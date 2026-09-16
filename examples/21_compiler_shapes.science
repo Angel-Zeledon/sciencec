@@ -78,8 +78,7 @@ DefTable has:
     # is the signature that matters: returning `borrowed Def` here would tie
     # the borrow to the table and forbid the next `alloc`, which is exactly
     # the pattern that forces `'a` into Rust signatures.
-    def alloc(mutable self, kind: DefKind, name: String,
-            parent: DefId?) -> DefId:
+    def alloc(mutable self, kind: DefKind, name: String, parent: DefId?) -> DefId:
         let id be DefId(index: self.defs.len())
         self.defs.push(Def(id: id, kind: kind, name: name, parent: parent))
         id

@@ -56,18 +56,40 @@
 //! eight levels a line starts at column 32. That is the language's problem
 //! rather than the formatter's, but the formatter is where it is felt.
 //!
-//! ## Maximum line width: 100 columns
+//! ## Maximum line width: 90 columns
 //!
-//! **Decision.** A line is broken when it would otherwise exceed 100
+//! **Decision.** A line is broken when it would otherwise exceed 90
 //! characters. A trailing comment does not count toward the width.
 //!
-//! **Reason.** The corpus's prose wraps at about 76 columns, but its *code*
-//! reaches 97 (`examples/08_dyn_dispatch.science`) and 93
-//! (`examples/19_stdlib.science`), and those lines are deliberate. Any limit
-//! at or below 97 would make the formatter's first act be to break lines their
-//! author chose not to break, which is the worst possible introduction. 100 is
-//! above everything checked in, so the formatter changes line breaking only
-//! where the author broke a line that did not need breaking.
+//! **Reason, and this decision was 100 until the corpus was measured
+//! properly.** The original argument was that code reaches 97 and 93, that any
+//! limit at or below 97 would break lines their author chose not to break, and
+//! that 100 is therefore "above everything checked in".
+//!
+//! The distribution says otherwise. Per-file maximum code width across the
+//! twenty-two corpus files is:
+//!
+//! ```text
+//! 84 71 68 86 65 69 82 82 [97] 76 85 83 79 80 70 61 81 60 71 88 66 82
+//! ```
+//!
+//! **Exactly one line in twenty-two files exceeds 88 columns**, and it is
+//! `examples/08_dyn_dispatch.science:129` — a `let` with no `where`, no chain
+//! and a doubled `Array of (Box of any Summarize)`, which is an outlier with no
+//! good break available anyway. The corpus's real working width is about 86.
+//!
+//! So 100 was not "above everything checked in" in any useful sense: it was
+//! twelve columns above everything but one line, and its first act was to
+//! manufacture lines of 91, 98 and 99 — each wider than the widest line in
+//! twenty-one of the twenty-two files. The old claim that it "changes line
+//! breaking only where the author broke a line that did not need breaking" was
+//! true as stated and wrong in effect: by the corpus's own standard those
+//! lines did need breaking.
+//!
+//! The 93 in the original argument is also gone. `examples/19_stdlib.science`
+//! measures 88 today, because revision 3 renamed `function` to `def` and took
+//! five columns off every declaration in the language. The width question was
+//! settled against numbers that the language then moved.
 //!
 //! **Cost.** 100 is wider than the prose beside it, so a formatted file has a
 //! ragged right edge: comments stop at 76 and code may run to 100. And a limit
@@ -75,11 +97,13 @@
 //! breaking rules are exercised by this crate's own fixtures instead, which is
 //! weaker evidence.
 //!
-//! There is also no width that agrees with the corpus, and that is worth
+//! There is still no width that agrees with the corpus, and that is worth
 //! recording rather than hiding. `examples/08_dyn_dispatch.science` leaves a
 //! line at 97 columns unbroken; `examples/00_kitchen_sink.science` breaks
 //! `def best_of …` before its `where` at 95. No single number honours
-//! both, so whichever is chosen the formatter contradicts one of them. 100
+//! both, so whichever is chosen the formatter contradicts one of them. 90
+//! contradicts the first, which is one line; 100 contradicted the second, and
+//! two more like it. 90
 //! contradicts the one where the disagreement is *joining* a line, which is
 //! recoverable by narrowing the limit later; the other direction would mean
 //! shipping a formatter that immediately rewrites code somebody wrote on
@@ -322,7 +346,7 @@ use scan::{Comment, LogicalLine};
 const E_FORMATTER_DISAGREES: Code = Code(900);
 
 /// The width a formatted line is kept within. See the module documentation.
-pub const MAX_WIDTH: usize = 100;
+pub const MAX_WIDTH: usize = 90;
 
 /// What [`format_source`] produced.
 #[derive(Debug, Clone, Default)]

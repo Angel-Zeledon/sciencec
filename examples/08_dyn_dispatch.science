@@ -67,8 +67,11 @@ def describe_boxed(value: Box of any Summarize) -> String:
 # `any` as a return type, again behind the indirection. The signature is
 # broken across lines inside the parameter list, where indentation takes no
 # part (§4.2).
-def pick(flag: Bool, left: borrowed any Summarize,
-        right: borrowed any Summarize) -> borrowed any Summarize:
+def pick(
+    flag: Bool,
+    left: borrowed any Summarize,
+    right: borrowed any Summarize
+) -> borrowed any Summarize:
     if flag: left else: right
 
 # `Box` is built through its associated function (§4.4); named-argument

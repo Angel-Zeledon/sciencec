@@ -25,8 +25,7 @@ def titles(docs: borrowed Array of Doc):
 
 # §8 does not say `Map` implements `Iterate`, and its method set is closed,
 # so a map is walked through an `Array` of its keys and `Map.get`.
-def dump(settings: borrowed Map of (String, String),
-        keys: borrowed Array of String):
+def dump(settings: borrowed Map of (String, String), keys: borrowed Array of String):
     for key in keys:
         # `Map.get` returns `(borrowed V)?`, so the loop body asks with `?`
         # rather than matching a variant. Inside the then-branch `value` is
@@ -86,9 +85,7 @@ def triangular(n: Int) -> Int:
 # A range need not start at zero, and either end may be any expression. The
 # ends are written with `..` and never with `:`, which already opens blocks
 # and separates match arms, fields, named arguments and bounds (§4.5).
-def slice_sum(items: borrowed Array of Int,
-        first: Int,
-        last: Int) -> Int:
+def slice_sum(items: borrowed Array of Int, first: Int, last: Int) -> Int:
     let mutable sum be 0
     for index in first..last:
         sum be sum + value_at(items, index)
@@ -128,9 +125,7 @@ def drain(stack: mutable borrowed Array of Int):
 # A compound condition using `and` / `or`. This one is a formula, so the
 # symbols carry it better than the words would (§4.6), and negating it whole
 # keeps the formula readable.
-def advance(index: Int,
-        limit: Int,
-        items: borrowed Array of Int) -> Int:
+def advance(index: Int, limit: Int, items: borrowed Array of Int) -> Int:
     let mutable i be index
     loop:
         if not (i < limit and i < items.length()):
