@@ -1,0 +1,24 @@
+---
+source: crates/science-lexer/tests/snapshots.rs
+expression: "dump(\"3.14 1e-9 2.5f32 1E9 1_000.5 1.foo()\\n\")"
+---
+== source ==
+|3.14 1e-9 2.5f32 1E9 1_000.5 1.foo()
+|
+
+== tokens ==
+   0..4     Float { value: 3.14, suffix: None }
+   5..9     Float { value: 1e-9, suffix: None }
+  10..16    Float { value: 2.5, suffix: Some(F32) }
+  17..20    Float { value: 1000000000.0, suffix: None }
+  21..28    Float { value: 1000.5, suffix: None }
+  29..30    Int { value: 1, base: Dec, suffix: None }
+  30..31    Dot
+  31..34    Ident("foo")
+  34..35    LParen
+  35..36    RParen
+  36..37    Newline
+  37..37    Eof
+
+== diagnostics ==
+(none)

@@ -1,0 +1,9 @@
+---
+source: crates/science-diagnostics/tests/render.rs
+expression: "render(&map, &d)"
+---
+error[SC0120]: expected an expression
+ --> t.science:2:13
+  |
+2 |     let x =
+  |             ^ the file ends here

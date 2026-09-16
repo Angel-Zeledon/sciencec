@@ -1,0 +1,17 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Pub, Struct, id(\"Pair\"), LBracket, id(\"A\"), Comma, id(\"B\"),\nRBracket, Colon, Newline, Indent, Pub, id(\"first\"), Colon, id(\"A\"), Newline,\nid(\"source\"), Colon, Amp, id(\"Doc\"), Newline, Dedent,])"
+---
+Module @0..40
+  Struct `Pair` pub @0..40
+    generics
+      TypeParam `A` @14..15
+      TypeParam `B` @16..17
+    fields
+      Field `first` pub @19..29
+        type: Path `A` @28..29
+      Field `source` @29..40
+        type: Ref @36..40
+          Path `Doc` @37..40
+--- diagnostics ---
+(none)

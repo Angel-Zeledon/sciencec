@@ -1,9 +1,0 @@
----
-source: crates/link-diagnostics/tests/render.rs
-expression: "render(&map, &d)"
----
-error[LK0230]: too many arguments
- --> t.link:2:13
-  |
-2 |     let x = compute(
-  |             ^^^^^^^^ this call takes 1 argument (continues to line 5)

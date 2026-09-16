@@ -1,0 +1,17 @@
+---
+source: crates/science-parser/tests/ast_dump.rs
+expression: out
+---
+Ref mut @0..13
+  Path `Array` @5..13
+    generics of `Array`
+      Path `T` @11..12
+Ref @15..29
+  Dyn @16..29
+    Bound `Summarize` @20..29
+Tuple @31..42
+  Path `I32` @32..35
+  Path `Bool` @37..41
+Unit @44..46
+SelfType @48..52
+Path `text.parser.Token` @54..71

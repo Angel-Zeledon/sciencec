@@ -1,0 +1,83 @@
+# 17 - Modules, imports and visibility
+# Spec: §4.3 "a file is a module; a directory with a `mod.science` is a module
+# containing its siblings." Keywords `use`, `mod`, `pub` are reserved.
+#
+# NOTE: the two `use` forms below are exactly the ones the spec writes down.
+# §12 excludes a `mod` declaration from F0 outright — a file is already a
+# module and a directory with `mod.science` is already a module, so there is
+# nothing for `mod` to do; it stays a reserved word only so that adding one
+# in a later phase breaks nothing. No `mod` is therefore written here.
+#
+# `pub` is a reserved word that §4.1 lists and no section gives a rule for.
+# It is used below in the only reading consistent with "a file is a module":
+# as a prefix marking an item visible outside its own file.
+
+# Import a whole module, referred to afterwards by its path.
+use text.parser
+
+# Import selected names out of a module.
+use text.parser (Token, lex)
+
+# A deeper path, and a multi-name selection.
+use compiler.frontend.lexer (Lexer, TokenKind, Span)
+
+# A selection broken over several lines, with a trailing comma (§4.5).
+use compiler.frontend.diagnostics (
+    Diagnostic,
+    Severity,
+    render,
+)
+
+# §8 gives `String` no `clone`, so an owned copy is built from `String.new()`
+# and `push_str`.
+fn copy_of(text: &String) -> String:
+    let mut out = String.new()
+    out.push_str(text)
+    out
+
+# Public items of this module.
+pub struct Document:
+    title: String
+    body: String
+
+pub enum Severity:
+    Error
+    Warning
+    Note
+
+pub trait Report:
+    fn report(&self) -> String
+
+# A public inherent impl, with a public associated function (§4.3).
+impl Document:
+    pub fn new(title: String) -> Document:
+        Document(title: title, body: String.new())
+
+    pub fn is_empty(&self) -> Bool:
+        self.body.is_empty()
+
+pub fn parse(source: &String) -> Array[Token]:
+    lex(source)
+
+# Private by default: no `pub`.
+fn helper(document: &Document) -> Int:
+    document.body.len()
+
+fn clamp(width: U16) -> U16:
+    if width < 20u16: 20u16 else: width
+
+impl Report for Document:
+    fn report(&self) -> String:
+        copy_of(&self.title)
+
+pub fn main():
+    let source = "fn main(): println(\"hi\")"
+    let tokens = parse(&source)
+    println(tokens.len())
+
+    # A name imported from another module is used unqualified; a module
+    # imported whole is reached through its path.
+    let scratch = Document.new("scratch")
+    println(scratch.is_empty())
+    println(clamp(8u16))
+    println(text.parser.lex(&source).len())

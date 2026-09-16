@@ -1,8 +1,0 @@
-# UI test: a string literal that is never closed.
-#
-# §4.1 gives the syntax of string literals but fixes no code for this error.
-# The lexer allocated LK0007 out of the lexical range LK0001-LK0099.
-
-fn main():
-    let greeting = "hello
-    println(greeting)

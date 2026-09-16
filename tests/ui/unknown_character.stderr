@@ -1,23 +1,23 @@
-error[LK0001]: `$` is not a character Link recognises
-  --> tests/ui/unknown_character.link:14:22
+error[SC0001]: `$` is not a character Science recognises
+  --> tests/ui/unknown_character.science:14:22
    |
 14 |     let priced = 100 $ 2
    |                      ^ unexpected character
 
-error[LK0001]: `` ` `` is not a character Link recognises
-  --> tests/ui/unknown_character.link:15:18
+error[SC0001]: `` ` `` is not a character Science recognises
+  --> tests/ui/unknown_character.science:15:18
    |
 15 |     let quoted = `backtick`
    |                  ^ unexpected character
 
-error[LK0001]: `` ` `` is not a character Link recognises
-  --> tests/ui/unknown_character.link:15:27
+error[SC0001]: `` ` `` is not a character Science recognises
+  --> tests/ui/unknown_character.science:15:27
    |
 15 |     let quoted = `backtick`
    |                           ^ unexpected character
 
-error[LK0001]: `!` is not an operator in Link
-  --> tests/ui/unknown_character.link:16:20
+error[SC0001]: `!` is not an operator in Science
+  --> tests/ui/unknown_character.science:16:20
    |
 16 |     let inverted = !true
    |                    ^ `!` is only valid as part of `!=`

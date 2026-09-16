@@ -1,0 +1,13 @@
+[package]
+name = "science-resolve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+science-diagnostics.workspace = true
+science-lexer.workspace = true
+science-parser.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

@@ -1,0 +1,17 @@
+[package]
+name = "science-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+science-diagnostics.workspace = true
+science-lexer.workspace = true
+science-parser.workspace = true
+# 0.28 is the current line (see the crate docs in `src/lib.rs` for why this
+# version and not an older one). The API changed shape between 0.16, the
+# `salsa-2022` experiment and 0.17+, so the requirement is deliberately
+# restricted to one minor: an upgrade is a code change, not a lockfile change.
+salsa = "0.28.2"
+
+[dev-dependencies]

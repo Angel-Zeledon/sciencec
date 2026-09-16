@@ -1,0 +1,11 @@
+---
+source: crates/science-diagnostics/tests/render.rs
+expression: "render(&map, &d)"
+---
+warning[SC0206]: variable does not need to be mutable
+ --> t.science:1:5
+  |
+1 | let mut x = 1
+  |     ^^^ never reassigned
+  |
+  = help: remove `mut`: delete `mut `

@@ -1,0 +1,7 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![])"
+---
+Module @0..0
+--- diagnostics ---
+(none)

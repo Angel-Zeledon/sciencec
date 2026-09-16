@@ -1,0 +1,34 @@
+---
+source: crates/science-parser/tests/parse_traits.rs
+expression: "parse_source(r#\"impl Swap[Pair[B, A]] for Pair[A, B]:\n    fn swapped(&self) -> Pair[B, A]:\n        Pair(first: self.second, second: self.first)\n\"#)"
+---
+Module @0..128
+  Impl @0..127
+    trait: Bound `Swap` @5..21
+      generics of `Swap`
+        Path `Pair` @10..20
+          generics of `Pair`
+            Path `B` @15..16
+            Path `A` @18..19
+    type: Path `Pair` @26..36
+      generics of `Pair`
+        Path `A` @31..32
+        Path `B` @34..35
+    methods
+      Fn `swapped` @42..127
+        receiver: &self @53..58
+        ret: Path `Pair` @63..73
+          generics of `Pair`
+            Path `B` @68..69
+            Path `A` @71..72
+        body: Block @83..127
+          tail: StructLit `Pair` @83..127
+            fields
+              FieldInit `first` @88..106
+                value: Field `second` @95..106
+                  base: Self @95..99
+              FieldInit `second` @108..126
+                value: Field `first` @116..126
+                  base: Self @116..120
+--- diagnostics ---
+(none)

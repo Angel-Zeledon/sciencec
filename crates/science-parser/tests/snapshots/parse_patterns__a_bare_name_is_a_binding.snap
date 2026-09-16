@@ -1,0 +1,16 @@
+---
+source: crates/science-parser/tests/parse_patterns.rs
+expression: "parse_body(r#\"fn f(x: Int) -> Int:\n    match x:\n        None: 0\n        other: other\n\"#)"
+---
+Block @25..70
+  tail: Match @25..70
+    scrutinee: Path `x` @31..32
+    arms
+      Arm @42..49
+        pattern: Binding `None` @42..46
+        body: Int 0 @48..49
+      Arm @58..70
+        pattern: Binding `other` @58..63
+        body: Path `other` @65..70
+--- diagnostics ---
+(none)

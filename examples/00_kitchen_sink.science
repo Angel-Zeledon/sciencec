@@ -1,0 +1,251 @@
+# 00 - Kitchen sink: the F0 acceptance program
+#
+# Spec §11, "definition of done", condition 1:
+#
+#   `sciencec` compiles to a native binary a program that uses, all at once:
+#   generics with bounds, traits with static and dynamic dispatch, exhaustive
+#   `match` over enums, `Option` and `Result` with `?`, and a struct that
+#   stores a borrow in a field.
+#
+# This single file is that program. Every one of those five features is
+# marked below with the number of the requirement it satisfies. When this
+# compiles, links and runs, phase F0 is finished.
+#
+# It sticks to constructs the spec writes down literally, and calls only the
+# library methods §8 lists — that list is closed, so anything else would be a
+# spec change rather than a library detail.
+
+# ---------------------------------------------------------------------------
+# Data
+# ---------------------------------------------------------------------------
+
+struct Doc:
+    title: String
+    body: String
+
+# (5) A struct that stores a borrow in a field. There is no lifetime syntax:
+# the region of `source` is inferred and propagated to every site that
+# instantiates `Excerpt` (§6.2).
+struct Excerpt:
+    source: &Doc
+    limit: Int
+
+struct Pair[A, B]:
+    first: A
+    second: B
+
+# (3) The enums that the exhaustive `match`es below are taken over.
+enum Format:
+    Plain
+    Markdown
+    Json
+
+enum LoadError:
+    NotFound(String)
+    Malformed(String)
+
+enum ParseError:
+    Empty
+    Unsupported(String)
+
+# `From` is a generic trait (§4.3): with no associated types in F0 the source
+# type is a parameter of the trait, not of the impl.
+#
+# (4) `?` propagates one error type into another through `From`.
+impl From[ParseError] for LoadError:
+    fn from(inner: ParseError) -> Self:
+        match inner:
+            Empty: Malformed("empty document")
+            Unsupported(what): Malformed(what)
+
+impl From[IoError] for LoadError:
+    fn from(inner: IoError) -> Self:
+        NotFound("unreadable")
+
+# ---------------------------------------------------------------------------
+# Inherent impls
+# ---------------------------------------------------------------------------
+
+# Methods that come from no trait (§4.3). A function with no `self` receiver
+# is an associated function, reached through the type.
+impl Doc:
+    fn new(title: String) -> Doc:
+        Doc(title: title, body: String.new())
+
+    fn heading(&self) -> Option[String]:
+        if self.body.starts_with("# "):
+            Some(self.body.truncate(60))
+        else:
+            None
+
+    fn is_empty(&self) -> Bool:
+        self.body.is_empty()
+
+# §8 gives `String` no `clone`, so an owned copy is built from the two
+# methods it does have.
+fn copy_of(text: &String) -> String:
+    let mut out = String.new()
+    out.push_str(text)
+    out
+
+# ---------------------------------------------------------------------------
+# Traits
+# ---------------------------------------------------------------------------
+
+# A trait with one required method and one default method that calls it.
+trait Summarize:
+    fn summarize(&self) -> String
+
+    fn preview(&self) -> String:
+        self.summarize().truncate(80)
+
+impl Summarize for Doc:
+    fn summarize(&self) -> String:
+        self.body.truncate(200)
+
+impl Summarize for Excerpt:
+    fn summarize(&self) -> String:
+        self.source.body.truncate(self.limit)
+
+# `Clone` is one of the traits the compiler recognises (§5.4); `best_of`
+# below takes it as a bound.
+impl Clone for Doc:
+    fn clone(&self) -> Doc:
+        Doc(title: copy_of(&self.title), body: copy_of(&self.body))
+
+# A marker trait is implemented by a single line with no block, because F0
+# has no empty block (§4.3).
+impl Copy for Format
+
+# ---------------------------------------------------------------------------
+# (1) Generics with bounds, and (2a) static dispatch
+# ---------------------------------------------------------------------------
+
+# A bound in the parameter list. Monomorphisation emits one specialised copy
+# per instantiation (§5.3), so the call to `preview` is resolved statically.
+fn describe[T: Summarize](value: &T) -> String:
+    value.preview()
+
+# Several bounds joined by `+`, written in a `where` clause.
+fn best_of[T](left: &T, right: &T) -> String where T: Summarize + Clone:
+    if left.summarize().len() >= right.summarize().len():
+        left.preview()
+    else:
+        right.preview()
+
+# A generic struct built at two different instantiations.
+fn paired[A, B](first: A, second: B) -> Pair[A, B]:
+    Pair(first: first, second: second)
+
+# ---------------------------------------------------------------------------
+# (2b) Dynamic dispatch
+# ---------------------------------------------------------------------------
+
+# `dyn` only behind an indirection: a reference here, a `Box` below (§4.3).
+fn describe_dyn(value: &dyn Summarize) -> String:
+    value.preview()
+
+fn describe_boxed(value: Box[dyn Summarize]) -> String:
+    value.summarize()
+
+# `Box` is built through its associated function, never by named-argument
+# construction: that form is for structs only (§4.3).
+fn as_summary(format: &Format) -> Box[dyn Summarize]:
+    match format:
+        Json: Box.new(Doc(title: "json", body: "{}"))
+        Plain: Box.new(Doc(title: "plain", body: "..."))
+        Markdown: Box.new(Doc(title: "markdown", body: "# ..."))
+
+# ---------------------------------------------------------------------------
+# (3) Exhaustive `match` over enums
+# ---------------------------------------------------------------------------
+
+# Every variant is listed; there is no wildcard arm. A missing variant is
+# SC0210 and the diagnostic lists what is missing (§11.3).
+fn extension(format: &Format) -> String:
+    match format:
+        Plain: "txt"
+        Markdown: "md"
+        Json: "json"
+
+# Variant patterns that bind their payload, in block form.
+fn explain(error: &LoadError) -> String:
+    match error:
+        NotFound(path):
+            let mut out = String.new()
+            out.push_str("not found: ")
+            out.push_str(path)
+            out
+        Malformed(detail):
+            copy_of(detail)
+
+# ---------------------------------------------------------------------------
+# (4) `Option` and `Result` with `?`
+# ---------------------------------------------------------------------------
+
+fn shorten(text: &String, limit: Int) -> Option[String]:
+    if text.is_empty(): None else: Some(text.truncate(limit))
+
+# `?` on `Option`: unwrap `Some`, or return `None` from the enclosing function.
+fn first_heading(doc: &Doc) -> Option[String]:
+    let heading = doc.heading()?
+    let trimmed = shorten(&heading, 40)?
+    Some(trimmed)
+
+fn parse_format(name: &String) -> Result[Format, ParseError]:
+    if name.is_empty():
+        Err(Empty)
+    else:
+        match name:
+            "txt": Ok(Plain)
+            "md": Ok(Markdown)
+            "json": Ok(Json)
+            other: Err(Unsupported(copy_of(other)))
+
+# `?` on `Result`, twice, the first widening `IoError` and the second
+# `ParseError` into `LoadError` through the `From` impls above.
+fn load(path: &String) -> Result[Doc, LoadError]:
+    let text = read_file(path)?
+    let format = parse_format(path)?
+    Ok(Doc(title: extension(&format), body: text))
+
+# ---------------------------------------------------------------------------
+# Everything at once
+# ---------------------------------------------------------------------------
+
+fn main():
+    let doc = Doc(title: "Regions", body: "# A region is a set of program points.")
+
+    # (5) The struct holding the borrow, built from a local.
+    let excerpt = Excerpt(source: &doc, limit: 40)
+
+    # (1) and (2a): generics with bounds, dispatched statically.
+    println(describe(&doc))
+    println(describe(&excerpt))
+    println(best_of(&doc, &doc))
+
+    # (2b): the same trait, dispatched dynamically.
+    println(describe_dyn(&doc))
+    println(describe_dyn(&excerpt))
+    println(describe_boxed(as_summary(&Markdown)))
+
+    # (3): exhaustive matches.
+    println(extension(&Json))
+    println(explain(&NotFound("link.toml")))
+
+    # (4): `Option` and `Result`, both consumed by an exhaustive `match`.
+    match first_heading(&doc):
+        Some(heading): println(heading)
+        None: println("no heading")
+
+    match load("link.toml"):
+        Ok(loaded): println(describe(&loaded))
+        Err(e): println(explain(&e))
+
+    # An associated function called through the type, and an inherent method.
+    let empty = Doc.new("scratch")
+    println(empty.is_empty())
+
+    let pair = paired(1, "one")
+    println(pair.first)
+    println(pair.second)

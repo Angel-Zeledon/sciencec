@@ -1,0 +1,12 @@
+[package]
+name = "science-lexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+science-diagnostics.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+science-testkit.workspace = true

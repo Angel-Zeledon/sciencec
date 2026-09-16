@@ -1,0 +1,11 @@
+# UI test: a character literal that holds the wrong number of characters,
+# or is never closed (SC0008).
+#
+# §4.1: "Characters: `'a'`, `'\n'`." Exactly one character, in quotes. 9
+# fixes only the range SC0001-SC0099; the lexer allocated SC0008 out of it
+# and uses it for all three ways of getting this wrong.
+
+fn main():
+    let empty = ''
+    let crowded = 'abc'
+    let unclosed = 'a

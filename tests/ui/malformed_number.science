@@ -1,0 +1,10 @@
+# UI test: a numeric literal whose digits do not fit its base, or which has
+# no digits at all (SC0010).
+#
+# §4.1: "Integers: `42`, `1_000_000`, `0xFF`, `0b1010`, `0o777`." Each prefix
+# fixes the digits that may follow it.
+
+fn main():
+    let mask = 0b1012
+    let permissions = 0o778
+    let nothing = 0x

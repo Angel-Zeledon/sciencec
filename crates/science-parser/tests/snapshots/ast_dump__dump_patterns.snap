@@ -1,0 +1,28 @@
+---
+source: crates/science-parser/tests/ast_dump.rs
+expression: match_expr.dump()
+---
+Match @0..90
+  scrutinee: Path `result` @6..12
+  arms
+    Arm @10..26
+      pattern: Variant `Ok` @10..19
+        Binding `value` @13..18
+      body: Path `value` @21..26
+    Arm @30..46
+      pattern: Tuple @30..36
+        Int 0 @31..32
+        Wildcard @34..35
+      body: Str "x axis" @38..46
+    Arm @50..66
+      pattern: StructPat `Doc` @50..63
+        fields
+          FieldPat `title` @54..62
+            pattern: Binding `t` mut @61..62
+      body: Path `t` @65..66
+    Arm @70..90
+      pattern: Or @70..86
+        Bool true @70..74
+        Unit @77..79
+        Variant `None` @82..86
+      body: Unit @88..90

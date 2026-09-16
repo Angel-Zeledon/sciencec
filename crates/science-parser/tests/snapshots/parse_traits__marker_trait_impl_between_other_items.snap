@@ -1,0 +1,33 @@
+---
+source: crates/science-parser/tests/parse_traits.rs
+expression: "parse_source(r#\"struct Point:\n    x: Int\n\nimpl Copy for Point\n\nimpl Clone for Point:\n    fn clone(&self) -> Point:\n        Point(x: self.x)\n\nfn main():\n    println(1)\n\"#)"
+---
+Module @0..151
+  Struct `Point` @0..24
+    fields
+      Field `x` @18..24
+        type: Path `Int` @21..24
+  Impl @26..45
+    trait: Bound `Copy` @31..35
+    type: Path `Point` @40..45
+  Impl @47..123
+    trait: Bound `Clone` @52..57
+    type: Path `Point` @62..67
+    methods
+      Fn `clone` @73..123
+        receiver: &self @82..87
+        ret: Path `Point` @92..97
+        body: Block @107..123
+          tail: StructLit `Point` @107..123
+            fields
+              FieldInit `x` @113..122
+                value: Field `x` @116..122
+                  base: Self @116..120
+  Fn `main` @125..150
+    body: Block @140..150
+      tail: Call @140..150
+        callee: Path `println` @140..147
+        args
+          Int 1 @148..149
+--- diagnostics ---
+(none)

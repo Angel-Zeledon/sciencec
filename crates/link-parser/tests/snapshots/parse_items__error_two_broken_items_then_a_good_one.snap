@@ -1,9 +1,0 @@
----
-source: crates/link-parser/tests/parse_items.rs
-expression: "parse_report(vec![Struct, Colon, Newline, Indent, id(\"a\"), Colon, id(\"I32\"),\nNewline, Dedent, Enum, Colon, Newline, Indent, id(\"A\"), Newline, Dedent, Use,\nid(\"text\"), Newline,])"
----
-Module @0..25
-  Use `text` @18..25
---- diagnostics ---
-LK0102 @6..7 expected an identifier, found `:`
-LK0102 @16..17 expected an identifier, found `:`

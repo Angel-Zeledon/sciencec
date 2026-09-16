@@ -1,0 +1,19 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Fn, id(\"longest\"), LParen, id(\"a\"), Colon, Amp,\nid(\"String\"), Comma, id(\"b\"), Colon, Amp, id(\"String\"), RParen, Arrow, Amp,\nid(\"String\"), Colon, id(\"a\"), Newline,])"
+---
+Module @0..41
+  Fn `longest` @0..41
+    params
+      Param `a` @10..19
+        type: Ref @12..19
+          Path `String` @13..19
+      Param `b` @20..29
+        type: Ref @22..29
+          Path `String` @23..29
+    ret: Ref @32..39
+      Path `String` @33..39
+    body: Block @40..41
+      tail: Path `a` @40..41
+--- diagnostics ---
+(none)

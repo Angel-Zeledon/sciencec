@@ -1,0 +1,9 @@
+---
+source: crates/science-diagnostics/tests/render.rs
+expression: "render(&map, &d)"
+---
+error[SC0230]: too many arguments
+ --> t.science:2:13
+  |
+2 |     let x = compute(
+  |             ^^^^^^^^ this call takes 1 argument (continues to line 5)

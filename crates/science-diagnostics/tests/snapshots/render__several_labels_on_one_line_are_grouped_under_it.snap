@@ -1,0 +1,10 @@
+---
+source: crates/science-diagnostics/tests/render.rs
+expression: "render(&map, &d)"
+---
+error[SC0220]: mismatched types in `+`
+ --> t.science:1:21
+  |
+1 | let total = first + second
+  |             ----- this is an `Int`
+  |                     ^^^^^^ this is a `String`

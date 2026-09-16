@@ -1,0 +1,9 @@
+---
+source: crates/science-diagnostics/tests/render.rs
+expression: "render(&map, &d)"
+---
+error[SC0310]: borrow of a moved value
+ --> t.science:2:7
+  |
+2 | print(café)
+  |       ^^^^ borrowed here

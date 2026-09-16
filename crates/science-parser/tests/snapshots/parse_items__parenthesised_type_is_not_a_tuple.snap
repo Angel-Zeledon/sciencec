@@ -1,0 +1,13 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Fn, id(\"f\"), LParen, id(\"a\"), Colon, LParen, id(\"I32\"),\nRParen, RParen, Colon, id(\"x\"), Newline,])"
+---
+Module @0..14
+  Fn `f` @0..14
+    params
+      Param `a` @4..11
+        type: Path `I32` @7..10
+    body: Block @13..14
+      tail: Path `x` @13..14
+--- diagnostics ---
+(none)

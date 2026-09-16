@@ -1,0 +1,88 @@
+---
+source: crates/science-lexer/tests/snapshots.rs
+expression: "dump(\"\\\ntrait Summarize:\n    fn summarize(&self) -> String\n\n    fn preview(&self) -> String:\n        self.summarize().truncate(80)\n\nimpl Summarize for Doc:\n    fn summarize(&self) -> String:\n        self.body.truncate(200)\n\")"
+---
+== source ==
+|trait Summarize:
+|    fn summarize(&self) -> String
+|
+|    fn preview(&self) -> String:
+|        self.summarize().truncate(80)
+|
+|impl Summarize for Doc:
+|    fn summarize(&self) -> String:
+|        self.body.truncate(200)
+|
+
+== tokens ==
+   0..5     Trait
+   6..15    Ident("Summarize")
+  15..16    Colon
+  16..17    Newline
+  17..21    Indent
+  21..23    Fn
+  24..33    Ident("summarize")
+  33..34    LParen
+  34..35    Amp
+  35..39    SelfValue
+  39..40    RParen
+  41..43    Arrow
+  44..50    Ident("String")
+  50..51    Newline
+  56..58    Fn
+  59..66    Ident("preview")
+  66..67    LParen
+  67..68    Amp
+  68..72    SelfValue
+  72..73    RParen
+  74..76    Arrow
+  77..83    Ident("String")
+  83..84    Colon
+  84..85    Newline
+  85..93    Indent
+  93..97    SelfValue
+  97..98    Dot
+  98..107   Ident("summarize")
+ 107..108   LParen
+ 108..109   RParen
+ 109..110   Dot
+ 110..118   Ident("truncate")
+ 118..119   LParen
+ 119..121   Int { value: 80, base: Dec, suffix: None }
+ 121..122   RParen
+ 122..123   Newline
+ 124..124   Dedent
+ 124..124   Dedent
+ 124..128   Impl
+ 129..138   Ident("Summarize")
+ 139..142   For
+ 143..146   Ident("Doc")
+ 146..147   Colon
+ 147..148   Newline
+ 148..152   Indent
+ 152..154   Fn
+ 155..164   Ident("summarize")
+ 164..165   LParen
+ 165..166   Amp
+ 166..170   SelfValue
+ 170..171   RParen
+ 172..174   Arrow
+ 175..181   Ident("String")
+ 181..182   Colon
+ 182..183   Newline
+ 183..191   Indent
+ 191..195   SelfValue
+ 195..196   Dot
+ 196..200   Ident("body")
+ 200..201   Dot
+ 201..209   Ident("truncate")
+ 209..210   LParen
+ 210..213   Int { value: 200, base: Dec, suffix: None }
+ 213..214   RParen
+ 214..215   Newline
+ 215..215   Dedent
+ 215..215   Dedent
+ 215..215   Eof
+
+== diagnostics ==
+(none)

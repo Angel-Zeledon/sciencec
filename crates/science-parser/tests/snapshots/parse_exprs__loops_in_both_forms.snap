@@ -1,0 +1,59 @@
+---
+source: crates/science-parser/tests/parse_exprs.rs
+expression: "parse_source(r#\"fn f(stack: &mut Array[Int], lines: &Array[String]):\n    while not stack.is_empty(): stack.pop()\n    for line in lines: println(line)\n    loop: break\n    while a < b:\n        a = a + 1\n    for x in xs:\n        println(x)\n    loop:\n        break\n\"#)"
+---
+Module @0..245
+  Fn `f` @0..244
+    params
+      Param `stack` @5..27
+        type: Ref mut @12..27
+          Path `Array` @17..27
+            generics of `Array`
+              Path `Int` @23..26
+      Param `lines` @29..50
+        type: Ref @36..50
+          Path `Array` @37..50
+            generics of `Array`
+              Path `String` @43..49
+    body: Block @57..244
+      While @57..96
+        cond: Unary `not` @63..83
+          Method `is_empty` @67..83
+            receiver: Path `stack` @67..72
+        body: Block @85..96
+          tail: Method `pop` @85..96
+            receiver: Path `stack` @85..90
+      For @101..133
+        pattern: Binding `line` @105..109
+        iter: Path `lines` @113..118
+        body: Block @120..133
+          tail: Call @120..133
+            callee: Path `println` @120..127
+            args
+              Path `line` @128..132
+      Loop @138..149
+        body: Block @144..149
+          Break @144..149
+      While @154..184
+        cond: Binary `<` @160..165
+          lhs: Path `a` @160..161
+          rhs: Path `b` @164..165
+        body: Block @175..184
+          Assign @175..184
+            target: Path `a` @175..176
+            value: Binary `+` @179..184
+              lhs: Path `a` @179..180
+              rhs: Int 1 @183..184
+      For @189..220
+        pattern: Binding `x` @193..194
+        iter: Path `xs` @198..200
+        body: Block @210..220
+          tail: Call @210..220
+            callee: Path `println` @210..217
+            args
+              Path `x` @218..219
+      tail: Loop @225..244
+        body: Block @239..244
+          Break @239..244
+--- diagnostics ---
+(none)

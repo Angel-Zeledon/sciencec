@@ -1,0 +1,9 @@
+---
+source: crates/science-diagnostics/tests/render.rs
+expression: "render(&map, &d)"
+---
+warning[SC0207]: unused variable `x`
+ --> t.science:1:5
+  |
+1 | let x = 1
+  |     ^ unused

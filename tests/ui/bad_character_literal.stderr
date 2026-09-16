@@ -1,17 +1,17 @@
-error[LK0008]: empty character literal
- --> tests/ui/bad_character_literal.link:9:17
+error[SC0008]: empty character literal
+ --> tests/ui/bad_character_literal.science:9:17
   |
 9 |     let empty = ''
   |                 ^^ expected a character here
 
-error[LK0008]: a character literal holds exactly one character
-  --> tests/ui/bad_character_literal.link:10:19
+error[SC0008]: a character literal holds exactly one character
+  --> tests/ui/bad_character_literal.science:10:19
    |
 10 |     let crowded = 'abc'
    |                   ^^^^^ 3 characters here
 
-error[LK0008]: unterminated character literal
-  --> tests/ui/bad_character_literal.link:11:20
+error[SC0008]: unterminated character literal
+  --> tests/ui/bad_character_literal.science:11:20
    |
 11 |     let unclosed = 'a
    |                    ^^ this `'` is never closed

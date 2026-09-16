@@ -1,0 +1,41 @@
+---
+source: crates/science-resolve/tests/snapshots.rs
+expression: "report(&module(vec![doc, summarize, impl_block, build]))"
+---
+Module `main` #41 @0..162
+  Struct `Doc` #42 @0..28
+    fields
+      Field `title` #43 @0..19
+        type: Path -> `String` #14 @0..6
+      Field `body` #44 @7..24
+        type: Path -> `String` #14 @7..13
+  Trait `Summarize` #45 @29..60
+    methods
+      Fn `summarize` #48 @29..50
+        receiver: SelfParam `self` #49 & @39..43
+        ret: Path -> `String` #14 @44..50
+        body: (none)
+  Impl #46 @61..113
+    trait: Bound -> `Summarize` #45 @95..104
+    for: Path -> `Doc` #42 @105..108
+    methods
+      Fn `summarize` #50 @61..94
+        receiver: SelfParam `self` #51 & @83..87
+        ret: Path -> `String` #14 @88..94
+        body: Block @61..72
+          tail: Field `body` (unresolved: needs the type) @61..70
+            Self -> `self` #51 @61..65
+  Fn `build` #47 @114..162
+    params
+      Param `title` #52 @144..156
+        type: Path -> `String` #14 @144..150
+    ret: Path -> `Doc` #42 @157..160
+    body: Block @114..162
+      tail: StructLit -> `Doc` #42 @114..137
+        fields
+          FieldInit `title` -> `title` #43 @114..132
+            value: Path -> `title` #52 @114..119
+          FieldInit `body` -> `body` #44 @120..137
+            value: Str "" @120..122
+--- diagnostics ---
+(none)

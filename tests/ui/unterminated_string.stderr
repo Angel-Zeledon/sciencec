@@ -1,5 +1,5 @@
-error[LK0007]: unterminated string literal
- --> tests/ui/unterminated_string.link:7:20
+error[SC0007]: unterminated string literal
+ --> tests/ui/unterminated_string.science:7:20
   |
 7 |     let greeting = "hello
   |                    ^^^^^^ this string has no closing `"`

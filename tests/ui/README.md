@@ -1,9 +1,9 @@
 # UI tests
 
-Programs that must be **rejected**, each next to the diagnostics `linkc` is
+Programs that must be **rejected**, each next to the diagnostics `sciencec` is
 expected to print for it, compared byte for byte. Spec §10.3:
 
-> UI tests in the style of rustc's: a `tests/ui/*.link` that must fail, next
+> UI tests in the style of rustc's: a `tests/ui/*.science` that must fail, next
 > to its expected `.stderr`, compared literally. It is the only known method
 > that stops error messages degrading over time. For a language with inferred
 > regions it is not optional.
@@ -12,57 +12,57 @@ Programs that must be *accepted* live in `examples/` instead.
 
 ## Running them
 
-Through [`link-testkit`](../../crates/link-testkit), from
-[`crates/link-lexer/tests/ui.rs`](../../crates/link-lexer/tests/ui.rs):
+Through [`science-testkit`](../../crates/science-testkit), from
+[`crates/science-lexer/tests/ui.rs`](../../crates/science-lexer/tests/ui.rs):
 
 ```sh
-cargo test -p link-lexer --test ui
+cargo test -p science-lexer --test ui
 ```
 
 The hookup lives in whichever crate can render the diagnostics these cases
-provoke — today that is `link-lexer`, which lexes the file and renders what
-comes back through `link_diagnostics::render_all`. When the parser can
-produce `LK0100`-range diagnostics the same six lines move to, or are
+provoke — today that is `science-lexer`, which lexes the file and renders what
+comes back through `science_diagnostics::render_all`. When the parser can
+produce `SC0100`-range diagnostics the same six lines move to, or are
 duplicated in, whichever crate renders them.
 
-`link-testkit` deliberately does not do this itself: it takes the compile step
+`science-testkit` deliberately does not do this itself: it takes the compile step
 as a closure so that it stays buildable and testable with no dependency on any
 compiler phase.
 
 The one detail worth getting right is the path registered in the
 `SourceMap`: it is what the renderer prints after `-->`, so it is registered
-as `tests/ui/<name>.link` — relative to the repository root, with forward
+as `tests/ui/<name>.science` — relative to the repository root, with forward
 slashes. Register an absolute path instead and every expectation here fails
 on its location line, and would fail differently on Windows and on Linux.
 
 To update the expectations after deliberately changing a message:
 
 ```sh
-LINK_BLESS=1 cargo test
+SCIENCE_BLESS=1 cargo test
 git diff tests/ui      # read this before committing
 ```
 
 A missing `.stderr` is written instead of failing, so a new case is added by
-dropping in the `.link` file and blessing once.
+dropping in the `.science` file and blessing once.
 
 ## The cases
 
 One case per lexical code, plus one that proves error recovery. Between them
-they cover every diagnostic `link-lexer` can emit.
+they cover every diagnostic `science-lexer` can emit.
 
 | Case | Code | What it pins down |
 |---|---|---|
-| `unknown_character` | `LK0001` | Characters that are not part of the language: `$`, a backtick, and a lone `!` — which is the interesting one, because `!=` *is* an operator and §4.4 spells negation `not`. |
-| `tab_in_indentation` | `LK0003` | A tab used to indent a line. §4.1 fixes this code and says no attempt is made to interpret the tab. |
-| `inconsistent_indentation` | `LK0004` | A line indented to a level that is not on the indentation stack: 8 spaces, after the lexer has popped 12 and is left holding 0 and 4. §4.1 fixes this code. |
-| `integer_overflow` | `LK0005` | An integer literal past `u128::MAX`, in decimal and in hex. §4.1 puts no bound in the grammar, so the bound is the lexer's accumulator. |
-| `bad_escape` | `LK0006` | Escapes outside the eight §4.1 lists, reached the way it happens in practice: an undoubled Windows path. Both flavours of the code appear — an unknown escape, and a `\u` with no braces. |
-| `unterminated_string` | `LK0007` | A `"` with no closing `"` before the end of the line. §9 fixes only the range, `LK0001`–`LK0099`; the lexer allocated the number. |
-| `bad_character_literal` | `LK0008` | All three ways §4.1's "exactly one character, in quotes" is broken: empty, too many, never closed. |
-| `invalid_numeric_suffix` | `LK0009` | `42q`, and `2.5i32` — an integer suffix on a float, which gets its own message. |
-| `malformed_number` | `LK0010` | A digit outside its base (`0b1012`, `0o778`) and a prefix with no digits at all (`0x`). |
-| `float_out_of_range` | `LK0011` | A float literal that `str::parse` saturates to infinity rather than rejecting, which is why the lexer has to check for it. |
-| `several_errors_in_one_file` | six codes | Error *recovery*. The lexer never aborts, so one pass reports `LK0001`, `LK0006`, `LK0007`, `LK0009`, `LK0010` and `LK0003`, in source order. No single message is the point here; the count and the order are. |
+| `unknown_character` | `SC0001` | Characters that are not part of the language: `$`, a backtick, and a lone `!` — which is the interesting one, because `!=` *is* an operator and §4.4 spells negation `not`. |
+| `tab_in_indentation` | `SC0003` | A tab used to indent a line. §4.1 fixes this code and says no attempt is made to interpret the tab. |
+| `inconsistent_indentation` | `SC0004` | A line indented to a level that is not on the indentation stack: 8 spaces, after the lexer has popped 12 and is left holding 0 and 4. §4.1 fixes this code. |
+| `integer_overflow` | `SC0005` | An integer literal past `u128::MAX`, in decimal and in hex. §4.1 puts no bound in the grammar, so the bound is the lexer's accumulator. |
+| `bad_escape` | `SC0006` | Escapes outside the eight §4.1 lists, reached the way it happens in practice: an undoubled Windows path. Both flavours of the code appear — an unknown escape, and a `\u` with no braces. |
+| `unterminated_string` | `SC0007` | A `"` with no closing `"` before the end of the line. §9 fixes only the range, `SC0001`–`SC0099`; the lexer allocated the number. |
+| `bad_character_literal` | `SC0008` | All three ways §4.1's "exactly one character, in quotes" is broken: empty, too many, never closed. |
+| `invalid_numeric_suffix` | `SC0009` | `42q`, and `2.5i32` — an integer suffix on a float, which gets its own message. |
+| `malformed_number` | `SC0010` | A digit outside its base (`0b1012`, `0o778`) and a prefix with no digits at all (`0x`). |
+| `float_out_of_range` | `SC0011` | A float literal that `str::parse` saturates to infinity rather than rejecting, which is why the lexer has to check for it. |
+| `several_errors_in_one_file` | six codes | Error *recovery*. The lexer never aborts, so one pass reports `SC0001`, `SC0006`, `SC0007`, `SC0009`, `SC0010` and `SC0003`, in source order. No single message is the point here; the count and the order are. |
 
 The `.stderr` files were produced by running the current lexer over these
 programs and reading the output, which is what blessing is for. They are
@@ -75,7 +75,7 @@ are kept that way on purpose so the improvement shows up as a diff:
 - `unknown_character` renders a backtick as ``` ``` ``` — the message
   interpolates the character into backticks without escaping it.
 - `unknown_character` tells someone who typed `!` only that it is not a
-  character Link recognises, when what it should say is that negation is
+  character Science recognises, when what it should say is that negation is
   spelled `not`.
 - `float_out_of_range` prints `f64::MAX` as 309 decimal digits instead of
   `1.7976931348623157e308`, and `malformed_number` says "a octal literal".
@@ -84,7 +84,7 @@ are kept that way on purpose so the improvement shows up as a diff:
 
 §9 says what a diagnostic *contains* — code, severity, message, primary span,
 secondary spans with labels, notes, and an automatically applicable
-suggestion. `link-diagnostics::render` decides how that is printed:
+suggestion. `science-diagnostics::render` decides how that is printed:
 
 ```
 error[LKnnnn]: <message>
@@ -120,18 +120,18 @@ Details that are easy to get wrong when writing or reviewing one by hand:
   These files assume repository-relative paths with forward slashes, which is
   what makes the same expectation work on Windows and on Linux.
 
-`crates/link-testkit/tests/corpus.rs` checks those last structural properties
+`crates/science-testkit/tests/corpus.rs` checks those last structural properties
 on every file in this directory, so a hand-written expectation in the wrong
 shape fails before anyone tries to run it.
 
 ## What is still missing
 
-The lexical layer is complete: every code `link-lexer` can emit has a case
+The lexical layer is complete: every code `science-lexer` can emit has a case
 above. §11 of the spec asks for UI coverage of things no phase can produce
 yet, and each one needs a case here as it lands:
 
 - every ownership violation, with the chain of borrows that explains it
-  (`LK0301` and the rest of `LK0300`–`LK0399`);
-- a non-exhaustive `match`, listing the patterns that are missing (`LK0210`);
-- syntax errors (`LK0100`–`LK0199`) and name resolution failures
-  (`LK0200`–`LK0299`).
+  (`SC0301` and the rest of `SC0300`–`SC0399`);
+- a non-exhaustive `match`, listing the patterns that are missing (`SC0210`);
+- syntax errors (`SC0100`–`SC0199`) and name resolution failures
+  (`SC0200`–`SC0299`).

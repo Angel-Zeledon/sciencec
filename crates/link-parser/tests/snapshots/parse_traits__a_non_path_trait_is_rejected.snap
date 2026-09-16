@@ -1,7 +1,0 @@
----
-source: crates/link-parser/tests/parse_traits.rs
-expression: "parse_source_allowing_errors(r#\"impl &Doc for Point:\n    fn f(&self) -> Int:\n        1\n\"#)"
----
-Module @0..55
---- diagnostics ---
-LK0111 @5..9 expected a trait name before `for`

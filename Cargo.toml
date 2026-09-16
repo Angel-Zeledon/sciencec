@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/link-diagnostics",
-    "crates/link-lexer",
-    "crates/link-parser",
-    "crates/link-testkit",
-    "crates/link-resolve",
-    "crates/link-db",
-    "crates/link-rt",
+    "crates/science-diagnostics",
+    "crates/science-lexer",
+    "crates/science-parser",
+    "crates/science-testkit",
+    "crates/science-resolve",
+    "crates/science-db",
+    "crates/science-rt",
 ]
 
 [workspace.package]
@@ -16,11 +16,11 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-link-diagnostics = { path = "crates/link-diagnostics" }
-link-lexer = { path = "crates/link-lexer" }
-link-parser = { path = "crates/link-parser" }
-link-testkit = { path = "crates/link-testkit" }
-link-resolve = { path = "crates/link-resolve" }
-link-db = { path = "crates/link-db" }
-link-rt = { path = "crates/link-rt" }
+science-diagnostics = { path = "crates/science-diagnostics" }
+science-lexer = { path = "crates/science-lexer" }
+science-parser = { path = "crates/science-parser" }
+science-testkit = { path = "crates/science-testkit" }
+science-resolve = { path = "crates/science-resolve" }
+science-db = { path = "crates/science-db" }
+science-rt = { path = "crates/science-rt" }
 insta = "1"

@@ -2,7 +2,7 @@
 
 Date: 2026-09-16
 Status: approved
-Supersedes: the Link F0 design of the same date. This document records the same
+Supersedes: the Science F0 design of the same date. This document records the same
 project after three decisions: the language is oriented to science and machine
 learning, it is named Science, and its syntax is written in English words rather
 than symbols and abbreviations.

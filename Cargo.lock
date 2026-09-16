@@ -186,59 +186,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
-name = "link-db"
-version = "0.0.1"
-dependencies = [
- "link-diagnostics",
- "link-lexer",
- "link-parser",
- "salsa",
-]
-
-[[package]]
-name = "link-diagnostics"
-version = "0.0.1"
-dependencies = [
- "insta",
-]
-
-[[package]]
-name = "link-lexer"
-version = "0.0.1"
-dependencies = [
- "insta",
- "link-diagnostics",
- "link-testkit",
-]
-
-[[package]]
-name = "link-parser"
-version = "0.0.1"
-dependencies = [
- "insta",
- "link-diagnostics",
- "link-lexer",
-]
-
-[[package]]
-name = "link-resolve"
-version = "0.0.1"
-dependencies = [
- "insta",
- "link-diagnostics",
- "link-lexer",
- "link-parser",
-]
-
-[[package]]
-name = "link-rt"
-version = "0.0.1"
-
-[[package]]
-name = "link-testkit"
-version = "0.0.1"
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -414,6 +361,59 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "science-db"
+version = "0.0.1"
+dependencies = [
+ "salsa",
+ "science-diagnostics",
+ "science-lexer",
+ "science-parser",
+]
+
+[[package]]
+name = "science-diagnostics"
+version = "0.0.1"
+dependencies = [
+ "insta",
+]
+
+[[package]]
+name = "science-lexer"
+version = "0.0.1"
+dependencies = [
+ "insta",
+ "science-diagnostics",
+ "science-testkit",
+]
+
+[[package]]
+name = "science-parser"
+version = "0.0.1"
+dependencies = [
+ "insta",
+ "science-diagnostics",
+ "science-lexer",
+]
+
+[[package]]
+name = "science-resolve"
+version = "0.0.1"
+dependencies = [
+ "insta",
+ "science-diagnostics",
+ "science-lexer",
+ "science-parser",
+]
+
+[[package]]
+name = "science-rt"
+version = "0.0.1"
+
+[[package]]
+name = "science-testkit"
+version = "0.0.1"
 
 [[package]]
 name = "scopeguard"

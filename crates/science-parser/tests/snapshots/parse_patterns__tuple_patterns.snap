@@ -1,0 +1,28 @@
+---
+source: crates/science-parser/tests/parse_patterns.rs
+expression: "parse_body(r#\"fn f(p: (Int, Int)) -> String:\n    match p:\n        (0, 0): \"origin\"\n        (x, 0): \"on the X axis\"\n        (_, _): \"somewhere else\"\n        (): \"unit\"\n\"#)"
+---
+Block @35..152
+  tail: Match @35..152
+    scrutinee: Path `p` @41..42
+    arms
+      Arm @52..68
+        pattern: Tuple @52..58
+          Int 0 @53..54
+          Int 0 @56..57
+        body: Str "origin" @60..68
+      Arm @77..100
+        pattern: Tuple @77..83
+          Binding `x` @78..79
+          Int 0 @81..82
+        body: Str "on the X axis" @85..100
+      Arm @109..133
+        pattern: Tuple @109..115
+          Wildcard @110..111
+          Wildcard @113..114
+        body: Str "somewhere else" @117..133
+      Arm @142..152
+        pattern: Unit @142..144
+        body: Str "unit" @146..152
+--- diagnostics ---
+(none)

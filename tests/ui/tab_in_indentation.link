@@ -1,7 +1,0 @@
-# UI test: a tab in the indentation is a lexical error (LK0003).
-#
-# Spec §4.1: "Spaces only. A tab in the indentation is a lexical error
-# (LK0003); no attempt is made to interpret it."
-
-fn main():
-	println("indented with a tab")

@@ -1,0 +1,15 @@
+---
+source: crates/science-diagnostics/tests/render.rs
+expression: "render(&map, &d)"
+---
+warning[SC0205]: unused bindings
+  --> wide.science:28:5
+   |
+ 2 | let v2 = 2
+   |     --- bound here
+ 3 | let v3 = 3
+ 4 | let v4 = 4
+   |     --- and here
+...
+28 | let v28 = 28
+   |     ^^^^ never used

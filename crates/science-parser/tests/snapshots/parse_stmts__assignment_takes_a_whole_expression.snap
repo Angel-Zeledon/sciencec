@@ -1,0 +1,15 @@
+---
+source: crates/science-parser/tests/parse_stmts.rs
+expression: "parse_body(\"fn main():\\n    a = if flag: 1 else: 2\\n\")"
+---
+Block @15..37
+  Assign @15..37
+    target: Path `a` @15..16
+    value: If @19..37
+      cond: Path `flag` @22..26
+      then: Block @28..29
+        tail: Int 1 @28..29
+      else: Block @36..37
+        tail: Int 2 @36..37
+--- diagnostics ---
+(none)

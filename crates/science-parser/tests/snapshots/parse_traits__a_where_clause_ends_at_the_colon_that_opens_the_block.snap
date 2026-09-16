@@ -1,0 +1,20 @@
+---
+source: crates/science-parser/tests/parse_traits.rs
+expression: "parse_source(r#\"fn f[T]() -> T where T: A + B:\n    body()\n\"#)"
+---
+Module @0..42
+  Fn `f` @0..41
+    generics
+      TypeParam `T` @5..6
+    ret: Path `T` @13..14
+    where
+      Predicate @21..29
+        type: Path `T` @21..22
+        bounds
+          Bound `A` @24..25
+          Bound `B` @28..29
+    body: Block @35..41
+      tail: Call @35..41
+        callee: Path `body` @35..39
+--- diagnostics ---
+(none)

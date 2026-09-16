@@ -1,0 +1,23 @@
+---
+source: crates/science-diagnostics/tests/render.rs
+expression: "render_all(&map, &diags)"
+---
+error[SC0001]: earlier in a
+ --> a.science:1:1
+  |
+1 | one
+  | ^^^ here
+
+error[SC0003]: later in a
+ --> a.science:3:1
+  |
+3 | three
+  | ^^^^^ here
+
+error[SC0002]: later in b
+ --> b.science:2:1
+  |
+2 | beta
+  | ^^^^ here
+
+error[SC0004]: no labels at all
