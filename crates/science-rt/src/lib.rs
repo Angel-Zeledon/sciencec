@@ -202,11 +202,38 @@
 //!
 //! # 8. Names
 //!
-//! Every symbol is `link_`-prefixed and matches its Science spelling:
+//! Every symbol is `science_`-prefixed and matches its Science spelling:
 //! `Array::push` is `science_array_push`. Entry points with no counterpart in §8
 //! exist because codegen needs them and are marked **codegen support** in their
-//! own documentation: drop glue (`link_*_free`), literal construction
+//! own documentation: drop glue (`science_*_free`), literal construction
 //! (`science_string_from_bytes`), and the capacity hints.
+//!
+//! This paragraph said `link_`-prefixed until it was checked against the crate:
+//! all 45 exported symbols are `science_`-prefixed and always were, and the
+//! sentence contradicted its own next example. It is recorded rather than
+//! quietly corrected because this page invites a code generator to be emitted
+//! *from it alone*, without reading a function body — which is the one reading
+//! under which the error was fatal rather than cosmetic. The fossil is the
+//! `LINK_OPTION_*` constants below, from a draft where the prefix was `link_`.
+//!
+//! # 8.1 What in this page is stale
+//!
+//! This crate was written against the pre-revision-2 error model and §5 and
+//! §9 below still describe it. `Option[T]` is now `T?` and `Result[T, E]` is
+//! gone entirely, replaced by the pair `-> (T, E?)` of `syntax-revision-2.md`
+//! §3.
+//!
+//! **The layout rules survive; the names and one shape do not.** `Option[&T]`
+//! became `(&T)?` with the same null niche, so every rule about niches, boxes
+//! and pointer payloads still holds word for word. `Result[T, E]` became a
+//! pair, which is a *different* representation — a tagged union with one live
+//! payload against a struct with two — and `io.rs` carries the three stale
+//! types, marked in place.
+//!
+//! This is written here rather than fixed because the replacement needs the
+//! representation of `T?` for a non-pointer `T`, which
+//! `type-checking-and-mir.md` decides. A code generator emitted from this page
+//! today would be correct about everything except the two `io` entry points.
 //!
 //! # 9. What §8 asks for that has no symbol here
 //!

@@ -22,6 +22,8 @@ disagrees with it says so explicitly and gives the reason.
 | `stdlib-standard.md` | Level 2: `time`, `os`, `random`, `testing`, `logging`, `text.regex`, `thread`, `net`. | F0 / F1 |
 | `stdlib-shape-and-packages.md` | The policy the three stdlib notes live under: batteries included, the error model's consequences, threads over async, naming, and Level 3. **Read before the other two.** | F0 |
 | `scientific-libraries.md` | The catalogue: `math`, `linalg`, `stats`, `optimize`, `signal`, `chem`, `bio`, `physics`; what links against C; the units-in-the-type decision. | F1+ |
+| `self-hosting.md` | Writing the Science compiler in Science: the gates, the differential bootstrap against the existing corpus, and the argument that the adversarial test is ~200 lines rather than 17,305. **Read before planning any phase order.** | F0 design, F2+ execution |
+| `mcp-servers.md` | `tool` as a declaration of *a callable exposed to a model*, protocol-agnostic, with the JSON Schema generated from the signature; why `prompt` stays reserved and unused. | F1 |
 | `intrinsics-math-physics.md` | Which mathematical and physical operations are tier 1 (a hardware instruction), tier 2 (a compiler obligation) or tier 3 (an ordinary library function). Establishes the tier test and the N1–N4 naming rule the sibling note follows. | F1+ |
 | `intrinsics-chem-bio.md` | The `chem` and `bio` catalogues under that same test: tier 1 is empty, tier 2 is five SI units, and seven reference tables are *data with releases*, shipped as content-addressed packages pinned by the lockfile. | F1+ |
 | `equations.md` | `equation` as a closed-grammar body that always has a rendering and a derivative; why dimensional checking is *not* what earns it; the LaTeX closure. | F1, conditional |
@@ -107,8 +109,10 @@ allocated by a design note and then implemented the same day.
 | `rust-binding-generation.md` | — | — | — | — | — | `SC0480`–`SC0489` |
 | `c-binding-coverage.md` | — | — | — | — | — | `SC0490`–`SC0499` |
 | `package-manager.md` | claims no `SC` code at all — see below | | | | | |
+| `self-hosting.md` | claims no `SC` code at all: seed and build mismatches reuse `SP0021`/`SP0022`, and the two-region rejection belongs to the unwritten region-inference note | | | | | |
 | `python-interop.md` | — | — | — | — | — | `SC0450`–`SC0458` |
 | `python-from-science.md` | — | `SC0180`–`SC0189` | — | — | — | `SC0459` |
+| `mcp-servers.md` | — | `SC0190`–`SC0199` | — | `SC0504`–`SC0519` | — | — |
 
 ### A namespace outside `SC`
 
@@ -149,7 +153,7 @@ existing `SC0009`, `script-mode.md` changes `SC0101`'s wording and reuses
 | Range | Free |
 |---|---|
 | Lexical | `SC0002`, `SC0018`–`SC0099` |
-| Syntax | `SC0138`–`SC0149`, `SC0155`–`SC0159`, `SC0161`–`SC0169`, `SC0178`–`SC0199` |
+| Syntax | `SC0156`–`SC0159`, `SC0161`–`SC0169`, `SC0178`–`SC0179` |
 | Resolution | `SC0200`–`SC0211`, `SC0222`–`SC0229`, `SC0241`–`SC0245` |
 | Types | `SC0250`, `SC0299`, and `SC0504`–`SC0799` in the second band |
 | Ownership | everything but `SC0301`–`SC0302`, `SC0331`–`SC0332`, `SC0380` |
@@ -157,6 +161,14 @@ existing `SC0009`, `script-mode.md` changes `SC0101`'s wording and reuses
 
 The notes index above is the allocation record. A note that claims a block adds
 its row before writing, not after.
+
+The Syntax row was wrong until now and said so in both directions at once: it
+offered `SC0138`–`SC0149` as free while the table above recorded `SC0138`–`SC0139`
+and `SC0141`–`SC0144` in `parser.rs`, `SC0140` held by `syntax-revision-2.md`
+and `SC0145`–`SC0149` claimed by `rust-interop.md`. `SC0155` has since gone to
+the `try` migration and `SC0190`–`SC0199` to `mcp-servers.md`. **Check this row
+against the table above before trusting it** — the table is the record and this
+is a convenience.
 
 ## Standing cross-note asks
 

@@ -49,6 +49,30 @@ impl ScienceIoError {
     }
 }
 
+// ---------------------------------------------------------------------------
+// STALE ABI — do not emit code against the three types below.
+//
+// `syntax-revision-2.md` §3 removed `Result` and replaced it with a pair:
+// `read_file` returns `(String, IoError?)` and `write_file` returns
+// `IoError?`. That is not a rename, it is a different layout. A `Result` is a
+// tagged union — one discriminant, one live payload, 32 bytes here. A pair is
+// a struct with *both* fields live at once, and the presence test reads the
+// second one rather than a tag.
+//
+// The types are left standing rather than deleted because the replacement
+// depends on a decision that has not been made: the representation of `T?`
+// when `T` is not a pointer. `Option[&T]` had the null niche and `(&T)?`
+// inherits it unchanged, but `IoError?` is a small value with no obvious
+// niche, and whether it gets a discriminant byte or a reserved bit pattern is
+// `type-checking-and-mir.md`'s call. Guessing here and having codegen agree
+// with the guess would be worse than the gap, because the two would be
+// consistent and wrong.
+//
+// What survives from below: the `ScienceIoError` codes and §5.1's general
+// enum layout rule. What does not: these three shapes and both entry points'
+// return types.
+// ---------------------------------------------------------------------------
+
 /// The payload union of `Result[String, IoError]`.
 ///
 /// `ok` is live exactly when the tag is [`LINK_RESULT_OK`]; `err` exactly when
