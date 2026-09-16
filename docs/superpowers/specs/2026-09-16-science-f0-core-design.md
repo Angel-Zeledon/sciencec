@@ -140,6 +140,10 @@ Every symbol or abbreviation that had a natural English word now has it.
 | Iteration | `for each x in xs:` | `for x in xs` |
 | Error propagation | `try f()` | `f()?` |
 | Visibility | `public` | `pub` |
+| Equality | `is` / `==` | `==` |
+| Inequality | `is not` / `!=` | `!=` |
+| Ordering | `is at least` / `>=`, and so on | `>= <= > <` |
+| Closure | `each.title`, or `doc giving doc.title` | — |
 | Compile-time constant | `const` | — |
 | Type alias | `type Vec3 is Tensor of ...` | — |
 
@@ -272,6 +276,78 @@ function read_config(path: borrowed String) returns Result of (Config, Error):
     Ok(config)
 ```
 
+### 4.6 Chains, and the comparison phrases
+
+The shape most Science code takes is a chain of method calls, so the language is
+built to make that read well.
+
+```science
+let headlines be docs
+    .iterate()
+    .discard(each.is_empty())
+    .map(each.title)
+    .take(5)
+    .collect()
+```
+
+**Calls always take parentheses**, including when they take no arguments:
+`text.length()`, not `text.length`. The parenthesis-free form reads better in a
+chain and was considered; it was rejected because once functions are values,
+`doc.summary` is ambiguous between calling it and naming it, and a language
+cannot resolve that by guessing. Parentheses mean call; their absence means a
+field.
+
+**A chain is broken across lines by indenting the continuation.** A line ending
+inside an unclosed bracket already continues implicitly (§4.2); a line whose
+continuation begins with `.` continues too. Nothing else may be split this way.
+
+#### Closures
+
+Two forms, because one is not enough.
+
+```science
+docs.map(each.title)                       # implicit subject
+docs.map(doc giving doc.title)             # named parameter
+docs.sort(by: doc giving doc.title.length())
+```
+
+`each` names the subject of the enclosing call without declaring it. It is the
+shorter form and the one most chains want.
+
+`name giving expression` declares the parameter. It is required whenever `each`
+cannot work, and there is exactly one such case, which the compiler must report
+clearly: **nesting**. In `outer.map(each.inner.map(each.x))` the two `each`
+refer to different things and the inner one shadows the outer irrecoverably.
+Science rejects a nested `each` (`SC0115`) rather than picking a rule, and the
+error names the named form as the fix.
+
+Having two spellings for one idea is design debt, recorded here as deliberate:
+Kotlin and Swift carry the same debt and it has not hurt them.
+
+#### Comparison phrases
+
+Every comparison has a word form and a symbol form, and they are the same
+operator.
+
+| Phrase | Symbol |
+|---|---|
+| `a is b` | `a == b` |
+| `a is not b` | `a != b` |
+| `a is at least b` | `a >= b` |
+| `a is at most b` | `a <= b` |
+| `a is above b` | `a > b` |
+| `a is below b` | `a < b` |
+
+The phrases are for code that is read; the symbols are for dense formulas. Two
+spellings is debt again, and the reason to accept it is the audience: a physicist
+writing an inequality wants `>=`, and a chain reading `if name is not ""` wants
+the words. Forcing either group into the other's notation costs more than the
+duplication does.
+
+The word forms are sequences of reserved words, resolved by the parser. `is`
+followed by `not`, `at`, `above` or `below` is a comparison; `is` followed by
+anything else is equality.
+
 **Precedence**, highest to lowest. Assignment is absent because it is a
 statement, not an operator.
 
@@ -286,12 +362,13 @@ as
 &
 ^
 |
-== != < > <= >=
+== != < > <= >=          (and their phrase forms: is, is not,
+                          is at least, is at most, is above, is below)
 and
 or
 ```
 
-### 4.6 Smaller rules
+### 4.7 Smaller rules
 
 - Trailing commas are allowed in every bracketed and parenthesized list.
 - Variants may be qualified: `Some(x)` and `Option.Some(x)` are the same.
@@ -359,6 +436,10 @@ on your own type is not a scientific language.
 
 `Add Sub Mul Div Rem Pow MatMul Neg Index Eq Ord Copy Clone Drop Iterate From
 Display`
+
+`Eq` and `Ord` are what the comparison phrases of §4.6 dispatch to, so `is` and
+`==` are the same trait method by construction, not by a parser rule that could
+drift.
 
 `Display` is what `print` requires, and it is the same trait the interactive
 tier's notebook rendering will extend with MIME variants in F1.
@@ -569,7 +650,12 @@ Reserving costs nothing now and breaks every program using the name later.
 
 **In use:** `function returns return let be mutable type choice trait implements
 has methods of borrowed any for each in if else match while loop break continue
-use where as self Self and or not true false is const public try`
+use where as self Self and or not true false is const public try giving at above
+below most least`
+
+The comparison phrases make `at`, `above`, `below`, `most` and `least` reserved,
+and closures make `giving` reserved. `each` is reserved too: it is a binder, and
+letting a program shadow it would make every chain ambiguous.
 
 **Reserved, not yet used:** `agent tool prompt spawn send receive durable
 checkpoint resume supervise async await tensor shape model extern unsafe pure
