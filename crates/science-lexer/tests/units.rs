@@ -1324,3 +1324,60 @@ fn equation_is_reserved_and_its_neighbours_are_not() {
     assert_eq!(bare("equations"), vec![id("equations")]);
     assert_eq!(bare("hill_equation"), vec![id("hill_equation")]);
 }
+
+// --- doc comments ---------------------------------------------------------
+
+/// `##` survives lexing and reaches the token it documents.
+///
+/// `strings-formatting-and-docs.md` §5.3 requires this in F0 and says why it
+/// cannot wait: once the lexer discards them, everything downstream is built
+/// assuming they are gone. It did discard them until this test existed.
+#[test]
+fn a_doc_comment_reaches_the_token_it_documents() {
+    let t = tokens("## Lists the runs.\nfunction list_runs():\n    print(\"x\")\n");
+    let documented: Vec<_> = t.iter().filter(|t| t.doc.is_some()).collect();
+    assert_eq!(documented.len(), 1, "exactly one token carries the run");
+    assert_eq!(documented[0].kind, Function, "and it is the declaration, not a newline");
+    assert_eq!(documented[0].doc.as_deref(), Some("Lists the runs."));
+}
+
+/// A run of several lines joins with line feeds, and the blank `##` is kept.
+#[test]
+fn a_doc_run_joins_its_lines() {
+    let t = tokens("## Summary line.\n##\n## Body paragraph.\nfunction f():\n    print(\"x\")\n");
+    let doc = t.iter().find_map(|t| t.doc.as_deref()).unwrap();
+    assert_eq!(doc, "Summary line.\n\nBody paragraph.");
+}
+
+/// An ordinary `#` comment is not documentation and leaves nothing behind.
+#[test]
+fn an_ordinary_comment_documents_nothing() {
+    let t = tokens("# just a comment\nfunction f():\n    print(\"x\")\n");
+    assert!(t.iter().all(|t| t.doc.is_none()));
+}
+
+/// `###` is documentation, because it is a Markdown heading inside one.
+#[test]
+fn three_hashes_are_still_documentation() {
+    let t = tokens("### A heading\nfunction f():\n    print(\"x\")\n");
+    assert_eq!(t.iter().find_map(|t| t.doc.as_deref()), Some("# A heading"));
+}
+
+/// Indentation inside a doc comment is the author's and is kept, because a
+/// doc comment holds code samples that §5.5 makes compile.
+#[test]
+fn indentation_inside_a_doc_comment_survives() {
+    let t = tokens("## Example:\n##     let x be 1\nfunction f():\n    print(\"x\")\n");
+    let doc = t.iter().find_map(|t| t.doc.as_deref()).unwrap();
+    assert_eq!(doc, "Example:\n    let x be 1");
+}
+
+/// A run is consumed by the token it documents and does not leak onto the
+/// next declaration — the failure that would attach one function's
+/// documentation to the one after it.
+#[test]
+fn a_doc_run_is_consumed_and_does_not_leak() {
+    let t = tokens("## First.\nfunction a():\n    print(\"x\")\nfunction b():\n    print(\"y\")\n");
+    let docs: Vec<_> = t.iter().filter_map(|t| t.doc.as_deref()).collect();
+    assert_eq!(docs, vec!["First."], "the second function carries nothing");
+}

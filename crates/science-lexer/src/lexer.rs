@@ -74,6 +74,13 @@ struct Lexer<'a> {
     /// Whether the current logical line has produced a token that still needs
     /// a closing `Newline`.
     pending_newline: bool,
+    /// The `##` lines seen since the last token with text of its own.
+    ///
+    /// A run accumulates here and is handed to the next such token. The
+    /// synthetic tokens — `Newline`, `Indent`, `Dedent` — pass over it without
+    /// consuming it, which is what lets a doc comment survive the line break
+    /// and the indent that always sit between it and the thing it documents.
+    doc_run: Vec<String>,
 }
 
 impl<'a> Lexer<'a> {
@@ -87,6 +94,7 @@ impl<'a> Lexer<'a> {
             indents: vec![0],
             depth: 0,
             pending_newline: false,
+            doc_run: Vec::new(),
         }
     }
 
@@ -327,12 +335,27 @@ impl<'a> Lexer<'a> {
     }
 
     /// Consumes `#` and the rest of the line, stopping before the line break.
+    /// Consumes a comment to end of line, keeping it if it documents.
+    ///
+    /// `##` is documentation and `#` is an ordinary comment; a third `#`
+    /// is still documentation, because `###` heads a Markdown section and
+    /// refusing it would make the marker fight the language inside it.
     fn skip_comment(&mut self) {
+        let start = self.pos;
+        let is_doc = self.peek_at(1) == Some('#');
         while let Some(c) = self.peek() {
             if c == '\n' {
                 break;
             }
             self.bump();
+        }
+        if is_doc {
+            // `##`, and the single space that conventionally follows it.
+            // Any further indentation is the author's and is kept: a doc
+            // comment holds code samples and §5.5 makes them compile.
+            let line = &self.src[start + 2..self.pos];
+            let line = line.strip_prefix(' ').unwrap_or(line);
+            self.doc_run.push(line.trim_end().to_string());
         }
     }
 
@@ -987,12 +1010,20 @@ impl<'a> Lexer<'a> {
     fn emit(&mut self, kind: TokenKind, start: usize, end: usize) {
         // Only tokens with text of their own leave a line open; the synthetic
         // ones are what closes it.
-        self.pending_newline = !matches!(
+        let has_text = !matches!(
             kind,
             TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent | TokenKind::Eof
         );
+        self.pending_newline = has_text;
         let span = self.span(start, end);
-        self.tokens.push(Token::new(kind, span));
+        // A run reaches the next token with text of its own; the synthetic
+        // tokens between a comment and the declaration leave it alone.
+        let doc = if has_text && !self.doc_run.is_empty() {
+            Some(std::mem::take(&mut self.doc_run).join("\n"))
+        } else {
+            None
+        };
+        self.tokens.push(Token::with_doc(kind, span, doc));
     }
 }
 

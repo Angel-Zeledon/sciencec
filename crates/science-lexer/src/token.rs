@@ -9,11 +9,32 @@ use science_diagnostics::Span;
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
+    /// The `##` run immediately above this token, if there was one.
+    ///
+    /// Doc comments are trivia, not tokens: making them tokens would put them
+    /// in every `match` over `TokenKind` in the parser, for a thing the
+    /// grammar never mentions. They are carried on the token they document
+    /// instead, which is where the parser wants them and nowhere else.
+    ///
+    /// `strings-formatting-and-docs.md` §5.3 requires this in F0 and says why
+    /// it cannot wait: *"once the lexer discards them every tool downstream is
+    /// built assuming they are gone."* They were discarded until now.
+    ///
+    /// The text is the run with its `##` markers and one following space
+    /// removed, and its lines joined by line feeds. Nothing else is done to
+    /// it: deciding what a doc comment *means* — a summary line, a body,
+    /// Markdown — is §5.4's job and is not done here.
+    pub doc: Option<String>,
 }
 
 impl Token {
     pub fn new(kind: TokenKind, span: Span) -> Self {
-        Token { kind, span }
+        Token { kind, span, doc: None }
+    }
+
+    /// The same token carrying a doc run.
+    pub fn with_doc(kind: TokenKind, span: Span, doc: Option<String>) -> Self {
+        Token { kind, span, doc }
     }
 }
 
