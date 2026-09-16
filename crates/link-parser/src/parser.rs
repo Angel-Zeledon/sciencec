@@ -594,11 +594,8 @@ impl<'t> Parser<'t> {
     /// lets a `where` clause end on the `:` that opens the block.
     fn parse_bounds(&mut self) -> Vec<TypeBound> {
         let mut bounds = Vec::new();
-        loop {
-            match self.parse_type_bound() {
-                Some(bound) => bounds.push(bound),
-                None => break,
-            }
+        while let Some(bound) = self.parse_type_bound() {
+            bounds.push(bound);
             if self.eat(&TokenKind::Plus).is_none() {
                 break;
             }
