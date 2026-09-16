@@ -192,7 +192,7 @@ fn a_nullable_box_costs_nothing_extra() {
 fn every_aggregate_return_is_three_words_or_more() {
     let word = std::mem::size_of::<usize>();
     for (name, size) in [
-        ("science_string_new / clone / truncate", std::mem::size_of::<ScienceString>()),
+        ("science_string_new / clone / truncate / from_bytes", std::mem::size_of::<ScienceString>()),
         ("science_array_new / with_capacity", std::mem::size_of::<ScienceArray>()),
         ("science_map_new", std::mem::size_of::<ScienceMap>()),
         ("science_read_file", std::mem::size_of::<ScienceStringAndIoError>()),

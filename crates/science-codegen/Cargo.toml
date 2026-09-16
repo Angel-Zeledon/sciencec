@@ -1,0 +1,44 @@
+[package]
+name = "science-codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The target-independent half of the Science code generator: layout, the C ABI, mangling, the runtime boundary, and the interface a backend implements."
+
+# `llvm-sys` is deliberately absent, and the absence is a decision rather than a
+# gap to be filled by the next person who reads this file.
+#
+# `codegen-and-linking.md` Decision 1 makes `llvm-sys` the one dependency this
+# crate's *backend half* is allowed, and Decision 2 pins it: `llvm-sys = "181"`,
+# LLVM 18.1.8, an upgrade being a code change and not a lockfile change. That
+# dependency does not belong here. Decision 42 splits the code generator in two
+# and asks for the split to be enforced by `cargo` rather than by a reviewer:
+# this crate is the half **above** the line, and "the target-independent half
+# does not name LLVM" is a fact anyone can check by reading the four lines
+# below.
+#
+# The backend half is a second crate, `science-codegen-llvm`, which depends on
+# this one and on `llvm-sys`, and which does not exist yet because LLVM is not
+# installed on the machine this crate was written on. `lib.rs` §0 says exactly
+# what is missing and what installs it. Adding `llvm-sys` here as an optional
+# dependency was considered and rejected: an optional dependency still has to
+# resolve, so it would have made `cargo test --workspace` require the network
+# and a lockfile entry for a crate nothing can build, in a workspace whose
+# `sciencec/Cargo.toml` refuses a second dependency for far less.
+[dependencies]
+science-diagnostics.workspace = true
+
+# `science-rt` is a **test** dependency and must never become an ordinary one.
+#
+# Codegen does not call the runtime; it emits calls to it. What the tests use it
+# for is the one thing a Rust process can do that no amount of reading can:
+# `tests/layout.rs` computes the layout of each of the runtime's eight
+# `#[repr(C)]` aggregates with this crate's own layout engine and compares the
+# answer against `size_of`/`align_of`/`offset_of` of the real Rust type. That
+# turns §3.2's C-layout rule and §3.3's enum rule from prose into a differential
+# test against the only fixed ABI in the project.
+#
+# The cost: `science-codegen`'s dev-dependency graph reaches a `staticlib`, so
+# `cargo test -p science-codegen` builds the runtime. It is a few seconds.
+[dev-dependencies]
+science-rt.workspace = true

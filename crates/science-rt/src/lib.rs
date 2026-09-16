@@ -35,7 +35,7 @@
 //! return.** Several entry points return a struct by value —
 //! [`science_string_new`], [`science_string_clone`], [`science_string_truncate`],
 //! [`science_array_new`], [`science_array_with_capacity`], [`science_map_new`],
-//! [`science_string_chars`],
+//! [`science_string_chars`], [`science_string_from_bytes`],
 //! [`science_read_file`]. Every one of those is three words or more, which both
 //! the System V x86-64 and the Windows x64 conventions classify as MEMORY:
 //! the caller passes a hidden pointer to the return slot and the callee writes
@@ -43,6 +43,29 @@
 //! than an LLVM `ret { ptr, i64, i64 }`, or the two sides will disagree about
 //! where the value lives. [`ScienceNullableIoError`] is the exception: at two
 //! bytes it comes back in a register on both conventions.
+//!
+//! **This list has now been wrong twice, and the second time was worse.**
+//! `science_array_with_capacity` was missing until `codegen-and-linking.md`
+//! was written against this page and checked the result against the
+//! signatures. `science_string_from_bytes` was missing after that repair, and
+//! was found the same way — by *deriving* the set from the signatures rather
+//! than reading the list, which produced nine where the list named eight.
+//!
+//! The second one matters more. `science_array_with_capacity` is a capacity
+//! hint nothing calls until late. `science_string_from_bytes` is what a string
+//! literal lowers to, so it is **the first runtime call `print("hello")`
+//! makes** — a generator emitted from this section would have corrupted a
+//! register on the first Science program ever compiled. And the fact was not
+//! unknown: `codegen-and-linking.md` §10 says the `sret` convention is needed
+//! "immediately, because `science_string_from_bytes` returns `ScienceString`
+//! by value". It was written in one note and missing from the section that
+//! *is* the return-convention spec.
+//!
+//! The lesson is about the shape of the record rather than about either
+//! symbol: **a hand-maintained list of everything that satisfies a property
+//! will be wrong again.** `science-codegen`'s `runtime.rs` derives the set
+//! from the signatures and `tests/runtime_abi.rs` fails if it ever reads
+//! eight, which is the only version of this that stays true.
 //!
 //! `science_array_with_capacity` was missing from that list until
 //! `codegen-and-linking.md` was written against this page and checked the
