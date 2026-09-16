@@ -1,0 +1,13 @@
+---
+source: crates/link-parser/tests/parse_items.rs
+expression: "parse_report(vec![Struct, id(\"Doc\"), Colon, Newline, Indent, id(\"title\"),\nColon, id(\"String\"), Newline, id(\"body\"), Colon, id(\"String\"), Newline,\nDedent,])"
+---
+Module @0..33
+  Struct `Doc` @0..33
+    fields
+      Field `title` @10..22
+        type: Path `String` @16..22
+      Field `body` @22..33
+        type: Path `String` @27..33
+--- diagnostics ---
+(none)

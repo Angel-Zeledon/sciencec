@@ -1,0 +1,9 @@
+---
+source: crates/link-parser/tests/parse_items.rs
+expression: "parse_report(vec![Fn, id(\"main\"), LParen, RParen, Colon, Newline, Indent,\nWhile, id(\"a\"), Colon, Newline, Indent, id(\"b\"), Newline, Dedent, id(\"c\"),\nNewline, Dedent,])"
+---
+Module @0..18
+  Fn `main` @0..18
+    body: Block @9..18
+--- diagnostics ---
+(none)

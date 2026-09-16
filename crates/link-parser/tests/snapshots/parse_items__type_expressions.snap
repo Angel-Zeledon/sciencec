@@ -1,0 +1,35 @@
+---
+source: crates/link-parser/tests/parse_items.rs
+expression: "parse_report(vec![Fn, id(\"f\"), LParen, id(\"a\"), Colon, Amp, Dyn,\nid(\"Summarize\"), Comma, id(\"b\"), Colon, LParen, RParen, Comma, id(\"c\"), Colon,\nLParen, id(\"I32\"), Comma, id(\"Bool\"), RParen, Comma, id(\"d\"), Colon, Amp, Mut,\nid(\"Array\"), LBracket, id(\"I32\"), RBracket, Comma, id(\"e\"), Colon, id(\"Box\"),\nLBracket, Dyn, id(\"Summarize\"), RBracket, Comma, id(\"g\"), Colon, Amp,\nSelfType, Comma, id(\"h\"), Colon, id(\"text\"), Dot, id(\"parser\"), Dot,\nid(\"Token\"), RParen, Colon, id(\"x\"), Newline,])"
+---
+Module @0..105
+  Fn `f` @0..105
+    params
+      Param `a` @4..19
+        type: Ref @6..19
+          Dyn @7..19
+            Bound `Summarize` @10..19
+      Param `b` @20..24
+        type: Unit @22..24
+      Param `c` @25..37
+        type: Tuple @27..37
+          Path `I32` @28..31
+          Path `Bool` @32..36
+      Param `d` @38..54
+        type: Ref mut @40..54
+          Path `Array` @44..54
+            generics of `Array`
+              Path `I32` @50..53
+      Param `e` @55..74
+        type: Path `Box` @57..74
+          generics of `Box`
+            Dyn @61..73
+              Bound `Summarize` @64..73
+      Param `g` @75..82
+        type: Ref @77..82
+          SelfType @78..82
+      Param `h` @83..102
+        type: Path `text.parser.Token` @85..102
+    body: Block @104..105
+--- diagnostics ---
+(none)

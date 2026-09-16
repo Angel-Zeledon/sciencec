@@ -1,0 +1,11 @@
+---
+source: crates/link-parser/tests/parse_items.rs
+expression: "parse_report(vec![Struct, id(\"S\"), Colon, Newline, Indent, id(\"title\"),\nNewline, id(\"body\"), Colon, id(\"String\"), Newline, Dedent,])"
+---
+Module @0..24
+  Struct `S` @0..24
+    fields
+      Field `body` @13..24
+        type: Path `String` @18..24
+--- diagnostics ---
+LK0100 @13..13 expected `:`, found end of line

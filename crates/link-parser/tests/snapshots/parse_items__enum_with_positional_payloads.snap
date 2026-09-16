@@ -1,0 +1,18 @@
+---
+source: crates/link-parser/tests/parse_items.rs
+expression: "parse_report(vec![Enum, id(\"Result\"), LBracket, id(\"T\"), Comma, id(\"E\"),\nRBracket, Colon, Newline, Indent, id(\"Ok\"), LParen, id(\"T\"), RParen, Newline,\nid(\"Err\"), LParen, id(\"E\"), RParen, Newline, Dedent,])"
+---
+Module @0..27
+  Enum `Result` @0..27
+    generics
+      TypeParam `T` @11..12
+      TypeParam `E` @13..14
+    variants
+      Variant `Ok` @16..21
+        payload
+          Path `T` @19..20
+      Variant `Err` @21..27
+        payload
+          Path `E` @25..26
+--- diagnostics ---
+(none)

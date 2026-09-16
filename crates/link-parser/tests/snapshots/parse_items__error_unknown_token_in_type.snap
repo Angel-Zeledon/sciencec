@@ -1,0 +1,12 @@
+---
+source: crates/link-parser/tests/parse_items.rs
+expression: "parse_report(vec![Fn, id(\"f\"), LParen, id(\"a\"), Colon, Percent, RParen, Colon,\nid(\"x\"), Newline,])"
+---
+Module @0..10
+  Fn `f` @0..10
+    params
+      Param `a` @4..7
+        type: Error @6..7
+    body: Block @9..10
+--- diagnostics ---
+LK0104 @6..7 expected a type, found `%`

@@ -1,0 +1,8 @@
+---
+source: crates/link-parser/tests/parse_items.rs
+expression: "parse_report(vec![Fn, id(\"f\"), LParen, RParen, Newline, Indent, id(\"x\"),\nNewline, Dedent,])"
+---
+Module @0..6
+  Fn `f` @0..6
+--- diagnostics ---
+LK0103 @5..5 expected `:` before the function body

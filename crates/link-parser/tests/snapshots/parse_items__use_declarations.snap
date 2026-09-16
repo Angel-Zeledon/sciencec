@@ -1,0 +1,12 @@
+---
+source: crates/link-parser/tests/parse_items.rs
+expression: "parse_report(vec![Use, id(\"text\"), Dot, id(\"parser\"), Newline, Use,\nid(\"text\"), Dot, id(\"parser\"), LParen, id(\"Token\"), Comma, id(\"lex\"), RParen,\nNewline,])"
+---
+Module @0..39
+  Use `text.parser` @0..14
+  Use `text.parser` @14..39
+    imports
+      Ident `Token` @29..34
+      Ident `lex` @35..38
+--- diagnostics ---
+(none)
