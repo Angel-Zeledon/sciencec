@@ -64,7 +64,7 @@ ever disagree, the stylesheet is right.
 | Role | Dark | Light |
 |---|---|---|
 | comment *(italic)* | `#7080a4` | `#66708a` |
-| keyword, operator | `#ff45d0` | `#c0117f` |
+| keyword, operator | `#e85aa8` | `#c0117f` |
 | type | `#4de8ff` | `#0a6c85` |
 | function | `#3dfca0` | `#0d7a4e` |
 | string | `#f6ff6b` | `#6d6a00` |
