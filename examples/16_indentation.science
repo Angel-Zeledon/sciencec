@@ -97,7 +97,7 @@ function mixed(a: borrowed String, b: borrowed String) -> Int:
 # Not every indented continuation opens a block. A chain broken by a leading
 # `.` is indented too (§4.6), and it is one logical line: the indentation
 # after `docs` belongs to the expression, not to a new body.
-function first_headline(docs: borrowed Array of Doc) -> Option of String:
+function first_headline(docs: borrowed Array of Doc) -> String?:
     docs
         .iterate()
         .map(each.title)

@@ -125,6 +125,11 @@ pub mod codes {
     pub const COMPARISON_PHRASE: Code = Code(143);
     /// The word `println`, which revision 2 §3.5 renamed to `print`.
     pub const PRINTLN_WORD: Code = Code(144);
+
+    /// The word `try`, which revision 2 §3 removed with the `Result` it
+    /// unwrapped. `SC0145`–`SC0149` belong to `rust-interop.md`, so this
+    /// takes the next block the allocation map records as free.
+    pub const TRY_WORD: Code = Code(155);
 }
 
 /// The `extern` block's own diagnostics.
@@ -714,6 +719,41 @@ impl<'t> Parser<'t> {
         let body = self.parse_block();
         let span = start.merge(self.last_text_span());
         Expr { kind: ExprKind::Loop { body }, span }
+    }
+
+    /// Whether the cursor is on `try <expression>`, the prefix §3 removed.
+    ///
+    /// The lookahead is what separates the keyword that was from a variable
+    /// named `try`, which is now a perfectly ordinary name: `try f()` is the
+    /// old syntax, `try be 3` is a binding, and only the first has an
+    /// expression after the word.
+    fn at_try_word(&self) -> bool {
+        self.word_at(0, "try") && self.starts_expr(self.peek_ahead(1))
+    }
+
+    /// Reports `try e` and returns the expression without it.
+    ///
+    /// There is no suggestion here, and that is deliberate. Every other
+    /// migration code in this block renames a word: `while` becomes `loop`,
+    /// `println` becomes `print`, and the fix is a span and a replacement a
+    /// tool can apply. `try` has no replacement — the new model turns one
+    /// expression into a binding, a test and a return, and which value the
+    /// function should return on the error path is not something this phase
+    /// can know. Emitting a machine-applicable fix that dropped the error
+    /// would be worse than emitting none.
+    ///
+    /// Recovery keeps the operand, so the rest of the statement still parses
+    /// and the reader gets the errors after this one.
+    fn report_try_word(&mut self) -> Expr {
+        let word = self.advance().span; // `try`
+        self.diagnostics.push(
+            Diagnostic::error(codes::TRY_WORD, "`try` was removed with the `Result` type")
+                .with_label(Label::primary(word, "there is no `try` in Science"))
+                .with_note(
+                    "a function that can fail returns its value and an error: write `let value, err be f()`, then `if err?:` and return",
+                ),
+        );
+        self.parse_postfix()
     }
 
     /// Reports `println(..)` and returns the `print` it stands for (§3.5).
@@ -1567,6 +1607,16 @@ impl<'t> Parser<'t> {
             // cannot occur in a block with no implementation around it, a
             // const argument is a number, and an `Error` has been reported
             // already.
+            // `T?` has no C spelling in general. A nullable *pointer* would be
+            // exactly C's own convention, but this phase cannot tell a pointer
+            // from anything else — `Doc?` and `ffi.Ptr of Doc?` are the same
+            // shape here — so it rejects the form and leaves the narrower
+            // positive case to whoever knows the type.
+            TypeKind::Nullable(_) => self.report_not_ffi_representable(
+                ty,
+                "a nullable type",
+                "C has no `T?`; pass a pointer and let the null pointer carry the absence, or return the error separately",
+            ),
             TypeKind::Unit
             | TypeKind::SelfType
             | TypeKind::SelfAssoc(_)
@@ -1886,13 +1936,41 @@ impl<'t> Parser<'t> {
     /// Always returns a node. A failure becomes `TypeKind::Error`, so the tree
     /// keeps its shape and the phases after this one still have something to
     /// walk.
+    /// A type, with any `?` suffixes applied.
+    ///
+    /// `T?` is revision 2 §3.1's nullable type. The suffix is a loop rather
+    /// than a single test so that `T??` produces one node per `?` and is
+    /// rejected by the phase that can say *why* — the parser refusing it
+    /// here would have to explain a type system it cannot see.
+    ///
+    /// The recursive calls inside [`Self::parse_type_atom`] come back through
+    /// this function, so `borrowed T?` is `borrowed (T?)`: the suffix binds to
+    /// the type it follows, not to the whole construction.
     fn parse_type(&mut self) -> Type {
+        let start = self.span();
+        let mut ty = self.parse_type_atom();
+        while self.at(&TokenKind::Question) {
+            self.advance();
+            ty = Type {
+                kind: TypeKind::Nullable(Box::new(ty)),
+                span: start.merge(self.last_text_span()),
+            };
+        }
+        ty
+    }
+
+    fn parse_type_atom(&mut self) -> Type {
         let start = self.span();
 
         // A const generic argument (§5.3) is a value where a type is expected:
         // the `4` of `Window of (Int, 4)`. Nothing else in a type position can
         // be a literal, so there is no ambiguity to resolve.
-        if let Some(literal) = literal_of(self.peek()) {
+        //
+        // `null` is the exception, and it is excluded rather than accepted and
+        // rejected later: it is an inhabitant of a type, never an argument to
+        // one, and letting it build a `Const` node would put a value nobody
+        // can evaluate into the one position that must stay evaluable.
+        if let Some(literal) = literal_of(self.peek()).filter(|_| !self.at(&TokenKind::Null)) {
             self.advance();
             let value = ConstExpr { kind: ConstExprKind::Lit(literal), span: start };
             return Type { kind: TypeKind::Const(value), span: start };
@@ -2200,19 +2278,33 @@ impl<'t> Parser<'t> {
             TokenKind::Let => {
                 self.advance();
                 let mutable = self.eat(&TokenKind::Mutable).is_some();
-                let name = self.expect_ident()?;
-                let ty = if self.eat(&TokenKind::Colon).is_some() {
-                    Some(self.parse_type())
-                } else {
-                    None
-                };
+                // One name, or several separated by commas. `mutable` is read
+                // once and applies to all of them: the list receives one
+                // tuple, and a binding list where half the names are mutable
+                // would need a second `mutable` in a position nothing else in
+                // the language puts one.
+                let mut names = Vec::new();
+                loop {
+                    let name_start = self.span();
+                    let name = self.expect_ident()?;
+                    let ty = if self.eat(&TokenKind::Colon).is_some() {
+                        Some(self.parse_type())
+                    } else {
+                        None
+                    };
+                    let span = name_start.merge(self.last_text_span());
+                    names.push(LetName { name, ty, span });
+                    if self.eat(&TokenKind::Comma).is_none() {
+                        break;
+                    }
+                }
                 // F0 has no `let` without an initialiser: `LetStmt::value` is
                 // not an `Option`, and inference is local (§5.2), so a
                 // binding with no value has nothing to infer from.
                 self.expect(&TokenKind::Be, "`be`")?;
                 let value = self.parse_expr();
                 let span = start.merge(self.last_text_span());
-                Some(Stmt { kind: StmtKind::Let(LetStmt { mutable, name, ty, value, span }), span })
+                Some(Stmt { kind: StmtKind::Let(LetStmt { mutable, names, value, span }), span })
             }
             TokenKind::Return => {
                 self.advance();
@@ -2305,7 +2397,7 @@ impl<'t> Parser<'t> {
                 | LParen
                 | Minus
                 | Not
-                | Try
+                | Null
                 | Borrowed
                 | Mutable
                 | Each
@@ -2543,24 +2635,25 @@ impl<'t> Parser<'t> {
     /// The tightest row: call, index, field access and `try`, applied left to
     /// right to whatever precedes them.
     ///
-    /// `try` is a prefix on this row rather than the postfix `?` it replaces
-    /// (§4.5), so it covers the whole chain that follows it: `try f().x` is
-    /// `try (f().x)`, and covering less takes parentheses —
-    /// `(try f()).x`, which is how the corpus writes it.
+    /// `?` is postfix and sits on this row with call, index and field access,
+    /// so `f().x?` is `(f().x)?`. It replaced the prefix `try`, which covered
+    /// the whole chain that *followed* it; the two read in opposite
+    /// directions, which is why this is a rewrite of the row and not a rename.
     fn parse_postfix(&mut self) -> Expr {
         let start = self.span();
-
-        if self.at(&TokenKind::Try) {
-            self.advance();
-            let inner = self.parse_postfix();
-            let span = start.merge(self.last_text_span());
-            return Expr { kind: ExprKind::Try(Box::new(inner)), span };
-        }
-
         let mut expr = self.parse_primary();
 
         loop {
             match self.peek() {
+                // `e?`. Chaining it is accepted here and rejected later:
+                // `err??` is a `Bool` tested for presence, which is never
+                // what anyone means, but saying so needs the type and this
+                // phase does not have it.
+                TokenKind::Question => {
+                    self.advance();
+                    let span = expr.span.merge(self.last_text_span());
+                    expr = Expr { kind: ExprKind::Present(Box::new(expr)), span };
+                }
                 TokenKind::Dot => {
                     self.advance();
                     let Some(name) = self.expect_ident() else {
@@ -2831,6 +2924,7 @@ impl<'t> Parser<'t> {
             // `while` and `println` are ordinary identifiers now, so they
             // reach the name arm below unless they are caught first.
             _ if self.at_while_word() => self.report_while_word(start),
+            _ if self.at_try_word() => self.report_try_word(),
             _ if self.word_at(0, "println") && matches!(self.peek_ahead(1), TokenKind::LParen) => {
                 self.report_println_word()
             }
@@ -3597,6 +3691,7 @@ fn literal_of(kind: &TokenKind) -> Option<Literal> {
         TokenKind::Char(value) => Literal::Char(*value),
         TokenKind::True => Literal::Bool(true),
         TokenKind::False => Literal::Bool(false),
+        TokenKind::Null => Literal::Null,
         _ => return None,
     })
 }
@@ -3604,8 +3699,8 @@ fn literal_of(kind: &TokenKind) -> Option<Literal> {
 /// §4.6's precedence table, as an operator and the rung it sits on.
 ///
 /// Higher binds tighter. The rows above `**` — unary, `as`, and the postfix
-/// chain with `try` on it — are not here: they are not infix, so they belong
-/// to the descent rather than to the climb. Assignment is not here either, and
+/// chain, which now carries `?` where it used to carry `try` — are not here:
+/// they are not infix, so they belong to the descent rather than to the climb. Assignment is not here either, and
 /// §4.6 says why: it is a statement, not an operator.
 ///
 /// The comparison phrases reach this table through the symbol they stand for,
@@ -3711,8 +3806,8 @@ fn fixed_text(kind: &TokenKind) -> &'static str {
         Use => "use",
         Public => "public",
         Const => "const",
-        Try => "try",
         Giving => "giving",
+        Null => "null",
         True => "true",
         False => "false",
         SelfValue => "self",
@@ -3744,6 +3839,7 @@ fn fixed_text(kind: &TokenKind) -> &'static str {
         Underscore => "_",
         AtSign => "@",
         Hash => "#",
+        Question => "?",
 
         Plus => "+",
         Minus => "-",
@@ -3938,7 +4034,7 @@ mod tests {
                  TokenKind::RParen, TokenKind::Colon, TokenKind::Ident("a".into()),
                  TokenKind::DotDot],
             vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,
-                 TokenKind::RParen, TokenKind::Colon, TokenKind::Try],
+                 TokenKind::RParen, TokenKind::Colon, TokenKind::Null],
             vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,
                  TokenKind::RParen, TokenKind::Colon, TokenKind::Each, TokenKind::Giving],
             vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,

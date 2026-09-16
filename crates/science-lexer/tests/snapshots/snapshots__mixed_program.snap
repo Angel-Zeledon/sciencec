@@ -1,6 +1,6 @@
 ---
 source: crates/science-lexer/tests/snapshots.rs
-expression: "dump(\"\\\nuse text.parser (Token, lex)\n\npublic type Doc:\n    title: String\n    body: String\n\nfunction largest of T(items: borrowed Array of T) -> borrowed T where T: Ord:\n    let mutable best be items.get(0)\n    for item in items:\n        if item > best: best be item\n    best\n\nfunction read_config(path: borrowed String) -> Result of (Config, Error):\n    let text be try read_file(path)   # early return on error\n    match parse(borrowed text):\n        Ok(value): value\n        Err(e): panic(e)\n\")"
+expression: "dump(\"\\\nuse text.parser (Token, lex)\n\npublic type Doc:\n    title: String\n    body: String\n\nfunction largest of T(items: borrowed Array of T) -> borrowed T where T: Ord:\n    let mutable best be items.get(0)\n    for item in items:\n        if item > best: best be item\n    best\n\nfunction read_config(path: borrowed String) -> (Config, Error?):\n    let text, err be read_file(path)   # the error comes back beside the value\n    if err?:\n        return (Config.empty(), err)\n    parse(borrowed text)\n\")"
 ---
 == source ==
 |use text.parser (Token, lex)
@@ -15,11 +15,11 @@ expression: "dump(\"\\\nuse text.parser (Token, lex)\n\npublic type Doc:\n    ti
 |        if item > best: best be item
 |    best
 |
-|function read_config(path: borrowed String) -> Result of (Config, Error):
-|    let text be try read_file(path)   # early return on error
-|    match parse(borrowed text):
-|        Ok(value): value
-|        Err(e): panic(e)
+|function read_config(path: borrowed String) -> (Config, Error?):
+|    let text, err be read_file(path)   # the error comes back beside the value
+|    if err?:
+|        return (Config.empty(), err)
+|    parse(borrowed text)
 |
 
 == tokens ==
@@ -110,54 +110,51 @@ expression: "dump(\"\\\nuse text.parser (Token, lex)\n\npublic type Doc:\n    ti
  304..310   Ident("String")
  310..311   RParen
  312..314   Arrow
- 315..321   Ident("Result")
- 322..324   Of
- 325..326   LParen
- 326..332   Ident("Config")
- 332..333   Comma
- 334..339   Ident("Error")
- 339..340   RParen
- 340..341   Colon
- 341..342   Newline
- 342..346   Indent
- 346..349   Let
- 350..354   Ident("text")
- 355..357   Be
- 358..361   Try
- 362..371   Ident("read_file")
- 371..372   LParen
- 372..376   Ident("path")
- 376..377   RParen
- 403..404   Newline
- 408..413   Match
- 414..419   Ident("parse")
- 419..420   LParen
- 420..428   Borrowed
- 429..433   Ident("text")
- 433..434   RParen
- 434..435   Colon
- 435..436   Newline
- 436..444   Indent
- 444..446   Ident("Ok")
- 446..447   LParen
- 447..452   Ident("value")
- 452..453   RParen
- 453..454   Colon
- 455..460   Ident("value")
- 460..461   Newline
- 469..472   Ident("Err")
- 472..473   LParen
- 473..474   Ident("e")
- 474..475   RParen
- 475..476   Colon
- 477..482   Ident("panic")
- 482..483   LParen
- 483..484   Ident("e")
- 484..485   RParen
- 485..486   Newline
- 486..486   Dedent
- 486..486   Dedent
- 486..486   Eof
+ 315..316   LParen
+ 316..322   Ident("Config")
+ 322..323   Comma
+ 324..329   Ident("Error")
+ 329..330   Question
+ 330..331   RParen
+ 331..332   Colon
+ 332..333   Newline
+ 333..337   Indent
+ 337..340   Let
+ 341..345   Ident("text")
+ 345..346   Comma
+ 347..350   Ident("err")
+ 351..353   Be
+ 354..363   Ident("read_file")
+ 363..364   LParen
+ 364..368   Ident("path")
+ 368..369   RParen
+ 411..412   Newline
+ 416..418   If
+ 419..422   Ident("err")
+ 422..423   Question
+ 423..424   Colon
+ 424..425   Newline
+ 425..433   Indent
+ 433..439   Return
+ 440..441   LParen
+ 441..447   Ident("Config")
+ 447..448   Dot
+ 448..453   Ident("empty")
+ 453..454   LParen
+ 454..455   RParen
+ 455..456   Comma
+ 457..460   Ident("err")
+ 460..461   RParen
+ 461..462   Newline
+ 466..466   Dedent
+ 466..471   Ident("parse")
+ 471..472   LParen
+ 472..480   Borrowed
+ 481..485   Ident("text")
+ 485..486   RParen
+ 486..487   Newline
+ 487..487   Dedent
+ 487..487   Eof
 
 == diagnostics ==
 (none)

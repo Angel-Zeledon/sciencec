@@ -1,0 +1,300 @@
+# 09 - Absence and failure
+# Spec: §4.5 the failure shape and the postfix `?`, §5.5 absence and failure,
+# §8 the free functions this file calls.
+#
+# Absence is `T?`: a value of that type is a `T`, or it is `null`. Failure is
+# a second return value of type `Error?`, so a function that can fail hands
+# back what it produced *and* what went wrong. `?` is the postfix presence
+# test — `err?` is a `Bool`, true when `err` is not null — and after
+# `if err?: return …` the compiler knows the value is good, which is the
+# narrowing that keeps the model from being cast-ridden.
+#
+# There is no `Option of T`, no `Result of (T, E)` and no `try`. The file this
+# one replaced was named after the two types and spent most of its length on
+# the third; it is worth saying what the trade was, because this file is
+# nearly twice as long as that one and the extra length is not an accident:
+#
+#   - `try f()` was one line. The check is three: the call, the `if err?:`,
+#     and the `return`. §5.5 calls that Go's well-known tax and takes it,
+#     because the error path is then written where it happens, in the order
+#     it happens, for a reader rather than for a writer.
+#   - `try` widened one error type into another by calling `From` invisibly.
+#     No section ever said that it did. Now the caller writes the conversion,
+#     at the `return`, where the caller is already writing the value — see
+#     `read_config` below, which is the same code the old file had and four
+#     lines longer for it.
+#
+# Both error forms §5.5 allows are used here on purpose. `parse_port` and
+# `parse_host` fail with the **concrete** `ConfigError`, which is what keeps
+# the `match` in `explain` exhaustive and what costs no allocation.
+# `read_config` and `start` fail with the **interface** `Error?`, which is
+# shorthand for `(any Error)?`: it composes across a library boundary, at the
+# price of a box. Neither is the right answer everywhere, and the choice is
+# the author's.
+
+type Config:
+    host: String
+    port: U16
+
+Config has:
+    function empty() -> Config:
+        Config(host: String.new(), port: 0u16)
+
+# The concrete error form: a `choice`, so every way this module can fail is a
+# variant a caller can enumerate and the compiler can check for (§5.5).
+choice ConfigError:
+    NotFound(String)
+    Malformed(String, Int)
+    Io(String)
+
+# `Error` is a prelude interface with one method (§5.5). Implementing it is
+# what lets a `ConfigError` stand in an `Error?` slot, which is the only
+# thing the interface form asks of a type.
+ConfigError implements Error:
+    function message(self) -> String:
+        match self:
+            NotFound(key): copy_of(key)
+            Malformed(detail, line): copy_of(detail)
+            Io(detail): copy_of(detail)
+
+# A second concrete error, belonging to the layer above. `read_config` fails
+# with this one rather than passing `ConfigError` through, which is what
+# makes the conversion below necessary and visible.
+type StartupError:
+    detail: String
+
+StartupError implements Error:
+    function message(self) -> String:
+        copy_of(self.detail)
+
+# The conversion that `try` used to perform without being asked. It is an
+# ordinary associated function now, and the call sites are in `read_config`.
+StartupError has:
+    function from_config(inner: borrowed ConfigError) -> StartupError:
+        StartupError(detail: inner.message())
+
+    function from_io(inner: borrowed IoError) -> StartupError:
+        StartupError(detail: "the file could not be read")
+
+# `From` is still one of the interfaces §5.4 names; what changed is that
+# nothing calls it for you.
+ConfigError implements From of IoError:
+    function from(inner: IoError) -> Self:
+        Io("the file could not be read")
+
+# §8 gives `String` no `clone`, so an owned copy is built from `String.new()`
+# and `push_str`.
+function copy_of(text: borrowed String) -> String:
+    let mutable out be String.new()
+    out.push_str(text)
+    out
+
+# --- Absence: `T?` ----------------------------------------------------------
+
+# A function that may have no answer says so in its return type. There is
+# nothing to wrap: the heading *is* the value, and `null` is the other one.
+function heading(text: borrowed String) -> String?:
+    if text.starts_with("# "):
+        text.truncate(60)
+    else:
+        null
+
+# `Map.get` hands back `(borrowed V)?` for the same reason (§8).
+function lookup(settings: borrowed Map of (String, String),
+        key: borrowed String) -> (borrowed String)?:
+    settings.get(key)
+
+# Two lookups that must both succeed. `try` on an `Option` used to collapse
+# each of these to one line; each is now three, and the shape is the same one
+# failure uses, which is the point of having only one shape.
+function host_of(settings: borrowed Map of (String, String)) -> String?:
+    let raw be lookup(settings, "host")
+    if not raw?:
+        return null
+
+    let trimmed be heading(raw)
+    if not trimmed?:
+        return null
+
+    trimmed
+
+# Narrowing, written out. Inside `if found?:` the compiler knows `found` is
+# not null, so `found.length()` needs no unwrapping and no cast (§4.5).
+function host_length(settings: borrowed Map of (String, String)) -> Int:
+    let found be lookup(settings, "host")
+    if found?:
+        return found.length()
+    0
+
+# A nullable is an ordinary type, so it is also an ordinary field and an
+# ordinary parameter. `?` is the only operation it has: there is no
+# `is_some`, no `unwrap` and no `unwrap_or`, because there is no type left
+# for those methods to hang off.
+type Override:
+    host: String?
+    port: U16?
+
+function applied(base: Config, over: borrowed Override) -> Config:
+    let mutable result be base
+    if over.host?:
+        result be Config(host: copy_of(over.host), port: result.port)
+    if over.port?:
+        result be Config(host: result.host, port: over.port)
+    result
+
+# --- Failure, with a concrete error ----------------------------------------
+
+# `-> (U16, ConfigError?)` is the pair: the value the function produced, and
+# what went wrong. A failing return still has to name something for the value
+# slot, and that is deliberate — the caller is expected to test the error
+# before reading the value, and `SC0140` makes forgetting to a compile error.
+function parse_port(text: borrowed String) -> (U16, ConfigError?):
+    if text.is_empty():
+        return (0u16, ConfigError.Malformed("empty input", 1))
+    if not text.starts_with("port="):
+        return (0u16, ConfigError.NotFound("port"))
+    (8080u16, null)
+
+function parse_host(text: borrowed String) -> (String, ConfigError?):
+    if text.starts_with("host="):
+        return (text.truncate(64), null)
+    (String.new(), ConfigError.NotFound("host"))
+
+# The concrete form's payoff: `match` over the error is exhaustive, every
+# variant is named, and adding a fourth to `ConfigError` breaks this function
+# loudly instead of falling through a wildcard (§5.5).
+function explain(error: borrowed ConfigError) -> String:
+    match error:
+        NotFound(key): copy_of(key)
+        Malformed(detail, line): copy_of(detail)
+        Io(detail): copy_of(detail)
+
+# An arm of type `Never`: `panic` does not return, and coerces to whatever the
+# other arms produce (§4.7).
+function must_parse_port(text: borrowed String) -> U16:
+    let port, err be parse_port(text)
+    if err?:
+        panic("the configuration has no port")
+    port
+
+# --- Failure, with the interface error --------------------------------------
+
+# `-> (Config, Error?)` is shorthand for `-> (Config, (any Error)?)`, which is
+# why the shorthand exists: the long form appears in the signature of every
+# fallible function and is not a signature anyone should have to read (§5.5).
+# It boxes, which the concrete form does not, and it is what lets this one
+# function report a failure that came from three different types.
+#
+# This is also where the conversion `try` used to hide is paid for. The
+# callees fail with `IoError` and with `ConfigError`; this function's
+# signature says `Error?`; so each error is turned into a `StartupError` at
+# the `return`, by a call anyone reading the code can see.
+function read_config(path: borrowed String) -> (Config, Error?):
+    let text, io_err be read_file(path)
+    if io_err?:
+        return (Config.empty(), StartupError.from_io(io_err))
+
+    let host, host_err be parse_host(text)
+    if host_err?:
+        return (Config.empty(), StartupError.from_config(host_err))
+
+    let port, port_err be parse_port(text)
+    if port_err?:
+        return (Config.empty(), StartupError.from_config(port_err))
+
+    (Config(host: host, port: port), null)
+
+# The same three calls without a conversion, because this function's own
+# error type is the one its callees already use. Nothing is converted, so
+# nothing is written: the cost of the explicit conversion is only paid where
+# a conversion actually happens.
+function read_config_concrete(path: borrowed String) -> (Config, ConfigError?):
+    let text, io_err be read_file(path)
+    if io_err?:
+        return (Config.empty(), ConfigError.from(io_err))
+
+    let host, host_err be parse_host(text)
+    if host_err?:
+        return (Config.empty(), host_err)
+
+    let port, port_err be parse_port(text)
+    if port_err?:
+        return (Config.empty(), port_err)
+
+    (Config(host: host, port: port), null)
+
+# A function with no value to hand back returns the error alone. The pair
+# would have `()` in its first slot and a name bound to it could do nothing.
+function save_config(path: borrowed String, config: borrowed Config) -> Error?:
+    let err be write_file(path, config.host)
+    if err?:
+        return StartupError.from_io(err)
+    null
+
+# The one method the `Error` interface has. A caller holding an `Error?`
+# knows this and nothing else about it, which is exactly the trade the
+# interface form makes: it composes, and it cannot be matched on.
+function report(err: borrowed any Error) -> String:
+    err.message()
+
+# --- Consuming the two forms ------------------------------------------------
+
+# With the concrete error the caller can distinguish cases.
+function describe_failure(path: borrowed String) -> String:
+    let config, err be read_config_concrete(path)
+    if err?:
+        return explain(err)
+    copy_of(config.host)
+
+# With the interface error it can only ask for the message — and that is
+# enough for a top-level report, which is the case the interface form is for.
+function start(path: borrowed String) -> Error?:
+    let config, err be read_config(path)
+    if err?:
+        print(report(err))
+        return err
+
+    let save_err be save_config("science.lock", config)
+    if save_err?:
+        print(report(save_err))
+        return save_err
+
+    print(config.host)
+    null
+
+function main():
+    let config, err be read_config("science.toml")
+    if err?:
+        print(report(err))
+    else:
+        print(config.host)
+
+    print(describe_failure("science.toml"))
+    print(must_parse_port("port=8080"))
+
+    let settings: Map of (String, String) be (Map of (String, String)).new()
+    print(host_length(settings))
+
+    let host be host_of(settings)
+    if host?:
+        print(host)
+    else:
+        print("no host")
+
+    # A nullable binding, written out with both of its values (§4.2). `?`
+    # evaluates to a `Bool` and never to the value, so these two lines print
+    # `false` and then `true`.
+    let mutable pending: String? be null
+    print(pending?)
+    pending be "science.toml"
+    print(pending?)
+    if pending?:
+        print(pending)
+
+    let over be Override(host: "localhost", port: null)
+    let merged be applied(Config.empty(), over)
+    print(merged.host)
+
+    let startup_err be start("science.toml")
+    if startup_err?:
+        print(report(startup_err))

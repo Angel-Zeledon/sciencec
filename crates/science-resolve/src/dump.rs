@@ -63,12 +63,17 @@ fn nodes<'a, T: DumpIn>(defs: &'a DefTable, items: &'a [T]) -> Vec<Node<'a, T>> 
 
 /// How a definition is introduced: ``Fn `main` #47``.
 fn defined(defs: &DefTable, kind: &str, id: DefId) -> String {
+    format!("{kind} {}", def_label(defs, id))
+}
+
+/// A definition as it appears in a header: `` `name` #12 ``, or `#12` alone
+/// when the name was lost to an error.
+///
+/// Split out of [`defined`] so a node that names several definitions can join
+/// them without re-deriving the spelling.
+fn def_label(defs: &DefTable, id: DefId) -> String {
     let name = &defs[id].name;
-    if name.is_empty() {
-        format!("{kind} {id}")
-    } else {
-        format!("{kind} `{name}` {id}")
-    }
+    if name.is_empty() { format!("{id}") } else { format!("`{name}` {id}") }
 }
 
 /// How a reference is printed: ``-> `main` #47``.
@@ -94,6 +99,7 @@ fn literal_header(literal: &Literal) -> String {
         Literal::Str(value) => format!("Str {value:?}"),
         Literal::Char(value) => format!("Char {value:?}"),
         Literal::Bool(value) => format!("Bool {value}"),
+        Literal::Null => "Null".to_string(),
     }
 }
 
@@ -430,6 +436,9 @@ impl DumpIn for Type {
                     w.list("generics", &nodes(defs, generics));
                 });
             }
+            TypeKind::Nullable(inner) => w.node("Nullable", self.span, |w| {
+                Node(defs, inner.as_ref()).dump_node(w);
+            }),
             TypeKind::Borrowed { mutable, inner } => {
                 let mut header = "Borrowed".to_string();
                 flag(&mut header, *mutable, "mutable");
@@ -487,11 +496,19 @@ impl DumpIn for Stmt {
     fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
         match &self.kind {
             StmtKind::Let(decl) => {
-                let mut header = defined(defs, "Let", decl.def);
+                let joined = decl
+                    .bindings
+                    .iter()
+                    .map(|b| def_label(defs, b.def))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let mut header = format!("Let {joined}");
                 flag(&mut header, decl.mutable, "mutable");
                 w.node(&header, decl.span, |w| {
-                    if let Some(ty) = &decl.ty {
-                        w.child("type", &Node(defs, ty));
+                    for binding in &decl.bindings {
+                        if let Some(ty) = &binding.ty {
+                            w.child("type", &Node(defs, ty));
+                        }
                     }
                     w.child("value", &Node(defs, &decl.value));
                 });
@@ -581,7 +598,7 @@ impl DumpIn for Expr {
                 Node(defs, expr.as_ref()).dump_node(w);
                 w.child("type", &Node(defs, ty));
             }),
-            ExprKind::Try(inner) => w.node("Try", self.span, |w| {
+            ExprKind::Present(inner) => w.node("Present", self.span, |w| {
                 Node(defs, inner.as_ref()).dump_node(w);
             }),
             ExprKind::Borrowed { mutable, expr } => {

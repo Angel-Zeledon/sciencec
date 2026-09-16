@@ -844,6 +844,14 @@ pub enum TypeKind {
     /// Two or more elements; `(T)` is `T` and produces no node.
     Tuple(Vec<Type>),
     Unit,
+    /// `T?` — `T`, or `null` (revision 2 §3.1).
+    ///
+    /// The `Error?` shorthand for `(any Error)?` is *not* expanded here
+    /// either. Resolution records what the author wrote; deciding that a
+    /// bare interface name in a nullable return position means a trait
+    /// object needs to know the name is an interface, and that is a fact
+    /// about the resolved type rather than about the syntax.
+    Nullable(Box<Type>),
     /// `Self`, carrying the implementation or interface it stands in for.
     SelfType(Res),
     /// `Self.Item` (§5.4). `res` is the [`AssocType`] it names; `name`
@@ -892,10 +900,24 @@ pub enum StmtKind {
 /// `value` is resolved before `def` is added to the enclosing rib.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Let {
-    pub def: DefId,
+    /// One binding, or several for revision 2 §3.1's `let value, err be f()`.
+    /// Never empty.
+    pub bindings: Vec<LetBinding>,
     pub mutable: bool,
-    pub ty: Option<Type>,
     pub value: Expr,
+    pub span: Span,
+}
+
+/// One name bound by a `let`, resolved.
+///
+/// Whether the value actually *is* a tuple of the right width is not checked
+/// here. This phase knows the binding count and nothing about the
+/// initialiser's type, so the arity check belongs to `science-types` along
+/// with everything else that needs one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LetBinding {
+    pub def: DefId,
+    pub ty: Option<Type>,
     pub span: Span,
 }
 
@@ -931,7 +953,9 @@ pub enum ExprKind {
     Unary { op: UnaryOp, operand: Box<Expr> },
     Binary { op: BinaryOp, lhs: Box<Expr>, rhs: Box<Expr> },
     Cast { expr: Box<Expr>, ty: Type },
-    Try(Box<Expr>),
+    /// `e?` — the presence test. A `Bool`, and total: unlike the `Try` it
+    /// replaced, it cannot return from the enclosing function.
+    Present(Box<Expr>),
     /// `borrowed e` and `mutable borrowed e`.
     Borrowed { mutable: bool, expr: Box<Expr> },
     /// `0..n` and `0..=n` (§4.5).

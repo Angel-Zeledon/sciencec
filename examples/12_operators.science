@@ -1,6 +1,6 @@
 # 12 - Operators and precedence
 # Spec: §4.6 precedence table, highest to lowest:
-#   call, index, field access, try
+#   call, index, field access, ?
 #   - not borrowed         (unary)
 #   as
 #   **                     (power, right-associative)
@@ -18,12 +18,15 @@
 # statement and not an operator, which is why `let x be if c: a be b else: c`
 # is not grammatical. It is still exercised below, as a statement.
 #
-# Two entries of the old table are gone, and neither replacement is an
-# operator. Error propagation was the postfix `?` and is now the prefix
-# keyword `try`, which sits at the tightest level with call and field access.
-# The unary `&` and `&mut` are now the words `borrowed` and
-# `mutable borrowed`, which sit at the unary level and are the same words a
-# borrow is written with in a type (§4.3).
+# `?` sits at the tightest level with call, index and field access, but it is
+# not error propagation: §5.5 removed `Result` and `try` together, and the
+# character came free. `e?` is the postfix *presence test* — a `Bool`, true
+# when `e` is not `null` — and it is a total operator, so unlike `try` it can
+# only produce a value and never return from the function around it.
+#
+# The unary `&` and `&mut` are the words `borrowed` and `mutable borrowed`,
+# which sit at the unary level and are the same words a borrow is written
+# with in a type (§4.3).
 
 type Point:
     x: Int
@@ -35,24 +38,31 @@ type Registry:
 function origin() -> Point:
     Point(x: 0, y: 0)
 
-# `try` sits at the tightest level, next to call and field access. Being a
-# prefix keyword it is written before what it unwraps, where `?` was written
-# after it (§4.3).
-function first_x(registry: borrowed Registry) -> Option of Int:
-    let first be try registry.points.get(0)
-    Some(first.x)
+# `?` binds on the same rung as call, index and field access, and it is
+# postfix, so it applies to everything to its left on that rung:
+# `registry.points.get(0)?` asks about the result of the call, not about
+# `registry`.
+function has_first(registry: borrowed Registry) -> Bool:
+    registry.points.get(0)?
 
-# Binding tightest is what lets `try` stand inside a larger expression;
-# parentheses say where it stops and the rest of the expression begins.
-function first_x_doubled(registry: borrowed Registry) -> Option of Int:
-    Some((try registry.points.get(0)).x * 2)
+# Because it binds tightest, covering *less* than the whole chain takes
+# parentheses — and the presence test answers a question rather than
+# unwrapping, so reading through it is `if`, not an operator.
+function first_x(registry: borrowed Registry) -> Int?:
+    let first be registry.points.get(0)
+    if first?:
+        return first.x
+    null
 
-# `@` is matrix multiply and sits with `* / %`. The library of §8 is
-# `Option`, `Result`, `Box`, `String`, `Array` and `Map`, with no tensor
-# among them, so `@` reaches a user type through an operator interface just
-# as
-# `+` does (§5.4). Tensors arrive in F1; the operator and its precedence are
-# F0.
+# `?` inside a larger expression: it produces a `Bool`, so it composes with
+# `and`, `or` and `not` like any other boolean.
+function is_ready(registry: borrowed Registry) -> Bool:
+    registry.points.get(0)? and not registry.points.is_empty()
+
+# `@` is matrix multiply and sits with `* / %`. The library of §8 is `Box`,
+# `String`, `Array`, `Map` and `Error`, with no tensor among them, so `@`
+# reaches a user type through an operator interface just as `+` does (§5.4).
+# Tensors arrive in F1; the operator and its precedence are F0.
 type Row:
     cells: Array of Int
 
@@ -150,10 +160,10 @@ function main():
     let cast_then_multiply be a as F64 * 2.0
     let negate_then_cast be -a as F64
 
-    # --- Calls, field access and `try` are the tightest ---------------------
+    # --- Calls, field access and `?` are the tightest -----------------------
     #
-    # §8 says `Array` and `Map` are read through `get`, which returns an
-    # `Option`: there is no indexing operator that can panic. What the table
+    # §8 says `Array` and `Map` are read through `get`, which returns a
+    # nullable: there is no indexing operator that can panic. What the table
     # calls index is therefore exercised where it does still appear — naming
     # a generic instantiation before calling one of its associated functions,
     # which takes parentheses so that the `.` cannot attach to the last type
@@ -167,11 +177,18 @@ function main():
     let negated_field be -point.x
     let field_arithmetic be point.x * 2 + point.y
 
-    # Field access through an `Option` goes via `match`, since `get` is the
-    # only accessor.
-    let nested_field be match registry.points.get(0):
-        Some(first): first.y
-        None: 0
+    # Field access through a nullable goes via the presence test, since `get`
+    # is the only accessor. `if` is an expression, so the whole thing is still
+    # one binding (§4.5), and inside the then-branch `first` is known not to
+    # be null.
+    let first be registry.points.get(0)
+    let nested_field be if first?: first.y else: 0
+
+    # `?` shares its rung with call and field access and is postfix, so it
+    # takes the whole chain to its left: this asks about the result of `get`,
+    # not about `registry`. Covering less takes parentheses.
+    let present be registry.points.get(0)?
+    let both_present be registry.points.get(0)? and registry.points.get(1)?
 
     # --- Assignment, which is a statement rather than an operator -----------
     #
@@ -198,6 +215,11 @@ function main():
     print(logical_precedence)
     print(nested_field)
 
-    match first_x(registry):
-        Some(x): print(x)
-        None: print("no points")
+    print(has_first(registry))
+    print(is_ready(registry))
+
+    let x be first_x(registry)
+    if x?:
+        print(x)
+    else:
+        print("no points")

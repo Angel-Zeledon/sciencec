@@ -823,6 +823,11 @@ impl<'a> Lexer<'a> {
             }
             '.' => TokenKind::Dot,
             '@' => TokenKind::AtSign,
+            // One character, one meaning. `?` is postfix in expressions
+            // (`err?`) and suffix in types (`Error?`), and the two never
+            // collide because a type and an expression are never both legal
+            // in the same position. There is no `??`, no `?.` and no `?:`.
+            '?' => TokenKind::Question,
 
             '+' => TokenKind::Plus,
             // `**` is one operator (§4.6: power, right-associative), not two
@@ -914,25 +919,6 @@ impl<'a> Lexer<'a> {
                             replacement: "not ".to_string(),
                             message: "if you meant to negate, write".to_string(),
                         }),
-                );
-                TokenKind::Unknown(c)
-            }
-
-            // `?` used to be error propagation and is now spelled `try`, which
-            // goes *before* the expression. Anyone arriving from Rust or Swift
-            // writes the postfix form first, so it gets the same treatment as
-            // `!`: a message about what to write instead of "unrecognised".
-            '?' => {
-                self.diags.push(
-                    Diagnostic::error(E_UNKNOWN_CHAR, "`?` is not an operator in Science")
-                        .with_label(Label::primary(
-                            self.span(start, self.pos),
-                            "error propagation is not written with `?`",
-                        ))
-                        .with_note(
-                            "error propagation is spelled `try`, and it goes before the \
-                             expression: write `try f(x)` rather than `f(x)?`",
-                        ),
                 );
                 TokenKind::Unknown(c)
             }

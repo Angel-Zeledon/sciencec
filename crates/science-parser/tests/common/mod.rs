@@ -55,7 +55,9 @@ fn width_of(kind: &TokenKind) -> u32 {
         Float { value, .. } => value.to_string().len() as u32,
 
         If | In | Or | As | Of | Be | Is => 2,
-        Let | For | Use | And | Not | Any | Has | Try => 3,
+        Let | For | Use | And | Not | Any | Has => 3,
+        Null => 4,
+        Question => 1,
         Else | Loop | Each | Type | True | SelfValue | SelfType => 4,
         Match | Break | Where | False | Const => 5,
         Return | Choice | Public | Giving | Extern | Unsafe => 6,

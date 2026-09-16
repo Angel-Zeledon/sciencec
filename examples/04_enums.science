@@ -2,10 +2,16 @@
 # Spec: §4.4 declarations, §4.7 qualified variants, §5.5 absence and failure.
 #
 # `choice` is what `enum` was. Covers: plain choices, generic choices,
-# variants with positional payload, variants with several payload fields, the
-# library `Option` and `Result`, and choices whose payload is a borrow.
+# variants with positional payload, variants with several payload fields,
+# choices whose payload is a borrow, and the qualified form of a variant.
 #
 # F0 has no variants with named fields, so every payload here is positional.
+#
+# The library supplies no generic choice of its own. `Option of T` and
+# `Result of (T, E)` used to stand here for the one- and two-parameter forms;
+# §5.5 replaced them with `T?` and a second return value, which took `Some`,
+# `None`, `Ok` and `Err` with them. Those four names are now free, and the
+# generic choices below are ordinary user declarations like any other.
 
 # A C-like choice: every variant is empty.
 choice Format:
@@ -29,13 +35,13 @@ choice Shape:
 
 # Generic choices, exactly as §4.4 declares them. One type argument needs no
 # parentheses; two do (§4.3).
-choice Option of T:
-    Some(T)
-    None
+choice Bound of T:
+    Exact(T)
+    Unbounded
 
-choice Result of (T, E):
-    Ok(T)
-    Err(E)
+choice Tagged of (T, Label):
+    Untagged(T)
+    Labelled(T, Label)
 
 # A generic choice over two parameters with mixed payloads.
 choice Either of (L, R):
@@ -71,10 +77,10 @@ function main():
     let rect be Rect(3.0, 4.0)
     let triangle be Triangle(3.0, 4.0, 5.0)
 
-    let present be Some(7)
-    let absent: Option of Int be None
-    let good: Result of (Int, ParseError) be Ok(1)
-    let bad: Result of (Int, ParseError) be Err(BadDigit('q'))
+    let exact be Exact(7)
+    let unbounded: Bound of Int be Unbounded
+    let plain: Tagged of (Int, String) be Untagged(1)
+    let labelled: Tagged of (Int, String) be Labelled(2, "width")
 
     let left: Either of (Int, String) be Left(1)
     let right: Either of (Int, String) be Right("one")
@@ -91,8 +97,18 @@ function main():
     # choices in scope share a variant name.
     let qualified be Format.Markdown
     let empty_slot be Slot.Empty
-    let qualified_none: Option of Int be Option.None
-    let qualified_some be Option.Some(1)
+    let qualified_unbounded: Bound of Int be Bound.Unbounded
+    let qualified_exact be Bound.Exact(1)
+
+    # Absence is *not* a choice. A value that may be missing has a nullable
+    # type, `?` asks whether it is there, and `null` is the one value of `T?`
+    # that is not a `T` (§5.5). Nothing below is a variant of anything.
+    let mutable measured: Int? be null
+    # `?` evaluates to a `Bool` and never to the value, so this prints
+    # `false` and then `true`, not `null` and then `42`.
+    print(measured?)
+    measured be 42
+    print(measured?)
 
     # Which variant a value holds is asked with `match`, not with `is`:
     # `is` is `Eq`, and `Eq` is an interface a choice only has if it implements

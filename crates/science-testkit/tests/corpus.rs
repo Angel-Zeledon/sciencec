@@ -78,7 +78,13 @@ fn the_acceptance_program_exists_and_names_every_requirement() {
         ("borrowed any Summarize", "a trait dispatched dynamically"),
         ("Box of any Summarize", "a trait object behind a box"),
         ("match ", "an exhaustive match"),
-        ("try ", "Option and Result with `try`"),
+        // §11.1's sixth requirement was "Option and Result with `try`" and is
+        // now "a nullable type and a fallible function returning `(T, Error?)`".
+        // It is two needles because it is two things: one requirement that
+        // could be satisfied by either half would not be checking either.
+        ("-> String?", "a nullable type"),
+        (", Error?)", "a fallible function returning `(T, Error?)`"),
+        ("err?", "the presence test that makes the pair usable"),
         ("implements Add", "a user type implementing an operator trait"),
         ("in 0..", "a range-driven loop"),
         ("each.", "a closure"),

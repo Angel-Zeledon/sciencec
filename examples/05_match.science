@@ -49,8 +49,9 @@ function name_of(format: borrowed Format) -> String:
         Markdown: "markdown"
         Json: "json"
 
-# The same match with every pattern qualified by its type. `Some(x)` and
-# `Option.Some(x)` are the same thing, and so are these (§4.7).
+# The same match with every pattern qualified by its type. `Plain` and
+# `Format.Plain` are the same thing, and the qualified form is what
+# disambiguates when two choices in scope share a variant name (§4.7).
 function name_of_qualified(format: borrowed Format) -> String:
     match format:
         Format.Plain: "plain"

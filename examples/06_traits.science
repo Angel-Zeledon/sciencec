@@ -103,7 +103,7 @@ Note implements IntoTitle:
 # generic container interface can be written (§5.4).
 interface Iterate:
     type Item
-    function next(mutable self) -> Option of Self.Item
+    function next(mutable self) -> Self.Item?
 
 type Countdown:
     remaining: Int
@@ -111,12 +111,12 @@ type Countdown:
 Countdown implements Iterate:
     type Item is Int
 
-    function next(mutable self) -> Option of Self.Item:
+    function next(mutable self) -> Self.Item?:
         if self.remaining <= 0:
-            None
+            null
         else:
             self.remaining be self.remaining - 1
-            Some(self.remaining)
+            self.remaining
 
 # A second implementation with a different `Item`, which is the point: the
 # element type belongs to the implementation, not to the interface.
@@ -127,7 +127,7 @@ type Letters:
 Letters implements Iterate:
     type Item is Char
 
-    function next(mutable self) -> Option of Self.Item:
+    function next(mutable self) -> Self.Item?:
         let found be self.glyphs.get(self.cursor)
         self.cursor be self.cursor + 1
         found

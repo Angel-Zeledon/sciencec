@@ -18,10 +18,6 @@ type Pair of (A, B):
 type Wrapper of T:
     inner: T
 
-choice Option of T:
-    Some(T)
-    None
-
 interface Summarize:
     function summarize(self) -> String
 
@@ -77,12 +73,15 @@ function swap of (A, B)(pair: Pair of (A, B)) -> Pair of (B, A):
 
 # Nested generic arguments in the signature: the inner `of` is parenthesized
 # so that `Wrapper of T` cannot be read as two arguments to `Array`. `Array.get`
-# returns `Option of (borrowed T)` (§8): there is no indexing operator that can
-# panic, so the absence is unwrapped with a `match`.
-function first_inner of T(items: borrowed Array of (Wrapper of T)) -> Option of (borrowed T):
-    match items.get(0):
-        Some(wrapper): Some(borrowed wrapper.inner)
-        None: None
+# returns `(borrowed T)?` (§8): there is no indexing operator that can panic,
+# so the absence is in the type and `?` is what asks about it. Inside
+# `if found?:` the compiler knows `found` is not null, so the field access
+# needs no unwrapping (§5.5).
+function first_inner of T(items: borrowed Array of (Wrapper of T)) -> (borrowed T)?:
+    let found be items.get(0)
+    if found?:
+        return borrowed found.inner
+    null
 
 # An inherent block on a generic type, with an associated function that names
 # its instantiation at the call site: `(Wrapper of Int).holding(1)`.
@@ -120,6 +119,8 @@ function main():
     print(wrapped.inner)
 
     let wrappers: Array of (Wrapper of Int) be (Array of (Wrapper of Int)).new()
-    match first_inner(wrappers):
-        Some(value): print(value)
-        None: print("empty")
+    let value be first_inner(wrappers)
+    if value?:
+        print(value)
+    else:
+        print("empty")

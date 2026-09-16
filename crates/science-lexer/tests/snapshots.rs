@@ -169,11 +169,11 @@ function largest of T(items: borrowed Array of T) -> borrowed T where T: Ord:
         if item > best: best be item
     best
 
-function read_config(path: borrowed String) -> Result of (Config, Error):
-    let text be try read_file(path)   # early return on error
-    match parse(borrowed text):
-        Ok(value): value
-        Err(e): panic(e)
+function read_config(path: borrowed String) -> (Config, Error?):
+    let text, err be read_file(path)   # the error comes back beside the value
+    if err?:
+        return (Config.empty(), err)
+    parse(borrowed text)
 "
     ));
 }

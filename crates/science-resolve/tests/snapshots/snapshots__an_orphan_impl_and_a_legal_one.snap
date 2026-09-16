@@ -2,17 +2,17 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report_crate(vec![(\"main.science\", main), (\"shapes.science\", summarize),\n(\"types.science\", types),])"
 ---
-Module `main` #78 @63..83
-  Impl #81 @63..83
-    interface: Bound -> `Summarize` #82 @46..62
-    for: Path -> `Doc` #83 @63..72
-Module `shapes` #79 @0..9
-  Interface `Summarize` #82 @0..9
-Module `types` #80 @27..45
-  Record `Doc` #83 @42..45
-  Impl #84 @27..41
-    interface: Bound -> `Summarize` #82 @10..26
-    for: Path -> `Doc` #83 @27..30
+Module `main` #73 @63..83
+  Impl #76 @63..83
+    interface: Bound -> `Summarize` #77 @46..62
+    for: Path -> `Doc` #78 @63..72
+Module `shapes` #74 @0..9
+  Interface `Summarize` #77 @0..9
+Module `types` #75 @27..45
+  Record `Doc` #78 @42..45
+  Impl #79 @27..41
+    interface: Bound -> `Summarize` #77 @10..26
+    for: Path -> `Doc` #78 @27..30
 --- diagnostics ---
 SC0207 @63..83 this implementation is an orphan: neither the interface nor the type belongs to this module
   note the interface `shapes.Summarize` belongs to `shapes`

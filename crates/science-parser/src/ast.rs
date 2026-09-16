@@ -505,6 +505,15 @@ pub enum TypeKind {
     Tuple(Vec<Type>),
     /// `()`.
     Unit,
+    /// `T?` — a nullable type (revision 2 §3.1): `T`, or `null`. It replaced
+    /// `Option of T`.
+    ///
+    /// `Error?` in a return position is shorthand for `(any Error)?`, an
+    /// optional trait object. The shorthand is not expanded here: the parser
+    /// records what was written and resolution decides what `Error` names,
+    /// because expanding it would make the parser depend on one name in the
+    /// prelude.
+    Nullable(Box<Type>),
     /// `Self`.
     SelfType,
     /// `Self.Item`: the associated type `Item` of the type being implemented
@@ -644,16 +653,48 @@ pub enum StmtKind {
     Error,
 }
 
-/// `let x be e`, `let mutable x be e`, `let x: T be e`.
+/// `let x be e`, `let mutable x be e`, `let x: T be e`, and revision 2
+/// §3.1's `let value, err be f()`.
 ///
-/// F0 has no destructuring in `let` (§4.5), so the bound name is an `Ident`
-/// rather than a pattern.
+/// The bound names are still `Ident`s and not patterns, and the list is flat.
+///
+/// The comment this replaced said §4.5 had *closed* `let` to destructuring.
+/// It never did — neither revision of §4.5 contains such a rule, and the
+/// prohibition was inferred from an absence. §4.5 now writes
+/// `let text, err be read_file(path)` outright, so the flat list is the
+/// amendment rather than an exception to one.
+///
+/// Three corners of it are written nowhere, and each is decided here rather
+/// than guessed at by a later phase:
+///
+/// - **The grammar is narrow.** Names only. Nesting, literals and variant
+///   patterns stay where §4.7 put them, in `match`, which is the form that
+///   can be checked for exhaustiveness.
+/// - **`mutable` distributes over every name.** The list receives one tuple,
+///   and a form where half the names were mutable would need a second
+///   `mutable` in a position nothing else in the language puts one.
+/// - **Ascription is per name**, so `let text: String, err: Error? be f()`
+///   says which type is whose. §3.1 shows ascription and destructuring as
+///   separate forms and never combines them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LetStmt {
     pub mutable: bool,
+    /// One name, or two or more for a tuple destructure. Never empty: a
+    /// `let` with no name does not parse.
+    pub names: Vec<LetName>,
+    pub value: Expr,
+    pub span: Span,
+}
+
+/// One name bound by a `let`, with the type the author wrote for it.
+///
+/// The annotation is per name rather than per statement so that
+/// `let text: String, err: Error? be read(path)` says which type is whose.
+/// A single binding is the same node with a one-element list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LetName {
     pub name: Ident,
     pub ty: Option<Type>,
-    pub value: Expr,
     pub span: Span,
 }
 
@@ -697,8 +738,15 @@ pub enum ExprKind {
     Binary { op: BinaryOp, lhs: Box<Expr>, rhs: Box<Expr> },
     /// `e as T`.
     Cast { expr: Box<Expr>, ty: Type },
-    /// `try e` (§4.5): unwrap `Ok`/`Some`, or return the failure.
-    Try(Box<Expr>),
+    /// `e?` — the presence test of revision 2 §3.1. Evaluates to a `Bool`,
+    /// true when the operand is not `null`. It is postfix and it binds on the
+    /// same rung as call, index and field access, so `f().x?` is `(f().x)?`
+    /// and covering less takes parentheses.
+    ///
+    /// This node replaced `Try`, and the two are not the same shape: `try`
+    /// was a prefix that could return from the enclosing function, and `?`
+    /// is a total operator that returns a value and can do nothing else.
+    Present(Box<Expr>),
     /// `borrowed e` and `mutable borrowed e`. Auto-borrow (§6.3) means a call
     /// rarely needs either, and both stay legal where they clarify.
     Borrowed { mutable: bool, expr: Box<Expr> },
@@ -782,6 +830,9 @@ pub enum Literal {
     Str(String),
     Char(char),
     Bool(bool),
+    /// `null`. A literal rather than a prelude value, because `T?` is a type
+    /// the compiler knows and what inhabits it has to be known with it.
+    Null,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

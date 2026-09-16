@@ -657,8 +657,11 @@ fn dump_statements_and_expressions() {
         stmt(
             StmtKind::Let(LetStmt {
                 mutable: true,
-                name: ident("count", 11),
-                ty: Some(ty("Int", 18)),
+                names: vec![LetName {
+                    name: ident("count", 11),
+                    ty: Some(ty("Int", 18)),
+                    span: sp(11, 21),
+                }],
                 value: int(0, 25, 26),
                 span: sp(0, 26),
             }),
@@ -669,8 +672,11 @@ fn dump_statements_and_expressions() {
         stmt(
             StmtKind::Let(LetStmt {
                 mutable: false,
-                name: ident("d", 34),
-                ty: None,
+                names: vec![LetName {
+                    name: ident("d", 34),
+                    ty: None,
+                    span: sp(0, 0),
+                }],
                 value: expr(
                     ExprKind::StructLit {
                         path: path("Doc", 39),
@@ -735,15 +741,17 @@ fn dump_statements_and_expressions() {
             70,
             99,
         ),
-        // try items.get of Int(0).value as Int
+        // items.get of Int(0).value? as Int
         //
-        // `try` is a prefix operator and covers the whole postfix chain, so it
-        // wraps the field access rather than sitting inside it.
+        // `?` is postfix and sits on the same rung as the field access, so it
+        // applies to the whole chain to its left; `as` is above that rung, so
+        // the cast is outermost. The tree is the same shape the prefix `try`
+        // produced and it is reached from the other direction.
         stmt(
             StmtKind::Expr(expr(
                 ExprKind::Cast {
                     expr: Box::new(expr(
-                        ExprKind::Try(Box::new(expr(
+                        ExprKind::Present(Box::new(expr(
                             ExprKind::Field {
                                 base: Box::new(expr(
                                     ExprKind::MethodCall {
@@ -904,8 +912,11 @@ fn dump_statements_and_expressions() {
         stmt(
             StmtKind::Let(LetStmt {
                 mutable: false,
-                name: ident("window", 279),
-                ty: None,
+                names: vec![LetName {
+                    name: ident("window", 279),
+                    ty: None,
+                    span: sp(0, 0),
+                }],
                 value: expr(
                     ExprKind::Range {
                         start: Box::new(int(0, 289, 290)),

@@ -578,7 +578,21 @@ pub fn block(sp: &Sp, stmts: Vec<Stmt>, tail: Option<Expr>) -> Block {
 pub fn let_stmt(sp: &Sp, mutable: bool, name: &str, ty: Option<Type>, value: Expr) -> Stmt {
     let name = ident(sp, name);
     let span = name.span.merge(value.span);
-    Stmt { kind: StmtKind::Let(LetStmt { mutable, name, ty, value, span }), span }
+    let binding = LetName { span: name.span, name, ty };
+    Stmt { kind: StmtKind::Let(LetStmt { mutable, names: vec![binding], value, span }), span }
+}
+
+/// A `let` binding several names: `let value, err be f()` (revision 2 §3.1).
+pub fn let_many(sp: &Sp, names: &[&str], value: Expr) -> Stmt {
+    let names: Vec<_> = names
+        .iter()
+        .map(|n| {
+            let name = ident(sp, n);
+            LetName { span: name.span, name, ty: None }
+        })
+        .collect();
+    let span = names[0].span.merge(value.span);
+    Stmt { kind: StmtKind::Let(LetStmt { mutable: false, names, value, span }), span }
 }
 
 pub fn expr_stmt(value: Expr) -> Stmt {

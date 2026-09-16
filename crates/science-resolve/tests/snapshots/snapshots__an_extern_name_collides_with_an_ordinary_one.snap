@@ -2,18 +2,18 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![ordinary, foreign]))"
 ---
-Module `main` #78 @0..46
-  Fn `crc32` #79 @0..13
+Module `main` #73 @0..46
+  Fn `crc32` #74 @0..13
     params
-      Param `n` #81 @6..11
+      Param `n` #76 @6..11
         type: Path -> `I32` #4 @6..9
     body: Block @12..13
   Extern "C" unsafe @14..46
     Library "z" @39..46
     items
-      ExternFn `crc32` #80 @14..25
+      ExternFn `crc32` #75 @14..25
         params
-          Param `n` #82 @14..19
+          Param `n` #77 @14..19
             type: Path -> `I32` #4 @14..17
 --- diagnostics ---
 SC0201 @20..25 the name `crc32` is defined more than once

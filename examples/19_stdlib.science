@@ -1,9 +1,8 @@
 # 19 - The F0 standard library
-# Spec: §8. The whole of it: `Option of T`, `Result of (T, E)`, `Box of T`,
-# `String` and `borrowed String`, `Array of T`, `Map of (K, V)`, the free
-# functions `print`, `write`, `panic`, `read_file` and `write_file`, and
-# the interfaces of §5.4 — here `Copy`, `Clone`, `Drop`, `Eq`, `Ord`, `Iterate`
-# and `From`.
+# Spec: §8. The whole of it: `Box of T`, `String` and `borrowed String`,
+# `Array of T`, `Map of (K, V)`, `Error`, the free functions `print`, `write`,
+# `panic`, `read_file` and `write_file`, and the interfaces of §5.4 — here
+# `Copy`, `Clone`, `Drop`, `Eq`, `Ord`, `Iterate` and `From`.
 #
 # §8 says the library is small and its method sets are **closed**: anything
 # not listed does not exist, and adding to the list is a spec change rather
@@ -11,6 +10,15 @@
 # longer spells the method sets out, so the names called below are the
 # corpus's standing reading of them, recorded in `examples/README.md`.
 # Between them they cover the whole surface the rest of the corpus uses.
+#
+# Two entries this file used to carry are gone. §5.5 replaced `Option of T`
+# with `T?` and `Result of (T, E)` with a second return value of type
+# `Error?`, and their method sets went with the types: `is_some`, `is_ok`,
+# `unwrap` and `unwrap_or` name nothing now. What stands in their place is
+# smaller than what it replaced — the postfix `?`, the literal `null`, and
+# the narrowing that follows a successful test — but it is not shorter at the
+# call site, and the sections below write out what each of those four methods
+# costs to replace. That cost is the model; hiding it would teach a lie.
 
 type Record:
     key: String
@@ -27,49 +35,91 @@ function copy_of(text: borrowed String) -> String:
     out.push_str(text)
     out
 
-# --- Option: is_some, unwrap, unwrap_or -------------------------------------
+# --- Absence: `T?`, `null` and the postfix `?` ------------------------------
 
-function find(records: borrowed Array of Record, key: borrowed String) -> Option of (borrowed Record):
+# A search that may find nothing returns a nullable. There is no wrapper to
+# construct: the found record *is* the value, and `null` is the other one
+# (§5.5).
+function find(records: borrowed Array of Record, key: borrowed String) -> (borrowed Record)?:
     for record in records:
         if record.key is key:
-            return Some(record)
-    None
+            return record
+    null
 
-function option_surface(records: borrowed Array of Record) -> Int:
+function hits_of(records: borrowed Array of Record) -> Int?:
+    let first be records.get(0)
+    if first?:
+        return first.hits
+    null
+
+function absence_surface(records: borrowed Array of Record) -> Int:
     # A parameter declared `borrowed` is borrowed at the call site without
     # the caller writing anything (§6.3).
+    #
+    # `found.is_some()` was a method call; `found?` is the operator that
+    # replaced it, and asking is the only thing a nullable answers.
     let found be find(records, "alpha")
-    if found.is_some():
+    if found?:
         print("found")
 
-    # `unwrap` panics on `None`; `unwrap_or` takes a fallback instead.
-    let hits be hits_of(records).unwrap_or(0)
-    let first be records.get(0)
-    let popped: Option of Int be Option.None
-    hits + popped.unwrap_or(0)
+    # `hits_of(records).unwrap_or(0)` was one line. This is what it costs
+    # without the method: the fallback is written where it applies, and the
+    # binding it fills has to be `mutable` to receive it.
+    let mutable hits be 0
+    let counted be hits_of(records)
+    if counted?:
+        hits be counted
 
-function hits_of(records: borrowed Array of Record) -> Option of Int:
-    match records.get(0):
-        Some(record): Some(record.hits)
-        None: None
+    # `unwrap` panicked on `None`, so its replacement is the panic written
+    # out — or, as here, something better than a panic, which is the reason
+    # §5.5 was willing to lose the method.
+    let mutable popped be 0
+    let last be records.get(0)
+    if not last?:
+        print("no records")
+    else:
+        popped be last.hits
 
-# --- Result: is_ok, unwrap, unwrap_or ---------------------------------------
+    hits + popped
+
+# --- Failure: the pair `-> (T, Error?)` -------------------------------------
 
 # These two hand back what §8's free functions hand them, so they are declared
-# with the library's own error type rather than this file's. Widening `IoError`
-# into a caller's error type is `00_kitchen_sink.science`'s job; here the point
-# is only the shape of the `Result` that `read_file` and `write_file` return.
-function load(path: borrowed String) -> Result of (String, IoError):
+# with the library's own error type rather than this file's. Converting
+# `IoError` into a caller's error type is `load_record` below and
+# `00_kitchen_sink.science`; here the point is only the shape the free
+# functions have.
+#
+# `read_file` has a value and a failure, so it returns the pair. `write_file`
+# has only a failure, so it returns the error alone: the value slot would be
+# `()` and a name bound to it could do nothing.
+function load(path: borrowed String) -> (String, IoError?):
     read_file(path)
 
-function store(path: borrowed String, text: borrowed String) -> Result of ((), IoError):
+function store(path: borrowed String, text: borrowed String) -> IoError?:
     write_file(path, text)
 
-function result_surface(path: borrowed String) -> String:
-    let outcome be load(path)
-    if outcome.is_ok():
-        print("loaded")
-    load(path).unwrap_or("")
+function failure_surface(path: borrowed String) -> String:
+    # `outcome.is_ok()` was a method on a wrapper. The pair has no wrapper:
+    # the call produces the two names it was always producing, and `?` asks
+    # about the second of them.
+    let text, err be load(path)
+    if err?:
+        print(err.message())
+        return String.new()
+    print("loaded")
+    text
+
+# Conversion between error types is written by the caller, at the return.
+# Nothing converts on the way out of a call any more: `LoadError.from(err)`
+# is an ordinary call to the `From` implementation at the bottom of this
+# file, and it is three lines because the check, the conversion and the
+# return are three separate things (§5.5).
+function load_record(path: borrowed String) -> (Record, LoadError?):
+    let text, err be load(path)
+    if err?:
+        return (Record.new(String.new()), LoadError.from(err))
+    (Record.new(text), null)
 
 # --- Box: new ---------------------------------------------------------------
 
@@ -119,19 +169,23 @@ function arrays() -> Int:
 
     print(items.length())
 
-    # Reading goes through `get`, which returns an `Option`: §8 gives no
+    # Reading goes through `get`, which returns `(borrowed T)?`: §8 gives no
     # indexing operator that can panic, because §5.5 puts absence in the type.
-    match items.get(0):
-        Some(first): print(first)
-        None: print("empty")
+    let first be items.get(0)
+    if first?:
+        print(first)
+    else:
+        print("empty")
 
-    match items.get_mut(0):
-        Some(first): first be 10
-        None: print("empty")
+    let slot be items.get_mut(0)
+    if slot?:
+        slot be 10
+    else:
+        print("empty")
 
-    match items.pop():
-        Some(last): sum be sum + last
-        None: sum be sum
+    let last be items.pop()
+    if last?:
+        sum be sum + last
 
     sum
 
@@ -140,19 +194,24 @@ function arrays() -> Int:
 function maps() -> Int:
     let mutable counts: Map of (String, Int) be (Map of (String, Int)).new()
 
-    # `insert` returns the value it displaced, if there was one.
+    # `insert` returns the value it displaced, if there was one, so its
+    # result is a `V?` and not a `V`.
     let displaced be counts.insert("alpha", 1)
     counts.insert("beta", 2)
 
     print(counts.contains("alpha"))
 
-    match counts.get("alpha"):
-        Some(value): print(value)
-        None: print("absent")
+    let value be counts.get("alpha")
+    if value?:
+        print(value)
+    else:
+        print("absent")
 
-    match counts.remove("beta"):
-        Some(value): print(value)
-        None: print("nothing to remove")
+    let removed be counts.remove("beta")
+    if removed?:
+        print(removed)
+    else:
+        print("nothing to remove")
 
     counts.length()
 
@@ -202,28 +261,40 @@ type Countdown:
 Countdown implements Iterate:
     type Item is Int
 
-    function next(mutable self) -> Option of Self.Item:
+    function next(mutable self) -> Self.Item?:
         if self.remaining <= 0:
-            None
+            null
         else:
             self.remaining be self.remaining - 1
-            Some(self.remaining)
+            self.remaining
 
-# `From` is what `try` uses to widen an error. The orphan rule (§5.4) is
-# satisfied by `LoadError`, declared here.
-LoadError implements From of Record:
-    function from(record: Record) -> Self:
-        Corrupt(record.key)
+# `From` is how one error type becomes another. It used to be invisible —
+# `try` called it on the way out and no section ever said that it did — and
+# §5.5 took that away. The implementation still lives here; what changed is
+# that the *call* is written by the caller, at the return, which is
+# `load_record` above. The orphan rule (§5.4) is satisfied by `LoadError`,
+# declared in this file.
+LoadError implements From of IoError:
+    function from(inner: IoError) -> Self:
+        Missing("the file could not be read")
 
 # --- The free functions -----------------------------------------------------
 
 # `panic` has type `Never`, which coerces to any type (§4.7): that is what
 # lets one arm of a `match` bail out while the others produce a `String`.
+#
+# `load_record` fails with a concrete `LoadError` and not with the `Error`
+# interface, and this `match` is why: every case is a variant the compiler can
+# enumerate, so a new variant added to the choice breaks this function loudly.
+# The interface form would compose across a library boundary and would box;
+# there is no boundary here, and the exhaustiveness is worth more (§5.5).
 function required(path: borrowed String) -> String:
-    match load(path):
-        Ok(text): text
-        Err(Missing(missing)): panic("the file is missing")
-        Err(Corrupt(corrupt)): panic("the file is corrupt")
+    let record, err be load_record(path)
+    if err?:
+        match err:
+            Missing(missing): panic("the file is missing")
+            Corrupt(corrupt): panic("the file is corrupt")
+    record.key
 
 function main():
     write("no newline")
@@ -233,8 +304,8 @@ function main():
     print(strings())
 
     let records: Array of Record be (Array of Record).new()
-    print(option_surface(records))
-    print(result_surface("science.toml"))
+    print(absence_surface(records))
+    print(failure_surface("science.toml"))
     print(required("science.toml"))
 
     let held be boxed(Record.new("alpha"))
@@ -242,11 +313,20 @@ function main():
     for value in Countdown(remaining: 3):
         print(value)
 
-    match store("out.txt", "contents"):
-        Ok(nothing): print("written")
-        Err(e): print("not written")
+    # `store` returns the error alone, so there is one name to bind and one
+    # question to ask.
+    let write_err be store("out.txt", "contents")
+    if write_err?:
+        print("not written")
+    else:
+        print("written")
 
-    match load("science.toml"):
-        Ok(text): print(text.length())
-        Err(Missing(path)): print(path)
-        Err(Corrupt(path)): print(path)
+    # `load_record` returns the pair, and the value is known good once the
+    # error has been tested and the function has not returned (§4.5).
+    let record, err be load_record("science.toml")
+    if err?:
+        match err:
+            Missing(path): print(path)
+            Corrupt(path): print(path)
+    else:
+        print(record.key.length())

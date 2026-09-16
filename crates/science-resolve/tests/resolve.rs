@@ -162,11 +162,11 @@ fn a_let_may_shadow_an_earlier_one_and_its_initializer_sees_the_earlier() {
     let f = nth_fn(&krate, 0);
     let stmts = &f.body.as_ref().unwrap().stmts;
     let outer = match &stmts[0].kind {
-        StmtKind::Let(l) => l.def,
+        StmtKind::Let(l) => l.bindings[0].def,
         other => panic!("{other:?}"),
     };
     let (inner, initializer) = match &stmts[1].kind {
-        StmtKind::Let(l) => (l.def, path_res(&l.value)),
+        StmtKind::Let(l) => (l.bindings[0].def, path_res(&l.value)),
         other => panic!("{other:?}"),
     };
 

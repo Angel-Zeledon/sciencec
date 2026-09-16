@@ -439,70 +439,73 @@ fn ampersand_is_only_bitwise_and_now_that_borrows_are_words() {
 
 // --- the postfix chain ---------------------------------------------------
 
-/// `try` is a prefix keyword on the tightest row (§4.5), so it covers the
-/// whole postfix chain to its right — and nothing beyond it.
+/// `?` is postfix on the tightest row (revision 2 §3.1), so it applies to the
+/// whole postfix chain to its *left* — the opposite direction from the `try`
+/// it replaced, which covered the chain to its right.
+///
+/// The note says only "it is a postfix operator" and every example in it
+/// applies `?` to a bare name, so the rung is decided here and not there.
 #[test]
-fn try_is_a_prefix_over_the_whole_chain() {
+fn the_presence_test_applies_to_the_whole_chain_to_its_left() {
     assert_shape(
-        "try a.b().c",
+        "a.b().c?",
         "
-        Try
+        Present
           Field `c`
             base: Method `b`
               receiver: Path `a`
         ",
     );
-    // It is on the tightest row, so a binary operator after the chain is not
-    // swallowed: this is `(try a.b()) + 1`.
+    // On the tightest row, so a binary operator does not end up inside it:
+    // this is `(a.b()?) + 1`.
     assert_shape(
-        "try a.b() + 1",
+        "a.b()? + 1",
         "
         Binary `+`
-          lhs: Try
+          lhs: Present
             Method `b`
               receiver: Path `a`
           rhs: Int 1
         ",
     );
-    // Covering *less* than the chain takes parentheses, which is how the
-    // corpus writes it: `(try f()).port`.
+    // Covering *less* than the chain takes parentheses, exactly as it did
+    // before, and for the same reason.
     assert_shape(
-        "(try read_config(path)).port + 1u16",
+        "(read_config(path)?).port",
         "
-        Binary `+`
-          lhs: Field `port`
-            base: Try
-              Call
-                callee: Path `read_config`
-                args
-                  Path `path`
-          rhs: Int 1 u16
+        Field `port`
+          base: Present
+            Call
+              callee: Path `read_config`
+              args
+                Path `path`
         ",
     );
 }
 
-/// Binding tightest is what lets `try` stand inside a larger expression;
-/// `examples/12_operators.science` writes exactly this.
+/// The test the error model is actually written with: a name, a `?`, and an
+/// `if`. Every example in §3.1 is this shape and nothing more.
 #[test]
-fn try_stands_inside_a_larger_expression() {
+fn the_presence_test_on_a_bare_binding_is_the_shape_that_matters() {
     assert_shape(
-        "Some((try registry.points.get(0)).x * 2)",
+        "err?",
         "
-        Call
-          callee: Path `Some`
-          args
-            Binary `*`
-              lhs: Field `x`
-                base: Try
-                  Method `get`
-                    receiver: Field `points`
-                      base: Path `registry`
-                    args
-                      Int 0
-              rhs: Int 2
+        Present
+          Path `err`
+        ",
+    );
+    // `not err?` can only be `not (err?)`: `not` is a prefix on a row above
+    // the postfix chain, so the chain binds first.
+    assert_shape(
+        "not err?",
+        "
+        Unary `not`
+          Present
+            Path `err`
         ",
     );
 }
+
 
 /// A method chain is left-nested: each call's receiver is everything so far.
 #[test]

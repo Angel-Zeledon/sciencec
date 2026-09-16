@@ -91,10 +91,14 @@ pub enum TokenKind {
     Use,
     Public,
     Const,
-    Try,
     Giving,
     True,
     False,
+
+    /// `null`, the absence of a value in a nullable type (revision 2 §3.1).
+    /// A literal and not a prelude value: `T?` is a type the compiler knows,
+    /// so the thing that inhabits it has to be a token the lexer knows.
+    Null,
     SelfValue, // self
     SelfType,  // Self
     As,
@@ -138,6 +142,10 @@ pub enum TokenKind {
     Underscore,
     AtSign, // @
     Hash, // # — only if it ever stops meaning a comment; not emitted today
+    /// `?` — the postfix presence test of revision 2 §3.1. `err?` is a `Bool`.
+    /// The original design gave `?` to error propagation and then removed it,
+    /// so the character carries one meaning and no history.
+    Question,
 
     // --- Operators --------------------------------------------------------
     Plus,
@@ -233,8 +241,8 @@ impl TokenKind {
             "use" => Use,
             "public" => Public,
             "const" => Const,
-            "try" => Try,
             "giving" => Giving,
+            "null" => Null,
             "true" => True,
             "false" => False,
             "self" => SelfValue,

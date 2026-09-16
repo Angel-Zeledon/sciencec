@@ -1131,6 +1131,9 @@ impl Resolver {
                 let res = self.require_kind(res, path, DefKind::is_type, "a type");
                 hir::TypeKind::Path { res, generics }
             }
+            ast::TypeKind::Nullable(inner) => {
+                hir::TypeKind::Nullable(Box::new(self.resolve_nullable_inner(inner)))
+            }
             ast::TypeKind::Borrowed { mutable, inner } => hir::TypeKind::Borrowed {
                 mutable: *mutable,
                 inner: Box::new(self.resolve_type(inner)),
@@ -1208,6 +1211,43 @@ impl Resolver {
                 Res::Error
             }
         }
+    }
+
+    /// The inside of a `T?`, with §3.4's `Error?` shorthand applied.
+    ///
+    /// A bare interface name under a `?` means the optional trait object
+    /// `(any Error)?`. The shorthand exists because that spelling appears in
+    /// the signature of every fallible function in the language and
+    /// `-> (Config, (any Error)?)` is not a signature anyone should read.
+    ///
+    /// §3.4 says the shorthand holds "in a return position". The rule here is
+    /// wider — anywhere under a `?` — and it has to be: §3.1's own example
+    /// `let missing: Error? be null` is an annotation on a binding and not a
+    /// return type at all, so the narrower reading does not describe the
+    /// note's own code. See the report in `syntax-revision-2.md` §3.4.
+    ///
+    /// Only a *bare* interface is rewritten. `any Error` written out stays
+    /// what it is, and an interface anywhere else still gets `SC0211`,
+    /// because `?` is the thing that makes the object form unambiguous.
+    fn resolve_nullable_inner(&mut self, ty: &ast::Type) -> hir::Type {
+        if let ast::TypeKind::Path(path) = &ty.kind {
+            let (res, generics) = self.resolve_path(path);
+            if let Res::Def(id) = res {
+                if self.defs.get(id).kind == DefKind::Interface {
+                    let bound = hir::Bound { res, generics, span: ty.span };
+                    return hir::Type { kind: hir::TypeKind::Any(bound), span: ty.span };
+                }
+            }
+            // The path was resolved to decide the question and resolving it
+            // again would allocate a second set of diagnostics for one name,
+            // so the ordinary path is rebuilt here rather than delegated.
+            let res = self.require_kind(res, path, DefKind::is_type, "a type");
+            return hir::Type {
+                kind: hir::TypeKind::Path { res, generics },
+                span: ty.span,
+            };
+        }
+        self.resolve_type(ty)
     }
 
     fn resolve_bound(&mut self, bound: &ast::TypeBound) -> hir::Bound {
@@ -1413,25 +1453,39 @@ impl Resolver {
     fn resolve_stmt(&mut self, stmt: &ast::Stmt) -> hir::Stmt {
         let kind = match &stmt.kind {
             ast::StmtKind::Let(decl) => {
-                self.check_reserved(&decl.name);
-                let ty = decl.ty.as_ref().map(|t| self.resolve_type(t));
-                // The initializer is resolved *before* the binding exists, so
-                // `let x = x` reaches the outer `x` and a `let` is invisible
-                // above its own line.
-                let value = self.resolve_expr(&decl.value);
-                let def = self.defs.alloc(
-                    DefKind::Local,
-                    &decl.name.name,
-                    decl.name.span,
-                    Some(self.current_module),
-                );
-                if let Err(previous) = self.ribs.define(&decl.name.name, def) {
-                    self.duplicate(&decl.name, previous, "binding");
+                for binding in &decl.names {
+                    self.check_reserved(&binding.name);
                 }
+                let types: Vec<_> = decl
+                    .names
+                    .iter()
+                    .map(|b| b.ty.as_ref().map(|t| self.resolve_type(t)))
+                    .collect();
+                // The initializer is resolved *before* any binding exists, so
+                // `let x = x` reaches the outer `x` and a `let` is invisible
+                // above its own line. With several names that rule matters
+                // more, not less: `let a, b be f(b)` must reach the outer `b`.
+                let value = self.resolve_expr(&decl.value);
+                let bindings = decl
+                    .names
+                    .iter()
+                    .zip(types)
+                    .map(|(binding, ty)| {
+                        let def = self.defs.alloc(
+                            DefKind::Local,
+                            &binding.name.name,
+                            binding.name.span,
+                            Some(self.current_module),
+                        );
+                        if let Err(previous) = self.ribs.define(&binding.name.name, def) {
+                            self.duplicate(&binding.name, previous, "binding");
+                        }
+                        hir::LetBinding { def, ty, span: binding.span }
+                    })
+                    .collect();
                 hir::StmtKind::Let(hir::Let {
-                    def,
+                    bindings,
                     mutable: decl.mutable,
-                    ty,
                     value,
                     span: decl.span,
                 })
@@ -1499,7 +1553,9 @@ impl Resolver {
                 expr: Box::new(self.resolve_expr(expr)),
                 ty: self.resolve_type(ty),
             },
-            ast::ExprKind::Try(inner) => hir::ExprKind::Try(Box::new(self.resolve_expr(inner))),
+            ast::ExprKind::Present(inner) => {
+                hir::ExprKind::Present(Box::new(self.resolve_expr(inner)))
+            }
             ast::ExprKind::Borrowed { mutable, expr } => hir::ExprKind::Borrowed {
                 mutable: *mutable,
                 expr: Box::new(self.resolve_expr(expr)),

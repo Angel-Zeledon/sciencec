@@ -18,8 +18,8 @@ type Config:
     verbose: Bool
 
 choice Outcome of (T, E):
-    Ok(T)
-    Err(E)
+    Loaded(T)
+    Rejected(E)
 
 interface Summarize:
     function summarize(self) -> String

@@ -21,7 +21,7 @@ Block @0..830
         lhs: Int 1 hex u8 @87..93
         rhs: Float 2.5 @96..99
   Cast @105..147
-    expr: Try @105..139
+    expr: Present @105..139
       Field `value` @109..139
         base: Method `get` @109..133
           receiver: Path `items` @109..114

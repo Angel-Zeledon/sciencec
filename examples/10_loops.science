@@ -28,12 +28,15 @@ function titles(docs: borrowed Array of Doc):
 function dump(settings: borrowed Map of (String, String),
         keys: borrowed Array of String):
     for key in keys:
-        match settings.get(key):
-            Some(value):
-                print(key)
-                print(value)
-            None:
-                print("absent")
+        # `Map.get` returns `(borrowed V)?`, so the loop body asks with `?`
+        # rather than matching a variant. Inside the then-branch `value` is
+        # known not to be null (§5.5).
+        let value be settings.get(key)
+        if value?:
+            print(key)
+            print(value)
+        else:
+            print("absent")
 
 # `String.chars` is the one iterator §8 hands out by name: it implements
 # `Iterate of Char`.
@@ -44,13 +47,15 @@ function count_spaces(text: borrowed String) -> Int:
             spaces be spaces + 1
     spaces
 
-# `for` with `continue` to skip, and `break` to stop early.
-function first_even(items: borrowed Array of Int) -> Option of Int:
+# `for` with `continue` to skip, and `break` to stop early. A search that may
+# find nothing returns a nullable, and `null` is the answer when the loop
+# runs out (§5.5).
+function first_even(items: borrowed Array of Int) -> Int?:
     for item in items:
         if item % 2 is not 0:
             continue
-        return Some(item)
-    None
+        return item
+    null
 
 function count_until_zero(items: borrowed Array of Int) -> Int:
     let mutable seen be 0
@@ -90,17 +95,16 @@ function slice_sum(items: borrowed Array of Int,
     sum
 
 function value_at(items: borrowed Array of Int, index: Int) -> Int:
-    match items.get(index):
-        Some(cell): cell
-        None: 0
+    let cell be items.get(index)
+    if cell?: cell else: 0
 
 # `break` and `continue` read the same over a range as over a collection.
-function first_multiple(limit: Int, factor: Int) -> Option of Int:
+function first_multiple(limit: Int, factor: Int) -> Int?:
     for i in 1..=limit:
         if i % factor is not 0:
             continue
-        return Some(i)
-    None
+        return i
+    null
 
 # --- 3. `loop` ended by a condition -----------------------------------------
 
@@ -146,34 +150,38 @@ Reader has:
     function new(path: String) -> Reader:
         Reader(path: path, lines: (Array of String).new(), cursor: 0)
 
-    function next_line(mutable self) -> Option of (borrowed String):
+    function next_line(mutable self) -> (borrowed String)?:
         let line be self.lines.get(self.cursor)
         self.cursor be self.cursor + 1
         line
 
+# The exhausted case and the blank-line case are two conditions rather than
+# two arms now: `?` asks whether the reader handed anything back, and the
+# narrowing that follows the check is what lets `line.is_empty()` be written
+# on the next line without unwrapping anything (§5.5).
 function read_until_blank(handle: mutable borrowed Reader) -> Int:
     let mutable lines be 0
     loop:
-        match handle.next_line():
-            None:
-                break
-            Some(line):
-                if line.is_empty():
-                    break
-                lines be lines + 1
+        let line be handle.next_line()
+        if not line?:
+            break
+        if line.is_empty():
+            break
+        lines be lines + 1
     lines
 
-# `loop` whose body is a `match`, with `break` and `continue` in the arms.
+# `loop` whose body is a `match`. The absence of a value is not a variant, so
+# the `?` test ends the loop and the `match` is left to do what it is for:
+# distinguishing between values of a type that has cases.
 function consume(tokens: mutable borrowed Array of Int) -> Int:
     let mutable kept be 0
     loop:
-        match tokens.pop():
-            None:
-                break
-            Some(0):
-                continue
-            Some(value):
-                kept be kept + value
+        let value be tokens.pop()
+        if not value?:
+            break
+        match value:
+            0: continue
+            other: kept be kept + other
     kept
 
 # --- 5. Nesting -------------------------------------------------------------
@@ -214,9 +222,8 @@ function deeply_nested(rows: borrowed Array of (Array of Int)) -> Int:
     found
 
 function is_zero_at(row: borrowed Array of Int, index: Int) -> Bool:
-    match row.get(index):
-        Some(cell): cell is 0
-        None: false
+    let cell be row.get(index)
+    cell? and cell is 0
 
 function main():
     # A collection is built through its associated function, never with the

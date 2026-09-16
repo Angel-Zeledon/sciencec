@@ -36,7 +36,9 @@ it as a fix.
 | `dyn Trait` | `any Interface` | |
 | `while cond:` | `loop:` + `break` | **`while` is gone**; see §2 |
 | `println(x)` | `print(x)` | no-newline form is `write(x)` |
-| `f()?` | `try f()` | **prefix, not postfix** |
+| `f()?` (Rust's propagation) | a pair and a check | **not** a `?`; see §2 |
+| `Result of (T, E)` | `-> (T, E?)` | the error comes back beside the value |
+| `Option of T` | `T?` | `null` is the absent case |
 | `pub` | `public` | |
 | `!flag` | `not flag` | |
 
@@ -60,9 +62,21 @@ list cannot be parsed. Nesting follows the same rule:
 `Array of (Map of (String, Int))`. And an associated call on a generic type needs
 its own parentheses: `(Array of Doc).new()`, never `Array of Doc.new()`.
 
-**4. `try` goes before the expression** and binds the whole chain to its right.
-`try a.b()` means `try (a.b())`. When it must cover only part of an expression,
-parenthesise it: `(try read_config(path)).port`.
+**4. A function that can fail returns its value and an error**, and `?` tests
+the error for presence. `?` is *postfix* and binds the whole chain to its left,
+so `a.b()?` is `(a.b())?`; covering less takes parentheses. It is a total
+operator — it produces a `Bool` and cannot return from the function — which is
+the whole difference from the `try` it replaced.
+
+```science
+let text, err be read_file(path)
+if err?:
+    return ("", err)
+```
+
+`?` looks like Rust's propagation operator and is not it. Reaching for
+`f()?` expecting an early return gets you a `Bool`, and the compiler cannot
+tell you so until the type checker lands.
 
 **5. Blocks are indentation, and an inline body ends where the expression ends.**
 `if a: b else: c` works because `else` cannot continue an expression. An inline
@@ -90,13 +104,15 @@ Using one is an error, not a warning. The ones you are most likely to reach for:
 **In use as keywords:** `function return let be mutable type choice
 interface implements has of borrowed any for each in if else match
 loop break continue use where as self Self and or not true false is const public
-try giving`
+giving null`
 
 `each` is a keyword but **not** a loop word: its only use is naming the subject
 of a call, `docs.map(each.title)`. Words a previous revision reserved and has
-since freed — `trait`, `methods`, `while`, `at`, `above`, `below`, `most`,
-`least` — are ordinary names now, and writing one where it used to be a keyword
-is its own diagnostic, `SC0138`–`SC0144`.
+since freed — `trait`, `methods`, `while`, `try`, `returns`, `at`, `above`,
+`below`, `most`, `least` — are ordinary names now, and writing one where it
+used to be a keyword is its own diagnostic, `SC0138`–`SC0144` and `SC0155`.
+`null` went the other way: it is a literal, its spelling is fixed, and a
+program may not bind the name.
 
 **Reserved for later phases:** `agent tool prompt spawn send receive durable
 checkpoint resume supervise async await tensor shape model mod extern unsafe
@@ -216,9 +232,11 @@ function longest of T(items: borrowed Array of T) -> borrowed T
             best be item
     best
 
-function load(path: borrowed String) -> Result of (Doc, Error):
-    let text be try read_file(path)
-    Ok(Doc(title: "loaded", body: text))
+function load(path: borrowed String) -> (Doc, Error?):
+    let text, err be read_file(path)
+    if err?:
+        return (Doc.empty(), err)
+    (Doc(title: "loaded", body: text), null)
 
 function main():
     let doc be Doc.new("Regions")

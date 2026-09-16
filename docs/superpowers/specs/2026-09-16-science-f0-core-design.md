@@ -756,15 +756,22 @@ Reserving costs nothing now and breaks every program using the name later.
 
 **In use:** `function return let be mutable type choice interface implements has
 of borrowed any for in if else match loop break continue use where as self Self
-and or not true false is const public giving each`
+and or not true false is null const public giving each`
 
 Closures make `giving` and `each` reserved. `each` is a binder, and letting a
 program shadow it would make every chain ambiguous; since §4.6 it is reserved for
 that reason alone and for no loop form.
 
 Revision 2 removed `returns`, `trait`, `methods`, `while`, `try`, `at`, `above`,
-`below`, `most` and `least` from this list, and added `interface`. Nine words
-against one is the arithmetic, and it is most of what that revision bought.
+`below`, `most` and `least` from this list, and added `interface` and `null`.
+Nine words against two is the arithmetic, and it is most of what that revision
+bought.
+
+`null` is a literal, like `true` and `false`, and it is on this list for the
+reason they are: its spelling is fixed, so a program may not bind the name. It
+was missed when revision 2 was folded into this section — §4.2's literal
+inventory got it and this list did not, which left the two halves of the spec
+disagreeing about whether `let null be 3` compiles.
 
 **Reserved, not yet used:** `agent tool prompt spawn send receive durable
 checkpoint resume supervise async await tensor shape model equation mod extern

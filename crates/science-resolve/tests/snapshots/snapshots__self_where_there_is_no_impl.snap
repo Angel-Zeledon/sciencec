@@ -2,8 +2,8 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![f]))"
 ---
-Module `main` #78 @0..13
-  Fn `f` #79 @0..13
+Module `main` #73 @0..13
+  Fn `f` #74 @0..13
     ret: SelfType -> <error> @2..6
     body: Block @7..13
       tail: Self -> <error> @7..11

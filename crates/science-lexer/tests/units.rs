@@ -514,7 +514,7 @@ fn keywords_are_resolved() {
     assert_eq!(bare("implements has"), vec![Implements, Has]);
     assert_eq!(bare("of borrowed any"), vec![Of, Borrowed, Any]);
     assert_eq!(bare("use public const"), vec![Use, Public, Const]);
-    assert_eq!(bare("try giving"), vec![Try, Giving]);
+    assert_eq!(bare("giving null"), vec![Giving, Null]);
     assert_eq!(bare("true false"), vec![True, False]);
     assert_eq!(bare("self Self"), vec![SelfValue, SelfType]);
     assert_eq!(bare("as where"), vec![As, Where]);
@@ -919,22 +919,20 @@ fn every_stale_comparison_symbol_is_reported_and_none_stops_the_lexer() {
 }
 
 #[test]
-fn a_question_mark_is_unknown_because_propagation_is_spelled_try() {
-    // `?` was error propagation and no longer exists. It is the postfix form
-    // everyone arriving from Rust or Swift reaches for, so it earns the same
-    // treatment as `!`: a message naming the replacement.
+fn a_question_mark_is_a_token_because_it_is_the_presence_test() {
+    // `?` spent one revision rejected outright: it had been error propagation,
+    // the design removed it, and the lexer reported it as a character Science
+    // does not have. Revision 2 §3.1 gave it back, as a postfix test for
+    // presence, and the rejection went with the meaning it was rejecting.
     let src = "read_file(path)?";
-    assert_eq!(codes(src), ["SC0001"]);
+    assert!(codes(src).is_empty(), "{:?}", codes(src));
     assert_eq!(
         bare(src),
-        vec![id("read_file"), LParen, id("path"), RParen, Unknown('?')]
+        vec![id("read_file"), LParen, id("path"), RParen, Question]
     );
 
-    let (_, diags) = run(src);
-    let d = diags.iter().next().unwrap();
-    let text = format!("{} {:?}", d.message, d.notes);
-    assert!(text.contains("`?`"), "{text}");
-    assert!(text.contains("try"), "{text}");
+    // One character, one token: there is no `??`, `?.` or `?:` to scan into.
+    assert_eq!(bare("a??"), vec![id("a"), Question, Question]);
 }
 
 #[test]
@@ -1005,12 +1003,36 @@ fn several_generic_arguments_are_parenthesised() {
 }
 
 #[test]
-fn error_propagation_is_a_word_before_the_expression() {
+fn try_is_an_ordinary_identifier_now() {
+    // Revision 2 §3 removed `try` with the `Result` it unwrapped. The lexer
+    // does not know that: it hands back an `Ident` and the parser reports the
+    // migration, which is how `while`, `trait` and `println` are handled too.
     assert_eq!(
         bare("let text be try read_file(path)"),
-        vec![Let, id("text"), Be, Try, id("read_file"), LParen, id("path"), RParen]
+        vec![Let, id("text"), Be, id("try"), id("read_file"), LParen, id("path"), RParen]
     );
     assert!(codes("let text be try read_file(path)").is_empty());
+}
+
+#[test]
+fn the_error_model_lexes() {
+    assert_eq!(
+        bare("let value, err be f()"),
+        vec![Let, id("value"), Comma, id("err"), Be, id("f"), LParen, RParen]
+    );
+    assert_eq!(bare("if err?:"), vec![If, id("err"), Question, Colon]);
+    assert_eq!(bare("Error?"), vec![id("Error"), Question]);
+    assert_eq!(bare("return (parsed, null)"), vec![
+        Return,
+        LParen,
+        id("parsed"),
+        Comma,
+        Null,
+        RParen
+    ]);
+    // `?` was freed when it stopped being error propagation, so it now
+    // produces a token rather than the diagnostic that used to reject it.
+    assert!(codes("if err?:").is_empty());
 }
 
 #[test]

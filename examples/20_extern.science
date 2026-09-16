@@ -174,17 +174,24 @@ type MatrixView:
 # The signature contains no `ffi` type at all. Everything unverifiable is
 # inside the `unsafe` block, which is short on purpose: if an unsafe block is
 # long, the binding is written wrong.
+#
+# `gemm` writes its result into `c` and so has no value to hand back, only a
+# failure — which is what a bare `-> BlasError?` says. It names a concrete
+# error rather than the `Error` interface because the two ways a call can be
+# wrong are a shape mismatch and an overflow, and a caller is expected to
+# tell them apart: the concrete form is the one that keeps `match`
+# exhaustive, and it does not box (§5.5).
 public function gemm(
         a: borrowed MatrixView,
         b: borrowed MatrixView,
         c: mutable borrowed MatrixView,
         alpha: F64,
-        beta: F64) -> Result of ((), BlasError):
+        beta: F64) -> BlasError?:
 
     if a.columns is not b.rows:
-        return Err(BlasError.Shape(a.columns, b.rows))
+        return BlasError.Shape(a.columns, b.rows)
     if a.leading < a.rows or b.leading < b.rows:
-        return Err(BlasError.Overflow)
+        return BlasError.Overflow
 
     unsafe:
         cblas_dgemm(
@@ -199,18 +206,22 @@ public function gemm(
             b: b.data, ldb: b.leading as BlasInt,
             beta: beta,
             c: c.data, ldc: c.leading as BlasInt)
-    Ok(())
+    null
 
 # The Science half of the macro `H5T_NATIVE_DOUBLE` stands for: the call the
 # macro exists to make, and the global it reads afterwards. Reading an
 # `extern static` is the seventh power `unsafe` grants, because the memory
 # belongs to C and may be uninitialised until the library has been opened.
-public function native_double_type() -> Result of (Hid, BlasError):
+#
+# This one has a value as well as a failure, so it returns the pair (§4.5).
+# The failing return still has to name a value for the first slot; the
+# binding's own "no such id" constant is what it uses.
+public function native_double_type() -> (Hid, BlasError?):
     unsafe:
         let opened be H5open()
         if opened < 0:
-            return Err(BlasError.Overflow)
-        Ok(H5T_NATIVE_DOUBLE_g)
+            return (H5I_BADID, BlasError.Overflow)
+        (H5T_NATIVE_DOUBLE_g, null)
 
 # `when available` gives the block a presence test, and a program that may run
 # on a CPU-only node asks before it calls.

@@ -3,9 +3,10 @@
 # This file is the acceptance criterion for `extern` blocks: the declaration
 # of §1.1 and the safe wrapper of §1.7, which must parse with no diagnostics
 # at all. §1.7 was written before `syntax-revision-2.md`, so `returns` is `->`
-# and `is below` / `is above` are `<` and `>`; the `Result` and the `try` are
-# left as the note wrote them, which is also what `examples/09_option_result`
-# still uses.
+# and `is below` / `is above` are `<` and `>`. The `Result` and the `try` the
+# note wrote are gone too: §3 of the revision replaced them with a pair and a
+# presence test, and this file is where the cost of that is easiest to see —
+# three one-line checks became three three-line ones.
 #
 # The signature of the wrapper contains no `ffi` type. That is the point of
 # the section: the declaration records the claim, and the interface is a
@@ -54,17 +55,23 @@ public function gemm(
         b: borrowed MatrixView,
         c: mutable borrowed MatrixView,
         alpha: F64,
-        beta: F64) -> Result of ((), BlasError):
+        beta: F64) -> ((), BlasError?):
 
     if a.columns is not b.rows:
-        return Err(BlasError.Shape(a.columns, b.rows))
+        return ((), BlasError.Shape(a.columns, b.rows))
     if c.rows is not a.rows or c.columns is not b.columns:
-        return Err(BlasError.Shape(c.rows, a.rows))
+        return ((), BlasError.Shape(c.rows, a.rows))
 
     # The obligation the borrow checker cannot discharge, discharged here.
-    try covers(a, a.columns)
-    try covers(b, b.columns)
-    try covers(c, c.columns)
+    let checked_a, err_a be covers(a, a.columns)
+    if err_a?:
+        return ((), err_a)
+    let checked_b, err_b be covers(b, b.columns)
+    if err_b?:
+        return ((), err_b)
+    let checked_c, err_c be covers(c, c.columns)
+    if err_c?:
+        return ((), err_c)
 
     unsafe:
         cblas_dgemm(
@@ -79,12 +86,12 @@ public function gemm(
             b: b.data, ldb: b.leading as BlasInt,
             beta: beta,
             c: c.data, ldc: c.leading as BlasInt)
-    Ok(())
+    ((), null)
 
-function covers(m: borrowed MatrixView, columns: Int) -> Result of ((), BlasError):
+function covers(m: borrowed MatrixView, columns: Int) -> ((), BlasError?):
     let needed be m.leading * (columns - 1) + m.rows
     if m.leading < m.rows:
-        return Err(BlasError.Stride(m.leading, m.rows))
+        return ((), BlasError.Stride(m.leading, m.rows))
     if needed > m.data.length():
-        return Err(BlasError.Overflow)
-    Ok(())
+        return ((), BlasError.Overflow)
+    ((), null)

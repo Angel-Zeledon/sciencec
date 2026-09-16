@@ -4,9 +4,10 @@
 #
 #   `sciencec` compiles to a native binary a program using, at once: generics
 #   with bounds, const generics, associated types, an interface dispatched both
-#   statically and dynamically, an exhaustive `match`, `Option` and `Result`
-#   with `try`, a user type implementing operator interfaces, a range-driven
-#   loop, a closure, and a type holding a borrow in a field.
+#   statically and dynamically, an exhaustive `match`, a nullable type and a
+#   fallible function returning `(T, Error?)`, a user type implementing
+#   operator interfaces, a range-driven loop, a closure, and a type holding a
+#   borrow in a field.
 #
 # This single file is that program. Every one of those ten requirements is
 # marked below with the number it carries in the list above. When this
@@ -53,7 +54,13 @@ choice ParseError:
     Empty
     Unsupported(String)
 
-# (6) `try` propagates one failure type into another through `From`.
+# (6) One failure type becomes another through `From` — but nothing calls
+# `From` for you. §5.5 removed the invisible widening `try` performed, so
+# these implementations exist to be *called*, by name, at the `return` that
+# needs them. `load` below is where that happens.
+#
+# `From` takes one source type per implementation, so a function whose
+# callees fail in two different ways needs two of them, as this one does.
 LoadError implements From of ParseError:
     function from(inner: ParseError) -> Self:
         match inner:
@@ -63,6 +70,14 @@ LoadError implements From of ParseError:
 LoadError implements From of IoError:
     function from(inner: IoError) -> Self:
         NotFound("unreadable")
+
+# `Error` is a prelude interface with one method (§5.5). Implementing it is
+# what lets a `LoadError` stand in an `Error?` slot, which `open` below uses.
+LoadError implements Error:
+    function message(self) -> String:
+        match self:
+            NotFound(path): copy_of(path)
+            Malformed(detail): copy_of(detail)
 
 # ---------------------------------------------------------------------------
 # Inherent methods
@@ -74,11 +89,11 @@ Doc has:
     function new(title: String) -> Doc:
         Doc(title: title, body: String.new())
 
-    function heading(self) -> Option of String:
+    function heading(self) -> String?:
         if self.body.starts_with("# "):
-            Some(self.body.truncate(60))
+            self.body.truncate(60)
         else:
-            None
+            null
 
     function is_empty(self) -> Bool:
         self.body.length() is 0
@@ -139,7 +154,7 @@ Format implements Copy
 # is the whole reason associated types are in F0 (§5.4).
 interface Iterate:
     type Item
-    function next(mutable self) -> Option of Self.Item
+    function next(mutable self) -> Self.Item?
 
 type Countdown:
     remaining: Int
@@ -147,12 +162,12 @@ type Countdown:
 Countdown implements Iterate:
     type Item is Int
 
-    function next(mutable self) -> Option of Self.Item:
+    function next(mutable self) -> Self.Item?:
         if self.remaining <= 0:
-            None
+            null
         else:
             self.remaining be self.remaining - 1
-            Some(self.remaining)
+            self.remaining
 
 # ---------------------------------------------------------------------------
 # (7) A user type implementing operator interfaces
@@ -248,35 +263,65 @@ function explain(error: borrowed LoadError) -> String:
             copy_of(detail)
 
 # ---------------------------------------------------------------------------
-# (6) `Option` and `Result` with `try`
+# (6) A nullable type, and a fallible function returning `(T, Error?)`
 # ---------------------------------------------------------------------------
 
-function shorten(text: borrowed String, limit: Int) -> Option of String:
-    if text.is_empty(): None else: Some(text.truncate(limit))
+# Absence is `T?` and `null` is its other value. There is nothing to wrap
+# (§5.5).
+function shorten(text: borrowed String, limit: Int) -> String?:
+    if text.is_empty(): null else: text.truncate(limit)
 
-# `try` on `Option`: unwrap `Some`, or return `None` from the enclosing
-# function.
-function first_heading(doc: borrowed Doc) -> Option of String:
-    let heading be try doc.heading()
-    let trimmed be try shorten(heading, 40)
-    Some(trimmed)
+# Two nullable results in a row. `?` asks, and the narrowing inside the
+# then-branch is what lets the next line read the value without a cast.
+function first_heading(doc: borrowed Doc) -> String?:
+    let heading be doc.heading()
+    if not heading?:
+        return null
 
-function parse_format(name: borrowed String) -> Result of (Format, ParseError):
+    let trimmed be shorten(heading, 40)
+    if not trimmed?:
+        return null
+
+    trimmed
+
+# The concrete error form: the caller can tell the cases apart, and `match`
+# over a `ParseError` stays exhaustive.
+function parse_format(name: borrowed String) -> (Format, ParseError?):
     if name.is_empty():
-        Err(Empty)
-    else:
-        match name:
-            "txt": Ok(Plain)
-            "md": Ok(Markdown)
-            "json": Ok(Json)
-            other: Err(Unsupported(copy_of(other)))
+        return (Plain, ParseError.Empty)
+    match name:
+        "txt": (Plain, null)
+        "md": (Markdown, null)
+        "json": (Json, null)
+        other: (Plain, ParseError.Unsupported(copy_of(other)))
 
-# `try` on `Result`, twice: the first widens `IoError` and the second
-# `ParseError` into `LoadError` through the `From` implementations above.
-function load(path: borrowed String) -> Result of (Doc, LoadError):
-    let text be try read_file(path)
-    let format be try parse_format(path)
-    Ok(Doc(title: extension(format), body: text))
+# A fallible function returning the pair, twice over, with the conversion
+# written out. `read_file` fails with `IoError` and `parse_format` with
+# `ParseError`; this function's signature says `LoadError`; so each error
+# is converted at the `return`, by an explicit call to the matching `From`
+# implementation above. `try` used to make those two calls invisibly, and no
+# section of the spec ever said that it did — which is why §5.5 moved the
+# conversion to the caller, where it is written down (§5.5).
+function load(path: borrowed String) -> (Doc, LoadError?):
+    let text, io_err be read_file(path)
+    if io_err?:
+        return (Doc.new(""), LoadError.from(io_err))
+
+    let format, parse_err be parse_format(path)
+    if parse_err?:
+        return (Doc.new(""), LoadError.from(parse_err))
+
+    (Doc(title: extension(format), body: text), null)
+
+# The interface error form, for contrast: `-> (Doc, Error?)` is shorthand for
+# `-> (Doc, (any Error)?)`. It composes across a library boundary and it
+# boxes, where the concrete form above does neither. Both are legal and the
+# choice is the author's (§5.5).
+function open(path: borrowed String) -> (Doc, Error?):
+    let doc, err be load(path)
+    if err?:
+        return (Doc.new(""), err)
+    (doc, null)
 
 # ---------------------------------------------------------------------------
 # (8) A range-driven loop, and (9) a closure
@@ -333,14 +378,28 @@ function main():
     print(extension(Json))
     print(explain(NotFound("science.toml")))
 
-    # (6): `Option` and `Result`, both consumed by an exhaustive `match`.
-    match first_heading(doc):
-        Some(heading): print(heading)
-        None: print("no heading")
+    # (6): the nullable, tested with `?`.
+    let heading be first_heading(doc)
+    if heading?:
+        print(heading)
+    else:
+        print("no heading")
 
-    match load("science.toml"):
-        Ok(loaded): print(describe(loaded))
-        Err(e): print(explain(e))
+    # (6): the fallible function, with the concrete error consumed by an
+    # exhaustive `match`.
+    let loaded, err be load("science.toml")
+    if err?:
+        print(explain(err))
+    else:
+        print(describe(loaded))
+
+    # The same failure behind the `Error` interface, which has one method and
+    # cannot be matched on.
+    let opened, open_err be open("science.toml")
+    if open_err?:
+        print(open_err.message())
+    else:
+        print(describe(opened))
 
     # (2): a const generic instantiated at a literal width. A generic type
     # needs parentheses before the `.`, because `Window of (Int, 4).empty()`

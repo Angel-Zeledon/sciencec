@@ -65,6 +65,12 @@ const LIBRARY_TYPES: &[&str] = &["Array", "Map", "Box", "Chars", "IoError"];
 const INTERFACES: &[&str] = &[
     "Add", "Sub", "Mul", "Div", "Rem", "Pow", "MatMul", "Neg", "Index", "Eq", "Ord", "Copy",
     "Clone", "Drop", "Iterate", "From", "Display",
+    // `Error`, the one-method interface of revision 2 §3.4. It is in the
+    // prelude and not in a module because `-> (T, Error?)` is the signature of
+    // every fallible function in the language, and a name that common cannot
+    // need an import. `Error?` is shorthand for `(any Error)?`; the expansion
+    // is in `resolve_nullable_inner`, not here.
+    "Error",
 ];
 
 /// The free functions (§8).
@@ -112,10 +118,13 @@ const FFI_TYPES: &[&str] = &[
 const FFI_INTERFACES: &[&str] = &["CLayout"];
 
 /// `(choice type name, [(variant name, payload arity)])`.
-const CHOICES: &[(&str, &[(&str, usize)])] = &[
-    ("Option", &[("Some", 1), ("None", 0)]),
-    ("Result", &[("Ok", 1), ("Err", 1)]),
-];
+///
+/// Empty since revision 2 §3. `Option of T` became `T?` and `Result of (T, E)`
+/// became the pair `-> (T, E?)`, which took `Some`, `None`, `Ok` and `Err`
+/// with them. The table stays because the prelude will have a choice type
+/// again and the machinery below is the part worth keeping; an empty table is
+/// also the honest record that these four names are *free*, not merely unused.
+const CHOICES: &[(&str, &[(&str, usize)])] = &[];
 
 /// Allocates the prelude into `defs`.
 pub fn build(defs: &mut DefTable) -> Prelude {
@@ -186,24 +195,36 @@ mod tests {
     }
 
     #[test]
-    fn option_and_result_variants_are_reachable_unqualified() {
+    fn the_option_and_result_variants_are_gone_and_the_names_are_free() {
         let mut defs = DefTable::new();
         let prelude = build(&mut defs);
+        // Revision 2 §3 removed all four with the types that carried them.
+        // This asserts they are *free*, not merely absent: a program may now
+        // declare its own `Ok`, and a `Some` in a pattern is a binding.
         for name in ["Some", "None", "Ok", "Err"] {
-            assert!(prelude.variants.iter().any(|(n, _)| n == name), "`{name}` must be reachable");
+            assert!(
+                !prelude.variants.iter().any(|(n, _)| n == name),
+                "`{name}` was removed with `Option` and `Result`"
+            );
+        }
+        for name in ["Option", "Result"] {
+            assert!(
+                !prelude.names.iter().any(|(n, _)| n == name),
+                "`{name}` was removed by revision 2 §3"
+            );
         }
     }
 
     #[test]
-    fn none_is_a_unit_variant_and_some_is_not() {
+    fn error_is_an_interface_in_the_prelude() {
         let mut defs = DefTable::new();
         let prelude = build(&mut defs);
-        let arity = |name: &str| {
-            let (_, id) = prelude.variants.iter().find(|(n, _)| n == name).unwrap();
-            prelude.variant_arity.iter().find(|(v, _)| v == id).unwrap().1
-        };
-        assert_eq!(arity("None"), 0, "a bare `None` in a pattern is a match, not a binding");
-        assert_eq!(arity("Some"), 1);
+        let (_, id) = prelude
+            .names
+            .iter()
+            .find(|(n, _)| n == "Error")
+            .expect("`Error` is the interface every fallible signature names");
+        assert_eq!(defs.get(*id).kind, DefKind::Interface);
     }
 
 

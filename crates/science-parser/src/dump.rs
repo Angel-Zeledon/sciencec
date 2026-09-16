@@ -234,6 +234,7 @@ fn literal_header(literal: &Literal) -> String {
         Literal::Str(value) => format!("Str {value:?}"),
         Literal::Char(value) => format!("Char {value:?}"),
         Literal::Bool(value) => format!("Bool {value}"),
+        Literal::Null => "Null".to_string(),
     }
 }
 
@@ -570,6 +571,7 @@ impl Dump for Type {
                 w.node(header, self.span, |w| inner.dump_node(w));
             }
             TypeKind::Any(bound) => w.node("Any", self.span, |w| bound.dump_node(w)),
+            TypeKind::Nullable(inner) => w.node("Nullable", self.span, |w| inner.dump_node(w)),
             TypeKind::Tuple(elems) => w.node("Tuple", self.span, |w| w.items(elems)),
             TypeKind::Unit => w.leaf("Unit", self.span),
             TypeKind::SelfType => w.leaf("SelfType", self.span),
@@ -639,10 +641,17 @@ impl Dump for Stmt {
 
 impl Dump for LetStmt {
     fn dump_node(&self, w: &mut DumpWriter) {
-        let mut header = named("Let", &self.name.name);
+        // The names are joined with the comma that separated them, so a
+        // single binding dumps exactly the header it always did and a
+        // destructure reads back as what was written.
+        let joined =
+            self.names.iter().map(|n| n.name.name.as_str()).collect::<Vec<_>>().join(", ");
+        let mut header = named("Let", &joined);
         flag(&mut header, self.mutable, "mutable");
         w.node(&header, self.span, |w| {
-            w.child_opt("type", self.ty.as_ref());
+            for binding in &self.names {
+                w.child_opt("type", binding.ty.as_ref());
+            }
             w.child("value", &self.value);
         });
     }
@@ -697,7 +706,7 @@ impl Dump for Expr {
                 w.child("expr", &**expr);
                 w.child("type", ty);
             }),
-            ExprKind::Try(inner) => w.node("Try", self.span, |w| inner.dump_node(w)),
+            ExprKind::Present(inner) => w.node("Present", self.span, |w| inner.dump_node(w)),
             ExprKind::Borrowed { mutable, expr } => {
                 let header = if *mutable { "Borrowed mutable" } else { "Borrowed" };
                 w.node(header, self.span, |w| expr.dump_node(w));
