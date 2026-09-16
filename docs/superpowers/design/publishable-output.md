@@ -307,7 +307,7 @@ the results.
 
 The record contains: the document's blocks in order; every table as columns of
 cells; every figure as a description with its series and its data; the data
-lineage; the `pv:` id of the run record; and, for each cell, three things rather
+lineage; the `pv:` id of the run record; and, for cell, three things rather
 than one.
 
 ### 3.3 A cell is three strings, and no floats anywhere
@@ -705,7 +705,7 @@ let fig be Figure.new()
     .line(Series.new("Replicate 2", times, concentration_2))
     .x_name("Time since injection")
     .y_name("Plasma concentration")
-    .caption("Plasma concentration against time for each replicate.")
+    .caption("Plasma concentration against time for replicate.")
 ```
 
 `times` is `Array of (Time of F64)` and `concentration_1` is

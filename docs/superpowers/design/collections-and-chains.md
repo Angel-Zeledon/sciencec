@@ -343,7 +343,7 @@ Thirty-eight entries. Rust's `Iterator` has upward of seventy.
 
 ### 1.5 What is deliberately left out
 
-- **`for_each(f)`.** The language already has `for each x in xs:` (§4.3). A
+- **`for_each(f)`.** The language already has `for x in xs:` (§4.3). A
   side-effecting terminal is a second spelling of an existing statement — and §1
   names an effect discipline as part of what Science is betting on. Standardising
   a side-effect combinator *before* the effect system arrives is the wrong order.
@@ -615,14 +615,14 @@ Two alternatives were considered and rejected:
 
 ### 4.2 `for each` borrows
 
-**AMENDMENT 11: `for each x in xs:` desugars to `xs.iterate()`** — it borrows. To
+**AMENDMENT 11: `for x in xs:` desugars to `xs.iterate()`** — it borrows. To
 consume, the user writes it:
 
 ```science
-for each doc in docs:                        # borrows; docs is usable afterwards
-    println(doc.title)
+for doc in docs:                        # borrows; docs is usable afterwards
+    print(doc.title)
 
-for each doc in docs.iterate_consuming():    # moves docs; docs is gone
+for doc in docs.iterate_consuming():    # moves docs; docs is gone
     archive(doc)
 ```
 
@@ -746,10 +746,10 @@ spec rather than an addition this note is asking for.
 ### 5.4 What every collection owes the chain API
 
 Each collection carries the same three source methods as **inherent** methods
-(§4.4's `has methods`), not through a trait:
+(§4.4's `has`), not through a trait:
 
 ```science
-Array of T has methods:
+Array of T has:
     def iterate(borrowed self) -> ArrayIterate of T
     def iterate_mutably(mutable borrowed self) -> ArrayIterateMutably of T
     def iterate_consuming(self) -> ArrayIterateConsuming of T
@@ -758,7 +758,7 @@ Array of T has methods:
 `Map` yields `Entry of (K, V)` and additionally offers `keys()`, `values()` and
 `values_mutably()`. `Set` yields its elements. `String` offers `characters()` and
 `lines()` as sources. `Range` is not a container and implements `Iterate`
-directly (**AMENDMENT 14**), which is what makes `for each i in 0..n:` the same
+directly (**AMENDMENT 14**), which is what makes `for i in 0..n:` the same
 construct as everything else rather than a special case in the parser.
 
 F0 has no generic "iterable" trait, on purpose: nothing in F0 is generic over
@@ -942,7 +942,7 @@ in an existing chain and nothing else about the chain changes:
 ```science
 rows.iterate()
     .parallel()
-    .keep(each.weight is above 0.0)
+    .keep(each.weight > 0.0)
     .map(row giving score(encoder, row))
     .collect()
 ```
@@ -1169,7 +1169,7 @@ several sit in another designer's territory and are flagged for routing.
 9. **`Map` and `Set` iterate in insertion order**, for the reproducibility
    §5.1 promises. *(Library.)*
 10. **Add `Set of T` to §8's library list.** *(Library.)*
-11. **`for each x in xs:` desugars to `xs.iterate()`** — it borrows; consuming is
+11. **`for x in xs:` desugars to `xs.iterate()`** — it borrows; consuming is
     written. *(Syntax / library.)*
 12. **Methods taking `self` by value are automatically excluded from `any Trait`
     vtables**, with a diagnostic instead of a `Sized` bound the user must write.

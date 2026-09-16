@@ -357,7 +357,7 @@ def erf of T(x: T) -> T where T: Float
 
 # Polynomials carry their coefficient type. `evaluate` rather than `at`,
 # because `at` is reserved by the comparison phrases (§3).
-Polynomial of T has methods:
+Polynomial of T has:
     def evaluate(self, x: T) -> T where T: Float
 
 # An ODE solve returns an error because a stiff problem can fail to converge,
@@ -582,9 +582,9 @@ Claimed here per §0.2, operating on `data-io.md`'s `Frame of R`.
 def mean of T(values: borrowed Array of T) -> (T, EmptyInput?)
     where T: Float
 
-# `Distribution` is a trait with an associated type for the sample, which is
+# `Distribution` is an interface with an associated type for the sample, which
 # what lets a discrete distribution sample an Int and a continuous one an F64.
-trait Distribution:
+interface Distribution:
     type Sample
     def pdf(self, x: Self.Sample) -> F64
     def cdf(self, x: Self.Sample) -> F64

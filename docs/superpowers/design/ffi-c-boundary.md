@@ -269,7 +269,7 @@ type CudnnStatus:
 
 CudnnStatus implements ffi.CLayout
 
-CudnnStatus has methods:
+CudnnStatus has:
     const SUCCESS be CudnnStatus(raw: 0)
     const NOT_INITIALIZED be CudnnStatus(raw: 1)
     const ALLOC_FAILED be CudnnStatus(raw: 2)

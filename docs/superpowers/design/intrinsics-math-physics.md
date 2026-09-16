@@ -30,6 +30,43 @@ not the lists; the lists exist so that the boundaries have something to cut.
 
 ---
 
+
+## 0.1 A gap this note found by needing it five times
+
+Five of the worked examples below wanted a **closure with more than one
+statement in it** — a `let` naming a subexpression, then the result. They were
+written `let f be def(x: F64) -> F64:` with an indented body, which reads well
+and **is not a form the language has**: `def-and-lambda.md` §4 keeps `each` and
+`giving` and rejects a third closure form, and `sciencec` answers that spelling
+with `SC0105`.
+
+They are written with `giving` now, which takes one expression, so every
+interior `let` is substituted into the expression that used it. The cost is the
+point:
+
+```science
+# What the physics wanted:
+#     let exponent be h * c / (wavelength * k * t)
+#     2.0 * h * c * c / (wavelength.powi(5) * exponent.expm1())
+
+let spectral be wavelength giving (
+    2.0 * h * c * c
+        / (wavelength.powi(5) * (h * c / (wavelength * k * t)).expm1()))
+```
+
+`exponent` was a **name for a quantity a physicist recognises**, and
+substituting it away is the kind of loss a scientific language should not be
+cheerful about. The alternative available today is to hoist the closure into a
+named `def` and pass every captured value as a parameter — five of them here,
+which is worse.
+
+**This note does not ask for a third closure form.** §4 of that note argued the
+case and the argument does not weaken because this note found it inconvenient.
+What this section does is record the evidence: five sites, every one numerical,
+every one naming an intermediate quantity. §4.5 of that note is where "the real
+gap, and the thing that does fit" is discussed, and this belongs there as a data
+point rather than here as a counter-argument.
+
 ## 1. The three tiers, defined so they cannot be confused
 
 ### 1.1 The tiers
@@ -1141,9 +1178,9 @@ def planck_total(temperature: Temperature of F64) -> (Irradiance of F64, Error?)
     let c be SPEED_OF_LIGHT.magnitude()
     let k be BOLTZMANN.magnitude()
 
-    let spectral be def(wavelength: F64) -> F64:
-        let exponent be h * c / (wavelength * k * t)
-        2.0 * h * c * c / (wavelength.powi(5) * exponent.expm1())
+    let spectral be wavelength giving (
+        2.0 * h * c * c
+            / (wavelength.powi(5) * (h * c / (wavelength * k * t)).expm1()))
 
     let total, err be integrate(
         spectral,
@@ -1279,12 +1316,11 @@ def lorenz() -> (OdeSolution of (F64, 3), Error?):
     let rho be 28.0
     let beta be 8.0 / 3.0
 
-    let rhs be def(t: F64, s: borrowed Vector of (F64, 3)) -> Vector of (F64, 3):
-        [
-            sigma * (s[1] - s[0]),
-            s[0] * (rho - s[2]) - s[1],
-            s[0] * s[1] - beta * s[2],
-        ]
+    let rhs be (t, s) giving [
+        sigma * (s[1] - s[0]),
+        s[0] * (rho - s[2]) - s[1],
+        s[0] * s[1] - beta * s[2],
+    ]
 
     let problem be OdeProblem.new(rhs, start: [1.0, 1.0, 1.0], span: (0.0, 40.0))
 
@@ -1534,8 +1570,7 @@ use physics.constants (GRAVITATIONAL)
 def orbital_radius(period: F64, central_mass: F64) -> (F64, Error?):
     let mu be GRAVITATIONAL.magnitude() * central_mass
 
-    let residual be def(r: F64) -> F64:
-        2.0 * F64.PI * (r * r * r / mu).sqrt() - period
+    let residual be r giving 2.0 * F64.PI * (r * r * r / mu).sqrt() - period
 
     let bracket, err be Bracket.new(1.0e5, 1.0e12, residual)
     if err?:
@@ -1956,17 +1991,14 @@ def double_pendulum() -> (Array of PhaseSpacePoint of (F64, 2), Error?):
     let l2 be 1.0<m>
     let g be 9.80665<m/s^2>
 
-    let kinetic be def(q: borrowed Vector of (F64, 2),
-                            qdot: borrowed Vector of (F64, 2)) -> Energy of F64:
-        let t1 be 0.5 * (m1 + m2) * l1 * l1 * qdot[0] * qdot[0]
-        let t2 be 0.5 * m2 * l2 * l2 * qdot[1] * qdot[1]
-        let cross be m2 * l1 * l2 * qdot[0] * qdot[1] * (q[0] - q[1]).cos()
-        t1 + t2 + cross
+    let kinetic be (q, qdot) giving (
+        0.5 * (m1 + m2) * l1 * l1 * qdot[0] * qdot[0]
+            + 0.5 * m2 * l2 * l2 * qdot[1] * qdot[1]
+            + m2 * l1 * l2 * qdot[0] * qdot[1] * (q[0] - q[1]).cos())
 
-    let potential be def(q: borrowed Vector of (F64, 2)) -> Energy of F64:
-        let v1 be -(m1 + m2) * g * l1 * q[0].cos()
-        let v2 be -m2 * g * l2 * q[1].cos()
-        v1 + v2
+    let potential be q giving (
+        -(m1 + m2) * g * l1 * q[0].cos()
+            - m2 * g * l2 * q[1].cos())
 
     let lagrangian be lagrangian_from_energies(
         kinetic, potential, scaling: Scaling.radians_and(l1))

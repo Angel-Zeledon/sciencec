@@ -64,12 +64,32 @@ disagrees with it says so explicitly and gives the reason.
 | `SC0300`–`SC0399` | Ownership and regions |
 | `SC0400`–`SC0499` | Codegen and linking |
 | `SC0500`–`SC0799` | Types and traits, continued |
+| `SC0900`–`SC0999` | **Tooling.** Not the compiler: a diagnostic from a program that reads Science rather than compiles it. |
+
+The tooling band is not in §9 of the core spec, and is recorded here because
+`science-fmt` had already taken `SC0900` and `SC0901` with no band to take them
+from. A formatter's complaint is not a compiler's: `SC0900` is the formatter
+finding that its own output does not parse back to the program it was given,
+and `SC0901` is an unmatched `# fmt: off`. Neither can ever be reported by
+`check`, and putting them in a phase range would make the ranges mean less.
+**This needs ratifying in §9**, which is a spec change this file cannot make.
 
 **Check this table before allocating a code.** Five of these notes were written
 in parallel and four collisions resulted — `SC0010` against the shipped lexer,
 `SC0150`–`SC0159` claimed twice, `SC0251` and `SC0255` claimed twice each. Every
 one of them was invisible to the note that caused it, because each had honestly
 checked against everything that existed when it started.
+
+**A sixth, and it is the same shape as the fifth.** `ffi-c-boundary.md`'s
+allocation row claimed `SC0410`–`SC0461`, which swallowed the whole of
+`python-interop.md`'s `SC0450`–`SC0457`. The partition below had already
+resolved this — it gives `ffi-c-boundary.md` `SC0410`–`SC0449` and
+`SC0460`–`SC0461`, and says in as many words that it *"supersedes the
+sub-range claims inside those two notes"* — and the row was never narrowed to
+match. Found by scanning the table against itself rather than by reading it.
+**Both the fifth and the sixth were a resolved conflict whose resolution was
+written somewhere the table did not reach**, which is the failure this section
+should now expect rather than be surprised by.
 
 **A fifth, found later.** `SC0458` was claimed by `script-mode.md` *and* by `python-interop.md`'s `SC0450`–`SC0458` block. `python-from-science.md` §9 had already noticed and written the resolution down — the code goes to `script-mode.md` — and the table above was never narrowed to match. It is now `SC0450`–`SC0457`, which is also the highest code that note actually uses. Found by `codegen-and-linking.md` while checking its own neighbours, which is the only way any of these five were ever found.
 
@@ -119,7 +139,7 @@ migration is written next to the other keyword migrations. **Both `SC0119` and
 | `effects.md` | — | — | `SC0214`–`SC0219` | — | — | — |
 | `collections-and-chains.md` | — | — | — | `SC0271`–`SC0273` | `SC0331`–`SC0332` | — |
 | `models-and-inference.md` | — | — | — | `SC0251`, `SC0263`–`SC0264` | — | — |
-| `ffi-c-boundary.md` | — | — | — | — | `SC0301`–`SC0302`, `SC0380` | `SC0410`–`SC0461` |
+| `ffi-c-boundary.md` | — | — | — | — | `SC0301`–`SC0302`, `SC0380` | `SC0410`–`SC0449`, `SC0460`–`SC0461` |
 | `rust-interop.md` | — | `SC0145`–`SC0149` | — | — | — | `SC0462`–`SC0470` |
 | `native-dependencies.md` | — | — | — | — | — | `SC0471`–`SC0479` |
 | `rust-binding-generation.md` | — | — | — | — | — | `SC0480`–`SC0489` |

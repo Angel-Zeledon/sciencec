@@ -791,7 +791,7 @@ error message above. Not worth it.
 Two methods, named so the difference is unmissable:
 
 ```science
-Tensor of (T, DIMS, D) has methods:
+Tensor of (T, DIMS, D) has:
     # Consumes self. The source allocation is freed after the transfer.
     def moved_to of D2(self, device: Device of D2) -> Tensor of (T, DIMS, D2)
 
