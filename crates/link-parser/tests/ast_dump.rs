@@ -1,9 +1,10 @@
 //! Snapshot tests for the AST dump.
 //!
-//! These build nodes by hand rather than through the parser, on purpose: the
-//! dump has to be legible for the whole tree, including the parts the parser
-//! does not build yet (traits, impls, expressions, patterns). Building them
-//! here also pins the shape of the node types.
+//! These build nodes by hand rather than through the parser, on purpose. A
+//! dump built from parsed source can only show trees the parser happens to
+//! produce, so it can never catch a node the dump renders wrongly but the
+//! parser never builds. Writing the nodes out also pins the shape of the types
+//! themselves, which the other crates read as a contract.
 
 use link_diagnostics::{FileId, Span};
 use link_lexer::{IntBase, NumSuffix};

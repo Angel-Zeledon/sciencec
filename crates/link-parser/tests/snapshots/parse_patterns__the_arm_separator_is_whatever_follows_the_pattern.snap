@@ -2,8 +2,8 @@
 source: crates/link-parser/tests/parse_patterns.rs
 expression: "parse_body(r#\"fn f(p: &Point) -> Int:\n    match p:\n        Point(x: x, y: y): x\n\"#)"
 ---
-Block @28..66
-  tail: Match @28..66
+Block @28..65
+  tail: Match @28..65
     scrutinee: Path `p` @34..35
     arms
       Arm @45..65

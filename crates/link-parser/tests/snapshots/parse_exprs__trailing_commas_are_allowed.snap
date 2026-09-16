@@ -3,7 +3,7 @@ source: crates/link-parser/tests/parse_exprs.rs
 expression: "parse_source(r#\"fn main():\n    let a = f(\n        1,\n        2,\n    )\n    let b = Doc(\n        title: \"a\",\n    )\n    let c = (1, 2,)\n\"#)"
 ---
 Module @0..117
-  Fn `main` @0..117
+  Fn `main` @0..116
     body: Block @15..116
       Let `a` @15..53
         value: Call @23..53

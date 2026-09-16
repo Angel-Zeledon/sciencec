@@ -3,11 +3,11 @@ source: crates/link-parser/tests/parse_stmts.rs
 expression: "parse_body(r#\"fn f(items: &Array[Int]) -> Option[Int]:\n    for item in items:\n        if item % 2 != 0:\n            continue\n        return Some(item)\n    loop:\n        break\n    return\n\"#)"
 ---
 Block @45..171
-  For @45..141
+  For @45..136
     pattern: Binding `item` @49..53
     iter: Path `items` @57..62
     body: Block @72..136
-      If @72..119
+      If @72..110
         cond: Binary `!=` @75..88
           lhs: Binary `%` @75..83
             lhs: Path `item` @75..79
@@ -20,7 +20,7 @@ Block @45..171
           callee: Path `Some` @126..130
           args
             Path `item` @131..135
-  Loop @141..165
+  Loop @141..160
     body: Block @155..160
       Break @155..160
   Return @165..171

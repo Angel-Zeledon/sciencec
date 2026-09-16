@@ -3,7 +3,7 @@ source: crates/link-parser/tests/parse_exprs.rs
 expression: "parse_source(r#\"fn render(token: &Token, format: &Format) -> String:\n    match token:\n        Number(value):\n            match format:\n                Json: value.json()\n                Plain: value.text()\n        Eof: \"\"\n\"#)"
 ---
 Module @0..206
-  Fn `render` @0..206
+  Fn `render` @0..205
     params
       Param `token` @10..23
         type: Ref @17..23
@@ -12,15 +12,15 @@ Module @0..206
         type: Ref @33..40
           Path `Format` @34..40
     ret: Path `String` @45..51
-    body: Block @57..206
-      tail: Match @57..206
+    body: Block @57..205
+      tail: Match @57..205
         scrutinee: Path `token` @63..68
         arms
-          Arm @78..198
+          Arm @78..189
             pattern: Variant `Number` @78..91
               Binding `value` @85..90
-            body: Block @105..198
-              tail: Match @105..198
+            body: Block @105..189
+              tail: Match @105..189
                 scrutinee: Path `format` @111..117
                 arms
                   Arm @135..153

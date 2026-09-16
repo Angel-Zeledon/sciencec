@@ -3,7 +3,7 @@ source: crates/link-parser/tests/parse_traits.rs
 expression: "parse_source(r#\"impl Summarize for Pair[A, B] where A: Clone, B: Clone:\n    fn summarize(&self) -> String:\n        \"pair\"\n\"#)"
 ---
 Module @0..106
-  Impl @0..106
+  Impl @0..105
     trait: Bound `Summarize` @5..14
     type: Path `Pair` @19..29
       generics of `Pair`
@@ -19,7 +19,7 @@ Module @0..106
         bounds
           Bound `Clone` @49..54
     methods
-      Fn `summarize` @60..106
+      Fn `summarize` @60..105
         receiver: &self @73..78
         ret: Path `String` @83..89
         body: Block @99..105

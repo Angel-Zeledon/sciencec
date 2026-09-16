@@ -1,11 +1,11 @@
-//! Snapshot tests for the first batch of the parser: top-level `fn`, `struct`
-//! and `enum` declarations, `use`, type expressions, block structure, and
-//! error recovery.
+//! Snapshot tests for declarations: top-level `fn`, `struct` and `enum`, `use`,
+//! type expressions, block structure, and error recovery.
 //!
-//! Statement and expression parsing lands in the next batch, so every block
-//! below comes out empty. What these tests pin down is that the block's
-//! *structure* is consumed correctly and that its span covers the right
-//! source.
+//! These are the tests written against hand-built token streams, so what they
+//! pin down is the exact sequence a declaration consumes. `trait` and `impl`
+//! live in `parse_traits.rs`, and everything inside a block in `parse_exprs.rs`,
+//! `parse_stmts.rs` and `parse_patterns.rs`, all of them written against real
+//! source through the lexer.
 
 use link_lexer::TokenKind::*;
 

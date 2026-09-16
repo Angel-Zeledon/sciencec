@@ -131,13 +131,34 @@ impl<'t> Parser<'t> {
         self.token_at(0).span
     }
 
-    /// The span of the token just consumed, which is what closes a node.
+    /// The span of the token just consumed.
     fn prev_span(&self) -> Span {
         if self.pos == 0 {
             self.span()
         } else {
             self.tokens[self.pos - 1].span
         }
+    }
+
+    /// The span of the last consumed token that stands for written text, which
+    /// is what closes a node.
+    ///
+    /// `Newline`, `Indent` and `Dedent` are markers for a change in line
+    /// structure rather than for any text, and the lexer places them at the
+    /// start of the following line. Merging one into a node's span would
+    /// stretch that node past the last thing the programmer actually wrote,
+    /// and every diagnostic that points at the node would then underline a
+    /// line that has nothing to do with it.
+    fn last_text_span(&self) -> Span {
+        for token in self.tokens[..self.pos].iter().rev() {
+            if !matches!(
+                token.kind,
+                TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent
+            ) {
+                return token.span;
+            }
+        }
+        self.prev_span()
     }
 
     fn advance(&mut self) -> Token {
@@ -383,7 +404,7 @@ impl<'t> Parser<'t> {
             return None;
         };
 
-        Some(Item { kind, span: start.merge(self.prev_span()) })
+        Some(Item { kind, span: start.merge(self.last_text_span()) })
     }
 
     fn reject_pub(&mut self, pub_span: Option<Span>, what: &str) {
@@ -435,7 +456,7 @@ impl<'t> Parser<'t> {
             ret,
             where_clause,
             body,
-            span: start.merge(self.prev_span()),
+            span: start.merge(self.last_text_span()),
         })
     }
 
@@ -488,13 +509,13 @@ impl<'t> Parser<'t> {
             (TokenKind::SelfValue, _) => {
                 self.advance();
                 self.advance();
-                Some(SelfParam { kind: SelfKind::Ref, span: start.merge(self.prev_span()) })
+                Some(SelfParam { kind: SelfKind::Ref, span: start.merge(self.last_text_span()) })
             }
             (TokenKind::Mut, TokenKind::SelfValue) => {
                 self.advance();
                 self.advance();
                 self.advance();
-                Some(SelfParam { kind: SelfKind::RefMut, span: start.merge(self.prev_span()) })
+                Some(SelfParam { kind: SelfKind::RefMut, span: start.merge(self.last_text_span()) })
             }
             _ => None,
         }
@@ -505,7 +526,7 @@ impl<'t> Parser<'t> {
         let name = self.expect_ident()?;
         self.expect(&TokenKind::Colon, "`:`")?;
         let ty = self.parse_type();
-        Some(Param { name, ty, span: start.merge(self.prev_span()) })
+        Some(Param { name, ty, span: start.merge(self.last_text_span()) })
     }
 
     // --- structs and enums -----------------------------------------------
@@ -522,7 +543,7 @@ impl<'t> Parser<'t> {
             generics,
             where_clause,
             fields,
-            span: start.merge(self.prev_span()),
+            span: start.merge(self.last_text_span()),
         })
     }
 
@@ -532,7 +553,7 @@ impl<'t> Parser<'t> {
         let name = self.expect_ident()?;
         self.expect(&TokenKind::Colon, "`:`")?;
         let ty = self.parse_type();
-        Some(FieldDef { is_pub, name, ty, span: start.merge(self.prev_span()) })
+        Some(FieldDef { is_pub, name, ty, span: start.merge(self.last_text_span()) })
     }
 
     fn parse_enum(&mut self, is_pub: bool, start: Span) -> Option<EnumDecl> {
@@ -547,7 +568,7 @@ impl<'t> Parser<'t> {
             generics,
             where_clause,
             variants,
-            span: start.merge(self.prev_span()),
+            span: start.merge(self.last_text_span()),
         })
     }
 
@@ -565,7 +586,7 @@ impl<'t> Parser<'t> {
             }
             self.expect(&TokenKind::RParen, "`)`");
         }
-        Some(VariantDef { name, payload, span: start.merge(self.prev_span()) })
+        Some(VariantDef { name, payload, span: start.merge(self.last_text_span()) })
     }
 
     // --- use -------------------------------------------------------------
@@ -590,7 +611,7 @@ impl<'t> Parser<'t> {
             None
         };
         self.expect_line_end();
-        Some(UseDecl { path, imports, span: start.merge(self.prev_span()) })
+        Some(UseDecl { path, imports, span: start.merge(self.last_text_span()) })
     }
 
     // --- generics and bounds ---------------------------------------------
@@ -615,7 +636,7 @@ impl<'t> Parser<'t> {
             } else {
                 Vec::new()
             };
-            params.push(GenericParam { name, bounds, span: start.merge(self.prev_span()) });
+            params.push(GenericParam { name, bounds, span: start.merge(self.last_text_span()) });
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
             }
@@ -660,7 +681,7 @@ impl<'t> Parser<'t> {
                 break;
             }
             let bounds = self.parse_bounds();
-            predicates.push(WherePredicate { ty, bounds, span: start.merge(self.prev_span()) });
+            predicates.push(WherePredicate { ty, bounds, span: start.merge(self.last_text_span()) });
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
             }
@@ -691,7 +712,7 @@ impl<'t> Parser<'t> {
         let mut generics = Vec::new();
         if self.at(&TokenKind::LBracket) {
             generics = self.parse_generic_args();
-            span = span.merge(self.prev_span());
+            span = span.merge(self.last_text_span());
         }
         Some(PathSegment { name, generics, span })
     }
@@ -727,7 +748,7 @@ impl<'t> Parser<'t> {
                 let inner = self.parse_type();
                 Type {
                     kind: TypeKind::Ref { mutable, inner: Box::new(inner) },
-                    span: start.merge(self.prev_span()),
+                    span: start.merge(self.last_text_span()),
                 }
             }
             TokenKind::Dyn => {
@@ -735,7 +756,7 @@ impl<'t> Parser<'t> {
                 match self.parse_type_bound() {
                     Some(bound) => Type {
                         kind: TypeKind::Dyn(bound),
-                        span: start.merge(self.prev_span()),
+                        span: start.merge(self.last_text_span()),
                     },
                     None => Type { kind: TypeKind::Error, span: start },
                 }
@@ -773,7 +794,7 @@ impl<'t> Parser<'t> {
     fn parse_paren_type(&mut self, start: Span) -> Type {
         self.advance(); // `(`
         if self.eat(&TokenKind::RParen).is_some() {
-            return Type { kind: TypeKind::Unit, span: start.merge(self.prev_span()) };
+            return Type { kind: TypeKind::Unit, span: start.merge(self.last_text_span()) };
         }
 
         let first = self.parse_type();
@@ -793,7 +814,7 @@ impl<'t> Parser<'t> {
             elems.push(self.parse_type());
         }
         self.expect(&TokenKind::RParen, "`)`");
-        Type { kind: TypeKind::Tuple(elems), span: start.merge(self.prev_span()) }
+        Type { kind: TypeKind::Tuple(elems), span: start.merge(self.last_text_span()) }
     }
 
     /// Tokens that close or separate a list, which recovery must never eat.
@@ -917,13 +938,16 @@ impl<'t> Parser<'t> {
 
     /// The single expression of an inline block.
     ///
-    /// §4.2 makes a statement here an error. `return`, `break`, `continue` and
-    /// an assignment are still accepted: the spec's own examples use all four
-    /// inline — `if item > best: best = item` in §4.3, `if n < 0: return -1`
-    /// and `loop: break` in the corpus — and each of them is an expression of
-    /// type `Never` (§4.5) in everything but where the AST files it. A `let`
-    /// is the one that has no such reading, and is exactly the example §4.2
-    /// rejects.
+    /// §4.2 makes a statement here an error and gives `fn f(): let x = 1` as
+    /// the example, which is what `LK0109` reports.
+    ///
+    /// Assignment, `return`, `break` and `continue` are still accepted, and the
+    /// spec writes all four inline itself: `if item > best: best = item` in
+    /// §4.3, and `if n < 0: return -1` and `loop: break` in the corpus. Each of
+    /// them is an expression of type `Never` (§4.5) in every respect except
+    /// where the AST happens to file it — `StmtKind` rather than `ExprKind` —
+    /// and a filing decision is not what §4.2 is ruling on. A `let` has no such
+    /// reading: it binds a name in a scope, and an inline body has none.
     fn parse_inline_block(&mut self) -> Block {
         let start = self.span();
         if !self.at_stmt_start() {
@@ -1007,19 +1031,19 @@ impl<'t> Parser<'t> {
                 // binding with no value has nothing to infer from.
                 self.expect(&TokenKind::Eq, "`=`")?;
                 let value = self.parse_expr();
-                let span = start.merge(self.prev_span());
+                let span = start.merge(self.last_text_span());
                 Some(Stmt { kind: StmtKind::Let(LetStmt { mutable, name, ty, value, span }), span })
             }
             TokenKind::Return => {
                 self.advance();
                 let value = if self.at_expr_start() { Some(self.parse_expr()) } else { None };
-                let span = start.merge(self.prev_span());
+                let span = start.merge(self.last_text_span());
                 Some(Stmt { kind: StmtKind::Return(value), span })
             }
             TokenKind::Break => {
                 self.advance();
                 let value = if self.at_expr_start() { Some(self.parse_expr()) } else { None };
-                let span = start.merge(self.prev_span());
+                let span = start.merge(self.last_text_span());
                 Some(Stmt { kind: StmtKind::Break(value), span })
             }
             TokenKind::Continue => {
@@ -1030,7 +1054,7 @@ impl<'t> Parser<'t> {
                 let expr = self.parse_expr();
                 if self.eat(&TokenKind::Eq).is_some() {
                     let value = self.parse_expr();
-                    let span = start.merge(self.prev_span());
+                    let span = start.merge(self.last_text_span());
                     return Some(Stmt { kind: StmtKind::Assign { target: expr, value }, span });
                 }
                 let span = expr.span;
@@ -1100,7 +1124,7 @@ impl<'t> Parser<'t> {
             }
             self.advance();
             let rhs = self.parse_binary(prec + 1);
-            let span = start.merge(self.prev_span());
+            let span = start.merge(self.last_text_span());
             lhs = Expr {
                 kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) },
                 span,
@@ -1115,7 +1139,7 @@ impl<'t> Parser<'t> {
         let mut expr = self.parse_unary();
         while self.eat(&TokenKind::As).is_some() {
             let ty = self.parse_type();
-            let span = start.merge(self.prev_span());
+            let span = start.merge(self.last_text_span());
             expr = Expr { kind: ExprKind::Cast { expr: Box::new(expr), ty }, span };
         }
         expr
@@ -1132,20 +1156,20 @@ impl<'t> Parser<'t> {
             TokenKind::Minus => {
                 self.advance();
                 let operand = self.parse_unary();
-                let span = start.merge(self.prev_span());
+                let span = start.merge(self.last_text_span());
                 Expr { kind: ExprKind::Unary { op: UnaryOp::Neg, operand: Box::new(operand) }, span }
             }
             TokenKind::Not => {
                 self.advance();
                 let operand = self.parse_unary();
-                let span = start.merge(self.prev_span());
+                let span = start.merge(self.last_text_span());
                 Expr { kind: ExprKind::Unary { op: UnaryOp::Not, operand: Box::new(operand) }, span }
             }
             TokenKind::Amp => {
                 self.advance();
                 let mutable = self.eat(&TokenKind::Mut).is_some();
                 let inner = self.parse_unary();
-                let span = start.merge(self.prev_span());
+                let span = start.merge(self.last_text_span());
                 Expr { kind: ExprKind::Ref { mutable, expr: Box::new(inner) }, span }
             }
             _ => self.parse_postfix(),
@@ -1163,14 +1187,14 @@ impl<'t> Parser<'t> {
                 TokenKind::Dot => {
                     self.advance();
                     let Some(name) = self.expect_ident() else {
-                        return error_expr(start.merge(self.prev_span()));
+                        return error_expr(start.merge(self.last_text_span()));
                     };
                     expr = if self.at(&TokenKind::LParen) {
                         if self.at_named_args() {
-                            self.qualified_struct_lit(expr, name, start)
+                            self.struct_lit(expr, Some(name), start)
                         } else {
                             let args = self.parse_call_args();
-                            let span = start.merge(self.prev_span());
+                            let span = start.merge(self.last_text_span());
                             Expr {
                                 kind: ExprKind::MethodCall {
                                     receiver: Box::new(expr),
@@ -1182,16 +1206,16 @@ impl<'t> Parser<'t> {
                             }
                         }
                     } else {
-                        let span = start.merge(self.prev_span());
+                        let span = start.merge(self.last_text_span());
                         Expr { kind: ExprKind::Field { base: Box::new(expr), name }, span }
                     };
                 }
                 TokenKind::LParen => {
                     expr = if self.at_named_args() {
-                        self.struct_lit(expr, start)
+                        self.struct_lit(expr, None, start)
                     } else {
                         let args = self.parse_call_args();
-                        let span = start.merge(self.prev_span());
+                        let span = start.merge(self.last_text_span());
                         Expr { kind: ExprKind::Call { callee: Box::new(expr), args }, span }
                     };
                 }
@@ -1207,7 +1231,7 @@ impl<'t> Parser<'t> {
                     // the result of a call or a field rather than a name.
                     if instantiable_path(&expr) {
                         let generics = self.parse_generic_args();
-                        let end = self.prev_span();
+                        let end = self.last_text_span();
                         if let ExprKind::Path(path) = &mut expr.kind {
                             if let Some(segment) = path.segments.last_mut() {
                                 segment.generics = generics;
@@ -1220,7 +1244,7 @@ impl<'t> Parser<'t> {
                         self.advance();
                         let index = self.parse_expr();
                         self.expect(&TokenKind::RBracket, "`]`");
-                        let span = start.merge(self.prev_span());
+                        let span = start.merge(self.last_text_span());
                         expr = Expr {
                             kind: ExprKind::Index { base: Box::new(expr), index: Box::new(index) },
                             span,
@@ -1229,7 +1253,7 @@ impl<'t> Parser<'t> {
                 }
                 TokenKind::Question => {
                     self.advance();
-                    let span = start.merge(self.prev_span());
+                    let span = start.merge(self.last_text_span());
                     expr = Expr { kind: ExprKind::Try(Box::new(expr)), span };
                 }
                 _ => break,
@@ -1240,24 +1264,10 @@ impl<'t> Parser<'t> {
     }
 
     /// `Doc(title: "a")`: the argument list is named, so this is construction.
-    fn struct_lit(&mut self, callee: Expr, start: Span) -> Expr {
-        let ExprKind::Path(path) = callee.kind else {
-            let span = self.span();
-            self.error(
-                codes::MISPLACED_NAMED_ARGUMENT,
-                "named arguments construct a struct, so they need a struct's name in front of them",
-                span,
-            );
-            self.parse_field_inits();
-            return error_expr(start.merge(self.prev_span()));
-        };
-        let fields = self.parse_field_inits();
-        let span = start.merge(self.prev_span());
-        Expr { kind: ExprKind::StructLit { path, fields }, span }
-    }
-
-    /// The same, with the struct named through a path: `text.Doc(title: "a")`.
-    fn qualified_struct_lit(&mut self, base: Expr, name: Ident, start: Span) -> Expr {
+    ///
+    /// `extra` is the segment of a qualified name, as in `text.Doc(title: "a")`,
+    /// where the postfix loop has already taken the `.` and the name.
+    fn struct_lit(&mut self, base: Expr, extra: Option<Ident>, start: Span) -> Expr {
         let ExprKind::Path(mut path) = base.kind else {
             let span = self.span();
             self.error(
@@ -1266,13 +1276,15 @@ impl<'t> Parser<'t> {
                 span,
             );
             self.parse_field_inits();
-            return error_expr(start.merge(self.prev_span()));
+            return error_expr(start.merge(self.last_text_span()));
         };
-        let segment_span = name.span;
-        path.segments.push(PathSegment { name, generics: Vec::new(), span: segment_span });
-        path.span = path.span.merge(segment_span);
+        if let Some(name) = extra {
+            let segment_span = name.span;
+            path.segments.push(PathSegment { name, generics: Vec::new(), span: segment_span });
+            path.span = path.span.merge(segment_span);
+        }
         let fields = self.parse_field_inits();
-        let span = start.merge(self.prev_span());
+        let span = start.merge(self.last_text_span());
         Expr { kind: ExprKind::StructLit { path, fields }, span }
     }
 
@@ -1311,7 +1323,7 @@ impl<'t> Parser<'t> {
                 .filter(|_| self.expect(&TokenKind::Colon, "`:`").is_some())
                 .map(|name| {
                     let value = self.parse_expr();
-                    FieldInit { name, value, span: start.merge(self.prev_span()) }
+                    FieldInit { name, value, span: start.merge(self.last_text_span()) }
                 });
             match parsed {
                 Some(field) => fields.push(field),
@@ -1357,13 +1369,13 @@ impl<'t> Parser<'t> {
                 self.advance();
                 let cond = self.parse_expr();
                 let body = self.parse_block();
-                let span = start.merge(self.prev_span());
+                let span = start.merge(self.last_text_span());
                 Expr { kind: ExprKind::While { cond: Box::new(cond), body }, span }
             }
             TokenKind::Loop => {
                 self.advance();
                 let body = self.parse_block();
-                let span = start.merge(self.prev_span());
+                let span = start.merge(self.last_text_span());
                 Expr { kind: ExprKind::Loop { body }, span }
             }
             TokenKind::For => {
@@ -1372,7 +1384,7 @@ impl<'t> Parser<'t> {
                 self.expect(&TokenKind::In, "`in`");
                 let iter = self.parse_expr();
                 let body = self.parse_block();
-                let span = start.merge(self.prev_span());
+                let span = start.merge(self.last_text_span());
                 Expr { kind: ExprKind::For { pattern, iter: Box::new(iter), body }, span }
             }
             _ => {
@@ -1397,7 +1409,7 @@ impl<'t> Parser<'t> {
     fn parse_paren_expr(&mut self, start: Span) -> Expr {
         self.advance(); // `(`
         if self.eat(&TokenKind::RParen).is_some() {
-            return Expr { kind: ExprKind::Unit, span: start.merge(self.prev_span()) };
+            return Expr { kind: ExprKind::Unit, span: start.merge(self.last_text_span()) };
         }
 
         let first = self.parse_expr();
@@ -1416,7 +1428,7 @@ impl<'t> Parser<'t> {
             elems.push(self.parse_expr());
         }
         self.expect(&TokenKind::RParen, "`)`");
-        Expr { kind: ExprKind::Tuple(elems), span: start.merge(self.prev_span()) }
+        Expr { kind: ExprKind::Tuple(elems), span: start.merge(self.last_text_span()) }
     }
 
     /// `if cond: ..` with an optional `else`.
@@ -1444,7 +1456,7 @@ impl<'t> Parser<'t> {
             None
         };
 
-        let span = start.merge(self.prev_span());
+        let span = start.merge(self.last_text_span());
         Expr {
             kind: ExprKind::If(IfExpr { cond: Box::new(cond), then_branch, else_branch, span }),
             span,
@@ -1456,7 +1468,7 @@ impl<'t> Parser<'t> {
         self.advance(); // `match`
         let scrutinee = self.parse_expr();
         let arms = self.parse_indented_body(Self::parse_match_arm);
-        let span = start.merge(self.prev_span());
+        let span = start.merge(self.last_text_span());
         Expr {
             kind: ExprKind::Match(MatchExpr { scrutinee: Box::new(scrutinee), arms, span }),
             span,
@@ -1470,7 +1482,7 @@ impl<'t> Parser<'t> {
         let start = self.span();
         let pattern = self.parse_pattern();
         let body = self.parse_arm_body();
-        Some(MatchArm { pattern, body, span: start.merge(self.prev_span()) })
+        Some(MatchArm { pattern, body, span: start.merge(self.last_text_span()) })
     }
 
     // --- patterns --------------------------------------------------------
@@ -1486,7 +1498,7 @@ impl<'t> Parser<'t> {
         while self.eat(&TokenKind::Pipe).is_some() {
             alts.push(self.parse_pattern_primary());
         }
-        Pattern { kind: PatternKind::Or(alts), span: start.merge(self.prev_span()) }
+        Pattern { kind: PatternKind::Or(alts), span: start.merge(self.last_text_span()) }
     }
 
     /// One alternative: a literal, `_`, a binding, a variant, a struct or a
@@ -1513,7 +1525,7 @@ impl<'t> Parser<'t> {
                 match self.expect_ident() {
                     Some(name) => Pattern {
                         kind: PatternKind::Binding { mutable: true, name },
-                        span: start.merge(self.prev_span()),
+                        span: start.merge(self.last_text_span()),
                     },
                     None => Pattern { kind: PatternKind::Error, span: start },
                 }
@@ -1532,7 +1544,7 @@ impl<'t> Parser<'t> {
                     } else {
                         PatternKind::Variant { path, elems: self.parse_pattern_list() }
                     };
-                    return Pattern { kind, span: start.merge(self.prev_span()) };
+                    return Pattern { kind, span: start.merge(self.last_text_span()) };
                 }
                 // A bare name is a binding until resolution says otherwise
                 // (§4.4). A qualified or generic one cannot be a binding, so
@@ -1543,7 +1555,7 @@ impl<'t> Parser<'t> {
                 } else {
                     PatternKind::Variant { path, elems: Vec::new() }
                 };
-                Pattern { kind, span: start.merge(self.prev_span()) }
+                Pattern { kind, span: start.merge(self.last_text_span()) }
             }
             _ => {
                 let found = describe(self.peek());
@@ -1564,7 +1576,7 @@ impl<'t> Parser<'t> {
     fn parse_paren_pattern(&mut self, start: Span) -> Pattern {
         self.advance(); // `(`
         if self.eat(&TokenKind::RParen).is_some() {
-            return Pattern { kind: PatternKind::Unit, span: start.merge(self.prev_span()) };
+            return Pattern { kind: PatternKind::Unit, span: start.merge(self.last_text_span()) };
         }
 
         let first = self.parse_pattern();
@@ -1581,7 +1593,7 @@ impl<'t> Parser<'t> {
             elems.push(self.parse_pattern());
         }
         self.expect(&TokenKind::RParen, "`)`");
-        Pattern { kind: PatternKind::Tuple(elems), span: start.merge(self.prev_span()) }
+        Pattern { kind: PatternKind::Tuple(elems), span: start.merge(self.last_text_span()) }
     }
 
     /// The positional payload of a variant pattern.
@@ -1613,7 +1625,7 @@ impl<'t> Parser<'t> {
                 .filter(|_| self.expect(&TokenKind::Colon, "`:`").is_some())
                 .map(|name| {
                     let pattern = self.parse_pattern();
-                    FieldPattern { name, pattern, span: start.merge(self.prev_span()) }
+                    FieldPattern { name, pattern, span: start.merge(self.last_text_span()) }
                 });
             match parsed {
                 Some(field) => fields.push(field),
@@ -1658,7 +1670,7 @@ impl<'t> Parser<'t> {
             supertraits,
             where_clause,
             methods,
-            span: start.merge(self.prev_span()),
+            span: start.merge(self.last_text_span()),
         })
     }
 
@@ -1707,7 +1719,7 @@ impl<'t> Parser<'t> {
             self_ty,
             where_clause,
             methods,
-            span: start.merge(self.prev_span()),
+            span: start.merge(self.last_text_span()),
         })
     }
 
@@ -2006,6 +2018,10 @@ mod tests {
             codes::EXPECTED_PATTERN,
             codes::MISPLACED_PUB,
             codes::MISPLACED_RECEIVER,
+            codes::STATEMENT_IN_INLINE_BLOCK,
+            codes::MISPLACED_NAMED_ARGUMENT,
+            codes::EXPECTED_TRAIT,
+            codes::EXPECTED_METHOD,
         ];
         for code in all {
             assert!(
@@ -2035,11 +2051,82 @@ mod tests {
             vec![TokenKind::Use, TokenKind::Comma, TokenKind::RParen],
             vec![TokenKind::Unknown('§'), TokenKind::Unknown('¿')],
             Vec::new(),
+            // Statements, expressions and patterns, each cut off mid-grammar.
+            vec![TokenKind::Fn, TokenKind::Ident("f".into()), TokenKind::LParen,
+                 TokenKind::RParen, TokenKind::Colon, TokenKind::Let],
+            vec![TokenKind::Fn, TokenKind::Ident("f".into()), TokenKind::LParen,
+                 TokenKind::RParen, TokenKind::Colon, TokenKind::Ident("a".into()),
+                 TokenKind::Plus],
+            vec![TokenKind::Fn, TokenKind::Ident("f".into()), TokenKind::LParen,
+                 TokenKind::RParen, TokenKind::Colon, TokenKind::Match],
+            vec![TokenKind::Fn, TokenKind::Ident("f".into()), TokenKind::LParen,
+                 TokenKind::RParen, TokenKind::Colon, TokenKind::Match,
+                 TokenKind::Ident("x".into()), TokenKind::Colon, TokenKind::Newline,
+                 TokenKind::Indent, TokenKind::Pipe, TokenKind::Pipe],
+            vec![TokenKind::Fn, TokenKind::Ident("f".into()), TokenKind::LParen,
+                 TokenKind::RParen, TokenKind::Colon, TokenKind::Ident("f".into()),
+                 TokenKind::LParen, TokenKind::Comma, TokenKind::Comma],
+            vec![TokenKind::Fn, TokenKind::Ident("f".into()), TokenKind::LParen,
+                 TokenKind::RParen, TokenKind::Colon, TokenKind::Newline,
+                 TokenKind::Indent, TokenKind::Colon, TokenKind::Colon],
+            vec![TokenKind::Trait, TokenKind::Ident("T".into()), TokenKind::Colon],
+            vec![TokenKind::Impl, TokenKind::For],
+            vec![TokenKind::Impl, TokenKind::Ident("T".into()), TokenKind::For],
         ];
         for kinds in garbage {
             let tokens = stream(kinds);
             let (_module, _diagnostics) = parse_module(&tokens, FileId(0));
         }
+    }
+
+    /// §4.4's table, read back out of `binary_op`. A row that loses an operator
+    /// to a typo would otherwise show up only as a wrong parse somewhere far
+    /// away.
+    #[test]
+    fn the_precedence_table_matches_the_spec() {
+        let rows: [&[TokenKind]; 9] = [
+            &[TokenKind::Or],
+            &[TokenKind::And],
+            &[TokenKind::EqEq, TokenKind::NotEq, TokenKind::Lt, TokenKind::Gt,
+              TokenKind::LtEq, TokenKind::GtEq],
+            &[TokenKind::Pipe],
+            &[TokenKind::Caret],
+            &[TokenKind::Amp],
+            &[TokenKind::Shl, TokenKind::Shr],
+            &[TokenKind::Plus, TokenKind::Minus],
+            &[TokenKind::Star, TokenKind::Slash, TokenKind::Percent],
+        ];
+        for (index, row) in rows.iter().enumerate() {
+            let expected = index as u8 + 1;
+            for kind in row.iter() {
+                let (_, prec) = binary_op(kind).expect("every operator in the table has a rung");
+                assert_eq!(prec, expected, "{} sits on the wrong rung", fixed_text(kind));
+            }
+        }
+        // `=` is a statement, not an operator, and must never gain a rung.
+        assert!(binary_op(&TokenKind::Eq).is_none(), "`=` is not in the precedence table");
+    }
+
+    /// A block's value is its last expression; a block ending in anything else
+    /// has none.
+    #[test]
+    fn a_block_takes_its_tail_from_the_last_expression() {
+        let file = FileId(0);
+        let expr = Stmt { kind: StmtKind::Expr(error_expr(span(0, 1))), span: span(0, 1) };
+        let jump = Stmt { kind: StmtKind::Continue, span: span(2, 3) };
+
+        let block = finish_block(vec![jump.clone(), expr.clone()], span(0, 0));
+        assert!(block.tail.is_some());
+        assert_eq!(block.stmts.len(), 1);
+        assert_eq!(block.span, Span::new(file, 0, 3));
+
+        let block = finish_block(vec![expr, jump], span(0, 0));
+        assert!(block.tail.is_none());
+        assert_eq!(block.stmts.len(), 2);
+
+        let empty = finish_block(Vec::new(), span(7, 9));
+        assert!(empty.tail.is_none());
+        assert_eq!(empty.span, Span::at(file, 7));
     }
 
     /// `synchronize` must always consume something when it is not already at a

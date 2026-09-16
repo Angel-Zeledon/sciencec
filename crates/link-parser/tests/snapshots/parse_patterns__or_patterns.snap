@@ -2,8 +2,8 @@
 source: crates/link-parser/tests/parse_patterns.rs
 expression: "parse_body(r#\"fn f(n: Int) -> String:\n    match n:\n        0 | 1 | 2: \"small\"\n        Symbol(',') | Symbol(';'): \"punctuation\"\n        _: \"large\"\n\"#)"
 ---
-Block @28..132
-  tail: Match @28..132
+Block @28..131
+  tail: Match @28..131
     scrutinee: Path `n` @34..35
     arms
       Arm @45..63

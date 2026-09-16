@@ -3,7 +3,7 @@ source: crates/link-parser/tests/parse_exprs.rs
 expression: "parse_source_allowing_errors(\"fn f():\\n    let a = *\\n    let b = 1\\n\")"
 ---
 Module @0..36
-  Fn `f` @0..36
+  Fn `f` @0..35
     body: Block @12..35
       Let `a` @12..21
         value: Error @20..21

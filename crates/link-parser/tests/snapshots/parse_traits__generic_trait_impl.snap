@@ -3,7 +3,7 @@ source: crates/link-parser/tests/parse_traits.rs
 expression: "parse_source(r#\"impl Swap[Pair[B, A]] for Pair[A, B]:\n    fn swapped(&self) -> Pair[B, A]:\n        Pair(first: self.second, second: self.first)\n\"#)"
 ---
 Module @0..128
-  Impl @0..128
+  Impl @0..127
     trait: Bound `Swap` @5..21
       generics of `Swap`
         Path `Pair` @10..20
@@ -15,7 +15,7 @@ Module @0..128
         Path `A` @31..32
         Path `B` @34..35
     methods
-      Fn `swapped` @42..128
+      Fn `swapped` @42..127
         receiver: &self @53..58
         ret: Path `Pair` @63..73
           generics of `Pair`

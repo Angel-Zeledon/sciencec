@@ -3,13 +3,13 @@ source: crates/link-parser/tests/parse_patterns.rs
 expression: "parse_source_allowing_errors(r#\"fn f(x: Int) -> Int:\n    match x:\n        *: 0\n        1: 1\n\"#)"
 ---
 Module @0..60
-  Fn `f` @0..60
+  Fn `f` @0..59
     params
       Param `x` @5..11
         type: Path `Int` @8..11
     ret: Path `Int` @16..19
-    body: Block @25..60
-      tail: Match @25..60
+    body: Block @25..59
+      tail: Match @25..59
         scrutinee: Path `x` @31..32
         arms
           Arm @42..46

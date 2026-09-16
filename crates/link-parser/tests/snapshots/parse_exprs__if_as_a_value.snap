@@ -3,7 +3,7 @@ source: crates/link-parser/tests/parse_exprs.rs
 expression: "parse_source(r#\"fn f(flag: Bool, n: Int) -> String:\n    let chosen = if flag: 1 else: 0\n    println(if flag: \"yes\" else: \"no\")\n    if n < 10: \"small\" else: if n < 100: \"medium\" else: \"large\"\n\"#)"
 ---
 Module @0..175
-  Fn `f` @0..175
+  Fn `f` @0..174
     params
       Param `flag` @5..15
         type: Path `Bool` @11..15

@@ -3,20 +3,20 @@ source: crates/link-parser/tests/parse_stmts.rs
 expression: "parse_body(r#\"fn f() -> Int:\n    for row in rows:\n        for cell in row:\n            if cell != 0:\n                if cell > 0:\n                    hits = hits + 1\n    hits\n\"#)"
 ---
 Block @19..160
-  For @19..156
+  For @19..151
     pattern: Binding `row` @23..26
     iter: Path `rows` @30..34
-    body: Block @44..156
-      tail: For @44..156
+    body: Block @44..151
+      tail: For @44..151
         pattern: Binding `cell` @48..52
         iter: Path `row` @56..59
-        body: Block @73..156
-          tail: If @73..156
+        body: Block @73..151
+          tail: If @73..151
             cond: Binary `!=` @76..85
               lhs: Path `cell` @76..80
               rhs: Int 0 @84..85
-            then: Block @103..156
-              tail: If @103..156
+            then: Block @103..151
+              tail: If @103..151
                 cond: Binary `>` @106..114
                   lhs: Path `cell` @106..110
                   rhs: Int 0 @113..114

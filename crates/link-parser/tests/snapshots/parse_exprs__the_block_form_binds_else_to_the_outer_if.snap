@@ -2,11 +2,11 @@
 source: crates/link-parser/tests/parse_exprs.rs
 expression: "parse_body(\"fn f():\\n    if a:\\n        if b:\\n            x\\n    else:\\n        y\\n\")"
 ---
-Block @12..66
-  tail: If @12..66
+Block @12..65
+  tail: If @12..65
     cond: Path `a` @15..16
-    then: Block @26..50
-      tail: If @26..50
+    then: Block @26..45
+      tail: If @26..45
         cond: Path `b` @29..30
         then: Block @44..45
           tail: Path `x` @44..45

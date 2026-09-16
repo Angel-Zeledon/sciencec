@@ -3,7 +3,7 @@ source: crates/link-parser/tests/parse_exprs.rs
 expression: "parse_source(\"fn longest(a: &String, b: &String) -> &String:\\n    if a.len() > b.len(): a else: b\\n\")"
 ---
 Module @0..83
-  Fn `longest` @0..83
+  Fn `longest` @0..82
     params
       Param `a` @11..21
         type: Ref @14..21

@@ -3,12 +3,12 @@ source: crates/link-parser/tests/parse_traits.rs
 expression: "parse_source(r#\"impl Array[T]:\n    fn new() -> Array[T]:\n        empty()\n\"#)"
 ---
 Module @0..57
-  Impl @0..57
+  Impl @0..56
     type: Path `Array` @5..13
       generics of `Array`
         Path `T` @11..12
     methods
-      Fn `new` @19..57
+      Fn `new` @19..56
         ret: Path `Array` @31..39
           generics of `Array`
             Path `T` @37..38

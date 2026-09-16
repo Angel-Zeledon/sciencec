@@ -3,7 +3,7 @@ source: crates/link-parser/tests/parse_traits.rs
 expression: "parse_source_allowing_errors(r#\"impl Summarize for Doc\n    fn summarize(&self) -> String:\n        \"a\"\n\"#)"
 ---
 Module @0..70
-  Impl @0..70
+  Impl @0..69
     trait: Bound `Summarize` @5..14
     type: Path `Doc` @19..22
 --- diagnostics ---

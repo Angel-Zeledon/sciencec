@@ -3,10 +3,10 @@ source: crates/link-parser/tests/parse_traits.rs
 expression: "parse_source(r#\"impl Doc:\n    fn new(title: String) -> Doc:\n        Doc(title: title, body: \"\")\n\n    fn is_empty(&self) -> Bool:\n        self.body.len() == 0\n\"#)"
 ---
 Module @0..142
-  Impl @0..142
+  Impl @0..141
     type: Path `Doc` @5..8
     methods
-      Fn `new` @14..85
+      Fn `new` @14..79
         params
           Param `title` @21..34
             type: Path `String` @28..34
@@ -18,7 +18,7 @@ Module @0..142
                 value: Path `title` @63..68
               FieldInit `body` @70..78
                 value: Str "" @76..78
-      Fn `is_empty` @85..142
+      Fn `is_empty` @85..141
         receiver: &self @97..102
         ret: Path `Bool` @107..111
         body: Block @121..141

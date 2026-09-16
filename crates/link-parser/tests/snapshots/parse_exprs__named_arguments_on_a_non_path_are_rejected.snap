@@ -1,13 +1,10 @@
 ---
 source: crates/link-parser/tests/parse_exprs.rs
-expression: "parse_source_allowing_errors(\"fn f():\\n    (a)(title: 1)\\n\")"
+expression: "parse_source_allowing_errors(\"fn f():\\n    f()(title: 1)\\n\")"
 ---
 Module @0..26
-  Fn `f` @0..26
+  Fn `f` @0..25
     body: Block @12..25
-      tail: StructLit `a` @12..25
-        fields
-          FieldInit `title` @16..24
-            value: Int 1 @23..24
+      tail: Error @12..25
 --- diagnostics ---
-(none)
+LK0110 @15..16 named arguments construct a struct, so they need a struct's name in front of them

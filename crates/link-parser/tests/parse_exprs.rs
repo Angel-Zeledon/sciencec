@@ -381,6 +381,37 @@ fn named_arguments_make_a_struct_literal_and_positional_ones_a_call() {
     );
 }
 
+/// The struct may be named through a path, in which case the named arguments
+/// still make it a construction rather than a method call.
+#[test]
+fn a_qualified_name_with_named_arguments_is_still_a_struct_literal() {
+    assert_shape(
+        "text.Doc(title: \"a\")",
+        "
+        StructLit `text.Doc`
+          fields
+            FieldInit `title`
+              value: Str \"a\"
+        ",
+    );
+}
+
+/// §4.5: `Some(x)` and `Option.Some(x)` are the same thing. The qualified form
+/// is written exactly like a method call, so the parser produces one and leaves
+/// resolution to reclassify it — the same answer §4.3's `Doc.new("a")` gets.
+#[test]
+fn a_qualified_variant_is_a_method_call_until_resolution() {
+    assert_shape(
+        "Option.Some(x)",
+        "
+        Method `Some`
+          receiver: Path `Option`
+          args
+            Path `x`
+        ",
+    );
+}
+
 /// §4.4 names `Doc()` as undecidable and settles it in favour of the variant
 /// form, leaving resolution to reclassify. The parser must not invent a rule.
 #[test]
@@ -672,10 +703,26 @@ fn a_let_as_a_whole_inline_function_body_is_rejected() {
 }
 
 /// Named arguments are how a struct is built, so they are meaningless on
-/// anything that is not a path.
+/// anything that is not a name. A call's result is the clearest case: there is
+/// nothing there for the field names to belong to.
 #[test]
 fn named_arguments_on_a_non_path_are_rejected() {
-    insta::assert_snapshot!(parse_source_allowing_errors("fn f():\n    (a)(title: 1)\n"));
+    insta::assert_snapshot!(parse_source_allowing_errors("fn f():\n    f()(title: 1)\n"));
+}
+
+/// Parentheses group and nothing more, so a parenthesised name is still a name
+/// and still constructs.
+#[test]
+fn a_parenthesised_name_still_constructs() {
+    assert_shape(
+        "(Doc)(title: 1)",
+        "
+        StructLit `Doc`
+          fields
+            FieldInit `title`
+              value: Int 1
+        ",
+    );
 }
 
 /// A token that can neither start nor continue an expression is reported once,
