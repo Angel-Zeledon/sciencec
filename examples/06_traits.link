@@ -1,0 +1,115 @@
+# 06 - Traits and impls
+# Spec: §4.3 traits with default methods, §5.4 trait resolution.
+#
+# Covers: a trait with a required method, a trait with a default method that
+# calls the required one, several impls of the same trait, a trait with more
+# than one required method, a generic trait implemented for a generic type,
+# and impls of the library traits the compiler knows about (§5.4).
+
+struct Doc:
+    title: String
+    body: String
+
+struct Note:
+    text: String
+
+struct Pair[A, B]:
+    first: A
+    second: B
+
+# A trait with one required method and one default method.
+trait Summarize:
+    fn summarize(&self) -> String
+
+    # The default body may call any other method of the trait.
+    fn preview(&self) -> String:
+        self.summarize().truncate(80)
+
+    # Defaults may be several, and may call each other.
+    fn headline(&self) -> String:
+        self.preview().to_upper()
+
+impl Summarize for Doc:
+    fn summarize(&self) -> String:
+        self.body.truncate(200)
+
+impl Summarize for Note:
+    # Only the required method: the defaults are inherited as written.
+    fn summarize(&self) -> String:
+        self.text.clone()
+
+    # A default may also be overridden.
+    fn preview(&self) -> String:
+        self.text.truncate(20)
+
+# A trait with several required methods and no defaults.
+trait Render:
+    fn render(&self) -> String
+    fn width(&self) -> Int
+
+impl Render for Doc:
+    fn render(&self) -> String:
+        self.title.clone()
+
+    fn width(&self) -> Int:
+        self.title.len()
+
+# A trait whose method takes an exclusive borrow of `self`.
+trait Reset:
+    fn reset(&mut self)
+
+impl Reset for Note:
+    fn reset(&mut self):
+        self.text = ""
+
+# A trait whose method takes `self` by value. Such a trait is not `dyn`
+# compatible (§4.3) and can only be used through static dispatch.
+trait IntoTitle:
+    fn into_title(self) -> String
+
+impl IntoTitle for Note:
+    fn into_title(self) -> String:
+        self.text
+
+# A generic trait, implemented for a generic type.
+trait Swap[T]:
+    fn swapped(&self) -> T
+
+impl Swap[Pair[B, A]] for Pair[A, B]:
+    fn swapped(&self) -> Pair[B, A]:
+        Pair(first: self.second.clone(), second: self.first.clone())
+
+# Impls of the library traits the compiler recognises (§5.4).
+impl Clone for Note:
+    fn clone(&self) -> Note:
+        Note(text: self.text.clone())
+
+impl Eq for Note:
+    fn eq(&self, other: &Note) -> Bool:
+        self.text == other.text
+
+impl Drop for Doc:
+    fn drop(&mut self):
+        println("dropping a doc")
+
+impl From[Note] for Doc:
+    fn from(note: Note) -> Self:
+        Doc(title: "untitled", body: note.text)
+
+fn main():
+    let doc = Doc(title: "Regions", body: "A region is a set of program points.")
+    let mut note = Note(text: "inferred, never written")
+
+    println(doc.summarize())
+    println(doc.preview())
+    println(doc.headline())
+    println(doc.render())
+    println(doc.width())
+
+    println(note.summarize())
+    println(note.preview())
+    note.reset()
+
+    let pair = Pair(first: 1, second: "one")
+    let flipped = pair.swapped()
+    println(flipped.first)

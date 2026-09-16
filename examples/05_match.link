@@ -1,0 +1,142 @@
+# 05 - Match and patterns
+# Spec: §4.4 (`match` is exhaustive; patterns are literals, wildcard,
+# bindings, enum variants, structs, tuples, and alternatives with `|`).
+#
+# Covers every pattern form, arms in inline form and in block form,
+# and matches nested inside one another.
+
+enum Format:
+    Plain
+    Markdown
+    Json
+
+enum Token:
+    Ident(String)
+    Number(Int)
+    Symbol(Char)
+    Eof
+
+struct Point:
+    x: Int
+    y: Int
+
+# --- Enum variant patterns, inline arms -------------------------------------
+
+fn name_of(format: &Format) -> String:
+    match format:
+        Plain: "plain"
+        Markdown: "markdown"
+        Json: "json"
+
+# --- Variant patterns that bind their payload -------------------------------
+
+fn describe(token: &Token) -> String:
+    match token:
+        Ident(name): name.clone()
+        Number(value): value.to_string()
+        Symbol(c): c.to_string()
+        Eof: "end of input"
+
+# --- Literal patterns and the wildcard --------------------------------------
+
+fn digit_name(digit: Int) -> String:
+    match digit:
+        0: "zero"
+        1: "one"
+        2: "two"
+        _: "many"
+
+fn is_vowel(c: Char) -> Bool:
+    match c:
+        'a': true
+        'e': true
+        'i': true
+        'o': true
+        'u': true
+        _: false
+
+fn is_greeting(text: &String) -> Bool:
+    match text:
+        "hello": true
+        "hi": true
+        _: false
+
+fn describe_flag(flag: Bool) -> String:
+    match flag:
+        true: "on"
+        false: "off"
+
+# --- Alternatives with `|` --------------------------------------------------
+
+fn size_class(n: Int) -> String:
+    match n:
+        0 | 1 | 2: "small"
+        3 | 4 | 5 | 6: "medium"
+        _: "large"
+
+fn is_punctuation(token: &Token) -> Bool:
+    match token:
+        Symbol(',') | Symbol(';') | Symbol('.'): true
+        _: false
+
+# --- Tuple patterns ---------------------------------------------------------
+
+fn quadrant(point: (Int, Int)) -> String:
+    match point:
+        (0, 0): "origin"
+        (x, 0): "on the X axis"
+        (0, y): "on the Y axis"
+        (_, _): "somewhere else"
+
+# --- Struct patterns, with the same named form used to build them -----------
+
+fn classify(point: &Point) -> String:
+    match point:
+        Point(x: 0, y: 0): "origin"
+        Point(x: 0, y: y): "on the Y axis"
+        Point(x: x, y: 0): "on the X axis"
+        Point(x: x, y: y): "general"
+
+# --- A binding pattern that catches everything ------------------------------
+
+fn passthrough(n: Int) -> Int:
+    match n:
+        0: 1
+        other: other
+
+# --- Block-form arms, and nesting -------------------------------------------
+
+fn render(token: &Token, format: &Format) -> String:
+    match token:
+        Number(value):
+            let doubled = value * 2
+            match format:
+                Json:
+                    doubled.to_string()
+                Plain | Markdown:
+                    doubled.to_string()
+        Ident(name):
+            match format:
+                Markdown: name.emphasize()
+                Plain: name.clone()
+                Json: name.quote()
+        Symbol(c): c.to_string()
+        Eof: ""
+
+# --- `match` as an expression in a binding ----------------------------------
+
+fn main():
+    let label = match Markdown:
+        Plain: "plain"
+        Markdown: "markdown"
+        Json: "json"
+
+    println(label)
+    println(name_of(&Json))
+    println(digit_name(2))
+    println(size_class(4))
+    println(quadrant((0, 3)))
+    println(classify(&Point(x: 1, y: 0)))
+    println(passthrough(9))
+    println(describe(&Ident("width")))
+    println(render(&Number(21), &Json))

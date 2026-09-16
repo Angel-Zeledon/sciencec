@@ -1,0 +1,59 @@
+# 01 - Functions
+# Spec: §4.3 declarations, §4.2 blocks.
+#
+# Covers: functions with and without a return type, early `return`,
+# the last expression as the function value, parameters by shared and
+# exclusive borrow, the unit type, and recursion.
+
+# Omitted return type means unit `()`.
+fn greet():
+    println("hello")
+
+# Explicit unit is also spelled out.
+fn greet_twice() -> ():
+    greet()
+    greet()
+
+# The value of a function is its last expression: no `return` needed.
+fn add(a: Int, b: Int) -> Int:
+    a + b
+
+# `return` exists for early exit.
+fn clamp_low(value: Int, floor: Int) -> Int:
+    if value < floor:
+        return floor
+    value
+
+# Several parameters, mixed borrow forms.
+fn longest(a: &String, b: &String) -> &String:
+    if a.len() > b.len(): a else: b
+
+# Exclusive borrow: the callee may mutate through it.
+fn bump(counter: &mut Int):
+    counter = counter + 1
+
+# Ownership is taken: the caller loses the value.
+fn consume(text: String) -> Int:
+    text.len()
+
+# Recursion.
+fn factorial(n: Int) -> Int:
+    if n <= 1:
+        1
+    else:
+        n * factorial(n - 1)
+
+# Nested calls and a call used as an argument.
+fn main():
+    greet()
+    greet_twice()
+    println(add(2, 3))
+    println(clamp_low(-4, 0))
+    println(factorial(10))
+
+    let mut hits = 0
+    bump(&mut hits)
+    println(hits)
+
+    let owned = "a sentence"
+    println(consume(owned))

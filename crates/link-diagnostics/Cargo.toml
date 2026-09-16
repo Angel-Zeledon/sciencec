@@ -1,0 +1,10 @@
+[package]
+name = "link-diagnostics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+insta.workspace = true

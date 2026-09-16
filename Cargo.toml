@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/link-diagnostics",
+    "crates/link-lexer",
+    "crates/link-parser",
+    "crates/link-testkit",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+link-diagnostics = { path = "crates/link-diagnostics" }
+link-lexer = { path = "crates/link-lexer" }
+link-parser = { path = "crates/link-parser" }
+link-testkit = { path = "crates/link-testkit" }
+insta = "1"

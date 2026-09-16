@@ -1,0 +1,11 @@
+[package]
+name = "link-lexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+link-diagnostics.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
