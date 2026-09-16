@@ -380,6 +380,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "science-fmt"
+version = "0.0.1"
+dependencies = [
+ "science-diagnostics",
+ "science-lexer",
+ "science-parser",
+]
+
+[[package]]
 name = "science-lexer"
 version = "0.0.1"
 dependencies = [
@@ -416,11 +425,22 @@ name = "science-testkit"
 version = "0.0.1"
 
 [[package]]
+name = "science-types"
+version = "0.0.1"
+dependencies = [
+ "science-diagnostics",
+ "science-lexer",
+ "science-parser",
+ "science-resolve",
+]
+
+[[package]]
 name = "sciencec"
 version = "0.0.1"
 dependencies = [
  "science-db",
  "science-diagnostics",
+ "science-fmt",
  "science-parser",
  "science-resolve",
 ]

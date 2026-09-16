@@ -113,12 +113,17 @@ impl Session {
                 continue;
             }
 
-            let source = science_db::source_text(&self.db, file);
-            let formatted = science_fmt::format_source(file, source);
-            let Some(text) = formatted.text else {
-                self.report(formatted.diagnostics.into_vec());
-                continue;
-            };
+            // The source is copied out of the database so that reporting,
+            // which needs the session, does not hold a borrow of it.
+            let source = science_db::source_text(&self.db, file).to_string();
+            let formatted = science_fmt::format_source(file, &source);
+            // Reported whether or not the file formatted: an unmatched
+            // `# fmt: off` is a warning on a file the formatter still hands
+            // back, and swallowing it would let the marker silently swallow
+            // the rest of the file with it.
+            let text = formatted.text;
+            self.report(formatted.diagnostics.into_vec());
+            let Some(text) = text else { continue };
             if !write {
                 print(&text);
                 continue;
@@ -176,6 +181,40 @@ impl Session {
         }
         let (krate, diagnostics) = self.resolved(file);
         print(&science_resolve::dump::dump_crate(&krate));
+        let mut all = syntax;
+        all.extend(diagnostics);
+        self.report(all);
+    }
+
+    /// `sciencec tools --json FILE`, the `tools/list` array of
+    /// `mcp-servers.md` §14.3.
+    ///
+    /// It resolves and then walks, for the reason that note gives for building
+    /// this before anything else: the schema is derived from the signature, so
+    /// the derivation is the claim, and it can be checked years before there
+    /// is a server to run it in.
+    ///
+    /// Errors stop it. A schema derived from a program that does not resolve
+    /// would be a schema for a program that does not exist, and emitting one
+    /// is worse than emitting nothing — a caller has no way to tell the two
+    /// apart.
+    pub fn dump_tools(&mut self, path: &Path) {
+        let Some(file) = self.load(path) else { return };
+        let syntax = science_db::file_diagnostics(&self.db, file).to_vec();
+        if syntax.iter().any(|d| d.severity == science_diagnostics::Severity::Error) {
+            self.report(syntax);
+            return;
+        }
+        let (krate, diagnostics) = self.resolved(file);
+        if diagnostics.iter().any(|d| d.severity == science_diagnostics::Severity::Error) {
+            let mut all = syntax;
+            all.extend(diagnostics);
+            self.report(all);
+            return;
+        }
+        if let Some(module) = krate.modules.first() {
+            print(&crate::tools::render(&krate, module));
+        }
         let mut all = syntax;
         all.extend(diagnostics);
         self.report(all);

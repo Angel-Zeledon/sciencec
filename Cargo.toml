@@ -4,8 +4,10 @@ members = [
     "crates/science-diagnostics",
     "crates/science-lexer",
     "crates/science-parser",
+    "crates/science-fmt",
     "crates/science-testkit",
     "crates/science-resolve",
+    "crates/science-types",
     "crates/science-db",
     "crates/science-rt",
     "crates/sciencec",
@@ -20,8 +22,10 @@ license = "MIT OR Apache-2.0"
 science-diagnostics = { path = "crates/science-diagnostics" }
 science-lexer = { path = "crates/science-lexer" }
 science-parser = { path = "crates/science-parser" }
+science-fmt = { path = "crates/science-fmt" }
 science-testkit = { path = "crates/science-testkit" }
 science-resolve = { path = "crates/science-resolve" }
+science-types = { path = "crates/science-types" }
 science-db = { path = "crates/science-db" }
 science-rt = { path = "crates/science-rt" }
 sciencec = { path = "crates/sciencec" }

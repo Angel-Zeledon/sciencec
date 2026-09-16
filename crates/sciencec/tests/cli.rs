@@ -406,3 +406,106 @@ fn scratch(name: &str, bytes: &[u8]) -> String {
     std::fs::write(&path, bytes).expect("the scratch file is writable");
     path.to_string_lossy().replace('\\', "/")
 }
+
+// --- tools --json --------------------------------------------------------
+
+/// The thesis of `mcp-servers.md` Decision 3, run: a JSON Schema derived from
+/// a signature, with no schema written anywhere by hand.
+///
+/// The three assertions below are the three things no other MCP SDK can do,
+/// and each is free here because the information was already in the type.
+#[test]
+fn the_schema_comes_out_of_the_signature() {
+    let file = scratch(
+        "tools.science",
+        b"## Counts events above a threshold.\n\
+          def count_above(samples: Array of F64, floor: U16) -> U64:\n\
+          \x20   0\n",
+    );
+    let run = sciencec(&["tools", "--json", &file]);
+    run.succeeded().silent_stderr();
+
+    // The width of the integer becomes the bounds of the number. `U16` is
+    // 0..65535 and the model is told so.
+    assert!(run.stdout.contains(r#""minimum":0,"maximum":65535"#), "{}", run.stdout);
+    // The doc comment is the description, which is what a model reads to
+    // decide whether to call the tool.
+    assert!(run.stdout.contains("Counts events above a threshold."), "{}", run.stdout);
+    assert!(run.stdout.contains(r#""name":"count_above""#), "{}", run.stdout);
+}
+
+/// A `choice` of unit variants is a string `enum`. `mcp-servers.md` §4.5 calls
+/// this the largest single win in the mapping, and the reason is that the
+/// author writes nothing: it is how Science already spells alternatives.
+#[test]
+fn a_choice_of_unit_variants_becomes_an_enum() {
+    let file = scratch(
+        "enum.science",
+        b"choice Lineshape:\n\x20   Gaussian\n\x20   Lorentzian\n\
+          def fit(profile: Lineshape) -> Int:\n\x20   0\n",
+    );
+    let run = sciencec(&["tools", "--json", &file]);
+    run.succeeded();
+    assert!(
+        run.stdout.contains(r#""type":"string","enum":["Gaussian","Lorentzian"]"#),
+        "{}",
+        run.stdout
+    );
+}
+
+/// `T?` is the payload's schema with the name absent from `required`.
+///
+/// §4.4 is explicit that absent and null are different states in JSON and the
+/// same state in Science, so this is a lossy direction and the note says so
+/// rather than hiding it. What matters is that the parameter is not required.
+#[test]
+fn a_nullable_parameter_is_not_required() {
+    let file = scratch(
+        "nullable.science",
+        b"def label(name: String, note: String?) -> Int:\n\x20   0\n",
+    );
+    let run = sciencec(&["tools", "--json", &file]);
+    run.succeeded();
+    assert!(run.stdout.contains(r#""required":["name"]"#), "{}", run.stdout);
+    assert!(run.stdout.contains(r#""note":{"type":"string"}"#), "{}", run.stdout);
+}
+
+/// `U64` gets no `maximum`, and the reason is arithmetic rather than laziness:
+/// 2^64-1 is not exactly representable as a JSON number, so emitting it would
+/// be a lie about what the other side can send.
+#[test]
+fn a_u64_has_no_maximum() {
+    let file = scratch("u64.science", b"def total(n: U64) -> Int:\n\x20   0\n");
+    let run = sciencec(&["tools", "--json", &file]);
+    run.succeeded();
+    assert!(run.stdout.contains(r#""minimum":0}"#), "{}", run.stdout);
+    assert!(!run.stdout.contains("18446744073709551615"), "{}", run.stdout);
+}
+
+/// A type with no JSON spelling is a named gap, not a silent one and not an
+/// error. Deciding a type is *wrong* rather than *unmapped* needs a checker,
+/// and there is not one.
+#[test]
+fn an_unmappable_parameter_is_named_rather_than_dropped() {
+    let file = scratch(
+        "gap.science",
+        b"interface Summarize:\n\x20   def summarize(self) -> String\n\
+          def show(what: any Summarize) -> Int:\n\x20   0\n",
+    );
+    let run = sciencec(&["tools", "--json", &file]);
+    run.succeeded();
+    assert!(run.stdout.contains("x-science-unmapped"), "{}", run.stdout);
+    assert!(run.stdout.contains("dispatched at run time"), "{}", run.stdout);
+}
+
+/// A program that does not resolve emits no schema at all.
+///
+/// A schema for a program that does not exist is worse than no schema: a
+/// caller cannot tell the two apart.
+#[test]
+fn a_broken_program_emits_no_schema() {
+    let file = scratch("broken.science", b"def f(x: Nonexistent) -> Int:\n\x20   0\n");
+    let run = sciencec(&["tools", "--json", &file]);
+    run.failed();
+    assert!(run.stdout.is_empty(), "stdout was {:?}", run.stdout);
+}

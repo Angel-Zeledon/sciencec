@@ -37,6 +37,7 @@
 //! driver, which is exactly what this binary must not do.
 
 mod driver;
+mod tools;
 mod report;
 
 use std::ffi::OsString;
@@ -55,6 +56,7 @@ Usage:
     sciencec tokens FILE      dump the token stream
     sciencec ast FILE         dump the syntax tree
     sciencec resolve FILE     dump the resolved crate
+    sciencec tools --json FILE   a JSON Schema for every function in the file
     sciencec --version        print the version
     sciencec --help           print this message
 
@@ -97,12 +99,18 @@ fn run(args: &[OsString]) -> Outcome {
         _ => {}
     }
 
-    // `fmt` is the one command with a flag of its own, so the flag is taken
-    // off the operands before they become paths. Doing it here rather than in
-    // `collect_files` keeps that function's rule intact: outside this line,
+    // Two commands take a flag of their own, and both flags are taken off the
+    // operands before they become paths. Doing it here rather than in
+    // `collect_files` keeps that function's rule intact: outside these lines,
     // anything beginning with `-` is still an error rather than a file.
+    //
+    // `tools --json` accepts the flag and requires nothing of it: JSON is the
+    // only format there is. It is spelled anyway because `mcp-servers.md`
+    // §14.3 spells it, and because a second format — a human-readable listing
+    // — is the obvious next thing to want.
     let (rest, write) = match command.to_str() {
         Some("fmt") => take_flag(rest, "--write"),
+        Some("tools") => take_flag(rest, "--json"),
         _ => (rest.to_vec(), false),
     };
 
@@ -136,13 +144,14 @@ fn run(args: &[OsString]) -> Outcome {
             }
             session.format(&files, write);
         }
-        Some(name @ ("tokens" | "ast" | "resolve")) => {
+        Some(name @ ("tokens" | "ast" | "resolve" | "tools")) => {
             let [file] = files.as_slice() else {
                 return usage_error(&format!("{name} expects exactly one file"));
             };
             match name {
                 "tokens" => session.dump_tokens(file),
                 "ast" => session.dump_ast(file),
+                "tools" => session.dump_tools(file),
                 _ => session.dump_resolved(file),
             }
         }
