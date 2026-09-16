@@ -431,15 +431,15 @@ of `stats` — which is where most real uncertainties come from.
 ```science
 Uncertain has:
     ## Independent: one fresh source, standard uncertainty `sigma`.
-    function of(nominal: F64, sigma: F64) -> Uncertain of F64
+    def of(nominal: F64, sigma: F64) -> Uncertain of F64
 
     ## Exact: no sources at all. Arithmetic with it is exact.
-    function exact(nominal: F64) -> Uncertain of F64
+    def exact(nominal: F64) -> Uncertain of F64
 
     ## Correlated: `n` values with an `n`×`n` covariance. Internally a Cholesky
     ## factor of `cov` over `n` fresh independent unit sources, so that the
     ## resulting values reproduce `cov` exactly under §3.2's formula.
-    function from_covariance(
+    def from_covariance(
         nominals: borrowed Array of F64,
         cov: borrowed Matrix of F64,
     ) -> (Array of Uncertain of F64, Error?)
@@ -732,7 +732,7 @@ That note's `Display for Quantity` reads:
 
 ```science
 Quantity implements Display:
-    function display(borrowed self, into: mutable borrowed Formatter):
+    def display(borrowed self, into: mutable borrowed Formatter):
         into.number(self.value as F64)
         into.raw(" ")
         into.raw(Self.unit_symbol())
@@ -747,7 +747,7 @@ to `T`'s own `DisplayNumber` rendering rather than casting.**
 
 ```science
 Quantity implements Display where T: DisplayNumber:
-    function display(borrowed self, into: mutable borrowed Formatter):
+    def display(borrowed self, into: mutable borrowed Formatter):
         self.value.display(into)
         into.raw(" ")
         into.raw(Self.unit_symbol())
@@ -811,17 +811,17 @@ plain floats. Rejected as the *only* answer, but adopted as part of the answer:
 
 ```science
 interface Real:
-    function from_exact(value: F64) -> Self
-    function nominal(borrowed self) -> F64
+    def from_exact(value: F64) -> Self
+    def nominal(borrowed self) -> F64
 
-    function sqrt(borrowed self) -> Self
-    function exp(borrowed self) -> Self
-    function ln(borrowed self) -> Self
-    function pow(borrowed self, exponent: borrowed Self) -> Self
-    function sin(borrowed self) -> Self
-    function cos(borrowed self) -> Self
-    function atan2(borrowed self, other: borrowed Self) -> Self
-    function abs(borrowed self) -> Self
+    def sqrt(borrowed self) -> Self
+    def exp(borrowed self) -> Self
+    def ln(borrowed self) -> Self
+    def pow(borrowed self, exponent: borrowed Self) -> Self
+    def sin(borrowed self) -> Self
+    def cos(borrowed self) -> Self
+    def atan2(borrowed self, other: borrowed Self) -> Self
+    def abs(borrowed self) -> Self
 ```
 
 plus the operator interfaces `Add`, `Sub`, `Mul`, `Div`, `Neg` and `Ord`, which
@@ -832,13 +832,13 @@ here depends on which.
 So the catalogue's signatures become:
 
 ```science
-function sqrt of T(x: T) -> T where T: Real
-function erf of T(x: T) -> T where T: Real
-function bessel_j of T(order: Int, x: T) -> T where T: Real
+def sqrt of T(x: T) -> T where T: Real
+def erf of T(x: T) -> T where T: Real
+def bessel_j of T(order: Int, x: T) -> T where T: Real
 
 # Unchanged — this one needs bit patterns, and refuses uncertainty on purpose.
-function ulp(x: F64) -> F64
-function next_after of T(x: T, towards: T) -> T where T: Float
+def ulp(x: F64) -> F64
+def next_after of T(x: T, towards: T) -> T where T: Float
 ```
 
 **The key property: the width of the gradient never appears in a signature.**
@@ -915,8 +915,8 @@ pretending:
 The edit is **mechanical and it was happening anyway**:
 
 ```
--function sqrt(x: F64) returns F64
-+function sqrt of T(x: T) -> T where T: Real
+-def sqrt(x: F64) returns F64
++def sqrt of T(x: T) -> T where T: Real
 ```
 
 Every signature in §5 through §11 of `scientific-libraries.md` that is currently

@@ -140,7 +140,7 @@ Given §2.1, a Science signature is already a far stronger statement than the sa
 signature in Python, Julia, C++ or Rust. Read one:
 
 ```science
-function fit(
+def fit(
         data: borrowed Array of Measurement,
         weights: mutable borrowed Array of F64,
         key: Key,
@@ -259,7 +259,7 @@ question.
 ### 3.4 Decision: effects are not in the type
 
 > **Decision 3. A function's effect set is a property of its `DefId`, stored
-> beside it, and is never a component of its type. `function(F64) -> F64` is one
+> beside it, and is never a component of its type. `def(F64) -> F64` is one
 > type regardless of what the function does.**
 
 This is the most consequential decision in the note and it is a negative one, so
@@ -267,14 +267,14 @@ it is worth the space.
 
 If effects were in the type, then:
 
-- The standing cross-note ask for **closure types spelled `function(T) -> U`**
+- The standing cross-note ask for **closure types spelled `def(T) -> U`**
   (`ffi-c-boundary.md` §10.1, `scientific-libraries.md` §14.2,
   `broadcasting.md` — three customers) would become an ask for
-  `function(T) -> U does {…}`, and every generic function taking a closure would
+  `def(T) -> U does {…}`, and every generic function taking a closure would
   need to be polymorphic over the effect set or else reject half its callers.
   That is effect-row polymorphism, which is Koka, which is the feature §12
   declined.
-- `map`'s bound would have to read `F: function(Self.Item) -> U` for *some*
+- `map`'s bound would have to read `F: def(Self.Item) -> U` for *some*
   effect row, which means the bound is no longer a bound but a schema.
 - Two implementations of the same interface method with different effect sets
   would not satisfy the same signature, so `Doc implements Summarize` would
@@ -357,7 +357,7 @@ channel this language has:
 error[SC0214]: `log_likelihood` is declared `pure` but carries the `ambient` effect
   --> model/fit.science:12:1
    |
-12 | pure function log_likelihood(data: borrowed Array of F64, mu: F64) -> F64:
+12 | pure def log_likelihood(data: borrowed Array of F64, mu: F64) -> F64:
    | ^^^^ declared pure here
    |
 note: the effect enters through this call chain
@@ -405,13 +405,13 @@ answers are bad.
 ### 4.1 The decision
 
 > **Decision 5. Effect sets are inferred everywhere and written nowhere, except
-> that a function may be declared `pure function`, which is a compiler-checked
+> that a function may be declared `pure def`, which is a compiler-checked
 > assertion that its inferred set is empty. There is no syntax for declaring a
 > non-empty set anywhere in Science source. `extern` is the exception and §7 owns
 > it.**
 
 ```science
-pure function log_likelihood(
+pure def log_likelihood(
         data: borrowed Array of F64,
         mu: F64,
         sigma: F64) -> F64:
@@ -422,9 +422,9 @@ pure function log_likelihood(
     total - (data.length() as F64) * sigma.log()
 ```
 
-The shape is `unsafe function` inverted, and the symmetry is the argument:
+The shape is `unsafe def` inverted, and the symmetry is the argument:
 
-| | `unsafe function` | `pure function` |
+| | `unsafe def` | `pure def` |
 |---|---|---|
 | Says | "I claim extra powers" | "I claim no effects" |
 | Checked by | Nobody — it is the author's claim | The compiler, against the inferred set |
@@ -486,7 +486,7 @@ is best rendered by a tool that cannot be wrong.
 ### 4.3 Why `pure` exists at all, given inference
 
 Because a library author sometimes wants the contract *locked*, and Decision 6's
-warning is a warning. `pure function` turns "this changed" into "this does not
+warning is a warning. `pure def` turns "this changed" into "this does not
 compile", at the author's discretion, on the functions where it matters:
 
 - a statistical distribution's density,
@@ -497,7 +497,7 @@ compile", at the author's discretion, on the functions where it matters:
 `scientific-libraries.md` §2 commits to writing special functions, distributions,
 optimisers and integrators **in Science** partly so they are generic and
 differentiable. `pure` is the annotation that makes that commitment checkable:
-a `pure function erf(x: F64) -> F64` cannot quietly acquire a call to a logging
+a `pure def erf(x: F64) -> F64` cannot quietly acquire a call to a logging
 helper three releases later.
 
 **Rejected: `pure` as the default, with an `impure` marker.** This is the Haskell
@@ -507,7 +507,7 @@ I/O constantly. It also makes `main` un-writable without a marker, which is a
 bad first page of a tutorial.
 
 **Rejected: allowing `pure` to be written with a non-empty set,
-`function f(...) does external:`.** It needs a grammar for effect sets, and once
+`def f(...) does external:`.** It needs a grammar for effect sets, and once
 there is a grammar for effect sets somebody will want them in bounds, and then
 Decision 3 is gone. The absence of that syntax is a load-bearing absence.
 
@@ -575,7 +575,7 @@ differentiation. In Science, exactly one of those is bought by purity alone.
 Two lines in that table deserve to be said out loud.
 
 **The `mutable borrowed` exclusion is why `pure` is not enough for memoisation.**
-`function draw(s: mutable borrowed Stream) -> F64` has an empty effect set and is
+`def draw(s: mutable borrowed Stream) -> F64` has an empty effect set and is
 `pure` by §5.1. It is also order-dependent: swap two calls and both results
 change. A memoiser that keyed on "the arguments" would key on a borrow, which is
 an address, and produce nonsense. So the compiler's internal *memoisable*
@@ -676,7 +676,7 @@ Three reasons, and they are independent.
    integer. Effects propagate monotonically up the call graph; differentiability
    does not, because the *composition* can fail where every part succeeds.
 2. **It is relative to an argument.** `grad(f, of: 0)` differentiates with
-   respect to the first parameter. `function loss(params: borrowed Array of F64,
+   respect to the first parameter. `def loss(params: borrowed Array of F64,
    labels: borrowed Array of I64) -> F64` is differentiable in `params` and
    meaningless in `labels`. A bit has no argument position; a check at the
    transformation site does.
@@ -750,7 +750,7 @@ the GIL, `ambient` for reproducibility — remain clear, and §7.2 fixes the res
 ```science
 unsafe extern "C" library "openblas" via pkg-config "openblas":
 
-    pure function cblas_dgemm(
+    pure def cblas_dgemm(
         layout: CblasLayout,
         transpose_a: CblasTranspose,
         transpose_b: CblasTranspose,
@@ -762,7 +762,7 @@ unsafe extern "C" library "openblas" via pkg-config "openblas":
         c: ffi.MutableSpan of F64, ldc: BlasInt,
     )
 
-    function openblas_set_num_threads(n: CInt)
+    def openblas_set_num_threads(n: CInt)
 ```
 
 `cblas_dgemm` writes through `c`, which is a `mutable borrowed` by another name,
@@ -838,7 +838,7 @@ the pass is closer to types. §11 asks for one of two fixes.
 
 | Code | Phase | Meaning |
 |---|---|---|
-| `SC0214` | Effects | A function declared `pure function` has a non-empty inferred effect set. Names the bit, and renders the witness chain of §3.6. Fix: remove `pure`, or take the ambient input as a parameter. |
+| `SC0214` | Effects | A function declared `pure def` has a non-empty inferred effect set. Names the bit, and renders the witness chain of §3.6. Fix: remove `pure`, or take the ambient input as a parameter. |
 | `SC0215` | Effects | `pure` on an `extern` function that takes an `ffi.Callback`. §7.4. Fix: remove `pure`; the call site computes the union. |
 | `SC0216` | Effects | **Warning.** A `public` function's inferred effect set differs from the one recorded in the package's interface. Names the function, the bit gained or lost, and the witness. §4.2. |
 | `SC0217` | Effects | `ambient` is reachable from `main` in a build declared reproducible. Names every distinct witness chain, not the first. F1+; see §11. |
@@ -978,7 +978,7 @@ an enhancement; a solver written without it must be rewritten to gain it, which
 
 **4. Effects must stay out of unification, per Decision 3.** This is the negative
 constraint and it is the one most easily lost, because the first person to add
-`function(T) -> U` as a closure type — which three notes ask for — will be
+`def(T) -> U` as a closure type — which three notes ask for — will be
 tempted to put an effect slot in it "for later". There must be no slot. If a
 later phase wants effect polymorphism, it should be a reopened decision with its
 own note, not a field that was left empty and then filled in.
@@ -998,7 +998,7 @@ not a shippable release policy.
 **7. `pure` moves to the in-use reserved list.** One word.
 
 **8. `extern` blocks need one contextual modifier position.**
-`ffi-c-boundary.md` owns the grammar; this note asks only that `pure function` be
+`ffi-c-boundary.md` owns the grammar; this note asks only that `pure def` be
 accepted as an item form inside the block.
 
 ### 10.1 F5, which is the strongest argument for building the `ambient` bit
@@ -1062,7 +1062,7 @@ Splitting a bit after a package ecosystem has recorded interfaces against it
    the package interface"* (§4.2, Decision 6) as a customer of whatever
    `package-manager.md` produces as a published-interface artefact. It is the
    second customer after types, which is what makes it worth building.
-4. **Of `ffi-c-boundary.md`**: accept `pure function` as a fourth item form
+4. **Of `ffi-c-boundary.md`**: accept `pure def` as a fourth item form
    inside an `extern` block (§7.2), and record §7.4's callback union rule beside
    §4.4's reentrancy hole, which it belongs to. This note claims `SC0215` for the
    `pure`-plus-callback case; if that note would rather own it in the `SC0410`

@@ -5,7 +5,7 @@ Status: draft for review
 Owns: the const-expression grammar, the normal form and its equality procedure,
 the `Shape` kind and its list operations, const-argument inference, the `with`
 construct's type-level half, and diagnostics `SC0260`–`SC0262`.
-Written in the syntax of `syntax-revision-2.md`.
+Written in the syntax of `syntax-revision-2.md` and `syntax-revision-3.md`.
 Customers: `scientific-libraries.md` §12.4/§12.5, `broadcasting.md` §5.2/§5.3/§11,
 `indexing-and-array-literals.md` §1.3/§8 item 10, `unit-literals.md` §9.
 
@@ -709,7 +709,7 @@ The three consumers:
 
 ```science
 Quantity has:
-    function sqrt of (const L: Int, const M: Int, const T: Int,
+    def sqrt of (const L: Int, const M: Int, const T: Int,
                       const I: Int, const K: Int, const Nn: Int, const J: Int)(
         self: Quantity of (F64, L * 2, M * 2, T * 2, I * 2, K * 2, Nn * 2, J * 2),
     ) -> Quantity of (F64, L, M, T, I, K, Nn, J)

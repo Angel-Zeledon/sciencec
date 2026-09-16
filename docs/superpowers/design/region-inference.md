@@ -91,7 +91,7 @@ The canonical one is the "get or insert" shape, which every symbol table wants:
 
 ```science
 # Rejected under Decision 1, and sound.
-function intern(mutable self, name: String) -> borrowed Symbol:
+def intern(mutable self, name: String) -> borrowed Symbol:
     let found be self.table.get(name)
     if found?:
         return found

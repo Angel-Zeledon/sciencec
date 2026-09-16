@@ -545,7 +545,7 @@ The consequence is that this does not compile:
 
 ```science
 # SC0294 at axis 0: `n` and `m` cannot be shown equal, and neither is 1.
-function combine of (const N: Int, const M: Int)(
+def combine of (const N: Int, const M: Int)(
     a: borrowed Tensor of (F32, (N, 3)),
     b: borrowed Tensor of (F32, (M, 3)),
 ) -> Tensor of (F32, (N, 3)):
@@ -555,7 +555,7 @@ function combine of (const N: Int, const M: Int)(
 and this does:
 
 ```science
-function centre of (const N: Int)(
+def centre of (const N: Int)(
     a: borrowed Tensor of (F32, (N, 3)),
     row: borrowed Tensor of (F32, (1, 3)),
 ) -> Tensor of (F32, (N, 3)):
@@ -610,7 +610,7 @@ whether the **type checker** has been told about it.
 reserved word.
 
 ```science
-function main():
+def main():
     let table, err be read_csv("measurements.csv")
     if err?:
         print("could not read the file")
@@ -726,7 +726,7 @@ un-canonicalisable property, since a formatter could not choose between
 signature is shape-preserving:
 
 ```science
-function map of (U)(self, f: function(T) -> U) -> Tensor of (U, SHAPE)
+def map of (U)(self, f: def(T) -> U) -> Tensor of (U, SHAPE)
 ```
 
 A chain over a tensor's elements would erase the shape, which is the one thing a
@@ -936,21 +936,21 @@ A standardisation and scoring pipeline, with the file boundary, the dynamic
 shape, the reductions, the broadcasts and the error handling all visible.
 
 ```science
-function standardise of (const N: Int, const D: Int)(
+def standardise of (const N: Int, const D: Int)(
     table: borrowed Tensor of (F32, (N, D)),
 ) -> Tensor of (F32, (N, D)):
     let centre be table.mean(axis: 0)               # (D)
     let spread be table.deviation(axis: 0)          # (D)
     (table .- centre) ./ (spread .+ 1e-8)           # both stretch axis 0
 
-function score of (const N: Int, const D: Int)(
+def score of (const N: Int, const D: Int)(
     table: borrowed Tensor of (F32, (N, D)),
     weights: borrowed Tensor of (F32, (D)),
     bias: F32,
 ) -> Tensor of (F32, (N)):
     (table .* weights).sum(axis: 1) + bias          # scalar add: no dot
 
-function main():
+def main():
     let table, read_err be read_tensor("measurements.npy")
     if read_err?:
         print("could not read the measurements")
@@ -1017,7 +1017,7 @@ should be deliberate rather than accidental (§3.6).
 inference. `collections-and-chains.md` §10.2 already asks for this for `sort(by:)`;
 `axis:` is the second consumer and `axes:` the third.
 
-**11.6 Closure types must be spelled.** `function(T) -> U` appears in `map` and
+**11.6 Closure types must be spelled.** `def(T) -> U` appears in `map` and
 `combine` (§7.1). `scientific-libraries.md` §14.2 and `ffi-c-boundary.md` §10.1
 have both already asked; this is the third note to depend on it.
 

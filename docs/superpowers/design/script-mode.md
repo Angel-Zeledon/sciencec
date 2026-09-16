@@ -70,11 +70,11 @@ print(text.lines().len())
 ```
 
 Four lines. Under today's grammar it is six, and every line of the body is
-indented one level under a `function main():` that carries no information.
+indented one level under a `def main():` that carries no information.
 
 ### 1.3 Items and statements coexist
 
-`use` declarations, `type`, `interface`, `function` and `Type has:` blocks are
+`use` declarations, `type`, `interface`, `def` and `Type has:` blocks are
 legal anywhere in the file, interleaved freely with statements:
 
 ```science
@@ -88,10 +88,10 @@ type Reading:
 Reading implements Record
 
 interface Describe:
-    function describe(self) -> String
+    def describe(self) -> String
 
 Reading implements Describe:
-    function describe(self) -> String:
+    def describe(self) -> String:
         self.station
 
 let options be CsvOptions.new().header(true)
@@ -103,7 +103,7 @@ if err?:
 print("rows:", frame.len())
 print(summary(frame.columns().temperature))
 
-function summary(values: borrowed Array of F32) -> String:
+def summary(values: borrowed Array of F32) -> String:
     if values.len() is 0:
         return "empty"
     values.mean().to_string()
@@ -181,7 +181,7 @@ took the two-file-kind route, and §9 is about why that is the row not to copy.
 ### 2.1 The script body is a function the user did not type
 
 **Decision.** A file's top-level statements, in source order, are the body of an
-implicit `function main() -> Error?`. Call it **the script body**. It is an
+implicit `def main() -> Error?`. Call it **the script body**. It is an
 ordinary function everywhere below HIR: ordinary MIR, ordinary CFG, ordinary
 region inference, ordinary drop glue.
 
@@ -202,7 +202,7 @@ runtime concept in it.
 ```science
 let x be compute()
 
-function main():          # error[SC0117]
+def main():          # error[SC0117]
     print(x)
 ```
 
@@ -224,7 +224,7 @@ or delete `main` and let the statements be the script. It names both.
 
 ### 2.3 The entry point and the exit code
 
-**Decision.** The script body's signature is `function main() -> Error?`.
+**Decision.** The script body's signature is `def main() -> Error?`.
 
 | The script ends by | Exit code | stderr |
 |---|---|---|
@@ -243,8 +243,8 @@ be used. A script is mostly IO and IO is mostly fallible; the entry point has to
 be fallible or every script's first line needs a workaround.
 
 This ratifies something `data-io.md` §10 already assumed: its worked example is
-`function main() -> DataError?`, an explicitly fallible `main` — the
-concrete-error form of `function main() -> Error?`. §11.3 turns that into an
+`def main() -> DataError?`, an explicitly fallible `main` — the
+concrete-error form of `def main() -> Error?`. §11.3 turns that into an
 explicit ask of the core spec, because §11 of the core spec never says what
 signatures `main` may have.
 
@@ -322,7 +322,7 @@ is not a scope any item body can see.
 ```science
 let threshold be 0.5f32
 
-function keep(value: F32) -> Bool:
+def keep(value: F32) -> Bool:
     value > threshold          # error[SC0212]
 ```
 
@@ -822,7 +822,7 @@ using the audience's own first program — `data-io.md`'s CSV reader:
 - It needs `Reading implements Record`. So `.sci` admits `implements`.
 - It needs `use data.csv (read_csv, CsvOptions)`. So `.sci` admits `use`.
 - It needs a helper function within about twenty lines of real work. So `.sci`
-  admits `function`.
+  admits `def`.
 - `data-io.md` §10's worked example, the canonical script, uses four of those.
 
 At which point `.sci` admits every item `.science` admits, **plus statements** —
@@ -845,7 +845,7 @@ is the same grammar plus one production, given a different file name.
    manager.
 4. **MATLAB is the evidence.** It is the one mainstream language in the
    audience's world that took this route, and its script-vs-function rule — a
-   file is a function file if its first non-comment token is `function`, and a
+   file is a function file if its first non-comment token is `def`, and a
    script may only have local functions *at the end* — is a reliable source of
    confusion for exactly these users. The ordering wart in that last clause is
    §3.3's question, answered badly, by the language that already ran the
@@ -969,7 +969,7 @@ want in F0:
    disambiguation rule of §8.2 stated as a rule rather than left to the
    implementation.
 3. **Core spec §11: what signatures `main` may have.** §11 never says. This note
-   needs `function main()` and `function main() -> Error?` to both be legal, and
+   needs `def main()` and `def main() -> Error?` to both be legal, and
    `data-io.md` §10 already assumed the latter. §11's definition of done should
    also gain one script program — a file with no `main` that compiles, runs, and
    returns a nonzero exit code from a top-level `return err`.
@@ -989,7 +989,7 @@ want in F0:
 6. **`data-io.md` §10: rewrite the worked example as a script.** **Half done.**
    The syntax half has since landed — that section is now revision-2 throughout,
    including the error model — so §12.1's contradiction is closed. What remains
-   is the *shape*: §10 is still a `function main()` program rather than a script
+   is the *shape*: §10 is still a `def main()` program rather than a script
    body, and §12.2 below still shows the script rewrite this item asks for.
 7. **`data-io.md` §11: a note that `.mean()` is assumed.** §11.4 of that note
    already flags `square_root()` and the reductions as belonging to a numerics
@@ -1078,7 +1078,7 @@ let write_err be write_parquet(frame, destination, ParquetOptions.new()
 if write_err?:
     return write_err
 
-function normalize(values: mutable borrowed Array of F32):
+def normalize(values: mutable borrowed Array of F32):
     let count be values.len() as F32
     if count is 0.0f32:
         return

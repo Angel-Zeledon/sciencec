@@ -742,7 +742,7 @@ information exists:
 use os (provenance, Provenance, NativeRecord)
 use data.json (write_json)
 
-function stamp_results(out: borrowed Path) -> ((), Error?):
+def stamp_results(out: borrowed Path) -> ((), Error?):
     let record: Provenance be provenance()
 
     print(f"science {record.compiler_version} on {record.target}")

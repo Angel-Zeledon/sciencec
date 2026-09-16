@@ -17,7 +17,7 @@ which §7 has one explicit disagreement; `scientific-libraries.md` §12 and §7;
 `unit-literals.md` §5.1, §7.2 and §7.3; `strings-formatting-and-docs.md` §2, §3.3
 and §5; `const-expression-arithmetic.md`, which is now building the largest thing
 §9.1 depends on; `data-io.md` §4 and §8; `stdlib-shape-and-packages.md` §5–§6.
-Written in the syntax of `syntax-revision-2.md`.
+Written in the syntax of `syntax-revision-2.md` and `syntax-revision-3.md`.
 
 **A note on ordering.** `reproducibility.md`, `uncertainty.md`,
 `statistical-validity.md`, `const-expression-arithmetic.md` and `effects.md` all
@@ -411,11 +411,11 @@ answer is the one the language already uses for `Error`:
 
 ```science
 interface TableColumn:
-    function header_noun(borrowed self) -> String
-    function unit_symbol(borrowed self) -> String
-    function len(borrowed self) -> U64
-    function cell(borrowed self, index: U64) -> Cell
-    function note(borrowed self) -> String?
+    def header_noun(borrowed self) -> String
+    def unit_symbol(borrowed self) -> String
+    def len(borrowed self) -> U64
+    def cell(borrowed self, index: U64) -> Cell
+    def note(borrowed self) -> String?
 
 Column of Q implements TableColumn where Q: DisplayNumber:
     ...
@@ -437,7 +437,7 @@ let rates be Table.new("Fitted first-order rate constants")
     .caption("Rate constants fitted to the decay of each replicate.")
 ```
 
-`.column` is `function column of Q(mutable self, name: String, values: Array of Q)
+`.column` is `def column of Q(mutable self, name: String, values: Array of Q)
 -> Table where Q: DisplayNumber`, so it needs `data-io.md` §11.2's
 explicit-type-arguments ask only in the cases where inference cannot see `Q` from
 the argument, which is none of them. The builder consumes and returns `self`,

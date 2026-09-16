@@ -300,21 +300,21 @@ forty lines of integer arithmetic, published, and exactly
 
 ```science
 ## The current wall-clock time, UTC. Jumps when the system clock is set.
-function now() -> Instant
+def now() -> Instant
 
 Monotonic has:
     ## A reading from a clock that does not go backwards. Has no epoch.
-    function now() -> Monotonic
+    def now() -> Monotonic
 
     ## Elapsed time between two readings. The only thing a Monotonic does.
-    function since(self, earlier: Monotonic) -> Duration
+    def since(self, earlier: Monotonic) -> Duration
 
 Instant has:
     ## Proleptic Gregorian civil time in UTC. Total: every Instant has one.
-    function to_civil_utc(self) -> Civil
+    def to_civil_utc(self) -> Civil
 
 ## RFC-3339 with a mandatory offset. The one text format `time` knows.
-function parse_rfc3339(text: borrowed String) -> (Instant, TimeError?)
+def parse_rfc3339(text: borrowed String) -> (Instant, TimeError?)
 ```
 
 ### 3.7 Example
@@ -322,7 +322,7 @@ function parse_rfc3339(text: borrowed String) -> (Instant, TimeError?)
 ```science
 use time (Instant, Monotonic, now)
 
-function main():
+def main():
     let started_at be now()
     let clock be Monotonic.now()
 
@@ -360,7 +360,7 @@ theoretical: it is why Rust made `std::env::set_var` unsafe in its 2024 edition,
 after a decade of it looking safe. `stdlib-shape-and-packages.md` Decision 3 puts
 real OS threads in the language, so the hazard is live rather than hypothetical.
 
-**Decision: `os.env.set` and `os.env.unset` are `unsafe function`s**, in
+**Decision: `os.env.set` and `os.env.unset` are `unsafe def`s**, in
 `ffi-c-boundary.md` §3.3's exact sense — the compiler cannot check the claim, so
 the caller signs for it. Reading is safe.
 
@@ -441,24 +441,24 @@ differs structurally by platform, and that is inherent: it is the module whose j
 
 ```science
 ## The command line, including argument zero. Answers `script-mode.md` §10.
-function args() -> Array of String
+def args() -> Array of String
 
 # in module os.env
 ## Null when the variable is unset. An empty variable is set and empty.
-function get(name: borrowed String) -> String?
+def get(name: borrowed String) -> String?
 
 # in module os.env
 ## Unsafe because `setenv` races any concurrent `getenv`, including one
 ## inside a linked C library, and Decision 3 gives us threads. §4.2.
-unsafe function set(name: borrowed String, value: borrowed String)
+unsafe def set(name: borrowed String, value: borrowed String)
 
 ## Run a program to completion and collect its output. No shell, no pipes.
-function run(program: borrowed Path, arguments: borrowed Array of String)
+def run(program: borrowed Path, arguments: borrowed Array of String)
         -> (Output, OsError?)
 
 # in module os.signals
 ## Polled, never handled. `is_` per the policy note's §4.1 rule. §4.3.
-function is_interrupted() -> Bool
+def is_interrupted() -> Bool
 ```
 
 ### 4.7 Example
@@ -467,7 +467,7 @@ function is_interrupted() -> Bool
 use os (args, exit)
 use os.env
 
-function main():
+def main():
     let root be os.env.get("EXPERIMENT_ROOT")
     if root is null:
         print("set EXPERIMENT_ROOT to the data directory")
@@ -517,7 +517,7 @@ signatures already show them doing. No name from §7.3 moves.
 That section writes
 
 ```
-    function sample(self, key: borrowed Key) returns Self.Sample
+    def sample(self, key: borrowed Key) returns Self.Sample
 ```
 
 and, four lines below, the comment
@@ -682,22 +682,22 @@ name it.
 Key has:
     ## The only way to make a key. There is no key from entropy: a key
     ## whose seed nobody recorded is a result nobody can reproduce.
-    function from_seed(seed: U64) -> Key
+    def from_seed(seed: U64) -> Key
 
     ## Consumes `self`. Reusing it afterwards is SC0301, and that is the
     ## whole verification claim of core spec §6.5.
-    function split(self) -> (Key, Key)
+    def split(self) -> (Key, Key)
 
 ## Translated from `scientific-libraries.md` §7.9 into revision-2 syntax.
 ## The key is taken by value. Inverse-CDF, per §5.5.
-function normal(key: Key, mean: F64, standard_deviation: F64) -> F64
+def normal(key: Key, mean: F64, standard_deviation: F64) -> F64
 
 Stream has:
     ## Not reproducible, and the name is the warning. §5.3.
-    function from_entropy() -> Stream
+    def from_entropy() -> Stream
 
 ## `_from` names the sequential face at every call site, on purpose. §5.2.
-function uniform_from(stream: mutable borrowed Stream) -> F64
+def uniform_from(stream: mutable borrowed Stream) -> F64
 ```
 
 ### 5.8 Example
@@ -708,14 +708,14 @@ answer on every machine.
 ```science
 use random (Key, uniform, normal)
 
-function bootstrap(sample: borrowed Array of F64, key: Key, draws: Int)
+def bootstrap(sample: borrowed Array of F64, key: Key, draws: Int)
         -> Array of F64:
     let keys be key.split_many(draws)
     keys.iterate()
         .map(k giving resample_mean(sample, k))
         .collect()
 
-function main():
+def main():
     let means be bootstrap(measurements, Key.from_seed(20260916), 10_000)
     print(f"bootstrap 95% CI: {quantile(means, 0.025):.4f} .. {quantile(means, 0.975):.4f}")
 ```
@@ -780,7 +780,7 @@ spelling; §0.3 records that as a divergence from
 
 ### 7.2 Why an item form, against the two alternatives
 
-**A naming convention (`function test_something()`) — rejected.** A convention is
+**A naming convention (`def test_something()`) — rejected.** A convention is
 not checkable. Go has exactly this, and `func testFoo(t *testing.T)` with a
 lowercase `t` compiles, links, and silently never runs; so does a signature with
 the wrong parameter type. The failure mode of a testing mechanism is a test that
@@ -908,23 +908,23 @@ convention for the same act would fork a discipline the repository already has.
 ```science
 ## The general assertion. `because` is required: a bare failed condition
 ## tells the reader nothing the source line did not.
-function check(condition: Bool, because: borrowed String)
+def check(condition: Bool, because: borrowed String)
 
 ## `Inspect` is `strings-formatting-and-docs.md` §3.2 — it is what lets the
 ## failure report print both values.
-function check_equal of T(actual: borrowed T, expected: borrowed T)
+def check_equal of T(actual: borrowed T, expected: borrowed T)
         where T: Eq + Inspect
 
 ## Floats do not get `check_equal`. The tolerance is not optional and has
 ## no default, because a default tolerance is a wrong answer in some unit.
-function check_close(actual: F64, expected: F64, tolerance: F64)
+def check_close(actual: F64, expected: F64, tolerance: F64)
 
 ## Asserts the error is present and hands it back, so the test can go on to
 ## check which error it was. The dual is `check_ok(err: Error?)`.
-function check_failed(err: Error?) -> any Error
+def check_failed(err: Error?) -> any Error
 
 ## Byte-for-byte against a `.snap` file, re-blessed with SCIENCE_BLESS=1.
-function check_snapshot(value: borrowed any Inspect, named: borrowed String)
+def check_snapshot(value: borrowed any Inspect, named: borrowed String)
 ```
 
 ### 7.8 Example
@@ -1035,18 +1035,18 @@ choice Level:
     Error
 
 ## Callable once. A second call panics and names the first. §8.2.
-function configure(minimum: Level, sink: Sink)
+def configure(minimum: Level, sink: Sink)
 
 ## The guard for expensive messages, because f"…" allocates. §8.4.
-function is_enabled(level: Level) -> Bool
+def is_enabled(level: Level) -> Bool
 
-function info(message: borrowed String)
+def info(message: borrowed String)
 
-function warning(message: borrowed String)
+def warning(message: borrowed String)
 
 ## The structured form. Fields are strings: a typed field map needs the
 ## derive mechanism the README's standing asks already track.
-function record(level: Level, message: borrowed String,
+def record(level: Level, message: borrowed String,
         fields: borrowed Map of (String, String))
 ```
 
@@ -1055,7 +1055,7 @@ function record(level: Level, message: borrowed String,
 ```science
 use logging (Level, configure, info, warning, is_enabled)
 
-function main():
+def main():
     configure(minimum: Level.Info, sink: logging.standard_error())
 
     for epoch in 0..epochs:
@@ -1166,18 +1166,18 @@ and needs the same capability for the same reason.
 Pattern has:
     ## Fallible at run time; checked at compile time when `source` is a
     ## literal (§9.4, SC0268).
-    function compile(source: borrowed String) -> (Pattern, PatternError?)
+    def compile(source: borrowed String) -> (Pattern, PatternError?)
 
     ## `matches`, not `match`: the keyword is taken and these read better.
-    function matches(self, text: borrowed String) -> Bool
+    def matches(self, text: borrowed String) -> Bool
 
     ## Null when there is no match, which is `T?` doing exactly its job.
-    function find(self, text: borrowed String) -> Found?
+    def find(self, text: borrowed String) -> Found?
 
     ## An `Iterate` source, so it composes with the chain vocabulary.
-    function find_all(self, text: borrowed String) -> Matches
+    def find_all(self, text: borrowed String) -> Matches
 
-    function replace_all(self, text: borrowed String,
+    def replace_all(self, text: borrowed String,
             replacement: borrowed String) -> String
 ```
 
@@ -1186,7 +1186,7 @@ Pattern has:
 ```science
 use text.regex (Pattern)
 
-function main():
+def main():
     let names, err be Pattern.compile("^run_(?<run>\\d{4})_(?<channel>[a-z]+)\\.csv$")
     if err?:
         panic("unreachable: a literal pattern is checked at compile time")
@@ -1277,10 +1277,10 @@ Science does not have.
 
 ```science
 Scope has:
-    function start of (T, U)(mutable self, over: borrowed T,
-            running: function(borrowed T) -> U) -> Task of U
+    def start of (T, U)(mutable self, over: borrowed T,
+            running: def(borrowed T) -> U) -> Task of U
 
-function scope of R(body: function(mutable borrowed Scope) -> R) -> R
+def scope of R(body: def(mutable borrowed Scope) -> R) -> R
 ```
 
 Every task started in a scope is joined before the scope returns, so the join is a
@@ -1332,26 +1332,26 @@ uses `Sender.try_send`, which is fallible and says so.
 ## `stdlib-shape-and-packages.md` §3.6. The value moves at the call, which
 ## is a program point the region engine already understands.
 Thread has:
-    function start of (T, U)(over: T, running: function(T) -> U) -> Thread of U
+    def start of (T, U)(over: T, running: def(T) -> U) -> Thread of U
 
 Thread of T has:
-    function join(self) -> (T, ThreadError?)
+    def join(self) -> (T, ThreadError?)
 
 ## Bounded. There is no unbounded constructor. §10.5.
 Channel of T has:
-    function bounded(capacity: Int) -> (Sender of T, Receiver of T)
+    def bounded(capacity: Int) -> (Sender of T, Receiver of T)
 
 ## Added by this note, in `Mutex.with_lock`'s shape and for its reason.
 RwLock of T has:
-    function with_read of U(self, giving: function(borrowed T) -> U) -> U
+    def with_read of U(self, giving: def(borrowed T) -> U) -> U
 
 ## Added by this note. Sequentially consistent; there is no other
 ## ordering, and `T` outside the lock-free set is SC0266. §10.2.
 Atomic of T has:
-    function fetch_add(self, amount: T) -> T
+    def fetch_add(self, amount: T) -> T
 ```
 
-The closure type `function(T) -> U` is the spelling the README's standing-asks
+The closure type `def(T) -> U` is the spelling the README's standing-asks
 table already lists three customers for. This is the fourth.
 
 ### 10.7 Example
@@ -1359,7 +1359,7 @@ table already lists three customers for. This is the fourth.
 ```science
 use thread (Thread, Channel)
 
-function total_counts(shards: Array of Shard) -> I64:
+def total_counts(shards: Array of Shard) -> I64:
     let workers be shards
         .iterate()
         .map(shard giving Thread.start(over: shard,
@@ -1454,24 +1454,24 @@ Out: Unix domain sockets, raw sockets, multicast, socket options beyond
 
 ```science
 TcpListener has:
-    function bind(address: borrowed String) -> (TcpListener, NetError?)
+    def bind(address: borrowed String) -> (TcpListener, NetError?)
 
     ## Every blocking operation takes a deadline. There is no overload
     ## without one. §11.2.
-    function accept(mutable self, timeout: Duration)
+    def accept(mutable self, timeout: Duration)
             -> (TcpStream, NetError?)
 
 TcpStream has:
-    function connect(address: borrowed String, timeout: Duration)
+    def connect(address: borrowed String, timeout: Duration)
             -> (TcpStream, NetError?)
 
     ## Returns the byte count, which may be short. The caller loops.
     ## This is Level 1's `Read`, so a socket and a file interchange. §11.1.
-    function read(mutable self, into: mutable borrowed Array of U8,
+    def read(mutable self, into: mutable borrowed Array of U8,
             timeout: Duration) -> (Int, NetError?)
 
 UdpSocket has:
-    function send_to(mutable self, data: borrowed Array of U8,
+    def send_to(mutable self, data: borrowed Array of U8,
             address: borrowed String) -> (Int, NetError?)
 ```
 
@@ -1483,7 +1483,7 @@ Reading from an instrument that streams newline-delimited samples over TCP.
 use net (TcpStream)
 use time (Duration)
 
-function collect_samples(host: borrowed String, wanted: Int)
+def collect_samples(host: borrowed String, wanted: Int)
         -> (Array of F64, Error?):
     let stream, err be TcpStream.connect(host, timeout: Duration.seconds(5))
     if err?:
@@ -1604,22 +1604,22 @@ an inconsistency.
 
 ```science
 ## The one-liner. Follows no redirects; see `Client` for policy.
-function get(url: borrowed String) -> (Response, HttpError?)
+def get(url: borrowed String) -> (Response, HttpError?)
 
 ## Streams to disk rather than into memory: a dataset does not fit in a
 ## `Response` body, and this is the module's most common use by far.
-function download(url: borrowed String, into: borrowed Path)
+def download(url: borrowed String, into: borrowed Path)
         -> (Int, HttpError?)
 
 Request has:
-    function new(method: Method, url: borrowed String) -> Request
+    def new(method: Method, url: borrowed String) -> Request
 
-    function header(mutable self, name: borrowed String,
+    def header(mutable self, name: borrowed String,
             value: borrowed String)
 
 Client has:
     ## `fetch`, not `send`: `send` is reserved for F3's actors. §12.4.
-    function fetch(mutable self, request: Request)
+    def fetch(mutable self, request: Request)
             -> (Response, HttpError?)
 ```
 
@@ -1632,7 +1632,7 @@ Fetch a dataset and verify it against the checksum the catalogue published — t
 use http (download)
 use crypto (hash_file, equal_constant_time)
 
-function fetch_verified(url: borrowed String, into: borrowed Path,
+def fetch_verified(url: borrowed String, into: borrowed Path,
         expected: borrowed Digest) -> Error?:
     let bytes, err be download(url, into: into)
     if err?:
@@ -1805,13 +1805,13 @@ No new mechanism. The primitives block is an ordinary `unsafe extern` block with
 ```science
 unsafe extern "C" library "sodium" via pkg-config "libsodium":
 
-    function crypto_generichash(
+    def crypto_generichash(
         out: ffi.MutableSpan of U8, out_length: ffi.CSizeT,
         input: ffi.Span of U8, input_length: ffi.CULongLong,
         key: ffi.Span of U8, key_length: ffi.CSizeT,
     ) -> ffi.CInt
 
-    function sodium_memcmp(
+    def sodium_memcmp(
         a: ffi.Span of U8, b: ffi.Span of U8, length: ffi.CSizeT,
     ) -> ffi.CInt
 ```
@@ -1845,21 +1845,21 @@ declarations were not written for is not a risk to accept.
 ```science
 ## No `ffi` type appears here, per FFI §1.7. `Digest` prints as lower-case
 ## hex and compares in constant time.
-function sha256(data: borrowed Array of U8) -> Digest
+def sha256(data: borrowed Array of U8) -> Digest
 
 ## Streams the file; a dataset does not fit in memory. The common use.
-function hash_file(path: borrowed Path) -> (Digest, CryptoError?)
+def hash_file(path: borrowed Path) -> (Digest, CryptoError?)
 
 ## The entire CSPRNG surface. No distributions, on purpose. §13.4.
-function random_bytes(count: Int) -> Array of U8
+def random_bytes(count: Int) -> Array of U8
 
 ## Ed25519. `SigningKey` redacts under `Display`, and there is no
 ## `crypto.Key`. §13.4.
-function sign(message: borrowed Array of U8, key: borrowed SigningKey)
+def sign(message: borrowed Array of U8, key: borrowed SigningKey)
         -> Signature
 
 ## Because `a is b` on byte arrays short-circuits and leaks timing.
-function equal_constant_time(a: borrowed Array of U8,
+def equal_constant_time(a: borrowed Array of U8,
         b: borrowed Array of U8) -> Bool
 ```
 
@@ -1871,7 +1871,7 @@ has, which is "did this come from my collaborator unmodified".
 ```science
 use crypto (VerifyingKey, Signature, verify, hash_file)
 
-function load_trusted(params: borrowed Path, signature: borrowed Path,
+def load_trusted(params: borrowed Path, signature: borrowed Path,
         author: borrowed VerifyingKey) -> (Parameters, Error?):
     let digest, err be hash_file(params)
     if err?:

@@ -1,36 +1,51 @@
 # Science — Design: `def` and `lambda`
 
-Date: 2026-09-16
-Status: draft for review
+Date: 2026-09-16. Revised the same day, after the `def` half was overruled.
+Status: `def` — **argued against here and adopted anyway**, by the project
+owner's decision. The keyword is `def`. This note keeps the argument it made,
+because the argument was not refuted, and records what losing it did to the rule
+the argument rested on (§1.5, §3.5). `syntax-revision-3.md` is the decision
+record.
+`lambda` — rejected, and the rejection stands untouched.
 Owns: the spelling of the function-declaration keyword, and the question of a
 third closure form.
-Depends on: `syntax-revision-2.md` (all samples here are in its syntax),
-`../specs/2026-09-16-science-f0-core-design.md` §4.1, §4.6, §13,
-`llm-ergonomics.md` §3 and §4.2, `reserved-words.md` §0.1 and §2.
-Diagnostic block: `SC0119`, `SC0135`–`SC0137`. `SC0138`–`SC0139` are returned
-unclaimed to the free pool (§9.3).
+Depends on: `syntax-revision-2.md` and `syntax-revision-3.md` (all samples here
+are in their syntax), `../specs/2026-09-16-science-f0-core-design.md` §4.1, §4.6,
+§13, `llm-ergonomics.md` §3 and §4.2, `reserved-words.md` §0.1, §2 and §2.3.
+Diagnostic block: `SC0135` and `SC0137`. `SC0119` and `SC0136` were allocated
+here and are returned unused — the live migration code is `SC0156` and it belongs
+to `syntax-revision-3.md` (§9). `SC0138`–`SC0139` were returned unclaimed when
+this note was written.
 
 ---
 
-## 0. The two answers, first
+## 0. The two answers, and what became of them
 
-Both requests are declined, and the reasons are different in kind.
+Both requests were declined here. One of them was then made anyway.
 
-| Request | Answer | Decided by |
-|---|---|---|
-| `function` → `def` | **No.** Keep `function`. | The keyword rule, §4.1, as revision 2 left it — see §1. |
-| add `lambda` | **No.** Keep `each` and `giving`. | The reserved-word audit — see §5. `lambda` is a binding-position collision in five fields. |
+| Request | This note's answer | What happened | Decided by |
+|---|---|---|---|
+| `function` → `def` | **No.** Keep `function`. | **Overruled. `def` shipped the same day.** | This note: the keyword rule, §4.1, as revision 2 left it (§1). The outcome: the project owner (§3.5). |
+| add `lambda` | **No.** Keep `each` and `giving`. | Stands. | The reserved-word audit — see §5. `lambda` is a binding-position collision in five fields. |
 
-Neither answer is "the change is small, so no". `def` is declined because it is
-the only proposal anyone has made that breaks the one clause of §4.1 still
+Neither answer was "the change is small, so no". `def` was declined because it
+was the only proposal anyone had made that breaks the one clause of §4.1 still
 standing after revision 2, and once that clause goes there is no principle left
-to answer the next request with. `lambda` is declined because `let lambda be
-532<nm>` is a line a physicist writes in their first hour, and because the form
-it would add is *longer* than the form the language already has.
+to answer the next request with. That consequence was not avoided; it was
+accepted. §1.5 says what the rule is now, and it is weaker.
 
-§2 makes the strongest case for `def` I can make, because it is a better case
-than it first looks, and §3 says why it still loses. §10 names the argument that
-nearly moved me.
+`lambda` is declined because `let lambda be 532<nm>` is a line a physicist writes
+in their first hour, and because the form it would add is *longer* than the form
+the language already has. Nothing about the `def` decision touches that
+reasoning: the two requests were declined for unrelated reasons, and only one of
+the reasons was overruled.
+
+**How to read what follows.** §1 through §3 are kept as they were argued, with
+the outcome marked where it lands rather than folded back in. §2 makes the
+strongest case for `def` I can make, and it is a better case than it first looks.
+§3 says why this note thought it still loses, and §3.5 says why that did not
+decide the matter. §10 names the argument that nearly moved me and that, read
+again after the fact, was the one that was right about where this would go.
 
 ---
 
@@ -86,6 +101,11 @@ or not true false is const public giving each`.
 
 Every entry is a whole English word, with **one exception**.
 
+> **What happened.** That list is revision 2's and it is left as it was, because
+> the argument below is about it. Revision 3 replaced `function` with `def`, so
+> the live list has two exceptions rather than one, which is the case §1.3 says
+> the rule cannot survive. It did not survive it. §1.5.
+
 ### 1.3 The exception is `const`, and it matters
 
 `const` is an abbreviation of `constant`. It is in §13's in-use list, it is
@@ -108,16 +128,26 @@ the audience types it by reflex, it is shorter at the start of a line — and
 under a list there is no principled answer to any of them. Under the one-clause
 rule there is one answer and it takes a sentence.
 
-**Decision.** The surviving rule is §1.2, stated in one clause, and it is
-retained. **Rejected alternative:** declaring §4.1 spent and replacing it with
-case-by-case taste. Reason: the language has made eleven keyword decisions this
-way and every one of them is defensible in the same sentence; taste does not
-scale past the first disagreement, and revision 2 §10 already set the bar — *a
-third revision should be held to a much higher bar*.
+**Decision — made here, and overruled the same day.** The surviving rule is
+§1.2, stated in one clause, and it is retained. **Rejected alternative:**
+declaring §4.1 spent and replacing it with case-by-case taste. Reason: the
+language has made eleven keyword decisions this way and every one of them is
+defensible in the same sentence; taste does not scale past the first
+disagreement, and revision 2 §10 already set the bar — *a third revision should
+be held to a much higher bar*.
 
 **Cost, stated.** This note is asking the author to keep an eight-character
 keyword for a reason that is architectural rather than felt. That is a real
 cost and §2 prices it.
+
+> **Outcome.** The author declined to pay it. `def` was adopted, §1.2 gained its
+> second exception, and the paragraph above is now a description of what the
+> rule stopped being able to do rather than a decision about what it is. The
+> prediction in it — *a list cannot answer a question it does not already
+> contain* — was not tested by argument and was not shown to be wrong. It was
+> passed over. §1.5 is the attempt to leave something behind that still answers
+> `elif`, `impl`, `str`, `len`, `mut`, `pub` and `fn`, because those requests are
+> still coming and the one-clause rule is no longer there to meet them.
 
 ### 1.4 The consequential ask: fix `const`
 
@@ -134,6 +164,72 @@ If the author would rather keep `const`, that is defensible too — but then §4
 should say so in writing, naming `const` as the one deliberate exception, so
 that the next `def`-shaped request meets a stated exception list rather than a
 silent one.
+
+> **Outcome.** The second half of that paragraph is what happened, in the worst
+> available version of it: §4.1 now names a stated exception list, and it has two
+> entries rather than one. The ask to rename `const` to `constant` is withdrawn
+> in §11 — with `def` on the list it buys nothing, because removing one exception
+> from a list of two leaves a list.
+
+### 1.5 What the keyword rule is now
+
+This is the section the `def` decision actually forced, and it is the reason the
+rest of §1 is kept rather than deleted. Three options were available and only one
+of them is true of the language as it stands.
+
+**(a) The rule is dead; keyword spelling is taste.** Rejected, for §1.3's reason,
+which is undamaged: taste does not scale past the first disagreement, and the
+language has eleven keyword decisions that were each defensible in one sentence
+and would now each be reopenable.
+
+**(b) The rule stands, with a named exception list.** Rejected, because §1.3
+proved it is not a rule. *Whole words, plus a universal symbol, plus `const`,
+plus `def`* is a list, a list answers only the questions already in it, and
+`elif` is not in it.
+
+**(c) Restate it weaker, so that what is left is true.** This is what the core
+spec's §4.1 now does, and it is the only honest one:
+
+> **A keyword is a whole English word by default. A shortened keyword is not
+> forbidden; it must beat the audience test, and if it is adopted without
+> beating it, it is named in the register.**
+
+The **audience test** is §3.2 of this note, promoted from an argument to a
+method: count the spelling across the languages this audience actually writes —
+Fortran, MATLAB, R, Julia, Python, JavaScript, PHP — rather than across the
+corpus a model was trained on. It is the part of the `def` case that produced an
+answer nobody expected, and it is the only part of §1 through §3 that still
+decides anything. It refuses `elif`, `impl`, `str`, `len`, `mut`, `pub` and `fn`
+in one sentence each, on evidence rather than on form.
+
+The **register** is §4.1's table: `const`, inherited and never argued, and `def`,
+argued and overruled, each with who decided it and against what.
+
+**(b) and (c) both end in a list, and the difference is which one decides.**
+Under (b) the list *is* the rule, so a word is legal because it is on the list
+and there is nothing to say to a word that wants on. Under (c) the list decides
+nothing — it is a record of overrides, kept so the precedent is readable — and
+the thing that decides is the audience test, which is a predicate and applies to
+words that have never been proposed. That is a real distinction and it is also a
+thin one: a register makes overriding visible, not harder.
+
+**What this costs, and it is not small.** The old clause could be checked by
+looking at the word. The new one cannot: it is empirical, so it is arguable, and
+an argument is exactly the thing that lost here. A reviewer meeting the next
+request has a method, a precedent and no authority — §4.1 has stopped being a
+veto and become an obligation to record. §1.3's worry was that a rule everyone
+knows has exceptions stops deciding anything; the honest position is that the
+*form* rule has stopped deciding anything, and what has been salvaged is a
+different and weaker instrument that decides on different grounds. Whether that
+is enough will be found out at `elif`, not here.
+
+**One thing is genuinely better, and it is small.** §4.1 named `const` as an
+exception before this; what it did not carry was *provenance* — who decided, on
+what evidence, against what argument. The register does, for both entries. That
+is worth something precisely because §1.3's complaint was that a list cannot
+answer a new question: a list with provenance still cannot, but it lets the next
+reader see that the last entry was an override rather than a finding, which is
+the difference between a precedent and a permission.
 
 ---
 
@@ -174,9 +270,21 @@ the correction.** §0 of that note:
 That is the author's own sentence, it is about exactly this trade, and on its
 face it points at `def`.
 
+> **Outcome: these four are now the change's benefits, and two of them landed.**
+> Argument 2 was paid in full — five characters off the front of 384 corpus
+> declarations, and the name starts at column 5 rather than column 10. Argument 3
+> inverted: `def` is correct and `function` is the compile error, which is
+> `SC0156`. **Argument 1 was wrong in its details and it is worth saying so**: it
+> claimed adopting `def` *deletes a row rather than adding one* from `AGENTS.md`
+> §1. It added one. The `fn f()` row stayed and a `function f()` → `def f()` row
+> joined it, because a translation table's job is to catch what people write, and
+> people now write `function` from having read everything published before today.
+> Argument 4 is the one this note answered in §3.1 and the answer still stands;
+> it was not what carried the decision.
+
 ---
 
-## 3. Why `def` loses anyway
+## 3. Why this note said `def` loses
 
 ### 3.1 Argument 4 is answered by the sentence next to it
 
@@ -223,6 +331,14 @@ diagnostic is for, and §9.1 specifies one. A one-round-trip fix with an
 applicable suggestion costs the model one round trip; a broken keyword rule
 costs the language every future keyword argument.
 
+> **This is the section that survived.** The six-to-one count was not disputed
+> and was not answered; it was overruled. It is promoted in §1.5 from an argument
+> about `def` to the *method* §4.1 now uses for every future shortening, because
+> it is the only instrument in this note that produces an answer by measurement
+> rather than by form. Read the last sentence above again, though: it is the
+> trade that was actually made, and it was made the other way. The language paid
+> the future keyword argument and bought the round trips.
+
 ### 3.3 Revision 2 already refunded the characters
 
 `function summarize(self) -> String:` is 35 characters. Under the *original*
@@ -232,11 +348,18 @@ more than `def` would buy, on the half of the line where signatures actually get
 long. Argument 2 is asking for a second refund on a line that has already been
 refunded once.
 
-### 3.4 Decision
+### 3.4 Decision — and the reversal
 
-**Decision.** `function` is retained. `def` is not adopted and is not reserved.
+**Decision, as made here.** `function` is retained. `def` is not adopted and is
+not reserved.
 
-**Rejected alternatives:**
+> **Reversed.** `def` is the keyword. `function` is not reserved — it is an
+> ordinary identifier, and the stale declaration is recognised positionally as
+> `SC0156`. So the second sentence above survived in an odd way: `def` was
+> adopted *and* nothing was reserved, because the word that left the list was
+> `function`. §3.5 is the decision; `syntax-revision-3.md` is the record.
+
+**Rejected alternatives, as they were argued:**
 
 - **`def`.** Breaks §1.2, the only clause of §4.1 that revision 2 left standing,
   and converts the keyword rule from a predicate into a list (§1.3). Loses the
@@ -266,6 +389,65 @@ refunded once.
 an error. §9.1 makes it a one-round-trip error with an applicable fix, and
 `AGENTS.md` (§8) pre-empts it. That is the whole mitigation and it is not
 complete: a fix applied is still a fix that had to be applied.
+
+> **The cost paragraph inverted exactly.** Read it with the words swapped and it
+> is the cost of the decision that was made: *humans and every document written
+> before today will write `function` indefinitely, and every one of those is an
+> error.* `SC0156` is the same mitigation pointed the other way, it is the same
+> one round trip, and it is still not complete for the same reason. The mitigation
+> did not change. The direction of the traffic did, and §3.2 is the disagreement
+> about which direction carries more.
+
+### 3.5 What was actually decided, and by whom
+
+**Decision. `function` becomes `def`.** Made by the project owner, after being
+shown §3.4 and its reasons, and after being told the question had been decided
+against. Recorded in `syntax-revision-3.md`, shipped the same day, 736 tests
+green.
+
+This note does not pretend to have been persuaded, because it was not, and a
+design record that quietly re-argues itself into agreement with the outcome is
+worth nothing to the person reading it in a month. What can be said honestly
+about the decision:
+
+- **It is the owner's call to make**, and it was made with the argument in front
+  of them rather than around it.
+- **Nothing in §3 was refuted.** The six-to-one count in §3.2 stands, the
+  double-refund observation in §3.3 stands, and §3.1's answer to argument 4
+  stands. They lost on authority, which is a real way for an argument to lose and
+  a different one from being wrong.
+- **The consequence §0 named was accepted, not dodged.** *Once that clause goes
+  there is no principle left to answer the next request with* — §1.5 is the
+  attempt to build a weaker one in its place, and it is weaker on purpose,
+  because the alternative is claiming a principle the language no longer has.
+
+**Two things this note got wrong, found by the change rather than by argument.**
+
+1. **The `define` rejection now cuts against `def`.** §3.4 rejected `define`
+   because `function` is *a noun naming the thing declared, which is what every
+   other declaration keyword in Science is (`type`, `choice`, `interface`); a
+   verb in a noun's slot is a worse fit than two extra characters is a cost.*
+   `def` is the stem of that same verb, so it is the rejected alternative's
+   defect with the compensating whole-word property removed. On this note's own
+   stated ground, `def` is worse than `define`, and `define` was the option that
+   fitted the rule. Nobody proposed `define`, including the author of this note,
+   who buried it in a rejection list; that is a miss, and it is recorded here
+   because it is the version of the request that could have been granted without
+   any of §1.5.
+2. **The reserved-word audit under-priced `def`** (§5). It looked for a
+   *scientist* who binds the name and correctly found almost none. It did not
+   look for a *compiler writer*, and `self-hosting.md` is a note about this
+   language compiling itself. `examples/21_compiler_shapes.science` had `def:
+   DefId` and broke on the first run. `reserved-words.md` §2.3 records the
+   collision and generalises it.
+
+**What is moot now.** The fourth rejected alternative above — making the keyword
+optional inside `has:` and `interface:` blocks — was named as the place to relent
+if the character count at the declaration head ever became a felt problem. It has
+stopped being a problem: `def new(title: String) -> Doc:` inside a `has:` block
+starts the name at column 9 instead of column 14, which is most of what that
+alternative was for, without the second spelling it would have cost. It is
+withdrawn rather than deferred.
 
 ---
 
@@ -407,12 +589,27 @@ in use, `—` = free. Status verified against
 
 | Word | Now | Collides with | Position | Decision | If adopted anyway |
 |---|---|---|---|---|---|
-| `def` | — | `def` as a local in symbolic-algebra and parser code; `default` and `deficiency` are separate identifiers and do not collide | Binding (rare) | **Leave free.** Not adopted (§3.4); not reserved | Low collision cost — `def` fails on the keyword rule, not on the vocabulary |
+| `def` | **K** (revision 3) | `def` as a local **and a field name** in symbolic-algebra and compiler code; `default` and `deficiency` are separate identifiers and do not collide | Binding, **field** | **Adopted as the declaration keyword** (§3.5). The row as argued read *leave free* | The collision cost was priced *low* here and that was wrong — see below |
 | `lambda` | — | λ in five fields; see §5.1 | **Binding and parameter** | **Leave free.** Not adopted (§4.4); not reserved | Unacceptable — see §5.2 |
 
 The `def` row is the honest one: **the reserved-word audit does not reject
 `def`.** If the author overrules §3.4, no scientist loses an identifier. That
 decision is §4.1's to make and this note should not pretend otherwise.
+
+> **The author did overrule §3.4, and the sentence above is true and
+> incomplete.** No scientist lost an identifier. A *compiler writer* did, on the
+> first run: `examples/21_compiler_shapes.science` bound `def: DefId` and
+> `binding.def`, because a definition table is what a compiler's middle is made
+> of and `def` is what every compiler calls the thing. The field is `definition`
+> now.
+>
+> The miss is instructive and it is not about `def`. This note audited against
+> the vocabulary of the *subject matter* — physics, chemistry, statistics — which
+> is what `reserved-words.md` audits against and what §13 has always audited
+> against. Science intends to compile itself, so it has a second audience whose
+> vocabulary nobody has ever checked: `type`, `has`, `match`, `use` and `const`
+> are all words a compiler written in Science wants for fields and locals.
+> `reserved-words.md` §2.3 carries the row and §5 of that note carries the ask.
 
 ### 5.1 `lambda`, priced
 
@@ -427,7 +624,7 @@ rule only frees words that follow a `.`.
 | Nuclear physics, chemical kinetics | decay constant | `let n be n0 * exp(-lambda * t)` | `physics`, `chem` |
 | Linear algebra | eigenvalue | `let lambda, v be eig(a)` | `linalg` |
 | Statistics | Poisson / exponential rate | `let lambda be events / interval` | `stats` |
-| ML, optimisation | ridge and lasso regularisation strength; Lagrange multiplier | `function ridge(x: Matrix, y: Vector, lambda: F64) -> Vector:` | `optimize`, `stats` |
+| ML, optimisation | ridge and lasso regularisation strength; Lagrange multiplier | `def ridge(x: Matrix, y: Vector, lambda: F64) -> Vector:` | `optimize`, `stats` |
 
 Two of these deserve calling out because they are worse than the others.
 
@@ -554,7 +751,7 @@ reject `class`:
 > an unfamiliar word makes a reader look it up, a familiar word used differently
 > makes a reader confidently wrong.
 
-In `function f(x: Int) -> Int` the `->` introduces a **type**. In
+In `def f(x: Int) -> Int` the `->` introduces a **type**. In
 `lambda x -> x > 5` it would introduce a **value**. Revision 2 adopted `->`
 precisely because "every reader … already reads it" — as *returns this type*.
 Giving it a second meaning spends the property that justified taking it, and it
@@ -623,9 +820,15 @@ Brief, because the answer is "nothing".
 **With both rejected, no node changes.** `ExprKind::Closure { param:
 Option<Ident>, body: Box<Expr> }` (`crates/science-parser/src/ast.rs:475`)
 already carries both existing forms — `None` for `each`, `Some` for `giving` —
-and `dump.rs:590` already prints both. `function` is `TokenKind::Function` and
-unchanged. Nothing reaches HIR, MIR, the evaluator or codegen differently,
-because nothing new reaches the parser.
+and `dump.rs:590` already prints both. Nothing reaches HIR, MIR, the evaluator or
+codegen differently, because nothing new reaches the parser.
+
+This survived revision 3 intact, and it is worth noticing why. The declaration
+keyword is still `TokenKind::Function`; only the text the lexer matches to reach
+it changed, from `"function"` to `"def"` at `crates/science-lexer/src/token.rs`.
+No node, no dump, no lowering. That is the whole reason a keyword rename is a
+mechanical migration and a closure form is not — the argument §7 makes about
+`lambda`, from the other end.
 
 **Had `lambda` been adopted as sugar (option b)**, still no node: it would
 desugar in `parse_expr` to `Closure { param: Some(_), … }`, and the snapshot
@@ -643,16 +846,23 @@ whoever lands `fold`.
 
 ## 9. Diagnostics
 
-Allocated from this note's block: `SC0119`, `SC0135`–`SC0137`.
+Allocated from this note's block: `SC0119`, `SC0135`–`SC0137`. **Two of the four
+are now void.**
 
-| Code | Fires on | Fix |
-|---|---|---|
-| `SC0119` | `def` starting an item | `function` — an applicable replacement |
-| `SC0135` | `lambda <name>:` / `lambda <name> ->` / `lambda:` in expression position | `<name> giving …` — an applicable multi-span edit |
-| `SC0136` | *contingency only*: `function` starting an item, if §3.4 is overruled and `def` is adopted | `def` |
-| `SC0137` | A closure with more than one parameter, in any spelling | names the one-parameter rule, or the parenthesised form once §4.5 lands |
+| Code | Fires on | Fix | Status |
+|---|---|---|---|
+| `SC0119` | `def` starting an item | `function` | **Void.** `def` is the declaration. Returned to the free pool |
+| `SC0135` | `lambda <name>:` / `lambda <name> ->` / `lambda:` in expression position | `<name> giving …` — an applicable multi-span edit | Live, unchanged |
+| `SC0136` | *contingency only*: `function` starting an item, if §3.4 is overruled and `def` is adopted | `def` | **Void, and instructive.** §3.4 *was* overruled and the contingency *did* arrive — and the implementation took `SC0156`, not this code. Returned to the free pool |
+| `SC0137` | A closure with more than one parameter, in any spelling | names the one-parameter rule, or the parenthesised form once §4.5 lands | Live, unchanged |
 
-### 9.1 `SC0119` — `def`
+**The live migration code is `SC0156`**, shipped in
+`crates/science-parser/src/parser.rs`, and it belongs to `syntax-revision-3.md`.
+It does exactly what §9.1 below specifies, with the two words swapped. §9.3 says
+what happened to `SC0136` and why the note's pre-allocation did not survive
+contact with the commit that needed it.
+
+### 9.1 `SC0119` — `def` — void, and read it inverted
 
 The Python sibling of `llm-ergonomics.md`'s `SC0127` (`fn` → `function`), and it
 is placed at `SC0119` deliberately: immediately below that note's
@@ -691,6 +901,20 @@ The note line is doing deliberate work. It teaches the *rule* rather than the
 one substitution, which is the cheapest place to pre-empt `mut`, `pub` and
 `impl` — exactly as `SC0120`'s note pre-empts `&x` at the call site.
 
+> **What shipped instead.** `SC0156`, the same diagnostic with the two words
+> swapped, the same no-cascade recovery, the same machine-applicable one-word
+> fix. Everything in this section about *shape* was right and only the direction
+> was wrong.
+>
+> The one part that did not survive is the note line, and it could not have: *the
+> keyword is the whole word, not an abbreviation* is a sentence the language can
+> no longer say, because `def` is the counter-example. `SC0156`'s note line is
+> `` `def` declares every function, method and interface member `` — a fact about
+> scope rather than a rule about form. That is a smaller thing to teach, and the
+> loss is exactly §1.5's: the diagnostic that was the cheapest place to pre-empt
+> `mut`, `pub` and `impl` no longer has a rule to pre-empt them with. It now
+> pre-empts nothing; each of those will need its own row.
+
 ### 9.2 `SC0135` — `lambda`, without reserving the word
 
 This is the one that needed design rather than transcription, because §5 forbids
@@ -710,7 +934,7 @@ costs nothing and forecloses nothing. And crucially:
 
 ```science
 let lambda be 532<nm>                                  # legal: `lambda` then `be`
-function ridge(x: Matrix, y: Vector, lambda: F64):     # legal: parameter position
+def ridge(x: Matrix, y: Vector, lambda: F64):          # legal: parameter position
 let lambda, v be eig(a)                                # legal: binding position
 let peak be lambda * 2                                 # legal: `lambda` then an operator
 xs.keep(lambda x: x > 5)                               # SC0135
@@ -767,6 +991,24 @@ need a code from a block someone else has taken. The migration-diagnostic table
 in `llm-ergonomics.md` §3.2 gets exactly one of `SC0119` and `SC0136`, never
 both.
 
+> **The contingency arrived and the allocation was not used.** The diagnostic
+> above is, to the letter, the one that shipped — the same message, the same
+> span, the same fix. It shipped as **`SC0156`**, the next free code in the
+> syntax block, beside `SC0155` where the `try` migration went. The code in the
+> commit is the record, so `SC0156` is live and `SC0136` goes back.
+>
+> This is worth one sentence of process rather than a shrug. Pre-allocating a
+> code for a contingency works only if whoever lands the contingency reads the
+> note that allocated it, and the person implementing a keyword rename reaches
+> for the parser's own block of migration codes, where every sibling already
+> lives. The pre-allocation was not wrong; it was in the wrong place. A
+> contingency code for a *migration* belongs next to the migration codes, not
+> next to the note's feature codes.
+>
+> Both `SC0119` and `SC0136` are therefore returned to the free pool, and
+> `docs/superpowers/design/README.md` carries the change. This note's live block
+> is `SC0135` and `SC0137`.
+
 **`SC0137`** covers the parse failure §6.1(e) found, which exists today
 independently of `lambda`: `f(a, b giving a + b)` parses as two arguments with no
 complaint, because `b: …` — or here `b giving …` after the comma split — is a
@@ -803,6 +1045,19 @@ particular audience has typed most. That is a familiarity argument *for*
 actually diverge here. They only appear to, if Python is mistaken for the
 audience.
 
+> **Read again afterwards, this section was the one that was right.** Not about
+> the merits — §3.2 still answers it — but about the *outcome*. "Rule-versus-motive
+> arguments are exactly the ones that get reopened" was written hours before this
+> one was reopened, and it was reopened by the person whose motive it was. The
+> section names the correct failure mode and then talks itself out of worrying
+> about it, on the strength of an argument that was never going to be the thing
+> that decided.
+>
+> The lesson is not "§3.2 was wrong". It is that a note which identifies the
+> ground its decision is most likely to be overturned on should say what it would
+> do when that happens, instead of explaining why it will not. §1.5 is that
+> paragraph, written late.
+
 ---
 
 ## 11. What this asks of other notes
@@ -810,6 +1065,14 @@ audience.
 1. **`llm-ergonomics.md` §3.2** adds one row to the migration table: `SC0119`,
    `def` starting an item, fix `function`. It sits directly above `SC0127`
    (`fn`), which is the same mistake from the other ecosystem.
+
+   **Withdrawn, and replaced by its mirror.** `SC0119` is void. What that table
+   needs instead is `SC0156` — `function` starting an item, fix `def` — and its
+   `SC0127` row's *fix* column changes from `function` to `def`, which is done.
+   The two sit three characters apart now, which is a question for that note:
+   `fn` and `def` are the two spellings a model is most likely to write, they
+   produce different codes with near-identical fixes, and merging them is a
+   one-line change if the split turns out to confuse.
 2. **`llm-ergonomics.md` §3.2's multi-span `Suggestion` extension** gains another
    customer. It was asked for by `SC0130` (`impl A for B` → `B implements A`) and
    `SC0134` (`f()?` → `try f()`); `SC0135` needs it too.
@@ -827,6 +1090,11 @@ audience.
    the strongest single case in the whole audit for the principle that note is
    arguing (§5.2), and it is a case where the answer was "do not reserve it"
    rather than "free it late".
+
+   **Done, and one row went the other way.** That note's §2.3 now carries `def`
+   as a keyword with a field-position collision, `function` as a freed word, and
+   a seventh ask — that §13 be audited against the vocabulary of a *compiler*,
+   which is the audience §5 of this note forgot to check.
 5. **`collections-and-chains.md`** owns the multi-parameter closure gap §4.5
    identifies, because `fold` is its first customer. The proposed spelling is
    `(acc, x) giving acc + x` and the AST cost is `param: Option<Ident>` →
@@ -834,11 +1102,29 @@ audience.
 6. **The core spec §4.3** should rename `const` to `constant`, or §4.1 should
    name `const` in writing as its one deliberate exception (§1.4). Either closes
    the hole; leaving it open is what makes the next `def` request hard to answer.
-7. **`AGENTS.md`** — §12 below. Not edited here; another agent holds the file.
+
+   **Half-discharged and half-withdrawn.** §4.1 now names its exceptions in
+   writing, and there are two of them. The rename of `const` to `constant` is
+   **withdrawn**: it was worth doing only while it would have left the rule with
+   no exception at all, and with `def` on the register it would take a list of
+   two down to a list of one, which is still a list. If `const` is ever renamed
+   it should be for `reserved-words.md` §2's reason — the module wants the name —
+   and not for this one.
+7. **`AGENTS.md`** — §12 below. **Superseded**: the file has since been carried to
+   revision 3 directly, and §12's edits are recorded there as what was asked for
+   rather than what was done.
 
 ---
 
 ## 12. `AGENTS.md`: exactly what changes
+
+> **Superseded by revision 3 for Edit 1; Edit 2 stands.** This section was
+> written against a `function` keyword. `AGENTS.md` has since been migrated
+> directly and its §1 row now reads `` | `function f()` | `def f()` | the keyword
+> until revision 3; `SC0156` | `` — the mirror of Edit 1 below. The `lambda`
+> edit, Edit 2, is unaffected and is still what that file should say. The section
+> is kept because the *reasoning* about which row goes where is the same in both
+> directions.
 
 Two edits, both additive. Neither touches the reserved-word list, because §3.4
 and §4.4 reserve nothing.
@@ -899,6 +1185,10 @@ editing it now should carry it to revision 2 in the same pass; that is
 `syntax-revision-2.md` §9's item 1, not this note's ask, and the two edits above
 are written against the file as it stands so they apply either way.
 
+> **Done.** `AGENTS.md` is in revision-3 syntax throughout, and its §3 now lists
+> `function` among the words a previous revision reserved and has since freed,
+> with `SC0156` beside `SC0138`–`SC0144` and `SC0155`.
+
 ---
 
 ## 13. Risks
@@ -911,6 +1201,15 @@ from being reopened by anyone who reads §1.3 and skips §1.4. Item 6 of §11
 closes it, and until it is closed this decision is softer than §3.4 makes it
 sound.
 
+> **This risk fired, within hours, and it was the right risk to have named.** The
+> decision was reopened and reversed. What is worth recording is that it was *not*
+> reopened on the `const` sentence — nobody used §1.3 as leverage — and that the
+> risk was still correctly stated: a decision resting on a rule with a live
+> counterexample is soft, and this one turned out to be soft in the plainest way,
+> which is that the person who could simply decide, decided. Naming the softness
+> in writing is what makes the reversal readable a month later instead of
+> surprising.
+
 **Rejecting both requests is a suspicious result.** A note asked to evaluate two
 changes and rejecting both should be read with the question *did it just prefer
 the status quo?* The honest check is what the note says yes to: §4.5's
@@ -919,6 +1218,15 @@ multi-parameter `giving`, which is a real AST change with real snapshot churn;
 for; and `SC0136`, a fully specified diagnostic for the outcome where §3.4 is
 overruled. None of those is a status-quo answer, and the second is a change the
 author did not request and may not want.
+
+> **One of the three has to be struck from that defence.** `SC0136` was the
+> outcome-where-overruled diagnostic and the outcome arrived; the diagnostic that
+> shipped was `SC0156` and this note's code was never used (§9.3). The other two
+> stand, and §1.4's `const` ask has since been withdrawn (§11 item 6), which
+> leaves §4.5's multi-parameter `giving` as the only thing this note said yes to
+> that is still live. That is a thinner answer to *did it just prefer the status
+> quo?* than the original paragraph claims, and the fair reading is that the
+> answer was always thinner than it looked.
 
 **`SC0135` is recognising a shape, not a token, and shapes rot.** If `lambda`
 ever becomes reserved for an unrelated reason, or if a future form makes

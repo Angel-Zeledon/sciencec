@@ -461,7 +461,7 @@ together:
 
 ```science
 interface Display:
-    function display(borrowed self, into: mutable borrowed Formatter)
+    def display(borrowed self, into: mutable borrowed Formatter)
 ```
 
 ```science
@@ -470,7 +470,7 @@ type Station:
     channels: Int
 
 Station implements Display:
-    function display(borrowed self, into: mutable borrowed Formatter):
+    def display(borrowed self, into: mutable borrowed Formatter):
         into.text(self.id)
 ```
 
@@ -480,19 +480,19 @@ of §8:
 ```science
 Formatter has:
     ## Write text, honouring fill, alignment and width from the spec.
-    function text(mutable self, value: borrowed String)
+    def text(mutable self, value: borrowed String)
 
     ## Write text with no padding, for a fragment of a larger rendering.
-    function raw(mutable self, value: borrowed String)
+    def raw(mutable self, value: borrowed String)
 
     ## Render a float under the spec's code, precision, sign and grouping.
-    function number(mutable self, value: F64)
+    def number(mutable self, value: F64)
 
     ## Render an integer under the spec's code, sign and grouping.
-    function integer(mutable self, value: I64)
+    def integer(mutable self, value: I64)
 
     ## The parsed spec, for an implementation that needs to branch on it.
-    function spec(borrowed self) -> FormatSpec
+    def spec(borrowed self) -> FormatSpec
 ```
 
 `FormatSpec` is a plain record of nullable fields — `fill: Char`, `align: Align?`,
@@ -511,7 +511,7 @@ for the programmer, and they are different interfaces.
 
 ```science
 interface Inspect:
-    function inspect(borrowed self, into: mutable borrowed Formatter)
+    def inspect(borrowed self, into: mutable borrowed Formatter)
 ```
 
 **Why the split, and not one interface.** The argument against a split is real:
@@ -575,7 +575,7 @@ library:
 
 ```science
 Quantity implements Display:
-    function display(borrowed self, into: mutable borrowed Formatter):
+    def display(borrowed self, into: mutable borrowed Formatter):
         into.number(self.value as F64)
         into.raw(" ")
         into.raw(Self.unit_symbol())
@@ -666,8 +666,8 @@ Formatting takes a different shape. **The example changes.**
 **Decision.**
 
 ```science
-function print(value: borrowed any Display)
-function write(value: borrowed any Display)
+def print(value: borrowed any Display)
+def write(value: borrowed any Display)
 ```
 
 One argument. Not variadic. `data-io.md` §10's two output lines become:
@@ -783,7 +783,7 @@ preceding a declaration. There is no docstring form and no `"""` literal.
 ##
 ## Rows whose deviation is zero are left unchanged, because dividing
 ## by it is the wrong answer rather than an error.
-function standardize(rows: mutable borrowed Frame of Row):
+def standardize(rows: mutable borrowed Frame of Row):
     for row in rows:
         row.center()
 ```
@@ -831,11 +831,11 @@ all.
 | Target | Example |
 |---|---|
 | Module | a `##` run at the top of the file, before any declaration |
-| Function, associated function, method | before `function` |
+| Function, associated function, method | before `def` |
 | `type`, `choice`, `interface`, type alias, `const` | before the keyword |
 | Field of a `type` | before the field line |
 | Variant of a `choice` | before the variant line |
-| Method inside an `interface` or a `has` block | before `function` |
+| Method inside an `interface` or a `has` block | before `def` |
 | An `implements` block | before the block; individual methods too |
 
 ```science
@@ -935,7 +935,7 @@ and nothing more.
 ## ```output
 ## 2.8734
 ## ```
-function pooled_deviation(s1: F64, n1: Int, s2: F64, n2: Int) -> F64:
+def pooled_deviation(s1: F64, n1: Int, s2: F64, n2: Int) -> F64:
     ...
 ````
 
@@ -984,7 +984,7 @@ is worse than none, because it implies a guarantee it does not provide.
 following already compiles:
 
 ```science
-function drift(σ: F64, Δt: F64, θ: F64) -> F64:
+def drift(σ: F64, Δt: F64, θ: F64) -> F64:
     σ * Δt.square_root() * θ.cos()
 
 let μ be mean(readings)
@@ -1126,7 +1126,7 @@ syntactic and takes the `SC0170` block.
 3. **The lexer: a mode stack** (§1.5), and suspension of the indentation machine
    inside an interpolation, as §4.2 already does inside brackets. This is the
    largest implementation item in the note.
-4. **§5.4: respecify `Display`** as `function display(borrowed self, into: mutable
+4. **§5.4: respecify `Display`** as `def display(borrowed self, into: mutable
    borrowed Formatter)`, and **add `Inspect` and `DisplayNumber`** to the
    interface list. `DisplayNumber` is a marker with no methods.
 5. **§8: add `Formatter` and `FormatSpec`** to the library types, and make the

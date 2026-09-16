@@ -339,29 +339,29 @@ operator traits of §5.4 are exactly what makes this readable.
 ### 5.11 Five signatures
 
 ```science
-function sqrt(x: F64) returns F64
+def sqrt(x: F64) returns F64
 
-# Quadrature over a closure. `function(F64) returns F64` as a type is the
+# Quadrature over a closure. `def(F64) returns F64` as a type is the
 # spelling `ffi-c-boundary.md` §10.1 flags as unsettled in the core spec; this
 # note assumes it and depends on that question being answered.
-function integrate(
-    f: function(F64) returns F64,
+def integrate(
+    f: def(F64) returns F64,
     lower: F64,
     upper: F64,
 ) -> (F64, QuadratureError?)
 
 # Generic over the float width, which is why it is written in Science and not
 # linked: a C `erf` is F64 only.
-function erf of T(x: T) returns T where T: Float
+def erf of T(x: T) returns T where T: Float
 
 # Polynomials carry their coefficient type. `evaluate` rather than `at`,
 # because `at` is reserved by the comparison phrases (§3).
 Polynomial of T has methods:
-    function evaluate(self, x: T) returns T where T: Float
+    def evaluate(self, x: T) returns T where T: Float
 
 # An ODE solve returns an error because a stiff problem can fail to converge,
 # and §8's rule is that nothing panics where an error will do.
-function solve_ode of T(
+def solve_ode of T(
     problem: borrowed OdeProblem of T,
     method: Method,
     tolerance: Tolerance,
@@ -428,31 +428,31 @@ Matrix functions: `matrix_exp` `matrix_log` `matrix_sqrt` `matrix_power`
 ```science
 # The shape is in the type. This is the whole reason linalg waits for F1: a
 # dimension mismatch is a compile error, not a runtime one.
-function matmul of (T, const M: Int, const K: Int, const N: Int)(
+def matmul of (T, const M: Int, const K: Int, const N: Int)(
     left: borrowed Matrix of (T, M, K),
     right: borrowed Matrix of (T, K, N),
 ) returns Matrix of (T, M, N) where T: Float
 
 # A solve can fail on a singular matrix, so it returns an error beside the
 # value. The shapes still make a dimension mismatch impossible to write.
-function solve of (T, const N: Int)(
+def solve of (T, const N: Int)(
     a: borrowed Matrix of (T, N, N),
     b: borrowed Vector of (T, N),
 ) -> (Vector of (T, N), LinalgError?) where T: Float
 
 # Cholesky's precondition — positive definiteness — is not in the type, and
 # cannot be. It is the error.
-function cholesky of (T, const N: Int)(
+def cholesky of (T, const N: Int)(
     a: borrowed Symmetric of (T, N),
 ) -> (Triangular of (T, N), NotPositiveDefinite?) where T: Float
 
 # The economy SVD's output shapes are a function of the input's, which is the
 # case const-generic arithmetic has to handle (§14.1).
-function svd_economy of (T, const M: Int, const N: Int)(
+def svd_economy of (T, const M: Int, const N: Int)(
     a: borrowed Matrix of (T, M, N),
 ) -> (Svd of (T, M, N), LinalgError?) where T: Float
 
-function conjugate_gradient of (T, const N: Int)(
+def conjugate_gradient of (T, const N: Int)(
     a: borrowed Sparse of (T, N, N),
     b: borrowed Vector of (T, N),
     tolerance: T,
@@ -578,32 +578,32 @@ Claimed here per §0.2, operating on `data-io.md`'s `Frame of R`.
 ### 7.9 Five signatures
 
 ```science
-function mean of T(values: borrowed Array of T) -> (T, EmptyInput?)
+def mean of T(values: borrowed Array of T) -> (T, EmptyInput?)
     where T: Float
 
 # `Distribution` is a trait with an associated type for the sample, which is
 # what lets a discrete distribution sample an Int and a continuous one an F64.
 trait Distribution:
     type Sample
-    function pdf(self, x: Self.Sample) returns F64
-    function cdf(self, x: Self.Sample) returns F64
+    def pdf(self, x: Self.Sample) returns F64
+    def cdf(self, x: Self.Sample) returns F64
     # By value, not borrowed. Consuming the key is the entire mechanism: a
     # borrowed key could be used twice, and §1 of the core spec names a reused
     # random key as one of the three things the language exists to catch.
-    function sample(self, key: Key) returns Self.Sample
+    def sample(self, key: Key) returns Self.Sample
 
 # The key is taken by value, not borrowed: consuming it is what makes reuse a
 # compile error rather than a convention (§1 of the core spec).
-function normal(key: Key, mean: F64, standard_deviation: F64) returns F64
+def normal(key: Key, mean: F64, standard_deviation: F64) returns F64
 
-function t_test_two_sample(
+def t_test_two_sample(
     first: borrowed Array of F64,
     second: borrowed Array of F64,
     alternative: Alternative,
 ) -> (TestResult, StatsError?)
 
 # `fit`, not `model`. F1, because the design matrix's shape is checked.
-function least_squares of (const N: Int, const P: Int)(
+def least_squares of (const N: Int, const P: Int)(
     design: borrowed Matrix of (F64, N, P),
     response: borrowed Vector of (F64, N),
 ) -> (Fit of P, LinalgError?)
@@ -652,36 +652,36 @@ vector is F1.
 ### 8.6 Five signatures
 
 ```science
-function minimise_scalar(
-    f: function(F64) returns F64,
+def minimise_scalar(
+    f: def(F64) returns F64,
     bracket: Bracket,
     tolerance: F64,
 ) -> (Minimum, DidNotConverge?)
 
 # The gradient is optional: given one, lbfgs uses it; without one it falls back
 # to finite differences, which is a decision the caller should see in the type.
-function lbfgs of (const N: Int)(
-    objective: function(borrowed Vector of (F64, N)) returns F64,
-    gradient: (function(borrowed Vector of (F64, N)) -> Vector of (F64, N))?,
+def lbfgs of (const N: Int)(
+    objective: def(borrowed Vector of (F64, N)) returns F64,
+    gradient: (def(borrowed Vector of (F64, N)) -> Vector of (F64, N))?,
     start: Vector of (F64, N),
     settings: borrowed Settings,
 ) -> (Solution of N, OptimiseError?)
 
-function curve_fit of (const N: Int, const P: Int)(
-    f: function(F64, borrowed Vector of (F64, P)) returns F64,
+def curve_fit of (const N: Int, const P: Int)(
+    f: def(F64, borrowed Vector of (F64, P)) returns F64,
     xs: borrowed Vector of (F64, N),
     ys: borrowed Vector of (F64, N),
     start: Vector of (F64, P),
 ) -> (Fit of P, OptimiseError?)
 
-function linear_program of (const M: Int, const N: Int)(
+def linear_program of (const M: Int, const N: Int)(
     objective: borrowed Vector of (F64, N),
     constraints: borrowed Matrix of (F64, M, N),
     bounds: borrowed Vector of (F64, M),
 ) -> (Vector of (F64, N), Infeasible?)
 
-function differential_evolution of (const N: Int)(
-    objective: function(borrowed Vector of (F64, N)) returns F64,
+def differential_evolution of (const N: Int)(
+    objective: def(borrowed Vector of (F64, N)) returns F64,
     bounds: borrowed Array of Bounds,
     key: Key,
     settings: borrowed Settings,
@@ -734,27 +734,27 @@ Windows — `window` rather than `kernel` (§3): `window_hann` `window_hamming`
 # The output length of an rfft is N/2+1 — the clearest case in the catalogue
 # for const-generic arithmetic (§14.1). Without it this signature cannot be
 # written and the length becomes a runtime value.
-function rfft of (const N: Int)(
+def rfft of (const N: Int)(
     signal: borrowed Vector of (F64, N),
 ) returns Vector of (Complex of F64, N / 2 + 1)
 
-function fft of (const N: Int)(
+def fft of (const N: Int)(
     signal: borrowed Vector of (Complex of F64, N),
 ) returns Vector of (Complex of F64, N)
 
-function butterworth(
+def butterworth(
     order: Int,
     cutoff: F64,
     kind: BandKind,
     sample_rate: F64,
 ) -> (SecondOrderSections, FilterError?)
 
-function filter_forward_backward of (const N: Int)(
+def filter_forward_backward of (const N: Int)(
     sections: borrowed SecondOrderSections,
     signal: borrowed Vector of (F64, N),
 ) returns Vector of (F64, N)
 
-function find_peaks of (const N: Int)(
+def find_peaks of (const N: Int)(
     signal: borrowed Vector of (F64, N),
     settings: borrowed PeakSettings,
 ) returns Array of Peak
@@ -832,25 +832,25 @@ and formula parsing are string and integer work.
 ```science
 # Balancing is a nullspace computation over the element-count matrix, which is
 # why chem depends on linalg transitively. It fails on an unbalanceable input.
-function balance(reaction: borrowed Reaction) -> (Reaction, BalanceError?)
+def balance(reaction: borrowed Reaction) -> (Reaction, BalanceError?)
 
 # Molar mass carries its unit in the type. This is the payoff of §12: a molar
 # mass cannot be added to a mass, and the compiler says so.
-function molar_mass(formula: borrowed Formula) returns Quantity of (F64, GramsPerMole)
+def molar_mass(formula: borrowed Formula) returns Quantity of (F64, GramsPerMole)
 
-function arrhenius(
+def arrhenius(
     activation_energy: Quantity of (F64, JoulesPerMole),
     temperature: Quantity of (F64, Kelvin),
     pre_exponential: F64,
 ) returns F64
 
 # `produced`, not `yield` (§3).
-function percent_produced(
+def percent_produced(
     actual: Quantity of (F64, Grams),
     theoretical: Quantity of (F64, Grams),
 ) returns F64
 
-function ph(concentration: Quantity of (F64, MolesPerLitre)) returns F64
+def ph(concentration: Quantity of (F64, MolesPerLitre)) returns F64
 ```
 
 ---
@@ -917,25 +917,25 @@ clearest early payoff.
 ```science
 # A DNA sequence and a protein sequence are different types, so translating in
 # the wrong direction is a compile error rather than nonsense output.
-function translate(
+def translate(
     sequence: borrowed DnaSequence,
     table: GeneticCode,
 ) -> (ProteinSequence, TranslationError?)
 
-function reverse_complement(sequence: borrowed DnaSequence) returns DnaSequence
+def reverse_complement(sequence: borrowed DnaSequence) returns DnaSequence
 
-function smith_waterman of T(
+def smith_waterman of T(
     first: borrowed T,
     second: borrowed T,
     scoring: borrowed Scoring,
 ) returns Alignment where T: Sequence
 
-function neighbour_joining of (const N: Int)(
+def neighbour_joining of (const N: Int)(
     distances: borrowed Symmetric of (F64, N),
     labels: borrowed Array of String,
 ) -> (Tree, TreeError?)
 
-function tajima_d(
+def tajima_d(
     sequences: borrowed Array of DnaSequence,
 ) -> (F64, TooFewSequences?)
 ```
@@ -1059,7 +1059,7 @@ type equality and works today.
 
 ```science
 Quantity implements Mul:
-    function mul of (
+    def mul of (
         const L1: Int, const M1: Int, const T1: Int, …,
         const L2: Int, const M2: Int, const T2: Int, …,
     )(
@@ -1094,8 +1094,8 @@ linear integer combinations of parameters, nothing else. A normaliser over
 this note has already had to write:
 
 ```science
-function rfft of (const N: Int)(…) returns Vector of (Complex of F64, N / 2 + 1)
-function concatenate of (const A: Int, const B: Int)(…) returns Tensor of (F32, A + B)
+def rfft of (const N: Int)(…) returns Vector of (Complex of F64, N / 2 + 1)
+def concatenate of (const A: Int, const B: Int)(…) returns Tensor of (F32, A + B)
 ```
 
 The `N / 2 + 1` in §9.4 and the `A + B` of any concatenation are the same
@@ -1135,22 +1135,22 @@ combinations. Design for the shape case and units come free.
 ### 12.7 Five signatures
 
 ```science
-function lorentz_factor(velocity: Velocity of F64) returns F64
+def lorentz_factor(velocity: Velocity of F64) returns F64
 
 # The return dimension is computed from the arguments'. This one line is what
 # §12.4 is asking F0 for.
-function kinetic_energy(mass: Mass of F64, velocity: Velocity of F64) returns Energy of F64
+def kinetic_energy(mass: Mass of F64, velocity: Velocity of F64) returns Energy of F64
 
-function schwarzschild_radius(mass: Mass of F64) returns Length of F64
+def schwarzschild_radius(mass: Mass of F64) returns Length of F64
 
-function ideal_gas_pressure(
+def ideal_gas_pressure(
     amount: Quantity of (F64, 0, 0, 0, 0, 0, 1, 0),
     temperature: Quantity of (F64, 0, 0, 0, 0, 1, 0, 0),
     volume: Quantity of (F64, 3, 0, 0, 0, 0, 0, 0),
 ) returns Pressure of F64
 
 # Conversion is explicit and is the only place a bare number becomes a quantity.
-function metres(value: F64) returns Length of F64
+def metres(value: F64) returns Length of F64
 ```
 
 ---
@@ -1183,7 +1183,7 @@ Ordered by how much is blocked behind each.
    blocks any shape that is a function of another shape — `rfft`, concatenation,
    reshaping, convolution output sizes. The largest single ask, and F1 needs it
    regardless of units.
-2. **Closure types as a spelling.** `function(F64) returns F64` appears in
+2. **Closure types as a spelling.** `def(F64) returns F64` appears in
    `integrate`, `minimise_scalar`, `lbfgs`, `curve_fit` and
    `differential_evolution`. `ffi-c-boundary.md` §10.1 already flags that the
    core spec defines closure *expressions* and never their types. Two notes now

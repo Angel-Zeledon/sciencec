@@ -10,7 +10,7 @@ collection types), `data-io.md` (`Path`, `File`, the `data.*` modules),
 `strings-formatting-and-docs.md` (interpolation, `Display`, `print`),
 `scientific-libraries.md` §5 (`math`), `indexing-and-array-literals.md`
 (`a[i]`, `Index`, `Slice of T`).
-Written in the syntax of `syntax-revision-2.md`.
+Written in the syntax of `syntax-revision-2.md` and `syntax-revision-3.md`.
 
 ---
 
@@ -387,23 +387,23 @@ hash order for speed" optimisation.
 
 ```science
 Array of T has:
-    function push(mutable self, value: T)
+    def push(mutable self, value: T)
 
     ## Parentheses are required: `borrowed T?` would read as `borrowed (T?)`.
-    function get(borrowed self, index: Int) -> (borrowed T)?
+    def get(borrowed self, index: Int) -> (borrowed T)?
 
 Map of (K, V) has:
     ## Returns the displaced value, or null. Insertion order is preserved
     ## (`collections-and-chains.md` §5.2); re-inserting an existing key does
     ## not move it.
-    function insert(mutable self, key: K, value: V) -> V? where K: Eq + Hash
+    def insert(mutable self, key: K, value: V) -> V? where K: Eq + Hash
 
 Set of T has:
-    function union(borrowed self, other: borrowed Set of T) -> Set of T where T: Eq + Hash
+    def union(borrowed self, other: borrowed Set of T) -> Set of T where T: Eq + Hash
 
 ## Level 2: use collections (Deque)
 Deque of T has:
-    function pop_front(mutable self) -> T?
+    def pop_front(mutable self) -> T?
 ```
 
 ### 3.7 In use
@@ -411,7 +411,7 @@ Deque of T has:
 ```science
 use collections (Deque)
 
-function reachable(graph: borrowed Graph, start: NodeId) -> Set of NodeId:
+def reachable(graph: borrowed Graph, start: NodeId) -> Set of NodeId:
     let mutable seen be Set.new()
     let mutable pending be Deque.new()
     pending.push_back(start)
@@ -460,11 +460,11 @@ interface Read:
     ## Fills as much of `into` as is available. Returns the count. A count of
     ## zero with no error means end of input, and is the only end-of-input
     ## signal.
-    function read(mutable self, into: mutable borrowed Array of U8) -> (U64, Error?)
+    def read(mutable self, into: mutable borrowed Array of U8) -> (U64, Error?)
 
 interface Write:
     ## Writes all of `bytes`, or fails. There is no partial write.
-    function write(mutable self, bytes: borrowed Array of U8) -> Error?
+    def write(mutable self, bytes: borrowed Array of U8) -> Error?
 ```
 
 They are named in the shape `Iterate`, `Display`, `Inspect` and `Summarize`
@@ -512,7 +512,7 @@ asking for `File` explicitly.
 **Decision.**
 
 ```science
-function read_line() -> (String?, Error?)
+def read_line() -> (String?, Error?)
 ```
 
 `null` means end of input; a blank line is `""`, so the two are distinguishable,
@@ -556,26 +556,26 @@ default path.
 ```science
 ## Level 1. Settled by `strings-formatting-and-docs.md` §4.1; repeated for the
 ## sake of a complete Level 1 enumeration, not re-decided.
-function print(value: borrowed any Display)
+def print(value: borrowed any Display)
 
 ## Level 1. New in this note. null at end of input.
-function read_line() -> (String?, Error?)
+def read_line() -> (String?, Error?)
 
 interface Read:
-    function read(mutable self, into: mutable borrowed Array of U8) -> (U64, Error?)
+    def read(mutable self, into: mutable borrowed Array of U8) -> (U64, Error?)
 
 interface Write:
-    function write(mutable self, bytes: borrowed Array of U8) -> Error?
+    def write(mutable self, bytes: borrowed Array of U8) -> Error?
 
 ## Level 2: use io (BufferedReader)
 BufferedReader of R has:
-    function new(source: R, capacity: Int) -> BufferedReader of R where R: Read
+    def new(source: R, capacity: Int) -> BufferedReader of R where R: Read
 ```
 
 ### 4.7 In use
 
 ```science
-function count_lines() -> (Int, IoError?):
+def count_lines() -> (Int, IoError?):
     let mutable total be 0
     loop:
         let line, err be read_line()
@@ -679,19 +679,19 @@ updated; it is named in §11.
 
 ```science
 ## Level 1. Note the concrete error type, not `Error?` — see §7.3.
-function read_file(path: borrowed Path) -> (String, IoError?)
+def read_file(path: borrowed Path) -> (String, IoError?)
 
 ## Level 1. No value, so the whole return is the error.
-function write_lines(path: borrowed Path, lines: borrowed Array of String) -> IoError?
+def write_lines(path: borrowed Path, lines: borrowed Array of String) -> IoError?
 
 Path has:
-    function join(self, part: borrowed String) -> Path
+    def join(self, part: borrowed String) -> Path
 
 File has:
-    function open(path: borrowed Path) -> (File, IoError?)
+    def open(path: borrowed Path) -> (File, IoError?)
 
 ## Level 2: use fs (glob). Results are in byte order, always (`data-io.md` §7).
-function glob(pattern: borrowed String) -> (Array of Path, GlobError?)
+def glob(pattern: borrowed String) -> (Array of Path, GlobError?)
 ```
 
 ### 5.4 In use
@@ -699,7 +699,7 @@ function glob(pattern: borrowed String) -> (Array of Path, GlobError?)
 ```science
 use fs (glob)
 
-function total_bytes(pattern: borrowed String) -> (U64, IoError?):
+def total_bytes(pattern: borrowed String) -> (U64, IoError?):
     let paths, err be glob(pattern)
     if err?:
         return (0, IoError.Other(0, err.message()))
@@ -749,7 +749,7 @@ It is not merely a wart. It is a contradiction with a sibling note that would be
 discovered by the type checker: `collections-and-chains.md` §1.4 specifies
 
 ```science
-function owned(self) -> Owned of Self where Self.Item is borrowed T, T: Clone
+def owned(self) -> Owned of Self where Self.Item is borrowed T, T: Clone
 ```
 
 and §4.3 of that note gives `docs.iterate().map(each.title).owned()` as the way to
@@ -827,15 +827,15 @@ the operator gets the same safety for none of that.
 ```science
 String has:
     ## O(1). The underlying UTF-8, as bytes.
-    function bytes(borrowed self) -> borrowed Array of U8
+    def bytes(borrowed self) -> borrowed Array of U8
 
     ## A lazy source over Unicode scalar values.
-    function characters(borrowed self) -> Characters
+    def characters(borrowed self) -> Characters
 
     ## A byte range. Fails if either end is not a character boundary, which is
     ## the honest signature: it is the only one that cannot silently produce
     ## broken UTF-8.
-    function slice(borrowed self, bytes: Range of Int) -> (borrowed String, TextError?)
+    def slice(borrowed self, bytes: Range of Int) -> (borrowed String, TextError?)
 ```
 
 Sub-ranges *by character* are the chain: `.characters().skip(a).take(b - a)`,
@@ -946,25 +946,25 @@ with it.
 
 ```science
 String has:
-    function new() -> String
-    function from_bytes(bytes: borrowed Array of U8) -> (String, TextError?)
-    function length(borrowed self) -> Int                              # bytes — §6.5
-    function is_empty(borrowed self) -> Bool
-    function push_str(mutable self, tail: borrowed String)
-    function truncate(mutable self, bytes: Int)                        # total — §6.5
-    function starts_with(borrowed self, prefix: borrowed String) -> Bool
-    function ends_with(borrowed self, suffix: borrowed String) -> Bool
-    function contains(borrowed self, needle: borrowed String) -> Bool
-    function find(borrowed self, needle: borrowed String) -> Int?      # byte offset
-    function slice(borrowed self, bytes: Range of Int) -> (borrowed String, TextError?)
-    function trim(borrowed self) -> borrowed String                    # ASCII whitespace — below
-    function split(borrowed self, separator: borrowed String) -> Split
-    function replace(borrowed self, from: borrowed String, to: borrowed String) -> String
-    function bytes(borrowed self) -> borrowed Array of U8
-    function characters(borrowed self) -> Characters
-    function lines(borrowed self) -> Lines
-    function parse_int(borrowed self) -> (I64, TextError?)
-    function parse_float(borrowed self) -> (F64, TextError?)
+    def new() -> String
+    def from_bytes(bytes: borrowed Array of U8) -> (String, TextError?)
+    def length(borrowed self) -> Int                              # bytes — §6.5
+    def is_empty(borrowed self) -> Bool
+    def push_str(mutable self, tail: borrowed String)
+    def truncate(mutable self, bytes: Int)                        # total — §6.5
+    def starts_with(borrowed self, prefix: borrowed String) -> Bool
+    def ends_with(borrowed self, suffix: borrowed String) -> Bool
+    def contains(borrowed self, needle: borrowed String) -> Bool
+    def find(borrowed self, needle: borrowed String) -> Int?      # byte offset
+    def slice(borrowed self, bytes: Range of Int) -> (borrowed String, TextError?)
+    def trim(borrowed self) -> borrowed String                    # ASCII whitespace — below
+    def split(borrowed self, separator: borrowed String) -> Split
+    def replace(borrowed self, from: borrowed String, to: borrowed String) -> String
+    def bytes(borrowed self) -> borrowed Array of U8
+    def characters(borrowed self) -> Characters
+    def lines(borrowed self) -> Lines
+    def parse_int(borrowed self) -> (I64, TextError?)
+    def parse_float(borrowed self) -> (F64, TextError?)
 ```
 
 Plus `String implements Clone, Eq, Ord, Add, Display, Inspect, Hash`.
@@ -984,23 +984,23 @@ them. The algorithm — Eisel–Lemire, Clinger, whatever comes next — is free
 
 ```science
 String has:
-    function split(borrowed self, separator: borrowed String) -> Split
+    def split(borrowed self, separator: borrowed String) -> Split
 
-    function slice(borrowed self, bytes: Range of Int) -> (borrowed String, TextError?)
+    def slice(borrowed self, bytes: Range of Int) -> (borrowed String, TextError?)
 
-    function characters(borrowed self) -> Characters
+    def characters(borrowed self) -> Characters
 
-    function parse_float(borrowed self) -> (F64, TextError?)
+    def parse_float(borrowed self) -> (F64, TextError?)
 
 ## Level 2: use text (graphemes). Not Level 1 because UAX #29 is revised with
 ## every Unicode release, and its tables are ~100 KiB in every binary (§1.5).
-function graphemes(text: borrowed String) -> Graphemes
+def graphemes(text: borrowed String) -> Graphemes
 ```
 
 ### 6.11 In use
 
 ```science
-function readings(text: borrowed String) -> (Array of F64, TextError?):
+def readings(text: borrowed String) -> (Array of F64, TextError?):
     let mutable values be Array.new()
     for line in text.lines():
         let field be line.trim()
@@ -1143,11 +1143,11 @@ interface, so `syntax-revision-2.md` §3.4 is unchanged.
 
 ```science
 interface Error:
-    function message(self) -> String
+    def message(self) -> String
 
     ## The error this one was built from, if any. Defaulted, so implementing
     ## `Error` is still a one-method job.
-    function cause(self) -> (any Error)?:
+    def cause(self) -> (any Error)?:
         null
 ```
 
@@ -1214,21 +1214,21 @@ compiler writes the conversion the first time, and the user learns the shape.
 
 ```science
 interface Error:
-    function message(self) -> String
-    function cause(self) -> (any Error)?:
+    def message(self) -> String
+    def cause(self) -> (any Error)?:
         null
 
 ## Both belong to the core library, so the orphan rule (§5.4) permits this.
 ## Renders the cause chain, joined with ": ".
 (any Error) implements Display:
-    function display(borrowed self, into: mutable borrowed Formatter)
+    def display(borrowed self, into: mutable borrowed Formatter)
 
 choice IoError:
     NotFound(Path)
     Other(I32, String)
 
 ConfigError has:
-    function from_io(cause: IoError) -> ConfigError
+    def from_io(cause: IoError) -> ConfigError
 ```
 
 ### 7.9 In use
@@ -1238,14 +1238,14 @@ choice StartupError:
     Unreadable(IoError)
 
 StartupError implements Error:
-    function message(self) -> String:
+    def message(self) -> String:
         "could not read the configuration"
 
-    function cause(self) -> (any Error)?:
+    def cause(self) -> (any Error)?:
         match self:
             StartupError.Unreadable(e): e
 
-function start(path: borrowed Path) -> (Config, StartupError?):
+def start(path: borrowed Path) -> (Config, StartupError?):
     let text, err be read_file(path)
     if err?:
         return (Config.empty(), StartupError.Unreadable(err))
@@ -1302,7 +1302,7 @@ Justified by §1.2, one row at a time:
 
 Three notes currently disagree about how to call `sqrt`:
 
-- `scientific-libraries.md` §5.11: `function sqrt(x: F64) returns F64` — a free
+- `scientific-libraries.md` §5.11: `def sqrt(x: F64) returns F64` — a free
   function in `math`.
 - `strings-formatting-and-docs.md` §6.1: `σ * Δt.square_root() * θ.cos()` — methods.
 - `data-io.md` §11.4 flags it as open: *"`square_root()` and the reductions belong
@@ -1373,14 +1373,14 @@ because it is the one place where Level 1 makes a promise it cannot fully keep.
 ```science
 F64 has:
     ## Level 1. Lowers to an LLVM intrinsic. Specified to within 1 ULP (§8.3).
-    function sqrt(self) -> F64
+    def sqrt(self) -> F64
 
     ## Level 1. The two-argument arctangent, quadrant-correct.
-    function atan2(self, x: F64) -> F64
+    def atan2(self, x: F64) -> F64
 
     ## Level 1. Relative comparison with the library's default tolerances,
     ## which exists because `a is b` on floats is almost always the wrong test.
-    function is_close(self, other: F64) -> Bool
+    def is_close(self, other: F64) -> Bool
 
     ## Level 1. An associated constant, which §4.4 does not yet permit in a
     ## `has:` block — the one language ask in this note (§11).
@@ -1389,8 +1389,8 @@ F64 has:
 ## Level 2: use math (integrate). `scientific-libraries.md` §5.11, in revision-2
 ## syntax. Not Level 1: the method and tolerance are arguments, so it has
 ## variants by construction (§1.2 Q4).
-function integrate(
-    f: function(F64) -> F64,
+def integrate(
+    f: def(F64) -> F64,
     lower: F64,
     upper: F64,
 ) -> (F64, QuadratureError?)
@@ -1399,7 +1399,7 @@ function integrate(
 ### 8.5 In use
 
 ```science
-function rms(values: borrowed Array of F64) -> F64:
+def rms(values: borrowed Array of F64) -> F64:
     if values.is_empty():
         return 0.0
     let mutable total be 0.0
@@ -1522,7 +1522,7 @@ Stated so the seams are visible, in the manner `data-io.md` §11 uses.
 
 **Of `scientific-libraries.md`:**
 
-12. **§5.11: `function sqrt(x: F64) returns F64` is the Level 2 form.** The Level 1
+12. **§5.11: `def sqrt(x: F64) returns F64` is the Level 2 form.** The Level 1
     spelling is the method (§8.2). The mapping is mechanical and nothing in the
     catalogue's substance changes.
 

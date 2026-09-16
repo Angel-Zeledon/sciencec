@@ -247,7 +247,7 @@ Every session can be used without declaring anything:
 use inference.onnx
 use inference (Bundle, Device)
 
-function main() -> ((), Error?):
+def main() -> ((), Error?):
     let net, err be onnx.open("resnet50.onnx", device: Device.cpu())
     if err?:
         return ((), err)
@@ -299,11 +299,11 @@ type ResnetOutputs of D:
     logits: Tensor of (F32, (Dyn, 1000), D)
 
 ResnetInputs of D implements Bindable:
-    function bindings() returns Array of Binding:
+    def bindings() returns Array of Binding:
         [Binding(field: "pixels", wire: "input.1")]
 
 ResnetOutputs of D implements Bindable:
-    function bindings() returns Array of Binding:
+    def bindings() returns Array of Binding:
         [Binding(field: "logits", wire: "output")]
 ```
 
@@ -513,7 +513,7 @@ use inference.onnx
 use inference (Device)
 use vision.resnet (Resnet, ResnetInputs, ResnetOutputs)
 
-function classify(path: borrowed String) -> (Array of I32, Error?):
+def classify(path: borrowed String) -> (Array of I32, Error?):
     let net: Resnet, err be onnx.open(path, device: Device.cuda(0))
     if err?:
         return (Array.new(), err)
@@ -544,14 +544,14 @@ reserved list. That list was chosen well.)
 ```science
 Session of (D, I, O) has:
     # Allocates outputs. The common case.
-    function run(borrowed self, inputs: borrowed I) -> (O, RunError?)
+    def run(borrowed self, inputs: borrowed I) -> (O, RunError?)
 
     # Writes into caller-owned outputs. No allocation per call.
-    function run_into(borrowed self, inputs: borrowed I,
+    def run_into(borrowed self, inputs: borrowed I,
                       outputs: mutable borrowed O) -> ((), RunError?)
 
     # Erased. For scripts and the REPL.
-    function run_dynamic(borrowed self, inputs: Bundle) -> (Bundle, RunError?)
+    def run_dynamic(borrowed self, inputs: Bundle) -> (Bundle, RunError?)
 ```
 
 `run` borrows both the session and the inputs. Borrowing the session shared
@@ -793,10 +793,10 @@ Two methods, named so the difference is unmissable:
 ```science
 Tensor of (T, DIMS, D) has methods:
     # Consumes self. The source allocation is freed after the transfer.
-    function moved_to of D2(self, device: Device of D2) returns Tensor of (T, DIMS, D2)
+    def moved_to of D2(self, device: Device of D2) returns Tensor of (T, DIMS, D2)
 
     # Borrows self. Both tensors exist afterwards. Costs a copy, always.
-    function copied_to of D2(borrowed self, device: Device of D2) returns Tensor of (T, DIMS, D2)
+    def copied_to of D2(borrowed self, device: Device of D2) returns Tensor of (T, DIMS, D2)
 ```
 
 `moved_to` consumes, so after it the host tensor is gone and using it is
@@ -1354,11 +1354,11 @@ public type ResnetOutputs of D:
     logits: Tensor of (F32, (Dyn of "batch", 1000), D)
 
 ResnetInputs of D implements Bindable:
-    function bindings() returns Array of Binding:
+    def bindings() returns Array of Binding:
         [Binding(field: "pixels", wire: "input.1")]
 
 ResnetOutputs of D implements Bindable:
-    function bindings() returns Array of Binding:
+    def bindings() returns Array of Binding:
         [Binding(field: "logits", wire: "495")]
 
 public type Resnet is Session of (Cuda, ResnetInputs of Cuda, ResnetOutputs of Cuda)
@@ -1387,7 +1387,7 @@ type Prediction:
     label: String
     score: F32
 
-function main() -> ((), Error?):
+def main() -> ((), Error?):
     let dev be Device.cuda(0)
 
     # ---- load the model -------------------------------------------------

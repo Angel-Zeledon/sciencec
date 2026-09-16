@@ -1044,7 +1044,7 @@ wall clock. A skeptic can run it on their own model on their own machine.
 
 ```science
 @export
-function normalize_batch(
+def normalize_batch(
         batch: mutable borrowed Tensor of (F32, (Dyn of "b", 3, 224, 224)),
         mean: borrowed Array of F32,
         std: borrowed Array of F32) -> Error?:
@@ -1068,7 +1068,7 @@ in six lines, today.
 ```science
 use lapack.raw (dsyevr)
 
-function eigenvalues_in_range(
+def eigenvalues_in_range(
         matrix: mutable borrowed Array of F64, n: Int,
         low: F64, high: F64) -> (Array of F64, Error?):
     let mutable values be Array of F64 .zeroed(n)
@@ -1098,7 +1098,7 @@ run time.
 use inference (Session)
 use tokenizers (Tokenizer)
 
-function main():
+def main():
     let session, err be Session.open("sentiment.onnx")
     if err?:
         print(f"could not open the model: {err.message()}")

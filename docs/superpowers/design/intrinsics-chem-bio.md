@@ -658,7 +658,7 @@ use chem.formula
 use chem.elements
 use chem.units
 
-function main():
+def main():
     let m be formula.molar_mass(formula.parse("C6H12O6"))
     print(f"{m}")
 ```
@@ -1051,7 +1051,7 @@ A real mistake, made by real people, several times a year.
 use chem.kinetics
 use chem.units            # brings `M`, `Da` into the unit namespace
 
-function main():
+def main():
     # Fitted from a plot of 1/[A] against t — so this is second order.
     let k be 0.042<L/mol/s>
 
@@ -1062,7 +1062,7 @@ function main():
 with the library declaring:
 
 ```science
-function half_life(rate_constant: RateConstant of (F64, 1)) -> Time of F64
+def half_life(rate_constant: RateConstant of (F64, 1)) -> Time of F64
 ```
 
 The compiler produces:
@@ -1078,7 +1078,7 @@ error: dimension mismatch in argument 1 of `kinetics.half_life`
    |                                      ^ expected  s^-1
    |
    = note: `half_life` is declared
-           `function half_life(rate_constant: RateConstant of (F64, 1)) -> Time of F64`
+           `def half_life(rate_constant: RateConstant of (F64, 1)) -> Time of F64`
    = note: `RateConstant of (T, ORDER)` has amount exponent `1 - ORDER`.
            The argument's amount exponent is -1, so `ORDER` would have to be 2.
    = help: `k` is a second-order rate constant. `half_life` is the first-order
@@ -1123,7 +1123,7 @@ let drop be solution.colligative_freezing(kf, c)  # error
 ```
 
 The signature is
-`function colligative_freezing(cryoscopic: Quantity of (F64, 0, -1, 0, 0, 1, -1, 0), molality: Molality of F64) -> Temperature of F64`,
+`def colligative_freezing(cryoscopic: Quantity of (F64, 0, -1, 0, 0, 1, -1, 0), molality: Molality of F64) -> Temperature of F64`,
 and `Concentration` is mol·m⁻³ while `Molality` is mol·kg⁻¹. The mass and length
 exponents disagree, so it does not compile. The library's `help` says why:
 *freezing-point depression is defined over molality because the solvent's mass
@@ -1498,23 +1498,23 @@ chemistry lookup.
 ```science
 # The table is a value. `by_symbol` fails on an unknown symbol rather than
 # panicking, because a symbol usually comes from user input or a file.
-function by_symbol(table: borrowed PeriodicTable, symbol: borrowed String)
+def by_symbol(table: borrowed PeriodicTable, symbol: borrowed String)
     -> (Element, UnknownElement?)
 
 # The free form reads the lockfile-pinned default (Decision 4.3). Its answer is
 # `†` and the run record says which release it came from (Decision 4.4).
-function atomic_mass(element: Element) -> MolarMass of F64
+def atomic_mass(element: Element) -> MolarMass of F64
 
 # Fourteen elements have an interval, not a value. A caller that wants the
 # interval asks for it; a caller that wants a number gets the conventional one.
-function atomic_weight_interval(element: Element)
+def atomic_weight_interval(element: Element)
     -> (MolarMass of F64, MolarMass of F64)?
 
 # Radioactive decay is exact arithmetic over a `†` half-life.
-function activity(nuclide: Nuclide, amount: Amount of F64)
+def activity(nuclide: Nuclide, amount: Amount of F64)
     -> Quantity of (F64, 0, 0, -1, 0, 0, 0, 0)
 
-function isotopes_of(element: Element) -> Array of Isotope
+def isotopes_of(element: Element) -> Array of Isotope
 ```
 
 **Example.** The average mass of natural chlorine, from its isotopes, checked
@@ -1523,7 +1523,7 @@ against the tabulated weight:
 ```science
 use chem.elements
 
-function main():
+def main():
     let cl, err be elements.by_symbol(elements.DEFAULT, "Cl")
     if err?:
         print("no such element")
@@ -1570,24 +1570,24 @@ ordinary inputs.
 
 ```science
 # Parsing fails with a position, because a formula usually comes from a file.
-function parse(text: borrowed String) -> (Formula, FormulaError?)
+def parse(text: borrowed String) -> (Formula, FormulaError?)
 
 # The payoff of §5: a molar mass is kg/mol and cannot be added to a mass.
-function molar_mass(formula: borrowed Formula) -> MolarMass of F64
+def molar_mass(formula: borrowed Formula) -> MolarMass of F64
 
 # Monoisotopic mass uses the most abundant isotope of each element, which is a
 # different `†` table from the standard atomic weight and a different answer.
-function monoisotopic_mass(formula: borrowed Formula) -> MolarMass of F64
+def monoisotopic_mass(formula: borrowed Formula) -> MolarMass of F64
 
 # The pattern is a function of the resolution, which is a `~` variant: the
 # caller's instrument decides how many peaks are resolved.
-function isotope_pattern_at_resolution(
+def isotope_pattern_at_resolution(
     formula: borrowed Formula,
     resolution: F64,
     minimum_abundance: F64,
 ) -> Array of IsotopePeak
 
-function degree_of_unsaturation(formula: borrowed Formula)
+def degree_of_unsaturation(formula: borrowed Formula)
     -> (F64, MixedValenceError?)
 ```
 
@@ -1596,7 +1596,7 @@ function degree_of_unsaturation(formula: borrowed Formula)
 ```science
 use chem.formula
 
-function main():
+def main():
     let glucose, err be formula.parse("C6H12O6")
     if err?:
         print("bad formula")
@@ -1641,27 +1641,27 @@ library that was not allowed to use the word. §6.2's `kernel` row.
 # then cleared to smallest integers. It fails when the nullspace is empty
 # (unbalanceable) or has dimension > 1 (underdetermined) — two different errors
 # that a chemist needs told apart.
-function balance(reaction: borrowed Reaction) -> (Reaction, BalanceError?)
+def balance(reaction: borrowed Reaction) -> (Reaction, BalanceError?)
 
 # Where §5.4(c) earns its keep: `available` is an Amount, not a Mass, so a
 # caller who forgot to divide by the molar mass is stopped.
-function limiting_reagent(
+def limiting_reagent(
     reaction: borrowed Reaction,
     available: borrowed Map of (Species, Amount of F64),
 ) -> (Species, NoReagentsError?)
 
 # `produced`, not `yield` (§6.1). Reverts to `theoretical_yield`.
-function theoretical_produced(
+def theoretical_produced(
     reaction: borrowed Reaction,
     limiting: Species,
     available: Amount of F64,
     product: Species,
 ) -> Amount of F64
 
-function percent_produced(actual: Amount of F64, theoretical: Amount of F64) -> F64
+def percent_produced(actual: Amount of F64, theoretical: Amount of F64) -> F64
 
 # Redox balancing needs a medium, which is a `~` variant with two answers.
-function balance_redox(reaction: borrowed Reaction, medium: Medium)
+def balance_redox(reaction: borrowed Reaction, medium: Medium)
     -> (Reaction, BalanceError?)
 ```
 
@@ -1670,7 +1670,7 @@ function balance_redox(reaction: borrowed Reaction, medium: Medium)
 ```science
 use chem.stoich
 
-function main():
+def main():
     let raw, parse_err be stoich.parse_reaction("C3H8 + O2 -> CO2 + H2O")
     if parse_err?:
         print("could not parse")
@@ -1726,29 +1726,29 @@ normality was hiding.
 **Five signatures.**
 
 ```science
-function molarity(amount: Amount of F64, volume: Volume of F64)
+def molarity(amount: Amount of F64, volume: Volume of F64)
     -> Concentration of F64
 
 # Molality is per kilogram of *solvent*, which is why it takes a solvent mass
 # and not a solution mass. Getting that wrong is the other half of §5.4(a).
-function molality(amount: Amount of F64, solvent_mass: Mass of F64)
+def molality(amount: Amount of F64, solvent_mass: Mass of F64)
     -> Molality of F64
 
 # The one in §5.4(a). Molality, not molarity, and the type says so.
-function colligative_freezing(
+def colligative_freezing(
     cryoscopic: Quantity of (F64, 0, -1, 0, 0, 1, -1, 0),
     molality: Molality of F64,
     vant_hoff: F64,
 ) -> Temperature of F64
 
-function dilution(
+def dilution(
     stock: Concentration of F64,
     stock_volume: Volume of F64,
     final_volume: Volume of F64,
 ) -> (Concentration of F64, DilutionError?)
 
 # `~`: three activity models with three validity ranges, three functions.
-function activity_coefficient_davies(charge: Int, ionic_strength: Molality of F64)
+def activity_coefficient_davies(charge: Int, ionic_strength: Molality of F64)
     -> F64
 ```
 
@@ -1758,7 +1758,7 @@ function activity_coefficient_davies(charge: Int, ionic_strength: Molality of F6
 use chem.solution
 use chem.units
 
-function main():
+def main():
     let stock be 2.5<mol/L>
     let final, err be solution.dilution(stock, 10.0<mL>, 250.0<mL>)
     if err?:
@@ -1808,24 +1808,24 @@ because both arguments are dimensionally identical. This is §5.5(4).
 
 ```science
 # Dimensioned in, dimensionless out. `ph(0.01)` does not compile.
-function ph(hydronium: Concentration of F64) -> F64
+def ph(hydronium: Concentration of F64) -> F64
 
-function henderson_hasselbalch_ph(p_ka: F64, base: Amount of F64, acid: Amount of F64)
+def henderson_hasselbalch_ph(p_ka: F64, base: Amount of F64, acid: Amount of F64)
     -> F64
 
 # Weak-acid pH is a quadratic in general and a cubic once water's autoionisation
 # matters; the solver can fail to bracket, so it returns an error.
-function ph_weak_acid(k_a: F64, concentration: Concentration of F64)
+def ph_weak_acid(k_a: F64, concentration: Concentration of F64)
     -> (F64, SolveError?)
 
 # A curve is `~`: the titrant, the model and the step count are all choices.
-function titration_curve(
+def titration_curve(
     analyte: borrowed Solution,
     titrant: borrowed Solution,
     steps: Int,
 ) -> (TitrationCurve, TitrationError?)
 
-function buffer_capacity(buffer: borrowed Buffer, at_ph: F64) -> Molality of F64
+def buffer_capacity(buffer: borrowed Buffer, at_ph: F64) -> Molality of F64
 ```
 
 **Example.**
@@ -1834,7 +1834,7 @@ function buffer_capacity(buffer: borrowed Buffer, at_ph: F64) -> Molality of F64
 use chem.acid_base
 use chem.units
 
-function main():
+def main():
     # An acetate buffer: 0.10 mol acid, 0.15 mol conjugate base.
     let value be acid_base.henderson_hasselbalch_ph(4.76, 0.15<mol>, 0.10<mol>)
     print(f"pH = {value:.2}")
@@ -1879,14 +1879,14 @@ redistributable in full.
 # Hess's law over a set of reactions with known enthalpies. It fails when the
 # target is not in the span — a linear-algebra failure with a chemical meaning,
 # which deserves its own error rather than a generic solve failure.
-function hess_law(
+def hess_law(
     known: borrowed Array of (Reaction, MolarEnergy of F64),
     target: borrowed Reaction,
 ) -> (MolarEnergy of F64, NotInSpanError?)
 
 # `MolarEnergy` and `MolarEntropy` differ in the temperature exponent, which is
 # the mix-up §5.1 exists to catch: kJ/mol read against J/(mol K).
-function gibbs_from_enthalpy_entropy(
+def gibbs_from_enthalpy_entropy(
     enthalpy: MolarEnergy of F64,
     entropy: MolarEntropy of F64,
     temperature: Temperature of F64,
@@ -1894,19 +1894,19 @@ function gibbs_from_enthalpy_entropy(
 
 # Shomate is a `†` seven-coefficient fit with a stated temperature range;
 # outside it the answer is nonsense, so the range is checked.
-function heat_capacity_shomate(
+def heat_capacity_shomate(
     coefficients: borrowed ShomateCoefficients,
     temperature: Temperature of F64,
 ) -> (MolarHeatCapacity of F64, OutOfRangeError?)
 
-function van_t_hoff_constant(
+def van_t_hoff_constant(
     k_1: F64,
     temperature_1: Temperature of F64,
     enthalpy: MolarEnergy of F64,
     temperature_2: Temperature of F64,
 ) -> F64
 
-function clausius_clapeyron_pressure(
+def clausius_clapeyron_pressure(
     pressure_1: Pressure of F64,
     temperature_1: Temperature of F64,
     vaporisation: MolarEnergy of F64,
@@ -1920,7 +1920,7 @@ function clausius_clapeyron_pressure(
 use chem.thermo
 use chem.units
 
-function main():
+def main():
     let enthalpy be -890.3<kJ/mol>
     let entropy be -242.8<J/mol/K>
     let g be thermo.gibbs_from_enthalpy_entropy(enthalpy, entropy, 298.15<K>)
@@ -1969,34 +1969,34 @@ silently get a concentration-based K.
 **Five signatures.**
 
 ```science
-function equilibrium_constant(
+def equilibrium_constant(
     reaction: borrowed Reaction,
     concentrations: borrowed Map of (Species, Concentration of F64),
     standard_state: Concentration of F64,
 ) -> (F64, EquilibriumError?)
 
-function reaction_quotient(
+def reaction_quotient(
     reaction: borrowed Reaction,
     concentrations: borrowed Map of (Species, Concentration of F64),
     standard_state: Concentration of F64,
 ) -> (F64, EquilibriumError?)
 
 # The ICE table is a value, not a printed thing, so it can be inspected.
-function ice_table(
+def ice_table(
     reaction: borrowed Reaction,
     initial: borrowed Map of (Species, Concentration of F64),
 ) -> IceTable
 
 # Gibbs minimisation over a species set is `optimize`'s job, can fail to
 # converge, and is `†` through the formation energies it reads.
-function gibbs_minimisation(
+def gibbs_minimisation(
     species: borrowed Array of Species,
     temperature: Temperature of F64,
     pressure: Pressure of F64,
     tolerance: F64,
 ) -> (EquilibriumComposition, ConvergenceError?)
 
-function le_chatelier_shift(reaction: borrowed Reaction, perturbation: Perturbation)
+def le_chatelier_shift(reaction: borrowed Reaction, perturbation: Perturbation)
     -> Direction
 ```
 
@@ -2005,7 +2005,7 @@ function le_chatelier_shift(reaction: borrowed Reaction, perturbation: Perturbat
 ```science
 use chem.equilibrium
 
-function main():
+def main():
     let composition, err be equilibrium.solve_ice(haber, initial, 1.0e-9)
     if err?:
         print(f"no equilibrium found: {err.message()}")
@@ -2069,11 +2069,11 @@ spreadsheets, which is worse.
 # The signature from §5.2 and §5.3. `ORDER` is a const parameter, the dimension
 # is computed from it, and passing the wrong order is a compile error whose
 # message names the order the argument actually has.
-function half_life(rate_constant: RateConstant of (F64, 1)) -> Time of F64
+def half_life(rate_constant: RateConstant of (F64, 1)) -> Time of F64
 
 # Arrhenius preserves the order, which is the clearest single demonstration
 # that the order really is in the type.
-function arrhenius_rate of (const ORDER: Int)(
+def arrhenius_rate of (const ORDER: Int)(
     activation_energy: MolarEnergy of F64,
     temperature: Temperature of F64,
     pre_exponential: RateConstant of (F64, ORDER),
@@ -2081,13 +2081,13 @@ function arrhenius_rate of (const ORDER: Int)(
 
 # Eyring needs the transmission coefficient, which is a modelling choice and is
 # therefore an argument rather than a hidden 1.0.
-function eyring_rate(
+def eyring_rate(
     activation_gibbs: MolarEnergy of F64,
     temperature: Temperature of F64,
     transmission: F64,
 ) -> Frequency of F64
 
-function michaelis_menten_rate(
+def michaelis_menten_rate(
     substrate: Concentration of F64,
     v_max: Quantity of (F64, -3, 0, -1, 0, 0, 1, 0),
     k_m: Concentration of F64,
@@ -2095,7 +2095,7 @@ function michaelis_menten_rate(
 
 # A stiff network integration is `math`'s ODE machinery with a chemical wrapper.
 # It can fail, and a failed kinetics run must not return zeros.
-function solve_kinetics_stiff(
+def solve_kinetics_stiff(
     network: borrowed ReactionNetwork,
     initial: borrowed Map of (Species, Concentration of F64),
     span: (Time of F64, Time of F64),
@@ -2109,7 +2109,7 @@ function solve_kinetics_stiff(
 use chem.kinetics
 use chem.units
 
-function main():
+def main():
     let k be 0.042<L/mol/s>                    # second order
     let initial be 0.15<mol/L>
     let t_half be kinetics.half_life_second_order(k, initial)
@@ -2154,24 +2154,24 @@ because the Faraday constant became exact in 2019.
 # The electron count is an Int and is not inferable from the potentials, so it
 # is an argument. Getting it wrong is the classic Nernst error and the type
 # system cannot catch it — §5.5(4).
-function nernst_potential(
+def nernst_potential(
     standard: Potential of F64,
     electrons: Int,
     reaction_quotient: F64,
     temperature: Temperature of F64,
 ) -> Potential of F64
 
-function cell_potential(
+def cell_potential(
     cathode: borrowed HalfCell,
     anode: borrowed HalfCell,
     temperature: Temperature of F64,
 ) -> (Potential of F64, CellError?)
 
 # Charge in, amount out. Not `†`: the Faraday constant is exact (§2.3(ii)).
-function faraday_electrolysis(charge: Charge of F64, electrons: Int)
+def faraday_electrolysis(charge: Charge of F64, electrons: Int)
     -> Amount of F64
 
-function butler_volmer_current(
+def butler_volmer_current(
     exchange_current: Quantity of (F64, -2, 0, 0, 1, 0, 0, 0),
     overpotential: Potential of F64,
     transfer_coefficient: F64,
@@ -2179,7 +2179,7 @@ function butler_volmer_current(
     temperature: Temperature of F64,
 ) -> Quantity of (F64, -2, 0, 0, 1, 0, 0, 0)
 
-function molar_conductivity(
+def molar_conductivity(
     conductivity: Quantity of (F64, -3, -1, 3, 2, 0, 0, 0),
     concentration: Concentration of F64,
 ) -> MolarConductivity of F64
@@ -2191,7 +2191,7 @@ function molar_conductivity(
 use chem.electro
 use chem.units
 
-function main():
+def main():
     let e be electro.nernst_potential(1.10<V>, 2, 0.01, 298.15<K>)
     print(f"cell potential: {e}")
 ```
@@ -2235,13 +2235,13 @@ functionals written in Science; `✗ molecular_dynamics` integrator. §12.1.
 
 ```science
 # Written in Science, analytic and exact.
-function particle_in_box_energy(level: Int, mass: Mass of F64, length: Length of F64)
+def particle_in_box_energy(level: Int, mass: Mass of F64, length: Length of F64)
     -> Energy of F64
 
 # Hückel is a symmetric eigenproblem over a connectivity matrix — small, exact,
 # and the one piece of real electronic structure worth writing rather than
 # linking.
-function huckel_energies of (const N: Int)(
+def huckel_energies of (const N: Int)(
     connectivity: borrowed Symmetric of (F64, N),
     alpha: Energy of F64,
     beta: Energy of F64,
@@ -2249,17 +2249,17 @@ function huckel_energies of (const N: Int)(
 
 # `†`: the aufbau order has documented exceptions (Cr, Cu, Pd, …) that come
 # from a table and not from the rule.
-function aufbau_configuration(element: Element) -> ElectronConfiguration
+def aufbau_configuration(element: Element) -> ElectronConfiguration
 
 # Linked. Science owns the molecule and the result type; the C library owns
 # everything between them.
-function scf_energy(
+def scf_energy(
     molecule: borrowed Molecule,
     basis: borrowed BasisSet,
     settings: borrowed ScfSettings,
 ) -> (Energy of F64, ScfError?)
 
-function homo_lumo_gap(orbitals: borrowed Array of Energy of F64, electrons: Int)
+def homo_lumo_gap(orbitals: borrowed Array of Energy of F64, electrons: Int)
     -> (Energy of F64, NoGapError?)
 ```
 
@@ -2269,7 +2269,7 @@ function homo_lumo_gap(orbitals: borrowed Array of Energy of F64, electrons: Int
 use chem.quantum
 use chem.units
 
-function main():
+def main():
     let m be 9.1093837139e-31<kg>
     let e1 be quantum.particle_in_box_energy(1, m, 1.0<nm>)
     let e2 be quantum.particle_in_box_energy(2, m, 1.0<nm>)
@@ -2320,7 +2320,7 @@ be bound to a variable called `tensor`.
 ```science
 # Beer–Lambert with all three dimensions checked: absorptivity is L/(mol·cm),
 # path is a length, concentration is mol/m^3, absorbance is dimensionless.
-function absorbance(
+def absorbance(
     molar_absorptivity: Quantity of (F64, 2, 0, 0, 0, 0, -1, 0),
     path: Length of F64,
     concentration: Concentration of F64,
@@ -2328,20 +2328,20 @@ function absorbance(
 
 # Peak picking is `~` in every respect: threshold, width, and whether a
 # shoulder is a peak. Three arguments make the choices visible.
-function peak_pick(spectrum: borrowed Spectrum, threshold: F64, minimum_width: F64)
+def peak_pick(spectrum: borrowed Spectrum, threshold: F64, minimum_width: F64)
     -> PeakList
 
-function larmor_frequency(
+def larmor_frequency(
     nucleus: Nuclide,
     field: Quantity of (F64, 0, 1, -2, -1, 0, 0, 0),
 ) -> Frequency of F64
 
 # `mz` is `†` twice over: the isotope masses and the electron mass.
-function mz(formula: borrowed Formula, charge: Int) -> (MolarMass of F64, ChargeError?)
+def mz(formula: borrowed Formula, charge: Int) -> (MolarMass of F64, ChargeError?)
 
 # Candidate formulas within a mass tolerance, constrained by element budgets.
 # `~` because the constraint set changes the answer entirely.
-function formula_from_mass(
+def formula_from_mass(
     target: MolarMass of F64,
     tolerance_ppm: F64,
     budget: borrowed Map of (Element, (Int, Int)),
@@ -2354,7 +2354,7 @@ function formula_from_mass(
 use chem.spectra
 use chem.units
 
-function main():
+def main():
     let a be spectra.absorbance(13900.0<L/mol/cm>, 1.0<cm>, 1.2e-5<mol/L>)
     print(f"A = {a:.3}")
 ```
@@ -2422,22 +2422,22 @@ tetrahedral — and it is a *second*, non-array meaning of a reserved word that
 ```science
 # Kabsch superposition is an SVD, which is why `chem.structure` depends on
 # `linalg` and waits for F1. It fails on fewer than three non-collinear points.
-function kabsch_superimpose(
+def kabsch_superimpose(
     mobile: borrowed Array of Position,
     reference: borrowed Array of Position,
 ) -> (Transform, DegenerateError?)
 
-function dihedral(a: borrowed Atom, b: borrowed Atom, c: borrowed Atom, d: borrowed Atom)
+def dihedral(a: borrowed Atom, b: borrowed Atom, c: borrowed Atom, d: borrowed Atom)
     -> Angle of F64
 
 # Bond perception is `~` and `†`: it reads covalent radii and applies a
 # tolerance, and two tolerances give two different molecules.
-function perceive_bonds(molecule: borrowed Molecule, tolerance: F64) -> Molecule
+def perceive_bonds(molecule: borrowed Molecule, tolerance: F64) -> Molecule
 
 # Linked. The InChI string is whatever the reference implementation says.
-function inchi(molecule: borrowed Molecule) -> (String, InchiError?)
+def inchi(molecule: borrowed Molecule) -> (String, InchiError?)
 
-function read_pdb(path: borrowed Path) -> (Array of Molecule, ParseError?)
+def read_pdb(path: borrowed Path) -> (Array of Molecule, ParseError?)
 ```
 
 **Example.**
@@ -2445,7 +2445,7 @@ function read_pdb(path: borrowed Path) -> (Array of Molecule, ParseError?)
 ```science
 use chem.structure
 
-function main():
+def main():
     let molecules, err be structure.read_pdb(Path.new("1ubq.pdb"))
     if err?:
         print(f"could not read: {err.message()}")
@@ -2497,23 +2497,23 @@ dimensional signature.
 ```science
 # The 230 groups and their generators are a `†` table, and the setting is a
 # required argument because the number alone does not fix the axes.
-function space_group_by_number(number: Int, setting: Setting)
+def space_group_by_number(number: Int, setting: Setting)
     -> (SpaceGroup, UnknownGroupError?)
 
-function d_spacing(cell: borrowed UnitCell, h: Int, k: Int, l: Int) -> Length of F64
+def d_spacing(cell: borrowed UnitCell, h: Int, k: Int, l: Int) -> Length of F64
 
 # Bragg fails when the reflection is beyond the limiting sphere, which is an
 # ordinary condition and not an exceptional one, so it is in the return type.
-function bragg_angle(d: Length of F64, wavelength: Length of F64, order: Int)
+def bragg_angle(d: Length of F64, wavelength: Length of F64, order: Int)
     -> (Angle of F64, BeyondSphereError?)
 
 # A structure factor is complex and `†` through the scattering factors.
-function structure_factor(structure: borrowed CrystalStructure, h: Int, k: Int, l: Int)
+def structure_factor(structure: borrowed CrystalStructure, h: Int, k: Int, l: Int)
     -> Complex of F64
 
 # A powder pattern is a simulation with a profile function — `~` in the peak
 # shape, the width model and the background.
-function powder_pattern(
+def powder_pattern(
     structure: borrowed CrystalStructure,
     wavelength: Length of F64,
     profile: ProfileFunction,
@@ -2527,7 +2527,7 @@ function powder_pattern(
 use chem.crystal
 use chem.units
 
-function main():
+def main():
     let cell be crystal.unit_cell(5.431<angstrom>, 5.431<angstrom>, 5.431<angstrom>,
                                   90.0<deg>, 90.0<deg>, 90.0<deg>)
     let d be crystal.d_spacing(cell, 1, 1, 1)
@@ -2633,30 +2633,30 @@ a type parameter, which §10.4's `align_local` demonstrates. That is one
 
 ```science
 interface Sequence:
-    function length(self) -> Int
-    function alphabet(self) -> Alphabet
-    function symbol(self, index: Int) -> U8
+    def length(self) -> Int
+    def alphabet(self) -> Alphabet
+    def symbol(self, index: Int) -> U8
 
-    function is_empty(self) -> Bool:
+    def is_empty(self) -> Bool:
         self.length() is 0
 
 # Parsing validates against the alphabet and reports the first offending
 # position, because a sequence usually comes from a file somebody else made.
-function from_text(text: borrowed String, alphabet: Alphabet)
+def from_text(text: borrowed String, alphabet: Alphabet)
     -> (DnaSequence, AlphabetError?)
 
 # Not `†` (§4.7): complementarity is pinned by chemistry and the IUPAC
 # ambiguity codes have not moved since 1985. The most tempting tier 2
 # candidate in the catalogue, and still tier 3 — §3.4.
-function reverse_complement(sequence: borrowed DnaSequence) -> DnaSequence
+def reverse_complement(sequence: borrowed DnaSequence) -> DnaSequence
 
 # Reading a FASTA is streaming, not slurping: a reference genome does not fit
 # in memory and `collections-and-chains.md`'s `Iterate` is the right shape.
-function read_fasta(path: borrowed Path) -> (Iterate of SequenceRecord, IoError?)
+def read_fasta(path: borrowed Path) -> (Iterate of SequenceRecord, IoError?)
 
 # Phred encoding is `~`: Sanger, Illumina 1.3 and Illumina 1.5 use three
 # offsets and the file does not say which.
-function phred_from_char(character: U8, encoding: QualityEncoding) -> (Int, RangeError?)
+def phred_from_char(character: U8, encoding: QualityEncoding) -> (Int, RangeError?)
 ```
 
 **Example.**
@@ -2664,7 +2664,7 @@ function phred_from_char(character: U8, encoding: QualityEncoding) -> (Int, Rang
 ```science
 use bio.seq
 
-function main():
+def main():
     let records, err be seq.read_fasta(Path.new("genome.fa"))
     if err?:
         print(f"could not open: {err.message()}")
@@ -2722,13 +2722,13 @@ someone noticing the protein looks odd.
 
 ```science
 # The code is required. `†` through the NCBI table release.
-function translate(sequence: borrowed DnaSequence, code: borrowed GeneticCode)
+def translate(sequence: borrowed DnaSequence, code: borrowed GeneticCode)
     -> (ProteinSequence, TranslationError?)
 
 # Frames are 0, 1, 2 on the forward strand and 3, 4, 5 on the reverse. An
 # out-of-range frame is a programming error, so it is an error return and not
 # a panic — the frame usually comes from a loop bound somebody wrote.
-function translate_frame(
+def translate_frame(
     sequence: borrowed DnaSequence,
     frame: Int,
     code: borrowed GeneticCode,
@@ -2736,7 +2736,7 @@ function translate_frame(
 
 # ORF finding is `~`: minimum length, whether to require a start codon, and
 # whether nested ORFs count are three choices with three different answers.
-function open_reading_frames(
+def open_reading_frames(
     sequence: borrowed DnaSequence,
     code: borrowed GeneticCode,
     minimum_length: Int,
@@ -2745,13 +2745,13 @@ function open_reading_frames(
 
 # The CAI reference set is `†` and organism-specific, and it is an argument
 # because "the" codon usage of an organism depends on which genes you counted.
-function codon_adaptation_index(
+def codon_adaptation_index(
     sequence: borrowed DnaSequence,
     reference: borrowed CodonTable,
     code: borrowed GeneticCode,
 ) -> (F64, LengthError?)
 
-function transcribe(sequence: borrowed DnaSequence) -> RnaSequence
+def transcribe(sequence: borrowed DnaSequence) -> RnaSequence
 ```
 
 **Example.** The mistake Decision 10.2 prevents, and the fix:
@@ -2760,7 +2760,7 @@ function transcribe(sequence: borrowed DnaSequence) -> RnaSequence
 use bio.seq
 use bio.code
 
-function main():
+def main():
     let mito, err be seq.from_text("ATGTGAGGCTAA", seq.dna_alphabet())
     if err?:
         return
@@ -2811,12 +2811,12 @@ term of art rather than merely being a second choice.
 **Five signatures.**
 
 ```science
-function gc_content(sequence: borrowed DnaSequence) -> F64
+def gc_content(sequence: borrowed DnaSequence) -> F64
 
 # Tm is `~` and `†`: four published methods, and the nearest-neighbour method
 # reads a thermodynamic table. The bare name is the one people ask for, and it
 # is documented as an alias for the nearest-neighbour method with stated salt.
-function melting_temperature_nearest_neighbour(
+def melting_temperature_nearest_neighbour(
     sequence: borrowed DnaSequence,
     sodium: Concentration of F64,
     primer: Concentration of F64,
@@ -2824,18 +2824,18 @@ function melting_temperature_nearest_neighbour(
 
 # Generic over the sequence type: k-mer counting is the same operation on DNA,
 # RNA and protein, and the alphabet comes from the value.
-function kmer_counts of T(sequence: borrowed T, k: Int)
+def kmer_counts of T(sequence: borrowed T, k: Int)
     -> (Map of (String, Int), KTooLargeError?) where T: Sequence
 
-function entropy_of_sequence of T(sequence: borrowed T) -> F64 where T: Sequence
+def entropy_of_sequence of T(sequence: borrowed T) -> F64 where T: Sequence
 
 # A window is a genomic interval here, and the statistic is a closure, which is
-# the `function(T) -> U` spelling `scientific-libraries.md` §14.2 asks for.
-function window_statistic of T(
+# the `def(T) -> U` spelling `scientific-libraries.md` §14.2 asks for.
+def window_statistic of T(
     sequence: borrowed T,
     width: Int,
     step: Int,
-    statistic: function(borrowed T) -> F64,
+    statistic: def(borrowed T) -> F64,
 ) -> Array of F64 where T: Sequence
 ```
 
@@ -2845,7 +2845,7 @@ function window_statistic of T(
 use bio.seq
 use bio.composition
 
-function main():
+def main():
     let s, err be seq.from_text("GATTACAGATTACA", seq.dna_alphabet())
     if err?:
         return
@@ -2909,7 +2909,7 @@ conventional choice and saying why in one sentence.
 # because the same dynamic program aligns DNA and protein and the alphabet
 # comes from the scoring. This replaces `scientific-libraries.md` §11.7's
 # `smith_waterman of T(…)`, which §13 asks that note to amend.
-function align_local of T(
+def align_local of T(
     first: borrowed T,
     second: borrowed T,
     scoring: borrowed Scoring,
@@ -2918,7 +2918,7 @@ function align_local of T(
 
 # Affine gaps are the default in practice, and the model is a value so that
 # open and extend cannot be swapped by position.
-function align_global of T(
+def align_global of T(
     first: borrowed T,
     second: borrowed T,
     matrix: borrowed SubstitutionMatrix,
@@ -2927,12 +2927,12 @@ function align_global of T(
 
 # Hamming needs equal lengths, which is a precondition the type cannot carry
 # for runtime-length sequences, so it is an error return.
-function hamming_distance of T(first: borrowed T, second: borrowed T)
+def hamming_distance of T(first: borrowed T, second: borrowed T)
     -> (Int, LengthMismatch?) where T: Sequence
 
 # Progressive MSA needs a guide tree, which is itself a choice; passing it in
 # rather than building it silently is what makes the result reproducible.
-function progressive_align of T(
+def progressive_align of T(
     sequences: borrowed Array of T,
     guide: borrowed GuideTree,
     scoring: borrowed Scoring,
@@ -2940,7 +2940,7 @@ function progressive_align of T(
 
 # `matches`, not `match` (§6.2). Percent identity is `~`: the denominator can
 # be the alignment length, the shorter sequence, or the ungapped columns.
-function percent_identity(alignment: borrowed Alignment, denominator: IdentityBasis) -> F64
+def percent_identity(alignment: borrowed Alignment, denominator: IdentityBasis) -> F64
 ```
 
 **Example.**
@@ -2949,7 +2949,7 @@ function percent_identity(alignment: borrowed Alignment, denominator: IdentityBa
 use bio.seq
 use bio.align
 
-function main():
+def main():
     let scoring be align.Scoring.new(
         align.matrices.blosum.ncbi_62,
         align.GapModel.affine(-11, -1),
@@ -2998,13 +2998,13 @@ which is why it is a `~` and not a `†`.
 ```science
 # Pseudocounts and the background are both required: a PWM with neither is a
 # division by zero waiting for its first unobserved base.
-function weights_from_frequencies(
+def weights_from_frequencies(
     frequencies: borrowed PositionFrequencyMatrix,
     background: borrowed Background,
     pseudocount: Pseudocount,
 ) -> PositionWeightMatrix
 
-function scan_sequence(
+def scan_sequence(
     pwm: borrowed PositionWeightMatrix,
     sequence: borrowed DnaSequence,
     threshold: F64,
@@ -3012,18 +3012,18 @@ function scan_sequence(
 
 # The score distribution is exact by dynamic programming over discretised
 # scores, which is why a p-value from a PWM does not need simulation.
-function p_value_of_score(
+def p_value_of_score(
     pwm: borrowed PositionWeightMatrix,
     background: borrowed Background,
     score: F64,
 ) -> PValue
 
-function information_content(pwm: borrowed PositionWeightMatrix, position: Int)
+def information_content(pwm: borrowed PositionWeightMatrix, position: Int)
     -> (F64, RangeError?)
 
 # `find_motif` handles IUPAC ambiguity in the pattern, which is what separates
 # it from an ordinary substring search.
-function find_ambiguous(
+def find_ambiguous(
     sequence: borrowed DnaSequence,
     pattern: borrowed String,
     maximum_mismatches: Int,
@@ -3035,7 +3035,7 @@ function find_ambiguous(
 ```science
 use bio.motif
 
-function main():
+def main():
     let pwm be motif.weights_from_frequencies(
         frequencies,
         motif.Background.from_sequence(genome),
@@ -3102,7 +3102,7 @@ names. §6.2.
 # `neighbour_joining of (const N: Int)(…)`; §13 asks that note to amend it.
 # The shape is still checked: the matrix must be symmetric and its size must
 # match the label count.
-function tree_from_distances of (const N: Int)(
+def tree_from_distances of (const N: Int)(
     distances: borrowed Symmetric of (F64, N),
     labels: borrowed Array of String,
     method: TreeMethod,
@@ -3110,24 +3110,24 @@ function tree_from_distances of (const N: Int)(
 
 # N3, not N2: JC69 and K2P are two *models* and give two different numbers, so
 # the eponym is in the name and they are two functions.
-function jukes_cantor_distance(observed: F64) -> (F64, SaturatedError?)
+def jukes_cantor_distance(observed: F64) -> (F64, SaturatedError?)
 
 # Robinson–Foulds needs matching leaf sets, which is the error case that
 # actually happens, so it is in the return type.
-function robinson_foulds_distance(first: borrowed Tree, second: borrowed Tree)
+def robinson_foulds_distance(first: borrowed Tree, second: borrowed Tree)
     -> (Int, LeafSetMismatch?)
 
 # Bootstrap is `~` in the replicate count and needs a random key, which is
 # taken by value so that reuse is a compile error (`scientific-libraries.md`
 # §7.9's argument, applied here).
-function bootstrap_tree of T(
+def bootstrap_tree of T(
     alignment: borrowed MultipleAlignment,
     replicates: Int,
     key: RandomKey,
-    build: function(borrowed DistanceMatrix) -> (Tree, TreeError?),
+    build: def(borrowed DistanceMatrix) -> (Tree, TreeError?),
 ) -> (Tree, TreeError?)
 
-function read_newick(text: borrowed String) -> (Tree, NewickError?)
+def read_newick(text: borrowed String) -> (Tree, NewickError?)
 ```
 
 **Example.**
@@ -3135,7 +3135,7 @@ function read_newick(text: borrowed String) -> (Tree, NewickError?)
 ```science
 use bio.phylo
 
-function main():
+def main():
     let distances be phylo.distance_matrix(alignment, phylo.KIMURA_TWO_PARAMETER)
     let tree, err be phylo.tree_from_distances(
         distances, labels, phylo.TreeMethod.NeighbourJoining)
@@ -3181,7 +3181,7 @@ conclusions.
 
 ```science
 # Two conventions, two functions, per N2. Both take the code explicitly.
-function nei_gojobori_dn_ds(
+def nei_gojobori_dn_ds(
     first: borrowed DnaSequence,
     second: borrowed DnaSequence,
     code: borrowed GeneticCode,
@@ -3189,27 +3189,27 @@ function nei_gojobori_dn_ds(
 
 # A rate matrix is a value with row sums of zero; constructing it can fail on
 # frequencies that do not sum to one.
-function gtr(
+def gtr(
     exchangeabilities: borrowed Array of F64,
     frequencies: borrowed Array of F64,
 ) -> (RateMatrix, ModelError?)
 
 # The matrix exponential is `linalg`'s, and this is the function every
 # likelihood calculation calls a million times.
-function transition_probabilities(
+def transition_probabilities(
     rates: borrowed RateMatrix,
     time: F64,
 ) -> Matrix of (F64, 4, 4)
 
 # Model selection is `~` in the criterion and returns the ranked list rather
 # than one winner, because "the best model" is a choice the user makes.
-function model_selection(
+def model_selection(
     alignment: borrowed MultipleAlignment,
     candidates: borrowed Array of RateMatrix,
     criterion: Criterion,
 ) -> Array of (RateMatrix, F64)
 
-function ancestral_states_likelihood(
+def ancestral_states_likelihood(
     tree: borrowed Tree,
     alignment: borrowed MultipleAlignment,
     rates: borrowed RateMatrix,
@@ -3222,7 +3222,7 @@ function ancestral_states_likelihood(
 use bio.evolution
 use bio.code
 
-function main():
+def main():
     let ratio, err be evolution.nei_gojobori_dn_ds(gene_a, gene_b, code.standard())
     if err?:
         print("cannot compute dN/dS on these sequences")
@@ -3281,26 +3281,26 @@ clearer, so this is the least painful of the three new collisions.
 ```science
 # `scientific-libraries.md` §11.7's signature, in revision-2 syntax. Tajima's D
 # is undefined below four sequences and the error says so.
-function tajima_d(sequences: borrowed Array of DnaSequence)
+def tajima_d(sequences: borrowed Array of DnaSequence)
     -> (F64, TooFewSequences?)
 
 # Hardy–Weinberg yields a PValue, not an F64, so it cannot be thresholded
 # before correction — `statistical-validity.md` Decision 1.
-function hardy_weinberg_test(observed: borrowed Map of (Genotype, Int))
+def hardy_weinberg_test(observed: borrowed Map of (Genotype, Int))
     -> (PValue, TooFewGenotypes?)
 
-function nucleotide_diversity(sequences: borrowed Array of DnaSequence)
+def nucleotide_diversity(sequences: borrowed Array of DnaSequence)
     -> (F64, TooFewSequences?)
 
 # Fst is `~`: Wright's, Weir–Cockerham's and Hudson's estimators are three
 # numbers, and which one a paper used is the first question a reviewer asks.
-function f_st_weir_cockerham(
+def f_st_weir_cockerham(
     populations: borrowed Array of Array of Genotype,
 ) -> (F64, StructureError?)
 
 # The Wright–Fisher step takes the random key by value, so a reused key is a
 # compile error rather than a silently repeated trajectory.
-function wright_fisher_step(
+def wright_fisher_step(
     frequency: F64,
     population_size: Int,
     selection: F64,
@@ -3314,7 +3314,7 @@ function wright_fisher_step(
 use bio.popgen
 use stats
 
-function main():
+def main():
     let mutable pvalues be Array of PValue.new()
     for locus in loci:
         let p, err be popgen.hardy_weinberg_test(locus.genotypes())
@@ -3389,7 +3389,7 @@ science and it is the exact case that note was written for.
 ```science
 # A DE result carries adjusted p-values by construction: there is no way to
 # get a `DifferentialResult` whose p-values have not been through a correction.
-function differential_expression(
+def differential_expression(
     counts: borrowed CountMatrix,
     design: borrowed Design,
     contrast: borrowed Contrast,
@@ -3398,17 +3398,17 @@ function differential_expression(
 
 # `†`-free and `~`: three normalisations with three different answers, three
 # functions, per N2.
-function median_of_ratios(counts: borrowed CountMatrix)
+def median_of_ratios(counts: borrowed CountMatrix)
     -> (SizeFactors, ZeroGeneError?)
 
 # TPM needs gene lengths, and forgetting them is the classic error that turns
 # TPM into CPM; making them an argument makes forgetting impossible.
-function tpm(counts: borrowed CountMatrix, lengths: borrowed Array of Int)
+def tpm(counts: borrowed CountMatrix, lengths: borrowed Array of Int)
     -> (ExpressionMatrix, LengthMismatch?)
 
 # ORA over a user-supplied gene set. Returns a PValue; thresholding it before
 # correction does not compile.
-function over_representation(
+def over_representation(
     selected: borrowed Set of GeneId,
     universe: borrowed Set of GeneId,
     gene_set: borrowed Set of GeneId,
@@ -3416,7 +3416,7 @@ function over_representation(
 
 # GSEA's permutation scheme is `~` — gene permutation and phenotype
 # permutation give different nulls — and it takes a key by value.
-function gene_set_enrichment(
+def gene_set_enrichment(
     ranked: borrowed Array of (GeneId, F64),
     gene_sets: borrowed Map of (String, Set of GeneId),
     permutations: Int,
@@ -3431,7 +3431,7 @@ function gene_set_enrichment(
 use bio.expression
 use stats
 
-function main():
+def main():
     let factors, size_err be expression.median_of_ratios(counts)
     if size_err?:
         print("a gene has a zero in every sample")
@@ -3494,14 +3494,14 @@ is the section where it applies to everything.
 # N2: Leiden and Louvain differ in the refinement step and nothing else, so
 # the method is an argument. `~` in the resolution, which changes the number of
 # clusters and is the single most consequential free parameter in the field.
-function communities(
+def communities(
     graph: borrowed Neighbourhood,
     resolution: F64,
     method: CommunityMethod,
     key: RandomKey,
 ) -> (ClusterAssignment, GraphError?)
 
-function highly_variable_genes(
+def highly_variable_genes(
     matrix: borrowed CellMatrix,
     count: Int,
     method: VariabilityMethod,
@@ -3510,7 +3510,7 @@ function highly_variable_genes(
 # N2: UMAP, t-SNE and diffusion maps take the same components and return the
 # same type, so the method is an argument. The embedding is a value with its
 # parameters attached, so a plot can say how it was made.
-function embedding of (const N: Int, const K: Int)(
+def embedding of (const N: Int, const K: Int)(
     components: borrowed Matrix of (F64, N, K),
     neighbours: Int,
     minimum_distance: F64,
@@ -3520,14 +3520,14 @@ function embedding of (const N: Int, const K: Int)(
 
 # Marker genes yields PValues, and the correction is a required argument
 # because a marker list is the most over-thresholded object in the field.
-function marker_genes(
+def marker_genes(
     matrix: borrowed CellMatrix,
     clusters: borrowed ClusterAssignment,
     test: MarkerTest,
     correction: Correction,
 ) -> (Map of (ClusterId, Array of (GeneId, AdjustedPValue)), MarkerError?)
 
-function mitochondrial_fraction(
+def mitochondrial_fraction(
     matrix: borrowed CellMatrix,
     mitochondrial: borrowed Set of GeneId,
 ) -> Array of F64
@@ -3538,7 +3538,7 @@ function mitochondrial_fraction(
 ```science
 use bio.singlecell
 
-function main():
+def main():
     let variable, err be singlecell.highly_variable_genes(
         matrix, 2000, singlecell.SEURAT_V3)
     if err?:
@@ -3599,13 +3599,13 @@ applies unchanged.
 ```science
 # `merged`, not `union` (§6.2). Reverts to `union` if `reserved-words.md` §5
 # item 2 lands.
-function merged(first: borrowed Network, second: borrowed Network) -> Network
+def merged(first: borrowed Network, second: borrowed Network) -> Network
 
-function betweenness(network: borrowed Network, normalised: Bool) -> Map of (Node, F64)
+def betweenness(network: borrowed Network, normalised: Bool) -> Map of (Node, F64)
 
 # N2 again, on a graph rather than a cell neighbourhood. Community detection
 # is `~` and needs a key; the resolution changes the answer and is not hidden.
-function communities(
+def communities(
     network: borrowed Network,
     resolution: F64,
     method: CommunityMethod,
@@ -3614,14 +3614,14 @@ function communities(
 
 # A co-expression network is a thresholded correlation matrix, and the
 # threshold is the whole method, so it is an argument with no default.
-function co_expression_network(
+def co_expression_network(
     expression: borrowed ExpressionMatrix,
     correlation: CorrelationKind,
     threshold: F64,
 ) -> (Network, TooFewSamplesError?)
 
 # FBA is linked: it is an LP, and the LP solver is the artefact.
-function flux_balance_analysis(
+def flux_balance_analysis(
     stoichiometry: borrowed Matrix of (F64, M, N),
     bounds: borrowed Array of (F64, F64),
     objective: borrowed Array of F64,
@@ -3633,7 +3633,7 @@ function flux_balance_analysis(
 ```science
 use bio.network
 
-function main():
+def main():
     let net, err be network.co_expression_network(
         expression, network.SPEARMAN, 0.75)
     if err?:
@@ -3695,31 +3695,31 @@ interface is the standard term and `interface` is a keyword since
 **Five signatures.**
 
 ```science
-function read_pdb_structure(path: borrowed Path)
+def read_pdb_structure(path: borrowed Path)
     -> (ProteinStructure, ParseError?)
 
 # `~`: DSSP and STRIDE assign different secondary structure to the same
 # coordinates, and which one a figure used is a real question.
-function dssp_like(structure: borrowed ProteinStructure)
+def dssp_like(structure: borrowed ProteinStructure)
     -> (Array of SecondaryStructure, GeometryError?)
 
 # TM-score is length-normalised and needs an alignment; passing an unaligned
 # pair is the mistake, so the alignment is an argument.
-function tm_score(
+def tm_score(
     mobile: borrowed ProteinStructure,
     reference: borrowed ProteinStructure,
     correspondence: borrowed Array of (Int, Int),
 ) -> (F64, LengthError?)
 
 # `~` in the cutoff and in whether the contact is CA–CA, CB–CB or any-atom.
-function contact_map(
+def contact_map(
     structure: borrowed ProteinStructure,
     cutoff: Length of F64,
     definition: ContactDefinition,
 ) -> ContactMap
 
 # `ContactSurface`, not `Interface` (§6.3).
-function contact_surface_residues(
+def contact_surface_residues(
     first: borrowed Chain,
     second: borrowed Chain,
     cutoff: Length of F64,
@@ -3732,7 +3732,7 @@ function contact_surface_residues(
 use bio.structure
 use chem.units
 
-function main():
+def main():
     let s, err be structure.read_pdb_structure(Path.new("1hho.pdb"))
     if err?:
         print(f"could not read: {err.message()}")
@@ -3778,27 +3778,27 @@ a phylogeny should not link the tree code.
 **Five signatures.**
 
 ```science
-function shannon_index(abundances: borrowed Array of F64) -> (F64, EmptyCommunity?)
+def shannon_index(abundances: borrowed Array of F64) -> (F64, EmptyCommunity?)
 
 # Hill numbers unify richness, Shannon and Simpson at q = 0, 1, 2, which is why
 # they are one function with an order rather than three functions — the order
 # is a continuous parameter, not a method choice, so N2's `~` does not apply.
-function hill_number(abundances: borrowed Array of F64, order: F64)
+def hill_number(abundances: borrowed Array of F64, order: F64)
     -> (F64, EmptyCommunity?)
 
-function bray_curtis_distance(first: borrowed Array of F64, second: borrowed Array of F64)
+def bray_curtis_distance(first: borrowed Array of F64, second: borrowed Array of F64)
     -> (F64, LengthMismatch?)
 
 # UniFrac needs a tree whose tips match the species, which is the error that
 # actually happens.
-function weighted_unifrac_distance(
+def weighted_unifrac_distance(
     first: borrowed Community,
     second: borrowed Community,
     tree: borrowed Tree,
 ) -> (F64, TipMismatch?)
 
 # PERMANOVA yields a PValue from a permutation null and takes a key by value.
-function permanova(
+def permanova(
     distances: borrowed Symmetric of (F64, N),
     groups: borrowed Array of Int,
     permutations: Int,
@@ -3811,7 +3811,7 @@ function permanova(
 ```science
 use bio.ecology
 
-function main():
+def main():
     for site in sites:
         let h, err be ecology.shannon_index(site.abundances())
         if err?:
@@ -3887,7 +3887,7 @@ or multi-strain models.
 ```science
 # The SIR system is an ODE; `math`'s integrator does the work and a stiff or
 # badly-scaled system can fail to converge.
-function solve_epidemic(
+def solve_epidemic(
     model: borrowed CompartmentModel,
     initial: borrowed Map of (Compartment, F64),
     span: (Time of F64, Time of F64),
@@ -3895,24 +3895,24 @@ function solve_epidemic(
 ) -> (EpidemicCurve, IntegrationError?)
 
 # R0 is the spectral radius of the next-generation matrix — not a closed form.
-function basic_reproduction_number of (const N: Int)(
+def basic_reproduction_number of (const N: Int)(
     transmission: borrowed Matrix of (F64, N, N),
     transition: borrowed Matrix of (F64, N, N),
 ) -> (F64, SingularError?)
 
 # Rt is `~`: Wallinga–Teunis and Cori give different curves from the same data
 # and answer different questions.
-function instantaneous_reproduction(
+def instantaneous_reproduction(
     incidence: borrowed Array of Int,
     serial_interval: borrowed Distribution,
     window: Int,
 ) -> (Array of F64, TooShortError?)
 
 # Re-exported from `stats.survival`.
-function kaplan_meier_curve(data: borrowed SurvivalData) -> (SurvivalCurve, EmptyRiskSet?)
+def kaplan_meier_curve(data: borrowed SurvivalData) -> (SurvivalCurve, EmptyRiskSet?)
 
 # The log-rank test yields a PValue, like every other test in the catalogue.
-function log_rank_test(groups: borrowed Array of SurvivalData)
+def log_rank_test(groups: borrowed Array of SurvivalData)
     -> (PValue, TooFewEventsError?)
 ```
 
@@ -3922,7 +3922,7 @@ function log_rank_test(groups: borrowed Array of SurvivalData)
 use bio.epi
 use chem.units
 
-function main():
+def main():
     let model be epi.seir(0.6, 0.2, 0.1)
     let curve, err be epi.solve_epidemic(
         model, initial, (0.0<d>, 365.0<d>), 1.0e-8)
@@ -4153,7 +4153,7 @@ askers; items 4 through 9 are new.
    printed. This note is the second asker after §7's own customers and the one
    with the most legible payoff.
 
-3. **Closure types spelled `function(T) -> U`.** `window_statistic` (§10.3),
+3. **Closure types spelled `def(T) -> U`.** `window_statistic` (§10.3),
    `bootstrap_tree` (§10.6) and `solve_kinetics_stiff`'s user-supplied rate laws
    need it. Fifth asker; no new argument, one more customer.
 

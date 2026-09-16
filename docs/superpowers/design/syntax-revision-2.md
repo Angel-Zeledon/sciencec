@@ -170,7 +170,7 @@ error type is nullable. `?` tests for presence. `Result of (T, E)` and `try` are
 removed; `Option of T` becomes `T?`.
 
 ```science
-function read_config(path: String) -> (Config, Error?):
+def read_config(path: String) -> (Config, Error?):
     let text, err be read_file(path)
     if err?:
         return (Config.empty(), err)
@@ -264,7 +264,7 @@ method:
 
 ```science
 interface Error:
-    function message(self) -> String
+    def message(self) -> String
 ```
 
 `Error?` in a return position is shorthand for `(any Error)?` — an optional
@@ -280,7 +280,7 @@ choice ConfigError:
     Missing(String)
     Malformed(String, Int)
 
-function read_config(path: String) -> (Config, ConfigError?):
+def read_config(path: String) -> (Config, ConfigError?):
     ...
 ```
 
@@ -326,7 +326,7 @@ newline. The no-newline form is `write`.
 **Decision.** `returns` becomes `->`.
 
 ```science
-function summarize(self) -> String:
+def summarize(self) -> String:
     self.body.truncate(200)
 ```
 
@@ -348,7 +348,7 @@ reverted.
 
 ```science
 Doc has:
-    function new(title: String) -> Doc:
+    def new(title: String) -> Doc:
         Doc(title: title, body: "")
 ```
 
@@ -364,13 +364,13 @@ not exotic.
 
 ```science
 interface Summarize:
-    function summarize(self) -> String
+    def summarize(self) -> String
 
-    function preview(self) -> String:
+    def preview(self) -> String:
         self.summarize().truncate(80)
 
 Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         self.body.truncate(200)
 ```
 
@@ -437,33 +437,33 @@ type Doc:
     body: String
 
 interface Summarize:
-    function summarize(self) -> String
+    def summarize(self) -> String
 
-    function preview(self) -> String:
+    def preview(self) -> String:
         self.summarize().truncate(80)
 
 Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         self.body.truncate(200)
 
 Doc has:
-    function new(title: String) -> Doc:
+    def new(title: String) -> Doc:
         Doc(title: title, body: "")
 
-function longest of T(items: borrowed Array of T) -> borrowed T where T: Ord:
+def longest of T(items: borrowed Array of T) -> borrowed T where T: Ord:
     let mutable best be items.get(0)
     for item in items:
         if item > best:
             best be item
     best
 
-function load(path: String) -> (Doc, Error?):
+def load(path: String) -> (Doc, Error?):
     let text, err be read_file(path)
     if err?:
         return (Doc.new(""), err)
     return (Doc(title: "loaded", body: text), null)
 
-function main():
+def main():
     let doc, err be load("a.txt")
     if err?:
         print("could not load")
@@ -629,6 +629,21 @@ parser's 157 all encode it. Every one of those moves again. That cost is
 accepted here on the grounds that the language has no users yet and this is the
 cheapest day it will ever be — but it is the last day that argument is free, and
 a third revision should be held to a much higher bar.
+
+> **There was a third revision, the same day.** `function` became `def`
+> (`syntax-revision-3.md`). It did not clear a higher bar on the merits — it
+> reversed a note that had just argued against it, and it broke the keyword rule
+> that §4 of this revision was careful to lean on rather than weaken. What
+> happened instead is that the bar's *premise* weakened: `sciencec fmt` landed
+> between the two revisions, so the migration that this paragraph treats as the
+> escalating cost got cheaper rather than dearer. §5 of that note works through
+> which of those two readings is honest. Both are.
+
+**The `->` argument is the one revision 3 spent.** §4 defends `->` on the ground
+that it *is not an abbreviation of an English word*, and that defence only works
+while the language still forbids abbreviations. It does not any more. `->` is
+unaffected as a decision — it is still a symbol every reader already reads — but
+the *form* of the argument for it no longer rules anything out.
 
 **The error model is the one change that is not merely syntactic.** Points 1, 2,
 4, 5 and 6 are renames a mechanical migration can perform. Point 3 changes what

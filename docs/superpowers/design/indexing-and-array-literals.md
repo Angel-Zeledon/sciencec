@@ -87,7 +87,7 @@ they wrote. Two spellings, two meanings, no guessing.
 promised and never supplied.
 
 ```science
-function scale(values: mutable borrowed Array of F64, factor: F64):
+def scale(values: mutable borrowed Array of F64, factor: F64):
     for i in 0..values.length():
         values[i] be values[i] * factor
 ```
@@ -100,11 +100,11 @@ type varies. It gains one.
 ```science
 interface Index of Idx:
     type Output
-    function index(borrowed self, at: Idx) -> borrowed Self.Output
+    def index(borrowed self, at: Idx) -> borrowed Self.Output
 
 interface IndexMutably of Idx:
     type Output
-    function index_mutably(mutable borrowed self, at: Idx) -> mutable borrowed Self.Output
+    def index_mutably(mutable borrowed self, at: Idx) -> mutable borrowed Self.Output
 ```
 
 `a[i] be v` requires `IndexMutably`; `a[i]` on the right of a `be` requires
@@ -211,8 +211,8 @@ week.
 
 ```science
 Array of T has:
-    function get(borrowed self, at: Int) -> (borrowed T)?
-    function get_mutably(mutable borrowed self, at: Int) -> (mutable borrowed T)?
+    def get(borrowed self, at: Int) -> (borrowed T)?
+    def get_mutably(mutable borrowed self, at: Int) -> (mutable borrowed T)?
 ```
 
 ```science

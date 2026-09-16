@@ -94,9 +94,9 @@ answer:
 ```science
 let model be load("weights.safetensors")    # `model` in binding position
 let shape be tensor.shape                   # `shape` in binding position
-function forward(tensor: Tensor) returns Tensor:   # parameter named `tensor`
+def forward(tensor: Tensor) returns Tensor:   # parameter named `tensor`
 let yield be produced / theoretical         # `yield` in binding position
-function kde(kernel: Kernel) returns Density:      # parameter named `kernel`
+def kde(kernel: Kernel) returns Density:      # parameter named `kernel`
 ```
 
 §3 handles these.
@@ -161,6 +161,8 @@ examples.
 | `move` | R | `moving_average` is one identifier | — | Keep — no real collision | — |
 | `on`, `static`, `pure`, `parallel`, `macro`, `extern`, `unsafe`, `kernel` | R | low | — | Keep; all are declaration-position words the FFI note already treats contextually | — |
 | `const` | K | a `const` module holding `PI`, `C`, `H` | Module | **Keep**; rename the module | `constants`, or `physics.constants` |
+| `def` | K | `def: DefId`, `binding.def` — the field name for a definition in compiler and symbolic-algebra code | **Binding and field** | **Keep** — it is the declaration keyword since revision 3 (§2.3) | `definition`; `d` after the dot rule lands |
+| `function` | free | nothing: it was the declaration keyword until revision 3 and is now an ordinary word | — | **Leave free**, and keep `SC0156` contextual (§2.3) | — |
 | `grad`, `dim`, `dims`, `axis`, `device`, `dtype`, `unit`, `alias` | free | — | — | Already correct — §13's best decision | — |
 
 ### 2.1 `mod`
@@ -197,6 +199,47 @@ their first hour.
 
 **Free `yield`.** If a generator form ever lands, it is a declaration-position
 word and can be contextual then, at the cost §3.2 measures.
+
+### 2.3 `def`, and the collision this note did not get to price first
+
+`def-and-lambda.md` §5 audited `def` before it was a keyword and recorded the
+row honestly: *the reserved-word audit does not reject `def`*. It priced the
+collision as low, on the ground that `def` is not a word a physicist or a chemist
+binds. That was right about the audience it checked and wrong about the audience
+it forgot.
+
+**`def` is ordinary compiler vocabulary, and this language intends to compile
+itself.** `self-hosting.md` is a whole note about writing `sciencec` in Science.
+A compiler's central table maps a definition id to a definition, and the field is
+called `def` in LLVM, in rustc, in every teaching compiler, and it was called
+`def` here: `examples/21_compiler_shapes.science` had `def: DefId` and
+`binding.def`, and the rename to `def` broke it on the first run. The field is
+`definition` now.
+
+So the row above says **Keep**, because the decision is made and a keyword is not
+re-litigated by its own collision audit, but the price is a real one and it is
+paid by exactly the users this project has promised to become:
+
+- **Binding and field position**, which §1's table marks as the two the dot rule
+  does not rescue. `binding.def` is a member access, so the dot rule *would*
+  free it — but `def: DefId` in the type declaration is a field name in
+  declaration position and no rule reaches it.
+- It is the first reservation in the language whose collision is with the
+  language's own implementation rather than with its subject matter. Every other
+  row in this table is a scientist's word. This one is a compiler writer's, and
+  §13 of the core spec has never audited against that vocabulary at all.
+
+**`definition` is the replacement**, and it should be the recommendation
+wherever this comes up: it is the whole word, it is what `def` abbreviates, and
+it reads better in a field list than `d` or `def_id` do.
+
+**`function` goes the other way.** It left the keyword list and was *not* moved
+to the reserved list, which is the choice this note would have argued for anyway:
+the compiler recognises the stale declaration as the ordinary word `function`
+followed by a name, one token of lookahead, exactly as §0.1's dot rule trades a
+reservation for a position test. A reservation would have cost the identifier —
+`ffi-c-boundary.md` §4.3 binds a C struct field spelled `function` — and bought
+nothing `SC0156` does not already have.
 
 ---
 
@@ -370,6 +413,11 @@ differently, which is a small cost with a clear end date.
    rewritten to say so.
 6. **Rename** the constants module to `constants` (`physics.constants`), which
    needs no language change at all.
+7. **Audit against the compiler's own vocabulary** (§2.3), which no list in §13
+   has ever done. `def` was found by breaking a corpus file rather than by
+   reading; `type`, `has`, `match`, `use` and `const` are all words a compiler
+   written in Science will want as field and local names, and the dot rule
+   covers only the ones that appear after a `.`.
 
 ### 5.1 Diagnostics this changes
 

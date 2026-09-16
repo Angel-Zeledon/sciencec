@@ -2,7 +2,7 @@
 
 Science is a compiled language for scientific computing and machine learning.
 Its syntax rhymes with Rust and Python and **is not either of them**. If you
-write it by analogy you will get it wrong in the twenty-two specific ways below.
+write it by analogy you will get it wrong in the twenty-four specific ways below.
 
 Read §1 before writing a line. The authority is
 `docs/superpowers/specs/2026-09-16-science-f0-core-design.md` §4, and
@@ -18,7 +18,8 @@ it as a fix.
 
 | Don't write | Write | |
 |---|---|---|
-| `fn f()` | `function f()` | |
+| `fn f()` | `def f()` | |
+| `function f()` | `def f()` | the keyword until revision 3; `SC0156` |
 | `let x = v` | `let x be v` | |
 | `let mut x = v` | `let mutable x be v` | |
 | `x = v` | `x be v` | assignment is also `be` |
@@ -29,7 +30,7 @@ it as a fix.
 | `trait Summarize:` | `interface Summarize:` | the interface; `impl` is the implementation |
 | `Array[T]` | `Array of T` | |
 | `Map[K, V]` | `Map of (K, V)` | two or more need parentheses |
-| `fn largest[T](…)` | `function largest of T(…)` | |
+| `fn largest[T](…)` | `def largest of T(…)` | |
 | `&T` | `borrowed T` | |
 | `&mut T` | `mutable borrowed T` | |
 | `&self` / `&mut self` | `self` / `mutable self` | by value is `self: Self` |
@@ -101,7 +102,7 @@ loop:
 
 Using one is an error, not a warning. The ones you are most likely to reach for:
 
-**In use as keywords:** `function return let be mutable type choice
+**In use as keywords:** `def return let be mutable type choice
 interface implements has of borrowed any for each in if else match
 loop break continue use where as self Self and or not true false is const public
 giving null`
@@ -109,10 +110,15 @@ giving null`
 `each` is a keyword but **not** a loop word: its only use is naming the subject
 of a call, `docs.map(each.title)`. Words a previous revision reserved and has
 since freed — `trait`, `methods`, `while`, `try`, `returns`, `at`, `above`,
-`below`, `most`, `least` — are ordinary names now, and writing one where it
-used to be a keyword is its own diagnostic, `SC0138`–`SC0144` and `SC0155`.
-`null` went the other way: it is a literal, its spelling is fixed, and a
-program may not bind the name.
+`below`, `most`, `least` and now `function` — are ordinary names now, and
+writing one where it used to be a keyword is its own diagnostic,
+`SC0138`–`SC0144`, `SC0155` and `SC0156`. `null` went the other way: it is a
+literal, its spelling is fixed, and a program may not bind the name.
+
+`function` is the one you will reach for, because `function f()` was the
+declaration until revision 3 and most of what you have read says so. It is
+`def f()` now, and the word itself is free: `let function be …` binds, and a
+field may be called `function`.
 
 **Reserved for later phases:** `agent tool prompt spawn send receive durable
 checkpoint resume supervise async await tensor shape model mod extern unsafe
@@ -131,6 +137,7 @@ The collisions that will actually bite you, with what to write instead:
 | a `kernel` parameter | `kernel` | `window`, `weights` |
 | `assert(cond)` | `assert` | `check(cond)` |
 | a `const` module | `const` | `constants` |
+| a field or local `def` | `def` | `definition` — compiler code hits this |
 
 Safe and deliberately not reserved: `grad`, `dim`, `dims`, `axis`, `device`,
 `dtype`, `unit`, `alias`.
@@ -177,14 +184,14 @@ docs.sort(by: line giving line.length())    # named argument
 **Chains break on a leading dot**, and a long signature breaks before `where`:
 
 ```science
-function headlines(docs: borrowed Array of Doc) -> Array of String:
+def headlines(docs: borrowed Array of Doc) -> Array of String:
     docs
         .iterate()
         .discard(each.is_empty())
         .map(each.title)
         .collect()
 
-function best_of of T(left: borrowed T, right: borrowed T) -> String
+def best_of of T(left: borrowed T, right: borrowed T) -> String
         where T: Summarize + Clone:
     left.preview()
 ```
@@ -211,20 +218,20 @@ choice Outcome of (T, E):
     Err(E)
 
 interface Summarize:
-    function summarize(self) -> String
+    def summarize(self) -> String
 
-    function preview(self) -> String:
+    def preview(self) -> String:
         self.summarize().truncate(80)
 
 Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         self.body.truncate(200)
 
 Doc has:
-    function new(title: String) -> Doc:
+    def new(title: String) -> Doc:
         Doc(title: title, body: "")
 
-function longest of T(items: borrowed Array of T) -> borrowed T
+def longest of T(items: borrowed Array of T) -> borrowed T
         where T: Ord:
     let mutable best be items.get(0)
     for item in items:
@@ -232,13 +239,13 @@ function longest of T(items: borrowed Array of T) -> borrowed T
             best be item
     best
 
-function load(path: borrowed String) -> (Doc, Error?):
+def load(path: borrowed String) -> (Doc, Error?):
     let text, err be read_file(path)
     if err?:
         return (Doc.empty(), err)
     (Doc(title: "loaded", body: text), null)
 
-function main():
+def main():
     let doc be Doc.new("Regions")
     print(doc.preview())
 
@@ -279,6 +286,7 @@ crates/science-lexer         tokens, indentation, SC0001-SC0099
 crates/science-parser        AST and grammar, SC0100-SC0199
 crates/science-resolve       names and scopes  (being migrated)
 crates/science-diagnostics   rendering, spans, suggestions
+crates/science-fmt           `sciencec fmt` — canonical layout, idempotent
 crates/science-rt            the runtime every compiled binary links against
 crates/science-db            incremental query database (salsa)
 crates/science-testkit       the UI-test and corpus harness

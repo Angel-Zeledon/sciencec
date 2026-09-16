@@ -46,9 +46,9 @@ type Bounds:
 interface Iterate:
     type Item
 
-    function next(mutable self) -> Self.Item?
+    def next(mutable self) -> Self.Item?
 
-    function estimated_length(borrowed self) -> Bounds:
+    def estimated_length(borrowed self) -> Bounds:
         Bounds(minimum: 0, maximum: null)
 ```
 
@@ -69,12 +69,24 @@ Combinators take closures, and §5.2 requires signatures to be fully annotated, 
 a closure needs a nameable type. Science spells it with words it already has:
 
 ```science
-function keep of P(self, predicate: P) returns Keep of (Self, P)
-        where P: function(borrowed Self.Item) returns Bool
+def keep of P(self, predicate: P) returns Keep of (Self, P)
+        where P: def(borrowed Self.Item) returns Bool
 ```
 
-`function(A) returns B` is a type, formed exactly as a declaration is. No new
+`def(A) returns B` is a type, formed exactly as a declaration is. No new
 keyword, and it reads inside a `where` clause. **AMENDMENT 1.**
+
+**Revision 3 changed the word and half of that sentence with it.** This was
+written when the declaration keyword was `function`, and *formed exactly as a
+declaration is* was doing two jobs: it meant no new keyword, which is still
+true, and it meant the type read as English — `f: function(F64) returns F64` is a
+noun naming what the parameter is. `def` is a verb stem, and `f: def(F64)
+returns F64` does not name anything; it reads as a declaration that lost its
+name. The mechanism is unaffected and the spelling has been carried over
+mechanically, but the *argument* for this spelling over an invented one is
+weaker than it was, and whoever takes this standing ask — `README.md` records
+three customers and no owner — should re-decide it rather than inherit it.
+`syntax-revision-3.md` §7 item 6 flags the same thing from the other side.
 
 Closures of more than one parameter (`reduce`, `accumulate`) need a spelling too.
 The named form takes a parenthesised list, and `each` — being the name of *the*
@@ -134,12 +146,12 @@ means it buffers the whole stream.
 
 | Method | Signature (abbreviated) | Parallel | Why it earns its place |
 |---|---|---|---|
-| `map(f)` | `map of (U, F)(self, f: F) returns MapOver of (Self, F)` where `F: function(Self.Item) returns U` | safe | The one combinator no pipeline omits. Name kept: §3.2. |
-| `expand(f)` | `expand of (S, F)(self, f: F) returns Expand of (Self, F)` where `F: function(Self.Item) returns S, S: Iterate` | safe | One item becomes many: a document becomes its tokens, a batch becomes its rows. Fused rather than `map` then `flatten` because the intermediate is never wanted. |
+| `map(f)` | `map of (U, F)(self, f: F) returns MapOver of (Self, F)` where `F: def(Self.Item) returns U` | safe | The one combinator no pipeline omits. Name kept: §3.2. |
+| `expand(f)` | `expand of (S, F)(self, f: F) returns Expand of (Self, F)` where `F: def(Self.Item) returns S, S: Iterate` | safe | One item becomes many: a document becomes its tokens, a batch becomes its rows. Fused rather than `map` then `flatten` because the intermediate is never wanted. |
 | `flatten()` | `flatten(self) returns Flatten of Self` where `Self.Item: Iterate` | safe | The unfused case, when the nesting arrived from somewhere else. |
 | `owned()` | `owned(self) returns Owned of Self` where `Self.Item` is `borrowed T, T: Clone` | safe | Turns a chain of borrows into a chain of values. Replaces Rust's `cloned` *and* `copied` (§4.4). |
 | `numbered()` | `numbered(self) returns NumberedOver of Self`, `Item = Numbered of Self.Item` | ordered | Row numbers, sample ids, progress reporting. |
-| `accumulate(initial, f)` | `accumulate of (A, F)(self, initial: A, f: F) returns Accumulate of (Self, A, F)` where `F: function(A, Self.Item) returns A` | sequential | Running totals, cumulative sums, moving averages, online state. `reduce` throws the intermediates away; time-series work wants them. |
+| `accumulate(initial, f)` | `accumulate of (A, F)(self, initial: A, f: F) returns Accumulate of (Self, A, F)` where `F: def(A, Self.Item) returns A` | sequential | Running totals, cumulative sums, moving averages, online state. `reduce` throws the intermediates away; time-series work wants them. |
 
 #### Filtering and selecting (lazy)
 
@@ -337,7 +349,7 @@ handed to the next stage is a dataset, not a recipe.
 Streaming across a boundary is not lost, because a *source* type is nameable:
 
 ```science
-function lines_of(path: borrowed String) -> (Lines, Error?)
+def lines_of(path: borrowed String) -> (Lines, Error?)
 ```
 
 `Lines` is a concrete type implementing `Iterate`, so the caller chains over it
@@ -601,9 +613,9 @@ Each collection carries the same three source methods as **inherent** methods
 
 ```science
 Array of T has methods:
-    function iterate(borrowed self) returns ArrayIterate of T
-    function iterate_mutably(mutable borrowed self) returns ArrayIterateMutably of T
-    function iterate_consuming(self) returns ArrayIterateConsuming of T
+    def iterate(borrowed self) returns ArrayIterate of T
+    def iterate_mutably(mutable borrowed self) returns ArrayIterateMutably of T
+    def iterate_consuming(self) returns ArrayIterateConsuming of T
 ```
 
 `Map` yields `Entry of (K, V)` and additionally offers `keys()`, `values()` and
@@ -802,7 +814,7 @@ Seven things must be true in F0 for that to be addable rather than a redesign.
 
 1. **Combinators are provided methods, never user-implemented.** A user
    implements `next()`; F2 adds a second trait — call it `Divide`, with
-   `function divide(self) -> (Self, Self)?` — and gives it the same
+   `def divide(self) -> (Self, Self)?` — and gives it the same
    provided methods. Nobody's source code changes. Had the combinators been
    free functions or user obligations, every source in existence would need a
    second implementation.
@@ -884,7 +896,7 @@ type Hit:
     id: String
     score: F32
 
-function top_matches(path: borrowed String,
+def top_matches(path: borrowed String,
                      encoder: borrowed Encoder,
                      query: borrowed Embedding)
         -> (Array of Hit, Error?):
@@ -996,7 +1008,7 @@ spec's to assign.
 Numbered as referenced above. Items 4–7 and 8–9 are the load-bearing ones;
 several sit in another designer's territory and are flagged for routing.
 
-1. **Function types are spelled `function(A) returns B`** and may appear in
+1. **Function types are spelled `def(A) returns B`** and may appear in
    `where` clauses. *(Type system.)*
 2. **Argument labels are part of a method's name**, resolved before type
    inference. Needed to keep §4.6's own `sort(by:)`. *(Resolution.)*

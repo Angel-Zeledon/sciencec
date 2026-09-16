@@ -270,10 +270,10 @@ interface Part:
 
     ## Forwarded from `Frame` so that reading, summarising and plotting a part
     ## never needs the escape of §3.7. The role survives all of these.
-    function length(self) -> U64
-    function columns(self) -> borrowed Self.Record.Columns
-    function row(self, index: U64) -> Self.Record
-    function rejected_count(self) -> U64
+    def length(self) -> U64
+    def columns(self) -> borrowed Self.Record.Columns
+    def row(self, index: U64) -> Self.Record
+    def rejected_count(self) -> U64
 
 ## May be fitted on.
 interface Fitting:
@@ -337,13 +337,13 @@ made to a `adjusted: Bool` field. It moves the check into the eight-hour job.
 > the first of them to touch it, and there is exactly one.
 
 ```science
-function split of R(frame: Frame of R, key: Key, holdout_fraction: F64)
+def split of R(frame: Frame of R, key: Key, holdout_fraction: F64)
     -> (Train of R, Holdout of R)
 
-function split_tune of R(train: Train of R, key: Key, tune_fraction: F64)
+def split_tune of R(train: Train of R, key: Key, tune_fraction: F64)
     -> (Train of R, Tune of R)
 
-function whole of R(frame: Frame of R) -> Whole of R
+def whole of R(frame: Frame of R) -> Whole of R
 ```
 
 This is the `Key` move in the one place where it does the most work. `Key` is not
@@ -396,19 +396,19 @@ This is the central case, the commonest leak, and the largest bill in the note.
 
 ```science
 Standardiser has:
-    function fit of P(data: borrowed P) -> Standardiser where P: Fitting
+    def fit of P(data: borrowed P) -> Standardiser where P: Fitting
 
     ## Generic in the role and returns the same role it was given: this is the
     ## one signature the whole design turns on. `apply` takes the part by value
     ## and returns it, so the transform may work in place.
-    function apply of P(self, data: P) -> P where P: Part
+    def apply of P(self, data: P) -> P where P: Part
 ```
 
 ```science
 use stats (split, Standardiser, Imputer, least_squares, evaluate)
 use random (Key)
 
-function main():
+def main():
     let frame, err be read_csv of Measurement(path, CsvOptions.new()).collect()
     if err?:
         return
@@ -496,17 +496,17 @@ positives, and §6 turns on not having any.
 
 ```science
 ## Consumes the holdout. One pass, and every metric comes out of it.
-function evaluate of (R, P)(fit: borrowed Fit of P, data: Holdout of R)
+def evaluate of (R, P)(fit: borrowed Fit of P, data: Holdout of R)
     -> Assessment of R
 
 ## Comparing several models is a different act and has a different name: it
 ## consumes one holdout, names the count, and the count is what a reviewer wants.
-function evaluate_all of (R, P)(fits: borrowed Array of Fit of P, data: Holdout of R)
+def evaluate_all of (R, P)(fits: borrowed Array of Fit of P, data: Holdout of R)
     -> Array of Assessment of R
 
 ## Repeatable, by design, because early stopping and hyperparameter search are
 ## legitimate and are also selection. Counted.
-function score of (R, P)(fit: borrowed Fit of P, data: borrowed Tune of R, metric: Metric)
+def score of (R, P)(fit: borrowed Fit of P, data: borrowed Tune of R, metric: Metric)
     -> F64
 ```
 
@@ -565,11 +565,11 @@ name.
 > Fold identity is a region, not a type parameter.
 
 ```science
-function k_fold of (R, S)(
+def k_fold of (R, S)(
     data: borrowed Train of R,
     key: Key,
     folds: U64,
-    each_fold: function(borrowed Train of R, borrowed Tune of R) -> S,
+    each_fold: def(borrowed Train of R, borrowed Tune of R) -> S,
 ) -> Array of S
 ```
 
@@ -609,13 +609,13 @@ built-in `cross_validate` never quite fits the pipeline they have.
 **Rejected: generative brands.** The complete answer to fold identity is the
 `runST` trick: parameterise every part by a fresh existential brand,
 `Train of (R, B)`, and give `k_fold` a rank-2 signature
-`for<B> function(Train of (R, B), Tune of (R, B)) -> S`, so that fold *k*'s train
+`for<B> def(Train of (R, B), Tune of (R, B)) -> S`, so that fold *k*'s train
 and fold *j*'s tune do not unify. It is sound, it is known to work (Haskell's
 `ST`, Rust's `GhostCell`), and it would close the residual hole in §6.4.
 
 It is rejected on price. It needs higher-rank polymorphism, and Science does not
-yet have closure *types* at all — `function(T) -> U` is a standing cross-note ask
-in `README.md` with three customers and no owner. Asking for `for<B> function(…)`
+yet have closure *types* at all — `def(T) -> U` is a standing cross-note ask
+in `README.md` with three customers and no owner. Asking for `for<B> def(…)`
 on top of an unresolved ask is asking a type-checker author to build System F
 where they were planning to build Hindley-Milner with annotated signatures (core
 spec §5.2). The residual hole is narrow — it is confusing one fold's parts for
@@ -869,7 +869,7 @@ types.
 `scientific-libraries.md` §7.9 fits from matrices, not frames:
 
 ```science
-function least_squares of (const N: Int, const P: Int)(
+def least_squares of (const N: Int, const P: Int)(
     design: borrowed Matrix of (F64, N, P),
     response: borrowed Vector of (F64, N),
 ) -> (Fit of P, LinalgError?)
@@ -886,10 +886,10 @@ and leaves the layer where fitting actually happens unguarded.
 
 ```science
 Train of R has:
-    function examples of (N, P)(self, features: …, target: …)
+    def examples of (N, P)(self, features: …, target: …)
         -> Examples of (Train, N, P)
 
-function least_squares of (N, P)(data: borrowed Examples of (Train, N, P))
+def least_squares of (N, P)(data: borrowed Examples of (Train, N, P))
     -> (Fit of P, LinalgError?)
 ```
 
@@ -1431,7 +1431,7 @@ opposite.
     `SC0504` returned to the free list, and the phase-range ruling §9.1 asks for.
     None of them can be made from here.
 12. **Of whoever owns closure types.** `k_fold` and `cross_validate` need
-    `function(T, U) -> S` in a signature, which is `README.md`'s standing
+    `def(T, U) -> S` in a signature, which is `README.md`'s standing
     cross-note ask with three existing customers. This note is the fourth and its
     §3.5 does not work without it.
 

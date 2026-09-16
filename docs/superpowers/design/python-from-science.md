@@ -19,7 +19,7 @@ for without touching the ruling); `ffi-c-boundary.md` §5.1 and §5.2 (library
 search, `when available`, `dlopen`); `rust-interop.md` §2.3 (the zero-percent
 result that §1 here is measured against); `package-manager.md` §4.2 and §4.5
 (the manifest this note adds a table to).
-Syntax: revision 2 throughout — `function`, `->`, `of`, `borrowed`, `is` / `is
+Syntax: revisions 2 and 3 throughout — `def`, `->`, `of`, `borrowed`, `is` / `is
 not`, `> < >= <=`, `interface`, `Type has:`, `T?`, `-> (T, Error?)` with `?` as
 the presence test, `for x in xs`, `loop:` / `break`, `print`. The parent note is
 written in the `Result` / `try` model; every quotation from it is translated on
@@ -122,10 +122,10 @@ The two interfaces, in revision-2 spelling:
 
 ```science
 interface ToPython:
-    function to_python(borrowed self) -> (PyObject, PyError?)
+    def to_python(borrowed self) -> (PyObject, PyError?)
 
 interface FromPython:
-    function from_python(value: borrowed PyObject) -> (Self, PyError?)
+    def from_python(value: borrowed PyObject) -> (Self, PyError?)
 ```
 
 That is a real design and it is not a small one: it reaches every *function* and
@@ -277,7 +277,7 @@ naming `Tensor` as the fix. Nothing numeric should ever travel as a `list`; a
 hyperparameter grid should, and that is the case this decision exists for.
 
 > **Decision 5 — a Science closure can be passed into Python as a callable.**
-> `python.callable(f)` wraps a Science closure of type `function(PyObject) ->
+> `python.callable(f)` wraps a Science closure of type `def(PyObject) ->
 > (PyObject, PyError?)` in a generated heap type with `tp_call`. The wrapper
 > owns the closure. On a returned non-null error the wrapper raises; when the
 > error is null it returns the value.
@@ -413,7 +413,7 @@ The mapping is mechanical. The substance does change, and here is the same
 function, written out:
 
 ```science
-function reduce(points: borrowed Tensor of (F32, (n, d)))
+def reduce(points: borrowed Tensor of (F32, (n, d)))
         -> (Tensor of (F32, (n, 8)), Error?):
     let model, err be PCA(n_components: 8)
     if err?:
@@ -454,7 +454,7 @@ use it. `PyError` implements the `Error` interface of `syntax-revision-2.md`
 
 ```science
 PyError implements Error:
-    function message(self) -> String:
+    def message(self) -> String:
         f"{self.type_name}: {self.text}"
 ```
 
@@ -497,7 +497,7 @@ recommendation, and the rest of §3 is it.
 > has constructed, and control resumes at the statement after the region.
 
 ```science
-function reduce(points: borrowed Tensor of (F32, (n, d)))
+def reduce(points: borrowed Tensor of (F32, (n, d)))
         -> (Tensor of (F32, (n, 8)), Error?):
     python err:
         let model be PCA(n_components: 8)
@@ -531,7 +531,7 @@ twenty-two lines rather than fifty-one.
    GIL policy and §5.4's parallel-region rejection (`SC0454`) apply to the region
    as a unit rather than to each operation.
 6. Regions do not nest (`SC0183`), and a region may not contain `return`,
-   `break`, `loop:` or a nested `function` (`SC0180`) — the failure exit and a
+   `break`, `loop:` or a nested `def` (`SC0180`) — the failure exit and a
    second control-flow exit in the same block is a semantics nobody should have
    to reason about, and closing the region first costs one line.
 
@@ -1156,7 +1156,7 @@ in `python-interop.md`'s codegen block, `SC0458` having gone to
 
 | Code | Meaning |
 |---|---|
-| `SC0180` | A `python:` region contains a statement it may not — `return`, `break`, `loop:`, or a nested `function`. Help: close the region first. |
+| `SC0180` | A `python:` region contains a statement it may not — `return`, `break`, `loop:`, or a nested `def`. Help: close the region first. |
 | `SC0181` | A `python:` region header is malformed: no error binding named. |
 | `SC0182` | An argument label admitted by the label rule (§2.3, Decision 8) is not a valid Python identifier. |
 | `SC0183` | A `python:` region nested inside another `python:` region. |

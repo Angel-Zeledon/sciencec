@@ -13,7 +13,7 @@ Syntax: `syntax-revision-2.md` — `->`, `interface`, `for x in xs`, `loop`/`bre
 Reconciles rather than re-specifies: `strings-formatting-and-docs.md` §5 (doc
 comments — this note makes one of them load-bearing and contradicts §5.3 in one
 sentence), `data-io.md` §4.3 (the `Record` derivation, whose third customer this
-note becomes), `effects.md` §3 and Decision 5 (`pure function`, which this note
+note becomes), `effects.md` §3 and Decision 5 (`pure def`, which this note
 spends and does not extend), `unit-literals.md` §5.1 and §7.3 (SI coherent base
 units, and the display-unit seam this note lands on), `llm-ergonomics.md` (the
 opposite direction), `rust-binding-generation.md` §5.2 Decision 10 (bind the
@@ -52,7 +52,7 @@ readability wins and the note says what was traded:
 
 - §4 trades **expressiveness** for readability: a `tool` may take only the types
   that survive a round trip through JSON Schema, which is fewer types than a
-  `function` may take, and the rejections are compile errors rather than runtime
+  `def` may take, and the rejections are compile errors rather than runtime
   surprises.
 - §5 trades **the author's freedom** for readability: a tool with no
   documentation does not compile. This is the only place in the language where a
@@ -417,7 +417,7 @@ type FitPeaksArgs:
 
 FitPeaksArgs implements ToolArgs
 
-function fit_peaks(args: FitPeaksArgs) -> (PeakTable, Error?):
+def fit_peaks(args: FitPeaksArgs) -> (PeakTable, Error?):
     ...
 ```
 
@@ -452,15 +452,15 @@ tool fit_peaks(
     ...
 ```
 
-### 2.4 What a `tool` has to satisfy that a `function` does not
+### 2.4 What a `tool` has to satisfy that a `def` does not
 
 A marker that changes nothing about a declaration is an attribute, and Science
 should not spend a keyword on an attribute. The case for Option C rests entirely
-on whether a `tool` carries obligations an ordinary `function` does not. It
+on whether a `tool` carries obligations an ordinary `def` does not. It
 carries five, and all five are checkable at compile time:
 
 1. **Every parameter type must survive a round trip through JSON Schema** (§4). A
-   `function` may take a closure, a trait object, a `borrowed` slice, a
+   `def` may take a closure, a trait object, a `borrowed` slice, a
    `Frame of Dynamic`; a `tool` may take none of them.
 2. **It may not be generic.** `tools/list` is a flat list of concrete tools with
    one schema each; there is nothing for a type parameter to be instantiated at
@@ -472,7 +472,7 @@ carries five, and all five are checkable at compile time:
 5. **Its return type is constrained** to `Content`, to a record type that can
    produce an output schema, or to an `Error?` alone (§7).
 
-Five obligations, none of which an ordinary `function` has, all of which a
+Five obligations, none of which an ordinary `def` has, all of which a
 compiler can check. That is not an attribute. That is a declaration form.
 
 ### 2.5 Decision 1
@@ -515,11 +515,13 @@ a strictly larger language change than the one it avoids.
   That is the cheap one: the word was already gone.
 - **`tool` is a second function-declaration form**, so every piece of the front
   end that walks items grows an arm — the parser, the resolver, `sciencec fmt`,
-  the language server, the doc tool. `def-and-lambda.md` rejected `def` partly on
-  this ground, and this note adds what that note refused. The difference it
-  claims: `def` would have been a *synonym* for `function`, and `tool` is a
-  declaration with five obligations `function` does not have. If that difference
-  is judged insufficient, the fallback is Option B and it is a good fallback.
+  the language server, the doc tool. `def-and-lambda.md` rejected a second
+  spelling of the declaration keyword partly on this ground, and this note adds
+  what that note refused. The difference it claims: a renamed keyword is a
+  *synonym* for `def` — which is what revision 3 in fact made it, at the cost
+  that note priced — and `tool` is a declaration with five obligations `def`
+  does not have. If that difference is judged insufficient, the fallback is
+  Option B and it is a good fallback.
 - **The five obligations are five new ways for a program to fail to compile**, and
   four of them fire in the type checker, which does not exist. §14 says what can
   ship before it; the answer is more than expected, and it is not all of it.
@@ -602,7 +604,7 @@ is a function that returns a list of messages, which is a function.
 
 ```science
 # What a prompt is, without a keyword. `f"…"` is already the templating.
-function fit_report(run: String) -> Array of Message:
+def fit_report(run: String) -> Array of Message:
     [Message.user(f"Summarise the peak fit for run {run}. "
                   f"Call fit_peaks first if you have not already.")]
 
@@ -668,7 +670,7 @@ The target is a JSON Schema object with `type: "object"`, `properties` and
 | Science type | Diagnostic | Why |
 |---|---|---|
 | `borrowed T`, `mutable borrowed T` | `SC0192` | There is no caller to borrow from. The value was deserialized a moment ago and the tool owns it. |
-| `function(T) -> U` | `SC0505` | A callable is not data. Nothing on the wire can become one. |
+| `def(T) -> U` | `SC0505` | A callable is not data. Nothing on the wire can become one. |
 | `any Interface` | `SC0506` | An interface object's concrete type is unknown at the declaration, so there is no schema to emit. Note this is *not* the same rejection as §4.1's — a sealed interface with a known implementation set could in principle emit a `oneOf`, and §20 records that as deliberately not done. |
 | A type parameter `T` | `SC0191` | A generic tool has no single schema. §2.4 item 2. |
 | `Map of (K, V)` where `K` is not `String` | `SC0507` | JSON object keys are strings. |
@@ -932,13 +934,13 @@ tool fit_peaks(
 table does not list parameters, and it is the one on which §2.5's choice of Option
 C over Option B depends. It is a small ask — the table gains a row reading
 *"Parameter of a `tool` declaration | before the parameter line"* — and it is
-deliberately scoped to `tool` and not to `function`, so that the general question
+deliberately scoped to `tool` and not to `def`, so that the general question
 of documenting parameters stays open and belongs to that note. A `##` before an
-ordinary `function`'s parameter is `SC0194`, with the fix "move it into the doc
+ordinary `def`'s parameter is `SC0194`, with the fix "move it into the doc
 comment above the declaration".
 
 **Cost, stated.** A `tool`'s parameter list is now multi-line by convention, which
-makes short tools longer than the same `function` would be. That is the price of
+makes short tools longer than the same `def` would be. That is the price of
 the thing the brief put first.
 
 ### 5.4 Doc tests become the examples a model reads, and they cannot be wrong
@@ -1169,7 +1171,7 @@ much as the author's.
 
 ```science
 interface Error:
-    function message(self) -> String
+    def message(self) -> String
 ```
 
 An MCP tool error carries **`content: ContentBlock[]`** — it can be an image, a
@@ -1257,7 +1259,7 @@ is the fail-safe direction and which is what makes the decision below possible
 attaches three inferred bits to every function — `python`, `ambient`, `external` —
 and its Decision 5 gives exactly one place to write an assertion about them:
 
-> A function may be declared `pure function`, which is a compiler-checked
+> A function may be declared `pure def`, which is a compiler-checked
 > assertion that its inferred effect set is empty.
 
 > **Decision 12. `pure tool` is the same assertion on a tool. A tool whose
@@ -2322,7 +2324,7 @@ choice ServerError:
     Cancelled
 
 ServerError implements Error:
-    function message(self) -> String:
+    def message(self) -> String:
         match self:
             NoRunDirectory: "SPECTRA_RUNS is not set"
             NoSuchRun(run): f"no run named {run}"
@@ -2481,7 +2483,7 @@ pure tool d_spacing(
 
 # --- The server ------------------------------------------------------------
 
-function main() -> ((), Error?):
+def main() -> ((), Error?):
     let server be Server.new("spectra", "0.4.1")
         .tools([list_runs, fetch_spectrum, fit_peaks, d_spacing])
         .resource_template("spectra://run/{run}/log", run_log)
@@ -2562,7 +2564,7 @@ a wrapper property, and the wrapper would have been in the model's way forever.
    the note that is worth the keyword on its own.
 2. **`line_shape` is an `enum` and nobody asked for one.** The author wrote
    `choice LineShape` because that is how Science spells a fixed set of
-   alternatives — they would have written it for a `function` too. §4.5.
+   alternatives — they would have written it for a `def` too. §4.5.
 3. **`max_peaks: U8` produced `minimum: 0, maximum: 255` for free**, and the body
    still has to check `> 32u8` itself, because 32 is a property of the fit and not
    of the type. The schema states what the type knows and the body states the
@@ -2813,7 +2815,7 @@ That is §14.2 stage 0.
 | `SC0193` | A `tool` with a `self` or `mutable self` parameter | A tool is not a method; move it to module level |
 | `SC0194` | A `##` run before a parameter of anything that is not a `tool` | Move the text into the declaration's own doc comment. §5.3 |
 | `SC0195` | A `tool` whose doc comment's summary line is blank — the run starts with an empty `##` | Put the summary first. §5.2 needs a `title` |
-| `SC0196` | `prompt` or `agent` used in declaration position | Names Decision 2 and says what to write instead: a `function` returning `Array of Message` for a prompt; nothing, yet, for an agent |
+| `SC0196` | `prompt` or `agent` used in declaration position | Names Decision 2 and says what to write instead: a `def` returning `Array of Message` for a prompt; nothing, yet, for an agent |
 | `SC0197` | A `tool` declared anywhere but module level — inside an `interface`, a `has` block, an `implements` block or a function body | Move it out |
 | `SC0198` | A `tool` with no body, in the shape of an interface method | Give it a body; there is no abstract tool |
 | `SC0199` | **Unallocated.** Held against the dynamic registration form of §15, so that if it ever lands it does not need a code from a fresh block | — |
@@ -2912,7 +2914,7 @@ package. §2.7's test (no MCP-specific diagnostic in `sciencec`) is what keeps t
 claim honest and is falsifiable by inspection. A reviewer who thinks `tool` is an
 MCP construct wearing a coat should read this as a contradiction and say so.
 
-**6. `effects.md` Decision 5.** `pure function` is described there as the one
+**6. `effects.md` Decision 5.** `pure def` is described there as the one
 declaration the effect discipline admits. `pure tool` widens that by one form. The
 mechanism is unchanged — the same query, the same witness chain, the same
 `SC0214` — and it is still an extension of a decision this note does not own.
@@ -3108,7 +3110,7 @@ better in the source, and it is recorded because it was not anticipated.
 |---|---|---|---|---|
 | 1 | `tool` is a declaration form and declares *a callable exposed to a model*; MCP is one backend in a Level 3 package | A hand-written schema beside the handler; a record type plus a derive; an attribute grammar | The abstraction is not MCP's, so `rust-binding-generation.md` Decision 10 does not bite. §2.5 | A second function-declaration form in every front-end pass; five new ways to fail to compile |
 | 2 | `prompt` and `agent` stay reserved and unspent | Spending all three F4 words together | Prompt arguments are not schematised, so the one argument that earns `tool` a declaration is absent; `agent` is the opposite direction and needs F5 | A visible asymmetry someone will ask about |
-| 3 | The input schema is generated from the parameter list; there is no way to write one by hand | Both mainstream SDK shapes | Two artefacts diverge, and the divergence is invisible and is told to a model as fact | Fewer types may cross than a `function` admits |
+| 3 | The input schema is generated from the parameter list; there is no way to write one by hand | Both mainstream SDK shapes | Two artefacts diverge, and the divergence is invisible and is told to a model as fact | Fewer types may cross than a `def` admits |
 | 4 | `T?` means the property is omitted from `required`; absent and explicitly-`null` are the same | Modelling all three JSON states | The language has two states and should not pretend otherwise | "unchanged versus cleared" must be modelled as a `choice` |
 | 5 | A `tool` with no doc comment does not compile | A lint; requiring it only for `public` | The description is an input to the caller's control flow, and its absence fails silently | `##` becomes load-bearing; contradicts a sibling note in one sentence |
 | 6 | `title` is the summary line, `description` is the whole comment | Inventing a second split | §5.4 of the strings note already splits it there | The summary appears twice |
@@ -3141,7 +3143,7 @@ the examples are all generated from the one declaration the author wrote for a
 human, so none of them can be wrong about the others.** That is a property of a
 compiled, fully-annotated, doc-comment-preserving language and it is not available
 to an SDK that has to introspect at run time or be handed a schema. The price is a
-keyword, five compile-time obligations, a narrower set of types than a `function`
+keyword, five compile-time obligations, a narrower set of types than a `def`
 admits, and a mandatory doc comment — and the whole of §2 is about making sure the
 keyword buys an abstraction that outlives the protocol that suggested it.
 

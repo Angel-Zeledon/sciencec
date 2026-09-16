@@ -12,7 +12,7 @@ re-derives), `python-interop.md` §2 and §6 (the sibling ecosystem),
 `stdlib-shape-and-packages.md` §3 and §6, `stdlib-standard.md` §9,
 `scientific-libraries.md` §15.
 
-Syntax: revision 2 throughout (`->`, `is`/`is not`, `-> (T, Error?)`, `T?`,
+Syntax: revisions 2 and 3 throughout (`def`, `->`, `is`/`is not`, `-> (T, Error?)`, `T?`,
 `interface`, `Type has:`, `print`). Where this note quotes `ffi-c-boundary.md`,
 whose samples predate the revision, it silently translates `returns` to `->` and
 `Result of (T, E)` to `-> (T, E?)`. That is the drift the README's conventions
@@ -409,14 +409,14 @@ unsafe extern "C" crate "regex_shim":
     const REGEX_BAD_UTF8 be 1 as CInt
     const REGEX_BAD_PATTERN be 2 as CInt
 
-    function science_regex_new(
+    def science_regex_new(
         pattern: ffi.Span of U8,
         pattern_len: CSizeT,
         out: mutable borrowed ffi.Uninitialized of ffi.OpaqueHandle) -> CInt
 
-    function science_regex_free(handle: ffi.OpaqueHandle)
+    def science_regex_free(handle: ffi.OpaqueHandle)
 
-    function science_regex_find_from(
+    def science_regex_find_from(
         handle: ffi.OpaqueHandle,
         text: ffi.Span of U8, text_len: CSizeT,
         start_at: CSizeT,
@@ -429,13 +429,13 @@ type Pattern:
 Pattern implements ffi.CLayout
 
 Pattern implements Drop:
-    function drop(mutable self):
+    def drop(mutable self):
         unsafe: science_regex_free(self.raw)
 
 Pattern has:
     ## Fallible at run time; checked at compile time when `source` is a
     ## literal, per stdlib-standard.md §9.4.
-    function compile(source: borrowed String) -> (Pattern?, PatternError?):
+    def compile(source: borrowed String) -> (Pattern?, PatternError?):
         let mutable slot be ffi.Uninitialized of ffi.OpaqueHandle .new()
         let status be unsafe:
             science_regex_new(source.bytes(), source.length() as CSizeT, slot)
@@ -444,10 +444,10 @@ Pattern has:
         let raw be unsafe: slot.assume_initialized()
         return (Pattern(raw: raw), null)
 
-    function find(self, text: borrowed String) -> Found?:
+    def find(self, text: borrowed String) -> Found?:
         self.find_from(text, 0)
 
-    function find_from(self, text: borrowed String, start_at: Int) -> Found?:
+    def find_from(self, text: borrowed String, start_at: Int) -> Found?:
         let mutable s be ffi.Uninitialized of CSizeT .new()
         let mutable e be ffi.Uninitialized of CSizeT .new()
         let hit be unsafe:
@@ -987,7 +987,7 @@ with the feature rather than after it.
 >
 > ```science
 > unsafe extern "C" crate "regex_shim":
->     function science_regex_free(handle: ffi.OpaqueHandle)
+>     def science_regex_free(handle: ffi.OpaqueHandle)
 > ```
 >
 > **Rejected: a distinct `foreign "rust"` declaration form.** Three reasons.

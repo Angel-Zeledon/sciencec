@@ -136,7 +136,7 @@ writes `next_in` and `avail_in` between calls, and there is no functional
 interface that would let it not:
 
 ```science
-function inflate_all(source: borrowed Array of U8) -> (Array of U8, Error?):
+def inflate_all(source: borrowed Array of U8) -> (Array of U8, Error?):
     let mutable stream be ZStream.new()
     let mutable out be Array of U8 .with_capacity(source.length() * 4)
     let mutable window be Array of U8 .zeroed(65536)
@@ -702,7 +702,7 @@ into a return code. This is fine and it is worth an example, because it is the
 shape every iteration binding takes:
 
 ```science
-function each_link(group: borrowed H5Group, visit: mutable borrowed (function(borrowed String) -> Bool)) -> Error?:
+def each_link(group: borrowed H5Group, visit: mutable borrowed (def(borrowed String) -> Bool)) -> Error?:
     let entry be ffi.Callback.of(visit)
     let status be unsafe:
         H5Literate2(group.id, H5_INDEX_NAME, H5_ITER_NATIVE, null,
@@ -914,7 +914,7 @@ unsafe extern "C" library "hdf5":
     type Hid is I64
     type Herr is I32
 
-    function H5open() -> Herr
+    def H5open() -> Herr
 
     # `H5T_NATIVE_DOUBLE` is not a constant. The header defines it as
     #   (H5open(), H5T_NATIVE_DOUBLE_g)
@@ -934,7 +934,7 @@ type H5Types:
     native_int: Hid
 
 H5Types has:
-    function get() -> (H5Types, Error?):
+    def get() -> (H5Types, Error?):
         unsafe:
             if H5open() < 0:
                 return (H5Types(native_double: -1, native_int: -1), H5Error.from_stack())
@@ -946,9 +946,9 @@ and CPython's, which is the case that is not optional:
 
 ```science
 unsafe extern "C" library "python3":
-    function Py_IncRef(object: ffi.Pointer of PyObject)
-    function Py_DecRef(object: ffi.Pointer of PyObject)
-    function PyErr_SetString(kind: ffi.Pointer of PyObject, message: ffi.CStr)
+    def Py_IncRef(object: ffi.Pointer of PyObject)
+    def Py_DecRef(object: ffi.Pointer of PyObject)
+    def PyErr_SetString(kind: ffi.Pointer of PyObject, message: ffi.CStr)
 
     static _Py_NoneStruct: PyObject
     static PyExc_TypeError: ffi.Pointer of PyObject
@@ -1190,18 +1190,18 @@ destroyed exactly once, and that the size came from a runtime call:
 
 ```science
 interface Hash:
-    function update(mutable self, bytes: borrowed Array of U8)
-    function finish(mutable self) -> Array of U8
+    def update(mutable self, bytes: borrowed Array of U8)
+    def finish(mutable self) -> Array of U8
 
 type Blake2b:
     state: ffi.CBuffer of U8      # size from crypto_generichash_statebytes()
 
 Blake2b implements Drop:
-    function drop(mutable self):
+    def drop(mutable self):
         unsafe: sodium_memzero(self.state.span_mut(), self.state.length())
 
 Blake2b has:
-    function new(digest_length: Int, key: (borrowed Array of U8)?) -> (Blake2b?, Error?):
+    def new(digest_length: Int, key: (borrowed Array of U8)?) -> (Blake2b?, Error?):
         if digest_length < 16 or digest_length > 64:
             return (null, CryptoError.DigestLength(digest_length))
         let size be unsafe: crypto_generichash_statebytes()
@@ -1214,7 +1214,7 @@ Blake2b has:
         return (Blake2b(state: state), null)
 
 Blake2b implements Hash:
-    function update(mutable self, bytes: borrowed Array of U8):
+    def update(mutable self, bytes: borrowed Array of U8):
         unsafe: crypto_generichash_update(self.state.span_mut(), bytes, bytes.length() as CULongLong)
 ```
 

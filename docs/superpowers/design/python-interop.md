@@ -80,14 +80,14 @@ A function becomes visible to Python by being declared so:
 
 ```science
 public to python
-function standardize(batch: borrowed Tensor of (F32, (rows, 768))) -> ...
+def standardize(batch: borrowed Tensor of (F32, (rows, 768))) -> ...
 ```
 
 `public to python` is a phrase, in the style of §4.3's multi-word keywords: the
 lexer emits three tokens and the parser recognizes the sequence at item
 position. Neither `to` nor `python` becomes a globally reserved word. This is
 safe because after `public` at item position the only legal continuations are
-`function`, `type`, `choice`, `interface`, `const` and `use`; an identifier there
+`def`, `type`, `choice`, `interface`, `const` and `use`; an identifier there
 cannot be anything else, so recognition is unambiguous without reservation.
 
 The F0 spec reserved `extern` for something like this and I am deliberately not
@@ -927,7 +927,7 @@ narrower than it reads.
 use python "numpy" as numpy
 use python "sklearn.decomposition" (PCA)
 
-function reduce(points: borrowed Tensor of (F32, (n, d)))
+def reduce(points: borrowed Tensor of (F32, (n, d)))
         -> (Tensor of (F32, (n, 8)), Error?):
     let model, err be PCA(n_components: 8)
     if err?:
@@ -1187,7 +1187,7 @@ choice SpectrumError:
     AllSaturated
 
 public to python
-function standardize(
+def standardize(
         batch: borrowed Tensor of (F32, (rows, 768)),
         saturation: F32)
         -> ((Tensor of (F32, (kept, 768)), Array of Int), SpectrumError?):

@@ -14,7 +14,7 @@ generator is written in Science), `collections-and-chains.md` §5.2 and §7.1
 (the three deliberate criterion violations), `stdlib-core.md` §8.3 (the 1-ULP
 contract), **`effects.md` §3 (the `ambient` bit) and §11 ask 9, which hands this
 note the policy that note deliberately declines to set**.
-Written in the syntax of `syntax-revision-2.md`.
+Written in the syntax of `syntax-revision-2.md` and `syntax-revision-3.md`.
 Claims `SC0237`–`SC0240` (resolution). Adopts `effects.md`'s `SC0217`.
 
 > **`effects.md` landed while this note was being drafted, and it changes §4.**
@@ -602,8 +602,8 @@ all** — nothing in twenty-seven design notes uses `@` or `#[…]`. Introducing
 here would be a grammar change, a new lexical form, and a precedent every
 subsequent note would draw on; and it would put a whole-program property in one
 file, invisible to anyone reading a library. A profile is a property of a build,
-which is what this is. (`pure function` is not a counter-example: `effects.md`
-Decision 5 makes it a *modifier on a definition*, in `unsafe function`'s existing
+which is what this is. (`pure def` is not a counter-example: `effects.md`
+Decision 5 makes it a *modifier on a definition*, in `unsafe def`'s existing
 position, and it asserts something about that one function rather than about the
 program.)
 
@@ -790,7 +790,7 @@ assumed away:
    soundness one.
 
 Two things the mode does **not** need and that already exist: `effects.md`
-Decision 5's **`pure function`** already lets a library assert a checked empty
+Decision 5's **`pure def`** already lets a library assert a checked empty
 effect set at a definition, which is the "a library can declare itself clean"
 property; and its Decision 6 records effect sets in the published package
 interface with `SC0216` warning on drift, which is how a dependency that acquires
@@ -805,7 +805,7 @@ both are already decided.
   as an iteration budget, which is a better program anyway, and allowing
   `time.monotonic_now` for the progress bar.
 - **A shared scientific library.** Turns it on in CI so it cannot acquire a clock
-  read by accident — or, more precisely, marks its entry points `pure function`,
+  read by accident — or, more precisely, marks its entry points `pure def`,
   which is stronger and is checked at the definition. Cost: near zero.
 - **A benchmark harness, a data downloader, an interactive session.** Never turns
   it on, correctly. `--deterministic` is not a quality bar and the documentation
@@ -995,7 +995,7 @@ use data.parquet (write_parquet)
 ## The stamping is automatic. This is what a program does when it wants to
 ## *check* rather than record — the pattern for a pipeline that refuses to
 ## write results it cannot stand behind.
-function write_results(frame: borrowed Frame of Fit, out: borrowed Path)
+def write_results(frame: borrowed Frame of Fit, out: borrowed Path)
         -> ((), Error?):
     let record: Provenance be provenance()
 
@@ -1135,7 +1135,7 @@ genuinely not optional:
 - **A `Key` cannot be reused.** `SC0301` is not a flag.
 - **`Map` has no hash-ordered iteration** to ask for.
 - **`SC0237`** (seeded from the clock) fires by default, outside the mode.
-- **`pure function`** is checked, and a library that asserts it cannot quietly
+- **`pure def`** is checked, and a library that asserts it cannot quietly
   acquire a clock read (`effects.md` Decision 5, `SC0216`).
 - **Provenance is emitted by default**, into every binary and every stamped
   output.

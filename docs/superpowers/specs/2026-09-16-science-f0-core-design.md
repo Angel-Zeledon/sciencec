@@ -82,22 +82,53 @@ later than first planned.
 
 ### 4.1 How far the English goes, and why it stops there
 
-Keywords are English words, and **no keyword is an abbreviation**. A keyword is
-either a whole English word or a symbol that every reader of scientific and
-programming notation already reads. `function`, not `fn`. But `->`, not
-`returns`, and `>=`, not `is at least`: neither symbol is a shortened word, and
-the operations they name have had universal notation for longer than
-programming has existed.
+Keywords are English words, or symbols that every reader of scientific and
+programming notation already reads. `->`, not `returns`, and `>=`, not `is at
+least`: neither symbol is a shortened word, and the operations they name have
+had universal notation for longer than programming has existed.
 
-The rule this replaces — no symbol where a word would do — is withdrawn. It was
-an overshoot, and it produced two spellings for every comparison, which §4.6
-records the cost of. The surviving clause is narrow and exact: a word where the
-operation has no universal symbol, the symbol where one exists and everyone
-reads it, and never a word with letters removed.
+Two rules have been withdrawn here, and the second one matters more than the
+first.
 
-`const` is the one live exception. It is an abbreviation of *constant* and it is
-in §13's in-use list, so it is named here as a deliberate exception rather than
-left to be found. Renaming it to `constant` is open and costs one keyword.
+**No symbol where a word would do** was withdrawn by revision 2. It was an
+overshoot, it produced two spellings for every comparison, and §4.6 records what
+that cost.
+
+**No keyword is an abbreviation** was withdrawn by revision 3, which renamed the
+function declaration from `function` to `def`. That clause was a prohibition and
+it is not one any more: it has two live exceptions, `const` and `def`, and
+`def-and-lambda.md` §1.3 had already shown — while there was still only one —
+that a prohibition with an exception list is a list rather than a rule.
+
+What is left is weaker, and it is stated here because it is what is actually
+true:
+
+> **A keyword is a whole English word by default. A shortened keyword is not
+> forbidden; it must beat the audience test, and if it is adopted without
+> beating it, it is named in the register below.**
+
+**The audience test.** When a shortening is proposed, count the spelling across
+the languages this project's audience actually writes — Fortran, MATLAB, R,
+Julia, Python, JavaScript, PHP — and not across the corpus a model was trained
+on. The method and the worked example are `def-and-lambda.md` §3.2. This is the
+clause that still decides things: `elif`, `impl`, `str`, `len`, `mut`, `pub` and
+`fn` all fail it, and each takes one sentence to refuse.
+
+**The register of shortened keywords.** Two, both named rather than left to be
+found.
+
+| Keyword | Full word | How it got here |
+|---|---|---|
+| `const` | *constant* | Inherited from the first draft; never argued either way. Renaming it to `constant` no longer repairs anything — a list of two becomes a list of one — so it is open only for `reserved-words.md` §2's reason, which is that the constants module wants the name. |
+| `def` | *definition*, *define* | Argued and lost the audience test six to one (`def-and-lambda.md` §3.2), then adopted by the project owner's decision. `syntax-revision-3.md` records the decision, the argument it overruled, and the price. |
+
+**The cost of this, stated.** The audience test is empirical, so it can be
+argued with; *is this word shortened?* could be settled by looking. And a
+register is a list, so the next request meets an argument rather than a veto,
+and can be overruled the way `def` was. What the language keeps is not the power
+to refuse but the obligation to record: a keyword shortened against the test
+costs a migration diagnostic that must be maintained for as long as anyone has
+old source, and the register is where that price is visible.
 
 The structure is unchanged: calls use parentheses, operators stay symbols, and
 blocks are indented. Science deliberately does **not** go further into natural
@@ -144,7 +175,7 @@ columns agree, the symbol was already the right answer and Science kept it.
 
 | Concept | Science | Rust |
 |---|---|---|
-| Function | `function` | `fn` |
+| Function | `def` | `fn` |
 | Return type | `-> T` | `-> T` |
 | Return early | `return` | `return` |
 | Binding | `let x be v` | `let x = v` |
@@ -155,7 +186,7 @@ columns agree, the symbol was already the right answer and Science kept it.
 | Implementation | `Doc implements Summarize` | `impl Summarize for Doc` |
 | Inherent methods | `Doc has:` | `impl Doc` |
 | Generic arguments | `Array of Doc`, `Map of (String, Int)` | `Array[Doc]` |
-| Generic parameters | `function largest of T ...` | `fn largest[T]` |
+| Generic parameters | `def largest of T ...` | `fn largest[T]` |
 | Shared borrow | `borrowed T` | `&T` |
 | Exclusive borrow | `mutable borrowed T` | `&mut T` |
 | Dynamic dispatch | `any Summarize` | `dyn Summarize` |
@@ -173,6 +204,13 @@ columns agree, the symbol was already the right answer and Science kept it.
 
 The return-type and ordering rows are the two where the columns agree: revision 2
 adopted the convention rather than replacing it, for the reason §4.1 gives.
+
+The Function row is the one revision 3 changed, and it is the only keyword in
+the table that is a shortened word rather than a whole one. §4.1's register says
+why it is here; `syntax-revision-3.md` says what it cost. `function` is no
+longer a keyword and no longer reserved — it is an ordinary identifier, and the
+compiler recognises `function` followed by a name as the old declaration and
+reports `SC0156` with `def` as an applicable fix.
 
 Unchanged because they are already English: `if`, `else`, `match`, `loop`,
 `break`, `continue`, `in`, `use`, `where`, `as`, `self`, `Self`, `and`, `or`,
@@ -219,20 +257,20 @@ body: "...")`.
 
 ```science
 interface Summarize:
-    function summarize(self) -> String
+    def summarize(self) -> String
 
-    function preview(self) -> String:
+    def preview(self) -> String:
         truncate(self.summarize(), 80)
 
 Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         truncate(self.body, 200)
 ```
 
 **Generic functions and bounds.**
 
 ```science
-function largest of T(items: borrowed Array of T) -> borrowed T
+def largest of T(items: borrowed Array of T) -> borrowed T
         where T: Ord:
     let mutable best be items.get(0)
     for item in items:
@@ -248,10 +286,10 @@ associated function, called through the type.
 
 ```science
 Doc has:
-    function new(title: String) -> Doc:
+    def new(title: String) -> Doc:
         Doc(title: title, body: "")
 
-    function is_empty(self) -> Bool:
+    def is_empty(self) -> Bool:
         self.body.length() is 0
 
 let d be Doc.new("a")
@@ -312,7 +350,7 @@ error type is nullable. `?` is the postfix presence test: `err?` is a `Bool`,
 true when the value is not null.
 
 ```science
-function read_config(path: borrowed String) -> (Config, Error?):
+def read_config(path: borrowed String) -> (Config, Error?):
     let text, err be read_file(path)
     if err?:
         return (Config.empty(), err)
@@ -498,7 +536,7 @@ type and no generic container interface can be written.
 ```science
 interface Iterate:
     type Item
-    function next(mutable self) -> Self.Item?
+    def next(mutable self) -> Self.Item?
 ```
 
 **Operator interfaces.** `+ - * / % ** @` and comparison are interface methods, so
@@ -521,7 +559,7 @@ Absence is `T?`, which is `T` or `null`. Failure is a second return value of typ
 spelling Kotlin, Swift, TypeScript and C# share, so it needs no teaching, and the
 pair-and-check shape is Go's.
 
-`Error` is an interface with one method, `function message(self) -> String`.
+`Error` is an interface with one method, `def message(self) -> String`.
 `Error?` in a return position is shorthand for `(any Error)?`, because it appears
 in the signature of every fallible function and `-> (Config, (any Error)?)` is not
 a signature anyone should have to read. A function may name a concrete error type
@@ -744,9 +782,11 @@ Four layers, all from the first commit, and development is test-driven.
 - Units of measure. Wanted, and a separate unifier over a free abelian group;
   after shapes.
 - Macros. Reserved as a word, not implemented.
-- Language server, formatter, package manager. An environment-reproducibility
-  story is the single most-cited reason scientists trust results across machines,
-  and it is planned, not built.
+- Language server and package manager. An environment-reproducibility story is
+  the single most-cited reason scientists trust results across machines, and it
+  is planned, not built. **The formatter is no longer on this list**: `sciencec
+  fmt` shipped, and revision 3 is the first migration it paid for
+  (`self-hosting.md` gate E, `syntax-revision-3.md` §4).
 - Cross-compilation.
 - Custom optimizations; everything is delegated to LLVM.
 
@@ -754,7 +794,7 @@ Four layers, all from the first commit, and development is test-driven.
 
 Reserving costs nothing now and breaks every program using the name later.
 
-**In use:** `function return let be mutable type choice interface implements has
+**In use:** `def return let be mutable type choice interface implements has
 of borrowed any for in if else match loop break continue use where as self Self
 and or not true false is null const public giving each`
 
@@ -766,6 +806,22 @@ Revision 2 removed `returns`, `trait`, `methods`, `while`, `try`, `at`, `above`,
 `below`, `most` and `least` from this list, and added `interface` and `null`.
 Nine words against two is the arithmetic, and it is most of what that revision
 bought.
+
+Revision 3 removed `function` and added `def`. One for one, and the arithmetic
+is the least interesting thing about it: see `syntax-revision-3.md`, and §4.1 for
+what it did to the rule that used to forbid it.
+
+**`function` is free.** It is not on any list in this section — not in use, not
+reserved for later — and a program may bind it, name a field `function`, or
+declare `def function(...)`. That is what the compiler does, not a concession
+made here: the parser has no `function` token, and it recognises the old
+declaration positionally, as the ordinary word `function` followed by a name.
+That shape is `SC0156`, with `def` as a machine-applicable fix. Holding the word
+reserved would have been the other way to keep `SC0156` working and it was not
+taken, because a contextual test costs one line of lookahead and a reservation
+costs an identifier the audience uses — `ffi-c-boundary.md` already binds a C
+struct field called `function`, and `reserved-words.md` §1 is an entire note
+about why that trade goes this way.
 
 `null` is a literal, like `true` and `false`, and it is on this list for the
 reason they are: its spelling is fixed, so a program may not bind the name. It

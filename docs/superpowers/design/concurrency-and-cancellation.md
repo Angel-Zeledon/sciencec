@@ -68,7 +68,7 @@ the point of this section.
 does not return until every thread it started has finished.**
 
 ```science
-function fit_all(runs: borrowed Array of Run) -> Array of Fit:
+def fit_all(runs: borrowed Array of Run) -> Array of Fit:
     let mutable out be (Array of Fit).new()
     scope:
         for run in runs:

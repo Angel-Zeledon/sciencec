@@ -178,7 +178,7 @@ Measurement implements Record
 ```science
 interface Record:
     type Columns
-    function schema() -> Schema
+    def schema() -> Schema
 ```
 
 For `Measurement`, `Measurement.Columns` is a type whose fields are
@@ -191,14 +191,14 @@ field access on an ordinary type:
 
 ```science
 Frame of R has where R: Record:
-    function len(self) -> U64
-    function columns(self) -> borrowed R.Columns
-    function columns_mutable(mutable self) -> mutable borrowed R.Columns
-    function row(self, index: U64) -> R
-    function slice(self, range: Range of U64) -> Frame of R
-    function append(mutable self, other: Frame of R) -> ((), DataError?)
-    function rejected(self) -> borrowed Array of RowError
-    function rejected_count(self) -> U64
+    def len(self) -> U64
+    def columns(self) -> borrowed R.Columns
+    def columns_mutable(mutable self) -> mutable borrowed R.Columns
+    def row(self, index: U64) -> R
+    def slice(self, range: Range of U64) -> Frame of R
+    def append(mutable self, other: Frame of R) -> ((), DataError?)
+    def rejected(self) -> borrowed Array of RowError
+    def rejected_count(self) -> U64
 ```
 
 **This derivation is the one piece of new language machinery this note asks
@@ -465,9 +465,9 @@ Three shapes, covering three real situations:
 
 ```science
 CsvReader of R has:
-    function rows(self) -> Rows of R
-    function chunks(self, size: U64) -> Chunks of R
-    function collect(self) -> (Frame of R, DataError?)
+    def rows(self) -> Rows of R
+    def chunks(self, size: U64) -> Chunks of R
+    def collect(self) -> (Frame of R, DataError?)
 ```
 
 - **`Rows of R`** — one record at a time, one IO buffer, constant memory
@@ -528,31 +528,31 @@ language keeps exactly one string type, which is worth far more.
 
 ```science
 Path has:
-    function from(text: borrowed String) -> Path
-    function join(self, part: borrowed String) -> Path
-    function parent(self) -> Path?
-    function name(self) -> String?
-    function stem(self) -> String?
-    function extension(self) -> String?
-    function with_extension(self, extension: borrowed String) -> Path
-    function is_absolute(self) -> Bool
-    function absolute(self) -> (Path, IoError?)
-    function exists(self) -> Bool
-    function is_directory(self) -> Bool
-    function size(self) -> (U64, IoError?)
-    function text(self) -> borrowed String
+    def from(text: borrowed String) -> Path
+    def join(self, part: borrowed String) -> Path
+    def parent(self) -> Path?
+    def name(self) -> String?
+    def stem(self) -> String?
+    def extension(self) -> String?
+    def with_extension(self, extension: borrowed String) -> Path
+    def is_absolute(self) -> Bool
+    def absolute(self) -> (Path, IoError?)
+    def exists(self) -> Bool
+    def is_directory(self) -> Bool
+    def size(self) -> (U64, IoError?)
+    def text(self) -> borrowed String
 ```
 
 Free functions:
 
 ```science
-function current_directory() -> (Path, IoError?)
-function create_directory(path: borrowed Path) -> ((), IoError?)
-function remove_file(path: borrowed Path) -> ((), IoError?)
-function remove_directory(path: borrowed Path) -> ((), IoError?)
-function rename(from: borrowed Path, to: borrowed Path) -> ((), IoError?)
-function list_directory(path: borrowed Path) -> (Array of Path, IoError?)
-function glob(pattern: borrowed String) -> (Array of Path, GlobError?)
+def current_directory() -> (Path, IoError?)
+def create_directory(path: borrowed Path) -> ((), IoError?)
+def remove_file(path: borrowed Path) -> ((), IoError?)
+def remove_directory(path: borrowed Path) -> ((), IoError?)
+def rename(from: borrowed Path, to: borrowed Path) -> ((), IoError?)
+def list_directory(path: borrowed Path) -> (Array of Path, IoError?)
+def glob(pattern: borrowed String) -> (Array of Path, GlobError?)
 ```
 
 `create_directory` creates parents; a "one level only" variant is not worth a
@@ -574,12 +574,12 @@ than silently treating the braces as literal characters.
 type TempDir         # Drop removes the directory and everything in it
 type TempFile        # Drop removes the file
 
-function temporary_directory() -> (TempDir, IoError?)
-function temporary_file(suffix: borrowed String) -> (TempFile, IoError?)
+def temporary_directory() -> (TempDir, IoError?)
+def temporary_file(suffix: borrowed String) -> (TempFile, IoError?)
 
 TempDir has:
-    function path(self) -> borrowed Path
-    function keep(self) -> Path              # consumes self, disarming the Drop
+    def path(self) -> borrowed Path
+    def keep(self) -> Path              # consumes self, disarming the Drop
 ```
 
 This is the small place where ownership visibly beats every dynamic language:
@@ -591,13 +591,13 @@ the value, so a program cannot both retain the directory and have it deleted. Th
 
 ```science
 File has:
-    function open(path: borrowed Path) -> (File, IoError?)
-    function create(path: borrowed Path) -> (File, IoError?)
-    function append(path: borrowed Path) -> (File, IoError?)
-    function read(mutable self, into: mutable borrowed Array of U8) -> (U64, IoError?)
-    function write(mutable self, bytes: borrowed Array of U8) -> (U64, IoError?)
-    function flush(mutable self) -> ((), IoError?)
-    function close(self) -> ((), IoError?)
+    def open(path: borrowed Path) -> (File, IoError?)
+    def create(path: borrowed Path) -> (File, IoError?)
+    def append(path: borrowed Path) -> (File, IoError?)
+    def read(mutable self, into: mutable borrowed Array of U8) -> (U64, IoError?)
+    def write(mutable self, bytes: borrowed Array of U8) -> (U64, IoError?)
+    def flush(mutable self) -> ((), IoError?)
+    def close(self) -> ((), IoError?)
 ```
 
 `close` **consumes** the file and returns an `IoError?`, and you are expected to
@@ -611,11 +611,11 @@ pretending RAII solves it.
 ## 8. Writing
 
 ```science
-function write_csv of R(frame: borrowed Frame of R, path: borrowed Path, options: CsvOptions) -> ((), DataError?)
-function write_json_lines of R(frame: borrowed Frame of R, path: borrowed Path) -> ((), DataError?)
-function write_npy(column: borrowed Array of F32, path: borrowed Path) -> ((), DataError?)
-function write_safetensors(tensors: borrowed Map of (String, Array of F32), path: borrowed Path) -> ((), DataError?)
-function write_parquet of R(frame: borrowed Frame of R, path: borrowed Path, options: ParquetOptions) -> ((), DataError?)
+def write_csv of R(frame: borrowed Frame of R, path: borrowed Path, options: CsvOptions) -> ((), DataError?)
+def write_json_lines of R(frame: borrowed Frame of R, path: borrowed Path) -> ((), DataError?)
+def write_npy(column: borrowed Array of F32, path: borrowed Path) -> ((), DataError?)
+def write_safetensors(tensors: borrowed Map of (String, Array of F32), path: borrowed Path) -> ((), DataError?)
+def write_parquet of R(frame: borrowed Frame of R, path: borrowed Path, options: ParquetOptions) -> ((), DataError?)
 ```
 
 **Every whole-file write is atomic.** The bytes go to a sibling temporary in the
@@ -629,9 +629,9 @@ the input needed for the rerun.
 
 ```science
 ParquetWriter of R has:
-    function create(path: borrowed Path, options: ParquetOptions) -> (ParquetWriter of R, DataError?)
-    function write_chunk(mutable self, frame: borrowed Frame of R) -> ((), DataError?)
-    function close(self) -> ((), DataError?)
+    def create(path: borrowed Path, options: ParquetOptions) -> (ParquetWriter of R, DataError?)
+    def write_chunk(mutable self, frame: borrowed Frame of R) -> ((), DataError?)
+    def close(self) -> ((), DataError?)
 ```
 
 `close` consumes the writer, for the same reason `File.close` does — and with
@@ -734,7 +734,7 @@ type Measurement:
 
 Measurement implements Record
 
-function normalize(values: mutable borrowed Array of F32):
+def normalize(values: mutable borrowed Array of F32):
     let count be values.len() as F32
     if count is 0.0f32: return
 
@@ -752,7 +752,7 @@ function normalize(values: mutable borrowed Array of F32):
     for i in 0..values.len():
         values.set(i, (values.get(i) - mean) / deviation)
 
-function main() -> ((), Error?):
+def main() -> ((), Error?):
     let files, err be glob("measurements/2026-09-*.csv")
     if err?:
         return ((), err)

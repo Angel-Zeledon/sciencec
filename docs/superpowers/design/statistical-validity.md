@@ -95,7 +95,7 @@ note and it dissolves the hard part.
 collection:
 
 ```science
-function holm(pvalues: borrowed Array of PValue) -> Array of AdjustedPValue
+def holm(pvalues: borrowed Array of PValue) -> Array of AdjustedPValue
 ```
 
 `n` is `pvalues.length()`, computed at runtime, by the function that needs it,
@@ -199,15 +199,15 @@ type AdjustedPValue
 PValue has:
     ## The number, with no claim attached. Printing a raw p-value is correct
     ## and common; this is what `Display` uses.
-    function unadjusted(self) -> F64
+    def unadjusted(self) -> F64
 
 AdjustedPValue has:
-    function value(self) -> F64
-    function is_significant_at(self, alpha: F64) -> Bool
+    def value(self) -> F64
+    def is_significant_at(self, alpha: F64) -> Bool
 
     ## What it was adjusted against, carried for the record (§6).
-    function correction(self) -> Correction
-    function family_size(self) -> U64
+    def correction(self) -> Correction
+    def family_size(self) -> U64
 ```
 
 Both implement `Display` and `Ord` — a p-value must print, and Holm, Hochberg and

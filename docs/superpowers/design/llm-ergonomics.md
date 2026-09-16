@@ -89,7 +89,7 @@ This is the worst category, and it is the biggest one.
 | `struct Doc:` | `SC0101` — *expected `implements` or `has methods` after `struct`* | same |
 | `enum Format:` | `SC0101` — *expected `implements` or `has methods` after `enum`* | same |
 | `impl Summarize for Doc:` | `SC0101` — *expected `implements` or `has methods` after `impl`* | same, and the fix is a **reordering** (`Doc implements Summarize`), which no generic message can suggest |
-| `pub function f():` | `SC0101` — *expected `implements` or `has methods` after `pub`* | same |
+| `pub def f():` | `SC0101` — *expected `implements` or `has methods` after `pub`* | same |
 | `let mut x be 1` | `SC0100` — *expected `be`, found `x`* | `mut` was read as the bound name. The compiler thinks the binding is called `mut`. |
 
 The cause is structural and worth naming: the English redesign made an item able
@@ -108,7 +108,7 @@ it and then complains about the wrong thing.
 | `dyn Summarize` | `SC0100` — *expected `)`, found `Summarize`* — never mentions `dyn` | **1** |
 | `Array[Int]` | `SC0100` — *expected `)`, found `[`* | **1** |
 | `function f[T](x)` | `SC0100` — *expected `(`, found `[`* | **1** |
-| `function f(&self)` | `SC0102` — *expected an identifier, found `&`* | 0 |
+| `def f(&self)` | `SC0102` — *expected an identifier, found `&`* | 0 |
 
 `dyn Summarize` is the standout failure: the word `dyn` is consumed silently as
 a type name and the error lands on the *next* token. Nothing in the output tells
@@ -125,7 +125,7 @@ the inventory would be dishonest without them.
 | `x.at(0)` | `SC0102` — *expected an identifier, found `at`* | **1** |
 | `x.union(y)` | `SC0102` — *… `union`, which is reserved …* | **1** |
 | `let model be 1` | `SC0102` — *… `model`, which is reserved …* | 0 |
-| `function f(tensor: Int)` | `SC0102` — *… `tensor`, which is reserved …* | **1** |
+| `def f(tensor: Int)` | `SC0102` — *… `tensor`, which is reserved …* | **1** |
 
 The dot rule proposed in `reserved-words.md` §0.1 eliminates the first three
 outright, cascade included.
@@ -166,14 +166,14 @@ consume it all, emit one diagnostic, keep the stream usable.
 error[SC0120]: a shared borrow is written `borrowed T`
   --> model.science:4:14
    |
- 4 | function f(x: &Doc) returns Int:
+ 4 | def f(x: &Doc) returns Int:
    |               ^ Science spells this `borrowed`
    |
    = note: an exclusive borrow is `mutable borrowed T`, and a call site needs
            neither — a parameter declared `borrowed` is borrowed automatically (§6.3)
 help: write the borrow as a word
    |
- 4 | function f(x: borrowed Doc) returns Int:
+ 4 | def f(x: borrowed Doc) returns Int:
    |               ~~~~~~~~
 ```
 
@@ -193,7 +193,7 @@ One new block, `SC0120`–`SC0134`, inside the syntax range §9 allocates.
 | `SC0124` | `-> T` where `returns` belongs | `returns T` |
 | `SC0125` | `Name[T]` in type position | `Name of T`, or `Name of (A, B)` for several |
 | `SC0126` | `name[T](…)` in declaration position | `name of T(…)` |
-| `SC0127` | `fn` starting an item | `function` |
+| `SC0127` | `fn` starting an item | `def` |
 | `SC0128` | `struct` starting an item | `type` |
 | `SC0129` | `enum` starting an item | `choice` |
 | `SC0130` | `impl Trait for Type:` | `Type implements Trait:` — a reordering fix |

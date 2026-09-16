@@ -512,7 +512,7 @@ precise about. That note's §12 guarantees *"drop points explicit before region
 inference runs"*. It says nothing about the case that makes drops hard:
 
 ```science
-function maybe_consume(flag: Bool, doc: Doc):
+def maybe_consume(flag: Bool, doc: Doc):
     if flag:
         consume(doc)
     # `doc` is dropped here on one path and moved on the other.
@@ -1880,7 +1880,7 @@ print("hello, world")
 ```
 
 Requires, and this is the whole list: the script body of `script-mode.md` §2.1
-lowered to `function main() -> Error?`; a string literal as a
+lowered to `def main() -> Error?`; a string literal as a
 `private unnamed_addr constant` plus a `science_string_from_bytes` call
 (Decision 15); a `science_println` call; drop glue for one `String`; and the
 `sret` convention, immediately, because `science_string_from_bytes` returns
@@ -1898,7 +1898,7 @@ at `-O3` contains no fast-math flag.
 
 ```science
 unsafe extern "C" library "m":
-    function cos(x: F64) -> F64
+    def cos(x: F64) -> F64
 
 let x be unsafe: cos(0.0)
 print(f"{x}")

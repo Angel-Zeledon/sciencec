@@ -15,7 +15,7 @@ which §5 reuses); `c-binding-coverage.md` §3.8 (the same rule applied to C++);
 `native-dependencies.md` §2.1; `stdlib-standard.md` §9.3;
 `syntax-revision-2.md`.
 
-Syntax: revision 2 throughout (`function` … `->`, `of`, `borrowed`, `interface`,
+Syntax: revisions 2 and 3 throughout (`def` … `->`, `of`, `borrowed`, `interface`,
 `Type has:`, `T?`, `-> (T, Error?)`, `is` / `is not`, `> < >= <=`,
 `for x in xs`, `loop:` / `break`, `print`).
 
@@ -541,7 +541,7 @@ type Matches:
     text: borrowed String
 
 Matches implements Drop:
-    function drop(mutable self):
+    def drop(mutable self):
         unsafe: science_regex_matches_free(self.raw)
 ```
 
@@ -653,7 +653,7 @@ boundary once per batch, never once per element.**
 > per-element `next` shim.**
 >
 > ```science
-> function science_regex_matches_next_batch(
+> def science_regex_matches_next_batch(
 >     handle: ffi.OpaqueHandle,
 >     out: mutable ffi.MutableSpan of ffi.Found,
 >     out_count: mutable borrowed ffi.Uninitialized of CSizeT) -> CInt
@@ -838,35 +838,35 @@ requires:
 ## Do not edit. Run `sciencec foreign bind` to regenerate.
 
 interface Error:
-    function message(self) -> String
+    def message(self) -> String
 
 type PatternError:
     text: String
 
 PatternError implements Error:
-    function message(self) -> String:
+    def message(self) -> String:
         self.text
 
 type Pattern:
     raw: ffi.OpaqueHandle
 
 Pattern implements Drop:
-    function drop(mutable self):
+    def drop(mutable self):
         unsafe: science_regex_free(self.raw)
 
 Pattern has:
-    function compile(source: borrowed String) -> (Pattern?, PatternError?)
+    def compile(source: borrowed String) -> (Pattern?, PatternError?)
 
-    function matches(self, text: borrowed String) -> Bool
+    def matches(self, text: borrowed String) -> Bool
 
-    function find_from(self, text: borrowed String, start_at: Int) -> Found?
+    def find_from(self, text: borrowed String, start_at: Int) -> Found?
 ```
 
 and here is a use of it, which is the thing a user actually writes and which the
 generator does not touch:
 
 ```science
-function count_matches(pattern_text: borrowed String,
+def count_matches(pattern_text: borrowed String,
                        text: borrowed String) -> (Int, Error?):
     let pattern, err be Pattern.compile(pattern_text)
     if err?:
@@ -938,7 +938,7 @@ type ItemCoverage:
     bucket: String
     reason: String
 
-function report_unbound(items: borrowed Array of ItemCoverage):
+def report_unbound(items: borrowed Array of ItemCoverage):
     let mutable unbound be 0
     for item in items:
         if item.bucket is not "bound":
@@ -1471,7 +1471,7 @@ closure across the thread boundary without a `Share` claim, or a recoverable err
 from a polars panic.
 
 ```science
-function mean_by_station(path: borrowed Path) -> (Frame, Error?):
+def mean_by_station(path: borrowed Path) -> (Frame, Error?):
     let frame, err be data.parquet.read(path)
     if err?:
         return (Frame.empty(), err)

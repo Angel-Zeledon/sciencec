@@ -54,7 +54,7 @@ unsafe extern "C" library "openblas" via pkg-config "openblas":
     const CBLAS_NO_TRANS be 111 as CblasTranspose
     const CBLAS_TRANS be 112 as CblasTranspose
 
-    function cblas_dgemm(
+    def cblas_dgemm(
         layout: CblasLayout,
         transpose_a: CblasTranspose,
         transpose_b: CblasTranspose,
@@ -101,7 +101,7 @@ Three, and only three.
 
 | Item | Form | Meaning |
 |---|---|---|
-| Function | `function name(params) returns T` | An undefined symbol resolved at link |
+| Function | `def name(params) returns T` | An undefined symbol resolved at link |
 | Type alias | `type Name is T` | A spelling for a C typedef over an FFI-representable type |
 | Constant | `const NAME be literal as T` | A `#define` or enumerator, transcribed |
 
@@ -153,7 +153,7 @@ whole design.
 | `ffi.MutableSpan of T` | `T*`, many elements, `noalias` | yes | yes |
 | `ffi.Pointer of T` | `T*`, nullable, unknown validity | **no** | no |
 | `ffi.OpaqueHandle` | `void*`, non-null, never dereferenced | no | as a field only |
-| `ffi.FunctionPointer of (extern "C" function(...) returns R)` | function pointer | no | as a field only |
+| `ffi.FunctionPointer of (extern "C" def(...) returns R)` | function pointer | no | as a field only |
 
 `ffi.Span of T` is `{ borrowed T, Int }` — a pointer with a length, holding a
 borrow whose region is inferred exactly as §4.4 of the core spec infers the
@@ -309,12 +309,12 @@ error:
 # 32-bit integers: the reference and default OpenBLAS build.
 unsafe extern "C" library "openblas":
     type BlasInt is I32
-    function dgemm(...) symbol "dgemm_"
+    def dgemm(...) symbol "dgemm_"
 
 # 64-bit integers: OpenBLAS built with INTERFACE64=1 SYMBOLSUFFIX=64_.
 unsafe extern "C" library "openblas64_":
     type BlasInt is I64
-    function dgemm(...) symbol "dgemm_64_"
+    def dgemm(...) symbol "dgemm_64_"
 ```
 
 `symbol` decouples the Science name from the linker name, which is what makes
@@ -347,7 +347,7 @@ public choice BlasError:
     Stride(Int, Int)
     Overflow
 
-public function gemm(
+public def gemm(
         a: borrowed MatrixView,
         b: borrowed MatrixView,
         c: mutable borrowed MatrixView,
@@ -386,7 +386,7 @@ public function gemm(
             c: c.data, ldc: c.leading as BlasInt)
     ((), null)
 
-function covers(m: borrowed MatrixView, columns: Int) -> ((), BlasError?):
+def covers(m: borrowed MatrixView, columns: Int) -> ((), BlasError?):
     let needed be m.leading * (columns - 1) + m.rows
     if m.leading < m.rows: return ((), BlasError.Stride(m.leading, m.rows))
     if needed > m.data.length(): return ((), BlasError.Overflow)
@@ -492,10 +492,10 @@ causes most of the resource bugs in real C code; it needs a type declaration.
 
 ```science
 unsafe extern "C" library "cudnn" when available:
-    function cudnnCreate(handle: mutable borrowed ffi.Uninitialized of CudnnHandle)
+    def cudnnCreate(handle: mutable borrowed ffi.Uninitialized of CudnnHandle)
         returns CudnnStatus
-    function cudnnDestroy(handle: CudnnHandle) returns CudnnStatus
-    function cudnnGetErrorString(status: CudnnStatus)
+    def cudnnDestroy(handle: CudnnHandle) returns CudnnStatus
+    def cudnnGetErrorString(status: CudnnStatus)
         returns ffi.CStr from static
 
 type CudnnHandle:
@@ -504,12 +504,12 @@ type CudnnHandle:
 CudnnHandle implements ffi.CLayout
 
 CudnnHandle implements Drop:
-    function drop(mutable self):
+    def drop(mutable self):
         # cudnnDestroy returns a status. There is no caller left to tell.
         unsafe: cudnnDestroy(self)
 
 CudnnHandle has:
-    public function new() -> (CudnnHandle?, CudnnError?):
+    public def new() -> (CudnnHandle?, CudnnError?):
         let mutable slot be ffi.Uninitialized of CudnnHandle .new()
         let status be unsafe: cudnnCreate(slot)
         let _, err be status.check()
@@ -539,8 +539,8 @@ than zero:
 ```science
 unsafe extern "C" library "hdf5":
     type Hid is I64
-    function H5Fopen(name: ffi.CStr, flags: CUInt, fapl: Hid) returns Hid
-    function H5Fclose(file: Hid) returns Herr
+    def H5Fopen(name: ffi.CStr, flags: CUInt, fapl: Hid) returns Hid
+    def H5Fclose(file: Hid) returns Herr
 
 type H5File:
     id: Hid
@@ -548,11 +548,11 @@ type H5File:
 H5File implements ffi.CLayout
 
 H5File implements Drop:
-    function drop(mutable self):
+    def drop(mutable self):
         unsafe: H5Fclose(self.id)
 
 H5File has:
-    public function open(path: borrowed String) -> (H5File?, H5Error?):
+    public def open(path: borrowed String) -> (H5File?, H5Error?):
         let name, err be ffi.CString.from(path)
         if err?:
             return (null, H5Error.from_nul(err))
@@ -578,16 +578,16 @@ memory is always allocated by a vendor library:
 
 ```science
 unsafe extern "C" library "cudart":
-    function cudaMalloc(out: mutable borrowed ffi.Uninitialized of ffi.DevicePointer of CVoid,
+    def cudaMalloc(out: mutable borrowed ffi.Uninitialized of ffi.DevicePointer of CVoid,
                         bytes: CSizeT) returns CudaError
-    function cudaFree(pointer: ffi.DevicePointer of CVoid) returns CudaError
+    def cudaFree(pointer: ffi.DevicePointer of CVoid) returns CudaError
 
 type DeviceBuffer of T:
     pointer: ffi.DevicePointer of T
     length: Int
 
 DeviceBuffer of T implements Drop:
-    function drop(mutable self):
+    def drop(mutable self):
         unsafe: cudaFree(self.pointer.erase())
 ```
 
@@ -619,7 +619,7 @@ type FftwPlan:
     output: ffi.MutableSpan of ffi.Complex64
 
 FftwPlan implements Drop:
-    function drop(mutable self):
+    def drop(mutable self):
         unsafe: fftw_destroy_plan(self.raw)
 ```
 
@@ -655,7 +655,7 @@ with `move`:
 
 ```science
 unsafe extern "C" library "somelib":
-    function somelib_adopt(data: move ffi.CBuffer of F64, count: CSizeT) returns CInt
+    def somelib_adopt(data: move ffi.CBuffer of F64, count: CSizeT) returns CInt
 ```
 
 `move` is already reserved (§13, reserved-not-yet-used) and this is what it is
@@ -689,8 +689,8 @@ lifetime syntax to say which. The `extern` grammar therefore has the one region
 construct in the language, and it exists only here:
 
 ```science
-    function cudnnGetErrorString(status: CudnnStatus) returns ffi.CStr from static
-    function gsl_matrix_ptr(m: mutable borrowed GslMatrix, i: CSizeT, j: CSizeT)
+    def cudnnGetErrorString(status: CudnnStatus) returns ffi.CStr from static
+    def gsl_matrix_ptr(m: mutable borrowed GslMatrix, i: CSizeT, j: CSizeT)
         returns mutable borrowed F64 from m
 ```
 
@@ -768,7 +768,7 @@ closed; adding to it is a spec change, in the same spirit as §8's closed method
 sets.
 
 1. Calling a function declared in an `extern` block.
-2. Calling a function declared `unsafe function`.
+2. Calling a function declared `unsafe def`.
 3. Dereferencing an `ffi.Pointer` or `ffi.DevicePointer`, and converting one to a
    borrow.
 4. `assume_initialized` on an `ffi.Uninitialized`.
@@ -808,14 +808,14 @@ can see is intact; what you are about to do involves memory it cannot see.* The
 block delimits the region of source a reviewer must read against the C
 documentation. If an `unsafe` block is long, the binding is written wrong.
 
-### 3.3 `unsafe function`
+### 3.3 `unsafe def`
 
-A function whose *preconditions* cannot be checked is declared `unsafe function`,
+A function whose *preconditions* cannot be checked is declared `unsafe def`,
 and calling it requires an `unsafe` block at the call site. This is how a binding
 layer exposes something that genuinely cannot be made safe — a routine taking a
 raw pointer and a length the caller must guarantee.
 
-**An `unsafe function`'s body is not implicitly an unsafe block.** Inside it,
+**An `unsafe def`'s body is not implicitly an unsafe block.** Inside it,
 calling an extern function still requires writing `unsafe:`. Rust shipped the
 opposite for eleven years and changed it, because the implicit version means the
 riskiest functions in a codebase are the ones with no visible markers inside
@@ -855,11 +855,11 @@ trampoline.
 The type of a C function pointer is spelled with reserved words only:
 
 ```science
-ffi.FunctionPointer of (extern "C" function(F64, ffi.Pointer of CVoid) returns F64)
+ffi.FunctionPointer of (extern "C" def(F64, ffi.Pointer of CVoid) returns F64)
 ```
 
 A plain Science function may be given the C ABI and a stable symbol by declaring
-it `extern "C" function`, which makes it addressable from C. That is the
+it `extern "C" def`, which makes it addressable from C. That is the
 low-level path and it takes no captures.
 
 ### 4.3 Closures, and the trampoline
@@ -869,7 +869,7 @@ a closure**:
 
 ```science
 ffi.Callback.of(closure: mutable borrowed F) returns ffi.Callback of ((A...), R)
-    where F: function(A...) returns R
+    where F: def(A...) returns R
 ```
 
 `code` is a monomorphized trampoline — one per closure type, which
@@ -883,8 +883,8 @@ lives in Science: the callback value is region-bounded by the closure, and if a
 user tries to store it somewhere longer-lived they get a region error.
 
 ```science
-public function integrate(
-        integrand: mutable borrowed (function(F64) returns F64),
+public def integrate(
+        integrand: mutable borrowed (def(F64) returns F64),
         lower: F64,
         upper: F64,
         tolerance: F64)
@@ -1128,7 +1128,7 @@ The `ffi` module provides:
 ```science
 interface ForeignStatus:
     type Error
-    function check(self) -> ((), Self.Error?)
+    def check(self) -> ((), Self.Error?)
 ```
 
 A binding implements it once per status type, and every wrapper then reads the
@@ -1137,7 +1137,7 @@ same way:
 ```science
 CudnnStatus implements ForeignStatus:
     type Error is CudnnError
-    function check(self) -> ((), CudnnError?):
+    def check(self) -> ((), CudnnError?):
         if self.raw is 0: return ((), null)
         ((), CudnnError(status: self, message: cudnn_message(self)))
 ```
@@ -1182,7 +1182,7 @@ guarantee about it:
 
 ```science
 unsafe extern "C" library "c":
-    function open(path: ffi.CStr, flags: CInt) returns CInt with errno
+    def open(path: ffi.CStr, flags: CInt) returns CInt with errno
 ```
 
 A declaration `with errno` changes the Science-level return type to
@@ -1400,7 +1400,7 @@ Named in this document:
 
 Four places where this design assumes something outside its territory.
 
-1. **Closure type syntax.** §4.3 writes `function(F64) returns F64` as a type. The
+1. **Closure type syntax.** §4.3 writes `def(F64) returns F64` as a type. The
    core spec defines closure *expressions* and never their types. If the core
    settles on a different spelling, `ffi.Callback`'s bound follows it.
 2. **Named arguments at call sites.** §1.7 permits them for extern calls only.

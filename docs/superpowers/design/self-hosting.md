@@ -325,20 +325,20 @@ type DefTable:
     defs: Array of Def
 
 DefTable has:
-    function new() -> DefTable:
+    def new() -> DefTable:
         DefTable(defs: (Array of Def).new())
 
-    function alloc(mutable self, kind: DefKind, name: String,
+    def alloc(mutable self, kind: DefKind, name: String,
             span: Span, parent: DefId?) -> DefId:
         let id be DefId(index: self.defs.length())
         self.defs.push(Def(id: id, kind: kind, name: name,
                            span: span, parent: parent))
         id
 
-    function get(borrowed self, id: DefId) -> borrowed Def:
+    def get(borrowed self, id: DefId) -> borrowed Def:
         self.defs[id.index]
 
-    function path_of(borrowed self, id: DefId) -> String:
+    def path_of(borrowed self, id: DefId) -> String:
         let mutable parts be (Array of String).new()
         let mutable cursor: DefId? be id
         loop:
@@ -401,10 +401,10 @@ type Parser:
     diagnostics: Diagnostics
 
 Parser has:
-    function peek(borrowed self) -> borrowed TokenKind:
+    def peek(borrowed self) -> borrowed TokenKind:
         self.token_at(0).kind
 
-    function into_diagnostics(self) -> Diagnostics:
+    def into_diagnostics(self) -> Diagnostics:
         self.diagnostics
 ```
 
@@ -516,7 +516,7 @@ mutating a table through a borrow that a recursive call also holds:
 
 ```science
 # Does not compile, and the reason is rule 4 of §6.1.
-function ast(db: borrowed Database, file: FileId) -> Module:
+def ast(db: borrowed Database, file: FileId) -> Module:
     let hit be db.cached_ast(file)            # a shared borrow of `db`
     if hit?:
         return db.module(hit).clone()
@@ -530,7 +530,7 @@ function ast(db: borrowed Database, file: FileId) -> Module:
 own index discipline to the query engine and it comes out:
 
 ```science
-function ast(db: mutable borrowed Database, file: FileId) -> AstId:
+def ast(db: mutable borrowed Database, file: FileId) -> AstId:
     let cached be db.cached_ast(file)
     if cached?:
         db.record_dependency(cached)
@@ -544,7 +544,7 @@ function ast(db: mutable borrowed Database, file: FileId) -> AstId:
     db.pop_active_query(id)
     id
 
-function module(db: borrowed Database, id: AstId) -> borrowed Module:
+def module(db: borrowed Database, id: AstId) -> borrowed Module:
     db.asts[id.index]
 ```
 
@@ -812,7 +812,7 @@ and one genuine friction:
 - **`reproducibility.md`'s float channels and `--deterministic`** are irrelevant
   to a compiler, except in the direction that matters in §7.3: the same
   determinism machinery is what makes the bootstrap fixpoint testable.
-- **`effects.md`'s `pure function`** fits a compiler well — most of the front end
+- **`effects.md`'s `pure def`** fits a compiler well — most of the front end
   is pure by construction — and the `external` bit correctly marks the driver.
 
 **Nothing in the design assumes a numerical pipeline in a way a compiler
@@ -1079,9 +1079,26 @@ and it is reachable years before A.
 
 ### Gate E — a syntax migration is mechanical
 
-- **E1.** `sciencec fmt` exists and is idempotent.
+- **E1.** `sciencec fmt` exists and is idempotent. **Met.** `crates/science-fmt`
+  shipped, with corpus and fixture tests.
 - **E2.** A migration tool replays the revision-1-to-2 migration from git history
-  and reproduces the committed corpus byte for byte (Decision 6).
+  and reproduces the committed corpus byte for byte (Decision 6). **Not met.**
+  There is no migration tool in `crates/`.
+
+> **Gate E has been exercised once, by accident of timing, and half of it held.**
+> Syntax revision 3 — `function` becomes `def` — landed hours after `sciencec
+> fmt` did: 384 corpus declarations, 264 embedded in Rust test sources, 116
+> snapshots, one afternoon. That is the cost Decision 6 predicted a mechanical
+> migration would have, and the prediction was right.
+>
+> Two things must be said against reading that as the gate working. **The gate
+> did not gate.** Nothing about revision 3 was conditioned on E1 being met; the
+> decision was made by the project owner and would have been made either way. A
+> gate that is not consulted is a cost estimate, which is worth having and is not
+> a control. **And E2 was never exercised**, because the revision-3 migration was
+> not replayable either — it was a mechanical rename applied once, not a tool.
+> Decision 6 is confirmed as a *criterion* and is **not discharged**.
+> `syntax-revision-3.md` §4 has the full account.
 
 ### Gate F — stage 1a: the lexer
 

@@ -137,6 +137,15 @@ pub mod codes {
     /// are Python's and `def-and-lambda.md` §3.2 predicted the traffic in the
     /// opposite direction. It gets a machine-applicable fix for the same
     /// reason every other migration code does.
+    ///
+    /// `def-and-lambda.md` §9.3 had pre-allocated `SC0136` for exactly this
+    /// contingency — *"`function` starting an item, if §3.4 is overruled and
+    /// `def` is adopted"* — and this code was allocated without reading that
+    /// far. The number stays here anyway, and not because the compiler is the
+    /// record: **the migration codes cluster.** `SC0138`–`SC0144` are
+    /// revision 2's, `SC0155` is its `try`, and this is revision 3's, beside
+    /// them. `SC0136` sits in that note's design block, which is about what
+    /// `def` and `lambda` should *be*, not about migrating to them.
     pub const FUNCTION_WORD: Code = Code(156);
 }
 

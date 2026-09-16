@@ -2,7 +2,8 @@
 
 Date: 2026-09-16
 Status: draft for review
-Written in the syntax of `syntax-revision-2.md` (`function` … `->`, `of`,
+Written in the syntax of `syntax-revision-2.md` and `syntax-revision-3.md`
+(`def` … `->`, `of`,
 `borrowed`, `interface`, `Type has:`, `T?`, `is` / `is not`).
 
 Owns: the **tier** of every mathematical and physical name — compiler intrinsic,
@@ -260,8 +261,8 @@ Every name introduced in this note was checked against
   and, if `reserved-words.md` §2.1's recommendation lands, as `mod(a, b)`. This
   note writes `remainder` and `rem_euclid` today and records `mod` as a
   beneficiary of that recommendation — a fifth voice for it.
-- **`pure`** is reserved and `effects.md` wants `pure function`. Almost every
-  signature in this note is a pure function in that sense, and §8.3 says what
+- **`pure`** is reserved and `effects.md` wants `pure def`. Almost every
+  signature in this note is a `pure def` in that sense, and §8.3 says what
   that buys.
 - **The one word this note wants and cannot have is `assert`**, for the tolerance
   assertions a numerics test suite is made of. `reserved-words.md` §4.2 keeps it
@@ -289,7 +290,7 @@ caller should see in the type."* Folding the methods into `minimise(…, method:
 moves the gradient into `Settings`, one hop further from the signature. That is a
 genuine loss. It is accepted because the alternative is forty entry points whose
 signatures differ in ways the caller must learn one at a time, and it is mitigated
-by making `Settings` a named type with a `gradient: (function(…) -> …)?` field, so
+by making `Settings` a named type with a `gradient: (def(…) -> …)?` field, so
 the choice is still in a type — just not in the function's own.
 
 ### 2.6 What the sibling note inherits
@@ -628,7 +629,7 @@ because the argument order is not obvious). An operation with no natural receive
 cannot be in the prelude at all under §8.2's rule — which is a large part of why
 physics cannot be (§4.5).
 
-**Third: `scientific-libraries.md` §5.11's `function sqrt(x: F64) returns F64`
+**Third: `scientific-libraries.md` §5.11's `def sqrt(x: F64) returns F64`
 is superseded**, both in spelling (`returns` → `->`, per `syntax-revision-2.md`
 §4) and in form (free function → method). `stdlib-core.md` §8.2 already says so
 and names the three-way drift it settled; this note is the fourth voice and
@@ -876,24 +877,24 @@ admit to tier 2.
 ## therefore bit-identical across targets (§3.6), unlike every other member of
 ## this section.
 F64 has:
-    function sqrt(self) -> F64
+    def sqrt(self) -> F64
 
 ## Tier 1. `self * factor + addend`, with ONE rounding. The argument order is not
 ## obvious and the doc comment is not optional.
 F64 has:
-    function fma(self, factor: F64, addend: F64) -> F64
+    def fma(self, factor: F64, addend: F64) -> F64
 
 ## Tier 2. Generic over `Real`, so `F32`, `F64` and `Uncertain of F64` all get it
 ## from one definition (§8). Specified to 1 ULP, not bit-identical (§3.6).
-function exp of T(x: T) -> T where T: Real
+def exp of T(x: T) -> T where T: Real
 
 ## Tier 2, and this is rule P2's whole point: `ln(1.0 + x)` for x = 1e-16 returns
 ## 0.0, and this returns 1e-16.
-function ln1p of T(x: T) -> T where T: Real
+def ln1p of T(x: T) -> T where T: Real
 
 ## Tier 3. Two results from one argument reduction. A fusion, not an operation,
 ## which is why it is imported and `sin` is not (§4.4).
-function sin_cos of T(x: T) -> (T, T) where T: Real
+def sin_cos of T(x: T) -> (T, T) where T: Real
 ```
 
 **In use.**
@@ -902,7 +903,7 @@ function sin_cos of T(x: T) -> (T, T) where T: Real
 ## The stable form of the logistic function. Both branches matter: the naive
 ## `1.0 / (1.0 + exp(-x))` underflows to zero below about x = -745, and the naive
 ## `exp(x) / (1.0 + exp(x))` overflows above about x = 709.
-pure function logistic(x: F64) -> F64:
+pure def logistic(x: F64) -> F64:
     if x >= 0.0:
         return 1.0 / (1.0 + (-x).exp())
     let z be x.exp()
@@ -971,29 +972,29 @@ and `elliptic_rf` differ by one character and mean substantially different thing
 
 ```science
 ## Generic over `Real`, per §8 and `uncertainty.md` §6.2. This is the signature
-## `scientific-libraries.md` §5.11 writes as `function erf of T(x: T) returns T
+## `scientific-libraries.md` §5.11 writes as `def erf of T(x: T) returns T
 ## where T: Float`; the bound changes and nothing else does.
-function erf of T(x: T) -> T where T: Real
+def erf of T(x: T) -> T where T: Real
 
 ## `ln_gamma` returns the log-magnitude and the sign separately, because gamma is
 ## negative on alternate intervals below zero and a logarithm that has thrown the
 ## sign away is a bug generator.
-function ln_gamma of T(x: T) -> (T, Sign) where T: Real
+def ln_gamma of T(x: T) -> (T, Sign) where T: Real
 
 ## Integer order, real argument. Non-integer order is `bessel_j_real`, kept
 ## separate because the algorithm and the cost are different, not because the
 ## mathematics is.
-function bessel_j of T(order: Int, x: T) -> T where T: Real
+def bessel_j of T(order: Int, x: T) -> T where T: Real
 
 ## Fallible, because the continued fraction for the incomplete beta does not
 ## converge for every parameter triple, and `stdlib-shape-and-packages.md` §2.3
 ## says nothing panics where an error will do.
-function beta_regularised of T(a: T, b: T, x: T) -> (T, SpecialFunctionError?)
+def beta_regularised of T(a: T, b: T, x: T) -> (T, SpecialFunctionError?)
     where T: Real
 
 ## An N3 name with two eponyms in it and no ambiguity, because the operation noun
 ## is present.
-function associated_legendre_p of T(degree: Int, order: Int, x: T) -> T
+def associated_legendre_p of T(degree: Int, order: Int, x: T) -> T
     where T: Real
 ```
 
@@ -1004,10 +1005,10 @@ use math (erf)
 
 ## The fraction of a normal population within `k` standard deviations, which is
 ## the single most-asked question in an experimental write-up.
-pure function within_sigma(k: F64) -> F64:
+pure def within_sigma(k: F64) -> F64:
     erf(k / 2.0.sqrt())
 
-function main():
+def main():
     for k in 1..4:
         print(f"{k} sigma: {within_sigma(k as F64):.6f}")
 ```
@@ -1073,11 +1074,11 @@ use math (integrate, integrate_estimated, derivative, accelerate)
 
 ## The N2 shape: one operation, the method as an argument. This replaces the
 ## thirteen free functions of `scientific-libraries.md` §5.3 (§2.5).
-## The closure type `function(T) -> T` is the standing cross-note ask that
+## The closure type `def(T) -> T` is the standing cross-note ask that
 ## `ffi-c-boundary.md` §10.1 raised and `scientific-libraries.md` §14.2 seconded;
 ## this note is the fourth asker (§11).
-function integrate of T(
-    f: function(T) -> T,
+def integrate of T(
+    f: def(T) -> T,
     lower: T,
     upper: T,
     method: Quadrature,
@@ -1087,8 +1088,8 @@ function integrate of T(
 ## The error estimate is a second return, not a field on a result type and not a
 ## log line. A quadrature result without its estimate is a number nobody can
 ## publish, and a second return is the spelling that makes ignoring it visible.
-function integrate_estimated of T(
-    f: function(T) -> T,
+def integrate_estimated of T(
+    f: def(T) -> T,
     lower: T,
     upper: T,
     method: Quadrature,
@@ -1097,8 +1098,8 @@ function integrate_estimated of T(
 
 ## Infinite limits are a domain argument rather than a second function, because
 ## the caller's code is otherwise identical.
-function integrate_infinite of T(
-    f: function(T) -> T,
+def integrate_infinite of T(
+    f: def(T) -> T,
     domain: InfiniteDomain of T,
     method: Quadrature,
     tolerance: Tolerance,
@@ -1107,8 +1108,8 @@ function integrate_infinite of T(
 ## Numerical differentiation returns a number and cannot fail in the error sense,
 ## so it returns the value and its estimated error and no error type. The step is
 ## nullable: given one, it is used; without one, `optimal_step` chooses.
-function derivative of T(
-    f: function(T) -> T,
+def derivative of T(
+    f: def(T) -> T,
     x: T,
     order: Int,
     step: T?,
@@ -1116,7 +1117,7 @@ function derivative of T(
 
 ## Acceleration consumes partial sums, not terms, because that is what the caller
 ## has and what every acceleration scheme actually reads.
-function accelerate of T(
+def accelerate of T(
     partial_sums: borrowed Array of T,
     method: Acceleration,
 ) -> (T, T) where T: Real
@@ -1131,13 +1132,13 @@ use physics.units (watts_per_square_metre)
 
 ## Total emissive power of a black body, by integrating the Planck law over
 ## wavelength, so that it can be checked against the Stefan-Boltzmann constant.
-function planck_total(temperature: Temperature of F64) -> (Irradiance of F64, Error?):
+def planck_total(temperature: Temperature of F64) -> (Irradiance of F64, Error?):
     let t be temperature.in(KELVIN)
     let h be PLANCK.magnitude()
     let c be SPEED_OF_LIGHT.magnitude()
     let k be BOLTZMANN.magnitude()
 
-    let spectral be function(wavelength: F64) -> F64:
+    let spectral be def(wavelength: F64) -> F64:
         let exponent be h * c / (wavelength * k * t)
         2.0 * h * c * c / (wavelength.powi(5) * exponent.expm1())
 
@@ -1218,7 +1219,7 @@ use math (solve_ode, solve_ode_dense, solve_ode_events, solve_bvp, heat_solve)
 ## The problem carries the right-hand side, the initial state, the span and
 ## optionally a Jacobian; the method and the tolerance are arguments because they
 ## are the two things a user changes without changing the problem.
-function solve_ode of (T, const N: Int)(
+def solve_ode of (T, const N: Int)(
     problem: borrowed OdeProblem of (T, N),
     method: OdeMethod,
     tolerance: Tolerance,
@@ -1226,7 +1227,7 @@ function solve_ode of (T, const N: Int)(
 
 ## Dense output is a separate entry point rather than a flag, because it changes
 ## the return type: the solution becomes callable at any time in the span.
-function solve_ode_dense of (T, const N: Int)(
+def solve_ode_dense of (T, const N: Int)(
     problem: borrowed OdeProblem of (T, N),
     method: OdeMethod,
     tolerance: Tolerance,
@@ -1234,7 +1235,7 @@ function solve_ode_dense of (T, const N: Int)(
 
 ## Event location. The event functions are root-found between steps, which is why
 ## this cannot be a post-processing pass over a finished solution.
-function solve_ode_events of (T, const N: Int)(
+def solve_ode_events of (T, const N: Int)(
     problem: borrowed OdeProblem of (T, N),
     events: borrowed Array of EventHandler of (T, N),
     method: OdeMethod,
@@ -1243,9 +1244,9 @@ function solve_ode_events of (T, const N: Int)(
 
 ## A two-point boundary value problem needs an initial guess over a mesh, not an
 ## initial condition, and the type says so rather than the documentation.
-function solve_bvp of (T, const N: Int, const M: Int)(
-    residual: function(T, borrowed Vector of (T, N)) -> Vector of (T, N),
-    boundary: function(borrowed Vector of (T, N), borrowed Vector of (T, N))
+def solve_bvp of (T, const N: Int, const M: Int)(
+    residual: def(T, borrowed Vector of (T, N)) -> Vector of (T, N),
+    boundary: def(borrowed Vector of (T, N), borrowed Vector of (T, N))
         -> Vector of (T, N),
     mesh: borrowed Vector of (T, M),
     guess: borrowed Matrix of (T, N, M),
@@ -1255,7 +1256,7 @@ function solve_bvp of (T, const N: Int, const M: Int)(
 ## F1. The output carries one row per recorded step and one column per grid
 ## point, both from the arguments, which is the const layer doing nothing clever
 ## and being necessary anyway.
-function heat_solve of (T, const NX: Int, const NT: Int)(
+def heat_solve of (T, const NX: Int, const NT: Int)(
     initial: borrowed Vector of (T, NX),
     diffusivity: T,
     boundary: BoundaryCondition of T,
@@ -1270,12 +1271,12 @@ function heat_solve of (T, const NX: Int, const NT: Int)(
 use math (solve_ode, OdeProblem, OdeMethod, Tolerance)
 
 ## The Lorenz system, integrated with an adaptive Runge-Kutta pair.
-function lorenz() -> (OdeSolution of (F64, 3), Error?):
+def lorenz() -> (OdeSolution of (F64, 3), Error?):
     let sigma be 10.0
     let rho be 28.0
     let beta be 8.0 / 3.0
 
-    let rhs be function(t: F64, s: borrowed Vector of (F64, 3)) -> Vector of (F64, 3):
+    let rhs be def(t: F64, s: borrowed Vector of (F64, 3)) -> Vector of (F64, 3):
         [
             sigma * (s[1] - s[0]),
             s[0] * (rho - s[2]) - s[1],
@@ -1311,11 +1312,11 @@ Two entry points, and the split is the wrinkle:
 
 ```science
 ## Evaluate at a point, once. Builds and discards.
-function interpolate_at(...)
+def interpolate_at(...)
 
 ## Build a reusable interpolant. The return is a value with state, which N4 says
 ## is when a type is justified.
-function Interpolator.fit(...)
+def Interpolator.fit(...)
 ```
 
 Supporting N3 functions that are objects rather than methods: `bspline_basis`
@@ -1348,7 +1349,7 @@ use math (interpolate_at, Interpolator, InterpolationMethod, Polynomial)
 
 ## The one-shot form. Fallible, because the sample points may be unsorted,
 ## duplicated, or too few for the requested method.
-function interpolate_at of T(
+def interpolate_at of T(
     xs: borrowed Array of T,
     ys: borrowed Array of T,
     x: T,
@@ -1357,30 +1358,30 @@ function interpolate_at of T(
 
 ## The reusable form. N4's justification for a type: it holds the coefficients.
 Interpolator of T has:
-    function fit(
+    def fit(
         xs: borrowed Array of T,
         ys: borrowed Array of T,
         method: InterpolationMethod,
     ) -> (Interpolator of T, InterpolationError?) where T: Real
 
-    function evaluate(borrowed self, x: T) -> T
-    function evaluate_derivative(borrowed self, x: T, order: Int) -> T
+    def evaluate(borrowed self, x: T) -> T
+    def evaluate_derivative(borrowed self, x: T, order: Int) -> T
 
 ## `evaluate`, not `at`. See §2.4: the rename outlives the reservation that
 ## forced it.
 Polynomial of T has:
-    function evaluate(borrowed self, x: T) -> T where T: Real
+    def evaluate(borrowed self, x: T) -> T where T: Real
 
 ## Roots are complex even for a real polynomial, which the return type says and
 ## the name does not have to.
 Polynomial of T has:
-    function roots(borrowed self, tolerance: T)
+    def roots(borrowed self, tolerance: T)
         -> (Array of Complex of T, RootError?) where T: Real
 
 ## A least-squares fit in the Chebyshev basis, which is what anybody fitting a
 ## smooth function on an interval should be doing and almost nobody is.
-function chebyshev_fit of T(
-    f: function(T) -> T,
+def chebyshev_fit of T(
+    f: def(T) -> T,
     lower: T,
     upper: T,
     degree: Int,
@@ -1395,7 +1396,7 @@ use math (Interpolator, InterpolationMethod)
 ## Resample an irregularly-sampled instrument trace onto a regular grid, with a
 ## shape-preserving method so that the resampling cannot invent an overshoot the
 ## instrument never saw.
-function resample(
+def resample(
     times: borrowed Array of F64,
     values: borrowed Array of F64,
     grid: borrowed Array of F64,
@@ -1482,8 +1483,8 @@ use math (root, find_all_roots, is_probable_prime, factorise, combinations)
 ## The N2 shape. `bracket` is a type rather than two floats, because a bracketing
 ## method needs a sign change and an open method does not, and the type is where
 ## that precondition can be checked once.
-function root of T(
-    f: function(T) -> T,
+def root of T(
+    f: def(T) -> T,
     bracket: Bracket of T,
     method: RootMethod,
     tolerance: Tolerance,
@@ -1493,9 +1494,9 @@ function root of T(
 ## through this second entry point rather than through a nullable argument: the
 ## two have genuinely different preconditions and N2's interchangeability test
 ## therefore fails between them.
-function root_with_derivative of T(
-    f: function(T) -> T,
-    derivative: function(T) -> T,
+def root_with_derivative of T(
+    f: def(T) -> T,
+    derivative: def(T) -> T,
     start: T,
     method: RootMethod,
     tolerance: Tolerance,
@@ -1504,15 +1505,15 @@ function root_with_derivative of T(
 ## Probabilistic, and the signature says so by taking the witness count. This is
 ## `stdlib-core.md` §1.2's Q1 failure rendered as an argument — the algorithm is
 ## the observable, so the algorithm is in the call.
-function is_probable_prime(n: Int, witnesses: Int, key: borrowed Key) -> Bool
+def is_probable_prime(n: Int, witnesses: Int, key: borrowed Key) -> Bool
 
 ## Fallible on time, not on input: every integer factorises, and the error is
 ## that the budget ran out. Returning the partial factorisation with the error is
 ## what makes the budget usable.
-function factorise(n: Int, budget: Budget) -> (Array of (Int, Int), FactorError?)
+def factorise(n: Int, budget: Budget) -> (Array of (Int, Int), FactorError?)
 
 ## Lazy. The eager form of this over twelve elements is half a billion arrays.
-function combinations of T(
+def combinations of T(
     items: borrowed Array of T,
     take: Int,
 ) -> Iterate of Array of T
@@ -1527,10 +1528,10 @@ use physics.constants (GRAVITATIONAL)
 ## The radius at which a satellite orbits with a given period: solve Kepler's
 ## third law for r. Bracketed, because the function is monotone and a bracket
 ## turns a convergence question into a guarantee.
-function orbital_radius(period: F64, central_mass: F64) -> (F64, Error?):
+def orbital_radius(period: F64, central_mass: F64) -> (F64, Error?):
     let mu be GRAVITATIONAL.magnitude() * central_mass
 
-    let residual be function(r: F64) -> F64:
+    let residual be def(r: F64) -> F64:
         2.0 * F64.PI * (r * r * r / mu).sqrt() - period
 
     let bracket, err be Bracket.new(1.0e5, 1.0e12, residual)
@@ -1598,7 +1599,7 @@ use signal (rfft, irfft, hilbert_transform, laplace_invert, wavelet_continuous)
 ## The clearest const-expression case in the corpus, and the one
 ## `scientific-libraries.md` §9.4 and `const-expression-arithmetic.md` §4 both
 ## build on: the output length is N/2+1, computed in type position.
-function rfft of (const N: Int)(
+def rfft of (const N: Int)(
     signal: borrowed Vector of (F64, N),
     norm: Normalisation,
 ) -> Vector of (Complex of F64, N / 2 + 1)
@@ -1606,20 +1607,20 @@ function rfft of (const N: Int)(
 ## The inverse takes the half-spectrum and the original length, because N/2+1
 ## does not determine N — `const-expression-arithmetic.md` §4.2's whole-form fold
 ## is one-way, and this is where that incompleteness shows at a call site.
-function irfft of (const N: Int)(
+def irfft of (const N: Int)(
     spectrum: borrowed Vector of (Complex of F64, N / 2 + 1),
     norm: Normalisation,
 ) -> Vector of (F64, N)
 
 ## N1 applied: `hilbert_transform`, not `hilbert`. Same length in, same out.
-function hilbert_transform of (const N: Int)(
+def hilbert_transform of (const N: Int)(
     signal: borrowed Vector of (F64, N),
 ) -> Vector of (F64, N)
 
 ## N2 applied: the inversion method is an argument. Numerical Laplace inversion
 ## is ill-posed, so the error is not optional and the tolerance is not a hint.
-function laplace_invert(
-    transform: function(Complex of F64) -> Complex of F64,
+def laplace_invert(
+    transform: def(Complex of F64) -> Complex of F64,
     time: F64,
     method: LaplaceInversion,
     tolerance: Tolerance,
@@ -1628,7 +1629,7 @@ function laplace_invert(
 ## The wavelet family is a value, not part of the name, because the families are
 ## interchangeable in the N2 sense: same inputs, same output, different cost and
 ## different time-frequency trade-off.
-function wavelet_continuous of (const N: Int, const S: Int)(
+def wavelet_continuous of (const N: Int, const S: Int)(
     signal: borrowed Vector of (F64, N),
     wavelet: Wavelet,
     scales: borrowed Vector of (F64, S),
@@ -1642,7 +1643,7 @@ use signal (rfft, rfftfreq, Normalisation)
 
 ## The dominant frequency of a sampled trace. The half-spectrum is the right
 ## transform for real input and its length is checked at compile time.
-function dominant_frequency of (const N: Int)(
+def dominant_frequency of (const N: Int)(
     trace: borrowed Vector of (F64, N),
     sample_rate: Frequency of F64,
 ) -> Frequency of F64:
@@ -1746,18 +1747,18 @@ const GRAVITATIONAL: Quantity of (Uncertain of F64, 3, -1, -2, 0, 0, 0, 0)
 
 ## The vintage, as a value rather than as a comment, so that a provenance record
 ## can read it.
-function codata_vintage() -> Int
+def codata_vintage() -> Int
 
 ## The only sanctioned way out of the unit system, and it is a named method
 ## rather than a field access, because §7.4 argues that leaving the system must
 ## be as visible as entering it.
 Quantity of (T, L, M, T2, I, K, N, J) has:
-    function magnitude(borrowed self) -> T
+    def magnitude(borrowed self) -> T
 
 ## Conversion into a named unit, which is checked for dimension and exact in its
 ## scale. `unit-literals.md` §7.4's `d.in(FOOT)`, adopted.
 Quantity of (T, L, M, T2, I, K, N, J) has:
-    function in(borrowed self, unit: UnitOf of (L, M, T2, I, K, N, J)) -> T
+    def in(borrowed self, unit: UnitOf of (L, M, T2, I, K, N, J)) -> T
 ```
 
 **In use.**
@@ -1768,7 +1769,7 @@ use physics.constants (GRAVITATIONAL, SPEED_OF_LIGHT)
 ## The Schwarzschild radius of the Sun, with the uncertainty of G carried
 ## through. The result prints as 2953.25(7) m rather than as nine digits of
 ## false precision.
-function solar_schwarzschild() -> Length of (Uncertain of F64):
+def solar_schwarzschild() -> Length of (Uncertain of F64):
     let solar_mass be 1.98847e30<kg>
     2.0 * GRAVITATIONAL * solar_mass / (SPEED_OF_LIGHT * SPEED_OF_LIGHT)
 ```
@@ -1887,22 +1888,22 @@ use physics.mechanics (kinetic_energy, Lagrangian, euler_lagrange_residual,
 ## `scientific-libraries.md` §12.7's signature, in revision-2 syntax and generic
 ## over `Real` so that an uncertain mass propagates. The return dimension is
 ## computed from the arguments'.
-function kinetic_energy of T(mass: Mass of T, velocity: Velocity of T)
+def kinetic_energy of T(mass: Mass of T, velocity: Velocity of T)
     -> Energy of T where T: Real
 
 ## Decision 11: the coordinates are bare `T`, the energies are `Quantity`. The
 ## scaling is what reattaches the units, and it is a required argument rather
 ## than a default, because a default scaling is a silent unit assumption.
-function lagrangian_from_energies of (T, const N: Int)(
-    kinetic: function(borrowed Vector of (T, N), borrowed Vector of (T, N)) -> Energy of T,
-    potential: function(borrowed Vector of (T, N)) -> Energy of T,
+def lagrangian_from_energies of (T, const N: Int)(
+    kinetic: def(borrowed Vector of (T, N), borrowed Vector of (T, N)) -> Energy of T,
+    potential: def(borrowed Vector of (T, N)) -> Energy of T,
     scaling: borrowed Scaling of (T, N),
 ) -> Lagrangian of (T, N) where T: Real
 
 ## The Euler-Lagrange residual, which is zero on a physical path. Returning the
 ## residual rather than "the equations of motion" is what makes this usable by a
 ## solver: it is the function a BVP or a variational integrator consumes.
-function euler_lagrange_residual of (T, const N: Int)(
+def euler_lagrange_residual of (T, const N: Int)(
     lagrangian: borrowed Lagrangian of (T, N),
     coordinates: borrowed Vector of (T, N),
     velocities: borrowed Vector of (T, N),
@@ -1912,14 +1913,14 @@ function euler_lagrange_residual of (T, const N: Int)(
 ## The Legendre transform. Fallible, because it requires the kinetic form to be
 ## invertible in the velocities, which a constrained or degenerate Lagrangian
 ## does not satisfy.
-function hamiltonian_from_lagrangian of (T, const N: Int)(
+def hamiltonian_from_lagrangian of (T, const N: Int)(
     lagrangian: borrowed Lagrangian of (T, N),
 ) -> (Hamiltonian of (T, N), MechanicsError?) where T: Real
 
 ## The symplectic requirement is in the type: this takes a `SymplecticMethod`,
 ## not an `OdeMethod`, so that a non-symplectic integrator cannot be handed to a
 ## Hamiltonian system by accident. §5.4's symplectic variants are that type.
-function integrate_hamiltonian of (T, const N: Int)(
+def integrate_hamiltonian of (T, const N: Int)(
     hamiltonian: borrowed Hamiltonian of (T, N),
     start: borrowed PhaseSpacePoint of (T, N),
     span: (T, T),
@@ -1945,21 +1946,21 @@ use physics.mechanics (lagrangian_from_energies, hamiltonian_from_lagrangian,
 ## A double pendulum. The coordinates are two angles, so Decision 11 applies and
 ## the state vector is dimensionless; the energies carry units and the scaling
 ## records that both coordinates are radians and both lengths are metres.
-function double_pendulum() -> (Array of PhaseSpacePoint of (F64, 2), Error?):
+def double_pendulum() -> (Array of PhaseSpacePoint of (F64, 2), Error?):
     let m1 be 1.0<kg>
     let m2 be 1.0<kg>
     let l1 be 1.0<m>
     let l2 be 1.0<m>
     let g be 9.80665<m/s^2>
 
-    let kinetic be function(q: borrowed Vector of (F64, 2),
+    let kinetic be def(q: borrowed Vector of (F64, 2),
                             qdot: borrowed Vector of (F64, 2)) -> Energy of F64:
         let t1 be 0.5 * (m1 + m2) * l1 * l1 * qdot[0] * qdot[0]
         let t2 be 0.5 * m2 * l2 * l2 * qdot[1] * qdot[1]
         let cross be m2 * l1 * l2 * qdot[0] * qdot[1] * (q[0] - q[1]).cos()
         t1 + t2 + cross
 
-    let potential be function(q: borrowed Vector of (F64, 2)) -> Energy of F64:
+    let potential be def(q: borrowed Vector of (F64, 2)) -> Energy of F64:
         let v1 be -(m1 + m2) * g * l1 * q[0].cos()
         let v2 be -m2 * g * l2 * q[1].cos()
         v1 + v2
@@ -2021,7 +2022,7 @@ use physics.thermo (ideal_gas_pressure, equation_of_state, carnot_efficiency,
 ## `scientific-libraries.md` §12.7's signature, with the dimension aliases rather
 ## than the raw exponent vectors, because `Amount of F64` is readable and
 ## `Quantity of (F64, 0, 0, 0, 0, 0, 1, 0)` is not.
-function ideal_gas_pressure of T(
+def ideal_gas_pressure of T(
     amount: Amount of T,
     temperature: Temperature of T,
     volume: Volume of T,
@@ -2029,7 +2030,7 @@ function ideal_gas_pressure of T(
 
 ## N2: the equation of state is a value. The critical constants come with it,
 ## because van der Waals without `a` and `b` is not an equation of state.
-function equation_of_state of T(
+def equation_of_state of T(
     model: EquationOfState of T,
     temperature: Temperature of T,
     molar_volume: MolarVolume of T,
@@ -2037,20 +2038,20 @@ function equation_of_state of T(
 
 ## Dimensionless return, and the type says so: an efficiency is a ratio, which
 ## under `unit-literals.md` §6.2's rule for all-zero exponents is a plain `T`.
-function carnot_efficiency of T(hot: Temperature of T, cold: Temperature of T)
+def carnot_efficiency of T(hot: Temperature of T, cold: Temperature of T)
     -> (T, ThermoError?) where T: Real
 
 ## Spectral radiance per unit wavelength — the dimension is W·m⁻²·sr⁻¹·m⁻¹, which
 ## is why the alias is named rather than spelled, and why getting it wrong is the
 ## most common error in radiometry.
-function blackbody_spectral_wavelength of T(
+def blackbody_spectral_wavelength of T(
     temperature: Temperature of T,
     wavelength: Length of T,
 ) -> SpectralRadianceWavelength of T where T: Real
 
 ## Statistical mechanics returns occupation numbers, which are dimensionless, and
 ## takes energies, which are not. The mixture is the normal case.
-function fermi_dirac_occupation of T(
+def fermi_dirac_occupation of T(
     energy: Energy of T,
     chemical_potential: Energy of T,
     temperature: Temperature of T,
@@ -2064,7 +2065,7 @@ use physics.thermo (carnot_efficiency)
 
 ## The theoretical ceiling on a steam plant, written with the temperatures in the
 ## units an engineer uses and stored in the unit the physics requires.
-function plant_ceiling() -> (F64, Error?):
+def plant_ceiling() -> (F64, Error?):
     let boiler be 540<degC>
     let condenser be 33<degC>
     carnot_efficiency(boiler, condenser)
@@ -2108,7 +2109,7 @@ use physics.em (coulomb_force, lorentz_force, impedance_series, skin_depth,
 ## silently makes superposition the caller's problem. `Vector3 of (Force of T)`
 ## is a fixed-size vector of a dimensioned scalar — Decision 11's heterogeneity
 ## problem does not arise here, because all three components are forces.
-function coulomb_force of T(
+def coulomb_force of T(
     charge_one: Charge of T,
     charge_two: Charge of T,
     separation: Vector3 of (Length of T),
@@ -2118,7 +2119,7 @@ function coulomb_force of T(
 ## The cross product is where units-in-the-type does something a scalar library
 ## cannot: `Velocity × MagneticFluxDensity` has the dimension of an electric
 ## field, and the compiler computes that rather than trusting the name.
-function lorentz_force of T(
+def lorentz_force of T(
     charge: Charge of T,
     field_electric: Vector3 of (ElectricField of T),
     velocity: Vector3 of (Velocity of T),
@@ -2129,14 +2130,14 @@ function lorentz_force of T(
 ## `Impedance of (Complex of T)` — the dimension is outside, exactly as
 ## `uncertainty.md` Decision 5 puts it for uncertainty, and for the same reason:
 ## a dimension is not complex.
-function impedance_series of T(
+def impedance_series of T(
     elements: borrowed Array of Complex of (Impedance of T),
 ) -> Complex of (Impedance of T) where T: Real
 
 ## Three arguments of three different dimensions returning a fourth. This is the
 ## signature a units-free library writes as `skin_depth(rho, f, mu)` and nobody
 ## can check.
-function skin_depth of T(
+def skin_depth of T(
     resistivity: Resistivity of T,
     frequency: Frequency of T,
     permeability: Permeability of T,
@@ -2144,7 +2145,7 @@ function skin_depth of T(
 
 ## `E × H` has the dimension of power per unit area, computed rather than
 ## asserted.
-function poynting_vector of T(
+def poynting_vector of T(
     field_electric: Vector3 of (ElectricField of T),
     field_magnetic: Vector3 of (MagneticFieldStrength of T),
 ) -> Vector3 of (Irradiance of T) where T: Real
@@ -2156,7 +2157,7 @@ function poynting_vector of T(
 use physics.em (skin_depth)
 
 ## How thick a copper shield has to be at mains frequency, and at a megahertz.
-function copper_shield():
+def copper_shield():
     let rho be 1.68e-8<ohm*m>
     let mu be 4.0 * F64.PI * 1.0e-7<H/m>
 
@@ -2197,7 +2198,7 @@ use physics.optics (snell_refraction_angle, thin_lens_image_distance,
 ## refracted ray, and returning a NaN is how that becomes a wrong plot rather
 ## than an error. The angle is dimensionless per `unit-literals.md` §6.2, so it
 ## is a plain `T`, and the doc comment says radians because the type cannot.
-function snell_refraction_angle of T(
+def snell_refraction_angle of T(
     index_incident: T,
     index_transmitted: T,
     angle_incident: T,
@@ -2205,7 +2206,7 @@ function snell_refraction_angle of T(
 
 ## Two lengths in, one length out, and the sign convention is the doc comment's
 ## job because a sign is not a dimension.
-function thin_lens_image_distance of T(
+def thin_lens_image_distance of T(
     focal_length: Length of T,
     object_distance: Length of T,
 ) -> (Length of T, OpticsError?) where T: Real
@@ -2213,21 +2214,21 @@ function thin_lens_image_distance of T(
 ## The resolution limit of an aperture. Wavelength and aperture are both lengths
 ## and the f-number is dimensionless, so the product is a length: the checker
 ## confirms the formula's shape and cannot confirm the 1.22.
-function airy_disc_radius of T(
+def airy_disc_radius of T(
     wavelength: Length of T,
     aperture_diameter: Length of T,
     focal_length: Length of T,
 ) -> Length of T where T: Real
 
 ## Malus's law. Intensity in, intensity out, angle dimensionless.
-function malus_intensity of T(
+def malus_intensity of T(
     incident: Irradiance of T,
     angle: T,
 ) -> Irradiance of T where T: Real
 
 ## A Gaussian beam's Rayleigh range. Two lengths and a refractive index in, one
 ## length out.
-function rayleigh_range of T(
+def rayleigh_range of T(
     waist: Length of T,
     wavelength: Length of T,
     refractive_index: T,
@@ -2240,7 +2241,7 @@ function rayleigh_range of T(
 use physics.optics (airy_disc_radius, rayleigh_criterion_angle)
 
 ## Can this telescope resolve the two components of a binary?
-function can_resolve(
+def can_resolve(
     aperture: Length of F64,
     wavelength: Length of F64,
     separation: F64,
@@ -2296,12 +2297,12 @@ use physics.quantum (de_broglie_wavelength, particle_in_box_energy,
 
 ## Two dimensioned arguments, one dimensioned result, and the constant is
 ## internal. This is the shape that works best in this module.
-function de_broglie_wavelength of T(mass: Mass of T, velocity: Velocity of T)
+def de_broglie_wavelength of T(mass: Mass of T, velocity: Velocity of T)
     -> Length of T where T: Real
 
 ## Quantum numbers are `Int`, not `T`, and the type saying so removes the
 ## commonest transcription error in the module.
-function particle_in_box_energy of T(
+def particle_in_box_energy of T(
     level: Int,
     mass: Mass of T,
     width: Length of T,
@@ -2310,14 +2311,14 @@ function particle_in_box_energy of T(
 ## F1. The operator's shape must match the state's, twice, and that is the whole
 ## correctness condition. Bare `Complex of T` inside, per the unit-system note
 ## above.
-function expectation_value of (T, const N: Int)(
+def expectation_value of (T, const N: Int)(
     state: borrowed Vector of (Complex of T, N),
     operator: borrowed Matrix of (Complex of T, N, N),
 ) -> (T, QuantumError?) where T: Real
 
 ## Returns the product and the bound it must exceed, rather than a Bool, because
 ## a user checking Heisenberg wants to see by how much.
-function uncertainty_product of (T, const N: Int)(
+def uncertainty_product of (T, const N: Int)(
     state: borrowed Vector of (Complex of T, N),
     observable_one: borrowed Matrix of (Complex of T, N, N),
     observable_two: borrowed Matrix of (Complex of T, N, N),
@@ -2325,7 +2326,7 @@ function uncertainty_product of (T, const N: Int)(
 
 ## Fallible on trace: a density matrix whose trace is not one is not a density
 ## matrix, and silently normalising it hides a bug upstream.
-function von_neumann_entropy of (T, const N: Int)(
+def von_neumann_entropy of (T, const N: Int)(
     density: borrowed Matrix of (Complex of T, N, N),
     base: EntropyBase,
 ) -> (T, QuantumError?) where T: Real
@@ -2338,7 +2339,7 @@ use physics.quantum (particle_in_box_energy)
 use physics.constants (ELECTRON_MASS)
 
 ## The first four levels of an electron in a one-nanometre box, in electron-volts.
-function box_levels():
+def box_levels():
     let width be 1<nm>
     for n in 1..5:
         let e be particle_in_box_energy(n, ELECTRON_MASS, width)
@@ -2394,23 +2395,23 @@ use physics.relativity (lorentz_factor, schwarzschild_radius, invariant_mass,
 
 ## `scientific-libraries.md` §12.7's signature, in revision-2 syntax and generic
 ## over `Real`. Dimensionless return, so a plain `T`.
-function lorentz_factor of T(velocity: Velocity of T) -> (T, RelativityError?)
+def lorentz_factor of T(velocity: Velocity of T) -> (T, RelativityError?)
     where T: Real
 
 ## §12.7's second signature. One dimensioned argument, one dimensioned result,
 ## two constants inside.
-function schwarzschild_radius of T(mass: Mass of T) -> Length of T where T: Real
+def schwarzschild_radius of T(mass: Mass of T) -> Length of T where T: Real
 
 ## A four-momentum carries an energy and three momenta, which are different
 ## dimensions, so `FourMomentum` is a struct with named fields and not a
 ## `Vector of (Quantity …, 4)` — Decision 11's heterogeneity constraint, again.
-function invariant_mass of T(
+def invariant_mass of T(
     momenta: borrowed Array of FourMomentum of T,
     signature: MetricSignature,
 ) -> (Mass of T, RelativityError?) where T: Real
 
 ## The signature is required, not defaulted, for the reason above.
-function minkowski_interval of T(
+def minkowski_interval of T(
     a: borrowed FourVector of T,
     b: borrowed FourVector of T,
     signature: MetricSignature,
@@ -2418,7 +2419,7 @@ function minkowski_interval of T(
 
 ## Cosmology takes a cosmology, not seven loose parameters, because the seven
 ## are correlated and passing six of them is the commonest error in the field.
-function luminosity_distance of T(
+def luminosity_distance of T(
     redshift: T,
     cosmology: borrowed Cosmology of T,
 ) -> (Length of T, RelativityError?) where T: Real
@@ -2437,7 +2438,7 @@ use physics.relativity (lorentz_factor, time_dilation)
 ## How much slower does a clock run on the ISS? The answer is about 28
 ## microseconds a day from velocity alone, and the calculation is one line once
 ## the units are in the type.
-function iss_clock_drift() -> (Time of F64, Error?):
+def iss_clock_drift() -> (Time of F64, Error?):
     let orbital_speed be 7660<m/s>
     let day be 86400<s>
 
@@ -2494,7 +2495,7 @@ use physics.fluids (reynolds_number, bernoulli_velocity, friction_factor_colebro
 ## single best advertisement for units in a type in the whole note: a Reynolds
 ## number that comes out with a leftover dimension is a Reynolds number computed
 ## with a diameter where a radius belonged, and the compiler says so.
-function reynolds_number of T(
+def reynolds_number of T(
     density: Density of T,
     velocity: Velocity of T,
     length: Length of T,
@@ -2503,7 +2504,7 @@ function reynolds_number of T(
 
 ## Two pressures and a density in, a velocity out. The square root is of an even
 ## dimension, so `const-expression-arithmetic.md` §7.2 permits it.
-function bernoulli_velocity of T(
+def bernoulli_velocity of T(
     pressure_total: Pressure of T,
     pressure_static: Pressure of T,
     density: Density of T,
@@ -2511,7 +2512,7 @@ function bernoulli_velocity of T(
 
 ## Implicit: Colebrook is solved by iteration, so it can fail to converge, and
 ## `root` from §5.6 is what it calls.
-function friction_factor_colebrook of T(
+def friction_factor_colebrook of T(
     reynolds: T,
     relative_roughness: T,
     tolerance: Tolerance,
@@ -2519,7 +2520,7 @@ function friction_factor_colebrook of T(
 
 ## Returns the whole set of ratios, because a caller who wants one almost always
 ## wants three, and five separate functions would recompute the same quantity.
-function normal_shock_relations of T(
+def normal_shock_relations of T(
     mach_upstream: T,
     heat_capacity_ratio: T,
 ) -> (ShockRatios of T, FluidError?) where T: Real
@@ -2527,7 +2528,7 @@ function normal_shock_relations of T(
 ## Stokes or Newton regime by Reynolds number, chosen inside, which is why this
 ## is one function and not two: the caller does not know the regime in advance,
 ## because the regime depends on the answer.
-function terminal_velocity of T(
+def terminal_velocity of T(
     particle_diameter: Length of T,
     particle_density: Density of T,
     fluid_density: Density of T,
@@ -2542,7 +2543,7 @@ function terminal_velocity of T(
 use physics.fluids (reynolds_number)
 
 ## Laminar or turbulent? Water at 20 C through a 25 mm pipe at 2 m/s.
-function pipe_regime() -> String:
+def pipe_regime() -> String:
     let re be reynolds_number(
         density: 998.2<kg/m^3>,
         velocity: 2.0<m/s>,
@@ -2635,7 +2636,7 @@ use physics.nuclear (activity_at, binding_energy_per_nucleon, bethe_bloch,
 
 ## Decay. Two dimensioned arguments and a time, returning an activity, which is
 ## becquerels — s⁻¹ with a meaning, per Decision 12.
-function activity_at of T(
+def activity_at of T(
     initial_activity: Activity of T,
     half_life: Time of T,
     elapsed: Time of T,
@@ -2643,7 +2644,7 @@ function activity_at of T(
 
 ## `ParticleId`-adjacent: a nuclide is two integers, and making them arguments
 ## rather than a parsed string is the same decision as `ParticleId`.
-function binding_energy_per_nucleon of T(
+def binding_energy_per_nucleon of T(
     protons: Int,
     neutrons: Int,
 ) -> (Energy of T, NuclearError?) where T: Real
@@ -2651,7 +2652,7 @@ function binding_energy_per_nucleon of T(
 ## Stopping power: energy per unit length, from a particle's charge, mass and
 ## energy and the medium's properties. Seven arguments of six dimensions, which
 ## is a signature nobody can check by eye and the compiler checks entirely.
-function bethe_bloch of T(
+def bethe_bloch of T(
     charge_number: Int,
     mass: Mass of T,
     kinetic_energy: Energy of T,
@@ -2663,7 +2664,7 @@ function bethe_bloch of T(
 
 ## Decision 12 in a signature: the input and the output have the same dimension
 ## and different types, and the weighting factor is the only way across.
-function equivalent_dose of T(
+def equivalent_dose of T(
     absorbed: AbsorbedDose of T,
     radiation: RadiationKind,
 ) -> EquivalentDose of T where T: Real
@@ -2672,7 +2673,7 @@ function equivalent_dose of T(
 ## probability. The baseline and the energy are the two things whose units get
 ## confused — kilometres and GeV are the field's convention and metres and joules
 ## are the SI — and the literal is where that is fixed.
-function neutrino_oscillation_probability of T(
+def neutrino_oscillation_probability of T(
     from_flavour: NeutrinoFlavour,
     to_flavour: NeutrinoFlavour,
     baseline: Length of T,
@@ -2688,7 +2689,7 @@ use physics.nuclear (activity_at, equivalent_dose, RadiationKind)
 
 ## A sealed caesium-137 source, ten years on, and the equivalent dose from an
 ## hour at one metre. Two separate unit questions, both settled by the types.
-function source_check() -> EquivalentDose of F64:
+def source_check() -> EquivalentDose of F64:
     let initial be 370<MBq>
     let half_life be 30.08<a>
 
@@ -2779,7 +2780,7 @@ the single easiest error to make in the whole system:
 ```science
 use physics.mechanics (projectile_range)
 
-function shot() -> Length of F64:
+def shot() -> Length of F64:
     let speed be 20<m/s>
     let angle be 45<deg>
     let g be 9.80665<m/s>          # should be m/s^2
@@ -2945,17 +2946,17 @@ today that distance is one program.
 
 ```science
 interface Real:
-    function from_exact(value: F64) -> Self
-    function nominal(borrowed self) -> F64
+    def from_exact(value: F64) -> Self
+    def nominal(borrowed self) -> F64
 
-    function sqrt(borrowed self) -> Self
-    function exp(borrowed self) -> Self
-    function ln(borrowed self) -> Self
-    function pow(borrowed self, exponent: borrowed Self) -> Self
-    function sin(borrowed self) -> Self
-    function cos(borrowed self) -> Self
-    function atan2(borrowed self, other: borrowed Self) -> Self
-    function abs(borrowed self) -> Self
+    def sqrt(borrowed self) -> Self
+    def exp(borrowed self) -> Self
+    def ln(borrowed self) -> Self
+    def pow(borrowed self, exponent: borrowed Self) -> Self
+    def sin(borrowed self) -> Self
+    def cos(borrowed self) -> Self
+    def atan2(borrowed self, other: borrowed Self) -> Self
+    def abs(borrowed self) -> Self
 ```
 
 — and observes in §6.5 that the edit to the catalogue *"was happening anyway"*,
@@ -2970,13 +2971,13 @@ which word goes in the bound.**
 > The functions that keep `Float`, and they are the entire list:
 >
 > ```science
-> function ulp(x: F64) -> F64
-> function next_after of T(x: T, towards: T) -> T where T: Float
-> function to_bits of T(x: T) -> T::Bits where T: Float
-> function from_bits of T(bits: T::Bits) -> T where T: Float
-> function classify of T(x: T) -> FloatClass where T: Float
-> function is_normal of T(x: T) -> Bool where T: Float
-> function total_order of T(a: T, b: T) -> Ordering where T: Float
+> def ulp(x: F64) -> F64
+> def next_after of T(x: T, towards: T) -> T where T: Float
+> def to_bits of T(x: T) -> T::Bits where T: Float
+> def from_bits of T(bits: T::Bits) -> T where T: Float
+> def classify of T(x: T) -> FloatClass where T: Float
+> def is_normal of T(x: T) -> Bool where T: Float
+> def total_order of T(a: T, b: T) -> Ordering where T: Float
 > ```
 >
 > Seven functions, all of them tier 1b, all of them in `math` rather than the
@@ -3007,7 +3008,7 @@ rule with nobody writing a derivative rule. This is the payoff
 functions rather than link them, and `Real` is what collects it.
 
 **`complex_step_derivative` becomes available** (§5.3). It needs `f` generic over
-its argument type; a signature written `function(F64) -> F64` cannot be evaluated
+its argument type; a signature written `def(F64) -> F64` cannot be evaluated
 at a complex argument, and one written `function of T(T) -> T where T: Real`
 can — once `Complex of F64` implements `Real`, which is the one extension this
 note asks of `uncertainty.md`'s interface (§11).
@@ -3019,12 +3020,12 @@ puts the dimension outside and the uncertainty inside, so
 example — an electron mass with a CODATA uncertainty producing an energy with the
 right number of digits — required no code in this note beyond choosing the bound.
 
-### 8.3 `pure function`, and what the bound does not cover
+### 8.3 `pure def`, and what the bound does not cover
 
-`effects.md` asks that `pure function` be a declaration the compiler checks, and
-its §3.6 uses `pure function erf(x: F64) -> F64` as its own example. Almost every
+`effects.md` asks that `pure def` be a declaration the compiler checks, and
+its §3.6 uses `pure def erf(x: F64) -> F64` as its own example. Almost every
 signature in §5 and §6 is pure in that sense, and declaring it buys the guarantee
-the note names: *"a `pure function erf` cannot quietly acquire a call to a logging
+the note names: *"a `pure def erf` cannot quietly acquire a call to a logging
 facility."*
 
 Three groups in this note are **not** pure and should not be declared so:
@@ -3127,7 +3128,7 @@ the information worth adding.
    §6 is blocked behind it** and so are §5.4's PDEs and §5.7's transforms. This
    note is the fourth asker and the largest consumer by line count.
 
-2. **Closure types spelled `function(T) -> U`.** `ffi-c-boundary.md` §10.1 raised
+2. **Closure types spelled `def(T) -> U`.** `ffi-c-boundary.md` §10.1 raised
    it, `scientific-libraries.md` §14.2 and `broadcasting.md` seconded it. It
    appears in `integrate`, `derivative`, `root`, `solve_ode`, `solve_bvp`,
    `laplace_invert`, `lagrangian_from_energies` and `euler_lagrange_residual` —

@@ -27,7 +27,7 @@ Amends: the core spec §12, which lists the package manager as out of scope for
 F0. This note agrees with three quarters of that and asks for the other quarter
 back; §1.4 says which quarter and why.
 
-Syntax: revision 2 throughout — `function`, `->`, `of`, `borrowed`, `is` / `is
+Syntax: revisions 2 and 3 throughout — `def`, `->`, `of`, `borrowed`, `is` / `is
 not`, `> < >= <=`, `interface`, `Type has:`, `T?`, `-> (T, Error?)` with `?` as
 the presence test, and `print`.
 
@@ -273,7 +273,7 @@ use data.csv (read_csv)
 use random (Key)
 use spectra.fit (Fit, fit_peaks)
 
-function run(path: String) -> (Fit, Error?):
+def run(path: String) -> (Fit, Error?):
     let frame, err be read_csv(path)
     if err?:
         return (Fit.empty(), err)
@@ -1020,20 +1020,20 @@ public type Fit:
     label: String?
 
 public interface Converge:
-    function is_converged(self) -> Bool
+    def is_converged(self) -> Bool
 
-    function report(self) -> String:
+    def report(self) -> String:
         if self.is_converged(): "converged" else: "did not converge"
 
 Fit implements Converge:
-    function is_converged(self) -> Bool:
+    def is_converged(self) -> Bool:
         self.residual <= 1.0e-6
 
 Fit has:
-    function empty() -> Fit:
+    def empty() -> Fit:
         Fit(centres: Array.new(), residual: 0.0, iterations: 0, label: null)
 
-public function fit_peaks(counts: borrowed Array of F64, key: Key) -> (Fit, Error?):
+public def fit_peaks(counts: borrowed Array of F64, key: Key) -> (Fit, Error?):
     let design, err be Matrix.vandermonde(counts.length(), 3)
     if err?:
         return (Fit.empty(), err)
@@ -1054,7 +1054,7 @@ use spectra.fit (Fit, fit_peaks, Converge)
 use data.csv (read_csv)
 use random (Key)
 
-function main():
+def main():
     let frame, err be read_csv("run-0912.csv")
     if err?:
         print("could not read the run")

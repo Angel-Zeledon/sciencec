@@ -216,7 +216,7 @@ accident.
 ### 4.3 The hardest case found
 
 ```science
-function pick(a: Doc?, b: Doc?) -> Doc?:
+def pick(a: Doc?, b: Doc?) -> Doc?:
     if a?:
         return a
     b
@@ -227,7 +227,7 @@ narrowed type is `Doc` and the return type is `Doc?`, so this works by Decision
 6's implicit widening. Now invert it:
 
 ```science
-function first_title(a: Doc?, b: Doc?) -> String?:
+def first_title(a: Doc?, b: Doc?) -> String?:
     if a?:
         return a.title      # `a` is `Doc` here, so `.title` resolves
     if b?:

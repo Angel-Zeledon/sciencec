@@ -10,6 +10,7 @@ disagrees with it says so explicitly and gives the reason.
 | Note | Owns | Phase |
 |---|---|---|
 | `syntax-revision-2.md` | The current syntax: comparisons, loops, the Go-style error model, `->`, `has`, `interface`, `print`. **Read this first** — the other notes are written in the syntax it defines. The core spec **has** since been amended to it (§4.2, §4.3, §4.5, §4.6, §5.4, §5.5, §8, §13), which discharges §9's item 1; §13 is the one place the amendment is incomplete — see the conventions below. | F0 |
+| `syntax-revision-3.md` | One keyword: the function declaration is `def`, not `function`. What that did to §4.1's keyword rule, what the migration cost, and why `sciencec fmt` made it cheap. **Read with `def-and-lambda.md`**, which argued the other way and lost. | F0 |
 | `reserved-words.md` | The reserved-word list audited against the scientific vocabulary; the dot rule; the case for freeing `shape`, `model` and `tensor`. | F0 |
 | `llm-ergonomics.md` | Diagnostics as the only teaching channel for a language with no training corpus; the migration-diagnostic inventory; canonicalisation for `sciencec fmt`. | F0 |
 | `indexing-and-array-literals.md` | `a[i]`, `m[i, j]`, slicing, `Slice of T`, array and matrix literals, zero-based indexing, and the rejection of comprehensions. | F0 / F1 |
@@ -17,7 +18,7 @@ disagrees with it says so explicitly and gives the reason.
 | `strings-formatting-and-docs.md` | `f"…"` interpolation, the format mini-language, `Display` / `Inspect` / `DisplayNumber`, `print`, `##` doc comments, Unicode policy. | F0 |
 | `unit-literals.md` | `9.8<m/s^2>`, the unit namespace, SI prefix composition, exact rational folding, affine and logarithmic units. | F0 (staged) |
 | `broadcasting.md` | Element-wise operators, the dotted forms, the alignment algorithm, `with … as …` for dynamic shapes, fusion. | F1 |
-| `def-and-lambda.md` | Whether `function` becomes `def` and whether `lambda` is added. Both rejected, with the surviving half of §4.1 stated as one clause. | F0 |
+| `def-and-lambda.md` | Whether `function` becomes `def` and whether `lambda` is added. Both rejected here; the `def` half was then **overruled by the project owner** and the note records the argument, the reversal, and the restated keyword rule (§1.5, §3.5). `lambda` stays rejected. | F0 |
 | `stdlib-core.md` | Level 1: what is available with no import. The core criterion, `String`'s surface, `Read`/`Write`, the concrete error inventory. | F0 |
 | `stdlib-standard.md` | Level 2: `time`, `os`, `random`, `testing`, `logging`, `text.regex`, `thread`, `net`. | F0 / F1 |
 | `stdlib-shape-and-packages.md` | The policy the three stdlib notes live under: batteries included, the error model's consequences, threads over async, naming, and Level 3. **Read before the other two.** | F0 |
@@ -37,7 +38,7 @@ disagrees with it says so explicitly and gives the reason.
 | `statistical-validity.md` | `PValue` and `AdjustedPValue`: making an uncorrected p-value impossible to threshold silently, by flow rather than by counting. | F1 |
 | `reproducibility.md` | What Science can actually promise about reruns, the five float channels, `--deterministic`, and the provenance artefact a reviewer checks. | F0 one-way doors |
 | `const-expression-arithmetic.md` | The five-operator grammar, the `k + Σ cᵢ·aᵢ` normal form, type-level shapes, and the eight things F0 must commit to before the type checker is written. **Blocks the type checker.** | F0 |
-| `effects.md` | Three inferred bits — `python`, `ambient`, `external`; `pure function` as the one declaration; how much the effect discipline already falls out of ownership. | F0 reserves |
+| `effects.md` | Three inferred bits — `python`, `ambient`, `external`; `pure def` as the one declaration; how much the effect discipline already falls out of ownership. | F0 reserves |
 | `collections-and-chains.md` | `Iterate`, the chain vocabulary, laziness, ownership through a chain, parallelism. | F0 |
 | `data-io.md` | `Path`, `File`, `Frame`, `Rows`, and the `data.*` format modules. | F0 |
 | `ffi-c-boundary.md` | `extern` blocks, the ownership boundary, `unsafe`, callbacks, linking, binding generation. | F0 |
@@ -77,12 +78,20 @@ checked against everything that existed when it started.
 | Codes | Where |
 |---|---|
 | `SC0001`, `SC0003`–`SC0011`, `SC0016`–`SC0017` | `crates/science-lexer/src/lexer.rs` |
-| `SC0100`–`SC0116`, `SC0118`, `SC0138`–`SC0139`, `SC0141`–`SC0144` | `crates/science-parser/src/parser.rs` |
+| `SC0100`–`SC0116`, `SC0118`, `SC0138`–`SC0139`, `SC0141`–`SC0144`, `SC0155`–`SC0156` | `crates/science-parser/src/parser.rs` |
 
 `SC0002` is unallocated. `SC0115` (nested `each`), `SC0116` (an ambiguous
 `Array of Doc.new()`) and `SC0118` (`returns` written where `->` belongs) are
 the newest and are in use. `SC0118` is the first code in this table that was
 allocated by a design note and then implemented the same day.
+
+`SC0155` (`try`, removed by revision 2) and `SC0156` (`function`, renamed to
+`def` by revision 3) were both taken straight from the syntax free pool by the
+commit that needed them rather than from a note's block. `SC0156` is the
+instructive one: `def-and-lambda.md` §9.3 had pre-allocated `SC0136` for exactly
+that contingency, and the implementation did not use it, because a keyword
+migration is written next to the other keyword migrations. **Both `SC0119` and
+`SC0136` are returned to the free pool** — see the Syntax row below.
 
 ### Claimed by notes
 
@@ -94,7 +103,8 @@ allocated by a design note and then implemented the same day.
 | `strings-formatting-and-docs.md` | `SC0015` | `SC0170`–`SC0177` | — | `SC0274`–`SC0275` | — | — |
 | `unit-literals.md` | `SC0012`–`SC0014` | — | `SC0230`–`SC0236` | `SC0252`–`SC0256` | — | — |
 | `script-mode.md` | — | `SC0117` | `SC0212`–`SC0213` | — | — | `SC0458` |
-| `def-and-lambda.md` | — | `SC0119`, `SC0135`–`SC0137` | — | — | — | — |
+| `def-and-lambda.md` | — | `SC0135`, `SC0137` | — | — | — | — |
+| `syntax-revision-3.md` | — | `SC0156` (`function` → `def`, shipped) | — | — | — | — |
 | `stdlib-core.md` | — | — | — | `SC0257`–`SC0259` | — | — |
 | `stdlib-standard.md` | — | — | — | `SC0265`–`SC0270` | — | — |
 | `stdlib-shape-and-packages.md` | — | — | — | `SC0276`, `SC0279` | — | — |
@@ -163,7 +173,7 @@ existing `SC0009`, `script-mode.md` changes `SC0101`'s wording and reuses
 | Range | Free |
 |---|---|
 | Lexical | `SC0002`, `SC0018`–`SC0099` |
-| Syntax | `SC0156`–`SC0159`, `SC0161`–`SC0169`, `SC0178`–`SC0179` |
+| Syntax | `SC0119`, `SC0136`, `SC0157`–`SC0159`, `SC0161`–`SC0169`, `SC0178`–`SC0179` |
 | Resolution | `SC0200`–`SC0211`, `SC0222`–`SC0229`, `SC0241`–`SC0245` |
 | Types | `SC0250`, `SC0299`, and `SC0504`–`SC0799` in the second band |
 | Ownership | everything but `SC0301`–`SC0302`, `SC0331`–`SC0332`, `SC0380` |
@@ -176,9 +186,12 @@ The Syntax row was wrong until now and said so in both directions at once: it
 offered `SC0138`–`SC0149` as free while the table above recorded `SC0138`–`SC0139`
 and `SC0141`–`SC0144` in `parser.rs`, `SC0140` held by `syntax-revision-2.md`
 and `SC0145`–`SC0149` claimed by `rust-interop.md`. `SC0155` has since gone to
-the `try` migration and `SC0190`–`SC0199` to `mcp-servers.md`. **Check this row
-against the table above before trusting it** — the table is the record and this
-is a convenience.
+the `try` migration, `SC0156` to the `function` → `def` migration, and
+`SC0190`–`SC0199` to `mcp-servers.md`. `SC0119` and `SC0136` came back the other
+way when `def-and-lambda.md`'s `def` half was reversed: the first is void because
+`def` is now correct, the second because the contingency it was held for shipped
+as `SC0156`. **Check this row against the table above before trusting it** — the
+table is the record and this is a convenience.
 
 ## Standing cross-note asks
 
@@ -188,7 +201,7 @@ building rather than deferring.
 | Ask | Asked by | Notes |
 |---|---|---|
 | **Const-expression arithmetic in type position** | `scientific-libraries.md` §12.4, `broadcasting.md` §11, `unit-literals.md` | The single largest one. Units need exponent addition; shapes need output-shape computation. Build once, two customers. `broadcasting.md` adds that shapes also need type-level *lists*, which is a bigger ask than §12.4 priced. |
-| **Closure types spelled `function(T) -> U`** | `ffi-c-boundary.md` §10.1, `scientific-libraries.md` §14.2, `broadcasting.md` | Three notes. The core spec defines closure *expressions* and never their types. |
+| **Closure types spelled `def(T) -> U`** | `ffi-c-boundary.md` §10.1, `scientific-libraries.md` §14.2, `broadcasting.md` | Three notes, still no owner. The core spec defines closure *expressions* and never their types. **The spelling was carried from `function(T) -> U` mechanically by revision 3 and the justification for it did not survive intact** — it was chosen because it read as a noun naming what the parameter is, and `def` does not. `collections-and-chains.md` §1.2 flags it; whoever takes this ask should re-decide the spelling rather than inherit it. |
 | **Explicit type arguments at call sites** | `data-io.md` §11.2, `scientific-libraries.md` §14.3 | `read_csv of Measurement(...)`. |
 | **A derive mechanism** | `data-io.md` §11.1 (`Record`), `strings-formatting-and-docs.md` (`Inspect`) | Two customers, against §12's "macros are reserved, not implemented". |
 | **An uncertainty type** | `scientific-libraries.md` §14.6, `unit-literals.md`, `strings-formatting-and-docs.md` | Three notes now point at this hole. It is lexical (`9.80665(15)<m/s^2>`) as much as it is a type question, and it gets more expensive as `physics.constants` approaches. |
@@ -197,6 +210,14 @@ building rather than deferring.
 
 ## Conventions
 
+- **Revision-3 syntax.** Every note and the spec have been carried to `def`;
+  nothing in `docs/` still declares a function with `function`, and `function` is
+  now an ordinary word that appears in these notes only as English or as a
+  historical quotation. Where a note's *argument* rested on the old spelling
+  rather than merely used it, the note says so in place —
+  `collections-and-chains.md` §1.2 (the closure type) and `def-and-lambda.md`
+  §1.5 and §3.5 (the keyword rule) are the two worth reading before relying on
+  either.
 - **Revision-2 syntax.** Notes written before `syntax-revision-2.md` use the
   older spelling (`returns`, `trait`, `for each`, `println`, `is at least`).
   That is drift, not disagreement; when one of those notes is next edited, its

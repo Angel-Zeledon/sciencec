@@ -15,10 +15,10 @@ settles the naming question; `const-expression-arithmetic.md`, on which the
 dimensional check is entirely gated; `unit-literals.md` §10.1, whose `SC0256`
 rendering this note extends; `uncertainty.md` §3, whose gradient this note can
 supply exactly and can print; `reserved-words.md`, whose audit method §8 reuses;
-`effects.md` §6, whose `pure function` an equation implies by its form; the core
+`effects.md` §6, whose `pure def` an equation implies by its form; the core
 spec's §2 (the phase table), §4.1 (how far the English goes) and §13 (the
 reserved list, which already contains this note's word).
-Written in the syntax of `syntax-revision-2.md`.
+Written in the syntax of `syntax-revision-2.md` and `syntax-revision-3.md`.
 
 **A note on what was already decided before this note was written.** `equation`
 is already in §13's *reserved, not yet used* list and already in
@@ -252,7 +252,7 @@ Write the thing without the construct:
 
 ```science
 ## Kinetic energy of a body.
-pure function kinetic_energy(m: Mass of F64, v: Velocity of F64) -> Energy of F64:
+pure def kinetic_energy(m: Mass of F64, v: Velocity of F64) -> Energy of F64:
     0.5 * m * v * v
 ```
 
@@ -263,7 +263,7 @@ dimensional check on the relation is delivered in full by the return type and
 feature; it is a killer feature, and it belongs to `scientific-libraries.md` §12,
 not here.
 
-So: what is left? A `function` plus a derive attribute could carry a typeset
+So: what is left? A `def` plus a derive attribute could carry a typeset
 symbol table and a renderer. The README already records *a derive mechanism* as
 a standing ask with two customers. Adding a third customer is much cheaper than
 adding an item form. **If the answer is "nothing survives", the right outcome is
@@ -271,7 +271,7 @@ a `@render` derive and no keyword, and this note should say so and stop.**
 
 Four things survive. Only the first is a difference of kind.
 
-**(a) Totality, which comes from the body grammar being closed.** A `function`
+**(a) Totality, which comes from the body grammar being closed.** A `def`
 body may contain a loop, a branch, a mutable binding, a call to another function,
 an I/O operation, and a `python { … }` block. A renderer over that is *partial*:
 it works on the bodies that happen to be expressions and fails on the rest. A
@@ -303,7 +303,7 @@ decidable question. `SC0249` asks the compile-time half of it. For a function,
 "rendered" is not a concept and there is nothing to check.
 
 **(d) Purity is implied by the form**, so `effects.md`'s three inferred bits are
-all zero by construction and `pure function` does not have to be written. Small,
+all zero by construction and `pure def` does not have to be written. Small,
 free, and it makes `SC0249`'s analysis sound.
 
 > **Decision 2. The language's contribution is not the dimensional check —
@@ -314,7 +314,7 @@ free, and it makes `SC0249`'s analysis sound.
 > copy anywhere.**
 >
 > **The fallback, stated so the project can take it.** If totality is judged not
-> worth an item form, the correct smaller design is `pure function` plus a
+> worth an item form, the correct smaller design is `pure def` plus a
 > `@render` derive, accepting a partial renderer, and `equation` stays reserved
 > and unused. This note thinks that is the wrong call and does not think it is an
 > unreasonable one.
@@ -384,7 +384,7 @@ doc.text(f"…fitted to {eq.reference()} over the range 280–340 K…")
 The generated signature is:
 
 ```science
-pure function arrhenius(
+pure def arrhenius(
     A: FirstOrderRate of F64,
     Ea: MolarEnergy of F64,
     T: AbsoluteTemperature of F64,
@@ -661,7 +661,7 @@ The derivative is not a demo. Three callers exist in sibling notes today.
 **`optimize` §8.6 has a hole shaped exactly like this.** Its signature reads:
 
 ```science
-gradient: (function(borrowed Vector of (F64, N)) -> Vector of (F64, N))?,
+gradient: (def(borrowed Vector of (F64, N)) -> Vector of (F64, N))?,
 ```
 
 with the comment *"given one, lbfgs uses it; without one it falls back to finite
@@ -1122,12 +1122,12 @@ From `scientific-libraries.md` §10.1, verbatim:
 and from §10.7's signatures, verbatim:
 
 ```science
-function molar_mass(formula: borrowed Formula) -> Quantity of (F64, GramsPerMole)
+def molar_mass(formula: borrowed Formula) -> Quantity of (F64, GramsPerMole)
 ```
 
 That is `formula` in **parameter position**, which `reserved-words.md` §0.2 lists
 among the cases the dot rule explicitly does not fix, alongside `let model be …`
-and `function forward(tensor: Tensor)`. Reserving it would mean:
+and `def forward(tensor: Tensor)`. Reserving it would mean:
 
 - `Formula` the type survives — types are capitalised and were never at risk,
   which is that note's §1 observation.
@@ -1271,7 +1271,7 @@ The construct itself, priced honestly:
 | Parser: one item form reusing the field-list parser, plus the body grammar | ~250 lines, one AST node, one snapshot sweep |
 | Resolution: the two-way name rule (§3.2) and `SC0246`–`SC0249` | ~300 lines |
 | Types: the dimensional obligation, which is `EQUAL` over the existing normal form | ~50 lines; the work is already done by item 1 |
-| Codegen: the generated function, which is an ordinary pure function body | near zero |
+| Codegen: the generated function, which is an ordinary `pure def` body | near zero |
 | Renderer: the LaTeX and Typst printers | ~400 lines, in the `report` library, not the compiler |
 | Differentiator: the rewrite, the derivative table, the folding pass | ~350 lines |
 | `SC0256`'s amendment | ~150 lines, reusing §9.3's derivation block |
@@ -1332,9 +1332,9 @@ genuinely library-shaped. What remains is not library-shaped for the reason in
 To 4: this note asks for nothing new from const-expression arithmetic and adds a
 fifth argument for building it. It is F1 work that starts after that lands.
 
-To 5, which is the only one that matters: **a derive over a `function` produces a
+To 5, which is the only one that matters: **a derive over a `def` produces a
 partial renderer, and a partial renderer fails on the equation the user cares
-about.** A `function` body may contain a loop, a branch, a foreign block or a
+about.** A `def` body may contain a loop, a branch, a foreign block or a
 call to a function in another package, and a renderer over it either refuses
 those — in which case the restriction exists but is discovered at the end rather
 than declared at the start — or renders them wrongly. The closed grammar is not
@@ -1582,7 +1582,7 @@ mitigation and the same partial answer as that note's asset bundle.
 | # | Decision | Rejected alternative | Why | Cost |
 |---|---|---|---|---|
 | 1 | The construct is the renderable reading on a minimal symbolic slice; acausal and notation are refused | Adopt all four readings and stage them | Acausal is a second compiler; notation is unbounded ambiguity | Two genuinely valuable readings are given up, one of them proven |
-| 2 | The contribution is **totality** from a closed body grammar, not the dimensional check | Claim the dimensional check; or `pure function` + a `@render` derive | Units already check an annotated function; a partial renderer fails on the equation that matters | Rests on one argument; the fallback is named and is not unreasonable |
+| 2 | The contribution is **totality** from a closed body grammar, not the dimensional check | Claim the dimensional check; or `pure def` + a `@render` derive | Units already check an annotated function; a partial renderer fails on the equation that matters | Rests on one argument; the fallback is named and is not unreasonable |
 | 3 | One name, resolving to the function in call position and the record in value position | Two names; or a call-operator interface | One declaration, two generated targets, nothing to disagree with | A name whose meaning depends on position |
 | 4 | The body is one expression from a fifteen-operator closed grammar | An arbitrary function body | *"Every body the grammar admits has a rendering and a derivative, because the grammar admits nothing else"* | No factoring, no piecewise, no vectors — §14 items 2, 3, 5 |
 | 5 | The dimensional failure **amends `SC0256`**; adds the residual row and the missing-factor help | A new type-range code | Identical condition, identical machinery, and `SC` has produced five collisions already | The amendment has to be agreed with the owning note |

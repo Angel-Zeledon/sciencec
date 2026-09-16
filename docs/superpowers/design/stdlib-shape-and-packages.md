@@ -243,10 +243,10 @@ that had to wait and the reason the error model had to be settled first.
 > omission.**
 
 ```science
-function length(self) -> Int:                      # cannot fail. No error slot.
-function abs(x: F64) -> F64:                       # cannot fail.
-function get(self, i: Int) -> T?:                  # can be absent, cannot fail.
-function parse_int(text: borrowed String) -> (Int, ParseError?):   # can fail.
+def length(self) -> Int:                      # cannot fail. No error slot.
+def abs(x: F64) -> F64:                       # cannot fail.
+def get(self, i: Int) -> T?:                  # can be absent, cannot fail.
+def parse_int(text: borrowed String) -> (Int, ParseError?):   # can fail.
 ```
 
 The distinction matters because the three shapes are genuinely three things and
@@ -287,10 +287,10 @@ exactly two options:
 
 ```science
 # Option A — a zero value in the value slot
-function open(path: borrowed Path) -> (File, IoError?)
+def open(path: borrowed Path) -> (File, IoError?)
 
 # Option B — the value slot is nullable
-function open(path: borrowed Path) -> (File?, IoError?)
+def open(path: borrowed Path) -> (File?, IoError?)
 ```
 
 > **Decision 2b. The value slot is `T?` exactly when the type has no safe zero
@@ -394,11 +394,11 @@ choice CsvError:
     BadHeader(String)
 
 CsvError has:
-    function from_io(e: IoError) -> CsvError:
+    def from_io(e: IoError) -> CsvError:
         CsvError.Io(e)
 
 CsvError implements Error:
-    function message(self) -> String:
+    def message(self) -> String:
         match self:
             CsvError.Io(e): f"reading the file: {e.message()}"
             CsvError.BadRow(n, why): f"row {n}: {why}"
@@ -408,7 +408,7 @@ CsvError implements Error:
 and the caller's conversion is one line with a name in it:
 
 ```science
-function load(path: borrowed Path) -> (Frame of Row, CsvError?):
+def load(path: borrowed Path) -> (Frame of Row, CsvError?):
     let text, err be read_file(path)
     if err?:
         return (Frame.empty(), CsvError.from_io(err))
@@ -784,7 +784,7 @@ specific:
    library's source the primary worked example. A worked example the reader
    cannot imitate is worse than no example.
 2. **For a machine-written corpus it is actively harmful.** A model that reads
-   `function mod(a, b)` in the standard library will emit `mod` in user code,
+   `def mod(a, b)` in the standard library will emit `mod` in user code,
    where it will not compile, and the diagnostic will say the word is reserved —
    which is true, unhelpful, and contradicted by the library the model just read.
    This failure repeats forever.
@@ -909,7 +909,7 @@ bitwise operators, and a general-purpose standard library needs them (bitmasks,
 flags, `U8` manipulation in a decoder, `signal`'s bit-reversal).
 
 `Not.not(self)`, `BitAnd.and(self, other)` and `BitOr.or(self, other)` are
-**declarations** — `function not(self) -> Self` — and declaration position is
+**declarations** — `def not(self) -> Self` — and declaration position is
 precisely what the dot rule does not reach. `not`, `and` and `or` are keywords
 in use. So:
 
@@ -973,7 +973,7 @@ plus whole-buffer convenience:
 ```science
 use compress.gzip (GzipReader, GzipWriter, decompress, compress)
 
-function read_log(path: borrowed Path) -> (Array of String, CompressError?):
+def read_log(path: borrowed Path) -> (Array of String, CompressError?):
     let file, err be File.open(path)
     if err?:
         return (Array.new(), CompressError.from_io(err))
@@ -1091,7 +1091,7 @@ application code is portable:
 use db (Connection, Rows)
 use db.postgres (Postgres)
 
-function counts(url: borrowed String) -> (Map of (String, Int), DbError?):
+def counts(url: borrowed String) -> (Map of (String, Int), DbError?):
     let connection, err be Postgres.connect(url)
     if err?:
         return (Map.new(), err)
