@@ -18,9 +18,16 @@
   var DECLARE = ("function type choice interface implements has of borrowed any use " +
     "public const extern unsafe let be mutable where giving").split(" ");
 
-  // Control flow, and the operators spelled as words.
-  var CONTROL = ("if else match for each in loop return break continue try and or not " +
-    "is as self Self true false").split(" ");
+  // Control flow, the operators spelled as words, and the literals.
+  //
+  // `try` left this list with syntax revision 2 §3, which removed `Result` and
+  // `try` together; `null` joined it by §7, which notes the literal was missed
+  // in the revision's first draft. Both moves are AHEAD of the lexer: token.rs
+  // still has `"try" => Try` and has no `null` at all, because the error model
+  // is specified and not yet built. This file follows the design, the page says
+  // so in as many words, and the two converge when the lexer lands.
+  var CONTROL = ("if else match for each in loop return break continue and or not " +
+    "is as self Self true false null").split(" ");
 
   // §13's "reserved, not yet used". Coloured differently on purpose: a reader
   // who meets one in a sample should see that it is not an ordinary name.
@@ -28,12 +35,25 @@
     "async await tensor shape model equation mod pure parallel on with yield assert move " +
     "static macro union kernel import").split(" ");
 
+  // §13's third list: free on purpose, because each is a common variable name
+  // in the code of the people Science is for. Listed here only to fill the bank
+  // on the reference page; it takes no part in highlighting.
+  var NEVER = "grad dim dims axis device dtype unit alias".split(" ");
+
+  // Spellings that have been REMOVED from the language. They are struck through
+  // rather than coloured, and only inside a block marked `data-legacy`, which
+  // is the one place the site still prints them — the before/after pairing in
+  // the Errors section. Scoping it to that attribute is deliberate: `Result`
+  // and `Some` are ordinary names a future sample may legitimately use, and a
+  // global list would strike them wherever they appeared.
+  var REMOVED = "try Result Option Ok Err Some None".split(" ");
+
   function set(words) {
     var m = Object.create(null);
     words.forEach(function (w) { m[w] = true; });
     return m;
   }
-  var DE = set(DECLARE), CT = set(CONTROL), RS = set(RESERVED);
+  var DE = set(DECLARE), CT = set(CONTROL), RS = set(RESERVED), RM = set(REMOVED);
 
   function esc(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -52,7 +72,8 @@
     "|([(){}\\[\\],:;.])",                          // 7 punctuation
     "g");
 
-  function classOf(word, after) {
+  function classOf(word, after, legacy) {
+    if (legacy && RM[word]) { return "rm"; }
     if (DE[word]) { return "k"; }
     if (CT[word]) { return "kc"; }
     if (RS[word]) { return "r"; }
@@ -70,7 +91,7 @@
     return "";
   }
 
-  function highlight(src) {
+  function highlight(src, legacy) {
     var out = "", last = 0, m;
     TOKEN.lastIndex = 0;
     while ((m = TOKEN.exec(src)) !== null) {
@@ -88,7 +109,7 @@
         // `map (each.x)` and `map(each.x)` are read the same way.
         var rest = src.slice(last);
         var after = (rest.match(/^[ \t]*(\S)/) || [])[1] || "";
-        var cls = classOf(m[5], after);
+        var cls = classOf(m[5], after, legacy);
         out += cls ? '<span class="' + cls + '">' + esc(m[5]) + "</span>" : esc(m[5]);
       } else if (m[6]) {
         out += '<span class="o">' + esc(m[6]) + "</span>";
@@ -102,13 +123,15 @@
   function run() {
     var blocks = document.querySelectorAll("pre[data-science]");
     for (var i = 0; i < blocks.length; i++) {
-      blocks[i].innerHTML = "<code>" + highlight(blocks[i].textContent) + "</code>";
+      var legacy = blocks[i].hasAttribute("data-legacy");
+      blocks[i].innerHTML = "<code>" + highlight(blocks[i].textContent, legacy) + "</code>";
     }
     var banks = document.querySelectorAll("[data-words]");
     for (var j = 0; j < banks.length; j++) {
       var which = banks[j].getAttribute("data-words");
       var words = which === "keywords" ? DECLARE.concat(CONTROL)
                 : which === "reserved" ? RESERVED
+                : which === "never" ? NEVER
                 : [];
       banks[j].innerHTML = words.map(function (w) {
         return "<li>" + esc(w) + "</li>";
@@ -116,9 +139,94 @@
     }
   }
 
+  // The sidebar's "you are here" mark.
+  //
+  // An IntersectionObserver rather than a scroll handler: the browser does the
+  // work off the main thread and there is no throttling to get wrong. The
+  // margin pins the trigger line near the top of the viewport, so the section
+  // highlighted is the one being read, not the one about to appear.
+  //
+  // If the API is missing the sidebar is still a list of working links, which
+  // is the whole of its job; the highlight is the part that can be lost.
+  function spy() {
+    var links = document.querySelectorAll(".sidebar a[href^='#']");
+    if (!links.length || !window.IntersectionObserver) { return; }
+
+    var byId = Object.create(null);
+    var targets = [];
+    for (var i = 0; i < links.length; i++) {
+      var id = links[i].getAttribute("href").slice(1);
+      var section = document.getElementById(id);
+      if (section) { byId[id] = links[i]; targets.push(section); }
+    }
+
+    var visible = Object.create(null);
+    var observer = new IntersectionObserver(function (entries) {
+      for (var i = 0; i < entries.length; i++) {
+        visible[entries[i].target.id] = entries[i].isIntersecting;
+      }
+      // The first section still in the band wins, so scrolling up and down
+      // over the same boundary does not flicker between two neighbours.
+      var chosen = null;
+      for (var j = 0; j < targets.length; j++) {
+        if (visible[targets[j].id]) { chosen = targets[j].id; break; }
+      }
+      for (var k in byId) { byId[k].classList.toggle("here", k === chosen); }
+    }, { rootMargin: "-10% 0px -75% 0px" });
+
+    for (var t = 0; t < targets.length; t++) { observer.observe(targets[t]); }
+  }
+
+  // A copy button on every code block.
+  //
+  // `navigator.clipboard` needs a secure context, so it is absent over plain
+  // http and on a `file://` page — which is exactly how `web/README.md` tells
+  // a contributor to open these files. The button is therefore not added at
+  // all when the API is missing, rather than added and left to fail: a control
+  // that does nothing is worse than no control.
+  //
+  // The text is read before highlighting would have wrapped it in spans, and
+  // `textContent` on the `pre` would include the button's own label, so the
+  // source is captured from the `<code>` element instead.
+  function copiers() {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) { return; }
+    var blocks = document.querySelectorAll("pre");
+    for (var i = 0; i < blocks.length; i++) {
+      addCopy(blocks[i]);
+    }
+  }
+
+  function addCopy(pre) {
+    var code = pre.querySelector("code") || pre;
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "copy";
+    button.textContent = "Copy";
+    button.setAttribute("aria-label", "Copy this code to the clipboard");
+    button.addEventListener("click", function () {
+      navigator.clipboard.writeText(code.textContent).then(function () {
+        settle(button, "Copied");
+      }, function () {
+        settle(button, "Failed");
+      });
+    });
+    pre.appendChild(button);
+  }
+
+  function settle(button, word) {
+    button.textContent = word;
+    button.setAttribute("data-done", "");
+    window.setTimeout(function () {
+      button.textContent = "Copy";
+      button.removeAttribute("data-done");
+    }, 1400);
+  }
+
+  function start() { run(); spy(); copiers(); }
+
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", run);
+    document.addEventListener("DOMContentLoaded", start);
   } else {
-    run();
+    start();
   }
 })();

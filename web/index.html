@@ -286,6 +286,24 @@ function main():
     the tokens, the syntax tree and the resolved definitions go to stdout, for
     when you want to see what the compiler saw.
   </p>
+
+  <h3>What the compiler does today</h3>
+
+  <p class="note">
+    <code>sciencec</code> lexes, parses and resolves. Type checking, region
+    inference and code generation are not started, so <code>build</code> is
+    ahead of the compiler that will perform it. Everything on this page and in
+    the <a href="reference.html">reference</a> is the language as designed, and
+    one part of that design has not reached the compiler yet: <strong>the error
+    model</strong>. A function that returns a pair &mdash;
+    <code>-&gt; (Config, Error?)</code> &mdash; along with the nullable type
+    <code>T?</code>, the presence test <code>?</code> and the literal
+    <code>null</code>, is decided and unimplemented. Type it today and you get a
+    syntax error; what the compiler still accepts in its place is
+    <code>Result of (T, E)</code> and <code>try</code>, which the design has
+    removed. The <a href="reference.html#errors">reference shows both</a> and
+    says which is which.
+  </p>
 </section>
 
 <!-- ==================================================================== -->

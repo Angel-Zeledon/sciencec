@@ -36,30 +36,61 @@
   <span><span class="dot dot-on"></span>Compiler <b>sciencec</b></span>
   <span><span class="dot dot-on"></span>Front half <b>661 tests</b>, green</span>
   <span><span class="dot dot-wip"></span>Types, regions, codegen <b>not started</b></span>
+  <span><span class="dot dot-wip"></span>Error model <b>specified</b>, not built</span>
   <span>Files <b>.science</b></span>
 </div>
 
-<nav class="ref">
-  <ul>
-    <li><a href="#start">Start</a></li>
-    <li><a href="#bindings">Bindings</a></li>
-    <li><a href="#types">Types</a></li>
-    <li><a href="#functions">Functions</a></li>
-    <li><a href="#interfaces">Interfaces</a></li>
-    <li><a href="#ownership">Ownership</a></li>
-    <li><a href="#control">Control flow</a></li>
-    <li><a href="#patterns">Patterns</a></li>
-    <li><a href="#errors">Errors</a></li>
-    <li><a href="#chains">Chains</a></li>
-    <li><a href="#foreign">Foreign code</a></li>
-    <li><a href="#toolchain">Toolchain</a></li>
-    <li><a href="#reference">Reference</a></li>
-  </ul>
-</nav>
+<div class="revision">
+  <h2>What this page is, and what the compiler is</h2>
+  <p>
+    This page describes <strong>syntax revision 2</strong>, which is the language
+    as designed. Most of it is what <code>sciencec</code> lexes, parses and
+    resolves today. <strong>The error model of the
+    <a href="#errors">Errors</a> section is the exception</strong>: pairs like
+    <code>-&gt; (Config, Error?)</code>, the nullable type <code>T?</code>, the
+    presence test <code>?</code> and the literal <code>null</code> are decided
+    and not yet implemented, so a compiler you install today rejects them and
+    still accepts the <code>Result</code>&hairsp;/&hairsp;<code>try</code> forms
+    they replace. That one change alters what programs <em>mean</em> rather than
+    how they are spelled, so it is being staged on its own. Everything marked
+    <span class="cite wip">changing</span> is in that state; everything else is
+    live.
+  </p>
+</div>
+
+<div class="docs">
+<aside class="sidebar">
+  <div class="groups">
+    <h2>The language</h2>
+    <ul>
+      <li><a href="#start">Getting started</a></li>
+      <li><a href="#bindings">Bindings and literals</a></li>
+      <li><a href="#types">Types</a></li>
+      <li><a href="#functions">Functions</a></li>
+      <li><a href="#interfaces">Interfaces</a></li>
+    </ul>
+    <h2>Semantics</h2>
+    <ul>
+      <li><a href="#ownership">Ownership and borrows</a></li>
+      <li><a href="#control">Control flow</a></li>
+      <li><a href="#patterns">Patterns</a></li>
+      <li><a href="#errors">Errors</a></li>
+      <li><a href="#chains">Chains and closures</a></li>
+    </ul>
+    <h2>Beyond it</h2>
+    <ul>
+      <li><a href="#foreign">Foreign code</a></li>
+      <li><a href="#toolchain">Toolchain</a></li>
+      <li><a href="#reference">Reference</a></li>
+    </ul>
+  </div>
+</aside>
+
+<main>
 
 <!-- ==================================================================== -->
 <section id="start">
-  <h2>Getting started</h2>
+  <h2>Getting started<a class="anchor" href="#start" aria-label="Link to this section">#</a></h2>
   <p class="lede">
     A file is a module and needs no scaffolding beyond a <code>main</code>.
     Save this as <code>hello.science</code>.
@@ -89,7 +120,7 @@ $ echo $?
 
 <!-- ==================================================================== -->
 <section id="bindings">
-  <h2>Bindings and literals</h2>
+  <h2>Bindings and literals<a class="anchor" href="#bindings" aria-label="Link to this section">#</a></h2>
   <p class="lede">
     <code>let … be</code> introduces a name. <code>be</code> on its own assigns
     to one that already exists. Bindings are immutable unless declared
@@ -122,7 +153,17 @@ let greeting be "hola"
 let escaped be "a\tb\nc \u{1F600}"
 let letter be 'a'
 let flag be true
-let nothing be ()</pre>
+let nothing be ()
+
+let missing: Error? be null        # absence, and the only spelling for it</pre>
+
+  <p class="note">
+    <code>null</code> is a literal like <code>true</code> and <code>false</code>:
+    its spelling is fixed, so a program may not bind the name. It inhabits a
+    nullable type <code>T?</code> and nothing else &mdash; <code>()</code> above
+    is the empty tuple, which is a value, not an absence.
+    <span class="cite wip">changing</span>
+  </p>
 
   <p class="note">
     Escapes in full: <code>\n \t \r \\ \" \' \0 \u{…}</code>. Numeric types are
@@ -135,7 +176,7 @@ let nothing be ()</pre>
 
 <!-- ==================================================================== -->
 <section id="types">
-  <h2>Types</h2>
+  <h2>Types<a class="anchor" href="#types" aria-label="Link to this section">#</a></h2>
   <p class="lede">
     A record is a <code>type</code>. A sum type is a <code>choice</code>. Both
     take generic parameters with <code>of</code>.
@@ -195,7 +236,7 @@ Array of (Map of (String, Int))    # nesting follows the same rule
 
 <!-- ==================================================================== -->
 <section id="functions">
-  <h2>Functions</h2>
+  <h2>Functions<a class="anchor" href="#functions" aria-label="Link to this section">#</a></h2>
   <p class="lede">
     Generic parameters follow the name with <code>of</code>. Bounds go inline or
     in a <code>where</code> clause; several join with <code>+</code>.
@@ -225,7 +266,7 @@ function paired of (A, B)(first: A, second: B) -> (A, B):
 
 <!-- ==================================================================== -->
 <section id="interfaces">
-  <h2>Interfaces</h2>
+  <h2>Interfaces<a class="anchor" href="#interfaces" aria-label="Link to this section">#</a></h2>
   <p class="lede">
     An interface may carry required methods, default bodies that call them, and
     associated types.
@@ -254,17 +295,23 @@ function into_title(self: Self)    # consumes it</pre>
 
 <pre data-science>interface Iterate:
     type Item
-    function next(mutable self) -> Option of Self.Item
+    function next(mutable self) -> Self.Item?
 
 Countdown implements Iterate:
     type Item is Int
 
-    function next(mutable self) -> Option of Self.Item:
+    function next(mutable self) -> Self.Item?:
         if self.remaining <= 0:
-            None
+            null
         else:
             self.remaining be self.remaining - 1
-            Some(self.remaining)</pre>
+            self.remaining</pre>
+
+  <p class="note">
+    An exhausted iterator returns <code>null</code>. <code>Self.Item?</code> is
+    the nullable type; there is no wrapper to construct, so the present case is
+    the value itself. <span class="cite wip">changing</span>
+  </p>
 
   <h3>Methods of your own</h3>
 
@@ -299,7 +346,7 @@ let n be Note.new("inferred, never written")</pre>
 
 <!-- ==================================================================== -->
 <section id="ownership">
-  <h2>Ownership and borrows</h2>
+  <h2>Ownership and borrows<a class="anchor" href="#ownership" aria-label="Link to this section">#</a></h2>
   <p class="lede">
     Memory is managed at compile time with full region inference. There are no
     lifetime annotations to write &mdash; the regions are inferred, including
@@ -339,7 +386,7 @@ function main():
 
 <!-- ==================================================================== -->
 <section id="control">
-  <h2>Control flow</h2>
+  <h2>Control flow<a class="anchor" href="#control" aria-label="Link to this section">#</a></h2>
   <p class="lede">
     <code>if</code>/<code>else</code> is an expression. A block is an indented
     body after <code>:</code>, or a single expression written inline.
@@ -347,8 +394,8 @@ function main():
 
 <pre data-science># The inline body ends where the EXPRESSION ends, not at the newline: the
 # then-branch stops at `else`, because `else` cannot continue an expression.
-function preview(text: borrowed String, limit: Int) -> Option of String:
-    if text.is_empty(): None else: Some(text.truncate(limit))</pre>
+function preview(text: borrowed String, limit: Int) -> String?:
+    if text.is_empty(): null else: text.truncate(limit)</pre>
 
   <p class="note">
     An inline body may be an expression, an assignment, or
@@ -377,7 +424,7 @@ loop:
 
 <!-- ==================================================================== -->
 <section id="patterns">
-  <h2>Patterns</h2>
+  <h2>Patterns<a class="anchor" href="#patterns" aria-label="Link to this section">#</a></h2>
   <p class="lede">
     <code>match</code> is exhaustive; a missing case is an error that lists the
     patterns left out. An arm is inline after its <code>:</code>, or an indented
@@ -410,32 +457,23 @@ match point:
 
 <!-- ==================================================================== -->
 <section id="errors">
-  <h2>Errors <span class="cite wip">changing</span></h2>
+  <h2>Errors <span class="cite wip">changing</span><a class="anchor" href="#errors" aria-label="Link to this section">#</a></h2>
 
   <div class="callout">
-    <h3>This section is being replaced</h3>
+    <h3>Designed, not yet compiled</h3>
     <p>
-      What the compiler accepts today is shown first. The nullable model below
-      it is designed and not yet built &mdash; it changes what programs
-      <em>mean</em> rather than how they are spelled, so it is staged
-      separately from the rest.
+      Everything in this section is the language as decided, and it is the one
+      area of the language <code>sciencec</code> does <strong>not</strong>
+      accept yet &mdash; here and wherever else on this page a block is marked
+      <span class="cite wip">changing</span>, which is everywhere
+      <code>T?</code> or <code>null</code> appears. It changes what programs
+      <em>mean</em> rather than how they are spelled, so it is being staged on
+      its own. A compiler installed today rejects <code>Error?</code> and still
+      accepts the removed forms shown at the bottom of this section.
     </p>
   </div>
 
-  <h3>Today</h3>
-
-<pre data-science>function read_config(path: borrowed String) -> Result of (Config, Error):
-    let text be try read_file(path)
-    let config be try parse(text)
-    Ok(config)</pre>
-
-  <p class="note">
-    <code>try</code> unwraps an <code>Ok</code> or a <code>Some</code> and
-    returns the failure otherwise. It is a prefix and binds the whole chain to
-    its right, so <code>(try f()).port</code> needs its parentheses.
-  </p>
-
-  <h3>Planned</h3>
+  <h3>A function that can fail returns its value and an error</h3>
 
 <pre data-science>function read_config(path: String) -> (Config, Error?):
     let text, err be read_file(path)
@@ -445,19 +483,51 @@ match point:
     return (parse(text), null)</pre>
 
   <p class="note">
-    A function that can fail returns its value <em>and</em> an error, the error
-    type is nullable, and <code>?</code> asks whether it is there.
-    <code>T?</code> replaces <code>Option of T</code>. <code>Error</code> is a
-    one-method interface, so <code>Error?</code> is shorthand for
-    <code>(any Error)?</code>; a function may declare a concrete
-    <code>choice</code> instead when it wants <code>match</code> to stay
-    exhaustive.
+    The error type is nullable and <code>?</code> asks whether it is there.
+    <code>T?</code> is <code>T</code> or <code>null</code>, which is the spelling
+    Kotlin, Swift, TypeScript and C# already use. Inside <code>if err?:</code>
+    the compiler knows <code>err</code> is not null, and after an early return
+    guarded by it the <em>value</em> is known good; that narrowing is what keeps
+    the model from being cast-ridden.
+  </p>
+
+  <p class="note">
+    <code>Error</code> is a one-method interface &mdash;
+    <code>function message(self) -&gt; String</code> &mdash; so
+    <code>Error?</code> in a return position is shorthand for
+    <code>(any Error)?</code>. A function may name a concrete
+    <code>choice</code> instead, and should when the caller is expected to tell
+    the cases apart, because that is what keeps <code>match</code> exhaustive.
+    Conversion between the two is written out at the <code>return</code>: there
+    is no implicit widening.
+  </p>
+
+  <h3>What it replaces &mdash; removed, shown only for comparison</h3>
+
+  <p class="legend">Not valid Science &middot; removed in syntax revision 2</p>
+
+<pre data-science data-legacy>function read_config(path: borrowed String) -> Result of (Config, Error):
+    let text be try read_file(path)
+    let config be try parse(text)
+    Ok(config)</pre>
+
+  <p class="note">
+    <strong>Do not write this.</strong> It is kept because the shape of the
+    change is easier to see against what it replaces, and because
+    <code>sciencec</code> is the one thing that still accepts it. In the removed
+    model <code>try</code> unwrapped an <code>Ok</code> or a <code>Some</code>
+    and returned the failure otherwise; it was a prefix and bound the whole
+    chain to its right, so <code>(try f()).port</code> needed its parentheses.
+    <code>Result of (T, E)</code>, <code>Option of T</code>, <code>try</code>,
+    <code>Ok</code>, <code>Err</code>, <code>Some</code> and <code>None</code>
+    all go together, and the implicit <code>From</code> widening that
+    <code>try</code> performed goes with them.
   </p>
 </section>
 
 <!-- ==================================================================== -->
 <section id="chains">
-  <h2>Chains and closures</h2>
+  <h2>Chains and closures<a class="anchor" href="#chains" aria-label="Link to this section">#</a></h2>
   <p class="lede">
     The shape most Science code takes is a chain of method calls. A line whose
     continuation begins with <code>.</code> continues the line above it.
@@ -499,7 +569,7 @@ function by_length(docs: borrowed Array of Doc) -> Array of String:
 
 <!-- ==================================================================== -->
 <section id="foreign">
-  <h2>Foreign code</h2>
+  <h2>Foreign code<a class="anchor" href="#foreign" aria-label="Link to this section">#</a></h2>
   <p class="lede">
     Essentially every floating-point operation that matters in scientific
     computing already lives in a C or Fortran library somebody else tuned. An
@@ -550,9 +620,9 @@ unsafe extern "C" library "cudnn" when available:</pre>
 
   <h3>The interface is the wrapper, not the declaration</h3>
 
-<pre data-science>function multiply(a: borrowed Matrix, b: borrowed Matrix) -> Result of (Matrix, BlasError):
+<pre data-science>function multiply(a: borrowed Matrix, b: borrowed Matrix) -> (Matrix, BlasError?):
     if a.columns is not b.rows:
-        return Err(BlasError.Shape(a.columns, b.rows))
+        return (Matrix.empty(), BlasError.Shape(a.columns, b.rows))
 
     unsafe:
         cblas_dgemm(
@@ -560,7 +630,7 @@ unsafe extern "C" library "cudnn" when available:</pre>
             transpose_a: CBLAS_NO_TRANS,
             m: a.rows as BlasInt,
         )
-    Ok(result)</pre>
+    (result, null)</pre>
 
   <p class="note">
     Named arguments are permitted at a foreign call site &mdash; thirteen-argument
@@ -569,11 +639,19 @@ unsafe extern "C" library "cudnn" when available:</pre>
     wrapper is where the unverifiable half of the claim is discharged by a check
     a human wrote.
   </p>
+
+  <p class="note">
+    The wrapper names a concrete <code>BlasError</code> rather than the
+    <code>Error</code> interface, because a caller that gets a shape mismatch
+    back wants to <code>match</code> on which mismatch it was, and because the
+    interface form boxes where the concrete form does not.
+    <span class="cite wip">changing</span>
+  </p>
 </section>
 
 <!-- ==================================================================== -->
 <section id="toolchain">
-  <h2>Toolchain</h2>
+  <h2>Toolchain<a class="anchor" href="#toolchain" aria-label="Link to this section">#</a></h2>
 
   <div class="scroller">
     <table>
@@ -597,7 +675,7 @@ unsafe extern "C" library "cudnn" when available:</pre>
 
 <!-- ==================================================================== -->
 <section id="reference">
-  <h2>Reference</h2>
+  <h2>Reference<a class="anchor" href="#reference" aria-label="Link to this section">#</a></h2>
 
   <h3>Comparisons</h3>
   <div class="scroller">
@@ -623,7 +701,7 @@ unsafe extern "C" library "cudnn" when available:</pre>
   <h3>Precedence, tightest first</h3>
 
   <ol class="ladder">
-    <li><span class="rung">01</span><span class="ops">call · index · field access · try</span></li>
+    <li><span class="rung">01</span><span class="ops">call · index · field access</span></li>
     <li><span class="rung">02</span><span class="ops">- not borrowed</span><span class="gloss">unary</span></li>
     <li><span class="rung">03</span><span class="ops">as</span></li>
     <li><span class="rung">04</span><span class="ops">**</span><span class="gloss">power, right-associative</span></li>
@@ -642,6 +720,38 @@ unsafe extern "C" library "cudnn" when available:</pre>
     Assignment is absent because it is a statement, not an operator. Ranges sit
     below everything, so <code>0..n - 1</code> counts to <code>n-1</code>.
   </p>
+
+  <p class="note">
+    <code>try</code> used to share rung 01. It was removed with the
+    <code>Result</code> model and <strong>nothing has taken its place</strong>:
+    the presence test <code>?</code> that replaces it is a different shape, so
+    the rung is vacant rather than reassigned.
+  </p>
+
+  <div class="callout">
+    <h3>Open &mdash; where <code>?</code> binds</h3>
+    <p>
+      Syntax revision 2 §3.1 settles that the presence test is
+      <strong>postfix</strong> and that <code>err?</code> is a <code>Bool</code>.
+      It does not say what it binds tighter or looser than, and every example it
+      gives applies <code>?</code> to a bare name, so <strong>this table
+      deliberately has no rung for it.</strong> Two questions are open and the
+      note answers neither:
+    </p>
+    <p style="margin-top:0.6rem">
+      <strong>1.</strong> Does <code>?</code> take a whole postfix chain, so that
+      <code>config.port?</code> and <code>next()?</code> parse, or does it test
+      only a binding? <strong>2.</strong> If it joins rung 01, it sits beside the
+      <code>T?</code> of a nullable <em>type</em>, which is a different
+      production with the same character &mdash; and the note does not say how a
+      reader or a parser tells <code>Foo?</code> the type from <code>Foo?</code>
+      the test where both could stand.
+    </p>
+    <p style="margin-top:0.6rem">
+      Guessing a rung here would teach something false, so the gap is left
+      visible. It closes when the spec revision §9 asks for lands.
+    </p>
+  </div>
 
   <h3>Blocks and line continuation</h3>
 
@@ -690,19 +800,29 @@ public type Doc:
   </p>
 
   <h3>Reserved words</h3>
-  <ul class="bank" id="bank-live"></ul>
+  <ul class="bank" id="bank-live" data-words="keywords"></ul>
 
   <h4 style="font-family: var(--mono); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 1.5rem 0 0.75rem;">Held for later phases &mdash; using one is an error</h4>
-  <ul class="bank later" id="bank-later"></ul>
+  <ul class="bank later" id="bank-later" data-words="reserved"></ul>
 
   <h4 style="font-family: var(--mono); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 1.5rem 0 0.75rem;">Deliberately not reserved</h4>
-  <ul class="bank never" id="bank-never"></ul>
+  <ul class="bank never" id="bank-never" data-words="never"></ul>
 
   <p class="note">
     Each of the last group is a common variable name in the code of the audience
     Science is for, and that outranks the convenience of reserving it.
   </p>
+
+  <p class="note">
+    The first list is revision 2's, so <code>try</code> has left it and
+    <code>null</code> has joined it. <code>sciencec</code> has not caught up:
+    its lexer still reserves <code>try</code> and does not know
+    <code>null</code>. <span class="cite wip">changing</span>
+  </p>
 </section>
+
+</main>
+</div>
 
 <footer>
   Twenty-one worked programs live in <code>examples/</code>; they are input data
