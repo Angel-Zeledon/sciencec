@@ -1,0 +1,26 @@
+[package]
+name = "sciencec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The Science compiler's command-line driver."
+
+[[bin]]
+name = "sciencec"
+path = "src/main.rs"
+
+# No argument-parsing dependency. The surface is four subcommands and two
+# flags, which is less code than the `clap` derive would be, and the workspace
+# has exactly one third-party dependency today (salsa, in `science-db`) — a
+# driver is the wrong place to double that.
+#
+# `science-lexer` is deliberately absent: the token stream arrives through
+# `science_db::tokens`, and a driver that could name the lexer directly would
+# eventually call it directly.
+[dependencies]
+science-db.workspace = true
+science-diagnostics.workspace = true
+science-parser.workspace = true
+science-resolve.workspace = true
+
+[dev-dependencies]

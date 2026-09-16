@@ -8,6 +8,7 @@ members = [
     "crates/science-resolve",
     "crates/science-db",
     "crates/science-rt",
+    "crates/sciencec",
 ]
 
 [workspace.package]
@@ -23,4 +24,5 @@ science-testkit = { path = "crates/science-testkit" }
 science-resolve = { path = "crates/science-resolve" }
 science-db = { path = "crates/science-db" }
 science-rt = { path = "crates/science-rt" }
+sciencec = { path = "crates/sciencec" }
 insta = "1"

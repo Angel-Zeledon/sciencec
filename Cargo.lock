@@ -416,6 +416,16 @@ name = "science-testkit"
 version = "0.0.1"
 
 [[package]]
+name = "sciencec"
+version = "0.0.1"
+dependencies = [
+ "science-db",
+ "science-diagnostics",
+ "science-parser",
+ "science-resolve",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
