@@ -1,0 +1,3 @@
+* text=auto eol=lf
+*.link text eol=lf
+*.stderr text eol=lf
