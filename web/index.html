@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Science Programming Language</title>
+<meta name="description" content="A compiled language for scientific computing and machine learning. Units, shapes and random keys checked before the run starts.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;1,400&display=swap">
+<link rel="stylesheet" href="assets/science.css">
+</head>
+<body>
+
+<div class="wrap">
+
+<div class="top">
+  <div class="mark">
+    <span class="glyph">&#8730;</span>
+    <span class="name">Science</span>
+  </div>
+  <nav>
+    <a href="#tour">Tour</a>
+    <a href="#interop">Interop</a>
+    <a href="#install">Install</a>
+    <a href="#docs">Docs</a>
+    <a href="#source">Source</a>
+  </nav>
+</div>
+
+<header class="hero">
+  <h1>The compiler checks your <em>units</em>, your <em>shapes</em> and your <em>random keys</em>.</h1>
+
+  <p class="deck">
+    Science is a compiled language for scientific computing and machine learning.
+    Native binaries through LLVM, ownership and borrows verified at compile time,
+    no garbage collector and <strong>no lifetime annotations to write</strong>.
+    Built for people who arrive from NumPy and PyTorch, not from systems
+    programming.
+  </p>
+
+  <div class="install">
+<pre class="shell"><code><span class="p">$</span> curl -sSf https://sci-lang.org/install.sh | sh</code></pre>
+    <a class="btn" href="#install">Other platforms</a>
+    <a class="btn ghost" href="#tour">Take the tour</a>
+  </div>
+</header>
+
+<!-- ==================================================================== -->
+<section id="why">
+  <h2>Three things nobody checks, checked</h2>
+  <p class="lede">
+    Julia has the REPL and the ecosystem and cannot check a shape, a unit or a
+    reused random key before running. Mojo has ownership and GPUs and no shapes
+    in its types. JAX has the right transformation model and no static types.
+    Science aims at the combination.
+  </p>
+
+  <div class="bets">
+    <div class="bet">
+      <h3>Units</h3>
+      <p>
+        A dimension lives in the type. Adding a mass to a length does not
+        compile, and neither does a conversion applied twice. The Mars Climate
+        Orbiter failure, moved from the run to the build.
+      </p>
+    </div>
+    <div class="bet">
+      <h3>Shapes</h3>
+      <p>
+        A tensor carries its shape as type arguments, so a matrix multiply whose
+        inner dimensions disagree is a compile error. Broadcasting is explicit:
+        <code>a .+ b</code> says you meant it; <code>a + b</code> requires the
+        shapes to match.
+      </p>
+    </div>
+    <div class="bet">
+      <h3>Random keys</h3>
+      <p>
+        A key is consumed when it is used, so reusing one is a compile error
+        rather than a silently correlated result. JAX has the design. A language
+        can enforce it.
+      </p>
+    </div>
+  </div>
+
+  <h3>What that looks like when you get it wrong</h3>
+
+<pre class="err"><code><span class="e-code">error[SC0256]</span>: this equation does not balance
+  <span class="e-hi">--&gt;</span> orbit.science:14:12
+   |
+14 |     let energy: Energy of F64 be mass * speed
+   |                                  <span class="e-hi">^^^^^^^^^^^^</span> this is `kg&#183;m/s`, and `Energy` is `kg&#183;m&#178;/s&#178;`
+   |
+   = difference: <span class="e-hi">m/s</span>
+<span class="e-help">help</span>: `speed` appears once; squaring it balances both sides
+   |
+14 |     let energy: Energy of F64 be mass * speed ** 2
+   |                                               <span class="e-help">++++</span></code></pre>
+
+  <p class="note">
+    Every diagnostic carries a code, a span and &mdash; where a mechanical fix
+    exists &mdash; the replacement text, so an editor or an agent can apply it
+    without reading the prose.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="tour">
+  <h2>The language</h2>
+  <p class="lede">
+    Keywords are English words where no symbol is universal, and symbols where
+    one is. Blocks are indentation. There is exactly one way to write each
+    operation.
+  </p>
+
+  <div class="two">
+    <div>
+      <h3>Types and interfaces</h3>
+<pre data-science>type Doc:
+    title: String
+    body: String
+
+interface Summarize:
+    function summarize(self) -> String
+
+    # A default body may call any
+    # other method of the interface.
+    function preview(self) -> String:
+        self.summarize().truncate(80)
+
+Doc implements Summarize:
+    function summarize(self) -> String:
+        self.body.truncate(200)</pre>
+    </div>
+    <div>
+      <h3>Generics and bounds</h3>
+<pre data-science>function best_of of T(
+    left: borrowed T,
+    right: borrowed T,
+) -> String where T: Summarize:
+    if left.summarize().length()
+            >= right.summarize().length():
+        left.preview()
+    else:
+        right.preview()
+
+# Const generics carry shapes.
+type Grid of (T, const ROWS: Int):
+    cells: Array of T</pre>
+    </div>
+  </div>
+
+  <h3>Borrows, with nothing to annotate</h3>
+
+<pre data-science>function retitle(doc: mutable borrowed Doc, title: String):
+    doc.title be title
+
+function main():
+    let mutable doc be Doc(title: "a", body: "")
+
+    # A parameter declared `borrowed` is borrowed automatically, so the call
+    # site is bare. The signature still carries the information.
+    retitle(doc, "renamed")</pre>
+
+  <p class="note">
+    Regions are inferred, including across function boundaries. There is no
+    <code>'a</code> to write and no garbage collector underneath &mdash; the
+    guarantee without the notation.
+  </p>
+
+  <h3>Chains, which is the shape most code takes</h3>
+
+<pre data-science>function headlines(docs: borrowed Array of Doc) -> Array of String:
+    docs
+        .iterate()
+        .discard(each.is_empty())
+        .map(each.title)
+        .take(5)
+        .collect()</pre>
+</section>
+
+<!-- ==================================================================== -->
+<section id="interop">
+  <h2>Your existing code still works</h2>
+  <p class="lede">
+    Essentially every floating-point operation that matters already lives in a C
+    or Fortran library somebody else tuned. <code>dgemm</code> is thirty years of
+    hand-written assembly per microarchitecture. A language that cannot call
+    these is not a scientific language, whatever its type system can prove.
+  </p>
+
+  <h3>C and Fortran, declared and linked</h3>
+
+<pre data-science>unsafe extern "C" library "openblas" via pkg-config "openblas":
+    type CblasLayout is CInt
+    const CBLAS_COL_MAJOR be 102 as CblasLayout
+
+    function cblas_dgemm(
+        layout: CblasLayout,
+        m: BlasInt,
+        a: ffi.Span of F64,
+    ) symbol "cblas_dgemm"</pre>
+
+  <p class="note">
+    <code>via pkg-config</code> takes the flags from the system, which is the
+    only thing that gets BLAS right across machines. <code>when available</code>
+    makes a library optional and loaded on first use, so a program that can use a
+    GPU still starts on a node without one.
+  </p>
+
+  <div class="strip">
+    <div>
+      <dt>Python, zero-copy</dt>
+      <dd>A tensor's header is a DLPack <code>DLTensor</code> field for field, so handing an array to NumPy, PyTorch or JAX is a cast rather than a copy.</dd>
+    </div>
+    <div>
+      <dt>Called from Python</dt>
+      <dd>Compile a file into a CPython extension module and replace one hot function inside the program you already have.</dd>
+    </div>
+    <div>
+      <dt>Rust crates</dt>
+      <dd>Bindings generated from a crate's own public interface, with layout and signature assertions discharged by rustc itself.</dd>
+    </div>
+    <div>
+      <dt>Arrow and Parquet</dt>
+      <dd>A dataframe column <em>is</em> an Arrow buffer, so the handoff to polars or DuckDB costs nothing.</dd>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== -->
+<section id="different">
+  <h2>Decisions you will notice</h2>
+
+  <dl class="strip">
+    <div>
+      <dt>One spelling per operation</dt>
+      <dd>Equality is <code>is</code>, ordering is <code>&gt;=</code>. No second way to write either, so a formatter has nothing to normalise and generated code cannot drift.</dd>
+    </div>
+    <div>
+      <dt>Fixes, not just messages</dt>
+      <dd>A diagnostic carries the replacement text and the span it applies to. Errors never cascade: one mistake costs one message.</dd>
+    </div>
+    <div>
+      <dt>Explicit broadcasting</dt>
+      <dd>NumPy will happily add a <code>(3,1)</code> to a <code>(1,3)</code> and hand you a <code>(3,3)</code> you did not want. Here that needs a dot.</dd>
+    </div>
+    <div>
+      <dt>Reproducible by construction</dt>
+      <dd>No ambient random generator, no <code>seed()</code>, and a provenance record in the binary that names every library it linked.</dd>
+    </div>
+  </dl>
+</section>
+
+<!-- ==================================================================== -->
+<section id="install">
+  <h2>Install</h2>
+
+  <div class="two">
+    <div>
+      <h3>macOS and Linux</h3>
+<pre class="shell"><code><span class="p">$</span> curl -sSf https://sci-lang.org/install.sh | sh</code></pre>
+      <h3>Homebrew</h3>
+<pre class="shell"><code><span class="p">$</span> brew install science</code></pre>
+    </div>
+    <div>
+      <h3>Windows</h3>
+<pre class="shell"><code><span class="p">&gt;</span> winget install Science.Science</code></pre>
+      <h3>From source</h3>
+<pre class="shell"><code><span class="p">$</span> git clone https://github.com/sci-lang/science
+<span class="p">$</span> cd science &amp;&amp; cargo build --release</code></pre>
+    </div>
+  </div>
+
+  <h3>Your first program</h3>
+
+<pre class="shell"><code><span class="p">$</span> sciencec check hello.science   <span class="c"># lex, parse, resolve, type-check</span>
+<span class="p">$</span> sciencec build hello.science   <span class="c"># a native binary</span>
+<span class="p">$</span> ./hello</code></pre>
+
+  <p class="note">
+    <code>check</code> is silent on a clean file and exits 0, so it drops into a
+    shell script or a CI job without ceremony. Diagnostics go to stderr; dumps of
+    the tokens, the syntax tree and the resolved definitions go to stdout, for
+    when you want to see what the compiler saw.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="docs">
+  <h2>Documentation</h2>
+  <p class="lede">
+    The specification is the authority. The design notes decide one area each,
+    state what they rejected and why, and price what they ask of the others.
+  </p>
+
+  <div class="docs">
+    <a class="doc" href="reference.html">
+      <span class="ttl">Language reference &rarr;</span>
+      <span class="sub">Syntax, ownership, interfaces, foreign code and the toolchain, in one page.</span>
+    </a>
+    <a class="doc" href="#docs">
+      <span class="ttl">The specification &rarr;</span>
+      <span class="sub">Phases, syntax, types, ownership, diagnostics. What the compiler is held to.</span>
+    </a>
+    <a class="doc" href="#docs">
+      <span class="ttl">Design notes &rarr;</span>
+      <span class="sub">Twenty-six areas decided in the open, each with the alternatives it rejected.</span>
+    </a>
+    <a class="doc" href="#docs">
+      <span class="ttl">Examples &rarr;</span>
+      <span class="sub">Worked programs, one per feature, used directly as the compiler's test data.</span>
+    </a>
+  </div>
+
+  <p class="note">
+    The example programs are input data for the test suites, so anything there
+    that fails to compile is a bug in the compiler rather than a typo to be
+    quietly patched. Programs that must <em>fail</em>, each paired with the exact
+    diagnostic it has to produce, live beside them.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="source">
+  <h2>Source</h2>
+  <p class="lede">
+    Seven crates behind one driver. The compiler is a set of memoised queries
+    rather than a pipeline, which is what makes recompilation incremental and
+    what the interactive tier is built out of.
+  </p>
+
+  <div class="strip">
+    <div><dt>science-lexer</dt><dd>Tokens, indentation, literals.</dd></div>
+    <div><dt>science-parser</dt><dd>Grammar, syntax tree, <code>extern</code> blocks.</dd></div>
+    <div><dt>science-resolve</dt><dd>Names, scopes, definitions.</dd></div>
+    <div><dt>science-types</dt><dd>Type checking, traits, const generics.</dd></div>
+    <div><dt>science-regions</dt><dd>Ownership and region inference.</dd></div>
+    <div><dt>science-codegen</dt><dd>LLVM lowering.</dd></div>
+    <div><dt>science-diagnostics</dt><dd>Rendering, spans, applicable fixes.</dd></div>
+    <div><dt>science-rt</dt><dd>The runtime every binary links.</dd></div>
+  </div>
+</section>
+
+<footer>
+  <div class="links">
+    <a href="#source">GitHub</a>
+    <a href="#docs">Reference</a>
+    <a href="#install">Install</a>
+    <a href="#docs">Design notes</a>
+  </div>
+  Science is a young language and the surface is still moving in places. Where a
+  decision is not settled, the design notes say so rather than papering over it
+  &mdash; the interesting ones are where a note reached a conclusion against the
+  brief it was given.
+</footer>
+
+</div>
+
+<script src="assets/highlight.js"></script>
+</body>
+</html>

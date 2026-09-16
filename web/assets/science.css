@@ -1,0 +1,225 @@
+/* Science — shared styles.
+ *
+ * One stylesheet for every page. Colours are tokens on :root, redefined for
+ * dark under both `prefers-color-scheme` and an explicit `data-theme`, so a
+ * page renders correctly in all three states a reader can be in.
+ */
+:root {
+  --paper:#f4f6f5; --surface:#ffffff; --sunk:#eceff0; --ink:#121a18;
+  --muted:#5c6b66; --faint:#859590; --rule:#dde3e0;
+  --accent:#0d6e62; --accent-soft:#e2efec; --old:#9c5140; --old-soft:#f6e9e5;
+  --deep:#0a1614; --deep-ink:#d6e2de; --deep-rule:#1d2e2a;
+  /* Syntax — "Science Neon". Declared once and never redefined, because
+   * every code surface on this site is dark in both themes. That is the
+   * decision that makes the palette possible: a neon hue survives on
+   * #0b0f1a and dies on paper, and a palette asked to do both ends up
+   * doing neither. The editor's light theme is the one place a readable
+   * variant is needed, and it lives in editors/vscode/. */
+  --code-bg:#0b0f1a; --code-ink:#cdd8f0; --code-frame:#1b2440;
+  --c-key:#ff45d0; --c-ctl:#ff45d0; --c-type:#4de8ff; --c-fn:#3dfca0;
+  --c-str:#f6ff6b; --c-num:#c77dff; --c-par:#ffa23c; --c-op:#ff45d0;
+  --c-com:#7080a4; --c-res:#ff6e6e; --c-pun:#8fa0c4;
+  --sans:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+  --serif:"IBM Plex Serif",Georgia,"Times New Roman",serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:#0d1412; --surface:#141d1a; --sunk:#101816; --ink:#e4ebe8;
+    --muted:#93a29c; --faint:#6d7c77; --rule:#253029;
+    --accent:#55c4b3; --accent-soft:#14312c; --old:#d4907c; --old-soft:#33211c;
+    --deep:#060d0c; --deep-ink:#d6e2de; --deep-rule:#1a2a26;
+  }
+}
+:root[data-theme="dark"] {
+  --paper:#0d1412; --surface:#141d1a; --sunk:#101816; --ink:#e4ebe8;
+  --muted:#93a29c; --faint:#6d7c77; --rule:#253029;
+  --accent:#55c4b3; --accent-soft:#14312c; --old:#d4907c; --old-soft:#33211c;
+  --deep:#060d0c; --deep-ink:#d6e2de; --deep-rule:#1a2a26;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font-family: var(--sans);
+  font-size: 16px; line-height: 1.6; margin: 0; -webkit-text-size-adjust: 100%; }
+.wrap { max-width: 62rem; margin: 0 auto; padding-inline: 20px; }
+
+/* ---- top bar ---- */
+.top { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 1rem; padding-block: 1.5rem; flex-wrap: wrap; }
+.mark { display: flex; align-items: baseline; gap: 0.55rem; }
+.mark .glyph { font-family: var(--mono); font-size: 1.15rem; font-weight: 600;
+  color: var(--accent); letter-spacing: -0.04em; }
+.mark .name { font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--ink); font-weight: 500; }
+.top nav { display: flex; gap: 1.4rem; flex-wrap: wrap; }
+.top nav a { font-family: var(--mono); font-size: 0.76rem; color: var(--muted);
+  text-decoration: none; }
+.top nav a:hover, .top nav a:focus-visible { color: var(--accent); }
+
+/* ---- hero ---- */
+.hero { padding-block: 3rem 3.5rem; border-bottom: 1px solid var(--rule); }
+h1 { font-size: clamp(2.5rem, 6.8vw, 4rem); font-weight: 600; letter-spacing: -0.035em;
+  line-height: 1.03; margin: 0 0 1.4rem; text-wrap: balance; max-width: 22ch; }
+h1 em { font-style: normal; color: var(--accent); }
+.deck { font-family: var(--serif); font-size: 1.15rem; line-height: 1.55;
+  color: var(--muted); max-width: 44rem; margin: 0 0 2.25rem; }
+.deck strong { color: var(--ink); font-weight: 500; }
+
+.install { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+.install pre { margin: 0; flex: 1 1 22rem; }
+.btn { font-family: var(--mono); font-size: 0.82rem; text-decoration: none;
+  padding: 0.7em 1.2em; border-radius: 3px; border: 1px solid var(--accent);
+  background: var(--accent); color: var(--paper); white-space: nowrap; }
+.btn.ghost { background: none; color: var(--accent); }
+.btn:hover, .btn:focus-visible { opacity: 0.85; }
+
+/* ---- sections ---- */
+section { padding-block: 4rem; border-bottom: 1px solid var(--rule); }
+section:last-of-type { border-bottom: none; }
+h2 { font-size: 1.7rem; font-weight: 600; letter-spacing: -0.022em; margin: 0 0 0.5rem; }
+.lede { font-family: var(--serif); color: var(--muted); max-width: 44rem; margin: 0 0 2rem; font-size: 1.02rem; }
+h3 { font-family: var(--mono); font-size: 0.76rem; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--muted); margin: 2.25rem 0 0.75rem; }
+p { max-width: 44rem; }
+p.note { font-family: var(--serif); font-size: 0.95rem; color: var(--muted); margin: 0.85rem 0 0; }
+
+/* ---- code ---- */
+/* Every code surface is dark, in both themes. A reader in light mode gets a
+ * light page and a dark listing — which is also what their editor gives them,
+ * since nobody writes code on the colour of the page around it. */
+pre { font-family: var(--mono); font-size: 0.83rem; line-height: 1.7;
+  background: var(--code-bg); color: var(--code-ink);
+  border: 1px solid var(--code-frame); border-left: 0; border-radius: 0 3px 3px 0;
+  padding: 1.1rem 1.25rem; margin: 0 0 1.25rem; overflow-x: auto; tab-size: 4; }
+
+/* The left rail is the one piece of ornament: a 3px cyan-to-magenta bleed
+ * painted as a background layer rather than a border, so the gradient runs
+ * down the block's full height however tall it grows. */
+pre[data-science] {
+  background:
+    linear-gradient(180deg, #4de8ff 0%, #8f7bff 55%, #ff45d0 100%) left / 3px 100% no-repeat,
+    var(--code-bg);
+  box-shadow: 0 10px 30px -18px rgba(77, 232, 255, 0.45);
+}
+pre.shell {
+  background: linear-gradient(180deg, #3dfca0, #4de8ff) left / 3px 100% no-repeat, var(--code-bg);
+}
+pre.shell .p { color: #7080a4; } pre.shell .c { color: #3dfca0; }
+pre.err {
+  background: linear-gradient(180deg, #ff6e6e, #ffa23c) left / 3px 100% no-repeat, var(--code-bg);
+}
+code { font-family: var(--mono); font-size: 0.87em; background: var(--sunk);
+  padding: 0.1em 0.35em; border-radius: 2px; }
+pre code { background: none; padding: 0; font-size: 1em; }
+.k  { color: var(--c-key); font-weight: 500; }   /* declaration keyword */
+.kc { color: var(--c-ctl); font-weight: 500; }   /* control flow */
+.t  { color: var(--c-type); }                    /* type, by capitalisation */
+.f  { color: var(--c-fn); }                      /* name followed by `(` */
+.s  { color: var(--c-str); }
+.n  { color: var(--c-num); }
+.pa { color: var(--c-par); font-style: italic; } /* label or field name */
+.o  { color: var(--c-op); }
+.pu { color: var(--c-pun); }
+.r  { color: var(--c-res); text-decoration: underline dotted; }
+                                                 /* reserved for a later phase:
+                                                    marked structurally, since no
+                                                    spare hue reads as "not yet" */
+.cm { color: var(--c-com); font-style: italic; }
+
+/* The neon part. A hue this saturated on a ground this dark already reads as
+ * emissive; the shadow only finishes the effect, and it is deliberately weak
+ * enough that deleting these three rules changes nothing about legibility. */
+pre[data-science] .k,
+pre[data-science] .kc,
+pre[data-science] .o  { text-shadow: 0 0 12px rgba(255, 69, 208, 0.40); }
+pre[data-science] .t  { text-shadow: 0 0 12px rgba(77, 232, 255, 0.35); }
+pre[data-science] .f  { text-shadow: 0 0 12px rgba(61, 252, 160, 0.30); }
+.e-code { color: #ff6e6e; font-weight: 600; } .e-hi { color: #ff6e6e; }
+.e-help { color: #4de8ff; }
+
+/* ---- the three bets ---- */
+.bets { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 2rem 2.5rem; margin-top: 2rem; }
+.bet h3 { margin-top: 0; color: var(--accent); }
+.bet p { font-family: var(--serif); font-size: 0.96rem; color: var(--muted); margin: 0; }
+
+/* ---- feature strip ---- */
+.strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr));
+  gap: 1.75rem; margin-top: 1.75rem; }
+.strip div { border-top: 2px solid var(--rule); padding-top: 0.8rem; }
+.strip dt { font-family: var(--mono); font-size: 0.78rem; color: var(--ink);
+  font-weight: 600; margin-bottom: 0.35rem; }
+.strip dd { font-family: var(--serif); font-size: 0.92rem; color: var(--muted); margin: 0; }
+
+/* ---- two-up ---- */
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: 1.5rem; }
+.two h3 { margin-top: 0; }
+
+/* ---- docs cards ---- */
+.docs { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem; margin-top: 1.5rem; }
+.doc { display: block; border: 1px solid var(--rule); border-radius: 3px;
+  padding: 1.05rem 1.2rem; text-decoration: none; background: var(--surface); }
+.doc:hover, .doc:focus-visible { border-color: var(--accent); }
+.doc .ttl { font-family: var(--mono); font-size: 0.8rem; color: var(--accent);
+  font-weight: 500; display: block; margin-bottom: 0.3rem; }
+.doc .sub { font-family: var(--serif); font-size: 0.89rem; color: var(--muted); }
+
+footer { padding-block: 2.5rem 4rem; font-family: var(--serif);
+  font-size: 0.9rem; color: var(--muted); border-top: 1px solid var(--rule); }
+footer code { font-size: 0.82em; }
+footer .links { display: flex; gap: 1.4rem; flex-wrap: wrap; margin-bottom: 1rem; }
+footer .links a { font-family: var(--mono); font-size: 0.78rem; color: var(--accent); text-decoration: none; }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* --- reference-only ------------------------------------------------------ */
+.masthead { padding-block: 3.5rem 2rem; border-bottom: 2px solid var(--ink); }
+.eyebrow { font-family: var(--mono); font-size: 0.72rem; font-weight: 500;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); margin: 0 0 1rem; }
+.standfirst { font-family: var(--serif); font-size: 1.1rem; line-height: 1.55;
+  color: var(--muted); max-width: 40rem; margin: 0; }
+.standfirst strong { color: var(--ink); font-weight: 500; }
+.status { display: flex; flex-wrap: wrap; gap: 0.5rem 1.75rem; padding-block: 1.25rem;
+  border-bottom: 1px solid var(--rule); font-family: var(--mono); font-size: 0.78rem; color: var(--muted); }
+.status b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.status .dot { display: inline-block; width: 0.5em; height: 0.5em; border-radius: 50%;
+  margin-right: 0.45em; vertical-align: 0.05em; }
+.dot-on { background: var(--accent); } .dot-wip { background: var(--old); }
+.revision { border: 1px solid var(--old); border-left: 3px solid var(--old);
+  border-radius: 0 3px 3px 0; background: var(--old-soft); padding: 1rem 1.25rem; margin-block: 2rem 0; }
+.revision h2 { font-family: var(--mono); font-size: 0.72rem; font-weight: 600;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--old); margin: 0 0 0.5rem; display: block; }
+.revision p { font-family: var(--serif); font-size: 0.95rem; color: var(--ink); margin: 0; max-width: none; }
+.revision code { background: var(--surface); }
+.cite { font-family: var(--mono); font-size: 0.72rem; font-weight: 400; letter-spacing: 0.04em;
+  color: var(--accent); background: var(--accent-soft); padding: 0.15em 0.5em; border-radius: 2px; }
+.cite.wip { color: var(--old); background: var(--old-soft); }
+.ladder { list-style: none; margin: 0 0 1.25rem; padding: 0; }
+.ladder li { display: flex; align-items: baseline; gap: 1rem; padding: 0.4rem 0; border-bottom: 1px solid var(--rule); }
+.ladder li:last-child { border-bottom: none; }
+.ladder .rung { font-family: var(--mono); font-size: 0.68rem; color: var(--faint);
+  width: 1.5rem; flex: none; font-variant-numeric: tabular-nums; }
+.ladder .ops { font-family: var(--mono); font-size: 0.85rem; color: var(--ink); }
+.ladder .gloss { font-family: var(--serif); font-size: 0.88rem; color: var(--muted);
+  margin-left: auto; text-align: right; }
+.bank { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0 0 1rem; padding: 0; list-style: none; }
+.bank li { font-family: var(--mono); font-size: 0.76rem; padding: 0.2em 0.5em;
+  border-radius: 2px; background: var(--accent-soft); color: var(--accent); }
+.bank.later li { background: var(--old-soft); color: var(--old); }
+.bank.never li { background: var(--sunk); color: var(--muted); }
+.callout { border: 1px solid var(--old); border-left: 3px solid var(--old);
+  border-radius: 0 3px 3px 0; background: var(--old-soft); padding: 1rem 1.25rem; margin: 0 0 1.5rem; }
+.callout h3 { margin: 0 0 0.5rem; color: var(--old); }
+.callout p { font-family: var(--serif); font-size: 0.95rem; color: var(--ink); margin: 0; max-width: none; }
+.callout code { background: var(--surface); }
+nav.ref { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; background: var(--paper);
+  border-bottom: 1px solid var(--rule); margin-bottom: 3rem; overflow-x: auto; }
+nav.ref ul { display: flex; gap: 1.25rem; list-style: none; margin: 0; padding: 0.85rem 0; white-space: nowrap; }
+nav.ref a { font-family: var(--mono); font-size: 0.75rem; color: var(--muted);
+  text-decoration: none; border-bottom: 1px solid transparent; padding-bottom: 2px; }
+nav.ref a:hover, nav.ref a:focus-visible { color: var(--accent); border-bottom-color: var(--accent); }
+.reference section { border-bottom: none; padding-block: 0 3.5rem; scroll-margin-top: 4.5rem; }
+.reference h2 { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; font-size: 1.5rem; }
+td.mono { font-family: var(--mono); font-size: 0.82rem; }
+td.what { font-family: var(--serif); color: var(--muted); }

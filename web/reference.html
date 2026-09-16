@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reference &middot; Science</title>
+<meta name="description" content="The Science language reference: syntax, ownership, interfaces, foreign code and the toolchain.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;1,400&display=swap">
+<link rel="stylesheet" href="assets/science.css">
+</head>
+<body>
+
+<div class="wrap"><div class="top">
+  <div class="mark"><span class="glyph">&#8730;</span><span class="name"><a href="index.html" style="color:inherit;text-decoration:none">Science</a></span></div>
+  <nav><a href="index.html">Home</a><a href="index.html#install">Install</a><a href="index.html#docs">Docs</a></nav>
+</div></div>
+
+<div class="wrap reference">
+
+<header class="masthead">
+  <p class="eyebrow">Language reference &middot; F0</p>
+  <h1>Science</h1>
+  <p class="standfirst">
+    A compiled language for scientific computing and machine learning. Native
+    binaries through LLVM, memory managed by <strong>ownership and borrows
+    verified at compile time</strong> with no garbage collector and no lifetime
+    annotations. Blocks are indentation; keywords are English words where no
+    symbol is universal, and symbols where one is.
+  </p>
+</header>
+
+<div class="status">
+  <span><span class="dot dot-on"></span>Compiler <b>sciencec</b></span>
+  <span><span class="dot dot-on"></span>Front half <b>661 tests</b>, green</span>
+  <span><span class="dot dot-wip"></span>Types, regions, codegen <b>not started</b></span>
+  <span>Files <b>.science</b></span>
+</div>
+
+<nav class="ref">
+  <ul>
+    <li><a href="#start">Start</a></li>
+    <li><a href="#bindings">Bindings</a></li>
+    <li><a href="#types">Types</a></li>
+    <li><a href="#functions">Functions</a></li>
+    <li><a href="#interfaces">Interfaces</a></li>
+    <li><a href="#ownership">Ownership</a></li>
+    <li><a href="#control">Control flow</a></li>
+    <li><a href="#patterns">Patterns</a></li>
+    <li><a href="#errors">Errors</a></li>
+    <li><a href="#chains">Chains</a></li>
+    <li><a href="#foreign">Foreign code</a></li>
+    <li><a href="#toolchain">Toolchain</a></li>
+    <li><a href="#reference">Reference</a></li>
+  </ul>
+</nav>
+
+<!-- ==================================================================== -->
+<section id="start">
+  <h2>Getting started</h2>
+  <p class="lede">
+    A file is a module and needs no scaffolding beyond a <code>main</code>.
+    Save this as <code>hello.science</code>.
+  </p>
+
+<pre data-science>type Doc:
+    title: String
+    body: String
+
+function main():
+    let doc be Doc(title: "Regions", body: "A region is a set of program points.")
+    print(doc.title)
+
+    for i in 0..3:
+        print(i)</pre>
+
+<pre class="shell"><code>$ sciencec check hello.science
+$ echo $?
+0</code></pre>
+
+  <p class="note">
+    <code>check</code> is silent when a file is clean and exits 0. Anything it
+    finds goes to stderr with a code, a span and, where a fix exists, the exact
+    replacement text. Warnings alone do not fail the run.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="bindings">
+  <h2>Bindings and literals</h2>
+  <p class="lede">
+    <code>let … be</code> introduces a name. <code>be</code> on its own assigns
+    to one that already exists. Bindings are immutable unless declared
+    <code>mutable</code>.
+  </p>
+
+<pre data-science>let title be "Regions"
+let mutable count be 0
+let width: Int be 768              # the annotation is optional
+
+count be count + 1                 # assignment
+self.text be ""
+
+const WIDTH be 768                 # compile-time constant
+type Embedding is Array of F32     # type alias</pre>
+
+  <h3>Literals</h3>
+
+<pre data-science>let decimal be 1_000_000
+let hex be 0xdead_beef
+let octal be 0o777
+let binary be 0b1010
+let sized be 42i32
+
+let pi be 3.14
+let tiny be 1e-9
+let single be 2.5f32
+
+let greeting be "hola"
+let escaped be "a\tb\nc \u{1F600}"
+let letter be 'a'
+let flag be true
+let nothing be ()</pre>
+
+  <p class="note">
+    Escapes in full: <code>\n \t \r \\ \" \' \0 \u{…}</code>. Numeric types are
+    <code>I8</code>&hairsp;…&hairsp;<code>I64</code>,
+    <code>U8</code>&hairsp;…&hairsp;<code>U64</code>, <code>F16</code>,
+    <code>BF16</code>, <code>F32</code>, <code>F64</code>, with
+    <code>Int</code> and <code>Float</code> as the defaults.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="types">
+  <h2>Types</h2>
+  <p class="lede">
+    A record is a <code>type</code>. A sum type is a <code>choice</code>. Both
+    take generic parameters with <code>of</code>.
+  </p>
+
+<pre data-science>type Doc:
+    title: String
+    body: String
+
+type Pair of (A, B):
+    first: A
+    second: B
+
+choice Format:
+    Plain
+    Markdown
+    Json
+
+choice Tree of T:
+    Leaf(T)
+    Node(Box of (Tree of T), Box of (Tree of T))</pre>
+
+  <p class="note">
+    Construction takes <strong>named arguments in any order</strong>:
+    <code>Doc(title: "a", body: "…")</code>. A trailing comma is allowed
+    everywhere a list is.
+  </p>
+
+  <h3>Generic arguments</h3>
+
+<pre data-science>Array of Doc                       # one argument needs no parentheses
+Map of (String, Int)               # two or more do
+Array of (Map of (String, Int))    # nesting follows the same rule
+(Array of Doc).new()               # an associated call needs its own parentheses</pre>
+
+  <p class="note">
+    <code>Map of String, Int</code> in a parameter list cannot be parsed &mdash;
+    that <code>Int</code> could be <code>Map</code>'s second argument or the
+    function's second parameter &mdash; so several arguments take parentheses.
+    <code>Array of Doc.new()</code> is ambiguous for the same kind of reason and
+    the compiler reports it specifically, says which reading it took, and offers
+    the parenthesised form as a fix.
+  </p>
+
+  <h3>Const generics</h3>
+
+<pre data-science>type Grid of (T, const ROWS: Int, const COLS: Int):
+    cells: Array of T</pre>
+
+  <p class="note">
+    A generic parameter may be a type or a constant. Const generics are in the
+    core because tensor shapes are built out of them:
+    <code>Tensor of (F32, (batch, 768))</code> carries <code>768</code> as an
+    argument, and <code>768</code> is not a type.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="functions">
+  <h2>Functions</h2>
+  <p class="lede">
+    Generic parameters follow the name with <code>of</code>. Bounds go inline or
+    in a <code>where</code> clause; several join with <code>+</code>.
+  </p>
+
+<pre data-science>function summarize(doc: borrowed Doc) -> String:
+    doc.body.truncate(200)
+
+function duplicate of T: Clone + Eq(value: borrowed T) -> Pair of (T, T):
+    Pair(first: value.clone(), second: value.clone())
+
+function best_of of T(left: borrowed T, right: borrowed T) -> String
+        where T: Summarize + Clone:
+    if left.summarize().length() >= right.summarize().length():
+        left.preview()
+    else:
+        right.preview()
+
+function paired of (A, B)(first: A, second: B) -> (A, B):
+    (first, second)</pre>
+
+  <p class="note">
+    The last expression of a body is its value; <code>return</code> is for
+    leaving early. A function with no return type returns <code>()</code>.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="interfaces">
+  <h2>Interfaces</h2>
+  <p class="lede">
+    An interface may carry required methods, default bodies that call them, and
+    associated types.
+  </p>
+
+<pre data-science>interface Summarize:
+    function summarize(self) -> String
+
+    # A default body may call any other method of the interface.
+    function preview(self) -> String:
+        self.summarize().truncate(80)
+
+Doc implements Summarize:
+    function summarize(self) -> String:
+        self.body.truncate(200)
+
+Position implements Copy           # a marker: one line, no block</pre>
+
+  <h3>Receivers</h3>
+
+<pre data-science>function summarize(self)            # shared borrow of the receiver
+function reset(mutable self)       # exclusive borrow
+function into_title(self: Self)    # consumes it</pre>
+
+  <h3>Associated types</h3>
+
+<pre data-science>interface Iterate:
+    type Item
+    function next(mutable self) -> Option of Self.Item
+
+Countdown implements Iterate:
+    type Item is Int
+
+    function next(mutable self) -> Option of Self.Item:
+        if self.remaining <= 0:
+            None
+        else:
+            self.remaining be self.remaining - 1
+            Some(self.remaining)</pre>
+
+  <h3>Methods of your own</h3>
+
+<pre data-science>Note has:
+    function new(text: String) -> Note:
+        Note(text: text)
+
+    function is_empty(self) -> Bool:
+        self.text.is_empty()
+
+let n be Note.new("inferred, never written")</pre>
+
+  <p class="note">
+    A function with no <code>self</code> is an associated function and is called
+    through the type.
+  </p>
+
+  <h3>Operators are interfaces</h3>
+
+<pre data-science>Vector2 implements Add:
+    function add(self, other: Vector2) -> Vector2:
+        Vector2(x: self.x + other.x, y: self.y + other.y)</pre>
+
+  <p class="note">
+    <code>Add Sub Mul Div Rem Pow MatMul Neg Index Eq Ord Copy Clone Drop
+    Iterate From Display</code>. A scientific language in which <code>+</code>
+    does not work on your own type is not a scientific language, so implementing
+    them is how a user type joins in. <code>Eq</code> and <code>Ord</code> are
+    what the comparisons dispatch to.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="ownership">
+  <h2>Ownership and borrows</h2>
+  <p class="lede">
+    Memory is managed at compile time with full region inference. There are no
+    lifetime annotations to write &mdash; the regions are inferred, including
+    across function boundaries.
+  </p>
+
+<pre data-science>function retitle(doc: mutable borrowed Doc, title: String):
+    doc.title be title
+
+function compare(left: borrowed Doc, right: borrowed Doc) -> Bool:
+    left.title is right.title
+
+type View:
+    source: borrowed Doc           # a record may hold a borrow; the region is inferred
+
+function main():
+    let mutable doc be Doc(title: "a", body: "")
+
+    # A parameter declared `borrowed` is borrowed automatically, so the call
+    # site is bare. The signature still carries the information.
+    retitle(doc, "renamed")
+    compare(doc, doc)
+
+    # Write the borrow out where the position is not a call site.
+    let view be View(source: borrowed doc)</pre>
+
+  <h3>Dynamic dispatch</h3>
+
+<pre data-science>function describe_any(value: borrowed any Summarize) -> String:
+    value.preview()</pre>
+
+  <p class="note">
+    <code>any Interface</code> is the alternative to monomorphization and is
+    used behind an indirection &mdash; a borrow or a box.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="control">
+  <h2>Control flow</h2>
+  <p class="lede">
+    <code>if</code>/<code>else</code> is an expression. A block is an indented
+    body after <code>:</code>, or a single expression written inline.
+  </p>
+
+<pre data-science># The inline body ends where the EXPRESSION ends, not at the newline: the
+# then-branch stops at `else`, because `else` cannot continue an expression.
+function preview(text: borrowed String, limit: Int) -> Option of String:
+    if text.is_empty(): None else: Some(text.truncate(limit))</pre>
+
+  <p class="note">
+    An inline body may be an expression, an assignment, or
+    <code>return</code>&thinsp;/&thinsp;<code>break</code>&thinsp;/&thinsp;<code>continue</code>.
+    It may not be a <code>let</code>, which would bind a name nothing could use.
+    A dangling <code>else</code> binds to the innermost <code>if</code>.
+  </p>
+
+  <h3>Two loops</h3>
+
+<pre data-science>for i in 0..width:                 # half-open
+    print(i)
+
+for i in 0..=n:                    # inclusive, visits `n`
+    total be total + i
+
+for row in rows:
+    print(row.name)
+
+# `loop` is the only unbounded loop; `break` ends it. There is no `while`.
+loop:
+    if not converged(state):
+        break
+    state be refine(state)</pre>
+</section>
+
+<!-- ==================================================================== -->
+<section id="patterns">
+  <h2>Patterns</h2>
+  <p class="lede">
+    <code>match</code> is exhaustive; a missing case is an error that lists the
+    patterns left out. An arm is inline after its <code>:</code>, or an indented
+    block.
+  </p>
+
+<pre data-science>match format:
+    Plain: "plain"
+    Markdown: "markdown"
+    Json: "json"
+
+match format:                      # qualified variants mean the same thing
+    Format.Plain: "plain"
+
+match digit:
+    0 | 1 | 2: "small"
+    3 | 4 | 5 | 6: "medium"
+    _: "large"
+
+match token:
+    Symbol(',') | Symbol(';') | Symbol('.'): true
+    _: false
+
+match point:
+    Point(x: 0, y: 0): "origin"
+    Point(x: 0, y: y): "on the Y axis"
+    Point(x: x, y: 0): "on the X axis"
+    Point(x: x, y: _): "general"</pre>
+</section>
+
+<!-- ==================================================================== -->
+<section id="errors">
+  <h2>Errors <span class="cite wip">changing</span></h2>
+
+  <div class="callout">
+    <h3>This section is being replaced</h3>
+    <p>
+      What the compiler accepts today is shown first. The nullable model below
+      it is designed and not yet built &mdash; it changes what programs
+      <em>mean</em> rather than how they are spelled, so it is staged
+      separately from the rest.
+    </p>
+  </div>
+
+  <h3>Today</h3>
+
+<pre data-science>function read_config(path: borrowed String) -> Result of (Config, Error):
+    let text be try read_file(path)
+    let config be try parse(text)
+    Ok(config)</pre>
+
+  <p class="note">
+    <code>try</code> unwraps an <code>Ok</code> or a <code>Some</code> and
+    returns the failure otherwise. It is a prefix and binds the whole chain to
+    its right, so <code>(try f()).port</code> needs its parentheses.
+  </p>
+
+  <h3>Planned</h3>
+
+<pre data-science>function read_config(path: String) -> (Config, Error?):
+    let text, err be read_file(path)
+    if err?:
+        return (Config.empty(), err)
+
+    return (parse(text), null)</pre>
+
+  <p class="note">
+    A function that can fail returns its value <em>and</em> an error, the error
+    type is nullable, and <code>?</code> asks whether it is there.
+    <code>T?</code> replaces <code>Option of T</code>. <code>Error</code> is a
+    one-method interface, so <code>Error?</code> is shorthand for
+    <code>(any Error)?</code>; a function may declare a concrete
+    <code>choice</code> instead when it wants <code>match</code> to stay
+    exhaustive.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="chains">
+  <h2>Chains and closures</h2>
+  <p class="lede">
+    The shape most Science code takes is a chain of method calls. A line whose
+    continuation begins with <code>.</code> continues the line above it.
+  </p>
+
+<pre data-science>function headlines(docs: borrowed Array of Doc) -> Array of String:
+    docs
+        .iterate()
+        .discard(each.is_empty())
+        .map(each.title)
+        .take(5)
+        .collect()
+
+function by_length(docs: borrowed Array of Doc) -> Array of String:
+    docs
+        .iterate()
+        .map(doc giving doc.summarize())
+        .sort(by: line giving line.length())
+        .collect()</pre>
+
+  <p class="note">
+    Two closure forms. <code>each</code> names the subject of the enclosing call
+    without declaring it. <code>name giving expression</code> declares the
+    parameter, and is required when the parameter is used more than once and for
+    the one case <code>each</code> cannot express: nesting, where two
+    <code>each</code> would refer to different things. A nested
+    <code>each</code> is rejected rather than guessed at, and the error names the
+    <code>giving</code> form.
+  </p>
+
+  <p class="note">
+    Calls always take parentheses, including when they take no arguments:
+    <code>text.length()</code>, never <code>text.length</code>. Once functions
+    are values, <code>doc.summary</code> is ambiguous between calling it and
+    naming it, and a language cannot resolve that by guessing. Parentheses mean
+    call; their absence means a field.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="foreign">
+  <h2>Foreign code</h2>
+  <p class="lede">
+    Essentially every floating-point operation that matters in scientific
+    computing already lives in a C or Fortran library somebody else tuned. An
+    <code>extern</code> block declares what Science may call; the block is
+    <code>unsafe</code> because the declaration is a claim the compiler cannot
+    check.
+  </p>
+
+<pre data-science>unsafe extern "C" library "openblas" via pkg-config "openblas":
+
+    type CblasLayout is CInt
+    type CblasTranspose is CInt
+
+    const CBLAS_ROW_MAJOR be 101 as CblasLayout
+    const CBLAS_COL_MAJOR be 102 as CblasLayout
+
+    function cblas_dgemm(
+        layout: CblasLayout,
+        transpose_a: CblasTranspose,
+        m: BlasInt,
+        n: BlasInt,
+        a: ffi.Span of F64,
+    ) symbol "cblas_dgemm"
+
+    static H5T_NATIVE_DOUBLE_g: Hid
+    union H5R_ref_t: size 64 align 8</pre>
+
+  <p class="note">
+    Five item forms: <code>function</code>, <code>type</code> alias,
+    <code>const</code>, <code>static</code> for a global whose value the loader
+    sets, and <code>union</code> as an opaque blob of a known size and alignment.
+    <code>symbol</code> decouples the Science name from the linker name.
+  </p>
+
+  <h3>Linking</h3>
+
+<pre data-science>unsafe extern "C" library "openblas64_" kind static:
+unsafe extern "C" library "cudnn" when available:</pre>
+
+  <p class="note">
+    <code>via pkg-config</code> takes the flags from the system, which is the
+    only thing that gets BLAS right across machines. <code>kind static</code>
+    forces static linking; dynamic is the default, because cluster module
+    systems work by swapping the shared object under a fixed name.
+    <code>when available</code> makes a library optional and loaded on first
+    use, so a program that can use a GPU still starts on a node without one.
+  </p>
+
+  <h3>The interface is the wrapper, not the declaration</h3>
+
+<pre data-science>function multiply(a: borrowed Matrix, b: borrowed Matrix) -> Result of (Matrix, BlasError):
+    if a.columns is not b.rows:
+        return Err(BlasError.Shape(a.columns, b.rows))
+
+    unsafe:
+        cblas_dgemm(
+            layout: CBLAS_COL_MAJOR,
+            transpose_a: CBLAS_NO_TRANS,
+            m: a.rows as BlasInt,
+        )
+    Ok(result)</pre>
+
+  <p class="note">
+    Named arguments are permitted at a foreign call site &mdash; thirteen-argument
+    <code>dgemm</code> has two transposition flags that look identical, and
+    confusing them produces a wrong answer rather than an error. The safe
+    wrapper is where the unverifiable half of the claim is discharged by a check
+    a human wrote.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="toolchain">
+  <h2>Toolchain</h2>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Command</th><th>Does</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">sciencec check FILE…</td><td class="what">Lex, parse and resolve. Reports every file, continuing past a broken one.</td></tr>
+        <tr><td class="mono">sciencec tokens FILE</td><td class="what">The token stream, with spans.</td></tr>
+        <tr><td class="mono">sciencec ast FILE</td><td class="what">The syntax tree.</td></tr>
+        <tr><td class="mono">sciencec resolve FILE</td><td class="what">The definition table after name resolution.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    Dumps go to stdout, diagnostics and the summary to stderr. Exit 0 when there
+    are no errors, 1 when there are; warnings alone do not fail. Every
+    diagnostic carries a code, a primary span, and where a mechanical fix exists,
+    the replacement text &mdash; a tool can apply it without reading the prose.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="reference">
+  <h2>Reference</h2>
+
+  <h3>Comparisons</h3>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Operation</th><th>Written</th></tr></thead>
+      <tbody>
+        <tr><td class="what">equal</td><td class="mono">a is b</td></tr>
+        <tr><td class="what">not equal</td><td class="mono">a is not b</td></tr>
+        <tr><td class="what">greater, less</td><td class="mono">a &gt; b&nbsp;&nbsp;&nbsp;a &lt; b</td></tr>
+        <tr><td class="what">at least, at most</td><td class="mono">a &gt;= b&nbsp;&nbsp;&nbsp;a &lt;= b</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    One spelling per operation. Identity is a word because no symbol for it is
+    universal &mdash; <code>==</code> is a programming convention, and the
+    languages that have it disagree about what it means for objects. Ordering is
+    a symbol because <code>&gt;=</code> is four hundred years old and every
+    reader of a paper already reads it.
+  </p>
+
+  <h3>Precedence, tightest first</h3>
+
+  <ol class="ladder">
+    <li><span class="rung">01</span><span class="ops">call · index · field access · try</span></li>
+    <li><span class="rung">02</span><span class="ops">- not borrowed</span><span class="gloss">unary</span></li>
+    <li><span class="rung">03</span><span class="ops">as</span></li>
+    <li><span class="rung">04</span><span class="ops">**</span><span class="gloss">power, right-associative</span></li>
+    <li><span class="rung">05</span><span class="ops">* / % @</span><span class="gloss">@ is matrix multiply</span></li>
+    <li><span class="rung">06</span><span class="ops">+ -</span></li>
+    <li><span class="rung">07</span><span class="ops">&lt;&lt; &gt;&gt;</span></li>
+    <li><span class="rung">08</span><span class="ops">&amp;</span></li>
+    <li><span class="rung">09</span><span class="ops">^</span></li>
+    <li><span class="rung">10</span><span class="ops">|</span></li>
+    <li><span class="rung">11</span><span class="ops">is · is not · &gt; &lt; &gt;= &lt;=</span></li>
+    <li><span class="rung">12</span><span class="ops">and</span></li>
+    <li><span class="rung">13</span><span class="ops">or</span></li>
+  </ol>
+
+  <p class="note">
+    Assignment is absent because it is a statement, not an operator. Ranges sit
+    below everything, so <code>0..n - 1</code> counts to <code>n-1</code>.
+  </p>
+
+  <h3>Blocks and line continuation</h3>
+
+  <p class="note">
+    Blocks are delimited by indentation, <strong>spaces only</strong> &mdash; a
+    tab in the indentation is an error with no attempt to interpret it, because
+    its width depends on how the file is displayed and a block would then mean
+    different things to different readers. Blank and comment-only lines take no
+    part. Comments run from <code>#</code> to end of line; there are no block
+    comments.
+  </p>
+
+<pre data-science># A line continues when it ends inside an unclosed bracket...
+use compiler.frontend.diagnostics (
+    Diagnostic,
+    Label,
+)
+
+# ...when the next line begins with `.`, which is how a chain is broken...
+let names be docs
+    .iterate()
+    .collect()
+
+# ...and when it begins with `where`, before a signature's bounds.
+function largest of T(items: borrowed Array of T) -> borrowed T
+        where T: Ord:
+    items.get(0)</pre>
+
+  <p class="note">
+    Those two words are the whole list, and it is meant to stay that way: a line
+    break is otherwise the end of a statement, and a reader should not have to
+    look ahead to know whether it was.
+  </p>
+
+  <h3>Modules</h3>
+
+<pre data-science>use text.parser
+use text.parser (Token, lex)
+
+public type Doc:
+    title: String</pre>
+
+  <p class="note">
+    A file is a module; a directory with <code>mod.science</code> in it is a
+    module containing its siblings. There is no <code>mod</code> declaration.
+  </p>
+
+  <h3>Reserved words</h3>
+  <ul class="bank" id="bank-live"></ul>
+
+  <h4 style="font-family: var(--mono); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 1.5rem 0 0.75rem;">Held for later phases &mdash; using one is an error</h4>
+  <ul class="bank later" id="bank-later"></ul>
+
+  <h4 style="font-family: var(--mono); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 1.5rem 0 0.75rem;">Deliberately not reserved</h4>
+  <ul class="bank never" id="bank-never"></ul>
+
+  <p class="note">
+    Each of the last group is a common variable name in the code of the audience
+    Science is for, and that outranks the convenience of reserving it.
+  </p>
+</section>
+
+<footer>
+  Twenty-one worked programs live in <code>examples/</code>; they are input data
+  for the compiler's own test suites, so anything there that fails to lex, parse
+  or resolve is a bug in the compiler rather than a typo to be quietly patched.
+  Programs that must <em>fail</em>, each paired with the exact diagnostic it has
+  to produce, live in <code>tests/ui/</code>.
+</footer>
+
+</div>
+
+<script src="assets/highlight.js"></script>
+</body>
+</html>

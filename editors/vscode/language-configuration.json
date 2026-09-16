@@ -1,0 +1,53 @@
+{
+  "comments": {
+    "lineComment": "#"
+  },
+
+  "brackets": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"]
+  ],
+
+  "autoClosingPairs": [
+    { "open": "{", "close": "}" },
+    { "open": "[", "close": "]" },
+    { "open": "(", "close": ")" },
+    { "open": "\"", "close": "\"", "notIn": ["string", "comment"] },
+    { "open": "'", "close": "'", "notIn": ["string", "comment"] }
+  ],
+
+  "autoCloseBefore": ";:.,=}])> \n\t",
+
+  "surroundingPairs": [
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"],
+    ["\"", "\""],
+    ["'", "'"]
+  ],
+
+  "wordPattern": "(-?\\d[\\d_]*(?:\\.[\\d_]+)?(?:[eE][+-]?[\\d_]+)?(?:[iuf](?:8|16|32|64))?)|([A-Za-z_][A-Za-z0-9_]*)",
+
+  "indentationRules": {
+    "increaseIndentPattern": ":[ \\t]*(#.*)?$",
+    "decreaseIndentPattern": "^[ \\t]*else\\b.*$"
+  },
+
+  "onEnterRules": [
+    {
+      "_comment": "`return`, `break` and `continue` end a block, so the next line goes back out. The `:` case is left to increaseIndentPattern: an onEnterRule and an indentation rule for the same line are two ways to indent once, and only one of them should own it.",
+      "beforeText": "^[ \\t]*(?:return|break|continue)\\b.*$",
+      "action": { "indentAction": "outdent" }
+    },
+    {
+      "_comment": "A comment block keeps its `#` when it is split.",
+      "beforeText": "^[ \\t]*#[ \\t]+.*$",
+      "action": { "indentAction": "none", "appendText": "# " }
+    }
+  ],
+
+  "folding": {
+    "offSide": true
+  }
+}
