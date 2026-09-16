@@ -79,7 +79,8 @@ is an informed act.
 - Integers: `42`, `1_000_000`, `0xFF`, `0b1010`, `0o777`. Optional type suffix:
   `42i32`, `7u8`.
 - Floats: `3.14`, `1e-9`, `2.5f32`.
-- Strings: `"hello"`, with escapes `\n`, `\t`, `\r`, `\\`, `\"`, `\0`, `\u{1F600}`.
+- Strings: `"hello"`, with escapes `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0`,
+  `\u{1F600}`. A string literal has type `String`.
 - Characters: `'a'`, `'\n'`.
 - Booleans: `true`, `false`.
 - Unit: `()`.
@@ -204,6 +205,46 @@ fn describe[T](x: &T) -> String where T: Summarize + Clone:
     x.summarize()
 ```
 
+**Generic traits.** A trait may take type parameters. With no associated types
+in F0 (§5.4), this is the only way to write `Iterate` or `From`:
+
+```link
+trait From[T]:
+    fn from(value: T) -> Self
+
+impl From[Doc] for Summary:
+    fn from(value: Doc) -> Summary: ...
+```
+
+**Inherent impls and associated functions.** A type may have methods that come
+from no trait. A function in an `impl` with no `self` receiver is an associated
+function, called through the type:
+
+```link
+impl Doc:
+    fn new(title: String) -> Doc:
+        Doc(title: title, body: "")
+
+    fn is_empty(&self) -> Bool:
+        self.body.len() == 0
+
+let d = Doc.new("a")
+let a = Array[Doc].new()
+```
+
+This is how `Array`, `Map`, and `Box` are constructed; named-argument
+construction is for structs only.
+
+**Marker traits.** A trait with no methods is implemented by a single line with
+no block, since there is nothing to indent:
+
+```link
+impl Copy for Point
+```
+
+Without this rule `Copy` would be unimplementable, because F0 has no empty
+block.
+
 **Dynamic dispatch.** `dyn Trait` only behind an indirection: `&dyn Summarize`
 or `Box[dyn Summarize]`. A trait is `dyn`-compatible if no method takes `Self`
 by value or has generic parameters of its own.
@@ -306,6 +347,25 @@ an assignment statement.
 `fn f[T]() -> T where T: A + B: body` the first `:` that no bound consumes is
 the one that opens the block. It resolves, but it is the tightest spot in the
 grammar and the place most likely to need a delimiter if the syntax ever grows.
+
+### 4.5 Smaller rules
+
+Collected here because each is one sentence, and because leaving any of them
+unsaid makes some real program ambiguous.
+
+- **Trailing commas** are allowed in every parenthesized and bracketed list:
+  arguments, parameters, generic arguments, struct fields, tuples.
+- **Enum variants may be qualified.** `Some(x)` and `Option.Some(x)` are the
+  same thing; the qualified form disambiguates when two enums in scope share a
+  variant name.
+- **References auto-dereference** for field access, method calls, and
+  assignment: given `d: &mut Doc`, both `d.title` and `d.title = t` work. F0 has
+  no explicit dereference operator, which is why the rule is needed rather than
+  merely convenient.
+- **There is no range syntax.** `for` walks a collection; counting loops use
+  `while`.
+- **`Never`** is the type of an expression that does not return, such as a call
+  to `panic`. It coerces to any type, which is what lets a `match` arm panic.
 
 ## 5. Type system
 
@@ -492,14 +552,69 @@ itself; recursion is detected and resolved with the component's fixed point.
 allocator, `panic` with a message and abort, and the representations of the
 library types. No garbage collector and no threads in F0.
 
-The F0 standard library, deliberately small:
+The F0 standard library, deliberately small. Method sets are listed in full:
+anything not written here does not exist, and adding to this list is a spec
+change rather than a library detail.
 
-- `Option[T]`, `Result[T, E]`, `Box[T]`
-- `String` (owned, UTF-8) and `&String` for views
-- `Array[T]` (growable, contiguous), `Map[K, V]` (hash table)
-- `print`, `println`
-- `read_file`, `write_file`
-- Traits: `Copy`, `Clone`, `Drop`, `Eq`, `Ord`, `Iterate`, `From`
+```link
+enum Option[T]:
+    Some(T)
+    None
+
+impl Option[T]:
+    fn is_some(&self) -> Bool
+    fn unwrap(self) -> T                      # panics on None
+    fn unwrap_or(self, fallback: T) -> T
+
+enum Result[T, E]:
+    Ok(T)
+    Err(E)
+
+impl Result[T, E]:
+    fn is_ok(&self) -> Bool
+    fn unwrap(self) -> T                      # panics on Err
+    fn unwrap_or(self, fallback: T) -> T
+
+impl Box[T]:
+    fn new(value: T) -> Box[T]
+
+impl String:
+    fn new() -> String
+    fn len(&self) -> Int                      # in bytes
+    fn is_empty(&self) -> Bool
+    fn push_str(&mut self, other: &String)
+    fn truncate(&self, limit: Int) -> String  # by characters, never mid-char
+    fn starts_with(&self, prefix: &String) -> Bool
+    fn chars(&self) -> Chars                  # implements Iterate[Char]
+
+impl Array[T]:
+    fn new() -> Array[T]
+    fn len(&self) -> Int
+    fn is_empty(&self) -> Bool
+    fn push(&mut self, value: T)
+    fn pop(&mut self) -> Option[T]
+    fn get(&self, index: Int) -> Option[&T]
+    fn get_mut(&mut self, index: Int) -> Option[&mut T]
+
+impl Map[K, V]:
+    fn new() -> Map[K, V]
+    fn len(&self) -> Int
+    fn insert(&mut self, key: K, value: V) -> Option[V]
+    fn get(&self, key: &K) -> Option[&V]
+    fn remove(&mut self, key: &K) -> Option[V]
+    fn contains(&self, key: &K) -> Bool
+```
+
+Free functions: `print(text: &String)`, `println(text: &String)`,
+`panic(message: &String) -> Never`, `read_file(path: &String) ->
+Result[String, IoError]`, `write_file(path: &String, contents: &String) ->
+Result[(), IoError]`.
+
+Traits: `Copy`, `Clone`, `Drop`, `Eq`, `Ord`, `Iterate[T]`, `From[T]`.
+
+`Array` and `Map` indexing goes through `get`, which returns an `Option`. There
+is no indexing operator that can panic, because §5.5 says absence is expressed
+in the type.
 
 Everything else is F1 or later.
 
