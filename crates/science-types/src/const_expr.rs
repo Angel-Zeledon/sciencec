@@ -36,9 +36,10 @@
 use std::fmt::Write as _;
 
 use science_diagnostics::{Diagnostic, Span};
-use science_resolve::hir::{self, DefId, DefTable, Literal};
+use science_resolve::hir::{self, DefTable, Literal};
 
 use crate::diagnostics;
+use crate::normal::{Atom, AtomOrder};
 
 /// One node of a const expression, with where it came from.
 ///
@@ -85,7 +86,7 @@ pub enum ConstExprKind {
     /// This is the atom of the normal form. It is a [`DefId`] and not a name,
     /// because two parameters called `N` in two scopes are two parameters and
     /// §3.3 must not call them equal.
-    Param(DefId),
+    Param(Atom),
     /// `-e`.
     Neg(Box<ConstExpr>),
     /// `e₁ + e₂`.
@@ -111,8 +112,13 @@ impl ConstExpr {
         ConstExpr { kind: ConstExprKind::Lit(value), span }
     }
 
-    pub fn param(def: DefId, span: Span) -> ConstExpr {
-        ConstExpr { kind: ConstExprKind::Param(def), span }
+    /// A const parameter, already ranked.
+    ///
+    /// The [`Atom`] is built at lowering because that is the one phase with a
+    /// `DefTable` in reach, and a rank cannot be computed without one. Every
+    /// phase after this compares ranks and never asks a table again.
+    pub fn param(atom: Atom, span: Span) -> ConstExpr {
+        ConstExpr { kind: ConstExprKind::Param(atom), span }
     }
 
     pub fn neg(operand: ConstExpr, span: Span) -> ConstExpr {
@@ -166,7 +172,7 @@ impl ConstExpr {
             ConstExprKind::Lit(value) => {
                 let _ = write!(out, "{value}");
             }
-            ConstExprKind::Param(def) => out.push_str(&defs.get(*def).name),
+            ConstExprKind::Param(atom) => out.push_str(&atom.render(defs)),
             ConstExprKind::Neg(operand) => {
                 out.push('-');
                 operand.render_at(defs, Precedence::Unary, out);
@@ -231,7 +237,7 @@ enum Precedence {
 /// what a const argument's signed value is, and `-2^127` is exactly the case
 /// where reading the magnitude and negating it afterwards gets a different
 /// answer.
-pub fn lower(expr: &hir::ConstExpr) -> Result<ConstExpr, Diagnostic> {
+pub fn lower(expr: &hir::ConstExpr, order: &AtomOrder) -> Result<ConstExpr, Diagnostic> {
     match &expr.kind {
         hir::ConstExprKind::Lit(literal) => {
             check_integer_literal(literal, expr.span)?;
@@ -248,28 +254,28 @@ pub fn lower(expr: &hir::ConstExpr) -> Result<ConstExpr, Diagnostic> {
                     expr.as_i128().ok_or_else(|| diagnostics::literal_too_large(expr.span))?;
                 return Ok(ConstExpr::lit(value, expr.span));
             }
-            Ok(ConstExpr::neg(lower(operand)?, expr.span))
+            Ok(ConstExpr::neg(lower(operand, order)?, expr.span))
         }
         // The rest landed when the parser grew §2.1's grammar. This match was
         // written exhaustive on purpose so that day would fail to compile
         // here rather than silently lower half a language.
         hir::ConstExprKind::Param(res) => match res.def_id() {
-            Some(def) => Ok(ConstExpr::param(def, expr.span)),
+            Some(def) => Ok(ConstExpr::param(order.atom(def), expr.span)),
             // The name resolved to nothing, and resolution said so. Lowering
             // a second diagnostic for the same mistake is how a compiler
             // acquires cascades.
             None => Err(diagnostics::unresolved_const_param(expr.span)),
         },
         hir::ConstExprKind::Add(lhs, rhs) => {
-            Ok(ConstExpr::add(lower(lhs)?, lower(rhs)?, expr.span))
+            Ok(ConstExpr::add(lower(lhs, order)?, lower(rhs, order)?, expr.span))
         }
         hir::ConstExprKind::Sub(lhs, rhs) => {
-            Ok(ConstExpr::sub(lower(lhs)?, lower(rhs)?, expr.span))
+            Ok(ConstExpr::sub(lower(lhs, order)?, lower(rhs, order)?, expr.span))
         }
         hir::ConstExprKind::Mul { operand, factor, factor_span } => {
             check_integer_literal(factor, *factor_span)?;
             let value = literal_value(factor, *factor_span)?;
-            Ok(ConstExpr::scale(lower(operand)?, value, *factor_span, expr.span))
+            Ok(ConstExpr::scale(lower(operand, order)?, value, *factor_span, expr.span))
         }
         // `e / k` is §4's quotient and F0 is the quotient-free fragment, so
         // this is refused rather than lowered into a node the normaliser has

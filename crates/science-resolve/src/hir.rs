@@ -249,6 +249,15 @@ impl DefTable {
         &self.defs[id.index()]
     }
 
+    /// Every definition's id, in allocation order.
+    ///
+    /// Allocation order is *not* a canonical order across files — see
+    /// `science-types`' `AtomOrder` for why that matters — so a caller that
+    /// needs one sorts by something the author wrote rather than by this.
+    pub fn ids(&self) -> impl Iterator<Item = DefId> + '_ {
+        (0..self.defs.len()).map(|i| DefId(i as u32))
+    }
+
     pub fn len(&self) -> usize {
         self.defs.len()
     }

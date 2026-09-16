@@ -75,7 +75,7 @@ pub mod normal;
 pub use const_expr::{lower, ConstExpr, ConstExprKind};
 pub use matching::{match_linear, Match, MatchError};
 pub use mono::MonoKey;
-pub use normal::{equal, normalise, Atom, ConstEvalError, NormalForm, Term};
+pub use normal::{equal, normalise, Atom, AtomOrder, ConstEvalError, NormalForm, Term};
 
 /// The diagnostics this crate emits.
 ///

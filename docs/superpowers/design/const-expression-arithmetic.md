@@ -254,6 +254,22 @@ by their divisor and then recursively by their numerator's normal form.
 Deliberately **not** `DefId`, which is an allocation order and would make a
 diagnostic's rendering depend on the order files were read.
 
+**This was implemented as `DefId` and then corrected**, which is worth
+recording because the mistake was made with an argument rather than by
+oversight. `type-checking-and-mir.md` §8 decided `DefId` on the ground that
+`DefTable::alloc` walks declarations in source order — true within a file, and
+false across them, since `sciencec` hands out `FileId`s in command-line order.
+Within one compilation it changed no answer, because `EQUAL` sorts both sides
+with the same function. What it changed was the **serialised monomorphisation
+key**, which printed the raw id: the same program could produce different
+symbol names depending on how it was invoked, which is what
+`reproducibility.md` forbids and which surfaces as a cache miss rather than as
+an error.
+
+`science-types`' `AtomOrder` is this section's order computed once per crate
+and compared as an integer, which answers the speed objection that motivated
+the wrong choice without keeping the property that was wrong.
+
 For units, atoms are always parameters and the form is `k + Σ cᵢ·pᵢ` — exactly
 what `scientific-libraries.md` §12.4 point 3 asks for, spelled the same way. **The
 quotient atom is charged entirely to shapes; the units checker never constructs

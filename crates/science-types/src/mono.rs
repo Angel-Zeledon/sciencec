@@ -110,8 +110,15 @@ impl fmt::Display for MonoKey {
                 let sign = if term.coefficient() < 0 { '-' } else { '+' };
                 let magnitude = term.coefficient().unsigned_abs();
                 match term.atom() {
-                    crate::Atom::Param(def) => {
-                        write!(f, "{sign}{magnitude}*#{}", def.index())?;
+                    // The **rank**, not the id. A `DefId` is allocation
+                    // order, so it moves when files are named in a different
+                    // order on the command line, and a symbol name that moves
+                    // with an invocation is what `reproducibility.md` exists
+                    // to forbid. A rank is §3.1's canonical order and does
+                    // not move. This printed `#{def.index()}` until that was
+                    // noticed.
+                    crate::Atom::Param { rank, .. } => {
+                        write!(f, "{sign}{magnitude}*#{rank}")?;
                     }
                 }
             }

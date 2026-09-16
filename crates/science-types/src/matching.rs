@@ -117,7 +117,7 @@ pub fn match_linear(pattern: &NormalForm, value: i128) -> Result<Match, MatchErr
     // of §4 arrives this stops compiling, which is the right moment to decide
     // what inverting `⌊e/d⌋` means — §7.1 says nothing about it, and guessing
     // silently would be worse than a build failure.
-    let Atom::Param(param) = term.atom();
+    let Atom::Param { def: param, .. } = term.atom();
     let coefficient = term.coefficient();
 
     let numerator = value.checked_sub(pattern.constant()).ok_or(MatchError::Overflow)?;

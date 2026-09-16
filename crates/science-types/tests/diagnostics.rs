@@ -20,7 +20,18 @@
 use science_diagnostics::{render, Diagnostic, FileId, SourceMap, Span};
 use science_resolve::hir::{DefId, DefKind, DefTable, BUILTIN_SPAN};
 use science_types::diagnostics::{cannot_show_equal, normal_form_block, Comparand};
-use science_types::{codes, normalise, ConstExpr, NormalForm};
+use science_types::{Atom, codes, normalise, ConstExpr, NormalForm};
+
+/// A ranked atom, where the id doubles as the rank.
+///
+/// Sound in a test because a test is one file, so allocation order *is* the
+/// canonical order. Real code builds an `AtomOrder` from the crate's table;
+/// this exists so no test hand-writes a rank, which is how three of them came
+/// to say `rank: 0` for every parameter at once and stop distinguishing them.
+fn atom(def: DefId) -> Atom {
+    Atom::Param { rank: def.index() as u32, def }
+}
+
 
 const SOURCE: &str = "\
 def residual of (const n: Int, const m: Int)(
@@ -72,8 +83,8 @@ fn two_distinct_parameters_render_the_full_block() {
     let (defs, n, m) = fixture();
 
     // The two extents, as they appear in the two parameter types.
-    let left_expr = ConstExpr::param(n, at("n),", 0));
-    let right_expr = ConstExpr::param(m, at("m),", 0));
+    let left_expr = ConstExpr::param(atom(n), at("n),", 0));
+    let right_expr = ConstExpr::param(atom(m), at("m),", 0));
     let (left_form, right_form) = (form(&left_expr), form(&right_expr));
 
     let diagnostic = cannot_show_equal(
@@ -108,13 +119,13 @@ fn the_normal_form_column_shows_that_reassociation_is_not_the_problem() {
     let (defs, n, m) = fixture();
 
     let left_expr = ConstExpr::add(
-        ConstExpr::param(n, at("n),", 0)),
+        ConstExpr::param(atom(n), at("n),", 0)),
         ConstExpr::lit(1, at("1", 0)),
         at("n),", 0),
     );
     let right_expr = ConstExpr::add(
         ConstExpr::lit(1, at("1", 0)),
-        ConstExpr::param(m, at("m),", 0)),
+        ConstExpr::param(atom(m), at("m),", 0)),
         at("m),", 0),
     );
     let (left_form, right_form) = (form(&left_expr), form(&right_expr));
@@ -147,8 +158,8 @@ fn explanation(left: &ConstExpr, right: &ConstExpr, defs: &DefTable) -> String {
 fn a_differing_constant_is_named_as_such() {
     let (defs, n, _) = fixture();
     let span = at("n),", 0);
-    let left = ConstExpr::add(ConstExpr::param(n, span), ConstExpr::lit(1, span), span);
-    let right = ConstExpr::add(ConstExpr::param(n, span), ConstExpr::lit(2, span), span);
+    let left = ConstExpr::add(ConstExpr::param(atom(n), span), ConstExpr::lit(1, span), span);
+    let right = ConstExpr::add(ConstExpr::param(atom(n), span), ConstExpr::lit(2, span), span);
 
     assert!(explanation(&left, &right, &defs)
         .contains("the constant terms differ: 1 on the left, 2 on the right"));
@@ -158,8 +169,8 @@ fn a_differing_constant_is_named_as_such() {
 fn a_differing_coefficient_is_named_as_such() {
     let (defs, n, _) = fixture();
     let span = at("n),", 0);
-    let left = ConstExpr::scale(ConstExpr::param(n, span), 2, span, span);
-    let right = ConstExpr::scale(ConstExpr::param(n, span), 3, span, span);
+    let left = ConstExpr::scale(ConstExpr::param(atom(n), span), 2, span, span);
+    let right = ConstExpr::scale(ConstExpr::param(atom(n), span), 3, span, span);
 
     assert!(explanation(&left, &right, &defs)
         .contains("`n` has coefficient 2 on the left and 3 on the right"));
@@ -169,8 +180,8 @@ fn a_differing_coefficient_is_named_as_such() {
 fn an_atom_present_on_one_side_only_is_named_as_such() {
     let (defs, n, m) = fixture();
     let span = at("n),", 0);
-    let left = ConstExpr::add(ConstExpr::param(n, span), ConstExpr::param(m, span), span);
-    let right = ConstExpr::param(n, span);
+    let left = ConstExpr::add(ConstExpr::param(atom(n), span), ConstExpr::param(atom(m), span), span);
+    let right = ConstExpr::param(atom(n), span);
 
     assert!(explanation(&left, &right, &defs)
         .contains("`m` appears on the left and not on the right"));
@@ -183,8 +194,8 @@ fn the_legend_has_one_entry_per_atom_in_atom_order_without_duplicates() {
     let (defs, n, m) = fixture();
     let span = at("n),", 0);
     // `n` twice on the left, `m` once on the right.
-    let left = ConstExpr::add(ConstExpr::param(n, span), ConstExpr::param(n, span), span);
-    let right = ConstExpr::add(ConstExpr::param(n, span), ConstExpr::param(m, span), span);
+    let left = ConstExpr::add(ConstExpr::param(atom(n), span), ConstExpr::param(atom(n), span), span);
+    let right = ConstExpr::add(ConstExpr::param(atom(n), span), ConstExpr::param(atom(m), span), span);
     let (left_form, right_form) = (form(&left), form(&right));
 
     let block = normal_form_block(
@@ -209,8 +220,8 @@ fn a_builtin_definition_never_becomes_a_label() {
     let builtin = defs.alloc(DefKind::ConstParam, "LANES", BUILTIN_SPAN, None);
 
     let span = at("n),", 0);
-    let left = ConstExpr::param(n, span);
-    let right = ConstExpr::param(builtin, span);
+    let left = ConstExpr::param(atom(n), span);
+    let right = ConstExpr::param(atom(builtin), span);
     let (left_form, right_form) = (form(&left), form(&right));
 
     let block = normal_form_block(
@@ -235,8 +246,8 @@ fn the_block_can_be_attached_to_someone_elses_diagnostic() {
     // exist yet.
     let (defs, n, m) = fixture();
     let span = at("n),", 0);
-    let left = ConstExpr::param(n, span);
-    let right = ConstExpr::param(m, at("m),", 0));
+    let left = ConstExpr::param(atom(n), span);
+    let right = ConstExpr::param(atom(m), at("m),", 0));
     let (left_form, right_form) = (form(&left), form(&right));
 
     let block = normal_form_block(

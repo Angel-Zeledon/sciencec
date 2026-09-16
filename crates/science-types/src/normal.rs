@@ -27,31 +27,41 @@
 //!
 //! `type-checking-and-mir.md` §8 Decision 17 overrides it: **the atom order is
 //! by `DefId`, and `DefId`s are assigned in source order by the resolver.**
-//! This crate implements Decision 17. The argument for it, stated so it can be
-//! attacked:
+//! This crate implemented Decision 17 — order by `DefId` — and **that was
+//! wrong**. The argument for it is kept below because it was careful and
+//! because the half of it that was right is the half that survives.
 //!
-//! - `DefTable::alloc` hands out ids sequentially as the resolver walks, and
-//!   the resolver walks declarations in source order within a module and
-//!   modules in the order they were handed in. So `DefId` order *is* source
-//!   order, not an arbitrary allocation order, and §3.1's objection is to a
-//!   property `DefId` does not have here.
+//! The argument was:
+//!
+//! - `DefTable::alloc` hands out ids as the resolver walks, and the resolver
+//!   walks declarations in source order. So `DefId` order *is* source order,
+//!   and §3.1's objection is to a property `DefId` does not have here.
 //! - It is one integer comparison. §3.1's order requires building a canonical
-//!   path per atom — a string, at every comparison, inside the inner loop of
-//!   the procedure four other things call.
-//! - It gives §8.3 its answer for free. A `with`-bound parameter is introduced
-//!   by a statement rather than by a declaration's `of` list, and §8.3 asks
-//!   that such parameters sort *after* declaration-bound ones by the source
-//!   position of their binder. Under `DefId` that is automatic: the resolver
-//!   reaches a statement after it has reached the signature that encloses it.
+//!   path per atom, inside the inner loop of a procedure four things call.
+//! - It gives §8.3 its answer for free: a `with`-bound parameter is reached
+//!   after the signature that encloses it, so it sorts after by construction.
 //!
-//! **What it costs, and §3.1 is right that it costs something.** The order
-//! depends on declaration order, so moving a `type` above another one in a file
-//! renumbers the const parameters below it and reorders the terms a diagnostic
-//! *prints*. It never changes an answer: `EQUAL` sorts both sides with the same
-//! function, and two forms that were equal stay equal. And it is stable across
-//! runs and across incremental rebuilds for as long as declaration order does
-//! not change, which is the property §3.1 actually wanted. `tests/atom_order.rs`
-//! holds all of that to it, including the part that costs.
+//! **The first point is true within a file and false across them.**
+//! `sciencec`'s driver hands out `FileId`s in command-line order, so
+//! `check a.science b.science` and `check b.science a.science` number the same
+//! program differently. §3.1 said exactly this and it was right.
+//!
+//! Within one run it changed no answer, because `EQUAL` sorts both sides with
+//! the same function. What it changed was the **serialised monomorphisation
+//! key**, which printed the raw id — so the same program could produce
+//! different symbol names depending on how it was invoked. That is what
+//! `reproducibility.md` exists to forbid, and it is not a compile error: it is
+//! a cache miss, or a pointer comparison that fails, found long after.
+//!
+//! [`AtomOrder`] keeps the second point and drops the first. A rank is §3.1's
+//! order computed **once per crate** and compared as an integer, so the inner
+//! loop stays one comparison and the canonical path is built once per
+//! parameter rather than once per comparison. §8.3 still gets its answer,
+//! because within one declaring item the order is still allocation order and
+//! that is the `of` list.
+//!
+//! `tests/atom_order.rs` holds the whole of it, including the test that builds
+//! two tables numbered oppositely and asserts the ranks agree.
 //!
 //! # 3. Provenance
 //!
@@ -105,11 +115,12 @@
 //! `None` over *"a wrong number somewhere downstream"* for the same reason one
 //! phase earlier.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 
 use science_diagnostics::Span;
-use science_resolve::hir::{DefId, DefTable};
+use science_resolve::hir::{DefId, DefKind, DefTable};
 
 use crate::const_expr::{ConstExpr, ConstExprKind};
 
@@ -133,23 +144,125 @@ use crate::const_expr::{ConstExpr, ConstExprKind};
 pub enum Atom {
     /// A const generic parameter, or a `with`-bound one (§8.3).
     ///
-    /// Ordered by [`DefId`], which is source order — see this module's §2 for
-    /// why that overrides §3.1's own sentence on the subject.
-    Param(DefId),
+    /// **Ordered by `rank`, not by `DefId`**, and the field order is what makes
+    /// the derived `Ord` say so. A rank is §3.1's order materialised as an
+    /// integer: [`AtomOrder`] sorts every const parameter in the crate by the
+    /// canonical path of its declaring item and then by its position in that
+    /// item's `of` list, exactly as that section specifies, and hands out
+    /// positions in that sequence.
+    ///
+    /// `def` is the identity and `rank` is the order. They are in bijection,
+    /// so comparing by one and equating by the other is consistent, and the
+    /// derived `Eq` and `Hash` use both, which is the same thing.
+    Param { rank: u32, def: DefId },
+}
+
+/// §3.1's atom order, materialised once per crate.
+///
+/// The section is exact about what the order is: *"parameters first, ordered by
+/// the canonical path of their declaring item and then by their index in its
+/// `of` list"*, and it says why it is **deliberately not `DefId`** — that is an
+/// allocation order, *"and would make a diagnostic's rendering depend on the
+/// order files were read"*.
+///
+/// This crate shipped ordering by `DefId` and argued that the objection did not
+/// apply, because `DefTable::alloc` walks declarations in source order. That is
+/// true **within a file** and false across them: `sciencec`'s driver hands out
+/// `FileId`s in command-line order, so `check a.science b.science` and
+/// `check b.science a.science` number the same program differently.
+///
+/// Within one run that changed nothing, because `EQUAL` sorts both sides with
+/// the same function. What it changed was the **serialised monomorphisation
+/// key**, which embedded the raw id and therefore the file order — so the same
+/// program could produce different symbol names depending on how it was
+/// invoked. `reproducibility.md` exists to forbid exactly that, and a symbol
+/// name that moves is not a compile error: it is a cache miss, or a pointer
+/// comparison that fails, found long after the cause.
+///
+/// So the note was right. A rank is its order computed once and compared as an
+/// integer, which keeps the inner loop a single comparison — the real half of
+/// the original argument — without keeping the property that was wrong.
+#[derive(Debug, Clone, Default)]
+pub struct AtomOrder {
+    rank: HashMap<DefId, u32>,
+}
+
+impl AtomOrder {
+    /// Ranks every const parameter in the crate.
+    ///
+    /// Sorted by the canonical path of the declaring item, then by position in
+    /// that item's `of` list. The second is `DefId` order *within one parent*,
+    /// which is the of-list order by construction and is not read order,
+    /// because a parent's generics are allocated consecutively as one
+    /// signature is walked.
+    pub fn of(defs: &DefTable) -> AtomOrder {
+        let mut params: Vec<(String, usize, DefId)> = Vec::new();
+        for id in defs.ids() {
+            let def = defs.get(id);
+            if def.kind != DefKind::ConstParam {
+                continue;
+            }
+            params.push((canonical_path(defs, id), id.index(), id));
+        }
+        // The path decides; the index breaks the tie inside one signature.
+        params.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        let rank =
+            params.iter().enumerate().map(|(i, (_, _, id))| (*id, i as u32)).collect();
+        AtomOrder { rank }
+    }
+
+    /// The atom for a const parameter, ranked.
+    ///
+    /// A parameter this order has never seen gets `u32::MAX`, which sorts it
+    /// last and is deterministic. It cannot happen for a table this order was
+    /// built from, and returning an error would push a `Result` through every
+    /// construction site for a case that is a bug in the caller.
+    pub fn atom(&self, def: DefId) -> Atom {
+        Atom::Param { rank: self.rank.get(&def).copied().unwrap_or(u32::MAX), def }
+    }
+}
+
+/// A definition's path from the crate root, dot-separated.
+///
+/// Read-order independent, which is the whole point: it is built from names
+/// the author wrote rather than from numbers the resolver handed out.
+fn canonical_path(defs: &DefTable, id: DefId) -> String {
+    let mut parts = Vec::new();
+    let mut current = Some(id);
+    while let Some(at) = current {
+        let def = defs.get(at);
+        if !def.name.is_empty() {
+            parts.push(def.name.clone());
+        }
+        current = def.parent;
+    }
+    parts.reverse();
+    parts.join(".")
 }
 
 impl Atom {
+    /// The atom's position in §3.1's canonical order.
+    ///
+    /// This is what the monomorphisation key serialises and what comparison
+    /// uses. It is the part that must not move between two compilations of
+    /// the same program; the [`DefId`] beside it is identity within one.
+    pub fn rank(&self) -> u32 {
+        match self {
+            Atom::Param { rank, .. } => *rank,
+        }
+    }
+
     /// The atom as a diagnostic spells it.
     pub fn render(&self, defs: &DefTable) -> String {
         match self {
-            Atom::Param(def) => defs.get(*def).name.clone(),
+            Atom::Param { def, .. } => defs.get(*def).name.clone(),
         }
     }
 
     /// Where the atom was bound, for §9.2's legend.
     pub fn definition_span(&self, defs: &DefTable) -> Span {
         match self {
-            Atom::Param(def) => defs.get(*def).span,
+            Atom::Param { def, .. } => defs.get(*def).span,
         }
     }
 
@@ -160,7 +273,7 @@ impl Atom {
     /// label. §9.2's legend is all labels, so it asks first.
     pub fn is_builtin(&self, defs: &DefTable) -> bool {
         match self {
-            Atom::Param(def) => defs.get(*def).is_builtin(),
+            Atom::Param { def, .. } => defs.get(*def).is_builtin(),
         }
     }
 }
@@ -440,7 +553,7 @@ fn checked(value: Option<i128>) -> Result<i128, ConstEvalError> {
 pub fn normalise(expr: &ConstExpr) -> Result<NormalForm, ConstEvalError> {
     let form = match &expr.kind {
         ConstExprKind::Lit(value) => Ok(NormalForm::literal(*value)),
-        ConstExprKind::Param(def) => Ok(NormalForm::atom(Atom::Param(*def), expr.span)),
+        ConstExprKind::Param(atom) => Ok(NormalForm::atom(*atom, expr.span)),
         ConstExprKind::Neg(operand) => normalise(operand)?.negate(),
         ConstExprKind::Add(left, right) => normalise(left)?.merge(&normalise(right)?),
         ConstExprKind::Sub(left, right) => normalise(left)?.merge(&normalise(right)?.negate()?),

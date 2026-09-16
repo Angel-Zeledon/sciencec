@@ -5,6 +5,7 @@
 //! work. Each section names the decision it holds to.
 
 mod common;
+use common::atom;
 
 use common::Scope;
 use science_types::{equal, normalise, Atom, ConstEvalError, ConstExpr, NormalForm};
@@ -277,10 +278,10 @@ fn terms_are_strictly_increasing_whatever_order_they_were_written_in() {
     let form = form(&expr);
 
     let atoms: Vec<Atom> = form.atoms().collect();
-    assert_eq!(atoms, vec![Atom::Param(ids[1]), Atom::Param(ids[2]), Atom::Param(ids[3])]);
+    assert_eq!(atoms, vec![atom(ids[1]), atom(ids[2]), atom(ids[3])]);
     assert!(atoms.windows(2).all(|pair| pair[0] < pair[1]), "strictly increasing");
-    assert_eq!(form.coefficient_of(Atom::Param(ids[1])), 2);
-    assert_eq!(form.coefficient_of(Atom::Param(ids[0])), 0, "an absent atom has coefficient 0");
+    assert_eq!(form.coefficient_of(atom(ids[1])), 2);
+    assert_eq!(form.coefficient_of(atom(ids[0])), 0, "an absent atom has coefficient 0");
 }
 
 // --- provenance (§9.3) ----------------------------------------------------

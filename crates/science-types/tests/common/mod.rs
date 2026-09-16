@@ -22,7 +22,7 @@ use std::cell::Cell;
 
 use science_diagnostics::{FileId, Span};
 use science_resolve::hir::{DefId, DefKind, DefTable};
-use science_types::ConstExpr;
+use science_types::{Atom, ConstExpr};
 
 pub const FILE: FileId = FileId(0);
 
@@ -71,7 +71,7 @@ impl Scope {
     }
 
     pub fn param_expr(&self, def: DefId) -> ConstExpr {
-        ConstExpr::param(def, self.span())
+        ConstExpr::param(atom(def), self.span())
     }
 
     pub fn neg(&self, operand: ConstExpr) -> ConstExpr {
@@ -89,4 +89,14 @@ impl Scope {
     pub fn scale(&self, operand: ConstExpr, factor: i128) -> ConstExpr {
         ConstExpr::scale(operand, factor, self.span(), self.span())
     }
+}
+
+/// A ranked atom for a synthetic definition table.
+///
+/// A test's table is one "file", so allocation order *is* the canonical order
+/// and the id doubles as the rank. Real code builds an `AtomOrder` from the
+/// crate's `DefTable`; this exists so a test never hand-writes a rank, which
+/// is how three of them came to say `rank: 0` for every parameter at once.
+pub fn atom(def: DefId) -> Atom {
+    Atom::Param { rank: def.index() as u32, def }
 }
