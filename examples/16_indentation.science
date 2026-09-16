@@ -21,18 +21,18 @@ type Doc:
     body: String
 
 interface Summarize:
-    function summarize(self) -> String
+    def summarize(self) -> String
 
-    function preview(self) -> String:
+    def preview(self) -> String:
         # Level 3: interface body, method body.
         self.summarize().truncate(80)
 
 Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         self.body.truncate(200)
 
 # Eight levels of nesting, then a single dedent all the way back to the top.
-function deep(rows: borrowed Array of (Array of Int), format: borrowed Format) -> Int:
+def deep(rows: borrowed Array of (Array of Int), format: borrowed Format) -> Int:
     let mutable total be 0
     for row in rows:
         for cell in row:
@@ -56,7 +56,7 @@ function deep(rows: borrowed Array of (Array of Int), format: borrowed Format) -
 
 # Closing many levels at once: the innermost statement is at level 6 and the
 # next statement is back at level 1.
-function dedent_several_levels(rows: borrowed Array of (Array of Int)) -> Int:
+def dedent_several_levels(rows: borrowed Array of (Array of Int)) -> Int:
     let mutable hits be 0
     for row in rows:
         for cell in row:
@@ -67,7 +67,7 @@ function dedent_several_levels(rows: borrowed Array of (Array of Int)) -> Int:
     hits
 
 # A block whose body is a single nested block, repeatedly.
-function ladder(flag: Bool) -> Int:
+def ladder(flag: Bool) -> Int:
     if flag:
         if flag:
             if flag:
@@ -87,7 +87,7 @@ function ladder(flag: Bool) -> Int:
 
 # An indented block that contains a construct using the inline form, so one
 # line closes nothing and the next dedents.
-function mixed(a: borrowed String, b: borrowed String) -> Int:
+def mixed(a: borrowed String, b: borrowed String) -> Int:
     if a.length() > 0:
         let chosen be if a.length() > b.length(): a else: b
         chosen.length()
@@ -97,14 +97,14 @@ function mixed(a: borrowed String, b: borrowed String) -> Int:
 # Not every indented continuation opens a block. A chain broken by a leading
 # `.` is indented too (§4.6), and it is one logical line: the indentation
 # after `docs` belongs to the expression, not to a new body.
-function first_headline(docs: borrowed Array of Doc) -> String?:
+def first_headline(docs: borrowed Array of Doc) -> String?:
     docs
         .iterate()
         .map(each.title)
         .first()
 
 # Blank lines inside a block do not close it, however many there are.
-function with_gaps() -> Int:
+def with_gaps() -> Int:
     let a be 1
 
 
@@ -114,6 +114,6 @@ function with_gaps() -> Int:
 
     a + b
 
-function main():
+def main():
     print(ladder(true))
     print(with_gaps())

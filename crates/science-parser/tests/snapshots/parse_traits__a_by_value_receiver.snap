@@ -1,17 +1,17 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(r#\"Note implements IntoTitle:\n    function into_title(self: Self) -> String:\n        self.text\n\"#)"
+expression: "parse_source(r#\"Note implements IntoTitle:\n    def into_title(self: Self) -> String:\n        self.text\n\"#)"
 ---
-Module @0..92
-  Implements @0..91
+Module @0..87
+  Implements @0..86
     interface: Bound `IntoTitle` @16..25
     type: Path `Note` @0..4
     methods
-      Fn `into_title` @31..91
-        receiver: self: Self @51..61
-        ret: Path `String` @66..72
-        body: Block @82..91
-          tail: Field `text` @82..91
-            base: Self @82..86
+      Fn `into_title` @31..86
+        receiver: self: Self @46..56
+        ret: Path `String` @61..67
+        body: Block @77..86
+          tail: Field `text` @77..86
+            base: Self @77..81
 --- diagnostics ---
 (none)

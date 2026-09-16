@@ -8,6 +8,8 @@
 //!
 //! ```text
 //! sciencec check FILE...     lex, parse and resolve; report what is wrong
+//! sciencec fmt FILE          print the file, formatted
+//! sciencec fmt --write FILE...  format in place
 //! sciencec tokens FILE       dump the token stream
 //! sciencec ast FILE          dump the syntax tree
 //! sciencec resolve FILE      dump the resolved crate
@@ -48,6 +50,8 @@ sciencec — the Science compiler
 
 Usage:
     sciencec check FILE...    lex, parse and resolve; report what is wrong
+    sciencec fmt FILE         print the file, formatted, to stdout
+    sciencec fmt --write F... format the files in place
     sciencec tokens FILE      dump the token stream
     sciencec ast FILE         dump the syntax tree
     sciencec resolve FILE     dump the resolved crate
@@ -56,7 +60,11 @@ Usage:
 
 Diagnostics go to stderr, dumps to stdout.
 Exits 0 when nothing was reported as an error, 1 otherwise; warnings alone
-do not fail.";
+do not fail.
+
+`fmt` writes to stdout unless `--write` is given, and refuses any file that
+does not already lex and parse — reformatting a file whose token stream is a
+guess is how a formatter eats a program.";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -89,7 +97,16 @@ fn run(args: &[OsString]) -> Outcome {
         _ => {}
     }
 
-    let files = match collect_files(rest) {
+    // `fmt` is the one command with a flag of its own, so the flag is taken
+    // off the operands before they become paths. Doing it here rather than in
+    // `collect_files` keeps that function's rule intact: outside this line,
+    // anything beginning with `-` is still an error rather than a file.
+    let (rest, write) = match command.to_str() {
+        Some("fmt") => take_flag(rest, "--write"),
+        _ => (rest.to_vec(), false),
+    };
+
+    let files = match collect_files(&rest) {
         Ok(files) => files,
         Err(message) => {
             eprintln!("error: {message}");
@@ -105,6 +122,19 @@ fn run(args: &[OsString]) -> Outcome {
                 return usage_error("check expects at least one file");
             }
             session.check(&files);
+        }
+        Some("fmt") => {
+            if write {
+                if files.is_empty() {
+                    return usage_error("fmt --write expects at least one file");
+                }
+            } else if files.len() != 1 {
+                // Without `--write` the output is the file, and two files
+                // concatenated are not a file. `--write` is how you ask for
+                // more than one.
+                return usage_error("fmt expects exactly one file, or --write");
+            }
+            session.format(&files, write);
         }
         Some(name @ ("tokens" | "ast" | "resolve")) => {
             let [file] = files.as_slice() else {
@@ -147,6 +177,22 @@ fn collect_files(args: &[OsString]) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
+/// Takes `flag` out of the operands, saying whether it was there.
+///
+/// Repeating it is not an error: `--write --write` means what it says.
+fn take_flag(args: &[OsString], flag: &str) -> (Vec<OsString>, bool) {
+    let mut found = false;
+    let mut rest = Vec::with_capacity(args.len());
+    for arg in args {
+        if arg.to_str() == Some(flag) {
+            found = true;
+        } else {
+            rest.push(arg.clone());
+        }
+    }
+    (rest, found)
+}
+
 fn usage_error(message: &str) -> Outcome {
     eprintln!("error: {message}");
     eprintln!("{USAGE}");
@@ -185,6 +231,25 @@ mod tests {
     #[test]
     fn a_dump_command_takes_exactly_one_file() {
         assert!(matches!(run(&args(&["ast", "a.science", "b.science"])), Outcome::Failed));
+    }
+
+    #[test]
+    fn fmt_needs_one_file_unless_it_is_writing() {
+        assert!(matches!(run(&args(&["fmt"])), Outcome::Failed));
+        assert!(matches!(run(&args(&["fmt", "a.science", "b.science"])), Outcome::Failed));
+        assert!(matches!(run(&args(&["fmt", "--write"])), Outcome::Failed));
+    }
+
+    #[test]
+    fn the_write_flag_is_only_taken_off_fmts_operands() {
+        let (rest, write) = take_flag(&args(&["--write", "a.science"]), "--write");
+        assert!(write);
+        assert_eq!(rest, args(&["a.science"]));
+        let (rest, write) = take_flag(&args(&["a.science"]), "--write");
+        assert!(!write);
+        assert_eq!(rest, args(&["a.science"]));
+        // Every other command still refuses it, because it never reaches here.
+        assert!(collect_files(&args(&["--write"])).is_err());
     }
 
     #[test]

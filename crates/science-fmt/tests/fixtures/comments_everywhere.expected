@@ -1,0 +1,31 @@
+# A header comment, before anything.
+
+# Attached to the declaration below.
+type Doc:  # after the header
+    title: String  # after a field
+    # on its own, at field level
+    body: String
+
+def main():
+    # first thing in the block
+    let a be call(
+        first,  # after an item
+        # on its own, inside the list
+        second,
+    )
+
+    values
+        .iterate()
+        # between two links of a chain
+        .collect()  # after the last link
+
+    if a:
+        print("yes")
+        # at the end of an inner block
+    # between the block and the `else`
+    else:
+        print("no")
+
+        # written far right, belonging to the block it was written in
+    print(a)
+# after everything

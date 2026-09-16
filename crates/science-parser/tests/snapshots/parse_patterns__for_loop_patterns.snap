@@ -1,27 +1,27 @@
 ---
 source: crates/science-parser/tests/parse_patterns.rs
-expression: "parse_body(r#\"function f(pairs: borrowed Array of Pair, n: Int):\n    for (a, b) in pairs:\n        print(a)\n    for i in 0..n:\n        print(i)\n\"#)"
+expression: "parse_body(r#\"def f(pairs: borrowed Array of Pair, n: Int):\n    for (a, b) in pairs:\n        print(a)\n    for i in 0..n:\n        print(i)\n\"#)"
 ---
-Block @55..128
-  For @55..92
-    pattern: Tuple @59..65
-      Binding `a` @60..61
-      Binding `b` @63..64
-    iter: Path `pairs` @69..74
-    body: Block @84..92
-      tail: Call @84..92
-        callee: Path `print` @84..89
+Block @50..123
+  For @50..87
+    pattern: Tuple @54..60
+      Binding `a` @55..56
+      Binding `b` @58..59
+    iter: Path `pairs` @64..69
+    body: Block @79..87
+      tail: Call @79..87
+        callee: Path `print` @79..84
         args
-          Path `a` @90..91
-  tail: For @97..128
-    pattern: Binding `i` @101..102
-    iter: Range @106..110
-      start: Int 0 @106..107
-      end: Path `n` @109..110
-    body: Block @120..128
-      tail: Call @120..128
-        callee: Path `print` @120..125
+          Path `a` @85..86
+  tail: For @92..123
+    pattern: Binding `i` @96..97
+    iter: Range @101..105
+      start: Int 0 @101..102
+      end: Path `n` @104..105
+    body: Block @115..123
+      tail: Call @115..123
+        callee: Path `print` @115..120
         args
-          Path `i` @126..127
+          Path `i` @121..122
 --- diagnostics ---
 (none)

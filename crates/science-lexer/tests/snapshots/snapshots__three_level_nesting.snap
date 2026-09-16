@@ -1,39 +1,39 @@
 ---
 source: crates/science-lexer/tests/snapshots.rs
-expression: "dump(\"\\\nfunction main():\n    if a:\n        loop:\n            c()\n\")"
+expression: "dump(\"\\\ndef main():\n    if a:\n        loop:\n            c()\n\")"
 ---
 == source ==
-|function main():
+|def main():
 |    if a:
 |        loop:
 |            c()
 |
 
 == tokens ==
-   0..8     Function
-   9..13    Ident("main")
-  13..14    LParen
-  14..15    RParen
-  15..16    Colon
-  16..17    Newline
-  17..21    Indent
-  21..23    If
-  24..25    Ident("a")
-  25..26    Colon
-  26..27    Newline
-  27..35    Indent
-  35..39    Loop
-  39..40    Colon
-  40..41    Newline
-  41..53    Indent
-  53..54    Ident("c")
-  54..55    LParen
-  55..56    RParen
-  56..57    Newline
-  57..57    Dedent
-  57..57    Dedent
-  57..57    Dedent
-  57..57    Eof
+   0..3     Function
+   4..8     Ident("main")
+   8..9     LParen
+   9..10    RParen
+  10..11    Colon
+  11..12    Newline
+  12..16    Indent
+  16..18    If
+  19..20    Ident("a")
+  20..21    Colon
+  21..22    Newline
+  22..30    Indent
+  30..34    Loop
+  34..35    Colon
+  35..36    Newline
+  36..48    Indent
+  48..49    Ident("c")
+  49..50    LParen
+  50..51    RParen
+  51..52    Newline
+  52..52    Dedent
+  52..52    Dedent
+  52..52    Dedent
+  52..52    Eof
 
 == diagnostics ==
 (none)

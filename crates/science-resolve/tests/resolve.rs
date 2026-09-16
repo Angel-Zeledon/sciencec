@@ -558,7 +558,7 @@ fn an_inherent_impl_on_a_local_type_is_legal_and_self_resolves_inside_it() {
 #[test]
 fn each_names_the_subject_the_implicit_closure_binds() {
     let sp = &Sp::new();
-    // function f(docs: Array): docs.map(each)
+    // def f(docs: Array): docs.map(each)
     let implicit = closure(sp, None, each(sp));
     let mapped = method_call_args(sp, name(sp, &["docs"]), "map", vec![arg(implicit)]);
     let f = func(sp, "f")
@@ -593,7 +593,7 @@ fn each_names_the_subject_the_implicit_closure_binds() {
 #[test]
 fn the_named_closure_form_binds_what_was_written() {
     let sp = &Sp::new();
-    // function f(docs: Array): docs.map(doc giving doc)
+    // def f(docs: Array): docs.map(doc giving doc)
     let named = closure(sp, Some("doc"), name(sp, &["doc"]));
     let mapped = method_call_args(sp, name(sp, &["docs"]), "map", vec![arg(named)]);
     let f = func(sp, "f")
@@ -620,7 +620,7 @@ fn the_named_closure_form_binds_what_was_written() {
 #[test]
 fn a_closure_parameter_is_gone_once_the_closure_closes() {
     let sp = &Sp::new();
-    // function f(docs: Array): docs.map(doc giving doc) ; doc
+    // def f(docs: Array): docs.map(doc giving doc) ; doc
     let named = closure(sp, Some("doc"), name(sp, &["doc"]));
     let mapped = method_call_args(sp, name(sp, &["docs"]), "map", vec![arg(named)]);
     let f = func(sp, "f")
@@ -646,7 +646,7 @@ fn an_each_with_no_call_around_it_is_reported() {
 #[test]
 fn the_label_on_a_named_argument_is_not_resolved_as_a_name() {
     let sp = &Sp::new();
-    // function f(docs: Array): docs.sort(by: doc giving doc)
+    // def f(docs: Array): docs.sort(by: doc giving doc)
     let named = closure(sp, Some("doc"), name(sp, &["doc"]));
     let sorted =
         method_call_args(sp, name(sp, &["docs"]), "sort", vec![named_arg(sp, "by", named)]);
@@ -748,7 +748,7 @@ fn an_associated_type_is_not_a_bare_name_in_the_module() {
 #[test]
 fn a_const_generic_parameter_is_its_own_kind_of_definition() {
     let sp = &Sp::new();
-    // function size of (T, const N: Int)() -> Int: N
+    // def size of (T, const N: Int)() -> Int: N
     let f = func(sp, "size")
         .generics(vec![generic(sp, "T", vec![]), generic_const(sp, "N", ty(sp, "Int"))])
         .ret(ty(sp, "Int"))

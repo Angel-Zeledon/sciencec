@@ -1,0 +1,19 @@
+[package]
+name = "science-fmt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The Science source formatter."
+
+# Three dependencies, all in this workspace, and no third-party crate at all.
+#
+# The layout itself works from the token stream and the source text and never
+# looks at the syntax tree. `science-parser` is here for one reason: before
+# `format_source` hands any text back it parses that text and compares the tree
+# with the one it started from. "Never emit something that parses differently"
+# is the formatter's whole contract, and a contract the tool cannot check is a
+# contract the test suite checks on Tuesdays.
+[dependencies]
+science-diagnostics.workspace = true
+science-lexer.workspace = true
+science-parser.workspace = true

@@ -81,6 +81,59 @@ impl Session {
         emit(&self.db.source_map(), &all);
     }
 
+    /// `sciencec fmt FILE...`, and `sciencec fmt --write FILE...`
+    ///
+    /// A file is formatted only when it lexes and parses clean. Resolution is
+    /// deliberately *not* required: a formatter works on syntax, so syntax is
+    /// what it may demand, and `examples/17_modules.science` — which imports
+    /// modules that are not files in this repository — is a perfectly
+    /// well-formed program that no single-file `check` can resolve. A file
+    /// with a syntax error is a different matter: its token stream is a guess,
+    /// and reformatting a guess is how a formatter eats a program.
+    ///
+    /// Without `--write` the formatted text goes to stdout, like every other
+    /// dump. With it, a file is rewritten only when the text actually changed,
+    /// so a `fmt --write` over a clean tree leaves every timestamp alone.
+    pub fn format(&mut self, paths: &[PathBuf], write: bool) {
+        let mut files: Vec<FileId> = Vec::with_capacity(paths.len());
+        for path in paths {
+            if let Some(file) = self.load(path) {
+                if !files.contains(&file) {
+                    files.push(file);
+                }
+            }
+        }
+
+        for file in files {
+            let syntax = science_db::file_diagnostics(&self.db, file).to_vec();
+            let broken =
+                syntax.iter().any(|d| d.severity == science_diagnostics::Severity::Error);
+            self.report(syntax);
+            if broken {
+                continue;
+            }
+
+            let source = science_db::source_text(&self.db, file);
+            let formatted = science_fmt::format_source(file, source);
+            let Some(text) = formatted.text else {
+                self.report(formatted.diagnostics.into_vec());
+                continue;
+            };
+            if !write {
+                print(&text);
+                continue;
+            }
+            if text == source {
+                continue;
+            }
+            let path = self.db.path(file).to_string();
+            if let Err(error) = std::fs::write(&path, text.as_bytes()) {
+                eprintln!("error: cannot write `{path}`: {}", io_reason(&error));
+                self.tally.error();
+            }
+        }
+    }
+
     /// `sciencec tokens FILE`
     ///
     /// The line format is the lexer's own snapshot dump — `start..end  kind`,

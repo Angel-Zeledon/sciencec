@@ -1,20 +1,20 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(r#\"Doc implements Summarize:\n    function summarize(self) -> String:\n        self.body.truncate(200)\n\"#)"
+expression: "parse_source(r#\"Doc implements Summarize:\n    def summarize(self) -> String:\n        self.body.truncate(200)\n\"#)"
 ---
-Module @0..98
-  Implements @0..97
+Module @0..93
+  Implements @0..92
     interface: Bound `Summarize` @15..24
     type: Path `Doc` @0..3
     methods
-      Fn `summarize` @30..97
-        receiver: self @49..53
-        ret: Path `String` @58..64
-        body: Block @74..97
-          tail: Method `truncate` @74..97
-            receiver: Field `body` @74..83
-              base: Self @74..78
+      Fn `summarize` @30..92
+        receiver: self @44..48
+        ret: Path `String` @53..59
+        body: Block @69..92
+          tail: Method `truncate` @69..92
+            receiver: Field `body` @69..78
+              base: Self @69..73
             args
-              Int 200 @93..96
+              Int 200 @88..91
 --- diagnostics ---
 (none)

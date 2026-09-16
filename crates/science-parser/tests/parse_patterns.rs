@@ -8,7 +8,7 @@ use common::{parse_body, parse_source_allowing_errors};
 #[test]
 fn literal_and_wildcard_patterns() {
     insta::assert_snapshot!(parse_body(
-        r#"function f(x: Int) -> String:
+        r#"def f(x: Int) -> String:
     match x:
         0: "zero"
         'a': "letter"
@@ -25,7 +25,7 @@ fn literal_and_wildcard_patterns() {
 #[test]
 fn a_bare_name_is_a_binding() {
     insta::assert_snapshot!(parse_body(
-        r#"function f(x: Int) -> Int:
+        r#"def f(x: Int) -> Int:
     match x:
         None: 0
         other: other
@@ -38,7 +38,7 @@ fn a_bare_name_is_a_binding() {
 #[test]
 fn variant_patterns() {
     insta::assert_snapshot!(parse_body(
-        r#"function f(x: Int) -> Int:
+        r#"def f(x: Int) -> Int:
     match x:
         Ok(value): value
         Err(NotFound(key)): key
@@ -54,7 +54,7 @@ fn variant_patterns() {
 #[test]
 fn record_patterns() {
     insta::assert_snapshot!(parse_body(
-        r#"function f(p: borrowed Point) -> String:
+        r#"def f(p: borrowed Point) -> String:
     match p:
         Point(x: 0, y: 0): "origin"
         Point(x: 0, y: y): "on the Y axis"
@@ -67,7 +67,7 @@ fn record_patterns() {
 #[test]
 fn tuple_patterns() {
     insta::assert_snapshot!(parse_body(
-        r#"function f(p: (Int, Int)) -> String:
+        r#"def f(p: (Int, Int)) -> String:
     match p:
         (0, 0): "origin"
         (x, 0): "on the X axis"
@@ -81,7 +81,7 @@ fn tuple_patterns() {
 #[test]
 fn or_patterns() {
     insta::assert_snapshot!(parse_body(
-        r#"function f(n: Int) -> String:
+        r#"def f(n: Int) -> String:
     match n:
         0 | 1 | 2: "small"
         Symbol(',') | Symbol(';'): "punctuation"
@@ -95,7 +95,7 @@ fn or_patterns() {
 #[test]
 fn an_empty_argument_list_in_a_pattern_is_a_variant() {
     insta::assert_snapshot!(parse_body(
-        r#"function f(x: Int) -> Int:
+        r#"def f(x: Int) -> Int:
     match x:
         Doc(): 0
 "#
@@ -107,7 +107,7 @@ fn an_empty_argument_list_in_a_pattern_is_a_variant() {
 #[test]
 fn for_loop_patterns() {
     insta::assert_snapshot!(parse_body(
-        r#"function f(pairs: borrowed Array of Pair, n: Int):
+        r#"def f(pairs: borrowed Array of Pair, n: Int):
     for (a, b) in pairs:
         print(a)
     for i in 0..n:
@@ -122,7 +122,7 @@ fn for_loop_patterns() {
 #[test]
 fn the_arm_separator_is_whatever_follows_the_pattern() {
     insta::assert_snapshot!(parse_body(
-        r#"function f(p: borrowed Point) -> Int:
+        r#"def f(p: borrowed Point) -> Int:
     match p:
         Point(x: x, y: y): x
 "#
@@ -134,7 +134,7 @@ fn the_arm_separator_is_whatever_follows_the_pattern() {
 #[test]
 fn a_mutable_binding_pattern() {
     insta::assert_snapshot!(parse_body(
-        r#"function f(x: Int) -> Int:
+        r#"def f(x: Int) -> Int:
     match x:
         Ok(mutable value): value
         (mutable a, b): a
@@ -147,7 +147,7 @@ fn a_mutable_binding_pattern() {
 #[test]
 fn a_broken_pattern_does_not_eat_the_next_arm() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        r#"function f(x: Int) -> Int:
+        r#"def f(x: Int) -> Int:
     match x:
         *: 0
         1: 1

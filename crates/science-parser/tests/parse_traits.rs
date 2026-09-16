@@ -17,9 +17,9 @@ use common::{parse_source, parse_source_allowing_errors};
 fn interface_with_a_default_method() {
     insta::assert_snapshot!(parse_source(
         r#"interface Summarize:
-    function summarize(self) -> String
+    def summarize(self) -> String
 
-    function preview(self) -> String:
+    def preview(self) -> String:
         self.summarize().truncate(80)
 "#
     ));
@@ -31,7 +31,7 @@ fn interface_with_a_default_method() {
 fn generic_interface() {
     insta::assert_snapshot!(parse_source(
         r#"interface From of T:
-    function from(value: T) -> Self
+    def from(value: T) -> Self
 "#
     ));
 }
@@ -43,7 +43,7 @@ fn generic_interface() {
 fn interface_with_required_interfaces() {
     insta::assert_snapshot!(parse_source(
         r#"interface Pretty: Summarize + Clone:
-    function pretty(self) -> String
+    def pretty(self) -> String
 "#
     ));
 }
@@ -57,10 +57,10 @@ fn interface_with_required_interfaces() {
 fn a_generic_interface_with_required_interfaces() {
     insta::assert_snapshot!(parse_source(
         r#"interface Pretty of T: Summarize + Clone:
-    function pretty(self) -> T
+    def pretty(self) -> T
 
 interface Plain of (T): Summarize + Clone:
-    function plain(self) -> T
+    def plain(self) -> T
 "#
     ));
 }
@@ -72,9 +72,9 @@ interface Plain of (T): Summarize + Clone:
 fn interface_receivers() {
     insta::assert_snapshot!(parse_source(
         r#"interface Shape:
-    function area(self) -> Int
-    function scale(mutable self) -> Int
-    function consume(self: Self) -> Int
+    def area(self) -> Int
+    def scale(mutable self) -> Int
+    def consume(self: Self) -> Int
 "#
     ));
 }
@@ -85,7 +85,7 @@ fn interface_receivers() {
 fn a_mutable_receiver() {
     insta::assert_snapshot!(parse_source(
         r#"Note implements Reset:
-    function reset(mutable self):
+    def reset(mutable self):
         self.text be ""
 "#
     ));
@@ -98,7 +98,7 @@ fn a_mutable_receiver() {
 fn a_by_value_receiver() {
     insta::assert_snapshot!(parse_source(
         r#"Note implements IntoTitle:
-    function into_title(self: Self) -> String:
+    def into_title(self: Self) -> String:
         self.text
 "#
     ));
@@ -110,7 +110,7 @@ fn a_by_value_receiver() {
 fn a_receiver_annotated_with_anything_but_self_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"Note has:
-    function take(self: Int) -> Int:
+    def take(self: Int) -> Int:
         1
 "#
     ));
@@ -123,7 +123,7 @@ fn a_receiver_annotated_with_anything_but_self_is_rejected() {
 fn a_type_implements_an_interface() {
     insta::assert_snapshot!(parse_source(
         r#"Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         self.body.truncate(200)
 "#
     ));
@@ -136,7 +136,7 @@ fn a_type_implements_an_interface() {
 fn a_generic_type_implements_a_generic_interface() {
     insta::assert_snapshot!(parse_source(
         r#"Pair of (A, B) implements Swap of Pair of (B, A):
-    function swapped(self) -> Pair of (B, A):
+    def swapped(self) -> Pair of (B, A):
         Pair(first: self.second, second: self.first)
 "#
     ));
@@ -150,7 +150,7 @@ fn a_generic_implementation_echoes_its_parameters() {
         r#"Pair of (A, B) implements Swap:
     type Swapped is Pair of (B, A)
 
-    function swapped(self: Self) -> Self.Swapped:
+    def swapped(self: Self) -> Self.Swapped:
         Pair(first: self.second, second: self.first)
 "#
     ));
@@ -163,10 +163,10 @@ fn a_generic_implementation_echoes_its_parameters() {
 fn has_with_an_associated_function() {
     insta::assert_snapshot!(parse_source(
         r#"Doc has:
-    function new(title: String) -> Doc:
+    def new(title: String) -> Doc:
         Doc(title: title, body: "")
 
-    function is_empty(self) -> Bool:
+    def is_empty(self) -> Bool:
         self.body.length() is 0
 "#
     ));
@@ -178,7 +178,7 @@ fn has_with_an_associated_function() {
 fn has_on_a_generic_type() {
     insta::assert_snapshot!(parse_source(
         r#"Array of T has:
-    function new() -> Array of T:
+    def new() -> Array of T:
         empty()
 "#
     ));
@@ -188,7 +188,7 @@ fn has_on_a_generic_type() {
 /// tell it from a method call, and §4.4's rule is that resolution decides.
 #[test]
 fn an_associated_function_call_is_a_method_call_until_resolution() {
-    insta::assert_snapshot!(parse_source("function main():\n    let d be Doc.new(\"a\")\n"));
+    insta::assert_snapshot!(parse_source("def main():\n    let d be Doc.new(\"a\")\n"));
 }
 
 /// §4.4's marker interface: "an interface with no methods is implemented by a
@@ -211,10 +211,10 @@ fn a_marker_implementation_between_other_items() {
 Position implements Copy
 
 Position implements Clone:
-    function clone(self) -> Position:
+    def clone(self) -> Position:
         Position(line: self.line)
 
-function main():
+def main():
     print(1)
 "#
     ));
@@ -225,7 +225,7 @@ function main():
 fn an_implementation_with_a_where_clause() {
     insta::assert_snapshot!(parse_source(
         r#"Pair of (A, B) implements Summarize where A: Clone, B: Clone:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         "pair"
 "#
     ));
@@ -236,7 +236,7 @@ fn an_implementation_with_a_where_clause() {
 #[test]
 fn a_where_clause_ends_at_the_colon_that_opens_the_block() {
     insta::assert_snapshot!(parse_source(
-        r#"function f of T() -> T where T: A + B:
+        r#"def f of T() -> T where T: A + B:
     body()
 "#
     ));
@@ -253,12 +253,12 @@ fn an_associated_type_is_declared_in_an_interface_and_bound_in_an_implementation
     insta::assert_snapshot!(parse_source(
         r#"interface Iterate:
     type Item
-    function next(mutable self) -> Option of Self.Item
+    def next(mutable self) -> Option of Self.Item
 
 Countdown implements Iterate:
     type Item is Int
 
-    function next(mutable self) -> Option of Self.Item:
+    def next(mutable self) -> Option of Self.Item:
         None
 "#
     ));
@@ -271,7 +271,7 @@ fn self_dot_item_names_an_associated_type_in_a_return_position() {
     insta::assert_snapshot!(parse_source(
         r#"interface Produce:
     type Output
-    function produce(self) -> Self.Output
+    def produce(self) -> Self.Output
 "#
     ));
 }
@@ -285,7 +285,7 @@ fn self_dot_item_names_an_associated_type_in_a_return_position() {
 fn a_projection_through_something_other_than_self_is_a_plain_path() {
     insta::assert_snapshot!(parse_source(
         r#"interface Produce of T:
-    function produce(self) -> T.Output
+    def produce(self) -> T.Output
 "#
     ));
 }
@@ -303,7 +303,7 @@ fn an_associated_type_bound_inside_an_interface_is_rejected() {
     let report = parse_source_allowing_errors(
         r#"interface Iterate:
     type Item is Int
-    function next(mutable self) -> Self.Item
+    def next(mutable self) -> Self.Item
 "#,
     );
     insta::assert_snapshot!(report);
@@ -325,7 +325,7 @@ fn an_associated_type_left_unbound_inside_an_implementation_is_rejected() {
     let report = parse_source_allowing_errors(
         r#"Countdown implements Iterate:
     type Item
-    function next(mutable self) -> Self.Item:
+    def next(mutable self) -> Self.Item:
         None
 "#,
     );
@@ -346,7 +346,7 @@ fn a_non_member_in_an_interface_body_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"interface T:
     let x be 1
-    function f(self) -> Int
+    def f(self) -> Int
 "#
     ));
 }
@@ -356,7 +356,7 @@ fn a_non_member_in_an_interface_body_is_rejected() {
 fn a_non_path_interface_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"Point implements borrowed Doc:
-    function f(self) -> Int:
+    def f(self) -> Int:
         1
 "#
     ));
@@ -368,7 +368,7 @@ fn a_non_path_interface_is_rejected() {
 fn public_on_an_implementation_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"public Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         "a"
 "#
     ));
@@ -381,7 +381,7 @@ fn public_on_an_implementation_is_rejected() {
 fn an_implementation_body_without_a_colon_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"Doc implements Summarize
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         "a"
 "#
     ));

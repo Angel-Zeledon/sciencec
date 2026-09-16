@@ -2,18 +2,18 @@
 source: crates/science-parser/tests/migration.rs
 expression: parse_source_allowing_errors(source)
 ---
-Module @0..56
-  Fn `f` @0..55
+Module @0..51
+  Fn `f` @0..50
     params
-      Param `a` @11..17
-        type: Path `Int` @14..17
-      Param `b` @19..25
-        type: Path `Int` @22..25
-    ret: Path `Bool` @30..34
-    body: Block @40..55
-      tail: Binary `>=` @40..55
-        lhs: Path `a` @40..41
-        rhs: Path `b` @54..55
+      Param `a` @6..12
+        type: Path `Int` @9..12
+      Param `b` @14..20
+        type: Path `Int` @17..20
+    ret: Path `Bool` @25..29
+    body: Block @35..50
+      tail: Binary `>=` @35..50
+        lhs: Path `a` @35..36
+        rhs: Path `b` @49..50
 --- diagnostics ---
-SC0143 @42..53 the comparison is written `>=`
+SC0143 @37..48 the comparison is written `>=`
   note `is` and `is not` are the only comparisons written as words

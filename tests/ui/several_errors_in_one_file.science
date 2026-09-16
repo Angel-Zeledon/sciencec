@@ -9,7 +9,7 @@
 # escape, SC0007 unterminated string, SC0009 invalid suffix, SC0010
 # malformed number.
 
-function main():
+def main():
     let tagged be 1 $ 2
     let path be "C:\users"
     let open be "never closed

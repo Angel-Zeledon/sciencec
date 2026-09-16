@@ -71,14 +71,14 @@ type DefTable:
     defs: Array of Def
 
 DefTable has:
-    function new() -> DefTable:
+    def new() -> DefTable:
         DefTable(defs: (Array of Def).new())
 
     # `alloc` takes `mutable self` and hands back an id, never a borrow. This
     # is the signature that matters: returning `borrowed Def` here would tie
     # the borrow to the table and forbid the next `alloc`, which is exactly
     # the pattern that forces `'a` into Rust signatures.
-    function alloc(mutable self, kind: DefKind, name: String,
+    def alloc(mutable self, kind: DefKind, name: String,
             parent: DefId?) -> DefId:
         let id be DefId(index: self.defs.len())
         self.defs.push(Def(id: id, kind: kind, name: name, parent: parent))
@@ -87,12 +87,12 @@ DefTable has:
     # A shared borrow out of the table. One region: the result borrows `self`
     # and nothing else, so there is one relation to infer and no second name
     # to relate it to.
-    function get(self, id: DefId) -> borrowed Def:
+    def get(self, id: DefId) -> borrowed Def:
         self.defs.get(id.index)
 
     # Walking to the parent returns an id, so the walk holds no borrow across
     # its own iterations.
-    function parent_of(self, id: DefId) -> DefId?:
+    def parent_of(self, id: DefId) -> DefId?:
         self.get(id).parent
 
 # ---------------------------------------------------------------------------
@@ -109,9 +109,12 @@ choice RibKind:
     Function
     Block
 
+# `def` was this field's name until `def` became the declaration keyword.
+# That collision is worth leaving a mark for: `def` is ordinary compiler
+# vocabulary, and this language is going to be used to write a compiler.
 type Binding:
     name: String
-    def: DefId
+    definition: DefId
 
 type Rib:
     kind: RibKind
@@ -121,13 +124,13 @@ type Scopes:
     ribs: Array of Rib
 
 Scopes has:
-    function new() -> Scopes:
+    def new() -> Scopes:
         Scopes(ribs: (Array of Rib).new())
 
-    function push(mutable self, kind: RibKind):
+    def push(mutable self, kind: RibKind):
         self.ribs.push(Rib(kind: kind, bindings: (Array of Binding).new()))
 
-    function pop(mutable self):
+    def pop(mutable self):
         self.ribs.pop()
 
     # Lookup returns `DefId?`, not `borrowed Binding?`. The caller wants the
@@ -138,11 +141,11 @@ Scopes has:
     # borrowing version is what makes a symbol table hard, and the reason to
     # avoid it is not the borrow checker — it is that the borrowing version is
     # wrong anyway, because the caller almost always goes on to mutate.
-    function lookup(self, name: borrowed String) -> DefId?:
+    def lookup(self, name: borrowed String) -> DefId?:
         for rib in self.ribs:
             for binding in rib.bindings:
                 if binding.name is name:
-                    return binding.def
+                    return binding.definition
         null
 
 # ---------------------------------------------------------------------------
@@ -166,16 +169,16 @@ type Parser:
     position: Int
 
 Parser has:
-    function new(tokens: borrowed Array of Token) -> Parser:
+    def new(tokens: borrowed Array of Token) -> Parser:
         Parser(tokens: tokens, position: 0)
 
-    function peek(self) -> borrowed Token:
+    def peek(self) -> borrowed Token:
         self.tokens.get(self.position)
 
-    function advance(mutable self):
+    def advance(mutable self):
         self.position be self.position + 1
 
-    function at_end(self) -> Bool:
+    def at_end(self) -> Bool:
         self.position >= self.tokens.len()
 
 # ---------------------------------------------------------------------------
@@ -201,7 +204,7 @@ type Node of T:
     value: borrowed T
 
 Node has:
-    function new of T(defs: borrowed DefTable, value: borrowed T) -> Node of T:
+    def new of T(defs: borrowed DefTable, value: borrowed T) -> Node of T:
         Node(defs: defs, value: value)
 
 # ---------------------------------------------------------------------------
@@ -240,27 +243,27 @@ type Diagnostics:
     items: Array of Diagnostic
 
 Diagnostics has:
-    function new() -> Diagnostics:
+    def new() -> Diagnostics:
         Diagnostics(items: (Array of Diagnostic).new())
 
-    function push(mutable self, code: Int, message: String):
+    def push(mutable self, code: Int, message: String):
         self.items.push(Diagnostic(code: code, message: message))
 
-    function is_empty(self) -> Bool:
+    def is_empty(self) -> Bool:
         self.items.len() is 0
 
 # The walk: a shared borrow of the table, an exclusive borrow of the sink, and
 # they are separate parameters so nothing is aliased.
-function walk(defs: borrowed DefTable, out: mutable borrowed Diagnostics):
-    for def in defs.defs:
-        if def.name is "":
+def walk(defs: borrowed DefTable, out: mutable borrowed Diagnostics):
+    for entry in defs.defs:
+        if entry.name is "":
             out.push(200, "a definition with no name")
 
 # ---------------------------------------------------------------------------
 # 7. The whole thing, run
 # ---------------------------------------------------------------------------
 
-function main():
+def main():
     let mutable defs be DefTable.new()
     let root be defs.alloc(DefKind.Module, "main", null)
     let f be defs.alloc(DefKind.Function, "read_config", root)

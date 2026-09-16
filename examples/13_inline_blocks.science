@@ -27,56 +27,56 @@ choice Format:
 
 # Inline, as written in the spec. This is a comparison of two lengths, so it
 # is written with symbols (§4.6).
-function longest(a: borrowed String, b: borrowed String) -> borrowed String:
+def longest(a: borrowed String, b: borrowed String) -> borrowed String:
     if a.length() > b.length(): a else: b
 
 # The same thing, indented.
-function longest_indented(a: borrowed String, b: borrowed String) -> borrowed String:
+def longest_indented(a: borrowed String, b: borrowed String) -> borrowed String:
     if a.length() > b.length():
         a
     else:
         b
 
 # An inline `if` with no `else`: its type is `()`.
-function warn_if_empty(text: borrowed String):
+def warn_if_empty(text: borrowed String):
     if text.is_empty(): print("empty")
 
 # An inline `if` used as the value of a binding. The `let` is outside the
 # inline body, which is what makes it legal: `if flag: let chosen be 1` is
 # the form §4.5 rejects.
-function pick(flag: Bool) -> Int:
+def pick(flag: Bool) -> Int:
     let chosen be if flag: 1 else: 0
     chosen
 
 # An inline body that is an assignment rather than an expression. Assignment
 # uses `be`, the same word that binds (§4.3).
-function bump_if(flag: Bool) -> Int:
+def bump_if(flag: Bool) -> Int:
     let mutable count be 0
     if flag: count be count + 1
     count
 
 # An inline `if` as an argument to a call.
-function report(flag: Bool):
+def report(flag: Bool):
     print(if flag: "yes" else: "no")
 
 # An inline body that is a `return`.
-function sign(n: Int) -> Int:
+def sign(n: Int) -> Int:
     if n < 0: return -1
     if n > 0: return 1
     0
 
 # Chained: the `else` of an inline `if` is another inline `if`.
-function bucket(n: Int) -> String:
+def bucket(n: Int) -> String:
     if n < 10: "small" else: if n < 100: "medium" else: "large"
 
 # A dangling `else` binds to the innermost `if` (§4.5): the `else` here
 # belongs to `if b`, so the outer `if` is the one with no `else` and the
 # whole thing has type `()`.
-function dangling(a: Bool, b: Bool):
+def dangling(a: Bool, b: Bool):
     if a: if b: print("both") else: print("only a")
 
 # Code that means the other thing has to use the block form.
-function not_dangling(a: Bool, b: Bool):
+def not_dangling(a: Bool, b: Bool):
     if a:
         if b: print("both")
     else:
@@ -84,24 +84,24 @@ function not_dangling(a: Bool, b: Bool):
 
 # --- Function bodies --------------------------------------------------------
 
-# A single-expression function body on its own line, which is the ordinary
+# A single-expression def body on its own line, which is the ordinary
 # indented form rather than the inline one.
-function double(n: Int) -> Int:
+def double(n: Int) -> Int:
     n * 2
 
 # --- Loops ------------------------------------------------------------------
 
-function drain(stack: mutable borrowed Array of Int):
+def drain(stack: mutable borrowed Array of Int):
     for _ in 0..stack.length(): stack.pop()
 
-function shout(lines: borrowed Array of String):
+def shout(lines: borrowed Array of String):
     for line in lines: print(line)
 
-function spin(limit: mutable borrowed Int):
+def spin(limit: mutable borrowed Int):
     loop: break
 
 # The other two statements an inline body may be: `continue` and `break`.
-function count_short(lines: borrowed Array of String) -> Int:
+def count_short(lines: borrowed Array of String) -> Int:
     let mutable seen be 0
     for line in lines:
         if line.is_empty(): continue
@@ -112,13 +112,13 @@ function count_short(lines: borrowed Array of String) -> Int:
 # --- `match` arms -----------------------------------------------------------
 
 # Every arm inline.
-function name_of(format: borrowed Format) -> String:
+def name_of(format: borrowed Format) -> String:
     match format:
         Plain: "plain"
         Markdown: "markdown"
 
 # Arms mixing the inline and the indented form.
-function describe(format: borrowed Format) -> String:
+def describe(format: borrowed Format) -> String:
     match format:
         Plain: "plain"
         Markdown:
@@ -129,7 +129,7 @@ function describe(format: borrowed Format) -> String:
             out.push_str("down")
             out
 
-function main():
+def main():
     print(longest("abc", "de"))
     print(longest_indented("abc", "de"))
     print(pick(true))

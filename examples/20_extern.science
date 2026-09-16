@@ -40,7 +40,7 @@ unsafe extern "C" library "openblas" via pkg-config "openblas":
     # §1.2, the function. `ffi.Span of F64` is a pointer and a length, of
     # which only the pointer crosses the ABI; the length is there so the
     # wrapper's bounds check is an expression the compiler checks.
-    function cblas_dgemm(
+    def cblas_dgemm(
         layout: CblasLayout,
         transpose_a: CblasTranspose,
         transpose_b: CblasTranspose,
@@ -54,14 +54,14 @@ unsafe extern "C" library "openblas" via pkg-config "openblas":
 
     # §4.1 of the coverage audit: the complex types, which half of LAPACK
     # and every `z`- and `c`-prefixed BLAS routine needs.
-    function cblas_zdotu_sub(
+    def cblas_zdotu_sub(
         n: BlasInt,
         x: ffi.Span of ffi.Complex64, incx: BlasInt,
         y: ffi.Span of ffi.Complex64, incy: BlasInt,
         result: mutable borrowed ffi.Complex64,
     )
 
-    function cblas_cdotu_sub(
+    def cblas_cdotu_sub(
         n: BlasInt,
         x: ffi.Span of ffi.Complex32, incx: BlasInt,
         y: ffi.Span of ffi.Complex32, incy: BlasInt,
@@ -75,7 +75,7 @@ unsafe extern "C" library "openblas64_" kind static:
 
     type BlasInt64 is I64
 
-    function dgemm_lp64(
+    def dgemm_lp64(
         m: BlasInt64, n: BlasInt64, k: BlasInt64,
         a: ffi.Span of F64,
         b: ffi.Span of F64,
@@ -97,14 +97,14 @@ unsafe extern "C" library "hdf5" via pkg-config "hdf5":
     const H5P_DEFAULT be 0 as Hid
     const H5I_BADID be -1 as Hid
 
-    function H5open() -> Herr
-    function H5Fcreate(
+    def H5open() -> Herr
+    def H5Fcreate(
         name: ffi.CStr,
         flags: CUInt,
         create: Hid,
         access: Hid,
     ) -> Hid
-    function H5Fclose(file: Hid) -> Herr
+    def H5Fclose(file: Hid) -> Herr
 
     static H5T_NATIVE_DOUBLE_g: Hid
     static H5T_NATIVE_INT_g: Hid
@@ -118,13 +118,13 @@ unsafe extern "C" library "hdf5" via pkg-config "hdf5":
     union H5L_info2_t: size 32 align 8
     union H5R_ref_t: size 64 align 8
 
-    function H5Rget_type(reference: borrowed H5R_ref_t) -> CInt
-    function H5Rdestroy(reference: mutable borrowed H5R_ref_t) -> Herr
+    def H5Rget_type(reference: borrowed H5R_ref_t) -> CInt
+    def H5Rdestroy(reference: mutable borrowed H5R_ref_t) -> Herr
 
 # --- §5.2: a library that may not be installed ------------------------------
 
 # A program that can use a GPU must still start on a machine without one. The
-# block lowers to a table of function pointers filled in on first use, and
+# block lowers to a table of def pointers filled in on first use, and
 # gains an `is_available()` of its own; the cost is one indirect call per
 # foreign call, which against a convolution is noise.
 unsafe extern "C" library "cudnn" when available:
@@ -132,11 +132,11 @@ unsafe extern "C" library "cudnn" when available:
     type CudnnStatus is CInt
     const CUDNN_STATUS_SUCCESS be 0 as CudnnStatus
 
-    function cudnnGetVersion() -> CSizeT
-    function cudnnCreate(
+    def cudnnGetVersion() -> CSizeT
+    def cudnnCreate(
         handle: mutable borrowed ffi.Uninitialized of CudnnHandle,
     ) -> CudnnStatus
-    function cudnnDestroy(handle: CudnnHandle) -> CudnnStatus
+    def cudnnDestroy(handle: CudnnHandle) -> CudnnStatus
 
 # --- §1.2: records and handles live outside the block -----------------------
 
@@ -181,7 +181,7 @@ type MatrixView:
 # wrong are a shape mismatch and an overflow, and a caller is expected to
 # tell them apart: the concrete form is the one that keeps `match`
 # exhaustive, and it does not box (§5.5).
-public function gemm(
+public def gemm(
         a: borrowed MatrixView,
         b: borrowed MatrixView,
         c: mutable borrowed MatrixView,
@@ -216,7 +216,7 @@ public function gemm(
 # This one has a value as well as a failure, so it returns the pair (§4.5).
 # The failing return still has to name a value for the first slot; the
 # binding's own "no such id" constant is what it uses.
-public function native_double_type() -> (Hid, BlasError?):
+public def native_double_type() -> (Hid, BlasError?):
     unsafe:
         let opened be H5open()
         if opened < 0:
@@ -225,6 +225,6 @@ public function native_double_type() -> (Hid, BlasError?):
 
 # `when available` gives the block a presence test, and a program that may run
 # on a CPU-only node asks before it calls.
-public function cudnn_version() -> Int:
+public def cudnn_version() -> Int:
     unsafe:
         cudnnGetVersion() as Int

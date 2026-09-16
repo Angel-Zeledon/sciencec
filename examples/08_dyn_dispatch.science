@@ -21,59 +21,59 @@ type Note:
 
 # §8 gives `String` no `clone`: an owned copy comes out of `String.new()` and
 # `push_str`.
-function copy_of(text: borrowed String) -> String:
+def copy_of(text: borrowed String) -> String:
     let mutable out be String.new()
     out.push_str(text)
     out
 
 interface Summarize:
-    function summarize(self) -> String
+    def summarize(self) -> String
 
-    function preview(self) -> String:
+    def preview(self) -> String:
         self.summarize().truncate(80)
 
 interface Reset:
-    function reset(mutable self)
+    def reset(mutable self)
 
 Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         self.body.truncate(200)
 
 Note implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         copy_of(self.text)
 
 Note implements Reset:
-    function reset(mutable self):
+    def reset(mutable self):
         self.text be ""
 
 # Static dispatch: one specialized copy per `T` (§5.3).
-function describe_static of T: Summarize(value: borrowed T) -> String:
+def describe_static of T: Summarize(value: borrowed T) -> String:
     value.preview()
 
 # Dynamic dispatch behind a shared borrow. `any Summarize` is not a type a
 # value can have on its own; it is only ever reached through an indirection.
-function describe_any(value: borrowed any Summarize) -> String:
+def describe_any(value: borrowed any Summarize) -> String:
     value.preview()
 
 # Dynamic dispatch behind an exclusive borrow.
-function clear(value: mutable borrowed any Reset):
+def clear(value: mutable borrowed any Reset):
     value.reset()
 
 # Dynamic dispatch behind `Box`: the value is owned.
-function describe_boxed(value: Box of any Summarize) -> String:
+def describe_boxed(value: Box of any Summarize) -> String:
     value.summarize()
 
 # `any` as a return type, again behind the indirection. The signature is
 # broken across lines inside the parameter list, where indentation takes no
 # part (§4.2).
-function pick(flag: Bool, left: borrowed any Summarize,
+def pick(flag: Bool, left: borrowed any Summarize,
         right: borrowed any Summarize) -> borrowed any Summarize:
     if flag: left else: right
 
 # `Box` is built through its associated function (§4.4); named-argument
 # construction is for record types only.
-function into_summary(flag: Bool) -> Box of any Summarize:
+def into_summary(flag: Bool) -> Box of any Summarize:
     if flag:
         Box.new(Doc(title: "a", body: "..."))
     else:
@@ -82,7 +82,7 @@ function into_summary(flag: Bool) -> Box of any Summarize:
 # A heterogeneous collection: the element type is erased, which is exactly
 # what monomorphization cannot give you. The inner `of` is parenthesized so
 # that `Box of any Summarize` reads as one argument to `Array` (§4.3).
-function describe_all(items: borrowed Array of (Box of any Summarize)):
+def describe_all(items: borrowed Array of (Box of any Summarize)):
     for item in items:
         print(item.preview())
 
@@ -94,7 +94,7 @@ type Renderer:
 type OwningRenderer:
     target: Box of any Summarize
 
-function main():
+def main():
     let doc be Doc(title: "Dispatch", body: "Static unless you ask otherwise.")
     let mutable note be Note(text: "erased")
 

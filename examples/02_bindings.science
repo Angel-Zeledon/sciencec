@@ -14,7 +14,7 @@ const GREETING be "hola"
 type Embedding is Array of F32
 type Counter is I64
 
-function main():
+def main():
     # `let ... be` binds immutably. The annotation is optional: it is
     # inferred (§5.2).
     let greeting be "hola"

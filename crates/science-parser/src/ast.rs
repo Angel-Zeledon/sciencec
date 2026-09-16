@@ -177,7 +177,7 @@ pub struct WherePredicate {
 pub struct FnDecl {
     pub is_pub: bool,
     pub name: Ident,
-    /// `function largest of T(..)`: §4.4 puts the parameters after the name,
+    /// `def largest of T(..)`: §4.4 puts the parameters after the name,
     /// introduced by `of`.
     pub generics: Vec<GenericParam>,
     /// The `self`, `mutable self` or `self: Self` receiver, when there is one.
@@ -401,7 +401,7 @@ pub struct ExternItem {
 /// blob a C union is imported as.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExternItemKind {
-    /// `function dgemm(m: BlasInt, ...) -> Herr symbol "dgemm_"`.
+    /// `def dgemm(m: BlasInt, ...) -> Herr symbol "dgemm_"`.
     Fn(ExternFn),
     /// `type BlasInt is I32` — a C typedef over an FFI-representable type.
     Alias(ExternAlias),

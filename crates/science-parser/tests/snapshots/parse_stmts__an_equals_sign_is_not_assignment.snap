@@ -2,14 +2,14 @@
 source: crates/science-parser/tests/parse_stmts.rs
 expression: parse_source_allowing_errors(source)
 ---
-Module @0..38
-  Fn `main` @0..37
-    body: Block @21..37
-      Assign @21..26
-        target: Path `a` @21..22
-        value: Int 3 @25..26
-      Assign @31..37
-        target: Path `a` @31..32
-        value: Int 4 @36..37
+Module @0..33
+  Fn `main` @0..32
+    body: Block @16..32
+      Assign @16..21
+        target: Path `a` @16..17
+        value: Int 3 @20..21
+      Assign @26..32
+        target: Path `a` @26..27
+        value: Int 4 @31..32
 --- diagnostics ---
-SC0100 @23..24 assignment is written `be`
+SC0100 @18..19 assignment is written `be`

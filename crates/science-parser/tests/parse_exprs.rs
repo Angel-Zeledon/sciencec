@@ -538,7 +538,7 @@ fn method_chains_nest_to_the_left() {
 #[test]
 fn a_chain_may_be_broken_by_a_leading_dot() {
     insta::assert_snapshot!(parse_body(
-        r#"function headlines(docs: borrowed Array of Doc) -> Array of String:
+        r#"def headlines(docs: borrowed Array of Doc) -> Array of String:
     docs
         .iterate()
         .discard(each.is_empty())
@@ -665,7 +665,7 @@ fn record_literals_and_calls_nest_in_each_other() {
 #[test]
 fn trailing_commas_are_allowed() {
     insta::assert_snapshot!(parse_source(
-        r#"function main():
+        r#"def main():
     let a be f(
         1,
         2,
@@ -764,7 +764,7 @@ fn an_each_inside_an_unclaimed_argument_is_fine() {
 #[test]
 fn a_nested_each_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "function f(outer: borrowed Array of Doc):\n    outer.map(each.inner.map(each.x))\n"
+        "def f(outer: borrowed Array of Doc):\n    outer.map(each.inner.map(each.x))\n"
     ));
 }
 
@@ -870,7 +870,7 @@ fn tuple_unit_and_grouping() {
 #[test]
 fn literals_keep_their_base_and_suffix() {
     insta::assert_snapshot!(parse_body(
-        r#"function main():
+        r#"def main():
     let a be 42
     let b be 0xFF
     let c be 0b1010
@@ -944,7 +944,7 @@ fn a_name_may_be_instantiated_before_an_associated_call() {
 #[test]
 fn a_bare_generic_before_an_associated_call_is_ambiguous() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "function f():\n    let a be Array of Doc.new()\n"
+        "def f():\n    let a be Array of Doc.new()\n"
     ));
 }
 
@@ -970,16 +970,16 @@ fn indexing_applies_to_a_receiver_that_is_not_a_name() {
 #[test]
 fn inline_if_else() {
     insta::assert_snapshot!(parse_source(
-        "function longest(a: borrowed String, b: borrowed String) -> borrowed String:\n    if a.length() > b.length(): a else: b\n"
+        "def longest(a: borrowed String, b: borrowed String) -> borrowed String:\n    if a.length() > b.length(): a else: b\n"
     ));
 }
 
 /// The same construct in block form produces the same shape.
 #[test]
 fn block_if_else_matches_the_inline_form() {
-    let inline = parse_body("function f() -> Int:\n    if c: 1 else: 2\n");
+    let inline = parse_body("def f() -> Int:\n    if c: 1 else: 2\n");
     let block =
-        parse_body("function f() -> Int:\n    if c:\n        1\n    else:\n        2\n");
+        parse_body("def f() -> Int:\n    if c:\n        1\n    else:\n        2\n");
     assert_eq!(
         common::strip_spans(&inline),
         common::strip_spans(&block),
@@ -991,14 +991,14 @@ fn block_if_else_matches_the_inline_form() {
 /// `if a: if b: x else: y` the `else` belongs to `if b`.
 #[test]
 fn dangling_else_binds_to_the_innermost_if() {
-    insta::assert_snapshot!(parse_body("function f():\n    if a: if b: x else: y\n"));
+    insta::assert_snapshot!(parse_body("def f():\n    if a: if b: x else: y\n"));
 }
 
 /// And the block form is how you say the other thing.
 #[test]
 fn the_block_form_binds_else_to_the_outer_if() {
     insta::assert_snapshot!(parse_body(
-        "function f():\n    if a:\n        if b:\n            x\n    else:\n        y\n"
+        "def f():\n    if a:\n        if b:\n            x\n    else:\n        y\n"
     ));
 }
 
@@ -1021,7 +1021,7 @@ fn if_without_else() {
 #[test]
 fn if_as_a_value() {
     insta::assert_snapshot!(parse_source(
-        r#"function f(flag: Bool, n: Int) -> String:
+        r#"def f(flag: Bool, n: Int) -> String:
     let chosen be if flag: 1 else: 0
     print(if flag: "yes" else: "no")
     if n < 10: "small" else: if n < 100: "medium" else: "large"
@@ -1033,7 +1033,7 @@ fn if_as_a_value() {
 #[test]
 fn match_with_inline_and_block_arms() {
     insta::assert_snapshot!(parse_source(
-        r#"function describe(format: borrowed Format) -> String:
+        r#"def describe(format: borrowed Format) -> String:
     match format:
         Plain: "plain"
         Markdown:
@@ -1048,7 +1048,7 @@ fn match_with_inline_and_block_arms() {
 #[test]
 fn nested_match() {
     insta::assert_snapshot!(parse_source(
-        r#"function render(token: borrowed Token, format: borrowed Format) -> String:
+        r#"def render(token: borrowed Token, format: borrowed Format) -> String:
     match token:
         Number(value):
             match format:
@@ -1064,7 +1064,7 @@ fn nested_match() {
 #[test]
 fn match_as_the_value_of_a_binding() {
     insta::assert_snapshot!(parse_source(
-        r#"function f() -> String:
+        r#"def f() -> String:
     let label be match x:
         A: "a"
         B: "b"
@@ -1078,7 +1078,7 @@ fn match_as_the_value_of_a_binding() {
 #[test]
 fn loops_in_both_forms() {
     insta::assert_snapshot!(parse_source(
-        r#"function f(stack: mutable borrowed Array of Int, lines: borrowed Array of String):
+        r#"def f(stack: mutable borrowed Array of Int, lines: borrowed Array of String):
     for _ in 0..stack.length(): stack.pop()
     for line in lines: print(line)
     loop: break
@@ -1102,13 +1102,13 @@ fn loops_in_both_forms() {
 /// own example of one — it binds a name nothing could then use.
 #[test]
 fn a_let_in_an_inline_body_is_rejected() {
-    insta::assert_snapshot!(parse_source_allowing_errors("function f():\n    if c: let x be 1\n"));
+    insta::assert_snapshot!(parse_source_allowing_errors("def f():\n    if c: let x be 1\n"));
 }
 
 /// The same, on a function body, which is where §4.5 writes it down.
 #[test]
 fn a_let_as_a_whole_inline_function_body_is_rejected() {
-    insta::assert_snapshot!(parse_source_allowing_errors("function f(): let x be 1\n"));
+    insta::assert_snapshot!(parse_source_allowing_errors("def f(): let x be 1\n"));
 }
 
 /// Named arguments are how a record is built, so they are meaningless on
@@ -1116,7 +1116,7 @@ fn a_let_as_a_whole_inline_function_body_is_rejected() {
 /// nothing there for the field names to belong to.
 #[test]
 fn named_arguments_on_a_non_path_are_rejected() {
-    insta::assert_snapshot!(parse_source_allowing_errors("function f():\n    f()(title: 1)\n"));
+    insta::assert_snapshot!(parse_source_allowing_errors("def f():\n    f()(title: 1)\n"));
 }
 
 /// Parentheses group and nothing more, so a parenthesised name is still a name
@@ -1139,7 +1139,7 @@ fn a_parenthesised_name_still_constructs() {
 #[test]
 fn a_broken_expression_does_not_eat_the_next_statement() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "function f():\n    let a be *\n    let b be 1\n"
+        "def f():\n    let a be *\n    let b be 1\n"
     ));
 }
 
@@ -1147,7 +1147,7 @@ fn a_broken_expression_does_not_eat_the_next_statement() {
 #[test]
 fn an_empty_inline_body_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "function f(flag: Bool) -> Int:\n    if flag:\n"
+        "def f(flag: Bool) -> Int:\n    if flag:\n"
     ));
 }
 

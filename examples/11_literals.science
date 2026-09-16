@@ -11,7 +11,7 @@
 # Literal syntax is the one part of §4 the English keywords left alone: what
 # changed around them is the binding, which is now `let name be value` (§4.3).
 
-function main():
+def main():
     # --- Integers, decimal --------------------------------------------------
     let zero be 0
     let small be 42

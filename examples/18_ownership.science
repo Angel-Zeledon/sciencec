@@ -32,28 +32,28 @@ type Position:
 Position implements Copy
 
 interface Summarize:
-    function summarize(self) -> String
+    def summarize(self) -> String
 
 Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         self.body.truncate(200)
 
 Doc implements Drop:
-    function drop(mutable self):
+    def drop(mutable self):
         print("doc dropped")
 
 # --- Moves ------------------------------------------------------------------
 
 # Passing by value moves: the caller may not use the value afterwards.
-function consume(doc: Doc) -> String:
+def consume(doc: Doc) -> String:
     doc.title
 
 # Returning moves ownership out.
-function produce() -> Doc:
+def produce() -> Doc:
     Doc(title: "owned", body: "...")
 
 # Rebinding moves too.
-function rebind() -> String:
+def rebind() -> String:
     let first be produce()
     let second be first
     second.title
@@ -61,10 +61,10 @@ function rebind() -> String:
 # --- Shared borrows ---------------------------------------------------------
 
 # Any number of shared borrows may coexist.
-function compare(a: borrowed Doc, b: borrowed Doc) -> Bool:
+def compare(a: borrowed Doc, b: borrowed Doc) -> Bool:
     a.body.length() > b.body.length()
 
-function many_shared():
+def many_shared():
     let doc be produce()
 
     # `borrowed` is the unary operator that makes a borrow, and it is what a
@@ -83,20 +83,20 @@ function many_shared():
     print(compare(doc, doc))
 
 # A borrow returned from a function: its region is inferred from the argument.
-function longest(a: borrowed String, b: borrowed String) -> borrowed String:
+def longest(a: borrowed String, b: borrowed String) -> borrowed String:
     if a.length() > b.length(): a else: b
 
-function title_of(doc: borrowed Doc) -> borrowed String:
+def title_of(doc: borrowed Doc) -> borrowed String:
     borrowed doc.title
 
 # --- Exclusive borrows ------------------------------------------------------
 
 # Exactly one exclusive borrow, and never at the same time as a shared one.
 # Assignment through it uses `be`, the same word that binds (§4.3).
-function retitle(doc: mutable borrowed Doc, title: String):
+def retitle(doc: mutable borrowed Doc, title: String):
     doc.title be title
 
-function exclusive_then_shared():
+def exclusive_then_shared():
     let mutable doc be produce()
 
     # Auto-borrow covers the exclusive case too: `retitle` says
@@ -113,14 +113,14 @@ function exclusive_then_shared():
 # Borrowing two different fields of the same record at once. Borrows
 # auto-dereference for field access, so nothing is written for the outer
 # `mutable borrowed`: Science has no dereference operator (§4.7).
-function disjoint_fields(doc: mutable borrowed Doc) -> Int:
+def disjoint_fields(doc: mutable borrowed Doc) -> Int:
     let title be borrowed doc.title
     let body be borrowed doc.body
     title.length() + body.length()
 
 # --- Borrows stored in records ----------------------------------------------
 
-function store_a_borrow():
+def store_a_borrow():
     let doc be produce()
 
     # `view` borrows `doc`. Construction is not a call, so the borrow is
@@ -130,18 +130,18 @@ function store_a_borrow():
     print(view.source.summarize())
     print(title_of(view.source))
 
-function store_an_exclusive_borrow():
+def store_an_exclusive_borrow():
     let mutable doc be produce()
     let editor be Editor(target: mutable borrowed doc)
     editor.target.title be "edited"
 
-function span_of(text: borrowed String) -> Span:
+def span_of(text: borrowed String) -> Span:
     Span(text: text, start: 0, end: text.length())
 
 # --- Copy types -------------------------------------------------------------
 
 # Types implementing `Copy` are not moved by assignment (§6.1 rule 2).
-function copies():
+def copies():
     let a be 42
     let b be a
     let c be a
@@ -161,15 +161,15 @@ function copies():
 
 # `Box` is built through its associated function; named-argument construction
 # is for record types only (§4.4).
-function boxed() -> Box of Doc:
+def boxed() -> Box of Doc:
     Box.new(produce())
 
-function describe_boxed(value: borrowed Box of Doc) -> String:
+def describe_boxed(value: borrowed Box of Doc) -> String:
     value.summarize()
 
 # --- Scopes and drop --------------------------------------------------------
 
-function scoped():
+def scoped():
     let outer be produce()
     if outer.body.length() > 0:
         # `inner` is destroyed at the end of this block; `Drop` runs there.
@@ -177,7 +177,7 @@ function scoped():
         print(inner.summarize())
     print(outer.summarize())
 
-function main():
+def main():
     many_shared()
     exclusive_then_shared()
     store_a_borrow()

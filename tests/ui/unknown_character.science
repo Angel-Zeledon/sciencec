@@ -10,7 +10,7 @@
 # negation `not`. A `!` therefore lands in SC0001, but with its own message
 # and an applicable fix rather than the catch-all one `$` gets.
 
-function main():
+def main():
     let priced be 100 $ 2
     let quoted be `backtick`
     let inverted be !true

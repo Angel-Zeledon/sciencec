@@ -1,24 +1,24 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_source(r#\"function f() -> String:\n    let label be match x:\n        A: \"a\"\n        B: \"b\"\n    print(label)\n\"#)"
+expression: "parse_source(r#\"def f() -> String:\n    let label be match x:\n        A: \"a\"\n        B: \"b\"\n    print(label)\n\"#)"
 ---
-Module @0..97
-  Fn `f` @0..96
-    ret: Path `String` @16..22
-    body: Block @28..96
-      Let `label` @28..79
-        value: Match @41..79
-          scrutinee: Path `x` @47..48
+Module @0..92
+  Fn `f` @0..91
+    ret: Path `String` @11..17
+    body: Block @23..91
+      Let `label` @23..74
+        value: Match @36..74
+          scrutinee: Path `x` @42..43
           arms
-            Arm @58..64
-              pattern: Binding `A` @58..59
-              body: Str "a" @61..64
-            Arm @73..79
-              pattern: Binding `B` @73..74
-              body: Str "b" @76..79
-      tail: Call @84..96
-        callee: Path `print` @84..89
+            Arm @53..59
+              pattern: Binding `A` @53..54
+              body: Str "a" @56..59
+            Arm @68..74
+              pattern: Binding `B` @68..69
+              body: Str "b" @71..74
+      tail: Call @79..91
+        callee: Path `print` @79..84
         args
-          Path `label` @90..95
+          Path `label` @85..90
 --- diagnostics ---
 (none)

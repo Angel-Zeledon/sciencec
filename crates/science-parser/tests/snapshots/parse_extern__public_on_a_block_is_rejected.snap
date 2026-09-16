@@ -1,15 +1,15 @@
 ---
 source: crates/science-parser/tests/parse_extern.rs
-expression: "parse_source_allowing_errors(r#\"public unsafe extern \"C\" library \"z\":\n    function crc32(crc: CULong) -> CULong\n\"#)"
+expression: "parse_source_allowing_errors(r#\"public unsafe extern \"C\" library \"z\":\n    def crc32(crc: CULong) -> CULong\n\"#)"
 ---
-Module @0..80
-  Extern "C" unsafe @0..79
+Module @0..75
+  Extern "C" unsafe @0..74
     Library "z" @25..36
     items
-      ExternFn `crc32` @42..79
+      ExternFn `crc32` @42..74
         params
-          Param `crc` @57..68
-            type: Path `CULong` @62..68
-        ret: Path `CULong` @73..79
+          Param `crc` @52..63
+            type: Path `CULong` @57..63
+        ret: Path `CULong` @68..74
 --- diagnostics ---
 SC0107 @0..6 `public` has no meaning on an `extern` block

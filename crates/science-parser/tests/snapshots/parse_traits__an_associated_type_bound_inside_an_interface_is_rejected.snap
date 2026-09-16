@@ -2,11 +2,11 @@
 source: crates/science-parser/tests/parse_traits.rs
 expression: report
 ---
-Module @0..85
-  Interface `Iterate` @0..84
+Module @0..80
+  Interface `Iterate` @0..79
     methods
-      Fn `next` @44..84
-        receiver: mutable self @58..70
-        ret: SelfAssoc `Item` @75..84
+      Fn `next` @44..79
+        receiver: mutable self @53..65
+        ret: SelfAssoc `Item` @70..79
 --- diagnostics ---
 SC0112 @23..39 an interface declares an associated type with `type Item` and leaves the type to the implementation

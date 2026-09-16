@@ -1,0 +1,52 @@
+# Lines past the width, and the three places a break may go.
+type Doc:
+    title: String
+
+interface Summarize:
+    def summarize(self) -> String
+
+def long_parameter_list(
+    alpha: borrowed String,
+    beta: borrowed String,
+    gamma: borrowed String,
+    delta: borrowed String
+) -> Int:
+    0
+
+def long_where_clause of (A, B)(left: borrowed A, right: borrowed B) -> String
+        where A: Summarize + Clone, B: Summarize + Clone:
+    left.summarize()
+
+def long_chain(docs: borrowed Array of Doc) -> Array of String:
+    docs
+        .iterate()
+        .discard(each.title.is_empty())
+        .map(each.title)
+        .sort(by: line giving line.length())
+        .take(5)
+        .collect()
+
+def nested(docs: borrowed Array of Doc) -> Int:
+    outer_function_with_a_name(
+        inner_function_with_a_name(alpha_argument, beta_argument, gamma_argument),
+        delta
+    )
+
+def short_chain_is_joined(doc: borrowed Doc) -> String:
+    doc.summarize().truncate(80)
+
+# Three links go down the page even though this fits on one line.
+def pipeline(docs: borrowed Array of Doc) -> Array of String:
+    docs
+        .iterate()
+        .map(each.title)
+        .collect()
+
+# Two chains on one line are not a chain: breaking before all four links would
+# put `.length() >= right` on a line of its own.
+def two_chains(left: borrowed Doc, right: borrowed Doc) -> Bool:
+    left.summarize().length() >= right.summarize().length()
+
+# A chain that does not end the line is left alone for the same reason.
+def not_the_tail(doc: borrowed Doc) -> Int:
+    doc.summarize().truncate(80).length() + 1

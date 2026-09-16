@@ -237,7 +237,7 @@ impl TokenKind {
         use ReservedWord::*;
         use TokenKind::*;
         Some(match word {
-            "function" => Function,
+            "def" => Function,
             "let" => Let,
             "be" => Be,
             "mutable" => Mutable,

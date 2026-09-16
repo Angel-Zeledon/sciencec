@@ -74,7 +74,7 @@ pub enum DefKind {
     /// A file, or a directory with a `mod.science` (§4.4).
     Module,
     Fn,
-    /// `function name(..)` inside an `extern` block. A kind of its own, not
+    /// `def name(..)` inside an `extern` block. A kind of its own, not
     /// because the name works differently — it is an ordinary module-level
     /// name — but because three later rules turn on it: §1.7 permits named
     /// arguments at its call sites and nowhere else, §3.1 requires an

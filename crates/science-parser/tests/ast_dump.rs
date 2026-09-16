@@ -166,7 +166,7 @@ fn dump_items() {
         56,
     );
 
-    // public function largest of T: Ord(items: borrowed Array of T)
+    // public def largest of T: Ord(items: borrowed Array of T)
     //         -> borrowed T where T: Clone:
     //     items.first()
     let largest = item(
@@ -354,9 +354,9 @@ fn dump_items() {
 fn dump_interfaces_and_implementations() {
     // public interface Iterate: Clone:
     //     type Item
-    //     function next(mutable self) -> Option of Self.Item
-    //     function count(self: Self) -> Int
-    //     function describe(self) -> String:
+    //     def next(mutable self) -> Option of Self.Item
+    //     def count(self: Self) -> Int
+    //     def describe(self) -> String:
     //         "an iterator"
     let next = FnDecl {
         is_pub: false,
@@ -418,7 +418,7 @@ fn dump_interfaces_and_implementations() {
 
     // Counter implements Iterate:
     //     type Item is Int
-    //     function next(mutable self) -> Option of Self.Item:
+    //     def next(mutable self) -> Option of Self.Item:
     //         Some(self.value)
     let impl_next = FnDecl {
         is_pub: false,
@@ -478,7 +478,7 @@ fn dump_interfaces_and_implementations() {
     );
 
     // Pair of (A, B) implements Swap where A: Clone:
-    //     function swapped(self) -> Pair of (B, A)
+    //     def swapped(self) -> Pair of (B, A)
     let swapped = FnDecl {
         is_pub: false,
         name: ident("swapped", 499),
@@ -527,7 +527,7 @@ fn dump_interfaces_and_implementations() {
     );
 
     // (Array of Doc) has:
-    //     function first(self) -> borrowed Doc:
+    //     def first(self) -> borrowed Doc:
     //         self[0]
     let first = FnDecl {
         is_pub: false,
@@ -1368,7 +1368,7 @@ fn dump_extern_blocks() {
                     }),
                     span: sp(167, 196),
                 },
-                //     function dgemm(m: BlasInt) -> Herr symbol "dgemm_"
+                //     def dgemm(m: BlasInt) -> Herr symbol "dgemm_"
                 ExternItem {
                     kind: ExternItemKind::Fn(ExternFn {
                         name: ident("dgemm", 210),
@@ -1439,7 +1439,7 @@ fn dump_extern_blocks() {
         384,
     );
 
-    // function call():
+    // def call():
     //     unsafe:
     //         H5open()
     let call = item(

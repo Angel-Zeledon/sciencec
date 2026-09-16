@@ -1,38 +1,38 @@
 ---
 source: crates/science-parser/tests/parse_stmts.rs
-expression: "parse_body(r#\"function main():\n    a be b\n    a be a + 1\n    self.text be \"\"\n    editor.target.title be \"edited\"\n    cells[0] be 1\n    grid[row][column] be cells[0]\n\"#)"
+expression: "parse_body(r#\"def main():\n    a be b\n    a be a + 1\n    self.text be \"\"\n    editor.target.title be \"edited\"\n    cells[0] be 1\n    grid[row][column] be cells[0]\n\"#)"
 ---
-Block @21..150
-  Assign @21..27
-    target: Path `a` @21..22
-    value: Path `b` @26..27
-  Assign @32..42
-    target: Path `a` @32..33
-    value: Binary `+` @37..42
-      lhs: Path `a` @37..38
-      rhs: Int 1 @41..42
-  Assign @47..62
-    target: Field `text` @47..56
-      base: Self @47..51
-    value: Str "" @60..62
-  Assign @67..98
-    target: Field `title` @67..86
-      base: Field `target` @67..80
-        base: Path `editor` @67..73
-    value: Str "edited" @90..98
-  Assign @103..116
-    target: Index @103..111
-      base: Path `cells` @103..108
-      index: Int 0 @109..110
-    value: Int 1 @115..116
-  Assign @121..150
-    target: Index @121..138
-      base: Index @121..130
-        base: Path `grid` @121..125
-        index: Path `row` @126..129
-      index: Path `column` @131..137
-    value: Index @142..150
-      base: Path `cells` @142..147
-      index: Int 0 @148..149
+Block @16..145
+  Assign @16..22
+    target: Path `a` @16..17
+    value: Path `b` @21..22
+  Assign @27..37
+    target: Path `a` @27..28
+    value: Binary `+` @32..37
+      lhs: Path `a` @32..33
+      rhs: Int 1 @36..37
+  Assign @42..57
+    target: Field `text` @42..51
+      base: Self @42..46
+    value: Str "" @55..57
+  Assign @62..93
+    target: Field `title` @62..81
+      base: Field `target` @62..75
+        base: Path `editor` @62..68
+    value: Str "edited" @85..93
+  Assign @98..111
+    target: Index @98..106
+      base: Path `cells` @98..103
+      index: Int 0 @104..105
+    value: Int 1 @110..111
+  Assign @116..145
+    target: Index @116..133
+      base: Index @116..125
+        base: Path `grid` @116..120
+        index: Path `row` @121..124
+      index: Path `column` @126..132
+    value: Index @137..145
+      base: Path `cells` @137..142
+      index: Int 0 @143..144
 --- diagnostics ---
 (none)

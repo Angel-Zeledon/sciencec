@@ -1,22 +1,22 @@
 ---
 source: crates/science-parser/tests/parse_patterns.rs
-expression: "parse_body(r#\"function f(x: Int) -> Int:\n    match x:\n        Ok(mutable value): value\n        (mutable a, b): a\n        mutable n: n\n\"#)"
+expression: "parse_body(r#\"def f(x: Int) -> Int:\n    match x:\n        Ok(mutable value): value\n        (mutable a, b): a\n        mutable n: n\n\"#)"
 ---
-Block @31..119
-  tail: Match @31..119
-    scrutinee: Path `x` @37..38
+Block @26..114
+  tail: Match @26..114
+    scrutinee: Path `x` @32..33
     arms
-      Arm @48..72
-        pattern: Variant `Ok` @48..65
-          Binding `value` mutable @51..64
-        body: Path `value` @67..72
-      Arm @81..98
-        pattern: Tuple @81..95
-          Binding `a` mutable @82..91
-          Binding `b` @93..94
-        body: Path `a` @97..98
-      Arm @107..119
-        pattern: Binding `n` mutable @107..116
-        body: Path `n` @118..119
+      Arm @43..67
+        pattern: Variant `Ok` @43..60
+          Binding `value` mutable @46..59
+        body: Path `value` @62..67
+      Arm @76..93
+        pattern: Tuple @76..90
+          Binding `a` mutable @77..86
+          Binding `b` @88..89
+        body: Path `a` @92..93
+      Arm @102..114
+        pattern: Binding `n` mutable @102..111
+        body: Path `n` @113..114
 --- diagnostics ---
 (none)

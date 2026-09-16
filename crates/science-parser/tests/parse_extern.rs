@@ -50,7 +50,7 @@ fn the_block_of_section_1_1() {
     const CBLAS_NO_TRANS be 111 as CblasTranspose
     const CBLAS_TRANS be 112 as CblasTranspose
 
-    function cblas_dgemm(
+    def cblas_dgemm(
         layout: CblasLayout,
         transpose_a: CblasTranspose,
         transpose_b: CblasTranspose,
@@ -71,7 +71,7 @@ fn the_block_of_section_1_1() {
 fn every_library_clause_at_once() {
     insta::assert_snapshot!(parse_source(
         r#"unsafe extern "C" library "cudnn" kind static when available via pkg-config "cudnn":
-    function cudnnGetVersion() -> CSizeT
+    def cudnnGetVersion() -> CSizeT
 "#
     ));
 }
@@ -84,11 +84,11 @@ fn both_integer_widths_of_section_1_6() {
     insta::assert_snapshot!(parse_source(
         r#"unsafe extern "C" library "openblas":
     type BlasInt is I32
-    function dgemm(m: BlasInt, n: BlasInt) symbol "dgemm_"
+    def dgemm(m: BlasInt, n: BlasInt) symbol "dgemm_"
 
 unsafe extern "C" library "openblas64_":
     type BlasInt64 is I64
-    function dgemm64(m: BlasInt64, n: BlasInt64) symbol "dgemm_64_"
+    def dgemm64(m: BlasInt64, n: BlasInt64) symbol "dgemm_64_"
 "#
     ));
 }
@@ -103,7 +103,7 @@ fn exported_globals() {
         r#"unsafe extern "C" library "hdf5":
     type Hid is I64
     type Herr is I32
-    function H5open() -> Herr
+    def H5open() -> Herr
     static H5T_NATIVE_DOUBLE_g: Hid
     static H5T_NATIVE_INT_g: Hid
     static PyExc_TypeError: ffi.Pointer of PyObject
@@ -118,13 +118,13 @@ fn the_complex_types_are_ordinary_ffi_types() {
     insta::assert_snapshot!(parse_source(
         r#"unsafe extern "C" library "openblas":
     type BlasInt is I32
-    function cblas_zgemv(
+    def cblas_zgemv(
         m: BlasInt,
         alpha: borrowed ffi.Complex64,
         a: ffi.Span of ffi.Complex64,
         y: ffi.MutableSpan of ffi.Complex64,
     ) symbol "cblas_zgemv"
-    function cblas_cdotu(x: ffi.Span of ffi.Complex32) -> ffi.Complex32
+    def cblas_cdotu(x: ffi.Span of ffi.Complex32) -> ffi.Complex32
 "#
     ));
 }
@@ -140,7 +140,7 @@ fn unions_are_opaque_blobs_of_a_size_and_an_alignment() {
     type Hid is I64
     union H5L_info2_t: size 32 align 8
     union H5R_ref_t: size 64 align 8
-    function H5Rget_type(reference: borrowed H5R_ref_t) -> I32
+    def H5Rget_type(reference: borrowed H5R_ref_t) -> I32
 "#
     ));
 }
@@ -152,8 +152,8 @@ fn unions_are_opaque_blobs_of_a_size_and_an_alignment() {
 fn a_variadic_function_is_recognised_and_refused() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"unsafe extern "C" library "python3":
-    function PyErr_Format(kind: ffi.Pointer of PyObject, format: ffi.CStr, ...) -> ffi.Pointer of PyObject
-    function PyErr_SetString(kind: ffi.Pointer of PyObject, message: ffi.CStr)
+    def PyErr_Format(kind: ffi.Pointer of PyObject, format: ffi.CStr, ...) -> ffi.Pointer of PyObject
+    def PyErr_SetString(kind: ffi.Pointer of PyObject, message: ffi.CStr)
 "#
     ));
 }
@@ -165,8 +165,8 @@ fn a_variadic_function_is_recognised_and_refused() {
 fn a_variadic_function_does_not_derail_the_block() {
     let report = parse_source_allowing_errors(
         r#"unsafe extern "C" library "z":
-    function gzprintf(file: ffi.OpaqueHandle, format: ffi.CStr, ...) -> CInt
-    function gzclose(file: ffi.OpaqueHandle) -> CInt
+    def gzprintf(file: ffi.OpaqueHandle, format: ffi.CStr, ...) -> CInt
+    def gzclose(file: ffi.OpaqueHandle) -> CInt
 "#,
     );
     assert!(report.contains("ExternFn `gzclose`"), "the next declaration was lost:\n{report}");
@@ -181,7 +181,7 @@ fn a_variadic_function_does_not_derail_the_block() {
 fn an_array_in_a_signature_names_the_span_that_replaces_it() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"unsafe extern "C" library "openblas":
-    function takes(a: borrowed Array of F64, b: mutable borrowed Array of F64, c: Array of I32)
+    def takes(a: borrowed Array of F64, b: mutable borrowed Array of F64, c: Array of I32)
 "#
     ));
 }
@@ -192,11 +192,11 @@ fn an_array_in_a_signature_names_the_span_that_replaces_it() {
 fn the_science_layouts_are_refused_by_name() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"unsafe extern "C" library "z":
-    function a(text: borrowed String)
-    function b(table: Map of (String, I32))
-    function c(maybe: Option of I32) -> Result of (I32, I32)
-    function d(pair: (I32, I32))
-    function e(value: any Summarize)
+    def a(text: borrowed String)
+    def b(table: Map of (String, I32))
+    def c(maybe: Option of I32) -> Result of (I32, I32)
+    def d(pair: (I32, I32))
+    def e(value: any Summarize)
     type Bad is Array of F64
     static worse: String
     const WORST be 1 as Box of I32
@@ -211,7 +211,7 @@ fn the_science_layouts_are_refused_by_name() {
 fn half_precision_is_refused_by_value_and_admitted_by_reference() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"unsafe extern "C" library "cudnn":
-    function scale(alpha: F16, out: mutable borrowed F16, buffer: ffi.Span of BF16) -> BF16
+    def scale(alpha: F16, out: mutable borrowed F16, buffer: ffi.Span of BF16) -> BF16
 "#
     ));
 }
@@ -224,7 +224,7 @@ fn half_precision_is_refused_by_value_and_admitted_by_reference() {
 fn a_block_without_unsafe_is_reported_and_still_parsed() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"extern "C" library "z":
-    function crc32(crc: CULong) -> CULong
+    def crc32(crc: CULong) -> CULong
 "#
     ));
 }
@@ -235,10 +235,10 @@ fn a_block_without_unsafe_is_reported_and_still_parsed() {
 fn a_block_without_a_library_is_reported_and_still_parsed() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"unsafe extern "C":
-    function crc32(crc: CULong) -> CULong
+    def crc32(crc: CULong) -> CULong
 
 unsafe extern "C" via pkg-config "zlib":
-    function crc32_z(crc: CULong) -> CULong
+    def crc32_z(crc: CULong) -> CULong
 "#
     ));
 }
@@ -248,7 +248,7 @@ unsafe extern "C" via pkg-config "zlib":
 fn an_abi_other_than_c_is_reported() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"unsafe extern "Fortran" library "openblas":
-    function dgemm(m: I32)
+    def dgemm(m: I32)
 "#
     ));
 }
@@ -265,8 +265,8 @@ fn an_item_form_the_block_does_not_have() {
         Ok
         Failed
     interface Readable:
-        function read(self)
-    function H5open() -> Hid
+        def read(self)
+    def H5open() -> Hid
 "#
     ));
 }
@@ -289,7 +289,7 @@ fn a_union_without_its_layout() {
 fn public_on_a_block_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"public unsafe extern "C" library "z":
-    function crc32(crc: CULong) -> CULong
+    def crc32(crc: CULong) -> CULong
 "#
     ));
 }
@@ -300,7 +300,7 @@ fn public_on_a_block_is_rejected() {
 fn pkg_config_has_to_be_written_as_one_word() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"unsafe extern "C" library "z" via pkg - config "zlib":
-    function crc32(crc: CULong) -> CULong
+    def crc32(crc: CULong) -> CULong
 "#
     ));
 }
@@ -311,7 +311,7 @@ fn pkg_config_has_to_be_written_as_one_word() {
 #[test]
 fn the_contextual_words_are_still_names_everywhere_else() {
     insta::assert_snapshot!(parse_source(
-        r#"function shelve(library: I32, kind: I32, size: I32, align: I32) -> I32:
+        r#"def shelve(library: I32, kind: I32, size: I32, align: I32) -> I32:
     let via be library + kind
     let symbol be size + align
     let available be via + symbol
@@ -327,7 +327,7 @@ fn the_contextual_words_are_still_names_everywhere_else() {
 #[test]
 fn the_unsafe_block_in_both_forms() {
     insta::assert_snapshot!(parse_source(
-        r#"function call():
+        r#"def call():
     unsafe:
         H5open()
         H5close()
@@ -350,7 +350,7 @@ fn the_two_exact_fixes_replace_exactly_what_they_should() {
     assert_eq!(
         fixes(
             r#"unsafe extern "C" library "openblas":
-    function takes(a: borrowed Array of F64, b: mutable borrowed Array of F64)
+    def takes(a: borrowed Array of F64, b: mutable borrowed Array of F64)
 "#
         ),
         vec![
@@ -366,7 +366,7 @@ fn the_two_exact_fixes_replace_exactly_what_they_should() {
     assert_eq!(
         fixes(
             r#"extern "C" library "z":
-    function crc32(crc: CULong) -> CULong
+    def crc32(crc: CULong) -> CULong
 "#
         ),
         vec![("SC0414".to_string(), "extern".to_string(), "unsafe extern".to_string())]
@@ -383,16 +383,16 @@ fn the_two_exact_fixes_replace_exactly_what_they_should() {
 fn the_diagnostics_with_no_mechanical_fix_offer_none() {
     for source in [
         r#"unsafe extern "C" library "z":
-    function gzprintf(file: ffi.OpaqueHandle, format: ffi.CStr, ...) -> CInt
+    def gzprintf(file: ffi.OpaqueHandle, format: ffi.CStr, ...) -> CInt
 "#,
         r#"unsafe extern "Fortran" library "openblas":
-    function dgemm(m: I32)
+    def dgemm(m: I32)
 "#,
         r#"unsafe extern "C" library "hdf5":
     union H5R_ref_t: size 64
 "#,
         r#"unsafe extern "C" library "z":
-    function a(text: borrowed String)
+    def a(text: borrowed String)
 "#,
     ] {
         assert!(fixes(source).is_empty(), "this diagnostic should not offer a fix:\n{source}");

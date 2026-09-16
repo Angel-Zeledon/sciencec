@@ -1,8 +1,8 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(r#\"type Position:\n    line: U32\n\nPosition implements Copy\n\nPosition implements Clone:\n    function clone(self) -> Position:\n        Position(line: self.line)\n\nfunction main():\n    print(1)\n\"#)"
+expression: "parse_source(r#\"type Position:\n    line: U32\n\nPosition implements Copy\n\nPosition implements Clone:\n    def clone(self) -> Position:\n        Position(line: self.line)\n\ndef main():\n    print(1)\n\"#)"
 ---
-Module @0..186
+Module @0..176
   Record `Position` @0..28
     fields
       Field `line` @19..28
@@ -10,24 +10,24 @@ Module @0..186
   Implements @30..54
     interface: Bound `Copy` @50..54
     type: Path `Position` @30..38
-  Implements @56..154
+  Implements @56..149
     interface: Bound `Clone` @76..81
     type: Path `Position` @56..64
     methods
-      Fn `clone` @87..154
-        receiver: self @102..106
-        ret: Path `Position` @111..119
-        body: Block @129..154
-          tail: StructLit `Position` @129..154
+      Fn `clone` @87..149
+        receiver: self @97..101
+        ret: Path `Position` @106..114
+        body: Block @124..149
+          tail: StructLit `Position` @124..149
             fields
-              FieldInit `line` @138..153
-                value: Field `line` @144..153
-                  base: Self @144..148
-  Fn `main` @156..185
-    body: Block @177..185
-      tail: Call @177..185
-        callee: Path `print` @177..182
+              FieldInit `line` @133..148
+                value: Field `line` @139..148
+                  base: Self @139..143
+  Fn `main` @151..175
+    body: Block @167..175
+      tail: Call @167..175
+        callee: Path `print` @167..172
         args
-          Int 1 @183..184
+          Int 1 @173..174
 --- diagnostics ---
 (none)

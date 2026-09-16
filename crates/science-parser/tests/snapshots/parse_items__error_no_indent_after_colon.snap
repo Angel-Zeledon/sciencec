@@ -9,4 +9,4 @@ Module @0..25
     body: Block @24..25
       tail: Path `x` @24..25
 --- diagnostics ---
-SC0100 @12..20 expected an indented block after `:`, found `function`
+SC0100 @12..20 expected an indented block after `:`, found `def`

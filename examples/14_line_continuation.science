@@ -22,12 +22,12 @@ choice Outcome of (T, E):
     Rejected(E)
 
 interface Summarize:
-    function summarize(self) -> String
+    def summarize(self) -> String
 
 # --- Unclosed brackets ------------------------------------------------------
 
 # A signature broken across lines inside its parameter list.
-function connect(
+def connect(
     host: borrowed String,
     port: U16,
     retries: U8,
@@ -36,21 +36,21 @@ function connect(
 
 # Two or more generic parameters take parentheses (§4.3), and parentheses
 # continue, so the generic parameter list breaks across lines as well.
-function constrained of (
+def constrained of (
     A: Summarize,
     B: Summarize,
 )(left: borrowed A, right: borrowed B) -> String:
     left.summarize()
 
 # A `where` clause spread over the parameter parentheses and the body line.
-function described of T(
+def described of T(
     value: borrowed T,
 ) -> String where T: Summarize + Clone:
     value.summarize()
 
 # A nested generic type broken across lines. `Array of (Outcome of (…))` is
 # the parenthesized nesting of §4.3, and each of those parentheses continues.
-function deep(
+def deep(
     items: borrowed Array of (
         Outcome of (
             Config,
@@ -65,7 +65,7 @@ function deep(
 # §4.6: a chain is broken across lines by indenting the continuation, and a
 # line whose continuation begins with `.` continues. This is the only thing
 # besides an unclosed bracket that may be split across lines at all.
-function hosts(configs: borrowed Array of Config) -> Array of String:
+def hosts(configs: borrowed Array of Config) -> Array of String:
     configs
         .iterate()
         .discard(each.verbose)
@@ -75,7 +75,7 @@ function hosts(configs: borrowed Array of Config) -> Array of String:
 
 # The two kinds of continuation nest: a chain broken by `.`, one of whose
 # calls is itself broken inside its parentheses.
-function named_hosts(configs: borrowed Array of Config) -> Array of String:
+def named_hosts(configs: borrowed Array of Config) -> Array of String:
     configs
         .iterate()
         .map(
@@ -84,7 +84,7 @@ function named_hosts(configs: borrowed Array of Config) -> Array of String:
         # A comment-only line takes no part (§4.2), and the chain survives it.
         .collect()          # a trailing comment on the last link
 
-function main():
+def main():
     # A call whose arguments are on separate lines.
     let ok be connect(
         "localhost",
@@ -125,7 +125,7 @@ function main():
         or config.verbose
     )
 
-    # Naming a generic instantiation before an associated function call needs
+    # Naming a generic instantiation before an associated def call needs
     # parentheses (§4.3, `SC0116`), and those parentheses continue like any
     # other, trailing comma included (§4.7).
     let items be (Array of (

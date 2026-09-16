@@ -22,7 +22,7 @@
 # not error propagation: §5.5 removed `Result` and `try` together, and the
 # character came free. `e?` is the postfix *presence test* — a `Bool`, true
 # when `e` is not `null` — and it is a total operator, so unlike `try` it can
-# only produce a value and never return from the function around it.
+# only produce a value and never return from the def around it.
 #
 # The unary `&` and `&mut` are the words `borrowed` and `mutable borrowed`,
 # which sit at the unary level and are the same words a borrow is written
@@ -35,20 +35,20 @@ type Point:
 type Registry:
     points: Array of Point
 
-function origin() -> Point:
+def origin() -> Point:
     Point(x: 0, y: 0)
 
 # `?` binds on the same rung as call, index and field access, and it is
 # postfix, so it applies to everything to its left on that rung:
 # `registry.points.get(0)?` asks about the result of the call, not about
 # `registry`.
-function has_first(registry: borrowed Registry) -> Bool:
+def has_first(registry: borrowed Registry) -> Bool:
     registry.points.get(0)?
 
 # Because it binds tightest, covering *less* than the whole chain takes
 # parentheses — and the presence test answers a question rather than
 # unwrapping, so reading through it is `if`, not an operator.
-function first_x(registry: borrowed Registry) -> Int?:
+def first_x(registry: borrowed Registry) -> Int?:
     let first be registry.points.get(0)
     if first?:
         return first.x
@@ -56,7 +56,7 @@ function first_x(registry: borrowed Registry) -> Int?:
 
 # `?` inside a larger expression: it produces a `Bool`, so it composes with
 # `and`, `or` and `not` like any other boolean.
-function is_ready(registry: borrowed Registry) -> Bool:
+def is_ready(registry: borrowed Registry) -> Bool:
     registry.points.get(0)? and not registry.points.is_empty()
 
 # `@` is matrix multiply and sits with `* / %`. The library of §8 is `Box`,
@@ -67,14 +67,14 @@ type Row:
     cells: Array of Int
 
 Row implements Add:
-    function add(self, other: Row) -> Row:
+    def add(self, other: Row) -> Row:
         Row(cells: (Array of Int).new())
 
 Row implements MatMul:
-    function matmul(self, other: Row) -> Row:
+    def matmul(self, other: Row) -> Row:
         Row(cells: (Array of Int).new())
 
-function main():
+def main():
     let mutable a be 10
     let b be 3
     let flag be true

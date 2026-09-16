@@ -5,6 +5,6 @@
 # u128::MAX + 1. §9 fixes only the range SC0001-SC0099; the lexer allocated
 # SC0005 out of it.
 
-function main():
+def main():
     let too_big be 340282366920938463463374607431768211456
     let also_too_big be 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_F

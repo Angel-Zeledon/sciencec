@@ -13,8 +13,8 @@ use science_db::{ast, tokens, ScienceDatabase};
 
 /// A valid module. Its exact contents do not matter, only that it lexes and
 /// parses without diagnostics.
-const A: &str = "function a() -> Int:\n    1\n";
-const B: &str = "function b() -> Int:\n    2\n";
+const A: &str = "def a() -> Int:\n    1\n";
+const B: &str = "def b() -> Int:\n    2\n";
 
 #[test]
 fn a_query_runs_once_and_is_then_reused() {
@@ -64,7 +64,7 @@ fn changing_one_file_invalidates_only_that_file() {
     let _ = ast(&db, b);
 
     db.clear_execution_log();
-    db.set_file_text(a, "function a() -> Int:\n    99\n");
+    db.set_file_text(a, "def a() -> Int:\n    99\n");
 
     // Requesting both again: only `a` is recomputed.
     let _ = ast(&db, a);

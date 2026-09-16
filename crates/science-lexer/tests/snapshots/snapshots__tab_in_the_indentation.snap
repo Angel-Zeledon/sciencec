@@ -1,36 +1,36 @@
 ---
 source: crates/science-lexer/tests/snapshots.rs
-expression: "dump(\"function main():\\n\\tlet x be 1\\n\\tlet y be 2\\n\")"
+expression: "dump(\"def main():\\n\\tlet x be 1\\n\\tlet y be 2\\n\")"
 ---
 == source ==
-|function main():
+|def main():
 |\tlet x be 1
 |\tlet y be 2
 |
 
 == tokens ==
-   0..8     Function
-   9..13    Ident("main")
-  13..14    LParen
-  14..15    RParen
-  15..16    Colon
-  16..17    Newline
-  18..21    Let
-  22..23    Ident("x")
-  24..26    Be
-  27..28    Int { value: 1, base: Dec, suffix: None }
-  28..29    Newline
-  30..33    Let
-  34..35    Ident("y")
-  36..38    Be
-  39..40    Int { value: 2, base: Dec, suffix: None }
-  40..41    Newline
-  41..41    Eof
+   0..3     Function
+   4..8     Ident("main")
+   8..9     LParen
+   9..10    RParen
+  10..11    Colon
+  11..12    Newline
+  13..16    Let
+  17..18    Ident("x")
+  19..21    Be
+  22..23    Int { value: 1, base: Dec, suffix: None }
+  23..24    Newline
+  25..28    Let
+  29..30    Ident("y")
+  31..33    Be
+  34..35    Int { value: 2, base: Dec, suffix: None }
+  35..36    Newline
+  36..36    Eof
 
 == diagnostics ==
 SC0003 error: tabs are not allowed in indentation
-    primary   17..18: tab character in the indentation
+    primary   12..13: tab character in the indentation
     note: Science does not interpret tabs: their width depends on how the file is displayed, so a block would mean different things to different readers. Indent with spaces only.
 SC0003 error: tabs are not allowed in indentation
-    primary   29..30: tab character in the indentation
+    primary   24..25: tab character in the indentation
     note: Science does not interpret tabs: their width depends on how the file is displayed, so a block would mean different things to different readers. Indent with spaces only.

@@ -3,6 +3,6 @@
 # §4.2 gives the syntax of string literals but fixes no code for this error.
 # The lexer allocated SC0007 out of the lexical range SC0001-SC0099.
 
-function main():
+def main():
     let greeting be "hello
     print(greeting)

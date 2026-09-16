@@ -2,21 +2,21 @@
 source: crates/science-parser/tests/migration.rs
 expression: parse_source_allowing_errors(source)
 ---
-Module @0..74
-  Fn `f` @0..73
+Module @0..69
+  Fn `f` @0..68
     params
-      Param `n` @11..17
-        type: Path `Int` @14..17
-    body: Block @24..73
-      Loop @24..49
-        body: Block @45..49
-          tail: Call @45..49
-            callee: Path `g` @45..46
+      Param `n` @6..12
+        type: Path `Int` @9..12
+    body: Block @19..68
+      Loop @19..44
+        body: Block @40..44
+          tail: Call @40..44
+            callee: Path `g` @40..41
             args
-              Path `n` @47..48
-      tail: Loop @54..73
-        body: Block @68..73
-          Break @68..73
+              Path `n` @42..43
+      tail: Loop @49..68
+        body: Block @63..68
+          Break @63..68
 --- diagnostics ---
-SC0142 @24..29 the unbounded loop is written `loop`
+SC0142 @19..24 the unbounded loop is written `loop`
   note end it with the condition negated: make `if not …: break` the first statement of the body, or write a count as a range, `for i in 0..n:`

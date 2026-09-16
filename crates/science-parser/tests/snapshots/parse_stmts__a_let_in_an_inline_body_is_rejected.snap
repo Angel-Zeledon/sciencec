@@ -1,17 +1,17 @@
 ---
 source: crates/science-parser/tests/parse_stmts.rs
-expression: "parse_source_allowing_errors(\"function f(flag: Bool):\\n    if flag: let x be 1\\n\")"
+expression: "parse_source_allowing_errors(\"def f(flag: Bool):\\n    if flag: let x be 1\\n\")"
 ---
-Module @0..48
-  Fn `f` @0..47
+Module @0..43
+  Fn `f` @0..42
     params
-      Param `flag` @11..21
-        type: Path `Bool` @17..21
-    body: Block @28..47
-      tail: If @28..47
-        cond: Path `flag` @31..35
-        then: Block @37..47
-          Let `x` @37..47
-            value: Int 1 @46..47
+      Param `flag` @6..16
+        type: Path `Bool` @12..16
+    body: Block @23..42
+      tail: If @23..42
+        cond: Path `flag` @26..30
+        then: Block @32..42
+          Let `x` @32..42
+            value: Int 1 @41..42
 --- diagnostics ---
-SC0109 @37..40 the body of an inline block must be an expression, and a `let` binding is a statement; write the body as an indented block instead
+SC0109 @32..35 the body of an inline block must be an expression, and a `let` binding is a statement; write the body as an indented block instead

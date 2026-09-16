@@ -1,26 +1,26 @@
 ---
 source: crates/science-parser/tests/parse_patterns.rs
-expression: "parse_body(r#\"function f(n: Int) -> String:\n    match n:\n        0 | 1 | 2: \"small\"\n        Symbol(',') | Symbol(';'): \"punctuation\"\n        _: \"large\"\n\"#)"
+expression: "parse_body(r#\"def f(n: Int) -> String:\n    match n:\n        0 | 1 | 2: \"small\"\n        Symbol(',') | Symbol(';'): \"punctuation\"\n        _: \"large\"\n\"#)"
 ---
-Block @34..137
-  tail: Match @34..137
-    scrutinee: Path `n` @40..41
+Block @29..132
+  tail: Match @29..132
+    scrutinee: Path `n` @35..36
     arms
-      Arm @51..69
-        pattern: Or @51..60
-          Int 0 @51..52
-          Int 1 @55..56
-          Int 2 @59..60
-        body: Str "small" @62..69
-      Arm @78..118
-        pattern: Or @78..103
-          Variant `Symbol` @78..89
-            Char ',' @85..88
-          Variant `Symbol` @92..103
-            Char ';' @99..102
-        body: Str "punctuation" @105..118
-      Arm @127..137
-        pattern: Wildcard @127..128
-        body: Str "large" @130..137
+      Arm @46..64
+        pattern: Or @46..55
+          Int 0 @46..47
+          Int 1 @50..51
+          Int 2 @54..55
+        body: Str "small" @57..64
+      Arm @73..113
+        pattern: Or @73..98
+          Variant `Symbol` @73..84
+            Char ',' @80..83
+          Variant `Symbol` @87..98
+            Char ';' @94..97
+        body: Str "punctuation" @100..113
+      Arm @122..132
+        pattern: Wildcard @122..123
+        body: Str "large" @125..132
 --- diagnostics ---
 (none)

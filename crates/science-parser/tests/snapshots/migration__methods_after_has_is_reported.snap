@@ -2,14 +2,14 @@
 source: crates/science-parser/tests/migration.rs
 expression: parse_source_allowing_errors(source)
 ---
-Module @0..58
-  Has @0..57
+Module @0..53
+  Has @0..52
     type: Path `Doc` @0..3
     methods
-      Fn `new` @21..57
-        ret: Path `Doc` @39..42
-        body: Block @52..57
-          tail: Call @52..57
-            callee: Path `Doc` @52..55
+      Fn `new` @21..52
+        ret: Path `Doc` @34..37
+        body: Block @47..52
+          tail: Call @47..52
+            callee: Path `Doc` @47..50
 --- diagnostics ---
 SC0141 @8..15 the inherent block is written `Type has:`

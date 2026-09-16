@@ -22,7 +22,7 @@ fn empty_module() {
 
 #[test]
 fn function_with_inline_body() {
-    // function main(): x
+    // def main(): x
     insta::assert_snapshot!(parse_report(vec![
         Function,
         id("main"),
@@ -36,7 +36,7 @@ fn function_with_inline_body() {
 
 #[test]
 fn function_with_indented_body() {
-    // function main():
+    // def main():
     //     a
     //     b
     insta::assert_snapshot!(parse_report(vec![
@@ -58,7 +58,7 @@ fn function_with_indented_body() {
 #[test]
 fn function_body_with_nested_block() {
     // A nested block must not close the outer one early.
-    // function main():
+    // def main():
     //     loop:
     //         b
     //     c
@@ -85,7 +85,7 @@ fn function_body_with_nested_block() {
 
 #[test]
 fn function_with_params_and_return_type() {
-    // function longest(a: borrowed String, b: borrowed String) -> borrowed String: a
+    // def longest(a: borrowed String, b: borrowed String) -> borrowed String: a
     insta::assert_snapshot!(parse_report(vec![
         Function,
         id("longest"),
@@ -111,7 +111,7 @@ fn function_with_params_and_return_type() {
 
 #[test]
 fn function_with_generic_bound_inline() {
-    // function largest of T: Ord(items: borrowed Array of T) -> borrowed T: items
+    // def largest of T: Ord(items: borrowed Array of T) -> borrowed T: items
     //
     // The bound ends at the `(` that opens the parameter list: a single
     // generic parameter needs no parentheses of its own (§4.3).
@@ -141,7 +141,7 @@ fn function_with_generic_bound_inline() {
 
 #[test]
 fn function_with_parenthesised_generics() {
-    // function paired of (A, B)(first: A, second: B) -> (A, B): x
+    // def paired of (A, B)(first: A, second: B) -> (A, B): x
     //
     // Two or more generic parameters take parentheses, and the parenthesised
     // list must not be mistaken for the parameter list that follows it.
@@ -177,7 +177,7 @@ fn function_with_parenthesised_generics() {
 
 #[test]
 fn function_with_where_clause() {
-    // function describe of T(x: borrowed T) -> String
+    // def describe of T(x: borrowed T) -> String
     //     where T: Summarize + Clone, U: Eq: x
     //
     // The interesting part is the last `:`: a bound list ends at `,` (another
@@ -219,7 +219,7 @@ fn function_with_where_clause() {
 /// suggestions, so the fix is asserted directly.
 #[test]
 fn the_word_returns_is_reported_where_an_arrow_belongs() {
-    let source = r#"function longest(a: borrowed String) returns borrowed String:
+    let source = r#"def longest(a: borrowed String) returns borrowed String:
     a
 "#;
     insta::assert_snapshot!(parse_source_allowing_errors(source));
@@ -240,10 +240,10 @@ fn the_word_returns_is_reported_where_an_arrow_belongs() {
 /// file parses as it was meant to.
 #[test]
 fn the_word_returns_does_not_derail_the_rest_of_the_file() {
-    let source = r#"function f() returns Int:
+    let source = r#"def f() returns Int:
     1
 
-function g() -> Int:
+def g() -> Int:
     2
 "#;
     let codes: Vec<String> = {
@@ -257,9 +257,9 @@ function g() -> Int:
 
 #[test]
 fn function_self_receivers() {
-    // function a(self: Self): x
-    // function b(self): x
-    // function c(mutable self, n: I32): x
+    // def a(self: Self): x
+    // def b(self): x
+    // def c(mutable self, n: I32): x
     //
     // The three receivers of §4.4, in the order value, shared, exclusive.
     insta::assert_snapshot!(parse_report(vec![
@@ -299,7 +299,7 @@ fn function_self_receivers() {
 
 #[test]
 fn function_signature_without_body() {
-    // function summarize(self) -> String
+    // def summarize(self) -> String
     //
     // A bodiless `function` is what an interface's required method looks like;
     // the same node covers it.
@@ -317,7 +317,7 @@ fn function_signature_without_body() {
 
 #[test]
 fn public_function() {
-    // public function main(): x
+    // public def main(): x
     insta::assert_snapshot!(parse_report(vec![
         Public,
         Function,
@@ -334,7 +334,7 @@ fn public_function() {
 
 #[test]
 fn type_expressions() {
-    // function f(a: borrowed any Summarize, b: (), c: (I32, Bool),
+    // def f(a: borrowed any Summarize, b: (), c: (I32, Bool),
     //            d: mutable borrowed Array of I32, e: Box of any Summarize,
     //            g: borrowed Self, h: text.parser.Token): x
     insta::assert_snapshot!(parse_report(vec![
@@ -396,7 +396,7 @@ fn type_expressions() {
 
 #[test]
 fn generic_argument_forms() {
-    // function f(a: Map of (String, Int), b: Array of (Map of (String, Int)),
+    // def f(a: Map of (String, Int), b: Array of (Map of (String, Int)),
     //            c: Window of (Int, 4), d: Self.Item): x
     //
     // Two or more arguments take parentheses (§4.3), a nested application
@@ -454,7 +454,7 @@ fn generic_argument_forms() {
 
 #[test]
 fn parenthesised_type_is_not_a_tuple() {
-    // function f(a: (I32)): x
+    // def f(a: (I32)): x
     insta::assert_snapshot!(parse_report(vec![
         Function,
         id("f"),
@@ -680,7 +680,7 @@ fn constant_declarations() {
 fn associated_type_in_an_interface() {
     // interface Iterate:
     //     type Item
-    //     function next(mutable self) -> Option of Self.Item
+    //     def next(mutable self) -> Option of Self.Item
     //
     // The third reading of `type`: inside an interface body it declares an
     // associated type rather than a record or an alias. What else an
@@ -792,7 +792,7 @@ fn error_statement_at_top_level() {
 
 #[test]
 fn error_missing_colon_before_body() {
-    // function f()
+    // def f()
     //     x
     insta::assert_snapshot!(parse_report(vec![
         Function,
@@ -809,8 +809,8 @@ fn error_missing_colon_before_body() {
 
 #[test]
 fn error_no_indent_after_colon() {
-    // function f():
-    // function g(): x
+    // def f():
+    // def g(): x
     insta::assert_snapshot!(parse_report(vec![
         Function,
         id("f"),
@@ -880,7 +880,7 @@ fn error_two_broken_items_then_a_good_one() {
 
 #[test]
 fn error_unknown_token_in_type() {
-    // function f(a: %): x
+    // def f(a: %): x
     insta::assert_snapshot!(parse_report(vec![
         Function,
         id("f"),
@@ -1107,7 +1107,7 @@ fn a_space_after_the_minus_does_not_change_the_const_argument() {
 
 /// A negative literal is a const *argument*, and nothing made it a type.
 ///
-/// `function f(x: -1)` is a position where an ordinary type belongs, and it
+/// `def f(x: -1)` is a position where an ordinary type belongs, and it
 /// stays the `SC0104` it has always been. So does a negative float, string or
 /// bool inside an argument list: `const-expression-arithmetic.md` §2.3 admits
 /// the const-parameter kinds `Int` and (in F1) `Shape`, and negating a string
@@ -1116,7 +1116,7 @@ fn a_space_after_the_minus_does_not_change_the_const_argument() {
 #[test]
 fn a_negative_literal_is_not_a_type() {
     insta::assert_snapshot!(parse_source_allowing_errors(concat!(
-        "function f(x: -1): x\n",
+        "def f(x: -1): x\n",
         "type Bad is Window of (Int, -1.5)\n",
         "type Worse is Window of (Int, -\"a\")\n",
         "type Worst is Window of (Int, -true)\n",

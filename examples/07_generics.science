@@ -19,41 +19,41 @@ type Wrapper of T:
     inner: T
 
 interface Summarize:
-    function summarize(self) -> String
+    def summarize(self) -> String
 
-    function preview(self) -> String:
+    def preview(self) -> String:
         self.summarize().truncate(80)
 
 Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         self.body.truncate(200)
 
 # No bound at all: the body may only move or borrow the value.
-function identity of T(value: T) -> T:
+def identity of T(value: T) -> T:
     value
 
 # A single bound, written in the parameter list. Copied from §4.4, including
 # `items.get(0)`, which is the one `Array` accessor §8 gives.
-function largest of T: Ord(items: borrowed Array of T) -> borrowed T:
+def largest of T: Ord(items: borrowed Array of T) -> borrowed T:
     let mutable best be items.get(0)
     for item in items:
         if item > best: best be item
     best
 
 # Several bounds joined by `+`, still in the parameter list.
-function duplicate of T: Clone + Eq(value: borrowed T) -> Pair of (T, T):
+def duplicate of T: Clone + Eq(value: borrowed T) -> Pair of (T, T):
     Pair(first: value.clone(), second: value.clone())
 
 # The same bounds moved into a `where` clause, which keeps a long signature
 # readable.
-function describe of T(x: borrowed T) -> String where T: Summarize + Clone:
+def describe of T(x: borrowed T) -> String where T: Summarize + Clone:
     x.summarize()
 
 # A `where` clause with several bounded parameters. The signature no longer
 # fits on one line, so it is broken inside the parameter list, where
 # indentation takes no part (§4.2). §8 gives `String` no concatenation method,
 # so the two previews are joined with `String.new()` and `push_str`.
-function merge of (A, B)(left: borrowed A,
+def merge of (A, B)(left: borrowed A,
         right: borrowed B) -> String where A: Summarize, B: Summarize + Clone:
     let mutable out be String.new()
     out.push_str(left.preview())
@@ -62,13 +62,13 @@ function merge of (A, B)(left: borrowed A,
     out
 
 # A bound in the parameter list and a `where` clause at once.
-function rank of T: Ord(items: borrowed Array of T,
+def rank of T: Ord(items: borrowed Array of T,
         fallback: borrowed T) -> borrowed T where T: Clone:
     if items.is_empty(): fallback else: largest(items)
 
 # Several type parameters, each used in a different position. Two or more
 # parameters take parentheses, exactly as two or more arguments do (§4.3).
-function swap of (A, B)(pair: Pair of (A, B)) -> Pair of (B, A):
+def swap of (A, B)(pair: Pair of (A, B)) -> Pair of (B, A):
     Pair(first: pair.second, second: pair.first)
 
 # Nested generic arguments in the signature: the inner `of` is parenthesized
@@ -77,23 +77,23 @@ function swap of (A, B)(pair: Pair of (A, B)) -> Pair of (B, A):
 # so the absence is in the type and `?` is what asks about it. Inside
 # `if found?:` the compiler knows `found` is not null, so the field access
 # needs no unwrapping (§5.5).
-function first_inner of T(items: borrowed Array of (Wrapper of T)) -> (borrowed T)?:
+def first_inner of T(items: borrowed Array of (Wrapper of T)) -> (borrowed T)?:
     let found be items.get(0)
     if found?:
         return borrowed found.inner
     null
 
-# An inherent block on a generic type, with an associated function that names
+# An inherent block on a generic type, with an associated def that names
 # its instantiation at the call site: `(Wrapper of Int).holding(1)`.
 # It cannot itself be called `of`: §4.3 makes `of` the word that introduces
 # generic arguments, so it is a keyword and no longer an identifier.
 Wrapper of T has:
-    function holding(inner: T) -> Wrapper of T:
+    def holding(inner: T) -> Wrapper of T:
         Wrapper(inner: inner)
 
 # A generic type used at several different instantiations: monomorphization
 # produces one specialized copy for.
-function main():
+def main():
     let a be identity(1)
     let b be identity("text")
     let c be identity(3.5f32)
@@ -111,7 +111,7 @@ function main():
     let cloned be duplicate(n)
     print(cloned.first)
 
-    # An associated function reached through an explicit instantiation. A
+    # An associated def reached through an explicit instantiation. A
     # generic type needs parentheses before the `.`, because
     # `Wrapper of Int.holding(7)` would not say whether `.holding` belongs to
     # `Int` or to the whole type (§4.3, SC0116).

@@ -1,7 +1,7 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source_allowing_errors(r#\"Point implements borrowed Doc:\n    function f(self) -> Int:\n        1\n\"#)"
+expression: "parse_source_allowing_errors(r#\"Point implements borrowed Doc:\n    def f(self) -> Int:\n        1\n\"#)"
 ---
-Module @0..70
+Module @0..65
 --- diagnostics ---
 SC0111 @17..25 expected an interface name after `implements`, found `borrowed`

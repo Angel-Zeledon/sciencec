@@ -322,22 +322,12 @@ fn codes_in(text: &str) -> Vec<String> {
 
 #[test]
 fn the_token_dump_uses_the_lexers_snapshot_format() {
-    let file = scratch("tokens.science", b"function main():\n    1\n");
+    let file = scratch("tokens.science", b"def main():\n    1\n");
     let run = sciencec(&["tokens", &file]);
     run.succeeded().silent_stderr();
     assert_eq!(
         run.stdout,
-        "   0..8     Function\n\
-         \x20  9..13    Ident(\"main\")\n\
-         \x20 13..14    LParen\n\
-         \x20 14..15    RParen\n\
-         \x20 15..16    Colon\n\
-         \x20 16..17    Newline\n\
-         \x20 17..21    Indent\n\
-         \x20 21..22    Int { value: 1, base: Dec, suffix: None }\n\
-         \x20 22..23    Newline\n\
-         \x20 23..23    Dedent\n\
-         \x20 23..23    Eof\n",
+        "   0..3     Function\n   4..8     Ident(\"main\")\n   8..9     LParen\n   9..10    RParen\n  10..11    Colon\n  11..12    Newline\n  12..16    Indent\n  16..17    Int { value: 1, base: Dec, suffix: None }\n  17..18    Newline\n  18..18    Dedent\n  18..18    Eof\n",
         "the format is `{{:>4}}..{{:<4}}  {{kind:?}}`, as in crates/science-lexer/tests/common/mod.rs"
     );
 }
@@ -393,9 +383,9 @@ fn a_directory_is_a_clean_error() {
 fn a_file_that_is_not_utf8_is_a_clean_error() {
     // `0xFF` begins no UTF-8 sequence, and the lexer cannot be handed it: the
     // whole compiler indexes source by byte offset into a `str`.
-    let file = scratch("not_utf8.science", b"function main():\n    print(\"\xff\")\n");
+    let file = scratch("not_utf8.science", b"def main():\n    print(\"\xff\")\n");
     let run = sciencec(&["check", &file]);
-    run.failed().stderr_contains("is not valid UTF-8").stderr_contains("offset 28");
+    run.failed().stderr_contains("is not valid UTF-8").stderr_contains("offset 23");
 }
 
 #[test]

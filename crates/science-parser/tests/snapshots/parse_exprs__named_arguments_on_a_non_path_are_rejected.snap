@@ -1,10 +1,10 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_source_allowing_errors(\"function f():\\n    f()(title: 1)\\n\")"
+expression: "parse_source_allowing_errors(\"def f():\\n    f()(title: 1)\\n\")"
 ---
-Module @0..32
-  Fn `f` @0..31
-    body: Block @18..31
-      tail: Error @18..31
+Module @0..27
+  Fn `f` @0..26
+    body: Block @13..26
+      tail: Error @13..26
 --- diagnostics ---
-SC0110 @21..22 named arguments construct a record, so they need a record's name in front of them
+SC0110 @16..17 named arguments construct a record, so they need a record's name in front of them

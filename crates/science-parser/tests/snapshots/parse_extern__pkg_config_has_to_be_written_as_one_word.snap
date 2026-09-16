@@ -1,15 +1,15 @@
 ---
 source: crates/science-parser/tests/parse_extern.rs
-expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\" library \"z\" via pkg - config \"zlib\":\n    function crc32(crc: CULong) -> CULong\n\"#)"
+expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\" library \"z\" via pkg - config \"zlib\":\n    def crc32(crc: CULong) -> CULong\n\"#)"
 ---
-Module @0..97
-  Extern "C" unsafe @0..96
+Module @0..92
+  Extern "C" unsafe @0..91
     Library "z" @18..53
     items
-      ExternFn `crc32` @59..96
+      ExternFn `crc32` @59..91
         params
-          Param `crc` @74..85
-            type: Path `CULong` @79..85
-        ret: Path `CULong` @90..96
+          Param `crc` @69..80
+            type: Path `CULong` @74..80
+        ret: Path `CULong` @85..91
 --- diagnostics ---
 SC0100 @34..37 expected `pkg-config` after `via`, found `pkg`

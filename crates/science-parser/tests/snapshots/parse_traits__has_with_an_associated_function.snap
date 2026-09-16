@@ -1,31 +1,31 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(r#\"Doc has:\n    function new(title: String) -> Doc:\n        Doc(title: title, body: \"\")\n\n    function is_empty(self) -> Bool:\n        self.body.length() is 0\n\"#)"
+expression: "parse_source(r#\"Doc has:\n    def new(title: String) -> Doc:\n        Doc(title: title, body: \"\")\n\n    def is_empty(self) -> Bool:\n        self.body.length() is 0\n\"#)"
 ---
-Module @0..155
-  Has @0..154
+Module @0..145
+  Has @0..144
     type: Path `Doc` @0..3
     methods
-      Fn `new` @13..84
+      Fn `new` @13..79
         params
-          Param `title` @26..39
-            type: Path `String` @33..39
-        ret: Path `Doc` @44..47
-        body: Block @57..84
-          tail: StructLit `Doc` @57..84
+          Param `title` @21..34
+            type: Path `String` @28..34
+        ret: Path `Doc` @39..42
+        body: Block @52..79
+          tail: StructLit `Doc` @52..79
             fields
-              FieldInit `title` @61..73
-                value: Path `title` @68..73
-              FieldInit `body` @75..83
-                value: Str "" @81..83
-      Fn `is_empty` @90..154
-        receiver: self @108..112
-        ret: Path `Bool` @117..121
-        body: Block @131..154
-          tail: Binary `==` @131..154
-            lhs: Method `length` @131..149
-              receiver: Field `body` @131..140
-                base: Self @131..135
-            rhs: Int 0 @153..154
+              FieldInit `title` @56..68
+                value: Path `title` @63..68
+              FieldInit `body` @70..78
+                value: Str "" @76..78
+      Fn `is_empty` @85..144
+        receiver: self @98..102
+        ret: Path `Bool` @107..111
+        body: Block @121..144
+          tail: Binary `==` @121..144
+            lhs: Method `length` @121..139
+              receiver: Field `body` @121..130
+                base: Self @121..125
+            rhs: Int 0 @143..144
 --- diagnostics ---
 (none)

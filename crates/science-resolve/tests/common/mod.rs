@@ -477,7 +477,7 @@ fn extern_item_of(kind: ExternItemKind, span: Span) -> ExternItem {
     ExternItem { kind, span }
 }
 
-/// `function name(params) -> ret symbol "..."`.
+/// `def name(params) -> ret symbol "..."`.
 pub fn extern_fn(
     sp: &Sp,
     name: &str,

@@ -326,7 +326,7 @@ fn an_orphan_impl_and_a_legal_one() {
 #[test]
 fn the_two_closure_forms_and_the_subject_each_names() {
     let sp = &Sp::new();
-    // function f(docs: Array):
+    // def f(docs: Array):
     //     docs.map(each.title)
     //     docs.sort(by: doc giving doc.title)
     let implicit = closure(sp, None, field_access(sp, each(sp), "title"));
@@ -361,7 +361,7 @@ fn an_interface_declares_an_associated_type_and_an_implementation_binds_it() {
 
     // interface Iterate:
     //     type Item
-    //     function next(mutable self) -> Self.Item
+    //     def next(mutable self) -> Self.Item
     let next_sig = func(sp, "next")
         .receiver(sp, SelfKind::Mutable)
         .ret(ty_self_assoc(sp, "Item"))
@@ -370,7 +370,7 @@ fn an_interface_declares_an_associated_type_and_an_implementation_binds_it() {
 
     // Doc implements Iterate:
     //     type Item is Int
-    //     function next(mutable self) -> Self.Item: 0
+    //     def next(mutable self) -> Self.Item: 0
     let next = func(sp, "next")
         .receiver(sp, SelfKind::Mutable)
         .ret(ty_self_assoc(sp, "Item"))
@@ -385,7 +385,7 @@ fn an_interface_declares_an_associated_type_and_an_implementation_binds_it() {
         vec![next],
     );
 
-    // function show(x: any Iterate)
+    // def show(x: any Iterate)
     let show = func(sp, "show")
         .params(vec![param(sp, "x", ty_any(sp, "Iterate"))])
         .body(block(sp, vec![], None))
@@ -425,7 +425,7 @@ fn a_const_generic_parameter_an_alias_and_a_constant() {
     );
     // const WIDTH be 768
     let width = const_item(sp, "WIDTH", Some(ty(sp, "Int")), int(sp, 768));
-    // function size of (const N: Int)() -> Int: N
+    // def size of (const N: Int)() -> Int: N
     let size = func(sp, "size")
         .generics(vec![generic_const(sp, "N", ty(sp, "Int"))])
         .ret(ty(sp, "Int"))
@@ -500,7 +500,7 @@ fn a_const_parameter_is_annotated_with_a_kind_and_not_with_a_type() {
         ],
         vec![field(sp, "value", ty(sp, "T"))],
     );
-    // function f of (const FLAG: Bool)()
+    // def f of (const FLAG: Bool)()
     let f = func(sp, "f").generics(vec![generic_const(sp, "FLAG", ty(sp, "Bool"))]).item();
 
     insta::assert_snapshot!(report(&module(vec![tensor, grid, f])));
@@ -530,7 +530,7 @@ fn two_variadic_parameters_in_one_list_have_no_split() {
 #[test]
 fn a_for_over_a_range_and_a_loop_with_a_break() {
     let sp = &Sp::new();
-    // function sum(xs: borrowed Array of Int) -> Int:
+    // def sum(xs: borrowed Array of Int) -> Int:
     //     let mutable total be 0
     //     borrowed xs
     //     for i in 0..10: total be i
@@ -577,7 +577,7 @@ fn bound_path(sp: &Sp, segments: &[&str]) -> science_parser::ast::TypeBound {
 fn an_extern_block_declares_ordinary_module_level_names() {
     let sp = &Sp::new();
 
-    // function scale(): unsafe: cblas_dgemm(4)
+    // def scale(): unsafe: cblas_dgemm(4)
     //
     // Written before the block, so this is also the forward reference: the
     // block is collected in step 2 like every other item, and nothing about

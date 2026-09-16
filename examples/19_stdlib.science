@@ -30,7 +30,7 @@ choice LoadError:
 
 # §8 gives `String` no `clone`. An owned copy is built out of the two methods
 # it does have, which is also the only way F0 has of concatenating.
-function copy_of(text: borrowed String) -> String:
+def copy_of(text: borrowed String) -> String:
     let mutable out be String.new()
     out.push_str(text)
     out
@@ -40,19 +40,19 @@ function copy_of(text: borrowed String) -> String:
 # A search that may find nothing returns a nullable. There is no wrapper to
 # construct: the found record *is* the value, and `null` is the other one
 # (§5.5).
-function find(records: borrowed Array of Record, key: borrowed String) -> (borrowed Record)?:
+def find(records: borrowed Array of Record, key: borrowed String) -> (borrowed Record)?:
     for record in records:
         if record.key is key:
             return record
     null
 
-function hits_of(records: borrowed Array of Record) -> Int?:
+def hits_of(records: borrowed Array of Record) -> Int?:
     let first be records.get(0)
     if first?:
         return first.hits
     null
 
-function absence_surface(records: borrowed Array of Record) -> Int:
+def absence_surface(records: borrowed Array of Record) -> Int:
     # A parameter declared `borrowed` is borrowed at the call site without
     # the caller writing anything (§6.3).
     #
@@ -93,13 +93,13 @@ function absence_surface(records: borrowed Array of Record) -> Int:
 # `read_file` has a value and a failure, so it returns the pair. `write_file`
 # has only a failure, so it returns the error alone: the value slot would be
 # `()` and a name bound to it could do nothing.
-function load(path: borrowed String) -> (String, IoError?):
+def load(path: borrowed String) -> (String, IoError?):
     read_file(path)
 
-function store(path: borrowed String, text: borrowed String) -> IoError?:
+def store(path: borrowed String, text: borrowed String) -> IoError?:
     write_file(path, text)
 
-function failure_surface(path: borrowed String) -> String:
+def failure_surface(path: borrowed String) -> String:
     # `outcome.is_ok()` was a method on a wrapper. The pair has no wrapper:
     # the call produces the two names it was always producing, and `?` asks
     # about the second of them.
@@ -115,7 +115,7 @@ function failure_surface(path: borrowed String) -> String:
 # is an ordinary call to the `From` implementation at the bottom of this
 # file, and it is three lines because the check, the conversion and the
 # return are three separate things (§5.5).
-function load_record(path: borrowed String) -> (Record, LoadError?):
+def load_record(path: borrowed String) -> (Record, LoadError?):
     let text, err be load(path)
     if err?:
         return (Record.new(String.new()), LoadError.from(err))
@@ -123,14 +123,14 @@ function load_record(path: borrowed String) -> (Record, LoadError?):
 
 # --- Box: new ---------------------------------------------------------------
 
-# `Box` has exactly one associated function and no methods. It is never built
+# `Box` has exactly one associated def and no methods. It is never built
 # with the named-argument form, which §4.4 reserves for record types.
-function boxed(record: Record) -> Box of Record:
+def boxed(record: Record) -> Box of Record:
     Box.new(record)
 
 # --- String: new, length, is_empty, push_str, truncate, starts_with, chars --
 
-function strings() -> Int:
+def strings() -> Int:
     # `String` owns its bytes; `borrowed String` is a view of them.
     let owned: String be "owned, UTF-8"
     let view: borrowed String be borrowed owned
@@ -153,8 +153,8 @@ function strings() -> Int:
 
 # --- Array: new, length, is_empty, push, pop, get, get_mut ------------------
 
-function arrays() -> Int:
-    # An associated function on a generic type takes parentheses around the
+def arrays() -> Int:
+    # An associated def on a generic type takes parentheses around the
     # type, because `Array of Int.new()` does not say whether `.new()`
     # belongs to `Int` or to the whole type (§4.3, SC0116).
     let mutable items: Array of Int be (Array of Int).new()
@@ -191,7 +191,7 @@ function arrays() -> Int:
 
 # --- Map: new, length, insert, get, remove, contains ------------------------
 
-function maps() -> Int:
+def maps() -> Int:
     let mutable counts: Map of (String, Int) be (Map of (String, Int)).new()
 
     # `insert` returns the value it displaced, if there was one, so its
@@ -227,30 +227,30 @@ type Position:
 Position implements Copy
 
 Position implements Clone:
-    function clone(self) -> Position:
+    def clone(self) -> Position:
         Position(line: self.line, column: self.column)
 
 Record implements Clone:
-    function clone(self) -> Record:
+    def clone(self) -> Record:
         Record(key: copy_of(self.key), hits: self.hits)
 
 Record implements Eq:
-    function eq(self, other: borrowed Record) -> Bool:
+    def eq(self, other: borrowed Record) -> Bool:
         self.key is other.key
 
 Record implements Ord:
-    function less(self, other: borrowed Record) -> Bool:
+    def less(self, other: borrowed Record) -> Bool:
         self.hits < other.hits
 
 Record implements Drop:
-    function drop(mutable self):
+    def drop(mutable self):
         print("record dropped")
 
 # An inherent block alongside the interface implementations: the associated
-# function is the idiomatic constructor, and needs no interface to arrive
+# def is the idiomatic constructor, and needs no interface to arrive
 # through (§4.4).
 Record has:
-    function new(key: String) -> Record:
+    def new(key: String) -> Record:
         Record(key: key, hits: 0)
 
 # `Iterate` is what `for` walks. Its element type is an associated type,
@@ -261,7 +261,7 @@ type Countdown:
 Countdown implements Iterate:
     type Item is Int
 
-    function next(mutable self) -> Self.Item?:
+    def next(mutable self) -> Self.Item?:
         if self.remaining <= 0:
             null
         else:
@@ -275,7 +275,7 @@ Countdown implements Iterate:
 # `load_record` above. The orphan rule (§5.4) is satisfied by `LoadError`,
 # declared in this file.
 LoadError implements From of IoError:
-    function from(inner: IoError) -> Self:
+    def from(inner: IoError) -> Self:
         Missing("the file could not be read")
 
 # --- The free functions -----------------------------------------------------
@@ -285,10 +285,10 @@ LoadError implements From of IoError:
 #
 # `load_record` fails with a concrete `LoadError` and not with the `Error`
 # interface, and this `match` is why: every case is a variant the compiler can
-# enumerate, so a new variant added to the choice breaks this function loudly.
+# enumerate, so a new variant added to the choice breaks this def loudly.
 # The interface form would compose across a library boundary and would box;
 # there is no boundary here, and the exhaustiveness is worth more (§5.5).
-function required(path: borrowed String) -> String:
+def required(path: borrowed String) -> String:
     let record, err be load_record(path)
     if err?:
         match err:
@@ -296,7 +296,7 @@ function required(path: borrowed String) -> String:
             Corrupt(corrupt): panic("the file is corrupt")
     record.key
 
-function main():
+def main():
     write("no newline")
     print("with newline")
     print(arrays())
@@ -322,7 +322,7 @@ function main():
         print("written")
 
     # `load_record` returns the pair, and the value is known good once the
-    # error has been tested and the function has not returned (§4.5).
+    # error has been tested and the def has not returned (§4.5).
     let record, err be load_record("science.toml")
     if err?:
         match err:

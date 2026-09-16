@@ -31,7 +31,7 @@ use compiler.frontend.diagnostics (
 
 # §8 gives `String` no `clone`, so an owned copy is built from `String.new()`
 # and `push_str`.
-function copy_of(text: borrowed String) -> String:
+def copy_of(text: borrowed String) -> String:
     let mutable out be String.new()
     out.push_str(text)
     out
@@ -48,33 +48,33 @@ public choice Severity:
     Note
 
 public interface Report:
-    function report(self) -> String
+    def report(self) -> String
 
-# An inherent block whose associated function and method are both public
-# (§4.4). A function with no `self` receiver is reached through the type.
+# An inherent block whose associated def and method are both public
+# (§4.4). A def with no `self` receiver is reached through the type.
 Document has:
-    public function new(title: String) -> Document:
+    public def new(title: String) -> Document:
         Document(title: title, body: String.new())
 
-    public function is_empty(self) -> Bool:
+    public def is_empty(self) -> Bool:
         self.body.is_empty()
 
-public function parse(source: borrowed String) -> Array of Token:
+public def parse(source: borrowed String) -> Array of Token:
     lex(source)
 
 # Private by default: no `public`.
-function helper(document: borrowed Document) -> Int:
+def helper(document: borrowed Document) -> Int:
     document.body.length()
 
-function clamp(width: U16) -> U16:
+def clamp(width: U16) -> U16:
     if width < 20u16: 20u16 else: width
 
 Document implements Report:
-    function report(self) -> String:
+    def report(self) -> String:
         copy_of(self.title)
 
-public function main():
-    let source be "function main(): print(\"hi\")"
+public def main():
+    let source be "def main(): print(\"hi\")"
 
     # A parameter declared `borrowed` is borrowed at the call site with
     # nothing written for it (§6.3).

@@ -195,7 +195,7 @@ pub fn parse_body(source: &str) -> String {
 /// stripped. Precedence and associativity are about *shape*, and a span on
 /// every line buries the shape the test is checking.
 pub fn shape_of_expr(source: &str) -> String {
-    let wrapped = format!("function f():\n    let x be {source}\n");
+    let wrapped = format!("def f():\n    let x be {source}\n");
     let (tokens, lex_diagnostics) = science_lexer::lex(FILE, &wrapped);
     assert!(lex_diagnostics.is_empty(), "the source of this test does not lex cleanly");
     let (module, diagnostics) = science_parser::parse_module(&tokens, FILE);
@@ -218,7 +218,7 @@ pub fn shape_of_expr(source: &str) -> String {
 /// needs a helper that tolerates a lexical diagnostic while still insisting
 /// the *parser* had nothing to say.
 pub fn shape_of_expr_despite_lexical_errors(source: &str) -> String {
-    let wrapped = format!("function f():\n    let x be {source}\n");
+    let wrapped = format!("def f():\n    let x be {source}\n");
     let (tokens, _lexical) = science_lexer::lex(FILE, &wrapped);
     let (module, diagnostics) = science_parser::parse_module(&tokens, FILE);
     assert!(

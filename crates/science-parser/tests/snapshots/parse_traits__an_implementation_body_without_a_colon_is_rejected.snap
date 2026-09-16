@@ -1,9 +1,9 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source_allowing_errors(r#\"Doc implements Summarize\n    function summarize(self) -> String:\n        \"a\"\n\"#)"
+expression: "parse_source_allowing_errors(r#\"Doc implements Summarize\n    def summarize(self) -> String:\n        \"a\"\n\"#)"
 ---
-Module @0..77
-  Implements @0..76
+Module @0..72
+  Implements @0..71
     interface: Bound `Summarize` @15..24
     type: Path `Doc` @0..3
 --- diagnostics ---

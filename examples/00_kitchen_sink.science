@@ -5,7 +5,7 @@
 #   `sciencec` compiles to a native binary a program using, at once: generics
 #   with bounds, const generics, associated types, an interface dispatched both
 #   statically and dynamically, an exhaustive `match`, a nullable type and a
-#   fallible function returning `(T, Error?)`, a user type implementing
+#   fallible def returning `(T, Error?)`, a user type implementing
 #   operator interfaces, a range-driven loop, a closure, and a type holding a
 #   borrow in a field.
 #
@@ -59,22 +59,22 @@ choice ParseError:
 # these implementations exist to be *called*, by name, at the `return` that
 # needs them. `load` below is where that happens.
 #
-# `From` takes one source type per implementation, so a function whose
+# `From` takes one source type per implementation, so a def whose
 # callees fail in two different ways needs two of them, as this one does.
 LoadError implements From of ParseError:
-    function from(inner: ParseError) -> Self:
+    def from(inner: ParseError) -> Self:
         match inner:
             Empty: Malformed("empty document")
             Unsupported(what): Malformed(what)
 
 LoadError implements From of IoError:
-    function from(inner: IoError) -> Self:
+    def from(inner: IoError) -> Self:
         NotFound("unreadable")
 
 # `Error` is a prelude interface with one method (§5.5). Implementing it is
 # what lets a `LoadError` stand in an `Error?` slot, which `open` below uses.
 LoadError implements Error:
-    function message(self) -> String:
+    def message(self) -> String:
         match self:
             NotFound(path): copy_of(path)
             Malformed(detail): copy_of(detail)
@@ -83,36 +83,36 @@ LoadError implements Error:
 # Inherent methods
 # ---------------------------------------------------------------------------
 
-# Methods that come from no interface (§4.4). A function with no `self` receiver
+# Methods that come from no interface (§4.4). A def with no `self` receiver
 # is an associated function, reached through the type.
 Doc has:
-    function new(title: String) -> Doc:
+    def new(title: String) -> Doc:
         Doc(title: title, body: String.new())
 
-    function heading(self) -> String?:
+    def heading(self) -> String?:
         if self.body.starts_with("# "):
             self.body.truncate(60)
         else:
             null
 
-    function is_empty(self) -> Bool:
+    def is_empty(self) -> Bool:
         self.body.length() is 0
 
 # (2) The const parameter is an ordinary value inside the body, which is what
 # makes it useful: it sizes a loop the compiler can unroll.
 Window of (T, const WIDTH: Int) has:
-    function empty() -> Window of (T, WIDTH):
+    def empty() -> Window of (T, WIDTH):
         Window(items: (Array of T).new())
 
-    function capacity(self) -> Int:
+    def capacity(self) -> Int:
         WIDTH
 
-    function is_full(self) -> Bool:
+    def is_full(self) -> Bool:
         self.items.length() >= WIDTH
 
 # §8 gives `String` no `clone`, so an owned copy is built from the two
 # methods it does have.
-function copy_of(text: borrowed String) -> String:
+def copy_of(text: borrowed String) -> String:
     let mutable out be String.new()
     out.push_str(text)
     out
@@ -123,23 +123,23 @@ function copy_of(text: borrowed String) -> String:
 
 # An interface with one required method and one default method that calls it.
 interface Summarize:
-    function summarize(self) -> String
+    def summarize(self) -> String
 
-    function preview(self) -> String:
+    def preview(self) -> String:
         self.summarize().truncate(80)
 
 Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         self.body.truncate(200)
 
 Excerpt implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         self.source.body.truncate(self.limit)
 
 # `Clone` is one of the interfaces §5.4 names; `best_of` below takes it as a
 # bound.
 Doc implements Clone:
-    function clone(self) -> Doc:
+    def clone(self) -> Doc:
         Doc(title: copy_of(self.title), body: copy_of(self.body))
 
 # A marker interface is implemented on one line, since there is nothing to
@@ -154,7 +154,7 @@ Format implements Copy
 # is the whole reason associated types are in F0 (§5.4).
 interface Iterate:
     type Item
-    function next(mutable self) -> Self.Item?
+    def next(mutable self) -> Self.Item?
 
 type Countdown:
     remaining: Int
@@ -162,7 +162,7 @@ type Countdown:
 Countdown implements Iterate:
     type Item is Int
 
-    function next(mutable self) -> Self.Item?:
+    def next(mutable self) -> Self.Item?:
         if self.remaining <= 0:
             null
         else:
@@ -181,19 +181,19 @@ type Counts:
     writes: Int
 
 Counts implements Add:
-    function add(self, other: Counts) -> Counts:
+    def add(self, other: Counts) -> Counts:
         Counts(reads: self.reads + other.reads, writes: self.writes + other.writes)
 
 Counts implements Sub:
-    function sub(self, other: Counts) -> Counts:
+    def sub(self, other: Counts) -> Counts:
         Counts(reads: self.reads - other.reads, writes: self.writes - other.writes)
 
 Counts implements Neg:
-    function neg(self) -> Counts:
+    def neg(self) -> Counts:
         Counts(reads: -self.reads, writes: -self.writes)
 
 Counts implements Eq:
-    function eq(self, other: Counts) -> Bool:
+    def eq(self, other: Counts) -> Bool:
         self.reads is other.reads and self.writes is other.writes
 
 Counts implements Copy
@@ -204,11 +204,11 @@ Counts implements Copy
 
 # A bound in the parameter list. Monomorphization emits one specialized copy
 # per instantiation (§5.3), so the call to `preview` is resolved statically.
-function describe of T: Summarize(value: borrowed T) -> String:
+def describe of T: Summarize(value: borrowed T) -> String:
     value.preview()
 
 # Several bounds joined by `+`, written in a `where` clause.
-function best_of of T(left: borrowed T, right: borrowed T) -> String
+def best_of of T(left: borrowed T, right: borrowed T) -> String
         where T: Summarize + Clone:
     if left.summarize().length() >= right.summarize().length():
         left.preview()
@@ -216,7 +216,7 @@ function best_of of T(left: borrowed T, right: borrowed T) -> String
         right.preview()
 
 # A generic type built at two different instantiations.
-function paired of (A, B)(first: A, second: B) -> Pair of (A, B):
+def paired of (A, B)(first: A, second: B) -> Pair of (A, B):
     Pair(first: first, second: second)
 
 # ---------------------------------------------------------------------------
@@ -225,15 +225,15 @@ function paired of (A, B)(first: A, second: B) -> Pair of (A, B):
 
 # `any Interface` only behind an indirection: a borrow here, a `Box` below
 # (§4.3).
-function describe_any(value: borrowed any Summarize) -> String:
+def describe_any(value: borrowed any Summarize) -> String:
     value.preview()
 
-function describe_boxed(value: Box of any Summarize) -> String:
+def describe_boxed(value: Box of any Summarize) -> String:
     value.summarize()
 
 # `Box` is built through its associated function, never by named-argument
 # construction: that form is for record types only (§4.4).
-function as_summary(format: borrowed Format) -> Box of any Summarize:
+def as_summary(format: borrowed Format) -> Box of any Summarize:
     match format:
         Json: Box.new(Doc(title: "json", body: "{}"))
         Plain: Box.new(Doc(title: "plain", body: "..."))
@@ -245,14 +245,14 @@ function as_summary(format: borrowed Format) -> Box of any Summarize:
 
 # Every variant is listed; there is no wildcard arm. A missing variant is an
 # error in the `SC0250` range and the diagnostic lists what is missing (§11.3).
-function extension(format: borrowed Format) -> String:
+def extension(format: borrowed Format) -> String:
     match format:
         Plain: "txt"
         Markdown: "md"
         Json: "json"
 
 # Variant patterns that bind their payload, in block form.
-function explain(error: borrowed LoadError) -> String:
+def explain(error: borrowed LoadError) -> String:
     match error:
         NotFound(path):
             let mutable out be String.new()
@@ -263,17 +263,17 @@ function explain(error: borrowed LoadError) -> String:
             copy_of(detail)
 
 # ---------------------------------------------------------------------------
-# (6) A nullable type, and a fallible function returning `(T, Error?)`
+# (6) A nullable type, and a fallible def returning `(T, Error?)`
 # ---------------------------------------------------------------------------
 
 # Absence is `T?` and `null` is its other value. There is nothing to wrap
 # (§5.5).
-function shorten(text: borrowed String, limit: Int) -> String?:
+def shorten(text: borrowed String, limit: Int) -> String?:
     if text.is_empty(): null else: text.truncate(limit)
 
 # Two nullable results in a row. `?` asks, and the narrowing inside the
 # then-branch is what lets the next line read the value without a cast.
-function first_heading(doc: borrowed Doc) -> String?:
+def first_heading(doc: borrowed Doc) -> String?:
     let heading be doc.heading()
     if not heading?:
         return null
@@ -286,7 +286,7 @@ function first_heading(doc: borrowed Doc) -> String?:
 
 # The concrete error form: the caller can tell the cases apart, and `match`
 # over a `ParseError` stays exhaustive.
-function parse_format(name: borrowed String) -> (Format, ParseError?):
+def parse_format(name: borrowed String) -> (Format, ParseError?):
     if name.is_empty():
         return (Plain, ParseError.Empty)
     match name:
@@ -295,14 +295,14 @@ function parse_format(name: borrowed String) -> (Format, ParseError?):
         "json": (Json, null)
         other: (Plain, ParseError.Unsupported(copy_of(other)))
 
-# A fallible function returning the pair, twice over, with the conversion
+# A fallible def returning the pair, twice over, with the conversion
 # written out. `read_file` fails with `IoError` and `parse_format` with
 # `ParseError`; this function's signature says `LoadError`; so each error
 # is converted at the `return`, by an explicit call to the matching `From`
 # implementation above. `try` used to make those two calls invisibly, and no
 # section of the spec ever said that it did — which is why §5.5 moved the
 # conversion to the caller, where it is written down (§5.5).
-function load(path: borrowed String) -> (Doc, LoadError?):
+def load(path: borrowed String) -> (Doc, LoadError?):
     let text, io_err be read_file(path)
     if io_err?:
         return (Doc.new(""), LoadError.from(io_err))
@@ -317,7 +317,7 @@ function load(path: borrowed String) -> (Doc, LoadError?):
 # `-> (Doc, (any Error)?)`. It composes across a library boundary and it
 # boxes, where the concrete form above does neither. Both are legal and the
 # choice is the author's (§5.5).
-function open(path: borrowed String) -> (Doc, Error?):
+def open(path: borrowed String) -> (Doc, Error?):
     let doc, err be load(path)
     if err?:
         return (Doc.new(""), err)
@@ -329,7 +329,7 @@ function open(path: borrowed String) -> (Doc, Error?):
 
 # `0..n` is half-open and `0..=n` inclusive (§4.5). `for i in 0..n:` is
 # the counting loop.
-function ruler(width: Int) -> Int:
+def ruler(width: Int) -> Int:
     let mutable marks be 0
     for i in 0..width:
         if i % 5 is 0:
@@ -339,7 +339,7 @@ function ruler(width: Int) -> Int:
 # (9) A closure, in the chain that is the shape most Science code takes
 # (§4.6). `each` names the subject of the enclosing call without declaring
 # it; `name giving expression` declares it where `each` will not do.
-function headlines(docs: borrowed Array of Doc) -> Array of String:
+def headlines(docs: borrowed Array of Doc) -> Array of String:
     docs
         .iterate()
         .discard(each.is_empty())
@@ -347,7 +347,7 @@ function headlines(docs: borrowed Array of Doc) -> Array of String:
         .take(5)
         .collect()
 
-function by_length(docs: borrowed Array of Doc) -> Array of String:
+def by_length(docs: borrowed Array of Doc) -> Array of String:
     docs
         .iterate()
         .map(doc giving doc.summarize())
@@ -358,7 +358,7 @@ function by_length(docs: borrowed Array of Doc) -> Array of String:
 # Everything at once
 # ---------------------------------------------------------------------------
 
-function main():
+def main():
     let doc be Doc(title: "Regions", body: "# A region is a set of program points.")
 
     # (10) The type holding the borrow, built from a local.
@@ -431,7 +431,7 @@ function main():
     print(headlines(docs).length())
     print(by_length(docs).length())
 
-    # An associated function called through the type, and an inherent method.
+    # An associated def called through the type, and an inherent method.
     let empty be Doc.new("scratch")
     print(empty.is_empty())
 

@@ -1,14 +1,14 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(r#\"interface Produce:\n    type Output\n    function produce(self) -> Self.Output\n\"#)"
+expression: "parse_source(r#\"interface Produce:\n    type Output\n    def produce(self) -> Self.Output\n\"#)"
 ---
-Module @0..77
-  Interface `Produce` @0..76
+Module @0..72
+  Interface `Produce` @0..71
     assoc types
       AssocType `Output` @23..34
     methods
-      Fn `produce` @39..76
-        receiver: self @56..60
-        ret: SelfAssoc `Output` @65..76
+      Fn `produce` @39..71
+        receiver: self @51..55
+        ret: SelfAssoc `Output` @60..71
 --- diagnostics ---
 (none)

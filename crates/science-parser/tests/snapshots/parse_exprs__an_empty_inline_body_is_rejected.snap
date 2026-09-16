@@ -1,16 +1,16 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_source_allowing_errors(\"function f(flag: Bool) -> Int:\\n    if flag:\\n\")"
+expression: "parse_source_allowing_errors(\"def f(flag: Bool) -> Int:\\n    if flag:\\n\")"
 ---
-Module @0..44
-  Fn `f` @0..43
+Module @0..39
+  Fn `f` @0..38
     params
-      Param `flag` @11..21
-        type: Path `Bool` @17..21
-    ret: Path `Int` @26..29
-    body: Block @35..43
-      tail: If @35..43
-        cond: Path `flag` @38..42
-        then: Block @44..44
+      Param `flag` @6..16
+        type: Path `Bool` @12..16
+    ret: Path `Int` @21..24
+    body: Block @30..38
+      tail: If @30..38
+        cond: Path `flag` @33..37
+        then: Block @39..39
 --- diagnostics ---
-SC0100 @44..44 expected an indented block after `:`, found the end of a block
+SC0100 @39..39 expected an indented block after `:`, found the end of a block

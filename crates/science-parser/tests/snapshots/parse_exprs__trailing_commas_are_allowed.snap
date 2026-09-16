@@ -1,24 +1,24 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_source(r#\"function main():\n    let a be f(\n        1,\n        2,\n    )\n    let b be Doc(\n        title: \"a\",\n    )\n    let c be (1, 2,)\n\"#)"
+expression: "parse_source(r#\"def main():\n    let a be f(\n        1,\n        2,\n    )\n    let b be Doc(\n        title: \"a\",\n    )\n    let c be (1, 2,)\n\"#)"
 ---
-Module @0..126
-  Fn `main` @0..125
-    body: Block @21..125
-      Let `a` @21..60
-        value: Call @30..60
-          callee: Path `f` @30..31
+Module @0..121
+  Fn `main` @0..120
+    body: Block @16..120
+      Let `a` @16..55
+        value: Call @25..55
+          callee: Path `f` @25..26
           args
-            Int 1 @41..42
-            Int 2 @52..53
-      Let `b` @65..104
-        value: StructLit `Doc` @74..104
+            Int 1 @36..37
+            Int 2 @47..48
+      Let `b` @60..99
+        value: StructLit `Doc` @69..99
           fields
-            FieldInit `title` @87..97
-              value: Str "a" @94..97
-      Let `c` @109..125
-        value: Tuple @118..125
-          Int 1 @119..120
-          Int 2 @122..123
+            FieldInit `title` @82..92
+              value: Str "a" @89..92
+      Let `c` @104..120
+        value: Tuple @113..120
+          Int 1 @114..115
+          Int 2 @117..118
 --- diagnostics ---
 (none)

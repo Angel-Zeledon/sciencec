@@ -1,0 +1,16 @@
+# Whitespace the formatter has an opinion about, and literals it does not.
+def main( ) :
+    let  a   be   1+2*3
+    let b be -1 - -2
+    let c be a ..  b
+    let d be ( 1 , 2 )
+    let e be  Doc( title : "x" , body : "y" )
+    let f be items [ 0 ]
+    let g be 0xDeadBeef
+    let h be 1_000.000_1
+    let i be "it\'s kept"
+    let j be not ( a is b )
+    let k be a . length ( )
+    let l be ( Wrapper of Int ) . holding ( 7 )
+    let m be value ?
+    print ( a )

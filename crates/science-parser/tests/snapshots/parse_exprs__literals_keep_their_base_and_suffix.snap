@@ -1,29 +1,29 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_body(r#\"function main():\n    let a be 42\n    let b be 0xFF\n    let c be 0b1010\n    let d be 0o777\n    let e be 42i32\n    let f be 3.14\n    let g be 2.5f32\n    let h be \"text\"\n    let i be 'x'\n    let j be true\n    let k be false\n\"#)"
+expression: "parse_body(r#\"def main():\n    let a be 42\n    let b be 0xFF\n    let c be 0b1010\n    let d be 0o777\n    let e be 42i32\n    let f be 3.14\n    let g be 2.5f32\n    let h be \"text\"\n    let i be 'x'\n    let j be true\n    let k be false\n\"#)"
 ---
-Block @21..220
-  Let `a` @21..32
-    value: Int 42 @30..32
-  Let `b` @37..50
-    value: Int 255 hex @46..50
-  Let `c` @55..70
-    value: Int 10 bin @64..70
-  Let `d` @75..89
-    value: Int 511 oct @84..89
-  Let `e` @94..108
-    value: Int 42 i32 @103..108
-  Let `f` @113..126
-    value: Float 3.14 @122..126
-  Let `g` @131..146
-    value: Float 2.5 f32 @140..146
-  Let `h` @151..166
-    value: Str "text" @160..166
-  Let `i` @171..183
-    value: Char 'x' @180..183
-  Let `j` @188..201
-    value: Bool true @197..201
-  Let `k` @206..220
-    value: Bool false @215..220
+Block @16..215
+  Let `a` @16..27
+    value: Int 42 @25..27
+  Let `b` @32..45
+    value: Int 255 hex @41..45
+  Let `c` @50..65
+    value: Int 10 bin @59..65
+  Let `d` @70..84
+    value: Int 511 oct @79..84
+  Let `e` @89..103
+    value: Int 42 i32 @98..103
+  Let `f` @108..121
+    value: Float 3.14 @117..121
+  Let `g` @126..141
+    value: Float 2.5 f32 @135..141
+  Let `h` @146..161
+    value: Str "text" @155..161
+  Let `i` @166..178
+    value: Char 'x' @175..178
+  Let `j` @183..196
+    value: Bool true @192..196
+  Let `k` @201..215
+    value: Bool false @210..215
 --- diagnostics ---
 (none)

@@ -2,16 +2,16 @@
 source: crates/science-parser/tests/migration.rs
 expression: parse_source_allowing_errors(source)
 ---
-Module @0..111
-  Interface `Summarize` @0..55
+Module @0..101
+  Interface `Summarize` @0..50
     methods
-      Fn `summarize` @21..55
-        receiver: self @40..44
-        ret: Path `String` @49..55
-  Interface `Pretty` @57..110
+      Fn `summarize` @21..50
+        receiver: self @35..39
+        ret: Path `String` @44..50
+  Interface `Pretty` @52..100
     methods
-      Fn `pretty` @79..110
-        receiver: self @95..99
-        ret: Path `String` @104..110
+      Fn `pretty` @74..100
+        receiver: self @85..89
+        ret: Path `String` @94..100
 --- diagnostics ---
 SC0139 @0..5 the declaration is written `interface`

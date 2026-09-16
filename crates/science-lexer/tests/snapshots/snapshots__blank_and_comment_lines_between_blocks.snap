@@ -1,9 +1,9 @@
 ---
 source: crates/science-lexer/tests/snapshots.rs
-expression: "dump(\"\\\nfunction main():\n    a\n\n            # not an indent\n\n    b\n\")"
+expression: "dump(\"\\\ndef main():\n    a\n\n            # not an indent\n\n    b\n\")"
 ---
 == source ==
-|function main():
+|def main():
 |    a
 |
 |            # not an indent
@@ -12,19 +12,19 @@ expression: "dump(\"\\\nfunction main():\n    a\n\n            # not an indent\n
 |
 
 == tokens ==
-   0..8     Function
-   9..13    Ident("main")
-  13..14    LParen
-  14..15    RParen
-  15..16    Colon
-  16..17    Newline
-  17..21    Indent
-  21..22    Ident("a")
-  22..23    Newline
-  57..58    Ident("b")
-  58..59    Newline
-  59..59    Dedent
-  59..59    Eof
+   0..3     Function
+   4..8     Ident("main")
+   8..9     LParen
+   9..10    RParen
+  10..11    Colon
+  11..12    Newline
+  12..16    Indent
+  16..17    Ident("a")
+  17..18    Newline
+  52..53    Ident("b")
+  53..54    Newline
+  54..54    Dedent
+  54..54    Eof
 
 == diagnostics ==
 (none)

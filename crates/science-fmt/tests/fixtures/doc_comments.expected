@@ -1,0 +1,23 @@
+## A doc comment is trivia carried on the token below it, not a token of its
+## own, so the formatter has to keep it above the same declaration and not
+## merely somewhere near it.
+##
+## The formatter has no opinion about what is inside one: a `##` run is an
+## ordinary comment to it, and `format_source` compares the doc run on every
+## token before and after to make sure moving one is impossible.
+type Doc:
+    ## Attached to a field.
+    title: String
+
+    body: String
+
+## Attached to a function, with a blank line between the run and the
+## declaration, which the lexer does not mind.
+
+def summarize(doc: borrowed Doc) -> String:
+    doc.title
+
+# An ordinary comment is not a doc run, however many hashes follow it on the
+# same line: ### only documents when it starts the comment.
+def plain() -> Int:
+    1

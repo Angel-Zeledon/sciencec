@@ -39,7 +39,7 @@
 //! only: to report that they were removed.
 //!
 //! **`of` introduces arguments in a type and parameters in a declaration
-//! head.** `Array of Doc` passes an argument; `function largest of T(..)` and
+//! head.** `Array of Doc` passes an argument; `def largest of T(..)` and
 //! `Grid of (T, const ROWS: Int) has:` declare parameters. Nothing in
 //! the token stream distinguishes them, and nothing has to: the two are read
 //! by different functions, reached from different places in the grammar.
@@ -130,6 +130,14 @@ pub mod codes {
     /// unwrapped. `SC0145`–`SC0149` belong to `rust-interop.md`, so this
     /// takes the next block the allocation map records as free.
     pub const TRY_WORD: Code = Code(155);
+
+    /// The word `function`, which revision 3 replaced with `def`.
+    ///
+    /// This is the migration every model will need, because a model's priors
+    /// are Python's and `def-and-lambda.md` §3.2 predicted the traffic in the
+    /// opposite direction. It gets a machine-applicable fix for the same
+    /// reason every other migration code does.
+    pub const FUNCTION_WORD: Code = Code(156);
 }
 
 /// The `extern` block's own diagnostics.
@@ -492,6 +500,9 @@ impl<'t> Parser<'t> {
         // borrow of the token from overlapping the parse call in each arm.
         let kind = if self.at(&TokenKind::Function) {
             ItemKind::Fn(self.parse_fn(is_pub, start)?)
+        } else if self.at_function_word() {
+            self.report_function_word();
+            ItemKind::Fn(self.parse_fn(is_pub, start)?)
         } else if self.at(&TokenKind::Type) {
             self.parse_type_item(is_pub, start)?
         } else if self.at(&TokenKind::Choice) {
@@ -535,7 +546,7 @@ impl<'t> Parser<'t> {
 
     // --- functions -------------------------------------------------------
 
-    /// `function name of T(params) -> T where ..:`.
+    /// `def name of T(params) -> T where ..:`.
     fn parse_fn(&mut self, is_pub: bool, start: Span) -> Option<FnDecl> {
         self.advance(); // `function`
         let name = self.expect_ident()?;
@@ -719,6 +730,36 @@ impl<'t> Parser<'t> {
         let body = self.parse_block();
         let span = start.merge(self.last_text_span());
         Expr { kind: ExprKind::Loop { body }, span }
+    }
+
+    /// Whether the cursor is on `function <name>`, the declaration revision 3
+    /// renamed to `def`.
+    ///
+    /// The lookahead is an identifier, which is what separates the keyword
+    /// that was from a variable called `function` — now an ordinary name.
+    fn at_function_word(&self) -> bool {
+        self.word_at(0, "function") && matches!(self.peek_ahead(1), TokenKind::Ident(_))
+    }
+
+    /// Reports `function` and steps over it, so `parse_fn` sees what it
+    /// expects and the rest of the declaration parses normally.
+    ///
+    /// Unlike `try`, this one *can* offer a machine-applicable fix, because
+    /// the replacement is a word for a word and nothing around it moves. It is
+    /// the migration that will be needed most: a model's priors are Python's,
+    /// and `def-and-lambda.md` §3.2 expected the traffic to run the other way.
+    fn report_function_word(&mut self) {
+        let span = self.advance().span; // `function`
+        self.diagnostics.push(
+            Diagnostic::error(codes::FUNCTION_WORD, "the declaration is written `def`")
+                .with_label(Label::primary(span, "`function` is not a keyword in Science"))
+                .with_suggestion(Suggestion {
+                    span,
+                    replacement: "def".to_string(),
+                    message: "write the declaration as".to_string(),
+                })
+                .with_note("`def` declares every function, method and interface member"),
+        );
     }
 
     /// Whether the cursor is on `try <expression>`, the prefix §3 removed.
@@ -1273,7 +1314,7 @@ impl<'t> Parser<'t> {
             )
             .with_label(Label::primary(span, format!("found {found}")))
             .with_note(
-                "a block contains `function name(..) -> T`, `type Name is T`, \
+                "a block contains `def name(..) -> T`, `type Name is T`, \
                  `const NAME be literal as T`, `static NAME: T` and \
                  `union Name: size N align M`, and nothing else",
             )
@@ -1285,7 +1326,7 @@ impl<'t> Parser<'t> {
         );
     }
 
-    /// `function cblas_dgemm(layout: CblasLayout, ..) -> Herr symbol "dgemm_"`.
+    /// `def cblas_dgemm(layout: CblasLayout, ..) -> Herr symbol "dgemm_"`.
     fn parse_extern_fn(&mut self) -> Option<ExternFn> {
         let start = self.advance().span; // `function`
         let name = self.expect_ident()?;
@@ -1703,7 +1744,7 @@ impl<'t> Parser<'t> {
     /// §4.3 explains the parentheses: a single argument cannot contain a
     /// top-level comma, so the comma that would follow it ends the list
     /// instead. The same rule reads the parameter list, and for the same
-    /// reason — `function merge of A, B(..)` could not be told from a
+    /// reason — `def merge of A, B(..)` could not be told from a
     /// parameter named `B`.
     fn parse_generic_params(&mut self) -> Vec<GenericParam> {
         let mut params = Vec::new();
@@ -1891,7 +1932,7 @@ impl<'t> Parser<'t> {
     /// parsed.
     ///
     /// The `-` is recognised here rather than at the head of `parse_type`
-    /// because a negative number is not a type. `function f(x: -1)` stays the
+    /// because a negative number is not a type. `def f(x: -1)` stays the
     /// error it has always been: an argument list is the one position that
     /// holds values beside types (§5.3), and it is the only position where a
     /// leading `-` has a value to belong to.
@@ -3781,7 +3822,7 @@ fn describe_word(kind: &TokenKind) -> String {
 fn fixed_text(kind: &TokenKind) -> &'static str {
     use TokenKind::*;
     match kind {
-        Function => "function",
+        Function => "def",
         Let => "let",
         Be => "be",
         Mutable => "mutable",

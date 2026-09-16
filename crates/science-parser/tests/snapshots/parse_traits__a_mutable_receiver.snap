@@ -1,18 +1,18 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(r#\"Note implements Reset:\n    function reset(mutable self):\n        self.text be \"\"\n\"#)"
+expression: "parse_source(r#\"Note implements Reset:\n    def reset(mutable self):\n        self.text be \"\"\n\"#)"
 ---
-Module @0..81
-  Implements @0..80
+Module @0..76
+  Implements @0..75
     interface: Bound `Reset` @16..21
     type: Path `Note` @0..4
     methods
-      Fn `reset` @27..80
-        receiver: mutable self @42..54
-        body: Block @65..80
-          Assign @65..80
-            target: Field `text` @65..74
-              base: Self @65..69
-            value: Str "" @78..80
+      Fn `reset` @27..75
+        receiver: mutable self @37..49
+        body: Block @60..75
+          Assign @60..75
+            target: Field `text` @60..69
+              base: Self @60..64
+            value: Str "" @73..75
 --- diagnostics ---
 (none)

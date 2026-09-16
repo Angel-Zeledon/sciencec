@@ -21,7 +21,7 @@ fn comments_only() {
 fn three_level_nesting() {
     insta::assert_snapshot!(dump(
         "\
-function main():
+def main():
     if a:
         loop:
             c()
@@ -33,7 +33,7 @@ function main():
 fn several_levels_close_at_once() {
     insta::assert_snapshot!(dump(
         "\
-function main():
+def main():
     if a:
         loop:
             c()
@@ -46,7 +46,7 @@ done()
 fn blank_and_comment_lines_between_blocks() {
     insta::assert_snapshot!(dump(
         "\
-function main():
+def main():
     a
 
             # not an indent
@@ -72,7 +72,7 @@ a:
 fn bracket_continuation_with_misleading_indentation() {
     insta::assert_snapshot!(dump(
         "\
-function main():
+def main():
     call(
             first,
   second,
@@ -86,7 +86,7 @@ function main():
 
 #[test]
 fn tab_in_the_indentation() {
-    insta::assert_snapshot!(dump("function main():\n\tlet x be 1\n\tlet y be 2\n"));
+    insta::assert_snapshot!(dump("def main():\n\tlet x be 1\n\tlet y be 2\n"));
 }
 
 #[test]
@@ -140,13 +140,13 @@ fn interface_summarize_program() {
     insta::assert_snapshot!(dump(
         "\
 interface Summarize:
-    function summarize(self) -> String
+    def summarize(self) -> String
 
-    function preview(self) -> String:
+    def preview(self) -> String:
         truncate(self.summarize(), 80)
 
 Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         truncate(self.body, 200)
 "
     ));
@@ -163,13 +163,13 @@ public type Doc:
     title: String
     body: String
 
-function largest of T(items: borrowed Array of T) -> borrowed T where T: Ord:
+def largest of T(items: borrowed Array of T) -> borrowed T where T: Ord:
     let mutable best be items.get(0)
     for item in items:
         if item > best: best be item
     best
 
-function read_config(path: borrowed String) -> (Config, Error?):
+def read_config(path: borrowed String) -> (Config, Error?):
     let text, err be read_file(path)   # the error comes back beside the value
     if err?:
         return (Config.empty(), err)

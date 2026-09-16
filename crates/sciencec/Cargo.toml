@@ -9,7 +9,7 @@ description = "The Science compiler's command-line driver."
 name = "sciencec"
 path = "src/main.rs"
 
-# No argument-parsing dependency. The surface is four subcommands and two
+# No argument-parsing dependency. The surface is five subcommands and three
 # flags, which is less code than the `clap` derive would be, and the workspace
 # has exactly one third-party dependency today (salsa, in `science-db`) — a
 # driver is the wrong place to double that.
@@ -20,6 +20,7 @@ path = "src/main.rs"
 [dependencies]
 science-db.workspace = true
 science-diagnostics.workspace = true
+science-fmt.workspace = true
 science-parser.workspace = true
 science-resolve.workspace = true
 

@@ -3,5 +3,5 @@
 # Spec §4.2: "Spaces only. A tab in the indentation is an error (`SC0003`),
 # with no attempt to interpret it."
 
-function main():
+def main():
 	print("indented with a tab")

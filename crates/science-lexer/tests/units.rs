@@ -505,7 +505,7 @@ fn lexing_continues_after_a_broken_character_literal() {
 
 #[test]
 fn keywords_are_resolved() {
-    assert_eq!(bare("function"), vec![Function]);
+    assert_eq!(bare("def"), vec![Function]);
     assert_eq!(bare("let be mutable"), vec![Let, Be, Mutable]);
     assert_eq!(bare("if else match"), vec![If, Else, Match]);
     assert_eq!(bare("for each in loop"), vec![For, Each, In, Loop]);
@@ -972,7 +972,7 @@ fn a_generic_signature_lexes_without_turbofish_ambiguity() {
     // §4.4's `largest`. Generic arguments are spelled `of T` and borrows
     // `borrowed T`, so nothing here needs brackets at all.
     assert_eq!(
-        bare("function largest of T(items: borrowed Array of T) -> borrowed T:"),
+        bare("def largest of T(items: borrowed Array of T) -> borrowed T:"),
         vec![
             Function,
             id("largest"),
@@ -1063,7 +1063,7 @@ fn the_two_closure_forms_lex_as_ordinary_words() {
 #[test]
 fn a_small_program_produces_no_diagnostics() {
     let src = "\
-function main():
+def main():
     let greeting be \"hola\"
     let mutable count be 0
     count be count + 1
@@ -1086,14 +1086,14 @@ const WIDTH be 768
 type Embedding is Array of F32
 
 Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         truncate(self.body, 200)
 
 Doc has:
-    function is_empty(self) -> Bool:
+    def is_empty(self) -> Bool:
         self.body.len() is 0
 
-function report(docs: borrowed Array of any Summarize) -> String:
+def report(docs: borrowed Array of any Summarize) -> String:
     for doc in docs:
         if doc.score >= 5 and doc.rank < 10:
             return try doc.summarize()
@@ -1109,7 +1109,7 @@ fn token_spans_never_go_backwards() {
     for src in [
         "a:\n  b:\n    c\n",
         "a:\n    b:\n        c\n  d\n",       // SC0004 recovery
-        "function main():\n\tlet x be 1\n",   // SC0003 recovery
+        "def main():\n\tlet x be 1\n",   // SC0003 recovery
         "f(\n        a,\n  b,\n)\nx\n",
         "let a be \"open\nlet b be 'x\n",
         "let a be b? # SC0001 recovery\n",
@@ -1235,7 +1235,7 @@ fn a_dot_cannot_continue_a_line_that_produced_no_token() {
 fn a_chain_continuation_does_not_close_the_block_it_sits_in() {
     // The continuation is dedented relative to the body it belongs to, which
     // under the ordinary rule would emit a `Dedent`. It must not.
-    let src = "function main():\n    let names be docs\n        .collect()\n    names\n";
+    let src = "def main():\n    let names be docs\n        .collect()\n    names\n";
     assert!(codes(src).is_empty(), "{:?}", messages(src));
     assert_eq!(
         kinds(src),
@@ -1269,7 +1269,7 @@ fn a_line_beginning_with_where_continues_the_signature_above() {
     // §4.4 writes a long signature with its bounds on the next line, indented.
     // Under the ordinary rule that indentation would open a block the body
     // could then never match, so `where` continues the line instead.
-    let src = "function best_of of T(x: borrowed T) -> String\n        where T: Ord:\n    x.preview()\n";
+    let src = "def best_of of T(x: borrowed T) -> String\n        where T: Ord:\n    x.preview()\n";
     assert!(codes(src).is_empty(), "{:?}", messages(src));
     assert_eq!(
         kinds(src),
@@ -1334,7 +1334,7 @@ fn equation_is_reserved_and_its_neighbours_are_not() {
 /// assuming they are gone. It did discard them until this test existed.
 #[test]
 fn a_doc_comment_reaches_the_token_it_documents() {
-    let t = tokens("## Lists the runs.\nfunction list_runs():\n    print(\"x\")\n");
+    let t = tokens("## Lists the runs.\ndef list_runs():\n    print(\"x\")\n");
     let documented: Vec<_> = t.iter().filter(|t| t.doc.is_some()).collect();
     assert_eq!(documented.len(), 1, "exactly one token carries the run");
     assert_eq!(documented[0].kind, Function, "and it is the declaration, not a newline");
@@ -1344,7 +1344,7 @@ fn a_doc_comment_reaches_the_token_it_documents() {
 /// A run of several lines joins with line feeds, and the blank `##` is kept.
 #[test]
 fn a_doc_run_joins_its_lines() {
-    let t = tokens("## Summary line.\n##\n## Body paragraph.\nfunction f():\n    print(\"x\")\n");
+    let t = tokens("## Summary line.\n##\n## Body paragraph.\ndef f():\n    print(\"x\")\n");
     let doc = t.iter().find_map(|t| t.doc.as_deref()).unwrap();
     assert_eq!(doc, "Summary line.\n\nBody paragraph.");
 }
@@ -1352,14 +1352,14 @@ fn a_doc_run_joins_its_lines() {
 /// An ordinary `#` comment is not documentation and leaves nothing behind.
 #[test]
 fn an_ordinary_comment_documents_nothing() {
-    let t = tokens("# just a comment\nfunction f():\n    print(\"x\")\n");
+    let t = tokens("# just a comment\ndef f():\n    print(\"x\")\n");
     assert!(t.iter().all(|t| t.doc.is_none()));
 }
 
 /// `###` is documentation, because it is a Markdown heading inside one.
 #[test]
 fn three_hashes_are_still_documentation() {
-    let t = tokens("### A heading\nfunction f():\n    print(\"x\")\n");
+    let t = tokens("### A heading\ndef f():\n    print(\"x\")\n");
     assert_eq!(t.iter().find_map(|t| t.doc.as_deref()), Some("# A heading"));
 }
 
@@ -1367,7 +1367,7 @@ fn three_hashes_are_still_documentation() {
 /// doc comment holds code samples that §5.5 makes compile.
 #[test]
 fn indentation_inside_a_doc_comment_survives() {
-    let t = tokens("## Example:\n##     let x be 1\nfunction f():\n    print(\"x\")\n");
+    let t = tokens("## Example:\n##     let x be 1\ndef f():\n    print(\"x\")\n");
     let doc = t.iter().find_map(|t| t.doc.as_deref()).unwrap();
     assert_eq!(doc, "Example:\n    let x be 1");
 }
@@ -1377,7 +1377,7 @@ fn indentation_inside_a_doc_comment_survives() {
 /// documentation to the one after it.
 #[test]
 fn a_doc_run_is_consumed_and_does_not_leak() {
-    let t = tokens("## First.\nfunction a():\n    print(\"x\")\nfunction b():\n    print(\"y\")\n");
+    let t = tokens("## First.\ndef a():\n    print(\"x\")\ndef b():\n    print(\"y\")\n");
     let docs: Vec<_> = t.iter().filter_map(|t| t.doc.as_deref()).collect();
     assert_eq!(docs, vec!["First."], "the second function carries nothing");
 }

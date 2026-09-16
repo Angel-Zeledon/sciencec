@@ -1,16 +1,16 @@
 ---
 source: crates/science-lexer/tests/snapshots.rs
-expression: "dump(\"\\\ninterface Summarize:\n    function summarize(self) -> String\n\n    function preview(self) -> String:\n        truncate(self.summarize(), 80)\n\nDoc implements Summarize:\n    function summarize(self) -> String:\n        truncate(self.body, 200)\n\")"
+expression: "dump(\"\\\ninterface Summarize:\n    def summarize(self) -> String\n\n    def preview(self) -> String:\n        truncate(self.summarize(), 80)\n\nDoc implements Summarize:\n    def summarize(self) -> String:\n        truncate(self.body, 200)\n\")"
 ---
 == source ==
 |interface Summarize:
-|    function summarize(self) -> String
+|    def summarize(self) -> String
 |
-|    function preview(self) -> String:
+|    def preview(self) -> String:
 |        truncate(self.summarize(), 80)
 |
 |Doc implements Summarize:
-|    function summarize(self) -> String:
+|    def summarize(self) -> String:
 |        truncate(self.body, 200)
 |
 
@@ -20,65 +20,65 @@ expression: "dump(\"\\\ninterface Summarize:\n    function summarize(self) -> St
   19..20    Colon
   20..21    Newline
   21..25    Indent
-  25..33    Function
-  34..43    Ident("summarize")
-  43..44    LParen
-  44..48    SelfValue
-  48..49    RParen
-  50..52    Arrow
-  53..59    Ident("String")
-  59..60    Newline
-  65..73    Function
-  74..81    Ident("preview")
-  81..82    LParen
-  82..86    SelfValue
-  86..87    RParen
-  88..90    Arrow
-  91..97    Ident("String")
-  97..98    Colon
-  98..99    Newline
-  99..107   Indent
- 107..115   Ident("truncate")
- 115..116   LParen
- 116..120   SelfValue
- 120..121   Dot
- 121..130   Ident("summarize")
- 130..131   LParen
- 131..132   RParen
- 132..133   Comma
- 134..136   Int { value: 80, base: Dec, suffix: None }
- 136..137   RParen
- 137..138   Newline
- 139..139   Dedent
- 139..139   Dedent
- 139..142   Ident("Doc")
- 143..153   Implements
- 154..163   Ident("Summarize")
- 163..164   Colon
- 164..165   Newline
- 165..169   Indent
- 169..177   Function
- 178..187   Ident("summarize")
- 187..188   LParen
- 188..192   SelfValue
- 192..193   RParen
- 194..196   Arrow
- 197..203   Ident("String")
- 203..204   Colon
- 204..205   Newline
- 205..213   Indent
- 213..221   Ident("truncate")
- 221..222   LParen
- 222..226   SelfValue
- 226..227   Dot
- 227..231   Ident("body")
- 231..232   Comma
- 233..236   Int { value: 200, base: Dec, suffix: None }
- 236..237   RParen
- 237..238   Newline
- 238..238   Dedent
- 238..238   Dedent
- 238..238   Eof
+  25..28    Function
+  29..38    Ident("summarize")
+  38..39    LParen
+  39..43    SelfValue
+  43..44    RParen
+  45..47    Arrow
+  48..54    Ident("String")
+  54..55    Newline
+  60..63    Function
+  64..71    Ident("preview")
+  71..72    LParen
+  72..76    SelfValue
+  76..77    RParen
+  78..80    Arrow
+  81..87    Ident("String")
+  87..88    Colon
+  88..89    Newline
+  89..97    Indent
+  97..105   Ident("truncate")
+ 105..106   LParen
+ 106..110   SelfValue
+ 110..111   Dot
+ 111..120   Ident("summarize")
+ 120..121   LParen
+ 121..122   RParen
+ 122..123   Comma
+ 124..126   Int { value: 80, base: Dec, suffix: None }
+ 126..127   RParen
+ 127..128   Newline
+ 129..129   Dedent
+ 129..129   Dedent
+ 129..132   Ident("Doc")
+ 133..143   Implements
+ 144..153   Ident("Summarize")
+ 153..154   Colon
+ 154..155   Newline
+ 155..159   Indent
+ 159..162   Function
+ 163..172   Ident("summarize")
+ 172..173   LParen
+ 173..177   SelfValue
+ 177..178   RParen
+ 179..181   Arrow
+ 182..188   Ident("String")
+ 188..189   Colon
+ 189..190   Newline
+ 190..198   Indent
+ 198..206   Ident("truncate")
+ 206..207   LParen
+ 207..211   SelfValue
+ 211..212   Dot
+ 212..216   Ident("body")
+ 216..217   Comma
+ 218..221   Int { value: 200, base: Dec, suffix: None }
+ 221..222   RParen
+ 222..223   Newline
+ 223..223   Dedent
+ 223..223   Dedent
+ 223..223   Eof
 
 == diagnostics ==
 (none)

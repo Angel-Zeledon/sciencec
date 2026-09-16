@@ -1,74 +1,74 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_source(r#\"function f(stack: mutable borrowed Array of Int, lines: borrowed Array of String):\n    for _ in 0..stack.length(): stack.pop()\n    for line in lines: print(line)\n    loop: break\n    loop:\n        if a >= b:\n            break\n        a be a + 1\n    for x in xs:\n        print(x)\n    for i in 0..n:\n        print(i)\n    loop:\n        break\n\"#)"
+expression: "parse_source(r#\"def f(stack: mutable borrowed Array of Int, lines: borrowed Array of String):\n    for _ in 0..stack.length(): stack.pop()\n    for line in lines: print(line)\n    loop: break\n    loop:\n        if a >= b:\n            break\n        a be a + 1\n    for x in xs:\n        print(x)\n    for i in 0..n:\n        print(i)\n    loop:\n        break\n\"#)"
 ---
-Module @0..338
-  Fn `f` @0..337
+Module @0..333
+  Fn `f` @0..332
     params
-      Param `stack` @11..47
-        type: Borrowed mutable @18..47
-          Path `Array` @35..47
+      Param `stack` @6..42
+        type: Borrowed mutable @13..42
+          Path `Array` @30..42
             generics of `Array`
-              Path `Int` @44..47
-      Param `lines` @49..80
-        type: Borrowed @56..80
-          Path `Array` @65..80
+              Path `Int` @39..42
+      Param `lines` @44..75
+        type: Borrowed @51..75
+          Path `Array` @60..75
             generics of `Array`
-              Path `String` @74..80
-    body: Block @87..337
-      For @87..126
-        pattern: Wildcard @91..92
-        iter: Range @96..113
-          start: Int 0 @96..97
-          end: Method `length` @99..113
-            receiver: Path `stack` @99..104
-        body: Block @115..126
-          tail: Method `pop` @115..126
-            receiver: Path `stack` @115..120
-      For @131..161
-        pattern: Binding `line` @135..139
-        iter: Path `lines` @143..148
-        body: Block @150..161
-          tail: Call @150..161
-            callee: Path `print` @150..155
+              Path `String` @69..75
+    body: Block @82..332
+      For @82..121
+        pattern: Wildcard @86..87
+        iter: Range @91..108
+          start: Int 0 @91..92
+          end: Method `length` @94..108
+            receiver: Path `stack` @94..99
+        body: Block @110..121
+          tail: Method `pop` @110..121
+            receiver: Path `stack` @110..115
+      For @126..156
+        pattern: Binding `line` @130..134
+        iter: Path `lines` @138..143
+        body: Block @145..156
+          tail: Call @145..156
+            callee: Path `print` @145..150
             args
-              Path `line` @156..160
-      Loop @166..177
-        body: Block @172..177
-          Break @172..177
-      Loop @182..243
-        body: Block @196..243
-          If @196..224
-            cond: Binary `>=` @199..205
-              lhs: Path `a` @199..200
-              rhs: Path `b` @204..205
-            then: Block @219..224
-              Break @219..224
-          Assign @233..243
-            target: Path `a` @233..234
-            value: Binary `+` @238..243
-              lhs: Path `a` @238..239
-              rhs: Int 1 @242..243
-      For @248..277
-        pattern: Binding `x` @252..253
-        iter: Path `xs` @257..259
-        body: Block @269..277
-          tail: Call @269..277
-            callee: Path `print` @269..274
+              Path `line` @151..155
+      Loop @161..172
+        body: Block @167..172
+          Break @167..172
+      Loop @177..238
+        body: Block @191..238
+          If @191..219
+            cond: Binary `>=` @194..200
+              lhs: Path `a` @194..195
+              rhs: Path `b` @199..200
+            then: Block @214..219
+              Break @214..219
+          Assign @228..238
+            target: Path `a` @228..229
+            value: Binary `+` @233..238
+              lhs: Path `a` @233..234
+              rhs: Int 1 @237..238
+      For @243..272
+        pattern: Binding `x` @247..248
+        iter: Path `xs` @252..254
+        body: Block @264..272
+          tail: Call @264..272
+            callee: Path `print` @264..269
             args
-              Path `x` @275..276
-      For @282..313
-        pattern: Binding `i` @286..287
-        iter: Range @291..295
-          start: Int 0 @291..292
-          end: Path `n` @294..295
-        body: Block @305..313
-          tail: Call @305..313
-            callee: Path `print` @305..310
+              Path `x` @270..271
+      For @277..308
+        pattern: Binding `i` @281..282
+        iter: Range @286..290
+          start: Int 0 @286..287
+          end: Path `n` @289..290
+        body: Block @300..308
+          tail: Call @300..308
+            callee: Path `print` @300..305
             args
-              Path `i` @311..312
-      tail: Loop @318..337
-        body: Block @332..337
-          Break @332..337
+              Path `i` @306..307
+      tail: Loop @313..332
+        body: Block @327..332
+          Break @327..332
 --- diagnostics ---
 (none)

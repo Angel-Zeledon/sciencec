@@ -2,49 +2,49 @@
 source: crates/science-parser/tests/migration.rs
 expression: parse_source_allowing_errors(source)
 ---
-Module @0..245
-  Interface `Summarize` @0..55
+Module @0..235
+  Interface `Summarize` @0..50
     methods
-      Fn `summarize` @21..55
-        receiver: self @40..44
-        ret: Path `String` @49..55
-  Has @57..244
-    type: Path `Doc` @57..60
+      Fn `summarize` @21..50
+        receiver: self @35..39
+        ret: Path `String` @44..50
+  Has @52..234
+    type: Path `Doc` @52..55
     methods
-      Fn `show` @78..244
-        receiver: self @92..96
+      Fn `show` @73..234
+        receiver: self @82..86
         params
-          Param `rows` @98..125
-            type: Borrowed @104..125
-              Path `Array` @113..125
+          Param `rows` @88..115
+            type: Borrowed @94..115
+              Path `Array` @103..115
                 generics of `Array`
-                  Path `Int` @122..125
-          Param `n` @127..133
-            type: Path `Int` @130..133
-        body: Block @144..244
-          For @144..190
-            pattern: Binding `row` @153..156
-            iter: Path `rows` @160..164
-            body: Block @178..190
-              tail: Call @178..190
-                callee: Path `print` @178..185
+                  Path `Int` @112..115
+          Param `n` @117..123
+            type: Path `Int` @120..123
+        body: Block @134..234
+          For @134..180
+            pattern: Binding `row` @143..146
+            iter: Path `rows` @150..154
+            body: Block @168..180
+              tail: Call @168..180
+                callee: Path `print` @168..175
                 args
-                  Path `row` @186..189
-          tail: Loop @199..244
-            body: Block @234..244
-              Assign @234..244
-                target: Path `n` @234..235
-                value: Binary `-` @239..244
-                  lhs: Path `n` @239..240
-                  rhs: Int 1 @243..244
+                  Path `row` @176..179
+          tail: Loop @189..234
+            body: Block @224..234
+              Assign @224..234
+                target: Path `n` @224..225
+                value: Binary `-` @229..234
+                  lhs: Path `n` @229..230
+                  rhs: Int 1 @233..234
 --- diagnostics ---
 SC0139 @0..5 the declaration is written `interface`
-SC0141 @65..72 the inherent block is written `Type has:`
-SC0138 @148..152 the loop is written `for x in xs`
+SC0141 @60..67 the inherent block is written `Type has:`
+SC0138 @138..142 the loop is written `for x in xs`
   note `each` names the subject of a call, as in `docs.map(each.title)`, and nothing else
-SC0144 @178..185 the free function is `print`
+SC0144 @168..175 the free function is `print`
   note `print` writes a newline; `write` is the form that does not
-SC0143 @207..218 the comparison is written `>=`
+SC0143 @197..208 the comparison is written `>=`
   note `is` and `is not` are the only comparisons written as words
-SC0142 @199..204 the unbounded loop is written `loop`
+SC0142 @189..194 the unbounded loop is written `loop`
   note end it with the condition negated: make `if not …: break` the first statement of the body, or write a count as a range, `for i in 0..n:`

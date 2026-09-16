@@ -1,9 +1,9 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(r#\"Pair of (A, B) implements Swap:\n    type Swapped is Pair of (B, A)\n\n    function swapped(self: Self) -> Self.Swapped:\n        Pair(first: self.second, second: self.first)\n\"#)"
+expression: "parse_source(r#\"Pair of (A, B) implements Swap:\n    type Swapped is Pair of (B, A)\n\n    def swapped(self: Self) -> Self.Swapped:\n        Pair(first: self.second, second: self.first)\n\"#)"
 ---
-Module @0..171
-  Implements @0..170
+Module @0..166
+  Implements @0..165
     generics
       TypeParam `A` @9..10
       TypeParam `B` @12..13
@@ -19,17 +19,17 @@ Module @0..171
             Path `B` @61..62
             Path `A` @64..65
     methods
-      Fn `swapped` @72..170
-        receiver: self: Self @89..99
-        ret: SelfAssoc `Swapped` @104..116
-        body: Block @126..170
-          tail: StructLit `Pair` @126..170
+      Fn `swapped` @72..165
+        receiver: self: Self @84..94
+        ret: SelfAssoc `Swapped` @99..111
+        body: Block @121..165
+          tail: StructLit `Pair` @121..165
             fields
-              FieldInit `first` @131..149
-                value: Field `second` @138..149
-                  base: Self @138..142
-              FieldInit `second` @151..169
-                value: Field `first` @159..169
-                  base: Self @159..163
+              FieldInit `first` @126..144
+                value: Field `second` @133..144
+                  base: Self @133..137
+              FieldInit `second` @146..164
+                value: Field `first` @154..164
+                  base: Self @154..158
 --- diagnostics ---
 (none)

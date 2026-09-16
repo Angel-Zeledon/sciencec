@@ -1,31 +1,31 @@
 ---
 source: crates/science-parser/tests/parse_extern.rs
-expression: "parse_source(r#\"unsafe extern \"C\" library \"openblas\":\n    type BlasInt is I32\n    function dgemm(m: BlasInt, n: BlasInt) symbol \"dgemm_\"\n\nunsafe extern \"C\" library \"openblas64_\":\n    type BlasInt64 is I64\n    function dgemm64(m: BlasInt64, n: BlasInt64) symbol \"dgemm_64_\"\n\"#)"
+expression: "parse_source(r#\"unsafe extern \"C\" library \"openblas\":\n    type BlasInt is I32\n    def dgemm(m: BlasInt, n: BlasInt) symbol \"dgemm_\"\n\nunsafe extern \"C\" library \"openblas64_\":\n    type BlasInt64 is I64\n    def dgemm64(m: BlasInt64, n: BlasInt64) symbol \"dgemm_64_\"\n\"#)"
 ---
-Module @0..257
-  Extern "C" unsafe @0..120
+Module @0..247
+  Extern "C" unsafe @0..115
     Library "openblas" @18..36
     items
       ExternAlias `BlasInt` @42..61
         type: Path `I32` @58..61
-      ExternFn `dgemm` @66..120
+      ExternFn `dgemm` @66..115
         params
-          Param `m` @81..91
-            type: Path `BlasInt` @84..91
-          Param `n` @93..103
-            type: Path `BlasInt` @96..103
-        symbol: Str "dgemm_" @112..120
-  Extern "C" unsafe @122..256
-    Library "openblas64_" @140..161
+          Param `m` @76..86
+            type: Path `BlasInt` @79..86
+          Param `n` @88..98
+            type: Path `BlasInt` @91..98
+        symbol: Str "dgemm_" @107..115
+  Extern "C" unsafe @117..246
+    Library "openblas64_" @135..156
     items
-      ExternAlias `BlasInt64` @167..188
-        type: Path `I64` @185..188
-      ExternFn `dgemm64` @193..256
+      ExternAlias `BlasInt64` @162..183
+        type: Path `I64` @180..183
+      ExternFn `dgemm64` @188..246
         params
-          Param `m` @210..222
-            type: Path `BlasInt64` @213..222
-          Param `n` @224..236
-            type: Path `BlasInt64` @227..236
-        symbol: Str "dgemm_64_" @245..256
+          Param `m` @200..212
+            type: Path `BlasInt64` @203..212
+          Param `n` @214..226
+            type: Path `BlasInt64` @217..226
+        symbol: Str "dgemm_64_" @235..246
 --- diagnostics ---
 (none)

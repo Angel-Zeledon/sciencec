@@ -6,6 +6,6 @@
 # so that `42q` stays one broken literal instead of becoming an integer next to
 # an identifier `q`.
 
-function main():
+def main():
     let counted be 42q
     let ratio be 2.5i32

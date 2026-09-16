@@ -47,43 +47,43 @@ type Marker:
 # nothing to indent (§4.4).
 Marker implements Copy
 
-function make_doc() -> Doc:
+def make_doc() -> Doc:
     # Construction: named arguments, all mandatory, in any order.
     Doc(title: "a", body: "...")
 
-function make_doc_reordered() -> Doc:
+def make_doc_reordered() -> Doc:
     Doc(body: "...", title: "a")
 
-function title_of(view: borrowed View) -> borrowed String:
+def title_of(view: borrowed View) -> borrowed String:
     # Borrows auto-dereference for field access, so the chain reads through
     # `source` with nothing written for it: Science has no dereference
     # operator at all (§4.7).
     borrowed view.source.title
 
-# A type may have methods that come from no interface, and a function with no
-# `self` receiver is an associated function called through the type (§4.4).
+# A type may have methods that come from no interface, and a def with no
+# `self` receiver is an associated def called through the type (§4.4).
 Doc has:
-    function new(title: String) -> Doc:
+    def new(title: String) -> Doc:
         Doc(title: title, body: String.new())
 
-    function is_empty(self) -> Bool:
+    def is_empty(self) -> Bool:
         self.body.is_empty()
 
 # An inherent block on a generic type names its parameters the same way the
 # declaration does.
 Grid of (T, const ROWS: Int, const COLS: Int) has:
-    function area() -> Int:
+    def area() -> Int:
         ROWS * COLS
 
 # Trailing commas are allowed in every parenthesized and bracketed list,
 # construction included (§4.7).
-function make_pair() -> Pair of (Int, Int):
+def make_pair() -> Pair of (Int, Int):
     Pair(
         first: 1,
         second: 2,
     )
 
-function main():
+def main():
     let doc be make_doc()
 
     # A record that stores a borrow of a local. The borrow ends with `view`,
@@ -109,7 +109,7 @@ function main():
     print(wrapped.inner)
     print(marker.tag)
 
-    # An associated function on a generic type takes parentheses around the
+    # An associated def on a generic type takes parentheses around the
     # type, because `Grid of (Int, 3, 3).area()` does not say whether
     # `.area()` belongs to the last argument or to the whole type (§4.3).
     print((Grid of (Int, 3, 3)).area())

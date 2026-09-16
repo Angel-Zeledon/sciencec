@@ -1,28 +1,28 @@
 ---
 source: crates/science-parser/tests/parse_stmts.rs
-expression: "parse_body(r#\"function f(items: borrowed Array of Int) -> Option of Int:\n    for item in items:\n        if item % 2 is not 0:\n            continue\n        return Some(item)\n    loop:\n        break\n    return\n\"#)"
+expression: "parse_body(r#\"def f(items: borrowed Array of Int) -> Option of Int:\n    for item in items:\n        if item % 2 is not 0:\n            continue\n        return Some(item)\n    loop:\n        break\n    return\n\"#)"
 ---
-Block @63..193
-  For @63..158
-    pattern: Binding `item` @67..71
-    iter: Path `items` @75..80
-    body: Block @90..158
-      If @90..132
-        cond: Binary `!=` @93..110
-          lhs: Binary `%` @93..101
-            lhs: Path `item` @93..97
-            rhs: Int 2 @100..101
-          rhs: Int 0 @109..110
-        then: Block @124..132
-          Continue @124..132
-      Return @141..158
-        value: Call @148..158
-          callee: Path `Some` @148..152
+Block @58..188
+  For @58..153
+    pattern: Binding `item` @62..66
+    iter: Path `items` @70..75
+    body: Block @85..153
+      If @85..127
+        cond: Binary `!=` @88..105
+          lhs: Binary `%` @88..96
+            lhs: Path `item` @88..92
+            rhs: Int 2 @95..96
+          rhs: Int 0 @104..105
+        then: Block @119..127
+          Continue @119..127
+      Return @136..153
+        value: Call @143..153
+          callee: Path `Some` @143..147
           args
-            Path `item` @153..157
-  Loop @163..182
-    body: Block @177..182
-      Break @177..182
-  Return @187..193
+            Path `item` @148..152
+  Loop @158..177
+    body: Block @172..177
+      Break @172..177
+  Return @182..188
 --- diagnostics ---
 (none)

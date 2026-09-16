@@ -7,7 +7,7 @@
 #A comment with no space after the hash.
 #### Several hashes are just part of the comment text.
 # A comment containing a # hash, a "quoted string", 'c', and 0xFF.
-# A comment holding words that would otherwise be keywords: function return
+# A comment holding words that would otherwise be keywords: def return
 # let be mutable type choice implements has of borrowed any null interface
 # giving >= — none of them lex, because the line ended at the hash.
 # A comment with unicode: ¿qué tal? — 你好 — 😀
@@ -20,7 +20,7 @@ type Doc:      # trailing comment after a declaration header
         # A comment indented far past any real block. It does not open one:
         # comment-only lines are invisible to the indentation stack.
 
-function main():
+def main():
     # A comment as the first thing in a block.
     let mutable a be 1   # trailing comment after a statement
 
@@ -28,7 +28,7 @@ function main():
 
     let b be 2
 
-# A comment at column 0 in the middle of a function does not close its block.
+# A comment at column 0 in the middle of a def does not close its block.
     let c be 3
 
     if a < b:

@@ -2,47 +2,47 @@
 # Spec: §4.4 declarations, §4.5 blocks, §6.3 auto-borrow at call sites.
 #
 # Covers: functions with and without a return type, early `return`,
-# the last expression as the function value, parameters by shared and
+# the last expression as the def value, parameters by shared and
 # exclusive borrow, the unit type, and recursion.
 
 # Omitted return type means unit `()`.
-function greet():
+def greet():
     print("hello")
 
 # Explicit unit is also spelled out.
-function greet_twice() -> ():
+def greet_twice() -> ():
     greet()
     greet()
 
-# The value of a function is its last expression: no `return` needed.
-function add(a: Int, b: Int) -> Int:
+# The value of a def is its last expression: no `return` needed.
+def add(a: Int, b: Int) -> Int:
     a + b
 
 # `return` exists for early exit. This is a formula, so it is written with
 # symbols (§4.6).
-function clamp_low(value: Int, floor: Int) -> Int:
+def clamp_low(value: Int, floor: Int) -> Int:
     if value < floor:
         return floor
     value
 
 # Several parameters, all borrowed. `borrowed T` is what `&T` was.
-function longest(a: borrowed String, b: borrowed String) -> borrowed String:
+def longest(a: borrowed String, b: borrowed String) -> borrowed String:
     if a.length() > b.length(): a else: b
 
 # Exclusive borrow: the callee may mutate through it. Borrows
 # auto-dereference for assignment and Science has no dereference operator at
 # all (§4.7), so the parameter is written plainly on both sides. Assignment
 # uses `be`, the same word that binds (§4.4).
-function bump(counter: mutable borrowed Int):
+def bump(counter: mutable borrowed Int):
     counter be counter + 1
 
 # Ownership is taken: the caller loses the value.
-function consume(text: String) -> Int:
+def consume(text: String) -> Int:
     text.length()
 
 # Recursion. `<=` reads as prose here, where the guard is a base case
 # rather than a calculation.
-function factorial(n: Int) -> Int:
+def factorial(n: Int) -> Int:
     if n <= 1:
         1
     else:
@@ -50,11 +50,11 @@ function factorial(n: Int) -> Int:
 
 # A predicate whose whole point is the word: `is not` is the only spelling of
 # inequality, and it says what it means.
-function has_name(name: borrowed String) -> Bool:
+def has_name(name: borrowed String) -> Bool:
     name is not ""
 
 # Nested calls, and a call used as an argument.
-function main():
+def main():
     greet()
     greet_twice()
     print(add(2, 3))

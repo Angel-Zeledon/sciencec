@@ -22,19 +22,19 @@ type Point:
 
 # §8 gives `String` no `clone`, so an owned copy is built from `String.new()`
 # and `push_str`, which is the whole of what §8 offers for building one.
-function copy_of(text: borrowed String) -> String:
+def copy_of(text: borrowed String) -> String:
     let mutable out be String.new()
     out.push_str(text)
     out
 
-function emphasized(text: borrowed String) -> String:
+def emphasized(text: borrowed String) -> String:
     let mutable out be String.new()
     out.push_str("*")
     out.push_str(text)
     out.push_str("*")
     out
 
-function quoted(text: borrowed String) -> String:
+def quoted(text: borrowed String) -> String:
     let mutable out be String.new()
     out.push_str("\"")
     out.push_str(text)
@@ -43,7 +43,7 @@ function quoted(text: borrowed String) -> String:
 
 # --- Variant patterns, inline arms ------------------------------------------
 
-function name_of(format: borrowed Format) -> String:
+def name_of(format: borrowed Format) -> String:
     match format:
         Plain: "plain"
         Markdown: "markdown"
@@ -52,7 +52,7 @@ function name_of(format: borrowed Format) -> String:
 # The same match with every pattern qualified by its type. `Plain` and
 # `Format.Plain` are the same thing, and the qualified form is what
 # disambiguates when two choices in scope share a variant name (§4.7).
-function name_of_qualified(format: borrowed Format) -> String:
+def name_of_qualified(format: borrowed Format) -> String:
     match format:
         Format.Plain: "plain"
         Format.Markdown: "markdown"
@@ -60,21 +60,21 @@ function name_of_qualified(format: borrowed Format) -> String:
 
 # --- Literal patterns and the wildcard --------------------------------------
 
-function digit_name(digit: Int) -> String:
+def digit_name(digit: Int) -> String:
     match digit:
         0: "zero"
         1: "one"
         2: "two"
         _: "many"
 
-function char_name(c: borrowed Char) -> String:
+def char_name(c: borrowed Char) -> String:
     match c:
         ',': "comma"
         ';': "semicolon"
         '.': "period"
         _: "symbol"
 
-function is_vowel(c: Char) -> Bool:
+def is_vowel(c: Char) -> Bool:
     match c:
         'a': true
         'e': true
@@ -83,20 +83,20 @@ function is_vowel(c: Char) -> Bool:
         'u': true
         _: false
 
-function is_greeting(text: borrowed String) -> Bool:
+def is_greeting(text: borrowed String) -> Bool:
     match text:
         "hello": true
         "hi": true
         _: false
 
-function describe_flag(flag: Bool) -> String:
+def describe_flag(flag: Bool) -> String:
     match flag:
         true: "on"
         false: "off"
 
 # --- Variant patterns that bind their payload -------------------------------
 
-function describe(token: borrowed Token) -> String:
+def describe(token: borrowed Token) -> String:
     match token:
         Ident(name): copy_of(name)
         Number(value): digit_name(value)
@@ -105,20 +105,20 @@ function describe(token: borrowed Token) -> String:
 
 # --- Alternatives with `|` --------------------------------------------------
 
-function size_class(n: Int) -> String:
+def size_class(n: Int) -> String:
     match n:
         0 | 1 | 2: "small"
         3 | 4 | 5 | 6: "medium"
         _: "large"
 
-function is_punctuation(token: borrowed Token) -> Bool:
+def is_punctuation(token: borrowed Token) -> Bool:
     match token:
         Symbol(',') | Symbol(';') | Symbol('.'): true
         _: false
 
 # --- Tuple patterns ---------------------------------------------------------
 
-function quadrant(point: (Int, Int)) -> String:
+def quadrant(point: (Int, Int)) -> String:
     match point:
         (0, 0): "origin"
         (x, 0): "on the X axis"
@@ -127,7 +127,7 @@ function quadrant(point: (Int, Int)) -> String:
 
 # --- Record patterns, which mirror construction with named fields -----------
 
-function classify(point: borrowed Point) -> String:
+def classify(point: borrowed Point) -> String:
     match point:
         Point(x: 0, y: 0): "origin"
         Point(x: 0, y: y): "on the Y axis"
@@ -135,13 +135,13 @@ function classify(point: borrowed Point) -> String:
         Point(x: x, y: y): "general"
 
 # A record pattern may ignore a field with the wildcard.
-function x_of(point: borrowed Point) -> Int:
+def x_of(point: borrowed Point) -> Int:
     match point:
         Point(x: x, y: _): x
 
 # --- A binding pattern that catches everything ------------------------------
 
-function passthrough(n: Int) -> Int:
+def passthrough(n: Int) -> Int:
     match n:
         0: 1
         other: other
@@ -150,7 +150,7 @@ function passthrough(n: Int) -> Int:
 
 # `panic` has type `Never`, which coerces to any type. That is what lets one
 # arm of a `match` bail out while the others produce a `String` (§4.7).
-function require_text(token: borrowed Token) -> String:
+def require_text(token: borrowed Token) -> String:
     match token:
         Ident(name): copy_of(name)
         Number(value): digit_name(value)
@@ -159,7 +159,7 @@ function require_text(token: borrowed Token) -> String:
 
 # --- Block-form arms, and nesting -------------------------------------------
 
-function render(token: borrowed Token, format: borrowed Format) -> String:
+def render(token: borrowed Token, format: borrowed Format) -> String:
     match token:
         Number(value):
             let doubled be value * 2
@@ -180,7 +180,7 @@ function render(token: borrowed Token, format: borrowed Format) -> String:
 
 # There is no `if` in a pattern, so a condition on the payload goes in the arm
 # body.
-function shout_level(token: borrowed Token) -> String:
+def shout_level(token: borrowed Token) -> String:
     match token:
         Ident(name):
             if name.length() > 10: "long" else: "short"
@@ -191,7 +191,7 @@ function shout_level(token: borrowed Token) -> String:
 
 # --- `match` as an expression in a binding ----------------------------------
 
-function main():
+def main():
     let label be match Markdown:
         Plain: "plain"
         Markdown: "markdown"

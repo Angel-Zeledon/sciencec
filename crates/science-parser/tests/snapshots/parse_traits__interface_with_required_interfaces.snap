@@ -1,15 +1,15 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(r#\"interface Pretty: Summarize + Clone:\n    function pretty(self) -> String\n\"#)"
+expression: "parse_source(r#\"interface Pretty: Summarize + Clone:\n    def pretty(self) -> String\n\"#)"
 ---
-Module @0..73
-  Interface `Pretty` @0..72
+Module @0..68
+  Interface `Pretty` @0..67
     supers
       Bound `Summarize` @18..27
       Bound `Clone` @30..35
     methods
-      Fn `pretty` @41..72
-        receiver: self @57..61
-        ret: Path `String` @66..72
+      Fn `pretty` @41..67
+        receiver: self @52..56
+        ret: Path `String` @61..67
 --- diagnostics ---
 (none)

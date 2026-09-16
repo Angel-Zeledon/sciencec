@@ -321,7 +321,7 @@
 //!   representation changes at the boundary — a narrowed `T?` is the same bytes
 //!   it always was, read under a stronger fact. Nothing here participates.
 //! - **`Iterate`'s method set.** `collections-and-chains.md` gives the interface
-//!   one method, `function next(mutable self) -> Self.Item?`, and Decision 15 of
+//!   one method, `def next(mutable self) -> Self.Item?`, and Decision 15 of
 //!   `type-checking-and-mir.md` §6.3 leaves it unchanged, adding failure to a
 //!   sibling `TryIterate` instead. [`science_chars_next`] conforms: one `next`,
 //!   following the owned-`T?` convention of §5.3. `TryIterate` exists for the

@@ -5,7 +5,7 @@
 # fixes only the range SC0001-SC0099; the lexer allocated SC0008 out of it
 # and uses it for all three ways of getting this wrong.
 
-function main():
+def main():
     let empty be ''
     let crowded be 'abc'
     let unclosed be 'a

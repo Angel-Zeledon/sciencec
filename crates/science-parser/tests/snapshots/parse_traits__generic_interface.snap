@@ -1,16 +1,16 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(r#\"interface From of T:\n    function from(value: T) -> Self\n\"#)"
+expression: "parse_source(r#\"interface From of T:\n    def from(value: T) -> Self\n\"#)"
 ---
-Module @0..57
-  Interface `From` @0..56
+Module @0..52
+  Interface `From` @0..51
     generics
       TypeParam `T` @18..19
     methods
-      Fn `from` @25..56
+      Fn `from` @25..51
         params
-          Param `value` @39..47
-            type: Path `T` @46..47
-        ret: SelfType @52..56
+          Param `value` @34..42
+            type: Path `T` @41..42
+        ret: SelfType @47..51
 --- diagnostics ---
 (none)

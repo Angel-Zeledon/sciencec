@@ -1,6 +1,6 @@
 //! The prelude: the names §5.1 and §8 say exist before any file is read.
 //!
-//! Without this, `function f(a: borrowed String)` reports an unresolved name, and every
+//! Without this, `def f(a: borrowed String)` reports an unresolved name, and every
 //! later phase would have to special-case a handful of strings — exactly the
 //! string lookup the HIR exists to abolish. So the primitives, the library
 //! types, their variants, the compiler-known traits and the free functions all

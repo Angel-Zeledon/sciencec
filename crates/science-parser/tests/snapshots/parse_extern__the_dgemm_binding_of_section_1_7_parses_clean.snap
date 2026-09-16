@@ -2,304 +2,304 @@
 source: crates/science-parser/tests/parse_extern.rs
 expression: parse_source(source)
 ---
-Module @809..3450
-  Extern "C" unsafe @809..1705
-    Library "openblas" @827..871
-      pkg-config: Str "openblas" @861..871
+Module @804..3430
+  Extern "C" unsafe @804..1695
+    Library "openblas" @822..866
+      pkg-config: Str "openblas" @856..866
     items
-      ExternAlias `CblasLayout` @878..902
-        type: Path `CInt` @898..902
-      ExternConst `CBLAS_ROW_MAJOR` @907..950
+      ExternAlias `CblasLayout` @873..897
+        type: Path `CInt` @893..897
+      ExternConst `CBLAS_ROW_MAJOR` @902..945
         value: Int 101
-        type: Path `CblasLayout` @939..950
-      ExternConst `CBLAS_COL_MAJOR` @955..998
+        type: Path `CblasLayout` @934..945
+      ExternConst `CBLAS_COL_MAJOR` @950..993
         value: Int 102
-        type: Path `CblasLayout` @987..998
-      ExternAlias `CblasTranspose` @1004..1031
-        type: Path `CInt` @1027..1031
-      ExternConst `CBLAS_NO_TRANS` @1036..1081
+        type: Path `CblasLayout` @982..993
+      ExternAlias `CblasTranspose` @999..1026
+        type: Path `CInt` @1022..1026
+      ExternConst `CBLAS_NO_TRANS` @1031..1076
         value: Int 111
-        type: Path `CblasTranspose` @1067..1081
-      ExternConst `CBLAS_TRANS` @1086..1128
+        type: Path `CblasTranspose` @1062..1076
+      ExternConst `CBLAS_TRANS` @1081..1123
         value: Int 112
-        type: Path `CblasTranspose` @1114..1128
-      ExternAlias `BlasInt` @1334..1353
-        type: Path `I32` @1350..1353
-      ExternFn `cblas_dgemm` @1359..1705
+        type: Path `CblasTranspose` @1109..1123
+      ExternAlias `BlasInt` @1329..1348
+        type: Path `I32` @1345..1348
+      ExternFn `cblas_dgemm` @1354..1695
         params
-          Param `layout` @1389..1408
-            type: Path `CblasLayout` @1397..1408
-          Param `transpose_a` @1418..1445
-            type: Path `CblasTranspose` @1431..1445
-          Param `transpose_b` @1455..1482
-            type: Path `CblasTranspose` @1468..1482
-          Param `m` @1492..1502
-            type: Path `BlasInt` @1495..1502
-          Param `n` @1504..1514
-            type: Path `BlasInt` @1507..1514
-          Param `k` @1516..1526
-            type: Path `BlasInt` @1519..1526
-          Param `alpha` @1536..1546
-            type: Path `F64` @1543..1546
-          Param `a` @1556..1574
-            type: Path `ffi.Span` @1559..1574
+          Param `layout` @1379..1398
+            type: Path `CblasLayout` @1387..1398
+          Param `transpose_a` @1408..1435
+            type: Path `CblasTranspose` @1421..1435
+          Param `transpose_b` @1445..1472
+            type: Path `CblasTranspose` @1458..1472
+          Param `m` @1482..1492
+            type: Path `BlasInt` @1485..1492
+          Param `n` @1494..1504
+            type: Path `BlasInt` @1497..1504
+          Param `k` @1506..1516
+            type: Path `BlasInt` @1509..1516
+          Param `alpha` @1526..1536
+            type: Path `F64` @1533..1536
+          Param `a` @1546..1564
+            type: Path `ffi.Span` @1549..1564
               generics of `Span`
-                Path `F64` @1571..1574
-          Param `lda` @1576..1588
-            type: Path `BlasInt` @1581..1588
-          Param `b` @1598..1616
-            type: Path `ffi.Span` @1601..1616
+                Path `F64` @1561..1564
+          Param `lda` @1566..1578
+            type: Path `BlasInt` @1571..1578
+          Param `b` @1588..1606
+            type: Path `ffi.Span` @1591..1606
               generics of `Span`
-                Path `F64` @1613..1616
-          Param `ldb` @1618..1630
-            type: Path `BlasInt` @1623..1630
-          Param `beta` @1640..1649
-            type: Path `F64` @1646..1649
-          Param `c` @1659..1684
-            type: Path `ffi.MutableSpan` @1662..1684
+                Path `F64` @1603..1606
+          Param `ldb` @1608..1620
+            type: Path `BlasInt` @1613..1620
+          Param `beta` @1630..1639
+            type: Path `F64` @1636..1639
+          Param `c` @1649..1674
+            type: Path `ffi.MutableSpan` @1652..1674
               generics of `MutableSpan`
-                Path `F64` @1681..1684
-          Param `ldc` @1686..1698
-            type: Path `BlasInt` @1691..1698
-  Record `MatrixView` @1707..1797
+                Path `F64` @1671..1674
+          Param `ldc` @1676..1688
+            type: Path `BlasInt` @1681..1688
+  Record `MatrixView` @1697..1787
     fields
-      Field `data` @1728..1749
-        type: Path `ffi.Span` @1734..1749
+      Field `data` @1718..1739
+        type: Path `ffi.Span` @1724..1739
           generics of `Span`
-            Path `F64` @1746..1749
-      Field `rows` @1754..1763
-        type: Path `Int` @1760..1763
-      Field `columns` @1768..1780
-        type: Path `Int` @1777..1780
-      Field `leading` @1785..1797
-        type: Path `Int` @1794..1797
-  Choice `BlasError` public @1857..1935
+            Path `F64` @1736..1739
+      Field `rows` @1744..1753
+        type: Path `Int` @1750..1753
+      Field `columns` @1758..1770
+        type: Path `Int` @1767..1770
+      Field `leading` @1775..1787
+        type: Path `Int` @1784..1787
+  Choice `BlasError` public @1847..1925
     variants
-      Variant `Shape` @1886..1901
+      Variant `Shape` @1876..1891
         payload
-          Path `Int` @1892..1895
-          Path `Int` @1897..1900
-      Variant `Stride` @1906..1922
+          Path `Int` @1882..1885
+          Path `Int` @1887..1890
+      Variant `Stride` @1896..1912
         payload
-          Path `Int` @1913..1916
-          Path `Int` @1918..1921
-      Variant `Overflow` @1927..1935
-  Fn `gemm` public @1937..3148
+          Path `Int` @1903..1906
+          Path `Int` @1908..1911
+      Variant `Overflow` @1917..1925
+  Fn `gemm` public @1927..3133
     params
-      Param `a` @1967..1989
-        type: Borrowed @1970..1989
-          Path `MatrixView` @1979..1989
-      Param `b` @1999..2021
-        type: Borrowed @2002..2021
-          Path `MatrixView` @2011..2021
-      Param `c` @2031..2061
-        type: Borrowed mutable @2034..2061
-          Path `MatrixView` @2051..2061
-      Param `alpha` @2071..2081
-        type: Path `F64` @2078..2081
-      Param `beta` @2091..2100
-        type: Path `F64` @2097..2100
-    ret: Tuple @2105..2121
-      Unit @2106..2108
-      Nullable @2110..2120
-        Path `BlasError` @2110..2119
-    body: Block @2128..3148
-      If @2128..2211
-        cond: Binary `!=` @2131..2154
-          lhs: Field `columns` @2131..2140
-            base: Path `a` @2131..2132
-          rhs: Field `rows` @2148..2154
-            base: Path `b` @2148..2149
-        then: Block @2164..2211
-          Return @2164..2211
-            value: Tuple @2171..2211
-              Unit @2172..2174
-              Method `Shape` @2176..2210
-                receiver: Path `BlasError` @2176..2185
+      Param `a` @1952..1974
+        type: Borrowed @1955..1974
+          Path `MatrixView` @1964..1974
+      Param `b` @1984..2006
+        type: Borrowed @1987..2006
+          Path `MatrixView` @1996..2006
+      Param `c` @2016..2046
+        type: Borrowed mutable @2019..2046
+          Path `MatrixView` @2036..2046
+      Param `alpha` @2056..2066
+        type: Path `F64` @2063..2066
+      Param `beta` @2076..2085
+        type: Path `F64` @2082..2085
+    ret: Tuple @2090..2106
+      Unit @2091..2093
+      Nullable @2095..2105
+        Path `BlasError` @2095..2104
+    body: Block @2113..3133
+      If @2113..2196
+        cond: Binary `!=` @2116..2139
+          lhs: Field `columns` @2116..2125
+            base: Path `a` @2116..2117
+          rhs: Field `rows` @2133..2139
+            base: Path `b` @2133..2134
+        then: Block @2149..2196
+          Return @2149..2196
+            value: Tuple @2156..2196
+              Unit @2157..2159
+              Method `Shape` @2161..2195
+                receiver: Path `BlasError` @2161..2170
                 args
-                  Field `columns` @2192..2201
-                    base: Path `a` @2192..2193
-                  Field `rows` @2203..2209
-                    base: Path `b` @2203..2204
-      If @2216..2323
-        cond: Binary `or` @2219..2269
-          lhs: Binary `!=` @2219..2239
-            lhs: Field `rows` @2219..2225
-              base: Path `c` @2219..2220
-            rhs: Field `rows` @2233..2239
-              base: Path `a` @2233..2234
-          rhs: Binary `!=` @2243..2269
-            lhs: Field `columns` @2243..2252
-              base: Path `c` @2243..2244
-            rhs: Field `columns` @2260..2269
-              base: Path `b` @2260..2261
-        then: Block @2279..2323
-          Return @2279..2323
-            value: Tuple @2286..2323
-              Unit @2287..2289
-              Method `Shape` @2291..2322
-                receiver: Path `BlasError` @2291..2300
+                  Field `columns` @2177..2186
+                    base: Path `a` @2177..2178
+                  Field `rows` @2188..2194
+                    base: Path `b` @2188..2189
+      If @2201..2308
+        cond: Binary `or` @2204..2254
+          lhs: Binary `!=` @2204..2224
+            lhs: Field `rows` @2204..2210
+              base: Path `c` @2204..2205
+            rhs: Field `rows` @2218..2224
+              base: Path `a` @2218..2219
+          rhs: Binary `!=` @2228..2254
+            lhs: Field `columns` @2228..2237
+              base: Path `c` @2228..2229
+            rhs: Field `columns` @2245..2254
+              base: Path `b` @2245..2246
+        then: Block @2264..2308
+          Return @2264..2308
+            value: Tuple @2271..2308
+              Unit @2272..2274
+              Method `Shape` @2276..2307
+                receiver: Path `BlasError` @2276..2285
                 args
-                  Field `rows` @2307..2313
-                    base: Path `c` @2307..2308
-                  Field `rows` @2315..2321
-                    base: Path `a` @2315..2316
-      Let `checked_a, err_a` @2404..2448
-        value: Call @2428..2448
-          callee: Path `covers` @2428..2434
+                  Field `rows` @2292..2298
+                    base: Path `c` @2292..2293
+                  Field `rows` @2300..2306
+                    base: Path `a` @2300..2301
+      Let `checked_a, err_a` @2389..2433
+        value: Call @2413..2433
+          callee: Path `covers` @2413..2419
           args
-            Path `a` @2435..2436
-            Field `columns` @2438..2447
-              base: Path `a` @2438..2439
-      If @2453..2490
-        cond: Present @2456..2462
-          Path `err_a` @2456..2461
-        then: Block @2472..2490
-          Return @2472..2490
-            value: Tuple @2479..2490
-              Unit @2480..2482
-              Path `err_a` @2484..2489
-      Let `checked_b, err_b` @2495..2539
-        value: Call @2519..2539
-          callee: Path `covers` @2519..2525
+            Path `a` @2420..2421
+            Field `columns` @2423..2432
+              base: Path `a` @2423..2424
+      If @2438..2475
+        cond: Present @2441..2447
+          Path `err_a` @2441..2446
+        then: Block @2457..2475
+          Return @2457..2475
+            value: Tuple @2464..2475
+              Unit @2465..2467
+              Path `err_a` @2469..2474
+      Let `checked_b, err_b` @2480..2524
+        value: Call @2504..2524
+          callee: Path `covers` @2504..2510
           args
-            Path `b` @2526..2527
-            Field `columns` @2529..2538
-              base: Path `b` @2529..2530
-      If @2544..2581
-        cond: Present @2547..2553
-          Path `err_b` @2547..2552
-        then: Block @2563..2581
-          Return @2563..2581
-            value: Tuple @2570..2581
-              Unit @2571..2573
-              Path `err_b` @2575..2580
-      Let `checked_c, err_c` @2586..2630
-        value: Call @2610..2630
-          callee: Path `covers` @2610..2616
+            Path `b` @2511..2512
+            Field `columns` @2514..2523
+              base: Path `b` @2514..2515
+      If @2529..2566
+        cond: Present @2532..2538
+          Path `err_b` @2532..2537
+        then: Block @2548..2566
+          Return @2548..2566
+            value: Tuple @2555..2566
+              Unit @2556..2558
+              Path `err_b` @2560..2565
+      Let `checked_c, err_c` @2571..2615
+        value: Call @2595..2615
+          callee: Path `covers` @2595..2601
           args
-            Path `c` @2617..2618
-            Field `columns` @2620..2629
-              base: Path `c` @2620..2621
-      If @2635..2672
-        cond: Present @2638..2644
-          Path `err_c` @2638..2643
-        then: Block @2654..2672
-          Return @2654..2672
-            value: Tuple @2661..2672
-              Unit @2662..2664
-              Path `err_c` @2666..2671
-      tail: Call @2678..3148
-        callee: Unsafe @2678..3133
-          body: Block @2694..3133
-            tail: StructLit `cblas_dgemm` @2694..3133
+            Path `c` @2602..2603
+            Field `columns` @2605..2614
+              base: Path `c` @2605..2606
+      If @2620..2657
+        cond: Present @2623..2629
+          Path `err_c` @2623..2628
+        then: Block @2639..2657
+          Return @2639..2657
+            value: Tuple @2646..2657
+              Unit @2647..2649
+              Path `err_c` @2651..2656
+      tail: Call @2663..3133
+        callee: Unsafe @2663..3118
+          body: Block @2679..3118
+            tail: StructLit `cblas_dgemm` @2679..3118
               fields
-                FieldInit `layout` @2719..2742
-                  value: Path `CBLAS_COL_MAJOR` @2727..2742
-                FieldInit `transpose_a` @2756..2783
-                  value: Path `CBLAS_NO_TRANS` @2769..2783
-                FieldInit `transpose_b` @2797..2824
-                  value: Path `CBLAS_NO_TRANS` @2810..2824
-                FieldInit `m` @2838..2858
-                  value: Cast @2841..2858
-                    expr: Field `rows` @2841..2847
-                      base: Path `a` @2841..2842
-                    type: Path `BlasInt` @2851..2858
-                FieldInit `n` @2872..2895
-                  value: Cast @2875..2895
-                    expr: Field `columns` @2875..2884
-                      base: Path `b` @2875..2876
-                    type: Path `BlasInt` @2888..2895
-                FieldInit `k` @2909..2932
-                  value: Cast @2912..2932
-                    expr: Field `columns` @2912..2921
-                      base: Path `a` @2912..2913
-                    type: Path `BlasInt` @2925..2932
-                FieldInit `alpha` @2946..2958
-                  value: Path `alpha` @2953..2958
-                FieldInit `a` @2972..2981
-                  value: Field `data` @2975..2981
-                    base: Path `a` @2975..2976
-                FieldInit `lda` @2983..3008
-                  value: Cast @2988..3008
-                    expr: Field `leading` @2988..2997
-                      base: Path `a` @2988..2989
-                    type: Path `BlasInt` @3001..3008
-                FieldInit `b` @3022..3031
-                  value: Field `data` @3025..3031
-                    base: Path `b` @3025..3026
-                FieldInit `ldb` @3033..3058
-                  value: Cast @3038..3058
-                    expr: Field `leading` @3038..3047
-                      base: Path `b` @3038..3039
-                    type: Path `BlasInt` @3051..3058
-                FieldInit `beta` @3072..3082
-                  value: Path `beta` @3078..3082
-                FieldInit `c` @3096..3105
-                  value: Field `data` @3099..3105
-                    base: Path `c` @3099..3100
-                FieldInit `ldc` @3107..3132
-                  value: Cast @3112..3132
-                    expr: Field `leading` @3112..3121
-                      base: Path `c` @3112..3113
-                    type: Path `BlasInt` @3125..3132
+                FieldInit `layout` @2704..2727
+                  value: Path `CBLAS_COL_MAJOR` @2712..2727
+                FieldInit `transpose_a` @2741..2768
+                  value: Path `CBLAS_NO_TRANS` @2754..2768
+                FieldInit `transpose_b` @2782..2809
+                  value: Path `CBLAS_NO_TRANS` @2795..2809
+                FieldInit `m` @2823..2843
+                  value: Cast @2826..2843
+                    expr: Field `rows` @2826..2832
+                      base: Path `a` @2826..2827
+                    type: Path `BlasInt` @2836..2843
+                FieldInit `n` @2857..2880
+                  value: Cast @2860..2880
+                    expr: Field `columns` @2860..2869
+                      base: Path `b` @2860..2861
+                    type: Path `BlasInt` @2873..2880
+                FieldInit `k` @2894..2917
+                  value: Cast @2897..2917
+                    expr: Field `columns` @2897..2906
+                      base: Path `a` @2897..2898
+                    type: Path `BlasInt` @2910..2917
+                FieldInit `alpha` @2931..2943
+                  value: Path `alpha` @2938..2943
+                FieldInit `a` @2957..2966
+                  value: Field `data` @2960..2966
+                    base: Path `a` @2960..2961
+                FieldInit `lda` @2968..2993
+                  value: Cast @2973..2993
+                    expr: Field `leading` @2973..2982
+                      base: Path `a` @2973..2974
+                    type: Path `BlasInt` @2986..2993
+                FieldInit `b` @3007..3016
+                  value: Field `data` @3010..3016
+                    base: Path `b` @3010..3011
+                FieldInit `ldb` @3018..3043
+                  value: Cast @3023..3043
+                    expr: Field `leading` @3023..3032
+                      base: Path `b` @3023..3024
+                    type: Path `BlasInt` @3036..3043
+                FieldInit `beta` @3057..3067
+                  value: Path `beta` @3063..3067
+                FieldInit `c` @3081..3090
+                  value: Field `data` @3084..3090
+                    base: Path `c` @3084..3085
+                FieldInit `ldc` @3092..3117
+                  value: Cast @3097..3117
+                    expr: Field `leading` @3097..3106
+                      base: Path `c` @3097..3098
+                    type: Path `BlasInt` @3110..3117
         args
-          Unit @3139..3141
-          Null @3143..3147
-  Fn `covers` @3150..3449
+          Unit @3124..3126
+          Null @3128..3132
+  Fn `covers` @3135..3429
     params
-      Param `m` @3166..3188
-        type: Borrowed @3169..3188
-          Path `MatrixView` @3178..3188
-      Param `columns` @3190..3202
-        type: Path `Int` @3199..3202
-    ret: Tuple @3207..3223
-      Unit @3208..3210
-      Nullable @3212..3222
-        Path `BlasError` @3212..3221
-    body: Block @3229..3449
-      Let `needed` @3229..3277
-        value: Binary `+` @3243..3277
-          lhs: Binary `*` @3243..3268
-            lhs: Field `leading` @3243..3252
-              base: Path `m` @3243..3244
-            rhs: Binary `-` @3256..3267
-              lhs: Path `columns` @3256..3263
-              rhs: Int 1 @3266..3267
-          rhs: Field `rows` @3271..3277
-            base: Path `m` @3271..3272
-      If @3282..3361
-        cond: Binary `<` @3285..3303
-          lhs: Field `leading` @3285..3294
-            base: Path `m` @3285..3286
-          rhs: Field `rows` @3297..3303
-            base: Path `m` @3297..3298
-        then: Block @3313..3361
-          Return @3313..3361
-            value: Tuple @3320..3361
-              Unit @3321..3323
-              Method `Stride` @3325..3360
-                receiver: Path `BlasError` @3325..3334
+      Param `m` @3146..3168
+        type: Borrowed @3149..3168
+          Path `MatrixView` @3158..3168
+      Param `columns` @3170..3182
+        type: Path `Int` @3179..3182
+    ret: Tuple @3187..3203
+      Unit @3188..3190
+      Nullable @3192..3202
+        Path `BlasError` @3192..3201
+    body: Block @3209..3429
+      Let `needed` @3209..3257
+        value: Binary `+` @3223..3257
+          lhs: Binary `*` @3223..3248
+            lhs: Field `leading` @3223..3232
+              base: Path `m` @3223..3224
+            rhs: Binary `-` @3236..3247
+              lhs: Path `columns` @3236..3243
+              rhs: Int 1 @3246..3247
+          rhs: Field `rows` @3251..3257
+            base: Path `m` @3251..3252
+      If @3262..3341
+        cond: Binary `<` @3265..3283
+          lhs: Field `leading` @3265..3274
+            base: Path `m` @3265..3266
+          rhs: Field `rows` @3277..3283
+            base: Path `m` @3277..3278
+        then: Block @3293..3341
+          Return @3293..3341
+            value: Tuple @3300..3341
+              Unit @3301..3303
+              Method `Stride` @3305..3340
+                receiver: Path `BlasError` @3305..3314
                 args
-                  Field `leading` @3342..3351
-                    base: Path `m` @3342..3343
-                  Field `rows` @3353..3359
-                    base: Path `m` @3353..3354
-      tail: Call @3366..3449
-        callee: If @3366..3434
-          cond: Binary `>` @3369..3393
-            lhs: Path `needed` @3369..3375
-            rhs: Method `length` @3378..3393
-              receiver: Field `data` @3378..3384
-                base: Path `m` @3378..3379
-          then: Block @3403..3434
-            Return @3403..3434
-              value: Tuple @3410..3434
-                Unit @3411..3413
-                Field `Overflow` @3415..3433
-                  base: Path `BlasError` @3415..3424
+                  Field `leading` @3322..3331
+                    base: Path `m` @3322..3323
+                  Field `rows` @3333..3339
+                    base: Path `m` @3333..3334
+      tail: Call @3346..3429
+        callee: If @3346..3414
+          cond: Binary `>` @3349..3373
+            lhs: Path `needed` @3349..3355
+            rhs: Method `length` @3358..3373
+              receiver: Field `data` @3358..3364
+                base: Path `m` @3358..3359
+          then: Block @3383..3414
+            Return @3383..3414
+              value: Tuple @3390..3414
+                Unit @3391..3393
+                Field `Overflow` @3395..3413
+                  base: Path `BlasError` @3395..3404
         args
-          Unit @3440..3442
-          Null @3444..3448
+          Unit @3420..3422
+          Null @3424..3428
 --- diagnostics ---
 (none)

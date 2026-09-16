@@ -1,0 +1,21 @@
+# Comments in positions the layout has no slot for. Those logical lines are
+# reproduced exactly as written rather than reformatted, and no comment moves.
+def main():
+    # A comment inside an expression with no list and no chain to hang it on.
+    let a be (1 +   # in the middle of an expression
+        2)
+
+    # A comment after a closing bracket but before the end of the line: there
+    # is no item left for it to belong to.
+    let c be (
+        1,
+        2,
+    )   # outside the list, inside the line
+        .length()
+
+    # A comment between a callee and its first argument *is* placeable — it
+    # becomes the trailing comment of the line the bracket opens — so this one
+    # is formatted like any other.
+    let b be call(  # after the opening bracket
+        x,
+    )

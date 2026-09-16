@@ -1,11 +1,11 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_source_allowing_errors(\"function f(): let x be 1\\n\")"
+expression: "parse_source_allowing_errors(\"def f(): let x be 1\\n\")"
 ---
-Module @0..25
-  Fn `f` @0..24
-    body: Block @14..24
-      Let `x` @14..24
-        value: Int 1 @23..24
+Module @0..20
+  Fn `f` @0..19
+    body: Block @9..19
+      Let `x` @9..19
+        value: Int 1 @18..19
 --- diagnostics ---
-SC0109 @14..17 the body of an inline block must be an expression, and a `let` binding is a statement; write the body as an indented block instead
+SC0109 @9..12 the body of an inline block must be an expression, and a `let` binding is a statement; write the body as an indented block instead

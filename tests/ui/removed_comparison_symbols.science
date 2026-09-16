@@ -13,7 +13,7 @@
 # The ordering symbols below are in the same expressions on purpose: they are
 # untouched, and nothing may be reported over them.
 
-function compare(a: Int, b: Int) -> Bool:
+def compare(a: Int, b: Int) -> Bool:
     let equal be a == b
     let different be a != b
     let ordered be a < b and a >= b

@@ -6,6 +6,6 @@
 # infinite, so the lexer reports it instead of letting `inf` reach the program
 # silently.
 
-function main():
+def main():
     let enormous be 1e400
     let also_enormous be 1.7976931348623159e308

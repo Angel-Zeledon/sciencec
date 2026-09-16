@@ -1,32 +1,32 @@
 ---
 source: crates/science-parser/tests/parse_extern.rs
-expression: "parse_source(r#\"function shelve(library: I32, kind: I32, size: I32, align: I32) -> I32:\n    let via be library + kind\n    let symbol be size + align\n    let available be via + symbol\n    available\n\"#)"
+expression: "parse_source(r#\"def shelve(library: I32, kind: I32, size: I32, align: I32) -> I32:\n    let via be library + kind\n    let symbol be size + align\n    let available be via + symbol\n    available\n\"#)"
 ---
-Module @0..181
-  Fn `shelve` @0..180
+Module @0..176
+  Fn `shelve` @0..175
     params
-      Param `library` @16..28
-        type: Path `I32` @25..28
-      Param `kind` @30..39
-        type: Path `I32` @36..39
-      Param `size` @41..50
-        type: Path `I32` @47..50
-      Param `align` @52..62
-        type: Path `I32` @59..62
-    ret: Path `I32` @67..70
-    body: Block @76..180
-      Let `via` @76..101
-        value: Binary `+` @87..101
-          lhs: Path `library` @87..94
-          rhs: Path `kind` @97..101
-      Let `symbol` @106..132
-        value: Binary `+` @120..132
-          lhs: Path `size` @120..124
-          rhs: Path `align` @127..132
-      Let `available` @137..166
-        value: Binary `+` @154..166
-          lhs: Path `via` @154..157
-          rhs: Path `symbol` @160..166
-      tail: Path `available` @171..180
+      Param `library` @11..23
+        type: Path `I32` @20..23
+      Param `kind` @25..34
+        type: Path `I32` @31..34
+      Param `size` @36..45
+        type: Path `I32` @42..45
+      Param `align` @47..57
+        type: Path `I32` @54..57
+    ret: Path `I32` @62..65
+    body: Block @71..175
+      Let `via` @71..96
+        value: Binary `+` @82..96
+          lhs: Path `library` @82..89
+          rhs: Path `kind` @92..96
+      Let `symbol` @101..127
+        value: Binary `+` @115..127
+          lhs: Path `size` @115..119
+          rhs: Path `align` @122..127
+      Let `available` @132..161
+        value: Binary `+` @149..161
+          lhs: Path `via` @149..152
+          rhs: Path `symbol` @155..161
+      tail: Path `available` @166..175
 --- diagnostics ---
 (none)

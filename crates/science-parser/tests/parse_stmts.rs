@@ -9,7 +9,7 @@ use common::{parse_body, parse_source_allowing_errors, strip_spans};
 #[test]
 fn let_bindings() {
     insta::assert_snapshot!(parse_body(
-        r#"function main():
+        r#"def main():
     let greeting be "hola"
     let mutable count be 0
     let annotated: Int be 42
@@ -25,7 +25,7 @@ fn let_bindings() {
 #[test]
 fn assignment_is_a_statement() {
     insta::assert_snapshot!(parse_body(
-        r#"function main():
+        r#"def main():
     a be b
     a be a + 1
     self.text be ""
@@ -43,7 +43,7 @@ fn assignment_is_a_statement() {
 /// does not render suggestions, so the fix is asserted directly.
 #[test]
 fn an_equals_sign_is_not_assignment() {
-    let source = "function main():\n    a = 3\n    a be 4\n";
+    let source = "def main():\n    a = 3\n    a be 4\n";
     insta::assert_snapshot!(parse_source_allowing_errors(source));
 
     let (tokens, _) = science_lexer::lex(common::FILE, source);
@@ -60,7 +60,7 @@ fn an_equals_sign_is_not_assignment() {
 /// inline `if`.
 #[test]
 fn assignment_takes_a_whole_expression() {
-    insta::assert_snapshot!(parse_body("function main():\n    a be if flag: 1 else: 2\n"));
+    insta::assert_snapshot!(parse_body("def main():\n    a be if flag: 1 else: 2\n"));
 }
 
 /// An assignment inside an inline body. §4.5 rejects a *statement* there, but
@@ -70,7 +70,7 @@ fn assignment_takes_a_whole_expression() {
 #[test]
 fn an_assignment_is_allowed_in_an_inline_body() {
     insta::assert_snapshot!(parse_body(
-        r#"function largest(items: borrowed Array of Int) -> Int:
+        r#"def largest(items: borrowed Array of Int) -> Int:
     let mutable best be 0
     for item in items:
         if item > best: best be item
@@ -84,7 +84,7 @@ fn an_assignment_is_allowed_in_an_inline_body() {
 #[test]
 fn a_let_in_an_inline_body_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "function f(flag: Bool):\n    if flag: let x be 1\n"
+        "def f(flag: Bool):\n    if flag: let x be 1\n"
     ));
 }
 
@@ -93,7 +93,7 @@ fn a_let_in_an_inline_body_is_rejected() {
 #[test]
 fn jumps() {
     insta::assert_snapshot!(parse_body(
-        r#"function f(items: borrowed Array of Int) -> Option of Int:
+        r#"def f(items: borrowed Array of Int) -> Option of Int:
     for item in items:
         if item % 2 is not 0:
             continue
@@ -110,7 +110,7 @@ fn jumps() {
 #[test]
 fn jumps_in_an_inline_body() {
     insta::assert_snapshot!(parse_body(
-        r#"function sign(n: Int) -> Int:
+        r#"def sign(n: Int) -> Int:
     if n < 0: return -1
     if n > 0: return 1
     loop: break
@@ -124,7 +124,7 @@ fn jumps_in_an_inline_body() {
 #[test]
 fn for_over_a_range() {
     insta::assert_snapshot!(parse_body(
-        r#"function f(n: Int) -> Int:
+        r#"def f(n: Int) -> Int:
     let mutable total be 0
     for i in 0..n:
         total be total + i
@@ -140,14 +140,14 @@ fn for_over_a_range() {
 #[test]
 fn the_last_expression_becomes_the_blocks_tail() {
     insta::assert_snapshot!(parse_body(
-        "function add(a: Int, b: Int) -> Int:\n    let c be a + b\n    c\n"
+        "def add(a: Int, b: Int) -> Int:\n    let c be a + b\n    c\n"
     ));
 }
 
 /// A block whose last statement is not an expression has no tail.
 #[test]
 fn a_block_ending_in_a_statement_has_no_tail() {
-    insta::assert_snapshot!(parse_body("function f():\n    let a be 1\n    a be 2\n"));
+    insta::assert_snapshot!(parse_body("def f():\n    let a be 1\n    a be 2\n"));
 }
 
 /// A statement ending in an indented block needs no newline of its own: the
@@ -155,7 +155,7 @@ fn a_block_ending_in_a_statement_has_no_tail() {
 #[test]
 fn a_statement_ending_in_a_block_needs_no_newline() {
     insta::assert_snapshot!(parse_body(
-        r#"function f():
+        r#"def f():
     if c:
         a
     b
@@ -171,7 +171,7 @@ fn a_statement_ending_in_a_block_needs_no_newline() {
 #[test]
 fn many_levels_closed_at_once() {
     insta::assert_snapshot!(parse_body(
-        r#"function f() -> Int:
+        r#"def f() -> Int:
     for row in rows:
         for cell in row:
             if cell is not 0:
@@ -187,7 +187,7 @@ fn many_levels_closed_at_once() {
 #[test]
 fn a_let_without_a_value_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "function f():\n    let a: Int\n    let b be 1\n"
+        "def f():\n    let a: Int\n    let b be 1\n"
     ));
 }
 
@@ -195,14 +195,14 @@ fn a_let_without_a_value_is_rejected() {
 #[test]
 fn two_statements_on_one_line_are_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "function f():\n    let a be 1 let b be 2\n"
+        "def f():\n    let a be 1 let b be 2\n"
     ));
 }
 
 /// The inline and the block form of a function body differ only in the spans.
 #[test]
 fn inline_and_block_bodies_agree() {
-    let inline = parse_body("function f() -> Int: 1\n");
-    let block = parse_body("function f() -> Int:\n    1\n");
+    let inline = parse_body("def f() -> Int: 1\n");
+    let block = parse_body("def f() -> Int:\n    1\n");
     assert_eq!(strip_spans(&inline), strip_spans(&block));
 }

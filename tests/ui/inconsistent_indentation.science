@@ -7,7 +7,7 @@
 # The open levels below are 0, 4 and 12. The last line is indented by 8,
 # which closes no block.
 
-function main():
+def main():
     if true:
             let a be 1
         let b be 2

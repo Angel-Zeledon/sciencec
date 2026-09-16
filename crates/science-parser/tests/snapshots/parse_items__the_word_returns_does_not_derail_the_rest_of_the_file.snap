@@ -2,14 +2,14 @@
 source: crates/science-parser/tests/parse_items.rs
 expression: parse_source_allowing_errors(source)
 ---
-Module @0..60
-  Fn `f` @0..31
-    ret: Path `Int` @21..24
-    body: Block @30..31
-      tail: Int 1 @30..31
-  Fn `g` @33..59
-    ret: Path `Int` @49..52
-    body: Block @58..59
-      tail: Int 2 @58..59
+Module @0..50
+  Fn `f` @0..26
+    ret: Path `Int` @16..19
+    body: Block @25..26
+      tail: Int 1 @25..26
+  Fn `g` @28..49
+    ret: Path `Int` @39..42
+    body: Block @48..49
+      tail: Int 2 @48..49
 --- diagnostics ---
-SC0118 @13..20 the return type is written `->`
+SC0118 @8..15 the return type is written `->`

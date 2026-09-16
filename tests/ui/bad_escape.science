@@ -7,6 +7,6 @@
 # `\u` is a known escape prefix, so `\users` is reported as a *malformed*
 # `\u` escape rather than an unknown one. Both messages are SC0006.
 
-function main():
+def main():
     let path be "C:\users\link\bin"
     let escaped be "a \q here"

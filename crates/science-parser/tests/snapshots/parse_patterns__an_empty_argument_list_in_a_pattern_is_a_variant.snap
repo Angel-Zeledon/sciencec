@@ -1,13 +1,13 @@
 ---
 source: crates/science-parser/tests/parse_patterns.rs
-expression: "parse_body(r#\"function f(x: Int) -> Int:\n    match x:\n        Doc(): 0\n\"#)"
+expression: "parse_body(r#\"def f(x: Int) -> Int:\n    match x:\n        Doc(): 0\n\"#)"
 ---
-Block @31..56
-  tail: Match @31..56
-    scrutinee: Path `x` @37..38
+Block @26..51
+  tail: Match @26..51
+    scrutinee: Path `x` @32..33
     arms
-      Arm @48..56
-        pattern: Variant `Doc` @48..53
-        body: Int 0 @55..56
+      Arm @43..51
+        pattern: Variant `Doc` @43..48
+        body: Int 0 @50..51
 --- diagnostics ---
 (none)

@@ -12,14 +12,14 @@
 //! use science_db::{ast, tokens, ScienceDatabase};
 //!
 //! let mut db = ScienceDatabase::new();
-//! let file = db.add_file("main.science", "function main():\n    1\n");
+//! let file = db.add_file("main.science", "def main():\n    1\n");
 //!
 //! let parsed = ast(&db, file);
 //! assert!(parsed.diagnostics().is_empty());
 //! assert_eq!(parsed.value().items.len(), 1);
 //!
 //! // Writing the same text back changes nothing, so nothing is recomputed.
-//! db.set_file_text(file, "function main():\n    1\n");
+//! db.set_file_text(file, "def main():\n    1\n");
 //! assert!(!tokens(&db, file).has_errors());
 //! ```
 //!

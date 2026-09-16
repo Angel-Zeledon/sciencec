@@ -1,26 +1,26 @@
 ---
 source: crates/science-parser/tests/parse_stmts.rs
-expression: "parse_body(r#\"function sign(n: Int) -> Int:\n    if n < 0: return -1\n    if n > 0: return 1\n    loop: break\n    0\n\"#)"
+expression: "parse_body(r#\"def sign(n: Int) -> Int:\n    if n < 0: return -1\n    if n > 0: return 1\n    loop: break\n    0\n\"#)"
 ---
-Block @34..98
-  If @34..53
-    cond: Binary `<` @37..42
-      lhs: Path `n` @37..38
-      rhs: Int 0 @41..42
-    then: Block @44..53
-      Return @44..53
-        value: Unary `-` @51..53
-          Int 1 @52..53
-  If @58..76
-    cond: Binary `>` @61..66
-      lhs: Path `n` @61..62
-      rhs: Int 0 @65..66
-    then: Block @68..76
-      Return @68..76
-        value: Int 1 @75..76
-  Loop @81..92
-    body: Block @87..92
-      Break @87..92
-  tail: Int 0 @97..98
+Block @29..93
+  If @29..48
+    cond: Binary `<` @32..37
+      lhs: Path `n` @32..33
+      rhs: Int 0 @36..37
+    then: Block @39..48
+      Return @39..48
+        value: Unary `-` @46..48
+          Int 1 @47..48
+  If @53..71
+    cond: Binary `>` @56..61
+      lhs: Path `n` @56..57
+      rhs: Int 0 @60..61
+    then: Block @63..71
+      Return @63..71
+        value: Int 1 @70..71
+  Loop @76..87
+    body: Block @82..87
+      Break @82..87
+  tail: Int 0 @92..93
 --- diagnostics ---
 (none)

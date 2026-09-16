@@ -1,16 +1,16 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source_allowing_errors(r#\"public Doc implements Summarize:\n    function summarize(self) -> String:\n        \"a\"\n\"#)"
+expression: "parse_source_allowing_errors(r#\"public Doc implements Summarize:\n    def summarize(self) -> String:\n        \"a\"\n\"#)"
 ---
-Module @0..85
-  Implements @0..84
+Module @0..80
+  Implements @0..79
     interface: Bound `Summarize` @22..31
     type: Path `Doc` @7..10
     methods
-      Fn `summarize` @37..84
-        receiver: self @56..60
-        ret: Path `String` @65..71
-        body: Block @81..84
-          tail: Str "a" @81..84
+      Fn `summarize` @37..79
+        receiver: self @51..55
+        ret: Path `String` @60..66
+        body: Block @76..79
+          tail: Str "a" @76..79
 --- diagnostics ---
 SC0107 @0..6 `public` has no meaning on an implementation

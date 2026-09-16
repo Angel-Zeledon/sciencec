@@ -2,25 +2,25 @@
 source: crates/science-parser/tests/migration.rs
 expression: parse_source_allowing_errors(source)
 ---
-Module @0..102
-  Fn `f` @0..101
+Module @0..97
+  Fn `f` @0..96
     params
-      Param `a` @11..17
-        type: Path `Int` @14..17
-      Param `b` @19..25
-        type: Path `Int` @22..25
-    ret: Path `Bool` @30..34
-    body: Block @40..101
-      Let `same` @40..58
-        value: Binary `==` @52..58
-          lhs: Path `a` @52..53
-          rhs: Path `b` @57..58
-      Let `other` @63..82
-        value: Binary `==` @76..82
-          lhs: Path `a` @76..77
-          rhs: Path `b` @81..82
-      tail: Binary `and` @87..101
-        lhs: Path `same` @87..91
-        rhs: Path `other` @96..101
+      Param `a` @6..12
+        type: Path `Int` @9..12
+      Param `b` @14..20
+        type: Path `Int` @17..20
+    ret: Path `Bool` @25..29
+    body: Block @35..96
+      Let `same` @35..53
+        value: Binary `==` @47..53
+          lhs: Path `a` @47..48
+          rhs: Path `b` @52..53
+      Let `other` @58..77
+        value: Binary `==` @71..77
+          lhs: Path `a` @71..72
+          rhs: Path `b` @76..77
+      tail: Binary `and` @82..96
+        lhs: Path `same` @82..86
+        rhs: Path `other` @91..96
 --- diagnostics ---
 (none)

@@ -10,7 +10,7 @@
 #
 # The signature of the wrapper contains no `ffi` type. That is the point of
 # the section: the declaration records the claim, and the interface is a
-# function whose body is a check and an `unsafe` call.
+# def whose body is a check and an `unsafe` call.
 
 unsafe extern "C" library "openblas" via pkg-config "openblas":
 
@@ -27,7 +27,7 @@ unsafe extern "C" library "openblas" via pkg-config "openblas":
     # is `I64` and whose symbols end in `_64_`.
     type BlasInt is I32
 
-    function cblas_dgemm(
+    def cblas_dgemm(
         layout: CblasLayout,
         transpose_a: CblasTranspose,
         transpose_b: CblasTranspose,
@@ -50,7 +50,7 @@ public choice BlasError:
     Stride(Int, Int)
     Overflow
 
-public function gemm(
+public def gemm(
         a: borrowed MatrixView,
         b: borrowed MatrixView,
         c: mutable borrowed MatrixView,
@@ -88,7 +88,7 @@ public function gemm(
             c: c.data, ldc: c.leading as BlasInt)
     ((), null)
 
-function covers(m: borrowed MatrixView, columns: Int) -> ((), BlasError?):
+def covers(m: borrowed MatrixView, columns: Int) -> ((), BlasError?):
     let needed be m.leading * (columns - 1) + m.rows
     if m.leading < m.rows:
         return ((), BlasError.Stride(m.leading, m.rows))
