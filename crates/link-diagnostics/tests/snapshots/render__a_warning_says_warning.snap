@@ -1,0 +1,9 @@
+---
+source: crates/link-diagnostics/tests/render.rs
+expression: "render(&map, &d)"
+---
+warning[LK0207]: unused variable `x`
+ --> t.link:1:5
+  |
+1 | let x = 1
+  |     ^ unused

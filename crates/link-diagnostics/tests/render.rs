@@ -136,7 +136,7 @@ fn distant_lines_are_elided_and_a_single_gap_is_printed() {
 }
 
 #[test]
-fn a_suggestion_that_deletes_text_says_so() {
+fn a_deleting_suggestion_shows_the_text_it_removes() {
     let mut map = SourceMap::new();
     let text = "let mut x = 1\n";
     let f = map.add_file("t.link".into(), text.into());

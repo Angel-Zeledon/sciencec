@@ -80,7 +80,9 @@ fn columns_count_characters_not_bytes() {
     let text = "let café = 1\n";
     let (m, f) = map_of(text);
     let byte = text.find('=').unwrap() as u32;
-    assert_eq!(byte, 11, "the byte offset really is off by one");
+    // Counting bytes would give column 11 (`byte + 1`); the accent costs an
+    // extra byte but only one character.
+    assert_eq!(byte + 1, 11);
     assert_eq!(m.line_col(Span::at(f, byte)), lc(1, 10));
 }
 

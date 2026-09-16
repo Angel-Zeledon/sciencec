@@ -171,7 +171,11 @@ impl Diagnostic {
         self
     }
 
-    /// The primary span, if any. Used to order diagnostics.
+    /// The *first* primary span, if any.
+    ///
+    /// The order of `labels` is load-bearing: this is what orders diagnostics
+    /// against each other, and the renderer anchors its `-->` header on the
+    /// same label. Pushing labels in a different order changes output.
     pub fn primary_span(&self) -> Option<Span> {
         self.labels.iter().find(|l| l.primary).map(|l| l.span)
     }
@@ -232,5 +236,5 @@ impl IntoIterator for Diagnostics {
 pub mod render;
 pub mod source_map;
 
-pub use render::render;
+pub use render::{render, render_all};
 pub use source_map::{LineCol, SourceMap};

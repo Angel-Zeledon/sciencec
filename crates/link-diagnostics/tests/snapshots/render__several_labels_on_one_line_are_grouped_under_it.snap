@@ -1,0 +1,10 @@
+---
+source: crates/link-diagnostics/tests/render.rs
+expression: "render(&map, &d)"
+---
+error[LK0220]: mismatched types in `+`
+ --> t.link:1:21
+  |
+1 | let total = first + second
+  |             ----- this is an `Int`
+  |                     ^^^^^^ this is a `String`

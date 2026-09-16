@@ -1,0 +1,9 @@
+---
+source: crates/link-diagnostics/tests/render.rs
+expression: "render(&map, &d)"
+---
+error[LK0120]: expected an expression
+ --> t.link:2:13
+  |
+2 |     let x =
+  |             ^ the file ends here
