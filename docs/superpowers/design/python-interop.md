@@ -5,7 +5,7 @@ Status: draft
 Phase: F2 (per the F0 spec §2 table), with one F0 obligation called out in §11
 Depends on: `docs/superpowers/specs/2026-09-16-science-f0-core-design.md`, in
 particular §8's commitment that the tensor layout is DLPack-compatible, §6 on
-ownership and regions, and §5.5 on `Option` and `Result`.
+ownership and regions, and §5.5 on absence and failure.
 
 ---
 
@@ -24,10 +24,10 @@ Everything below follows from one idea:
 > **The boundary is where every static guarantee becomes exactly one dynamic
 > check.** Types become an argument conversion. Shapes become a single
 > dimension check at the door. Regions become a reference count plus an export
-> counter. Effects become a decision about the GIL. `Result` becomes a raised
-> exception. Inside the Science function, nothing is checked at runtime that the
-> compiler already proved; outside it, Python's rules apply. The membrane is
-> thin, it is generated, and the user does not write it.
+> counter. Effects become a decision about the GIL. A returned error becomes a
+> raised exception. Inside the Science function, nothing is checked at runtime
+> that the compiler already proved; outside it, Python's rules apply. The
+> membrane is thin, it is generated, and the user does not write it.
 
 Here is that mapping in one table, which is also the table of contents.
 
@@ -35,8 +35,8 @@ Here is that mapping in one table, which is also the table of contents.
 |---|---|---|
 | Static types in the signature | One conversion per argument, `TypeError` on failure | §3.4 |
 | Static shapes | One dimension check per shape variable, `ValueError` on failure | §3.4, §8 |
-| `Result of (T, E)` | Return `T`, or raise a generated exception class | §3.5 |
-| `Option of T` | Return `T`, or `None` | §3.5 |
+| A trailing `Error?` in a multiple return | Return `T`, or raise a generated exception class | §3.5 |
+| `T?` | Return `T`, or `None` | §3.5 |
 | Ownership of a buffer | A DLPack deleter that frees through the right owner | §4.4 |
 | A borrow's region | A strong reference to the Python object that roots it | §4.5 |
 | Exclusive borrow (`mutable borrowed`) | An export counter checked at the membrane | §4.5 |
@@ -80,14 +80,14 @@ A function becomes visible to Python by being declared so:
 
 ```science
 public to python
-function standardize(batch: borrowed Tensor of (F32, (rows, 768))) returns ...
+function standardize(batch: borrowed Tensor of (F32, (rows, 768))) -> ...
 ```
 
 `public to python` is a phrase, in the style of §4.3's multi-word keywords: the
 lexer emits three tokens and the parser recognizes the sequence at item
 position. Neither `to` nor `python` becomes a globally reserved word. This is
 safe because after `public` at item position the only legal continuations are
-`function`, `type`, `choice`, `trait`, `const` and `use`; an identifier there
+`function`, `type`, `choice`, `interface`, `const` and `use`; an identifier there
 cannot be anything else, so recognition is unambiguous without reservation.
 
 The F0 spec reserved `extern` for something like this and I am deliberately not
@@ -227,8 +227,8 @@ map directly.
 | `(A, B, …)` tuple | `tuple` | `tuple` |
 | `Array of T` | `list`/any sequence — **copied**, element-wise | `list` — copied |
 | `Tensor of (…)` | anything with `__dlpack__` or a buffer — **not copied** (§4) | wrapper object — not copied |
-| `Option of T` | `T` or `None` | `T` or `None` |
-| `Result of (T, E)` | *not accepted as an argument* | `T`, or raise |
+| `T?` | `T` or `None` | `T` or `None` |
+| a trailing `Error?` | *not accepted as an argument* | `T`, or raise |
 | exported `type` | an instance of the generated wrapper class | the wrapper class |
 | exported `choice` | the generated variant classes | the matching variant |
 | anything else | rejected at compile time, `SC0450` | |
@@ -265,26 +265,34 @@ Notes that are not incidental:
   one check at the door, zero checks inside the loop.
 - **Returning several values** returns a `tuple`, positionally.
 
-### 3.5 `Result` and `Option` at the boundary
+### 3.5 Failure and absence at the boundary
 
 Python has exceptions and it has `None`, and pretending otherwise would produce
 a module that feels foreign. So:
 
-**`Result of (T, E)` returns `T` on `Ok` and raises on `Err`.** Not a Result
-object, not a `(value, error)` pair. A Python caller writes `try:` because that
-is what Python callers write.
+**A trailing `Error?` returns `T` when the error is null and raises when it is
+not.** Not a `(value, error)` pair handed to the caller. A Python caller writes
+`try:` because that is what Python callers write, and the shim is the thing that
+performs the check the Science caller would have written by hand.
 
-The exception classes are generated from `E`:
+Note what the boundary now does that it did not have to do before. Under
+`Result` the shim destructured one value; under revision 2's model the Science
+side returns a pair and the shim *discards the pair shape*, projecting two
+returned slots onto Python's one-value-or-raise convention. The transformation is
+larger, and it is the one place where the two models differ at the membrane
+rather than merely in spelling.
+
+The exception classes are generated from the error type:
 
 - The module defines `spectra.ScienceError(Exception)` as the root.
-- If `E` is an exported `choice`, each variant becomes a subclass:
+- If the error type is an exported `choice`, each variant becomes a subclass:
   `spectra.SpectrumError(ScienceError)` and
   `spectra.WrongChannelCount(SpectrumError)`, so `except spectra.SpectrumError`
   catches the family and `except spectra.WrongChannelCount` catches the case.
 - Variant payload fields become attributes on the instance, with their declared
   names, converted by the same rules as return values. Structured errors stay
   structured; a Python caller reads `e.found` and `e.expected`.
-- `__str__` is the `Display` implementation if `E` has one, and a generated
+- `__str__` is the `Display` implementation if the type has one, and a generated
   rendering otherwise.
 - Where a Python builtin is the obvious match, the generated class inherits
   from both: a shape mismatch is `class ShapeError(ScienceError, ValueError)`,
@@ -292,23 +300,43 @@ The exception classes are generated from `E`:
   `except ValueError` and `except spectra.ScienceError` then work, which is
   what a Python user expects, and it costs one extra base class.
 
-**`Option of T` returns `T` on `Some` and `None` on `None`.** In argument
-position, `None` maps to the `None` variant and anything else to `Some`.
+**All of that requires a concrete error type, and revision 2 made the other form
+the default.** `syntax-revision-2.md` §3.4 says `Error?` in a return position is
+shorthand for `(any Error)?` — a boxed trait object whose only method is
+`message(self) -> String`. There are no variants to generate subclasses from and
+no payload fields to become attributes; the whole of the list above collapses to
+the root class with `message()` as `__str__`. An exported function that wants a
+structured Python exception must therefore name a concrete error type in its
+signature, which is exactly the choice §3.4 leaves to the author — and this is
+the first place in the corpus where that choice has a consequence the author
+cannot see from the signature alone. It is worth a sentence in the generated
+documentation and possibly a warning; allocating a code for it is not this
+note's call.
+
+**`T?` returns `T` when it is non-null and `None` when it is null.** In argument
+position, `None` maps to `null` and anything else to the value.
 
 Two cases are rejected at compile time rather than resolved by a rule, because
 any rule would be a guess:
 
-- `Option of (Option of T)` in an exported signature — `SC0451`. There is no
-  Python value that distinguishes `Some(None)` from `None`. The error names the
-  fix: define a `choice` and export that.
-- `Option of ()` — same code, same reason.
+- A doubly-nullable value in an exported signature — `SC0451`. There is no
+  Python value that distinguishes "present, and the thing present is absent"
+  from "absent". The error names the fix: define a `choice` and export that.
+  Under revision 2 the subject of this code would be spelled `T??`, and whether
+  `T??` is admissible at all is not settled anywhere — `python-from-science.md`
+  §9 raises the possibility that the code has no subject and may be retired.
+  That is not resolved here.
+- `()?` — same code, same reason.
 
-**`Result` in argument position is rejected** (`SC0453`). Python callers do not
-construct `Result` values, and a function that wants to accept failure should
-accept `Option` or take the successful value.
+**An error is not accepted in argument position** (`SC0453`). Python callers do
+not construct Science error values, and a function that wants to accept absence
+should take a `T?` and a function that wants the successful value should take
+it. Note that this code's subject narrowed: under `Result` it rejected a whole
+type constructor, and under revision 2 a nullable *value* parameter is perfectly
+ordinary and only a nullable *error* parameter is refused.
 
-`Result of (T, E)` where `E` is not exportable is rejected (`SC0450`) — an
-error type that cannot cross is an error that cannot be reported.
+An error type that is not exportable is rejected (`SC0450`) — an error that
+cannot cross is an error that cannot be reported.
 
 ### 3.6 Exported record and choice types
 
@@ -871,6 +899,28 @@ specifically. In hosted mode, calling Python is nearly free of consequences. In
 standalone mode, it is the whole deployment story. Different situations,
 different answers.
 
+**Inline `python { … }` blocks are this decision, wearing different syntax.**
+The question of putting Python source directly inside a `.science` file is
+answered in `syntax-revision-2.md` §8.3, and it is answered by pointing back
+here: a `python { }` block inside a file compiled to a standalone binary *is*
+the standalone case, so it needs no fresh ruling. That note's §8.4 adds a second
+objection this section does not make — foreign source inside a `.science` file
+is invisible to every Python tool (`black`, `mypy`, `pytest`) and forces
+Science's own formatter and language server either to understand three languages
+or to give up inside those regions — and its §8.5 lands on a sidecar
+`foreign/*.py` directory with the inline form, if it is ever wanted, as pure
+sugar for it. Readers arriving at this section with the inline-block question
+should read §8.3 through §8.5 there rather than re-deriving the answer.
+
+One qualification, because §8.3 leans on the ruling above and the ruling has
+since moved: `python-from-science.md` §4.5 redefines `SC0455` from a prohibition
+into a missing declaration and permits standalone embedding behind an explicit
+`[python] embed = true`. The *argument* of §6.2 is upheld there and restated —
+the binary is genuinely not self-contained — but "rejected for the first
+version" is no longer the whole ruling, and §8.3's reliance on it is therefore
+narrower than it reads.
+
+
 ### 6.3 What it looks like
 
 ```science
@@ -878,18 +928,35 @@ use python "numpy" as numpy
 use python "sklearn.decomposition" (PCA)
 
 function reduce(points: borrowed Tensor of (F32, (n, d)))
-        returns Result of (Tensor of (F32, (n, 8)), PyError):
-    let model be try PCA(n_components: 8)
-    let fitted be try model.fit_transform(points)
-    Ok(try fitted.into_tensor())
+        -> (Tensor of (F32, (n, 8)), Error?):
+    let model, err be PCA(n_components: 8)
+    if err?:
+        return (Tensor.empty(), err)
+
+    let fitted, err be model.fit_transform(points)
+    if err?:
+        return (Tensor.empty(), err)
+
+    let out, err be fitted.into_tensor()
+    if err?:
+        return (Tensor.empty(), err)
+
+    return (out, null)
 ```
 
 The design is deliberately minimal:
 
-- One opaque type, `PyObject`, with traits `FromPython` and `ToPython` for
+- One opaque type, `PyObject`, with interfaces `FromPython` and `ToPython` for
   conversion. No attempt to type Python.
-- Every call returns `Result of (PyObject, PyError)`, so `try` (F0 §4.5) is the
-  ergonomics and the existing error propagation does all the work.
+- Every fallible call returns a pair, `-> (PyObject, PyError?)`, and the caller
+  tests the error where it happens (F0 §4.5).
+- **`PyError implements Error`**, the one-method interface of
+  `syntax-revision-2.md` §3.4. So a function declared `-> (T, Error?)` accepts a
+  Python failure with no conversion written at the return, which is the boxed
+  interface form that section says composes across library boundaries. A
+  function that can fail in Python and in Science has one error type and one
+  check. That is a genuine gain over `Result`, which had no widening once
+  revision 2 deleted `From`, and it should be said before the cost is.
 - Attribute access and calls go through the dynamic protocol. Keyword arguments
   use Science's named-argument syntax, which lines up exactly.
 - Tensors cross by the same DLPack path as everything else (§4), in both
@@ -898,6 +965,32 @@ The design is deliberately minimal:
   That is the part that makes this worth having at all.
 - Every one of these carries the `python` effect (§5.2), which is what keeps
   them out of parallel regions and keeps the GIL held.
+
+**The cost, stated plainly, because the revision note understated it.**
+`syntax-revision-2.md` §3.3 says of this section that "the mapping is mechanical
+(`-> (PyObject, PyError?)`) and the note's substance does not change." The
+mapping is mechanical. The substance does change. The function above was three
+lines under `Result` and `try`; it is eleven here, and the earlier draft of this
+section claimed `try` "is the ergonomics and the existing error propagation does
+all the work" — a claim the new model cannot make, because there is no
+propagation operator and the caller writes every check.
+
+Worse, the tax is not the one revision 2 priced. §3.3 prices three lines per
+fallible *call*, and in Science code a fallible call is a statement. In Python
+code the unit that fails is a *sub-expression*: `hdul[0].data` is three fallible
+operations and `q.to(u.km / u.s)` is three more, so the expansion is roughly 3×
+per dot rather than 3× per statement. `python-from-science.md` §3.1 works this
+through on a real astropy program: fourteen lines of Python become fifty-one
+lines of Science, thirty-four of which are `if err?:` and its return. That note
+also observes that some of §2.2's operations — subscripting and operators on a
+`PyObject` — are not merely verbose under this model but *inexpressible*, because
+there is no place to put the check.
+
+This section does not resolve that. `python-from-science.md` §3.3 proposes a
+`python <name>:` region as the answer and prices it; that proposal is that
+note's to make and this note's to consume once it is accepted. What belongs here
+is the honest statement that the ergonomics of §6.3 were carried entirely by
+`try`, that `try` is gone, and that nothing has yet replaced it.
 
 ### 6.4 What it does not get
 
@@ -917,8 +1010,8 @@ lost.
 
 ### 7.1 Science → Python: failures
 
-`Err(e)` becomes a raised exception of the generated class (§3.5), with the
-variant's fields as attributes. The Python traceback naturally ends at the call
+A non-null error in the returned pair becomes a raised exception of the
+generated class (§3.5), with the variant's fields as attributes. The Python traceback naturally ends at the call
 into the extension module, showing the user's own frames and then nothing —
 correct, but unhelpful when the failure is three Science functions deep.
 
@@ -996,7 +1089,7 @@ implying more.
 ### 7.3 Python → Science
 
 A Python exception raised inside a callback, or inside a `use python` call
-(§6), becomes `Err(PyError)`. `PyError` holds:
+(§6), lands in the error slot as a non-null `PyError`. `PyError` holds:
 
 - a **strong reference to the original exception object**;
 - the exception type's name and the `str()` of it, as Science `String`s, so
@@ -1012,8 +1105,8 @@ exceptions are exceptional.
 ### 7.4 Round trip: Python → Science → Python
 
 This is the case that is usually botched. A Python callback raises `KeyError`;
-Science propagates the `Err` with `try`; the exported function returns it; the
-shim raises. What should the user see?
+Science carries the `PyError` up through its return pairs; the exported function
+returns it; the shim raises. What should the user see?
 
 **The original exception object, re-raised.** Not a `ScienceError` wrapping a
 description of it. `except KeyError:` in the caller must still work, and the
@@ -1039,12 +1132,21 @@ If Science *wrapped* the error into one of its own (mapped it into a different
 
 **Fatal exceptions do not get swallowed.** `KeyboardInterrupt`, `SystemExit`
 and `MemoryError` mean the program is trying to stop or is out of resources. If
-Science receives one as an `Err` and *discards* it — which the language
-permits, since `Result` is an ordinary value — the intent is lost. So the shim
-checks, on the way out, whether a fatal Python exception was captured and not
-re-raised, and re-raises it even when Science returned `Ok`. It is a
-belt-and-braces check on a rare path, and the alternative is a program that
-cannot be interrupted.
+Science receives one in an error slot and *discards* it — which the language
+permits, since a `PyError?` is an ordinary nullable value — the intent is lost.
+So the shim checks, on the way out, whether a fatal Python exception was
+captured and not re-raised, and re-raises it even when Science returned a null
+error. It is a belt-and-braces check on a rare path, and the alternative is a
+program that cannot be interrupted.
+
+Revision 2 does not make this check unnecessary, and it is worth saying why,
+because the obvious reading is that it does. `syntax-revision-2.md` §3.3 promises
+`SC0140` for an error binding that is never tested with `?` before the function
+returns — but this path is not an untested error. It is an error that was
+tested, handled, and deliberately not re-raised, which `SC0140` does not and
+should not reject. Under `Result` the same hole existed for the same reason. The
+check stays, and `python-from-science.md` §9 adds one more path it must cover: a
+region that short-circuited and whose error was handled without re-raising.
 
 ### 7.5 Ctrl-C during a long call
 
@@ -1088,27 +1190,27 @@ public to python
 function standardize(
         batch: borrowed Tensor of (F32, (rows, 768)),
         saturation: F32)
-        returns Result of ((Tensor of (F32, (kept, 768)), Array of Int),
-                           SpectrumError):
+        -> ((Tensor of (F32, (kept, 768)), Array of Int), SpectrumError?):
     if batch.extent(0) is 0:
-        return Err(SpectrumError.Empty)
+        return ((Tensor.empty(), Array of Int .new()), SpectrumError.Empty)
 
     let mutable keep be Array of Int .new()
-    for each r in 0..batch.extent(0):
-        if batch.row(r).maximum() is below saturation:
+    for r in 0..batch.extent(0):
+        if batch.row(r).maximum() < saturation:
             keep.push(r)
 
     if keep.len() is 0:
-        return Err(SpectrumError.AllSaturated)
+        return ((Tensor.empty(), Array of Int .new()),
+                SpectrumError.AllSaturated)
 
     let mutable out be Tensor of F32 .zeros((keep.len(), 768))
-    for each i in 0..keep.len():
+    for i in 0..keep.len():
         let row be batch.row(keep.get(i))
         let centre be row.mean()
         let spread be row.standard_deviation().maximum(1e-6f32)
         out.row_mutable(i).assign((row - centre) / spread)
 
-    Ok((out, keep))
+    return ((out, keep), null)
 ```
 
 Note what is *not* there: no annotation about the GIL, no reference counting,
@@ -1280,9 +1382,9 @@ the sibling design notes**, which may also be allocating in `SC0400`+.
 | Code | Meaning |
 |---|---|
 | `SC0450` | Type in an exported signature has no Python representation |
-| `SC0451` | `Option of (Option of T)` or `Option of ()` in an exported signature |
+| `SC0451` | A doubly-nullable value, or `()?`, in an exported signature |
 | `SC0452` | Exported function returns a borrow whose root is not rooted in Python |
-| `SC0453` | `Result` in argument position of an exported function |
+| `SC0453` | An error type in argument position of an exported function |
 | `SC0454` | Python-effecting code inside a parallel region |
 | `SC0455` | `use python` in a standalone (non-hosted) build |
 | `SC0456` | Exported name collides with a Python keyword or a generated name |

@@ -854,7 +854,7 @@ reserved-not-used, `F` freed by `reserved-words.md` §5 or
 | `in` | K | `range.in(x)`; **`stdin` as `io.in`**; `in:` label | member, binding, label | member | **yes** | `input`, `stdin`, `contains` |
 | `not` | K | `Not.not(self)` — an operator-trait **method declaration** | member, **declaration** | member only | — | see §4.5: the method is `invert` |
 | `and` | K | `BitAnd.and(self, other)` — same shape | member, declaration | member only | — | `bitand` |
-| `or` | K | `BitOr.or(self, other)`; `Option.or_else` is one identifier | member, declaration | member only | — | `bitor` |
+| `or` | K | `BitOr.or(self, other)`; `or_else` on a `T?` (§2.3) is one identifier | member, declaration | member only | — | `bitor` |
 | `use` | K | `Resource.use(f)`, `counter.uses` | member | **yes** | — | `with_lock`, `borrow` |
 | `loop` | K | `EventLoop` (capitalised, fine); `let loop be …` | binding | no | — | `events`, `runner` |
 | `break` | K | `text.break_lines()` is one identifier; a `Break` control value | member | **yes** | — | `split_lines` |

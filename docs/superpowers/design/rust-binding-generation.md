@@ -1120,7 +1120,7 @@ Stated plainly, because the temptation is to claim the whole problem is solved.
 
 - A polars `DataFrame` becomes a Science `Frame` with **no copy**: each column's
   buffers are adopted, the `release` callback becomes the Science column's `Drop`,
-  and the validity bitmap becomes `data-io.md` §9's `Option of T` column. Both
+  and the validity bitmap becomes `data-io.md` §9's nullable (`T?`) column. Both
   directions, because the interface is symmetric.
 - **The dependency direction inverts, which is the underrated part.** Science does
   not need to model polars' type system; it needs to model Arrow's, which it has

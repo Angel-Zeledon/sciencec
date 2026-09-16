@@ -511,7 +511,7 @@ is worth being explicit that it is not.
 tests `( title :` and is satisfied before the lambda is reached.
 **Unambiguous.**
 
-**(d) In a `match` arm, `Ok(v): lambda x: x + v`.** `parse_arm_body` takes the
+**(d) In a `match` arm, `Missing(v): lambda x: x + v`.** `parse_arm_body` takes the
 first `:` as the arm separator and hands the rest to `parse_expr`; the lambda
 takes the second. The arm cannot run into the next one because
 `parse_indented_body` is newline-delimited. **Unambiguous to the parser** — and
@@ -810,10 +810,15 @@ audience.
 1. **`llm-ergonomics.md` §3.2** adds one row to the migration table: `SC0119`,
    `def` starting an item, fix `function`. It sits directly above `SC0127`
    (`fn`), which is the same mistake from the other ecosystem.
-2. **`llm-ergonomics.md` §3.2's multi-span `Suggestion` extension** gains a third
+2. **`llm-ergonomics.md` §3.2's multi-span `Suggestion` extension** gains another
    customer. It was asked for by `SC0130` (`impl A for B` → `B implements A`) and
-   `SC0134` (`f()?` → `try f()`); `SC0135` needs it too. Three customers is past
-   the threshold that note uses for "worth the work".
+   `SC0134` (`f()?` → `try f()`); `SC0135` needs it too.
+
+   **This count no longer holds.** `syntax-revision-2.md` §3 makes `?` a presence
+   test and deletes `try`, so `SC0134`'s edit has no destination and that note's
+   §3.2 now records the row as void. The customers are `SC0130` and `SC0135` —
+   two, not three — and whether two is still past the threshold that note uses
+   for "worth the work" is a question for its owner, not settled here.
 3. **`llm-ergonomics.md` §4.2** takes the clarifying clause in §7 — multi-parameter
    closures are `giving`, unconditionally. A no-op until item 5 lands.
 4. **`reserved-words.md` §2** may record the two rows of §5 as *audited and
@@ -887,10 +892,12 @@ quietly break §5.1's five fields.
 
 A separate observation, outside this note's scope: `AGENTS.md` is still written
 in revision-1 syntax throughout — `returns`, `for each x in xs`, `is at least`,
-`try f()`, `Result of (Doc, Error)`. Whoever is editing it now should carry it to
-revision 2 in the same pass; that is `syntax-revision-2.md` §9's item 1, not
-this note's ask, and the two edits above are written against the file as it
-stands so they apply either way.
+`try f()`, `Result of (Doc, Error)`. It sits outside `docs/`, so the migration of
+the design notes to the revision-2 error model did not reach it and it remains
+the largest known piece of revision-1 syntax in the repository. Whoever is
+editing it now should carry it to revision 2 in the same pass; that is
+`syntax-revision-2.md` §9's item 1, not this note's ask, and the two edits above
+are written against the file as it stands so they apply either way.
 
 ---
 

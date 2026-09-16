@@ -243,10 +243,10 @@ be used. A script is mostly IO and IO is mostly fallible; the entry point has to
 be fallible or every script's first line needs a workaround.
 
 This ratifies something `data-io.md` §10 already assumed: its worked example is
-`function main() returns Result of ((), DataError)`, an explicitly fallible
-`main`. Under revision-2 that becomes `function main() -> Error?`. §11.3 turns
-that into an explicit ask of the core spec, because §11 of the core spec never
-says what signatures `main` may have.
+`function main() -> DataError?`, an explicitly fallible `main` — the
+concrete-error form of `function main() -> Error?`. §11.3 turns that into an
+explicit ask of the core spec, because §11 of the core spec never says what
+signatures `main` may have.
 
 ### 2.4 `return` at the top level
 
@@ -986,11 +986,11 @@ want in F0:
    `columns_mutable()` call. Whether `mutable` binds the first name or both is
    unspecified, and a script hits it on the first line that needs a mutable
    frame.
-6. **`data-io.md` §10: rewrite the worked example as a script**, in revision-2
-   syntax. It is currently in revision-1 throughout (`for each`, `println`,
-   `Result of`, `is at least`, `is not None`, `has methods`, `returns`), which
-   §12.1 records as a pre-existing contradiction rather than one this note
-   introduces. §12.2 shows the rewrite.
+6. **`data-io.md` §10: rewrite the worked example as a script.** **Half done.**
+   The syntax half has since landed — that section is now revision-2 throughout,
+   including the error model — so §12.1's contradiction is closed. What remains
+   is the *shape*: §10 is still a `function main()` program rather than a script
+   body, and §12.2 below still shows the script rewrite this item asks for.
 7. **`data-io.md` §11: a note that `.mean()` is assumed.** §11.4 of that note
    already flags `square_root()` and the reductions as belonging to a numerics
    note. §1.4 here leans on `.mean()` for the shortest honest CSV example, so the
@@ -1009,15 +1009,23 @@ want in F0:
 
 Stated rather than papered over, per §0 of the house convention.
 
-### 12.1 `data-io.md` §10 is written in revision-1 syntax
+### 12.1 `data-io.md` §10 was written in revision-1 syntax — now closed
 
-The canonical worked example uses `for each`, `println`, `Result of ((),
+The canonical worked example used `for each`, `println`, `Result of ((),
 DataError)`, `try`, `is at least`, `is not None`, `has methods`, `returns` and
-`Option of F32` — all of which `syntax-revision-2.md` removed the same day. This
-is not a contradiction this note creates and it is not this note's to fix, but
-§11.6 asks for it, because the example is the single most-cited piece of Science
-code in the design directory and it currently does not parse under the syntax
-the project has adopted.
+`Option of F32` — all of which `syntax-revision-2.md` removed the same day, so the
+single most-cited piece of Science code in the design directory did not parse
+under the syntax the project had adopted. **That has since been fixed in
+place**: `data-io.md` §10 is now revision-2 throughout and its fallible calls are
+written as pairs with `if err?:`.
+
+Two things the fix surfaced rather than settled, both of which §11 already
+asks for and neither of which is this note's to answer. First, §10's `main`
+called `glob`, whose `GlobError` has no variant in `DataError`; under revision 1
+the `try` there depended on the `From` widening §3.2 of the revision note deleted,
+so the signature is now the interface form `-> ((), Error?)`. Second, the example
+needs `let mutable frame, err be …`, and whether `mutable` distributes over a
+destructuring `let` is still unspecified (§11.5).
 
 ### 12.2 The same example, in revision-2 and as a script
 

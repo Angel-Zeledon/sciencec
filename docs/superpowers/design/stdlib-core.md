@@ -471,7 +471,7 @@ They are named in the shape `Iterate`, `Display`, `Inspect` and `Summarize`
 already use — a verb naming what an implementor does.
 
 **`write` writes all of it, and this contradicts `data-io.md` §7.** That note gives
-`File.write(...) returns Result of (U64, IoError)`. The count in a write result is
+`File.write(...) -> (U64, IoError?)`. The count in a write result is
 only useful if the caller loops on it, and the correct loop is the same four lines
 in every caller, written wrong in some of them. `data-io.md`'s own worked example
 never looks at the count. The partial-write loop belongs in `science-rt` once, not
@@ -493,8 +493,8 @@ it is the one thing implementors get wrong.
 and `BufferedWriter` are explicit wrappers, at Level 2 in `io`.
 
 **Rejected alternative: buffer `File` by default**, as Python does. Rejected
-because `data-io.md` §7 already made `close()` consume the file and return a
-`Result`, on the explicit grounds that "a flush that failed at close is a real
+because `data-io.md` §7 already made `close()` consume the file and return an
+error, on the explicit grounds that "a flush that failed at close is a real
 data-loss bug that must not be swallowed". Implicit buffering makes `close()` the
 *only* place a write error can surface, which converts that note's carefully
 narrow data-loss window into the normal case. Explicit buffering keeps `File.write`
@@ -1512,7 +1512,7 @@ Stated so the seams are visible, in the manner `data-io.md` §11 uses.
 8. **§2: the seven filesystem free functions, `TempDir`, `TempFile`, `DataError`
    and `RowError` move to Level 2** (§5.1, §7.2). Nothing else in that note
    changes; its §10 worked example gains one `use fs` line.
-9. **§7: `File.write` returns `Error?`, not `Result of (U64, IoError)`** (§4.2).
+9. **§7: `File.write` returns `Error?`, not `(U64, IoError?)`** (§4.2).
    The count is only useful to a caller who loops, and no caller should loop.
 
 **Of `strings-formatting-and-docs.md`:**

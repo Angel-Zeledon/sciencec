@@ -9,7 +9,7 @@ disagrees with it says so explicitly and gives the reason.
 
 | Note | Owns | Phase |
 |---|---|---|
-| `syntax-revision-2.md` | The current syntax: comparisons, loops, the Go-style error model, `->`, `has`, `interface`, `print`. **Read this first** — the other notes are written in the syntax it defines, and the core spec is not yet amended to it. | F0 |
+| `syntax-revision-2.md` | The current syntax: comparisons, loops, the Go-style error model, `->`, `has`, `interface`, `print`. **Read this first** — the other notes are written in the syntax it defines. The core spec **has** since been amended to it (§4.2, §4.3, §4.5, §4.6, §5.4, §5.5, §8, §13), which discharges §9's item 1; §13 is the one place the amendment is incomplete — see the conventions below. | F0 |
 | `reserved-words.md` | The reserved-word list audited against the scientific vocabulary; the dot rule; the case for freeing `shape`, `model` and `tensor`. | F0 |
 | `llm-ergonomics.md` | Diagnostics as the only teaching channel for a language with no training corpus; the migration-diagnostic inventory; canonicalisation for `sciencec fmt`. | F0 |
 | `indexing-and-array-literals.md` | `a[i]`, `m[i, j]`, slicing, `Slice of T`, array and matrix literals, zero-based indexing, and the rejection of comprehensions. | F0 / F1 |
@@ -176,9 +176,20 @@ building rather than deferring.
 ## Conventions
 
 - **Revision-2 syntax.** Notes written before `syntax-revision-2.md` use the
-  older spelling (`returns`, `trait`, `for each`, `Option of T`, `println`,
-  `is at least`). That is drift, not disagreement; when one of those notes is
-  next edited, its code samples should move.
+  older spelling (`returns`, `trait`, `for each`, `println`, `is at least`).
+  That is drift, not disagreement; when one of those notes is next edited, its
+  code samples should move. **The error model is the exception and is no longer
+  drift**: `Result of (T, E)`, `try`, `Option of T`, `Some`, `None`, `Ok` and
+  `Err` have been migrated out of every note, to `(T, E?)`, the `if err?:` shape,
+  `T?` and `null`. Where a note's *argument* depended on `Result` being a type
+  rather than merely on its spelling, the note now says so in place rather than
+  quietly restating the claim — `collections-and-chains.md` §6.3 and
+  `ffi-c-boundary.md` §6 are the two worth reading before relying on the model.
+- **`null` is not yet on the reserved list.** Core spec §4.2 gained the literal
+  and §13 did not gain the word; §13's own prose says revision 2 "added
+  `interface`" where `syntax-revision-2.md` §7 says it added `interface` **and**
+  `null`. `stdlib-shape-and-packages.md` §4.4 records the same ask. This is an
+  open spec edit, not a note-level one.
 - **Say what you contradict.** A note that disagrees with a sibling names the
   section and gives the reason. Several already do, and it is the only reason
   the seams are visible at all.

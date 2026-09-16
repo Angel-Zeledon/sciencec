@@ -348,7 +348,7 @@ function integrate(
     f: function(F64) returns F64,
     lower: F64,
     upper: F64,
-) returns Result of (F64, QuadratureError)
+) -> (F64, QuadratureError?)
 
 # Generic over the float width, which is why it is written in Science and not
 # linked: a C `erf` is F64 only.
@@ -359,13 +359,13 @@ function erf of T(x: T) returns T where T: Float
 Polynomial of T has methods:
     function evaluate(self, x: T) returns T where T: Float
 
-# An ODE solve returns a Result because a stiff problem can fail to converge,
-# and §8's rule is that nothing panics where a Result will do.
+# An ODE solve returns an error because a stiff problem can fail to converge,
+# and §8's rule is that nothing panics where an error will do.
 function solve_ode of T(
     problem: borrowed OdeProblem of T,
     method: Method,
     tolerance: Tolerance,
-) returns Result of (OdeSolution of T, OdeError)
+) -> (OdeSolution of T, OdeError?)
 ```
 
 ---
@@ -433,31 +433,31 @@ function matmul of (T, const M: Int, const K: Int, const N: Int)(
     right: borrowed Matrix of (T, K, N),
 ) returns Matrix of (T, M, N) where T: Float
 
-# A solve can fail on a singular matrix, so it returns a Result. The shapes
-# still make a dimension mismatch impossible to write.
+# A solve can fail on a singular matrix, so it returns an error beside the
+# value. The shapes still make a dimension mismatch impossible to write.
 function solve of (T, const N: Int)(
     a: borrowed Matrix of (T, N, N),
     b: borrowed Vector of (T, N),
-) returns Result of (Vector of (T, N), LinalgError) where T: Float
+) -> (Vector of (T, N), LinalgError?) where T: Float
 
 # Cholesky's precondition — positive definiteness — is not in the type, and
-# cannot be. It is the Result.
+# cannot be. It is the error.
 function cholesky of (T, const N: Int)(
     a: borrowed Symmetric of (T, N),
-) returns Result of (Triangular of (T, N), NotPositiveDefinite) where T: Float
+) -> (Triangular of (T, N), NotPositiveDefinite?) where T: Float
 
 # The economy SVD's output shapes are a function of the input's, which is the
 # case const-generic arithmetic has to handle (§14.1).
 function svd_economy of (T, const M: Int, const N: Int)(
     a: borrowed Matrix of (T, M, N),
-) returns Result of (Svd of (T, M, N), LinalgError) where T: Float
+) -> (Svd of (T, M, N), LinalgError?) where T: Float
 
 function conjugate_gradient of (T, const N: Int)(
     a: borrowed Sparse of (T, N, N),
     b: borrowed Vector of (T, N),
     tolerance: T,
     limit: Int,
-) returns Result of (Vector of (T, N), DidNotConverge) where T: Float
+) -> (Vector of (T, N), DidNotConverge?) where T: Float
 ```
 
 ---
@@ -578,7 +578,7 @@ Claimed here per §0.2, operating on `data-io.md`'s `Frame of R`.
 ### 7.9 Five signatures
 
 ```science
-function mean of T(values: borrowed Array of T) returns Result of (T, EmptyInput)
+function mean of T(values: borrowed Array of T) -> (T, EmptyInput?)
     where T: Float
 
 # `Distribution` is a trait with an associated type for the sample, which is
@@ -600,13 +600,13 @@ function t_test_two_sample(
     first: borrowed Array of F64,
     second: borrowed Array of F64,
     alternative: Alternative,
-) returns Result of (TestResult, StatsError)
+) -> (TestResult, StatsError?)
 
 # `fit`, not `model`. F1, because the design matrix's shape is checked.
 function least_squares of (const N: Int, const P: Int)(
     design: borrowed Matrix of (F64, N, P),
     response: borrowed Vector of (F64, N),
-) returns Result of (Fit of P, LinalgError)
+) -> (Fit of P, LinalgError?)
 ```
 
 ---
@@ -656,36 +656,36 @@ function minimise_scalar(
     f: function(F64) returns F64,
     bracket: Bracket,
     tolerance: F64,
-) returns Result of (Minimum, DidNotConverge)
+) -> (Minimum, DidNotConverge?)
 
 # The gradient is optional: given one, lbfgs uses it; without one it falls back
 # to finite differences, which is a decision the caller should see in the type.
 function lbfgs of (const N: Int)(
     objective: function(borrowed Vector of (F64, N)) returns F64,
-    gradient: Option of (function(borrowed Vector of (F64, N)) returns Vector of (F64, N)),
+    gradient: (function(borrowed Vector of (F64, N)) -> Vector of (F64, N))?,
     start: Vector of (F64, N),
     settings: borrowed Settings,
-) returns Result of (Solution of N, OptimiseError)
+) -> (Solution of N, OptimiseError?)
 
 function curve_fit of (const N: Int, const P: Int)(
     f: function(F64, borrowed Vector of (F64, P)) returns F64,
     xs: borrowed Vector of (F64, N),
     ys: borrowed Vector of (F64, N),
     start: Vector of (F64, P),
-) returns Result of (Fit of P, OptimiseError)
+) -> (Fit of P, OptimiseError?)
 
 function linear_program of (const M: Int, const N: Int)(
     objective: borrowed Vector of (F64, N),
     constraints: borrowed Matrix of (F64, M, N),
     bounds: borrowed Vector of (F64, M),
-) returns Result of (Vector of (F64, N), Infeasible)
+) -> (Vector of (F64, N), Infeasible?)
 
 function differential_evolution of (const N: Int)(
     objective: function(borrowed Vector of (F64, N)) returns F64,
     bounds: borrowed Array of Bounds,
     key: Key,
     settings: borrowed Settings,
-) returns Result of (Solution of N, OptimiseError)
+) -> (Solution of N, OptimiseError?)
 ```
 
 ---
@@ -747,7 +747,7 @@ function butterworth(
     cutoff: F64,
     kind: BandKind,
     sample_rate: F64,
-) returns Result of (SecondOrderSections, FilterError)
+) -> (SecondOrderSections, FilterError?)
 
 function filter_forward_backward of (const N: Int)(
     sections: borrowed SecondOrderSections,
@@ -832,7 +832,7 @@ and formula parsing are string and integer work.
 ```science
 # Balancing is a nullspace computation over the element-count matrix, which is
 # why chem depends on linalg transitively. It fails on an unbalanceable input.
-function balance(reaction: borrowed Reaction) returns Result of (Reaction, BalanceError)
+function balance(reaction: borrowed Reaction) -> (Reaction, BalanceError?)
 
 # Molar mass carries its unit in the type. This is the payoff of §12: a molar
 # mass cannot be added to a mass, and the compiler says so.
@@ -920,7 +920,7 @@ clearest early payoff.
 function translate(
     sequence: borrowed DnaSequence,
     table: GeneticCode,
-) returns Result of (ProteinSequence, TranslationError)
+) -> (ProteinSequence, TranslationError?)
 
 function reverse_complement(sequence: borrowed DnaSequence) returns DnaSequence
 
@@ -933,11 +933,11 @@ function smith_waterman of T(
 function neighbour_joining of (const N: Int)(
     distances: borrowed Symmetric of (F64, N),
     labels: borrowed Array of String,
-) returns Result of (Tree, TreeError)
+) -> (Tree, TreeError?)
 
 function tajima_d(
     sequences: borrowed Array of DnaSequence,
-) returns Result of (F64, TooFewSequences)
+) -> (F64, TooFewSequences?)
 ```
 
 ---

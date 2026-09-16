@@ -44,7 +44,7 @@ See §9.
 
 Three small things. Each is flagged here rather than smuggled into an example.
 
-1. **Let-ascription**: `let net: Session of (Cuda, In, Out) be try onnx.open(...)`.
+1. **Let-ascription**: `let net: Session of (Cuda, In, Out), err be onnx.open(...)`.
    §5.2 says signatures are annotated and bodies inferred; a loaded model is the
    one case where the annotation *is* the specification, so the binding must be
    able to carry a type. Without it, every load needs generic arguments spelled
@@ -247,21 +247,29 @@ Every session can be used without declaring anything:
 use inference.onnx
 use inference (Bundle, Device)
 
-function main() returns Result of ((), Error):
-    let net be try onnx.open("resnet50.onnx", device: Device.cpu())
+function main() -> ((), Error?):
+    let net, err be onnx.open("resnet50.onnx", device: Device.cpu())
+    if err?:
+        return ((), err)
 
     let mutable inputs be Bundle.new()
     inputs.set("pixels", pixels)                 # pixels: AnyTensor
 
-    let outputs be try net.run_dynamic(inputs)
-    let logits be try outputs.get("logits")      # Result, not a panic
-    println(logits.dims())
-    Ok(())
+    let outputs, err be net.run_dynamic(inputs)
+    if err?:
+        return ((), err)
+
+    let logits, err be outputs.get("logits")     # an error, not a panic
+    if err?:
+        return ((), err)
+
+    print(logits.dims())
+    return ((), null)
 ```
 
 `Bundle` is a name-to-`AnyTensor` map. `AnyTensor` is the erased tensor: dtype
 and rank are runtime fields, not type parameters. Everything is checked at run
-time and every accessor returns `Result`.
+time and every accessor returns its value with an `Error?` beside it.
 
 (`dims()`, not `.shape` — `shape` is reserved, and `dim`/`dims` are deliberately
 not. That is the reserved-word decision paying for itself: the accessor everyone
@@ -327,8 +335,8 @@ type Session of (D, I, O) where I: Bindable, O: Bindable
 and loading annotates:
 
 ```science
-let net: Session of (Cuda, ResnetInputs of Cuda, ResnetOutputs of Cuda)
-    be try onnx.open("resnet50.onnx", device: Device.cuda(0))
+let net: Session of (Cuda, ResnetInputs of Cuda, ResnetOutputs of Cuda), err be
+    onnx.open("resnet50.onnx", device: Device.cuda(0))
 ```
 
 That line is long. It is long once per model per program, and in exchange every
@@ -338,7 +346,7 @@ generator emits one:
 ```science
 type Resnet is Session of (Cuda, ResnetInputs of Cuda, ResnetOutputs of Cuda)
 
-let net: Resnet be try onnx.open("resnet50.onnx", device: Device.cuda(0))
+let net: Resnet, err be onnx.open("resnet50.onnx", device: Device.cuda(0))
 ```
 
 ### 2.4 What is checked when
@@ -505,20 +513,27 @@ use inference.onnx
 use inference (Device)
 use vision.resnet (Resnet, ResnetInputs, ResnetOutputs)
 
-function classify(path: borrowed String) returns Result of (Array of I32, Error):
-    let net: Resnet be try onnx.open(path, device: Device.cuda(0))
+function classify(path: borrowed String) -> (Array of I32, Error?):
+    let net: Resnet, err be onnx.open(path, device: Device.cuda(0))
+    if err?:
+        return (Array.new(), err)
 
-    let pixels be try load_batch("images/", batch_size: 32)     # host tensor
+    let pixels, err be load_batch("images/", batch_size: 32)    # host tensor
+    if err?:
+        return (Array.new(), err)
+
     let inputs be ResnetInputs(pixels: pixels.moved_to(Device.cuda(0)))
 
-    let outputs be try net.run(inputs)
+    let outputs, err be net.run(inputs)
+    if err?:
+        return (Array.new(), err)
 
-    Ok(outputs.logits.argmax(axis: 1).moved_to(Device.cpu()).to_array())
+    return (outputs.logits.argmax(axis: 1).moved_to(Device.cpu()).to_array(), null)
 ```
 
 Four moves — open, bind, run, read — each a separate expression with its own
-failure. Nothing is hidden: the host-to-device transfer is written, the run is
-`try`, and the read back to host is written.
+failure. Nothing is hidden: the host-to-device transfer is written, the run's
+error is tested where it happens, and the read back to host is written.
 
 (Parameter labels avoid `on`, `with`, `at` and `in`, all of which are reserved.
 `device:` is used throughout, and `device` is on the core spec's deliberately-not-
@@ -527,16 +542,16 @@ reserved list. That list was chosen well.)
 ### 3.2 The three run forms
 
 ```science
-Session of (D, I, O) has methods:
+Session of (D, I, O) has:
     # Allocates outputs. The common case.
-    function run(borrowed self, inputs: borrowed I) returns Result of (O, RunError)
+    function run(borrowed self, inputs: borrowed I) -> (O, RunError?)
 
     # Writes into caller-owned outputs. No allocation per call.
     function run_into(borrowed self, inputs: borrowed I,
-                      outputs: mutable borrowed O) returns Result of ((), RunError)
+                      outputs: mutable borrowed O) -> ((), RunError?)
 
     # Erased. For scripts and the REPL.
-    function run_dynamic(borrowed self, inputs: Bundle) returns Result of (Bundle, RunError)
+    function run_dynamic(borrowed self, inputs: Bundle) -> (Bundle, RunError?)
 ```
 
 `run` borrows both the session and the inputs. Borrowing the session shared
@@ -568,8 +583,11 @@ batch of 8. Three ways to handle it:
 The library provides the helper so nobody writes it wrong:
 
 ```science
-for each chunk in images.batched(32, pad: Pad.repeat_last()):
-    let outputs be try net.run(ResnetInputs(pixels: chunk.data))
+for chunk in images.batched(32, pad: Pad.repeat_last()):
+    let outputs, err be net.run(ResnetInputs(pixels: chunk.data))
+    if err?:
+        return (Array.new(), err)
+
     results.extend(outputs.logits.slice(axis: 0, count: chunk.valid))
 ```
 
@@ -610,7 +628,7 @@ type EncoderOutputs of D:
 
 let encoded be tok.encode_batch(texts, max_length: 128)
 
-let outputs be try encoder.run(EncoderInputs(
+let outputs, err be encoder.run(EncoderInputs(
     input_ids:      encoded.ids.moved_to(dev),
     attention_mask: encoded.mask.moved_to(dev),
     token_type_ids: encoded.types.moved_to(dev),
@@ -634,7 +652,7 @@ Three properties fall out of using a record, all free:
   than a rank-4 shape dump from the runtime.
 
 Optional inputs — models where `token_type_ids` may be omitted — use
-`Option of Tensor`, and the binder skips `None` fields. This is exactly the §5.5
+`Tensor?`, and the binder skips the null fields. This is exactly the §5.5
 argument: absence has a type.
 
 ### 3.5 Generation is a different shape, and should look different
@@ -646,7 +664,10 @@ would produce a bad API.
 ```science
 use inference.llama
 
-let weights be try llama.open("qwen3-8b-q4_k_m.gguf", device: Device.metal())
+let weights, err be llama.open("qwen3-8b-q4_k_m.gguf", device: Device.metal())
+if err?:
+    return ((), err)
+
 let mutable chat be weights.session(context: 8192, seed: 42)
 
 let prompt be chat.template([
@@ -654,10 +675,16 @@ let prompt be chat.template([
     Message(role: Role.User, text: "What is a tensor?"),
 ])
 
-try chat.feed(prompt)
+let _, err be chat.feed(prompt)
+if err?:
+    return ((), err)
 
-for each token in chat.generate(Sampling(temperature: 0.7, top_p: 0.9, max_tokens: 256)):
-    print(try token.text())
+for token in chat.generate(Sampling(temperature: 0.7, top_p: 0.9, max_tokens: 256)):
+    let text, err be token.text()
+    if err?:
+        return ((), err)
+
+    print(text)
 ```
 
 What this deliberately does:
@@ -726,23 +753,23 @@ type Tensor of (T, DIMS, D = Cpu)
 The reason is the thesis of the language. With the device in the type:
 
 ```science
-let net: Resnet be try onnx.open("resnet50.onnx", device: Device.cuda(0))
-let pixels be try load_image("cat.jpg")             # Tensor of (F32, …, Cpu)
-let outputs be try net.run(ResnetInputs(pixels: pixels))
+let net: Resnet, err be onnx.open("resnet50.onnx", device: Device.cuda(0))
+let pixels, err be load_image("cat.jpg")           # Tensor of (F32, …, Cpu)
+let outputs, err be net.run(ResnetInputs(pixels: pixels))
 ```
 
 ```
 error[SC0262]: device mismatch
-  --> classify.science:12:47
+  --> classify.science:12:48
    |
-12 |     let outputs be try net.run(ResnetInputs(pixels: pixels))
-   |                                                     ^^^^^^ this tensor is on Cpu
+12 |     let outputs, err be net.run(ResnetInputs(pixels: pixels))
+   |                                                      ^^^^^^ this tensor is on Cpu
    |
    = note: `net` is a Session on Cuda, so `pixels` must be Tensor of (F32, …, Cuda)
 help: move it to the device — this consumes `pixels`
    |
-12 |     let outputs be try net.run(ResnetInputs(pixels: pixels.moved_to(net.device())))
-   |                                                           +++++++++++++++++++++++
+12 |     let outputs, err be net.run(ResnetInputs(pixels: pixels.moved_to(net.device())))
+   |                                                            +++++++++++++++++++++++
 ```
 
 In every alternative — Python, Rust with `ort`, C++ — that line either silently
@@ -848,17 +875,27 @@ needs most.
 ### 4.5 Arenas and steady state
 
 ```science
-let net: Resnet be try onnx.open("models/resnet50.onnx",
+let net: Resnet, err be onnx.open("models/resnet50.onnx",
     device: Device.cuda(0),
     arena: Arena.reuse(),              # keep intermediates between runs
 )
+if err?:
+    return ((), err)
 
 let mutable outputs be ResnetOutputs.allocate(device: Device.cuda(0), batch: 32)
 
 loop:
-    let request be try queue.take()
-    try net.run_into(ResnetInputs(pixels: request.pixels), outputs)
-    try respond(request, outputs.logits)
+    let request, err be queue.take()
+    if err?:
+        return ((), err)
+
+    let _, err be net.run_into(ResnetInputs(pixels: request.pixels), outputs)
+    if err?:
+        return ((), err)
+
+    let _, err be respond(request, outputs.logits)
+    if err?:
+        return ((), err)
 ```
 
 Nothing allocates inside the loop. Both the intermediates (the runtime's arena)
@@ -870,11 +907,11 @@ iterations" a statement the compiler understands.
 ### 4.6 Device selection, and not falling back silently
 
 ```science
-let net: Resnet be try onnx.open("models/resnet50.onnx", device: Device.cuda(0))
+let net: Resnet, err be onnx.open("models/resnet50.onnx", device: Device.cuda(0))
 ```
 
-If CUDA is unavailable this returns `Err(LoadError.ProviderUnavailable)`. It does
-**not** fall back to CPU.
+If CUDA is unavailable this returns `LoadError.ProviderUnavailable` in the error
+slot. It does **not** fall back to CPU.
 
 This is a deliberate reversal of what most libraries do, and the reason is the
 audience. A benchmark that silently ran on the CPU is a published number wrong by
@@ -883,9 +920,9 @@ refuses to start is noticed in ten seconds. Fallback is available and must be
 asked for:
 
 ```science
-let net: Resnet be try onnx.open("models/resnet50.onnx",
+let net: Resnet, err be onnx.open("models/resnet50.onnx",
     device: Device.prefer([Device.cuda(0), Device.cpu()]))
-println("running on " + net.device().name())
+print("running on " + net.device().name())
 ```
 
 Note the type consequence: `Device.prefer` cannot produce a statically-known
@@ -912,12 +949,15 @@ Science needs anyway, a dtype table, and an `mmap`.
 ```science
 use weights.safetensors
 
-let w be try safetensors.open("model.safetensors")
+let w, err be safetensors.open("model.safetensors")
+if err?:
+    return ((), err)
 
-println(w.names().len())                                  # how many tensors
-println(w.info("layers.0.attn.q_proj.weight"))            # F16 [4096, 4096]
+print(w.names().len())                                    # how many tensors
+print(w.info("layers.0.attn.q_proj.weight"))              # F16 [4096, 4096]
 
-let q: Tensor of (F16, (4096, 4096)) be try w.get("layers.0.attn.q_proj.weight")
+let q: Tensor of (F16, (4096, 4096)), err be
+    w.get("layers.0.attn.q_proj.weight")
 ```
 
 Two properties worth calling out.
@@ -1072,7 +1112,7 @@ they came from the reference implementation.
 ```science
 use text.tokenizers
 
-let tok be try tokenizers.open("tokenizer.json")
+let tok, err be tokenizers.open("tokenizer.json")
 
 let encoded be tok.encode_batch(
     ["the cat sat", "on the mat"],
@@ -1110,7 +1150,7 @@ binding is announced.
 use vision.preprocess
 
 let pipeline be Preprocess.imagenet_torchvision()    # exactly torchvision's transform
-let pixels be try pipeline.apply_batch(paths)        # Tensor of (F32, (Dyn, 3, 224, 224))
+let pixels, err be pipeline.apply_batch(paths)  # Tensor of (F32, (Dyn, 3, 224, 224))
 ```
 
 What the library owns:
@@ -1347,33 +1387,44 @@ type Prediction:
     label: String
     score: F32
 
-function main() returns Result of ((), Error):
+function main() -> ((), Error?):
     let dev be Device.cuda(0)
 
     # ---- load the model -------------------------------------------------
     # Names, dtypes, ranks and static dims were checked when this file compiled.
     # This call checks the file on disk against that declaration, once.
-    let net: Resnet be try onnx.open("models/resnet50.onnx", device: dev)
-    println("loaded " + net.describe())
+    let net: Resnet, err be onnx.open("models/resnet50.onnx", device: dev)
+    if err?:
+        return ((), err)
 
-    let classes be try labels.read_lines("models/imagenet_classes.txt")
+    print("loaded " + net.describe())
+
+    let classes, err be labels.read_lines("models/imagenet_classes.txt")
+    if err?:
+        return ((), err)
+
     if classes.len() is not 1000:
-        return Err(Error.new("label file has " + classes.len() as String
-                             + " entries, the model outputs 1000"))
+        return ((), Error.new("label file has " + classes.len() as String
+                              + " entries, the model outputs 1000"))
 
     # ---- preprocessing, declared and printable --------------------------
     let pipeline be Preprocess.imagenet_torchvision()
-    println(pipeline)
+    print(pipeline)
 
-    let paths be try list_images("images/")
-    println(paths.len() as String + " images, batch " + BATCH as String)
+    let paths, err be list_images("images/")
+    if err?:
+        return ((), err)
+
+    print(paths.len() as String + " images, batch " + BATCH as String)
 
     # ---- run ------------------------------------------------------------
     let mutable predictions be Array of Prediction .new()
 
-    for each chunk in paths.batched(BATCH, pad: Pad.repeat_last()):
+    for chunk in paths.batched(BATCH, pad: Pad.repeat_last()):
         # host tensor: Tensor of (F32, (32, 3, 224, 224), Cpu)
-        let staged be try pipeline.apply_batch(chunk.items)
+        let staged, err be pipeline.apply_batch(chunk.items)
+        if err?:
+            return ((), err)
 
         # `moved_to` consumes `staged`; the host buffer is freed here.
         # Omitting it is SC0262 at compile time, with the fix suggested.
@@ -1381,13 +1432,15 @@ function main() returns Result of ((), Error):
 
         # `outputs` borrows `net`. It cannot escape this loop body,
         # and the compiler knows it.
-        let outputs be try net.run(inputs)
+        let outputs, err be net.run(inputs)
+        if err?:
+            return ((), err)
 
         let scores be outputs.logits.softmax(axis: 1)
         let best   be scores.topk(TOP_K, axis: 1).moved_to(Device.cpu())
 
-        for each row in 0..chunk.valid:
-            for each rank in 0..TOP_K:
+        for row in 0..chunk.valid:
+            for rank in 0..TOP_K:
                 predictions.push(Prediction(
                     path:  chunk.items.get(row).clone(),
                     label: classes.get(best.indices.at(row, rank) as Int).clone(),
@@ -1398,12 +1451,15 @@ function main() returns Result of ((), Error):
     # ---- write ----------------------------------------------------------
     let mutable csv be String.new()
     csv.push_str("path,label,score\n")
-    for each p in predictions:
+    for p in predictions:
         csv.push_str(p.path + "," + quote(p.label) + "," + p.score as String + "\n")
 
-    try write_file("predictions.csv", csv)
-    println("wrote " + predictions.len() as String + " rows to predictions.csv")
-    Ok(())
+    let _, err be write_file("predictions.csv", csv)
+    if err?:
+        return ((), err)
+
+    print("wrote " + predictions.len() as String + " rows to predictions.csv")
+    return ((), null)
     # `net` drops here. The CUDA context, the weights and the arena are
     # freed at this point, named by the compiler, not when a collector
     # decides host memory is tight.
@@ -1413,14 +1469,14 @@ function main() returns Result of ((), Error):
 
 | Line | What it shows |
 |---|---|
-| `let net: Resnet be try onnx.open(...)` | Compile-time signature from a generated, reviewed, checked-in declaration; load-time verification against the actual file; `try` for the failure |
+| `let net: Resnet, err be onnx.open(...)` | Compile-time signature from a generated, reviewed, checked-in declaration; load-time verification against the actual file; the error tested on the next line |
 | `if classes.len() is not 1000` | The label-map-versus-output-dimension check of §6.5, written once, in English words |
-| `println(pipeline)` | Preprocessing is declared, versioned and printable (§6.6) |
+| `print(pipeline)` | Preprocessing is declared, versioned and printable (§6.6) |
 | `paths.batched(BATCH, pad: ...)` | Batching with the last-batch problem handled explicitly, not silently (§3.3) |
 | `staged.moved_to(dev)` | Explicit host-to-device transfer that consumes the host tensor; the omission is a compile error with a machine-applicable fix (§4.3) |
-| `let outputs be try net.run(inputs)` | Shared borrow of the session, so it is concurrency-safe by signature; outputs borrow the session and cannot escape (§4.4) |
-| `for each row in 0..chunk.valid` | Padded rows discarded by construction |
-| the final `Ok(())` | Device memory freed at a program point the compiler names (§6.5 of the core spec) |
+| `let outputs, err be net.run(inputs)` | Shared borrow of the session, so it is concurrency-safe by signature; outputs borrow the session and cannot escape (§4.4) |
+| `for row in 0..chunk.valid` | Padded rows discarded by construction |
+| the final `return ((), null)` | Device memory freed at a program point the compiler names (§6.5 of the core spec) |
 
 None of the eight rows is checkable at all in the Python version of this program,
 and only the last is checkable in the Rust version. That gap is the product.

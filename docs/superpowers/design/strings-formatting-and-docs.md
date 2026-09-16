@@ -641,7 +641,7 @@ Decided here, because each is a case where the obvious convenience is wrong:
 - **`T?` does not implement `Display`.** It implements `Inspect`. Printing a
   possibly-null value must be a decision: after narrowing (`if x?:`) the value is
   `T` and prints; otherwise the user writes the default or asks for `{x!i}` and
-  gets `null`. A silent `None` or an empty cell in a published table is the
+  gets `null`. A silent `null` or an empty cell in a published table is the
   failure this prevents. **Serves scientists**, at a small cost in typing.
 - **Arrays and maps do not implement `Display`.** They implement `Inspect`.
   Printing a million-element array by accident is a mistake the language should

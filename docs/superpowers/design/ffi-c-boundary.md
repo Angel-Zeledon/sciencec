@@ -185,12 +185,12 @@ between them exists.
 | `ffi.CString` | Owned, NUL-terminated, Science's allocator, `Drop` frees it |
 | `ffi.CStr` | `borrowed`, NUL-terminated, someone else's memory |
 
-`ffi.CString.from(text: borrowed String) returns Result of (CString, NulError)` —
-a `Result`, because a Science `String` may contain an interior NUL, which is
-valid UTF-8 and not a valid C string. `CStr.to_string() returns Result of
-(String, Utf8Error)` — a `Result`, because C strings are byte strings and nothing
-guarantees a library hands back UTF-8. Both allocate and copy. There is no
-zero-copy path and there should not be one.
+`ffi.CString.from(text: borrowed String) -> (CString, NulError?)` — fallible,
+because a Science `String` may contain an interior NUL, which is valid UTF-8 and
+not a valid C string. `CStr.to_string() -> (String, Utf8Error?)` — fallible,
+because C strings are byte strings and nothing guarantees a library hands back
+UTF-8. Both allocate and copy. There is no zero-copy path and there should not be
+one.
 
 **Uninitialized memory.** `ffi.Uninitialized of T` is a slot of the right size and
 alignment that holds no value. It exists because the out-parameter idiom
@@ -226,7 +226,7 @@ not own.
 
 `ffi.CLayout` is checked, not assumed. Every field type must itself be
 FFI-representable, transitively (`SC0424` otherwise). A type implementing it may
-not hold a `String`, an `Array`, a `Map`, an `Option` of a non-niche payload, or
+not hold a `String`, an `Array`, a `Map`, a `T?` whose payload has no niche, or
 any `choice` — those are Science layouts and the C side does not know them.
 
 **A single-field record over an FFI-representable type is transparent**: it is
@@ -241,9 +241,9 @@ CudnnHandle implements ffi.CLayout
 ```
 
 `CudnnHandle` is one word at the ABI, and because `ffi.OpaqueHandle` is non-null
-it inherits the null niche of §5.2 of the runtime ABI — so `Option of
-CudnnHandle` is also one word, with `None` as the null pointer, costing not one
-bit more than the handle itself. That falls out of rules that already exist.
+it inherits the null niche of §5.2 of the runtime ABI — so `CudnnHandle?` is also
+one word, with the null pointer as `null`, costing not one bit more than the
+handle itself. That falls out of rules that already exist.
 
 **Bitfields and unions are not representable.** A C struct containing either is
 imported as an opaque byte array of the right size and alignment, and the only
@@ -353,17 +353,23 @@ public function gemm(
         c: mutable borrowed MatrixView,
         alpha: F64,
         beta: F64)
-        returns Result of ((), BlasError):
+        -> ((), BlasError?):
 
     if a.columns is not b.rows:
-        return Err(BlasError.Shape(a.columns, b.rows))
+        return ((), BlasError.Shape(a.columns, b.rows))
     if c.rows is not a.rows or c.columns is not b.columns:
-        return Err(BlasError.Shape(c.rows, a.rows))
+        return ((), BlasError.Shape(c.rows, a.rows))
 
     # The obligation the borrow checker cannot discharge, discharged here.
-    try covers(a, a.columns)
-    try covers(b, b.columns)
-    try covers(c, c.columns)
+    let _, err be covers(a, a.columns)
+    if err?:
+        return ((), err)
+    let _, err be covers(b, b.columns)
+    if err?:
+        return ((), err)
+    let _, err be covers(c, c.columns)
+    if err?:
+        return ((), err)
 
     unsafe:
         cblas_dgemm(
@@ -378,13 +384,13 @@ public function gemm(
             b: b.data, ldb: b.leading as BlasInt,
             beta: beta,
             c: c.data, ldc: c.leading as BlasInt)
-    Ok(())
+    ((), null)
 
-function covers(m: borrowed MatrixView, columns: Int) returns Result of ((), BlasError):
+function covers(m: borrowed MatrixView, columns: Int) -> ((), BlasError?):
     let needed be m.leading * (columns - 1) + m.rows
-    if m.leading is below m.rows: return Err(BlasError.Stride(m.leading, m.rows))
-    if needed is above m.data.length(): return Err(BlasError.Overflow)
-    Ok(())
+    if m.leading < m.rows: return ((), BlasError.Stride(m.leading, m.rows))
+    if needed > m.data.length(): return ((), BlasError.Overflow)
+    ((), null)
 ```
 
 Two things in that call site deserve their reasons.
@@ -502,12 +508,14 @@ CudnnHandle implements Drop:
         # cudnnDestroy returns a status. There is no caller left to tell.
         unsafe: cudnnDestroy(self)
 
-CudnnHandle has methods:
-    public function new() returns Result of (CudnnHandle, CudnnError):
+CudnnHandle has:
+    public function new() -> (CudnnHandle?, CudnnError?):
         let mutable slot be ffi.Uninitialized of CudnnHandle .new()
         let status be unsafe: cudnnCreate(slot)
-        try status.check()
-        unsafe: Ok(slot.assume_initialized())
+        let _, err be status.check()
+        if err?:
+            return (null, err)
+        unsafe: (slot.assume_initialized(), null)
 ```
 
 What the compiler now guarantees about every `CudnnHandle` in the program:
@@ -516,12 +524,13 @@ What the compiler now guarantees about every `CudnnHandle` in the program:
 - It is never used after destruction (`SC0301`).
 - It is never copied — `CudnnHandle` implements neither `Copy` nor `Clone`, so
   there is no second handle to double-destroy.
-- On every path out of a function, including early `return` and the `try` of a
-  later call, it is destroyed. There is no `goto cleanup` and no way to forget
-  one.
+- On every path out of a function, including early `return` and the error check
+  of a later call, it is destroyed. There is no `goto cleanup` and no way to
+  forget one.
 
-`Option of CudnnHandle` costs one word with `None` as null (§1.4), which is what
-a fallible constructor wants and what the runtime ABI's niche rule already gives.
+`CudnnHandle?` costs one word, with the null pointer as `null` (§1.4), which is
+what a fallible constructor wants and what the runtime ABI's niche rule already
+gives.
 
 **Handles over integers work the same way and are worth showing**, because HDF5's
 `hid_t` is an `int64_t`, not a pointer, and its invalid value is negative rather
@@ -542,21 +551,23 @@ H5File implements Drop:
     function drop(mutable self):
         unsafe: H5Fclose(self.id)
 
-H5File has methods:
-    public function open(path: borrowed String) returns Result of (H5File, H5Error):
-        let name be try ffi.CString.from(path)
+H5File has:
+    public function open(path: borrowed String) -> (H5File?, H5Error?):
+        let name, err be ffi.CString.from(path)
+        if err?:
+            return (null, H5Error.from_nul(err))
         let id be unsafe: H5Fopen(name.as_cstr(), H5F_ACC_RDONLY, H5P_DEFAULT)
-        if id is below 0: return Err(H5Error.from_stack())
-        Ok(H5File(id: id))
+        if id < 0: return (null, H5Error.from_stack())
+        (H5File(id: id), null)
 ```
 
 Note what the safe constructor is doing beyond wrapping: it turns a sentinel into
-a `Result` *before* the value ever becomes an `H5File`, so no `H5File` in the
+an `H5Error?` *before* the value ever becomes an `H5File`, so no `H5File` in the
 program ever holds a negative id, so `drop` never calls `H5Fclose(-1)`. The
-invariant lives in the one place that can establish it. `Option of H5File` costs
-two words here rather than one, because an integer has no niche the compiler
-knows about — the runtime ABI is explicit that only never-null pointers carry
-niches, and inventing a "negative is the niche" rule for one library's typedef is
+invariant lives in the one place that can establish it. `H5File?` costs two words
+here rather than one, because an integer has no niche the compiler knows about —
+the runtime ABI is explicit that only never-null pointers carry niches, and
+inventing a "negative is the niche" rule for one library's typedef is
 not worth a word.
 
 **Device memory is this case, and it is where the core spec's central claim gets
@@ -877,9 +888,11 @@ public function integrate(
         lower: F64,
         upper: F64,
         tolerance: F64)
-        returns Result of (Integral, GslError):
+        -> (Integral?, GslError?):
 
-    let mutable workspace be try GslWorkspace.new(1000)
+    let mutable workspace, err be GslWorkspace.new(1000)
+    if err?:
+        return (null, err)
     let entry be ffi.Callback.of(integrand)          # borrows `integrand`
     let f be GslFunction(function: entry.code(), params: entry.data())
 
@@ -888,15 +901,19 @@ public function integrate(
     let status be unsafe:
         gsl_integration_qags(f, lower, upper, 0.0, tolerance, 1000,
                              workspace, value, absolute_error)
-    try status.check()
-    Ok(Integral(value: value, absolute_error: absolute_error))
+    let _, err be status.check()
+    if err?:
+        return (null, err)
+    (Integral(value: value, absolute_error: absolute_error), null)
 ```
 
 Used:
 
 ```science
 let mutable gaussian be x giving exp(0.0 - x * x)
-let result be try integrate(gaussian, 0.0, 10.0, 1e-9)
+let result, err be integrate(gaussian, 0.0, 10.0, 1e-9)
+if err?:
+    panic(err.message())
 ```
 
 ### 4.4 Reentrancy, which is the hole
@@ -1074,14 +1091,14 @@ call at startup.
 
 ## 6. Errors
 
-C reports failure in at least five different ways, and Science has `Result`. The
+C reports failure in at least five different ways, and Science has `Error?`. The
 decision is about where the conversion happens.
 
 ### 6.1 The compiler converts nothing
 
 An `extern` declaration returns exactly what the C function returns. No status
-code becomes a `Result` automatically, no null becomes a `None`, no negative
-becomes an `Err`.
+code becomes an `Error?` automatically, no null pointer becomes `null`, no
+negative becomes a failure.
 
 The reason is that the mapping is a property of the library, not of C:
 
@@ -1098,9 +1115,9 @@ The reason is that the mapping is a property of the library, not of C:
 LAPACK settles the argument on its own. `dgesv` returns `info > 0` to mean the
 factorization completed and `U(i,i)` is exactly zero — the matrix is singular.
 That is not an error in the library's sense; it is the answer. Whether it becomes
-`Err(Singular)` or `Ok` with a flag is a decision about what the *Science* API
-means, and the compiler has no basis for making it. `dgeev` uses `info > 0` for
-partial convergence, where the eigenvalues in the first `info` positions are
+a `Singular` error or a value with a flag is a decision about what the *Science*
+API means, and the compiler has no basis for making it. `dgeev` uses `info > 0`
+for partial convergence, where the eigenvalues in the first `info` positions are
 valid and the caller may well want them. Any automatic rule is wrong for at least
 one of these.
 
@@ -1109,9 +1126,9 @@ one of these.
 The `ffi` module provides:
 
 ```science
-trait ForeignStatus:
+interface ForeignStatus:
     type Error
-    function check(self) returns Result of ((), Self.Error)
+    function check(self) -> ((), Self.Error?)
 ```
 
 A binding implements it once per status type, and every wrapper then reads the
@@ -1120,14 +1137,27 @@ same way:
 ```science
 CudnnStatus implements ForeignStatus:
     type Error is CudnnError
-    function check(self) returns Result of ((), CudnnError):
-        if self.raw is 0: return Ok(())
-        Err(CudnnError(status: self, message: cudnn_message(self)))
+    function check(self) -> ((), CudnnError?):
+        if self.raw is 0: return ((), null)
+        ((), CudnnError(status: self, message: cudnn_message(self)))
 ```
 
-and at every call site, `try status.check()`. The `try` of §4.5 then does the
-propagation, which is the point: the FFI does not introduce an error-handling
-mechanism, it feeds the one the language has.
+and at every call site, the same three lines:
+
+```science
+let _, err be status.check()
+if err?:
+    return (null, err)
+```
+
+That propagation is the point: the FFI does not introduce an error-handling
+mechanism, it feeds the one the language has. But this is the place in the note
+where revision 2 costs something, and it should be said plainly. Under `try` the
+call site was one token. Under the Go model it is three lines, at every one of
+the hundreds of foreign calls a real binding wraps, and the three lines are
+identical every time. That is §3.3's verbosity tax, and the FFI is where the
+language pays most of it: nothing in `ffi.ForeignStatus` can shorten the check,
+and nothing in this note pretends otherwise.
 
 `ffi.ForeignStatus` is the only error machinery in the `ffi` module. Nothing
 converts, nothing is implicit, and the only thing gained over writing `if` by
@@ -1141,7 +1171,7 @@ destructor Science ran on the way out of a scope. Code like
 
 ```science
 let r be unsafe: some_posix_call(...)
-if r is below 0: return Err(ffi.errno())        # WRONG
+if r < 0: return (null, ffi.errno())           # WRONG
 ```
 
 is a real bug, because between the call and the read there may be drop glue, a
@@ -1168,16 +1198,16 @@ same adjacency guarantee. A declaration may use one or the other, not both.
 ### 6.4 Sentinel returns
 
 Null and negative sentinels get no language support. `ffi.Pointer of T` has
-`.to_borrow()` returning `Option`, which is the null check written once; the
-negative-`hid_t` check in §2.3 is three characters of Science. Both belong in the
-safe constructor, where they establish the invariant that the rest of the type
-depends on. Putting them in the language would mean the language deciding what
+`.to_borrow()` returning `(borrowed T)?`, which is the null check written once;
+the negative-`hid_t` check in §2.3 is three characters of Science. Both belong in
+the safe constructor, where they establish the invariant that the rest of the
+type depends on. Putting them in the language would mean the language deciding what
 `-1` means, which is the mistake §6.1 declined to make in a larger form.
 
 ### 6.5 Errors the boundary cannot report
 
-A C library that calls `abort` or `exit` produces no `Result`, and no wrapper is
-possible. MPI's default error handler aborts; MKL aborts on some parameter
+A C library that calls `abort` or `exit` produces no error value, and no wrapper
+is possible. MPI's default error handler aborts; MKL aborts on some parameter
 errors; reference BLAS's `XERBLA` prints and stops. Where a library allows
 installing a handler — GSL's `gsl_set_error_handler`, MPI's
 `MPI_Comm_set_errhandler`, HDF5's `H5Eset_auto` — the binding **should** install
@@ -1356,7 +1386,7 @@ Named in this document:
 | C enums import as integer newtypes, never `choice` | Import as `choice` | A newer library returns values the header did not declare | No exhaustive `match` on a C status |
 | Only foreign-allocated memory may be given to C | Allocator-parameterized `Array` | Mismatched allocators corrupt the heap; the ABI has no allocator slot | One copy on transfer-out |
 | `from p` / `from static` on returned borrows | Inference | With no body there is nothing to infer from | The one region construct in the language |
-| No automatic error conversion | Status codes become `Result` automatically | LAPACK's `info > 0` is an answer, not an error | Every binding writes `check()` |
+| No automatic error conversion | Status codes become `Error?` automatically | LAPACK's `info > 0` is an answer, not an error | Every binding writes `check()` |
 | `with errno` guarantees adjacency | A library `errno()` function | Any intervening call clobbers it, including drop glue | A codegen constraint |
 | `when available` lowers to a dlopen table | Weak symbols and `--as-needed` | GPU libraries must be optional; weak symbols differ on three platforms | An indirect call per foreign call |
 | Named arguments permitted at extern call sites | Positional only | Thirteen-argument `dgemm` with two identical-looking flags | Two call conventions in one language |

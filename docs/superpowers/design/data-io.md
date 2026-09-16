@@ -30,7 +30,7 @@ That is the whole argument, and the rest of this note is what it costs.
 
 ## 2. What the core library gains
 
-The closed list of §8 (`print`, `println`, `panic`, `read_file`, `write_file`)
+The closed list of §8 (`print`, `write`, `panic`, `read_file`, `write_file`)
 grows by exactly this much in the core:
 
 - `Path`, and the filesystem free functions of §7.
@@ -115,8 +115,8 @@ There is no single "dataset" type. There are three, and which one you have is
 visible in the signature:
 
 ```science
-Rows of R        # a lazy stream of records; bounded memory; Item is Result of (R, RowError)
-Chunks of R      # a lazy stream of batches;  bounded memory; Item is Result of (Frame of R, DataError)
+Rows of R        # a lazy stream of records; bounded memory; Item is (R, RowError?)
+Chunks of R      # a lazy stream of batches;  bounded memory; Item is (Frame of R, DataError?)
 Frame of R       # a columnar table, fully in memory, owning its columns
 ```
 
@@ -144,10 +144,10 @@ this, with the type of every intermediate:
 |---|---|---|
 | Name the file | `Path.from("m.csv")` | `Path` |
 | Configure | `CsvOptions.new().delimiter(',')` | `CsvOptions` |
-| Open — reads the header, checks the schema, parses no rows | `read_csv of Measurement(path, options)` | `Result of (CsvReader of Measurement, DataError)` |
+| Open — reads the header, checks the schema, parses no rows | `read_csv of Measurement(path, options)` | `(CsvReader of Measurement, DataError?)` |
 | Stream | `.rows()` | `Rows of Measurement` |
-| Filter — still lazy, still bounded memory | `.keep(each.temperature is at least 0.0f32)` | `Rows of Measurement` |
-| Materialize | `.collect()` | `Result of (Frame of Measurement, DataError)` |
+| Filter — still lazy, still bounded memory | `.keep(each.temperature >= 0.0f32)` | `Rows of Measurement` |
+| Materialize | `.collect()` | `(Frame of Measurement, DataError?)` |
 | Take a column | `.columns().temperature` | `borrowed Array of F32` |
 | Feed a model (F1) | `Tensor.viewing(column)` | `Tensor of (F32, (n,))`, zero copy |
 
@@ -167,18 +167,18 @@ type Measurement:
     station: String
     timestamp: I64
     temperature: F32
-    humidity: Option of F32
+    humidity: F32?
 
 Measurement implements Record
 ```
 
-`Record` is a **compiler-derived trait**, written on one line like a marker
+`Record` is a **compiler-derived interface**, written on one line like a marker
 (§4.4 of the core spec), and the compiler synthesizes:
 
 ```science
-trait Record:
+interface Record:
     type Columns
-    function schema() returns Schema
+    function schema() -> Schema
 ```
 
 For `Measurement`, `Measurement.Columns` is a type whose fields are
@@ -190,15 +190,15 @@ returns the field names and types as data.
 field access on an ordinary type:
 
 ```science
-Frame of R has methods where R: Record:
-    function len(self) returns U64
-    function columns(self) returns borrowed R.Columns
-    function columns_mutable(mutable self) returns mutable borrowed R.Columns
-    function row(self, index: U64) returns R
-    function slice(self, range: Range of U64) returns Frame of R
-    function append(mutable self, other: Frame of R) returns Result of ((), DataError)
-    function rejected(self) returns borrowed Array of RowError
-    function rejected_count(self) returns U64
+Frame of R has where R: Record:
+    function len(self) -> U64
+    function columns(self) -> borrowed R.Columns
+    function columns_mutable(mutable self) -> mutable borrowed R.Columns
+    function row(self, index: U64) -> R
+    function slice(self, range: Range of U64) -> Frame of R
+    function append(mutable self, other: Frame of R) -> ((), DataError?)
+    function rejected(self) -> borrowed Array of RowError
+    function rejected_count(self) -> U64
 ```
 
 **This derivation is the one piece of new language machinery this note asks
@@ -227,14 +227,22 @@ Exploration is real: sometimes you do not know the columns. `Frame of Dynamic`
 exists for that.
 
 ```science
-let frame be try read_csv of Dynamic(path, CsvOptions.new())
-let column be try frame.column("temperature")          # Result, checked at runtime
-let typed be try frame.cast of Measurement()           # one check, then static forever
+let frame, err be read_csv of Dynamic(path, CsvOptions.new())
+if err?:
+    return (Frame.empty(), err)
+
+let column, err be frame.column("temperature")   # checked at runtime, not before it
+if err?:
+    return (Frame.empty(), err)
+
+let typed, err be frame.cast of Measurement()    # one check, then static forever
+if err?:
+    return (Frame.empty(), err)
 ```
 
 `Dynamic` is a `Record` whose `Columns` is a name-to-column map. Every access
-returns `Result`. `cast of R()` validates once and hands back a `Frame of R`,
-after which everything is static again.
+hands back a `DataError?` beside its value. `cast of R()` validates once and
+hands back a `Frame of R`, after which everything is static again.
 
 The boundary is deliberate: `Dynamic` exists for the first five minutes with a
 new file, and for F1's notebook tier, where a cell genuinely does not know its
@@ -252,8 +260,8 @@ expresses a schema.
 
 **Checked, at open, before the first row.** `read_csv` reads the header line;
 `read_parquet` reads the footer. Either compares what is on disk to `R.schema()`
-and returns `Err(SchemaMismatch)` from the *open* call. Nothing is parsed until
-the schema agrees. This is the single most important ergonomic property of the
+and returns `SchemaMismatch` as the error of the *open* call. Nothing is parsed
+until the schema agrees. This is the single most important ergonomic property of the
 whole design: a schema error surfaces in the first millisecond, not at row four
 million of a nine-hour job.
 
@@ -302,7 +310,7 @@ For CSV and delimited text:
 | `Bool` | `true`, `false` | extra spellings only via `bool_values(...)` |
 | `Char` | exactly one Unicode scalar | |
 | `String` | the field, quotes removed, `""` unescaped | |
-| `Option of T` | a null token gives `None`, else `T` | this is how "missing" is spelled |
+| `T?` | a null token gives `null`, else `T` | this is how "missing" is spelled |
 | anything else | — | compile error, at the `implements Record` line |
 
 **Float parsing is Science's own, not the platform's `strtod`.** Different C
@@ -311,20 +319,28 @@ laptop and a cluster because of its libc is a published-results bug, and a
 correctly-rounded parser is a few hundred lines written once.
 
 **Nested and repeated columns are not readable in v1.** A CSV cell is a scalar,
-and a Parquet file with a `LIST` or `STRUCT` column returns
-`Err(UnsupportedSchema)` at open. Flat schemas only. This is a real limitation
-and it blocks a real minority of Parquet files.
+and a Parquet file with a `LIST` or `STRUCT` column fails at open with
+`UnsupportedSchema`. Flat schemas only. This is a real limitation and it blocks
+a real minority of Parquet files.
 
-**Nullability is `Option of T`, and there is no other null.** §5.5 of the core
-spec says absence is `Option`; the data layer inherits that rather than inventing
-a NULL. Arrow and Parquet validity bitmaps map to and from `Option of T` at the
-column level. A non-`Option` column that meets an empty field produces a row
-error — the file disagreed with what you declared, and that is worth hearing.
+**Nullability is `T?`, and there is no other absence.** §5.5 of the core spec
+says absence is `T?`, whose one absent value is the literal `null` (§4.2); the
+data layer inherits that rather than inventing a NULL of its own. Arrow and
+Parquet validity bitmaps map to and from `T?` at the column level. A
+non-nullable column that meets an empty field produces a row error — the file
+disagreed with what you declared, and that is worth hearing.
 
-**Text encoding is UTF-8, plus Latin-1 on request.** Everything else returns
-`Err(NotUnicode)` with a byte offset. Latin-1 is a 256-entry table and covers
-most of the legacy instrument-export pain for essentially no work; Shift-JIS and
-the rest do not, and are refused rather than half-supported. Line endings `\n`
+That spelling now collides with the file's own vocabulary, and the two must be
+kept apart. A *null token* is a string in the input — `""`, `"NA"`, `"-999"` —
+named in `null_value(...)`, and it is a property of the file. `null` is the
+Science literal, and it is a value in the program. A null token in an `F32?`
+column becomes `null`; the same token in an `F32` column becomes a row error.
+Nothing on disk is ever the literal itself.
+
+**Text encoding is UTF-8, plus Latin-1 on request.** Everything else fails with
+`NotUnicode` and a byte offset. Latin-1 is a 256-entry table and covers most of
+the legacy instrument-export pain for essentially no work; Shift-JIS and the rest
+do not, and are refused rather than half-supported. Line endings `\n`
 and `\r\n` are both terminators; a lone `\r` is not.
 
 **Dates and times are the acknowledged hole.** There is no `Instant` type in the
@@ -348,13 +364,13 @@ choice BadRow:
     Skip(max: U64)
 ```
 
-`Stop` is the default: the stream yields the `Err` and ends, and `.collect()`
-returns it.
+`Stop` is the default: the stream yields the row error and ends, and
+`.collect()` returns it as its error.
 
 `Skip` **requires a cap.** `BadRow.Skip(500)` means "up to five hundred bad rows
 is what I expect from this instrument; more than that and my assumptions about
 this file are wrong, so stop and tell me." Exceeding the cap is
-`Err(TooManyBadRows)`, carrying the first rejects as evidence.
+`TooManyBadRows`, carrying the first rejects as evidence.
 
 This is the decision in this note I am most confident about. Every dynamic data
 library offers "skip bad rows" as an unbounded flag, and every one of them has
@@ -362,11 +378,13 @@ produced a published number computed from 12% of the intended data without anyon
 noticing. A cap costs the user one integer and converts a silent wrong answer
 into a loud stop.
 
-A third policy — "replace a bad value with null" — was considered and
+A third policy — "replace a bad value with `null`" — was considered and
 **rejected**. Coercing an unparseable value into missingness is exactly how a
-unit error becomes a number in a paper. The legitimate version of that need is
-served properly and truthfully: declare the field `Option of F32` and list the
-file's null tokens in `null_value(...)`.
+unit error becomes a number in a paper. Note which `null` that is: the proposal
+was to substitute the *literal* for a value the file got wrong, which is not the
+same thing as honouring a null *token* the file deliberately wrote. The
+legitimate version of that need is served properly and truthfully: declare the
+field `F32?` and list the file's null tokens in `null_value(...)`.
 
 Rejects that fall under the cap are kept, not discarded: `frame.rejected()` is an
 `Array of RowError`, bounded by a configurable retention limit, and
@@ -389,7 +407,7 @@ type RowError:
     file: Path
     line: U64
     byte_offset: U64
-    column: Option of String
+    column: String?
     expected: String
     found: String            # truncated to 64 characters
     code: String             # for example "DATA0007"
@@ -422,16 +440,18 @@ here is glue, not machinery, and the machinery would be roughly the size of the
 rest of this note squared.
 
 **The cost is stated plainly:** there is no automatic predicate pushdown. If you
-write `.keep(each.temperature is above 40.0f32)` over a Parquet file, every row
+write `.keep(each.temperature > 40.0f32)` over a Parquet file, every row
 group is read and decoded and then most rows are thrown away.
 
 **The mitigation is that the pushdowns that actually matter are explicit
 arguments to the reader**, not inferred from a predicate:
 
 ```science
-let reader be try read_parquet of Measurement(path, ParquetOptions.new()
+let reader, err be read_parquet of Measurement(path, ParquetOptions.new()
     .columns_used("station", "temperature")                    # other columns never decoded
     .row_groups_where("temperature", Bound.above(40.0f32)))    # skip by row-group statistics
+if err?:
+    return (Frame.empty(), err)
 ```
 
 Column projection is the pushdown worth most of the benefit and it is trivially
@@ -444,21 +464,21 @@ tail is where the optimizer's complexity lives.
 Three shapes, covering three real situations:
 
 ```science
-CsvReader of R has methods:
-    function rows(self) returns Rows of R
-    function chunks(self, size: U64) returns Chunks of R
-    function collect(self) returns Result of (Frame of R, DataError)
+CsvReader of R has:
+    function rows(self) -> Rows of R
+    function chunks(self, size: U64) -> Chunks of R
+    function collect(self) -> (Frame of R, DataError?)
 ```
 
 - **`Rows of R`** — one record at a time, one IO buffer, constant memory
   regardless of file size. This handles any single-pass job: filter and rewrite,
-  fold to a scalar, count, transcode. Its combinators are Result-transparent:
-  `keep`, `discard`, `map_row` and `fold` apply to the `Ok` payload and forward
-  `Err` untouched, exactly as `Result.map` does. `.iterate()` escapes to the
-  ordinary `Iterate` chain over `Result of (R, RowError)` when you want the
-  general tools. This is why `Rows` is its own type with its own closed method
-  set rather than a plain iterator: `docs.discard(each.is_empty())` reads
-  correctly only if `each` is the record, not a `Result` wrapping it.
+  fold to a scalar, count, transcode. Its combinators are error-transparent:
+  `keep`, `discard`, `map_row` and `fold` apply to the record and forward a row
+  error untouched. `.iterate()` escapes to the ordinary `Iterate` chain over
+  `(R, RowError?)` when you want the general tools. This is why `Rows` is its own
+  type with its own closed method set rather than a plain iterator:
+  `docs.discard(each.is_empty())` reads correctly only if `each` is the record,
+  not a pair wrapping it.
 - **`Chunks of R`** — a `Frame of R` at a time, default 65 536 rows. This is the
   shape that matters for ML, because a training loop wants batches, and each
   chunk's `.columns()` is already the contiguous array the model eats. Memory is
@@ -498,7 +518,7 @@ belongs behind a method; a function taking `borrowed Path` cannot be handed a
 column name or a URL by accident; and F2 will want object-store paths, and a type
 gives those somewhere to live without breaking every signature.
 
-**Paths are UTF-8, and non-Unicode paths are `Err(NotUnicode)`.** On Windows a
+**Paths are UTF-8, and a non-Unicode path is a `NotUnicode` error.** On Windows a
 path is UTF-16 and may contain unpaired surrogates; on Unix it is bytes and may
 not be UTF-8. Rust's answer is a second string type (`OsString`) that infects
 every signature it touches. Go's and Python's answer is to declare UTF-8 and
@@ -507,32 +527,32 @@ real files become unreachable and need `extern` FFI; the benefit is that the
 language keeps exactly one string type, which is worth far more.
 
 ```science
-Path has methods:
-    function from(text: borrowed String) returns Path
-    function join(self, part: borrowed String) returns Path
-    function parent(self) returns Option of Path
-    function name(self) returns Option of String
-    function stem(self) returns Option of String
-    function extension(self) returns Option of String
-    function with_extension(self, extension: borrowed String) returns Path
-    function is_absolute(self) returns Bool
-    function absolute(self) returns Result of (Path, IoError)
-    function exists(self) returns Bool
-    function is_directory(self) returns Bool
-    function size(self) returns Result of (U64, IoError)
-    function text(self) returns borrowed String
+Path has:
+    function from(text: borrowed String) -> Path
+    function join(self, part: borrowed String) -> Path
+    function parent(self) -> Path?
+    function name(self) -> String?
+    function stem(self) -> String?
+    function extension(self) -> String?
+    function with_extension(self, extension: borrowed String) -> Path
+    function is_absolute(self) -> Bool
+    function absolute(self) -> (Path, IoError?)
+    function exists(self) -> Bool
+    function is_directory(self) -> Bool
+    function size(self) -> (U64, IoError?)
+    function text(self) -> borrowed String
 ```
 
 Free functions:
 
 ```science
-function current_directory() returns Result of (Path, IoError)
-function create_directory(path: borrowed Path) returns Result of ((), IoError)
-function remove_file(path: borrowed Path) returns Result of ((), IoError)
-function remove_directory(path: borrowed Path) returns Result of ((), IoError)
-function rename(from: borrowed Path, to: borrowed Path) returns Result of ((), IoError)
-function list_directory(path: borrowed Path) returns Result of (Array of Path, IoError)
-function glob(pattern: borrowed String) returns Result of (Array of Path, GlobError)
+function current_directory() -> (Path, IoError?)
+function create_directory(path: borrowed Path) -> ((), IoError?)
+function remove_file(path: borrowed Path) -> ((), IoError?)
+function remove_directory(path: borrowed Path) -> ((), IoError?)
+function rename(from: borrowed Path, to: borrowed Path) -> ((), IoError?)
+function list_directory(path: borrowed Path) -> (Array of Path, IoError?)
+function glob(pattern: borrowed String) -> (Array of Path, GlobError?)
 ```
 
 `create_directory` creates parents; a "one level only" variant is not worth a
@@ -545,7 +565,7 @@ convenience. A program whose input file order depends on the host filesystem's
 directory iteration produces different output on a laptop and on a cluster, and
 for an audience that publishes, deterministic ordering is a correctness property,
 not a nicety. Supported syntax is `*`, `?`, `[a-z]`, and `**` for recursive
-descent. Brace expansion is not supported, and `Err(GlobError)` says so rather
+descent. Brace expansion is not supported, and `GlobError` says so rather
 than silently treating the braces as literal characters.
 
 ### Temporary files
@@ -554,12 +574,12 @@ than silently treating the braces as literal characters.
 type TempDir         # Drop removes the directory and everything in it
 type TempFile        # Drop removes the file
 
-function temporary_directory() returns Result of (TempDir, IoError)
-function temporary_file(suffix: borrowed String) returns Result of (TempFile, IoError)
+function temporary_directory() -> (TempDir, IoError?)
+function temporary_file(suffix: borrowed String) -> (TempFile, IoError?)
 
-TempDir has methods:
-    function path(self) returns borrowed Path
-    function keep(self) returns Path         # consumes self, disarming the Drop
+TempDir has:
+    function path(self) -> borrowed Path
+    function keep(self) -> Path              # consumes self, disarming the Drop
 ```
 
 This is the small place where ownership visibly beats every dynamic language:
@@ -570,32 +590,32 @@ the value, so a program cannot both retain the directory and have it deleted. Th
 ### Files
 
 ```science
-File has methods:
-    function open(path: borrowed Path) returns Result of (File, IoError)
-    function create(path: borrowed Path) returns Result of (File, IoError)
-    function append(path: borrowed Path) returns Result of (File, IoError)
-    function read(mutable self, into: mutable borrowed Array of U8) returns Result of (U64, IoError)
-    function write(mutable self, bytes: borrowed Array of U8) returns Result of (U64, IoError)
-    function flush(mutable self) returns Result of ((), IoError)
-    function close(self) returns Result of ((), IoError)
+File has:
+    function open(path: borrowed Path) -> (File, IoError?)
+    function create(path: borrowed Path) -> (File, IoError?)
+    function append(path: borrowed Path) -> (File, IoError?)
+    function read(mutable self, into: mutable borrowed Array of U8) -> (U64, IoError?)
+    function write(mutable self, bytes: borrowed Array of U8) -> (U64, IoError?)
+    function flush(mutable self) -> ((), IoError?)
+    function close(self) -> ((), IoError?)
 ```
 
-`close` **consumes** the file and returns a `Result`, and you are expected to call
-it on anything you wrote. `Drop` closes too, as a safety net, but `Drop` cannot
-return a `Result`, and a flush that failed at close is a real data-loss bug that
-must not be swallowed. The library says this in one line rather than pretending
-RAII solves it.
+`close` **consumes** the file and returns an `IoError?`, and you are expected to
+call it on anything you wrote. `Drop` closes too, as a safety net, but `Drop`
+cannot return an error, and a flush that failed at close is a real data-loss bug
+that must not be swallowed. The library says this in one line rather than
+pretending RAII solves it.
 
 ---
 
 ## 8. Writing
 
 ```science
-function write_csv of R(frame: borrowed Frame of R, path: borrowed Path, options: CsvOptions) returns Result of ((), DataError)
-function write_json_lines of R(frame: borrowed Frame of R, path: borrowed Path) returns Result of ((), DataError)
-function write_npy(column: borrowed Array of F32, path: borrowed Path) returns Result of ((), DataError)
-function write_safetensors(tensors: borrowed Map of (String, Array of F32), path: borrowed Path) returns Result of ((), DataError)
-function write_parquet of R(frame: borrowed Frame of R, path: borrowed Path, options: ParquetOptions) returns Result of ((), DataError)
+function write_csv of R(frame: borrowed Frame of R, path: borrowed Path, options: CsvOptions) -> ((), DataError?)
+function write_json_lines of R(frame: borrowed Frame of R, path: borrowed Path) -> ((), DataError?)
+function write_npy(column: borrowed Array of F32, path: borrowed Path) -> ((), DataError?)
+function write_safetensors(tensors: borrowed Map of (String, Array of F32), path: borrowed Path) -> ((), DataError?)
+function write_parquet of R(frame: borrowed Frame of R, path: borrowed Path, options: ParquetOptions) -> ((), DataError?)
 ```
 
 **Every whole-file write is atomic.** The bytes go to a sibling temporary in the
@@ -608,10 +628,10 @@ the input needed for the rerun.
 **Streaming writers** exist for output bigger than memory:
 
 ```science
-ParquetWriter of R has methods:
-    function create(path: borrowed Path, options: ParquetOptions) returns Result of (ParquetWriter of R, DataError)
-    function write_chunk(mutable self, frame: borrowed Frame of R) returns Result of ((), DataError)
-    function close(self) returns Result of ((), DataError)
+ParquetWriter of R has:
+    function create(path: borrowed Path, options: ParquetOptions) -> (ParquetWriter of R, DataError?)
+    function write_chunk(mutable self, frame: borrowed Frame of R) -> ((), DataError?)
+    function close(self) -> ((), DataError?)
 ```
 
 `close` consumes the writer, for the same reason `File.close` does — and with
@@ -662,8 +682,8 @@ dtype, with a validity bitmap for the nullable ones. A `Frame` can therefore
 *adopt* an Arrow chunk without copying, holding the release callback and calling
 it on `Drop`. Ownership makes that safe rather than a leak waiting to happen.
 
-The consequence for `Option`: an `Option of F32` column carries Arrow's validity
-bitmap, and DLPack has no concept of validity. So an `Option` column **cannot**
+The consequence for nullable columns: an `F32?` column carries Arrow's validity
+bitmap, and DLPack has no concept of validity. So a nullable column **cannot**
 become a tensor directly — it needs `.fill(value)` or `.drop_missing()` first, and
 that is a compile-time distinction rather than a runtime surprise. This is exactly
 the NaN-versus-NA confusion that costs pandas users days, resolved by the type.
@@ -702,7 +722,7 @@ the result as Parquet.
 
 ```science
 use fs (Path, glob)
-use data (Frame, Record, BadRow, DataError)
+use data (Frame, Record, BadRow)
 use data.csv (read_csv, CsvOptions)
 use data.parquet (write_parquet, ParquetOptions, Compression)
 
@@ -710,7 +730,7 @@ type Measurement:
     station: String
     timestamp: I64            # epoch seconds; see §5.2 on dates
     temperature: F32
-    humidity: Option of F32
+    humidity: F32?
 
 Measurement implements Record
 
@@ -719,21 +739,23 @@ function normalize(values: mutable borrowed Array of F32):
     if count is 0.0f32: return
 
     let mutable total be 0.0f32
-    for each v in values:
+    for v in values:
         total be total + v
     let mean be total / count
 
     let mutable squares be 0.0f32
-    for each v in values:
+    for v in values:
         squares be squares + (v - mean) ** 2
     let deviation be (squares / count).square_root()
     if deviation is 0.0f32: return
 
-    for each i in 0..values.len():
+    for i in 0..values.len():
         values.set(i, (values.get(i) - mean) / deviation)
 
-function main() returns Result of ((), DataError):
-    let files be try glob("measurements/2026-09-*.csv")
+function main() -> ((), Error?):
+    let files, err be glob("measurements/2026-09-*.csv")
+    if err?:
+        return ((), err)
 
     let options be CsvOptions.new()
         .header(true)
@@ -743,24 +765,28 @@ function main() returns Result of ((), DataError):
         .null_value("-999")
         .on_bad_row(BadRow.Skip(500))
 
-    let mutable frame be try read_csv of Measurement(files, options)
+    let mutable frame, err be read_csv of Measurement(files, options)
         .rows()
-        .keep(each.temperature is at least -80.0f32)
-        .keep(each.temperature is at most 70.0f32)
-        .keep(each.humidity is not None)
+        .keep(each.temperature >= -80.0f32)
+        .keep(each.temperature <= 70.0f32)
+        .keep(each.humidity?)
         .collect()
+    if err?:
+        return ((), err)
 
-    println("kept rows:", frame.len())
-    println("rejected rows:", frame.rejected_count())
+    print("kept rows:", frame.len())
+    print("rejected rows:", frame.rejected_count())
 
     normalize(frame.columns_mutable().temperature)
 
     let destination be Path.from("measurements").join("clean.parquet")
-    try write_parquet(frame, destination, ParquetOptions.new()
+    let _, err be write_parquet(frame, destination, ParquetOptions.new()
         .compression(Compression.Zstd(3))
         .row_group_rows(1_000_000))
+    if err?:
+        return ((), err)
 
-    Ok(())
+    return ((), null)
 ```
 
 Seven things this example is making a case for:
@@ -772,9 +798,13 @@ Seven things this example is making a case for:
    cannot span files makes every caller write the concatenation loop.
 3. **The filters run on `Rows`, before `.collect()`.** Memory is bounded by the
    IO buffer, not by the input, no matter how many September files there are.
-4. **`is at least` and `is not None` read as the predicates they are.** This is
-   the case §4.6 of the core spec was arguing for, in the code where most of an
-   audience's time is spent.
+4. **The comparisons are symbols now, and that was this item's case.** In
+   revision 1 the filters read `is at least` and `is not None`, and §4.6 of the
+   core spec argued for exactly that, in the code where most of an audience's
+   time is spent. `syntax-revision-2.md` §1 replaced the word-forms with `>=`
+   and `<=`, and §3.1 replaced `is not None` with the postfix `?`. This item's
+   case no longer holds, and it is recorded here as lost rather than restated
+   with a different justification.
 5. **`BadRow.Skip(500)` is a promise with a bound on it.** If the instrument was
    misconfigured and ten thousand rows are unparseable, this program stops and
    says so instead of quietly normalizing the survivors.
@@ -816,8 +846,8 @@ Stated explicitly so the seams are visible rather than assumed.
 4. **Numeric methods** — `square_root()` and the reductions — belong to the
    numerics note; the worked example uses one and would be written differently if
    the answer is a free function `square_root(x)`.
-5. **Formatting** — the example's `println("kept rows:", frame.len())` assumes a
-   variadic `println` over `Display`. If formatting takes a different shape, the
+5. **Formatting** — the example's `print("kept rows:", frame.len())` assumes a
+   variadic `print` over `Display`. If formatting takes a different shape, the
    example changes and nothing else does.
 6. **Array literals** — this note avoids them (`null_value` is called three times
    rather than taking a list) because §4.2 of the core spec lists no array

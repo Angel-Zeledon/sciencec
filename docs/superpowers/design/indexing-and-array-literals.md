@@ -120,7 +120,7 @@ amending a rule and inventing one.
 
 What §8 actually says is that the F0 library is closed and covers `Array` and
 `Map`. What `examples/README.md` records, under "beyond the spec", is the
-consequence the corpus lives by: `get` "returns an `Option` and cannot panic," and
+consequence the corpus lives by: `get` "returns a `T?` and cannot panic," and
 "no file in the corpus contains a `[`." The prohibition is a **property of the
 surface as built**, not a written rule. Nobody has yet had to decide whether an
 indexing operator may panic, because there has been no indexing operator.
@@ -783,7 +783,7 @@ mechanism is neither.
 §4.6's precedence table already has the level, top row:
 
 ```
-call, index, field access, try
+call, index, field access, ?
 ```
 
 (`try` leaves that row under `syntax-revision-2.md` §3; the postfix `?` presence

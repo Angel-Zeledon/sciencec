@@ -41,15 +41,15 @@ spec has not settled, it is marked **AMENDMENT n** and collected in §10.
 ```science
 type Bounds:
     minimum: Int
-    maximum: Option of Int
+    maximum: Int?
 
-trait Iterate:
+interface Iterate:
     type Item
 
-    function next(mutable self) returns Option of Self.Item
+    function next(mutable self) -> Self.Item?
 
-    function estimated_length(borrowed self) returns Bounds:
-        Bounds(minimum: 0, maximum: None)
+    function estimated_length(borrowed self) -> Bounds:
+        Bounds(minimum: 0, maximum: null)
 ```
 
 One required method. `estimated_length` has a default so that implementing a new
@@ -147,8 +147,8 @@ means it buffers the whole stream.
 |---|---|---|---|
 | `keep(p)` | `keep of P(self, p: P) returns Keep of (Self, P)` | safe | Retain what matches. |
 | `discard(p)` | `discard of P(self, p: P) returns Discard of (Self, P)` | safe | Drop what matches. Both exist because a negated predicate is the commonest readability wart in filtering code, and §4.6's own example is `discard(each.is_empty())`. |
-| `keep_some()` | `keep_some(self) returns KeepSome of Self` where `Self.Item` is `Option of T` | safe | `map` then `keep_some` is `filter_map` in two honest words, and removes a combinator from the set. |
-| `keep_ok()` | `keep_ok(self) returns KeepOk of Self` where `Self.Item` is `Result of (T, E)` | safe | The "drop the bad rows" error policy, named at the call site (§6). |
+| `keep_some()` | `keep_some(self) -> KeepSome of Self` where `Self.Item` is `T?` | safe | `map` then `keep_some` is `filter_map` in two honest words, and removes a combinator from the set. |
+| `keep_ok()` | `keep_ok(self) -> KeepOk of Self` where `Self.Item` is `(T, E?)` | safe | The "drop the bad rows" error policy, named at the call site (§6). |
 | `take(n)` | `take(self, n: Int) returns Take of Self` | ordered | §4.6 uses it. Head of the stream, and the reason laziness pays. |
 | `skip(n)` | `skip(self, n: Int) returns Skip of Self` | ordered | Header lines, warm-up steps, burn-in samples. |
 | `take_while(p)` | `take_while of P(self, p: P) returns TakeWhile of (Self, P)` | sequential | Read until a sentinel; stop a sweep when the loss stops falling. |
@@ -174,18 +174,18 @@ means it buffers the whole stream.
 | Method | Signature | Parallel | Why |
 |---|---|---|---|
 | `collect()` | `collect(self) returns Array of Self.Item` | ordered | Always an `Array`. Never inference-directed (§3.3). |
-| `collect_or_error()` | `collect_or_error(self) returns Result of (Array of T, E)` where `Self.Item` is `Result of (T, E)` | ordered | The "stop at the first bad row" error policy (§6). |
-| `partition_results()` | `partition_results(self) returns Outcome of (T, E)` | ordered | The "give me both" policy (§6), and the one a scientist actually wants. |
+| `collect_or_error()` | `collect_or_error(self) -> (Array of T, E?)` where `Self.Item` is `(T, E?)` | ordered | The "stop at the first bad row" error policy (§6). |
+| `partition_results()` | `partition_results(self) -> Outcome of (T, E)` | ordered | The "give me both" policy (§6), and the one a scientist actually wants. |
 | `partition(p)` | `partition of P(self, p: P) returns Parts of Self.Item` | ordered | One pass over a source you cannot rewind. That, and only that, is why it exists beside `keep`/`discard`. |
-| `reduce(initial, f)` | `reduce of (A, F)(self, initial: A, f: F) returns A` | ordered | The general fold. One form, always with an initial value — the initial-less variant returns an `Option` nobody handles. |
+| `reduce(initial, f)` | `reduce of (A, F)(self, initial: A, f: F) -> A` | ordered | The general fold. One form, always with an initial value — the initial-less variant returns a nullable nobody handles. |
 | `sum()` | `sum(self) returns Total` where `Self.Item: Add of Output = Total` | ordered | Named separately from `reduce` because summation order is a published-results question (§5.1) and the library owes it a defined answer. |
 | `product()` | `product(self) returns Total` where `Self.Item: Mul of Output = Total` | ordered | Same argument; likelihoods and volumes. |
 | `count()` | `count(self) returns Int` | safe | Deliberately not called `length`: `length()` on a collection is `O(1)`, counting a stream consumes it, and two names keep the difference visible. |
-| `minimum()` / `maximum()` | `returns Option of Self.Item` where `Self.Item: Ord` | ordered | Full words, per §4.3's rule against abbreviations. |
-| `minimum(by: key)` / `maximum(by: key)` | `of (K, F)(self, by: F) returns Option of Self.Item` where `K: Ord` | ordered | The best *record*, not the best score. |
-| `first()` | `first(mutable self) returns Option of Self.Item` | sequential | Takes `mutable self`, so a chain can be stepped and then resumed. |
-| `find(p)` | `find of P(mutable self, p: P) returns Option of Self.Item` | sequential | First match, short-circuiting, chain still usable afterwards. |
-| `last()` | `last(self) returns Option of Self.Item` | ordered | The final state of a run. Walks the whole chain, and says so. |
+| `minimum()` / `maximum()` | `-> Self.Item?` where `Self.Item: Ord` | ordered | Full words, per §4.3's rule against abbreviations. |
+| `minimum(by: key)` / `maximum(by: key)` | `of (K, F)(self, by: F) -> Self.Item?` where `K: Ord` | ordered | The best *record*, not the best score. |
+| `first()` | `first(mutable self) -> Self.Item?` | sequential | Takes `mutable self`, so a chain can be stepped and then resumed. |
+| `find(p)` | `find of P(mutable self, p: P) -> Self.Item?` | sequential | First match, short-circuiting, chain still usable afterwards. |
+| `last()` | `last(self) -> Self.Item?` | ordered | The final state of a run. Walks the whole chain, and says so. |
 | `has_any(p)` / `has_all(p)` | `of P(mutable self, p: P) returns Bool` | safe | Validation predicates. `has_` because `any` is reserved (§4.3, `any Summarize`), and because `if rows.iterate().has_any(each.is_missing())` reads as a sentence. |
 | `group(by: key)` | `group of (K, F)(self, by: F) returns Map of (K, Array of Self.Item)` where `K: Eq + Hash` | ordered | The most frequently rewritten loop in data work. Without it every user writes the same six lines and half of them get the insert-or-append wrong. |
 | `tally(by: key)` | `tally of (K, F)(self, by: F) returns Map of (K, Int)` where `K: Eq + Hash` | ordered | Class balance, label counts, bin counts. `group(by:)` then `count()` allocates every group only to discard it. |
@@ -255,8 +255,8 @@ units of work lazily and a million eagerly.
   specialisation, and pipeline chains are few and shallow.
 - **Nothing happens until the end.** A chain whose terminal is never called is
   dead code that looks like work. **The compiler must warn when an `Iterate`
-  value is dropped without a terminal**, in the same family as an unused
-  `Result`. Without it, "I called `.map` and nothing happened" is the first bug
+  value is dropped without a terminal**, in the same family as `SC0140`'s
+  unchecked error. Without it, "I called `.map` and nothing happened" is the first bug
   every user files.
 - **Debugging is harder**, and §1.5 refuses the usual mitigation on purpose.
 
@@ -337,7 +337,7 @@ handed to the next stage is a dataset, not a recipe.
 Streaming across a boundary is not lost, because a *source* type is nameable:
 
 ```science
-function lines_of(path: borrowed String) returns Result of (Lines, Error)
+function lines_of(path: borrowed String) -> (Lines, Error?)
 ```
 
 `Lines` is a concrete type implementing `Iterate`, so the caller chains over it
@@ -539,7 +539,8 @@ theirs.
 
 ### 5.1 `Array` and `Map` (given), plus `Set`
 
-§8 gives F0 `Option`, `Result`, `Box`, `String`, `Array`, `Map`. This note adds
+§8 gives F0 `Box`, `String`, `Array`, `Map` and `Error` — absence and failure are
+no longer library types under revision 2 (§5.5). This note adds
 exactly one type.
 
 **`Set of T` — accepted. AMENDMENT 10.** Membership, vocabularies, label sets,
@@ -646,32 +647,33 @@ turbofish because there is nothing to disambiguate.
 
 ## 6. Errors inside a chain
 
-### 6.1 What `.map(try parse(each))` does
+### 6.1 What a fallible step does inside a chain
 
 First, the spelling. `each` is a reserved binder (§13), so it cannot also be a
 closure parameter name; the two legal forms are:
 
 ```science
-lines.iterate().map(try parse(each))              # implicit subject
-lines.iterate().map(line giving try parse(line))  # named parameter
+lines.iterate().map(parse(each))              # implicit subject
+lines.iterate().map(line giving parse(line))  # named parameter
 ```
 
-Both mean the same thing, and the thing they mean needs a rule:
+`parse` is `-> (Row, ParseError?)`, so the closure returns a pair and the
+chain's `Item` is `(Row, ParseError?)`.
 
-**AMENDMENT 4: `try` inside a closure body returns from the closure, not from the
-enclosing function.** A closure is a function; `try` is defined as "unwrap or
-return the failure" (§4.5) and the thing it returns from is the nearest function
-body. So `try parse(line)` makes the closure's return type `Result of (Row,
-Error)`, and the chain's `Item` becomes `Result of (Row, Error)`.
+**AMENDMENT 4 is withdrawn.** It read: *"`try` inside a closure body returns
+from the closure, not from the enclosing function"*, and it existed because
+`try` was a control-flow operator and a closure is a function, so the operator
+had to be told which function body it returned from. `syntax-revision-2.md` §3
+removes `try`; `?` is a presence *test*, not a propagation operator, and it
+returns from nothing. The non-local-control-flow question this amendment settled
+can no longer be asked, and the diagnostic it requested has no subject.
 
-The alternative — `try` inside a closure returning from the enclosing function —
-is what most users initially expect and is unimplementable without non-local
-control flow, which F0 does not have and F5's serializable state machines would
-have to reproduce. The rule must be the local one, and the diagnostic when a
-closure's `try` makes its return type a `Result` that the combinator did not
-expect must say so in those words.
+That is a genuine simplification, and it is the only one this section gets. It
+is also worth being precise about what was removed: the amendment was not wrong,
+it was made unnecessary by removing the feature it constrained. Nothing became
+easier to *write*; one rule stopped needing to exist.
 
-So the chain does not fail. It becomes a chain **of results**, and the user then
+So the chain does not fail. It becomes a chain **of pairs**, and the user then
 chooses, by name, what to do about them.
 
 ### 6.2 Three policies, three names
@@ -679,27 +681,29 @@ chooses, by name, what to do about them.
 ```science
 # 1. Ignore the failures.
 let rows be lines.iterate()
-    .map(try parse(each))            # Item = Result of (Row, Error)
+    .map(parse(each))                # Item = (Row, Error?)
     .keep_ok()                       # Item = Row
     .collect()                       # Array of Row
 
 # 2. Stop at the first failure.
-let rows be try lines.iterate()
-    .map(try parse(each))            # Item = Result of (Row, Error)
-    .collect_or_error()              # Result of (Array of Row, Error)
+let rows, err be lines.iterate()
+    .map(parse(each))                # Item = (Row, Error?)
+    .collect_or_error()              # (Array of Row, Error?)
+if err?:
+    return (Array of Row .new(), err)
 
 # 3. Keep both, which is usually what a scientist wants.
 let outcome be lines.iterate()
-    .map(try parse(each))            # Item = Result of (Row, Error)
+    .map(parse(each))                # Item = (Row, Error?)
     .partition_results()             # Outcome of (Row, Error)
 
-println(outcome.errors.length())
+print(outcome.errors.length())
 train(outcome.values)
 ```
 
 Three lines of policy, each one word, each visible at the call site. This is the
 whole answer to "how does a chain of fallible steps collect into a single
-`Result` rather than a mess": **the mess is a real choice and the language makes
+outcome rather than a mess": **the mess is a real choice and the language makes
 the user name which one they made.** Rust's `collect::<Result<Vec<_>, _>>()` does
 policy 2 through a type annotation on a binding, which is the cleverest and least
 readable thing in its iterator API.
@@ -709,36 +713,75 @@ rows parsed and three did not; the pipeline should run and the three should be
 inspectable. A language that only offers "ignore" and "abort" forces a hand-rolled
 loop the first time a real dataset shows up.
 
-### 6.3 Several fallible steps
+**The three names outlived the type they were named after, and this note has not
+renamed them.** `keep_ok` reads `Ok`, `collect_or_error` returned a `Result`, and
+`partition_results` is named for results — none of which is a type in the
+language after `syntax-revision-2.md` §3. The *policies* survive untouched,
+because a policy over `Item = (T, E?)` is the same policy it was over
+`Item = Result of (T, E)`; only the names now point at nothing. The signatures in
+§1.4 are therefore restated over `(T, E?)`, so that the semantics are unambiguous
+whatever the names become, and the rename is left as an open question for
+whoever next edits the closed set — it is an API decision, and this note should
+not make it as a side effect of a syntax migration.
+
+Note also that policy 2 costs a line it did not cost before. `collect_or_error()`
+used to produce a `Result` that the enclosing `try` consumed on the same line;
+it now produces a pair that has to be bound and tested. That is revision 2's
+stated tax (§3.3 of that note) arriving in the chain API.
+
+### 6.3 Several fallible steps — the hole this section used to fill is open again
 
 Two fallible steps in one chain produce two error types unless something unifies
-them. **AMENDMENT 5: `try` converts the error through `From`**, exactly as Rust's
-`?` does. Without it, the second fallible step in any chain fails to compile with
-a type error about `E1` and `E2` that has nothing to do with what the user did
-wrong. This is a dependency on whoever owns the error design; it is stated here
-because the chain API is where its absence is felt first and worst.
+them. This section used to unify them:
 
-With it, a chain of fallible steps is flat:
+> **AMENDMENT 5: `try` converts the error through `From`**, exactly as Rust's
+> `?` does. Without it, the second fallible step in any chain fails to compile
+> with a type error about `E1` and `E2` that has nothing to do with what the
+> user did wrong.
 
-```science
-let rows be try lines.iterate()
-    .map(try parse(each))               # Item = Result of (Row, ParseError)
-    .keep_ok()                          # Item = Row
-    .map(row giving try validate(row))  # Item = Result of (Row, ValidationError)
-    .collect_or_error()                 # Result of (Array of Row, Error)
-```
+**That amendment is dead, and it was killed deliberately.**
+`syntax-revision-2.md` §3.2 lists `From` widening among the things the new model
+removes, and §3.4 states the replacement in full: *"Conversion is explicit, and
+that is the point [...] a function whose callee fails with `ConfigError` and
+whose own signature says `Error?` converts at the return."*
 
-both `ParseError` and `ValidationError` converting into the function's `Error`
-through `From`.
+A chain has no `return`. The conversion revision 2 relocated to the caller's
+return statement has no call site inside a chain, so the failure mode AMENDMENT 5
+was written to prevent — a type error about `E1` and `E2` that has nothing to do
+with what the user did wrong — comes back exactly as described, and this note no
+longer has a mechanism to point at.
+
+Three options are visible from here and none of them is this note's alone to
+choose:
+
+1. **Convert in the closure.** `.map(row giving widen(validate(row)))`. Explicit,
+   consistent with §3.4's principle, and it needs a per-pair conversion helper
+   that neither `stdlib-core.md` nor the closed set of §1.4 currently contains.
+2. **Declare every fallible step in a chain as `-> (T, Error?)`**, taking the
+   boxed interface form. This works today with no new machinery, and §3.4 of the
+   revision note prices it against exactly this case: *"for a function called in
+   a tight loop that returns `Error?` on every iteration it is not [acceptable],
+   and the concrete form is the answer."* A chain link is the tight loop.
+3. **A chain-level conversion combinator.** One more name in a set §1.4 argues
+   should stay closed, and the only option that keeps the concrete error types
+   and the flat chain at once.
+
+This note records the hole rather than closing it. §6.3 was always a dependency
+on whoever owns the error design — the original text said so — and the error
+design has since been rewritten in a way that removes the mechanism without
+supplying a replacement. That is the one place in this note where the new error
+model is straightforwardly worse than what it replaced, and it should not be
+written up as anything else.
 
 ### 6.4 Two rules that keep the story honest
 
-- **A chain never panics on a data error.** Every failure a dataset can cause is
-  a `Result`. `panic` is for a broken program: an index out of bounds, a batch
-  size of zero.
+- **A chain never panics on a data error.** Every failure a dataset can cause
+  arrives in an error slot. `panic` is for a broken program: an index out of
+  bounds, a batch size of zero.
 - **`reduce` over fallible items is not special-cased.** No `reduce_or_error`.
-  Resolve the results first — `.collect_or_error()` then `try`, or `.keep_ok()` —
-  and reduce over values. One fewer name, and the policy stays visible.
+  Resolve the pairs first — `.collect_or_error()` and then test the error, or
+  `.keep_ok()` — and reduce over values. One fewer name, and the policy stays
+  visible.
 
 ---
 
@@ -759,7 +802,7 @@ Seven things must be true in F0 for that to be addable rather than a redesign.
 
 1. **Combinators are provided methods, never user-implemented.** A user
    implements `next()`; F2 adds a second trait — call it `Divide`, with
-   `function divide(self) returns Option of (Self, Self)` — and gives it the same
+   `function divide(self) -> (Self, Self)?` — and gives it the same
    provided methods. Nobody's source code changes. Had the combinators been
    free functions or user obligations, every source in existence would need a
    second implementation.
@@ -844,25 +887,27 @@ type Hit:
 function top_matches(path: borrowed String,
                      encoder: borrowed Encoder,
                      query: borrowed Embedding)
-        returns Result of (Array of Hit, Error):
+        -> (Array of Hit, Error?):
 
-    let raw be try read_lines(path)
+    let raw, err be read_lines(path)
+    if err?:
+        return (Array of Hit .new(), err)
 
     let loaded be raw
         .iterate()                                              # 1
         .discard(each.is_empty())                               # 2
         .skip(1)                                                # 3
-        .map(line giving try parse_row(line))                   # 4
+        .map(line giving parse_row(line))                       # 4
         .partition_results()                                    # 5
 
-    for each problem in loaded.errors.iterate().take(5):
-        println(problem)
+    for problem in loaded.errors.iterate().take(5):
+        print(problem)
 
     let ranked be loaded.values
         .iterate()                                              # 6
         .keep(each.split is "train")                            # 7
         .unique(by: each.id)                                    # 8
-        .keep(each.weight is at least 0.5)                      # 9
+        .keep(each.weight >= 0.5)                               # 9
         .batches(64)                                            # 10
         .expand(group giving encode_batch(encoder, group)
                              .iterate_consuming())              # 11
@@ -873,7 +918,7 @@ function top_matches(path: borrowed String,
         .take(10)                                               # 15
         .collect()                                              # 16
 
-    Ok(ranked)
+    return (ranked, null)
 ```
 
 The type at every stage:
@@ -884,13 +929,13 @@ The type at every stage:
 | 1 | `.iterate()` | `borrowed String` |
 | 2 | `.discard(each.is_empty())` | `borrowed String` |
 | 3 | `.skip(1)` | `borrowed String` |
-| 4 | `.map(line giving try parse_row(line))` | `Result of (Row, ParseError)` |
+| 4 | `.map(line giving parse_row(line))` | `(Row, ParseError?)` |
 | 5 | `.partition_results()` | terminal — `Outcome of (Row, ParseError)` |
 | — | `loaded.values` | `Array of Row`; `loaded.errors` is `Array of ParseError` |
 | 6 | `.iterate()` | `borrowed Row` |
 | 7 | `.keep(each.split is "train")` | `borrowed Row` |
 | 8 | `.unique(by: each.id)` | `borrowed Row` |
-| 9 | `.keep(each.weight is at least 0.5)` | `borrowed Row` |
+| 9 | `.keep(each.weight >= 0.5)` | `borrowed Row` |
 | 10 | `.batches(64)` | `Array of borrowed Row` |
 | 11 | `.expand(...)` | `Embedded` (owned — `encode_batch` allocates them) |
 | 12 | `.map(row giving Hit(...))` | `Hit` (owned) |
@@ -957,10 +1002,14 @@ several sit in another designer's territory and are flagged for routing.
    inference. Needed to keep §4.6's own `sort(by:)`. *(Resolution.)*
 3. **Multi-parameter closures** are `(a, b) giving expression`; `each` is defined
    only at arity one, with a diagnostic. *(Syntax.)*
-4. **`try` inside a closure returns from the closure.** *(Types / errors.)*
-5. **`try` converts the error through `From`.** *(Errors — dependency, not this
-   note's to decide, but a chain with two fallible steps does not compile
-   without it.)*
+4. ~~**`try` inside a closure returns from the closure.**~~ **Withdrawn** —
+   `syntax-revision-2.md` §3 removes `try`, so the rule has no subject (§6.1).
+5. ~~**`try` converts the error through `From`.**~~ **Dead, and the problem it
+   solved is open.** `syntax-revision-2.md` §3.2 removes `From` widening and
+   §3.4 relocates conversion to the caller's `return`, which a chain does not
+   have. A chain with two fallible steps of different error types still does not
+   compile, and this note no longer has a mechanism to ask for. *(Errors — still
+   not this note's to decide; §6.3 states the three options.)*
 6. **The copy-out rule**: a place expression returned from a closure yields the
    value when `Copy`, a borrow otherwise. *(Types / ownership.)*
 7. **Operator traits are implemented for borrowed primitive operands** with owned

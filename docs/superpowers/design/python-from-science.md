@@ -279,8 +279,8 @@ hyperparameter grid should, and that is the case this decision exists for.
 > **Decision 5 — a Science closure can be passed into Python as a callable.**
 > `python.callable(f)` wraps a Science closure of type `function(PyObject) ->
 > (PyObject, PyError?)` in a generated heap type with `tp_call`. The wrapper
-> owns the closure. On a returned non-null error the wrapper raises; on `Ok` it
-> returns the value.
+> owns the closure. On a returned non-null error the wrapper raises; when the
+> error is null it returns the value.
 
 The lifetime rule is the same one `python-interop.md` §4.4 already states for
 buffers, applied to code: the Python object owns the closure, so the closure

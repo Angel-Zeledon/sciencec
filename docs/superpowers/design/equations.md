@@ -661,11 +661,11 @@ The derivative is not a demo. Three callers exist in sibling notes today.
 **`optimize` §8.6 has a hole shaped exactly like this.** Its signature reads:
 
 ```science
-gradient: Option of (function(borrowed Vector of (F64, N)) returns Vector of (F64, N)),
+gradient: (function(borrowed Vector of (F64, N)) -> Vector of (F64, N))?,
 ```
 
 with the comment *"given one, lbfgs uses it; without one it falls back to finite
-differences"*. An objective written as an equation can fill that `Option` at
+differences"*. An objective written as an equation can fill that nullable slot at
 compile time, with an exact gradient, with no AD and no hand-differentiation.
 `levenberg_marquardt` and `gauss_newton` in §8.3 want the same thing and want it
 more, because a least-squares Jacobian computed by finite differences is the
@@ -1424,7 +1424,7 @@ is one.
    only the constants table knows them. This is the same shape as
    `publishable-output.md` §12 item 5b's ask on the same table and should be done
    in the same pass.
-6. **That `optimize` §8.6's `gradient: Option of (function …)` parameter be
+6. **That `optimize` §8.6's `gradient: (function …)?` parameter be
    fillable from an equation**, which requires only that an equation's derivative
    be expressible as a value of that function type. §5.2 is the argument; nothing
    in that note's text needs to change.

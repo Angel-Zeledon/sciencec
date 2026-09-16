@@ -283,7 +283,7 @@ section and the reason:
 | **§9.1 transforms** | `hilbert`, `mellin`, `hartley`, `czt`, `cwt_morlet` | `hilbert_transform`, `mellin_transform`, `hartley_transform`, `chirp_z_transform`, `wavelet_continuous(signal, wavelet: Wavelet.Morlet, …)` | N1 and N3 |
 
 **The optimize row costs something real and it is named rather than hidden.**
-`scientific-libraries.md` §8.6 writes `lbfgs` with an `Option of (function …)`
+`scientific-libraries.md` §8.6 writes `lbfgs` with a `(function …)?`
 gradient parameter and says in its own comment that this is *"a decision the
 caller should see in the type."* Folding the methods into `minimise(…, method:)`
 moves the gradient into `Settings`, one hop further from the signature. That is a

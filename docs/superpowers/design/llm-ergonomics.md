@@ -60,12 +60,24 @@ Two. Out of fourteen.
 
 | Habit | Diagnostic today | Missing |
 |---|---|---|
-| `g()?` | `SC0001` — ``` `?` is not an operator in Science ```, note names `try` | a fix; and it cascades into `SC0100` |
+| `g()?` | — — **this row is void since revision 2**; see below | not a fix. A decision about what `g()?` now means |
 | `for x in xs:` | `SC0100` — *expected `each` after `for`* | a fix inserting `each` |
 | `let x = 1` | `SC0100` — *expected `be`, found `=`* | a fix replacing `=` with `be` — the assignment path already has one |
 
 These are one line of work each: the diagnostic already knows the span and the
 replacement text, and `Suggestion` already exists and is already rendered.
+
+**Except the first, which revision 2 turned inside out.** `syntax-revision-2.md` §3
+makes `?` a postfix presence test, so `g()?` is no longer a syntax error — it is
+legal, it is a `Bool`, and it means *"did `g()` return something non-null"*. The
+habit this row was written about is a model reaching for Rust's propagation
+operator, and that habit now **parses and compiles into something else**. A
+diagnostic cannot catch it at the lexer any more; what catches it is the type
+checker, when a `Bool` is bound where a value was wanted, and that message will
+not mention error propagation unless somebody makes it. This is the one row in
+§2 where revision 2 made the situation *worse*: a hard error became a silent
+change of meaning. What to do about it is a diagnostics decision and is not
+settled here; no code is claimed for it.
 
 ### 2.3 Actively misleading
 
@@ -188,17 +200,22 @@ One new block, `SC0120`–`SC0134`, inside the syntax range §9 allocates.
 | `SC0131` | `impl Type:` | `Type has methods:` |
 | `SC0132` | `pub` starting an item | `public` |
 | `SC0133` | `mut` after `let` | `mutable` |
-| `SC0134` | postfix `?` | `try` before the expression — a **move**, not a replacement |
+| `SC0134` | postfix `?` | **void since revision 2** — `?` is the presence test and `try` does not exist. The code is not reassigned here (see §2.2) |
 
 `SC0127`–`SC0132` must be checked **before** the `implements` branch in
 `parse_item`, which is what §2.3 diagnosed. That ordering is the whole fix for
 six of the nine bad cases.
 
-`SC0130` and `SC0134` are the two that need real work, because the fix is not a
-substitution at one span: `impl Summarize for Doc:` has to become
-`Doc implements Summarize:`, and `f()?` has to become `try f()`. `Suggestion`
-must therefore admit a multi-span edit, or these two ship as notes. Worth the
-work: `?` is the single most-repeated habit in the whole list.
+`SC0130` needed real work, because the fix is not a substitution at one span:
+`impl Summarize for Doc:` has to become `Doc implements Summarize:`. `Suggestion`
+must therefore admit a multi-span edit, or it ships as a note.
+
+`SC0134` was the second customer for that extension and it no longer is, because
+the edit it wanted — `f()?` to `try f()` — has no destination. That matters
+beyond this table: `def-and-lambda.md` §11 item 2 counts `SC0130`, `SC0134` and
+`SC0135` as "three customers" for multi-span `Suggestion` and calls that "past the
+threshold". With `SC0134` void the count is two, and whether two is still past
+the threshold is that note's question to re-ask.
 
 ---
 
@@ -312,8 +329,10 @@ Its sections, in that order:
    mode. Fourteen rows, each with the wrong form and the right one.
 2. **The five rules that have no Rust or Python analogue** and so cannot be
    guessed: `be` for both binding and assignment; calls always take parentheses;
-   `of` for generic arguments with the parenthesisation rule; `try` is a prefix;
-   blocks are indentation and the inline body ends where the expression ends.
+   `of` for generic arguments with the parenthesisation rule; `?` is a postfix
+   presence test and failure is a second return value, not a propagation
+   operator; blocks are indentation and the inline body ends where the
+   expression ends.
 3. **The reserved-word list**, with the collisions spelled out, because a model
    reaching for `model` as a variable name is near-certain.
 4. **Style**: which comparison spelling to use — the type-informed rule the
