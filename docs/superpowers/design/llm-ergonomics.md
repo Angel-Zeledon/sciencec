@@ -190,7 +190,7 @@ One new block, `SC0120`–`SC0134`, inside the syntax range §9 allocates.
 | `SC0121` | `&mut T` in type position | `mutable borrowed T` |
 | `SC0122` | `&self` / `&mut self` | `self` / `mutable self` |
 | `SC0123` | `dyn T` | `any T` |
-| `SC0124` | **void since revision 2** — it fired on `-> T` and suggested `returns T`, and revision 2 §4 made `-> T` the correct form. The traffic runs the other way now and it is `SC0118`, which shipped. The code is not reassigned here (see §2.2) |
+| `SC0124` | `-> T` in a signature | **void since revision 2** — it suggested `returns T`, and §4 of that revision made `-> T` the correct form. The traffic runs the other way now, and that diagnostic is `SC0118`, which shipped. The code is not reassigned here (see §2.2) |
 | `SC0125` | `Name[T]` in type position | `Name of T`, or `Name of (A, B)` for several |
 | `SC0126` | `name[T](…)` in declaration position | `name of T(…)` |
 | `SC0127` | `fn` starting an item | `def` |
