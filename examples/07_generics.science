@@ -53,6 +53,13 @@ def describe of T(x: borrowed T) -> String where T: Summarize + Clone:
 # fits on one line, so it is broken inside the parameter list, where
 # indentation takes no part (§4.2). §8 gives `String` no concatenation method,
 # so the two previews are joined with `String.new()` and `push_str`.
+#
+# The break is the demonstration, so the formatter is told to leave it: the
+# house style in `AGENTS.md` §4 breaks a long signature *before* `where`, and
+# it is right, and applying it here would move the break this comment is about.
+# `rank` below has no such comment and is formatted normally, which is what
+# makes the difference visible.
+# fmt: skip
 def merge of (A, B)(left: borrowed A,
         right: borrowed B) -> String where A: Summarize, B: Summarize + Clone:
     let mutable out be String.new()
@@ -62,8 +69,8 @@ def merge of (A, B)(left: borrowed A,
     out
 
 # A bound in the parameter list and a `where` clause at once.
-def rank of T: Ord(items: borrowed Array of T,
-        fallback: borrowed T) -> borrowed T where T: Clone:
+def rank of T: Ord(items: borrowed Array of T, fallback: borrowed T) -> borrowed T
+        where T: Clone:
     if items.is_empty(): fallback else: largest(items)
 
 # Several type parameters, each used in a different position. Two or more

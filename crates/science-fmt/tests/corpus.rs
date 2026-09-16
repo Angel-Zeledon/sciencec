@@ -270,13 +270,28 @@ fn the_output_is_tidy() {
 /// * `09_absence_and_failure.science` — one hand-broken signature with no
 ///   trailing comma, which the formatter rebreaks. No demonstration is at
 ///   stake; it is simply not formatted yet.
-const UNFORMATTED: &[(&str, usize)] = &[
-    ("07_generics.science", 8),
-    ("08_dyn_dispatch.science", 4),
-    ("09_absence_and_failure.science", 6),
-];
+/// The ledger is empty, and that is the interesting state rather than the
+/// boring one.
+///
+/// It held three files. Each came off the list for a different reason and none
+/// of them by widening a rule:
+///
+/// - `07_generics` broke a signature inside its parameter list to demonstrate
+///   that indentation takes no part there, while `AGENTS.md` §4's house style
+///   breaks a long signature before `where`. Both are right about different
+///   things, and the demonstration got a `# fmt: skip`.
+/// - `08_dyn_dispatch` had the only line in the corpus over 88 columns, and
+///   the width was never the problem: the type was written twice, once as an
+///   annotation and once as the constructor, and §5.2 infers inside a body.
+/// - `09_absence_and_failure` had a hand-broken signature with nothing at
+///   stake, and was simply formatted.
+///
+/// **An empty ledger is not a licence to delete it.** The next disagreement
+/// goes here with its reason, and a file that lands in this list without one
+/// is a rule that needs looking at rather than a file that needs an entry.
+const UNFORMATTED: &[(&str, usize)] = &[];
 
-/// Nineteen of the twenty-two corpus files are what the formatter would write.
+/// Every one of the twenty-two corpus files is what the formatter would write.
 #[test]
 fn the_corpus_is_what_the_formatter_would_write_except_for_the_known_ledger() {
     let mut wrong = Vec::new();
@@ -336,7 +351,7 @@ fn every_corpus_marker_is_load_bearing() {
         }
     }
     assert!(idle.is_empty(), "{}", idle.join("\n"));
-    assert_eq!(marked, 4, "four corpus files carry markers; see the crate documentation");
+    assert_eq!(marked, 5, "five corpus files carry markers; see the crate documentation");
 }
 
 fn is_marker(line: &str) -> bool {
@@ -373,6 +388,10 @@ const SUPPRESSED: &[(&str, usize)] = &[
     // One `# fmt: skip` on the `cblas_dgemm` call site. The six declarations
     // above it need no marker: their trailing commas hold their grouping.
     ("20_extern.science", 13),
+    // One `# fmt: skip` on `merge`, whose comment says the break *is* the
+    // demonstration. `rank` two declarations below has no such comment and is
+    // formatted normally, which is what makes the difference visible.
+    ("07_generics.science", 3),
 ];
 
 #[test]

@@ -125,8 +125,10 @@ def main():
     print(owning.target.preview())
 
     # The heterogeneous collection, built with `(Array of T).new()` and filled
-    # with boxed interface objects.
-    let mutable boxes: Array of (Box of any Summarize) be (Array of (Box of any Summarize)).new()
+    # with boxed interface objects. The annotation is omitted: it would name
+    # the same type the constructor already names, and §5.2 infers inside a
+    # body. Writing it twice was the only line in the corpus over 88 columns.
+    let mutable boxes be (Array of (Box of any Summarize)).new()
     boxes.push(into_summary(true))
     boxes.push(into_summary(false))
     describe_all(boxes)

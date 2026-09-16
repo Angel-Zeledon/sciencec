@@ -100,8 +100,10 @@ def heading(text: borrowed String) -> String?:
         null
 
 # `Map.get` hands back `(borrowed V)?` for the same reason (§8).
-def lookup(settings: borrowed Map of (String, String),
-        key: borrowed String) -> (borrowed String)?:
+def lookup(
+    settings: borrowed Map of (String, String),
+    key: borrowed String
+) -> (borrowed String)?:
     settings.get(key)
 
 # Two lookups that must both succeed. `try` on an `Option` used to collapse
