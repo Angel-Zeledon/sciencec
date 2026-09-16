@@ -22,6 +22,7 @@ disagrees with it says so explicitly and gives the reason.
 | `stdlib-standard.md` | Level 2: `time`, `os`, `random`, `testing`, `logging`, `text.regex`, `thread`, `net`. | F0 / F1 |
 | `stdlib-shape-and-packages.md` | The policy the three stdlib notes live under: batteries included, the error model's consequences, threads over async, naming, and Level 3. **Read before the other two.** | F0 |
 | `scientific-libraries.md` | The catalogue: `math`, `linalg`, `stats`, `optimize`, `signal`, `chem`, `bio`, `physics`; what links against C; the units-in-the-type decision. | F1+ |
+| `region-inference.md` | The language's central claim, specified: what a region is, why a *type* gets one variable per borrowed field, what happens when a signature is ambiguous with no syntax to disambiguate it, and the contradiction between interprocedural inference and separate compilation. **Read with `examples/21_compiler_shapes.science`.** | F0 design, F1 build |
 | `self-hosting.md` | Writing the Science compiler in Science: the gates, the differential bootstrap against the existing corpus, and the argument that the adversarial test is ~200 lines rather than 17,305. **Read before planning any phase order.** | F0 design, F2+ execution |
 | `mcp-servers.md` | `tool` as a declaration of *a callable exposed to a model*, protocol-agnostic, with the JSON Schema generated from the signature; why `prompt` stays reserved and unused. | F1 |
 | `intrinsics-math-physics.md` | Which mathematical and physical operations are tier 1 (a hardware instruction), tier 2 (a compiler obligation) or tier 3 (an ordinary library function). Establishes the tier test and the N1–N4 naming rule the sibling note follows. | F1+ |
@@ -113,6 +114,7 @@ allocated by a design note and then implemented the same day.
 | `python-interop.md` | — | — | — | — | — | `SC0450`–`SC0458` |
 | `python-from-science.md` | — | `SC0180`–`SC0189` | — | — | — | `SC0459` |
 | `mcp-servers.md` | — | `SC0190`–`SC0199` | — | `SC0504`–`SC0519` | — | — |
+| `region-inference.md` | — | — | — | — | `SC0330`, `SC0333`–`SC0379` | — |
 
 ### A namespace outside `SC`
 
