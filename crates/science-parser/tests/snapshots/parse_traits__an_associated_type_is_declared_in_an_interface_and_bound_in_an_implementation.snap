@@ -1,0 +1,30 @@
+---
+source: crates/science-parser/tests/parse_traits.rs
+expression: "parse_source(r#\"interface Iterate:\n    type Item\n    function next(mutable self) -> Option of Self.Item\n\nCountdown implements Iterate:\n    type Item is Int\n\n    function next(mutable self) -> Option of Self.Item:\n        None\n\"#)"
+---
+Module @0..210
+  Interface `Iterate` @0..87
+    assoc types
+      AssocType `Item` @23..32
+    methods
+      Fn `next` @37..87
+        receiver: mutable self @51..63
+        ret: Path `Option` @68..87
+          generics of `Option`
+            SelfAssoc `Item` @78..87
+  Implements @89..209
+    interface: Bound `Iterate` @110..117
+    type: Path `Countdown` @89..98
+    assoc types
+      AssocType `Item` @123..139
+        type: Path `Int` @136..139
+    methods
+      Fn `next` @145..209
+        receiver: mutable self @159..171
+        ret: Path `Option` @176..195
+          generics of `Option`
+            SelfAssoc `Item` @186..195
+        body: Block @205..209
+          tail: Path `None` @205..209
+--- diagnostics ---
+(none)

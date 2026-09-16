@@ -1,0 +1,10 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Function, id(\"summarize\"), LParen, SelfValue, RParen, Arrow,\nid(\"String\"), Newline,])"
+---
+Module @0..31
+  Fn `summarize` @0..31
+    receiver: self @18..22
+    ret: Path `String` @25..31
+--- diagnostics ---
+(none)

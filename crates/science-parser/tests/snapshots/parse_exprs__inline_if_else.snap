@@ -1,28 +1,28 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_source(\"fn longest(a: &String, b: &String) -> &String:\\n    if a.len() > b.len(): a else: b\\n\")"
+expression: "parse_source(\"function longest(a: borrowed String, b: borrowed String) -> borrowed String:\\n    if a.length() > b.length(): a else: b\\n\")"
 ---
-Module @0..83
-  Fn `longest` @0..82
+Module @0..119
+  Fn `longest` @0..118
     params
-      Param `a` @11..21
-        type: Ref @14..21
-          Path `String` @15..21
-      Param `b` @23..33
-        type: Ref @26..33
-          Path `String` @27..33
-    ret: Ref @38..45
-      Path `String` @39..45
-    body: Block @51..82
-      tail: If @51..82
-        cond: Binary `>` @54..71
-          lhs: Method `len` @54..61
-            receiver: Path `a` @54..55
-          rhs: Method `len` @64..71
-            receiver: Path `b` @64..65
-        then: Block @73..74
-          tail: Path `a` @73..74
-        else: Block @81..82
-          tail: Path `b` @81..82
+      Param `a` @17..35
+        type: Borrowed @20..35
+          Path `String` @29..35
+      Param `b` @37..55
+        type: Borrowed @40..55
+          Path `String` @49..55
+    ret: Borrowed @60..75
+      Path `String` @69..75
+    body: Block @81..118
+      tail: If @81..118
+        cond: Binary `>` @84..107
+          lhs: Method `length` @84..94
+            receiver: Path `a` @84..85
+          rhs: Method `length` @97..107
+            receiver: Path `b` @97..98
+        then: Block @109..110
+          tail: Path `a` @109..110
+        else: Block @117..118
+          tail: Path `b` @117..118
 --- diagnostics ---
 (none)

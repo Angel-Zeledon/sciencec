@@ -1,235 +1,252 @@
 # 19 - The F0 standard library
-# Spec: §8. The whole of it: `Option[T]`, `Result[T, E]`, `Box[T]`, `String`
-# and `&String`, `Array[T]`, `Map[K, V]`, the free functions `print`,
-# `println`, `panic`, `read_file` and `write_file`, and the traits `Copy`,
-# `Clone`, `Drop`, `Eq`, `Ord`, `Iterate` and `From`.
+# Spec: §8. The whole of it: `Option of T`, `Result of (T, E)`, `Box of T`,
+# `String` and `borrowed String`, `Array of T`, `Map of (K, V)`, the free
+# functions `print`, `write`, `panic`, `read_file` and `write_file`, and
+# the interfaces of §5.4 — here `Copy`, `Clone`, `Drop`, `Eq`, `Ord`, `Iterate`
+# and `From`.
 #
-# §8 lists the method set of every one of those types **in full** and says
-# the list is closed: anything not written there does not exist, and adding
-# to it is a spec change rather than a library detail. Every call below is
-# one of those methods, and between them they cover the whole surface.
+# §8 says the library is small and its method sets are **closed**: anything
+# not listed does not exist, and adding to the list is a spec change rather
+# than a library detail. §8 names the types and the free functions but no
+# longer spells the method sets out, so the names called below are the
+# corpus's standing reading of them, recorded in `examples/README.md`.
+# Between them they cover the whole surface the rest of the corpus uses.
 
-struct Record:
+type Record:
     key: String
     hits: Int
 
-enum LoadError:
+choice LoadError:
     Missing(String)
     Corrupt(String)
 
 # §8 gives `String` no `clone`. An owned copy is built out of the two methods
 # it does have, which is also the only way F0 has of concatenating.
-fn copy_of(text: &String) -> String:
-    let mut out = String.new()
+function copy_of(text: borrowed String) -> String:
+    let mutable out be String.new()
     out.push_str(text)
     out
 
 # --- Option: is_some, unwrap, unwrap_or -------------------------------------
 
-fn find(records: &Array[Record], key: &String) -> Option[&Record]:
+function find(records: borrowed Array of Record, key: borrowed String) -> Option of (borrowed Record):
     for record in records:
-        if record.key == key:
+        if record.key is key:
             return Some(record)
     None
 
-fn option_surface(records: &Array[Record]) -> Int:
-    let found = find(records, "alpha")
+function option_surface(records: borrowed Array of Record) -> Int:
+    # A parameter declared `borrowed` is borrowed at the call site without
+    # the caller writing anything (§6.3).
+    let found be find(records, "alpha")
     if found.is_some():
-        println("found")
+        print("found")
 
     # `unwrap` panics on `None`; `unwrap_or` takes a fallback instead.
-    let hits = hits_of(records).unwrap_or(0)
-    let first = records.get(0)
-    let popped: Option[Int] = Option.None
+    let hits be hits_of(records).unwrap_or(0)
+    let first be records.get(0)
+    let popped: Option of Int be Option.None
     hits + popped.unwrap_or(0)
 
-fn hits_of(records: &Array[Record]) -> Option[Int]:
+function hits_of(records: borrowed Array of Record) -> Option of Int:
     match records.get(0):
         Some(record): Some(record.hits)
         None: None
 
 # --- Result: is_ok, unwrap, unwrap_or ---------------------------------------
 
-fn load(path: &String) -> Result[String, LoadError]:
+# These two hand back what §8's free functions hand them, so they are declared
+# with the library's own error type rather than this file's. Widening `IoError`
+# into a caller's error type is `00_kitchen_sink.science`'s job; here the point
+# is only the shape of the `Result` that `read_file` and `write_file` return.
+function load(path: borrowed String) -> Result of (String, IoError):
     read_file(path)
 
-fn store(path: &String, text: &String) -> Result[(), LoadError]:
+function store(path: borrowed String, text: borrowed String) -> Result of ((), IoError):
     write_file(path, text)
 
-fn result_surface(path: &String) -> String:
-    let outcome = load(path)
+function result_surface(path: borrowed String) -> String:
+    let outcome be load(path)
     if outcome.is_ok():
-        println("loaded")
+        print("loaded")
     load(path).unwrap_or("")
 
 # --- Box: new ---------------------------------------------------------------
 
 # `Box` has exactly one associated function and no methods. It is never built
-# with the named-argument form, which §4.3 reserves for structs.
-fn boxed(record: Record) -> Box[Record]:
+# with the named-argument form, which §4.4 reserves for record types.
+function boxed(record: Record) -> Box of Record:
     Box.new(record)
 
-# --- String: new, len, is_empty, push_str, truncate, starts_with, chars -----
+# --- String: new, length, is_empty, push_str, truncate, starts_with, chars --
 
-fn strings() -> Int:
-    # `String` owns its bytes; `&String` is a view of them.
-    let owned: String = "owned, UTF-8"
-    let view: &String = &owned
-    println(owned.len())
-    println(view.is_empty())
-    println(owned.starts_with("owned"))
-    println(owned.truncate(5))
+function strings() -> Int:
+    # `String` owns its bytes; `borrowed String` is a view of them.
+    let owned: String be "owned, UTF-8"
+    let view: borrowed String be borrowed owned
+    print(owned.length())
+    print(view.is_empty())
+    print(owned.starts_with("owned"))
+    print(owned.truncate(5))
 
-    let mut built = String.new()
+    let mutable built be String.new()
     built.push_str("one ")
-    built.push_str(&owned)
+    built.push_str(owned)
 
     # `chars` is the one iterator §8 hands out by name; it implements
-    # `Iterate[Char]`, which is what `for` walks.
-    let mut letters = 0
+    # `Iterate` with `Item` as `Char`, which is what `for` walks.
+    let mutable letters be 0
     for c in built.chars():
-        if c != ' ':
-            letters = letters + 1
+        if c is not ' ':
+            letters be letters + 1
     letters
 
-# --- Array: new, len, is_empty, push, pop, get, get_mut ---------------------
+# --- Array: new, length, is_empty, push, pop, get, get_mut ------------------
 
-fn arrays() -> Int:
-    let mut items: Array[Int] = Array[Int].new()
-    println(items.is_empty())
+function arrays() -> Int:
+    # An associated function on a generic type takes parentheses around the
+    # type, because `Array of Int.new()` does not say whether `.new()`
+    # belongs to `Int` or to the whole type (§4.3, SC0116).
+    let mutable items: Array of Int be (Array of Int).new()
+    print(items.is_empty())
     items.push(1)
     items.push(2)
     items.push(3)
 
-    let mut sum = 0
+    let mutable sum be 0
     for item in items:
-        sum = sum + item
+        sum be sum + item
 
-    println(items.len())
+    print(items.length())
 
     # Reading goes through `get`, which returns an `Option`: §8 gives no
     # indexing operator that can panic, because §5.5 puts absence in the type.
     match items.get(0):
-        Some(first): println(first)
-        None: println("empty")
+        Some(first): print(first)
+        None: print("empty")
 
     match items.get_mut(0):
-        Some(first): first = 10
-        None: println("empty")
+        Some(first): first be 10
+        None: print("empty")
 
     match items.pop():
-        Some(last): sum = sum + last
-        None: sum = sum
+        Some(last): sum be sum + last
+        None: sum be sum
 
     sum
 
-# --- Map: new, len, insert, get, remove, contains ---------------------------
+# --- Map: new, length, insert, get, remove, contains ------------------------
 
-fn maps() -> Int:
-    let mut counts: Map[String, Int] = Map[String, Int].new()
+function maps() -> Int:
+    let mutable counts: Map of (String, Int) be (Map of (String, Int)).new()
 
     # `insert` returns the value it displaced, if there was one.
-    let displaced = counts.insert("alpha", 1)
+    let displaced be counts.insert("alpha", 1)
     counts.insert("beta", 2)
 
-    println(counts.contains("alpha"))
+    print(counts.contains("alpha"))
 
     match counts.get("alpha"):
-        Some(value): println(value)
-        None: println("absent")
+        Some(value): print(value)
+        None: print("absent")
 
     match counts.remove("beta"):
-        Some(value): println(value)
-        None: println("nothing to remove")
+        Some(value): print(value)
+        None: print("nothing to remove")
 
-    counts.len()
+    counts.length()
 
-# --- The library traits -----------------------------------------------------
+# --- The library interfaces -------------------------------------------------
 
-struct Position:
+type Position:
     line: U32
     column: U32
 
 # `Copy`: assignment duplicates instead of moving. `Copy` carries no methods
-# and F0 has no empty block, so the impl is a single line without one (§4.3).
-impl Copy for Position
+# and F0 has no empty block, so the implementation is a single line without
+# one (§4.4).
+Position implements Copy
 
-impl Clone for Position:
-    fn clone(&self) -> Position:
+Position implements Clone:
+    function clone(self) -> Position:
         Position(line: self.line, column: self.column)
 
-impl Clone for Record:
-    fn clone(&self) -> Record:
-        Record(key: copy_of(&self.key), hits: self.hits)
+Record implements Clone:
+    function clone(self) -> Record:
+        Record(key: copy_of(self.key), hits: self.hits)
 
-impl Eq for Record:
-    fn eq(&self, other: &Record) -> Bool:
-        self.key == other.key
+Record implements Eq:
+    function eq(self, other: borrowed Record) -> Bool:
+        self.key is other.key
 
-impl Ord for Record:
-    fn less(&self, other: &Record) -> Bool:
+Record implements Ord:
+    function less(self, other: borrowed Record) -> Bool:
         self.hits < other.hits
 
-impl Drop for Record:
-    fn drop(&mut self):
-        println("record dropped")
+Record implements Drop:
+    function drop(mutable self):
+        print("record dropped")
 
-# An inherent impl alongside the trait impls: the associated function is the
-# idiomatic constructor, and needs no trait to arrive through (§4.3).
-impl Record:
-    fn new(key: String) -> Record:
+# An inherent block alongside the interface implementations: the associated
+# function is the idiomatic constructor, and needs no interface to arrive
+# through (§4.4).
+Record has:
+    function new(key: String) -> Record:
         Record(key: key, hits: 0)
 
-# `Iterate[T]` is what `for` walks, and it is a generic trait because F0 has
-# no associated types (§5.4).
-struct Countdown:
+# `Iterate` is what `for` walks. Its element type is an associated type,
+# so it belongs to the implementation rather than to the interface (§5.4).
+type Countdown:
     remaining: Int
 
-impl Iterate[Int] for Countdown:
-    fn next(&mut self) -> Option[Int]:
+Countdown implements Iterate:
+    type Item is Int
+
+    function next(mutable self) -> Option of Self.Item:
         if self.remaining <= 0:
             None
         else:
-            self.remaining = self.remaining - 1
+            self.remaining be self.remaining - 1
             Some(self.remaining)
 
-# `From[T]` is what `?` uses to widen an error, and is generic for the same
-# reason. The orphan rule (§5.4) is satisfied by `LoadError`, declared here.
-impl From[Record] for LoadError:
-    fn from(record: Record) -> Self:
+# `From` is what `try` uses to widen an error. The orphan rule (§5.4) is
+# satisfied by `LoadError`, declared here.
+LoadError implements From of Record:
+    function from(record: Record) -> Self:
         Corrupt(record.key)
 
 # --- The free functions -----------------------------------------------------
 
-# `panic` returns `Never`, which coerces to any type (§4.5): that is what
+# `panic` has type `Never`, which coerces to any type (§4.7): that is what
 # lets one arm of a `match` bail out while the others produce a `String`.
-fn required(path: &String) -> String:
+function required(path: borrowed String) -> String:
     match load(path):
         Ok(text): text
         Err(Missing(missing)): panic("the file is missing")
         Err(Corrupt(corrupt)): panic("the file is corrupt")
 
-fn main():
-    print("no newline")
-    println("with newline")
-    println(arrays())
-    println(maps())
-    println(strings())
+function main():
+    write("no newline")
+    print("with newline")
+    print(arrays())
+    print(maps())
+    print(strings())
 
-    let records: Array[Record] = Array[Record].new()
-    println(option_surface(&records))
-    println(result_surface("link.toml"))
+    let records: Array of Record be (Array of Record).new()
+    print(option_surface(records))
+    print(result_surface("science.toml"))
+    print(required("science.toml"))
 
-    let held = boxed(Record.new("alpha"))
+    let held be boxed(Record.new("alpha"))
 
     for value in Countdown(remaining: 3):
-        println(value)
+        print(value)
 
     match store("out.txt", "contents"):
-        Ok(nothing): println("written")
-        Err(e): println("not written")
+        Ok(nothing): print("written")
+        Err(e): print("not written")
 
-    match load("link.toml"):
-        Ok(text): println(text.len())
-        Err(Missing(path)): println(path)
-        Err(Corrupt(path)): println(path)
+    match load("science.toml"):
+        Ok(text): print(text.length())
+        Err(Missing(path)): print(path)
+        Err(Corrupt(path)): print(path)

@@ -1,136 +1,203 @@
 # 12 - Operators and precedence
-# Spec: §4.4 precedence table, highest to lowest:
-#   call, index, field access, ?
-#   - not & &mut        (unary)
+# Spec: §4.6 precedence table, highest to lowest:
+#   call, index, field access, try
+#   - not borrowed         (unary)
 #   as
-#   * / %
+#   **                     (power, right-associative)
+#   * / % @                (@ is matrix multiply)
 #   + -
 #   << >>
 #   &
 #   ^
 #   |
-#   == != < > <= >=
+#   is  is not  < > <= >=  (identity in words, order in symbols)
 #   and
 #   or
 #
-# Assignment is deliberately absent from that table: §4.4 says `x = y` is a
-# statement, not an expression, which is why `let x = if c: a = b else: c` is
-# not grammatical. It is still exercised below, as a statement.
+# Assignment is deliberately absent from that table: §4.6 says it is a
+# statement and not an operator, which is why `let x be if c: a be b else: c`
+# is not grammatical. It is still exercised below, as a statement.
+#
+# Two entries of the old table are gone, and neither replacement is an
+# operator. Error propagation was the postfix `?` and is now the prefix
+# keyword `try`, which sits at the tightest level with call and field access.
+# The unary `&` and `&mut` are now the words `borrowed` and
+# `mutable borrowed`, which sit at the unary level and are the same words a
+# borrow is written with in a type (§4.3).
 
-struct Point:
+type Point:
     x: Int
     y: Int
 
-struct Registry:
-    points: Array[Point]
+type Registry:
+    points: Array of Point
 
-fn origin() -> Point:
+function origin() -> Point:
     Point(x: 0, y: 0)
 
-# `?` sits at the tightest level, next to call and field access.
-fn first_x(registry: &Registry) -> Option[Int]:
-    let first = registry.points.get(0)?
+# `try` sits at the tightest level, next to call and field access. Being a
+# prefix keyword it is written before what it unwraps, where `?` was written
+# after it (§4.3).
+function first_x(registry: borrowed Registry) -> Option of Int:
+    let first be try registry.points.get(0)
     Some(first.x)
 
-fn main():
-    let mut a = 10
-    let b = 3
-    let flag = true
-    let other = false
+# Binding tightest is what lets `try` stand inside a larger expression;
+# parentheses say where it stops and the rest of the expression begins.
+function first_x_doubled(registry: borrowed Registry) -> Option of Int:
+    Some((try registry.points.get(0)).x * 2)
+
+# `@` is matrix multiply and sits with `* / %`. The library of §8 is
+# `Option`, `Result`, `Box`, `String`, `Array` and `Map`, with no tensor
+# among them, so `@` reaches a user type through an operator interface just
+# as
+# `+` does (§5.4). Tensors arrive in F1; the operator and its precedence are
+# F0.
+type Row:
+    cells: Array of Int
+
+Row implements Add:
+    function add(self, other: Row) -> Row:
+        Row(cells: (Array of Int).new())
+
+Row implements MatMul:
+    function matmul(self, other: Row) -> Row:
+        Row(cells: (Array of Int).new())
+
+function main():
+    let mutable a be 10
+    let b be 3
+    let flag be true
+    let other be false
 
     # --- Arithmetic ---------------------------------------------------------
-    let sum = a + b
-    let difference = a - b
-    let product = a * b
-    let quotient = a / b
-    let remainder = a % b
+    let sum be a + b
+    let difference be a - b
+    let product be a * b
+    let quotient be a / b
+    let remainder be a % b
 
     # Unary minus and `not`.
-    let negated = -a
-    let inverted = not flag
+    let negated be -a
+    let inverted be not flag
+
+    # `**` is power and is right-associative, so this is 2 ** (3 ** 2).
+    let power be 2 ** 3 ** 2
+    # It binds tighter than `*`, so this is 2 * (3 ** 2).
+    let power_then_multiply be 2 * 3 ** 2
 
     # `*` binds tighter than `+`, so this is 1 + (2 * 3).
-    let precedence_mul_add = 1 + 2 * 3
+    let precedence_mul_add be 1 + 2 * 3
     # Parentheses override it.
-    let grouped = (1 + 2) * 3
+    let grouped be (1 + 2) * 3
     # `%` sits with `*` and `/`.
-    let mixed = 1 + 10 % 4 * 2
+    let mixed be 1 + 10 % 4 * 2
+
+    # --- Matrix multiply ----------------------------------------------------
+    let left be Row(cells: (Array of Int).new())
+    let right be Row(cells: (Array of Int).new())
+    # `@` sits with `*`, so it binds tighter than `+`: (left @ right) + left.
+    let matmul_then_add be left @ right + left
 
     # --- Shifts and bitwise -------------------------------------------------
-    let shifted_left = 1 << 4
-    let shifted_right = 256 >> 2
-    let bit_and = 0b1100 & 0b1010
-    let bit_xor = 0b1100 ^ 0b1010
-    let bit_or = 0b1100 | 0b1010
+    let shifted_left be 1 << 4
+    let shifted_right be 256 >> 2
+    let bit_and be 0b1100 & 0b1010
+    let bit_xor be 0b1100 ^ 0b1010
+    let bit_or be 0b1100 | 0b1010
 
     # `+` binds tighter than `<<`, which binds tighter than `&`,
     # then `^`, then `|`. So this is ((1 + 1) << 2) | (0b1 ^ 0b10 & 0b11).
-    let bit_precedence = 1 + 1 << 2 | 0b1 ^ 0b10 & 0b11
+    let bit_precedence be 1 + 1 << 2 | 0b1 ^ 0b10 & 0b11
 
-    # --- Comparison ---------------------------------------------------------
-    let equal = a == b
-    let not_equal = a != b
-    let less = a < b
-    let greater = a > b
-    let at_most = a <= b
-    let at_least = a >= b
+    # --- Identity, in words -------------------------------------------------
+    #
+    # `is` and `is not` are the only comparisons written as words, and they
+    # sit on the comparison row with the ordering symbols rather than on one
+    # of their own. They are also the *only* spelling identity has: `==` and
+    # `!=` are not Science, and the lexer reports them as SC0016 and SC0017.
+    let equal be a is b
+    let not_equal be a is not b
+
+    # --- Order, in symbols --------------------------------------------------
+    #
+    # Ordering has no word form, and needs none: `>=` is four hundred years
+    # old and every reader already has it.
+    let less be a < b
+    let greater be a > b
+    let at_most be a <= b
+    let at_least be a >= b
 
     # Arithmetic binds tighter than comparison: (a + b) < (a * b).
-    let compared = a + b < a * b
+    let compared be a + b < a * b
+    # `is` sits at the same level: (a + b) is (a * b).
+    let compared_by_identity be a + b is a * b
 
     # --- Logical ------------------------------------------------------------
     # `and` binds tighter than `or`, and both looser than comparison.
-    let conjunction = flag and other
-    let disjunction = flag or other
-    let logical_precedence = a < b or a > b and flag
-    let negated_comparison = not (a < b)
+    let conjunction be flag and other
+    let disjunction be flag or other
+    let logical_precedence be a < b or a > b and flag
+    let negated_comparison be not (a < b)
+    # `not` is unary and binds tightest of the three, so this reads as
+    # `(not flag) and other` and not as `not (flag and other)`.
+    let negation_precedence be not flag and other
 
-    # --- `as`, tighter than `*` and looser than the unary operators ----------
-    let widened = a as F64
-    let narrowed = a as I32
-    let chained_cast = a as I32 as I64
-    let cast_then_multiply = a as F64 * 2.0
-    let negate_then_cast = -a as F64
+    # --- `as`, tighter than `**` and looser than the unary operators --------
+    let widened be a as F64
+    let narrowed be a as I32
+    let chained_cast be a as I32 as I64
+    let cast_then_multiply be a as F64 * 2.0
+    let negate_then_cast be -a as F64
 
-    # --- Calls, indexing, field access and `?` are the tightest -------------
+    # --- Calls, field access and `try` are the tightest ---------------------
     #
     # §8 says `Array` and `Map` are read through `get`, which returns an
-    # `Option`: there is no indexing operator that can panic. The `[...]`
-    # postfix of the precedence table is therefore exercised where it does
-    # appear in expressions — naming a generic instantiation before calling
-    # one of its associated functions.
-    let registry = Registry(points: Array[Point].new())
-    let point = origin()
-    let field = point.x
-    let indexed_then_called = Array[Point].new()
-    let indexed_then_field_then_called = Map[String, Int].new().len()
-    let called_then_field = origin().y
-    let negated_field = -point.x
-    let field_arithmetic = point.x * 2 + point.y
+    # `Option`: there is no indexing operator that can panic. What the table
+    # calls index is therefore exercised where it does still appear — naming
+    # a generic instantiation before calling one of its associated functions,
+    # which takes parentheses so that the `.` cannot attach to the last type
+    # argument instead (§4.3).
+    let registry be Registry(points: (Array of Point).new())
+    let point be origin()
+    let field be point.x
+    let generic_then_called be (Array of Point).new()
+    let generic_then_called_then_field be (Map of (String, Int)).new().length()
+    let called_then_field be origin().y
+    let negated_field be -point.x
+    let field_arithmetic be point.x * 2 + point.y
 
     # Field access through an `Option` goes via `match`, since `get` is the
     # only accessor.
-    let nested_field = match registry.points.get(0):
+    let nested_field be match registry.points.get(0):
         Some(first): first.y
         None: 0
 
     # --- Assignment, which is a statement rather than an operator -----------
-    a = b
-    a = a + 1
-    a = if flag: 1 else: 2
-    a = b * 2 + 1
+    #
+    # Reassignment uses `be`, the same word that binds: there is one word for
+    # "this name now means this value" (§4.3).
+    a be b
+    a be a + 1
+    a be if flag: 1 else: 2
+    a be b * 2 + 1
 
-    # References are unary operators.
-    let shared = &point
-    let shared_field = &point.x
-    let mut owner = origin()
-    let exclusive = &mut owner
-    let exclusive_field = &mut owner.y
+    # --- `borrowed`, at the unary level with `-` and `not` ------------------
+    #
+    # A parameter declared borrowed is borrowed at the call site with nothing
+    # written for it (§6.3), so the operator is only wanted where a borrow is
+    # made outside a call. Being unary it binds looser than field access, so
+    # `borrowed point.x` borrows the field and not the record.
+    let shared be borrowed point
+    let shared_field be borrowed point.x
+    let mutable owner be origin()
+    let exclusive be mutable borrowed owner
+    let exclusive_field be mutable borrowed owner.y
 
-    println(bit_precedence)
-    println(logical_precedence)
-    println(nested_field)
+    print(bit_precedence)
+    print(logical_precedence)
+    print(nested_field)
 
-    match first_x(&registry):
-        Some(x): println(x)
-        None: println("no points")
+    match first_x(registry):
+        Some(x): print(x)
+        None: print("no points")

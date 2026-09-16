@@ -13,8 +13,8 @@ use science_db::{ast, tokens, ScienceDatabase};
 
 /// A valid module. Its exact contents do not matter, only that it lexes and
 /// parses without diagnostics.
-const A: &str = "fn a() -> Int:\n    1\n";
-const B: &str = "fn b() -> Int:\n    2\n";
+const A: &str = "function a() -> Int:\n    1\n";
+const B: &str = "function b() -> Int:\n    2\n";
 
 #[test]
 fn a_query_runs_once_and_is_then_reused() {
@@ -64,7 +64,7 @@ fn changing_one_file_invalidates_only_that_file() {
     let _ = ast(&db, b);
 
     db.clear_execution_log();
-    db.set_file_text(a, "fn a() -> Int:\n    99\n");
+    db.set_file_text(a, "function a() -> Int:\n    99\n");
 
     // Requesting both again: only `a` is recomputed.
     let _ = ast(&db, a);
@@ -176,11 +176,11 @@ fn removing_an_absent_file_invalidates_nothing() {
 #[test]
 fn an_edit_the_lexer_absorbs_does_not_reach_the_parser() {
     let mut db = ScienceDatabase::with_execution_log();
-    let a = db.add_file("a.science", "# aaaa\nfn a() -> Int:\n    1\n");
+    let a = db.add_file("a.science", "# aaaa\nfunction a() -> Int:\n    1\n");
     let before = ast(&db, a).clone();
 
     db.clear_execution_log();
-    db.set_file_text(a, "# bbbb\nfn a() -> Int:\n    1\n");
+    db.set_file_text(a, "# bbbb\nfunction a() -> Int:\n    1\n");
     let after = ast(&db, a);
 
     assert_eq!(db.executions_for("tokens", a), 1, "the text did change");

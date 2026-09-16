@@ -1,115 +1,129 @@
 # 08 - Dynamic dispatch
-# Spec: §4.3 "dyn Trait only behind an indirection: &dyn Trait or
-# Box[dyn Trait]", §5.3 (dyn exists for when monomorphisation is the wrong
-# trade-off).
+# Spec: §4.3 (the `any Summarize` row of the keyword table), §5.3
+# (monomorphization, which is what `any` is the alternative to).
 #
-# Covers: `dyn` behind a shared reference, behind an exclusive reference,
-# behind `Box`, inside a generic container, as a return type, as a struct
-# field, and the contrast with the statically dispatched version of the
-# same call.
+# NOTE: that `any Interface` is usable only behind an indirection —
+# `borrowed any Interface` or `Box of any Interface` — is the corpus's
+# standing reading, not a rule
+# the spec states. It follows from the type having no size of its own, and
+# every file here obeys it. See `examples/README.md`.
+#
+# Covers: `any` behind a shared borrow, behind an exclusive borrow, behind
+# `Box`, inside a generic container, as a return type, as a record field, and
+# the contrast with the statically dispatched version of the same call.
 
-struct Doc:
+type Doc:
     title: String
     body: String
 
-struct Note:
+type Note:
     text: String
 
 # §8 gives `String` no `clone`: an owned copy comes out of `String.new()` and
 # `push_str`.
-fn copy_of(text: &String) -> String:
-    let mut out = String.new()
+function copy_of(text: borrowed String) -> String:
+    let mutable out be String.new()
     out.push_str(text)
     out
 
-trait Summarize:
-    fn summarize(&self) -> String
+interface Summarize:
+    function summarize(self) -> String
 
-    fn preview(&self) -> String:
+    function preview(self) -> String:
         self.summarize().truncate(80)
 
-trait Reset:
-    fn reset(&mut self)
+interface Reset:
+    function reset(mutable self)
 
-impl Summarize for Doc:
-    fn summarize(&self) -> String:
+Doc implements Summarize:
+    function summarize(self) -> String:
         self.body.truncate(200)
 
-impl Summarize for Note:
-    fn summarize(&self) -> String:
-        copy_of(&self.text)
+Note implements Summarize:
+    function summarize(self) -> String:
+        copy_of(self.text)
 
-impl Reset for Note:
-    fn reset(&mut self):
-        self.text = ""
+Note implements Reset:
+    function reset(mutable self):
+        self.text be ""
 
-# Static dispatch: one specialised copy per `T` (§5.3).
-fn describe_static[T: Summarize](value: &T) -> String:
+# Static dispatch: one specialized copy per `T` (§5.3).
+function describe_static of T: Summarize(value: borrowed T) -> String:
     value.preview()
 
-# Dynamic dispatch behind a shared reference.
-fn describe_dyn(value: &dyn Summarize) -> String:
+# Dynamic dispatch behind a shared borrow. `any Summarize` is not a type a
+# value can have on its own; it is only ever reached through an indirection.
+function describe_any(value: borrowed any Summarize) -> String:
     value.preview()
 
-# Dynamic dispatch behind an exclusive reference.
-fn clear(value: &mut dyn Reset):
+# Dynamic dispatch behind an exclusive borrow.
+function clear(value: mutable borrowed any Reset):
     value.reset()
 
 # Dynamic dispatch behind `Box`: the value is owned.
-fn describe_boxed(value: Box[dyn Summarize]) -> String:
+function describe_boxed(value: Box of any Summarize) -> String:
     value.summarize()
 
-# `dyn` as a return type, again behind the indirection.
-fn pick(flag: Bool, left: &dyn Summarize, right: &dyn Summarize) -> &dyn Summarize:
+# `any` as a return type, again behind the indirection. The signature is
+# broken across lines inside the parameter list, where indentation takes no
+# part (§4.2).
+function pick(flag: Bool, left: borrowed any Summarize,
+        right: borrowed any Summarize) -> borrowed any Summarize:
     if flag: left else: right
 
-# `Box` is built through its associated function (§4.3); named-argument
-# construction is for structs only.
-fn into_summary(flag: Bool) -> Box[dyn Summarize]:
+# `Box` is built through its associated function (§4.4); named-argument
+# construction is for record types only.
+function into_summary(flag: Bool) -> Box of any Summarize:
     if flag:
         Box.new(Doc(title: "a", body: "..."))
     else:
         Box.new(Note(text: "..."))
 
 # A heterogeneous collection: the element type is erased, which is exactly
-# what monomorphisation cannot give you.
-fn describe_all(items: &Array[Box[dyn Summarize]]):
+# what monomorphization cannot give you. The inner `of` is parenthesized so
+# that `Box of any Summarize` reads as one argument to `Array` (§4.3).
+function describe_all(items: borrowed Array of (Box of any Summarize)):
     for item in items:
-        println(item.preview())
+        print(item.preview())
 
-# A struct field of `dyn` type, behind a reference.
-struct Renderer:
-    target: &dyn Summarize
+# A record field of `any` type, behind a borrow.
+type Renderer:
+    target: borrowed any Summarize
 
-# And behind a box, so the struct owns it.
-struct OwningRenderer:
-    target: Box[dyn Summarize]
+# And behind a box, so the record owns it.
+type OwningRenderer:
+    target: Box of any Summarize
 
-fn main():
-    let doc = Doc(title: "Dispatch", body: "Static unless you ask otherwise.")
-    let mut note = Note(text: "erased")
+function main():
+    let doc be Doc(title: "Dispatch", body: "Static unless you ask otherwise.")
+    let mutable note be Note(text: "erased")
 
-    println(describe_static(&doc))
-    println(describe_dyn(&doc))
-    println(describe_dyn(&note))
+    # A parameter declared `borrowed` or `mutable borrowed` is borrowed at the
+    # call site without the caller writing anything (§6.3). The same call is
+    # dispatched statically first and dynamically after.
+    print(describe_static(doc))
+    print(describe_any(doc))
+    print(describe_any(note))
 
-    clear(&mut note)
+    clear(note)
 
-    println(describe_boxed(Box.new(Doc(title: "b", body: "..."))))
-    println(describe_boxed(into_summary(true)))
+    print(describe_boxed(Box.new(Doc(title: "b", body: "..."))))
+    print(describe_boxed(into_summary(true)))
 
-    let chosen = pick(true, &doc, &note)
-    println(chosen.summarize())
+    let chosen be pick(true, doc, note)
+    print(chosen.summarize())
 
-    let renderer = Renderer(target: &doc)
-    println(renderer.target.preview())
+    # A field is not a parameter, so the borrow is written out with the unary
+    # `borrowed` operator (§4.6).
+    let renderer be Renderer(target: borrowed doc)
+    print(renderer.target.preview())
 
-    let owning = OwningRenderer(target: into_summary(false))
-    println(owning.target.preview())
+    let owning be OwningRenderer(target: into_summary(false))
+    print(owning.target.preview())
 
-    # The heterogeneous collection, built with `Array[T].new()` and filled
-    # with boxed trait objects.
-    let mut boxes: Array[Box[dyn Summarize]] = Array[Box[dyn Summarize]].new()
+    # The heterogeneous collection, built with `(Array of T).new()` and filled
+    # with boxed interface objects.
+    let mutable boxes: Array of (Box of any Summarize) be (Array of (Box of any Summarize)).new()
     boxes.push(into_summary(true))
     boxes.push(into_summary(false))
-    describe_all(&boxes)
+    describe_all(boxes)

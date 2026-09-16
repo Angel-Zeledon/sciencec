@@ -1,15 +1,15 @@
 error[SC0009]: `q` is not a valid numeric literal suffix
- --> tests/ui/invalid_numeric_suffix.science:9:21
-  |
-9 |     let counted = 42q
-  |                     ^ unknown suffix
-  |
-  = note: the suffixes are `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32` and `f64`
+  --> tests/ui/invalid_numeric_suffix.science:10:22
+   |
+10 |     let counted be 42q
+   |                      ^ unknown suffix
+   |
+   = note: the suffixes are `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32` and `f64`
 
 error[SC0009]: `i32` is not a valid suffix for a float literal
-  --> tests/ui/invalid_numeric_suffix.science:10:20
+  --> tests/ui/invalid_numeric_suffix.science:11:21
    |
-10 |     let ratio = 2.5i32
-   |                    ^^^ invalid suffix
+11 |     let ratio be 2.5i32
+   |                     ^^^ invalid suffix
    |
    = note: float literals only take `f32` or `f64`

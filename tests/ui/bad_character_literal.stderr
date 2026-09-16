@@ -1,17 +1,17 @@
 error[SC0008]: empty character literal
- --> tests/ui/bad_character_literal.science:9:17
+ --> tests/ui/bad_character_literal.science:9:18
   |
-9 |     let empty = ''
-  |                 ^^ expected a character here
+9 |     let empty be ''
+  |                  ^^ expected a character here
 
 error[SC0008]: a character literal holds exactly one character
-  --> tests/ui/bad_character_literal.science:10:19
+  --> tests/ui/bad_character_literal.science:10:20
    |
-10 |     let crowded = 'abc'
-   |                   ^^^^^ 3 characters here
+10 |     let crowded be 'abc'
+   |                    ^^^^^ 3 characters here
 
 error[SC0008]: unterminated character literal
-  --> tests/ui/bad_character_literal.science:11:20
+  --> tests/ui/bad_character_literal.science:11:21
    |
-11 |     let unclosed = 'a
-   |                    ^^ this `'` is never closed
+11 |     let unclosed be 'a
+   |                     ^^ this `'` is never closed

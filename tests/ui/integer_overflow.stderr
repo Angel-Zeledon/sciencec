@@ -1,15 +1,15 @@
 error[SC0005]: this integer literal is too large
- --> tests/ui/integer_overflow.science:9:19
+ --> tests/ui/integer_overflow.science:9:20
   |
-9 |     let too_big = 340282366920938463463374607431768211456
-  |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ value out of range
+9 |     let too_big be 340282366920938463463374607431768211456
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ value out of range
   |
   = note: the widest integer type is `U64`, whose largest value is 18446744073709551615
 
 error[SC0005]: this integer literal is too large
-  --> tests/ui/integer_overflow.science:10:24
+  --> tests/ui/integer_overflow.science:10:25
    |
-10 |     let also_too_big = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_F
-   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ value out of range
+10 |     let also_too_big be 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_F
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ value out of range
    |
    = note: the widest integer type is `U64`, whose largest value is 18446744073709551615

@@ -32,7 +32,7 @@ use crate::hir::DefId;
 /// easier to read in a dump that says which rib a name landed in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RibKind {
-    /// Generic parameters of a function, type, trait or impl.
+    /// Generic parameters of a function, type, interface or implementation.
     Generics,
     /// Function parameters, including the `self` receiver.
     Params,
@@ -40,6 +40,12 @@ pub enum RibKind {
     Block,
     /// The bindings of one pattern — a `match` arm or a `for` loop.
     Pattern,
+    /// The subject of a closure: the `doc` of `doc giving doc.title`, or the
+    /// `each` that the implicit form leaves unwritten (§4.6). It is its own
+    /// kind rather than a [`RibKind::Params`] because a closure's subject is
+    /// introduced by an expression, and a dump that says so is how a scope bug
+    /// in a nested closure is read.
+    Closure,
 }
 
 impl RibKind {
@@ -47,7 +53,8 @@ impl RibKind {
     ///
     /// Only a block shadows. `(x, x)` in one pattern binds the same name
     /// twice with no way to reach the first, so it is an error, and so is a
-    /// repeated parameter or generic parameter.
+    /// repeated parameter or generic parameter. A closure rib holds exactly
+    /// one name, so the question never arises there.
     pub fn allows_shadowing(self) -> bool {
         matches!(self, RibKind::Block)
     }

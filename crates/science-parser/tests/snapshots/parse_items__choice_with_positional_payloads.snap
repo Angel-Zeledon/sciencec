@@ -1,0 +1,18 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Choice, id(\"Result\"), Of, LParen, id(\"T\"), Comma, id(\"E\"),\nRParen, Colon, Newline, Indent, id(\"Ok\"), LParen, id(\"T\"), RParen, Newline,\nid(\"Err\"), LParen, id(\"E\"), RParen, Newline, Dedent,])"
+---
+Module @0..31
+  Choice `Result` @0..31
+    generics
+      TypeParam `T` @15..16
+      TypeParam `E` @17..18
+    variants
+      Variant `Ok` @20..25
+        payload
+          Path `T` @23..24
+      Variant `Err` @25..31
+        payload
+          Path `E` @29..30
+--- diagnostics ---
+(none)

@@ -1,0 +1,11 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Function, id(\"main\"), LParen, RParen, Colon, Newline,\nIndent, id(\"a\"), Newline, id(\"b\"), Newline, Dedent,])"
+---
+Module @0..17
+  Fn `main` @0..17
+    body: Block @15..17
+      Path `a` @15..16
+      tail: Path `b` @16..17
+--- diagnostics ---
+(none)

@@ -1,0 +1,27 @@
+---
+source: crates/science-parser/tests/parse_extern.rs
+expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\" library \"cudnn\":\n    function scale(alpha: F16, out: mutable borrowed F16, buffer: ffi.Span of BF16) -> BF16\n\"#)"
+---
+Module @0..127
+  Extern "C" unsafe @0..126
+    Library "cudnn" @18..33
+    items
+      ExternFn `scale` @39..126
+        params
+          Param `alpha` @54..64
+            type: Path `F16` @61..64
+          Param `out` @66..91
+            type: Borrowed mutable @71..91
+              Path `F16` @88..91
+          Param `buffer` @93..117
+            type: Path `ffi.Span` @101..117
+              generics of `Span`
+                Path `BF16` @113..117
+        ret: Path `BF16` @122..126
+--- diagnostics ---
+SC0431 @61..64 `F16` cannot be passed by value across the C boundary
+  note `_Float16` is passed differently by GCC, Clang and MSVC, and CUDA's `__half` is a struct around an `unsigned short`
+  note pass it by reference — `borrowed F16`, or `ffi.Span of F16` — or as the `U16` bit pattern the callee reinterprets
+SC0431 @122..126 `BF16` cannot be passed by value across the C boundary
+  note `_Float16` is passed differently by GCC, Clang and MSVC, and CUDA's `__half` is a struct around an `unsigned short`
+  note pass it by reference — `borrowed F16`, or `ffi.Span of F16` — or as the `U16` bit pattern the callee reinterprets

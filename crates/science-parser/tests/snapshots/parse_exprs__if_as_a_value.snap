@@ -1,46 +1,46 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_source(r#\"fn f(flag: Bool, n: Int) -> String:\n    let chosen = if flag: 1 else: 0\n    println(if flag: \"yes\" else: \"no\")\n    if n < 10: \"small\" else: if n < 100: \"medium\" else: \"large\"\n\"#)"
+expression: "parse_source(r#\"function f(flag: Bool, n: Int) -> String:\n    let chosen be if flag: 1 else: 0\n    print(if flag: \"yes\" else: \"no\")\n    if n < 10: \"small\" else: if n < 100: \"medium\" else: \"large\"\n\"#)"
 ---
-Module @0..175
-  Fn `f` @0..174
+Module @0..180
+  Fn `f` @0..179
     params
-      Param `flag` @5..15
-        type: Path `Bool` @11..15
-      Param `n` @17..23
-        type: Path `Int` @20..23
-    ret: Path `String` @28..34
-    body: Block @40..174
-      Let `chosen` @40..71
-        value: If @53..71
-          cond: Path `flag` @56..60
-          then: Block @62..63
-            tail: Int 1 @62..63
-          else: Block @70..71
-            tail: Int 0 @70..71
-      Call @76..110
-        callee: Path `println` @76..83
+      Param `flag` @11..21
+        type: Path `Bool` @17..21
+      Param `n` @23..29
+        type: Path `Int` @26..29
+    ret: Path `String` @34..40
+    body: Block @46..179
+      Let `chosen` @46..78
+        value: If @60..78
+          cond: Path `flag` @63..67
+          then: Block @69..70
+            tail: Int 1 @69..70
+          else: Block @77..78
+            tail: Int 0 @77..78
+      Call @83..115
+        callee: Path `print` @83..88
         args
-          If @84..109
-            cond: Path `flag` @87..91
-            then: Block @93..98
-              tail: Str "yes" @93..98
-            else: Block @105..109
-              tail: Str "no" @105..109
-      tail: If @115..174
-        cond: Binary `<` @118..124
-          lhs: Path `n` @118..119
-          rhs: Int 10 @122..124
-        then: Block @126..133
-          tail: Str "small" @126..133
-        else: Block @140..174
-          tail: If @140..174
-            cond: Binary `<` @143..150
-              lhs: Path `n` @143..144
-              rhs: Int 100 @147..150
-            then: Block @152..160
-              tail: Str "medium" @152..160
-            else: Block @167..174
-              tail: Str "large" @167..174
+          If @89..114
+            cond: Path `flag` @92..96
+            then: Block @98..103
+              tail: Str "yes" @98..103
+            else: Block @110..114
+              tail: Str "no" @110..114
+      tail: If @120..179
+        cond: Binary `<` @123..129
+          lhs: Path `n` @123..124
+          rhs: Int 10 @127..129
+        then: Block @131..138
+          tail: Str "small" @131..138
+        else: Block @145..179
+          tail: If @145..179
+            cond: Binary `<` @148..155
+              lhs: Path `n` @148..149
+              rhs: Int 100 @152..155
+            then: Block @157..165
+              tail: Str "medium" @157..165
+            else: Block @172..179
+              tail: Str "large" @172..179
 --- diagnostics ---
 (none)

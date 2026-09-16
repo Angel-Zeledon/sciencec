@@ -1,0 +1,34 @@
+---
+source: crates/science-parser/tests/parse_patterns.rs
+expression: "parse_body(r#\"function f(p: borrowed Point) -> String:\n    match p:\n        Point(x: 0, y: 0): \"origin\"\n        Point(x: 0, y: y): \"on the Y axis\"\n        Doc(title: t, body: _): t\n\"#)"
+---
+Block @45..166
+  tail: Match @45..166
+    scrutinee: Path `p` @51..52
+    arms
+      Arm @62..89
+        pattern: StructPat `Point` @62..79
+          fields
+            FieldPat `x` @68..72
+              pattern: Int 0 @71..72
+            FieldPat `y` @74..78
+              pattern: Int 0 @77..78
+        body: Str "origin" @81..89
+      Arm @98..132
+        pattern: StructPat `Point` @98..115
+          fields
+            FieldPat `x` @104..108
+              pattern: Int 0 @107..108
+            FieldPat `y` @110..114
+              pattern: Binding `y` @113..114
+        body: Str "on the Y axis" @117..132
+      Arm @141..166
+        pattern: StructPat `Doc` @141..163
+          fields
+            FieldPat `title` @145..153
+              pattern: Binding `t` @152..153
+            FieldPat `body` @155..162
+              pattern: Wildcard @161..162
+        body: Path `t` @165..166
+--- diagnostics ---
+(none)

@@ -86,9 +86,9 @@ fn two_types_may_refer_to_each_other() {
     // struct A: b: B
     // struct B: a: A
     let b_ty = ty(sp, "B");
-    let a = struct_item(sp, "A", vec![], vec![field(sp, "b", b_ty)]);
+    let a = record_item(sp, "A", vec![], vec![field(sp, "b", b_ty)]);
     let a_ty = ty(sp, "A");
-    let b = struct_item(sp, "B", vec![], vec![field(sp, "a", a_ty)]);
+    let b = record_item(sp, "B", vec![], vec![field(sp, "a", a_ty)]);
 
     let (_, codes) = resolve(&module(vec![a, b]));
     assert!(codes.is_empty(), "mutually recursive types must resolve: {codes:?}");
@@ -244,17 +244,17 @@ fn self_outside_an_impl_is_reported() {
 // --- the three ambiguities of §4.4 --------------------------------------
 
 /// `enum Option[T]: Some(T) / None`, plus whatever else the test adds.
-fn option_enum(sp: &Sp) -> science_parser::ast::Item {
+fn option_choice(sp: &Sp) -> science_parser::ast::Item {
     let t = generic(sp, "T", vec![]);
     let some_payload = ty(sp, "T");
     let variants = vec![variant(sp, "Some", vec![some_payload]), variant(sp, "None", vec![])];
-    enum_item(sp, "Choice", vec![t], variants)
+    choice_item(sp, "Choice", vec![t], variants)
 }
 
 #[test]
 fn a_bare_name_that_is_a_unit_variant_becomes_a_variant_pattern() {
     let sp = &Sp::new();
-    let choice = option_enum(sp);
+    let choice = option_choice(sp);
     // fn f(x: Choice): match x: None: 0 / other: 1
     let scrutinee = name(sp, &["x"]);
     let none_arm = (pat_binding(sp, false, "None"), int(sp, 0));
@@ -287,7 +287,7 @@ fn a_bare_name_that_is_a_unit_variant_becomes_a_variant_pattern() {
 #[test]
 fn a_bare_name_matching_a_payload_carrying_variant_stays_a_binding() {
     let sp = &Sp::new();
-    let choice = option_enum(sp);
+    let choice = option_choice(sp);
     // `Some` carries a payload, so a bare `Some` is a binding, not a match.
     let arm = (pat_binding(sp, false, "Some"), int(sp, 0));
     let scrutinee = name(sp, &["x"]);
@@ -310,7 +310,7 @@ fn a_bare_name_matching_a_payload_carrying_variant_stays_a_binding() {
 #[test]
 fn an_empty_argument_list_on_a_fieldless_struct_becomes_a_struct_literal() {
     let sp = &Sp::new();
-    let empty = struct_item(sp, "Empty", vec![], vec![]);
+    let empty = record_item(sp, "Empty", vec![], vec![]);
     // fn f(): Empty()
     let callee = name(sp, &["Empty"]);
     let body = block(sp, vec![], Some(call(sp, callee, vec![])));
@@ -319,7 +319,7 @@ fn an_empty_argument_list_on_a_fieldless_struct_becomes_a_struct_literal() {
     let (krate, codes) = resolve(&module(vec![empty, f]));
     assert!(codes.is_empty(), "{codes:?}");
 
-    let empty_id = def_of(&krate, DefKind::Struct, "Empty");
+    let empty_id = def_of(&krate, DefKind::Record, "Empty");
     match &tail_of(nth_fn(&krate, 1)).kind {
         ExprKind::StructLit { res, fields } => {
             assert_eq!(*res, Res::Def(empty_id));
@@ -332,7 +332,7 @@ fn an_empty_argument_list_on_a_fieldless_struct_becomes_a_struct_literal() {
 #[test]
 fn an_empty_argument_list_on_a_unit_variant_stays_a_variant_call() {
     let sp = &Sp::new();
-    let choice = option_enum(sp);
+    let choice = option_choice(sp);
     let callee = name(sp, &["None"]);
     let body = block(sp, vec![], Some(call(sp, callee, vec![])));
     let f = func(sp, "f").body(body).item();
@@ -345,7 +345,7 @@ fn an_empty_argument_list_on_a_unit_variant_stays_a_variant_call() {
 #[test]
 fn positional_arguments_on_a_struct_with_fields_are_a_construction_mismatch() {
     let sp = &Sp::new();
-    let doc = struct_item(sp, "Doc", vec![], vec![field(sp, "title", ty(sp, "String"))]);
+    let doc = record_item(sp, "Doc", vec![], vec![field(sp, "title", ty(sp, "String"))]);
     // fn f(): Doc("a")      # positional, but `Doc` is a struct
     let callee = name(sp, &["Doc"]);
     let arg = string(sp, "a");
@@ -374,7 +374,7 @@ fn named_arguments_on_something_that_is_not_a_struct_are_a_construction_mismatch
 #[test]
 fn a_struct_literal_resolves_its_field_names_and_reports_the_unknown_ones() {
     let sp = &Sp::new();
-    let doc = struct_item(sp, "Doc", vec![], vec![field(sp, "title", ty(sp, "String"))]);
+    let doc = record_item(sp, "Doc", vec![], vec![field(sp, "title", ty(sp, "String"))]);
     let good = string(sp, "a");
     let bad = string(sp, "b");
     let lit = struct_lit(sp, &["Doc"], vec![("title", good), ("subtitle", bad)]);
@@ -398,7 +398,7 @@ fn a_struct_literal_resolves_its_field_names_and_reports_the_unknown_ones() {
 #[test]
 fn use_brings_a_name_into_the_importing_module() {
     let sp = Sp::new();
-    let token = struct_item(&sp, "Token", vec![], vec![]);
+    let token = record_item(&sp, "Token", vec![], vec![]);
     let parser = module(vec![token]);
 
     let use_decl = use_item(&sp, &["text", "parser"], Some(&["Token"]));
@@ -427,7 +427,7 @@ fn use_brings_a_name_into_the_importing_module() {
 #[test]
 fn use_of_a_name_that_does_not_exist_is_reported() {
     let sp = Sp::new();
-    let parser = module(vec![struct_item(&sp, "Token", vec![], vec![])]);
+    let parser = module(vec![record_item(&sp, "Token", vec![], vec![])]);
     let main = module(vec![use_item(&sp, &["text", "parser"], Some(&["Missing"]))]);
 
     let sources = [
@@ -464,8 +464,8 @@ fn use_of_a_module_that_does_not_exist_is_reported() {
 /// Three modules: the trait in one, the type in another, the impl in a third.
 fn orphan_sources(impl_in_type_module: bool) -> Vec<science_resolve::SourceModule> {
     let sp = Sp::new();
-    let traits = module(vec![trait_item(&sp, "Summarize", vec![], vec![])]);
-    let doc = struct_item(&sp, "Doc", vec![], vec![]);
+    let traits = module(vec![interface_item(&sp, "Summarize", vec![], vec![])]);
+    let doc = record_item(&sp, "Doc", vec![], vec![]);
 
     let block = impl_item(
         &sp,
@@ -522,9 +522,9 @@ fn an_impl_owning_neither_the_trait_nor_the_type_is_an_orphan() {
 #[test]
 fn an_inherent_impl_on_a_local_type_is_legal_and_self_resolves_inside_it() {
     let sp = &Sp::new();
-    let doc = struct_item(sp, "Doc", vec![], vec![]);
+    let doc = record_item(sp, "Doc", vec![], vec![]);
     let method = func(sp, "id")
-        .receiver(sp, SelfKind::Ref)
+        .receiver(sp, SelfKind::Shared)
         .ret(ty_self(sp))
         .body(block(sp, vec![], Some(self_value(sp))))
         .decl();
@@ -542,6 +542,221 @@ fn an_inherent_impl_on_a_local_type_is_legal_and_self_resolves_inside_it() {
         ExprKind::SelfValue(res) => assert_eq!(*res, Res::Def(receiver.def)),
         other => panic!("{other:?}"),
     }
+}
+
+// --- closures and `each` (§4.6) -----------------------------------------
+
+#[test]
+fn each_names_the_subject_the_implicit_closure_binds() {
+    let sp = &Sp::new();
+    // function f(docs: Array): docs.map(each)
+    let implicit = closure(sp, None, each(sp));
+    let mapped = method_call_args(sp, name(sp, &["docs"]), "map", vec![arg(implicit)]);
+    let f = func(sp, "f")
+        .params(vec![param(sp, "docs", ty(sp, "Array"))])
+        .body(block(sp, vec![], Some(mapped)))
+        .item();
+
+    let (krate, codes) = resolve(&module(vec![f]));
+    assert!(codes.is_empty(), "{codes:?}");
+
+    let args = match &tail_of(nth_fn(&krate, 0)).kind {
+        ExprKind::MethodCall { args, .. } => args,
+        other => panic!("{other:?}"),
+    };
+    match &args[0].value.kind {
+        ExprKind::Closure { param, body } => {
+            assert_eq!(
+                krate.defs[*param].name, "each",
+                "the implicit form binds a subject the programmer never wrote"
+            );
+            match &body.kind {
+                ExprKind::Each(res) => {
+                    assert_eq!(*res, Res::Def(*param), "`each` names that subject")
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        other => panic!("the argument must have become a closure, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_named_closure_form_binds_what_was_written() {
+    let sp = &Sp::new();
+    // function f(docs: Array): docs.map(doc giving doc)
+    let named = closure(sp, Some("doc"), name(sp, &["doc"]));
+    let mapped = method_call_args(sp, name(sp, &["docs"]), "map", vec![arg(named)]);
+    let f = func(sp, "f")
+        .params(vec![param(sp, "docs", ty(sp, "Array"))])
+        .body(block(sp, vec![], Some(mapped)))
+        .item();
+
+    let (krate, codes) = resolve(&module(vec![f]));
+    assert!(codes.is_empty(), "{codes:?}");
+
+    let args = match &tail_of(nth_fn(&krate, 0)).kind {
+        ExprKind::MethodCall { args, .. } => args,
+        other => panic!("{other:?}"),
+    };
+    match &args[0].value.kind {
+        ExprKind::Closure { param, body } => {
+            assert_eq!(krate.defs[*param].name, "doc");
+            assert_eq!(path_res(body), Res::Def(*param), "the body sees its own parameter");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_closure_parameter_is_gone_once_the_closure_closes() {
+    let sp = &Sp::new();
+    // function f(docs: Array): docs.map(doc giving doc) ; doc
+    let named = closure(sp, Some("doc"), name(sp, &["doc"]));
+    let mapped = method_call_args(sp, name(sp, &["docs"]), "map", vec![arg(named)]);
+    let f = func(sp, "f")
+        .params(vec![param(sp, "docs", ty(sp, "Array"))])
+        .body(block(sp, vec![expr_stmt(mapped)], Some(name(sp, &["doc"]))))
+        .item();
+
+    let (_, codes) = resolve(&module(vec![f]));
+    assert_eq!(codes, ["SC0200"], "`doc` is not in scope after the closure");
+}
+
+#[test]
+fn an_each_with_no_call_around_it_is_reported() {
+    let sp = &Sp::new();
+    let f = func(sp, "f").body(block(sp, vec![], Some(each(sp)))).item();
+
+    let diagnostics = diagnose(&module(vec![f]));
+    assert_eq!(codes(&diagnostics), ["SC0212"]);
+}
+
+// --- named arguments -----------------------------------------------------
+
+#[test]
+fn the_label_on_a_named_argument_is_not_resolved_as_a_name() {
+    let sp = &Sp::new();
+    // function f(docs: Array): docs.sort(by: doc giving doc)
+    let named = closure(sp, Some("doc"), name(sp, &["doc"]));
+    let sorted =
+        method_call_args(sp, name(sp, &["docs"]), "sort", vec![named_arg(sp, "by", named)]);
+    let f = func(sp, "f")
+        .params(vec![param(sp, "docs", ty(sp, "Array"))])
+        .body(block(sp, vec![], Some(sorted)))
+        .item();
+
+    let (krate, codes) = resolve(&module(vec![f]));
+    assert!(codes.is_empty(), "`by` names a parameter, not a value: {codes:?}");
+
+    let args = match &tail_of(nth_fn(&krate, 0)).kind {
+        ExprKind::MethodCall { args, .. } => args,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        args[0].name.as_ref().map(|n| n.name.as_str()),
+        Some("by"),
+        "the label survives for the type checker to match against a parameter"
+    );
+    assert!(
+        !krate.defs.iter().any(|d| d.name == "by"),
+        "and it is not a definition of any kind"
+    );
+}
+
+// --- associated types (§5.4) --------------------------------------------
+
+#[test]
+fn self_dot_item_names_the_associated_type_of_the_block_it_is_written_in() {
+    let sp = &Sp::new();
+    let doc = record_item(sp, "Doc", vec![], vec![]);
+    let next_sig = func(sp, "next")
+        .receiver(sp, SelfKind::Mutable)
+        .ret(ty_self_assoc(sp, "Item"))
+        .decl();
+    let iterate = interface_item_assoc(sp, "Iterate", vec![], &["Item"], vec![next_sig]);
+    let next = func(sp, "next")
+        .receiver(sp, SelfKind::Mutable)
+        .ret(ty_self_assoc(sp, "Item"))
+        .body(block(sp, vec![], Some(int(sp, 0))))
+        .decl();
+    let implementation = impl_item_assoc(
+        sp,
+        vec![],
+        Some(bound(sp, "Iterate")),
+        ty(sp, "Doc"),
+        vec![("Item", ty(sp, "Int"))],
+        vec![next],
+    );
+
+    let (krate, codes) = resolve(&module(vec![doc, iterate, implementation]));
+    assert!(codes.is_empty(), "{codes:?}");
+
+    // The interface's `Self.Item` is the interface's declaration; the
+    // implementation's is the implementation's binding. They are two
+    // definitions, and each block sees its own.
+    let interface = match &items(&krate)[1].kind {
+        hir::ItemKind::Interface(i) => i,
+        other => panic!("{other:?}"),
+    };
+    let declared = interface.assoc_types[0].def;
+    assert_eq!(krate.defs[declared].kind, DefKind::AssocType);
+    assert!(interface.assoc_types[0].ty.is_none(), "an interface declares without answering");
+    match &interface.methods[0].ret.as_ref().unwrap().kind {
+        // The name keeps the span it was *written* at, not the one it points
+        // to: that is what a diagnostic about this return type has to underline.
+        TypeKind::SelfAssoc { res, name } => {
+            assert_eq!(*res, Res::Def(declared));
+            assert_eq!(name.name, "Item");
+            assert_ne!(name.span, krate.defs[declared].span);
+        }
+        other => panic!("{other:?}"),
+    }
+
+    let imp = nth_impl(&krate, 2);
+    let bound = imp.assoc_types[0].def;
+    assert_ne!(bound, declared, "the binding is a definition of its own");
+    assert!(imp.assoc_types[0].ty.is_some(), "an implementation answers it");
+    match &imp.methods[0].ret.as_ref().unwrap().kind {
+        TypeKind::SelfAssoc { res, .. } => assert_eq!(*res, Res::Def(bound)),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn an_associated_type_is_not_a_bare_name_in_the_module() {
+    let sp = &Sp::new();
+    let iface = interface_item_assoc(sp, "Iterate", vec![], &["Item"], vec![]);
+    // `Item` on its own names nothing: the only way in is `Self.Item`.
+    let f = func(sp, "f").params(vec![param(sp, "x", ty(sp, "Item"))]).item();
+
+    let (_, codes) = resolve(&module(vec![iface, f]));
+    assert_eq!(codes, ["SC0200"]);
+}
+
+// --- const generic parameters (§5.3) ------------------------------------
+
+#[test]
+fn a_const_generic_parameter_is_its_own_kind_of_definition() {
+    let sp = &Sp::new();
+    // function size of (T, const N: Int)() -> Int: N
+    let f = func(sp, "size")
+        .generics(vec![generic(sp, "T", vec![]), generic_const(sp, "N", ty(sp, "Int"))])
+        .ret(ty(sp, "Int"))
+        .body(block(sp, vec![], Some(name(sp, &["N"]))))
+        .item();
+
+    let (krate, codes) = resolve(&module(vec![f]));
+    assert!(codes.is_empty(), "{codes:?}");
+
+    let n = def_of(&krate, DefKind::ConstParam, "N");
+    assert_ne!(
+        krate.defs[n].kind,
+        DefKind::TypeParam,
+        "a const parameter stands for a value, not a type"
+    );
+    assert_eq!(path_res(tail_of(nth_fn(&krate, 0))), Res::Def(n));
+    assert_eq!(krate.defs[def_of(&krate, DefKind::TypeParam, "T")].kind, DefKind::TypeParam);
 }
 
 // --- reserved words ------------------------------------------------------

@@ -1,0 +1,31 @@
+---
+source: crates/science-parser/tests/parse_extern.rs
+expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\" library \"python3\":\n    function PyErr_Format(kind: ffi.Pointer of PyObject, format: ffi.CStr, ...) -> ffi.Pointer of PyObject\n    function PyErr_SetString(kind: ffi.Pointer of PyObject, message: ffi.CStr)\n\"#)"
+---
+Module @0..223
+  Extern "C" unsafe @0..222
+    Library "python3" @18..35
+    items
+      ExternFn `PyErr_Format` variadic @41..143
+        params
+          Param `kind` @63..92
+            type: Path `ffi.Pointer` @69..92
+              generics of `Pointer`
+                Path `PyObject` @84..92
+          Param `format` @94..110
+            type: Path `ffi.CStr` @102..110
+        ret: Path `ffi.Pointer` @120..143
+          generics of `Pointer`
+            Path `PyObject` @135..143
+      ExternFn `PyErr_SetString` @148..222
+        params
+          Param `kind` @173..202
+            type: Path `ffi.Pointer` @179..202
+              generics of `Pointer`
+                Path `PyObject` @194..202
+          Param `message` @204..221
+            type: Path `ffi.CStr` @213..221
+--- diagnostics ---
+SC0434 @112..115 `PyErr_Format` is variadic, and a variadic function cannot be declared
+  note the convention is per-platform and depends on the types of the arguments actually passed, so no fixed signature describes it
+  note where the library ships a `va_list` sibling — `PyErr_FormatV` beside `PyErr_Format`, `vfprintf` beside `fprintf` — bind that instead, behind a three-line C shim

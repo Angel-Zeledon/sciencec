@@ -8,39 +8,59 @@
 //! therefore reports several problems, which is the whole point of the
 //! `Diagnostics` accumulator.
 //!
-//! # The four places the grammar is decided rather than discovered
+//! # The places the grammar is decided rather than discovered
 //!
-//! **Assignment is a statement, not an operator.** §4.4 keeps `=` out of the
-//! precedence table on purpose: listing it would make
-//! `let x = if c: a = b else: c` grammatical. So `parse_stmt` parses an
-//! expression and, on finding a following `=`, treats the whole thing as an
+//! **Assignment is a statement, not an operator.** §4.6's precedence table has
+//! no assignment in it at all, on purpose: listing it would make
+//! `let x be if c: a be b else: c` grammatical. So `parse_stmt` parses an
+//! expression and, on finding a following `be`, treats the whole thing as an
 //! assignment.
 //!
+//! **An item may begin with a type rather than a keyword.** `Doc implements
+//! Summarize:` and `Doc has:` (§4.4) put the type first, so `parse_item`
+//! cannot dispatch on a leading keyword alone: it parses a path and then looks
+//! for `implements` or `has`. A line that is neither is
+//! still reported as "not a declaration", because a statement at the top level
+//! of a module has to be told so in those terms.
+//!
 //! **An inline body ends where the expression ends, not at the newline.**
-//! §4.2 is explicit: in `if c: a else: b` the `then` body stops mid-line, at
+//! §4.5 is explicit: in `if c: a else: b` the `then` body stops mid-line, at
 //! `else`, because `else` cannot continue an expression. Recursive descent
 //! gives that for free — the expression parser simply stops — and the same
 //! mechanism gives the dangling `else` its innermost binding.
 //!
-//! **`&` is resolved by position.** In front of an operand it is a reference
-//! (`&x`, `&mut x`); between two operands it is bitwise and. `parse_unary` is
-//! only ever called where an operand is expected and the binary loop only ever
-//! looks for an operator after one, so neither can see the other's `&`.
+//! **`is` resolves to a symbol, not to an operator of its own.** Revision 2
+//! §1 leaves exactly one spelling for each comparison: `is` and `is not` for
+//! identity, and the symbols for order. `peek_binary_op` maps `is` to the
+//! *token* `==` and `is not` to `!=`, which are then read by the single
+//! operator table every symbol goes through, so a word and a symbol can never
+//! become different operators. The phrases `is at least`, `is at most`, `is
+//! above` and `is below` are recognised in the same place for one purpose
+//! only: to report that they were removed.
+//!
+//! **`of` introduces arguments in a type and parameters in a declaration
+//! head.** `Array of Doc` passes an argument; `function largest of T(..)` and
+//! `Grid of (T, const ROWS: Int) has:` declare parameters. Nothing in
+//! the token stream distinguishes them, and nothing has to: the two are read
+//! by different functions, reached from different places in the grammar.
 //!
 //! **Two ambiguities are left for name resolution**, because §4.4 says they
-//! cannot be settled by syntax: `Doc()` parses as a call, not as a struct with
+//! cannot be settled by syntax: `Doc()` parses as a call, not as a record with
 //! no fields, and a bare name in a pattern parses as a binding, not as a unit
 //! variant. The same rule decides `Doc(title: "a")` against `f(1)`: named
-//! arguments mean a struct, positional ones mean a call or a variant.
+//! arguments mean a record, positional ones mean a call or a variant. It is
+//! also what decides `docs.sort(by: f)`, which is written exactly like the
+//! qualified construction `text.Doc(title: "a")` and parses as one — only
+//! resolution knows whether `docs` names a module or a value.
 //!
 //! A third ambiguity follows from `.` serving as both the path separator and
-//! the field-access operator: `Option.Some(x)` (§4.5's qualified variant) is
-//! written exactly like a method call, and `Doc.new("a")` (§4.3's associated
+//! the field-access operator: `Option.Some(x)` (§4.7's qualified variant) is
+//! written exactly like a method call, and `Doc.new("a")` (§4.4's associated
 //! function) exactly like one too. Both parse as `MethodCall`; resolution
 //! reclassifies them. A path in expression position is therefore one segment
 //! long, and every `.` after it belongs to the postfix chain.
 
-use science_diagnostics::{Code, Diagnostic, Diagnostics, FileId, Label, Span};
+use science_diagnostics::{Code, Diagnostic, Diagnostics, FileId, Label, Span, Suggestion};
 use science_lexer::{ReservedWord, Token, TokenKind};
 
 use crate::ast::*;
@@ -56,7 +76,7 @@ pub mod codes {
     /// A name was required here.
     pub const EXPECTED_IDENT: Code = Code(102);
     /// A `:` did not introduce a block, or the block that followed was not
-    /// shaped the way §4.2 requires.
+    /// shaped the way §4.5 requires.
     pub const EXPECTED_BLOCK: Code = Code(103);
     /// A type expression was required here.
     pub const EXPECTED_TYPE: Code = Code(104);
@@ -64,18 +84,86 @@ pub mod codes {
     pub const EXPECTED_EXPR: Code = Code(105);
     /// A pattern was required here.
     pub const EXPECTED_PATTERN: Code = Code(106);
-    /// `pub` in front of something that cannot be public.
-    pub const MISPLACED_PUB: Code = Code(107);
+    /// `public` in front of something that cannot be public.
+    pub const MISPLACED_PUBLIC: Code = Code(107);
     /// A `self` receiver somewhere other than first in the parameter list.
     pub const MISPLACED_RECEIVER: Code = Code(108);
-    /// A statement where §4.2 requires an inline block's single expression.
+    /// A statement where §4.5 requires an inline block's single expression.
     pub const STATEMENT_IN_INLINE_BLOCK: Code = Code(109);
-    /// Named arguments in front of something that is not a struct's name.
+    /// Named arguments in front of something that is not a record's name.
     pub const MISPLACED_NAMED_ARGUMENT: Code = Code(110);
-    /// `impl <something that is not a path> for ..`.
+    /// `<something that is not a path> implements ..`.
     pub const EXPECTED_TRAIT: Code = Code(111);
-    /// Something in a `trait` or `impl` body that is not a method.
-    pub const EXPECTED_METHOD: Code = Code(112);
+    /// Something in an `interface` or implementation body that is not a
+    /// member.
+    pub const EXPECTED_MEMBER: Code = Code(112);
+    /// A nested `each`, which §4.6 rejects rather than giving it a rule.
+    pub const NESTED_EACH: Code = Code(115);
+    /// `Array of Doc.new()`, whose `.new()` §4.3 refuses to attach by guessing.
+    pub const AMBIGUOUS_GENERIC_CALL: Code = Code(116);
+    /// The word `returns` where §4.4 now writes `->`.
+    pub const RETURNS_WORD: Code = Code(118);
+
+    // The migration codes of syntax revision 2. Each names a word the
+    // revision removed and says what replaced it, because a reader arriving
+    // with pre-revision code gets a keyword that is now an ordinary word, and
+    // the error that falls out of the grammar names the symptom instead.
+    //
+    // `SC0140` is skipped: `syntax-revision-2.md` §3.3 already claims it for
+    // the unchecked-error analysis.
+
+    /// `for each x in xs`, where revision 2 §2.1 writes `for x in xs`.
+    pub const EACH_AFTER_FOR: Code = Code(138);
+    /// The word `trait`, which revision 2 §6 renamed to `interface`.
+    pub const TRAIT_WORD: Code = Code(139);
+    /// `Type has methods:`, where revision 2 §5 writes `Type has:`.
+    pub const METHODS_AFTER_HAS: Code = Code(141);
+    /// The word `while`, which revision 2 §2.2 removed in favour of `loop`.
+    pub const WHILE_WORD: Code = Code(142);
+    /// `is above`, `is below`, `is at least`, `is at most` — the comparison
+    /// phrases revision 2 §1 replaced with `>`, `<`, `>=` and `<=`.
+    pub const COMPARISON_PHRASE: Code = Code(143);
+    /// The word `println`, which revision 2 §3.5 renamed to `print`.
+    pub const PRINTLN_WORD: Code = Code(144);
+}
+
+/// The `extern` block's own diagnostics.
+///
+/// `ffi-c-boundary.md` §8 owns `SC0410`-`SC0449` and `docs/superpowers/design/README.md`
+/// has the authoritative partition, so these are the one place the parser
+/// steps outside §9's syntax range. It is allowed to, and only here: an
+/// `extern` block is a separate grammar with its own vocabulary, and a
+/// diagnostic about the FFI type table is not a diagnostic about syntax.
+///
+/// Codes `SC0410`, `SC0421`, `SC0424`, `SC0426`, `SC0429`, `SC0431` and
+/// `SC0433` are named by §8 of that note; the ones it names and this phase can
+/// check are below under the meaning §8 gives them. `SC0434` is the code
+/// `c-binding-coverage.md` §7 asks for by number. The rest are allocated here,
+/// inside the range and nowhere near a neighbour's.
+pub mod ffi_codes {
+    use science_diagnostics::Code;
+
+    /// A line inside an `extern` block that is none of the five item forms.
+    pub const UNKNOWN_EXTERN_ITEM: Code = Code(411);
+    /// An `extern` block with no `library` clause (§5.1).
+    pub const MISSING_LIBRARY: Code = Code(412);
+    /// An ABI string other than `"C"` (§1.1).
+    pub const UNKNOWN_ABI: Code = Code(413);
+    /// An `extern` block not marked `unsafe` (§1.1).
+    pub const EXTERN_NOT_UNSAFE: Code = Code(414);
+    /// A `union` item with no size, or no alignment
+    /// (`c-binding-coverage.md` §3.4).
+    pub const UNION_WITHOUT_LAYOUT: Code = Code(417);
+    /// A type §1.3's closed vocabulary cannot represent at the boundary.
+    pub const NOT_FFI_REPRESENTABLE: Code = Code(420);
+    /// `Array of T` in an extern signature; names `ffi.Span of T` as the fix
+    /// (§8, `SC0421`).
+    pub const ARRAY_IN_SIGNATURE: Code = Code(421);
+    /// `F16` or `BF16` passed by value across the boundary (§8, `SC0431`).
+    pub const HALF_PRECISION_BY_VALUE: Code = Code(431);
+    /// A variadic function in a hand-written `extern` block. Asked for by
+    /// number in `c-binding-coverage.md` §7.
+    pub const VARIADIC_FUNCTION: Code = Code(434);
 }
 
 /// Parses a token stream into a module, along with everything that went wrong.
@@ -94,6 +182,9 @@ pub struct Parser<'t> {
     /// Returned by `peek` once the stream runs out, so no lookahead needs a
     /// bounds check.
     eof: Token,
+    /// One entry per enclosing call argument, `true` once an `each` inside
+    /// that argument has claimed it as a closure (§4.6). See `parse_call_args`.
+    each_scopes: Vec<bool>,
     diagnostics: Diagnostics,
 }
 
@@ -104,6 +195,7 @@ impl<'t> Parser<'t> {
             tokens,
             pos: 0,
             eof: Token::new(TokenKind::Eof, Span::at(file, end)),
+            each_scopes: Vec::new(),
             diagnostics: Diagnostics::new(),
         }
     }
@@ -173,6 +265,16 @@ impl<'t> Parser<'t> {
         self.peek() == kind
     }
 
+    /// Whether the token `offset` ahead is the identifier `word`.
+    ///
+    /// Every word syntax revision 2 removed is an ordinary identifier now, so
+    /// recognising one to report it is a string comparison rather than a
+    /// token test. Keeping that in one place is what stops the migration
+    /// diagnostics from each inventing their own spelling of it.
+    fn word_at(&self, offset: usize, word: &str) -> bool {
+        matches!(self.peek_ahead(offset), TokenKind::Ident(name) if name == word)
+    }
+
     fn eat(&mut self, kind: &TokenKind) -> Option<Token> {
         if self.at(kind) {
             Some(self.advance())
@@ -215,12 +317,12 @@ impl<'t> Parser<'t> {
 
     /// Whether the logical line has already ended at the token just consumed.
     ///
-    /// Two things end one. A `Newline`, obviously — a bodiless `fn` in a trait
-    /// consumes its own, and the enclosing list then has nothing left to take.
-    /// And a `Dedent`: a statement whose last token closed an indented block
-    /// has had its newline emitted *inside* that block, before the `Dedent`, so
-    /// `if c:` with an indented body is one logical line with nothing trailing
-    /// it.
+    /// Two things end one. A `Newline`, obviously — a bodiless `function` in a
+    /// nested list consumes its own, and the enclosing one has nothing left to
+    /// take. And a `Dedent`: a statement whose last token closed an indented
+    /// block has had its newline emitted *inside* that block, before the
+    /// `Dedent`, so `if c:` with an indented body is one logical line with
+    /// nothing trailing it.
     fn prev_ends_line(&self) -> bool {
         self.pos > 0
             && matches!(self.tokens[self.pos - 1].kind, TokenKind::Dedent | TokenKind::Newline)
@@ -369,65 +471,83 @@ impl<'t> Parser<'t> {
         Module { items, span }
     }
 
+    /// One declaration.
+    ///
+    /// Everything but an implementation begins with a keyword. An
+    /// implementation begins with the type being implemented (§4.4), so a name
+    /// has to be parsed before the parser can know what it is looking at — and
+    /// a top-level statement, which also begins with a name, is diagnosed from
+    /// the same place.
     fn parse_item(&mut self) -> Option<Item> {
         let start = self.span();
-        let pub_span = self.eat(&TokenKind::Pub).map(|t| t.span);
-        let is_pub = pub_span.is_some();
+        let public = self.eat(&TokenKind::Public).map(|t| t.span);
+        let is_pub = public.is_some();
 
         // Dispatching with `at` rather than a `match` on `peek` keeps the
         // borrow of the token from overlapping the parse call in each arm.
-        let kind = if self.at(&TokenKind::Fn) {
+        let kind = if self.at(&TokenKind::Function) {
             ItemKind::Fn(self.parse_fn(is_pub, start)?)
-        } else if self.at(&TokenKind::Struct) {
-            ItemKind::Struct(self.parse_struct(is_pub, start)?)
-        } else if self.at(&TokenKind::Enum) {
-            ItemKind::Enum(self.parse_enum(is_pub, start)?)
-        } else if self.at(&TokenKind::Trait) {
-            ItemKind::Trait(self.parse_trait(is_pub, start)?)
-        } else if self.at(&TokenKind::Impl) {
-            self.reject_pub(pub_span, "an `impl` block");
-            ItemKind::Impl(self.parse_impl(start)?)
+        } else if self.at(&TokenKind::Type) {
+            self.parse_type_item(is_pub, start)?
+        } else if self.at(&TokenKind::Choice) {
+            ItemKind::Choice(self.parse_choice(is_pub, start)?)
+        } else if self.at(&TokenKind::Interface) {
+            ItemKind::Interface(self.parse_interface(is_pub, start)?)
+        } else if self.at_trait_word() {
+            self.report_trait_word();
+            ItemKind::Interface(self.parse_interface_body(is_pub, start)?)
+        } else if self.at(&TokenKind::Const) {
+            ItemKind::Const(self.parse_const(is_pub, start)?)
         } else if self.at(&TokenKind::Use) {
-            self.reject_pub(pub_span, "a `use` declaration");
+            self.reject_public(public, "a `use` declaration");
             ItemKind::Use(self.parse_use(start)?)
+        } else if self.at_extern_block() {
+            self.reject_public(public, "an `extern` block");
+            ItemKind::Extern(self.parse_extern_block(start)?)
+        } else if matches!(self.peek(), TokenKind::Ident(_) | TokenKind::SelfType) {
+            self.reject_public(public, "an implementation");
+            ItemKind::Impl(self.parse_impl(start)?)
         } else {
             let found = describe(self.peek());
             let span = self.span();
-            self.error(
-                codes::EXPECTED_ITEM,
-                format!(
-                    "expected a declaration (`fn`, `struct`, `enum`, `trait`, `impl` or `use`), \
-                     found {found}"
-                ),
-                span,
-            );
+            let message = format!("{EXPECTED_DECLARATION}, found {found}");
+            self.error(codes::EXPECTED_ITEM, message, span);
             return None;
         };
 
         Some(Item { kind, span: start.merge(self.last_text_span()) })
     }
 
-    fn reject_pub(&mut self, pub_span: Option<Span>, what: &str) {
-        if let Some(span) = pub_span {
-            self.error(codes::MISPLACED_PUB, format!("`pub` has no meaning on {what}"), span);
+    fn reject_public(&mut self, public: Option<Span>, what: &str) {
+        if let Some(span) = public {
+            self.error(
+                codes::MISPLACED_PUBLIC,
+                format!("`public` has no meaning on {what}"),
+                span,
+            );
         }
     }
 
     // --- functions -------------------------------------------------------
 
+    /// `function name of T(params) -> T where ..:`.
     fn parse_fn(&mut self, is_pub: bool, start: Span) -> Option<FnDecl> {
-        self.advance(); // `fn`
+        self.advance(); // `function`
         let name = self.expect_ident()?;
         let generics = self.parse_generic_params();
         let (self_param, params) = self.parse_params();
         let ret = if self.eat(&TokenKind::Arrow).is_some() {
+            Some(self.parse_type())
+        } else if self.at_returns_word() {
+            self.report_returns_word();
             Some(self.parse_type())
         } else {
             None
         };
         let where_clause = self.parse_where_clause();
 
-        // No `:` means no body, which is exactly a trait's required method.
+        // No `:` means no body, which is exactly an interface's required
+        // method.
         let body = if self.at(&TokenKind::Colon) {
             Some(self.parse_block())
         } else if self.at(&TokenKind::Newline)
@@ -458,6 +578,160 @@ impl<'t> Parser<'t> {
             body,
             span: start.merge(self.last_text_span()),
         })
+    }
+
+    /// Whether the parameter list is followed by the word `returns`, which
+    /// §4.4 used to spell the return type before `->` replaced it.
+    fn at_returns_word(&self) -> bool {
+        matches!(self.peek(), TokenKind::Ident(name) if name == "returns")
+    }
+
+    /// Reports the old `returns` spelling and steps over the word.
+    ///
+    /// `returns` is an ordinary identifier now, so without this the parser
+    /// would end the signature at the parameter list and complain that a name
+    /// is not the end of a line — the symptom, not the mistake. Recovering as
+    /// if `->` had been written keeps the return type in the tree, so the rest
+    /// of the file parses as the programmer meant it.
+    fn report_returns_word(&mut self) {
+        let span = self.span();
+        self.diagnostics.push(
+            Diagnostic::error(codes::RETURNS_WORD, "the return type is written `->`")
+                .with_label(Label::primary(span, "`returns` is not a keyword in Science"))
+                .with_suggestion(Suggestion {
+                    span,
+                    replacement: "->".to_string(),
+                    message: "write the return type with".to_string(),
+                }),
+        );
+        self.advance();
+    }
+
+    // --- syntax revision 2 migration -------------------------------------
+    //
+    // Every word below was a keyword before the revision and is an ordinary
+    // identifier after it. Left to the grammar each one produces a message
+    // about a name where a colon belongs, or a call to something undefined —
+    // the symptom, never the mistake. Each of these reports the mistake, and
+    // each recovers by parsing the construct the programmer meant, so one
+    // stale keyword costs one diagnostic instead of a cascade.
+
+    /// Whether the cursor is on `trait Name`, the pre-revision spelling of
+    /// `interface Name` (§6).
+    fn at_trait_word(&self) -> bool {
+        self.word_at(0, "trait") && matches!(self.peek_ahead(1), TokenKind::Ident(_))
+    }
+
+    /// Reports the old `trait` spelling and steps over the word.
+    fn report_trait_word(&mut self) {
+        let span = self.span();
+        self.diagnostics.push(
+            Diagnostic::error(codes::TRAIT_WORD, "the declaration is written `interface`")
+                .with_label(Label::primary(span, "`trait` is not a keyword in Science"))
+                .with_suggestion(Suggestion {
+                    span,
+                    replacement: "interface".to_string(),
+                    message: "declare the interface with".to_string(),
+                }),
+        );
+        self.advance();
+    }
+
+    /// Reports `for each x in xs` and steps over the `each` (§2.1).
+    ///
+    /// `each` is still a keyword — it is the implicit closure subject in
+    /// `docs.map(each.title)` — so this is the one migration here whose stale
+    /// word is still a token. Only the loop dropped it.
+    fn report_each_after_for(&mut self, for_span: Span) {
+        let span = self.span();
+        self.diagnostics.push(
+            Diagnostic::error(codes::EACH_AFTER_FOR, "the loop is written `for x in xs`")
+                .with_label(Label::primary(span, "`each` is not part of the loop"))
+                .with_suggestion(Suggestion {
+                    span: for_span.merge(span),
+                    replacement: "for".to_string(),
+                    message: "write the loop with".to_string(),
+                })
+                .with_note(
+                    "`each` names the subject of a call, as in `docs.map(each.title)`, \
+                     and nothing else",
+                ),
+        );
+        self.advance();
+    }
+
+    /// Reports `Type has methods:` and steps over the `methods` (§5).
+    fn report_methods_after_has(&mut self, has_span: Span) {
+        let span = self.span();
+        self.diagnostics.push(
+            Diagnostic::error(
+                codes::METHODS_AFTER_HAS,
+                "the inherent block is written `Type has:`",
+            )
+            .with_label(Label::primary(span, "`methods` is not a keyword in Science"))
+            .with_suggestion(Suggestion {
+                span: has_span.merge(span),
+                replacement: "has".to_string(),
+                message: "open the block with".to_string(),
+            }),
+        );
+        self.advance();
+    }
+
+    /// Whether the cursor is on `while <expression>`, the loop §2.2 removed.
+    fn at_while_word(&self) -> bool {
+        self.word_at(0, "while") && self.starts_expr(self.peek_ahead(1))
+    }
+
+    /// Reports `while cond:` and steps over `while` and its condition.
+    ///
+    /// The fix replaces the whole head with `loop`, which is the part a tool
+    /// can apply: what is left is a well-formed loop over the same body. The
+    /// note carries the half a span cannot — that the condition comes back as
+    /// the body's first statement, or that a count belongs in a range.
+    /// Recovery drops the condition for the same reason, so the tree matches
+    /// what applying the fix would produce.
+    fn report_while_word(&mut self, start: Span) -> Expr {
+        self.advance(); // `while`
+        // Read the condition and drop it. Keeping it would mean inventing a
+        // node the language no longer has, and the fix below discards the same
+        // text, so the tree and the fix agree.
+        self.parse_expr();
+        let head = start.merge(self.last_text_span());
+        self.diagnostics.push(
+            Diagnostic::error(codes::WHILE_WORD, "the unbounded loop is written `loop`")
+                .with_label(Label::primary(start, "`while` is not a keyword in Science"))
+                .with_suggestion(Suggestion {
+                    span: head,
+                    replacement: "loop".to_string(),
+                    message: "open the loop with".to_string(),
+                })
+                .with_note(
+                    "end it with the condition negated: make `if not …: break` the first \
+                     statement of the body, or write a count as a range, `for i in 0..n:`",
+                ),
+        );
+        let body = self.parse_block();
+        let span = start.merge(self.last_text_span());
+        Expr { kind: ExprKind::Loop { body }, span }
+    }
+
+    /// Reports `println(..)` and returns the `print` it stands for (§3.5).
+    fn report_println_word(&mut self) -> Expr {
+        let span = self.advance().span;
+        self.diagnostics.push(
+            Diagnostic::error(codes::PRINTLN_WORD, "the free function is `print`")
+                .with_label(Label::primary(span, "there is no `println` in Science"))
+                .with_suggestion(Suggestion {
+                    span,
+                    replacement: "print".to_string(),
+                    message: "write the call as".to_string(),
+                })
+                .with_note("`print` writes a newline; `write` is the form that does not"),
+        );
+        let name = Ident::new("print".to_string(), span);
+        let segment = PathSegment { name, generics: Vec::new(), span };
+        Expr { kind: ExprKind::Path(Path { segments: vec![segment], span }), span }
     }
 
     /// `(a: T, b: U)`, optionally opening with a `self` receiver.
@@ -496,29 +770,40 @@ impl<'t> Parser<'t> {
         (receiver, params)
     }
 
+    /// The three receivers of §4.4: `self`, `mutable self`, and the by-value
+    /// `self: Self`, which is written as an ordinary annotated parameter and
+    /// is the only one that takes the value away from the caller.
     fn try_parse_self_param(&mut self) -> Option<SelfParam> {
         let start = self.span();
-        if self.at(&TokenKind::SelfValue) {
+        if self.at(&TokenKind::Mutable) && matches!(self.peek_ahead(1), TokenKind::SelfValue) {
             self.advance();
-            return Some(SelfParam { kind: SelfKind::Value, span: start });
+            self.advance();
+            return Some(SelfParam {
+                kind: SelfKind::Mutable,
+                span: start.merge(self.last_text_span()),
+            });
         }
-        if !self.at(&TokenKind::Amp) {
+        if !self.at(&TokenKind::SelfValue) {
             return None;
         }
-        match (self.peek_ahead(1), self.peek_ahead(2)) {
-            (TokenKind::SelfValue, _) => {
-                self.advance();
-                self.advance();
-                Some(SelfParam { kind: SelfKind::Ref, span: start.merge(self.last_text_span()) })
-            }
-            (TokenKind::Mut, TokenKind::SelfValue) => {
-                self.advance();
-                self.advance();
-                self.advance();
-                Some(SelfParam { kind: SelfKind::RefMut, span: start.merge(self.last_text_span()) })
-            }
-            _ => None,
+        self.advance();
+        if self.eat(&TokenKind::Colon).is_none() {
+            return Some(SelfParam { kind: SelfKind::Shared, span: start });
         }
+
+        // The annotation is dropped because it carries nothing: a receiver's
+        // type is the implementing type, whatever it is written as. It is
+        // still checked, so `self: Int` cannot pass for a by-value receiver.
+        let ty = self.parse_type();
+        if !matches!(ty.kind, TypeKind::SelfType | TypeKind::Error) {
+            self.error(
+                codes::EXPECTED_TYPE,
+                "a `self` parameter can only be annotated `Self`, which is what takes the \
+                 receiver by value",
+                ty.span,
+            );
+        }
+        Some(SelfParam { kind: SelfKind::Value, span: start.merge(self.last_text_span()) })
     }
 
     fn parse_param(&mut self) -> Option<Param> {
@@ -529,40 +814,70 @@ impl<'t> Parser<'t> {
         Some(Param { name, ty, span: start.merge(self.last_text_span()) })
     }
 
-    // --- structs and enums -----------------------------------------------
+    // --- records, choices, aliases and constants --------------------------
 
-    fn parse_struct(&mut self, is_pub: bool, start: Span) -> Option<StructDecl> {
-        self.advance(); // `struct`
+    /// `type` introduces two declarations, told apart by what follows the
+    /// name: `is` makes it an alias (§4.4), a block makes it a record. The
+    /// generic parameters come first either way, so `type Handle of T is Box
+    /// of T` needs no lookahead beyond the one token.
+    fn parse_type_item(&mut self, is_pub: bool, start: Span) -> Option<ItemKind> {
+        self.advance(); // `type`
         let name = self.expect_ident()?;
         let generics = self.parse_generic_params();
+
+        if self.eat(&TokenKind::Is).is_some() {
+            let ty = self.parse_type();
+            self.expect_line_end();
+            return Some(ItemKind::Alias(AliasDecl {
+                is_pub,
+                name,
+                generics,
+                ty,
+                span: start.merge(self.last_text_span()),
+            }));
+        }
+
         let where_clause = self.parse_where_clause();
+        if !self.at(&TokenKind::Colon) {
+            let found = describe(self.peek());
+            let span = self.span();
+            self.error(
+                codes::UNEXPECTED_TOKEN,
+                format!(
+                    "expected `:` to open the type's fields or `is` to alias it, found {found}"
+                ),
+                span,
+            );
+            return None;
+        }
+
         let fields = self.parse_indented_body(Self::parse_field);
-        Some(StructDecl {
+        Some(ItemKind::Record(RecordDecl {
             is_pub,
             name,
             generics,
             where_clause,
             fields,
             span: start.merge(self.last_text_span()),
-        })
+        }))
     }
 
     fn parse_field(&mut self) -> Option<FieldDef> {
         let start = self.span();
-        let is_pub = self.eat(&TokenKind::Pub).is_some();
+        let is_pub = self.eat(&TokenKind::Public).is_some();
         let name = self.expect_ident()?;
         self.expect(&TokenKind::Colon, "`:`")?;
         let ty = self.parse_type();
         Some(FieldDef { is_pub, name, ty, span: start.merge(self.last_text_span()) })
     }
 
-    fn parse_enum(&mut self, is_pub: bool, start: Span) -> Option<EnumDecl> {
-        self.advance(); // `enum`
+    fn parse_choice(&mut self, is_pub: bool, start: Span) -> Option<ChoiceDecl> {
+        self.advance(); // `choice`
         let name = self.expect_ident()?;
         let generics = self.parse_generic_params();
         let where_clause = self.parse_where_clause();
         let variants = self.parse_indented_body(Self::parse_variant);
-        Some(EnumDecl {
+        Some(ChoiceDecl {
             is_pub,
             name,
             generics,
@@ -587,6 +902,21 @@ impl<'t> Parser<'t> {
             self.expect(&TokenKind::RParen, "`)`");
         }
         Some(VariantDef { name, payload, span: start.merge(self.last_text_span()) })
+    }
+
+    /// `const WIDTH be 768`, with the same optional annotation a `let` takes.
+    fn parse_const(&mut self, is_pub: bool, start: Span) -> Option<ConstDecl> {
+        self.advance(); // `const`
+        let name = self.expect_ident()?;
+        let ty = if self.eat(&TokenKind::Colon).is_some() {
+            Some(self.parse_type())
+        } else {
+            None
+        };
+        self.expect(&TokenKind::Be, "`be`")?;
+        let value = self.parse_expr();
+        self.expect_line_end();
+        Some(ConstDecl { is_pub, name, ty, value, span: start.merge(self.last_text_span()) })
     }
 
     // --- use -------------------------------------------------------------
@@ -614,39 +944,787 @@ impl<'t> Parser<'t> {
         Some(UseDecl { path, imports, span: start.merge(self.last_text_span()) })
     }
 
-    // --- generics and bounds ---------------------------------------------
+    // --- extern blocks ---------------------------------------------------
+    //
+    // §9 of `ffi-c-boundary.md` calls this "a small separate grammar with
+    // contextual keywords", and that is what the code below is: nothing here
+    // reaches back into the declaration grammar except `parse_type` and
+    // `parse_param`, and nothing outside this section reaches in.
+    //
+    // `library`, `via`, `pkg-config`, `kind`, `when`, `available`, `symbol`,
+    // `size` and `align` are ordinary identifiers everywhere in the language,
+    // including inside the block wherever they are not in one of the two or
+    // three positions below. `reserved-words.md` argues for keeping the
+    // reserved list short and the FFI note took the same view; the price is
+    // that every one of them is recognised here by `word_at` rather than by a
+    // token test, and the price is worth paying for words as ordinary as
+    // `kind` and `size`.
+    //
+    // `static` and `union` are the exceptions, and they are not exceptions to
+    // the principle: both are already in §13's reserved list, so the block's
+    // grammar spends words that were frozen long ago rather than freezing two
+    // more.
 
-    /// `[T, U: Ord + Clone]`, or nothing at all.
-    fn parse_generic_params(&mut self) -> Vec<GenericParam> {
-        let mut params = Vec::new();
-        if self.eat(&TokenKind::LBracket).is_none() {
-            return params;
+    /// Whether the cursor is on an `extern` block, with or without its
+    /// `unsafe`.
+    fn at_extern_block(&self) -> bool {
+        self.at(&TokenKind::Extern)
+            || (self.at(&TokenKind::Unsafe) && self.at_ahead(1, &TokenKind::Extern))
+    }
+
+    /// `unsafe extern "C" library "openblas" via pkg-config "openblas":`
+    ///
+    /// Every clause after the ABI is optional to the *parser* — a block that
+    /// has lost one is reported and then parsed to the end, because the items
+    /// inside it are what the rest of the file refers to and losing them would
+    /// turn one missing word into an error per foreign call.
+    fn parse_extern_block(&mut self, start: Span) -> Option<ExternBlock> {
+        let is_unsafe = self.eat(&TokenKind::Unsafe).is_some();
+        let extern_span = self.advance().span; // `extern`
+        if !is_unsafe {
+            self.report_extern_without_unsafe(extern_span);
         }
-        while !self.at(&TokenKind::RBracket) {
-            let start = self.span();
-            let Some(name) = self.expect_ident() else {
-                self.recover_in_brackets();
-                if self.eat(&TokenKind::Comma).is_some() {
-                    continue;
+
+        let abi = self.expect_str("the ABI as a string, `\"C\"`")?;
+        if abi.value != "C" {
+            self.report_unknown_abi(&abi);
+        }
+
+        let library = self.parse_library_clause();
+        if library.is_none() {
+            self.report_missing_library(start.merge(abi.span));
+        }
+
+        let items = self.parse_indented_body(Self::parse_extern_item);
+        Some(ExternBlock {
+            is_unsafe,
+            abi,
+            library,
+            items,
+            span: start.merge(self.last_text_span()),
+        })
+    }
+
+    /// A string literal, or a report that one belonged here.
+    fn expect_str(&mut self, what: &str) -> Option<StrLit> {
+        if let TokenKind::Str(value) = self.peek() {
+            let value = value.clone();
+            let span = self.advance().span;
+            return Some(StrLit { value, span });
+        }
+        let found = describe(self.peek());
+        let span = self.span();
+        self.error(codes::UNEXPECTED_TOKEN, format!("expected {what}, found {found}"), span);
+        None
+    }
+
+    /// §1.1: the `unsafe` is on the block because writing the declaration is
+    /// itself the unverifiable act. The fix is exact, so it is a suggestion.
+    fn report_extern_without_unsafe(&mut self, extern_span: Span) {
+        self.diagnostics.push(
+            Diagnostic::error(
+                ffi_codes::EXTERN_NOT_UNSAFE,
+                "an `extern` block is written `unsafe extern`",
+            )
+            .with_label(Label::primary(extern_span, "this block declares what cannot be checked"))
+            .with_suggestion(Suggestion {
+                span: extern_span,
+                replacement: "unsafe extern".to_string(),
+                message: "mark the block with".to_string(),
+            })
+            .with_note(
+                "the declaration claims a symbol of this name exists, takes these arguments \
+                 at these widths, and neither retains nor frees the pointers it is given — \
+                 none of which the compiler can see",
+            ),
+        );
+    }
+
+    /// §1.1: `"C"` is the only ABI in this phase, and Fortran is one of them.
+    ///
+    /// No suggestion: replacing the string would silently produce a binding
+    /// that links and is wrong, which is the failure mode the whole note is
+    /// written against. The note says instead where the difference really
+    /// lives.
+    fn report_unknown_abi(&mut self, abi: &StrLit) {
+        self.diagnostics.push(
+            Diagnostic::error(ffi_codes::UNKNOWN_ABI, "the only ABI in this phase is `\"C\"`")
+                .with_label(Label::primary(
+                    abi.span,
+                    format!("`{}` names no calling convention Science emits", abi.value),
+                ))
+                .with_note(
+                    "Fortran BLAS and LAPACK are `\"C\"` too: their difference is not the \
+                     calling convention but the argument passing, which is expressed in the \
+                     types",
+                ),
+        );
+    }
+
+    /// §5.1: the library name is the link target, and `via pkg-config` does
+    /// not replace it — it says how to find the flags for it.
+    fn report_missing_library(&mut self, head: Span) {
+        self.diagnostics.push(
+            Diagnostic::error(
+                ffi_codes::MISSING_LIBRARY,
+                "an `extern` block names the library it comes from",
+            )
+            .with_label(Label::primary(head, "no `library` clause on this block"))
+            .with_note(
+                "write `library \"openblas\"` after the ABI; a block discovering its flags \
+                 with `via pkg-config` still declares the plain name as the fallback, \
+                 because pkg-config is not present on every platform",
+            ),
+        );
+    }
+
+    /// `library "openblas" via pkg-config "openblas" kind static when available`.
+    ///
+    /// The three trailing clauses are read in a loop rather than in a fixed
+    /// order: each modifies how this one library is found or linked, none of
+    /// them interacts with another, and an order would be a rule for a reader
+    /// to remember for no gain.
+    ///
+    /// The clauses are read whether or not the `library` name is there. A
+    /// block that opens `extern "C" via pkg-config "zlib":` has one mistake in
+    /// it, and consuming the clause it *did* write is what keeps that one
+    /// mistake from turning the `:` into a second error and the body into a
+    /// third.
+    fn parse_library_clause(&mut self) -> Option<LibraryClause> {
+        let start = self.span();
+        let name = if self.word_at(0, "library") {
+            self.advance();
+            self.expect_str("the library's name as a string")
+        } else {
+            None
+        };
+        let mut pkg_config = None;
+        let mut static_link = None;
+        let mut when_available = None;
+
+        loop {
+            if self.word_at(0, "via") {
+                self.advance();
+                if !self.expect_pkg_config() {
+                    self.recover_to_block_colon();
+                    break;
                 }
-                break;
-            };
-            let bounds = if self.eat(&TokenKind::Colon).is_some() {
-                self.parse_bounds()
+                pkg_config = self.expect_str("the pkg-config module name as a string");
+                if pkg_config.is_none() {
+                    self.recover_to_block_colon();
+                    break;
+                }
+            } else if self.word_at(0, "kind") {
+                let kind_span = self.advance().span;
+                match self.eat(&TokenKind::Reserved(ReservedWord::Static)) {
+                    Some(token) => static_link = Some(kind_span.merge(token.span)),
+                    None => {
+                        let found = describe(self.peek());
+                        let span = self.span();
+                        self.error(
+                            codes::UNEXPECTED_TOKEN,
+                            format!("expected `static` after `kind`, found {found}"),
+                            span,
+                        );
+                        self.recover_to_block_colon();
+                        break;
+                    }
+                }
+            } else if self.word_at(0, "when") && self.word_at(1, "available") {
+                let when_span = self.advance().span;
+                let available_span = self.advance().span;
+                when_available = Some(when_span.merge(available_span));
             } else {
-                Vec::new()
-            };
-            params.push(GenericParam { name, bounds, span: start.merge(self.last_text_span()) });
+                break;
+            }
+        }
+
+        Some(LibraryClause {
+            name: name?,
+            pkg_config,
+            static_link,
+            when_available,
+            span: start.merge(self.last_text_span()),
+        })
+    }
+
+    /// Drops the rest of a broken block header, stopping in front of the `:`
+    /// that opens the body.
+    ///
+    /// The header is one line and the body is the part the rest of the file
+    /// refers to, so recovery here throws away the line and keeps the block:
+    /// `synchronize` would take the indented region with it and turn a
+    /// misspelled clause into an unresolved name per foreign call.
+    fn recover_to_block_colon(&mut self) {
+        loop {
+            match self.peek() {
+                TokenKind::Colon
+                | TokenKind::Newline
+                | TokenKind::Indent
+                | TokenKind::Dedent
+                | TokenKind::Eof => return,
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+    }
+
+    /// `pkg-config`, which is three tokens and one word.
+    ///
+    /// The lexer has no reason to know the name of a build tool, so it reads
+    /// `pkg-config` as `pkg`, `-`, `config` like any other subtraction. Here
+    /// there is no expression for a subtraction to be part of, and the three
+    /// tokens are only accepted when they are written with nothing between
+    /// them — `pkg - config` is not the name of anything.
+    fn expect_pkg_config(&mut self) -> bool {
+        let joined = self.word_at(0, "pkg")
+            && self.at_ahead(1, &TokenKind::Minus)
+            && self.word_at(2, "config")
+            && self.token_at(0).span.end == self.token_at(1).span.start
+            && self.token_at(1).span.end == self.token_at(2).span.start;
+        if joined {
+            self.advance();
+            self.advance();
+            self.advance();
+            return true;
+        }
+        let found = describe(self.peek());
+        let span = self.span();
+        self.error(
+            codes::UNEXPECTED_TOKEN,
+            format!("expected `pkg-config` after `via`, found {found}"),
+            span,
+        );
+        false
+    }
+
+    /// One line of a block's body: §1.2's three forms, plus the two
+    /// `c-binding-coverage.md` adds.
+    fn parse_extern_item(&mut self) -> Option<ExternItem> {
+        let start = self.span();
+        let kind = if self.at(&TokenKind::Function) {
+            ExternItemKind::Fn(self.parse_extern_fn()?)
+        } else if self.at(&TokenKind::Type) {
+            ExternItemKind::Alias(self.parse_extern_alias()?)
+        } else if self.at(&TokenKind::Const) {
+            ExternItemKind::Const(self.parse_extern_const()?)
+        } else if self.at(&TokenKind::Reserved(ReservedWord::Static)) {
+            ExternItemKind::Static(self.parse_extern_static()?)
+        } else if self.at(&TokenKind::Reserved(ReservedWord::Union)) {
+            ExternItemKind::Union(self.parse_extern_union()?)
+        } else {
+            self.report_unknown_extern_item();
+            return None;
+        };
+        Some(ExternItem { kind, span: start.merge(self.last_text_span()) })
+    }
+
+    /// §1.2 closed the list at three and `c-binding-coverage.md` reopened it
+    /// once, so the message enumerates rather than describing: the list is
+    /// short, and a reader who guessed wrong needs to see what is on it.
+    fn report_unknown_extern_item(&mut self) {
+        let found = describe(self.peek());
+        let span = self.span();
+        self.diagnostics.push(
+            Diagnostic::error(
+                ffi_codes::UNKNOWN_EXTERN_ITEM,
+                "this is not something an `extern` block may contain",
+            )
+            .with_label(Label::primary(span, format!("found {found}")))
+            .with_note(
+                "a block contains `function name(..) -> T`, `type Name is T`, \
+                 `const NAME be literal as T`, `static NAME: T` and \
+                 `union Name: size N align M`, and nothing else",
+            )
+            .with_note(
+                "a record or a handle type is an ordinary `type` declaration outside the \
+                 block, marked `implements ffi.CLayout`, because a handle needs a `Drop` \
+                 the declaring module must own",
+            ),
+        );
+    }
+
+    /// `function cblas_dgemm(layout: CblasLayout, ..) -> Herr symbol "dgemm_"`.
+    fn parse_extern_fn(&mut self) -> Option<ExternFn> {
+        let start = self.advance().span; // `function`
+        let name = self.expect_ident()?;
+        let (params, variadic) = self.parse_extern_params();
+        let ret = if self.eat(&TokenKind::Arrow).is_some() {
+            Some(self.parse_type())
+        } else if self.at_returns_word() {
+            self.report_returns_word();
+            Some(self.parse_type())
+        } else {
+            None
+        };
+        // §1.6: `symbol` decouples the Science name from the linker name, and
+        // is what turns an ILP64/LP64 mismatch into an undefined symbol
+        // instead of a wrong answer.
+        let symbol = if self.word_at(0, "symbol") {
+            self.advance();
+            self.expect_str("the linker name as a string")
+        } else {
+            None
+        };
+
+        for param in &params {
+            self.check_ffi_type(&param.ty, true);
+        }
+        if let Some(ret) = &ret {
+            self.check_ffi_type(ret, true);
+        }
+        if let Some(span) = variadic {
+            self.report_variadic_function(&name, span);
+        }
+
+        Some(ExternFn {
+            name,
+            params,
+            ret,
+            symbol,
+            variadic,
+            span: start.merge(self.last_text_span()),
+        })
+    }
+
+    /// `(a: T, b: U)`, optionally ending in `...`.
+    ///
+    /// A separate reader from `parse_params`: an extern function has no `self`
+    /// receiver to look for, and it is the only place in the language where a
+    /// parameter list can end in something that is not a parameter.
+    fn parse_extern_params(&mut self) -> (Vec<Param>, Option<Span>) {
+        let mut params = Vec::new();
+        let mut variadic = None;
+        if self.expect(&TokenKind::LParen, "`(`").is_none() {
+            return (params, variadic);
+        }
+
+        while !self.at(&TokenKind::RParen) {
+            if let Some(span) = self.eat_ellipsis() {
+                variadic = Some(span);
+                self.eat(&TokenKind::Comma);
+                break;
+            }
+            match self.parse_param() {
+                Some(param) => params.push(param),
+                None => self.recover_in_brackets(),
+            }
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
             }
         }
-        self.expect(&TokenKind::RBracket, "`]`");
+        self.expect(&TokenKind::RParen, "`)`");
+        (params, variadic)
+    }
+
+    /// `...`, which is `..` followed by `.` and nothing between them.
+    ///
+    /// No `Ellipsis` token exists and none is added: three dots mean something
+    /// in exactly one position in the language, and a token for it would put a
+    /// C-only concept in the contract every other phase reads. Requiring the
+    /// two spans to touch is what keeps a range followed by a field access
+    /// from being read as one.
+    fn eat_ellipsis(&mut self) -> Option<Span> {
+        if !(self.at(&TokenKind::DotDot)
+            && self.at_ahead(1, &TokenKind::Dot)
+            && self.token_at(0).span.end == self.token_at(1).span.start)
+        {
+            return None;
+        }
+        let first = self.advance().span;
+        let second = self.advance().span;
+        Some(first.merge(second))
+    }
+
+    /// §1.4 and `c-binding-coverage.md` Decision 3: variadics stay
+    /// unreachable, and the audit measured the cost at 0.84% of a surface
+    /// whose non-variadic half always exists.
+    ///
+    /// No suggestion. Dropping the `...` would leave a declaration that links
+    /// and passes its arguments under the wrong convention, which is worse
+    /// than the error; the only fix is a shim, and a shim is not an edit to
+    /// this line.
+    fn report_variadic_function(&mut self, name: &Ident, span: Span) {
+        self.diagnostics.push(
+            Diagnostic::error(
+                ffi_codes::VARIADIC_FUNCTION,
+                format!("`{}` is variadic, and a variadic function cannot be declared", name.name),
+            )
+            .with_label(Label::primary(span, "C's variadic convention has no Science spelling"))
+            .with_note(
+                "the convention is per-platform and depends on the types of the arguments \
+                 actually passed, so no fixed signature describes it",
+            )
+            .with_note(
+                "where the library ships a `va_list` sibling — `PyErr_FormatV` beside \
+                 `PyErr_Format`, `vfprintf` beside `fprintf` — bind that instead, behind a \
+                 three-line C shim",
+            ),
+        );
+    }
+
+    /// `type BlasInt is I32` — a spelling for a C typedef (§1.2).
+    fn parse_extern_alias(&mut self) -> Option<ExternAlias> {
+        let start = self.advance().span; // `type`
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::Is, "`is`")?;
+        let ty = self.parse_type();
+        self.check_ffi_type(&ty, true);
+        Some(ExternAlias { name, ty, span: start.merge(self.last_text_span()) })
+    }
+
+    /// `const CBLAS_ROW_MAJOR be 101 as CblasLayout` (§1.2).
+    ///
+    /// The value is a literal and not an expression. §1.2 says the item
+    /// transcribes a `#define` or an enumerator, and Decision 7 of
+    /// `c-binding-coverage.md` turns on the distinction: a constant is a
+    /// compile-time value, a `static` is a link-time address, and a grammar
+    /// that let an expression in here would blur the two. A leading `-` is
+    /// admitted because C enumerators are routinely negative.
+    fn parse_extern_const(&mut self) -> Option<ExternConst> {
+        let start = self.advance().span; // `const`
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::Be, "`be`")?;
+        let negative = self.eat(&TokenKind::Minus).is_some();
+        let value = match literal_of(self.peek()) {
+            Some(literal) => {
+                self.advance();
+                literal
+            }
+            None => {
+                let found = describe(self.peek());
+                let span = self.span();
+                self.error(
+                    codes::EXPECTED_EXPR,
+                    format!("expected the constant's literal value, found {found}"),
+                    span,
+                );
+                return None;
+            }
+        };
+        self.expect(&TokenKind::As, "`as`, and the constant's type")?;
+        let ty = self.parse_type();
+        self.check_ffi_type(&ty, true);
+        Some(ExternConst {
+            name,
+            negative,
+            value,
+            ty,
+            span: start.merge(self.last_text_span()),
+        })
+    }
+
+    /// `static H5T_NATIVE_DOUBLE_g: Hid` — `c-binding-coverage.md` Decision 7.
+    ///
+    /// The fourth item form, and the one the audit measured as the largest
+    /// gap: `H5T_NATIVE_DOUBLE` expands to `(H5open(), H5T_NATIVE_DOUBLE_g)`,
+    /// so without a way to name the global half HDF5 is 90% function-bindable
+    /// and 0% usable.
+    fn parse_extern_static(&mut self) -> Option<ExternStatic> {
+        let start = self.advance().span; // `static`
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::Colon, "`:`, and the global's type")?;
+        let ty = self.parse_type();
+        // A global is reached through its address, never passed by value, so
+        // the half-precision rule of §1.3 does not reach it.
+        self.check_ffi_type(&ty, false);
+        Some(ExternStatic { name, ty, span: start.merge(self.last_text_span()) })
+    }
+
+    /// `union H5R_ref_t: size 64 align 8` — `c-binding-coverage.md` §3.4.
+    ///
+    /// A C union has no Science layout and is not going to get one: the audit
+    /// found two in HDF5 and one in CPython, and the remedy §1.4 already named
+    /// — an opaque byte array of the right size and alignment — is the whole
+    /// of the import. The arms are not written down because nothing in
+    /// Science may read them; the library's own accessors (`H5Rget_type`,
+    /// `Py_REFCNT`) are ordinary `function` items beside this one.
+    fn parse_extern_union(&mut self) -> Option<ExternUnion> {
+        let start = self.advance().span; // `union`
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::Colon, "`:`, and the union's size and alignment")?;
+        let size = self.eat_layout_number("size");
+        let align = self.eat_layout_number("align");
+        if size.is_none() || align.is_none() {
+            let span = start.merge(self.last_text_span());
+            self.report_union_without_layout(&name, span);
+        }
+        Some(ExternUnion { name, size, align, span: start.merge(self.last_text_span()) })
+    }
+
+    /// `size 64` or `align 8`: a contextual word and the byte count after it.
+    fn eat_layout_number(&mut self, word: &str) -> Option<u128> {
+        if !self.word_at(0, word) {
+            return None;
+        }
+        self.advance();
+        match self.peek() {
+            TokenKind::Int { value, .. } => {
+                let value = *value;
+                self.advance();
+                Some(value)
+            }
+            _ => {
+                let found = describe(self.peek());
+                let span = self.span();
+                self.error(
+                    codes::EXPECTED_EXPR,
+                    format!("expected a byte count after `{word}`, found {found}"),
+                    span,
+                );
+                None
+            }
+        }
+    }
+
+    /// Neither number can be inferred and neither can be guessed, so there is
+    /// nothing to suggest — only the two places they can honestly come from.
+    fn report_union_without_layout(&mut self, name: &Ident, span: Span) {
+        self.diagnostics.push(
+            Diagnostic::error(
+                ffi_codes::UNION_WITHOUT_LAYOUT,
+                format!("`{}` needs its size and its alignment", name.name),
+            )
+            .with_label(Label::primary(span, "written `union Name: size N align M`"))
+            .with_note(
+                "a C union is imported as an opaque blob of the right size and alignment, \
+                 because its layout is the C ABI's and nothing in Science may read its arms",
+            )
+            .with_note(
+                "take both numbers from `sizeof` and `alignof` on the target, or from what \
+                 `sciencec bindgen` recorded; the library's own accessors bind as ordinary \
+                 `function` items",
+            ),
+        );
+    }
+
+    // --- the FFI type vocabulary -----------------------------------------
+
+    /// The half of §1.3's closed vocabulary that syntax can decide.
+    ///
+    /// The parser knows two things about a type: what it is written as, and
+    /// which names the F0 library already owns. That is enough to reject every
+    /// Science layout by name — a `String` is a length and UTF-8 bytes, an
+    /// `Array` is a `{ptr, len, cap}` header, an `Option` is a niche — and it
+    /// is not enough to *accept* anything: whether `DLTensor` implements
+    /// `ffi.CLayout`, and whether every one of its fields transitively does
+    /// (`SC0424`), depends on definitions this phase has not seen.
+    ///
+    /// So the rule is: report what is certainly wrong, stay silent about
+    /// everything else, and leave the positive half to the type checker. A
+    /// parser that guessed would produce the one kind of FFI diagnostic worse
+    /// than none, the false one.
+    ///
+    /// `by_value` is false under a pointer or a borrow, which is the only
+    /// thing the half-precision rule turns on.
+    fn check_ffi_type(&mut self, ty: &Type, by_value: bool) {
+        match &ty.kind {
+            TypeKind::Borrowed { mutable, inner } => {
+                if let Some(element) = array_element(inner) {
+                    self.report_array_in_signature(ty, Some(*mutable), &element);
+                    return;
+                }
+                self.check_ffi_type(inner, false);
+            }
+            TypeKind::Path(path) => {
+                if let Some(element) = array_element(ty) {
+                    self.report_array_in_signature(ty, None, &element);
+                    return;
+                }
+                let name = path.dotted();
+                if let Some(why) = science_layout_note(&name) {
+                    let what = format!("`{name}`");
+                    self.report_not_ffi_representable(ty, &what, why);
+                    return;
+                }
+                if by_value && matches!(name.as_str(), "F16" | "BF16") {
+                    self.report_half_precision_by_value(ty, &name);
+                    return;
+                }
+                // The arguments of `ffi.Span of T`, `ffi.Pointer of T` and the
+                // rest name a pointee, never a value the ABI passes.
+                for argument in path.segments.iter().flat_map(|s| s.generics.iter()) {
+                    self.check_ffi_type(argument, false);
+                }
+            }
+            TypeKind::Any(bound) => {
+                let what = format!("`any {}`", bound.path.dotted());
+                self.report_not_ffi_representable(
+                    ty,
+                    &what,
+                    "a dynamically dispatched value is a Science pair of pointers, and C \
+                     knows neither half",
+                );
+            }
+            TypeKind::Tuple(_) => self.report_not_ffi_representable(
+                ty,
+                "a tuple",
+                "C has no tuple; declare a `type` marked `implements ffi.CLayout` and pass \
+                 a pointer to it",
+            ),
+            // `()` is how a function that returns nothing is written, `Self`
+            // cannot occur in a block with no implementation around it, a
+            // const argument is a number, and an `Error` has been reported
+            // already.
+            TypeKind::Unit
+            | TypeKind::SelfType
+            | TypeKind::SelfAssoc(_)
+            | TypeKind::Const(_)
+            | TypeKind::Error => {}
+        }
+    }
+
+    /// §1.3, and `SC0421` by the name §8 gives it.
+    ///
+    /// The suggestion is exact and the call site does not move: §1.3 coerces
+    /// `borrowed Array of T` to `ffi.Span of T` at an extern call site for
+    /// precisely this reason, so rewriting the declaration is the whole fix.
+    fn report_array_in_signature(&mut self, ty: &Type, mutable: Option<bool>, element: &str) {
+        let span = ty.span;
+        let replacement = match mutable {
+            Some(true) => format!("ffi.MutableSpan of {element}"),
+            _ => format!("ffi.Span of {element}"),
+        };
+        self.diagnostics.push(
+            Diagnostic::error(
+                ffi_codes::ARRAY_IN_SIGNATURE,
+                "`Array of T` has no C representation",
+            )
+            .with_label(Label::primary(
+                span,
+                "C wants the elements; an `Array` is a `{ptr, len, cap}` header",
+            ))
+            .with_suggestion(Suggestion {
+                span,
+                replacement,
+                message: "declare the parameter as".to_string(),
+            })
+            .with_note(
+                "the length does not cross the ABI — it exists on the Science side so that \
+                 the wrapper's bounds check is an expression the compiler checks",
+            )
+            .with_note(
+                "a call site still passes the array: `borrowed Array of T` coerces to \
+                 `ffi.Span of T` there, and `.span()` names the conversion where it has to \
+                 be written out",
+            ),
+        );
+    }
+
+    /// `what` arrives spelled the way it should read in the message, quoted
+    /// when it is a name and bare when it is a description: "`String`" and
+    /// "a tuple" are both things a sentence can say, and "`a tuple`" is not.
+    fn report_not_ffi_representable(&mut self, ty: &Type, what: &str, why: &str) {
+        self.diagnostics.push(
+            Diagnostic::error(
+                ffi_codes::NOT_FFI_REPRESENTABLE,
+                format!("{what} cannot cross the C boundary"),
+            )
+            .with_label(Label::primary(ty.span, "not in the `ffi` type vocabulary"))
+            .with_note(why.to_string()),
+        );
+    }
+
+    /// §1.3, and `SC0431` by the name §8 gives it.
+    fn report_half_precision_by_value(&mut self, ty: &Type, name: &str) {
+        self.diagnostics.push(
+            Diagnostic::error(
+                ffi_codes::HALF_PRECISION_BY_VALUE,
+                format!("`{name}` cannot be passed by value across the C boundary"),
+            )
+            .with_label(Label::primary(ty.span, "half precision has no agreed C ABI by value"))
+            .with_note(
+                "`_Float16` is passed differently by GCC, Clang and MSVC, and CUDA's \
+                 `__half` is a struct around an `unsigned short`",
+            )
+            .with_note(
+                "pass it by reference — `borrowed F16`, or `ffi.Span of F16` — or as the \
+                 `U16` bit pattern the callee reinterprets",
+            ),
+        );
+    }
+
+    // --- generics and bounds ---------------------------------------------
+
+    /// `of T`, `of T: Ord + Clone`, `of (A, B)`, `of (T, const WIDTH: Int)`,
+    /// or nothing at all.
+    ///
+    /// §4.3 explains the parentheses: a single argument cannot contain a
+    /// top-level comma, so the comma that would follow it ends the list
+    /// instead. The same rule reads the parameter list, and for the same
+    /// reason — `function merge of A, B(..)` could not be told from a
+    /// parameter named `B`.
+    fn parse_generic_params(&mut self) -> Vec<GenericParam> {
+        let mut params = Vec::new();
+        if self.eat(&TokenKind::Of).is_none() {
+            return params;
+        }
+
+        if self.eat(&TokenKind::LParen).is_none() {
+            if let Some(param) = self.parse_generic_param() {
+                params.push(param);
+            }
+            return params;
+        }
+
+        while !self.at(&TokenKind::RParen) {
+            match self.parse_generic_param() {
+                Some(param) => params.push(param),
+                None => self.recover_in_brackets(),
+            }
+            if self.eat(&TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RParen, "`)`");
         params
     }
 
+    fn parse_generic_param(&mut self) -> Option<GenericParam> {
+        let start = self.span();
+
+        // A const parameter (§5.3) is annotated, and a type parameter's `:`
+        // introduces bounds instead. The leading `const` is what tells them
+        // apart, which is why it is written even though the annotation alone
+        // would be enough to infer it: `of (T, WIDTH: Int)` would read as a
+        // bound on `WIDTH`.
+        if self.eat(&TokenKind::Const).is_some() {
+            let name = self.expect_ident()?;
+            self.expect(&TokenKind::Colon, "`:`")?;
+            let ty = self.parse_type();
+            return Some(GenericParam {
+                name,
+                kind: GenericParamKind::Const { ty },
+                span: start.merge(self.last_text_span()),
+            });
+        }
+
+        let name = self.expect_ident()?;
+
+        // The same two colons the interface head has: `of T: Ord(..)` bounds
+        // parameter, and the `:` of `type Wrapper of T:` opens the body. The
+        // one that bounds is followed by a name, the one that opens a block by
+        // the end of the line — and inside the parenthesised form the lexer
+        // emits no newline at all, so this only ever fires on the bare one.
+        let bounds = if self.at(&TokenKind::Colon)
+            && !matches!(self.peek_ahead(1), TokenKind::Newline)
+        {
+            self.advance();
+            self.parse_bounds()
+        } else {
+            Vec::new()
+        };
+        Some(GenericParam {
+            name,
+            kind: GenericParamKind::Type { bounds },
+            span: start.merge(self.last_text_span()),
+        })
+    }
+
     /// `A + B + C`. The list ends at anything that is not a `+`, which is what
-    /// lets a `where` clause end on the `:` that opens the block.
+    /// lets a `where` clause end on the `:` that opens the block and an inline
+    /// bound end on the `(` that opens the parameter list.
     fn parse_bounds(&mut self) -> Vec<TypeBound> {
         let mut bounds = Vec::new();
         while let Some(bound) = self.parse_type_bound() {
@@ -691,71 +1769,160 @@ impl<'t> Parser<'t> {
 
     // --- paths and types -------------------------------------------------
 
-    fn parse_path(&mut self) -> Option<Path> {
-        let first = self.parse_path_segment()?;
+    /// A dotted name and nothing else.
+    ///
+    /// Split out from `parse_path` for the one caller that must not read an
+    /// `of`: an implementation head, where `of` declares parameters rather
+    /// than passing arguments, and `Grid of (T, const ROWS: Int) has:`
+    /// would be nonsense read as a type.
+    fn parse_path_segments(&mut self) -> Option<Path> {
+        let first = self.expect_ident()?;
         let mut span = first.span;
-        let mut segments = vec![first];
+        let mut segments = vec![PathSegment { name: first, generics: Vec::new(), span }];
+
         // A `.` only continues the path when a name follows; otherwise it is
         // field access and belongs to whoever called us.
         while self.at(&TokenKind::Dot) && matches!(self.peek_ahead(1), TokenKind::Ident(_)) {
             self.advance();
-            let segment = self.parse_path_segment()?;
-            span = span.merge(segment.span);
-            segments.push(segment);
+            let name = self.expect_ident()?;
+            span = span.merge(name.span);
+            let segment_span = name.span;
+            segments.push(PathSegment { name, generics: Vec::new(), span: segment_span });
         }
+
         Some(Path { segments, span })
     }
 
-    fn parse_path_segment(&mut self) -> Option<PathSegment> {
-        let name = self.expect_ident()?;
-        let mut span = name.span;
-        let mut generics = Vec::new();
-        if self.at(&TokenKind::LBracket) {
-            generics = self.parse_generic_args();
-            span = span.merge(self.last_text_span());
+    /// A dotted name, with `of` arguments when it has any.
+    ///
+    /// The arguments bind to the whole name rather than to a segment —
+    /// §4.3 writes `text.parser.Token of Doc`, never `text.Token of Doc.parser`
+    /// — so they land on the last segment, which is the one they name.
+    fn parse_path(&mut self) -> Option<Path> {
+        let mut path = self.parse_path_segments()?;
+        if self.eat(&TokenKind::Of).is_some() {
+            let generics = self.parse_generic_args();
+            let end = self.last_text_span();
+            if let Some(last) = path.segments.last_mut() {
+                last.generics = generics;
+                last.span = last.span.merge(end);
+            }
+            path.span = path.span.merge(end);
         }
-        Some(PathSegment { name, generics, span })
+        Some(path)
     }
 
-    /// `[A, B]` in a type or a path.
+    /// The arguments after `of`, with the `of` already consumed.
+    ///
+    /// One argument may be written bare (`Array of Doc`); two or more take
+    /// parentheses, and so may one (§4.3).
     fn parse_generic_args(&mut self) -> Vec<Type> {
-        let mut args = Vec::new();
-        if self.eat(&TokenKind::LBracket).is_none() {
-            return args;
+        if self.eat(&TokenKind::LParen).is_none() {
+            return vec![self.parse_generic_arg()];
         }
-        while !self.at(&TokenKind::RBracket) {
-            args.push(self.parse_type());
+        let mut args = Vec::new();
+        while !self.at(&TokenKind::RParen) {
+            args.push(self.parse_generic_arg());
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
             }
         }
-        self.expect(&TokenKind::RBracket, "`]`");
+        self.expect(&TokenKind::RParen, "`)`");
         args
     }
 
-    /// A type expression: `&T`, `&mut T`, `dyn Trait`, `Array[T]`, `(A, B)`,
-    /// `()`, `Self`, and dotted paths.
+    /// One argument of an `of` list: a type, or a const generic argument.
+    ///
+    /// This is `parse_type` plus exactly one thing — a const generic argument
+    /// here may be negated, and only here. `Quantity of (T, 1, 0, -1, 0, 0,
+    /// 0, 0)` is `scientific-libraries.md` §12.3's velocity, and roughly half
+    /// of every SI dimension vector in that note is negative, so this is not
+    /// an edge case; before this existed, none of its nine unit aliases
+    /// parsed.
+    ///
+    /// The `-` is recognised here rather than at the head of `parse_type`
+    /// because a negative number is not a type. `function f(x: -1)` stays the
+    /// error it has always been: an argument list is the one position that
+    /// holds values beside types (§5.3), and it is the only position where a
+    /// leading `-` has a value to belong to.
+    ///
+    /// Only an **integer** literal may follow the `-`. A negative float,
+    /// string, character or boolean const argument is not a thing:
+    /// `const-expression-arithmetic.md` §2.3 admits the const-parameter kinds
+    /// `Int` and (in F1) `Shape` and nothing else, so there is no kind in
+    /// which negating one of those is a phrase. Rather than grow a second
+    /// rejection path that could drift, those fall through to `parse_type`,
+    /// which reports the `-` as "expected a type" exactly as it does for
+    /// every other token that cannot start one.
+    ///
+    /// **`- 1`, with a space, parses, and means `-1`.** The lexer's rule that
+    /// `->` is one token only when its two characters touch does not reach
+    /// here and should not: that rule is about a *lexeme* that two characters
+    /// spell, whereas this is a parser production over two tokens —
+    /// `const-expression-arithmetic.md` §2.1 writes `ConstAtom := '-'
+    /// ConstAtom`, whose operand grows to `-(N + 1)`, where there is no pair
+    /// of characters for adjacency to be measured between. `- 1` is already
+    /// legal unary negation in expression position, and making whitespace
+    /// significant in one of the two positions and not the other would be a
+    /// rule with exactly one instance in the language.
+    fn parse_generic_arg(&mut self) -> Type {
+        if self.at(&TokenKind::Minus) && matches!(self.peek_ahead(1), TokenKind::Int { .. }) {
+            let minus = self.advance().span;
+            let literal = literal_of(self.peek())
+                .expect("the token after the `-` was just matched as an integer literal");
+            let operand_span = self.advance().span;
+            let span = minus.merge(operand_span);
+            let operand = ConstExpr { kind: ConstExprKind::Lit(literal), span: operand_span };
+            let value = ConstExpr { kind: ConstExprKind::Neg(Box::new(operand)), span };
+            return Type { kind: TypeKind::Const(value), span };
+        }
+        self.parse_type()
+    }
+
+    /// A type expression: `borrowed T`, `mutable borrowed T`, `any Trait`,
+    /// `Array of T`, `(A, B)`, `()`, `Self`, `Self.Item`, a const argument,
+    /// and dotted paths.
     ///
     /// Always returns a node. A failure becomes `TypeKind::Error`, so the tree
     /// keeps its shape and the phases after this one still have something to
     /// walk.
     fn parse_type(&mut self) -> Type {
         let start = self.span();
+
+        // A const generic argument (§5.3) is a value where a type is expected:
+        // the `4` of `Window of (Int, 4)`. Nothing else in a type position can
+        // be a literal, so there is no ambiguity to resolve.
+        if let Some(literal) = literal_of(self.peek()) {
+            self.advance();
+            let value = ConstExpr { kind: ConstExprKind::Lit(literal), span: start };
+            return Type { kind: TypeKind::Const(value), span: start };
+        }
+
         match self.peek() {
-            TokenKind::Amp => {
+            TokenKind::Borrowed => {
                 self.advance();
-                let mutable = self.eat(&TokenKind::Mut).is_some();
                 let inner = self.parse_type();
                 Type {
-                    kind: TypeKind::Ref { mutable, inner: Box::new(inner) },
+                    kind: TypeKind::Borrowed { mutable: false, inner: Box::new(inner) },
                     span: start.merge(self.last_text_span()),
                 }
             }
-            TokenKind::Dyn => {
+            TokenKind::Mutable => {
+                self.advance();
+                // `mutable` is only ever the first half of `mutable borrowed`
+                // in a type: there is no other kind of mutable type.
+                self.expect(&TokenKind::Borrowed, "`borrowed` after `mutable`");
+                let inner = self.parse_type();
+                Type {
+                    kind: TypeKind::Borrowed { mutable: true, inner: Box::new(inner) },
+                    span: start.merge(self.last_text_span()),
+                }
+            }
+            TokenKind::Any => {
                 self.advance();
                 match self.parse_type_bound() {
                     Some(bound) => Type {
-                        kind: TypeKind::Dyn(bound),
+                        kind: TypeKind::Any(bound),
                         span: start.merge(self.last_text_span()),
                     },
                     None => Type { kind: TypeKind::Error, span: start },
@@ -763,6 +1930,18 @@ impl<'t> Parser<'t> {
             }
             TokenKind::SelfType => {
                 self.advance();
+                // `Self.Item` names an associated type (§5.4); `Self` alone is
+                // the implementing type.
+                if self.at(&TokenKind::Dot) && matches!(self.peek_ahead(1), TokenKind::Ident(_)) {
+                    self.advance();
+                    return match self.expect_ident() {
+                        Some(name) => Type {
+                            kind: TypeKind::SelfAssoc(name),
+                            span: start.merge(self.last_text_span()),
+                        },
+                        None => Type { kind: TypeKind::Error, span: start },
+                    };
+                }
                 Type { kind: TypeKind::SelfType, span: start }
             }
             TokenKind::LParen => self.parse_paren_type(start),
@@ -825,6 +2004,7 @@ impl<'t> Parser<'t> {
                 | TokenKind::RBracket
                 | TokenKind::Comma
                 | TokenKind::Colon
+                | TokenKind::Be
                 | TokenKind::Arrow
                 | TokenKind::Newline
                 | TokenKind::Indent
@@ -836,7 +2016,7 @@ impl<'t> Parser<'t> {
     // --- blocks ----------------------------------------------------------
 
     /// The indented body of a declaration whose contents are one item per
-    /// line: a struct's fields, an enum's variants, a trait's methods.
+    /// line: a record's fields, a choice's variants, an interface's members.
     ///
     /// This is not a `Block`: those lines are declarations, not statements.
     fn parse_indented_body<T>(&mut self, parse_one: fn(&mut Self) -> Option<T>) -> Vec<T> {
@@ -869,13 +2049,13 @@ impl<'t> Parser<'t> {
         items
     }
 
-    /// A block of statements, in either of §4.2's two forms:
+    /// A block of statements, in either of §4.5's two forms:
     ///
     /// - indented: `:` NEWLINE INDENT statements DEDENT
     /// - inline: `:` followed by a single expression
     ///
     /// The inline form ends where the *expression* ends, not at the end of the
-    /// line. That is the whole of §4.2's rule, and the reason `if c: a else: b`
+    /// line. That is the whole of §4.5's rule, and the reason `if c: a else: b`
     /// works: `else` cannot continue an expression, so the `then` body stops in
     /// front of it. "Fits on one line" is a consequence, never a test.
     ///
@@ -938,15 +2118,15 @@ impl<'t> Parser<'t> {
 
     /// The single expression of an inline block.
     ///
-    /// §4.2 makes a statement here an error and gives `fn f(): let x = 1` as
-    /// the example, which is what `SC0109` reports.
+    /// §4.5 makes a statement here an error and gives `let` as the example,
+    /// which is what `SC0109` reports.
     ///
     /// Assignment, `return`, `break` and `continue` are still accepted, and the
-    /// spec writes all four inline itself: `if item > best: best = item` in
-    /// §4.3, and `if n < 0: return -1` and `loop: break` in the corpus. Each of
-    /// them is an expression of type `Never` (§4.5) in every respect except
+    /// spec writes all four inline itself: `if item > best: best be item` in
+    /// §4.4, and `if n < 0: return -1` and `loop: break` in the corpus. Each of
+    /// them is an expression of type `Never` (§4.7) in every respect except
     /// where the AST happens to file it — `StmtKind` rather than `ExprKind` —
-    /// and a filing decision is not what §4.2 is ruling on. A `let` has no such
+    /// and a filing decision is not what §4.5 is ruling on. A `let` has no such
     /// reading: it binds a name in a scope, and an inline body has none.
     fn parse_inline_block(&mut self) -> Block {
         let start = self.span();
@@ -978,7 +2158,7 @@ impl<'t> Parser<'t> {
         finish_block(stmts, start)
     }
 
-    /// The body of a `match` arm, which §4.4 makes an expression rather than a
+    /// The body of a `match` arm, which §4.5 makes an expression rather than a
     /// block so that an inline arm carries the expression itself.
     fn parse_arm_body(&mut self) -> Expr {
         let colon = self.span();
@@ -1019,7 +2199,7 @@ impl<'t> Parser<'t> {
         match self.peek() {
             TokenKind::Let => {
                 self.advance();
-                let mutable = self.eat(&TokenKind::Mut).is_some();
+                let mutable = self.eat(&TokenKind::Mutable).is_some();
                 let name = self.expect_ident()?;
                 let ty = if self.eat(&TokenKind::Colon).is_some() {
                     Some(self.parse_type())
@@ -1029,7 +2209,7 @@ impl<'t> Parser<'t> {
                 // F0 has no `let` without an initialiser: `LetStmt::value` is
                 // not an `Option`, and inference is local (§5.2), so a
                 // binding with no value has nothing to infer from.
-                self.expect(&TokenKind::Eq, "`=`")?;
+                self.expect(&TokenKind::Be, "`be`")?;
                 let value = self.parse_expr();
                 let span = start.merge(self.last_text_span());
                 Some(Stmt { kind: StmtKind::Let(LetStmt { mutable, name, ty, value, span }), span })
@@ -1052,7 +2232,31 @@ impl<'t> Parser<'t> {
             }
             _ => {
                 let expr = self.parse_expr();
-                if self.eat(&TokenKind::Eq).is_some() {
+                // `=` is not an operator in Science and not assignment either
+                // (§4.3): it survives in the lexer only as the tail of `==`,
+                // `<=` and `..=`. After an expression it can only be a missed
+                // `be`, and saying so beats "expected end of line", which
+                // names the symptom rather than the mistake. Recovering as an
+                // assignment keeps the tree the programmer meant.
+                if self.at(&TokenKind::Eq) {
+                    let span = self.span();
+                    self.diagnostics.push(
+                        Diagnostic::error(codes::UNEXPECTED_TOKEN, "assignment is written `be`")
+                            .with_label(Label::primary(span, "`=` does not assign in Science"))
+                            .with_suggestion(Suggestion {
+                                span,
+                                replacement: "be".to_string(),
+                                message: "assign with".to_string(),
+                            }),
+                    );
+                    self.advance();
+                    let value = self.parse_expr();
+                    let span = start.merge(self.last_text_span());
+                    return Some(Stmt { kind: StmtKind::Assign { target: expr, value }, span });
+                }
+                // `place be value` (§4.3): the same word that binds a name is
+                // what assigns to one that already exists.
+                if self.eat(&TokenKind::Be).is_some() {
                     let value = self.parse_expr();
                     let span = start.merge(self.last_text_span());
                     return Some(Stmt { kind: StmtKind::Assign { target: expr, value }, span });
@@ -1076,9 +2280,19 @@ impl<'t> Parser<'t> {
     /// Used where an expression is optional — after `return` and `break` — and
     /// to tell an empty inline body from a real one.
     fn at_expr_start(&self) -> bool {
+        self.starts_expr(self.peek())
+    }
+
+    /// Whether `kind` can begin an expression.
+    ///
+    /// Taken as an argument rather than read off the cursor because the
+    /// migration diagnostics look one token ahead: `while` is an ordinary
+    /// identifier now, and what tells `while n > 0:` from a variable named
+    /// `while` is whether an expression follows it.
+    fn starts_expr(&self, kind: &TokenKind) -> bool {
         use TokenKind::*;
         matches!(
-            self.peek(),
+            kind,
             Int { .. }
                 | Float { .. }
                 | Str(_)
@@ -1087,43 +2301,102 @@ impl<'t> Parser<'t> {
                 | False
                 | Ident(_)
                 | SelfValue
+                | SelfType
                 | LParen
                 | Minus
                 | Not
-                | Amp
+                | Try
+                | Borrowed
+                | Mutable
+                | Each
                 | If
                 | Match
-                | While
                 | Loop
                 | For
+                | Unsafe
         )
     }
 
     // --- expressions -----------------------------------------------------
 
-    /// An expression, by precedence climbing over §4.4's table.
+    /// An expression, by precedence climbing over §4.6's table.
     ///
     /// Always returns a node: a failure becomes `ExprKind::Error`, so the tree
     /// keeps its shape and the phases after this one still have something to
-    /// walk. `=` is not in the table; see the note at the top of this module.
+    /// walk. Assignment is not in the table; see the note at the top of this
+    /// module.
+    ///
+    /// The named closure form is read here, above everything else, because
+    /// `doc giving doc.title.length()` gives its whole right-hand side to the
+    /// closure: there is no operator `giving` could be an operand of.
     fn parse_expr(&mut self) -> Expr {
-        self.parse_binary(1)
+        if matches!(self.peek(), TokenKind::Ident(_))
+            && matches!(self.peek_ahead(1), TokenKind::Giving)
+        {
+            let start = self.span();
+            let param = self.expect_ident();
+            self.advance(); // `giving`
+            let body = self.parse_expr();
+            let span = start.merge(self.last_text_span());
+            return Expr {
+                kind: ExprKind::Closure { param, body: Box::new(body) },
+                span,
+            };
+        }
+        self.parse_range()
+    }
+
+    /// `a..b` and `a..=b` (§4.5).
+    ///
+    /// §4.6's table does not place `..`, so it is placed here: looser than
+    /// every operator, which makes `0..n - 1` count to `n - 1` rather than
+    /// subtracting from a range. Both ends are required. An open end would
+    /// have to be told from a `..` that ends a line, and F0 has no method that
+    /// takes one — §8 gives `Array` no slicing.
+    fn parse_range(&mut self) -> Expr {
+        let start = self.span();
+        let lhs = self.parse_binary(1);
+        let inclusive = match self.peek() {
+            TokenKind::DotDot => false,
+            TokenKind::DotDotEq => true,
+            _ => return lhs,
+        };
+        self.advance();
+        let end = self.parse_binary(1);
+        let span = start.merge(self.last_text_span());
+        Expr {
+            kind: ExprKind::Range { start: Box::new(lhs), end: Box::new(end), inclusive },
+            span,
+        }
     }
 
     /// One rung of the table and everything above it.
     ///
-    /// Every row is left-associative, which is why the recursive call asks for
-    /// `prec + 1`: a second operator of the same row cannot be absorbed by the
-    /// right-hand side and is left for this loop.
+    /// Every row is left-associative but `**`, which is why the recursive call
+    /// usually asks for `prec + 1`: a second operator of the same row cannot be
+    /// absorbed by the right-hand side and is left for this loop. `**` asks for
+    /// `prec`, so `2 ** 3 ** 2` is `2 ** (3 ** 2)` as §4.6 requires.
     fn parse_binary(&mut self, min_prec: u8) -> Expr {
         let start = self.span();
         let mut lhs = self.parse_cast();
-        while let Some((op, prec)) = binary_op(self.peek()) {
+        while let Some((op, prec, width)) = self.peek_binary_op() {
             if prec < min_prec {
                 break;
             }
-            self.advance();
-            let rhs = self.parse_binary(prec + 1);
+            // A pre-revision comparison phrase is reported here rather than
+            // where it is recognised. `peek_binary_op` runs once per rung of
+            // the climb and the rung that gives up on a comparison gives up
+            // *after* the look, so reporting there would fire the diagnostic
+            // again for every rung above the one that takes the operator.
+            // Here is past the only `break`, so it fires exactly once.
+            if let Some((symbol, phrase_width)) = self.stale_comparison_phrase() {
+                self.report_comparison_phrase(symbol, phrase_width);
+            }
+            for _ in 0..width {
+                self.advance();
+            }
+            let next = if op == BinaryOp::Pow { prec } else { prec + 1 };
+            let rhs = self.parse_binary(next);
             let span = start.merge(self.last_text_span());
             lhs = Expr {
                 kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) },
@@ -1133,7 +2406,92 @@ impl<'t> Parser<'t> {
         lhs
     }
 
-    /// `as`, which sits between the unary operators and `*`.
+    /// The operator at the cursor, its rung, and how many tokens it is written
+    /// with.
+    ///
+    /// The width survives although revision 2 §1 deleted the comparison
+    /// phrases, because `is not` is two words. It is the only operator that
+    /// is, and the pre-revision phrases are recognised here only to report
+    /// them.
+    /// Side-effect free, because the climb looks at every rung: see the note
+    /// in [`Self::parse_binary`] on where a stale phrase is reported.
+    fn peek_binary_op(&self) -> Option<(BinaryOp, u8, usize)> {
+        if !self.at(&TokenKind::Is) {
+            let (op, prec) = binary_op(self.peek())?;
+            return Some((op, prec, 1));
+        }
+        let (symbol, width) = match self.stale_comparison_phrase() {
+            Some(phrase) => phrase,
+            // `is` is equality and `is not` is inequality. Nothing else
+            // follows `is`.
+            None if self.at_ahead(1, &TokenKind::Not) => (TokenKind::NotEq, 2),
+            None => (TokenKind::EqEq, 1),
+        };
+        let (op, prec) = binary_op(&symbol)?;
+        Some((op, prec, width))
+    }
+
+    /// The symbol a pre-revision comparison phrase stood for, and how many
+    /// words it took, when the cursor is on `is`.
+    ///
+    /// `at`, `above`, `below`, `most` and `least` are ordinary identifiers
+    /// now, so a phrase is recognised by spelling rather than by token. The
+    /// phrase must be followed by something that starts an expression, which
+    /// is what keeps `n is above` — equality against a variable named
+    /// `above` — out of the net.
+    fn stale_comparison_phrase(&self) -> Option<(TokenKind, usize)> {
+        if self.word_at(1, "at") && self.starts_expr(self.peek_ahead(3)) {
+            if self.word_at(2, "least") {
+                return Some((TokenKind::GtEq, 3));
+            }
+            if self.word_at(2, "most") {
+                return Some((TokenKind::LtEq, 3));
+            }
+        }
+        if self.starts_expr(self.peek_ahead(2)) {
+            if self.word_at(1, "above") {
+                return Some((TokenKind::Gt, 2));
+            }
+            if self.word_at(1, "below") {
+                return Some((TokenKind::Lt, 2));
+            }
+        }
+        None
+    }
+
+    /// Reports a pre-revision comparison phrase, naming the symbol §1 put in
+    /// its place.
+    ///
+    /// Recovery is that symbol: the caller reads the phrase with the table the
+    /// symbol uses, so the expression keeps the shape the programmer meant and
+    /// nothing after the parser sees the difference.
+    fn report_comparison_phrase(&mut self, symbol: TokenKind, width: usize) {
+        let span = self.span().merge(self.token_at(width - 1).span);
+        let words: Vec<String> =
+            (0..width).map(|i| describe_word(self.peek_ahead(i))).collect();
+        let phrase = words.join(" ");
+        let replacement = fixed_text(&symbol).to_string();
+        self.diagnostics.push(
+            Diagnostic::error(
+                codes::COMPARISON_PHRASE,
+                format!("the comparison is written `{replacement}`"),
+            )
+            .with_label(Label::primary(span, format!("`{phrase}` is not an operator in Science")))
+            .with_suggestion(Suggestion {
+                span,
+                replacement,
+                message: "compare with".to_string(),
+            })
+            .with_note("`is` and `is not` are the only comparisons written as words"),
+        );
+    }
+
+    /// Whether the token `offset` ahead is `kind`.
+    fn at_ahead(&self, offset: usize, kind: &TokenKind) -> bool {
+        self.peek_ahead(offset) == kind
+    }
+
+    /// `as`, which sits between the unary operators and `**`.
     fn parse_cast(&mut self) -> Expr {
         let start = self.span();
         let mut expr = self.parse_unary();
@@ -1145,11 +2503,11 @@ impl<'t> Parser<'t> {
         expr
     }
 
-    /// `-`, `not`, `&` and `&mut`, all of them prefix.
+    /// `-`, `not`, `borrowed` and `mutable borrowed`, all of them prefix.
     ///
-    /// This is the only place a `&` is read as a reference, and it is only ever
-    /// reached where an operand is expected — which is the whole of the rule
-    /// that tells `&x` from `a & b`.
+    /// Auto-borrow (§6.3) means a call site rarely writes a borrow at all; the
+    /// forms stay for the places where writing it clarifies, and for storing
+    /// one in a record field.
     fn parse_unary(&mut self) -> Expr {
         let start = self.span();
         match self.peek() {
@@ -1165,21 +2523,40 @@ impl<'t> Parser<'t> {
                 let span = start.merge(self.last_text_span());
                 Expr { kind: ExprKind::Unary { op: UnaryOp::Not, operand: Box::new(operand) }, span }
             }
-            TokenKind::Amp => {
+            TokenKind::Borrowed => {
                 self.advance();
-                let mutable = self.eat(&TokenKind::Mut).is_some();
                 let inner = self.parse_unary();
                 let span = start.merge(self.last_text_span());
-                Expr { kind: ExprKind::Ref { mutable, expr: Box::new(inner) }, span }
+                Expr { kind: ExprKind::Borrowed { mutable: false, expr: Box::new(inner) }, span }
+            }
+            TokenKind::Mutable => {
+                self.advance();
+                self.expect(&TokenKind::Borrowed, "`borrowed` after `mutable`");
+                let inner = self.parse_unary();
+                let span = start.merge(self.last_text_span());
+                Expr { kind: ExprKind::Borrowed { mutable: true, expr: Box::new(inner) }, span }
             }
             _ => self.parse_postfix(),
         }
     }
 
-    /// The tightest row: call, index, field access and `?`, applied left to
+    /// The tightest row: call, index, field access and `try`, applied left to
     /// right to whatever precedes them.
+    ///
+    /// `try` is a prefix on this row rather than the postfix `?` it replaces
+    /// (§4.5), so it covers the whole chain that follows it: `try f().x` is
+    /// `try (f().x)`, and covering less takes parentheses —
+    /// `(try f()).x`, which is how the corpus writes it.
     fn parse_postfix(&mut self) -> Expr {
         let start = self.span();
+
+        if self.at(&TokenKind::Try) {
+            self.advance();
+            let inner = self.parse_postfix();
+            let span = start.merge(self.last_text_span());
+            return Expr { kind: ExprKind::Try(Box::new(inner)), span };
+        }
+
         let mut expr = self.parse_primary();
 
         loop {
@@ -1190,7 +2567,12 @@ impl<'t> Parser<'t> {
                         return error_expr(start.merge(self.last_text_span()));
                     };
                     expr = if self.at(&TokenKind::LParen) {
-                        if self.at_named_args() {
+                        // Named arguments construct a record, and only a path
+                        // can name one. `docs.sort(by: f)` is written exactly
+                        // like `text.Doc(title: "a")` and parses the same way;
+                        // resolution tells them apart, because only it knows
+                        // whether `docs` is a module.
+                        if self.at_named_args() && matches!(expr.kind, ExprKind::Path(_)) {
                             self.struct_lit(expr, Some(name), start)
                         } else {
                             let args = self.parse_call_args();
@@ -1220,47 +2602,104 @@ impl<'t> Parser<'t> {
                     };
                 }
                 TokenKind::LBracket => {
-                    // `[` after a name is a generic instantiation —
-                    // `Array[Int].new()` (§4.3) — and after anything else it is
-                    // an index. Nothing in the token stream separates
-                    // `Array[Int]` from `items[0]`, so position has to: §8
-                    // gives `Array` and `Map` no indexing operator at all, and
-                    // the instantiation form is the only one that ever follows
-                    // a bare name. The index row of §4.4's table is kept for
-                    // the case a type does define one, where the receiver is
-                    // the result of a call or a field rather than a name.
-                    if instantiable_path(&expr) {
-                        let generics = self.parse_generic_args();
-                        let end = self.last_text_span();
-                        if let ExprKind::Path(path) = &mut expr.kind {
-                            if let Some(segment) = path.segments.last_mut() {
-                                segment.generics = generics;
-                                segment.span = segment.span.merge(end);
-                            }
-                            path.span = path.span.merge(end);
-                        }
-                        expr.span = start.merge(end);
-                    } else {
-                        self.advance();
-                        let index = self.parse_expr();
-                        self.expect(&TokenKind::RBracket, "`]`");
-                        let span = start.merge(self.last_text_span());
-                        expr = Expr {
-                            kind: ExprKind::Index { base: Box::new(expr), index: Box::new(index) },
-                            span,
-                        };
-                    }
-                }
-                TokenKind::Question => {
                     self.advance();
+                    let index = self.parse_expr();
+                    self.expect(&TokenKind::RBracket, "`]`");
                     let span = start.merge(self.last_text_span());
-                    expr = Expr { kind: ExprKind::Try(Box::new(expr)), span };
+                    expr = Expr {
+                        kind: ExprKind::Index { base: Box::new(expr), index: Box::new(index) },
+                        span,
+                    };
+                }
+                TokenKind::Of if instantiable_path(&expr) => {
+                    expr = self.parse_instantiation(expr, start);
                 }
                 _ => break,
             }
         }
 
         expr
+    }
+
+    /// `Array of Doc` in expression position, which §4.4 reaches an associated
+    /// function through: `(Array of Doc).new()`.
+    ///
+    /// The parenthesised form is unambiguous and is all the corpus writes. The
+    /// bare `Array of Doc.new()` is the form §4.3 rules on: `.new()` could
+    /// attach to `Doc` or to the whole type, and rather than make the space in
+    /// `Array of Doc .new()` load-bearing, Science reports the ambiguity
+    /// (`SC0116`), says which reading it took, and offers the parentheses as a
+    /// fix.
+    fn parse_instantiation(&mut self, mut expr: Expr, start: Span) -> Expr {
+        self.advance(); // `of`
+
+        let parenthesised = self.at(&TokenKind::LParen);
+        let mut args = self.parse_generic_args();
+
+        // Only the bare single-argument form can be ambiguous: a parenthesised
+        // list ends at its own `)`, so any `.` after it has just one reading.
+        let split = if parenthesised { None } else { split_trailing_call(&mut args, self.peek()) };
+
+        let end = self.last_text_span();
+        if let ExprKind::Path(path) = &mut expr.kind {
+            if let Some(segment) = path.segments.last_mut() {
+                segment.generics = args;
+                segment.span = segment.span.merge(end);
+            }
+            path.span = path.span.merge(end);
+        }
+        expr.span = start.merge(end);
+
+        let Some(method) = split else { return expr };
+
+        // The head and its one argument, read back out of the path the
+        // arguments were just attached to, so the message quotes the type as
+        // it now stands rather than as it was written.
+        let (head, argument) = match &expr.kind {
+            ExprKind::Path(path) => {
+                let argument = path
+                    .segments
+                    .last()
+                    .and_then(|segment| segment.generics.first())
+                    .map(type_text)
+                    .unwrap_or_default();
+                (path.dotted(), argument)
+            }
+            _ => (String::new(), String::new()),
+        };
+        let call = format!("`.{}()`", method.name);
+        let parenthesised_form = format!("({head} of {argument})");
+        self.diagnostics.push(
+            Diagnostic::error(
+                codes::AMBIGUOUS_GENERIC_CALL,
+                format!("{call} could belong to `{argument}` or to `{head} of {argument}`"),
+            )
+            .with_label(Label::primary(
+                expr.span.merge(method.span),
+                "this associated function call is ambiguous",
+            ))
+            .with_note(format!(
+                "Science reads it as `{parenthesised_form}.{}()`, the whole generic type",
+                method.name
+            ))
+            .with_suggestion(Suggestion {
+                span: expr.span,
+                replacement: parenthesised_form,
+                message: "write the parentheses to say so".to_string(),
+            }),
+        );
+
+        let args = self.parse_call_args();
+        let span = start.merge(self.last_text_span());
+        Expr {
+            kind: ExprKind::MethodCall {
+                receiver: Box::new(expr),
+                method,
+                generics: Vec::new(),
+                args,
+            },
+            span,
+        }
     }
 
     /// `Doc(title: "a")`: the argument list is named, so this is construction.
@@ -1272,7 +2711,7 @@ impl<'t> Parser<'t> {
             let span = self.span();
             self.error(
                 codes::MISPLACED_NAMED_ARGUMENT,
-                "named arguments construct a struct, so they need a struct's name in front of them",
+                "named arguments construct a record, so they need a record's name in front of them",
                 span,
             );
             self.parse_field_inits();
@@ -1289,20 +2728,52 @@ impl<'t> Parser<'t> {
     }
 
     /// Whether the `(` about to be read opens a *named* argument list, which
-    /// §4.4 makes the one and only sign of a struct construction.
+    /// §4.4 makes the one and only sign of a record construction.
     fn at_named_args(&self) -> bool {
         self.at(&TokenKind::LParen)
             && matches!(self.peek_ahead(1), TokenKind::Ident(_))
             && matches!(self.peek_ahead(2), TokenKind::Colon)
     }
 
-    fn parse_call_args(&mut self) -> Vec<Expr> {
+    /// The arguments of a call, and the place §4.6's implicit closures are
+    /// formed.
+    ///
+    /// `each` names the subject of the enclosing call without declaring it, so
+    /// the argument that mentions one *is* the closure: `docs.map(each.title)`
+    /// passes `each giving each.title` with the binder left out. Each argument
+    /// therefore opens a scope, and an `each` inside it claims that scope; the
+    /// argument is wrapped when it does.
+    fn parse_call_args(&mut self) -> Vec<Arg> {
         let mut args = Vec::new();
         if self.eat(&TokenKind::LParen).is_none() {
             return args;
         }
         while !self.at(&TokenKind::RParen) {
-            args.push(self.parse_expr());
+            let start = self.span();
+            // `docs.sort(by: f)`: a name in front of an argument. Where the
+            // callee is a path this list is a record construction instead and
+            // never reaches here.
+            let name = if matches!(self.peek(), TokenKind::Ident(_))
+                && matches!(self.peek_ahead(1), TokenKind::Colon)
+            {
+                let name = self.expect_ident();
+                self.advance(); // `:`
+                name
+            } else {
+                None
+            };
+
+            self.each_scopes.push(false);
+            let value = self.parse_expr();
+            let claimed = self.each_scopes.pop().unwrap_or(false);
+            let span = start.merge(self.last_text_span());
+            let value = if claimed {
+                Expr { kind: ExprKind::Closure { param: None, body: Box::new(value) }, span }
+            } else {
+                value
+            };
+
+            args.push(Arg { name, value, span });
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
             }
@@ -1337,8 +2808,8 @@ impl<'t> Parser<'t> {
         fields
     }
 
-    /// A literal, a name, `self`, a parenthesised expression, or one of the
-    /// control-flow forms that §4.4 makes expressions.
+    /// A literal, a name, `self`, `each`, a parenthesised expression, or one of
+    /// the control-flow forms that §4.5 makes expressions.
     fn parse_primary(&mut self) -> Expr {
         let start = self.span();
 
@@ -1351,6 +2822,17 @@ impl<'t> Parser<'t> {
             TokenKind::SelfValue => {
                 self.advance();
                 Expr { kind: ExprKind::SelfValue, span: start }
+            }
+            TokenKind::Each => {
+                self.advance();
+                self.claim_each(start);
+                Expr { kind: ExprKind::Each, span: start }
+            }
+            // `while` and `println` are ordinary identifiers now, so they
+            // reach the name arm below unless they are caught first.
+            _ if self.at_while_word() => self.report_while_word(start),
+            _ if self.word_at(0, "println") && matches!(self.peek_ahead(1), TokenKind::LParen) => {
+                self.report_println_word()
             }
             // One segment only: every `.` after it is field access or a method
             // call, and every `[` after it is an index.
@@ -1365,21 +2847,29 @@ impl<'t> Parser<'t> {
             TokenKind::LParen => self.parse_paren_expr(start),
             TokenKind::If => self.parse_if_expr(),
             TokenKind::Match => self.parse_match_expr(),
-            TokenKind::While => {
-                self.advance();
-                let cond = self.parse_expr();
-                let body = self.parse_block();
-                let span = start.merge(self.last_text_span());
-                Expr { kind: ExprKind::While { cond: Box::new(cond), body }, span }
-            }
             TokenKind::Loop => {
                 self.advance();
                 let body = self.parse_block();
                 let span = start.merge(self.last_text_span());
                 Expr { kind: ExprKind::Loop { body }, span }
             }
+            // §3 of the FFI note: `unsafe:` with a body, in either of §4.5's
+            // two block forms. It is an expression, so `let h be unsafe:
+            // cudnnCreate(..)` needs no statement form of its own.
+            TokenKind::Unsafe => {
+                self.advance();
+                let body = self.parse_block();
+                let span = start.merge(self.last_text_span());
+                Expr { kind: ExprKind::Unsafe(body), span }
+            }
             TokenKind::For => {
                 self.advance();
+                // `for x in xs` (revision 2 §2.1). `each` used to stand
+                // between the two and is still a keyword, so a stale loop
+                // arrives here as a token rather than as a pattern.
+                if self.at(&TokenKind::Each) {
+                    self.report_each_after_for(start);
+                }
                 let pattern = self.parse_pattern();
                 self.expect(&TokenKind::In, "`in`");
                 let iter = self.parse_expr();
@@ -1403,6 +2893,41 @@ impl<'t> Parser<'t> {
                 error_expr(start)
             }
         }
+    }
+
+    /// Marks the argument this `each` belongs to, and rejects a nested one.
+    ///
+    /// §4.6 gives exactly one case where `each` cannot work: in
+    /// `outer.map(each.inner.map(each.x))` the two refer to different subjects
+    /// and the inner shadows the outer irrecoverably. Science rejects that
+    /// rather than picking a rule, and the error names the `giving` form,
+    /// which is what the case exists for.
+    ///
+    /// Two `each` in the *same* argument are fine — they are the same subject —
+    /// so only an enclosing claim is an error.
+    fn claim_each(&mut self, span: Span) {
+        let depth = self.each_scopes.len();
+        if depth == 0 {
+            // Outside any call argument there is no subject to name. Leaving
+            // the bare `Each` node for resolution keeps the parser out of a
+            // judgement it has no scope information to make.
+            return;
+        }
+        if self.each_scopes[..depth - 1].iter().any(|claimed| *claimed) {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    codes::NESTED_EACH,
+                    "a nested `each` would name a different subject than the `each` around it",
+                )
+                .with_label(Label::primary(span, "this `each` is inside another `each`"))
+                .with_note(
+                    "name the parameter instead, with the `giving` form: \
+                     `outer.map(item giving item.inner.map(each.x))`",
+                ),
+            );
+            return;
+        }
+        self.each_scopes[depth - 1] = true;
     }
 
     /// `()`, `(e)` and `(a, b)` all start the same way.
@@ -1433,7 +2958,7 @@ impl<'t> Parser<'t> {
 
     /// `if cond: ..` with an optional `else`.
     ///
-    /// The dangling `else` binds to the innermost `if` (§4.2) because this
+    /// The dangling `else` binds to the innermost `if` (§4.5) because this
     /// function takes the `else` it finds before returning to its caller.
     fn parse_if_expr(&mut self) -> Expr {
         let start = self.span();
@@ -1475,9 +3000,9 @@ impl<'t> Parser<'t> {
         }
     }
 
-    /// One arm. §4.4: the pattern is parsed by the pattern grammar, and
+    /// One arm. §4.5: the pattern is parsed by the pattern grammar, and
     /// whatever follows it is the separator — there is no way to find the `:`
-    /// by scanning, because `:` also appears inside a struct pattern.
+    /// by scanning, because `:` also appears inside a record pattern.
     fn parse_match_arm(&mut self) -> Option<MatchArm> {
         let start = self.span();
         let pattern = self.parse_pattern();
@@ -1501,12 +3026,12 @@ impl<'t> Parser<'t> {
         Pattern { kind: PatternKind::Or(alts), span: start.merge(self.last_text_span()) }
     }
 
-    /// One alternative: a literal, `_`, a binding, a variant, a struct or a
+    /// One alternative: a literal, `_`, a binding, a variant, a record or a
     /// tuple.
     ///
     /// Unlike an expression, a pattern's path may span several segments: there
-    /// is no field access in a pattern, so a `.` can only be §4.5's qualified
-    /// variant, and a `[` can only be generic arguments.
+    /// is no field access in a pattern, so a `.` can only be §4.7's qualified
+    /// variant.
     fn parse_pattern_primary(&mut self) -> Pattern {
         let start = self.span();
 
@@ -1520,7 +3045,7 @@ impl<'t> Parser<'t> {
                 self.advance();
                 Pattern { kind: PatternKind::Wildcard, span: start }
             }
-            TokenKind::Mut => {
+            TokenKind::Mutable => {
                 self.advance();
                 match self.expect_ident() {
                     Some(name) => Pattern {
@@ -1536,7 +3061,7 @@ impl<'t> Parser<'t> {
                     return Pattern { kind: PatternKind::Error, span: start };
                 };
                 if self.at(&TokenKind::LParen) {
-                    // Named fields mean a struct, positional ones a variant —
+                    // Named fields mean a record, positional ones a variant —
                     // the same rule that decides the expression form (§4.4).
                     // An empty list takes the variant form, as §4.4 requires.
                     let kind = if self.at_named_args() {
@@ -1612,7 +3137,7 @@ impl<'t> Parser<'t> {
         elems
     }
 
-    /// The named fields of a struct pattern: `Doc(title: t, body: _)`.
+    /// The named fields of a record pattern: `Doc(title: t, body: _)`.
     fn parse_field_patterns(&mut self) -> Vec<FieldPattern> {
         let mut fields = Vec::new();
         if self.eat(&TokenKind::LParen).is_none() {
@@ -1639,19 +3164,28 @@ impl<'t> Parser<'t> {
         fields
     }
 
-    // --- traits and impls ------------------------------------------------
+    // --- interfaces and implementations -----------------------------------
 
-    /// `trait Name[T]: Super + Other where ..:` followed by an indented list
-    /// of methods, with or without bodies.
-    fn parse_trait(&mut self, is_pub: bool, start: Span) -> Option<TraitDecl> {
-        self.advance(); // `trait`
+    /// `interface Name of T: Super + Other where ..:` followed by an indented
+    /// list of members.
+    fn parse_interface(&mut self, is_pub: bool, start: Span) -> Option<InterfaceDecl> {
+        self.advance(); // `interface`
+        self.parse_interface_body(is_pub, start)
+    }
+
+    /// Everything after the `interface` keyword.
+    ///
+    /// Split out so that [`Self::report_trait_word`], which has already
+    /// stepped over the old spelling, can share it.
+    fn parse_interface_body(&mut self, is_pub: bool, start: Span) -> Option<InterfaceDecl> {
         let name = self.expect_ident()?;
         let generics = self.parse_generic_params();
 
         // Two colons can follow, and only one of them is ever present at a
-        // time in the corpus: the one that introduces supertraits is followed
-        // by a name, the one that opens the body by the end of the line.
-        let supertraits = if self.at(&TokenKind::Colon)
+        // time in the corpus: the one that introduces the required interfaces
+        // is followed by a name, the one that opens the body by the end of
+        // the line.
+        let supers = if self.at(&TokenKind::Colon)
             && !matches!(self.peek_ahead(1), TokenKind::Newline)
         {
             self.advance();
@@ -1661,101 +3195,215 @@ impl<'t> Parser<'t> {
         };
 
         let where_clause = self.parse_where_clause();
-        let methods = self.parse_indented_body(Self::parse_method);
+        let members = self.parse_indented_body(Self::parse_trait_member);
 
-        Some(TraitDecl {
+        let mut assoc_types = Vec::new();
+        let mut methods = Vec::new();
+        for member in members {
+            match member {
+                Member::AssocDecl(decl) => assoc_types.push(decl),
+                Member::Method(decl) => methods.push(decl),
+                Member::AssocBinding(binding) => self.error(
+                    codes::EXPECTED_MEMBER,
+                    "an interface declares an associated type with `type Item` and leaves \
+                     the type to the implementation",
+                    binding.span,
+                ),
+            }
+        }
+
+        Some(InterfaceDecl {
             is_pub,
             name,
             generics,
-            supertraits,
+            supers,
             where_clause,
+            assoc_types,
             methods,
             span: start.merge(self.last_text_span()),
         })
     }
 
-    /// `impl Trait for Type:`, `impl Type:` and the block-less marker form.
+    /// `Doc implements Summarize:`, `Doc has:`, and the block-less marker
+    /// form `Position implements Copy` (§4.4).
     ///
-    /// §4.3 gives all three: an inherent impl has no trait and its bodiless
-    /// functions are associated functions, and `impl Copy for Point` on one
-    /// line with no `:` is how a trait with no methods is implemented, "since
-    /// there is nothing to indent".
+    /// The type comes first in all three, so this is also where a line at the
+    /// top level of a module that is not a declaration at all is diagnosed:
+    /// by the time the head has been read, the next word says whether it was
+    /// ever meant to be one.
     fn parse_impl(&mut self, start: Span) -> Option<ImplBlock> {
-        self.advance(); // `impl`
+        let head = self.parse_path_segments()?;
         let generics = self.parse_generic_params();
+        let self_ty = self_type_of(&head, &generics);
 
-        // The first type is the trait when a `for` follows and the self type
-        // otherwise, and nothing before the `for` says which it will be.
-        let first = self.parse_type();
-        let (trait_, self_ty) = if self.eat(&TokenKind::For).is_some() {
-            (Some(self.type_as_bound(first)?), self.parse_type())
+        let interface = if self.eat(&TokenKind::Implements).is_some() {
+            Some(self.parse_impl_trait()?)
+        } else if let Some(has) = self.eat(&TokenKind::Has) {
+            // `has methods` was two words before revision 2 §5; `methods` is
+            // an ordinary identifier now, so a stale block is caught by name.
+            if self.word_at(0, "methods") {
+                self.report_methods_after_has(has.span);
+            }
+            None
         } else {
-            (None, first)
+            let found = describe(self.peek());
+            let message = format!(
+                "expected `implements` or `has` after `{}`, found {found}",
+                head.dotted()
+            );
+            self.diagnostics.push(
+                Diagnostic::error(codes::EXPECTED_ITEM, message.clone())
+                    .with_label(Label::primary(self.span(), message))
+                    .with_label(Label::secondary(head.span, "this begins an implementation"))
+                    .with_note(
+                        "a module holds declarations only; a statement belongs in a function body",
+                    ),
+            );
+            return None;
         };
 
         let where_clause = self.parse_where_clause();
 
-        let methods = if self.at(&TokenKind::Colon) {
-            self.parse_indented_body(Self::parse_method)
+        let members = if self.at(&TokenKind::Colon) {
+            self.parse_indented_body(Self::parse_impl_member)
         } else {
             if self.at(&TokenKind::Newline) && matches!(self.peek_ahead(1), TokenKind::Indent) {
                 // An indented body with nothing introducing it is a missing
                 // `:`, and saying so here points at the header rather than at
                 // the first method.
                 let span = self.span();
-                self.error(codes::EXPECTED_BLOCK, "expected `:` before the `impl` body", span);
+                self.error(
+                    codes::EXPECTED_BLOCK,
+                    "expected `:` before the body of the implementation",
+                    span,
+                );
                 self.advance();
                 self.skip_indented_region();
             } else {
-                // The marker form: one line, no block, no methods.
+                // The marker form: one line, no block, no members.
                 self.expect_line_end();
             }
             Vec::new()
         };
 
+        let mut assoc_types = Vec::new();
+        let mut methods = Vec::new();
+        for member in members {
+            match member {
+                Member::AssocBinding(binding) => assoc_types.push(binding),
+                Member::Method(decl) => methods.push(decl),
+                Member::AssocDecl(decl) => self.error(
+                    codes::EXPECTED_MEMBER,
+                    "an implementation has to give the associated type a type, as in \
+                     `type Item is Int`",
+                    decl.span,
+                ),
+            }
+        }
+
         Some(ImplBlock {
             generics,
-            trait_,
+            interface,
             self_ty,
             where_clause,
+            assoc_types,
             methods,
             span: start.merge(self.last_text_span()),
         })
     }
 
-    /// A trait is named by a path, so anything else in front of `for` is an
-    /// error rather than something a later phase could make sense of.
-    fn type_as_bound(&mut self, ty: Type) -> Option<TypeBound> {
-        match ty.kind {
-            TypeKind::Path(path) => Some(TypeBound { path, span: ty.span }),
-            TypeKind::Error => None,
-            _ => {
-                self.error(
-                    codes::EXPECTED_TRAIT,
-                    "expected a trait name before `for`",
-                    ty.span,
-                );
-                None
-            }
+    /// The interface after `implements`. It is named by a path — possibly with
+    /// arguments, as in `From of ParseError` — so anything else is an error
+    /// rather than something a later phase could make sense of.
+    fn parse_impl_trait(&mut self) -> Option<TypeBound> {
+        if !matches!(self.peek(), TokenKind::Ident(_)) {
+            let found = describe(self.peek());
+            let span = self.span();
+            self.error(
+                codes::EXPECTED_TRAIT,
+                format!("expected an interface name after `implements`, found {found}"),
+                span,
+            );
+            return None;
         }
+        self.parse_type_bound()
     }
 
-    /// One method of a `trait` or `impl` body.
-    fn parse_method(&mut self) -> Option<FnDecl> {
+    /// One member of an `interface` body: a function, or `type Item`.
+    fn parse_trait_member(&mut self) -> Option<Member> {
+        self.parse_member()
+    }
+
+    /// One member of an implementation body: a function, or `type Item is Int`.
+    fn parse_impl_member(&mut self) -> Option<Member> {
+        self.parse_member()
+    }
+
+    /// The shared shape of both bodies.
+    ///
+    /// An associated type is read in whichever of §5.4's two forms it was
+    /// written in, and the caller rejects the one that does not belong to it.
+    /// Refusing the wrong form here instead would be cheaper by one branch and
+    /// strictly worse to read: the parser would report `is` as an unexpected
+    /// token, when what the author needs to be told is that an interface declares
+    /// `type Item` and only the implementation says what it stands for.
+    fn parse_member(&mut self) -> Option<Member> {
         let start = self.span();
-        let is_pub = self.eat(&TokenKind::Pub).is_some();
-        if !self.at(&TokenKind::Fn) {
+
+        if self.at(&TokenKind::Type) {
+            self.advance();
+            let name = self.expect_ident()?;
+            if self.eat(&TokenKind::Is).is_some() {
+                let ty = self.parse_type();
+                return Some(Member::AssocBinding(AssocTypeBinding {
+                    name,
+                    ty,
+                    span: start.merge(self.last_text_span()),
+                }));
+            }
+            return Some(Member::AssocDecl(AssocTypeDecl {
+                name,
+                span: start.merge(self.last_text_span()),
+            }));
+        }
+
+        let is_pub = self.eat(&TokenKind::Public).is_some();
+        if !self.at(&TokenKind::Function) {
             let found = describe(self.peek());
             self.error(
-                codes::EXPECTED_METHOD,
-                format!("expected a method declaration beginning with `fn`, found {found}"),
+                codes::EXPECTED_MEMBER,
+                format!(
+                    "expected a `function` or an associated type declared with `type`, found \
+                     {found}"
+                ),
                 start,
             );
             return None;
         }
-        self.parse_fn(is_pub, start)
+        Some(Member::Method(self.parse_fn(is_pub, start)?))
     }
 }
+
+/// What one line of an `interface` or implementation body turned out to be.
+///
+/// The two bodies differ in one member only, and parsing them apart would mean
+/// two copies of the function grammar's entry point.
+enum Member {
+    /// `type Item`, in an interface.
+    AssocDecl(AssocTypeDecl),
+    /// `type Item is Int`, in an implementation.
+    AssocBinding(AssocTypeBinding),
+    Method(FnDecl),
+}
+
+/// The list of declaration keywords, as a diagnostic says it.
+///
+/// Written once because it appears in two messages that must not drift apart:
+/// a line that starts with the wrong keyword, and a line that starts with a
+/// name but never reaches `implements`.
+const EXPECTED_DECLARATION: &str = "expected a declaration (`function`, `type`, `choice`, \
+                                    `interface`, `const`, `use`, or a type followed by \
+                                    `implements` or `has`)";
 
 fn empty_block(span: Span) -> Block {
     Block { stmts: Vec::new(), tail: None, span: Span::at(span.file, span.start) }
@@ -1765,9 +3413,132 @@ fn error_expr(span: Span) -> Expr {
     Expr { kind: ExprKind::Error, span }
 }
 
+/// The type an implementation head names, rebuilt from the head path and the
+/// parameters declared on it.
+///
+/// `Grid of (T, const ROWS: Int) has:` declares two parameters and
+/// implements `Grid of (T, ROWS)`. Echoing the names back as arguments keeps
+/// `self_ty` an ordinary type — a const *parameter* has an annotation and no
+/// type has room for one — while `generics` keeps what was declared.
+fn self_type_of(head: &Path, generics: &[GenericParam]) -> Type {
+    let mut path = head.clone();
+    if !generics.is_empty() {
+        let args = generics
+            .iter()
+            .map(|param| {
+                let span = param.name.span;
+                let segment =
+                    PathSegment { name: param.name.clone(), generics: Vec::new(), span };
+                Type { kind: TypeKind::Path(Path { segments: vec![segment], span }), span }
+            })
+            .collect();
+        if let Some(last) = path.segments.last_mut() {
+            last.generics = args;
+        }
+    }
+    let span = path.span;
+    Type { kind: TypeKind::Path(path), span }
+}
+
+/// Takes the `.new` off `Array of Doc.new(`, returning the method name.
+///
+/// This is the ambiguity §4.3 rules on, and it exists because a type's path
+/// and a method call are both written with a `.`. The reading taken is the one
+/// the parentheses would have given — the call belongs to the whole generic
+/// type — and the caller reports it either way, so nothing is decided here in
+/// silence.
+fn split_trailing_call(args: &mut [Type], next: &TokenKind) -> Option<Ident> {
+    if !matches!(next, TokenKind::LParen) {
+        return None;
+    }
+    let [Type { kind: TypeKind::Path(path), span }] = args else { return None };
+    if path.segments.len() < 2 {
+        return None;
+    }
+    let method = path.segments.pop()?;
+    let end = path.segments.last().map(|s| s.span).unwrap_or(method.span);
+    path.span = Span::new(path.span.file, path.span.start, end.end);
+    *span = path.span;
+    Some(method.name)
+}
+
+/// The element type of `Array of T`, written back out, when `ty` is one.
+///
+/// Matching on the name is the whole of it: the parser has no definitions, and
+/// `Array` is the F0 library's, not any user's.
+fn array_element(ty: &Type) -> Option<String> {
+    let TypeKind::Path(path) = &ty.kind else { return None };
+    let [segment] = path.segments.as_slice() else { return None };
+    if segment.name.name != "Array" {
+        return None;
+    }
+    match segment.generics.as_slice() {
+        [element] => Some(type_text(element)),
+        _ => Some("T".to_string()),
+    }
+}
+
+/// Why a named F0 type cannot cross the boundary, when it cannot.
+///
+/// The list is the negative half of §1.3 and §1.4: every one of these is a
+/// Science layout the C side does not know, and every one of them is a name
+/// the F0 library owns, so no user type can collide with an entry. Anything
+/// not listed is left to the type checker, which is the phase that knows
+/// whether it implements `ffi.CLayout`.
+fn science_layout_note(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "String" => {
+            "a C string is NUL-terminated and a Science `String` is UTF-8 bytes with a \
+             length; write `ffi.CStr` for one that is borrowed and `ffi.CString` for one \
+             Science owns, and expect the copy both of them make"
+        }
+        "Map" => "a `Map` is a Science hash table, and the C side does not know its layout",
+        "Box" => {
+            "a `Box` owns what it points at under Science's allocator; pass \
+             `ffi.Pointer of T` and say in the binding who frees it"
+        }
+        "Option" => {
+            "an `Option` is a niche, and which niche depends on the payload; the C \
+             spelling of absence is a null `ffi.Pointer`"
+        }
+        "Result" => {
+            "a `Result` is a Science choice; a C function reports failure with a status \
+             the safe wrapper converts"
+        }
+        "Chars" => "an iterator is a Science value with no C representation",
+        _ => return None,
+    })
+}
+
+/// A type written back out as source, for the fix `SC0116` offers.
+///
+/// It handles only what can appear in the ambiguous position — a path, with or
+/// without arguments of its own — because that is the only place it is used,
+/// and a fix that guesses at the text it is replacing is worse than no fix.
+fn type_text(ty: &Type) -> String {
+    match &ty.kind {
+        TypeKind::Path(path) => {
+            let head = path.dotted();
+            let args: Vec<String> = path
+                .segments
+                .last()
+                .map(|s| s.generics.iter().map(type_text).collect())
+                .unwrap_or_default();
+            match args.len() {
+                0 => head,
+                1 => format!("{head} of {}", args[0]),
+                _ => format!("{head} of ({})", args.join(", ")),
+            }
+        }
+        TypeKind::SelfType => "Self".to_string(),
+        TypeKind::SelfAssoc(name) => format!("Self.{}", name.name),
+        _ => String::new(),
+    }
+}
+
 /// Whether `expr` is a name that could still take generic arguments.
 ///
-/// `Array` can; `Array[Int]` already has them, and a call, a field or a
+/// `Array` can; `Array of Int` already has them, and a call, a field or a
 /// literal never could.
 fn instantiable_path(expr: &Expr) -> bool {
     match &expr.kind {
@@ -1780,7 +3551,7 @@ fn instantiable_path(expr: &Expr) -> bool {
 
 /// Turns a finished list of statements into a block, splitting off the tail.
 ///
-/// §4.3: "a function's value is its last expression". Splitting that
+/// §4.4: "a function's value is its last expression". Splitting that
 /// expression out here means no later phase has to re-derive which statement
 /// the block evaluates to, and a statement that is *not* an expression simply
 /// leaves the block with no tail.
@@ -1813,8 +3584,9 @@ fn finish_block(mut stmts: Vec<Stmt>, start: Span) -> Block {
 
 /// The literal a token stands for, or `None` when it is not one.
 ///
-/// Shared by expressions and patterns, which take literals from exactly the
-/// same set: the two would otherwise drift apart silently.
+/// Shared by expressions, patterns and const generic arguments, which take
+/// literals from exactly the same set: they would otherwise drift apart
+/// silently.
 fn literal_of(kind: &TokenKind) -> Option<Literal> {
     Some(match kind {
         TokenKind::Int { value, base, suffix } => {
@@ -1829,12 +3601,15 @@ fn literal_of(kind: &TokenKind) -> Option<Literal> {
     })
 }
 
-/// §4.4's precedence table, as an operator and the rung it sits on.
+/// §4.6's precedence table, as an operator and the rung it sits on.
 ///
-/// Higher binds tighter. The rows above `*` — unary, `as`, and the postfix
-/// chain — are not here: they are not infix, so they belong to the descent
-/// rather than to the climb. `=` is not here either, and §4.4 says why: it is
-/// a statement, not an operator.
+/// Higher binds tighter. The rows above `**` — unary, `as`, and the postfix
+/// chain with `try` on it — are not here: they are not infix, so they belong
+/// to the descent rather than to the climb. Assignment is not here either, and
+/// §4.6 says why: it is a statement, not an operator.
+///
+/// The comparison phrases reach this table through the symbol they stand for,
+/// so there is exactly one place a comparison's precedence is written down.
 fn binary_op(kind: &TokenKind) -> Option<(BinaryOp, u8)> {
     use TokenKind as T;
     Some(match kind {
@@ -1861,6 +3636,9 @@ fn binary_op(kind: &TokenKind) -> Option<(BinaryOp, u8)> {
         T::Star => (BinaryOp::Mul, 9),
         T::Slash => (BinaryOp::Div, 9),
         T::Percent => (BinaryOp::Rem, 9),
+        T::AtSign => (BinaryOp::MatMul, 9),
+
+        T::StarStar => (BinaryOp::Pow, 10),
 
         _ => return None,
     })
@@ -1892,40 +3670,62 @@ fn describe(kind: &TokenKind) -> String {
     }
 }
 
+/// The source text of a word, keyword or not.
+///
+/// A pre-revision comparison phrase is `is` — a keyword — followed by words
+/// that are ordinary identifiers now, so quoting the phrase back at the
+/// programmer needs both halves.
+fn describe_word(kind: &TokenKind) -> String {
+    match kind {
+        TokenKind::Ident(name) => name.clone(),
+        other => fixed_text(other).to_string(),
+    }
+}
+
 /// The source text of every token whose spelling is fixed.
 fn fixed_text(kind: &TokenKind) -> &'static str {
     use TokenKind::*;
     match kind {
-        Fn => "fn",
+        Function => "function",
         Let => "let",
-        Mut => "mut",
+        Be => "be",
+        Mutable => "mutable",
         If => "if",
         Else => "else",
         Match => "match",
         For => "for",
+        Each => "each",
         In => "in",
-        While => "while",
         Loop => "loop",
         Return => "return",
         Break => "break",
         Continue => "continue",
-        Struct => "struct",
-        Enum => "enum",
-        Trait => "trait",
-        Impl => "impl",
+        Type => "type",
+        Choice => "choice",
+        Interface => "interface",
+        Implements => "implements",
+        Has => "has",
+        Of => "of",
+        Borrowed => "borrowed",
+        Any => "any",
         Use => "use",
-        Mod => "mod",
-        Pub => "pub",
+        Public => "public",
+        Const => "const",
+        Try => "try",
+        Giving => "giving",
         True => "true",
         False => "false",
         SelfValue => "self",
         SelfType => "Self",
         As => "as",
-        Dyn => "dyn",
         Where => "where",
+        Extern => "extern",
+        Unsafe => "unsafe",
         And => "and",
         Or => "or",
         Not => "not",
+
+        Is => "is",
 
         LParen => "(",
         RParen => ")",
@@ -1937,16 +3737,18 @@ fn fixed_text(kind: &TokenKind) -> &'static str {
         Colon => ":",
         Semi => ";",
         Dot => ".",
+        DotDot => "..",
+        DotDotEq => "..=",
         Arrow => "->",
         FatArrow => "=>",
-        Question => "?",
         Underscore => "_",
-        At => "@",
+        AtSign => "@",
         Hash => "#",
 
         Plus => "+",
         Minus => "-",
         Star => "*",
+        StarStar => "**",
         Slash => "/",
         Percent => "%",
         Amp => "&",
@@ -1986,6 +3788,20 @@ fn reserved_text(word: ReservedWord) -> &'static str {
         Tensor => "tensor",
         Shape => "shape",
         Model => "model",
+        Equation => "equation",
+        Mod => "mod",
+        Pure => "pure",
+        Parallel => "parallel",
+        On => "on",
+        With => "with",
+        Yield => "yield",
+        Assert => "assert",
+        Move => "move",
+        Static => "static",
+        Macro => "macro",
+        Union => "union",
+        Kernel => "kernel",
+        Import => "import",
     }
 }
 
@@ -2016,12 +3832,14 @@ mod tests {
             codes::EXPECTED_TYPE,
             codes::EXPECTED_EXPR,
             codes::EXPECTED_PATTERN,
-            codes::MISPLACED_PUB,
+            codes::MISPLACED_PUBLIC,
             codes::MISPLACED_RECEIVER,
             codes::STATEMENT_IN_INLINE_BLOCK,
             codes::MISPLACED_NAMED_ARGUMENT,
             codes::EXPECTED_TRAIT,
-            codes::EXPECTED_METHOD,
+            codes::EXPECTED_MEMBER,
+            codes::NESTED_EACH,
+            codes::AMBIGUOUS_GENERIC_CALL,
         ];
         for code in all {
             assert!(
@@ -2038,6 +3856,57 @@ mod tests {
         assert_eq!(before, seen.len(), "two diagnostics share a code");
     }
 
+    /// The `extern` block's codes live in the range `ffi-c-boundary.md` §8
+    /// owns and `README.md` partitions, and nowhere else.
+    ///
+    /// The two tables also have to stay disjoint from each other: this file is
+    /// the only one in the compiler that allocates out of two ranges, and the
+    /// day someone copies a number from one list into the other is the day a
+    /// UI test starts asserting the wrong phase.
+    #[test]
+    fn every_ffi_code_is_in_the_extern_range() {
+        let all = [
+            ffi_codes::UNKNOWN_EXTERN_ITEM,
+            ffi_codes::MISSING_LIBRARY,
+            ffi_codes::UNKNOWN_ABI,
+            ffi_codes::EXTERN_NOT_UNSAFE,
+            ffi_codes::UNION_WITHOUT_LAYOUT,
+            ffi_codes::NOT_FFI_REPRESENTABLE,
+            ffi_codes::ARRAY_IN_SIGNATURE,
+            ffi_codes::HALF_PRECISION_BY_VALUE,
+            ffi_codes::VARIADIC_FUNCTION,
+        ];
+        for code in all {
+            assert!(
+                (410..=449).contains(&code.0),
+                "{code} is outside SC0410-SC0449, which ffi-c-boundary.md owns"
+            );
+        }
+        let mut seen: Vec<u16> = all.iter().map(|c| c.0).collect();
+        seen.sort_unstable();
+        let before = seen.len();
+        seen.dedup();
+        assert_eq!(before, seen.len(), "two FFI diagnostics share a code");
+
+        // Nothing in the syntax range may be reused here, and nothing here
+        // may drift into the syntax range.
+        for code in all {
+            assert!(!(100..=199).contains(&code.0), "{code} is a syntax code");
+        }
+    }
+
+    /// The three codes §8 of the FFI note names by number keep the meanings it
+    /// gave them. A code is a promise to whoever reads the note.
+    #[test]
+    fn the_codes_the_note_named_keep_their_numbers() {
+        assert_eq!(ffi_codes::ARRAY_IN_SIGNATURE.0, 421);
+        assert_eq!(ffi_codes::HALF_PRECISION_BY_VALUE.0, 431);
+        // `c-binding-coverage.md` §7 asks for this one by number rather than
+        // taking it from its own block, so that it sits with the grammar it
+        // belongs to.
+        assert_eq!(ffi_codes::VARIADIC_FUNCTION.0, 434);
+    }
+
     /// Recovery has to terminate on anything, including streams no lexer would
     /// ever produce. A parser that loops here hangs the whole compiler.
     #[test]
@@ -2045,33 +3914,58 @@ mod tests {
         let garbage = vec![
             vec![TokenKind::Indent, TokenKind::Dedent, TokenKind::Dedent],
             vec![TokenKind::Colon, TokenKind::Colon, TokenKind::Colon],
-            vec![TokenKind::Fn, TokenKind::LParen, TokenKind::LParen],
-            vec![TokenKind::Struct, TokenKind::Indent, TokenKind::Indent],
-            vec![TokenKind::Enum, TokenKind::Ident("E".into()), TokenKind::Colon],
+            vec![TokenKind::Function, TokenKind::LParen, TokenKind::LParen],
+            vec![TokenKind::Type, TokenKind::Indent, TokenKind::Indent],
+            vec![TokenKind::Choice, TokenKind::Ident("E".into()), TokenKind::Colon],
             vec![TokenKind::Use, TokenKind::Comma, TokenKind::RParen],
             vec![TokenKind::Unknown('§'), TokenKind::Unknown('¿')],
             Vec::new(),
+            // The heads of the two implementation forms, each cut off.
+            vec![TokenKind::Ident("Doc".into()), TokenKind::Implements],
+            vec![TokenKind::Ident("Doc".into()), TokenKind::Has],
+            vec![TokenKind::Ident("Doc".into()), TokenKind::Of],
+            vec![TokenKind::Ident("Doc".into()), TokenKind::Plus, TokenKind::Ident("x".into())],
             // Statements, expressions and patterns, each cut off mid-grammar.
-            vec![TokenKind::Fn, TokenKind::Ident("f".into()), TokenKind::LParen,
+            vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,
                  TokenKind::RParen, TokenKind::Colon, TokenKind::Let],
-            vec![TokenKind::Fn, TokenKind::Ident("f".into()), TokenKind::LParen,
+            vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,
                  TokenKind::RParen, TokenKind::Colon, TokenKind::Ident("a".into()),
                  TokenKind::Plus],
-            vec![TokenKind::Fn, TokenKind::Ident("f".into()), TokenKind::LParen,
+            vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,
+                 TokenKind::RParen, TokenKind::Colon, TokenKind::Ident("a".into()),
+                 TokenKind::Is, TokenKind::Ident("at".into())],
+            vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,
+                 TokenKind::RParen, TokenKind::Colon, TokenKind::Ident("a".into()),
+                 TokenKind::DotDot],
+            vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,
+                 TokenKind::RParen, TokenKind::Colon, TokenKind::Try],
+            vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,
+                 TokenKind::RParen, TokenKind::Colon, TokenKind::Each, TokenKind::Giving],
+            vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,
                  TokenKind::RParen, TokenKind::Colon, TokenKind::Match],
-            vec![TokenKind::Fn, TokenKind::Ident("f".into()), TokenKind::LParen,
+            vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,
                  TokenKind::RParen, TokenKind::Colon, TokenKind::Match,
                  TokenKind::Ident("x".into()), TokenKind::Colon, TokenKind::Newline,
                  TokenKind::Indent, TokenKind::Pipe, TokenKind::Pipe],
-            vec![TokenKind::Fn, TokenKind::Ident("f".into()), TokenKind::LParen,
+            vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,
                  TokenKind::RParen, TokenKind::Colon, TokenKind::Ident("f".into()),
                  TokenKind::LParen, TokenKind::Comma, TokenKind::Comma],
-            vec![TokenKind::Fn, TokenKind::Ident("f".into()), TokenKind::LParen,
+            vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,
                  TokenKind::RParen, TokenKind::Colon, TokenKind::Newline,
                  TokenKind::Indent, TokenKind::Colon, TokenKind::Colon],
-            vec![TokenKind::Trait, TokenKind::Ident("T".into()), TokenKind::Colon],
-            vec![TokenKind::Impl, TokenKind::For],
-            vec![TokenKind::Impl, TokenKind::Ident("T".into()), TokenKind::For],
+            vec![TokenKind::Interface, TokenKind::Ident("T".into()), TokenKind::Colon],
+            vec![TokenKind::Interface, TokenKind::Ident("T".into()), TokenKind::Colon,
+                 TokenKind::Newline, TokenKind::Indent, TokenKind::Type],
+            // The pre-revision spellings, which recover by parsing on.
+            vec![TokenKind::Ident("trait".into()), TokenKind::Ident("T".into()),
+                 TokenKind::Colon],
+            vec![TokenKind::Ident("Doc".into()), TokenKind::Has,
+                 TokenKind::Ident("methods".into())],
+            vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,
+                 TokenKind::RParen, TokenKind::Colon, TokenKind::Ident("while".into()),
+                 TokenKind::True],
+            vec![TokenKind::Function, TokenKind::Ident("f".into()), TokenKind::LParen,
+                 TokenKind::RParen, TokenKind::Colon, TokenKind::For, TokenKind::Each],
         ];
         for kinds in garbage {
             let tokens = stream(kinds);
@@ -2079,12 +3973,12 @@ mod tests {
         }
     }
 
-    /// §4.4's table, read back out of `binary_op`. A row that loses an operator
+    /// §4.6's table, read back out of `binary_op`. A row that loses an operator
     /// to a typo would otherwise show up only as a wrong parse somewhere far
     /// away.
     #[test]
     fn the_precedence_table_matches_the_spec() {
-        let rows: [&[TokenKind]; 9] = [
+        let rows: [&[TokenKind]; 10] = [
             &[TokenKind::Or],
             &[TokenKind::And],
             &[TokenKind::EqEq, TokenKind::NotEq, TokenKind::Lt, TokenKind::Gt,
@@ -2094,7 +3988,8 @@ mod tests {
             &[TokenKind::Amp],
             &[TokenKind::Shl, TokenKind::Shr],
             &[TokenKind::Plus, TokenKind::Minus],
-            &[TokenKind::Star, TokenKind::Slash, TokenKind::Percent],
+            &[TokenKind::Star, TokenKind::Slash, TokenKind::Percent, TokenKind::AtSign],
+            &[TokenKind::StarStar],
         ];
         for (index, row) in rows.iter().enumerate() {
             let expected = index as u8 + 1;
@@ -2103,8 +3998,62 @@ mod tests {
                 assert_eq!(prec, expected, "{} sits on the wrong rung", fixed_text(kind));
             }
         }
-        // `=` is a statement, not an operator, and must never gain a rung.
-        assert!(binary_op(&TokenKind::Eq).is_none(), "`=` is not in the precedence table");
+        // Assignment is a statement, not an operator, and `be` must never gain
+        // a rung.
+        assert!(binary_op(&TokenKind::Be).is_none(), "`be` is not in the precedence table");
+    }
+
+    /// §5.4: a word and its symbol are the same operator "by construction,
+    /// not by a parser rule that could drift". They are, because `is`
+    /// resolves to the symbol's own token before the operator table sees it.
+    ///
+    /// Revision 2 §1 leaves two rows here where §4.6 had six. The four it
+    /// deleted are in `stale_comparison_phrase`, which reports rather than
+    /// resolves, and the test below holds them to the same mapping so a fix
+    /// cannot suggest the wrong symbol.
+    #[test]
+    fn is_and_is_not_are_their_symbols() {
+        use TokenKind::*;
+        let words: [(&[TokenKind], TokenKind); 2] = [(&[Is], EqEq), (&[Is, Not], NotEq)];
+        for (spelling, symbol) in words {
+            let tokens = stream(spelling.to_vec());
+            let parser = Parser::new(&tokens, FileId(0));
+            let (op, _, width) = parser.peek_binary_op().expect("`is` is always an operator");
+            assert_eq!(width, spelling.len(), "{spelling:?} is the wrong number of words");
+            assert_eq!(
+                Some(op),
+                binary_op(&symbol).map(|(op, _)| op),
+                "{spelling:?} must be the operator `{}` is",
+                fixed_text(&symbol)
+            );
+        }
+    }
+
+    /// The four phrases revision 2 §1 deleted, each still recognised for the
+    /// one purpose of reporting the symbol that replaced it.
+    #[test]
+    fn every_stale_comparison_phrase_maps_to_its_symbol() {
+        use TokenKind::*;
+        let word = |w: &str| Ident(w.to_string());
+        let phrases: [(Vec<TokenKind>, TokenKind); 4] = [
+            (vec![Is, word("at"), word("least"), True], GtEq),
+            (vec![Is, word("at"), word("most"), True], LtEq),
+            (vec![Is, word("above"), True], Gt),
+            (vec![Is, word("below"), True], Lt),
+        ];
+        for (spelling, symbol) in phrases {
+            let tokens = stream(spelling.clone());
+            let parser = Parser::new(&tokens, FileId(0));
+            let (resolved, width) =
+                parser.stale_comparison_phrase().expect("the phrase begins with `is`");
+            assert_eq!(resolved, symbol, "{spelling:?} resolves to the wrong symbol");
+            // The trailing operand is not part of the phrase.
+            assert_eq!(width, spelling.len() - 1, "{spelling:?} is the wrong number of words");
+        }
+        // `n is above` with nothing after it is equality against a variable.
+        let tokens = stream(vec![Is, word("above")]);
+        let parser = Parser::new(&tokens, FileId(0));
+        assert!(parser.stale_comparison_phrase().is_none(), "`is above <end>` is not a phrase");
     }
 
     /// A block's value is its last expression; a block ending in anything else

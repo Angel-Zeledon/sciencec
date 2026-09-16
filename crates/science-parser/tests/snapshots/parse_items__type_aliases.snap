@@ -1,0 +1,17 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Type, id(\"Embedding\"), Is, id(\"Array\"), Of, id(\"F32\"),\nNewline, Public, Type, id(\"Handle\"), Of, id(\"T\"), Is, id(\"Box\"), Of, id(\"T\"),\nNewline,])"
+---
+Module @0..52
+  Alias `Embedding` @0..25
+    type: Path `Array` @15..25
+      generics of `Array`
+        Path `F32` @22..25
+  Alias `Handle` public @25..52
+    generics
+      TypeParam `T` @43..44
+    type: Path `Box` @46..52
+      generics of `Box`
+        Path `T` @51..52
+--- diagnostics ---
+(none)

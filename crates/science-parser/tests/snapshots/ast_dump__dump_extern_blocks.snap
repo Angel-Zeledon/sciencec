@@ -1,0 +1,41 @@
+---
+source: crates/science-parser/tests/ast_dump.rs
+expression: module.dump()
+---
+Module @0..437
+  Extern "C" unsafe @0..324
+    Library "openblas" static when-available @18..89
+      pkg-config: Str "openblas" @52..62
+    items
+      ExternAlias `BlasInt` @95..114
+        type: Path `I32` @111..114
+      ExternConst `CBLAS_ROW_MAJOR` @119..162
+        value: Int 101
+        type: Path `CblasLayout` @151..162
+      ExternConst `H5I_BADID` negative @167..196
+        value: Int 1
+        type: Path `Hid` @193..196
+      ExternFn `dgemm` @201..251
+        params
+          Param `m` @216..226
+            type: Path `BlasInt` @219..226
+        ret: Path `Herr` @231..235
+        symbol: Str "dgemm_" @243..251
+      ExternStatic `H5T_NATIVE_DOUBLE_g` @256..287
+        type: Path `Hid` @284..287
+      ExternUnion `H5R_ref_t` @292..324
+        size: 64
+        align: 8
+  Extern "Fortran" @332..384
+    library (none)
+    items
+      Error @355..361
+      ExternUnion `H5L_info2_t` @366..384
+        size: (none)
+        align: (none)
+  Fn `call` @386..437
+    body: Block @412..437
+      tail: Unsafe @412..437
+        body: Block @429..437
+          tail: Call @429..437
+            callee: Path `H5open` @429..435

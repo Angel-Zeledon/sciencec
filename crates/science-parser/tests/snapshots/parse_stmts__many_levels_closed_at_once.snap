@@ -1,31 +1,31 @@
 ---
 source: crates/science-parser/tests/parse_stmts.rs
-expression: "parse_body(r#\"fn f() -> Int:\n    for row in rows:\n        for cell in row:\n            if cell != 0:\n                if cell > 0:\n                    hits = hits + 1\n    hits\n\"#)"
+expression: "parse_body(r#\"function f() -> Int:\n    for row in rows:\n        for cell in row:\n            if cell is not 0:\n                if cell > 0:\n                    hits be hits + 1\n    hits\n\"#)"
 ---
-Block @19..160
-  For @19..151
-    pattern: Binding `row` @23..26
-    iter: Path `rows` @30..34
-    body: Block @44..151
-      tail: For @44..151
-        pattern: Binding `cell` @48..52
-        iter: Path `row` @56..59
-        body: Block @73..151
-          tail: If @73..151
-            cond: Binary `!=` @76..85
-              lhs: Path `cell` @76..80
-              rhs: Int 0 @84..85
-            then: Block @103..151
-              tail: If @103..151
-                cond: Binary `>` @106..114
-                  lhs: Path `cell` @106..110
-                  rhs: Int 0 @113..114
-                then: Block @136..151
-                  Assign @136..151
-                    target: Path `hits` @136..140
-                    value: Binary `+` @143..151
-                      lhs: Path `hits` @143..147
-                      rhs: Int 1 @150..151
-  tail: Path `hits` @156..160
+Block @25..171
+  For @25..162
+    pattern: Binding `row` @29..32
+    iter: Path `rows` @36..40
+    body: Block @50..162
+      tail: For @50..162
+        pattern: Binding `cell` @54..58
+        iter: Path `row` @62..65
+        body: Block @79..162
+          tail: If @79..162
+            cond: Binary `!=` @82..95
+              lhs: Path `cell` @82..86
+              rhs: Int 0 @94..95
+            then: Block @113..162
+              tail: If @113..162
+                cond: Binary `>` @116..124
+                  lhs: Path `cell` @116..120
+                  rhs: Int 0 @123..124
+                then: Block @146..162
+                  Assign @146..162
+                    target: Path `hits` @146..150
+                    value: Binary `+` @154..162
+                      lhs: Path `hits` @154..158
+                      rhs: Int 1 @161..162
+  tail: Path `hits` @167..171
 --- diagnostics ---
 (none)

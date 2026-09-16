@@ -1,100 +1,115 @@
-# 03 - Structs
-# Spec: §4.3 structs, §6.2 regions in struct fields.
+# 03 - Record types
+# Spec: §4.4 declarations, §4.7 smaller rules, §6.2 regions in fields.
 #
-# Covers: struct declaration, construction with mandatory named arguments in
-# any order, field access, nested structs, generic structs, and structs whose
-# fields are references (the region is inferred, never written).
+# `type` is what `struct` was. Covers: declaration, construction with
+# mandatory named arguments in any order, field access, nested records,
+# generic records, const generic parameters, and fields that are borrows
+# (the region is inferred, never written).
 
-struct Doc:
+type Doc:
     title: String
     body: String
 
-# A field may be a reference. The region parameter is implicit: the
-# programmer never writes a lifetime (§6.1).
-struct View:
-    source: &Doc
+# A field may be a borrow. The region parameter is implicit: the programmer
+# never writes one (§6.1).
+type View:
+    source: borrowed Doc
 
-# Several reference fields, shared and exclusive.
-struct Editor:
-    document: &mut Doc
-    template: &Doc
+# Several borrowed fields, shared and exclusive.
+type Editor:
+    document: mutable borrowed Doc
+    template: borrowed Doc
     revision: Int
 
-# A struct may hold other structs by value.
-struct Bundle:
+# A record may hold other records by value.
+type Bundle:
     primary: Doc
     secondary: Doc
     label: String
 
-# Generic struct (§4.3 generics).
-struct Pair[A, B]:
+# Generic parameters. One parameter needs no parentheses; more than one does,
+# because the comma would otherwise be ambiguous (§4.3).
+type Wrapper of T:
+    inner: T
+
+type Pair of (A, B):
     first: A
     second: B
 
-# Single-field structs, one generic and one not.
-struct Wrapper[T]:
-    inner: T
+# A const generic parameter: a value, not a type (§5.3).
+type Grid of (T, const ROWS: Int, const COLS: Int):
+    cells: Array of T
 
-struct Marker:
+type Marker:
     tag: U8
 
-# Marker traits are implemented with a single line and no block, because F0
-# has no empty block (§4.3).
-impl Copy for Marker
+# Marker interfaces are implemented on one line with no block, since there is
+# nothing to indent (§4.4).
+Marker implements Copy
 
-fn make_doc() -> Doc:
+function make_doc() -> Doc:
     # Construction: named arguments, all mandatory, in any order.
     Doc(title: "a", body: "...")
 
-fn make_doc_reordered() -> Doc:
+function make_doc_reordered() -> Doc:
     Doc(body: "...", title: "a")
 
-fn title_of(view: &View) -> &String:
-    # References auto-dereference for field access, so the chain reads
-    # through `source` with nothing written for it: F0 has no explicit
-    # dereference operator at all (§4.5).
-    &view.source.title
+function title_of(view: borrowed View) -> borrowed String:
+    # Borrows auto-dereference for field access, so the chain reads through
+    # `source` with nothing written for it: Science has no dereference
+    # operator at all (§4.7).
+    borrowed view.source.title
 
-# A type may have methods that come from no trait, and an `impl` function
-# with no `self` receiver is an associated function called through the type
-# (§4.3).
-impl Doc:
-    fn new(title: String) -> Doc:
+# A type may have methods that come from no interface, and a function with no
+# `self` receiver is an associated function called through the type (§4.4).
+Doc has:
+    function new(title: String) -> Doc:
         Doc(title: title, body: String.new())
 
-    fn is_empty(&self) -> Bool:
+    function is_empty(self) -> Bool:
         self.body.is_empty()
 
-# Trailing commas are allowed in every parenthesised and bracketed list,
-# construction included (§4.5).
-fn make_pair() -> Pair[Int, Int]:
+# An inherent block on a generic type names its parameters the same way the
+# declaration does.
+Grid of (T, const ROWS: Int, const COLS: Int) has:
+    function area() -> Int:
+        ROWS * COLS
+
+# Trailing commas are allowed in every parenthesized and bracketed list,
+# construction included (§4.7).
+function make_pair() -> Pair of (Int, Int):
     Pair(
         first: 1,
         second: 2,
     )
 
-fn main():
-    let doc = make_doc()
+function main():
+    let doc be make_doc()
 
-    # A struct that stores a borrow of a local. The borrow ends with `view`,
+    # A record that stores a borrow of a local. The borrow ends with `view`,
     # so `doc` is still usable afterwards.
-    let view = View(source: &doc)
-    println(title_of(&view))
+    let view be View(source: borrowed doc)
+    print(title_of(view))
 
-    let bundle = Bundle(primary: doc, secondary: make_doc_reordered(), label: "pair")
-    println(bundle.label)
-    println(bundle.primary.title)
+    let bundle be Bundle(primary: doc, secondary: make_doc_reordered(), label: "pair")
+    print(bundle.label)
+    print(bundle.primary.title)
 
-    let scratch = Doc.new("scratch")
-    println(scratch.is_empty())
-    println(make_pair().first)
+    let scratch be Doc.new("scratch")
+    print(scratch.is_empty())
+    print(make_pair().first)
 
-    let coords = Pair(first: 3, second: 4)
-    let mixed = Pair(first: "left", second: 7u8)
-    let boxed_value = Wrapper(inner: 1_000)
-    let marker = Marker(tag: 0xFF)
+    let coords be Pair(first: 3, second: 4)
+    let mixed be Pair(first: "left", second: 7u8)
+    let wrapped be Wrapper(inner: 1_000)
+    let marker be Marker(tag: 0xFF)
 
-    println(coords.first)
-    println(mixed.second)
-    println(boxed_value.inner)
-    println(marker.tag)
+    print(coords.first)
+    print(mixed.second)
+    print(wrapped.inner)
+    print(marker.tag)
+
+    # An associated function on a generic type takes parentheses around the
+    # type, because `Grid of (Int, 3, 3).area()` does not say whether
+    # `.area()` belongs to the last argument or to the whole type (§4.3).
+    print((Grid of (Int, 3, 3)).area())

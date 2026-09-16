@@ -1,0 +1,15 @@
+---
+source: crates/science-parser/tests/parse_traits.rs
+expression: "parse_source_allowing_errors(r#\"Note has:\n    function take(self: Int) -> Int:\n        1\n\"#)"
+---
+Module @0..57
+  Has @0..56
+    type: Path `Note` @0..4
+    methods
+      Fn `take` @14..56
+        receiver: self: Self @28..37
+        ret: Path `Int` @42..45
+        body: Block @55..56
+          tail: Int 1 @55..56
+--- diagnostics ---
+SC0104 @34..37 a `self` parameter can only be annotated `Self`, which is what takes the receiver by value

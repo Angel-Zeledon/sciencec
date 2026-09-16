@@ -9,10 +9,10 @@
 # escape, SC0007 unterminated string, SC0009 invalid suffix, SC0010
 # malformed number.
 
-fn main():
-    let tagged = 1 $ 2
-    let path = "C:\users"
-    let open = "never closed
-    let counted = 42q
-    let mask = 0b1012
-	let indented_with_a_tab = 0
+function main():
+    let tagged be 1 $ 2
+    let path be "C:\users"
+    let open be "never closed
+    let counted be 42q
+    let mask be 0b1012
+	let indented_with_a_tab be 0

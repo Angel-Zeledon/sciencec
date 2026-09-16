@@ -1,0 +1,18 @@
+---
+source: crates/science-parser/tests/migration.rs
+expression: parse_source_allowing_errors(source)
+---
+Module @0..57
+  Fn `main` @0..56
+    body: Block @21..56
+      Call @21..37
+        callee: Path `print` @21..28
+        args
+          Str "hello" @29..36
+      tail: Call @42..56
+        callee: Path `print` @42..47
+        args
+          Str "again" @48..55
+--- diagnostics ---
+SC0144 @21..28 the free function is `print`
+  note `print` writes a newline; `write` is the form that does not

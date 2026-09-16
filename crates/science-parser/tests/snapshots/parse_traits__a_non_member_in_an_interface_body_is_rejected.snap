@@ -1,0 +1,12 @@
+---
+source: crates/science-parser/tests/parse_traits.rs
+expression: "parse_source_allowing_errors(r#\"interface T:\n    let x be 1\n    function f(self) -> Int\n\"#)"
+---
+Module @0..56
+  Interface `T` @0..55
+    methods
+      Fn `f` @32..55
+        receiver: self @43..47
+        ret: Path `Int` @52..55
+--- diagnostics ---
+SC0112 @17..20 expected a `function` or an associated type declared with `type`, found `let`

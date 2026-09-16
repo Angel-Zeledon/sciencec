@@ -1,112 +1,125 @@
 # 07 - Generics, bounds and `where`
-# Spec: §4.3 generics and bounds, §5.3 monomorphisation.
+# Spec: §4.3 generics and bounds, §4.4 generic functions, §5.3
+# monomorphization.
 #
-# Covers: generic functions with no bound, with one bound, with several bounds
-# joined by `+`, with a `where` clause, generic structs and enums, generic
-# functions over several parameters, and nested generic types.
+# Covers: generic functions with no bound, with one bound written in the
+# parameter list, with several bounds joined by `+`, with a `where` clause,
+# generic record types and choices, generic functions over several
+# parameters, and nested generic arguments.
 
-struct Doc:
+type Doc:
     title: String
     body: String
 
-struct Pair[A, B]:
+type Pair of (A, B):
     first: A
     second: B
 
-struct Wrapper[T]:
+type Wrapper of T:
     inner: T
 
-enum Option[T]:
+choice Option of T:
     Some(T)
     None
 
-trait Summarize:
-    fn summarize(&self) -> String
+interface Summarize:
+    function summarize(self) -> String
 
-    fn preview(&self) -> String:
+    function preview(self) -> String:
         self.summarize().truncate(80)
 
-impl Summarize for Doc:
-    fn summarize(&self) -> String:
+Doc implements Summarize:
+    function summarize(self) -> String:
         self.body.truncate(200)
 
 # No bound at all: the body may only move or borrow the value.
-fn identity[T](value: T) -> T:
+function identity of T(value: T) -> T:
     value
 
-# A single bound. Copied verbatim from §4.3, including `items.get(0)`, which
-# is the one `Array` accessor §8 gives.
-fn largest[T: Ord](items: &Array[T]) -> &T:
-    let mut best = items.get(0)
+# A single bound, written in the parameter list. Copied from §4.4, including
+# `items.get(0)`, which is the one `Array` accessor §8 gives.
+function largest of T: Ord(items: borrowed Array of T) -> borrowed T:
+    let mutable best be items.get(0)
     for item in items:
-        if item > best: best = item
+        if item > best: best be item
     best
 
-# Several bounds joined by `+`.
-fn duplicate[T: Clone + Eq](value: &T) -> Pair[T, T]:
+# Several bounds joined by `+`, still in the parameter list.
+function duplicate of T: Clone + Eq(value: borrowed T) -> Pair of (T, T):
     Pair(first: value.clone(), second: value.clone())
 
-# A `where` clause keeps a long signature readable.
-fn describe[T](x: &T) -> String where T: Summarize + Clone:
+# The same bounds moved into a `where` clause, which keeps a long signature
+# readable.
+function describe of T(x: borrowed T) -> String where T: Summarize + Clone:
     x.summarize()
 
-# A `where` clause with several bounded parameters. §8 gives `String` no
-# concatenation method, so the two previews are joined with `String.new()`
-# and `push_str`.
-fn merge[A, B](left: &A, right: &B) -> String where A: Summarize, B: Summarize + Clone:
-    let mut out = String.new()
-    out.push_str(&left.preview())
+# A `where` clause with several bounded parameters. The signature no longer
+# fits on one line, so it is broken inside the parameter list, where
+# indentation takes no part (§4.2). §8 gives `String` no concatenation method,
+# so the two previews are joined with `String.new()` and `push_str`.
+function merge of (A, B)(left: borrowed A,
+        right: borrowed B) -> String where A: Summarize, B: Summarize + Clone:
+    let mutable out be String.new()
+    out.push_str(left.preview())
     out.push_str(" / ")
-    out.push_str(&right.preview())
+    out.push_str(right.preview())
     out
 
-# Bounds in the parameter list and a `where` clause at once.
-fn rank[T: Ord](items: &Array[T], fallback: &T) -> &T where T: Clone:
+# A bound in the parameter list and a `where` clause at once.
+function rank of T: Ord(items: borrowed Array of T,
+        fallback: borrowed T) -> borrowed T where T: Clone:
     if items.is_empty(): fallback else: largest(items)
 
-# Several type parameters, each used in a different position.
-fn swap[A, B](pair: Pair[A, B]) -> Pair[B, A]:
+# Several type parameters, each used in a different position. Two or more
+# parameters take parentheses, exactly as two or more arguments do (§4.3).
+function swap of (A, B)(pair: Pair of (A, B)) -> Pair of (B, A):
     Pair(first: pair.second, second: pair.first)
 
-# Nested generic types in the signature. `Array.get` returns `Option[&T]`
-# (§8): there is no indexing operator that can panic, so the absence is
-# unwrapped with a `match`.
-fn first_inner[T](items: &Array[Wrapper[T]]) -> Option[&T]:
+# Nested generic arguments in the signature: the inner `of` is parenthesized
+# so that `Wrapper of T` cannot be read as two arguments to `Array`. `Array.get`
+# returns `Option of (borrowed T)` (§8): there is no indexing operator that can
+# panic, so the absence is unwrapped with a `match`.
+function first_inner of T(items: borrowed Array of (Wrapper of T)) -> Option of (borrowed T):
     match items.get(0):
-        Some(wrapper): Some(&wrapper.inner)
+        Some(wrapper): Some(borrowed wrapper.inner)
         None: None
 
-# An inherent impl on a generic type, with an associated function that names
-# its instantiation at the call site: `Wrapper[Int].of(1)`.
-impl Wrapper[T]:
-    fn of(inner: T) -> Wrapper[T]:
+# An inherent block on a generic type, with an associated function that names
+# its instantiation at the call site: `(Wrapper of Int).holding(1)`.
+# It cannot itself be called `of`: §4.3 makes `of` the word that introduces
+# generic arguments, so it is a keyword and no longer an identifier.
+Wrapper of T has:
+    function holding(inner: T) -> Wrapper of T:
         Wrapper(inner: inner)
 
-# A generic type used at several different instantiations: monomorphisation
-# produces one specialised copy for each.
-fn main():
-    let a = identity(1)
-    let b = identity("text")
-    let c = identity(3.5f32)
+# A generic type used at several different instantiations: monomorphization
+# produces one specialized copy for.
+function main():
+    let a be identity(1)
+    let b be identity("text")
+    let c be identity(3.5f32)
 
-    let doc = Doc(title: "Monomorphisation", body: "One copy per instantiation.")
-    println(describe(&doc))
+    let doc be Doc(title: "Monomorphization", body: "One copy per instantiation.")
+    print(describe(doc))
 
-    let pair = Pair(first: 1, second: "one")
-    let flipped = swap(pair)
-    println(flipped.first)
+    # A parameter declared `borrowed` is borrowed at the call site without the
+    # caller writing anything (§6.3).
+    let pair be Pair(first: 1, second: "one")
+    let flipped be swap(pair)
+    print(flipped.first)
 
-    let n = 5
-    let cloned = duplicate(&n)
-    println(cloned.first)
+    let n be 5
+    let cloned be duplicate(n)
+    print(cloned.first)
 
-    # An associated function reached through an explicit instantiation, and
-    # the empty `Array` it needs (§4.3): collections are never built with the
-    # named-argument form.
-    let wrapped = Wrapper[Int].of(7)
-    println(wrapped.inner)
+    # An associated function reached through an explicit instantiation. A
+    # generic type needs parentheses before the `.`, because
+    # `Wrapper of Int.holding(7)` would not say whether `.holding` belongs to
+    # `Int` or to the whole type (§4.3, SC0116).
+    let wrapped be (Wrapper of Int).holding(7)
+    print(wrapped.inner)
 
-    let wrappers: Array[Wrapper[Int]] = Array[Wrapper[Int]].new()
-    match first_inner(&wrappers):
-        Some(value): println(value)
-        None: println("empty")
+    let wrappers: Array of (Wrapper of Int) be (Array of (Wrapper of Int)).new()
+    match first_inner(wrappers):
+        Some(value): print(value)
+        None: print("empty")

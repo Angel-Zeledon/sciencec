@@ -1,7 +1,7 @@
 error[SC0004]: this indentation matches no open level
-  --> tests/ui/inconsistent_indentation.science:14:1
+  --> tests/ui/inconsistent_indentation.science:13:1
    |
-14 |         let b = 2
+13 |         let b be 2
    | ^^^^^^^^ indented 8 columns
    |
    = note: the open levels are 0, 4

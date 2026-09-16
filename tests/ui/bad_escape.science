@@ -1,12 +1,12 @@
 # UI test: an escape sequence the lexer does not know (SC0006).
 #
-# §4.1 lists the escapes in full: `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0` and
-# `\u{...}`. Anything else is an error. A Windows path typed without doubling
-# its separators is the way this happens in practice.
+# §4.2 lists the escapes in full: "escapes `\n \t \r \\ \" \' \0 \u{1F600}`".
+# Anything else is an error. A Windows path typed without doubling its
+# separators is the way this happens in practice.
 #
 # `\u` is a known escape prefix, so `\users` is reported as a *malformed*
 # `\u` escape rather than an unknown one. Both messages are SC0006.
 
-fn main():
-    let path = "C:\users\link\bin"
-    let escaped = "a \q here"
+function main():
+    let path be "C:\users\link\bin"
+    let escaped be "a \q here"

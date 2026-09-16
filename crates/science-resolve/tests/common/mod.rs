@@ -1,11 +1,11 @@
 //! Builders that hand the resolver an AST, and the report a snapshot records.
 //!
-//! These tests do not call the parser. `parse_expr`, `parse_pattern`,
-//! `parse_impl` and `parse_trait` are still `todo!()` while another batch of
-//! work lands, and even once they are not, a resolver test that goes through
-//! the parser is a test of two phases at once. The AST is the contract, so the
-//! tests build one directly, the way the parser's own tests build token
-//! streams instead of calling the lexer.
+//! These tests do not call the parser, and there is no `.science` source
+//! anywhere under this crate: a resolver test that went through the parser
+//! would be a test of two phases at once, and it would only be able to reach
+//! the trees the current surface syntax happens to produce. The AST is the
+//! contract, so the tests build one directly, the way the parser's own tests
+//! build token streams instead of calling the lexer.
 //!
 //! Spans come from [`Sp`], a counter that hands out a fresh, non-overlapping
 //! range per node. The numbers are arbitrary; what matters is that they are
@@ -17,6 +17,7 @@
 use std::cell::Cell;
 
 use science_diagnostics::{Diagnostics, FileId, Span};
+use science_lexer::IntBase;
 use science_parser::ast::*;
 
 pub const FILE: FileId = FileId(0);
@@ -111,9 +112,42 @@ pub fn ty_generic(sp: &Sp, name: &str, args: Vec<Type>) -> Type {
     Type { kind: TypeKind::Path(path), span }
 }
 
-pub fn ty_ref(sp: &Sp, mutable: bool, inner: Type) -> Type {
+pub fn ty_borrowed(sp: &Sp, mutable: bool, inner: Type) -> Type {
     let span = sp.take(1).merge(inner.span);
-    Type { kind: TypeKind::Ref { mutable, inner: Box::new(inner) }, span }
+    Type { kind: TypeKind::Borrowed { mutable, inner: Box::new(inner) }, span }
+}
+
+pub fn ty_any(sp: &Sp, name: &str) -> Type {
+    let bound = bound(sp, name);
+    let span = bound.span;
+    Type { kind: TypeKind::Any(bound), span }
+}
+
+/// `Self.Item` (§5.4).
+pub fn ty_self_assoc(sp: &Sp, name: &str) -> Type {
+    let name = ident(sp, name);
+    let span = name.span;
+    Type { kind: TypeKind::SelfAssoc(name), span }
+}
+
+/// The `4` of `Window of (Int, 4)`: a const generic argument (§5.3).
+pub fn ty_const_int(sp: &Sp, value: u128) -> Type {
+    let span = sp.take(value.to_string().len() as u32);
+    let literal =
+        Literal::Int { value, base: science_lexer::IntBase::Dec, suffix: None };
+    Type { kind: TypeKind::Const(ConstExpr { kind: ConstExprKind::Lit(literal), span }), span }
+}
+
+/// The `-1` of `Quantity of (T, 1, 0, -1, 0, 0, 0, 0)`: the same, negated.
+/// The `-` and the digits each get their own span, as the parser gives them.
+pub fn ty_const_neg_int(sp: &Sp, magnitude: u128) -> Type {
+    let span = sp.take(magnitude.to_string().len() as u32 + 1);
+    let digits = Span::new(FILE, span.start + 1, span.end);
+    let literal =
+        Literal::Int { value: magnitude, base: science_lexer::IntBase::Dec, suffix: None };
+    let operand = ConstExpr { kind: ConstExprKind::Lit(literal), span: digits };
+    let value = ConstExpr { kind: ConstExprKind::Neg(Box::new(operand)), span };
+    Type { kind: TypeKind::Const(value), span }
 }
 
 pub fn ty_self(sp: &Sp) -> Type {
@@ -142,7 +176,14 @@ fn item(kind: ItemKind, span: Span) -> Item {
 pub fn generic(sp: &Sp, name: &str, bounds: Vec<TypeBound>) -> GenericParam {
     let name = ident(sp, name);
     let span = name.span;
-    GenericParam { name, bounds, span }
+    GenericParam { name, kind: GenericParamKind::Type { bounds }, span }
+}
+
+/// `const ROWS: Int` (§5.3).
+pub fn generic_const(sp: &Sp, name: &str, ty: Type) -> GenericParam {
+    let name = ident(sp, name);
+    let span = name.span.merge(ty.span);
+    GenericParam { name, kind: GenericParamKind::Const { ty }, span }
 }
 
 pub fn param(sp: &Sp, name: &str, ty: Type) -> Param {
@@ -239,7 +280,7 @@ pub fn field(sp: &Sp, name: &str, ty: Type) -> FieldDef {
     FieldDef { is_pub: false, name, ty, span }
 }
 
-pub fn struct_item(
+pub fn record_item(
     sp: &Sp,
     name: &str,
     generics: Vec<GenericParam>,
@@ -250,7 +291,7 @@ pub fn struct_item(
     for f in &fields {
         span = span.merge(f.span);
     }
-    let decl = StructDecl {
+    let decl = RecordDecl {
         is_pub: false,
         name,
         generics,
@@ -258,7 +299,21 @@ pub fn struct_item(
         fields,
         span,
     };
-    item(ItemKind::Struct(decl), span)
+    item(ItemKind::Record(decl), span)
+}
+
+/// `type Embedding is Array of F32` (§4.4).
+pub fn alias_item(sp: &Sp, name: &str, generics: Vec<GenericParam>, ty: Type) -> Item {
+    let name = ident(sp, name);
+    let span = name.span.merge(ty.span);
+    item(ItemKind::Alias(AliasDecl { is_pub: false, name, generics, ty, span }), span)
+}
+
+/// `const WIDTH be 768` (§4.4).
+pub fn const_item(sp: &Sp, name: &str, ty: Option<Type>, value: Expr) -> Item {
+    let name = ident(sp, name);
+    let span = name.span.merge(value.span);
+    item(ItemKind::Const(ConstDecl { is_pub: false, name, ty, value, span }), span)
 }
 
 pub fn variant(sp: &Sp, name: &str, payload: Vec<Type>) -> VariantDef {
@@ -270,7 +325,7 @@ pub fn variant(sp: &Sp, name: &str, payload: Vec<Type>) -> VariantDef {
     VariantDef { name, payload, span }
 }
 
-pub fn enum_item(
+pub fn choice_item(
     sp: &Sp,
     name: &str,
     generics: Vec<GenericParam>,
@@ -281,7 +336,7 @@ pub fn enum_item(
     for v in &variants {
         span = span.merge(v.span);
     }
-    let decl = EnumDecl {
+    let decl = ChoiceDecl {
         is_pub: false,
         name,
         generics,
@@ -289,52 +344,209 @@ pub fn enum_item(
         variants,
         span,
     };
-    item(ItemKind::Enum(decl), span)
+    item(ItemKind::Choice(decl), span)
 }
 
-pub fn trait_item(
+pub fn interface_item(
     sp: &Sp,
     name: &str,
     generics: Vec<GenericParam>,
     methods: Vec<FnDecl>,
 ) -> Item {
+    interface_item_assoc(sp, name, generics, &[], methods)
+}
+
+/// An interface that also declares associated types: `type Item` (§5.4).
+pub fn interface_item_assoc(
+    sp: &Sp,
+    name: &str,
+    generics: Vec<GenericParam>,
+    assoc: &[&str],
+    methods: Vec<FnDecl>,
+) -> Item {
     let name = ident(sp, name);
     let mut span = name.span;
+    let assoc_types: Vec<AssocTypeDecl> = assoc
+        .iter()
+        .map(|n| {
+            let name = ident(sp, n);
+            let span = name.span;
+            AssocTypeDecl { name, span }
+        })
+        .collect();
+    for a in &assoc_types {
+        span = span.merge(a.span);
+    }
     for m in &methods {
         span = span.merge(m.span);
     }
-    let decl = TraitDecl {
+    let decl = InterfaceDecl {
         is_pub: false,
         name,
         generics,
-        supertraits: Vec::new(),
+        supers: Vec::new(),
         where_clause: Vec::new(),
+        assoc_types,
         methods,
         span,
     };
-    item(ItemKind::Trait(decl), span)
+    item(ItemKind::Interface(decl), span)
 }
 
 pub fn impl_item(
     sp: &Sp,
     generics: Vec<GenericParam>,
-    trait_: Option<TypeBound>,
+    interface: Option<TypeBound>,
     self_ty: Type,
     methods: Vec<FnDecl>,
 ) -> Item {
-    let mut span = sp.word("impl").merge(self_ty.span);
+    impl_item_assoc(sp, generics, interface, self_ty, vec![], methods)
+}
+
+/// An implementation that also binds associated types: `type Item is Int`.
+pub fn impl_item_assoc(
+    sp: &Sp,
+    generics: Vec<GenericParam>,
+    interface: Option<TypeBound>,
+    self_ty: Type,
+    assoc: Vec<(&str, Type)>,
+    methods: Vec<FnDecl>,
+) -> Item {
+    let mut span = sp.word("implements").merge(self_ty.span);
+    let assoc_types: Vec<AssocTypeBinding> = assoc
+        .into_iter()
+        .map(|(n, ty)| {
+            let name = ident(sp, n);
+            let span = name.span.merge(ty.span);
+            AssocTypeBinding { name, ty, span }
+        })
+        .collect();
+    for a in &assoc_types {
+        span = span.merge(a.span);
+    }
     for m in &methods {
         span = span.merge(m.span);
     }
     let block = ImplBlock {
         generics,
-        trait_,
+        interface,
         self_ty,
         where_clause: Vec::new(),
+        assoc_types,
         methods,
         span,
     };
     item(ItemKind::Impl(block), span)
+}
+
+// --- extern blocks -------------------------------------------------------
+
+/// `unsafe extern "C" library <name>:` with the items given.
+///
+/// The `library` clause is always written: a block without one is the
+/// parser's diagnostic, not the resolver's, and a builder that made it easy
+/// to omit would be inviting a test about the wrong phase.
+pub fn extern_item(sp: &Sp, library: &str, items: Vec<ExternItem>) -> Item {
+    let start = sp.word("extern");
+    let abi = StrLit { value: "C".to_string(), span: sp.word("\"C\"") };
+    let name = StrLit { value: library.to_string(), span: sp.word(library) };
+    let library = LibraryClause {
+        name,
+        pkg_config: None,
+        static_link: None,
+        when_available: None,
+        span: sp.word("library"),
+    };
+    let mut span = start.merge(library.span);
+    for one in &items {
+        span = span.merge(one.span);
+    }
+    item(
+        ItemKind::Extern(ExternBlock {
+            is_unsafe: true,
+            abi,
+            library: Some(library),
+            items,
+            span,
+        }),
+        span,
+    )
+}
+
+fn extern_item_of(kind: ExternItemKind, span: Span) -> ExternItem {
+    ExternItem { kind, span }
+}
+
+/// `function name(params) -> ret symbol "..."`.
+pub fn extern_fn(
+    sp: &Sp,
+    name: &str,
+    params: Vec<Param>,
+    ret: Option<Type>,
+    symbol: Option<&str>,
+) -> ExternItem {
+    let name = ident(sp, name);
+    let mut span = name.span;
+    for p in &params {
+        span = span.merge(p.span);
+    }
+    if let Some(ret) = &ret {
+        span = span.merge(ret.span);
+    }
+    let symbol = symbol.map(|text| StrLit { value: text.to_string(), span: sp.word(text) });
+    if let Some(symbol) = &symbol {
+        span = span.merge(symbol.span);
+    }
+    extern_item_of(
+        ExternItemKind::Fn(ExternFn { name, params, ret, symbol, variadic: None, span }),
+        span,
+    )
+}
+
+/// `type BlasInt is I32`.
+pub fn extern_alias(sp: &Sp, name: &str, ty: Type) -> ExternItem {
+    let name = ident(sp, name);
+    let span = name.span.merge(ty.span);
+    extern_item_of(ExternItemKind::Alias(ExternAlias { name, ty, span }), span)
+}
+
+/// `const NAME be <value> as T`.
+pub fn extern_const(sp: &Sp, name: &str, negative: bool, value: u128, ty: Type) -> ExternItem {
+    let name = ident(sp, name);
+    let span = name.span.merge(ty.span);
+    extern_item_of(
+        ExternItemKind::Const(ExternConst {
+            name,
+            negative,
+            value: Literal::Int { value, base: IntBase::Dec, suffix: None },
+            ty,
+            span,
+        }),
+        span,
+    )
+}
+
+/// `static NAME: T`.
+pub fn extern_static(sp: &Sp, name: &str, ty: Type) -> ExternItem {
+    let name = ident(sp, name);
+    let span = name.span.merge(ty.span);
+    extern_item_of(ExternItemKind::Static(ExternStatic { name, ty, span }), span)
+}
+
+/// `union Name: size N align M`.
+pub fn extern_union(sp: &Sp, name: &str, size: u128, align: u128) -> ExternItem {
+    let name = ident(sp, name);
+    let span = name.span;
+    extern_item_of(
+        ExternItemKind::Union(ExternUnion { name, size: Some(size), align: Some(align), span }),
+        span,
+    )
+}
+
+/// `unsafe:` around a block, which §3 of the FFI note makes an expression.
+pub fn unsafe_expr(sp: &Sp, body: Block) -> Expr {
+    let span = sp.word("unsafe").merge(body.span);
+    Expr { kind: ExprKind::Unsafe(body), span }
 }
 
 pub fn use_item(sp: &Sp, segments: &[&str], imports: Option<&[&str]>) -> Item {
@@ -404,7 +616,24 @@ pub fn string(sp: &Sp, value: &str) -> Expr {
     Expr { kind: ExprKind::Literal(Literal::Str(value.to_string())), span }
 }
 
+/// An unnamed argument: the ordinary positional case.
+pub fn arg(value: Expr) -> Arg {
+    let span = value.span;
+    Arg { name: None, value, span }
+}
+
+/// `by: f` — a *label*, not a name. Resolution must leave it alone.
+pub fn named_arg(sp: &Sp, name: &str, value: Expr) -> Arg {
+    let name = ident(sp, name);
+    let span = name.span.merge(value.span);
+    Arg { name: Some(name), value, span }
+}
+
 pub fn call(sp: &Sp, callee: Expr, args: Vec<Expr>) -> Expr {
+    call_args(sp, callee, args.into_iter().map(arg).collect())
+}
+
+pub fn call_args(sp: &Sp, callee: Expr, args: Vec<Arg>) -> Expr {
     let mut span = callee.span.merge(sp.take(2));
     for a in &args {
         span = span.merge(a.span);
@@ -436,6 +665,10 @@ pub fn field_access(sp: &Sp, base: Expr, field: &str) -> Expr {
 }
 
 pub fn method_call(sp: &Sp, receiver: Expr, method: &str, args: Vec<Expr>) -> Expr {
+    method_call_args(sp, receiver, method, args.into_iter().map(arg).collect())
+}
+
+pub fn method_call_args(sp: &Sp, receiver: Expr, method: &str, args: Vec<Arg>) -> Expr {
     let method = ident(sp, method);
     let mut span = receiver.span.merge(method.span);
     for a in &args {
@@ -450,6 +683,45 @@ pub fn method_call(sp: &Sp, receiver: Expr, method: &str, args: Vec<Expr>) -> Ex
         },
         span,
     }
+}
+
+/// `doc giving doc.title` when `param` is `Some`, and the implicit
+/// `each.title` when it is `None` (§4.6).
+pub fn closure(sp: &Sp, param: Option<&str>, body: Expr) -> Expr {
+    let param = param.map(|n| ident(sp, n));
+    let span = param.as_ref().map_or(body.span, |p| p.span.merge(body.span));
+    Expr { kind: ExprKind::Closure { param, body: Box::new(body) }, span }
+}
+
+/// `each` — the subject the implicit closure form leaves unwritten.
+pub fn each(sp: &Sp) -> Expr {
+    Expr { kind: ExprKind::Each, span: sp.word("each") }
+}
+
+pub fn range(sp: &Sp, start: Expr, end: Expr, inclusive: bool) -> Expr {
+    let span = start.span.merge(sp.take(2)).merge(end.span);
+    Expr {
+        kind: ExprKind::Range { start: Box::new(start), end: Box::new(end), inclusive },
+        span,
+    }
+}
+
+pub fn borrowed(sp: &Sp, mutable: bool, expr: Expr) -> Expr {
+    let span = sp.word("borrowed").merge(expr.span);
+    Expr { kind: ExprKind::Borrowed { mutable, expr: Box::new(expr) }, span }
+}
+
+pub fn loop_expr(sp: &Sp, body: Block) -> Expr {
+    let span = sp.word("loop").merge(body.span);
+    Expr { kind: ExprKind::Loop { body }, span }
+}
+
+pub fn break_stmt(sp: &Sp, value: Option<Expr>) -> Stmt {
+    let mut span = sp.word("break");
+    if let Some(v) = &value {
+        span = span.merge(v.span);
+    }
+    Stmt { kind: StmtKind::Break(value), span }
 }
 
 pub fn self_value(sp: &Sp) -> Expr {

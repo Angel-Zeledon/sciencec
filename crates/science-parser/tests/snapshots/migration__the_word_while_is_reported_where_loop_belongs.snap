@@ -1,0 +1,19 @@
+---
+source: crates/science-parser/tests/migration.rs
+expression: parse_source_allowing_errors(source)
+---
+Module @0..50
+  Fn `f` @0..49
+    params
+      Param `n` @11..17
+        type: Path `Int` @14..17
+    body: Block @24..49
+      tail: Loop @24..49
+        body: Block @45..49
+          tail: Call @45..49
+            callee: Path `g` @45..46
+            args
+              Path `n` @47..48
+--- diagnostics ---
+SC0142 @24..29 the unbounded loop is written `loop`
+  note end it with the condition negated: make `if not …: break` the first statement of the body, or write a count as a range, `for i in 0..n:`

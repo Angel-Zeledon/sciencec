@@ -1,41 +1,41 @@
 error[SC0001]: `$` is not a character Science recognises
-  --> tests/ui/several_errors_in_one_file.science:13:20
+  --> tests/ui/several_errors_in_one_file.science:13:21
    |
-13 |     let tagged = 1 $ 2
-   |                    ^ unexpected character
+13 |     let tagged be 1 $ 2
+   |                     ^ unexpected character
 
 error[SC0006]: malformed `\u` escape
-  --> tests/ui/several_errors_in_one_file.science:14:19
+  --> tests/ui/several_errors_in_one_file.science:14:20
    |
-14 |     let path = "C:\users"
-   |                   ^^ malformed escape
+14 |     let path be "C:\users"
+   |                    ^^ malformed escape
    |
    = note: a `\u` escape needs braces, as in `\u{1F600}`
 
 error[SC0007]: unterminated string literal
-  --> tests/ui/several_errors_in_one_file.science:15:16
+  --> tests/ui/several_errors_in_one_file.science:15:17
    |
-15 |     let open = "never closed
-   |                ^^^^^^^^^^^^^ this string has no closing `"`
+15 |     let open be "never closed
+   |                 ^^^^^^^^^^^^^ this string has no closing `"`
 
 error[SC0009]: `q` is not a valid numeric literal suffix
-  --> tests/ui/several_errors_in_one_file.science:16:21
+  --> tests/ui/several_errors_in_one_file.science:16:22
    |
-16 |     let counted = 42q
-   |                     ^ unknown suffix
+16 |     let counted be 42q
+   |                      ^ unknown suffix
    |
    = note: the suffixes are `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32` and `f64`
 
 error[SC0010]: `2` is not a valid digit in a binary literal
-  --> tests/ui/several_errors_in_one_file.science:17:21
+  --> tests/ui/several_errors_in_one_file.science:17:22
    |
-17 |     let mask = 0b1012
-   |                     ^ invalid digit
+17 |     let mask be 0b1012
+   |                      ^ invalid digit
 
 error[SC0003]: tabs are not allowed in indentation
   --> tests/ui/several_errors_in_one_file.science:18:1
    |
-18 | 	let indented_with_a_tab = 0
+18 | 	let indented_with_a_tab be 0
    | ^ tab character in the indentation
    |
    = note: Science does not interpret tabs: their width depends on how the file is displayed, so a block would mean different things to different readers. Indent with spaces only.

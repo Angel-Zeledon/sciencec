@@ -1,159 +1,266 @@
-# 06 - Traits and impls
-# Spec: §4.3 traits with default methods, generic traits, inherent impls,
-# associated functions and marker traits; §5.4 trait resolution.
+# 06 - Interfaces and implementations
+# Spec: §4.4 interfaces with default methods, `Type implements Interface:`,
+# `Type has:`, associated functions and marker interfaces; §5.4 interface
+# resolution, associated types and operator interfaces.
 #
-# Covers: a trait with a required method, a trait with a default method that
-# calls the required one, several impls of the same trait, a trait with more
-# than one required method, a generic trait implemented for a generic type,
-# an inherent `impl` with an associated function, a block-less marker impl,
-# and impls of the library traits the compiler knows about (§5.4).
+# Covers: an interface with a required method, an interface with a default
+# method that calls the required one, several implementations of the same
+# interface, an interface with more than one required method, an interface with
+# an associated type, an inherent block with an associated function, a one-line
+# marker implementation, the operator interfaces, and the library interfaces of
+# §5.4.
 
-struct Doc:
+type Doc:
     title: String
     body: String
 
-struct Note:
+type Note:
     text: String
 
-struct Pair[A, B]:
+type Pair of (A, B):
     first: A
     second: B
 
-struct Position:
+type Position:
     line: U32
     column: U32
 
 # §8 gives `String` no `clone`; an owned copy comes out of `String.new()` and
 # `push_str`, which is all §8 offers for building one.
-fn copy_of(text: &String) -> String:
-    let mut out = String.new()
+function copy_of(text: borrowed String) -> String:
+    let mutable out be String.new()
     out.push_str(text)
     out
 
-# A trait with one required method and one default method.
-trait Summarize:
-    fn summarize(&self) -> String
+# An interface with one required method and one default method.
+interface Summarize:
+    function summarize(self) -> String
 
-    # The default body may call any other method of the trait.
-    fn preview(&self) -> String:
+    # The default body may call any other method of the interface.
+    function preview(self) -> String:
         self.summarize().truncate(80)
 
     # Defaults may be several, and may call each other.
-    fn headline(&self) -> String:
-        let mut out = String.new()
+    function headline(self) -> String:
+        let mutable out be String.new()
         out.push_str("# ")
-        out.push_str(&self.preview())
+        out.push_str(self.preview())
         out
 
-impl Summarize for Doc:
-    fn summarize(&self) -> String:
+Doc implements Summarize:
+    function summarize(self) -> String:
         self.body.truncate(200)
 
-impl Summarize for Note:
+Note implements Summarize:
     # Only the required method: the defaults are inherited as written.
-    fn summarize(&self) -> String:
-        copy_of(&self.text)
+    function summarize(self) -> String:
+        copy_of(self.text)
 
     # A default may also be overridden.
-    fn preview(&self) -> String:
+    function preview(self) -> String:
         self.text.truncate(20)
 
-# A trait with several required methods and no defaults.
-trait Render:
-    fn render(&self) -> String
-    fn width(&self) -> Int
+# An interface with several required methods and no defaults.
+interface Render:
+    function render(self) -> String
+    function width(self) -> Int
 
-impl Render for Doc:
-    fn render(&self) -> String:
-        copy_of(&self.title)
+Doc implements Render:
+    function render(self) -> String:
+        copy_of(self.title)
 
-    fn width(&self) -> Int:
-        self.title.len()
+    function width(self) -> Int:
+        self.title.length()
 
-# A trait whose method takes an exclusive borrow of `self`.
-trait Reset:
-    fn reset(&mut self)
+# An interface whose method takes an exclusive borrow of the receiver. `self` is
+# the shared receiver; `mutable self` is the exclusive one (§5.4).
+interface Reset:
+    function reset(mutable self)
 
-impl Reset for Note:
-    fn reset(&mut self):
-        self.text = ""
+Note implements Reset:
+    function reset(mutable self):
+        self.text be ""
 
-# A trait whose method takes `self` by value. Such a trait is not `dyn`
-# compatible (§4.3) and can only be used through static dispatch.
-trait IntoTitle:
-    fn into_title(self) -> String
+# An interface whose method consumes the receiver. Such an interface is not
+# usable
+# through `any Interface` and can only be dispatched statically.
+#
+# NOTE: §4.3 gives `self` and §5.4 gives `mutable self`, and neither is a
+# by-value receiver, so the consuming form is written as an ordinary
+# parameter with an explicit type. See `examples/README.md`.
+interface IntoTitle:
+    function into_title(self: Self) -> String
 
-impl IntoTitle for Note:
-    fn into_title(self) -> String:
+Note implements IntoTitle:
+    function into_title(self: Self) -> String:
         self.text
 
-# A generic trait, implemented for a generic type. With no associated types
-# in F0 (§5.4) a type parameter on the trait is the only way to write this.
-# `swapped` takes `self` by value so that the fields can be moved out: `Pair`
-# carries no `Clone` bound.
-trait Swap[T]:
-    fn swapped(self) -> T
+# --- Associated types -------------------------------------------------------
 
-impl Swap[Pair[B, A]] for Pair[A, B]:
-    fn swapped(self) -> Pair[B, A]:
+# An associated type lets an interface name a type it produces rather than
+# take it
+# as a parameter. Without them `Iterate` cannot name its element type and no
+# generic container interface can be written (§5.4).
+interface Iterate:
+    type Item
+    function next(mutable self) -> Option of Self.Item
+
+type Countdown:
+    remaining: Int
+
+Countdown implements Iterate:
+    type Item is Int
+
+    function next(mutable self) -> Option of Self.Item:
+        if self.remaining <= 0:
+            None
+        else:
+            self.remaining be self.remaining - 1
+            Some(self.remaining)
+
+# A second implementation with a different `Item`, which is the point: the
+# element type belongs to the implementation, not to the interface.
+type Letters:
+    glyphs: Array of Char
+    cursor: Int
+
+Letters implements Iterate:
+    type Item is Char
+
+    function next(mutable self) -> Option of Self.Item:
+        let found be self.glyphs.get(self.cursor)
+        self.cursor be self.cursor + 1
+        found
+
+# An interface with an associated type used as a bound: `Swap` produces a
+# type the
+# implementation names.
+interface Swap:
+    type Swapped
+    function swapped(self: Self) -> Self.Swapped
+
+Pair of (A, B) implements Swap:
+    type Swapped is Pair of (B, A)
+
+    function swapped(self: Self) -> Self.Swapped:
         Pair(first: self.second, second: self.first)
 
-# --- Inherent impls ---------------------------------------------------------
+# --- Operator interfaces ----------------------------------------------------
 
-# Methods that come from no trait at all. One with no `self` receiver is an
-# associated function and is called through the type (§4.3).
-impl Note:
-    fn new(text: String) -> Note:
+# `+ - * / % ** @` and comparison are interface methods, so a user type
+# takes part in arithmetic (§5.4).
+type Vector2:
+    x: F64
+    y: F64
+
+Vector2 implements Add:
+    function add(self, other: Vector2) -> Vector2:
+        Vector2(x: self.x + other.x, y: self.y + other.y)
+
+Vector2 implements Sub:
+    function sub(self, other: Vector2) -> Vector2:
+        Vector2(x: self.x - other.x, y: self.y - other.y)
+
+Vector2 implements Mul:
+    function mul(self, scale: F64) -> Vector2:
+        Vector2(x: self.x * scale, y: self.y * scale)
+
+Vector2 implements Neg:
+    function neg(self) -> Vector2:
+        Vector2(x: -self.x, y: -self.y)
+
+Vector2 implements Eq:
+    function eq(self, other: Vector2) -> Bool:
+        self.x is other.x and self.y is other.y
+
+Vector2 implements Copy
+
+# `Display` is what `print` requires, and it is the same interface F1's notebook
+# rendering will extend (§5.4).
+Vector2 implements Display:
+    function display(self) -> String:
+        let mutable out be String.new()
+        out.push_str("a vector")
+        out
+
+# --- Inherent methods -------------------------------------------------------
+
+# Methods that come from no interface at all. One with no `self` receiver is an
+# associated function and is called through the type (§4.4).
+Note has:
+    function new(text: String) -> Note:
         Note(text: text)
 
-    fn empty() -> Note:
+    function empty() -> Note:
         Note(text: String.new())
 
-    fn is_empty(&self) -> Bool:
+    function is_empty(self) -> Bool:
         self.text.is_empty()
 
-# --- The library traits the compiler recognises (§5.4) ----------------------
+# --- The library interfaces of §5.4 -----------------------------------------
 
-impl Clone for Note:
-    fn clone(&self) -> Note:
-        Note(text: copy_of(&self.text))
+Note implements Clone:
+    function clone(self) -> Note:
+        Note(text: copy_of(self.text))
 
-impl Eq for Note:
-    fn eq(&self, other: &Note) -> Bool:
-        self.text == other.text
+Note implements Eq:
+    function eq(self, other: Note) -> Bool:
+        self.text is other.text
 
-impl Drop for Doc:
-    fn drop(&mut self):
-        println("dropping a doc")
+Note implements Ord:
+    function less(self, other: Note) -> Bool:
+        self.text.length() < other.text.length()
 
-impl From[Note] for Doc:
-    fn from(note: Note) -> Self:
+Doc implements Drop:
+    function drop(mutable self):
+        print("dropping a doc")
+
+Doc implements From of Note:
+    function from(note: Note) -> Self:
         Doc(title: "untitled", body: note.text)
 
-# A marker trait has no methods, and F0 has no empty block, so it is
-# implemented by one line with no block at all (§4.3).
-impl Copy for Position
+# A marker interface has no methods, so it is implemented on one line with no
+# block at all (§4.4).
+Position implements Copy
 
-impl Clone for Position:
-    fn clone(&self) -> Position:
+Position implements Clone:
+    function clone(self) -> Position:
         Position(line: self.line, column: self.column)
 
-fn main():
-    let doc = Doc(title: "Regions", body: "A region is a set of program points.")
-    let mut note = Note.new("inferred, never written")
+function main():
+    let doc be Doc(title: "Regions", body: "A region is a set of program points.")
+    let mutable note be Note.new("inferred, never written")
 
-    println(doc.summarize())
-    println(doc.preview())
-    println(doc.headline())
-    println(doc.render())
-    println(doc.width())
+    print(doc.summarize())
+    print(doc.preview())
+    print(doc.headline())
+    print(doc.render())
+    print(doc.width())
 
-    println(note.summarize())
-    println(note.preview())
+    print(note.summarize())
+    print(note.preview())
     note.reset()
 
-    println(Note.empty().is_empty())
+    print(Note.empty().is_empty())
 
-    let pair = Pair(first: 1, second: "one")
-    let flipped = pair.swapped()
-    println(flipped.first)
+    let pair be Pair(first: 1, second: "one")
+    let flipped be pair.swapped()
+    print(flipped.first)
+
+    # The operator interfaces, used as operators.
+    let a be Vector2(x: 1.0, y: 2.0)
+    let b be Vector2(x: 0.5, y: 0.5)
+    print(a + b)
+    print(a - b)
+    print(a * 2.0)
+    print(-a)
+
+    # `is` and `is not` are the two forms of the `Eq` interface, and they
+    # dispatch to the user's `eq` by construction, not by a parser rule that
+    # could drift (§5.4). Both appear here on purpose: an identity test reads
+    # as a sentence whether its operands are names or a whole formula.
+    print(a is b)
+    print(a + b is b + a)
+
+    for value in Countdown(remaining: 3):
+        print(value)

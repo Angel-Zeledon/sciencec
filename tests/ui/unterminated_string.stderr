@@ -1,5 +1,5 @@
 error[SC0007]: unterminated string literal
- --> tests/ui/unterminated_string.science:7:20
+ --> tests/ui/unterminated_string.science:7:21
   |
-7 |     let greeting = "hello
-  |                    ^^^^^^ this string has no closing `"`
+7 |     let greeting be "hello
+  |                     ^^^^^^ this string has no closing `"`

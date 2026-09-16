@@ -1,0 +1,18 @@
+---
+source: crates/science-parser/tests/parse_traits.rs
+expression: "parse_source(r#\"interface Shape:\n    function area(self) -> Int\n    function scale(mutable self) -> Int\n    function consume(self: Self) -> Int\n\"#)"
+---
+Module @0..128
+  Interface `Shape` @0..127
+    methods
+      Fn `area` @21..47
+        receiver: self @35..39
+        ret: Path `Int` @44..47
+      Fn `scale` @52..87
+        receiver: mutable self @67..79
+        ret: Path `Int` @84..87
+      Fn `consume` @92..127
+        receiver: self: Self @109..119
+        ret: Path `Int` @124..127
+--- diagnostics ---
+(none)

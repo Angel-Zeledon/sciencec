@@ -1,0 +1,37 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_source_allowing_errors(concat!(\"function f(x: -1): x\\n\",\n\"type Bad is Window of (Int, -1.5)\\n\",\n\"type Worse is Window of (Int, -\\\"a\\\")\\n\",\n\"type Worst is Window of (Int, -true)\\n\",))"
+---
+Module @0..128
+  Fn `f` @0..20
+    params
+      Param `x` @11..15
+        type: Error @14..15
+  Alias `Bad` @21..54
+    type: Path `Window` @33..50
+      generics of `Window`
+        Path `Int` @44..47
+        Error @49..50
+  Alias `Worse` @55..90
+    type: Path `Window` @69..86
+      generics of `Window`
+        Path `Int` @80..83
+        Error @85..86
+  Alias `Worst` @91..127
+    type: Path `Window` @105..122
+      generics of `Window`
+        Path `Int` @116..119
+        Error @121..122
+--- diagnostics ---
+SC0104 @14..15 expected a type, found `-`
+SC0100 @15..16 expected `)`, found a number literal
+SC0100 @15..16 expected end of line, found a number literal
+SC0104 @49..50 expected a type, found `-`
+SC0100 @50..53 expected `)`, found a number literal
+SC0100 @50..53 expected end of line, found a number literal
+SC0104 @85..86 expected a type, found `-`
+SC0100 @86..89 expected `)`, found a string literal
+SC0100 @86..89 expected end of line, found a string literal
+SC0104 @121..122 expected a type, found `-`
+SC0100 @122..126 expected `)`, found `true`
+SC0100 @122..126 expected end of line, found `true`

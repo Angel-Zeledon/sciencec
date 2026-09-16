@@ -1,0 +1,19 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Function, id(\"longest\"), LParen, id(\"a\"), Colon, Borrowed,\nid(\"String\"), Comma, id(\"b\"), Colon, Borrowed, id(\"String\"), RParen, Arrow,\nBorrowed, id(\"String\"), Colon, id(\"a\"), Newline,])"
+---
+Module @0..68
+  Fn `longest` @0..68
+    params
+      Param `a` @16..32
+        type: Borrowed @18..32
+          Path `String` @26..32
+      Param `b` @33..49
+        type: Borrowed @35..49
+          Path `String` @43..49
+    ret: Borrowed @52..66
+      Path `String` @60..66
+    body: Block @67..68
+      tail: Path `a` @67..68
+--- diagnostics ---
+(none)

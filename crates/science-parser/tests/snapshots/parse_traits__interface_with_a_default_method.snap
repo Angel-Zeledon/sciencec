@@ -1,0 +1,21 @@
+---
+source: crates/science-parser/tests/parse_traits.rs
+expression: "parse_source(r#\"interface Summarize:\n    function summarize(self) -> String\n\n    function preview(self) -> String:\n        self.summarize().truncate(80)\n\"#)"
+---
+Module @0..137
+  Interface `Summarize` @0..136
+    methods
+      Fn `summarize` @25..59
+        receiver: self @44..48
+        ret: Path `String` @53..59
+      Fn `preview` @65..136
+        receiver: self @82..86
+        ret: Path `String` @91..97
+        body: Block @107..136
+          tail: Method `truncate` @107..136
+            receiver: Method `summarize` @107..123
+              receiver: Self @107..111
+            args
+              Int 80 @133..135
+--- diagnostics ---
+(none)

@@ -1,0 +1,23 @@
+---
+source: crates/science-parser/tests/migration.rs
+expression: parse_source_allowing_errors(source)
+---
+Module @0..112
+  Has @0..57
+    type: Path `Doc` @0..3
+    methods
+      Fn `new` @21..57
+        ret: Path `Doc` @39..42
+        body: Block @52..57
+          tail: Call @52..57
+            callee: Path `Doc` @52..55
+  Has @59..111
+    type: Path `Note` @59..63
+    methods
+      Fn `new` @73..111
+        ret: Path `Note` @91..95
+        body: Block @105..111
+          tail: Call @105..111
+            callee: Path `Note` @105..109
+--- diagnostics ---
+SC0141 @8..15 the inherent block is written `Type has:`

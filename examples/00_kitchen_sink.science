@@ -2,177 +2,245 @@
 #
 # Spec §11, "definition of done", condition 1:
 #
-#   `sciencec` compiles to a native binary a program that uses, all at once:
-#   generics with bounds, traits with static and dynamic dispatch, exhaustive
-#   `match` over enums, `Option` and `Result` with `?`, and a struct that
-#   stores a borrow in a field.
+#   `sciencec` compiles to a native binary a program using, at once: generics
+#   with bounds, const generics, associated types, an interface dispatched both
+#   statically and dynamically, an exhaustive `match`, `Option` and `Result`
+#   with `try`, a user type implementing operator interfaces, a range-driven
+#   loop, a closure, and a type holding a borrow in a field.
 #
-# This single file is that program. Every one of those five features is
-# marked below with the number of the requirement it satisfies. When this
+# This single file is that program. Every one of those ten requirements is
+# marked below with the number it carries in the list above. When this
 # compiles, links and runs, phase F0 is finished.
 #
-# It sticks to constructs the spec writes down literally, and calls only the
-# library methods §8 lists — that list is closed, so anything else would be a
-# spec change rather than a library detail.
+# It sticks to constructs §4 writes down literally, and calls only the
+# library surface §8 names.
 
 # ---------------------------------------------------------------------------
 # Data
 # ---------------------------------------------------------------------------
 
-struct Doc:
+type Doc:
     title: String
     body: String
 
-# (5) A struct that stores a borrow in a field. There is no lifetime syntax:
-# the region of `source` is inferred and propagated to every site that
-# instantiates `Excerpt` (§6.2).
-struct Excerpt:
-    source: &Doc
+# (10) A type that stores a borrow in a field. There is no region syntax: the
+# region of `source` is inferred and propagated to every site that builds an
+# `Excerpt` (§6.2).
+type Excerpt:
+    source: borrowed Doc
     limit: Int
 
-struct Pair[A, B]:
+type Pair of (A, B):
     first: A
     second: B
 
-# (3) The enums that the exhaustive `match`es below are taken over.
-enum Format:
+# (2) Const generics. A generic parameter may be a value as well as a type
+# (§5.3), and F1's shapes are built out of exactly this.
+type Window of (T, const WIDTH: Int):
+    items: Array of T
+
+# (5) The choices that the exhaustive `match`es below are taken over.
+choice Format:
     Plain
     Markdown
     Json
 
-enum LoadError:
+choice LoadError:
     NotFound(String)
     Malformed(String)
 
-enum ParseError:
+choice ParseError:
     Empty
     Unsupported(String)
 
-# `From` is a generic trait (§4.3): with no associated types in F0 the source
-# type is a parameter of the trait, not of the impl.
-#
-# (4) `?` propagates one error type into another through `From`.
-impl From[ParseError] for LoadError:
-    fn from(inner: ParseError) -> Self:
+# (6) `try` propagates one failure type into another through `From`.
+LoadError implements From of ParseError:
+    function from(inner: ParseError) -> Self:
         match inner:
             Empty: Malformed("empty document")
             Unsupported(what): Malformed(what)
 
-impl From[IoError] for LoadError:
-    fn from(inner: IoError) -> Self:
+LoadError implements From of IoError:
+    function from(inner: IoError) -> Self:
         NotFound("unreadable")
 
 # ---------------------------------------------------------------------------
-# Inherent impls
+# Inherent methods
 # ---------------------------------------------------------------------------
 
-# Methods that come from no trait (§4.3). A function with no `self` receiver
+# Methods that come from no interface (§4.4). A function with no `self` receiver
 # is an associated function, reached through the type.
-impl Doc:
-    fn new(title: String) -> Doc:
+Doc has:
+    function new(title: String) -> Doc:
         Doc(title: title, body: String.new())
 
-    fn heading(&self) -> Option[String]:
+    function heading(self) -> Option of String:
         if self.body.starts_with("# "):
             Some(self.body.truncate(60))
         else:
             None
 
-    fn is_empty(&self) -> Bool:
-        self.body.is_empty()
+    function is_empty(self) -> Bool:
+        self.body.length() is 0
+
+# (2) The const parameter is an ordinary value inside the body, which is what
+# makes it useful: it sizes a loop the compiler can unroll.
+Window of (T, const WIDTH: Int) has:
+    function empty() -> Window of (T, WIDTH):
+        Window(items: (Array of T).new())
+
+    function capacity(self) -> Int:
+        WIDTH
+
+    function is_full(self) -> Bool:
+        self.items.length() >= WIDTH
 
 # §8 gives `String` no `clone`, so an owned copy is built from the two
 # methods it does have.
-fn copy_of(text: &String) -> String:
-    let mut out = String.new()
+function copy_of(text: borrowed String) -> String:
+    let mutable out be String.new()
     out.push_str(text)
     out
 
 # ---------------------------------------------------------------------------
-# Traits
+# Interfaces
 # ---------------------------------------------------------------------------
 
-# A trait with one required method and one default method that calls it.
-trait Summarize:
-    fn summarize(&self) -> String
+# An interface with one required method and one default method that calls it.
+interface Summarize:
+    function summarize(self) -> String
 
-    fn preview(&self) -> String:
+    function preview(self) -> String:
         self.summarize().truncate(80)
 
-impl Summarize for Doc:
-    fn summarize(&self) -> String:
+Doc implements Summarize:
+    function summarize(self) -> String:
         self.body.truncate(200)
 
-impl Summarize for Excerpt:
-    fn summarize(&self) -> String:
+Excerpt implements Summarize:
+    function summarize(self) -> String:
         self.source.body.truncate(self.limit)
 
-# `Clone` is one of the traits the compiler recognises (§5.4); `best_of`
-# below takes it as a bound.
-impl Clone for Doc:
-    fn clone(&self) -> Doc:
-        Doc(title: copy_of(&self.title), body: copy_of(&self.body))
+# `Clone` is one of the interfaces §5.4 names; `best_of` below takes it as a
+# bound.
+Doc implements Clone:
+    function clone(self) -> Doc:
+        Doc(title: copy_of(self.title), body: copy_of(self.body))
 
-# A marker trait is implemented by a single line with no block, because F0
-# has no empty block (§4.3).
-impl Copy for Format
+# A marker interface is implemented on one line, since there is nothing to
+# indent (§4.4).
+Format implements Copy
 
 # ---------------------------------------------------------------------------
-# (1) Generics with bounds, and (2a) static dispatch
+# (3) Associated types
 # ---------------------------------------------------------------------------
 
-# A bound in the parameter list. Monomorphisation emits one specialised copy
+# `Iterate` names its element type rather than taking it as a parameter, which
+# is the whole reason associated types are in F0 (§5.4).
+interface Iterate:
+    type Item
+    function next(mutable self) -> Option of Self.Item
+
+type Countdown:
+    remaining: Int
+
+Countdown implements Iterate:
+    type Item is Int
+
+    function next(mutable self) -> Option of Self.Item:
+        if self.remaining <= 0:
+            None
+        else:
+            self.remaining be self.remaining - 1
+            Some(self.remaining)
+
+# ---------------------------------------------------------------------------
+# (7) A user type implementing operator interfaces
+# ---------------------------------------------------------------------------
+
+# `+ - * / % ** @` and comparison are interface methods, so a user type
+# takes part in arithmetic (§5.4). A scientific language in which `+` does not work on
+# your own type is not a scientific language.
+type Counts:
+    reads: Int
+    writes: Int
+
+Counts implements Add:
+    function add(self, other: Counts) -> Counts:
+        Counts(reads: self.reads + other.reads, writes: self.writes + other.writes)
+
+Counts implements Sub:
+    function sub(self, other: Counts) -> Counts:
+        Counts(reads: self.reads - other.reads, writes: self.writes - other.writes)
+
+Counts implements Neg:
+    function neg(self) -> Counts:
+        Counts(reads: -self.reads, writes: -self.writes)
+
+Counts implements Eq:
+    function eq(self, other: Counts) -> Bool:
+        self.reads is other.reads and self.writes is other.writes
+
+Counts implements Copy
+
+# ---------------------------------------------------------------------------
+# (1) Generics with bounds, and (4a) static dispatch
+# ---------------------------------------------------------------------------
+
+# A bound in the parameter list. Monomorphization emits one specialized copy
 # per instantiation (§5.3), so the call to `preview` is resolved statically.
-fn describe[T: Summarize](value: &T) -> String:
+function describe of T: Summarize(value: borrowed T) -> String:
     value.preview()
 
 # Several bounds joined by `+`, written in a `where` clause.
-fn best_of[T](left: &T, right: &T) -> String where T: Summarize + Clone:
-    if left.summarize().len() >= right.summarize().len():
+function best_of of T(left: borrowed T, right: borrowed T) -> String
+        where T: Summarize + Clone:
+    if left.summarize().length() >= right.summarize().length():
         left.preview()
     else:
         right.preview()
 
-# A generic struct built at two different instantiations.
-fn paired[A, B](first: A, second: B) -> Pair[A, B]:
+# A generic type built at two different instantiations.
+function paired of (A, B)(first: A, second: B) -> Pair of (A, B):
     Pair(first: first, second: second)
 
 # ---------------------------------------------------------------------------
-# (2b) Dynamic dispatch
+# (4b) Dynamic dispatch
 # ---------------------------------------------------------------------------
 
-# `dyn` only behind an indirection: a reference here, a `Box` below (§4.3).
-fn describe_dyn(value: &dyn Summarize) -> String:
+# `any Interface` only behind an indirection: a borrow here, a `Box` below
+# (§4.3).
+function describe_any(value: borrowed any Summarize) -> String:
     value.preview()
 
-fn describe_boxed(value: Box[dyn Summarize]) -> String:
+function describe_boxed(value: Box of any Summarize) -> String:
     value.summarize()
 
 # `Box` is built through its associated function, never by named-argument
-# construction: that form is for structs only (§4.3).
-fn as_summary(format: &Format) -> Box[dyn Summarize]:
+# construction: that form is for record types only (§4.4).
+function as_summary(format: borrowed Format) -> Box of any Summarize:
     match format:
         Json: Box.new(Doc(title: "json", body: "{}"))
         Plain: Box.new(Doc(title: "plain", body: "..."))
         Markdown: Box.new(Doc(title: "markdown", body: "# ..."))
 
 # ---------------------------------------------------------------------------
-# (3) Exhaustive `match` over enums
+# (5) Exhaustive `match`
 # ---------------------------------------------------------------------------
 
-# Every variant is listed; there is no wildcard arm. A missing variant is
-# SC0210 and the diagnostic lists what is missing (§11.3).
-fn extension(format: &Format) -> String:
+# Every variant is listed; there is no wildcard arm. A missing variant is an
+# error in the `SC0250` range and the diagnostic lists what is missing (§11.3).
+function extension(format: borrowed Format) -> String:
     match format:
         Plain: "txt"
         Markdown: "md"
         Json: "json"
 
 # Variant patterns that bind their payload, in block form.
-fn explain(error: &LoadError) -> String:
+function explain(error: borrowed LoadError) -> String:
     match error:
         NotFound(path):
-            let mut out = String.new()
+            let mutable out be String.new()
             out.push_str("not found: ")
             out.push_str(path)
             out
@@ -180,19 +248,20 @@ fn explain(error: &LoadError) -> String:
             copy_of(detail)
 
 # ---------------------------------------------------------------------------
-# (4) `Option` and `Result` with `?`
+# (6) `Option` and `Result` with `try`
 # ---------------------------------------------------------------------------
 
-fn shorten(text: &String, limit: Int) -> Option[String]:
+function shorten(text: borrowed String, limit: Int) -> Option of String:
     if text.is_empty(): None else: Some(text.truncate(limit))
 
-# `?` on `Option`: unwrap `Some`, or return `None` from the enclosing function.
-fn first_heading(doc: &Doc) -> Option[String]:
-    let heading = doc.heading()?
-    let trimmed = shorten(&heading, 40)?
+# `try` on `Option`: unwrap `Some`, or return `None` from the enclosing
+# function.
+function first_heading(doc: borrowed Doc) -> Option of String:
+    let heading be try doc.heading()
+    let trimmed be try shorten(heading, 40)
     Some(trimmed)
 
-fn parse_format(name: &String) -> Result[Format, ParseError]:
+function parse_format(name: borrowed String) -> Result of (Format, ParseError):
     if name.is_empty():
         Err(Empty)
     else:
@@ -202,50 +271,111 @@ fn parse_format(name: &String) -> Result[Format, ParseError]:
             "json": Ok(Json)
             other: Err(Unsupported(copy_of(other)))
 
-# `?` on `Result`, twice, the first widening `IoError` and the second
-# `ParseError` into `LoadError` through the `From` impls above.
-fn load(path: &String) -> Result[Doc, LoadError]:
-    let text = read_file(path)?
-    let format = parse_format(path)?
-    Ok(Doc(title: extension(&format), body: text))
+# `try` on `Result`, twice: the first widens `IoError` and the second
+# `ParseError` into `LoadError` through the `From` implementations above.
+function load(path: borrowed String) -> Result of (Doc, LoadError):
+    let text be try read_file(path)
+    let format be try parse_format(path)
+    Ok(Doc(title: extension(format), body: text))
+
+# ---------------------------------------------------------------------------
+# (8) A range-driven loop, and (9) a closure
+# ---------------------------------------------------------------------------
+
+# `0..n` is half-open and `0..=n` inclusive (§4.5). `for i in 0..n:` is
+# the counting loop.
+function ruler(width: Int) -> Int:
+    let mutable marks be 0
+    for i in 0..width:
+        if i % 5 is 0:
+            marks be marks + 1
+    marks
+
+# (9) A closure, in the chain that is the shape most Science code takes
+# (§4.6). `each` names the subject of the enclosing call without declaring
+# it; `name giving expression` declares it where `each` will not do.
+function headlines(docs: borrowed Array of Doc) -> Array of String:
+    docs
+        .iterate()
+        .discard(each.is_empty())
+        .map(each.title)
+        .take(5)
+        .collect()
+
+function by_length(docs: borrowed Array of Doc) -> Array of String:
+    docs
+        .iterate()
+        .map(doc giving doc.summarize())
+        .sort(by: line giving line.length())
+        .collect()
 
 # ---------------------------------------------------------------------------
 # Everything at once
 # ---------------------------------------------------------------------------
 
-fn main():
-    let doc = Doc(title: "Regions", body: "# A region is a set of program points.")
+function main():
+    let doc be Doc(title: "Regions", body: "# A region is a set of program points.")
 
-    # (5) The struct holding the borrow, built from a local.
-    let excerpt = Excerpt(source: &doc, limit: 40)
+    # (10) The type holding the borrow, built from a local.
+    let excerpt be Excerpt(source: borrowed doc, limit: 40)
 
-    # (1) and (2a): generics with bounds, dispatched statically.
-    println(describe(&doc))
-    println(describe(&excerpt))
-    println(best_of(&doc, &doc))
+    # (1) and (4a): generics with bounds, dispatched statically.
+    print(describe(doc))
+    print(describe(excerpt))
+    print(best_of(doc, doc))
 
-    # (2b): the same trait, dispatched dynamically.
-    println(describe_dyn(&doc))
-    println(describe_dyn(&excerpt))
-    println(describe_boxed(as_summary(&Markdown)))
+    # (4b): the same interface, dispatched dynamically.
+    print(describe_any(doc))
+    print(describe_any(excerpt))
+    print(describe_boxed(as_summary(Markdown)))
 
-    # (3): exhaustive matches.
-    println(extension(&Json))
-    println(explain(&NotFound("link.toml")))
+    # (5): exhaustive matches.
+    print(extension(Json))
+    print(explain(NotFound("science.toml")))
 
-    # (4): `Option` and `Result`, both consumed by an exhaustive `match`.
-    match first_heading(&doc):
-        Some(heading): println(heading)
-        None: println("no heading")
+    # (6): `Option` and `Result`, both consumed by an exhaustive `match`.
+    match first_heading(doc):
+        Some(heading): print(heading)
+        None: print("no heading")
 
-    match load("link.toml"):
-        Ok(loaded): println(describe(&loaded))
-        Err(e): println(explain(&e))
+    match load("science.toml"):
+        Ok(loaded): print(describe(loaded))
+        Err(e): print(explain(e))
+
+    # (2): a const generic instantiated at a literal width. A generic type
+    # needs parentheses before the `.`, because `Window of (Int, 4).empty()`
+    # would not say whether `.empty()` belongs to `4` or to the whole type
+    # (§4.3, SC0116).
+    let window be (Window of (Int, 4)).empty()
+    print(window.capacity())
+    print(window.is_full())
+
+    # (3): the associated type, walked by `for`.
+    for value in Countdown(remaining: 3):
+        print(value)
+
+    # (7): the operator interfaces. `is` and `is not` are the two forms of
+    # `Eq`, so the user implementation below answers both of them.
+    let one be Counts(reads: 3, writes: 1)
+    let two be Counts(reads: 4, writes: 2)
+    let total be one + two
+    print(total.reads)
+    print((two - one).writes)
+    print((-one).reads)
+    print(one is two)
+
+    # (8): the range-driven loop.
+    print(ruler(20))
+
+    # (9): the closures, in chains.
+    let docs be (Array of Doc).new()
+    print(headlines(docs).length())
+    print(by_length(docs).length())
 
     # An associated function called through the type, and an inherent method.
-    let empty = Doc.new("scratch")
-    println(empty.is_empty())
+    let empty be Doc.new("scratch")
+    print(empty.is_empty())
 
-    let pair = paired(1, "one")
-    println(pair.first)
-    println(pair.second)
+    let pair be paired(1, "one")
+    print(pair.first)
+    print(pair.second)

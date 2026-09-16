@@ -1,0 +1,11 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Type, id(\"Doc\"), Newline, Type, id(\"Other\"), Colon, Newline,\nIndent, id(\"title\"), Colon, id(\"String\"), Newline, Dedent,])"
+---
+Module @0..29
+  Record `Other` @7..29
+    fields
+      Field `title` @17..29
+        type: Path `String` @23..29
+--- diagnostics ---
+SC0100 @7..7 expected `:` to open the type's fields or `is` to alias it, found end of line

@@ -114,11 +114,122 @@ impl DumpIn for Item {
         // its own — the parser's dump makes the same choice.
         match &self.kind {
             ItemKind::Fn(node) => node.dump_in(defs, w),
-            ItemKind::Struct(node) => node.dump_in(defs, w),
-            ItemKind::Enum(node) => node.dump_in(defs, w),
-            ItemKind::Trait(node) => node.dump_in(defs, w),
+            ItemKind::Record(node) => node.dump_in(defs, w),
+            ItemKind::Choice(node) => node.dump_in(defs, w),
+            ItemKind::Alias(node) => node.dump_in(defs, w),
+            ItemKind::Const(node) => node.dump_in(defs, w),
+            ItemKind::Interface(node) => node.dump_in(defs, w),
             ItemKind::Impl(node) => node.dump_in(defs, w),
+            ItemKind::Extern(node) => node.dump_in(defs, w),
         }
+    }
+}
+
+impl DumpIn for ExternBlock {
+    fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
+        let mut header = format!("Extern {:?}", self.abi);
+        if self.is_unsafe {
+            header.push_str(" unsafe");
+        }
+        w.node(&header, self.span, |w| {
+            match &self.library {
+                Some(library) => library.dump_in(defs, w),
+                None => w.note("library (none)"),
+            }
+            w.list("items", &nodes(defs, &self.items));
+        });
+    }
+}
+
+impl DumpIn for ExternLibrary {
+    fn dump_in(&self, _defs: &DefTable, w: &mut DumpWriter) {
+        let mut header = format!("Library {:?}", self.name);
+        if self.static_link {
+            header.push_str(" static");
+        }
+        if self.when_available {
+            header.push_str(" when-available");
+        }
+        if let Some(module) = &self.pkg_config {
+            header.push_str(&format!(" pkg-config {module:?}"));
+        }
+        w.leaf(&header, self.span);
+    }
+}
+
+impl DumpIn for ExternItem {
+    fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
+        // As in the parser dump, the wrapper span only repeats its child's.
+        match &self.kind {
+            ExternItemKind::Fn(node) => node.dump_in(defs, w),
+            ExternItemKind::Alias(node) => node.dump_in(defs, w),
+            ExternItemKind::Const(node) => node.dump_in(defs, w),
+            ExternItemKind::Static(node) => node.dump_in(defs, w),
+            ExternItemKind::Union(node) => node.dump_in(defs, w),
+        }
+    }
+}
+
+impl DumpIn for ExternFn {
+    fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
+        let mut header = defined(defs, "ExternFn", self.def);
+        if self.variadic {
+            header.push_str(" variadic");
+        }
+        if let Some(symbol) = &self.symbol {
+            header.push_str(&format!(" symbol {symbol:?}"));
+        }
+        w.node(&header, self.span, |w| {
+            w.list("params", &nodes(defs, &self.params));
+            if let Some(ret) = &self.ret {
+                w.child("ret", &Node(defs, ret));
+            }
+        });
+    }
+}
+
+impl DumpIn for ExternAlias {
+    fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
+        let header = defined(defs, "ExternAlias", self.def);
+        w.node(&header, self.span, |w| w.child("type", &Node(defs, &self.ty)));
+    }
+}
+
+impl DumpIn for ExternConst {
+    fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
+        let mut header = defined(defs, "ExternConst", self.def);
+        if self.negative {
+            header.push_str(" negative");
+        }
+        w.node(&header, self.span, |w| {
+            w.note(&format!("value: {}", literal_header(&self.value)));
+            w.child("type", &Node(defs, &self.ty));
+        });
+    }
+}
+
+impl DumpIn for ExternStatic {
+    fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
+        let header = defined(defs, "ExternStatic", self.def);
+        w.node(&header, self.span, |w| w.child("type", &Node(defs, &self.ty)));
+    }
+}
+
+impl DumpIn for ExternUnion {
+    fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
+        let header = defined(defs, "ExternUnion", self.def);
+        w.node(&header, self.span, |w| {
+            w.note(&format!("size: {}", layout_number(self.size)));
+            w.note(&format!("align: {}", layout_number(self.align)));
+        });
+    }
+}
+
+/// A foreign union size or alignment, or that it was missing and reported.
+fn layout_number(value: Option<u128>) -> String {
+    match value {
+        Some(value) => value.to_string(),
+        None => "(none)".to_string(),
     }
 }
 
@@ -145,10 +256,20 @@ impl DumpIn for Fn {
 
 impl DumpIn for GenericParam {
     fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
-        let header = defined(defs, "TypeParam", self.def);
-        w.node(&header, self.span, |w| {
-            w.list("bounds", &nodes(defs, &self.bounds));
-        });
+        match &self.kind {
+            GenericParamKind::Type { bounds } => {
+                let header = defined(defs, "TypeParam", self.def);
+                w.node(&header, self.span, |w| {
+                    w.list("bounds", &nodes(defs, bounds));
+                });
+            }
+            GenericParamKind::Const { ty } => {
+                let header = defined(defs, "ConstParam", self.def);
+                w.node(&header, self.span, |w| {
+                    w.child("type", &Node(defs, ty));
+                });
+            }
+        }
     }
 }
 
@@ -174,9 +295,9 @@ impl DumpIn for SelfParam {
     fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
         let mut header = defined(defs, "SelfParam", self.def);
         match self.kind {
-            SelfKind::Value => {}
-            SelfKind::Ref => header.push_str(" &"),
-            SelfKind::RefMut => header.push_str(" &mut"),
+            SelfKind::Shared => {}
+            SelfKind::Mutable => header.push_str(" mutable"),
+            SelfKind::Value => header.push_str(" by value"),
         }
         w.leaf(&header, self.span);
     }
@@ -191,9 +312,9 @@ impl DumpIn for Param {
     }
 }
 
-impl DumpIn for Struct {
+impl DumpIn for Record {
     fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
-        let header = defined(defs, "Struct", self.def);
+        let header = defined(defs, "Record", self.def);
         w.node(&header, self.span, |w| {
             w.list("generics", &nodes(defs, &self.generics));
             w.list("where", &nodes(defs, &self.where_clause));
@@ -211,9 +332,9 @@ impl DumpIn for Field {
     }
 }
 
-impl DumpIn for Enum {
+impl DumpIn for Choice {
     fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
-        let header = defined(defs, "Enum", self.def);
+        let header = defined(defs, "Choice", self.def);
         w.node(&header, self.span, |w| {
             w.list("generics", &nodes(defs, &self.generics));
             w.list("where", &nodes(defs, &self.where_clause));
@@ -231,15 +352,52 @@ impl DumpIn for Variant {
     }
 }
 
-impl DumpIn for Trait {
+impl DumpIn for Alias {
     fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
-        let header = defined(defs, "Trait", self.def);
+        let header = defined(defs, "Alias", self.def);
         w.node(&header, self.span, |w| {
             w.list("generics", &nodes(defs, &self.generics));
-            w.list("supertraits", &nodes(defs, &self.supertraits));
+            w.child("type", &Node(defs, &self.ty));
+        });
+    }
+}
+
+impl DumpIn for Const {
+    fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
+        let header = defined(defs, "Const", self.def);
+        w.node(&header, self.span, |w| {
+            if let Some(ty) = &self.ty {
+                w.child("type", &Node(defs, ty));
+            }
+            w.child("value", &Node(defs, &self.value));
+        });
+    }
+}
+
+impl DumpIn for Interface {
+    fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
+        let header = defined(defs, "Interface", self.def);
+        w.node(&header, self.span, |w| {
+            w.list("generics", &nodes(defs, &self.generics));
+            w.list("supers", &nodes(defs, &self.supers));
             w.list("where", &nodes(defs, &self.where_clause));
+            w.list("assoc types", &nodes(defs, &self.assoc_types));
             w.list("methods", &nodes(defs, &self.methods));
         });
+    }
+}
+
+impl DumpIn for AssocType {
+    fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
+        let header = defined(defs, "AssocType", self.def);
+        match &self.ty {
+            // An interface declares the name and stops there; printing an
+            // empty child would suggest something went missing.
+            None => w.leaf(&header, self.span),
+            Some(ty) => w.node(&header, self.span, |w| {
+                w.child("is", &Node(defs, ty));
+            }),
+        }
     }
 }
 
@@ -248,11 +406,12 @@ impl DumpIn for Impl {
         let header = format!("Impl {}", self.def);
         w.node(&header, self.span, |w| {
             w.list("generics", &nodes(defs, &self.generics));
-            if let Some(trait_) = &self.trait_ {
-                w.child("trait", &Node(defs, trait_));
+            if let Some(interface) = &self.interface {
+                w.child("interface", &Node(defs, interface));
             }
             w.child("for", &Node(defs, &self.self_ty));
             w.list("where", &nodes(defs, &self.where_clause));
+            w.list("assoc types", &nodes(defs, &self.assoc_types));
             w.list("methods", &nodes(defs, &self.methods));
         });
     }
@@ -269,14 +428,14 @@ impl DumpIn for Type {
                     w.list("generics", &nodes(defs, generics));
                 });
             }
-            TypeKind::Ref { mutable, inner } => {
-                let mut header = "Ref".to_string();
-                flag(&mut header, *mutable, "mut");
+            TypeKind::Borrowed { mutable, inner } => {
+                let mut header = "Borrowed".to_string();
+                flag(&mut header, *mutable, "mutable");
                 w.node(&header, self.span, |w| {
                     Node(defs, inner.as_ref()).dump_node(w);
                 });
             }
-            TypeKind::Dyn(bound) => w.node("Dyn", self.span, |w| {
+            TypeKind::Any(bound) => w.node("Any", self.span, |w| {
                 Node(defs, bound).dump_node(w);
             }),
             TypeKind::Tuple(elems) => w.node("Tuple", self.span, |w| {
@@ -286,6 +445,24 @@ impl DumpIn for Type {
             TypeKind::SelfType(res) => {
                 w.leaf(&format!("SelfType {}", arrow(defs, *res)), self.span)
             }
+            TypeKind::SelfAssoc { res, name } => w.leaf(
+                &format!("SelfAssoc `{}` {}", name.name, arrow(defs, *res)),
+                self.span,
+            ),
+            // The parser's `ConstArg`, under this phase's name for it. The
+            // root shares the argument's span, so the two share a line; see
+            // the parser's dump for the rule.
+            TypeKind::Const(value) => match &value.kind {
+                ConstExprKind::Lit(literal) => {
+                    w.leaf(&format!("Const {}", literal_header(literal)), self.span)
+                }
+                // `ConstExpr` is the parser's node, re-exported rather than
+                // redefined, so its `Dump` is the parser's too: there is one
+                // rendering of a const expression, not two that could drift.
+                ConstExprKind::Neg(operand) => {
+                    w.node("Const Neg", self.span, |w| operand.dump_node(w))
+                }
+            },
             TypeKind::Error => w.leaf("Error", self.span),
         }
     }
@@ -309,7 +486,7 @@ impl DumpIn for Stmt {
         match &self.kind {
             StmtKind::Let(decl) => {
                 let mut header = defined(defs, "Let", decl.def);
-                flag(&mut header, decl.mutable, "mut");
+                flag(&mut header, decl.mutable, "mutable");
                 w.node(&header, decl.span, |w| {
                     if let Some(ty) = &decl.ty {
                         w.child("type", &Node(defs, ty));
@@ -405,12 +582,29 @@ impl DumpIn for Expr {
             ExprKind::Try(inner) => w.node("Try", self.span, |w| {
                 Node(defs, inner.as_ref()).dump_node(w);
             }),
-            ExprKind::Ref { mutable, expr } => {
-                let mut header = "Ref".to_string();
-                flag(&mut header, *mutable, "mut");
+            ExprKind::Borrowed { mutable, expr } => {
+                let mut header = "Borrowed".to_string();
+                flag(&mut header, *mutable, "mutable");
                 w.node(&header, self.span, |w| {
                     Node(defs, expr.as_ref()).dump_node(w);
                 });
+            }
+            ExprKind::Range { start, end, inclusive } => {
+                let mut header = "Range".to_string();
+                flag(&mut header, *inclusive, "inclusive");
+                w.node(&header, self.span, |w| {
+                    w.child("start", &Node(defs, start.as_ref()));
+                    w.child("end", &Node(defs, end.as_ref()));
+                });
+            }
+            ExprKind::Closure { param, body } => {
+                let header = defined(defs, "Closure", *param);
+                w.node(&header, self.span, |w| {
+                    w.child("body", &Node(defs, body.as_ref()));
+                });
+            }
+            ExprKind::Each(res) => {
+                w.leaf(&format!("Each {}", arrow(defs, *res)), self.span)
             }
             ExprKind::If(if_expr) => w.node("If", self.span, |w| {
                 w.child("cond", &Node(defs, if_expr.cond.as_ref()));
@@ -423,10 +617,6 @@ impl DumpIn for Expr {
                 w.child("scrutinee", &Node(defs, match_expr.scrutinee.as_ref()));
                 w.list("arms", &nodes(defs, &match_expr.arms));
             }),
-            ExprKind::While { cond, body } => w.node("While", self.span, |w| {
-                w.child("cond", &Node(defs, cond.as_ref()));
-                w.child("body", &Node(defs, body));
-            }),
             ExprKind::Loop { body } => w.node("Loop", self.span, |w| {
                 w.child("body", &Node(defs, body));
             }),
@@ -435,8 +625,27 @@ impl DumpIn for Expr {
                 w.child("iter", &Node(defs, iter.as_ref()));
                 w.child("body", &Node(defs, body));
             }),
+            ExprKind::Unsafe(body) => w.node("Unsafe", self.span, |w| {
+                w.child("body", &Node(defs, body));
+            }),
             ExprKind::Block(block) => block.dump_in(defs, w),
             ExprKind::Error => w.leaf("Error", self.span),
+        }
+    }
+}
+
+impl DumpIn for Arg {
+    fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
+        // The label is not a reference and has no arrow: there is nothing in
+        // any scope for it to point at. See `Resolver::resolve_args`.
+        match &self.name {
+            None => self.value.dump_in(defs, w),
+            Some(name) => {
+                let header = format!("Arg `{}` (a label, not a name)", name.name);
+                w.node(&header, self.span, |w| {
+                    Node(defs, &self.value).dump_node(w);
+                });
+            }
         }
     }
 }
@@ -468,7 +677,7 @@ impl DumpIn for Pattern {
             PatternKind::Literal(literal) => w.leaf(&literal_header(literal), self.span),
             PatternKind::Binding { mutable, def } => {
                 let mut header = defined(defs, "Binding", *def);
-                flag(&mut header, *mutable, "mut");
+                flag(&mut header, *mutable, "mutable");
                 w.leaf(&header, self.span);
             }
             PatternKind::Variant { res, elems } => {

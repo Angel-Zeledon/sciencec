@@ -2,65 +2,175 @@
 source: crates/science-parser/tests/ast_dump.rs
 expression: body.dump()
 ---
-Block @0..249
-  Let `count` mut @0..22
-    type: Path `I64` @15..18
-    value: Int 0 @21..22
-  Let `d` @23..57
-    value: StructLit `Doc` @31..57
+Block @0..830
+  Let `count` mutable @0..26
+    type: Path `Int` @18..21
+    value: Int 0 @25..26
+  Let `d` @30..64
+    value: StructLit `Doc` @39..64
       fields
-        FieldInit `title` @35..45
-          value: Str "a" @42..45
-        FieldInit `body` @47..56
-          value: Str "b" @53..56
-  Assign @60..88
-    target: Path `count` @60..65
-    value: Binary `+` @68..88
-      lhs: Path `count` @68..73
-      rhs: Binary `*` @76..88
-        lhs: Int 1 hex u8 @76..82
-        rhs: Float 2.5 @85..88
-  Cast @90..121
-    expr: Field `value` @90..114
-      base: Try @90..108
-        Method `get` @90..107
-          receiver: Path `items` @90..95
+        FieldInit `title` @43..53
+          value: Str "a" @50..53
+        FieldInit `body` @55..64
+          value: Str "b" @61..64
+  Assign @70..99
+    target: Path `count` @70..75
+    value: Binary `+` @79..99
+      lhs: Path `count` @79..84
+      rhs: Binary `**` @87..99
+        lhs: Int 1 hex u8 @87..93
+        rhs: Float 2.5 @96..99
+  Cast @105..147
+    expr: Try @105..139
+      Field `value` @109..139
+        base: Method `get` @109..133
+          receiver: Path `items` @109..114
           generics
-            Path `I32` @100..103
+            Path `Int` @122..125
           args
-            Int 0 @105..106
-    type: Path `I32` @118..121
-  Call @123..154
-    callee: Index @123..130
-      base: Path `grid` @123..127
-      index: Path `i` @128..129
+            Int 0 @131..132
+    type: Path `Int` @144..147
+  Call @155..199
+    callee: Index @155..163
+      base: Path `grid` @155..159
+      index: Path `i` @160..161
     args
-      Ref mut @131..139
-        Path `buf` @136..139
-      Unary `not` @141..149
-        Path `flag` @145..149
-      Unary `-` @151..153
-        Int 1 @152..153
-  If @156..171
-    cond: Path `a` @159..160
-    then: Block @162..163
-      tail: Path `b` @162..163
-    else: Block @170..171
-      tail: Path `c` @170..171
-  While @173..232
-    cond: Path `a` @179..180
-    body: Block @190..232
-      Loop @190..232
-        body: Block @196..232
-          For @196..232
-            pattern: Binding `x` @200..201
-            iter: Path `xs` @205..207
-            body: Block @209..232
-              Continue @209..217
-              Break @218..225
-                value: Path `x` @224..225
-              Return @226..232
-  tail: Tuple @234..249
-    Bool true @235..239
-    Char 'a' @241..244
-    Unit @246..248
+      Borrowed mutable @164..184
+        Path `buf` @181..184
+      Unary `not` @186..194
+        Path `flag` @190..194
+      Unary `-` @196..198
+        Int 1 @197..198
+  Method `sort` @205..239
+    receiver: Path `docs` @205..209
+    args
+      Arg `by` @215..238
+        value: Closure @219..238
+          param: Ident `doc` @219..222
+          body: Field `title` @229..238
+            base: Path `doc` @229..232
+  Method `map` @245..266
+    receiver: Path `names` @245..250
+    args
+      Closure @255..265
+        body: Field `title` @255..265
+          base: Each @255..259
+  Let `window` @275..295
+    value: Range inclusive @289..295
+      start: Int 0 @289..290
+      end: Path `n` @294..295
+  If @300..326
+    cond: Path `a` @303..304
+    then: Block @306..307
+      tail: Path `b` @306..307
+    else: Block @325..326
+      tail: Path `c` @325..326
+  Loop @335..421
+    body: Block @345..421
+      Loop @345..421
+        body: Block @351..421
+          For @351..421
+            pattern: Binding `x` @360..361
+            iter: Range @365..369
+              start: Int 0 @365..366
+              end: Path `n` @368..369
+            body: Block @370..421
+              Continue @370..378
+              Break @380..386
+                value: Path `x` @385..386
+              Break @390..395
+              Return @398..410
+                value: Path `count` @405..410
+              Return @415..421
+  Borrowed @430..442
+    Path `doc` @439..442
+  Tuple @450..610
+    Binary `+` @450..455
+      lhs: Path `a` @450..451
+      rhs: Path `b` @454..455
+    Binary `-` @458..463
+      lhs: Path `a` @458..459
+      rhs: Path `b` @462..463
+    Binary `*` @466..471
+      lhs: Path `a` @466..467
+      rhs: Path `b` @470..471
+    Binary `/` @474..479
+      lhs: Path `a` @474..475
+      rhs: Path `b` @478..479
+    Binary `%` @482..487
+      lhs: Path `a` @482..483
+      rhs: Path `b` @486..487
+    Binary `**` @490..495
+      lhs: Path `a` @490..491
+      rhs: Path `b` @494..495
+    Binary `@` @498..503
+      lhs: Path `a` @498..499
+      rhs: Path `b` @502..503
+    Binary `<<` @506..511
+      lhs: Path `a` @506..507
+      rhs: Path `b` @510..511
+    Binary `>>` @514..519
+      lhs: Path `a` @514..515
+      rhs: Path `b` @518..519
+    Binary `&` @522..527
+      lhs: Path `a` @522..523
+      rhs: Path `b` @526..527
+    Binary `^` @530..535
+      lhs: Path `a` @530..531
+      rhs: Path `b` @534..535
+    Binary `|` @538..543
+      lhs: Path `a` @538..539
+      rhs: Path `b` @542..543
+    Binary `==` @546..551
+      lhs: Path `a` @546..547
+      rhs: Path `b` @550..551
+    Binary `!=` @554..559
+      lhs: Path `a` @554..555
+      rhs: Path `b` @558..559
+    Binary `<` @562..567
+      lhs: Path `a` @562..563
+      rhs: Path `b` @566..567
+    Binary `>` @570..575
+      lhs: Path `a` @570..571
+      rhs: Path `b` @574..575
+    Binary `<=` @578..583
+      lhs: Path `a` @578..579
+      rhs: Path `b` @582..583
+    Binary `>=` @586..591
+      lhs: Path `a` @586..587
+      rhs: Path `b` @590..591
+    Binary `and` @594..599
+      lhs: Path `a` @594..595
+      rhs: Path `b` @598..599
+    Binary `or` @602..607
+      lhs: Path `a` @602..603
+      rhs: Path `b` @606..607
+  Tuple @619..648
+    Binary `==` @620..630
+      lhs: Path `count` @620..625
+      rhs: Int 0 @629..630
+    Binary `!=` @635..647
+      lhs: Path `count` @635..640
+      rhs: Int 0 @646..647
+  Error @655..665
+  Error @670..680
+  Tuple @700..796
+    Int 10 @700..706
+    Int 10 hex @708..714
+    Int 10 oct @716..722
+    Int 10 bin @724..730
+    Int 1 i8 @732..736
+    Int 1 i16 @738..742
+    Int 1 i32 @744..748
+    Int 1 i64 @750..754
+    Int 1 u8 @756..760
+    Int 1 u16 @762..766
+    Int 1 u32 @768..772
+    Int 1 u64 @774..778
+    Float 1.5 f32 @780..786
+    Float 1.5 f64 @788..794
+  tail: Tuple @810..830
+    Bool true @811..815
+    Char 'a' @817..820
+    Unit @822..824
+    Float 1.5 @826..829

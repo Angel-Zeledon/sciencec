@@ -1,0 +1,12 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Const, id(\"WIDTH\"), Be, int(768), Newline, Public, Const,\nid(\"NAME\"), Colon, id(\"String\"), Be, text(\"science\"), Newline,])"
+---
+Module @0..48
+  Const `WIDTH` @0..15
+    value: Int 768 @12..15
+  Const `NAME` public @15..48
+    type: Path `String` @31..37
+    value: Str "science" @39..48
+--- diagnostics ---
+(none)

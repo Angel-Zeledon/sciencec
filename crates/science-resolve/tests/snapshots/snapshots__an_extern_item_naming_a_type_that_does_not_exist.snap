@@ -1,0 +1,15 @@
+---
+source: crates/science-resolve/tests/snapshots.rs
+expression: "report(&module(vec![foreign]))"
+---
+Module `main` #78 @0..59
+  Extern "C" unsafe @0..59
+    Library "hdf5" @52..59
+    items
+      ExternStatic `H5T_NATIVE_DOUBLE_g` #79 @0..23
+        type: Path -> <error> @0..3
+      ExternFn `H5open` #80 @24..35
+        ret: Path -> <error> @24..28
+--- diagnostics ---
+SC0200 @0..3 cannot find `Hid` in this scope
+SC0200 @24..28 cannot find `Herr` in this scope

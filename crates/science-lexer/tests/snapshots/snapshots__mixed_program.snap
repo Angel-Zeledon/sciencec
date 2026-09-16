@@ -1,23 +1,23 @@
 ---
 source: crates/science-lexer/tests/snapshots.rs
-expression: "dump(\"\\\nuse text.parser (Token, lex)\n\nstruct Doc:\n    title: String\n    body: String\n\nfn largest[T: Ord](items: &Array[T]) -> &T:\n    let mut best = items.get(0)\n    for item in items:\n        if item > best: best = item\n    best\n\nfn read_config(path: &String) -> Result[Config, Error]:\n    let text = read_file(path)?   # early return on error\n    match parse(&text):\n        Ok(value): value\n        Err(e): panic(e)\n\")"
+expression: "dump(\"\\\nuse text.parser (Token, lex)\n\npublic type Doc:\n    title: String\n    body: String\n\nfunction largest of T(items: borrowed Array of T) -> borrowed T where T: Ord:\n    let mutable best be items.get(0)\n    for item in items:\n        if item > best: best be item\n    best\n\nfunction read_config(path: borrowed String) -> Result of (Config, Error):\n    let text be try read_file(path)   # early return on error\n    match parse(borrowed text):\n        Ok(value): value\n        Err(e): panic(e)\n\")"
 ---
 == source ==
 |use text.parser (Token, lex)
 |
-|struct Doc:
+|public type Doc:
 |    title: String
 |    body: String
 |
-|fn largest[T: Ord](items: &Array[T]) -> &T:
-|    let mut best = items.get(0)
+|function largest of T(items: borrowed Array of T) -> borrowed T where T: Ord:
+|    let mutable best be items.get(0)
 |    for item in items:
-|        if item > best: best = item
+|        if item > best: best be item
 |    best
 |
-|fn read_config(path: &String) -> Result[Config, Error]:
-|    let text = read_file(path)?   # early return on error
-|    match parse(&text):
+|function read_config(path: borrowed String) -> Result of (Config, Error):
+|    let text be try read_file(path)   # early return on error
+|    match parse(borrowed text):
 |        Ok(value): value
 |        Err(e): panic(e)
 |
@@ -33,129 +33,131 @@ expression: "dump(\"\\\nuse text.parser (Token, lex)\n\nstruct Doc:\n    title: 
   24..27    Ident("lex")
   27..28    RParen
   28..29    Newline
-  30..36    Struct
-  37..40    Ident("Doc")
-  40..41    Colon
-  41..42    Newline
-  42..46    Indent
-  46..51    Ident("title")
-  51..52    Colon
-  53..59    Ident("String")
-  59..60    Newline
-  64..68    Ident("body")
-  68..69    Colon
-  70..76    Ident("String")
-  76..77    Newline
-  78..78    Dedent
-  78..80    Fn
-  81..88    Ident("largest")
-  88..89    LBracket
-  89..90    Ident("T")
-  90..91    Colon
-  92..95    Ident("Ord")
-  95..96    RBracket
-  96..97    LParen
-  97..102   Ident("items")
- 102..103   Colon
- 104..105   Amp
- 105..110   Ident("Array")
- 110..111   LBracket
- 111..112   Ident("T")
- 112..113   RBracket
- 113..114   RParen
- 115..117   Arrow
- 118..119   Amp
- 119..120   Ident("T")
- 120..121   Colon
- 121..122   Newline
- 122..126   Indent
- 126..129   Let
- 130..133   Mut
- 134..138   Ident("best")
- 139..140   Eq
- 141..146   Ident("items")
- 146..147   Dot
- 147..150   Ident("get")
- 150..151   LParen
- 151..152   Int { value: 0, base: Dec, suffix: None }
- 152..153   RParen
- 153..154   Newline
- 158..161   For
- 162..166   Ident("item")
- 167..169   In
- 170..175   Ident("items")
- 175..176   Colon
- 176..177   Newline
- 177..185   Indent
- 185..187   If
- 188..192   Ident("item")
- 193..194   Gt
- 195..199   Ident("best")
- 199..200   Colon
- 201..205   Ident("best")
- 206..207   Eq
- 208..212   Ident("item")
- 212..213   Newline
- 217..217   Dedent
- 217..221   Ident("best")
- 221..222   Newline
- 223..223   Dedent
- 223..225   Fn
- 226..237   Ident("read_config")
- 237..238   LParen
- 238..242   Ident("path")
- 242..243   Colon
- 244..245   Amp
- 245..251   Ident("String")
- 251..252   RParen
- 253..255   Arrow
- 256..262   Ident("Result")
- 262..263   LBracket
- 263..269   Ident("Config")
- 269..270   Comma
- 271..276   Ident("Error")
- 276..277   RBracket
- 277..278   Colon
- 278..279   Newline
- 279..283   Indent
- 283..286   Let
- 287..291   Ident("text")
- 292..293   Eq
- 294..303   Ident("read_file")
- 303..304   LParen
- 304..308   Ident("path")
- 308..309   RParen
- 309..310   Question
- 336..337   Newline
- 341..346   Match
- 347..352   Ident("parse")
- 352..353   LParen
- 353..354   Amp
- 354..358   Ident("text")
- 358..359   RParen
- 359..360   Colon
- 360..361   Newline
- 361..369   Indent
- 369..371   Ident("Ok")
+  30..36    Public
+  37..41    Type
+  42..45    Ident("Doc")
+  45..46    Colon
+  46..47    Newline
+  47..51    Indent
+  51..56    Ident("title")
+  56..57    Colon
+  58..64    Ident("String")
+  64..65    Newline
+  69..73    Ident("body")
+  73..74    Colon
+  75..81    Ident("String")
+  81..82    Newline
+  83..83    Dedent
+  83..91    Function
+  92..99    Ident("largest")
+ 100..102   Of
+ 103..104   Ident("T")
+ 104..105   LParen
+ 105..110   Ident("items")
+ 110..111   Colon
+ 112..120   Borrowed
+ 121..126   Ident("Array")
+ 127..129   Of
+ 130..131   Ident("T")
+ 131..132   RParen
+ 133..135   Arrow
+ 136..144   Borrowed
+ 145..146   Ident("T")
+ 147..152   Where
+ 153..154   Ident("T")
+ 154..155   Colon
+ 156..159   Ident("Ord")
+ 159..160   Colon
+ 160..161   Newline
+ 161..165   Indent
+ 165..168   Let
+ 169..176   Mutable
+ 177..181   Ident("best")
+ 182..184   Be
+ 185..190   Ident("items")
+ 190..191   Dot
+ 191..194   Ident("get")
+ 194..195   LParen
+ 195..196   Int { value: 0, base: Dec, suffix: None }
+ 196..197   RParen
+ 197..198   Newline
+ 202..205   For
+ 206..210   Ident("item")
+ 211..213   In
+ 214..219   Ident("items")
+ 219..220   Colon
+ 220..221   Newline
+ 221..229   Indent
+ 229..231   If
+ 232..236   Ident("item")
+ 237..238   Gt
+ 239..243   Ident("best")
+ 243..244   Colon
+ 245..249   Ident("best")
+ 250..252   Be
+ 253..257   Ident("item")
+ 257..258   Newline
+ 262..262   Dedent
+ 262..266   Ident("best")
+ 266..267   Newline
+ 268..268   Dedent
+ 268..276   Function
+ 277..288   Ident("read_config")
+ 288..289   LParen
+ 289..293   Ident("path")
+ 293..294   Colon
+ 295..303   Borrowed
+ 304..310   Ident("String")
+ 310..311   RParen
+ 312..314   Arrow
+ 315..321   Ident("Result")
+ 322..324   Of
+ 325..326   LParen
+ 326..332   Ident("Config")
+ 332..333   Comma
+ 334..339   Ident("Error")
+ 339..340   RParen
+ 340..341   Colon
+ 341..342   Newline
+ 342..346   Indent
+ 346..349   Let
+ 350..354   Ident("text")
+ 355..357   Be
+ 358..361   Try
+ 362..371   Ident("read_file")
  371..372   LParen
- 372..377   Ident("value")
- 377..378   RParen
- 378..379   Colon
- 380..385   Ident("value")
- 385..386   Newline
- 394..397   Ident("Err")
- 397..398   LParen
- 398..399   Ident("e")
- 399..400   RParen
- 400..401   Colon
- 402..407   Ident("panic")
- 407..408   LParen
- 408..409   Ident("e")
- 409..410   RParen
- 410..411   Newline
- 411..411   Dedent
- 411..411   Dedent
- 411..411   Eof
+ 372..376   Ident("path")
+ 376..377   RParen
+ 403..404   Newline
+ 408..413   Match
+ 414..419   Ident("parse")
+ 419..420   LParen
+ 420..428   Borrowed
+ 429..433   Ident("text")
+ 433..434   RParen
+ 434..435   Colon
+ 435..436   Newline
+ 436..444   Indent
+ 444..446   Ident("Ok")
+ 446..447   LParen
+ 447..452   Ident("value")
+ 452..453   RParen
+ 453..454   Colon
+ 455..460   Ident("value")
+ 460..461   Newline
+ 469..472   Ident("Err")
+ 472..473   LParen
+ 473..474   Ident("e")
+ 474..475   RParen
+ 475..476   Colon
+ 477..482   Ident("panic")
+ 482..483   LParen
+ 483..484   Ident("e")
+ 484..485   RParen
+ 485..486   Newline
+ 486..486   Dedent
+ 486..486   Dedent
+ 486..486   Eof
 
 == diagnostics ==
 (none)

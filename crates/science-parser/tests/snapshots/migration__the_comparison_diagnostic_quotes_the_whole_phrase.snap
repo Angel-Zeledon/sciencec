@@ -1,0 +1,19 @@
+---
+source: crates/science-parser/tests/migration.rs
+expression: parse_source_allowing_errors(source)
+---
+Module @0..56
+  Fn `f` @0..55
+    params
+      Param `a` @11..17
+        type: Path `Int` @14..17
+      Param `b` @19..25
+        type: Path `Int` @22..25
+    ret: Path `Bool` @30..34
+    body: Block @40..55
+      tail: Binary `>=` @40..55
+        lhs: Path `a` @40..41
+        rhs: Path `b` @54..55
+--- diagnostics ---
+SC0143 @42..53 the comparison is written `>=`
+  note `is` and `is not` are the only comparisons written as words

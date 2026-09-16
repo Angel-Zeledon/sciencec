@@ -1,0 +1,16 @@
+---
+source: crates/science-parser/tests/parse_extern.rs
+expression: "parse_source_allowing_errors(r#\"extern \"C\" library \"z\":\n    function crc32(crc: CULong) -> CULong\n\"#)"
+---
+Module @0..66
+  Extern "C" @0..65
+    Library "z" @11..22
+    items
+      ExternFn `crc32` @28..65
+        params
+          Param `crc` @43..54
+            type: Path `CULong` @48..54
+        ret: Path `CULong` @59..65
+--- diagnostics ---
+SC0414 @0..6 an `extern` block is written `unsafe extern`
+  note the declaration claims a symbol of this name exists, takes these arguments at these widths, and neither retains nor frees the pointers it is given — none of which the compiler can see

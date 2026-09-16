@@ -1,0 +1,15 @@
+---
+source: crates/science-parser/tests/parse_exprs.rs
+expression: "parse_source_allowing_errors(\"function f():\\n    let a be Array of Doc.new()\\n\")"
+---
+Module @0..46
+  Fn `f` @0..45
+    body: Block @18..45
+      Let `a` @18..45
+        value: Method `new` @27..45
+          receiver: Path `Array` @27..43
+            generics of `Array`
+              Path `Doc` @36..39
+--- diagnostics ---
+SC0116 @27..43 `.new()` could belong to `Doc` or to `Array of Doc`
+  note Science reads it as `(Array of Doc).new()`, the whole generic type

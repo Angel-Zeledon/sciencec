@@ -1,0 +1,15 @@
+---
+source: crates/science-parser/tests/parse_stmts.rs
+expression: parse_source_allowing_errors(source)
+---
+Module @0..38
+  Fn `main` @0..37
+    body: Block @21..37
+      Assign @21..26
+        target: Path `a` @21..22
+        value: Int 3 @25..26
+      Assign @31..37
+        target: Path `a` @31..32
+        value: Int 4 @36..37
+--- diagnostics ---
+SC0100 @23..24 assignment is written `be`

@@ -1,0 +1,31 @@
+---
+source: crates/science-parser/tests/parse_traits.rs
+expression: "parse_source(r#\"Pair of (A, B) implements Summarize where A: Clone, B: Clone:\n    function summarize(self) -> String:\n        \"pair\"\n\"#)"
+---
+Module @0..117
+  Implements @0..116
+    generics
+      TypeParam `A` @9..10
+      TypeParam `B` @12..13
+    interface: Bound `Summarize` @26..35
+    type: Path `Pair` @0..4
+      generics of `Pair`
+        Path `A` @9..10
+        Path `B` @12..13
+    where
+      Predicate @42..50
+        type: Path `A` @42..43
+        bounds
+          Bound `Clone` @45..50
+      Predicate @52..60
+        type: Path `B` @52..53
+        bounds
+          Bound `Clone` @55..60
+    methods
+      Fn `summarize` @66..116
+        receiver: self @85..89
+        ret: Path `String` @94..100
+        body: Block @110..116
+          tail: Str "pair" @110..116
+--- diagnostics ---
+(none)

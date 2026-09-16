@@ -1,10 +1,11 @@
 # UI test: a float literal too large to represent (SC0011).
 #
-# §4.1 admits `1e-9` and `6.02E23` with no bound written into the grammar, so
-# the limit is the representation: F64. `str::parse` saturates to infinity
-# rather than failing, and a literal can never legitimately be infinite, so
-# the lexer reports it instead of letting `inf` reach the program silently.
+# §4.2 admits "Floats: `3.14`, `1e-9`, `2.5f32`" with no bound written into the
+# grammar, so the limit is the representation: F64. `str::parse` saturates to
+# infinity rather than failing, and a literal can never legitimately be
+# infinite, so the lexer reports it instead of letting `inf` reach the program
+# silently.
 
-fn main():
-    let enormous = 1e400
-    let also_enormous = 1.7976931348623159e308
+function main():
+    let enormous be 1e400
+    let also_enormous be 1.7976931348623159e308

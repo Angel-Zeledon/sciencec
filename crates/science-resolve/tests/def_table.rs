@@ -28,7 +28,7 @@ fn module_of_walks_up_to_the_nearest_module() {
     let mut defs = DefTable::new();
     let root = defs.alloc(DefKind::Module, "root", span(0, 0), None);
     let text = defs.alloc(DefKind::Module, "text", span(0, 0), Some(root));
-    let doc = defs.alloc(DefKind::Struct, "Doc", span(0, 10), Some(text));
+    let doc = defs.alloc(DefKind::Record, "Doc", span(0, 10), Some(text));
     let title = defs.alloc(DefKind::Field, "title", span(4, 9), Some(doc));
 
     assert_eq!(defs.module_of(title), Some(text));
@@ -43,7 +43,7 @@ fn path_of_prints_the_chain_without_the_root() {
     let root = defs.alloc(DefKind::Module, "", span(0, 0), None);
     let text = defs.alloc(DefKind::Module, "text", span(0, 0), Some(root));
     let parser = defs.alloc(DefKind::Module, "parser", span(0, 0), Some(text));
-    let token = defs.alloc(DefKind::Enum, "Token", span(0, 10), Some(parser));
+    let token = defs.alloc(DefKind::Choice, "Token", span(0, 10), Some(parser));
 
     assert_eq!(defs.path_of(token), "text.parser.Token");
     assert_eq!(defs.path_of(text), "text");

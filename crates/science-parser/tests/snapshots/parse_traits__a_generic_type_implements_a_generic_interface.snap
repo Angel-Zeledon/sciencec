@@ -1,0 +1,37 @@
+---
+source: crates/science-parser/tests/parse_traits.rs
+expression: "parse_source(r#\"Pair of (A, B) implements Swap of Pair of (B, A):\n    function swapped(self) -> Pair of (B, A):\n        Pair(first: self.second, second: self.first)\n\"#)"
+---
+Module @0..149
+  Implements @0..148
+    generics
+      TypeParam `A` @9..10
+      TypeParam `B` @12..13
+    interface: Bound `Swap` @26..48
+      generics of `Swap`
+        Path `Pair` @34..48
+          generics of `Pair`
+            Path `B` @43..44
+            Path `A` @46..47
+    type: Path `Pair` @0..4
+      generics of `Pair`
+        Path `A` @9..10
+        Path `B` @12..13
+    methods
+      Fn `swapped` @54..148
+        receiver: self @71..75
+        ret: Path `Pair` @80..94
+          generics of `Pair`
+            Path `B` @89..90
+            Path `A` @92..93
+        body: Block @104..148
+          tail: StructLit `Pair` @104..148
+            fields
+              FieldInit `first` @109..127
+                value: Field `second` @116..127
+                  base: Self @116..120
+              FieldInit `second` @129..147
+                value: Field `first` @137..147
+                  base: Self @137..141
+--- diagnostics ---
+(none)

@@ -2,16 +2,42 @@
 source: crates/science-parser/tests/ast_dump.rs
 expression: out
 ---
-Ref mut @0..13
-  Path `Array` @5..13
+Borrowed @0..12
+  Path `Doc` @9..12
+Borrowed mutable @14..43
+  Path `Array` @31..43
     generics of `Array`
-      Path `T` @11..12
-Ref @15..29
-  Dyn @16..29
-    Bound `Summarize` @20..29
-Tuple @31..42
-  Path `I32` @32..35
-  Path `Bool` @37..41
-Unit @44..46
-SelfType @48..52
-Path `text.parser.Token` @54..71
+      Path `Doc` @40..43
+Any @45..58
+  Bound `Summarize` @49..58
+Path `Map` @60..107
+  generics of `Map`
+    Path `String` @68..74
+    Path `Array` @76..106
+      generics of `Array`
+        Path `Map` @86..105
+          generics of `Map`
+            Path `String` @94..100
+            Path `Int` @102..105
+Tuple @110..121
+  Path `Int` @111..114
+  Path `Bool` @116..120
+Path `Int` @124..127
+Unit @130..132
+SelfType @134..138
+SelfAssoc `Item` @140..149
+Path `Window` @152..170
+  generics of `Window`
+    Path `Int` @163..166
+    ConstArg Int 4 @168..169
+Path `Quantity` @172..191
+  generics of `Quantity`
+    Path `T` @185..186
+    ConstArg Neg @188..190
+      Int 1 @189..190
+Path `Window` @193..214
+  generics of `Window`
+    Path `Int` @204..207
+    ConstArg Str "a" @209..212
+Path `text.parser.Token` @216..233
+Error @236..241

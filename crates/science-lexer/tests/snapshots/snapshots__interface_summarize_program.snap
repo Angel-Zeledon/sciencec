@@ -1,0 +1,84 @@
+---
+source: crates/science-lexer/tests/snapshots.rs
+expression: "dump(\"\\\ninterface Summarize:\n    function summarize(self) -> String\n\n    function preview(self) -> String:\n        truncate(self.summarize(), 80)\n\nDoc implements Summarize:\n    function summarize(self) -> String:\n        truncate(self.body, 200)\n\")"
+---
+== source ==
+|interface Summarize:
+|    function summarize(self) -> String
+|
+|    function preview(self) -> String:
+|        truncate(self.summarize(), 80)
+|
+|Doc implements Summarize:
+|    function summarize(self) -> String:
+|        truncate(self.body, 200)
+|
+
+== tokens ==
+   0..9     Interface
+  10..19    Ident("Summarize")
+  19..20    Colon
+  20..21    Newline
+  21..25    Indent
+  25..33    Function
+  34..43    Ident("summarize")
+  43..44    LParen
+  44..48    SelfValue
+  48..49    RParen
+  50..52    Arrow
+  53..59    Ident("String")
+  59..60    Newline
+  65..73    Function
+  74..81    Ident("preview")
+  81..82    LParen
+  82..86    SelfValue
+  86..87    RParen
+  88..90    Arrow
+  91..97    Ident("String")
+  97..98    Colon
+  98..99    Newline
+  99..107   Indent
+ 107..115   Ident("truncate")
+ 115..116   LParen
+ 116..120   SelfValue
+ 120..121   Dot
+ 121..130   Ident("summarize")
+ 130..131   LParen
+ 131..132   RParen
+ 132..133   Comma
+ 134..136   Int { value: 80, base: Dec, suffix: None }
+ 136..137   RParen
+ 137..138   Newline
+ 139..139   Dedent
+ 139..139   Dedent
+ 139..142   Ident("Doc")
+ 143..153   Implements
+ 154..163   Ident("Summarize")
+ 163..164   Colon
+ 164..165   Newline
+ 165..169   Indent
+ 169..177   Function
+ 178..187   Ident("summarize")
+ 187..188   LParen
+ 188..192   SelfValue
+ 192..193   RParen
+ 194..196   Arrow
+ 197..203   Ident("String")
+ 203..204   Colon
+ 204..205   Newline
+ 205..213   Indent
+ 213..221   Ident("truncate")
+ 221..222   LParen
+ 222..226   SelfValue
+ 226..227   Dot
+ 227..231   Ident("body")
+ 231..232   Comma
+ 233..236   Int { value: 200, base: Dec, suffix: None }
+ 236..237   RParen
+ 237..238   Newline
+ 238..238   Dedent
+ 238..238   Dedent
+ 238..238   Eof
+
+== diagnostics ==
+(none)

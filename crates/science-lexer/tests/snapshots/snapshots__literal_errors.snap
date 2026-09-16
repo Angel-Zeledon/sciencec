@@ -1,53 +1,53 @@
 ---
 source: crates/science-lexer/tests/snapshots.rs
-expression: "dump(\"\\\nlet a = \\\"open\nlet b = 'x\nlet c = \\\"bad \\\\q escape\\\"\nlet d = 340282366920938463463374607431768211456\nlet e = 0b1012\n\")"
+expression: "dump(\"\\\nlet a be \\\"open\nlet b be 'x\nlet c be \\\"bad \\\\q escape\\\"\nlet d be 340282366920938463463374607431768211456\nlet e be 0b1012\n\")"
 ---
 == source ==
-|let a = "open
-|let b = 'x
-|let c = "bad \q escape"
-|let d = 340282366920938463463374607431768211456
-|let e = 0b1012
+|let a be "open
+|let b be 'x
+|let c be "bad \q escape"
+|let d be 340282366920938463463374607431768211456
+|let e be 0b1012
 |
 
 == tokens ==
    0..3     Let
    4..5     Ident("a")
-   6..7     Eq
-   8..13    Str("open")
-  13..14    Newline
-  14..17    Let
-  18..19    Ident("b")
-  20..21    Eq
-  22..24    Char('x')
-  24..25    Newline
-  25..28    Let
-  29..30    Ident("c")
-  31..32    Eq
-  33..48    Str("bad q escape")
-  48..49    Newline
-  49..52    Let
-  53..54    Ident("d")
-  55..56    Eq
-  57..96    Int { value: 0, base: Dec, suffix: None }
-  96..97    Newline
-  97..100   Let
- 101..102   Ident("e")
- 103..104   Eq
- 105..111   Int { value: 5, base: Bin, suffix: None }
- 111..112   Newline
- 112..112   Eof
+   6..8     Be
+   9..14    Str("open")
+  14..15    Newline
+  15..18    Let
+  19..20    Ident("b")
+  21..23    Be
+  24..26    Char('x')
+  26..27    Newline
+  27..30    Let
+  31..32    Ident("c")
+  33..35    Be
+  36..51    Str("bad q escape")
+  51..52    Newline
+  52..55    Let
+  56..57    Ident("d")
+  58..60    Be
+  61..100   Int { value: 0, base: Dec, suffix: None }
+ 100..101   Newline
+ 101..104   Let
+ 105..106   Ident("e")
+ 107..109   Be
+ 110..116   Int { value: 5, base: Bin, suffix: None }
+ 116..117   Newline
+ 117..117   Eof
 
 == diagnostics ==
 SC0007 error: unterminated string literal
-    primary   8..13: this string has no closing `"`
+    primary   9..14: this string has no closing `"`
 SC0008 error: unterminated character literal
-    primary   22..24: this `'` is never closed
+    primary   24..26: this `'` is never closed
 SC0006 error: unknown escape sequence `\q`
-    primary   38..40: unknown escape
+    primary   41..43: unknown escape
     note: the escapes are `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0` and `\u{...}`
 SC0005 error: this integer literal is too large
-    primary   57..96: value out of range
+    primary   61..100: value out of range
     note: the widest integer type is `U64`, whose largest value is 18446744073709551615
 SC0010 error: `2` is not a valid digit in a binary literal
-    primary   110..111: invalid digit
+    primary   115..116: invalid digit

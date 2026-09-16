@@ -1,24 +1,38 @@
 ---
 source: crates/science-parser/tests/parse_stmts.rs
-expression: "parse_body(r#\"fn main():\n    a = b\n    a = a + 1\n    self.text = \"\"\n    editor.target.title = \"edited\"\n\"#)"
+expression: "parse_body(r#\"function main():\n    a be b\n    a be a + 1\n    self.text be \"\"\n    editor.target.title be \"edited\"\n    cells[0] be 1\n    grid[row][column] be cells[0]\n\"#)"
 ---
-Block @15..88
-  Assign @15..20
-    target: Path `a` @15..16
-    value: Path `b` @19..20
-  Assign @25..34
-    target: Path `a` @25..26
-    value: Binary `+` @29..34
-      lhs: Path `a` @29..30
-      rhs: Int 1 @33..34
-  Assign @39..53
-    target: Field `text` @39..48
-      base: Self @39..43
-    value: Str "" @51..53
-  Assign @58..88
-    target: Field `title` @58..77
-      base: Field `target` @58..71
-        base: Path `editor` @58..64
-    value: Str "edited" @80..88
+Block @21..150
+  Assign @21..27
+    target: Path `a` @21..22
+    value: Path `b` @26..27
+  Assign @32..42
+    target: Path `a` @32..33
+    value: Binary `+` @37..42
+      lhs: Path `a` @37..38
+      rhs: Int 1 @41..42
+  Assign @47..62
+    target: Field `text` @47..56
+      base: Self @47..51
+    value: Str "" @60..62
+  Assign @67..98
+    target: Field `title` @67..86
+      base: Field `target` @67..80
+        base: Path `editor` @67..73
+    value: Str "edited" @90..98
+  Assign @103..116
+    target: Index @103..111
+      base: Path `cells` @103..108
+      index: Int 0 @109..110
+    value: Int 1 @115..116
+  Assign @121..150
+    target: Index @121..138
+      base: Index @121..130
+        base: Path `grid` @121..125
+        index: Path `row` @126..129
+      index: Path `column` @131..137
+    value: Index @142..150
+      base: Path `cells` @142..147
+      index: Int 0 @148..149
 --- diagnostics ---
 (none)

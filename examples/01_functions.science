@@ -1,61 +1,73 @@
 # 01 - Functions
-# Spec: §4.3 declarations, §4.2 blocks.
+# Spec: §4.4 declarations, §4.5 blocks, §6.3 auto-borrow at call sites.
 #
 # Covers: functions with and without a return type, early `return`,
 # the last expression as the function value, parameters by shared and
 # exclusive borrow, the unit type, and recursion.
 
 # Omitted return type means unit `()`.
-fn greet():
-    println("hello")
+function greet():
+    print("hello")
 
 # Explicit unit is also spelled out.
-fn greet_twice() -> ():
+function greet_twice() -> ():
     greet()
     greet()
 
 # The value of a function is its last expression: no `return` needed.
-fn add(a: Int, b: Int) -> Int:
+function add(a: Int, b: Int) -> Int:
     a + b
 
-# `return` exists for early exit.
-fn clamp_low(value: Int, floor: Int) -> Int:
+# `return` exists for early exit. This is a formula, so it is written with
+# symbols (§4.6).
+function clamp_low(value: Int, floor: Int) -> Int:
     if value < floor:
         return floor
     value
 
-# Several parameters, mixed borrow forms.
-fn longest(a: &String, b: &String) -> &String:
-    if a.len() > b.len(): a else: b
+# Several parameters, all borrowed. `borrowed T` is what `&T` was.
+function longest(a: borrowed String, b: borrowed String) -> borrowed String:
+    if a.length() > b.length(): a else: b
 
-# Exclusive borrow: the callee may mutate through it. References
-# auto-dereference for assignment, and F0 has no explicit dereference
-# operator, so the parameter is written plainly on both sides (§4.5).
-fn bump(counter: &mut Int):
-    counter = counter + 1
+# Exclusive borrow: the callee may mutate through it. Borrows
+# auto-dereference for assignment and Science has no dereference operator at
+# all (§4.7), so the parameter is written plainly on both sides. Assignment
+# uses `be`, the same word that binds (§4.4).
+function bump(counter: mutable borrowed Int):
+    counter be counter + 1
 
 # Ownership is taken: the caller loses the value.
-fn consume(text: String) -> Int:
-    text.len()
+function consume(text: String) -> Int:
+    text.length()
 
-# Recursion.
-fn factorial(n: Int) -> Int:
+# Recursion. `<=` reads as prose here, where the guard is a base case
+# rather than a calculation.
+function factorial(n: Int) -> Int:
     if n <= 1:
         1
     else:
         n * factorial(n - 1)
 
-# Nested calls and a call used as an argument.
-fn main():
+# A predicate whose whole point is the word: `is not` is the only spelling of
+# inequality, and it says what it means.
+function has_name(name: borrowed String) -> Bool:
+    name is not ""
+
+# Nested calls, and a call used as an argument.
+function main():
     greet()
     greet_twice()
-    println(add(2, 3))
-    println(clamp_low(-4, 0))
-    println(factorial(10))
+    print(add(2, 3))
+    print(clamp_low(-4, 0))
+    print(factorial(10))
+    print(has_name("Kepler"))
 
-    let mut hits = 0
-    bump(&mut hits)
-    println(hits)
+    # A parameter declared `borrowed` or `mutable borrowed` is borrowed at
+    # the call site without the caller writing anything (§6.3). The signature
+    # still says which it is, so nothing is lost to the reader.
+    let mutable hits be 0
+    bump(hits)
+    print(hits)
 
-    let owned = "a sentence"
-    println(consume(owned))
+    let owned be "a sentence"
+    print(consume(owned))

@@ -1,14 +1,14 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(\"fn main():\\n    let d = Doc.new(\\\"a\\\")\\n\")"
+expression: "parse_source(\"function main():\\n    let d be Doc.new(\\\"a\\\")\\n\")"
 ---
-Module @0..36
-  Fn `main` @0..35
-    body: Block @15..35
-      Let `d` @15..35
-        value: Method `new` @23..35
-          receiver: Path `Doc` @23..26
+Module @0..43
+  Fn `main` @0..42
+    body: Block @21..42
+      Let `d` @21..42
+        value: Method `new` @30..42
+          receiver: Path `Doc` @30..33
           args
-            Str "a" @31..34
+            Str "a" @38..41
 --- diagnostics ---
 (none)

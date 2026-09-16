@@ -1,0 +1,8 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Public, Use, id(\"text\"), Dot, id(\"parser\"), Newline,])"
+---
+Module @0..20
+  Use `text.parser` @0..20
+--- diagnostics ---
+SC0107 @0..6 `public` has no meaning on a `use` declaration

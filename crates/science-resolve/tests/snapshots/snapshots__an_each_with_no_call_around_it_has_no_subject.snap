@@ -1,0 +1,11 @@
+---
+source: crates/science-resolve/tests/snapshots.rs
+expression: "report(&module(vec![f]))"
+---
+Module `main` #78 @0..8
+  Fn `f` #79 @0..8
+    body: Block @2..8
+      tail: Each -> <error> @2..6
+--- diagnostics ---
+SC0212 @2..6 `each` names the subject of the call it is written in, and there is no call here
+  note `each` stands for one argument's value inside a call, as in `docs.map(each.title)`

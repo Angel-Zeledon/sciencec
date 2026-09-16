@@ -1,22 +1,22 @@
 ---
 source: crates/science-parser/tests/parse_patterns.rs
-expression: "parse_source_allowing_errors(r#\"fn f(x: Int) -> Int:\n    match x:\n        *: 0\n        1: 1\n\"#)"
+expression: "parse_source_allowing_errors(r#\"function f(x: Int) -> Int:\n    match x:\n        *: 0\n        1: 1\n\"#)"
 ---
-Module @0..60
-  Fn `f` @0..59
+Module @0..66
+  Fn `f` @0..65
     params
-      Param `x` @5..11
-        type: Path `Int` @8..11
-    ret: Path `Int` @16..19
-    body: Block @25..59
-      tail: Match @25..59
-        scrutinee: Path `x` @31..32
+      Param `x` @11..17
+        type: Path `Int` @14..17
+    ret: Path `Int` @22..25
+    body: Block @31..65
+      tail: Match @31..65
+        scrutinee: Path `x` @37..38
         arms
-          Arm @42..46
-            pattern: Error @42..43
-            body: Int 0 @45..46
-          Arm @55..59
-            pattern: Int 1 @55..56
-            body: Int 1 @58..59
+          Arm @48..52
+            pattern: Error @48..49
+            body: Int 0 @51..52
+          Arm @61..65
+            pattern: Int 1 @61..62
+            body: Int 1 @64..65
 --- diagnostics ---
-SC0106 @42..43 expected a pattern, found `*`
+SC0106 @48..49 expected a pattern, found `*`

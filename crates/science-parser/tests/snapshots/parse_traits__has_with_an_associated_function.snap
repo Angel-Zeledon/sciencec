@@ -1,0 +1,31 @@
+---
+source: crates/science-parser/tests/parse_traits.rs
+expression: "parse_source(r#\"Doc has:\n    function new(title: String) -> Doc:\n        Doc(title: title, body: \"\")\n\n    function is_empty(self) -> Bool:\n        self.body.length() is 0\n\"#)"
+---
+Module @0..155
+  Has @0..154
+    type: Path `Doc` @0..3
+    methods
+      Fn `new` @13..84
+        params
+          Param `title` @26..39
+            type: Path `String` @33..39
+        ret: Path `Doc` @44..47
+        body: Block @57..84
+          tail: StructLit `Doc` @57..84
+            fields
+              FieldInit `title` @61..73
+                value: Path `title` @68..73
+              FieldInit `body` @75..83
+                value: Str "" @81..83
+      Fn `is_empty` @90..154
+        receiver: self @108..112
+        ret: Path `Bool` @117..121
+        body: Block @131..154
+          tail: Binary `==` @131..154
+            lhs: Method `length` @131..149
+              receiver: Field `body` @131..140
+                base: Self @131..135
+            rhs: Int 0 @153..154
+--- diagnostics ---
+(none)

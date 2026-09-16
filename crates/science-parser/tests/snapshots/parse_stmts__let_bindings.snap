@@ -1,19 +1,19 @@
 ---
 source: crates/science-parser/tests/parse_stmts.rs
-expression: "parse_body(r#\"fn main():\n    let greeting = \"hola\"\n    let mut count = 0\n    let annotated: Int = 42\n    let mut typed: &mut String = &mut owner\n\"#)"
+expression: "parse_body(r#\"function main():\n    let greeting be \"hola\"\n    let mutable count be 0\n    let annotated: Int be 42\n    let mutable typed: mutable borrowed String be mutable borrowed owner\n\"#)"
 ---
-Block @15..130
-  Let `greeting` @15..36
-    value: Str "hola" @30..36
-  Let `count` mut @41..58
-    value: Int 0 @57..58
-  Let `annotated` @63..86
-    type: Path `Int` @78..81
-    value: Int 42 @84..86
-  Let `typed` mut @91..130
-    type: Ref mut @106..117
-      Path `String` @111..117
-    value: Ref mut @120..130
-      Path `owner` @125..130
+Block @21..172
+  Let `greeting` @21..43
+    value: Str "hola" @37..43
+  Let `count` mutable @48..70
+    value: Int 0 @69..70
+  Let `annotated` @75..99
+    type: Path `Int` @90..93
+    value: Int 42 @97..99
+  Let `typed` mutable @104..172
+    type: Borrowed mutable @123..146
+      Path `String` @140..146
+    value: Borrowed mutable @150..172
+      Path `owner` @167..172
 --- diagnostics ---
 (none)

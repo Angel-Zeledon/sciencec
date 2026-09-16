@@ -1,58 +1,57 @@
 # 05 - Match and patterns
-# Spec: §4.4 (`match` is exhaustive; patterns are literals, wildcard,
-# bindings, enum variants, structs, tuples, and alternatives with `|`),
-# §4.5 (qualified variants, `Never`).
+# Spec: §4.5 (`match` is exhaustive; non-exhaustiveness lists the missing
+# patterns), §4.7 (qualified variants, `Never`).
 #
 # Covers every pattern form, arms in inline form and in block form,
 # and matches nested inside one another.
 
-enum Format:
+choice Format:
     Plain
     Markdown
     Json
 
-enum Token:
+choice Token:
     Ident(String)
     Number(Int)
     Symbol(Char)
     Eof
 
-struct Point:
+type Point:
     x: Int
     y: Int
 
 # §8 gives `String` no `clone`, so an owned copy is built from `String.new()`
 # and `push_str`, which is the whole of what §8 offers for building one.
-fn copy_of(text: &String) -> String:
-    let mut out = String.new()
+function copy_of(text: borrowed String) -> String:
+    let mutable out be String.new()
     out.push_str(text)
     out
 
-fn emphasized(text: &String) -> String:
-    let mut out = String.new()
+function emphasized(text: borrowed String) -> String:
+    let mutable out be String.new()
     out.push_str("*")
     out.push_str(text)
     out.push_str("*")
     out
 
-fn quoted(text: &String) -> String:
-    let mut out = String.new()
+function quoted(text: borrowed String) -> String:
+    let mutable out be String.new()
     out.push_str("\"")
     out.push_str(text)
     out.push_str("\"")
     out
 
-# --- Enum variant patterns, inline arms -------------------------------------
+# --- Variant patterns, inline arms ------------------------------------------
 
-fn name_of(format: &Format) -> String:
+function name_of(format: borrowed Format) -> String:
     match format:
         Plain: "plain"
         Markdown: "markdown"
         Json: "json"
 
-# The same match with every pattern qualified by its enum. `Some(x)` and
-# `Option.Some(x)` are the same thing, and so are these (§4.5).
-fn name_of_qualified(format: &Format) -> String:
+# The same match with every pattern qualified by its type. `Some(x)` and
+# `Option.Some(x)` are the same thing, and so are these (§4.7).
+function name_of_qualified(format: borrowed Format) -> String:
     match format:
         Format.Plain: "plain"
         Format.Markdown: "markdown"
@@ -60,21 +59,21 @@ fn name_of_qualified(format: &Format) -> String:
 
 # --- Literal patterns and the wildcard --------------------------------------
 
-fn digit_name(digit: Int) -> String:
+function digit_name(digit: Int) -> String:
     match digit:
         0: "zero"
         1: "one"
         2: "two"
         _: "many"
 
-fn char_name(c: &Char) -> String:
+function char_name(c: borrowed Char) -> String:
     match c:
         ',': "comma"
         ';': "semicolon"
         '.': "period"
         _: "symbol"
 
-fn is_vowel(c: Char) -> Bool:
+function is_vowel(c: Char) -> Bool:
     match c:
         'a': true
         'e': true
@@ -83,20 +82,20 @@ fn is_vowel(c: Char) -> Bool:
         'u': true
         _: false
 
-fn is_greeting(text: &String) -> Bool:
+function is_greeting(text: borrowed String) -> Bool:
     match text:
         "hello": true
         "hi": true
         _: false
 
-fn describe_flag(flag: Bool) -> String:
+function describe_flag(flag: Bool) -> String:
     match flag:
         true: "on"
         false: "off"
 
 # --- Variant patterns that bind their payload -------------------------------
 
-fn describe(token: &Token) -> String:
+function describe(token: borrowed Token) -> String:
     match token:
         Ident(name): copy_of(name)
         Number(value): digit_name(value)
@@ -105,44 +104,43 @@ fn describe(token: &Token) -> String:
 
 # --- Alternatives with `|` --------------------------------------------------
 
-fn size_class(n: Int) -> String:
+function size_class(n: Int) -> String:
     match n:
         0 | 1 | 2: "small"
         3 | 4 | 5 | 6: "medium"
         _: "large"
 
-fn is_punctuation(token: &Token) -> Bool:
+function is_punctuation(token: borrowed Token) -> Bool:
     match token:
         Symbol(',') | Symbol(';') | Symbol('.'): true
         _: false
 
 # --- Tuple patterns ---------------------------------------------------------
 
-fn quadrant(point: (Int, Int)) -> String:
+function quadrant(point: (Int, Int)) -> String:
     match point:
         (0, 0): "origin"
         (x, 0): "on the X axis"
         (0, y): "on the Y axis"
         (_, _): "somewhere else"
 
-# --- Struct patterns, which mirror construction with named fields -----------
+# --- Record patterns, which mirror construction with named fields -----------
 
-fn classify(point: &Point) -> String:
+function classify(point: borrowed Point) -> String:
     match point:
         Point(x: 0, y: 0): "origin"
         Point(x: 0, y: y): "on the Y axis"
         Point(x: x, y: 0): "on the X axis"
         Point(x: x, y: y): "general"
 
-# A struct pattern may ignore a field with the wildcard, exactly as §4.4
-# writes it.
-fn x_of(point: &Point) -> Int:
+# A record pattern may ignore a field with the wildcard.
+function x_of(point: borrowed Point) -> Int:
     match point:
         Point(x: x, y: _): x
 
 # --- A binding pattern that catches everything ------------------------------
 
-fn passthrough(n: Int) -> Int:
+function passthrough(n: Int) -> Int:
     match n:
         0: 1
         other: other
@@ -150,8 +148,8 @@ fn passthrough(n: Int) -> Int:
 # --- An arm that does not return at all -------------------------------------
 
 # `panic` has type `Never`, which coerces to any type. That is what lets one
-# arm of a `match` bail out while the others produce a `String` (§4.5).
-fn require_text(token: &Token) -> String:
+# arm of a `match` bail out while the others produce a `String` (§4.7).
+function require_text(token: borrowed Token) -> String:
     match token:
         Ident(name): copy_of(name)
         Number(value): digit_name(value)
@@ -160,13 +158,13 @@ fn require_text(token: &Token) -> String:
 
 # --- Block-form arms, and nesting -------------------------------------------
 
-fn render(token: &Token, format: &Format) -> String:
+function render(token: borrowed Token, format: borrowed Format) -> String:
     match token:
         Number(value):
-            let doubled = value * 2
+            let doubled be value * 2
             match format:
                 Json:
-                    quoted(&digit_name(doubled))
+                    quoted(digit_name(doubled))
                 Plain | Markdown:
                     digit_name(doubled)
         Ident(name):
@@ -177,22 +175,36 @@ fn render(token: &Token, format: &Format) -> String:
         Symbol(c): char_name(c)
         Eof: ""
 
+# --- A guard written as a comparison ----------------------------------------
+
+# There is no `if` in a pattern, so a condition on the payload goes in the arm
+# body.
+function shout_level(token: borrowed Token) -> String:
+    match token:
+        Ident(name):
+            if name.length() > 10: "long" else: "short"
+        Number(value):
+            if value % 2 is 0: "even" else: "odd"
+        Symbol(c): char_name(c)
+        Eof: "none"
+
 # --- `match` as an expression in a binding ----------------------------------
 
-fn main():
-    let label = match Markdown:
+function main():
+    let label be match Markdown:
         Plain: "plain"
         Markdown: "markdown"
         Json: "json"
 
-    println(label)
-    println(name_of(&Json))
-    println(name_of_qualified(&Format.Json))
-    println(digit_name(2))
-    println(size_class(4))
-    println(quadrant((0, 3)))
-    println(classify(&Point(x: 1, y: 0)))
-    println(x_of(&Point(x: 1, y: 0)))
-    println(passthrough(9))
-    println(describe(&Ident("width")))
-    println(render(&Number(21), &Json))
+    print(label)
+    print(name_of(Json))
+    print(name_of_qualified(Format.Json))
+    print(digit_name(2))
+    print(size_class(4))
+    print(quadrant((0, 3)))
+    print(classify(Point(x: 1, y: 0)))
+    print(x_of(Point(x: 1, y: 0)))
+    print(passthrough(9))
+    print(describe(Ident("width")))
+    print(render(Number(21), Json))
+    print(shout_level(Ident("monomorphization")))

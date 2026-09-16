@@ -1,17 +1,16 @@
 ---
 source: crates/science-parser/tests/parse_stmts.rs
-expression: "parse_body(r#\"fn f():\n    if c:\n        a\n    b\n    while d:\n        e\n    f\n\"#)"
+expression: "parse_body(r#\"function f():\n    if c:\n        a\n    b\n    loop:\n        e\n    f\n\"#)"
 ---
-Block @12..62
-  If @12..27
-    cond: Path `c` @15..16
-    then: Block @26..27
-      tail: Path `a` @26..27
-  Path `b` @32..33
-  While @38..56
-    cond: Path `d` @44..45
-    body: Block @55..56
-      tail: Path `e` @55..56
-  tail: Path `f` @61..62
+Block @18..65
+  If @18..33
+    cond: Path `c` @21..22
+    then: Block @32..33
+      tail: Path `a` @32..33
+  Path `b` @38..39
+  Loop @44..59
+    body: Block @58..59
+      tail: Path `e` @58..59
+  tail: Path `f` @64..65
 --- diagnostics ---
 (none)

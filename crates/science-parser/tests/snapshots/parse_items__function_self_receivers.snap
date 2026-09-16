@@ -1,0 +1,22 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Function, id(\"a\"), LParen, SelfValue, Colon, SelfType,\nRParen, Colon, id(\"x\"), Newline, Function, id(\"b\"), LParen, SelfValue, RParen,\nColon, id(\"x\"), Newline, Function, id(\"c\"), LParen, Mutable, SelfValue, Comma,\nid(\"n\"), Colon, id(\"I32\"), RParen, Colon, id(\"x\"), Newline,])"
+---
+Module @0..69
+  Fn `a` @0..22
+    receiver: self: Self @10..19
+    body: Block @21..22
+      tail: Path `x` @21..22
+  Fn `b` @22..39
+    receiver: self @32..36
+    body: Block @38..39
+      tail: Path `x` @38..39
+  Fn `c` @39..69
+    receiver: mutable self @49..60
+    params
+      Param `n` @61..66
+        type: Path `I32` @63..66
+    body: Block @68..69
+      tail: Path `x` @68..69
+--- diagnostics ---
+(none)

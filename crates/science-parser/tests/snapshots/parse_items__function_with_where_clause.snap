@@ -1,0 +1,27 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Function, id(\"describe\"), Of, id(\"T\"), LParen, id(\"x\"),\nColon, Borrowed, id(\"T\"), RParen, Arrow, id(\"String\"), Where, id(\"T\"), Colon,\nid(\"Summarize\"), Plus, id(\"Clone\"), Comma, id(\"U\"), Colon, id(\"Eq\"), Colon,\nid(\"x\"), Newline,])"
+---
+Module @0..69
+  Fn `describe` @0..69
+    generics
+      TypeParam `T` @18..19
+    params
+      Param `x` @20..31
+        type: Borrowed @22..31
+          Path `T` @30..31
+    ret: Path `String` @34..40
+    where
+      Predicate @45..62
+        type: Path `T` @45..46
+        bounds
+          Bound `Summarize` @47..56
+          Bound `Clone` @57..62
+      Predicate @63..67
+        type: Path `U` @63..64
+        bounds
+          Bound `Eq` @65..67
+    body: Block @68..69
+      tail: Path `x` @68..69
+--- diagnostics ---
+(none)

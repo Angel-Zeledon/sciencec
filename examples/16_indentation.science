@@ -1,67 +1,73 @@
 # 16 - Indentation and block nesting
-# Spec: §4.1 indentation, §4.2 blocks.
+# Spec: §4.2 indentation, §4.5 blocks.
 #
 # Spaces only. A block opens with `:` + newline + INDENT and closes with
-# DEDENT. Closing several levels at once emits several DEDENTs.
+# DEDENT, one per level closed. Blank lines and comment-only lines take no
+# part. A tab in the indentation is an error (`SC0003`) and indentation
+# matching no open level is an error (`SC0004`); both rejected forms live in
+# `tests/ui/`, because everything in `examples/` must be accepted. This file
+# is therefore the accepted side of the rule.
 #
-# This file goes deliberately deep, and closes several levels in one step,
-# which is the case that breaks a naive indentation stack.
+# It goes deliberately deep, and closes several levels in one step, which is
+# the case that breaks a naive indentation stack.
 
-enum Format:
+choice Format:
     Plain
     Markdown
     Json
 
-struct Doc:
+type Doc:
     title: String
     body: String
 
-trait Summarize:
-    fn summarize(&self) -> String
+interface Summarize:
+    function summarize(self) -> String
 
-    fn preview(&self) -> String:
-        # Level 3: trait body, method body.
+    function preview(self) -> String:
+        # Level 3: interface body, method body.
         self.summarize().truncate(80)
 
-impl Summarize for Doc:
-    fn summarize(&self) -> String:
+Doc implements Summarize:
+    function summarize(self) -> String:
         self.body.truncate(200)
 
 # Eight levels of nesting, then a single dedent all the way back to the top.
-fn deep(rows: &Array[Array[Int]], format: &Format) -> Int:
-    let mut total = 0
+function deep(rows: borrowed Array of (Array of Int), format: borrowed Format) -> Int:
+    let mutable total be 0
     for row in rows:
         for cell in row:
             if cell > 0:
                 match format:
                     Json:
-                        while total < cell:
+                        loop:
+                            if total >= cell:
+                                break
                             loop:
                                 if total >= cell:
                                     break
-                                total = total + 1
+                                total be total + 1
                     Plain:
-                        total = total + cell
+                        total be total + cell
                     Markdown:
-                        total = total + 1
+                        total be total + 1
             else:
-                total = total - 1
+                total be total - 1
     total
 
 # Closing many levels at once: the innermost statement is at level 6 and the
 # next statement is back at level 1.
-fn dedent_several_levels(rows: &Array[Array[Int]]) -> Int:
-    let mut hits = 0
+function dedent_several_levels(rows: borrowed Array of (Array of Int)) -> Int:
+    let mutable hits be 0
     for row in rows:
         for cell in row:
-            if cell != 0:
+            if cell is not 0:
                 if cell > 0:
                     if cell > 10:
-                        hits = hits + 1
+                        hits be hits + 1
     hits
 
 # A block whose body is a single nested block, repeatedly.
-fn ladder(flag: Bool) -> Int:
+function ladder(flag: Bool) -> Int:
     if flag:
         if flag:
             if flag:
@@ -81,24 +87,33 @@ fn ladder(flag: Bool) -> Int:
 
 # An indented block that contains a construct using the inline form, so one
 # line closes nothing and the next dedents.
-fn mixed(a: &String, b: &String) -> Int:
-    if a.len() > 0:
-        let chosen = if a.len() > b.len(): a else: b
-        chosen.len()
+function mixed(a: borrowed String, b: borrowed String) -> Int:
+    if a.length() > 0:
+        let chosen be if a.length() > b.length(): a else: b
+        chosen.length()
     else:
         0
 
+# Not every indented continuation opens a block. A chain broken by a leading
+# `.` is indented too (§4.6), and it is one logical line: the indentation
+# after `docs` belongs to the expression, not to a new body.
+function first_headline(docs: borrowed Array of Doc) -> Option of String:
+    docs
+        .iterate()
+        .map(each.title)
+        .first()
+
 # Blank lines inside a block do not close it, however many there are.
-fn with_gaps() -> Int:
-    let a = 1
+function with_gaps() -> Int:
+    let a be 1
 
 
-    let b = 2
+    let b be 2
 
 
 
     a + b
 
-fn main():
-    println(ladder(true))
-    println(with_gaps())
+function main():
+    print(ladder(true))
+    print(with_gaps())

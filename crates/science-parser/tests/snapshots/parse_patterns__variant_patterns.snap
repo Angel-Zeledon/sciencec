@@ -1,31 +1,31 @@
 ---
 source: crates/science-parser/tests/parse_patterns.rs
-expression: "parse_body(r#\"fn f(x: Int) -> Int:\n    match x:\n        Ok(value): value\n        Err(NotFound(key)): key\n        Option.Some(v): v\n        Option.None: 0\n        Rect(w, h): w\n\"#)"
+expression: "parse_body(r#\"function f(x: Int) -> Int:\n    match x:\n        Ok(value): value\n        Err(NotFound(key)): key\n        Option.Some(v): v\n        Option.None: 0\n        Rect(w, h): w\n\"#)"
 ---
-Block @25..161
-  tail: Match @25..161
-    scrutinee: Path `x` @31..32
+Block @31..167
+  tail: Match @31..167
+    scrutinee: Path `x` @37..38
     arms
-      Arm @42..58
-        pattern: Variant `Ok` @42..51
-          Binding `value` @45..50
-        body: Path `value` @53..58
-      Arm @67..90
-        pattern: Variant `Err` @67..85
-          Variant `NotFound` @71..84
-            Binding `key` @80..83
-        body: Path `key` @87..90
-      Arm @99..116
-        pattern: Variant `Option.Some` @99..113
-          Binding `v` @111..112
-        body: Path `v` @115..116
-      Arm @125..139
-        pattern: Variant `Option.None` @125..136
-        body: Int 0 @138..139
-      Arm @148..161
-        pattern: Variant `Rect` @148..158
-          Binding `w` @153..154
-          Binding `h` @156..157
-        body: Path `w` @160..161
+      Arm @48..64
+        pattern: Variant `Ok` @48..57
+          Binding `value` @51..56
+        body: Path `value` @59..64
+      Arm @73..96
+        pattern: Variant `Err` @73..91
+          Variant `NotFound` @77..90
+            Binding `key` @86..89
+        body: Path `key` @93..96
+      Arm @105..122
+        pattern: Variant `Option.Some` @105..119
+          Binding `v` @117..118
+        body: Path `v` @121..122
+      Arm @131..145
+        pattern: Variant `Option.None` @131..142
+        body: Int 0 @144..145
+      Arm @154..167
+        pattern: Variant `Rect` @154..164
+          Binding `w` @159..160
+          Binding `h` @162..163
+        body: Path `w` @166..167
 --- diagnostics ---
 (none)

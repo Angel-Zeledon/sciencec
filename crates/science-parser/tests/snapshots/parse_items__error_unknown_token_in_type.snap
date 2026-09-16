@@ -1,13 +1,13 @@
 ---
 source: crates/science-parser/tests/parse_items.rs
-expression: "parse_report(vec![Fn, id(\"f\"), LParen, id(\"a\"), Colon, Percent, RParen, Colon,\nid(\"x\"), Newline,])"
+expression: "parse_report(vec![Function, id(\"f\"), LParen, id(\"a\"), Colon, Percent, RParen,\nColon, id(\"x\"), Newline,])"
 ---
-Module @0..10
-  Fn `f` @0..10
+Module @0..16
+  Fn `f` @0..16
     params
-      Param `a` @4..7
-        type: Error @6..7
-    body: Block @9..10
-      tail: Path `x` @9..10
+      Param `a` @10..13
+        type: Error @12..13
+    body: Block @15..16
+      tail: Path `x` @15..16
 --- diagnostics ---
-SC0104 @6..7 expected a type, found `%`
+SC0104 @12..13 expected a type, found `%`

@@ -1,22 +1,22 @@
 ---
 source: crates/science-parser/tests/parse_stmts.rs
-expression: "parse_body(r#\"fn largest(items: &Array[Int]) -> Int:\n    let mut best = 0\n    for item in items:\n        if item > best: best = item\n    best\n\"#)"
+expression: "parse_body(r#\"function largest(items: borrowed Array of Int) -> Int:\n    let mutable best be 0\n    for item in items:\n        if item > best: best be item\n    best\n\"#)"
 ---
-Block @43..127
-  Let `best` mut @43..59
-    value: Int 0 @58..59
-  For @64..118
-    pattern: Binding `item` @68..72
-    iter: Path `items` @76..81
-    body: Block @91..118
-      tail: If @91..118
-        cond: Binary `>` @94..105
-          lhs: Path `item` @94..98
-          rhs: Path `best` @101..105
-        then: Block @107..118
-          Assign @107..118
-            target: Path `best` @107..111
-            value: Path `item` @114..118
-  tail: Path `best` @123..127
+Block @59..149
+  Let `best` mutable @59..80
+    value: Int 0 @79..80
+  For @85..140
+    pattern: Binding `item` @89..93
+    iter: Path `items` @97..102
+    body: Block @112..140
+      tail: If @112..140
+        cond: Binary `>` @115..126
+          lhs: Path `item` @115..119
+          rhs: Path `best` @122..126
+        then: Block @128..140
+          Assign @128..140
+            target: Path `best` @128..132
+            value: Path `item` @136..140
+  tail: Path `best` @145..149
 --- diagnostics ---
 (none)

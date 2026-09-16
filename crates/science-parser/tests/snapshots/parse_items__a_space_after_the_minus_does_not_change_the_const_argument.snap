@@ -1,0 +1,13 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: spaced
+---
+Module @0..33
+  Alias `Row` @0..32
+    type: Path `Window` @12..32
+      generics of `Window`
+        Path `Int` @23..26
+        ConstArg Neg @28..31
+          Int 1 @30..31
+--- diagnostics ---
+(none)

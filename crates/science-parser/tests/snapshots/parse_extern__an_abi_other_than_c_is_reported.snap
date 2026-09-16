@@ -1,0 +1,15 @@
+---
+source: crates/science-parser/tests/parse_extern.rs
+expression: "parse_source_allowing_errors(r#\"unsafe extern \"Fortran\" library \"openblas\":\n    function dgemm(m: I32)\n\"#)"
+---
+Module @0..71
+  Extern "Fortran" unsafe @0..70
+    Library "openblas" @24..42
+    items
+      ExternFn `dgemm` @48..70
+        params
+          Param `m` @63..69
+            type: Path `I32` @66..69
+--- diagnostics ---
+SC0413 @14..23 the only ABI in this phase is `"C"`
+  note Fortran BLAS and LAPACK are `"C"` too: their difference is not the calling convention but the argument passing, which is expressed in the types

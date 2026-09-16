@@ -1,0 +1,15 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: parse_source_allowing_errors(source)
+---
+Module @0..60
+  Fn `f` @0..31
+    ret: Path `Int` @21..24
+    body: Block @30..31
+      tail: Int 1 @30..31
+  Fn `g` @33..59
+    ret: Path `Int` @49..52
+    body: Block @58..59
+      tail: Int 2 @58..59
+--- diagnostics ---
+SC0118 @13..20 the return type is written `->`

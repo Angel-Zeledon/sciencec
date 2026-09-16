@@ -9,7 +9,7 @@ use science_db::ScienceDatabase;
 #[test]
 fn the_placeholder_keys_are_usable() {
     let mut db = ScienceDatabase::new();
-    let file = db.add_file("a.science", "fn a():\n    1\n");
+    let file = db.add_file("a.science", "function a():\n    1\n");
 
     let module = ModuleId::new(&db, file);
     assert_eq!(module.file(&db), file);
@@ -28,7 +28,7 @@ fn the_placeholder_keys_are_usable() {
 #[should_panic(expected = "science-resolve")]
 fn hir_is_declared_and_unimplemented() {
     let mut db = ScienceDatabase::new();
-    let file = db.add_file("a.science", "fn a():\n    1\n");
+    let file = db.add_file("a.science", "function a():\n    1\n");
     let _ = pending::hir(&db, ModuleId::new(&db, file));
 }
 
@@ -36,7 +36,7 @@ fn hir_is_declared_and_unimplemented() {
 #[should_panic(expected = "science-regions")]
 fn region_result_is_declared_and_unimplemented() {
     let mut db = ScienceDatabase::new();
-    let file = db.add_file("a.science", "fn a():\n    1\n");
+    let file = db.add_file("a.science", "function a():\n    1\n");
     let module = ModuleId::new(&db, file);
     let _ = pending::region_result(&db, DefId::new(&db, module, 0));
 }

@@ -8,7 +8,7 @@ use common::{parse_body, parse_source_allowing_errors};
 #[test]
 fn literal_and_wildcard_patterns() {
     insta::assert_snapshot!(parse_body(
-        r#"fn f(x: Int) -> String:
+        r#"function f(x: Int) -> String:
     match x:
         0: "zero"
         'a': "letter"
@@ -25,7 +25,7 @@ fn literal_and_wildcard_patterns() {
 #[test]
 fn a_bare_name_is_a_binding() {
     insta::assert_snapshot!(parse_body(
-        r#"fn f(x: Int) -> Int:
+        r#"function f(x: Int) -> Int:
     match x:
         None: 0
         other: other
@@ -33,12 +33,12 @@ fn a_bare_name_is_a_binding() {
     ));
 }
 
-/// Enum variant patterns, with and without a payload, and qualified (§4.5:
+/// Choice variant patterns, with and without a payload, and qualified (§4.7:
 /// `Some(x)` and `Option.Some(x)` are the same thing).
 #[test]
 fn variant_patterns() {
     insta::assert_snapshot!(parse_body(
-        r#"fn f(x: Int) -> Int:
+        r#"function f(x: Int) -> Int:
     match x:
         Ok(value): value
         Err(NotFound(key)): key
@@ -49,11 +49,12 @@ fn variant_patterns() {
     ));
 }
 
-/// §4.4's struct pattern: it mirrors construction, with named fields.
+/// §4.4's record pattern: it mirrors construction, with named fields, and may
+/// ignore one with `_`.
 #[test]
-fn struct_patterns() {
+fn record_patterns() {
     insta::assert_snapshot!(parse_body(
-        r#"fn f(p: &Point) -> String:
+        r#"function f(p: borrowed Point) -> String:
     match p:
         Point(x: 0, y: 0): "origin"
         Point(x: 0, y: y): "on the Y axis"
@@ -66,7 +67,7 @@ fn struct_patterns() {
 #[test]
 fn tuple_patterns() {
     insta::assert_snapshot!(parse_body(
-        r#"fn f(p: (Int, Int)) -> String:
+        r#"function f(p: (Int, Int)) -> String:
     match p:
         (0, 0): "origin"
         (x, 0): "on the X axis"
@@ -80,7 +81,7 @@ fn tuple_patterns() {
 #[test]
 fn or_patterns() {
     insta::assert_snapshot!(parse_body(
-        r#"fn f(n: Int) -> String:
+        r#"function f(n: Int) -> String:
     match n:
         0 | 1 | 2: "small"
         Symbol(',') | Symbol(';'): "punctuation"
@@ -94,44 +95,50 @@ fn or_patterns() {
 #[test]
 fn an_empty_argument_list_in_a_pattern_is_a_variant() {
     insta::assert_snapshot!(parse_body(
-        r#"fn f(x: Int) -> Int:
+        r#"function f(x: Int) -> Int:
     match x:
         Doc(): 0
 "#
     ));
 }
 
-/// The pattern of a `for` loop goes through the same grammar.
+/// The pattern of a `for` loop goes through the same grammar, over a
+/// collection and over a range alike.
 #[test]
 fn for_loop_patterns() {
     insta::assert_snapshot!(parse_body(
-        r#"fn f(pairs: &Array[(Int, Int)]):
+        r#"function f(pairs: borrowed Array of Pair, n: Int):
     for (a, b) in pairs:
-        println(a)
+        print(a)
+    for i in 0..n:
+        print(i)
 "#
     ));
 }
 
 /// §4.4: a `match` arm's `:` "cannot be found by scanning". The pattern is
 /// parsed by the pattern grammar and whatever follows it is the separator —
-/// which is why the colons inside a struct pattern do not end the arm.
+/// which is why the colons inside a record pattern do not end the arm.
 #[test]
 fn the_arm_separator_is_whatever_follows_the_pattern() {
     insta::assert_snapshot!(parse_body(
-        r#"fn f(p: &Point) -> Int:
+        r#"function f(p: borrowed Point) -> Int:
     match p:
         Point(x: x, y: y): x
 "#
     ));
 }
 
-/// A `mut` binding, which `PatternKind::Binding` carries a flag for.
+/// A `mutable` binding, which `PatternKind::Binding` carries a flag for. The
+/// word is `mutable` everywhere, in a pattern as in a `let` (§4.3).
 #[test]
 fn a_mutable_binding_pattern() {
     insta::assert_snapshot!(parse_body(
-        r#"fn f(x: Int) -> Int:
+        r#"function f(x: Int) -> Int:
     match x:
-        mut n: n
+        Ok(mutable value): value
+        (mutable a, b): a
+        mutable n: n
 "#
     ));
 }
@@ -140,7 +147,7 @@ fn a_mutable_binding_pattern() {
 #[test]
 fn a_broken_pattern_does_not_eat_the_next_arm() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        r#"fn f(x: Int) -> Int:
+        r#"function f(x: Int) -> Int:
     match x:
         *: 0
         1: 1

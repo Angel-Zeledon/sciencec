@@ -1,0 +1,21 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Function, id(\"paired\"), Of, LParen, id(\"A\"), Comma, id(\"B\"),\nRParen, LParen, id(\"first\"), Colon, id(\"A\"), Comma, id(\"second\"), Colon,\nid(\"B\"), RParen, Arrow, LParen, id(\"A\"), Comma, id(\"B\"), RParen, Colon,\nid(\"x\"), Newline,])"
+---
+Module @0..48
+  Fn `paired` @0..48
+    generics
+      TypeParam `A` @17..18
+      TypeParam `B` @19..20
+    params
+      Param `first` @22..29
+        type: Path `A` @28..29
+      Param `second` @30..38
+        type: Path `B` @37..38
+    ret: Tuple @41..46
+      Path `A` @42..43
+      Path `B` @44..45
+    body: Block @47..48
+      tail: Path `x` @47..48
+--- diagnostics ---
+(none)

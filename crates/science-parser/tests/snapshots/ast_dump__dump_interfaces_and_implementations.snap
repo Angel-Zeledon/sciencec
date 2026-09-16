@@ -1,0 +1,79 @@
+---
+source: crates/science-parser/tests/ast_dump.rs
+expression: module.dump()
+---
+Module @0..662
+  Interface `Iterate` public @0..213
+    supers
+      Bound `Clone` @22..27
+    assoc types
+      AssocType `Item` @33..42
+    methods
+      Fn `next` @48..103
+        receiver: mutable self @62..74
+        ret: Path `Option` @84..103
+          generics of `Option`
+            SelfAssoc `Item` @94..103
+      Fn `count` @110..149
+        receiver: self: Self @125..135
+        ret: Path `Int` @146..149
+      Fn `describe` @155..213
+        receiver: self @173..177
+        ret: Path `String` @186..192
+        body: Block @200..213
+          tail: Str "an iterator" @200..213
+  Implements @240..376
+    interface: Bound `Iterate` @256..263
+    type: Path `Counter` @240..247
+    assoc types
+      AssocType `Item` @269..285
+        type: Path `Int` @282..285
+    methods
+      Fn `next` @295..376
+        receiver: mutable self @309..321
+        ret: Path `Option` @331..350
+          generics of `Option`
+            SelfAssoc `Item` @341..350
+        body: Block @360..376
+          tail: Call @360..376
+            callee: Path `Some` @360..364
+            args
+              Field `value` @365..375
+                base: Self @365..369
+  Implements @430..535
+    generics
+      TypeParam `A` @438..439
+      TypeParam `B` @441..442
+    interface: Bound `Swap` @456..460
+    type: Path `Pair` @430..444
+      generics of `Pair`
+        Path `A` @438..439
+        Path `B` @441..442
+    where
+      Predicate @467..475
+        type: Path `A` @467..468
+        bounds
+          Bound `Clone` @470..475
+    methods
+      Fn `swapped` @490..535
+        receiver: self @507..511
+        ret: Path `Pair` @520..535
+          generics of `Pair`
+            Path `B` @528..529
+            Path `A` @531..532
+  Implements @545..569
+    interface: Bound `Copy` @565..569
+    type: Path `Position` @545..553
+  Has @580..662
+    type: Path `Array` @581..593
+      generics of `Array`
+        Path `Doc` @590..593
+    methods
+      Fn `first` @605..662
+        receiver: self @620..624
+        ret: Borrowed @634..646
+          Path `Doc` @643..646
+        body: Block @655..662
+          tail: Index @655..662
+            base: Self @655..659
+            index: Int 0 @660..661

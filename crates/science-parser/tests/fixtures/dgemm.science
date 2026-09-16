@@ -1,0 +1,90 @@
+# The `dgemm` binding of `ffi-c-boundary.md` §1.7, in revision-2 syntax.
+#
+# This file is the acceptance criterion for `extern` blocks: the declaration
+# of §1.1 and the safe wrapper of §1.7, which must parse with no diagnostics
+# at all. §1.7 was written before `syntax-revision-2.md`, so `returns` is `->`
+# and `is below` / `is above` are `<` and `>`; the `Result` and the `try` are
+# left as the note wrote them, which is also what `examples/09_option_result`
+# still uses.
+#
+# The signature of the wrapper contains no `ffi` type. That is the point of
+# the section: the declaration records the claim, and the interface is a
+# function whose body is a check and an `unsafe` call.
+
+unsafe extern "C" library "openblas" via pkg-config "openblas":
+
+    type CblasLayout is CInt
+    const CBLAS_ROW_MAJOR be 101 as CblasLayout
+    const CBLAS_COL_MAJOR be 102 as CblasLayout
+
+    type CblasTranspose is CInt
+    const CBLAS_NO_TRANS be 111 as CblasTranspose
+    const CBLAS_TRANS be 112 as CblasTranspose
+
+    # 32-bit integers: the reference and default OpenBLAS build. The ILP64
+    # build is a second block, over `library "openblas64_"`, whose `BlasInt`
+    # is `I64` and whose symbols end in `_64_`.
+    type BlasInt is I32
+
+    function cblas_dgemm(
+        layout: CblasLayout,
+        transpose_a: CblasTranspose,
+        transpose_b: CblasTranspose,
+        m: BlasInt, n: BlasInt, k: BlasInt,
+        alpha: F64,
+        a: ffi.Span of F64, lda: BlasInt,
+        b: ffi.Span of F64, ldb: BlasInt,
+        beta: F64,
+        c: ffi.MutableSpan of F64, ldc: BlasInt,
+    )
+
+type MatrixView:
+    data: ffi.Span of F64
+    rows: Int
+    columns: Int
+    leading: Int        # the "leading dimension" - stride between columns
+
+public choice BlasError:
+    Shape(Int, Int)
+    Stride(Int, Int)
+    Overflow
+
+public function gemm(
+        a: borrowed MatrixView,
+        b: borrowed MatrixView,
+        c: mutable borrowed MatrixView,
+        alpha: F64,
+        beta: F64) -> Result of ((), BlasError):
+
+    if a.columns is not b.rows:
+        return Err(BlasError.Shape(a.columns, b.rows))
+    if c.rows is not a.rows or c.columns is not b.columns:
+        return Err(BlasError.Shape(c.rows, a.rows))
+
+    # The obligation the borrow checker cannot discharge, discharged here.
+    try covers(a, a.columns)
+    try covers(b, b.columns)
+    try covers(c, c.columns)
+
+    unsafe:
+        cblas_dgemm(
+            layout: CBLAS_COL_MAJOR,
+            transpose_a: CBLAS_NO_TRANS,
+            transpose_b: CBLAS_NO_TRANS,
+            m: a.rows as BlasInt,
+            n: b.columns as BlasInt,
+            k: a.columns as BlasInt,
+            alpha: alpha,
+            a: a.data, lda: a.leading as BlasInt,
+            b: b.data, ldb: b.leading as BlasInt,
+            beta: beta,
+            c: c.data, ldc: c.leading as BlasInt)
+    Ok(())
+
+function covers(m: borrowed MatrixView, columns: Int) -> Result of ((), BlasError):
+    let needed be m.leading * (columns - 1) + m.rows
+    if m.leading < m.rows:
+        return Err(BlasError.Stride(m.leading, m.rows))
+    if needed > m.data.length():
+        return Err(BlasError.Overflow)
+    Ok(())

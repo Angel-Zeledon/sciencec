@@ -1,16 +1,16 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_body(\"fn f():\\n    if a: if b: x else: y\\n\")"
+expression: "parse_body(\"function f():\\n    if a: if b: x else: y\\n\")"
 ---
-Block @12..33
-  tail: If @12..33
-    cond: Path `a` @15..16
-    then: Block @18..33
-      tail: If @18..33
-        cond: Path `b` @21..22
-        then: Block @24..25
-          tail: Path `x` @24..25
-        else: Block @32..33
-          tail: Path `y` @32..33
+Block @18..39
+  tail: If @18..39
+    cond: Path `a` @21..22
+    then: Block @24..39
+      tail: If @24..39
+        cond: Path `b` @27..28
+        then: Block @30..31
+          tail: Path `x` @30..31
+        else: Block @38..39
+          tail: Path `y` @38..39
 --- diagnostics ---
 (none)

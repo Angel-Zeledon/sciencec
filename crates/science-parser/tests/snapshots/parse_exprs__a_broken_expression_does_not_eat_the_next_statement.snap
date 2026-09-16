@@ -1,13 +1,13 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_source_allowing_errors(\"fn f():\\n    let a = *\\n    let b = 1\\n\")"
+expression: "parse_source_allowing_errors(\"function f():\\n    let a be *\\n    let b be 1\\n\")"
 ---
-Module @0..36
-  Fn `f` @0..35
-    body: Block @12..35
-      Let `a` @12..21
-        value: Error @20..21
-      Let `b` @26..35
-        value: Int 1 @34..35
+Module @0..44
+  Fn `f` @0..43
+    body: Block @18..43
+      Let `a` @18..28
+        value: Error @27..28
+      Let `b` @33..43
+        value: Int 1 @42..43
 --- diagnostics ---
-SC0105 @20..21 expected an expression, found `*`
+SC0105 @27..28 expected an expression, found `*`

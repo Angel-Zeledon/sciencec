@@ -6,15 +6,20 @@
 //! per level, and every line ending in the node's span.
 //!
 //! ```text
-//! Fn `longest` @0..48
+//! Fn `longest` @0..62
 //!   params
-//!     Param `a` @11..21
-//!       type: Ref @14..21
-//!         Path `String` @15..21
-//!   ret: Ref @37..44
-//!     Path `String` @38..44
-//!   body: Block @46..47
+//!     Param `a` @14..32
+//!       type: Borrowed @17..32
+//!         Path `String` @26..32
+//!   ret: Borrowed @46..61
+//!     Path `String` @55..61
+//!   body: Block @63..64
 //! ```
+//!
+//! The headers name the source construct, not an internal one: a type written
+//! `borrowed T` dumps as `Borrowed`, and an implementation as `Implements` or
+//! `HasMethods`. A dump that still spoke the old syntax would be a second
+//! place the language is described, and it would be the one that rots.
 //!
 //! Wrapper nodes whose span merely repeats their child's are not printed: an
 //! `Item` shows as the declaration it holds, and an expression statement shows
@@ -269,10 +274,13 @@ impl Dump for Item {
         match &self.kind {
             ItemKind::Use(decl) => decl.dump_node(w),
             ItemKind::Fn(decl) => decl.dump_node(w),
-            ItemKind::Struct(decl) => decl.dump_node(w),
-            ItemKind::Enum(decl) => decl.dump_node(w),
-            ItemKind::Trait(decl) => decl.dump_node(w),
+            ItemKind::Record(decl) => decl.dump_node(w),
+            ItemKind::Choice(decl) => decl.dump_node(w),
+            ItemKind::Alias(decl) => decl.dump_node(w),
+            ItemKind::Const(decl) => decl.dump_node(w),
+            ItemKind::Interface(decl) => decl.dump_node(w),
             ItemKind::Impl(block) => block.dump_node(w),
+            ItemKind::Extern(block) => block.dump_node(w),
         }
     }
 }
@@ -289,9 +297,16 @@ impl Dump for UseDecl {
 
 impl Dump for GenericParam {
     fn dump_node(&self, w: &mut DumpWriter) {
-        w.node(&named("TypeParam", &self.name.name), self.span, |w| {
-            w.list("bounds", &self.bounds)
-        });
+        match &self.kind {
+            GenericParamKind::Type { bounds } => {
+                w.node(&named("TypeParam", &self.name.name), self.span, |w| {
+                    w.list("bounds", bounds)
+                })
+            }
+            GenericParamKind::Const { ty } => {
+                w.node(&named("ConstParam", &self.name.name), self.span, |w| w.child("type", ty))
+            }
+        }
     }
 }
 
@@ -307,7 +322,7 @@ impl Dump for WherePredicate {
 impl Dump for FnDecl {
     fn dump_node(&self, w: &mut DumpWriter) {
         let mut header = named("Fn", &self.name.name);
-        flag(&mut header, self.is_pub, "pub");
+        flag(&mut header, self.is_pub, "public");
         w.node(&header, self.span, |w| {
             w.list("generics", &self.generics);
             w.child_opt("receiver", self.self_param.as_ref());
@@ -322,9 +337,9 @@ impl Dump for FnDecl {
 impl Dump for SelfParam {
     fn dump_node(&self, w: &mut DumpWriter) {
         let header = match self.kind {
-            SelfKind::Value => "self",
-            SelfKind::Ref => "&self",
-            SelfKind::RefMut => "&mut self",
+            SelfKind::Shared => "self",
+            SelfKind::Mutable => "mutable self",
+            SelfKind::Value => "self: Self",
         };
         w.leaf(header, self.span);
     }
@@ -336,10 +351,10 @@ impl Dump for Param {
     }
 }
 
-impl Dump for StructDecl {
+impl Dump for RecordDecl {
     fn dump_node(&self, w: &mut DumpWriter) {
-        let mut header = named("Struct", &self.name.name);
-        flag(&mut header, self.is_pub, "pub");
+        let mut header = named("Record", &self.name.name);
+        flag(&mut header, self.is_pub, "public");
         w.node(&header, self.span, |w| {
             w.list("generics", &self.generics);
             w.list("where", &self.where_clause);
@@ -351,15 +366,15 @@ impl Dump for StructDecl {
 impl Dump for FieldDef {
     fn dump_node(&self, w: &mut DumpWriter) {
         let mut header = named("Field", &self.name.name);
-        flag(&mut header, self.is_pub, "pub");
+        flag(&mut header, self.is_pub, "public");
         w.node(&header, self.span, |w| w.child("type", &self.ty));
     }
 }
 
-impl Dump for EnumDecl {
+impl Dump for ChoiceDecl {
     fn dump_node(&self, w: &mut DumpWriter) {
-        let mut header = named("Enum", &self.name.name);
-        flag(&mut header, self.is_pub, "pub");
+        let mut header = named("Choice", &self.name.name);
+        flag(&mut header, self.is_pub, "public");
         w.node(&header, self.span, |w| {
             w.list("generics", &self.generics);
             w.list("where", &self.where_clause);
@@ -376,28 +391,169 @@ impl Dump for VariantDef {
     }
 }
 
-impl Dump for TraitDecl {
+impl Dump for AliasDecl {
     fn dump_node(&self, w: &mut DumpWriter) {
-        let mut header = named("Trait", &self.name.name);
-        flag(&mut header, self.is_pub, "pub");
+        let mut header = named("Alias", &self.name.name);
+        flag(&mut header, self.is_pub, "public");
         w.node(&header, self.span, |w| {
             w.list("generics", &self.generics);
-            w.list("supertraits", &self.supertraits);
+            w.child("type", &self.ty);
+        });
+    }
+}
+
+impl Dump for ConstDecl {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        let mut header = named("Const", &self.name.name);
+        flag(&mut header, self.is_pub, "public");
+        w.node(&header, self.span, |w| {
+            w.child_opt("type", self.ty.as_ref());
+            w.child("value", &self.value);
+        });
+    }
+}
+
+impl Dump for InterfaceDecl {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        let mut header = named("Interface", &self.name.name);
+        flag(&mut header, self.is_pub, "public");
+        w.node(&header, self.span, |w| {
+            w.list("generics", &self.generics);
+            w.list("supers", &self.supers);
             w.list("where", &self.where_clause);
+            w.list("assoc types", &self.assoc_types);
             w.list("methods", &self.methods);
         });
     }
 }
 
+impl Dump for AssocTypeDecl {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        w.leaf(&named("AssocType", &self.name.name), self.span);
+    }
+}
+
 impl Dump for ImplBlock {
     fn dump_node(&self, w: &mut DumpWriter) {
-        w.node("Impl", self.span, |w| {
+        // The two heads of §4.4 are different declarations, so they get
+        // different headers: a reader should not have to look for an
+        // `interface:` line to tell `Doc implements Summarize` from `Doc has`.
+        let header = if self.interface.is_some() { "Implements" } else { "Has" };
+        w.node(header, self.span, |w| {
             w.list("generics", &self.generics);
-            w.child_opt("trait", self.trait_.as_ref());
+            w.child_opt("interface", self.interface.as_ref());
             w.child("type", &self.self_ty);
             w.list("where", &self.where_clause);
+            w.list("assoc types", &self.assoc_types);
             w.list("methods", &self.methods);
         });
+    }
+}
+
+impl Dump for AssocTypeBinding {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        w.node(&named("AssocType", &self.name.name), self.span, |w| w.child("type", &self.ty));
+    }
+}
+
+// --- extern blocks -------------------------------------------------------
+
+impl Dump for StrLit {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        w.leaf(&format!("Str {:?}", self.value), self.span);
+    }
+}
+
+impl Dump for ExternBlock {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        let mut header = format!("Extern {:?}", self.abi.value);
+        flag(&mut header, self.is_unsafe, "unsafe");
+        w.node(&header, self.span, |w| {
+            match &self.library {
+                Some(library) => library.dump_node(w),
+                None => w.note("library (none)"),
+            }
+            w.list("items", &self.items);
+        });
+    }
+}
+
+impl Dump for LibraryClause {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        let mut header = format!("Library {:?}", self.name.value);
+        flag(&mut header, self.static_link.is_some(), "static");
+        flag(&mut header, self.when_available.is_some(), "when-available");
+        w.node(&header, self.span, |w| {
+            if let Some(module) = &self.pkg_config {
+                w.child("pkg-config", module);
+            }
+        });
+    }
+}
+
+impl Dump for ExternItem {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        // As with `Item`, the wrapper's span only repeats its child's.
+        match &self.kind {
+            ExternItemKind::Fn(node) => node.dump_node(w),
+            ExternItemKind::Alias(node) => node.dump_node(w),
+            ExternItemKind::Const(node) => node.dump_node(w),
+            ExternItemKind::Static(node) => node.dump_node(w),
+            ExternItemKind::Union(node) => node.dump_node(w),
+            ExternItemKind::Error => w.leaf("Error", self.span),
+        }
+    }
+}
+
+impl Dump for ExternFn {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        let mut header = named("ExternFn", &self.name.name);
+        flag(&mut header, self.variadic.is_some(), "variadic");
+        w.node(&header, self.span, |w| {
+            w.list("params", &self.params);
+            w.child_opt("ret", self.ret.as_ref());
+            w.child_opt("symbol", self.symbol.as_ref());
+        });
+    }
+}
+
+impl Dump for ExternAlias {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        w.node(&named("ExternAlias", &self.name.name), self.span, |w| w.child("type", &self.ty));
+    }
+}
+
+impl Dump for ExternConst {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        let mut header = named("ExternConst", &self.name.name);
+        flag(&mut header, self.negative, "negative");
+        w.node(&header, self.span, |w| {
+            w.note(&format!("value: {}", literal_header(&self.value)));
+            w.child("type", &self.ty);
+        });
+    }
+}
+
+impl Dump for ExternStatic {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        w.node(&named("ExternStatic", &self.name.name), self.span, |w| w.child("type", &self.ty));
+    }
+}
+
+impl Dump for ExternUnion {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        w.node(&named("ExternUnion", &self.name.name), self.span, |w| {
+            w.note(&format!("size: {}", layout_number(self.size)));
+            w.note(&format!("align: {}", layout_number(self.align)));
+        });
+    }
+}
+
+/// A union's size or alignment, or that it was missing and reported.
+fn layout_number(value: Option<u128>) -> String {
+    match value {
+        Some(value) => value.to_string(),
+        None => "(none)".to_string(),
     }
 }
 
@@ -409,15 +565,39 @@ impl Dump for Type {
             TypeKind::Path(path) => {
                 w.node(&named("Path", &path.dotted()), self.span, |w| dump_path_generics(path, w))
             }
-            TypeKind::Ref { mutable, inner } => {
-                let header = if *mutable { "Ref mut" } else { "Ref" };
+            TypeKind::Borrowed { mutable, inner } => {
+                let header = if *mutable { "Borrowed mutable" } else { "Borrowed" };
                 w.node(header, self.span, |w| inner.dump_node(w));
             }
-            TypeKind::Dyn(bound) => w.node("Dyn", self.span, |w| bound.dump_node(w)),
+            TypeKind::Any(bound) => w.node("Any", self.span, |w| bound.dump_node(w)),
             TypeKind::Tuple(elems) => w.node("Tuple", self.span, |w| w.items(elems)),
             TypeKind::Unit => w.leaf("Unit", self.span),
             TypeKind::SelfType => w.leaf("SelfType", self.span),
+            TypeKind::SelfAssoc(name) => w.leaf(&named("SelfAssoc", &name.name), self.span),
+            // `ConstArg` and the const expression's root always cover the same
+            // span, so they share a line rather than one wrapping the other:
+            // a wrapper whose span merely repeats its child's is not printed.
+            // A literal stays the single leaf it has always been; a negation
+            // names its operator and hangs its operand below, which is the
+            // shape `+`, `*` and `/` will arrive in.
+            TypeKind::Const(value) => match &value.kind {
+                ConstExprKind::Lit(literal) => {
+                    w.leaf(&format!("ConstArg {}", literal_header(literal)), self.span)
+                }
+                ConstExprKind::Neg(operand) => {
+                    w.node("ConstArg Neg", self.span, |w| operand.dump_node(w))
+                }
+            },
             TypeKind::Error => w.leaf("Error", self.span),
+        }
+    }
+}
+
+impl Dump for ConstExpr {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        match &self.kind {
+            ConstExprKind::Lit(literal) => w.leaf(&literal_header(literal), self.span),
+            ConstExprKind::Neg(operand) => w.node("Neg", self.span, |w| operand.dump_node(w)),
         }
     }
 }
@@ -460,7 +640,7 @@ impl Dump for Stmt {
 impl Dump for LetStmt {
     fn dump_node(&self, w: &mut DumpWriter) {
         let mut header = named("Let", &self.name.name);
-        flag(&mut header, self.mutable, "mut");
+        flag(&mut header, self.mutable, "mutable");
         w.node(&header, self.span, |w| {
             w.child_opt("type", self.ty.as_ref());
             w.child("value", &self.value);
@@ -518,24 +698,52 @@ impl Dump for Expr {
                 w.child("type", ty);
             }),
             ExprKind::Try(inner) => w.node("Try", self.span, |w| inner.dump_node(w)),
-            ExprKind::Ref { mutable, expr } => {
-                let header = if *mutable { "Ref mut" } else { "Ref" };
+            ExprKind::Borrowed { mutable, expr } => {
+                let header = if *mutable { "Borrowed mutable" } else { "Borrowed" };
                 w.node(header, self.span, |w| expr.dump_node(w));
             }
+            ExprKind::Range { start, end, inclusive } => {
+                let header = if *inclusive { "Range inclusive" } else { "Range" };
+                w.node(header, self.span, |w| {
+                    w.child("start", &**start);
+                    w.child("end", &**end);
+                })
+            }
+            ExprKind::Closure { param, body } => {
+                // The implicit form has no parameter to print, and the
+                // `Each` in its body is what says so.
+                w.node("Closure", self.span, |w| {
+                    w.child_opt("param", param.as_ref());
+                    w.child("body", &**body);
+                })
+            }
+            ExprKind::Each => w.leaf("Each", self.span),
             ExprKind::If(if_expr) => if_expr.dump_node(w),
             ExprKind::Match(match_expr) => match_expr.dump_node(w),
-            ExprKind::While { cond, body } => w.node("While", self.span, |w| {
-                w.child("cond", &**cond);
-                w.child("body", body);
-            }),
             ExprKind::Loop { body } => w.node("Loop", self.span, |w| w.child("body", body)),
             ExprKind::For { pattern, iter, body } => w.node("For", self.span, |w| {
                 w.child("pattern", pattern);
                 w.child("iter", &**iter);
                 w.child("body", body);
             }),
+            ExprKind::Unsafe(body) => {
+                w.node("Unsafe", self.span, |w| w.child("body", body))
+            }
             ExprKind::Block(block) => block.dump_node(w),
             ExprKind::Error => w.leaf("Error", self.span),
+        }
+    }
+}
+
+impl Dump for Arg {
+    fn dump_node(&self, w: &mut DumpWriter) {
+        // A positional argument is its expression: the wrapper would repeat
+        // the span and say nothing. A named one has a name worth a line.
+        match &self.name {
+            None => self.value.dump_node(w),
+            Some(name) => w.node(&named("Arg", &name.name), self.span, |w| {
+                w.child("value", &self.value)
+            }),
         }
     }
 }
@@ -585,7 +793,7 @@ impl Dump for Pattern {
             PatternKind::Literal(literal) => w.leaf(&literal_header(literal), self.span),
             PatternKind::Binding { mutable, name } => {
                 let mut header = named("Binding", &name.name);
-                flag(&mut header, *mutable, "mut");
+                flag(&mut header, *mutable, "mutable");
                 w.leaf(&header, self.span);
             }
             PatternKind::Variant { path, elems } => {

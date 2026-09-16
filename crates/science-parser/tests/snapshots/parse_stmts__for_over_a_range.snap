@@ -1,0 +1,32 @@
+---
+source: crates/science-parser/tests/parse_stmts.rs
+expression: "parse_body(r#\"function f(n: Int) -> Int:\n    let mutable total be 0\n    for i in 0..n:\n        total be total + i\n    for i in 0..=n:\n        total be total + i\n    total\n\"#)"
+---
+Block @31..156
+  Let `total` mutable @31..53
+    value: Int 0 @52..53
+  For @58..99
+    pattern: Binding `i` @62..63
+    iter: Range @67..71
+      start: Int 0 @67..68
+      end: Path `n` @70..71
+    body: Block @81..99
+      Assign @81..99
+        target: Path `total` @81..86
+        value: Binary `+` @90..99
+          lhs: Path `total` @90..95
+          rhs: Path `i` @98..99
+  For @104..146
+    pattern: Binding `i` @108..109
+    iter: Range inclusive @113..118
+      start: Int 0 @113..114
+      end: Path `n` @117..118
+    body: Block @128..146
+      Assign @128..146
+        target: Path `total` @128..133
+        value: Binary `+` @137..146
+          lhs: Path `total` @137..142
+          rhs: Path `i` @145..146
+  tail: Path `total` @151..156
+--- diagnostics ---
+(none)

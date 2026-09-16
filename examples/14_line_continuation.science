@@ -1,86 +1,117 @@
-# 14 - Implicit line continuation
-# Spec: §4.1 "inside unclosed parentheses or brackets, newlines and
-# indentation are ignored entirely: line continuation is implicit."
+# 14 - Line continuation
+# Spec: §4.2 "inside unclosed parentheses or brackets, newlines and
+# indentation are ignored entirely", and §4.6 "a line whose continuation
+# begins with `.` continues too. Nothing else may be split this way."
 #
 # Every construct below spans several physical lines while being a single
-# logical line. The indentation inside the brackets is decorative: the lexer
-# emits no NEWLINE, INDENT or DEDENT until the bracket closes.
+# logical line. Inside brackets the indentation is decorative: the lexer emits
+# no NEWLINE, INDENT or DEDENT until the bracket closes.
 #
-# Trailing commas are allowed in every parenthesised and bracketed list —
-# arguments, parameters, generic arguments, struct fields and tuples (§4.5) —
+# Trailing commas are allowed in every parenthesized and bracketed list —
+# arguments, parameters, generic arguments, record fields and tuples (§4.7) —
 # which is what makes one-item-per-line formatting work.
 
-struct Config:
+type Config:
     host: String
     port: U16
     retries: U8
     verbose: Bool
 
-enum Outcome[T, E]:
+choice Outcome of (T, E):
     Ok(T)
     Err(E)
 
-trait Summarize:
-    fn summarize(&self) -> String
+interface Summarize:
+    function summarize(self) -> String
+
+# --- Unclosed brackets ------------------------------------------------------
 
 # A signature broken across lines inside its parameter list.
-fn connect(
-    host: &String,
+function connect(
+    host: borrowed String,
     port: U16,
     retries: U8,
 ) -> Bool:
     retries > 0
 
-# The generic parameter list is brackets too, so it continues implicitly.
-fn constrained[
+# Two or more generic parameters take parentheses (§4.3), and parentheses
+# continue, so the generic parameter list breaks across lines as well.
+function constrained of (
     A: Summarize,
     B: Summarize,
-](left: &A, right: &B) -> String:
+)(left: borrowed A, right: borrowed B) -> String:
     left.summarize()
 
-# A `where` clause spread over the parameter bracket and the body line.
-fn described[T](
-    value: &T,
+# A `where` clause spread over the parameter parentheses and the body line.
+function described of T(
+    value: borrowed T,
 ) -> String where T: Summarize + Clone:
     value.summarize()
 
-# A nested generic type broken across lines.
-fn deep(
-    items: &Array[
-        Outcome[
+# A nested generic type broken across lines. `Array of (Outcome of (…))` is
+# the parenthesized nesting of §4.3, and each of those parentheses continues.
+function deep(
+    items: borrowed Array of (
+        Outcome of (
             Config,
             String,
-        ],
-    ],
+        )
+    ),
 ) -> Int:
-    items.len()
+    items.length()
 
-fn main():
+# --- A chain broken by a leading `.` ----------------------------------------
+
+# §4.6: a chain is broken across lines by indenting the continuation, and a
+# line whose continuation begins with `.` continues. This is the only thing
+# besides an unclosed bracket that may be split across lines at all.
+function hosts(configs: borrowed Array of Config) -> Array of String:
+    configs
+        .iterate()
+        .discard(each.verbose)
+        .map(each.host)
+        .take(5)
+        .collect()
+
+# The two kinds of continuation nest: a chain broken by `.`, one of whose
+# calls is itself broken inside its parentheses.
+function named_hosts(configs: borrowed Array of Config) -> Array of String:
+    configs
+        .iterate()
+        .map(
+            config giving config.host,
+        )
+        # A comment-only line takes no part (§4.2), and the chain survives it.
+        .collect()          # a trailing comment on the last link
+
+function main():
     # A call whose arguments are on separate lines.
-    let ok = connect(
+    let ok be connect(
         "localhost",
         8080u16,
         3u8,
     )
 
     # Named-argument construction, one field per line.
-    let config = Config(
+    let config be Config(
         host: "localhost",
         port: 8080u16,
         retries: 3u8,
         verbose: false,
     )
 
-    # A deeply nested call: the indentation inside is free-form.
-    let nested = connect(
-        &config.host,
+    # A deeply nested call: the indentation inside is free-form. A parameter
+    # declared `borrowed` is borrowed at the call site without the caller
+    # writing anything (§6.3), so `config.host` is passed plainly.
+    let nested be connect(
+        config.host,
             config.port,
                 config.retries,
     )
 
-    # A parenthesised expression continuing across lines. Operators may sit
+    # A parenthesized expression continuing across lines. Operators may sit
     # at the end or the start of a line.
-    let arithmetic = (
+    let arithmetic be (
         1 +
         2 *
         3
@@ -88,34 +119,33 @@ fn main():
     )
 
     # A long boolean expression, one operand per line.
-    let predicate = (
+    let predicate be (
         config.port > 0u16
         and config.retries > 0u8
         or config.verbose
     )
 
-    # The `[...]` postfix continues too. §8 leaves `Array` with no indexing
-    # operator, so the postfix appears here where it does exist in an
-    # expression: naming a generic instantiation before an associated
-    # function call, with a trailing comma inside (§4.5).
-    let items = Array[
-        Outcome[
+    # Naming a generic instantiation before an associated function call needs
+    # parentheses (§4.3, `SC0116`), and those parentheses continue like any
+    # other, trailing comma included (§4.7).
+    let items be (Array of (
+        Outcome of (
             Config,
             String,
-        ],
-    ].new()
-    let element = items.get(
+        )
+    )).new()
+    let element be items.get(
         0,
     )
 
     # A comment inside brackets is still a comment to end of line, and the
     # continuation survives it.
-    let commented = connect(
+    let commented be connect(
         "localhost",   # the host
         8080u16,       # the port
         # a whole line of comment
         3u8,
     )
 
-    println(arithmetic)
-    println(predicate)
+    print(arithmetic)
+    print(predicate)

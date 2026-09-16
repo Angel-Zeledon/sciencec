@@ -67,14 +67,29 @@ fn the_acceptance_program_exists_and_names_every_requirement() {
     let path = repository_root().join("examples").join("00_kitchen_sink.science");
     let text = std::fs::read_to_string(&path).expect("the §11 acceptance program should exist");
 
-    // §11.1: generics with bounds, static and dynamic dispatch, exhaustive
-    // match over enums, Option and Result with `?`, and a struct holding a
-    // borrow in a field. All five, in one program.
-    for needle in ["[T: Summarize]", "&dyn Summarize", "Box[dyn Summarize]", "match ", "?", "&Doc"]
-    {
-        assert!(text.contains(needle), "the acceptance program never uses {needle:?}");
+    // §11.1 lists what the acceptance program must use at once. Each needle
+    // below is one item of that list, in the order §11 gives them, so a
+    // requirement that quietly leaves the program fails here and not in a
+    // review six months later.
+    for (needle, requirement) in [
+        ("of T: Summarize", "generics with bounds"),
+        ("const ", "const generics"),
+        ("type Item is", "associated types"),
+        ("borrowed any Summarize", "a trait dispatched dynamically"),
+        ("Box of any Summarize", "a trait object behind a box"),
+        ("match ", "an exhaustive match"),
+        ("try ", "Option and Result with `try`"),
+        ("implements Add", "a user type implementing an operator trait"),
+        ("in 0..", "a range-driven loop"),
+        ("each.", "a closure"),
+        ("borrowed Doc", "a type holding a borrow in a field"),
+    ] {
+        assert!(
+            text.contains(needle),
+            "the acceptance program never uses {needle:?}, so it does not show {requirement}"
+        );
     }
-    assert!(text.contains("where T: Summarize + Clone"));
+    assert!(text.contains("where T: Summarize + Clone"), "the `where` clause is gone");
 }
 
 #[test]

@@ -1,7 +1,7 @@
 # UI test: a tab in the indentation is a lexical error (SC0003).
 #
-# Spec §4.1: "Spaces only. A tab in the indentation is a lexical error
-# (SC0003); no attempt is made to interpret it."
+# Spec §4.2: "Spaces only. A tab in the indentation is an error (`SC0003`),
+# with no attempt to interpret it."
 
-fn main():
-	println("indented with a tab")
+function main():
+	print("indented with a tab")

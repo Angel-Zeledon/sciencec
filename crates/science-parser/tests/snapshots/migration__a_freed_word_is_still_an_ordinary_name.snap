@@ -1,0 +1,18 @@
+---
+source: crates/science-parser/tests/migration.rs
+expression: parse_source_allowing_errors(source)
+---
+Module @0..55
+  Fn `f` @0..54
+    params
+      Param `a` @11..17
+        type: Path `Int` @14..17
+      Param `above` @19..29
+        type: Path `Int` @26..29
+    ret: Path `Bool` @34..38
+    body: Block @44..54
+      tail: Binary `==` @44..54
+        lhs: Path `a` @44..45
+        rhs: Path `above` @49..54
+--- diagnostics ---
+(none)

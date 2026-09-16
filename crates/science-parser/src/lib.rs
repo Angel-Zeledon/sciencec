@@ -6,7 +6,10 @@
 //!   snapshot tests compare and what the later phases print when they want to
 //!   see what they were handed.
 //! - [`parser`] is the recursive-descent parser, and [`parser::codes`] lists
-//!   the syntax diagnostics, SC0100-SC0199.
+//!   the syntax diagnostics, SC0100-SC0199. [`parser::ffi_codes`] lists the
+//!   `extern` block's, which belong to `ffi-c-boundary.md` §8's
+//!   SC0410-SC0449 because they are about the C boundary rather than about
+//!   syntax.
 //!
 //! The parser never stops at the first error: it reports, synchronises on the
 //! end of the line or the end of the block, and keeps going, so one pass can
@@ -27,4 +30,4 @@ pub mod dump;
 pub mod parser;
 
 pub use dump::{Dump, DumpWriter};
-pub use parser::{codes, parse_module, Parser};
+pub use parser::{codes, ffi_codes, parse_module, Parser};

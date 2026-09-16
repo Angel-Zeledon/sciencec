@@ -1,11 +1,11 @@
 ---
 source: crates/science-parser/tests/parse_items.rs
-expression: "parse_report(vec![Fn, LParen, RParen, Colon, id(\"x\"), Newline, Struct,\nid(\"Doc\"), Colon, Newline, Indent, id(\"title\"), Colon, id(\"String\"), Newline,\nDedent,])"
+expression: "parse_report(vec![Function, LParen, RParen, Colon, id(\"x\"), Newline, Type,\nid(\"Doc\"), Colon, Newline, Indent, id(\"title\"), Colon, id(\"String\"), Newline,\nDedent,])"
 ---
-Module @0..28
-  Struct `Doc` @6..28
+Module @0..32
+  Record `Doc` @12..32
     fields
-      Field `title` @16..28
-        type: Path `String` @22..28
+      Field `title` @20..32
+        type: Path `String` @26..32
 --- diagnostics ---
-SC0102 @2..3 expected an identifier, found `(`
+SC0102 @8..9 expected an identifier, found `(`

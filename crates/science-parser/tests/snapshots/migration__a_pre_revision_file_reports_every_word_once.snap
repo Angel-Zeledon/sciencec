@@ -1,0 +1,50 @@
+---
+source: crates/science-parser/tests/migration.rs
+expression: parse_source_allowing_errors(source)
+---
+Module @0..245
+  Interface `Summarize` @0..55
+    methods
+      Fn `summarize` @21..55
+        receiver: self @40..44
+        ret: Path `String` @49..55
+  Has @57..244
+    type: Path `Doc` @57..60
+    methods
+      Fn `show` @78..244
+        receiver: self @92..96
+        params
+          Param `rows` @98..125
+            type: Borrowed @104..125
+              Path `Array` @113..125
+                generics of `Array`
+                  Path `Int` @122..125
+          Param `n` @127..133
+            type: Path `Int` @130..133
+        body: Block @144..244
+          For @144..190
+            pattern: Binding `row` @153..156
+            iter: Path `rows` @160..164
+            body: Block @178..190
+              tail: Call @178..190
+                callee: Path `print` @178..185
+                args
+                  Path `row` @186..189
+          tail: Loop @199..244
+            body: Block @234..244
+              Assign @234..244
+                target: Path `n` @234..235
+                value: Binary `-` @239..244
+                  lhs: Path `n` @239..240
+                  rhs: Int 1 @243..244
+--- diagnostics ---
+SC0139 @0..5 the declaration is written `interface`
+SC0141 @65..72 the inherent block is written `Type has:`
+SC0138 @148..152 the loop is written `for x in xs`
+  note `each` names the subject of a call, as in `docs.map(each.title)`, and nothing else
+SC0144 @178..185 the free function is `print`
+  note `print` writes a newline; `write` is the form that does not
+SC0143 @207..218 the comparison is written `>=`
+  note `is` and `is not` are the only comparisons written as words
+SC0142 @199..204 the unbounded loop is written `loop`
+  note end it with the condition negated: make `if not …: break` the first statement of the body, or write a count as a range, `for i in 0..n:`

@@ -1,0 +1,13 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Type, id(\"Doc\"), Colon, Newline, Indent, id(\"title\"), Colon,\nid(\"String\"), Newline, id(\"body\"), Colon, id(\"String\"), Newline, Dedent,])"
+---
+Module @0..31
+  Record `Doc` @0..31
+    fields
+      Field `title` @8..20
+        type: Path `String` @14..20
+      Field `body` @20..31
+        type: Path `String` @25..31
+--- diagnostics ---
+(none)

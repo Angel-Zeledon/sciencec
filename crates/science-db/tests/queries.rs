@@ -5,7 +5,7 @@ use science_db::{ast, file_diagnostics, source_text, tokens, Db, ScienceDatabase
 use science_diagnostics::{FileId, Severity};
 use science_lexer::TokenKind;
 
-const VALID: &str = "fn main():\n    1\n";
+const VALID: &str = "function main():\n    1\n";
 
 #[test]
 fn source_text_round_trips() {
@@ -22,9 +22,9 @@ fn a_path_keeps_one_file_id() {
     let a = db.add_file("a.science", VALID);
     let b = db.add_file("b.science", VALID);
     assert_ne!(a, b);
-    assert_eq!(db.add_file("a.science", "fn other():\n    2\n"), a);
+    assert_eq!(db.add_file("a.science", "function other():\n    2\n"), a);
     assert_eq!(db.file_id("a.science"), a);
-    assert_eq!(source_text(&db, a), "fn other():\n    2\n");
+    assert_eq!(source_text(&db, a), "function other():\n    2\n");
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn removing_a_file_keeps_its_slot() {
 fn tokens_carry_the_lexers_diagnostics() {
     let mut db = ScienceDatabase::new();
     // `§` is not a character of the language: SC0001.
-    let a = db.add_file("a.science", "fn main():\n    §\n");
+    let a = db.add_file("a.science", "function main():\n    §\n");
 
     let result = tokens(&db, a);
     assert!(
@@ -78,7 +78,7 @@ fn tokens_carry_the_lexers_diagnostics() {
 fn ast_carries_the_parsers_diagnostics() {
     let mut db = ScienceDatabase::new();
     // A `fn` with no name is a syntax error, LK01xx.
-    let a = db.add_file("a.science", "fn ():\n    1\n");
+    let a = db.add_file("a.science", "function ():\n    1\n");
 
     let result = ast(&db, a);
     assert!(result.has_errors());
@@ -103,7 +103,7 @@ fn a_valid_file_produces_no_diagnostics() {
 #[test]
 fn file_diagnostics_concatenates_the_phases_in_order() {
     let mut db = ScienceDatabase::new();
-    let a = db.add_file("a.science", "fn §():\n    1\n");
+    let a = db.add_file("a.science", "function §():\n    1\n");
 
     let lexical = tokens(&db, a).diagnostics().len();
     let syntax = ast(&db, a).diagnostics().len();
@@ -128,14 +128,14 @@ fn tokens_end_with_eof() {
 fn file_ids_agree_with_the_source_map() {
     let mut db = ScienceDatabase::new();
     let a = db.add_file("a.science", VALID);
-    let b = db.add_file("b.science", "fn other():\n    2\n");
+    let b = db.add_file("b.science", "function other():\n    2\n");
     db.remove_file(a);
     let c = db.add_file("c.science", VALID);
 
     let map = db.source_map();
     assert_eq!(map.file_count(), 3);
     assert_eq!(map.path(b), "b.science");
-    assert_eq!(map.text(b), "fn other():\n    2\n");
+    assert_eq!(map.text(b), "function other():\n    2\n");
     assert_eq!(map.path(c), "c.science");
     // A removed file keeps its slot so that the ids of the others do not move.
     assert_eq!(map.path(a), "a.science");
@@ -146,7 +146,7 @@ fn file_ids_agree_with_the_source_map() {
 fn a_diagnostic_from_a_query_renders_against_the_databases_source_map() {
     let mut db = ScienceDatabase::new();
     let _pad = db.add_file("pad.science", VALID);
-    let a = db.add_file("a.science", "fn main():\n    §\n");
+    let a = db.add_file("a.science", "function main():\n    §\n");
 
     let diagnostic = tokens(&db, a).diagnostics()[0].clone();
     let map = db.source_map();

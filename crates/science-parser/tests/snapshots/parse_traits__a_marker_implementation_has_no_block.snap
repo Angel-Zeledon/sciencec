@@ -1,0 +1,10 @@
+---
+source: crates/science-parser/tests/parse_traits.rs
+expression: "parse_source(\"Position implements Copy\\n\")"
+---
+Module @0..25
+  Implements @0..24
+    interface: Bound `Copy` @20..24
+    type: Path `Position` @0..8
+--- diagnostics ---
+(none)

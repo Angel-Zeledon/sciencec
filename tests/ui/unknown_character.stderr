@@ -1,26 +1,26 @@
 error[SC0001]: `$` is not a character Science recognises
-  --> tests/ui/unknown_character.science:14:22
+  --> tests/ui/unknown_character.science:14:23
    |
-14 |     let priced = 100 $ 2
-   |                      ^ unexpected character
+14 |     let priced be 100 $ 2
+   |                       ^ unexpected character
 
 error[SC0001]: `` ` `` is not a character Science recognises
-  --> tests/ui/unknown_character.science:15:18
+  --> tests/ui/unknown_character.science:15:19
    |
-15 |     let quoted = `backtick`
-   |                  ^ unexpected character
+15 |     let quoted be `backtick`
+   |                   ^ unexpected character
 
 error[SC0001]: `` ` `` is not a character Science recognises
-  --> tests/ui/unknown_character.science:15:27
+  --> tests/ui/unknown_character.science:15:28
    |
-15 |     let quoted = `backtick`
-   |                           ^ unexpected character
+15 |     let quoted be `backtick`
+   |                            ^ unexpected character
 
 error[SC0001]: `!` is not an operator in Science
-  --> tests/ui/unknown_character.science:16:20
+  --> tests/ui/unknown_character.science:16:21
    |
-16 |     let inverted = !true
-   |                    ^ `!` is only valid as part of `!=`
+16 |     let inverted be !true
+   |                     ^ negation is spelled `not`
    |
-   = note: negation is spelled `not`
+   = note: `!` begins no operator in Science: inequality is `is not`
    = help: if you meant to negate, write: `not `

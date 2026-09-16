@@ -1,95 +1,108 @@
-# 04 - Enums
-# Spec: §4.3 enums, §5.5 absence and failure.
+# 04 - Choices (sum types)
+# Spec: §4.4 declarations, §4.7 qualified variants, §5.5 absence and failure.
 #
-# Covers: plain enums, generic enums, variants with positional payload,
-# variants with several payload fields, the library `Option` and `Result`,
-# and enums whose payload is a reference.
+# `choice` is what `enum` was. Covers: plain choices, generic choices,
+# variants with positional payload, variants with several payload fields, the
+# library `Option` and `Result`, and choices whose payload is a borrow.
 #
 # F0 has no variants with named fields, so every payload here is positional.
 
-# A C-like enum: every variant is empty.
-enum Format:
+# A C-like choice: every variant is empty.
+choice Format:
     Plain
     Markdown
     Json
 
 # Positional payloads, one per variant.
-enum Token:
+choice Token:
     Ident(String)
     Number(Int)
     Symbol(Char)
     Eof
 
 # Several values in a single variant.
-enum Shape:
+choice Shape:
     Point
     Circle(F64)
     Rect(F64, F64)
     Triangle(F64, F64, F64)
 
-# Generic enums, exactly as the standard library declares them.
-enum Option[T]:
+# Generic choices, exactly as §4.4 declares them. One type argument needs no
+# parentheses; two do (§4.3).
+choice Option of T:
     Some(T)
     None
 
-enum Result[T, E]:
+choice Result of (T, E):
     Ok(T)
     Err(E)
 
-# A generic enum over two parameters with mixed payloads.
-enum Either[L, R]:
+# A generic choice over two parameters with mixed payloads.
+choice Either of (L, R):
     Left(L)
     Right(R)
     Neither
 
-# An enum whose payload is itself a generic type.
-enum Tree[T]:
+# A choice whose payload is itself a generic type. A nested `of` takes
+# parentheses (§4.3).
+choice Tree of T:
     Leaf(T)
-    Node(Box[Tree[T]], Box[Tree[T]])
+    Node(Box of (Tree of T), Box of (Tree of T))
 
-# An enum carrying a borrow: the region is inferred like any other.
-enum Slot:
-    Filled(&String)
+# A choice carrying a borrow: the region is inferred like any other.
+choice Slot:
+    Filled(borrowed String)
     Empty
 
-# Error enums are ordinary enums.
-enum ParseError:
+# Error choices are ordinary choices.
+choice ParseError:
     UnexpectedEnd
     BadDigit(Char)
     Unsupported(String)
 
-fn main():
-    let format = Markdown
-    let ident = Ident("width")
-    let number = Number(1_024)
-    let symbol = Symbol(':')
-    let end = Eof
+function main():
+    let format be Markdown
+    let ident be Ident("width")
+    let number be Number(1_024)
+    let symbol be Symbol(':')
+    let end be Eof
 
-    let circle = Circle(2.0)
-    let rect = Rect(3.0, 4.0)
-    let triangle = Triangle(3.0, 4.0, 5.0)
+    let circle be Circle(2.0)
+    let rect be Rect(3.0, 4.0)
+    let triangle be Triangle(3.0, 4.0, 5.0)
 
-    let present = Some(7)
-    let absent: Option[Int] = None
-    let good: Result[Int, ParseError] = Ok(1)
-    let bad: Result[Int, ParseError] = Err(BadDigit('q'))
+    let present be Some(7)
+    let absent: Option of Int be None
+    let good: Result of (Int, ParseError) be Ok(1)
+    let bad: Result of (Int, ParseError) be Err(BadDigit('q'))
 
-    let left: Either[Int, String] = Left(1)
-    let right: Either[Int, String] = Right("one")
+    let left: Either of (Int, String) be Left(1)
+    let right: Either of (Int, String) be Right("one")
 
-    # `Box` is built through its associated function (§4.3): named-argument
-    # construction is for structs only.
-    let tree = Node(Box.new(Leaf(1)), Box.new(Leaf(2)))
+    # `Box` is built through its associated function (§4.4): named-argument
+    # construction is for record types only.
+    let tree be Node(Box.new(Leaf(1)), Box.new(Leaf(2)))
 
-    let text = "borrowed"
-    let slot = Filled(&text)
+    let text be "borrowed"
+    let slot be Filled(borrowed text)
 
-    # A variant may be qualified by its enum, and the two spellings mean the
-    # same thing (§4.5). The qualified form is what disambiguates when two
-    # enums in scope share a variant name.
-    let qualified = Format.Markdown
-    let empty_slot = Slot.Empty
-    let qualified_none: Option[Int] = Option.None
-    let qualified_some = Option.Some(1)
+    # A variant may be qualified by its type, and the two spellings mean the
+    # same thing (§4.7). The qualified form is what disambiguates when two
+    # choices in scope share a variant name.
+    let qualified be Format.Markdown
+    let empty_slot be Slot.Empty
+    let qualified_none: Option of Int be Option.None
+    let qualified_some be Option.Some(1)
 
-    println(number)
+    # Which variant a value holds is asked with `match`, not with `is`:
+    # `is` is `Eq`, and `Eq` is an interface a choice only has if it implements
+    # one (§5.4). On the payload, where the type does implement `Eq`, the
+    # word form is the one that reads (§4.6).
+    let punctuation be match symbol:
+        Symbol(c): c is ':'
+        Ident(name): name is not ""
+        Number(value): false
+        Eof: false
+
+    print(punctuation)
+    print(number)

@@ -1,0 +1,23 @@
+---
+source: crates/science-parser/tests/parse_exprs.rs
+expression: "parse_body(r#\"function headlines(docs: borrowed Array of Doc) -> Array of String:\n    docs\n        .iterate()\n        .discard(each.is_empty())\n        .map(each.title)\n        .take(5)\n        .collect()\n\"#)"
+---
+Block @72..190
+  tail: Method `collect` @72..190
+    receiver: Method `take` @72..171
+      receiver: Method `map` @72..154
+        receiver: Method `discard` @72..129
+          receiver: Method `iterate` @72..95
+            receiver: Path `docs` @72..76
+          args
+            Closure @113..128
+              body: Method `is_empty` @113..128
+                receiver: Each @113..117
+        args
+          Closure @143..153
+            body: Field `title` @143..153
+              base: Each @143..147
+      args
+        Int 5 @169..170
+--- diagnostics ---
+(none)

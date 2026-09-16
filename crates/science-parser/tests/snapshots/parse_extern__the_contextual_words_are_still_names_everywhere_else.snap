@@ -1,0 +1,32 @@
+---
+source: crates/science-parser/tests/parse_extern.rs
+expression: "parse_source(r#\"function shelve(library: I32, kind: I32, size: I32, align: I32) -> I32:\n    let via be library + kind\n    let symbol be size + align\n    let available be via + symbol\n    available\n\"#)"
+---
+Module @0..181
+  Fn `shelve` @0..180
+    params
+      Param `library` @16..28
+        type: Path `I32` @25..28
+      Param `kind` @30..39
+        type: Path `I32` @36..39
+      Param `size` @41..50
+        type: Path `I32` @47..50
+      Param `align` @52..62
+        type: Path `I32` @59..62
+    ret: Path `I32` @67..70
+    body: Block @76..180
+      Let `via` @76..101
+        value: Binary `+` @87..101
+          lhs: Path `library` @87..94
+          rhs: Path `kind` @97..101
+      Let `symbol` @106..132
+        value: Binary `+` @120..132
+          lhs: Path `size` @120..124
+          rhs: Path `align` @127..132
+      Let `available` @137..166
+        value: Binary `+` @154..166
+          lhs: Path `via` @154..157
+          rhs: Path `symbol` @160..166
+      tail: Path `available` @171..180
+--- diagnostics ---
+(none)

@@ -1,5 +1,5 @@
-//! Expressions: §4.4's precedence table, the postfix chain, and every
-//! expression form the grammar has.
+//! Expressions: §4.6's precedence table, the postfix chain, the closures of
+//! §4.6, and every expression form the grammar has.
 //!
 //! The precedence tests are plain assertions over a span-stripped dump rather
 //! than snapshots. A precedence rule is a claim about *shape* — that
@@ -7,7 +7,10 @@
 //! than diffed.
 
 mod common;
-use common::{parse_body, parse_source, parse_source_allowing_errors, shape_of_expr};
+use common::{
+    parse_body, parse_source, parse_source_allowing_errors, shape_of_expr,
+    shape_of_expr_despite_lexical_errors,
+};
 
 /// `expr` parses to exactly `shape`, ignoring spans.
 #[track_caller]
@@ -23,7 +26,10 @@ fn assert_shape(expr: &str, shape: &str) {
 
 // --- one row of the precedence table at a time ---------------------------
 
-/// The top row: call, index, field access and `?` bind tighter than anything.
+/// The top row: call, index, field access and `try` bind tighter than anything.
+///
+/// `borrowed` and `mutable borrowed` are the unary row now that the sigils are
+/// gone (§4.3), so `borrowed point.x` borrows the *field*.
 #[test]
 fn postfix_binds_tighter_than_unary() {
     assert_shape(
@@ -43,17 +49,17 @@ fn postfix_binds_tighter_than_unary() {
         ",
     );
     assert_shape(
-        "&point.x",
+        "borrowed point.x",
         "
-        Ref
+        Borrowed
           Field `x`
             base: Path `point`
         ",
     );
     assert_shape(
-        "&mut owner.y",
+        "mutable borrowed owner.y",
         "
-        Ref mut
+        Borrowed mutable
           Field `y`
             base: Path `owner`
         ",
@@ -74,9 +80,9 @@ fn unary_binds_tighter_than_as() {
     );
 }
 
-/// `as` binds tighter than `*`, and chains left to right.
+/// `as` binds tighter than `**` and than `*`, and chains left to right.
 #[test]
-fn as_binds_tighter_than_multiplication() {
+fn as_binds_tighter_than_power_and_multiplication() {
     assert_shape(
         "a as F64 * 2.0",
         "
@@ -97,9 +103,70 @@ fn as_binds_tighter_than_multiplication() {
           type: Path `I64`
         ",
     );
+    // `as` is the row directly above `**`, so the cast is the power's base.
+    assert_shape(
+        "a as F64 ** 2",
+        "
+        Binary `**`
+          lhs: Cast
+            expr: Path `a`
+            type: Path `F64`
+          rhs: Int 2
+        ",
+    );
 }
 
-/// `* / %` share a row, above `+ -`.
+/// `**` is the one right-associative row of §4.6, and it sits above `* / % @`.
+///
+/// `examples/12_operators.science` spells both halves out: `2 ** 3 ** 2` is
+/// `2 ** (3 ** 2)`, and `2 * 3 ** 2` is `2 * (3 ** 2)`.
+#[test]
+fn power_is_right_associative_and_binds_tighter_than_multiplication() {
+    assert_shape(
+        "2 ** 3 ** 2",
+        "
+        Binary `**`
+          lhs: Int 2
+          rhs: Binary `**`
+            lhs: Int 3
+            rhs: Int 2
+        ",
+    );
+    assert_shape(
+        "2 * 3 ** 2",
+        "
+        Binary `*`
+          lhs: Int 2
+          rhs: Binary `**`
+            lhs: Int 3
+            rhs: Int 2
+        ",
+    );
+    // The same row on the left: `**` still wins, and the `*` takes the result.
+    assert_shape(
+        "2 ** 3 * 2",
+        "
+        Binary `*`
+          lhs: Binary `**`
+            lhs: Int 2
+            rhs: Int 3
+          rhs: Int 2
+        ",
+    );
+    // The unary row is *above* `**` in §4.6's table, so the minus is applied
+    // first: `-a ** 2` is `(-a) ** 2`, not `-(a ** 2)`.
+    assert_shape(
+        "-a ** 2",
+        "
+        Binary `**`
+          lhs: Unary `-`
+            Path `a`
+          rhs: Int 2
+        ",
+    );
+}
+
+/// `* / % @` share a row, above `+ -`. `@` is matrix multiply (§4.6).
 #[test]
 fn multiplication_binds_tighter_than_addition() {
     assert_shape(
@@ -123,6 +190,28 @@ fn multiplication_binds_tighter_than_addition() {
               lhs: Int 10
               rhs: Int 4
             rhs: Int 2
+        ",
+    );
+    // `@` shares the row, so it binds tighter than `+`: (left @ right) + left.
+    assert_shape(
+        "left @ right + left",
+        "
+        Binary `+`
+          lhs: Binary `@`
+            lhs: Path `left`
+            rhs: Path `right`
+          rhs: Path `left`
+        ",
+    );
+    // And it is level with `*`, so the two nest left to right.
+    assert_shape(
+        "a @ b * c",
+        "
+        Binary `*`
+          lhs: Binary `@`
+            lhs: Path `a`
+            rhs: Path `b`
+          rhs: Path `c`
         ",
     );
 }
@@ -181,6 +270,19 @@ fn arithmetic_binds_tighter_than_comparison() {
             rhs: Path `b`
         ",
     );
+    // `is` sits on the same row: (a + b) is (a * b).
+    assert_shape(
+        "a + b is a * b",
+        "
+        Binary `==`
+          lhs: Binary `+`
+            lhs: Path `a`
+            rhs: Path `b`
+          rhs: Binary `*`
+            lhs: Path `a`
+            rhs: Path `b`
+        ",
+    );
 }
 
 /// Comparison above `and` above `or`.
@@ -200,12 +302,23 @@ fn and_binds_tighter_than_or() {
             rhs: Path `flag`
         ",
     );
+    // `not` is unary and binds tightest of the three: `(not flag) and other`.
+    assert_shape(
+        "not flag and other",
+        "
+        Binary `and`
+          lhs: Unary `not`
+            Path `flag`
+          rhs: Path `other`
+        ",
+    );
 }
 
-/// Every binary row is left-associative, so a repeated operator nests left.
+/// Every binary row is left-associative but `**`, so a repeated operator nests
+/// left. `**` is excluded here and pinned right-associative above.
 #[test]
 fn binary_operators_are_left_associative() {
-    for op in ["-", "/", "%", "<<", "&", "^", "|", "and", "or", "=="] {
+    for op in ["-", "/", "%", "@", "<<", "&", "^", "|", "and", "or"] {
         assert_shape(
             &format!("a {op} b {op} c"),
             &format!(
@@ -219,17 +332,39 @@ fn binary_operators_are_left_associative() {
             ),
         );
     }
+
+    // `is` is on the same row and associates the same way. It cannot join the
+    // loop above because it is spelled as a word and dumps under the
+    // operator's own name.
+    assert_shape(
+        "a is b is c",
+        "
+        Binary `==`
+          lhs: Binary `==`
+            lhs: Path `a`
+            rhs: Path `b`
+          rhs: Path `c`
+        ",
+    );
 }
 
-/// Every comparison operator parses, and they share one row.
+/// Revision 2 §1: `is` is equality, `is not` is inequality, and ordering is
+/// written with the symbols. There is one spelling for each.
 #[test]
-fn every_comparison_operator_parses() {
-    for op in ["==", "!=", "<", ">", "<=", ">="] {
+fn every_comparison_parses() {
+    for (phrase, symbol) in [
+        ("is", "=="),
+        ("is not", "!="),
+        (">=", ">="),
+        ("<=", "<="),
+        (">", ">"),
+        ("<", "<"),
+    ] {
         assert_shape(
-            &format!("a + 1 {op} b"),
+            &format!("a + 1 {phrase} b"),
             &format!(
                 "
-        Binary `{op}`
+        Binary `{symbol}`
           lhs: Binary `+`
             lhs: Path `a`
             rhs: Int 1
@@ -240,18 +375,33 @@ fn every_comparison_operator_parses() {
     }
 }
 
-/// `&` is both the reference operator and bitwise and. Nothing but position
-/// tells them apart: in front of an operand it is a reference, between two it
-/// is an operator.
+/// The removed symbols still parse, and they parse as the words they were
+/// replaced by.
+///
+/// This test used to assert that the word and the symbol were the same
+/// operator, because §4.6 carried both spellings. Revision 2 §1 removed the
+/// symbols from the language, so the claim is now a different one: the lexer
+/// reports `==` and `!=` but emits `EqEq` and `NotEq` anyway, which means the
+/// parser builds *exactly* the tree the corrected source would build. That is
+/// what stops one stale symbol from cascading, and it is only observable by
+/// comparing the two trees.
 #[test]
-fn ampersand_is_a_reference_in_prefix_position_and_an_operator_between_operands() {
-    assert_shape(
-        "&a",
-        "
-        Ref
-          Path `a`
-        ",
-    );
+fn the_removed_symbols_still_parse_as_the_words_that_replaced_them() {
+    for (phrase, symbol) in [("is", "=="), ("is not", "!=")] {
+        let words = shape_of_expr(&format!("a + 1 {phrase} b * 2"));
+        let symbols = shape_of_expr_despite_lexical_errors(&format!("a + 1 {symbol} b * 2"));
+        assert_eq!(
+            words, symbols,
+            "`{symbol}` must recover to `{phrase}`, not to something the parser invents"
+        );
+    }
+}
+
+
+/// `&` used to be both the reference operator and bitwise and; the reference
+/// is the word `borrowed` now (§4.3), so `&` has exactly one reading left.
+#[test]
+fn ampersand_is_only_bitwise_and_now_that_borrows_are_words() {
     assert_shape(
         "a & b",
         "
@@ -260,20 +410,28 @@ fn ampersand_is_a_reference_in_prefix_position_and_an_operator_between_operands(
           rhs: Path `b`
         ",
     );
-    // Both at once: a reference on the right of the binary operator.
+    // A borrow on the right of the operator: `borrowed` is unary, so it takes
+    // only the operand after it.
     assert_shape(
-        "a & &b",
+        "a & borrowed b",
         "
         Binary `&`
           lhs: Path `a`
-          rhs: Ref
+          rhs: Borrowed
             Path `b`
         ",
     );
     assert_shape(
-        "&mut a",
+        "borrowed a",
         "
-        Ref mut
+        Borrowed
+          Path `a`
+        ",
+    );
+    assert_shape(
+        "mutable borrowed a",
+        "
+        Borrowed mutable
           Path `a`
         ",
     );
@@ -281,12 +439,35 @@ fn ampersand_is_a_reference_in_prefix_position_and_an_operator_between_operands(
 
 // --- the postfix chain ---------------------------------------------------
 
-/// `?` is in the tightest row, so it applies to what precedes it and the chain
-/// continues through it.
+/// `try` is a prefix keyword on the tightest row (§4.5), so it covers the
+/// whole postfix chain to its right — and nothing beyond it.
 #[test]
-fn try_chains_with_field_access_and_calls() {
+fn try_is_a_prefix_over_the_whole_chain() {
     assert_shape(
-        "read_config(path)?.port + 1u16",
+        "try a.b().c",
+        "
+        Try
+          Field `c`
+            base: Method `b`
+              receiver: Path `a`
+        ",
+    );
+    // It is on the tightest row, so a binary operator after the chain is not
+    // swallowed: this is `(try a.b()) + 1`.
+    assert_shape(
+        "try a.b() + 1",
+        "
+        Binary `+`
+          lhs: Try
+            Method `b`
+              receiver: Path `a`
+          rhs: Int 1
+        ",
+    );
+    // Covering *less* than the chain takes parentheses, which is how the
+    // corpus writes it: `(try f()).port`.
+    assert_shape(
+        "(try read_config(path)).port + 1u16",
         "
         Binary `+`
           lhs: Field `port`
@@ -298,15 +479,27 @@ fn try_chains_with_field_access_and_calls() {
           rhs: Int 1 u16
         ",
     );
+}
+
+/// Binding tightest is what lets `try` stand inside a larger expression;
+/// `examples/12_operators.science` writes exactly this.
+#[test]
+fn try_stands_inside_a_larger_expression() {
     assert_shape(
-        "a?.b()?.c?",
+        "Some((try registry.points.get(0)).x * 2)",
         "
-        Try
-          Field `c`
-            base: Try
-              Method `b`
-                receiver: Try
-                  Path `a`
+        Call
+          callee: Path `Some`
+          args
+            Binary `*`
+              lhs: Field `x`
+                base: Try
+                  Method `get`
+                    receiver: Field `points`
+                      base: Path `registry`
+                    args
+                      Int 0
+              rhs: Int 2
         ",
     );
 }
@@ -337,6 +530,22 @@ fn method_chains_nest_to_the_left() {
     );
 }
 
+/// §4.6: "a line whose continuation begins with `.` continues too". The chain
+/// broken across lines is the same tree as the chain written on one.
+#[test]
+fn a_chain_may_be_broken_by_a_leading_dot() {
+    insta::assert_snapshot!(parse_body(
+        r#"function headlines(docs: borrowed Array of Doc) -> Array of String:
+    docs
+        .iterate()
+        .discard(each.is_empty())
+        .map(each.title)
+        .take(5)
+        .collect()
+"#
+    ));
+}
+
 /// Indexing is postfix and composes with field access in either order.
 #[test]
 fn indexing_composes_with_field_access() {
@@ -352,12 +561,12 @@ fn indexing_composes_with_field_access() {
     );
 }
 
-// --- calls, struct literals and the ambiguity between them ---------------
+// --- calls, record literals and the ambiguity between them ---------------
 
-/// §4.4: "named arguments mean a struct, positional arguments mean a call or
+/// §4.4: "named arguments mean a record, positional arguments mean a call or
 /// variant." That is the whole rule, and it is decided here and nowhere else.
 #[test]
-fn named_arguments_make_a_struct_literal_and_positional_ones_a_call() {
+fn named_arguments_make_a_record_literal_and_positional_ones_a_call() {
     assert_shape(
         "Doc(title: \"a\", body: \"b\")",
         "
@@ -381,10 +590,10 @@ fn named_arguments_make_a_struct_literal_and_positional_ones_a_call() {
     );
 }
 
-/// The struct may be named through a path, in which case the named arguments
+/// The record may be named through a path, in which case the named arguments
 /// still make it a construction rather than a method call.
 #[test]
-fn a_qualified_name_with_named_arguments_is_still_a_struct_literal() {
+fn a_qualified_name_with_named_arguments_is_still_a_record_literal() {
     assert_shape(
         "text.Doc(title: \"a\")",
         "
@@ -396,9 +605,9 @@ fn a_qualified_name_with_named_arguments_is_still_a_struct_literal() {
     );
 }
 
-/// §4.5: `Some(x)` and `Option.Some(x)` are the same thing. The qualified form
+/// §4.7: `Some(x)` and `Option.Some(x)` are the same thing. The qualified form
 /// is written exactly like a method call, so the parser produces one and leaves
-/// resolution to reclassify it — the same answer §4.3's `Doc.new("a")` gets.
+/// resolution to reclassify it — the same answer `Doc.new("a")` gets.
 #[test]
 fn a_qualified_variant_is_a_method_call_until_resolution() {
     assert_shape(
@@ -425,15 +634,15 @@ fn an_empty_argument_list_parses_as_a_call() {
     );
 }
 
-/// A struct literal nested in a call argument, and a call nested in a field's
+/// A record literal nested in a call argument, and a call nested in a field's
 /// value: neither form leaks into the other.
 #[test]
-fn struct_literals_and_calls_nest_in_each_other() {
+fn record_literals_and_calls_nest_in_each_other() {
     assert_shape(
-        "println(Doc(title: f(1), body: g()))",
+        "print(Doc(title: f(1), body: g()))",
         "
         Call
-          callee: Path `println`
+          callee: Path `print`
           args
             StructLit `Doc`
               fields
@@ -449,21 +658,191 @@ fn struct_literals_and_calls_nest_in_each_other() {
     );
 }
 
-/// Trailing commas are allowed in every bracketed list (§4.5).
+/// Trailing commas are allowed in every bracketed list (§4.7).
 #[test]
 fn trailing_commas_are_allowed() {
     insta::assert_snapshot!(parse_source(
-        r#"fn main():
-    let a = f(
+        r#"function main():
+    let a be f(
         1,
         2,
     )
-    let b = Doc(
+    let b be Doc(
         title: "a",
     )
-    let c = (1, 2,)
+    let c be (1, 2,)
 "#
     ));
+}
+
+// --- closures ------------------------------------------------------------
+
+/// §4.6's implicit form: `each` names the subject of the enclosing call, and
+/// the argument that mentions one *is* the closure.
+#[test]
+fn the_implicit_closure_form_wraps_the_argument() {
+    assert_shape(
+        "docs.map(each.title)",
+        "
+        Method `map`
+          receiver: Path `docs`
+          args
+            Closure
+              body: Field `title`
+                base: Each
+        ",
+    );
+}
+
+/// §4.6's named form: `name giving expression` declares the parameter, and
+/// gives the closure its whole right-hand side.
+#[test]
+fn the_named_closure_form_declares_its_parameter() {
+    assert_shape(
+        "docs.map(doc giving doc.title)",
+        "
+        Method `map`
+          receiver: Path `docs`
+          args
+            Closure
+              param: Ident `doc`
+              body: Field `title`
+                base: Path `doc`
+        ",
+    );
+}
+
+/// Two `each` in the *same* argument are the same subject, so they are fine
+/// and they make one closure, not two.
+#[test]
+fn two_each_in_one_argument_make_one_closure() {
+    assert_shape(
+        "docs.discard(each.title.is_empty() or each.body.is_empty())",
+        "
+        Method `discard`
+          receiver: Path `docs`
+          args
+            Closure
+              body: Binary `or`
+                lhs: Method `is_empty`
+                  receiver: Field `title`
+                    base: Each
+                rhs: Method `is_empty`
+                  receiver: Field `body`
+                    base: Each
+        ",
+    );
+}
+
+/// `outer.map(inner.map(each.x))` is legal: the inner `each` is inside no
+/// other `each`, so only one subject is ever named. §4.6 rejects *nesting*,
+/// not two calls.
+#[test]
+fn an_each_inside_an_unclaimed_argument_is_fine() {
+    assert_shape(
+        "outer.map(inner.map(each.x))",
+        "
+        Method `map`
+          receiver: Path `outer`
+          args
+            Method `map`
+              receiver: Path `inner`
+              args
+                Closure
+                  body: Field `x`
+                    base: Each
+        ",
+    );
+}
+
+/// §4.6: in `outer.map(each.inner.map(each.x))` the two `each` refer to
+/// different subjects and the inner shadows the outer irrecoverably. Science
+/// rejects it (`SC0115`) rather than picking a rule.
+#[test]
+fn a_nested_each_is_rejected() {
+    insta::assert_snapshot!(parse_source_allowing_errors(
+        "function f(outer: borrowed Array of Doc):\n    outer.map(each.inner.map(each.x))\n"
+    ));
+}
+
+/// A named argument on a receiver that cannot name a record: the name stays on
+/// the argument, which is the `Arg { name: Some(..) }` of §4.6.
+#[test]
+fn a_named_call_argument_keeps_its_name() {
+    assert_shape(
+        "docs.iterate().sort(by: line giving line.length())",
+        "
+        Method `sort`
+          receiver: Method `iterate`
+            receiver: Path `docs`
+          args
+            Arg `by`
+              value: Closure
+                param: Ident `line`
+                body: Method `length`
+                  receiver: Path `line`
+        ",
+    );
+}
+
+/// The same call on a *path* receiver is written exactly like `text.Doc(title:
+/// "a")`, and the parser cannot tell them apart: only resolution knows whether
+/// `docs` is a module. It produces the construction and lets resolution
+/// reclassify, which is the same answer §4.4 gives `Doc()`.
+#[test]
+fn a_named_argument_on_a_path_receiver_reads_as_a_construction() {
+    assert_shape(
+        "docs.sort(by: line giving line.length())",
+        "
+        StructLit `docs.sort`
+          fields
+            FieldInit `by`
+              value: Closure
+                param: Ident `line`
+                body: Method `length`
+                  receiver: Path `line`
+        ",
+    );
+}
+
+// --- ranges --------------------------------------------------------------
+
+/// §4.5: `0..n` is half-open, `0..=n` inclusive, and both endpoints are
+/// required.
+#[test]
+fn both_range_forms_parse() {
+    assert_shape(
+        "0..n",
+        "
+        Range
+          start: Int 0
+          end: Path `n`
+        ",
+    );
+    assert_shape(
+        "0..=n",
+        "
+        Range inclusive
+          start: Int 0
+          end: Path `n`
+        ",
+    );
+}
+
+/// `..` is looser than every operator in §4.6's table, so `0..n - 1` counts to
+/// `n - 1` rather than subtracting from a range.
+#[test]
+fn a_range_endpoint_takes_the_whole_arithmetic_expression() {
+    assert_shape(
+        "0..n - 1",
+        "
+        Range
+          start: Int 0
+          end: Binary `-`
+            lhs: Path `n`
+            rhs: Int 1
+        ",
+    );
 }
 
 // --- primaries -----------------------------------------------------------
@@ -488,18 +867,18 @@ fn tuple_unit_and_grouping() {
 #[test]
 fn literals_keep_their_base_and_suffix() {
     insta::assert_snapshot!(parse_body(
-        r#"fn main():
-    let a = 42
-    let b = 0xFF
-    let c = 0b1010
-    let d = 0o777
-    let e = 42i32
-    let f = 3.14
-    let g = 2.5f32
-    let h = "text"
-    let i = 'x'
-    let j = true
-    let k = false
+        r#"function main():
+    let a be 42
+    let b be 0xFF
+    let c be 0b1010
+    let d be 0o777
+    let e be 42i32
+    let f be 3.14
+    let g be 2.5f32
+    let h be "text"
+    let i be 'x'
+    let j be true
+    let k be false
 "#
     ));
 }
@@ -517,12 +896,22 @@ fn self_is_an_expression() {
 }
 
 /// A name may carry generic arguments before an associated function is called
-/// through it: `Array[Int].new()` (§4.3). §8 leaves the library collections
-/// with no indexing operator, so a `[` after a name is always this form.
+/// through it. §4.3 requires the parenthesised form — `(Array of Doc).new()` —
+/// so that the `.` cannot attach to the last type argument instead.
 #[test]
 fn a_name_may_be_instantiated_before_an_associated_call() {
     assert_shape(
-        "Map[String, Int].new()",
+        "(Array of Doc).new()",
+        "
+        Method `new`
+          receiver: Path `Array`
+            generics of `Array`
+              Path `Doc`
+        ",
+    );
+    // Two or more arguments take parentheses of their own (§4.3).
+    assert_shape(
+        "(Map of (String, Int)).new()",
         "
         Method `new`
           receiver: Path `Map`
@@ -532,20 +921,31 @@ fn a_name_may_be_instantiated_before_an_associated_call() {
         ",
     );
     assert_shape(
-        "Array[Box[dyn Summarize]].new()",
+        "(Array of Box of any Summarize).new()",
         "
         Method `new`
           receiver: Path `Array`
             generics of `Array`
               Path `Box`
                 generics of `Box`
-                  Dyn
+                  Any
                     Bound `Summarize`
         ",
     );
 }
 
-/// The index row of §4.4's table is still reachable, on a receiver that is not
+/// The bare form is the one §4.3 rules on: `.new()` could belong to `Doc` or
+/// to `Array of Doc`, and rather than make a space load-bearing Science
+/// reports the ambiguity (`SC0116`), says which reading it took, and offers
+/// the parentheses as the fix.
+#[test]
+fn a_bare_generic_before_an_associated_call_is_ambiguous() {
+    insta::assert_snapshot!(parse_source_allowing_errors(
+        "function f():\n    let a be Array of Doc.new()\n"
+    ));
+}
+
+/// The index row of §4.6's table is still reachable, on a receiver that is not
 /// a name and so could never be a generic instantiation.
 #[test]
 fn indexing_applies_to_a_receiver_that_is_not_a_name() {
@@ -562,20 +962,21 @@ fn indexing_applies_to_a_receiver_that_is_not_a_name() {
 
 // --- control flow as an expression ---------------------------------------
 
-/// §4.2's inline form, as the spec writes it. The `then` body ends at `else`,
+/// §4.5's inline form, as the spec writes it. The `then` body ends at `else`,
 /// mid-line, because `else` cannot continue an expression.
 #[test]
 fn inline_if_else() {
     insta::assert_snapshot!(parse_source(
-        "fn longest(a: &String, b: &String) -> &String:\n    if a.len() > b.len(): a else: b\n"
+        "function longest(a: borrowed String, b: borrowed String) -> borrowed String:\n    if a.length() > b.length(): a else: b\n"
     ));
 }
 
 /// The same construct in block form produces the same shape.
 #[test]
 fn block_if_else_matches_the_inline_form() {
-    let inline = parse_body("fn f() -> Int:\n    if c: 1 else: 2\n");
-    let block = parse_body("fn f() -> Int:\n    if c:\n        1\n    else:\n        2\n");
+    let inline = parse_body("function f() -> Int:\n    if c: 1 else: 2\n");
+    let block =
+        parse_body("function f() -> Int:\n    if c:\n        1\n    else:\n        2\n");
     assert_eq!(
         common::strip_spans(&inline),
         common::strip_spans(&block),
@@ -583,18 +984,18 @@ fn block_if_else_matches_the_inline_form() {
     );
 }
 
-/// §4.2: "dangling `else` binds to the innermost `if`". In
+/// §4.5: "dangling `else` binds to the innermost `if`". In
 /// `if a: if b: x else: y` the `else` belongs to `if b`.
 #[test]
 fn dangling_else_binds_to_the_innermost_if() {
-    insta::assert_snapshot!(parse_body("fn f():\n    if a: if b: x else: y\n"));
+    insta::assert_snapshot!(parse_body("function f():\n    if a: if b: x else: y\n"));
 }
 
 /// And the block form is how you say the other thing.
 #[test]
 fn the_block_form_binds_else_to_the_outer_if() {
     insta::assert_snapshot!(parse_body(
-        "fn f():\n    if a:\n        if b:\n            x\n    else:\n        y\n"
+        "function f():\n    if a:\n        if b:\n            x\n    else:\n        y\n"
     ));
 }
 
@@ -617,9 +1018,9 @@ fn if_without_else() {
 #[test]
 fn if_as_a_value() {
     insta::assert_snapshot!(parse_source(
-        r#"fn f(flag: Bool, n: Int) -> String:
-    let chosen = if flag: 1 else: 0
-    println(if flag: "yes" else: "no")
+        r#"function f(flag: Bool, n: Int) -> String:
+    let chosen be if flag: 1 else: 0
+    print(if flag: "yes" else: "no")
     if n < 10: "small" else: if n < 100: "medium" else: "large"
 "#
     ));
@@ -629,11 +1030,11 @@ fn if_as_a_value() {
 #[test]
 fn match_with_inline_and_block_arms() {
     insta::assert_snapshot!(parse_source(
-        r#"fn describe(format: &Format) -> String:
+        r#"function describe(format: borrowed Format) -> String:
     match format:
         Plain: "plain"
         Markdown:
-            let prefix = "marked"
+            let prefix be "marked"
             prefix.append("down")
 "#
     ));
@@ -644,7 +1045,7 @@ fn match_with_inline_and_block_arms() {
 #[test]
 fn nested_match() {
     insta::assert_snapshot!(parse_source(
-        r#"fn render(token: &Token, format: &Format) -> String:
+        r#"function render(token: borrowed Token, format: borrowed Format) -> String:
     match token:
         Number(value):
             match format:
@@ -660,27 +1061,32 @@ fn nested_match() {
 #[test]
 fn match_as_the_value_of_a_binding() {
     insta::assert_snapshot!(parse_source(
-        r#"fn f() -> String:
-    let label = match x:
+        r#"function f() -> String:
+    let label be match x:
         A: "a"
         B: "b"
-    println(label)
+    print(label)
 "#
     ));
 }
 
-/// `while`, `loop` and `for`, in both block and inline form.
+/// `loop` and `for`, in both block and inline form, and the counting loop
+/// §4.5 builds out of a range.
 #[test]
 fn loops_in_both_forms() {
     insta::assert_snapshot!(parse_source(
-        r#"fn f(stack: &mut Array[Int], lines: &Array[String]):
-    while not stack.is_empty(): stack.pop()
-    for line in lines: println(line)
+        r#"function f(stack: mutable borrowed Array of Int, lines: borrowed Array of String):
+    for _ in 0..stack.length(): stack.pop()
+    for line in lines: print(line)
     loop: break
-    while a < b:
-        a = a + 1
+    loop:
+        if a >= b:
+            break
+        a be a + 1
     for x in xs:
-        println(x)
+        print(x)
+    for i in 0..n:
+        print(i)
     loop:
         break
 "#
@@ -689,25 +1095,25 @@ fn loops_in_both_forms() {
 
 // --- errors --------------------------------------------------------------
 
-/// §4.2: a statement in an inline body is an error, and `fn f(): let x = 1` is
-/// the spec's own example of one.
+/// §4.5: a statement in an inline body is an error, and a `let` is the spec's
+/// own example of one — it binds a name nothing could then use.
 #[test]
 fn a_let_in_an_inline_body_is_rejected() {
-    insta::assert_snapshot!(parse_source_allowing_errors("fn f():\n    if c: let x = 1\n"));
+    insta::assert_snapshot!(parse_source_allowing_errors("function f():\n    if c: let x be 1\n"));
 }
 
-/// The same, on a function body, which is where §4.2 writes it down.
+/// The same, on a function body, which is where §4.5 writes it down.
 #[test]
 fn a_let_as_a_whole_inline_function_body_is_rejected() {
-    insta::assert_snapshot!(parse_source_allowing_errors("fn f(): let x = 1\n"));
+    insta::assert_snapshot!(parse_source_allowing_errors("function f(): let x be 1\n"));
 }
 
-/// Named arguments are how a struct is built, so they are meaningless on
+/// Named arguments are how a record is built, so they are meaningless on
 /// anything that is not a name. A call's result is the clearest case: there is
 /// nothing there for the field names to belong to.
 #[test]
 fn named_arguments_on_a_non_path_are_rejected() {
-    insta::assert_snapshot!(parse_source_allowing_errors("fn f():\n    f()(title: 1)\n"));
+    insta::assert_snapshot!(parse_source_allowing_errors("function f():\n    f()(title: 1)\n"));
 }
 
 /// Parentheses group and nothing more, so a parenthesised name is still a name
@@ -729,13 +1135,66 @@ fn a_parenthesised_name_still_constructs() {
 /// and the next statement still parses.
 #[test]
 fn a_broken_expression_does_not_eat_the_next_statement() {
-    insta::assert_snapshot!(parse_source_allowing_errors("fn f():\n    let a = *\n    let b = 1\n"));
+    insta::assert_snapshot!(parse_source_allowing_errors(
+        "function f():\n    let a be *\n    let b be 1\n"
+    ));
 }
 
 /// Nothing after the `:` of an inline block.
 #[test]
 fn an_empty_inline_body_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "fn f(flag: Bool) -> Int:\n    if flag:\n"
+        "function f(flag: Bool) -> Int:\n    if flag:\n"
     ));
+}
+
+// --- negation in expression position, which did not change --------------
+
+/// Unary and binary `-` in expressions, pinned because a *const argument* may
+/// now be negated too (`const-expression-arithmetic.md` §2.1) and that change
+/// must be invisible from here.
+///
+/// The const-argument rule lives in `parse_generic_arg`, which only an `of`
+/// list ever reaches, so nothing below shares a line of code with it. These
+/// assertions exist so that a future edit which tries to unify the two has to
+/// break something visible first.
+#[test]
+fn negation_in_expressions_is_untouched_by_const_arguments() {
+    // `let x be -1` is unary negation of a literal, not a negative literal:
+    // the AST has no such thing, and it did not grow one.
+    assert_shape(
+        "-1",
+        "
+        Unary `-`
+          Int 1
+        ",
+    );
+    // A space changes nothing here either, which is the precedent the const
+    // argument's rule follows rather than the lexer's `->`.
+    assert_shape(
+        "- 1",
+        "
+        Unary `-`
+          Int 1
+        ",
+    );
+    // `a - 1` is still subtraction, not `a` applied to a negative literal.
+    assert_shape(
+        "a - 1",
+        "
+        Binary `-`
+          lhs: Path `a`
+          rhs: Int 1
+        ",
+    );
+    // And the two in one expression still associate the way §4.6 says.
+    assert_shape(
+        "-a - 1",
+        "
+        Binary `-`
+          lhs: Unary `-`
+            Path `a`
+          rhs: Int 1
+        ",
+    );
 }

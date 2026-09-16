@@ -1,28 +1,28 @@
 ---
 source: crates/science-parser/tests/parse_patterns.rs
-expression: "parse_body(r#\"fn f(x: Int) -> String:\n    match x:\n        0: \"zero\"\n        'a': \"letter\"\n        \"hello\": \"greeting\"\n        true: \"on\"\n        3.5: \"float\"\n        _: \"other\"\n\"#)"
+expression: "parse_body(r#\"function f(x: Int) -> String:\n    match x:\n        0: \"zero\"\n        'a': \"letter\"\n        \"hello\": \"greeting\"\n        true: \"on\"\n        3.5: \"float\"\n        _: \"other\"\n\"#)"
 ---
-Block @28..163
-  tail: Match @28..163
-    scrutinee: Path `x` @34..35
+Block @34..169
+  tail: Match @34..169
+    scrutinee: Path `x` @40..41
     arms
-      Arm @45..54
-        pattern: Int 0 @45..46
-        body: Str "zero" @48..54
-      Arm @63..76
-        pattern: Char 'a' @63..66
-        body: Str "letter" @68..76
-      Arm @85..104
-        pattern: Str "hello" @85..92
-        body: Str "greeting" @94..104
-      Arm @113..123
-        pattern: Bool true @113..117
-        body: Str "on" @119..123
-      Arm @132..144
-        pattern: Float 3.5 @132..135
-        body: Str "float" @137..144
-      Arm @153..163
-        pattern: Wildcard @153..154
-        body: Str "other" @156..163
+      Arm @51..60
+        pattern: Int 0 @51..52
+        body: Str "zero" @54..60
+      Arm @69..82
+        pattern: Char 'a' @69..72
+        body: Str "letter" @74..82
+      Arm @91..110
+        pattern: Str "hello" @91..98
+        body: Str "greeting" @100..110
+      Arm @119..129
+        pattern: Bool true @119..123
+        body: Str "on" @125..129
+      Arm @138..150
+        pattern: Float 3.5 @138..141
+        body: Str "float" @143..150
+      Arm @159..169
+        pattern: Wildcard @159..160
+        body: Str "other" @162..169
 --- diagnostics ---
 (none)

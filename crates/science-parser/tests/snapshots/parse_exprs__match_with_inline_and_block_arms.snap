@@ -1,29 +1,29 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_source(r#\"fn describe(format: &Format) -> String:\n    match format:\n        Plain: \"plain\"\n        Markdown:\n            let prefix = \"marked\"\n            prefix.append(\"down\")\n\"#)"
+expression: "parse_source(r#\"function describe(format: borrowed Format) -> String:\n    match format:\n        Plain: \"plain\"\n        Markdown:\n            let prefix be \"marked\"\n            prefix.append(\"down\")\n\"#)"
 ---
-Module @0..167
-  Fn `describe` @0..166
+Module @0..182
+  Fn `describe` @0..181
     params
-      Param `format` @12..27
-        type: Ref @20..27
-          Path `Format` @21..27
-    ret: Path `String` @32..38
-    body: Block @44..166
-      tail: Match @44..166
-        scrutinee: Path `format` @50..56
+      Param `format` @18..41
+        type: Borrowed @26..41
+          Path `Format` @35..41
+    ret: Path `String` @46..52
+    body: Block @58..181
+      tail: Match @58..181
+        scrutinee: Path `format` @64..70
         arms
-          Arm @66..80
-            pattern: Binding `Plain` @66..71
-            body: Str "plain" @73..80
-          Arm @89..166
-            pattern: Binding `Markdown` @89..97
-            body: Block @111..166
-              Let `prefix` @111..132
-                value: Str "marked" @124..132
-              tail: Method `append` @145..166
-                receiver: Path `prefix` @145..151
+          Arm @80..94
+            pattern: Binding `Plain` @80..85
+            body: Str "plain" @87..94
+          Arm @103..181
+            pattern: Binding `Markdown` @103..111
+            body: Block @125..181
+              Let `prefix` @125..147
+                value: Str "marked" @139..147
+              tail: Method `append` @160..181
+                receiver: Path `prefix` @160..166
                 args
-                  Str "down" @159..165
+                  Str "down" @174..180
 --- diagnostics ---
 (none)

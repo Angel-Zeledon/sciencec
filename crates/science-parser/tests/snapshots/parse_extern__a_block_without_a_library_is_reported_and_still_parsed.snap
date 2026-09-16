@@ -1,0 +1,26 @@
+---
+source: crates/science-parser/tests/parse_extern.rs
+expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\":\n    function crc32(crc: CULong) -> CULong\n\nunsafe extern \"C\" via pkg-config \"zlib\":\n    function crc32_z(crc: CULong) -> CULong\n\"#)"
+---
+Module @0..147
+  Extern "C" unsafe @0..60
+    library (none)
+    items
+      ExternFn `crc32` @23..60
+        params
+          Param `crc` @38..49
+            type: Path `CULong` @43..49
+        ret: Path `CULong` @54..60
+  Extern "C" unsafe @62..146
+    library (none)
+    items
+      ExternFn `crc32_z` @107..146
+        params
+          Param `crc` @124..135
+            type: Path `CULong` @129..135
+        ret: Path `CULong` @140..146
+--- diagnostics ---
+SC0412 @0..17 an `extern` block names the library it comes from
+  note write `library "openblas"` after the ABI; a block discovering its flags with `via pkg-config` still declares the plain name as the fallback, because pkg-config is not present on every platform
+SC0412 @62..79 an `extern` block names the library it comes from
+  note write `library "openblas"` after the ABI; a block discovering its flags with `via pkg-config` still declares the plain name as the fallback, because pkg-config is not present on every platform

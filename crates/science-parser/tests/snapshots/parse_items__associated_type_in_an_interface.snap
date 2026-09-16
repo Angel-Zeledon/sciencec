@@ -1,0 +1,16 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Interface, id(\"Iterate\"), Colon, Newline, Indent, Type,\nid(\"Item\"), Newline, Function, id(\"next\"), LParen, Mutable, SelfValue, RParen,\nArrow, id(\"Option\"), Of, SelfType, Dot, id(\"Item\"), Newline, Dedent,])"
+---
+Module @0..69
+  Interface `Iterate` @0..69
+    assoc types
+      AssocType `Item` @17..25
+    methods
+      Fn `next` @25..69
+        receiver: mutable self @38..49
+        ret: Path `Option` @52..69
+          generics of `Option`
+            SelfAssoc `Item` @60..69
+--- diagnostics ---
+(none)

@@ -3,10 +3,9 @@
 Programs that must be **rejected**, each next to the diagnostics `sciencec` is
 expected to print for it, compared byte for byte. Spec §10.3:
 
-> UI tests in the style of rustc's: a `tests/ui/*.science` that must fail, next
-> to its expected `.stderr`, compared literally. It is the only known method
-> that stops error messages degrading over time. For a language with inferred
-> regions it is not optional.
+> **UI tests**: a program that must fail, beside its expected rendered output,
+> compared literally. It is the only known method that stops error messages
+> from decaying, and for a language with inferred regions it is not optional.
 
 Programs that must be *accepted* live in `examples/` instead.
 
@@ -47,21 +46,23 @@ dropping in the `.science` file and blessing once.
 
 ## The cases
 
-One case per lexical code, plus one that proves error recovery. Between them
-they cover every diagnostic `science-lexer` can emit.
+One case per lexical code — the two removed comparison symbols share one,
+because they are one decision — plus one that proves error recovery. Between
+them they cover every diagnostic `science-lexer` can emit.
 
 | Case | Code | What it pins down |
 |---|---|---|
-| `unknown_character` | `SC0001` | Characters that are not part of the language: `$`, a backtick, and a lone `!` — which is the interesting one, because `!=` *is* an operator and §4.4 spells negation `not`. |
-| `tab_in_indentation` | `SC0003` | A tab used to indent a line. §4.1 fixes this code and says no attempt is made to interpret the tab. |
-| `inconsistent_indentation` | `SC0004` | A line indented to a level that is not on the indentation stack: 8 spaces, after the lexer has popped 12 and is left holding 0 and 4. §4.1 fixes this code. |
-| `integer_overflow` | `SC0005` | An integer literal past `u128::MAX`, in decimal and in hex. §4.1 puts no bound in the grammar, so the bound is the lexer's accumulator. |
-| `bad_escape` | `SC0006` | Escapes outside the eight §4.1 lists, reached the way it happens in practice: an undoubled Windows path. Both flavours of the code appear — an unknown escape, and a `\u` with no braces. |
+| `unknown_character` | `SC0001` | Characters that are not part of the language: `$`, a backtick, and a lone `!` — which is the interesting one, because `!` begins no operator at all now that `!=` is gone, and §4.3 spells negation `not`. |
+| `tab_in_indentation` | `SC0003` | A tab used to indent a line. §4.2 fixes this code and says no attempt is made to interpret the tab. |
+| `inconsistent_indentation` | `SC0004` | A line indented to a level that is not on the indentation stack: 8 spaces, after the lexer has popped 12 and is left holding 0 and 4. §4.2 fixes this code. |
+| `integer_overflow` | `SC0005` | An integer literal past `u128::MAX`, in decimal and in hex. §4.2 puts no bound in the grammar, so the bound is the lexer's accumulator. |
+| `bad_escape` | `SC0006` | Escapes outside the eight §4.2 lists, reached the way it happens in practice: an undoubled Windows path. Both flavours of the code appear — an unknown escape, and a `\u` with no braces. |
 | `unterminated_string` | `SC0007` | A `"` with no closing `"` before the end of the line. §9 fixes only the range, `SC0001`–`SC0099`; the lexer allocated the number. |
-| `bad_character_literal` | `SC0008` | All three ways §4.1's "exactly one character, in quotes" is broken: empty, too many, never closed. |
+| `bad_character_literal` | `SC0008` | All three ways §4.2's "exactly one character, in quotes" is broken: empty, too many, never closed. |
 | `invalid_numeric_suffix` | `SC0009` | `42q`, and `2.5i32` — an integer suffix on a float, which gets its own message. |
 | `malformed_number` | `SC0010` | A digit outside its base (`0b1012`, `0o778`) and a prefix with no digits at all (`0x`). |
 | `float_out_of_range` | `SC0011` | A float literal that `str::parse` saturates to infinity rather than rejecting, which is why the lexer has to check for it. |
+| `removed_comparison_symbols` | `SC0016`, `SC0017` | The two spellings `syntax-revision-2.md` §1 removed. `==` and `!=` are still lexed as `EqEq` and `NotEq` so the expression parses as though the fix had been applied, and each costs exactly one diagnostic with an applicable fix — `is` and `is not`. The ordering symbols in the same file are untouched. |
 | `several_errors_in_one_file` | six codes | Error *recovery*. The lexer never aborts, so one pass reports `SC0001`, `SC0006`, `SC0007`, `SC0009`, `SC0010` and `SC0003`, in source order. No single message is the point here; the count and the order are. |
 
 The `.stderr` files were produced by running the current lexer over these
@@ -69,16 +70,16 @@ programs and reading the output, which is what blessing is for. They are
 still an *expectation*: if a message changes, the change should be visible in
 `git diff` and defensible, not silently absorbed.
 
-Three of them pin a message that is currently worse than it should be, and
-are kept that way on purpose so the improvement shows up as a diff:
+Three messages that used to be worse than they should be have since been
+fixed, and the expectations here now pin the good versions:
 
-- `unknown_character` renders a backtick as ``` ``` ``` — the message
-  interpolates the character into backticks without escaping it.
-- `unknown_character` tells someone who typed `!` only that it is not a
-  character Science recognises, when what it should say is that negation is
-  spelled `not`.
-- `float_out_of_range` prints `f64::MAX` as 309 decimal digits instead of
-  `1.7976931348623157e308`, and `malformed_number` says "a octal literal".
+- `unknown_character` renders a backtick as `` ` `` — the message escapes the
+  character before interpolating it, instead of emitting bare backticks.
+- `unknown_character` tells someone who typed `!` that negation is spelled
+  `not`, notes that `!` begins no operator in Science, and offers `not ` as
+  an applicable fix. It no longer points at `!=`, which §1 removed.
+- `float_out_of_range` prints `f64::MAX` as `1.7976931348623157e308` rather
+  than 309 decimal digits, and `malformed_number` says "an octal literal".
 
 ## The format they are in
 
@@ -132,6 +133,7 @@ yet, and each one needs a case here as it lands:
 
 - every ownership violation, with the chain of borrows that explains it
   (`SC0301` and the rest of `SC0300`–`SC0399`);
-- a non-exhaustive `match`, listing the patterns that are missing (`SC0210`);
+- a non-exhaustive `match`, listing the patterns that are missing (a code in
+  the `SC0250` range, which §9 moved it to from `SC0210`);
 - syntax errors (`SC0100`–`SC0199`) and name resolution failures
   (`SC0200`–`SC0299`).

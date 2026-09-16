@@ -1,0 +1,16 @@
+---
+source: crates/science-parser/tests/parse_traits.rs
+expression: report
+---
+Module @0..103
+  Implements @0..102
+    interface: Bound `Iterate` @21..28
+    type: Path `Countdown` @0..9
+    methods
+      Fn `next` @48..102
+        receiver: mutable self @62..74
+        ret: SelfAssoc `Item` @79..88
+        body: Block @98..102
+          tail: Path `None` @98..102
+--- diagnostics ---
+SC0112 @34..43 an implementation has to give the associated type a type, as in `type Item is Int`

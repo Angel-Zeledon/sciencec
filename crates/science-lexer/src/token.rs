@@ -66,36 +66,55 @@ pub enum TokenKind {
     Ident(String),
 
     // --- Keywords ---------------------------------------------------------
-    Fn,
+    Function,
     Let,
-    Mut,
+    Be,
+    Mutable,
     If,
     Else,
     Match,
     For,
+    Each,
     In,
-    While,
     Loop,
     Return,
     Break,
     Continue,
-    Struct,
-    Enum,
-    Trait,
-    Impl,
+    Type,
+    Choice,
+    Interface,
+    Implements,
+    Has,
+    Of,
+    Borrowed,
+    Any,
     Use,
-    Mod,
-    Pub,
+    Public,
+    Const,
+    Try,
+    Giving,
     True,
     False,
     SelfValue, // self
     SelfType,  // Self
     As,
-    Dyn,
     Where,
+
+    /// `extern "C"` — the foreign declaration block of the FFI note's §1.1.
+    /// A real keyword rather than a reservation since the block exists.
+    Extern,
+    /// `unsafe`, on an `extern` block and on a block expression (§3 of the
+    /// FFI note). Also a real keyword now, for the same reason.
+    Unsafe,
+
     And,
     Or,
     Not,
+
+    /// Identity. `is` alone is equality and `is not` is inequality; ordering
+    /// is written with the symbols. Revision 2 §1 deleted the comparison
+    /// phrases, so `is` is followed by at most one more word.
+    Is,
 
     /// Words reserved for F1-F4. Using one today is an error, but it is never
     /// an identifier. Reserving them now avoids a breaking change later.
@@ -112,17 +131,19 @@ pub enum TokenKind {
     Colon,
     Semi,
     Dot,
-    Arrow,    // ->
+    DotDot,   // .. — the half-open range of §4.5
+    DotDotEq, // ..= — the inclusive one
+    Arrow,    // -> — the return type of §4.4
     FatArrow, // =>
-    Question, // ?
     Underscore,
-    At,   // @
+    AtSign, // @
     Hash, // # — only if it ever stops meaning a comment; not emitted today
 
     // --- Operators --------------------------------------------------------
     Plus,
     Minus,
     Star,
+    StarStar, // ** — the power operator of §4.6, right-associative
     Slash,
     Percent,
     Amp,   // &
@@ -160,6 +181,25 @@ pub enum ReservedWord {
     Tensor,
     Shape,
     Model,
+    /// An equation as a construct: dimensionally checked at compile time and
+    /// rendered to the paper from the same definition that ran. Reserved now
+    /// because reserving costs nothing today and is impossible later; see
+    /// `docs/superpowers/design/equations.md`. `formula` was rejected for the
+    /// name because `chem` already spells a chemical formula that way.
+    Equation,
+    Mod,
+    Pure,
+    Parallel,
+    On,
+    With,
+    Yield,
+    Assert,
+    Move,
+    Static,
+    Macro,
+    Union,
+    Kernel,
+    Import,
 }
 
 impl TokenKind {
@@ -168,36 +208,48 @@ impl TokenKind {
         use ReservedWord::*;
         use TokenKind::*;
         Some(match word {
-            "fn" => Fn,
+            "function" => Function,
             "let" => Let,
-            "mut" => Mut,
+            "be" => Be,
+            "mutable" => Mutable,
             "if" => If,
             "else" => Else,
             "match" => Match,
             "for" => For,
+            "each" => Each,
             "in" => In,
-            "while" => While,
             "loop" => Loop,
             "return" => Return,
             "break" => Break,
             "continue" => Continue,
-            "struct" => Struct,
-            "enum" => Enum,
-            "trait" => Trait,
-            "impl" => Impl,
+            "type" => Type,
+            "choice" => Choice,
+            "interface" => Interface,
+            "implements" => Implements,
+            "has" => Has,
+            "of" => Of,
+            "borrowed" => Borrowed,
+            "any" => Any,
             "use" => Use,
-            "mod" => Mod,
-            "pub" => Pub,
+            "public" => Public,
+            "const" => Const,
+            "try" => Try,
+            "giving" => Giving,
             "true" => True,
             "false" => False,
             "self" => SelfValue,
             "Self" => SelfType,
             "as" => As,
-            "dyn" => Dyn,
             "where" => Where,
+
+            "extern" => Extern,
+            "unsafe" => Unsafe,
+
             "and" => And,
             "or" => Or,
             "not" => Not,
+
+            "is" => Is,
 
             "agent" => Reserved(Agent),
             "tool" => Reserved(Tool),
@@ -212,8 +264,22 @@ impl TokenKind {
             "async" => Reserved(Async),
             "await" => Reserved(Await),
             "tensor" => Reserved(Tensor),
+            "equation" => Reserved(Equation),
             "shape" => Reserved(Shape),
             "model" => Reserved(Model),
+            "mod" => Reserved(Mod),
+            "pure" => Reserved(Pure),
+            "parallel" => Reserved(Parallel),
+            "on" => Reserved(On),
+            "with" => Reserved(With),
+            "yield" => Reserved(Yield),
+            "assert" => Reserved(Assert),
+            "move" => Reserved(Move),
+            "static" => Reserved(Static),
+            "macro" => Reserved(Macro),
+            "union" => Reserved(Union),
+            "kernel" => Reserved(Kernel),
+            "import" => Reserved(Import),
 
             _ => return None,
         })

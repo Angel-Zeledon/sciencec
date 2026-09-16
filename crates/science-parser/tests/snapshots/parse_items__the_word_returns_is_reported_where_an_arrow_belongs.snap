@@ -1,0 +1,16 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: parse_source_allowing_errors(source)
+---
+Module @0..68
+  Fn `longest` @0..67
+    params
+      Param `a` @17..35
+        type: Borrowed @20..35
+          Path `String` @29..35
+    ret: Borrowed @45..60
+      Path `String` @54..60
+    body: Block @66..67
+      tail: Path `a` @66..67
+--- diagnostics ---
+SC0118 @37..44 the return type is written `->`

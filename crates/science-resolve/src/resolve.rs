@@ -32,9 +32,10 @@
 //!
 //! `d.title` and `d.summarize()` are not resolved here and cannot be: which
 //! `title` depends on the type of `d`. They keep their `Ident` and belong to
-//! `science-types`. So does whether an argument list has the right arity, whether
-//! a struct literal names *all* the mandatory fields, and whether a `match` is
-//! exhaustive.
+//! `science-types`. So does the *label* on a named argument — `docs.sort(by: f)`
+//! names a parameter, and there is no `by` in any scope to look up. So does
+//! whether an argument list has the right arity, whether a record literal names
+//! *all* the mandatory fields, and whether a `match` is exhaustive.
 
 use std::collections::HashMap;
 
@@ -80,11 +81,11 @@ struct Input<'a> {
 
 /// The names one module offers.
 ///
-/// `variants` is separate from `names` because §4.5 puts an enum's variants in
-/// the module unqualified *as well as* qualified, and two enums are allowed to
-/// share a variant name — which would be a duplicate definition if they shared
-/// one table. Unqualified use of a name two enums declare is ambiguous, and
-/// that is what the qualified form is for.
+/// `variants` is separate from `names` because §4.5 puts a choice type's
+/// variants in the module unqualified *as well as* qualified, and two choice
+/// types are allowed to share a variant name — which would be a duplicate
+/// definition if they shared one table. Unqualified use of a name two choice
+/// types declare is ambiguous, and that is what the qualified form is for.
 #[derive(Default)]
 struct ModuleScope {
     names: HashMap<String, DefId>,
@@ -99,10 +100,16 @@ struct ModuleScope {
 enum ItemDefs {
     Use,
     Fn(DefId),
-    Struct { def: DefId, fields: Vec<DefId> },
-    Enum { def: DefId, variants: Vec<DefId> },
-    Trait(DefId),
+    Record { def: DefId, fields: Vec<DefId> },
+    Choice { def: DefId, variants: Vec<DefId> },
+    Alias(DefId),
+    Const(DefId),
+    Interface(DefId),
     Impl(DefId),
+    /// One entry per item in the block, in order. `None` is an item the
+    /// parser could not read, which has no name to declare and nothing to
+    /// resolve.
+    Extern(Vec<Option<DefId>>),
 }
 
 // --- the resolver --------------------------------------------------------
@@ -116,11 +123,12 @@ struct Resolver {
     /// Payload arity per variant, which decides whether a bare name in a
     /// pattern matches or binds (§4.4).
     variant_arity: HashMap<DefId, usize>,
-    /// How many fields each struct has, which decides what `Doc()` means.
-    struct_fields: HashMap<DefId, Vec<DefId>>,
+    /// How many fields each record has, which decides what `Doc()` means.
+    record_fields: HashMap<DefId, Vec<DefId>>,
     ribs: Scopes,
     current_module: DefId,
-    /// The `impl` or `trait` whose `Self` is in scope, if any.
+    /// The implementation or interface whose `Self` is in scope, if any. It
+    /// is also the parent of the associated types `Self.Item` can reach.
     self_owner: Option<DefId>,
 }
 
@@ -139,6 +147,14 @@ impl Resolver {
         for (name, id) in prelude.variants {
             prelude_scope.variants.entry(name).or_default().push(id);
         }
+        // A module of the prelude gets a scope of its own, so `ffi.Span` is
+        // read by the same two-segment path walk as `text.parser.Token`.
+        for (module, names) in prelude.modules {
+            let scope = scopes.entry(module).or_default();
+            for (name, id) in names {
+                scope.names.insert(name, id);
+            }
+        }
 
         Resolver {
             defs,
@@ -147,7 +163,7 @@ impl Resolver {
             prelude: prelude.module,
             scopes,
             variant_arity: prelude.variant_arity.into_iter().collect(),
-            struct_fields: HashMap::new(),
+            record_fields: HashMap::new(),
             ribs: Scopes::new(),
             current_module: root,
             self_owner: None,
@@ -277,8 +293,8 @@ impl Resolver {
             ast::ItemKind::Fn(decl) => {
                 ItemDefs::Fn(self.declare_in_module(module, DefKind::Fn, &decl.name))
             }
-            ast::ItemKind::Struct(decl) => {
-                let def = self.declare_in_module(module, DefKind::Struct, &decl.name);
+            ast::ItemKind::Record(decl) => {
+                let def = self.declare_in_module(module, DefKind::Record, &decl.name);
                 let mut fields = Vec::new();
                 let mut seen: HashMap<&str, DefId> = HashMap::new();
                 for field in &decl.fields {
@@ -291,11 +307,11 @@ impl Resolver {
                     seen.entry(field.name.name.as_str()).or_insert(id);
                     fields.push(id);
                 }
-                self.struct_fields.insert(def, fields.clone());
-                ItemDefs::Struct { def, fields }
+                self.record_fields.insert(def, fields.clone());
+                ItemDefs::Record { def, fields }
             }
-            ast::ItemKind::Enum(decl) => {
-                let def = self.declare_in_module(module, DefKind::Enum, &decl.name);
+            ast::ItemKind::Choice(decl) => {
+                let def = self.declare_in_module(module, DefKind::Choice, &decl.name);
                 let mut variants = Vec::new();
                 let mut seen: HashMap<&str, DefId> = HashMap::new();
                 for variant in &decl.variants {
@@ -321,15 +337,51 @@ impl Resolver {
                         .push(id);
                     variants.push(id);
                 }
-                ItemDefs::Enum { def, variants }
+                ItemDefs::Choice { def, variants }
             }
-            ast::ItemKind::Trait(decl) => {
-                ItemDefs::Trait(self.declare_in_module(module, DefKind::Trait, &decl.name))
+            ast::ItemKind::Alias(decl) => {
+                ItemDefs::Alias(self.declare_in_module(module, DefKind::Alias, &decl.name))
             }
+            ast::ItemKind::Const(decl) => {
+                ItemDefs::Const(self.declare_in_module(module, DefKind::Const, &decl.name))
+            }
+            ast::ItemKind::Interface(decl) => {
+                ItemDefs::Interface(self.declare_in_module(
+                    module,
+                    DefKind::Interface,
+                    &decl.name,
+                ))
+            }
+            // §1.2 of `ffi-c-boundary.md` keeps the block a list of symbols,
+            // and the names in that list are ordinary module-level names:
+            // `cblas_dgemm` is called like any function and `BlasInt` is
+            // written like any alias. So each item is declared in the module
+            // exactly as the corresponding declaration outside the block would
+            // be, and everything downstream of here can forget the block
+            // existed. What it may not forget is which kind each name is, and
+            // `DefKind::Static` and `DefKind::Union` exist for that.
+            ast::ItemKind::Extern(block) => ItemDefs::Extern(
+                block
+                    .items
+                    .iter()
+                    .map(|item| {
+                        let (kind, name) = match &item.kind {
+                            ast::ExternItemKind::Fn(decl) => (DefKind::ExternFn, &decl.name),
+                            ast::ExternItemKind::Alias(decl) => (DefKind::Alias, &decl.name),
+                            ast::ExternItemKind::Const(decl) => (DefKind::Const, &decl.name),
+                            ast::ExternItemKind::Static(decl) => (DefKind::Static, &decl.name),
+                            ast::ExternItemKind::Union(decl) => (DefKind::Union, &decl.name),
+                            ast::ExternItemKind::Error => return None,
+                        };
+                        Some(self.declare_in_module(module, kind, name))
+                    })
+                    .collect(),
+            ),
             ast::ItemKind::Impl(block) => {
-                // An impl has no name, so nothing goes in the name table; the
-                // def exists to parent the methods and to answer `module_of`
-                // for the orphan rule.
+                // An implementation has no name, so nothing goes in the name
+                // table; the def exists to parent the methods and the
+                // associated types, and to answer `module_of` for the orphan
+                // rule.
                 ItemDefs::Impl(self.defs.alloc(DefKind::Impl, "", block.span, Some(module)))
             }
         }
@@ -479,17 +531,26 @@ impl Resolver {
             (ast::ItemKind::Fn(decl), ItemDefs::Fn(def)) => {
                 hir::ItemKind::Fn(self.resolve_fn(*def, decl))
             }
-            (ast::ItemKind::Struct(decl), ItemDefs::Struct { def, fields }) => {
-                hir::ItemKind::Struct(self.resolve_struct(*def, fields, decl))
+            (ast::ItemKind::Record(decl), ItemDefs::Record { def, fields }) => {
+                hir::ItemKind::Record(self.resolve_record(*def, fields, decl))
             }
-            (ast::ItemKind::Enum(decl), ItemDefs::Enum { def, variants }) => {
-                hir::ItemKind::Enum(self.resolve_enum(*def, variants, decl))
+            (ast::ItemKind::Choice(decl), ItemDefs::Choice { def, variants }) => {
+                hir::ItemKind::Choice(self.resolve_choice(*def, variants, decl))
             }
-            (ast::ItemKind::Trait(decl), ItemDefs::Trait(def)) => {
-                hir::ItemKind::Trait(self.resolve_trait(*def, decl))
+            (ast::ItemKind::Alias(decl), ItemDefs::Alias(def)) => {
+                hir::ItemKind::Alias(self.resolve_alias(*def, decl))
+            }
+            (ast::ItemKind::Const(decl), ItemDefs::Const(def)) => {
+                hir::ItemKind::Const(self.resolve_const(*def, decl))
+            }
+            (ast::ItemKind::Interface(decl), ItemDefs::Interface(def)) => {
+                hir::ItemKind::Interface(self.resolve_interface(*def, decl))
             }
             (ast::ItemKind::Impl(block), ItemDefs::Impl(def)) => {
                 hir::ItemKind::Impl(self.resolve_impl(*def, block))
+            }
+            (ast::ItemKind::Extern(block), ItemDefs::Extern(defs)) => {
+                hir::ItemKind::Extern(self.resolve_extern(block, defs))
             }
             _ => unreachable!("the collected definitions fell out of step with the items"),
         };
@@ -507,7 +568,7 @@ impl Resolver {
                     codes::SELF_OUTSIDE_IMPL,
                     "`self` is only a parameter of a method",
                     receiver.span,
-                    "there is no `impl` or `trait` around this function",
+                    "there is no implementation or interface around this function",
                 );
             }
             let id = self.defs.alloc(DefKind::SelfParam, "self", receiver.span, Some(def));
@@ -526,6 +587,112 @@ impl Resolver {
         hir::Fn { def, generics, self_param, params, ret, where_clause, body, span: decl.span }
     }
 
+    /// An `extern` block: the types its items mention, resolved.
+    ///
+    /// The names were declared in step 2, so a foreign function may be called
+    /// from a function written above it and a `type BlasInt is I32` may be
+    /// used by a declaration that precedes it — the same forward reference
+    /// every other item gets, for the same reason.
+    ///
+    /// What this phase leaves alone, and why:
+    ///
+    /// - **Whether a type is FFI-representable.** The parser rejects the
+    ///   Science layouts it can name (`SC0420`, `SC0421`); whether a user type
+    ///   implements `ffi.CLayout`, and whether every field transitively does
+    ///   (`SC0424`), belongs to the type checker, which has the definitions.
+    /// - **`unsafe` at the use site.** Calling one of these functions, and
+    ///   reading or writing a `static` (`SC0490`), require an `unsafe` block.
+    ///   That is a property of an expression context, not of a name.
+    /// - **The library, the ABI and the `symbol` string.** All three belong to
+    ///   the driver, and none of them is a name in any scope.
+    fn resolve_extern(
+        &mut self,
+        block: &ast::ExternBlock,
+        defs: &[Option<DefId>],
+    ) -> hir::ExternBlock {
+        let items = block
+            .items
+            .iter()
+            .zip(defs)
+            .filter_map(|(item, def)| {
+                let def = (*def)?;
+                let kind = match &item.kind {
+                    ast::ExternItemKind::Fn(decl) => {
+                        hir::ExternItemKind::Fn(self.resolve_extern_fn(def, decl))
+                    }
+                    ast::ExternItemKind::Alias(decl) => {
+                        hir::ExternItemKind::Alias(hir::ExternAlias {
+                            def,
+                            ty: self.resolve_type(&decl.ty),
+                            span: decl.span,
+                        })
+                    }
+                    ast::ExternItemKind::Const(decl) => {
+                        hir::ExternItemKind::Const(hir::ExternConst {
+                            def,
+                            negative: decl.negative,
+                            value: decl.value.clone(),
+                            ty: self.resolve_type(&decl.ty),
+                            span: decl.span,
+                        })
+                    }
+                    ast::ExternItemKind::Static(decl) => {
+                        hir::ExternItemKind::Static(hir::ExternStatic {
+                            def,
+                            ty: self.resolve_type(&decl.ty),
+                            span: decl.span,
+                        })
+                    }
+                    ast::ExternItemKind::Union(decl) => {
+                        hir::ExternItemKind::Union(hir::ExternUnion {
+                            def,
+                            size: decl.size,
+                            align: decl.align,
+                            span: decl.span,
+                        })
+                    }
+                    // Declared as nothing in step 2, so there is nothing here.
+                    ast::ExternItemKind::Error => return None,
+                };
+                Some(hir::ExternItem { kind, span: item.span })
+            })
+            .collect();
+
+        hir::ExternBlock {
+            is_unsafe: block.is_unsafe,
+            abi: block.abi.value.clone(),
+            library: block.library.as_ref().map(|library| hir::ExternLibrary {
+                name: library.name.value.clone(),
+                pkg_config: library.pkg_config.as_ref().map(|m| m.value.clone()),
+                static_link: library.static_link.is_some(),
+                when_available: library.when_available.is_some(),
+                span: library.span,
+            }),
+            items,
+            span: block.span,
+        }
+    }
+
+    /// A foreign function gets a rib for its parameters although it has no
+    /// body to see them: §1.7 permits naming them at the call site, so two
+    /// parameters sharing a name is a duplicate, and it has to be reported
+    /// here rather than at every call.
+    fn resolve_extern_fn(&mut self, def: DefId, decl: &ast::ExternFn) -> hir::ExternFn {
+        self.ribs.push(RibKind::Params);
+        let params = decl.params.iter().map(|p| self.resolve_param(def, p)).collect();
+        let ret = decl.ret.as_ref().map(|t| self.resolve_type(t));
+        self.ribs.pop();
+
+        hir::ExternFn {
+            def,
+            params,
+            ret,
+            symbol: decl.symbol.as_ref().map(|s| s.value.clone()),
+            variadic: decl.variadic.is_some(),
+            span: decl.span,
+        }
+    }
+
     fn resolve_param(&mut self, owner: DefId, param: &ast::Param) -> hir::Param {
         self.check_reserved(&param.name);
         let ty = self.resolve_type(&param.ty);
@@ -537,7 +704,13 @@ impl Resolver {
     }
 
     /// Declares every generic parameter before resolving any bound, so that
-    /// `[A: Into[B], B]` works regardless of the order they are written in.
+    /// `of (A: Into of B, B)` works regardless of the order they are written
+    /// in.
+    ///
+    /// §5.3's two kinds land in two different `DefKind`s: a type parameter
+    /// names a type, a `const` parameter names a value, and a later phase that
+    /// confuses the two would accept `let n be T`. They share one rib all the
+    /// same — they are written in one list and one name cannot mean both.
     ///
     /// The caller must have pushed a `Generics` rib.
     fn declare_generics(
@@ -549,12 +722,12 @@ impl Resolver {
             .iter()
             .map(|param| {
                 self.check_reserved(&param.name);
-                let def = self.defs.alloc(
-                    DefKind::TypeParam,
-                    &param.name.name,
-                    param.name.span,
-                    Some(owner),
-                );
+                let kind = match &param.kind {
+                    ast::GenericParamKind::Type { .. } => DefKind::TypeParam,
+                    ast::GenericParamKind::Const { .. } => DefKind::ConstParam,
+                };
+                let def =
+                    self.defs.alloc(kind, &param.name.name, param.name.span, Some(owner));
                 if let Err(previous) = self.ribs.define(&param.name.name, def) {
                     self.duplicate(&param.name, previous, "generic parameter");
                 }
@@ -565,10 +738,46 @@ impl Resolver {
         params
             .iter()
             .zip(ids)
-            .map(|(param, def)| hir::GenericParam {
-                def,
-                bounds: param.bounds.iter().map(|b| self.resolve_bound(b)).collect(),
-                span: param.span,
+            .map(|(param, def)| {
+                let kind = match &param.kind {
+                    ast::GenericParamKind::Type { bounds } => hir::GenericParamKind::Type {
+                        bounds: bounds.iter().map(|b| self.resolve_bound(b)).collect(),
+                    },
+                    ast::GenericParamKind::Const { ty } => {
+                        hir::GenericParamKind::Const { ty: self.resolve_type(ty) }
+                    }
+                };
+                hir::GenericParam { def, kind, span: param.span }
+            })
+            .collect()
+    }
+
+    /// The associated types a block declares (§5.4).
+    ///
+    /// They are allocated before anything else in the block is resolved, so
+    /// that `Self.Item` reaches one wherever it is written — in a method's
+    /// signature, in its body, or in the type another associated type is bound
+    /// to. They are children of the block and go in no name table: an
+    /// associated type is reached through `Self`, never as a bare name, which
+    /// is a namespace of its own with exactly one way in.
+    fn declare_assoc_types(&mut self, owner: DefId, names: &[&ast::Ident]) -> Vec<DefId> {
+        let mut seen: HashMap<String, DefId> = HashMap::new();
+        names
+            .iter()
+            .map(|name| {
+                self.check_reserved(name);
+                let def =
+                    self.defs.alloc(DefKind::AssocType, &name.name, name.span, Some(owner));
+                match seen.get(&name.name) {
+                    Some(previous) => {
+                        let previous = *previous;
+                        self.duplicate(name, previous, "associated type");
+                    }
+                    None => {
+                        seen.insert(name.name.clone(), def);
+                    }
+                }
+                def
             })
             .collect()
     }
@@ -584,12 +793,12 @@ impl Resolver {
             .collect()
     }
 
-    fn resolve_struct(
+    fn resolve_record(
         &mut self,
         def: DefId,
         field_defs: &[DefId],
-        decl: &ast::StructDecl,
-    ) -> hir::Struct {
+        decl: &ast::RecordDecl,
+    ) -> hir::Record {
         self.ribs.push(RibKind::Generics);
         let generics = self.declare_generics(def, &decl.generics);
         let where_clause = self.resolve_where(&decl.where_clause);
@@ -604,15 +813,15 @@ impl Resolver {
             })
             .collect();
         self.ribs.pop();
-        hir::Struct { def, generics, where_clause, fields, span: decl.span }
+        hir::Record { def, generics, where_clause, fields, span: decl.span }
     }
 
-    fn resolve_enum(
+    fn resolve_choice(
         &mut self,
         def: DefId,
         variant_defs: &[DefId],
-        decl: &ast::EnumDecl,
-    ) -> hir::Enum {
+        decl: &ast::ChoiceDecl,
+    ) -> hir::Choice {
         self.ribs.push(RibKind::Generics);
         let generics = self.declare_generics(def, &decl.generics);
         let where_clause = self.resolve_where(&decl.where_clause);
@@ -627,40 +836,108 @@ impl Resolver {
             })
             .collect();
         self.ribs.pop();
-        hir::Enum { def, generics, where_clause, variants, span: decl.span }
+        hir::Choice { def, generics, where_clause, variants, span: decl.span }
     }
 
-    fn resolve_trait(&mut self, def: DefId, decl: &ast::TraitDecl) -> hir::Trait {
+    /// `type Embedding is Array of F32` (§4.4).
+    ///
+    /// The generic parameters are an ordinary `of` list, so the alias gets the
+    /// same rib every other type declaration gets, and the aliased type is
+    /// resolved inside it.
+    fn resolve_alias(&mut self, def: DefId, decl: &ast::AliasDecl) -> hir::Alias {
         self.ribs.push(RibKind::Generics);
         let generics = self.declare_generics(def, &decl.generics);
-        let supertraits = decl.supertraits.iter().map(|b| self.resolve_bound(b)).collect();
+        let ty = self.resolve_type(&decl.ty);
+        self.ribs.pop();
+        hir::Alias { def, generics, ty, span: decl.span }
+    }
+
+    /// `const WIDTH be 768` (§4.4).
+    ///
+    /// The value is an expression at module level, so it sees the module's
+    /// names and no ribs. Whether it can be evaluated at compile time is a
+    /// question about the expression, not about its names.
+    fn resolve_const(&mut self, def: DefId, decl: &ast::ConstDecl) -> hir::Const {
+        let ty = decl.ty.as_ref().map(|t| self.resolve_type(t));
+        let value = self.resolve_expr(&decl.value);
+        hir::Const { def, ty, value, span: decl.span }
+    }
+
+    fn resolve_interface(&mut self, def: DefId, decl: &ast::InterfaceDecl) -> hir::Interface {
+        self.ribs.push(RibKind::Generics);
+        let generics = self.declare_generics(def, &decl.generics);
+        let supers = decl.supers.iter().map(|b| self.resolve_bound(b)).collect();
         let where_clause = self.resolve_where(&decl.where_clause);
+
+        let names: Vec<&ast::Ident> = decl.assoc_types.iter().map(|a| &a.name).collect();
+        let assoc_defs = self.declare_assoc_types(def, &names);
+        // An interface declares the name and leaves the type to the
+        // implementation, so there is nothing here to resolve.
+        let assoc_types: Vec<hir::AssocType> = decl
+            .assoc_types
+            .iter()
+            .zip(assoc_defs)
+            .map(|(decl, def)| hir::AssocType { def, ty: None, span: decl.span })
+            .collect();
 
         let previous_self = self.self_owner.replace(def);
         let methods = self.resolve_methods(def, &decl.methods);
         self.self_owner = previous_self;
 
         self.ribs.pop();
-        hir::Trait { def, generics, supertraits, where_clause, methods, span: decl.span }
+        hir::Interface {
+            def,
+            generics,
+            supers,
+            where_clause,
+            assoc_types,
+            methods,
+            span: decl.span,
+        }
     }
 
     fn resolve_impl(&mut self, def: DefId, block: &ast::ImplBlock) -> hir::Impl {
         self.ribs.push(RibKind::Generics);
         let generics = self.declare_generics(def, &block.generics);
-        let trait_ = block.trait_.as_ref().map(|b| self.resolve_bound(b));
+        let interface = block.interface.as_ref().map(|b| self.resolve_bound(b));
         let self_ty = self.resolve_type(&block.self_ty);
         let where_clause = self.resolve_where(&block.where_clause);
-        self.check_orphan(def, trait_.as_ref(), &self_ty, block.span);
+        self.check_orphan(def, interface.as_ref(), &self_ty, block.span);
 
         let previous_self = self.self_owner.replace(def);
+
+        // Declared before the bindings are resolved, so that `type A is Self.B`
+        // reaches `B` however the two are ordered.
+        let names: Vec<&ast::Ident> = block.assoc_types.iter().map(|a| &a.name).collect();
+        let assoc_defs = self.declare_assoc_types(def, &names);
+        let assoc_types: Vec<hir::AssocType> = block
+            .assoc_types
+            .iter()
+            .zip(assoc_defs)
+            .map(|(binding, def)| hir::AssocType {
+                def,
+                ty: Some(self.resolve_type(&binding.ty)),
+                span: binding.span,
+            })
+            .collect();
+
         let methods = self.resolve_methods(def, &block.methods);
         self.self_owner = previous_self;
 
         self.ribs.pop();
-        hir::Impl { def, generics, trait_, self_ty, where_clause, methods, span: block.span }
+        hir::Impl {
+            def,
+            generics,
+            interface,
+            self_ty,
+            where_clause,
+            assoc_types,
+            methods,
+            span: block.span,
+        }
     }
 
-    /// The methods of a trait or an impl.
+    /// The methods of an interface or an implementation.
     ///
     /// They are children of the block, not of the module: a method is reached
     /// through a receiver or through its type, never as a bare name, so it has
@@ -688,19 +965,23 @@ impl Resolver {
             .collect()
     }
 
-    /// §5.4: an `impl` is legal only if the trait or the type belongs to the
-    /// module declaring it.
+    /// §5.4: an implementation is legal only if the interface or the type
+    /// belongs to the module declaring it.
     ///
     /// Read literally, which is what makes two conflicting implementations
-    /// impossible. Two consequences worth naming: an inherent `impl` is held
-    /// to the same rule, since an inherent method on a foreign type collides
-    /// just as badly; and a generic parameter cannot stand in for the type,
-    /// because `impl Copy for T` would otherwise pass — a type parameter's
-    /// module is the one that declared the `impl`.
+    /// impossible. Two consequences worth naming: an inherent `Doc has:` is
+    /// held to the same rule, since an inherent method on a foreign type
+    /// collides just as badly; and a generic parameter cannot stand in for the
+    /// type, because `T implements Copy:` would otherwise pass — a type
+    /// parameter's module is the one that declared the implementation.
+    ///
+    /// A type alias is not an owner either. `type MyText is String` in this
+    /// module does not make `String` this module's to implement on, so an
+    /// alias resolves to a `DefKind::Alias` and falls outside the set below.
     fn check_orphan(
         &mut self,
         def: DefId,
-        trait_: Option<&hir::Bound>,
+        interface: Option<&hir::Bound>,
         self_ty: &hir::Type,
         span: Span,
     ) {
@@ -708,20 +989,22 @@ impl Resolver {
 
         // Nothing to say when a name already failed: the error is reported and
         // a second one about the same line helps nobody.
-        if trait_.is_some_and(|b| b.res.is_error()) || matches!(self_ty.kind, hir::TypeKind::Error) {
+        if interface.is_some_and(|b| b.res.is_error())
+            || matches!(self_ty.kind, hir::TypeKind::Error)
+        {
             return;
         }
 
-        let trait_owner = trait_.and_then(|b| b.res.def_id());
+        let interface_owner = interface.and_then(|b| b.res.def_id());
         let type_owner = type_owner(self_ty).filter(|id| {
-            matches!(self.defs.get(*id).kind, DefKind::Struct | DefKind::Enum | DefKind::Primitive)
+            matches!(self.defs.get(*id).kind, DefKind::Record | DefKind::Choice | DefKind::Primitive)
         });
         if let Some(id) = type_owner {
             if self.defs.module_of(id) == home {
                 return;
             }
         }
-        if let Some(id) = trait_owner {
+        if let Some(id) = interface_owner {
             if self.defs.module_of(id) == home {
                 return;
             }
@@ -729,10 +1012,11 @@ impl Resolver {
 
         let mut diagnostic = Diagnostic::error(
             codes::ORPHAN_IMPL,
-            "this `impl` is an orphan: neither the trait nor the type belongs to this module",
+            "this implementation is an orphan: neither the interface nor the type \
+             belongs to this module",
         )
         .with_label(Label::primary(span, "declared here"));
-        for (id, what) in [(trait_owner, "trait"), (type_owner, "type")] {
+        for (id, what) in [(interface_owner, "interface"), (type_owner, "type")] {
             let Some(id) = id else { continue };
             let Some(module) = self.defs.module_of(id) else { continue };
             let name = self.defs.path_of(id);
@@ -746,7 +1030,8 @@ impl Resolver {
                 diagnostic.with_note(format!("the {what} `{name}` belongs to {module}"));
         }
         diagnostic = diagnostic.with_note(
-            "move the `impl` into one of those modules, or wrap the type in one of your own",
+            "move the implementation into one of those modules, or wrap the type in one \
+             of your own",
         );
         self.diags.push(diagnostic);
     }
@@ -760,16 +1045,23 @@ impl Resolver {
                 let res = self.require_kind(res, path, DefKind::is_type, "a type");
                 hir::TypeKind::Path { res, generics }
             }
-            ast::TypeKind::Ref { mutable, inner } => hir::TypeKind::Ref {
+            ast::TypeKind::Borrowed { mutable, inner } => hir::TypeKind::Borrowed {
                 mutable: *mutable,
                 inner: Box::new(self.resolve_type(inner)),
             },
-            ast::TypeKind::Dyn(bound) => hir::TypeKind::Dyn(self.resolve_bound(bound)),
+            ast::TypeKind::Any(bound) => hir::TypeKind::Any(self.resolve_bound(bound)),
             ast::TypeKind::Tuple(elems) => {
                 hir::TypeKind::Tuple(elems.iter().map(|t| self.resolve_type(t)).collect())
             }
             ast::TypeKind::Unit => hir::TypeKind::Unit,
             ast::TypeKind::SelfType => hir::TypeKind::SelfType(self.resolve_self_ty(ty.span)),
+            ast::TypeKind::SelfAssoc(name) => hir::TypeKind::SelfAssoc {
+                res: self.resolve_self_assoc(name, ty.span),
+                name: name.clone(),
+            },
+            // A const generic argument is a literal. There is no name in it, so
+            // there is nothing for this phase to say about it.
+            ast::TypeKind::Const(value) => hir::TypeKind::Const(value.clone()),
             ast::TypeKind::Error => hir::TypeKind::Error,
         };
         hir::Type { kind, span: ty.span }
@@ -781,9 +1073,51 @@ impl Resolver {
             None => {
                 self.error(
                     codes::SELF_OUTSIDE_IMPL,
-                    "`Self` only exists inside an `impl` or a `trait`",
+                    "`Self` only exists inside an implementation or an interface",
                     span,
-                    "no enclosing `impl` or `trait`",
+                    "no enclosing implementation or interface",
+                );
+                Res::Error
+            }
+        }
+    }
+
+    /// `Self.Item` (§5.4).
+    ///
+    /// The one way into the associated-type namespace, and it looks in exactly
+    /// one place: the block `Self` stands for. An interface finds what it
+    /// declared; an implementation finds what it bound. An implementation that
+    /// uses `Self.Item` without binding `Item` is *not* answered from the
+    /// interface's declaration — the binding is the implementation's to supply,
+    /// and a missing one is §5.4's completeness check, which `science-types`
+    /// runs over the same block.
+    fn resolve_self_assoc(&mut self, name: &ast::Ident, span: Span) -> Res {
+        let Some(owner) = self.self_owner else {
+            self.error(
+                codes::SELF_OUTSIDE_IMPL,
+                "`Self` only exists inside an implementation or an interface",
+                span,
+                "no enclosing implementation or interface",
+            );
+            return Res::Error;
+        };
+        let found = self
+            .defs
+            .children(owner)
+            .find(|child| child.kind == DefKind::AssocType && child.name == name.name)
+            .map(|child| child.id);
+        match found {
+            Some(def) => Res::Def(def),
+            None => {
+                let what = match self.defs.get(owner).kind {
+                    DefKind::Interface => "interface",
+                    _ => "implementation",
+                };
+                self.error(
+                    codes::UNRESOLVED_NAME,
+                    format!("this {what} declares no associated type `{}`", name.name),
+                    name.span,
+                    "no such associated type",
                 );
                 Res::Error
             }
@@ -792,8 +1126,12 @@ impl Resolver {
 
     fn resolve_bound(&mut self, bound: &ast::TypeBound) -> hir::Bound {
         let (res, generics) = self.resolve_path(&bound.path);
-        let res =
-            self.require_kind(res, &bound.path, |kind| kind == DefKind::Trait, "a trait");
+        let res = self.require_kind(
+            res,
+            &bound.path,
+            |kind| kind == DefKind::Interface,
+            "an interface",
+        );
         hir::Bound { res, generics, span: bound.span }
     }
 
@@ -828,7 +1166,7 @@ impl Resolver {
     ///
     /// Generic arguments are gathered from every segment and concatenated. In
     /// F0 only the final segment can carry any — an earlier segment is a
-    /// module or an enum, neither of which takes arguments — so the
+    /// module or a choice type, neither of which takes arguments — so the
     /// concatenation is the last segment's list.
     fn resolve_path(&mut self, path: &ast::Path) -> (Res, Vec<hir::Type>) {
         let generics: Vec<hir::Type> = path
@@ -851,7 +1189,7 @@ impl Resolver {
     /// The first segment of a path, or a bare name.
     ///
     /// The order is the language's scoping rule in one list: ribs innermost
-    /// first, then the current module, then its enums' variants, then the
+    /// first, then the current module, then its choice types' variants, then the
     /// prelude, and last the crate root's modules — which is what lets
     /// `text.parser.Token` be written from anywhere without an import.
     ///
@@ -903,14 +1241,14 @@ impl Resolver {
     fn ambiguous(&mut self, ident: &ast::Ident, candidates: &[DefId]) {
         let mut diagnostic = Diagnostic::error(
             codes::AMBIGUOUS_NAME,
-            format!("`{}` is a variant of more than one enum in scope", ident.name),
+            format!("`{}` is a variant of more than one choice type in scope", ident.name),
         )
         .with_label(Label::primary(ident.span, "ambiguous"));
         for candidate in candidates {
             let qualified = self.defs.path_of(*candidate);
             diagnostic = diagnostic.with_note(format!("it could be `{qualified}`"));
         }
-        diagnostic = diagnostic.with_note("write the enum's name to say which (§4.5)");
+        diagnostic = diagnostic.with_note("write the choice type's name to say which (§4.5)");
         self.diags.push(diagnostic);
     }
 
@@ -937,7 +1275,7 @@ impl Resolver {
                     Res::Error
                 }
             },
-            DefKind::Enum => {
+            DefKind::Choice => {
                 let variant = self
                     .defs
                     .children(id)
@@ -967,7 +1305,7 @@ impl Resolver {
                         ident.name
                     ),
                     ident.span,
-                    "not a module or an enum",
+                    "not a module or a choice type",
                     id,
                     "defined here",
                 );
@@ -1046,7 +1384,7 @@ impl Resolver {
                     receiver: Box::new(self.resolve_expr(receiver)),
                     method: method.clone(),
                     generics: generics.iter().map(|t| self.resolve_type(t)).collect(),
-                    args: args.iter().map(|a| self.resolve_expr(a)).collect(),
+                    args: self.resolve_args(args),
                 }
             }
             ast::ExprKind::Field { base, name } => hir::ExprKind::Field {
@@ -1076,10 +1414,18 @@ impl Resolver {
                 ty: self.resolve_type(ty),
             },
             ast::ExprKind::Try(inner) => hir::ExprKind::Try(Box::new(self.resolve_expr(inner))),
-            ast::ExprKind::Ref { mutable, expr } => hir::ExprKind::Ref {
+            ast::ExprKind::Borrowed { mutable, expr } => hir::ExprKind::Borrowed {
                 mutable: *mutable,
                 expr: Box::new(self.resolve_expr(expr)),
             },
+            // Both ends are ordinary expressions; `..` binds nothing.
+            ast::ExprKind::Range { start, end, inclusive } => hir::ExprKind::Range {
+                start: Box::new(self.resolve_expr(start)),
+                end: Box::new(self.resolve_expr(end)),
+                inclusive: *inclusive,
+            },
+            ast::ExprKind::Closure { param, body } => self.resolve_closure(param, body, expr.span),
+            ast::ExprKind::Each => hir::ExprKind::Each(self.resolve_each(expr.span)),
             ast::ExprKind::If(if_expr) => hir::ExprKind::If(hir::IfExpr {
                 cond: Box::new(self.resolve_expr(&if_expr.cond)),
                 then_branch: self.resolve_block(&if_expr.then_branch),
@@ -1090,11 +1436,14 @@ impl Resolver {
                 span: if_expr.span,
             }),
             ast::ExprKind::Match(match_expr) => hir::ExprKind::Match(self.resolve_match(match_expr)),
-            ast::ExprKind::While { cond, body } => hir::ExprKind::While {
-                cond: Box::new(self.resolve_expr(cond)),
-                body: self.resolve_block(body),
-            },
+            // `while` is gone (revision 2 §2.1): a conditional loop is `loop`
+            // with an `if .. break` in it, and the body is the only thing left
+            // to walk. `resolve_block` opens the rib the condition never had.
             ast::ExprKind::Loop { body } => hir::ExprKind::Loop { body: self.resolve_block(body) },
+            // `unsafe` grants powers, never scope: §3.2 of the FFI note keeps
+            // every rule this phase enforces intact inside one, so the body is
+            // resolved exactly as a bare block would be.
+            ast::ExprKind::Unsafe(body) => hir::ExprKind::Unsafe(self.resolve_block(body)),
             ast::ExprKind::For { pattern, iter, body } => {
                 // The iterable is evaluated outside the loop's bindings.
                 let iter = Box::new(self.resolve_expr(iter));
@@ -1108,6 +1457,78 @@ impl Resolver {
             ast::ExprKind::Error => hir::ExprKind::Error,
         };
         hir::Expr { kind, span: expr.span }
+    }
+
+    /// §4.6's two closure forms, resolved into one.
+    ///
+    /// A closure binds exactly one name, so it gets a rib of its own. The
+    /// named form binds what was written; the implicit form binds `each`,
+    /// which the programmer did not write and which [`ast::ExprKind::Each`]
+    /// inside the body then finds by the ordinary rib lookup. `each` is a
+    /// keyword, so no user name can collide with the one invented here, and no
+    /// local can shadow it.
+    fn resolve_closure(
+        &mut self,
+        param: &Option<ast::Ident>,
+        body: &ast::Expr,
+        span: Span,
+    ) -> hir::ExprKind {
+        self.ribs.push(RibKind::Closure);
+        let (name, name_span) = match param {
+            Some(ident) => {
+                self.check_reserved(ident);
+                (ident.name.as_str(), ident.span)
+            }
+            None => ("each", span),
+        };
+        let def = self.defs.alloc(DefKind::Param, name, name_span, Some(self.current_module));
+        let _ = self.ribs.define(name, def);
+        let body = Box::new(self.resolve_expr(body));
+        self.ribs.pop();
+        hir::ExprKind::Closure { param: def, body }
+    }
+
+    /// `each` (§4.6).
+    ///
+    /// The parser wraps the call argument an `each` appears in, so in a
+    /// well-formed program there is always a closure rib holding one. A bare
+    /// `each` outside any argument reaches here unwrapped — the parser leaves
+    /// that judgement to this phase because it has no scopes to make it with.
+    fn resolve_each(&mut self, span: Span) -> Res {
+        match self.ribs.lookup("each") {
+            Some(def) => Res::Def(def),
+            None => {
+                self.diags.push(
+                    Diagnostic::error(
+                        codes::EACH_WITHOUT_SUBJECT,
+                        "`each` names the subject of the call it is written in, and there \
+                         is no call here",
+                    )
+                    .with_label(Label::primary(span, "no subject to name"))
+                    .with_note(
+                        "`each` stands for one argument's value inside a call, as in \
+                         `docs.map(each.title)`",
+                    ),
+                );
+                Res::Error
+            }
+        }
+    }
+
+    /// The arguments of a call.
+    ///
+    /// A named argument's label is *not* resolved. `docs.sort(by: f)` names the
+    /// parameter `by`, and there is no `by` in any scope; matching it to a
+    /// parameter needs the callee's signature, which is `science-types`' to know.
+    /// The label is carried through unchanged so that it can.
+    fn resolve_args(&mut self, args: &[ast::Arg]) -> Vec<hir::Arg> {
+        args.iter()
+            .map(|arg| hir::Arg {
+                name: arg.name.clone(),
+                value: self.resolve_expr(&arg.value),
+                span: arg.span,
+            })
+            .collect()
     }
 
     fn resolve_self_value(&mut self, span: Span) -> Res {
@@ -1140,13 +1561,13 @@ impl Resolver {
     }
 
     /// §4.4, second and third points: positional arguments mean a call or a
-    /// variant, named arguments mean a struct. The parser cannot see the
+    /// variant, named arguments mean a record. The parser cannot see the
     /// difference for `Doc()`, which has neither, so it is settled here
     /// against what `Doc` turned out to be.
     fn resolve_call(
         &mut self,
         callee: &ast::Expr,
-        args: &[ast::Expr],
+        args: &[ast::Arg],
         span: Span,
     ) -> hir::ExprKind {
         let callee_res = match &callee.kind {
@@ -1157,27 +1578,27 @@ impl Resolver {
         let Some(((res, generics), path)) = callee_res else {
             return hir::ExprKind::Call {
                 callee: Box::new(self.resolve_expr(callee)),
-                args: args.iter().map(|a| self.resolve_expr(a)).collect(),
+                args: self.resolve_args(args),
             };
         };
 
         if let Res::Def(id) = res {
-            if self.defs.get(id).kind == DefKind::Struct {
-                let field_count = self.struct_fields.get(&id).map_or(0, Vec::len);
+            if self.defs.get(id).kind == DefKind::Record {
+                let field_count = self.record_fields.get(&id).map_or(0, Vec::len);
                 if args.is_empty() && field_count == 0 {
-                    // `Doc()` on a struct with no fields is construction.
+                    // `Doc()` on a record with no fields is construction.
                     return hir::ExprKind::StructLit { res, fields: Vec::new() };
                 }
                 self.error_with_def(
                     codes::CONSTRUCTION_MISMATCH,
                     format!(
-                        "`{}` is a struct, so it is built with named arguments",
+                        "`{}` is a record type, so it is built with named arguments",
                         path.dotted()
                     ),
                     span,
                     "positional arguments here",
                     id,
-                    "this struct is declared here",
+                    "this record type is declared here",
                 );
             }
         }
@@ -1187,7 +1608,7 @@ impl Resolver {
                 kind: hir::ExprKind::Path { res, generics },
                 span: callee.span,
             }),
-            args: args.iter().map(|a| self.resolve_expr(a)).collect(),
+            args: self.resolve_args(args),
         }
     }
 
@@ -1196,13 +1617,42 @@ impl Resolver {
         path: &ast::Path,
         fields: &[ast::FieldInit],
     ) -> hir::ExprKind {
-        let (res, _) = self.resolve_path(path);
-        let struct_def = self.expect_struct(res, path, "named arguments build a struct");
+        let (res, generics) = self.resolve_path(path);
+
+        // §1.7 of `ffi-c-boundary.md`: an extern call site may use named
+        // arguments, in any order, and it is the only call site in the
+        // language that may. `cblas_dgemm` takes thirteen arguments, two of
+        // which are transposition flags that look identical and whose
+        // confusion produces a wrong answer rather than an error; the note
+        // prices the second call convention and takes it deliberately.
+        //
+        // Syntactically this is indistinguishable from a record construction,
+        // which is why it is settled here and not in the parser: only this
+        // phase knows that the name is a foreign function.
+        if matches!(res, Res::Def(id) if self.defs.get(id).kind == DefKind::ExternFn) {
+            let args = fields
+                .iter()
+                .map(|init| hir::Arg {
+                    name: Some(init.name.clone()),
+                    value: self.resolve_expr(&init.value),
+                    span: init.span,
+                })
+                .collect();
+            return hir::ExprKind::Call {
+                callee: Box::new(hir::Expr {
+                    kind: hir::ExprKind::Path { res, generics },
+                    span: path.span,
+                }),
+                args,
+            };
+        }
+
+        let record_def = self.expect_record(res, path, "named arguments build a record");
 
         let fields = fields
             .iter()
             .map(|init| hir::FieldInit {
-                field: self.resolve_field(struct_def, &init.name),
+                field: self.resolve_field(record_def, &init.name),
                 name: init.name.clone(),
                 value: self.resolve_expr(&init.value),
                 span: init.span,
@@ -1211,41 +1661,41 @@ impl Resolver {
         hir::ExprKind::StructLit { res, fields }
     }
 
-    /// The definition behind a name used where only a struct can go.
-    fn expect_struct(&mut self, res: Res, path: &ast::Path, why: &str) -> Option<DefId> {
+    /// The definition behind a name used where only a record can go.
+    fn expect_record(&mut self, res: Res, path: &ast::Path, why: &str) -> Option<DefId> {
         let Res::Def(id) = res else { return None };
         let kind = self.defs.get(id).kind;
-        if kind == DefKind::Struct {
+        if kind == DefKind::Record {
             return Some(id);
         }
         self.error_with_def(
             codes::CONSTRUCTION_MISMATCH,
             format!("{why}, but `{}` is {}", path.dotted(), kind.describe()),
             path.span,
-            "not a struct",
+            "not a record type",
             id,
             "defined here",
         );
         None
     }
 
-    /// One field of a known struct.
+    /// One field of a known record.
     ///
-    /// Which fields are *missing* is not checked here: §4.3 makes them
+    /// Which fields are *missing* is not checked here: §4.4 makes them
     /// mandatory, but a missing field is a shape error about a value, and the
     /// type checker is already walking the same node to check the types of the
     /// ones that are present.
-    fn resolve_field(&mut self, struct_def: Option<DefId>, name: &ast::Ident) -> Res {
-        let Some(struct_def) = struct_def else { return Res::Error };
+    fn resolve_field(&mut self, record_def: Option<DefId>, name: &ast::Ident) -> Res {
+        let Some(record_def) = record_def else { return Res::Error };
         let field = self
             .defs
-            .children(struct_def)
+            .children(record_def)
             .find(|child| child.kind == DefKind::Field && child.name == name.name)
             .map(|child| child.id);
         match field {
             Some(def) => Res::Def(def),
             None => {
-                let owner = self.defs.path_of(struct_def);
+                let owner = self.defs.path_of(record_def);
                 self.error(
                     codes::UNKNOWN_FIELD,
                     format!("`{owner}` has no field `{}`", name.name),
@@ -1306,7 +1756,7 @@ impl Resolver {
                 // §4.4, second point, in pattern position: the parser writes
                 // `Doc()` as a variant because it cannot know better.
                 if let Res::Def(id) = res {
-                    if self.defs.get(id).kind == DefKind::Struct {
+                    if self.defs.get(id).kind == DefKind::Record {
                         if elems.is_empty() {
                             return hir::Pattern {
                                 kind: hir::PatternKind::Struct { res, fields: Vec::new() },
@@ -1316,13 +1766,13 @@ impl Resolver {
                         self.error_with_def(
                             codes::CONSTRUCTION_MISMATCH,
                             format!(
-                                "`{}` is a struct, so its pattern names its fields",
+                                "`{}` is a record type, so its pattern names its fields",
                                 path.dotted()
                             ),
                             pattern.span,
                             "positional elements here",
                             id,
-                            "this struct is declared here",
+                            "this record type is declared here",
                         );
                     }
                 }
@@ -1334,14 +1784,14 @@ impl Resolver {
 
             ast::PatternKind::Struct { path, fields } => {
                 let (res, _) = self.resolve_path(path);
-                let struct_def =
-                    self.expect_struct(res, path, "a named-field pattern matches a struct");
+                let record_def =
+                    self.expect_record(res, path, "a named-field pattern matches a record");
                 hir::PatternKind::Struct {
                     res,
                     fields: fields
                         .iter()
                         .map(|field| hir::FieldPattern {
-                            field: self.resolve_field(struct_def, &field.name),
+                            field: self.resolve_field(record_def, &field.name),
                             name: field.name.clone(),
                             pattern: self.resolve_pattern(&field.pattern),
                             span: field.span,
@@ -1389,11 +1839,11 @@ impl Resolver {
     }
 }
 
-/// The type an `impl` is for, once references are peeled off.
+/// The type an implementation is for, once borrows are peeled off.
 fn type_owner(ty: &hir::Type) -> Option<DefId> {
     match &ty.kind {
         hir::TypeKind::Path { res, .. } => res.def_id(),
-        hir::TypeKind::Ref { inner, .. } => type_owner(inner),
+        hir::TypeKind::Borrowed { inner, .. } => type_owner(inner),
         _ => None,
     }
 }

@@ -1,0 +1,17 @@
+error[SC0016]: equality is written `is`
+  --> tests/ui/removed_comparison_symbols.science:17:20
+   |
+17 |     let equal be a == b
+   |                    ^^ `==` is not an operator in Science
+   |
+   = note: there is one spelling for each comparison: `is` and `is not` for identity, and `>`, `<`, `>=`, `<=` for order
+   = help: write the word instead: `is`
+
+error[SC0017]: inequality is written `is not`
+  --> tests/ui/removed_comparison_symbols.science:18:24
+   |
+18 |     let different be a != b
+   |                        ^^ `!=` is not an operator in Science
+   |
+   = note: there is one spelling for each comparison: `is` and `is not` for identity, and `>`, `<`, `>=`, `<=` for order
+   = help: write the words instead: `is not`

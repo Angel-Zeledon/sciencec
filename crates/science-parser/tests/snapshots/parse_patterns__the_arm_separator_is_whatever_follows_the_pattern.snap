@@ -1,18 +1,18 @@
 ---
 source: crates/science-parser/tests/parse_patterns.rs
-expression: "parse_body(r#\"fn f(p: &Point) -> Int:\n    match p:\n        Point(x: x, y: y): x\n\"#)"
+expression: "parse_body(r#\"function f(p: borrowed Point) -> Int:\n    match p:\n        Point(x: x, y: y): x\n\"#)"
 ---
-Block @28..65
-  tail: Match @28..65
-    scrutinee: Path `p` @34..35
+Block @42..79
+  tail: Match @42..79
+    scrutinee: Path `p` @48..49
     arms
-      Arm @45..65
-        pattern: StructPat `Point` @45..62
+      Arm @59..79
+        pattern: StructPat `Point` @59..76
           fields
-            FieldPat `x` @51..55
-              pattern: Binding `x` @54..55
-            FieldPat `y` @57..61
-              pattern: Binding `y` @60..61
-        body: Path `x` @64..65
+            FieldPat `x` @65..69
+              pattern: Binding `x` @68..69
+            FieldPat `y` @71..75
+              pattern: Binding `y` @74..75
+        body: Path `x` @78..79
 --- diagnostics ---
 (none)

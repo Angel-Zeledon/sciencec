@@ -26,8 +26,9 @@
 //!
 //! The ambiguities §4.4 of the spec hands to name resolution are settled here:
 //! an `ast::PatternKind::Binding` that named a unit variant arrives as
-//! [`PatternKind::Variant`], and an empty-argument call on a fieldless struct
-//! arrives as [`ExprKind::StructLit`]. A later phase never has to ask again.
+//! [`PatternKind::Variant`], an empty-argument call on a fieldless record
+//! arrives as [`ExprKind::StructLit`], and the implicit closure of §4.6 has a
+//! binder for its `each`. A later phase never has to ask again.
 
 use std::ops::Index;
 
@@ -36,7 +37,9 @@ use science_diagnostics::{FileId, Span};
 // Re-exported rather than redefined: these carry no names and no paths, so
 // resolution has nothing to say about them, and a second copy would only be a
 // second thing to keep in step with the parser.
-pub use science_parser::ast::{BinaryOp, Ident, Literal, SelfKind, UnaryOp};
+pub use science_parser::ast::{
+    BinaryOp, ConstExpr, ConstExprKind, Ident, Literal, SelfKind, UnaryOp,
+};
 
 // --- definitions ---------------------------------------------------------
 
@@ -68,26 +71,56 @@ impl std::fmt::Display for DefId {
 /// where a name was introduced without a second side table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DefKind {
-    /// A file, or a directory with a `mod.science` (§4.3).
+    /// A file, or a directory with a `mod.science` (§4.4).
     Module,
     Fn,
-    Struct,
-    Enum,
-    /// One variant of an enum. Its parent is the enum.
+    /// `function name(..)` inside an `extern` block. A kind of its own, not
+    /// because the name works differently — it is an ordinary module-level
+    /// name — but because three later rules turn on it: §1.7 permits named
+    /// arguments at its call sites and nowhere else, §3.1 requires an
+    /// `unsafe` block around the call, and codegen emits a declaration rather
+    /// than a definition.
+    ExternFn,
+    /// `type Doc:` — the record type of §4.4.
+    Record,
+    /// `choice Format:` — the sum type of §4.4.
+    Choice,
+    /// One variant of a choice type. Its parent is the choice.
     Variant,
-    Trait,
-    /// An `impl` block. It has no name of its own; see [`Def::name`].
+    /// `type Embedding is Array of F32` (§4.4).
+    Alias,
+    /// `const WIDTH be 768` (§4.4), and `const NAME be literal as T` inside
+    /// an `extern` block.
+    Const,
+    /// `static NAME: T` inside an `extern` block — an exported data symbol
+    /// resolved at link, which `c-binding-coverage.md` Decision 7 adds as the
+    /// fourth item form. A different kind from a constant because the two are
+    /// different things: one is a compile-time value, the other an address.
+    Static,
+    /// `union Name: size N align M` inside an `extern` block — the opaque
+    /// blob a C union is imported as.
+    Union,
+    Interface,
+    /// `type Item` on an interface, and the `type Item is Int` that answers
+    /// it. Its parent is the interface or the implementation that wrote it.
+    AssocType,
+    /// An implementation block — `Doc has:` or `Doc implements Summarize:`.
+    /// It has no name of its own; see [`Def::name`].
     Impl,
-    /// A struct field. Its parent is the struct.
+    /// A record's field. Its parent is the record.
     Field,
-    /// A function parameter.
+    /// A function parameter, and the subject of a closure.
     Param,
-    /// The `self`, `&self` or `&mut self` receiver.
+    /// The `self`, `mutable self` or `self: Self` receiver.
     SelfParam,
     /// A `let` binding, or a binding introduced by a pattern.
     Local,
-    /// A generic parameter of a function, type, trait or impl.
+    /// A generic type parameter of a function, type, interface or
+    /// implementation.
     TypeParam,
+    /// A `const WIDTH: Int` generic parameter (§5.3). A different kind from
+    /// [`DefKind::TypeParam`] because it stands for a value, not a type.
+    ConstParam,
     /// A primitive or library type the compiler knows about (§5.1, §8).
     Primitive,
 }
@@ -98,24 +131,48 @@ impl DefKind {
         match self {
             DefKind::Module => "a module",
             DefKind::Fn => "a function",
-            DefKind::Struct => "a struct",
-            DefKind::Enum => "an enum",
-            DefKind::Variant => "an enum variant",
-            DefKind::Trait => "a trait",
-            DefKind::Impl => "an impl block",
+            DefKind::ExternFn => "a foreign function",
+            DefKind::Record => "a record type",
+            DefKind::Choice => "a choice type",
+            DefKind::Variant => "a variant",
+            DefKind::Alias => "a type alias",
+            DefKind::Const => "a constant",
+            DefKind::Static => "a foreign global",
+            DefKind::Union => "a foreign union",
+            DefKind::Interface => "an interface",
+            DefKind::AssocType => "an associated type",
+            DefKind::Impl => "an implementation block",
             DefKind::Field => "a field",
             DefKind::Param => "a parameter",
             DefKind::SelfParam => "the `self` receiver",
             DefKind::Local => "a local binding",
             DefKind::TypeParam => "a generic parameter",
+            DefKind::ConstParam => "a const generic parameter",
             DefKind::Primitive => "a built-in type",
         }
     }
 
     /// Whether the kind names a type, which is what a type position and an
-    /// `impl` header may refer to.
+    /// implementation header may refer to.
+    ///
+    /// [`DefKind::ConstParam`] is admitted although it names a value. §5.3
+    /// puts const arguments in the same `of (..)` list as type arguments, so
+    /// `Grid of (T, ROWS)` reaches a const parameter through a type position
+    /// and there is no way to tell the two apart without the declared arity of
+    /// the thing being applied — which is `science-types`' to know, not this
+    /// phase's.
     pub fn is_type(self) -> bool {
-        matches!(self, DefKind::Struct | DefKind::Enum | DefKind::TypeParam | DefKind::Primitive)
+        matches!(
+            self,
+            DefKind::Record
+                | DefKind::Choice
+                | DefKind::Alias
+                | DefKind::Union
+                | DefKind::AssocType
+                | DefKind::TypeParam
+                | DefKind::ConstParam
+                | DefKind::Primitive
+        )
     }
 }
 
@@ -140,8 +197,9 @@ pub struct Def {
     /// Where it was declared: the name's span, not the whole declaration's, so
     /// that "defined here" points at the word the reader is looking for.
     pub span: Span,
-    /// The enclosing definition: the module for an item, the enum for a
-    /// variant, the function for a parameter. `None` only for the crate root.
+    /// The enclosing definition: the module for an item, the choice type for
+    /// a variant, the function for a parameter. `None` only for the crate
+    /// root.
     pub parent: Option<DefId>,
 }
 
@@ -199,8 +257,8 @@ impl DefTable {
     /// The nearest enclosing module, counting `id` itself.
     ///
     /// This is what the orphan rule of §5.4 asks about: "the module declaring
-    /// it" is the answer for the `impl`, and "belongs to" is the answer for
-    /// the trait and the type.
+    /// it" is the answer for the implementation, and "belongs to" is the
+    /// answer for the interface and the type.
     pub fn module_of(&self, id: DefId) -> Option<DefId> {
         let mut cursor = Some(id);
         while let Some(current) = cursor {
@@ -257,8 +315,8 @@ impl Index<DefId> for DefTable {
 pub enum Res {
     /// Resolved to a definition.
     Def(DefId),
-    /// `Self` or `self` inside an `impl` or a `trait`. The id is the `impl` or
-    /// `trait` it belongs to; what `Self` *is* depends on that block's self
+    /// `Self` or `self` inside an implementation or an interface. The id is
+    /// the block it belongs to; what `Self` *is* depends on that block's self
     /// type, which the type checker substitutes.
     SelfTy(DefId),
     /// Resolution failed, and was reported.
@@ -290,7 +348,7 @@ pub struct Crate {
     pub modules: Vec<Module>,
 }
 
-/// A file (§4.3: a file is a module).
+/// A file (§4.4: a file is a module).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Module {
     pub def: DefId,
@@ -310,15 +368,21 @@ pub struct Item {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ItemKind {
     Fn(Fn),
-    Struct(Struct),
-    Enum(Enum),
-    Trait(Trait),
+    Record(Record),
+    Choice(Choice),
+    Alias(Alias),
+    Const(Const),
+    Interface(Interface),
     Impl(Impl),
+    /// `unsafe extern "C" library "openblas":` — the block survives because
+    /// linking needs it, even though the names inside it are already ordinary
+    /// module-level names by the time this tree exists.
+    Extern(ExternBlock),
 }
 
 // --- items ---------------------------------------------------------------
 
-/// A function, a method, or a trait's required method — one node for all
+/// A function, a method, or an interface's required method — one node for all
 /// three, as in the AST. `body: None` is a signature without a body.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fn {
@@ -326,7 +390,7 @@ pub struct Fn {
     pub generics: Vec<GenericParam>,
     pub self_param: Option<SelfParam>,
     pub params: Vec<Param>,
-    /// `None` means unit (§4.3).
+    /// `None` means unit (§4.4).
     pub ret: Option<Type>,
     pub where_clause: Vec<WherePredicate>,
     pub body: Option<Block>,
@@ -336,19 +400,32 @@ pub struct Fn {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericParam {
     pub def: DefId,
-    pub bounds: Vec<Bound>,
+    pub kind: GenericParamKind,
     pub span: Span,
 }
 
-/// A trait named as a bound: in `T: Ord`, in `dyn Summarize`, after `impl`.
+/// §5.3's two kinds of generic parameter, kept apart because they live in
+/// different namespaces: a type parameter stands for a type and a const
+/// parameter for a value, and only the second one has a type of its own.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GenericParamKind {
+    /// `T`, or `T: Ord + Clone`.
+    Type { bounds: Vec<Bound> },
+    /// `const WIDTH: Int`. The annotation is mandatory, so it is not optional
+    /// here either.
+    Const { ty: Type },
+}
+
+/// An interface named as a bound: in `of T: Ord`, in `any Summarize`, after
+/// `implements`.
 ///
 /// Kept as its own node rather than collapsed into a [`Type`] because the
 /// parser distinguished the two, and because a bound that resolved to
-/// something which is not a trait must say so with the span as written.
+/// something which is not an interface must say so with the span as written.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bound {
     pub res: Res,
-    /// Generic arguments on the trait: `From[Doc]`.
+    /// Generic arguments on the interface: `From of Doc`.
     pub generics: Vec<Type>,
     pub span: Span,
 }
@@ -374,8 +451,9 @@ pub struct Param {
     pub span: Span,
 }
 
+/// `type Doc:` with its fields.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Struct {
+pub struct Record {
     pub def: DefId,
     pub generics: Vec<GenericParam>,
     pub where_clause: Vec<WherePredicate>,
@@ -390,8 +468,9 @@ pub struct Field {
     pub span: Span,
 }
 
+/// `choice Format:` with its variants.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Enum {
+pub struct Choice {
     pub def: DefId,
     pub generics: Vec<GenericParam>,
     pub where_clause: Vec<WherePredicate>,
@@ -402,18 +481,53 @@ pub struct Enum {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Variant {
     pub def: DefId,
-    /// Positional payload; empty is a unit variant (§4.3).
+    /// Positional payload; empty is a unit variant (§4.4).
     pub payload: Vec<Type>,
     pub span: Span,
 }
 
+/// `type Embedding is Array of F32` (§4.4).
 #[derive(Debug, Clone, PartialEq)]
-pub struct Trait {
+pub struct Alias {
     pub def: DefId,
     pub generics: Vec<GenericParam>,
-    pub supertraits: Vec<Bound>,
+    pub ty: Type,
+    pub span: Span,
+}
+
+/// `const WIDTH be 768` (§4.4).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Const {
+    pub def: DefId,
+    pub ty: Option<Type>,
+    pub value: Expr,
+    pub span: Span,
+}
+
+/// `interface Summarize:` with its members.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Interface {
+    pub def: DefId,
+    pub generics: Vec<GenericParam>,
+    /// Interfaces this one requires, written `interface A: B + C`.
+    pub supers: Vec<Bound>,
     pub where_clause: Vec<WherePredicate>,
+    /// `type Item` — declared here, supplied by the implementation (§5.4).
+    /// Each one is a definition of its own, reached as `Self.Item`.
+    pub assoc_types: Vec<AssocType>,
     pub methods: Vec<Fn>,
+    pub span: Span,
+}
+
+/// `type Item` on an interface, and `type Item is Int` in an implementation.
+///
+/// One node for both: they are the same name in the same namespace, and the
+/// only difference is whether the type is written yet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssocType {
+    pub def: DefId,
+    /// `None` on an interface, which declares the name without answering it.
+    pub ty: Option<Type>,
     pub span: Span,
 }
 
@@ -424,11 +538,109 @@ pub struct Impl {
     /// the module for the orphan rule.
     pub def: DefId,
     pub generics: Vec<GenericParam>,
-    /// `Some` for `impl Trait for Type`, `None` for an inherent impl.
-    pub trait_: Option<Bound>,
+    /// `Some` for `Doc implements Summarize:`, `None` for the inherent
+    /// `Doc has:`.
+    pub interface: Option<Bound>,
     pub self_ty: Type,
     pub where_clause: Vec<WherePredicate>,
+    /// `type Item is Int` — this block's side of §5.4's associated types.
+    pub assoc_types: Vec<AssocType>,
     pub methods: Vec<Fn>,
+    pub span: Span,
+}
+
+/// `unsafe extern "C" library "openblas" via pkg-config "openblas":`
+///
+/// Resolution declares each item's name in the enclosing module and resolves
+/// the types they mention. What it deliberately does not do is check them:
+/// whether a type is FFI-representable under `ffi.CLayout`, whether a read of
+/// a `static` sits inside an `unsafe` block, and what the linker is handed are
+/// three different later phases.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternBlock {
+    pub is_unsafe: bool,
+    pub abi: String,
+    /// `None` when the clause was missing and was reported by the parser.
+    pub library: Option<ExternLibrary>,
+    pub items: Vec<ExternItem>,
+    pub span: Span,
+}
+
+/// The link target and how to find it (§5.1, §5.2 of `ffi-c-boundary.md`).
+///
+/// It names no definition and holds no `DefId`: a library is a string the
+/// driver passes to the system linker, not a name in any Science scope.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternLibrary {
+    pub name: String,
+    pub pkg_config: Option<String>,
+    pub static_link: bool,
+    pub when_available: bool,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternItem {
+    pub kind: ExternItemKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExternItemKind {
+    Fn(ExternFn),
+    Alias(ExternAlias),
+    Const(ExternConst),
+    Static(ExternStatic),
+    Union(ExternUnion),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternFn {
+    pub def: DefId,
+    pub params: Vec<Param>,
+    /// `None` means unit.
+    pub ret: Option<Type>,
+    /// `symbol "dgemm_"`: the linker name when it is not the Science name.
+    pub symbol: Option<String>,
+    /// Reported by the parser and kept so that no later phase mistakes the
+    /// declaration for a complete one.
+    pub variadic: bool,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternAlias {
+    pub def: DefId,
+    pub ty: Type,
+    pub span: Span,
+}
+
+/// `const NAME be literal as T`, whose value is a literal rather than an
+/// expression: there is nothing in it to resolve, and that is the point.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternConst {
+    pub def: DefId,
+    pub negative: bool,
+    pub value: Literal,
+    pub ty: Type,
+    pub span: Span,
+}
+
+/// `static H5T_NATIVE_DOUBLE_g: Hid`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternStatic {
+    pub def: DefId,
+    pub ty: Type,
+    pub span: Span,
+}
+
+/// `union H5R_ref_t: size 64 align 8`. `None` is a number the parser reported
+/// as missing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternUnion {
+    pub def: DefId,
+    pub size: Option<u128>,
+    pub align: Option<u128>,
     pub span: Span,
 }
 
@@ -442,16 +654,26 @@ pub struct Type {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeKind {
-    /// `String`, `Array[T]`, `text.parser.Token`, a bare type parameter. The
-    /// path is gone; what is left is what it pointed at.
+    /// `String`, `Array of T`, `text.parser.Token`, a bare type parameter.
+    /// The path is gone; what is left is what it pointed at.
     Path { res: Res, generics: Vec<Type> },
-    Ref { mutable: bool, inner: Box<Type> },
-    Dyn(Bound),
+    /// `borrowed T` and `mutable borrowed T`.
+    Borrowed { mutable: bool, inner: Box<Type> },
+    /// `any Summarize`.
+    Any(Bound),
     /// Two or more elements; `(T)` is `T` and produces no node.
     Tuple(Vec<Type>),
     Unit,
-    /// `Self`, carrying the `impl` or `trait` it stands in for.
+    /// `Self`, carrying the implementation or interface it stands in for.
     SelfType(Res),
+    /// `Self.Item` (§5.4). `res` is the [`AssocType`] it names; `name`
+    /// survives for diagnostics, and is all that is left when it does not
+    /// resolve.
+    SelfAssoc { res: Res, name: Ident },
+    /// The `4` in `Window of (Int, 4)`, and the `-1` of a dimension vector:
+    /// a const generic argument (§5.3). It declares no name and mentions
+    /// none, so there is nothing to resolve and it arrives unchanged.
+    Const(ConstExpr),
     /// A type the parser could not parse, or a name that did not resolve.
     Error,
 }
@@ -461,7 +683,7 @@ pub enum TypeKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
-    /// The expression the block evaluates to (§4.3), split out so that no
+    /// The expression the block evaluates to (§4.4), split out so that no
     /// later phase re-derives it.
     pub tail: Option<Box<Expr>>,
     pub span: Span,
@@ -513,16 +735,16 @@ pub enum ExprKind {
     Path { res: Res, generics: Vec<Type> },
     /// `self`.
     SelfValue(Res),
-    /// `f(a, b)` and `Some(x)`: positional arguments (§4.4).
-    Call { callee: Box<Expr>, args: Vec<Expr> },
+    /// `f(a, b)` and `Some(x)`.
+    Call { callee: Box<Expr>, args: Vec<Arg> },
     /// `receiver.method(args)`. The method stays a name: which one it is
     /// depends on the receiver's type, so it is the type checker's to resolve.
-    MethodCall { receiver: Box<Expr>, method: Ident, generics: Vec<Type>, args: Vec<Expr> },
+    MethodCall { receiver: Box<Expr>, method: Ident, generics: Vec<Type>, args: Vec<Arg> },
     /// `base.name`. The field stays a name, for the same reason.
     Field { base: Box<Expr>, name: Ident },
     Index { base: Box<Expr>, index: Box<Expr> },
     /// `Doc(title: "a")`: named arguments (§4.4). Also where `Doc()` lands
-    /// once resolution has seen that `Doc` is a fieldless struct.
+    /// once resolution has seen that `Doc` is a fieldless record.
     StructLit { res: Res, fields: Vec<FieldInit> },
     Tuple(Vec<Expr>),
     Unit,
@@ -530,19 +752,48 @@ pub enum ExprKind {
     Binary { op: BinaryOp, lhs: Box<Expr>, rhs: Box<Expr> },
     Cast { expr: Box<Expr>, ty: Type },
     Try(Box<Expr>),
-    Ref { mutable: bool, expr: Box<Expr> },
+    /// `borrowed e` and `mutable borrowed e`.
+    Borrowed { mutable: bool, expr: Box<Expr> },
+    /// `0..n` and `0..=n` (§4.5).
+    Range { start: Box<Expr>, end: Box<Expr>, inclusive: bool },
+    /// Both closure forms of §4.6, with the difference between them closed.
+    ///
+    /// `param` is always a definition: `doc giving doc.title` binds `doc`, and
+    /// the implicit `each.title` binds a subject named `each` that the
+    /// programmer did not write. [`ExprKind::Each`] then points at it like any
+    /// other reference, so nothing downstream has to know which form was
+    /// written.
+    Closure { param: DefId, body: Box<Expr> },
+    /// `each` — the subject of the enclosing implicit closure (§4.6).
+    Each(Res),
     If(IfExpr),
     Match(MatchExpr),
-    While { cond: Box<Expr>, body: Block },
     Loop { body: Block },
     For { pattern: Pattern, iter: Box<Expr>, body: Block },
+    /// `unsafe:` with a body (§3 of `ffi-c-boundary.md`). It survives
+    /// resolution as its own node rather than collapsing into a plain block:
+    /// the type checker needs to know which expressions are inside one, and
+    /// the block is also what a reviewer reads against the C documentation.
+    Unsafe(Block),
     Block(Block),
     /// An expression that could not be lowered. Its span is kept so a later
     /// phase can still say where the hole is.
     Error,
 }
 
-/// `name: value` in a struct construction.
+/// One argument of a call.
+///
+/// The name is a *label*, not a reference: `docs.sort(by: f)` names the
+/// parameter, and there is no `by` in any scope to resolve it against. It is
+/// carried through unresolved so the type checker can match it to a parameter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Arg {
+    pub name: Option<Ident>,
+    pub value: Expr,
+    pub span: Span,
+}
+
+/// `name: value` in a record construction.
 ///
 /// `field` is the field's `DefId` once it is known; `name` survives for
 /// diagnostics and dumps, and is all that is left when it is not.
@@ -596,7 +847,7 @@ pub enum PatternKind {
     Binding { mutable: bool, def: DefId },
     /// `Ok(value)` and `None`. The payload is positional.
     Variant { res: Res, elems: Vec<Pattern> },
-    /// `Doc(title: t, body: _)`, and `Doc()` on a fieldless struct.
+    /// `Doc(title: t, body: _)`, and `Doc()` on a fieldless record.
     Struct { res: Res, fields: Vec<FieldPattern> },
     Tuple(Vec<Pattern>),
     Unit,

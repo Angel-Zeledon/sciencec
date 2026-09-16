@@ -1,7 +1,7 @@
 error[SC0003]: tabs are not allowed in indentation
  --> tests/ui/tab_in_indentation.science:7:1
   |
-7 | 	println("indented with a tab")
+7 | 	print("indented with a tab")
   | ^ tab character in the indentation
   |
   = note: Science does not interpret tabs: their width depends on how the file is displayed, so a block would mean different things to different readers. Indent with spaces only.

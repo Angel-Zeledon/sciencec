@@ -1,0 +1,20 @@
+# UI test: the comparison symbols revision 2 removed (SC0016, SC0017).
+#
+# `syntax-revision-2.md` §1 leaves exactly one spelling for each comparison:
+# identity is `is` and `is not`, order keeps `>`, `<`, `>=` and `<=`. `==`
+# and `!=` are therefore not Science any more.
+#
+# The lexer still emits `EqEq` and `NotEq` for them. That is deliberate: the
+# author's intent is never in doubt, so reporting once and carrying on means
+# the rest of the expression parses exactly as it would have if the fix had
+# already been applied, and a stale file costs one diagnostic per symbol
+# rather than a cascade.
+#
+# The ordering symbols below are in the same expressions on purpose: they are
+# untouched, and nothing may be reported over them.
+
+function compare(a: Int, b: Int) -> Bool:
+    let equal be a == b
+    let different be a != b
+    let ordered be a < b and a >= b
+    equal and different and ordered

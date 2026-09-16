@@ -1,0 +1,26 @@
+---
+source: crates/science-parser/tests/parse_exprs.rs
+expression: "parse_source_allowing_errors(\"function f(outer: borrowed Array of Doc):\\n    outer.map(each.inner.map(each.x))\\n\")"
+---
+Module @0..80
+  Fn `f` @0..79
+    params
+      Param `outer` @11..39
+        type: Borrowed @18..39
+          Path `Array` @27..39
+            generics of `Array`
+              Path `Doc` @36..39
+    body: Block @46..79
+      tail: Method `map` @46..79
+        receiver: Path `outer` @46..51
+        args
+          Closure @56..78
+            body: Method `map` @56..78
+              receiver: Field `inner` @56..66
+                base: Each @56..60
+              args
+                Field `x` @71..77
+                  base: Each @71..75
+--- diagnostics ---
+SC0115 @71..75 a nested `each` would name a different subject than the `each` around it
+  note name the parameter instead, with the `giving` form: `outer.map(item giving item.inner.map(each.x))`

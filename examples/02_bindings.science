@@ -1,50 +1,74 @@
 # 02 - Bindings
-# Spec: §4.3 (`let`, `let mut`), §5.1 primitive types, §5.2 local inference.
+# Spec: §4.3 (`let x be v`, `let mutable x be v`), §5.1 primitive types,
+# §5.2 local inference, §4.4 constants and type aliases.
 #
 # Covers: immutable and mutable bindings, optional type annotations,
-# assignment as a statement, `as` casts, and bindings of every primitive type.
+# assignment as a statement, `as` casts, constants, type aliases, and
+# bindings of every primitive type.
 
-fn main():
-    # `let` binds immutably. The annotation is optional: it is inferred.
-    let greeting = "hola"
-    let answer = 42
-    let annotated: Int = 42
-    let widened: I64 = 42i64
+# A compile-time constant, at module level (§4.4).
+const WIDTH be 768
+const GREETING be "hola"
 
-    # `let mut` allows reassignment.
-    let mut count = 0
-    count = count + 1
-    count = count * 2
+# A type alias. `type X is Y` names a type; `type X:` declares a record.
+type Embedding is Array of F32
+type Counter is I64
+
+function main():
+    # `let ... be` binds immutably. The annotation is optional: it is
+    # inferred (§5.2).
+    let greeting be "hola"
+    let answer be 42
+    let annotated: Int be 42
+    let widened: I64 be 42i64
+
+    # `let mutable ... be` allows reassignment, and reassignment uses `be`
+    # too: there is one word for "this name now means this value".
+    let mutable count be 0
+    count be count + 1
+    count be count * 2
 
     # One binding of each primitive type (§5.1).
-    let a: I8 = 1i8
-    let b: I16 = 2i16
-    let c: I32 = 3i32
-    let d: I64 = 4i64
-    let e: U8 = 5u8
-    let f: U16 = 6u16
-    let g: U32 = 7u32
-    let h: U64 = 8u64
-    let i: F32 = 1.5f32
-    let j: F64 = 2.5
-    let k: Bool = true
-    let l: Char = 'x'
-    let m: String = "owned"
-    let n: () = ()
+    let a: I8 be 1i8
+    let b: I16 be 2i16
+    let c: I32 be 3i32
+    let d: I64 be 4i64
+    let e: U8 be 5u8
+    let f: U16 be 6u16
+    let g: U32 be 7u32
+    let h: U64 be 8u64
+    # §4.2 gives the float suffixes `f32` and `f64`; `F16` and `BF16` are
+    # primitives with no suffix written down, so a literal reaches them
+    # through the annotation and inference (§5.2).
+    let i: F16 be 1.5
+    let j: BF16 be 1.5
+    let k: F32 be 1.5f32
+    let l: F64 be 2.5
+    let m: Bool be true
+    let n: Char be 'x'
+    let o: String be "owned"
+    let p: () be ()
 
-    # `Int` is an alias of `I64`, `Float` of `F64`.
-    let alias_int: Int = 9
-    let alias_float: Float = 9.5
+    # `Int` aliases `I64`, `Float` aliases `F64`.
+    let alias_int: Int be 9
+    let alias_float: Float be 9.5
 
-    # No implicit numeric conversion: `as` is always written out,
-    # including when it loses precision.
-    let narrowed = answer as I32
-    let floated = answer as F64
-    let truncated = alias_float as Int
+    # And an alias declared above is a name for the same type.
+    let ticks: Counter be 0i64
 
-    # A borrow is a binding like any other.
-    let view: &String = &greeting
-    let mut owner = "mutable text"
-    let exclusive: &mut String = &mut owner
+    # No implicit numeric conversion: `as` is always written out, including
+    # when it loses precision (§5.1).
+    let narrowed be answer as I32
+    let floated be answer as F64
+    let truncated be alias_float as Int
 
-    println(count)
+    # A borrow is a binding like any other. The type is `borrowed T`, and
+    # `borrowed` is also the unary operator that makes one (§4.6).
+    let view: borrowed String be borrowed greeting
+    let mutable owner be "mutable text"
+    let exclusive: mutable borrowed String be mutable borrowed owner
+
+    # A constant is used by name and has no storage of its own.
+    print(WIDTH)
+    print(GREETING)
+    print(count)

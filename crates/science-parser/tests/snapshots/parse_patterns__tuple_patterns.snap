@@ -1,28 +1,28 @@
 ---
 source: crates/science-parser/tests/parse_patterns.rs
-expression: "parse_body(r#\"fn f(p: (Int, Int)) -> String:\n    match p:\n        (0, 0): \"origin\"\n        (x, 0): \"on the X axis\"\n        (_, _): \"somewhere else\"\n        (): \"unit\"\n\"#)"
+expression: "parse_body(r#\"function f(p: (Int, Int)) -> String:\n    match p:\n        (0, 0): \"origin\"\n        (x, 0): \"on the X axis\"\n        (_, _): \"somewhere else\"\n        (): \"unit\"\n\"#)"
 ---
-Block @35..152
-  tail: Match @35..152
-    scrutinee: Path `p` @41..42
+Block @41..158
+  tail: Match @41..158
+    scrutinee: Path `p` @47..48
     arms
-      Arm @52..68
-        pattern: Tuple @52..58
-          Int 0 @53..54
-          Int 0 @56..57
-        body: Str "origin" @60..68
-      Arm @77..100
-        pattern: Tuple @77..83
-          Binding `x` @78..79
-          Int 0 @81..82
-        body: Str "on the X axis" @85..100
-      Arm @109..133
-        pattern: Tuple @109..115
-          Wildcard @110..111
-          Wildcard @113..114
-        body: Str "somewhere else" @117..133
-      Arm @142..152
-        pattern: Unit @142..144
-        body: Str "unit" @146..152
+      Arm @58..74
+        pattern: Tuple @58..64
+          Int 0 @59..60
+          Int 0 @62..63
+        body: Str "origin" @66..74
+      Arm @83..106
+        pattern: Tuple @83..89
+          Binding `x` @84..85
+          Int 0 @87..88
+        body: Str "on the X axis" @91..106
+      Arm @115..139
+        pattern: Tuple @115..121
+          Wildcard @116..117
+          Wildcard @119..120
+        body: Str "somewhere else" @123..139
+      Arm @148..158
+        pattern: Unit @148..150
+        body: Str "unit" @152..158
 --- diagnostics ---
 (none)

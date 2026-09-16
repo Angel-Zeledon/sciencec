@@ -63,19 +63,21 @@ pub mod codes {
     pub const DUPLICATE_DEFINITION: Code = Code(201);
     /// A `use` naming a module or an item that does not exist.
     pub const UNRESOLVED_IMPORT: Code = Code(202);
-    /// A bare name that two enums in scope both offer as a variant (§4.5).
+    /// A bare name that two choice types in scope both offer as a variant
+    /// (§4.5).
     pub const AMBIGUOUS_NAME: Code = Code(203);
-    /// A path qualifier that is neither a module nor an enum.
+    /// A path qualifier that is neither a module nor a choice type.
     pub const NOT_A_MODULE: Code = Code(204);
-    /// A struct literal or struct pattern naming a field the struct lacks.
+    /// A record literal or record pattern naming a field the record lacks.
     pub const UNKNOWN_FIELD: Code = Code(205);
-    /// Named arguments on something that is not a struct, or positional
+    /// Named arguments on something that is not a record, or positional
     /// arguments on something that is (§4.4).
     pub const CONSTRUCTION_MISMATCH: Code = Code(206);
-    /// An `impl` whose trait and type both belong to other modules (§5.4).
+    /// An implementation whose interface and type both belong to other
+    /// modules (§5.4).
     pub const ORPHAN_IMPL: Code = Code(207);
-    /// `self` or `Self` where there is no `impl` or `trait` to give it a
-    /// meaning.
+    /// `self` or `Self` where there is no implementation or interface to give
+    /// it a meaning.
     pub const SELF_OUTSIDE_IMPL: Code = Code(208);
     /// One of the words §4.1 reserves for F1-F4, used as a name.
     pub const RESERVED_WORD: Code = Code(209);
@@ -84,8 +86,17 @@ pub mod codes {
     // `match`, which `science-types` reports. See the module documentation.
 
     /// A name used in a position its kind cannot fill: a function where a type
-    /// belongs, a struct where a trait belongs.
+    /// belongs, a record where an interface belongs.
     pub const WRONG_NAMESPACE: Code = Code(211);
+
+    /// `each` written where no call argument encloses it, so there is no
+    /// subject for it to name (§4.6).
+    ///
+    /// The parser reports a *nested* `each`, which it can see; it cannot see
+    /// whether there is an enclosing argument at all once an expression has
+    /// been lifted out of one, so the bare node arrives here and this is where
+    /// it is answered.
+    pub const EACH_WITHOUT_SUBJECT: Code = Code(212);
 
     /// Every code this crate can emit, for the test that keeps them inside
     /// `SC0200`-`SC0249` and distinct.
@@ -101,6 +112,7 @@ pub mod codes {
         SELF_OUTSIDE_IMPL,
         RESERVED_WORD,
         WRONG_NAMESPACE,
+        EACH_WITHOUT_SUBJECT,
     ];
 
     #[cfg(test)]

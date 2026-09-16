@@ -1,0 +1,19 @@
+---
+source: crates/science-parser/tests/parse_extern.rs
+expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\" library \"hdf5\":\n    type Hid is I64\n    choice Status:\n        Ok\n        Failed\n    interface Readable:\n        function read(self)\n    function H5open() -> Hid\n\"#)"
+---
+Module @0..180
+  Extern "C" unsafe @0..179
+    Library "hdf5" @18..32
+    items
+      ExternAlias `Hid` @38..53
+        type: Path `I64` @50..53
+      ExternFn `H5open` @155..179
+        ret: Path `Hid` @176..179
+--- diagnostics ---
+SC0411 @58..64 this is not something an `extern` block may contain
+  note a block contains `function name(..) -> T`, `type Name is T`, `const NAME be literal as T`, `static NAME: T` and `union Name: size N align M`, and nothing else
+  note a record or a handle type is an ordinary `type` declaration outside the block, marked `implements ffi.CLayout`, because a handle needs a `Drop` the declaring module must own
+SC0411 @103..112 this is not something an `extern` block may contain
+  note a block contains `function name(..) -> T`, `type Name is T`, `const NAME be literal as T`, `static NAME: T` and `union Name: size N align M`, and nothing else
+  note a record or a handle type is an ordinary `type` declaration outside the block, marked `implements ffi.CLayout`, because a handle needs a `Drop` the declaring module must own

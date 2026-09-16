@@ -1,0 +1,32 @@
+---
+source: crates/science-parser/tests/migration.rs
+expression: parse_source_allowing_errors(source)
+---
+Module @0..118
+  Fn `f` @0..117
+    params
+      Param `rows` @11..38
+        type: Borrowed @17..38
+          Path `Array` @26..38
+            generics of `Array`
+              Path `Int` @35..38
+    body: Block @45..117
+      For @45..81
+        pattern: Binding `row` @54..57
+        iter: Path `rows` @61..65
+        body: Block @75..81
+          tail: Call @75..81
+            callee: Path `g` @75..76
+            args
+              Path `row` @77..80
+      tail: For @86..117
+        pattern: Binding `row` @90..93
+        iter: Path `rows` @97..101
+        body: Block @111..117
+          tail: Call @111..117
+            callee: Path `g` @111..112
+            args
+              Path `row` @113..116
+--- diagnostics ---
+SC0138 @49..53 the loop is written `for x in xs`
+  note `each` names the subject of a call, as in `docs.map(each.title)`, and nothing else

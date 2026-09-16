@@ -1,0 +1,22 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_report(vec![Function, id(\"largest\"), Of, id(\"T\"), Colon, id(\"Ord\"),\nLParen, id(\"items\"), Colon, Borrowed, id(\"Array\"), Of, id(\"T\"), RParen, Arrow,\nBorrowed, id(\"T\"), Colon, id(\"items\"), Newline,])"
+---
+Module @0..63
+  Fn `largest` @0..63
+    generics
+      TypeParam `T` @17..22
+        bounds
+          Bound `Ord` @19..22
+    params
+      Param `items` @23..45
+        type: Borrowed @29..45
+          Path `Array` @37..45
+            generics of `Array`
+              Path `T` @44..45
+    ret: Borrowed @48..57
+      Path `T` @56..57
+    body: Block @58..63
+      tail: Path `items` @58..63
+--- diagnostics ---
+(none)

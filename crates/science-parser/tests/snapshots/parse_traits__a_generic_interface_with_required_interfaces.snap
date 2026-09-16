@@ -1,0 +1,27 @@
+---
+source: crates/science-parser/tests/parse_traits.rs
+expression: "parse_source(r#\"interface Pretty of T: Summarize + Clone:\n    function pretty(self) -> T\n\ninterface Plain of (T): Summarize + Clone:\n    function plain(self) -> T\n\"#)"
+---
+Module @0..147
+  Interface `Pretty` @0..72
+    generics
+      TypeParam `T` @20..40
+        bounds
+          Bound `Summarize` @23..32
+          Bound `Clone` @35..40
+    methods
+      Fn `pretty` @46..72
+        receiver: self @62..66
+        ret: Path `T` @71..72
+  Interface `Plain` @74..146
+    generics
+      TypeParam `T` @94..95
+    supers
+      Bound `Summarize` @98..107
+      Bound `Clone` @110..115
+    methods
+      Fn `plain` @121..146
+        receiver: self @136..140
+        ret: Path `T` @145..146
+--- diagnostics ---
+(none)

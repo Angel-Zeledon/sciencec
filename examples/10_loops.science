@@ -1,106 +1,158 @@
 # 10 - Loops
-# Spec: §4.4 "`for x in iterable:` walks anything implementing `Iterate`.
-# `while cond:` and `loop:` with `break` and `continue`."
+# Spec: §4.5 expressions and control flow: `for x in xs:` walks anything
+# implementing `Iterate`, `0..n` is half-open and `0..=n` inclusive, and
+# `loop:` takes `break` and `continue`.
 #
-# The spec names three looping constructs. This file exercises all three plus
-# every shape they take: block body and inline body, `break`, `continue`,
-# nesting, and a loop whose body is a `match`.
-#
-# NOTE: §4.5 says there is no range syntax at all — `for` walks a collection
-# and a counting loop is a `while`. Every `for` here therefore walks a
-# library collection.
+# Covers: `for` over a collection and over a range, `loop` with a `break`
+# condition, block bodies and inline bodies, `break`, `continue`, nesting,
+# and a loop whose body is a `match`.
 
-struct Doc:
+type Doc:
     title: String
     body: String
 
 # --- 1. `for` over anything implementing `Iterate` --------------------------
 
-fn total(items: &Array[Int]) -> Int:
-    let mut sum = 0
+function total(items: borrowed Array of Int) -> Int:
+    let mutable sum be 0
     for item in items:
-        sum = sum + item
+        sum be sum + item
     sum
 
-fn titles(docs: &Array[Doc]):
+function titles(docs: borrowed Array of Doc):
     for doc in docs:
-        println(doc.title)
+        print(doc.title)
 
 # §8 does not say `Map` implements `Iterate`, and its method set is closed,
 # so a map is walked through an `Array` of its keys and `Map.get`.
-fn dump(settings: &Map[String, String], keys: &Array[String]):
+function dump(settings: borrowed Map of (String, String),
+        keys: borrowed Array of String):
     for key in keys:
         match settings.get(key):
             Some(value):
-                println(key)
-                println(value)
+                print(key)
+                print(value)
             None:
-                println("absent")
+                print("absent")
 
 # `String.chars` is the one iterator §8 hands out by name: it implements
-# `Iterate[Char]`.
-fn count_spaces(text: &String) -> Int:
-    let mut spaces = 0
+# `Iterate of Char`.
+function count_spaces(text: borrowed String) -> Int:
+    let mutable spaces be 0
     for c in text.chars():
-        if c == ' ':
-            spaces = spaces + 1
+        if c is ' ':
+            spaces be spaces + 1
     spaces
 
 # `for` with `continue` to skip, and `break` to stop early.
-fn first_even(items: &Array[Int]) -> Option[Int]:
+function first_even(items: borrowed Array of Int) -> Option of Int:
     for item in items:
-        if item % 2 != 0:
+        if item % 2 is not 0:
             continue
         return Some(item)
     None
 
-fn count_until_zero(items: &Array[Int]) -> Int:
-    let mut seen = 0
+function count_until_zero(items: borrowed Array of Int) -> Int:
+    let mutable seen be 0
     for item in items:
-        if item == 0:
+        if item is 0:
             break
-        seen = seen + 1
+        seen be seen + 1
     seen
 
-# --- 2. `while` -------------------------------------------------------------
+# --- 2. `for` over a range --------------------------------------------------
 
-# A counting loop, which is what F0 has instead of a range (§4.5).
-fn countdown(from: Int):
-    let mut n = from
-    while n > 0:
-        println(n)
-        n = n - 1
+# `0..n` is half-open: it stops one short of `n`, so this visits `0`, `1`,
+# `2`, `3` and `4` (§4.5). This is the counting loop.
+function ruler(width: Int) -> Int:
+    let mutable marks be 0
+    for i in 0..width:
+        if i % 5 is 0:
+            marks be marks + 1
+    marks
 
-# A `while` whose body is a single inline statement.
-fn drain(stack: &mut Array[Int]):
-    while not stack.is_empty(): stack.pop()
+# `0..=n` is inclusive, so this one visits `n` itself.
+function triangular(n: Int) -> Int:
+    let mutable sum be 0
+    for i in 0..=n:
+        sum be sum + i
+    sum
 
-# `while` with a compound condition using `and` / `or`.
-fn advance(index: Int, limit: Int, items: &Array[Int]) -> Int:
-    let mut i = index
-    while i < limit and i < items.len():
-        i = i + 1
+# A range need not start at zero, and either end may be any expression. The
+# ends are written with `..` and never with `:`, which already opens blocks
+# and separates match arms, fields, named arguments and bounds (§4.5).
+function slice_sum(items: borrowed Array of Int,
+        first: Int,
+        last: Int) -> Int:
+    let mutable sum be 0
+    for index in first..last:
+        sum be sum + value_at(items, index)
+    sum
+
+function value_at(items: borrowed Array of Int, index: Int) -> Int:
+    match items.get(index):
+        Some(cell): cell
+        None: 0
+
+# `break` and `continue` read the same over a range as over a collection.
+function first_multiple(limit: Int, factor: Int) -> Option of Int:
+    for i in 1..=limit:
+        if i % factor is not 0:
+            continue
+        return Some(i)
+    None
+
+# --- 3. `loop` ended by a condition -----------------------------------------
+
+# Counting up is a range. A count that runs *down* is not a range, so it is a
+# `loop` whose first statement ends it (§2.2).
+function countdown(start: Int):
+    let mutable n be start
+    loop:
+        if n <= 0:
+            break
+        print(n)
+        n be n - 1
+
+# The condition is what the loop is about, so it stays a condition.
+function drain(stack: mutable borrowed Array of Int):
+    loop:
+        if stack.is_empty():
+            break
+        stack.pop()
+
+# A compound condition using `and` / `or`. This one is a formula, so the
+# symbols carry it better than the words would (§4.6), and negating it whole
+# keeps the formula readable.
+function advance(index: Int,
+        limit: Int,
+        items: borrowed Array of Int) -> Int:
+    let mutable i be index
+    loop:
+        if not (i < limit and i < items.length()):
+            break
+        i be i + 1
     i
 
-# --- 3. `loop` --------------------------------------------------------------
+# --- 4. `loop` ended by a `break` in its body -------------------------------
 
-struct Reader:
+type Reader:
     path: String
-    lines: Array[String]
+    lines: Array of String
     cursor: Int
 
-# An inherent impl, so `next_line` needs no trait to arrive through (§4.3).
-impl Reader:
-    fn new(path: String) -> Reader:
-        Reader(path: path, lines: Array[String].new(), cursor: 0)
+# An inherent block, so `next_line` needs no interface to arrive through (§4.4).
+Reader has:
+    function new(path: String) -> Reader:
+        Reader(path: path, lines: (Array of String).new(), cursor: 0)
 
-    fn next_line(&mut self) -> Option[&String]:
-        let line = self.lines.get(self.cursor)
-        self.cursor = self.cursor + 1
+    function next_line(mutable self) -> Option of (borrowed String):
+        let line be self.lines.get(self.cursor)
+        self.cursor be self.cursor + 1
         line
 
-fn read_until_blank(handle: &mut Reader) -> Int:
-    let mut lines = 0
+function read_until_blank(handle: mutable borrowed Reader) -> Int:
+    let mutable lines be 0
     loop:
         match handle.next_line():
             None:
@@ -108,12 +160,12 @@ fn read_until_blank(handle: &mut Reader) -> Int:
             Some(line):
                 if line.is_empty():
                     break
-                lines = lines + 1
+                lines be lines + 1
     lines
 
 # `loop` whose body is a `match`, with `break` and `continue` in the arms.
-fn consume(tokens: &mut Array[Int]) -> Int:
-    let mut kept = 0
+function consume(tokens: mutable borrowed Array of Int) -> Int:
+    let mutable kept be 0
     loop:
         match tokens.pop():
             None:
@@ -121,49 +173,68 @@ fn consume(tokens: &mut Array[Int]) -> Int:
             Some(0):
                 continue
             Some(value):
-                kept = kept + value
+                kept be kept + value
     kept
 
-# --- 4. Nesting -------------------------------------------------------------
+# --- 5. Nesting -------------------------------------------------------------
 
-fn grid_sum(rows: &Array[Array[Int]]) -> Int:
-    let mut sum = 0
+function grid_sum(rows: borrowed Array of (Array of Int)) -> Int:
+    let mutable sum be 0
     for row in rows:
         for cell in row:
             if cell < 0:
                 continue
-            sum = sum + cell
+            sum be sum + cell
     sum
 
-# A `while` inside a `loop` inside a `for`.
-fn deeply_nested(rows: &Array[Array[Int]]) -> Int:
-    let mut found = 0
+# A range inside a range, which is the same nesting written the other way.
+function checkerboard(side: Int) -> Int:
+    let mutable dark be 0
+    for row in 0..side:
+        for column in 0..side:
+            if (row + column) % 2 is 0:
+                dark be dark + 1
+    dark
+
+# A `loop` inside a `loop` inside a `for`. The inner `break` ends the inner
+# loop only.
+function deeply_nested(rows: borrowed Array of (Array of Int)) -> Int:
+    let mutable found be 0
     for row in rows:
-        let mut index = 0
+        let mutable index be 0
         loop:
-            while index < row.len() and is_zero_at(row, index):
-                index = index + 1
-            if index >= row.len():
+            loop:
+                if not (index < row.length() and is_zero_at(row, index)):
+                    break
+                index be index + 1
+            if index >= row.length():
                 break
-            found = found + 1
-            index = index + 1
+            found be found + 1
+            index be index + 1
     found
 
-fn is_zero_at(row: &Array[Int], index: Int) -> Bool:
+function is_zero_at(row: borrowed Array of Int, index: Int) -> Bool:
     match row.get(index):
-        Some(cell): cell == 0
+        Some(cell): cell is 0
         None: false
 
-fn main():
+function main():
     # A collection is built through its associated function, never with the
-    # named-argument form reserved for structs (§4.3).
-    let mut numbers = Array[Int].new()
+    # named-argument form reserved for record types, and naming a generic
+    # type before the `.` takes parentheses (§4.3).
+    let mutable numbers be (Array of Int).new()
     numbers.push(4)
     numbers.push(0)
     numbers.push(7)
 
-    println(total(&numbers))
-    println(count_until_zero(&numbers))
-    println(count_spaces("one two three"))
+    # A parameter declared `borrowed` or `mutable borrowed` is borrowed at
+    # the call site with nothing written for it (§6.3).
+    print(total(numbers))
+    print(count_until_zero(numbers))
+    print(count_spaces("one two three"))
+    print(ruler(20))
+    print(triangular(4))
+    print(slice_sum(numbers, 0, 2))
+    print(checkerboard(8))
     countdown(3)
-    drain(&mut numbers)
+    drain(numbers)

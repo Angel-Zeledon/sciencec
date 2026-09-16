@@ -1,96 +1,101 @@
 # 11 - Literals
-# Spec: §4.1 literals.
+# Spec: §4.2 lexical structure, the literal forms.
 #
 # Covers: decimal, hex, binary and octal integers, digit separators, every
 # integer and float type suffix, exponent notation, every string escape,
 # character literals, booleans, and unit.
 #
-# §4.1 lists the escapes as `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0` and
+# §4.2 lists the escapes as `\n`, `\t`, `\r`, `\`, `\"`, `\'`, `\0` and
 # `\u{...}`. All eight appear below, in a string and in a character.
+#
+# Literal syntax is the one part of §4 the English keywords left alone: what
+# changed around them is the binding, which is now `let name be value` (§4.3).
 
-fn main():
+function main():
     # --- Integers, decimal --------------------------------------------------
-    let zero = 0
-    let small = 42
-    let big = 1234567890
-    let separated = 1_000_000
-    let separated_pairs = 1_2_3
+    let zero be 0
+    let small be 42
+    let big be 1234567890
+    let separated be 1_000_000
+    let separated_pairs be 1_2_3
 
     # --- Integers, other bases ----------------------------------------------
-    let hex_lower = 0xff
-    let hex_upper = 0xFF
-    let hex_mixed = 0xDeadBeef
-    let hex_separated = 0xFF_FF_FF
-    let binary = 0b1010
-    let binary_long = 0b1111_0000_1010_0101
-    let octal = 0o777
-    let octal_separated = 0o7_5_5
+    let hex_lower be 0xff
+    let hex_upper be 0xFF
+    let hex_mixed be 0xDeadBeef
+    let hex_separated be 0xFF_FF_FF
+    let binary be 0b1010
+    let binary_long be 0b1111_0000_1010_0101
+    let octal be 0o777
+    let octal_separated be 0o7_5_5
 
     # --- Integer type suffixes ----------------------------------------------
-    let as_i8 = 42i8
-    let as_i16 = 42i16
-    let as_i32 = 42i32
-    let as_i64 = 42i64
-    let as_u8 = 7u8
-    let as_u16 = 7u16
-    let as_u32 = 7u32
-    let as_u64 = 7u64
+    let as_i8 be 42i8
+    let as_i16 be 42i16
+    let as_i32 be 42i32
+    let as_i64 be 42i64
+    let as_u8 be 7u8
+    let as_u16 be 7u16
+    let as_u32 be 7u32
+    let as_u64 be 7u64
 
     # A suffix combines with any base and with separators.
-    let hex_suffixed = 0xFFu8
-    let binary_suffixed = 0b1010i32
-    let octal_suffixed = 0o777u16
-    let separated_suffixed = 1_000i64
+    let hex_suffixed be 0xFFu8
+    let binary_suffixed be 0b1010i32
+    let octal_suffixed be 0o777u16
+    let separated_suffixed be 1_000i64
 
     # --- Floats -------------------------------------------------------------
-    let pi = 3.14
-    let tiny = 1e-9
-    let large = 1e9
-    let signed_exponent = 2.5e+3
-    let capital_exponent = 6.02E23
-    let float_separated = 1_000.000_1
+    let pi be 3.14
+    let tiny be 1e-9
+    let large be 1e9
+    let signed_exponent be 2.5e+3
+    let capital_exponent be 6.02E23
+    let float_separated be 1_000.000_1
 
     # --- Float type suffixes ------------------------------------------------
-    let as_f32 = 2.5f32
-    let as_f64 = 2.5f64
-    let exponent_suffixed = 1e-9f32
+    let as_f32 be 2.5f32
+    let as_f64 be 2.5f64
+    let exponent_suffixed be 1e-9f32
 
     # --- Strings and their escapes ------------------------------------------
-    let plain = "hola"
-    let empty = ""
-    let unicode_text = "identificadores en el idioma del autor"
-    let newline = "line one\nline two"
-    let tab = "column\tcolumn"
-    let carriage_return = "overwrite\rme"
-    let backslash = "a\\b"
-    let quote = "she said \"hi\""
-    let nul = "ends here\0"
-    let single_quote = "it\'s escaped here, though inside a string it need not be"
-    let codepoint = "\u{1F600}"
-    let every_escape = "\n\t\r\\\"\'\0\u{1F600}"
+    #
+    # A string literal has type `String` (§4.2).
+    let plain be "hola"
+    let empty be ""
+    let unicode_text be "identificadores en el idioma del autor"
+    let newline be "line one\nline two"
+    let tab be "column\tcolumn"
+    let carriage_return be "overwrite\rme"
+    let backslash be "a\\b"
+    let quote be "she said \"hi\""
+    let nul be "ends here\0"
+    let single_quote be "it\'s escaped here, though inside a string it need not be"
+    let codepoint be "\u{1F600}"
+    let every_escape be "\n\t\r\\\"\'\0\u{1F600}"
 
     # --- Characters ---------------------------------------------------------
-    let letter = 'a'
-    let digit = '7'
-    let symbol = ':'
-    let space = ' '
-    let escaped_newline = '\n'
-    let escaped_tab = '\t'
-    let escaped_return = '\r'
-    let escaped_backslash = '\\'
-    let escaped_nul = '\0'
-    let escaped_quote = '\"'
-    let escaped_single_quote = '\''
-    let escaped_codepoint = '\u{1F600}'
-    let non_ascii = 'ñ'
+    let letter be 'a'
+    let digit be '7'
+    let symbol be ':'
+    let space be ' '
+    let escaped_newline be '\n'
+    let escaped_tab be '\t'
+    let escaped_return be '\r'
+    let escaped_backslash be '\\'
+    let escaped_nul be '\0'
+    let escaped_quote be '\"'
+    let escaped_single_quote be '\''
+    let escaped_codepoint be '\u{1F600}'
+    let non_ascii be 'ñ'
 
     # --- Booleans -----------------------------------------------------------
-    let yes = true
-    let no = false
+    let yes be true
+    let no be false
 
     # --- Unit ---------------------------------------------------------------
-    let nothing = ()
+    let nothing be ()
 
-    println(separated)
-    println(hex_mixed)
-    println(every_escape)
+    print(separated)
+    print(hex_mixed)
+    print(every_escape)

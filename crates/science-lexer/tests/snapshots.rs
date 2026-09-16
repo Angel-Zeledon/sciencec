@@ -21,9 +21,9 @@ fn comments_only() {
 fn three_level_nesting() {
     insta::assert_snapshot!(dump(
         "\
-fn main():
+function main():
     if a:
-        while b:
+        loop:
             c()
 "
     ));
@@ -33,9 +33,9 @@ fn main():
 fn several_levels_close_at_once() {
     insta::assert_snapshot!(dump(
         "\
-fn main():
+function main():
     if a:
-        while b:
+        loop:
             c()
 done()
 "
@@ -46,7 +46,7 @@ done()
 fn blank_and_comment_lines_between_blocks() {
     insta::assert_snapshot!(dump(
         "\
-fn main():
+function main():
     a
 
             # not an indent
@@ -72,7 +72,7 @@ a:
 fn bracket_continuation_with_misleading_indentation() {
     insta::assert_snapshot!(dump(
         "\
-fn main():
+function main():
     call(
             first,
   second,
@@ -86,7 +86,7 @@ fn main():
 
 #[test]
 fn tab_in_the_indentation() {
-    insta::assert_snapshot!(dump("fn main():\n\tlet x = 1\n\tlet y = 2\n"));
+    insta::assert_snapshot!(dump("function main():\n\tlet x be 1\n\tlet y be 2\n"));
 }
 
 #[test]
@@ -110,39 +110,44 @@ fn string_and_character_literals() {
 fn literal_errors() {
     insta::assert_snapshot!(dump(
         "\
-let a = \"open
-let b = 'x
-let c = \"bad \\q escape\"
-let d = 340282366920938463463374607431768211456
-let e = 0b1012
+let a be \"open
+let b be 'x
+let c be \"bad \\q escape\"
+let d be 340282366920938463463374607431768211456
+let e be 0b1012
 "
     ));
 }
 
+/// Every operator and punctuation mark in one line.
+///
+/// `==` and `!=` stay in it although §1 removed them from the language: they
+/// are still lexed, and the snapshot is where their two diagnostics — one
+/// each, and nothing over the ordering symbols beside them — are visible.
 #[test]
 fn operators_and_punctuation() {
-    insta::assert_snapshot!(dump("+ - * / % & | ^ << >> = == != < > <= >= -> => ? _ @ . , : ;\n"));
+    insta::assert_snapshot!(dump("+ - * / % & | ^ << >> = == != < > <= >= => _ @ . , : ;\n"));
 }
 
 #[test]
 fn unknown_characters_do_not_stop_the_lexer() {
-    insta::assert_snapshot!(dump("let x = 1 $ 2\nlet y = `z`\n"));
+    insta::assert_snapshot!(dump("let x be 1 $ 2\nlet y be `z`\n"));
 }
 
-/// The `trait Summarize` example from section 4.3 of the design spec.
+/// The `interface Summarize` example from section 4.3 of the design spec.
 #[test]
-fn trait_summarize_program() {
+fn interface_summarize_program() {
     insta::assert_snapshot!(dump(
         "\
-trait Summarize:
-    fn summarize(&self) -> String
+interface Summarize:
+    function summarize(self) -> String
 
-    fn preview(&self) -> String:
-        self.summarize().truncate(80)
+    function preview(self) -> String:
+        truncate(self.summarize(), 80)
 
-impl Summarize for Doc:
-    fn summarize(&self) -> String:
-        self.body.truncate(200)
+Doc implements Summarize:
+    function summarize(self) -> String:
+        truncate(self.body, 200)
 "
     ));
 }
@@ -154,19 +159,19 @@ fn mixed_program() {
         "\
 use text.parser (Token, lex)
 
-struct Doc:
+public type Doc:
     title: String
     body: String
 
-fn largest[T: Ord](items: &Array[T]) -> &T:
-    let mut best = items.get(0)
+function largest of T(items: borrowed Array of T) -> borrowed T where T: Ord:
+    let mutable best be items.get(0)
     for item in items:
-        if item > best: best = item
+        if item > best: best be item
     best
 
-fn read_config(path: &String) -> Result[Config, Error]:
-    let text = read_file(path)?   # early return on error
-    match parse(&text):
+function read_config(path: borrowed String) -> Result of (Config, Error):
+    let text be try read_file(path)   # early return on error
+    match parse(borrowed text):
         Ok(value): value
         Err(e): panic(e)
 "

@@ -54,15 +54,20 @@ fn width_of(kind: &TokenKind) -> u32 {
         Int { value, .. } => value.to_string().len() as u32,
         Float { value, .. } => value.to_string().len() as u32,
 
-        Fn | If | In | Or | As => 2,
-        Let | Mut | For | Use | Mod | Pub | And | Not | Dyn => 3,
-        Else | Loop | Enum | True | Impl | SelfValue | SelfType => 4,
-        Match | While | Break | Trait | Where | False => 5,
-        Return | Struct => 6,
+        If | In | Or | As | Of | Be | Is => 2,
+        Let | For | Use | And | Not | Any | Has | Try => 3,
+        Else | Loop | Each | Type | True | SelfValue | SelfType => 4,
+        Match | Break | Where | False | Const => 5,
+        Return | Choice | Public | Giving | Extern | Unsafe => 6,
+        Mutable => 7,
+        Function | Borrowed => 8,
         Continue => 8,
+        Interface => 9,
+        Implements => 10,
         Reserved(_) => 5,
 
-        Arrow | FatArrow | Shl | Shr | EqEq | NotEq | LtEq | GtEq => 2,
+        Arrow | FatArrow | StarStar | DotDot | Shl | Shr | EqEq | NotEq | LtEq | GtEq => 2,
+        DotDotEq => 3,
         Underscore => 1,
 
         _ => 1,
@@ -188,13 +193,35 @@ pub fn parse_body(source: &str) -> String {
 /// stripped. Precedence and associativity are about *shape*, and a span on
 /// every line buries the shape the test is checking.
 pub fn shape_of_expr(source: &str) -> String {
-    let wrapped = format!("fn f():\n    let x = {source}\n");
+    let wrapped = format!("function f():\n    let x be {source}\n");
     let (tokens, lex_diagnostics) = science_lexer::lex(FILE, &wrapped);
     assert!(lex_diagnostics.is_empty(), "the source of this test does not lex cleanly");
     let (module, diagnostics) = science_parser::parse_module(&tokens, FILE);
     assert!(
         diagnostics.is_empty(),
         "`{source}` did not parse: {:?}",
+        diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
+    );
+
+    let value = let_value(&module)
+        .unwrap_or_else(|| panic!("`{source}` did not produce a `let` value"));
+    strip_spans(&value)
+}
+
+/// The same as `shape_of_expr`, but for a source the *lexer* complains about.
+///
+/// `syntax-revision-2.md` §1 removed `==` and `!=` without removing the tokens
+/// they lex to: the lexer reports them and emits `EqEq`/`NotEq` anyway, so the
+/// expression parses exactly as the corrected source would. Checking that
+/// needs a helper that tolerates a lexical diagnostic while still insisting
+/// the *parser* had nothing to say.
+pub fn shape_of_expr_despite_lexical_errors(source: &str) -> String {
+    let wrapped = format!("function f():\n    let x be {source}\n");
+    let (tokens, _lexical) = science_lexer::lex(FILE, &wrapped);
+    let (module, diagnostics) = science_parser::parse_module(&tokens, FILE);
+    assert!(
+        diagnostics.is_empty(),
+        "`{source}` should still parse: {:?}",
         diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
     );
 

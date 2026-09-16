@@ -1,15 +1,15 @@
 error[SC0011]: this float literal is out of range
- --> tests/ui/float_out_of_range.science:9:20
-  |
-9 |     let enormous = 1e400
-  |                    ^^^^^ value overflows
-  |
-  = note: the largest representable value is 1.7976931348623157e308
+  --> tests/ui/float_out_of_range.science:10:21
+   |
+10 |     let enormous be 1e400
+   |                     ^^^^^ value overflows
+   |
+   = note: the largest representable value is 1.7976931348623157e308
 
 error[SC0011]: this float literal is out of range
-  --> tests/ui/float_out_of_range.science:10:25
+  --> tests/ui/float_out_of_range.science:11:26
    |
-10 |     let also_enormous = 1.7976931348623159e308
-   |                         ^^^^^^^^^^^^^^^^^^^^^^ value overflows
+11 |     let also_enormous be 1.7976931348623159e308
+   |                          ^^^^^^^^^^^^^^^^^^^^^^ value overflows
    |
    = note: the largest representable value is 1.7976931348623157e308

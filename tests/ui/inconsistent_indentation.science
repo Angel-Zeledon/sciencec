@@ -1,14 +1,13 @@
 # UI test: an indentation that matches no level on the stack (SC0004).
 #
-# Spec §4.1: "A stack of levels is kept. A greater indentation than the top
-# emits an INDENT and pushes; a smaller one emits as many DEDENTs as levels
-# close. An indentation that matches no level on the stack is an error
-# (SC0004)."
+# Spec §4.2: "A stack of levels: greater indentation pushes and emits `INDENT`,
+# smaller pops and emits one `DEDENT` per level closed. Indentation matching no
+# open level is an error (`SC0004`)."
 #
 # The open levels below are 0, 4 and 12. The last line is indented by 8,
 # which closes no block.
 
-fn main():
+function main():
     if true:
-            let a = 1
-        let b = 2
+            let a be 1
+        let b be 2

@@ -1,0 +1,63 @@
+---
+source: crates/science-parser/tests/parse_extern.rs
+expression: "parse_source(r#\"unsafe extern \"C\" library \"openblas\" via pkg-config \"openblas\":\n    type CblasLayout is CInt\n    const CBLAS_ROW_MAJOR be 101 as CblasLayout\n    const CBLAS_COL_MAJOR be 102 as CblasLayout\n\n    type CblasTranspose is CInt\n    const CBLAS_NO_TRANS be 111 as CblasTranspose\n    const CBLAS_TRANS be 112 as CblasTranspose\n\n    function cblas_dgemm(\n        layout: CblasLayout,\n        transpose_a: CblasTranspose,\n        transpose_b: CblasTranspose,\n        m: BlasInt, n: BlasInt, k: BlasInt,\n        alpha: F64,\n        a: ffi.Span of F64, lda: BlasInt,\n        b: ffi.Span of F64, ldb: BlasInt,\n        beta: F64,\n        c: ffi.MutableSpan of F64, ldc: BlasInt,\n    )\n\"#)"
+---
+Module @0..671
+  Extern "C" unsafe @0..670
+    Library "openblas" @18..62
+      pkg-config: Str "openblas" @52..62
+    items
+      ExternAlias `CblasLayout` @68..92
+        type: Path `CInt` @88..92
+      ExternConst `CBLAS_ROW_MAJOR` @97..140
+        value: Int 101
+        type: Path `CblasLayout` @129..140
+      ExternConst `CBLAS_COL_MAJOR` @145..188
+        value: Int 102
+        type: Path `CblasLayout` @177..188
+      ExternAlias `CblasTranspose` @194..221
+        type: Path `CInt` @217..221
+      ExternConst `CBLAS_NO_TRANS` @226..271
+        value: Int 111
+        type: Path `CblasTranspose` @257..271
+      ExternConst `CBLAS_TRANS` @276..318
+        value: Int 112
+        type: Path `CblasTranspose` @304..318
+      ExternFn `cblas_dgemm` @324..670
+        params
+          Param `layout` @354..373
+            type: Path `CblasLayout` @362..373
+          Param `transpose_a` @383..410
+            type: Path `CblasTranspose` @396..410
+          Param `transpose_b` @420..447
+            type: Path `CblasTranspose` @433..447
+          Param `m` @457..467
+            type: Path `BlasInt` @460..467
+          Param `n` @469..479
+            type: Path `BlasInt` @472..479
+          Param `k` @481..491
+            type: Path `BlasInt` @484..491
+          Param `alpha` @501..511
+            type: Path `F64` @508..511
+          Param `a` @521..539
+            type: Path `ffi.Span` @524..539
+              generics of `Span`
+                Path `F64` @536..539
+          Param `lda` @541..553
+            type: Path `BlasInt` @546..553
+          Param `b` @563..581
+            type: Path `ffi.Span` @566..581
+              generics of `Span`
+                Path `F64` @578..581
+          Param `ldb` @583..595
+            type: Path `BlasInt` @588..595
+          Param `beta` @605..614
+            type: Path `F64` @611..614
+          Param `c` @624..649
+            type: Path `ffi.MutableSpan` @627..649
+              generics of `MutableSpan`
+                Path `F64` @646..649
+          Param `ldc` @651..663
+            type: Path `BlasInt` @656..663
+--- diagnostics ---
+(none)

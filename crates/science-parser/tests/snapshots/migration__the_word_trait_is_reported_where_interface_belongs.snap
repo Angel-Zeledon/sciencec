@@ -1,0 +1,12 @@
+---
+source: crates/science-parser/tests/migration.rs
+expression: parse_source_allowing_errors(source)
+---
+Module @0..56
+  Interface `Summarize` @0..55
+    methods
+      Fn `summarize` @21..55
+        receiver: self @40..44
+        ret: Path `String` @49..55
+--- diagnostics ---
+SC0139 @0..5 the declaration is written `interface`

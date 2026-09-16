@@ -1,0 +1,34 @@
+---
+source: crates/science-parser/tests/parse_extern.rs
+expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\" library \"openblas\":\n    function takes(a: borrowed Array of F64, b: mutable borrowed Array of F64, c: Array of I32)\n\"#)"
+---
+Module @0..134
+  Extern "C" unsafe @0..133
+    Library "openblas" @18..36
+    items
+      ExternFn `takes` @42..133
+        params
+          Param `a` @57..81
+            type: Borrowed @60..81
+              Path `Array` @69..81
+                generics of `Array`
+                  Path `F64` @78..81
+          Param `b` @83..115
+            type: Borrowed mutable @86..115
+              Path `Array` @103..115
+                generics of `Array`
+                  Path `F64` @112..115
+          Param `c` @117..132
+            type: Path `Array` @120..132
+              generics of `Array`
+                Path `I32` @129..132
+--- diagnostics ---
+SC0421 @60..81 `Array of T` has no C representation
+  note the length does not cross the ABI — it exists on the Science side so that the wrapper's bounds check is an expression the compiler checks
+  note a call site still passes the array: `borrowed Array of T` coerces to `ffi.Span of T` there, and `.span()` names the conversion where it has to be written out
+SC0421 @86..115 `Array of T` has no C representation
+  note the length does not cross the ABI — it exists on the Science side so that the wrapper's bounds check is an expression the compiler checks
+  note a call site still passes the array: `borrowed Array of T` coerces to `ffi.Span of T` there, and `.span()` names the conversion where it has to be written out
+SC0421 @120..132 `Array of T` has no C representation
+  note the length does not cross the ABI — it exists on the Science side so that the wrapper's bounds check is an expression the compiler checks
+  note a call site still passes the array: `borrowed Array of T` coerces to `ffi.Span of T` there, and `.span()` names the conversion where it has to be written out

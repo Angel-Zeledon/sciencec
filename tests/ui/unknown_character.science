@@ -1,16 +1,16 @@
 # UI test: a character that is not part of the language (SC0001).
 #
-# §4.1 says what Science's lexis is made of and §9 fixes only the range,
+# §4.2 says what Science's lexis is made of and §9 fixes only the range,
 # SC0001-SC0099; the lexer allocated the first number in it for the
 # catch-all. The lexer does not stop: it emits an `Unknown` token and keeps
 # going, which is why all three characters below are reported.
 #
-# The last one is the interesting case. `!=` is an operator, but `!` alone is
-# not: §4.4's table spells negation `not`. A `!` on its own therefore lands
-# in SC0001 with the same message as `$`, which is the least helpful place
-# for it to land.
+# The last one is the interesting case. `!` begins no operator at all now
+# that `syntax-revision-2.md` §1 has removed `!=`, and §4.3's table spells
+# negation `not`. A `!` therefore lands in SC0001, but with its own message
+# and an applicable fix rather than the catch-all one `$` gets.
 
-fn main():
-    let priced = 100 $ 2
-    let quoted = `backtick`
-    let inverted = !true
+function main():
+    let priced be 100 $ 2
+    let quoted be `backtick`
+    let inverted be !true

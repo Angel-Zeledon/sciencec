@@ -1,161 +1,183 @@
 # 18 - Ownership and borrows
-# Spec: §6.1 rules, §6.2 region inference, §4.3 struct fields that are
-# references.
+# Spec: §6.1 rules, §6.2 region inference, §6.3 auto-borrow at call sites,
+# §4.4 record fields that are borrows.
 #
 # Every program here is meant to be *accepted*: the rejected cases live in
-# `tests/ui/`. There is no lifetime syntax anywhere; regions are inferred.
+# `tests/ui/`. There is no region syntax anywhere; regions are inferred, and
+# the programmer never writes one.
 
-struct Doc:
+type Doc:
     title: String
     body: String
 
-# A struct whose field is a borrow. Its region parameter is implicit and
+# A record whose field is a borrow. Its region parameter is implicit and
 # propagated to every site that instantiates the type (§6.2).
-struct View:
-    source: &Doc
+type View:
+    source: borrowed Doc
 
-struct Editor:
-    target: &mut Doc
+type Editor:
+    target: mutable borrowed Doc
 
-struct Span:
-    text: &String
+type Span:
+    text: borrowed String
     start: Int
     end: Int
 
-# A `Copy` type. `Copy` has no methods and F0 has no empty block, so the impl
-# is a single line with no block at all (§4.3).
-struct Position:
+# A `Copy` type. `Copy` has no methods and F0 has no empty block, so the
+# implementation is a single line with no block at all (§4.4).
+type Position:
     line: U32
     column: U32
 
-impl Copy for Position
+Position implements Copy
 
-trait Summarize:
-    fn summarize(&self) -> String
+interface Summarize:
+    function summarize(self) -> String
 
-impl Summarize for Doc:
-    fn summarize(&self) -> String:
+Doc implements Summarize:
+    function summarize(self) -> String:
         self.body.truncate(200)
 
-impl Drop for Doc:
-    fn drop(&mut self):
-        println("doc dropped")
+Doc implements Drop:
+    function drop(mutable self):
+        print("doc dropped")
 
 # --- Moves ------------------------------------------------------------------
 
 # Passing by value moves: the caller may not use the value afterwards.
-fn consume(doc: Doc) -> String:
+function consume(doc: Doc) -> String:
     doc.title
 
 # Returning moves ownership out.
-fn produce() -> Doc:
+function produce() -> Doc:
     Doc(title: "owned", body: "...")
 
 # Rebinding moves too.
-fn rebind() -> String:
-    let first = produce()
-    let second = first
+function rebind() -> String:
+    let first be produce()
+    let second be first
     second.title
 
 # --- Shared borrows ---------------------------------------------------------
 
 # Any number of shared borrows may coexist.
-fn compare(a: &Doc, b: &Doc) -> Bool:
-    a.body.len() > b.body.len()
+function compare(a: borrowed Doc, b: borrowed Doc) -> Bool:
+    a.body.length() > b.body.length()
 
-fn many_shared():
-    let doc = produce()
-    let one = &doc
-    let two = &doc
-    let three = &doc
-    println(compare(one, two))
-    println(three.summarize())
+function many_shared():
+    let doc be produce()
+
+    # `borrowed` is the unary operator that makes a borrow, and it is what a
+    # binding needs: there is no call here to borrow on the programmer's
+    # behalf (§4.6).
+    let one be borrowed doc
+    let two be borrowed doc
+    let three be borrowed doc
+    print(compare(one, two))
+    print(three.summarize())
+
+    # At a call site nothing is written at all: `compare` declares both
+    # parameters `borrowed`, so both arguments are borrowed automatically
+    # (§6.3). The signature still says which it is, so the reader keeps the
+    # information and only the noise goes.
+    print(compare(doc, doc))
 
 # A borrow returned from a function: its region is inferred from the argument.
-fn longest(a: &String, b: &String) -> &String:
-    if a.len() > b.len(): a else: b
+function longest(a: borrowed String, b: borrowed String) -> borrowed String:
+    if a.length() > b.length(): a else: b
 
-fn title_of(doc: &Doc) -> &String:
-    &doc.title
+function title_of(doc: borrowed Doc) -> borrowed String:
+    borrowed doc.title
 
 # --- Exclusive borrows ------------------------------------------------------
 
 # Exactly one exclusive borrow, and never at the same time as a shared one.
-fn retitle(doc: &mut Doc, title: String):
-    doc.title = title
+# Assignment through it uses `be`, the same word that binds (§4.3).
+function retitle(doc: mutable borrowed Doc, title: String):
+    doc.title be title
 
-fn exclusive_then_shared():
-    let mut doc = produce()
-    retitle(&mut doc, "renamed")
+function exclusive_then_shared():
+    let mutable doc be produce()
+
+    # Auto-borrow covers the exclusive case too: `retitle` says
+    # `mutable borrowed`, so the caller writes the variable and nothing else.
+    retitle(doc, "renamed")
+
     # The exclusive borrow ended with the call, so a shared one is fine now.
-    println(doc.summarize())
+    print(doc.summarize())
 
-# Borrowing two different fields of the same struct at once. References
-# auto-dereference for field access, so nothing is written for the `&mut`
-# (§4.5).
-fn disjoint_fields(doc: &mut Doc) -> Int:
-    let title = &doc.title
-    let body = &doc.body
-    title.len() + body.len()
+    # An explicit borrow remains legal where it clarifies (§6.3).
+    retitle(mutable borrowed doc, "renamed again")
+    print(doc.summarize())
 
-# --- Borrows stored in structs ----------------------------------------------
+# Borrowing two different fields of the same record at once. Borrows
+# auto-dereference for field access, so nothing is written for the outer
+# `mutable borrowed`: Science has no dereference operator (§4.7).
+function disjoint_fields(doc: mutable borrowed Doc) -> Int:
+    let title be borrowed doc.title
+    let body be borrowed doc.body
+    title.length() + body.length()
 
-fn store_a_borrow():
-    let doc = produce()
-    # `view` borrows `doc`; the region of the field is inferred so that the
-    # borrow cannot outlive its referent (§6.1 rule 5).
-    let view = View(source: &doc)
-    println(view.source.summarize())
-    println(title_of(view.source))
+# --- Borrows stored in records ----------------------------------------------
 
-fn store_an_exclusive_borrow():
-    let mut doc = produce()
-    let editor = Editor(target: &mut doc)
-    editor.target.title = "edited"
+function store_a_borrow():
+    let doc be produce()
 
-fn span_of(text: &String) -> Span:
-    Span(text: text, start: 0, end: text.len())
+    # `view` borrows `doc`. Construction is not a call, so the borrow is
+    # written out; the region of the field is inferred so that the borrow
+    # cannot outlive its referent (§6.1 rule 5).
+    let view be View(source: borrowed doc)
+    print(view.source.summarize())
+    print(title_of(view.source))
+
+function store_an_exclusive_borrow():
+    let mutable doc be produce()
+    let editor be Editor(target: mutable borrowed doc)
+    editor.target.title be "edited"
+
+function span_of(text: borrowed String) -> Span:
+    Span(text: text, start: 0, end: text.length())
 
 # --- Copy types -------------------------------------------------------------
 
 # Types implementing `Copy` are not moved by assignment (§6.1 rule 2).
-fn copies():
-    let a = 42
-    let b = a
-    let c = a
-    println(a + b + c)
+function copies():
+    let a be 42
+    let b be a
+    let c be a
+    print(a + b + c)
 
-    let flag = true
-    let also = flag
-    println(flag and also)
+    let flag be true
+    let also be flag
+    print(flag and also)
 
     # A user type that implements `Copy` behaves the same way: `start` is
     # still usable after the assignment, because it was duplicated, not moved.
-    let start = Position(line: 1u32, column: 1u32)
-    let copied = start
-    println(start.line + copied.column)
+    let start be Position(line: 1u32, column: 1u32)
+    let copied be start
+    print(start.line + copied.column)
 
 # --- Box: owned indirection -------------------------------------------------
 
-# `Box` is built through its associated function; named-argument
-# construction is for structs only (§4.3).
-fn boxed() -> Box[Doc]:
+# `Box` is built through its associated function; named-argument construction
+# is for record types only (§4.4).
+function boxed() -> Box of Doc:
     Box.new(produce())
 
-fn describe_boxed(value: &Box[Doc]) -> String:
+function describe_boxed(value: borrowed Box of Doc) -> String:
     value.summarize()
 
 # --- Scopes and drop --------------------------------------------------------
 
-fn scoped():
-    let outer = produce()
-    if outer.body.len() > 0:
+function scoped():
+    let outer be produce()
+    if outer.body.length() > 0:
         # `inner` is destroyed at the end of this block; `Drop` runs there.
-        let inner = produce()
-        println(inner.summarize())
-    println(outer.summarize())
+        let inner be produce()
+        print(inner.summarize())
+    print(outer.summarize())
 
-fn main():
+function main():
     many_shared()
     exclusive_then_shared()
     store_a_borrow()
@@ -163,11 +185,14 @@ fn main():
     copies()
     scoped()
 
-    let text = "a borrowed string"
-    let span = span_of(&text)
-    println(span.end)
+    let mutable edited be produce()
+    print(disjoint_fields(edited))
 
-    println(describe_boxed(&boxed()))
-    println(rebind())
-    println(consume(produce()))
-    println(longest("abc", "de"))
+    let text be "a borrowed string"
+    let span be span_of(text)
+    print(span.end)
+
+    print(describe_boxed(boxed()))
+    print(rebind())
+    print(consume(produce()))
+    print(longest("abc", "de"))

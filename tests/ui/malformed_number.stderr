@@ -1,17 +1,17 @@
 error[SC0010]: `2` is not a valid digit in a binary literal
- --> tests/ui/malformed_number.science:8:21
+ --> tests/ui/malformed_number.science:8:22
   |
-8 |     let mask = 0b1012
-  |                     ^ invalid digit
+8 |     let mask be 0b1012
+  |                      ^ invalid digit
 
 error[SC0010]: `8` is not a valid digit in an octal literal
- --> tests/ui/malformed_number.science:9:27
+ --> tests/ui/malformed_number.science:9:28
   |
-9 |     let permissions = 0o778
-  |                           ^ invalid digit
+9 |     let permissions be 0o778
+  |                            ^ invalid digit
 
 error[SC0010]: this hexadecimal literal has no digits
-  --> tests/ui/malformed_number.science:10:19
+  --> tests/ui/malformed_number.science:10:20
    |
-10 |     let nothing = 0x
-   |                   ^^ expected at least one hexadecimal digit after the prefix
+10 |     let nothing be 0x
+   |                    ^^ expected at least one hexadecimal digit after the prefix

@@ -34,10 +34,22 @@ impl Ident {
     }
 }
 
-/// A dotted path, with optional generic arguments on any segment.
+/// A string literal with its span: the ABI of an `extern` block, a library
+/// name, the `symbol` a foreign function really has.
 ///
-/// One type covers every use: `String`, `Array[T]`, `text.parser.Token`, the
-/// module path of a `use`, and the head of an enum or struct pattern.
+/// `Literal::Str` carries the same text, but these are not expressions — they
+/// are clauses of a declaration, and a node that is not an expression should
+/// not have to be wrapped in one to keep its span.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrLit {
+    pub value: String,
+    pub span: Span,
+}
+
+/// A dotted path, with optional generic arguments on its last segment.
+///
+/// One type covers every use: `String`, `Array of Doc`, `text.parser.Token`,
+/// the module path of a `use`, and the head of a choice or type pattern.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Path {
     pub segments: Vec<PathSegment>,
@@ -59,12 +71,19 @@ impl Path {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathSegment {
     pub name: Ident,
-    /// `[A, B]`, empty when absent.
+    /// The arguments of `of Doc` or `of (String, Int)`, empty when absent.
+    ///
+    /// §4.3 puts them after the whole name (`text.parser.Token of Doc`), so in
+    /// practice only the last segment ever carries any. The field is on the
+    /// segment rather than on the path so that a future qualified form has
+    /// somewhere to put them, and so a diagnostic can point at the one name
+    /// the arguments belong to.
     pub generics: Vec<Type>,
     pub span: Span,
 }
 
-/// A trait named as a bound: in `T: Ord`, in `dyn Summarize`, after `impl`.
+/// A trait named as a bound: in `of T: Ord`, in `any Summarize`, after
+/// `implements`.
 ///
 /// It is a path, but naming the wrapper records which of the two a given path
 /// was, which later phases would otherwise have to rediscover.
@@ -76,7 +95,7 @@ pub struct TypeBound {
 
 // --- module and items ----------------------------------------------------
 
-/// A whole source file. In Science a file is a module (§4.3).
+/// A whole source file. In Science a file is a module (§4.4).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Module {
     pub items: Vec<Item>,
@@ -93,10 +112,19 @@ pub struct Item {
 pub enum ItemKind {
     Use(UseDecl),
     Fn(FnDecl),
-    Struct(StructDecl),
-    Enum(EnumDecl),
-    Trait(TraitDecl),
+    /// `type Doc:` — the record type of §4.4.
+    Record(RecordDecl),
+    /// `choice Option of T:` — the sum type of §4.4.
+    Choice(ChoiceDecl),
+    /// `type Embedding is Array of F32`.
+    Alias(AliasDecl),
+    /// `const WIDTH be 768`.
+    Const(ConstDecl),
+    Interface(InterfaceDecl),
+    /// `Doc implements Summarize:` and `Doc has:`.
     Impl(ImplBlock),
+    /// `unsafe extern "C" library "openblas":` — §1.1 of the FFI note.
+    Extern(ExternBlock),
 }
 
 /// `use text.parser` or `use text.parser (Token, lex)`.
@@ -108,15 +136,28 @@ pub struct UseDecl {
     pub span: Span,
 }
 
-/// One generic parameter, with the bounds written inline: `T: Ord + Clone`.
+/// One generic parameter of §4.4's `of` list: `T`, `T: Ord + Clone`, or
+/// `const WIDTH: Int`.
 ///
 /// Bounds from a `where` clause stay in the clause rather than being folded in
 /// here, because a diagnostic has to point at where the programmer wrote them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericParam {
     pub name: Ident,
-    pub bounds: Vec<TypeBound>,
+    pub kind: GenericParamKind,
     pub span: Span,
+}
+
+/// §5.3: a generic parameter is a type or a constant. Const generics are in F0
+/// because F1's shapes are built from them, and retrofitting them would mean
+/// reopening this enum and everything that matches on it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GenericParamKind {
+    /// `T`, or `T: Ord + Clone`.
+    Type { bounds: Vec<TypeBound> },
+    /// `const WIDTH: Int`. The annotation is mandatory: a constant's type is
+    /// never inferred from a use site.
+    Const { ty: Type },
 }
 
 /// One predicate of a `where` clause: `T: Summarize + Clone`.
@@ -136,11 +177,13 @@ pub struct WherePredicate {
 pub struct FnDecl {
     pub is_pub: bool,
     pub name: Ident,
+    /// `function largest of T(..)`: §4.4 puts the parameters after the name,
+    /// introduced by `of`.
     pub generics: Vec<GenericParam>,
-    /// The `self`, `&self` or `&mut self` receiver, when there is one.
+    /// The `self`, `mutable self` or `self: Self` receiver, when there is one.
     pub self_param: Option<SelfParam>,
     pub params: Vec<Param>,
-    /// `None` means unit, per §4.3.
+    /// `None` means unit, since `->` may be left off entirely (§4.4).
     pub ret: Option<Type>,
     pub where_clause: Vec<WherePredicate>,
     pub body: Option<Block>,
@@ -153,17 +196,23 @@ pub struct SelfParam {
     pub span: Span,
 }
 
+/// How a method takes its receiver (§4.4).
+///
+/// The three forms are the three things that can happen to a value, and the
+/// English says which: a bare `self` borrows it, `mutable self` borrows it
+/// exclusively, and only the annotated `self: Self` takes it away from the
+/// caller. `&self` and `&mut self` are gone with the rest of the sigils.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelfKind {
-    /// `self`
+    /// `self` — a shared borrow.
+    Shared,
+    /// `mutable self` — an exclusive borrow.
+    Mutable,
+    /// `self: Self` — by value, written as an ordinary annotated parameter.
     Value,
-    /// `&self`
-    Ref,
-    /// `&mut self`
-    RefMut,
 }
 
-/// A parameter. The annotation is mandatory (§4.3), so it is not an `Option`.
+/// A parameter. The annotation is mandatory (§4.4), so it is not an `Option`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: Ident,
@@ -171,8 +220,9 @@ pub struct Param {
     pub span: Span,
 }
 
+/// `type Doc:` with its fields — the record type of §4.4.
 #[derive(Debug, Clone, PartialEq)]
-pub struct StructDecl {
+pub struct RecordDecl {
     pub is_pub: bool,
     pub name: Ident,
     pub generics: Vec<GenericParam>,
@@ -189,8 +239,9 @@ pub struct FieldDef {
     pub span: Span,
 }
 
+/// `choice Format:` with its variants — the sum type of §4.4.
 #[derive(Debug, Clone, PartialEq)]
-pub struct EnumDecl {
+pub struct ChoiceDecl {
     pub is_pub: bool,
     pub name: Ident,
     pub generics: Vec<GenericParam>,
@@ -199,7 +250,7 @@ pub struct EnumDecl {
     pub span: Span,
 }
 
-/// A variant with a positional payload. F0 has no named-field variants (§4.3),
+/// A variant with a positional payload. F0 has no named-field variants (§4.4),
 /// so an empty payload is a unit variant.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariantDef {
@@ -208,26 +259,226 @@ pub struct VariantDef {
     pub span: Span,
 }
 
+/// `type Embedding is Array of F32` (§4.4).
+///
+/// The generic parameters are the same `of` list a record takes, so
+/// `type Handle of T is Box of T` needs no new grammar.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TraitDecl {
+pub struct AliasDecl {
     pub is_pub: bool,
     pub name: Ident,
     pub generics: Vec<GenericParam>,
-    /// Traits this one requires, written `trait A: B + C`.
-    pub supertraits: Vec<TypeBound>,
+    pub ty: Type,
+    pub span: Span,
+}
+
+/// `const WIDTH be 768` (§4.4).
+///
+/// The annotation is optional and the value is not, which is exactly a `let`:
+/// the two differ in when they are evaluated, not in how they are written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstDecl {
+    pub is_pub: bool,
+    pub name: Ident,
+    pub ty: Option<Type>,
+    pub value: Expr,
+    pub span: Span,
+}
+
+/// `trait Summarize:` with its members.
+///
+/// Associated types and methods are kept in two lists rather than one list of
+/// members. Their relative order carries no meaning — §5.4 gives an
+/// implementation no ordering obligation — and every consumer wants one kind
+/// or the other, never the interleaving. Each member keeps its own span, so a
+/// diagnostic still points where it was written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterfaceDecl {
+    pub is_pub: bool,
+    pub name: Ident,
+    pub generics: Vec<GenericParam>,
+    /// Interfaces this one requires, written `interface A: B + C`.
+    pub supers: Vec<TypeBound>,
     pub where_clause: Vec<WherePredicate>,
+    /// `type Item` — declared here, supplied by the implementation (§5.4).
+    pub assoc_types: Vec<AssocTypeDecl>,
     pub methods: Vec<FnDecl>,
     pub span: Span,
 }
 
-/// `impl Trait for Type` when `trait_` is set, `impl Type` when it is not.
+/// `type Item` in an interface body: an associated type the implementer must
+/// give.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssocTypeDecl {
+    pub name: Ident,
+    pub span: Span,
+}
+
+/// `Doc implements Summarize:` when `interface` is set, `Doc has:` when it is
+/// not (§4.4).
+///
+/// `generics` holds the parameters declared on the head — the `of (A, B)` of
+/// `Pair of (A, B) implements Swap:` — and `self_ty` is the type they apply
+/// to, with those same names echoed back as its arguments. Keeping the two
+/// apart is what lets `Grid of (T, const ROWS: Int) has:` declare a
+/// const parameter while `self_ty` stays an ordinary type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImplBlock {
     pub generics: Vec<GenericParam>,
-    pub trait_: Option<TypeBound>,
+    pub interface: Option<TypeBound>,
     pub self_ty: Type,
     pub where_clause: Vec<WherePredicate>,
+    /// `type Item is Int` — the implementation's side of §5.4's associated
+    /// types.
+    pub assoc_types: Vec<AssocTypeBinding>,
     pub methods: Vec<FnDecl>,
+    pub span: Span,
+}
+
+/// `type Item is Int` in an implementation body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssocTypeBinding {
+    pub name: Ident,
+    pub ty: Type,
+    pub span: Span,
+}
+
+// --- extern blocks -------------------------------------------------------
+
+/// `unsafe extern "C" library "openblas" via pkg-config "openblas":`
+///
+/// §1.1 of `ffi-c-boundary.md`, and §9 of that note calls it "a small separate
+/// grammar with contextual keywords". It is separate here too: an extern item
+/// is not an [`Item`], because none of the four forms below is a declaration
+/// the ordinary grammar can read. The names they introduce are nevertheless
+/// ordinary module-level names, which is name resolution's business and not
+/// this tree's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternBlock {
+    /// `unsafe` on the block, which §1.1 requires: writing the declaration is
+    /// itself the unsafe act. `false` means it was left off and reported.
+    pub is_unsafe: bool,
+    /// The ABI as written. `"C"` is the only one this phase accepts.
+    pub abi: StrLit,
+    /// `None` means the `library` clause was missing and was reported; the
+    /// block is kept so the items in it still parse.
+    pub library: Option<LibraryClause>,
+    pub items: Vec<ExternItem>,
+    pub span: Span,
+}
+
+/// `library "openblas" via pkg-config "openblas" kind static when available`
+/// — §5.1 and §5.2.
+///
+/// The three optional clauses hang off the library rather than off the block
+/// because each of them modifies how that one library is found or linked.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LibraryClause {
+    pub name: StrLit,
+    /// `via pkg-config "openblas"` (§5.1): where the link flags come from.
+    /// The plain name stays as the fallback, which is why this is an extra
+    /// clause and not an alternative to one.
+    pub pkg_config: Option<StrLit>,
+    /// `kind static` (§5.1). Dynamic is the default.
+    pub static_link: Option<Span>,
+    /// `when available` (§5.2): the block lowers to a `dlopen` table instead
+    /// of to direct declarations.
+    pub when_available: Option<Span>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternItem {
+    pub kind: ExternItemKind,
+    pub span: Span,
+}
+
+/// What an `extern` block may contain.
+///
+/// §1.2 of the FFI note admits three forms. `c-binding-coverage.md`'s
+/// Decision 7 adds [`ExternItemKind::Static`], without which HDF5 and CPython
+/// are unusable, and its §3.4 adds [`ExternItemKind::Union`], the opaque
+/// blob a C union is imported as.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExternItemKind {
+    /// `function dgemm(m: BlasInt, ...) -> Herr symbol "dgemm_"`.
+    Fn(ExternFn),
+    /// `type BlasInt is I32` — a C typedef over an FFI-representable type.
+    Alias(ExternAlias),
+    /// `const CBLAS_ROW_MAJOR be 101 as CblasLayout` — a `#define` or an
+    /// enumerator, transcribed.
+    Const(ExternConst),
+    /// `static H5T_NATIVE_DOUBLE_g: Hid` — an exported data symbol.
+    Static(ExternStatic),
+    /// `union H5R_ref_t: size 64 align 8` — an opaque blob of the right size
+    /// and alignment.
+    Union(ExternUnion),
+    /// An item form the block does not have. Kept so the block still shows
+    /// what parsed around it.
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternFn {
+    pub name: Ident,
+    /// Named, because §1.7 permits named arguments at extern call sites and
+    /// the names are what makes a thirteen-argument `dgemm` readable.
+    pub params: Vec<Param>,
+    /// `None` means the function returns unit.
+    pub ret: Option<Type>,
+    /// `symbol "dgemm_"` (§1.6): the linker name, when it is not the Science
+    /// name. This is what makes the ILP64 hazard a link error.
+    pub symbol: Option<StrLit>,
+    /// The span of a `...` in the parameter list. §1.4 refuses to represent
+    /// C's variadic convention, so this is only ever recorded in order to be
+    /// reported; it is kept in the tree so that a later phase cannot mistake
+    /// the declaration for a complete one.
+    pub variadic: Option<Span>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternAlias {
+    pub name: Ident,
+    pub ty: Type,
+    pub span: Span,
+}
+
+/// `const NAME be literal as T`.
+///
+/// The value is a literal, not an expression: §1.2 says a constant in a block
+/// transcribes a `#define`, and Decision 7 turns on the distinction between a
+/// compile-time literal and a link-time symbol. A leading `-` is admitted
+/// because C enumerators are routinely negative (`H5I_BADID`, `Herr`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternConst {
+    pub name: Ident,
+    pub negative: bool,
+    pub value: Literal,
+    pub ty: Type,
+    pub span: Span,
+}
+
+/// `static H5T_NATIVE_DOUBLE_g: Hid` — `c-binding-coverage.md` Decision 7.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternStatic {
+    pub name: Ident,
+    pub ty: Type,
+    pub span: Span,
+}
+
+/// `union H5L_info2_t: size 32 align 8`.
+///
+/// A C union has no Science layout, so what is imported is the opaque byte
+/// array `c-binding-coverage.md` §3.4 names: the size and the alignment, and
+/// nothing about the arms. The library's own accessors are ordinary function
+/// items beside it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternUnion {
+    pub name: Ident,
+    /// `None` when the clause was missing and was reported.
+    pub size: Option<u128>,
+    pub align: Option<u128>,
     pub span: Span,
 }
 
@@ -241,13 +492,14 @@ pub struct Type {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeKind {
-    /// `String`, `Array[T]`, `text.parser.Token`, and a bare type parameter.
+    /// `String`, `Array of T`, `text.parser.Token`, and a bare type parameter.
     Path(Path),
-    /// `&T` and `&mut T`.
-    Ref { mutable: bool, inner: Box<Type> },
-    /// `dyn Trait`. Legal only behind an indirection (§4.3); the parser accepts
+    /// `borrowed T` and `mutable borrowed T`. There is no region to write:
+    /// §6.1 says the programmer never writes one.
+    Borrowed { mutable: bool, inner: Box<Type> },
+    /// `any Trait`. Legal only behind an indirection (§4.3); the parser accepts
     /// it anywhere and lets a later phase say so with a better message.
-    Dyn(TypeBound),
+    Any(TypeBound),
     /// `(A, B)`, always two or more elements. `(T)` is just `T` and produces no
     /// node of its own.
     Tuple(Vec<Type>),
@@ -255,20 +507,110 @@ pub enum TypeKind {
     Unit,
     /// `Self`.
     SelfType,
+    /// `Self.Item`: the associated type `Item` of the type being implemented
+    /// (§5.4). Only `Self` can be the base in F0 — a projection through a
+    /// generic parameter would need the qualified form Rust spells
+    /// `<T as Iterate>::Item`, and F0 has no syntax for it.
+    SelfAssoc(Ident),
+    /// The `4` in `Window of (Int, 4)`: a const generic argument (§5.3). It is
+    /// a value in an argument list that otherwise holds types, which is why it
+    /// lives in `TypeKind` rather than anywhere more comfortable.
+    Const(ConstExpr),
     /// A type that failed to parse. Keeps the tree shaped so later phases can
     /// run instead of the parser having to bail out.
     Error,
 }
 
+/// The value of a const generic argument: the `4` of `Window of (Int, 4)` and
+/// the `-1` of `Quantity of (T, 1, 0, -1, 0, 0, 0, 0)`.
+///
+/// `const-expression-arithmetic.md` §2.1 gives this position a five-operator
+/// grammar — `+`, binary `-`, unary `-`, `*` and `/`, with a literal required
+/// on one side of `*` and `/` — and §10.1 states two of its F0 commitments as
+/// this node:
+///
+/// > 1. **The const-expression grammar of §2.1 parses in type-argument
+/// >    position**, including unary negation.
+/// > 2. **The const-argument node carries a signed integer.**
+///
+/// What exists today is the unary-negation half of commitment 1, and nothing
+/// else: without it none of `scientific-libraries.md` §12.3's nine unit
+/// aliases parse, because roughly half of every SI dimension vector is
+/// negative. The rest of the grammar arrives as further variants of
+/// [`ConstExprKind`] — that is the whole reason this is a node and not a
+/// `negated: bool` beside a `Literal`. Adding `Add`, `Mul` and `Div` is then
+/// adding arms to an enum the parser, the dump and the resolver already walk
+/// as a tree, rather than replacing a representation that never was one.
+///
+/// Commitment 2 is [`ConstExpr::as_i128`]: the sign lives in [`ConstExprKind::Neg`]
+/// rather than in the literal (whose `u128` cannot hold it), and the signed
+/// value a const argument denotes is read out in exactly one place.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstExpr {
+    pub kind: ConstExprKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstExprKind {
+    /// An atom: the `4` of `Window of (Int, 4)`.
+    ///
+    /// Any [`Literal`], not just an integer one. The parser has always
+    /// accepted `Window of (Int, "a")` here and let a later phase say what is
+    /// wrong with it — `const-expression-arithmetic.md` §2.3 is that phase,
+    /// and it reports `SC0260` naming the two admissible kinds.
+    Lit(Literal),
+    /// `-` applied to a const expression: the `-1` of a dimension vector.
+    ///
+    /// The operand keeps its own span, so a diagnostic can point at the
+    /// literal, at the `-`, or at the whole negated term.
+    Neg(Box<ConstExpr>),
+}
+
+impl ConstExpr {
+    /// The signed integer this const argument denotes, or `None` when it does
+    /// not denote one.
+    ///
+    /// This is F0 commitment 2. [`Literal::Int`] holds a `u128` because that
+    /// is what the lexer accumulates, and a const argument is signed, so the
+    /// representation of a const argument's *value* is `i128` and this is the
+    /// single place that says so. `-2^127` is therefore the most negative
+    /// value a const argument has; a larger magnitude is `None` here rather
+    /// than a wrong number somewhere downstream.
+    ///
+    /// `None` also covers the const arguments that are not integers at all —
+    /// a float, a string, a character, a bool — which parse (see
+    /// [`ConstExprKind::Lit`]) and are rejected by kind-checking, not here.
+    pub fn as_i128(&self) -> Option<i128> {
+        /// The magnitude of `i128::MIN`, which is one past `i128::MAX`.
+        const MIN_MAGNITUDE: u128 = i128::MAX as u128 + 1;
+
+        match &self.kind {
+            ConstExprKind::Lit(Literal::Int { value, .. }) => i128::try_from(*value).ok(),
+            ConstExprKind::Lit(_) => None,
+            ConstExprKind::Neg(operand) => match &operand.kind {
+                // `-(2^127)` is representable although `+2^127` is not, so a
+                // negated literal is negated from its unsigned magnitude and
+                // never through an `i128` that cannot hold it.
+                ConstExprKind::Lit(Literal::Int { value, .. }) if *value <= MIN_MAGNITUDE => {
+                    Some((*value as i128).wrapping_neg())
+                }
+                ConstExprKind::Lit(_) => None,
+                _ => operand.as_i128()?.checked_neg(),
+            },
+        }
+    }
+}
+
 // --- blocks and statements -----------------------------------------------
 
 /// A sequence of statements, optionally ending in an expression that is the
-/// block's value (§4.3: a function's value is its last expression).
+/// block's value (§4.4: a function's value is its last expression).
 ///
 /// The tail is split out rather than left as the last statement so that later
 /// phases never have to re-derive which expression the block evaluates to.
 ///
-/// Both block forms of §4.2 produce this node: the indented
+/// Both block forms of §4.5 produce this node: the indented
 /// `:` NEWLINE INDENT .. DEDENT form, and the single-expression inline form,
 /// which comes out as an empty `stmts` with a `tail`.
 ///
@@ -291,9 +633,9 @@ pub enum StmtKind {
     Let(LetStmt),
     /// An expression evaluated for its effect.
     Expr(Expr),
-    /// `target = value`. §4.4 lists `=` in the precedence table, but it is
-    /// non-associative and cannot appear nested in a useful way, so it is a
-    /// statement here; see the note in `parser.rs`.
+    /// `target be value`. §4.6's precedence table has no assignment in it at
+    /// all: assignment is a statement, not an operator; see the note in
+    /// `parser.rs`.
     Assign { target: Expr, value: Expr },
     Return(Option<Expr>),
     Break(Option<Expr>),
@@ -302,9 +644,9 @@ pub enum StmtKind {
     Error,
 }
 
-/// `let x = e`, `let mut x = e`, `let x: T = e`.
+/// `let x be e`, `let mutable x be e`, `let x: T be e`.
 ///
-/// F0 has no destructuring in `let` (§4.3), so the bound name is an `Ident`
+/// F0 has no destructuring in `let` (§4.5), so the bound name is an `Ident`
 /// rather than a pattern.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LetStmt {
@@ -331,20 +673,20 @@ pub enum ExprKind {
     /// `self`.
     SelfValue,
     /// `f(a, b)`. Struct construction with named arguments is `StructLit`.
-    Call { callee: Box<Expr>, args: Vec<Expr> },
+    Call { callee: Box<Expr>, args: Vec<Arg> },
     /// `receiver.method(args)`.
     MethodCall {
         receiver: Box<Expr>,
         method: Ident,
         generics: Vec<Type>,
-        args: Vec<Expr>,
+        args: Vec<Arg>,
     },
     /// `base.name`.
     Field { base: Box<Expr>, name: Ident },
     /// `base[index]`.
     Index { base: Box<Expr>, index: Box<Expr> },
     /// `Doc(title: "a", body: "b")` — construction with named arguments, which
-    /// §4.3 makes mandatory for structs. Syntactically this is a call whose
+    /// §4.4 makes mandatory for records. Syntactically this is a call whose
     /// arguments are named; nothing but the names distinguishes the two.
     StructLit { path: Path, fields: Vec<FieldInit> },
     /// `(a, b)`, two or more elements.
@@ -355,22 +697,47 @@ pub enum ExprKind {
     Binary { op: BinaryOp, lhs: Box<Expr>, rhs: Box<Expr> },
     /// `e as T`.
     Cast { expr: Box<Expr>, ty: Type },
-    /// `e?`.
+    /// `try e` (§4.5): unwrap `Ok`/`Some`, or return the failure.
     Try(Box<Expr>),
-    /// `&e` and `&mut e`.
-    Ref { mutable: bool, expr: Box<Expr> },
+    /// `borrowed e` and `mutable borrowed e`. Auto-borrow (§6.3) means a call
+    /// rarely needs either, and both stay legal where they clarify.
+    Borrowed { mutable: bool, expr: Box<Expr> },
+    /// `0..n` and `0..=n` (§4.5).
+    Range { start: Box<Expr>, end: Box<Expr>, inclusive: bool },
+    /// The two closure forms of §4.6. `param: None` is the implicit-subject
+    /// form `each.title`, whose body mentions [`ExprKind::Each`]; `Some(name)`
+    /// is `doc giving doc.title`.
+    Closure { param: Option<Ident>, body: Box<Expr> },
+    /// `each`, the undeclared subject of the enclosing call (§4.6).
+    Each,
     If(IfExpr),
     Match(MatchExpr),
-    While { cond: Box<Expr>, body: Block },
     Loop { body: Block },
     For { pattern: Pattern, iter: Box<Expr>, body: Block },
+    /// `unsafe:` with a body — §3 of the FFI note. It is an expression and
+    /// not a statement for the same reason `if` is: it has the value of its
+    /// block, and a foreign call is usually the whole of it.
+    Unsafe(Block),
     /// A bare block used as an expression.
     Block(Block),
     /// An expression that failed to parse.
     Error,
 }
 
-/// `name: value` inside a struct construction.
+/// One argument of a call.
+///
+/// The name is `Some` only for `docs.sort(by: doc giving ..)` (§4.6), where
+/// the receiver is not a path and so no record construction could be meant.
+/// Where the callee *is* a path, named arguments construct a record and the
+/// call becomes a `StructLit` instead; see `parser.rs`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Arg {
+    pub name: Option<Ident>,
+    pub value: Expr,
+    pub span: Span,
+}
+
+/// `name: value` inside a record construction.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldInit {
     pub name: Ident,
@@ -378,7 +745,7 @@ pub struct FieldInit {
     pub span: Span,
 }
 
-/// `if`/`else` is an expression (§4.4).
+/// `if`/`else` is an expression (§4.5).
 ///
 /// `else_branch` is an `Expr` rather than a `Block` so that `else if` chains
 /// are just a nested `If`; a plain `else:` gives an `ExprKind::Block`.
@@ -434,6 +801,13 @@ impl UnaryOp {
     }
 }
 
+/// The binary operators of §4.6's precedence table.
+///
+/// A comparison has two spellings — `a is b` and `a == b` — and exactly one
+/// variant here, which is §5.4's requirement that the phrase and the symbol be
+/// the same operator "by construction, not by a parser rule that could drift".
+/// `as_str` prints the symbol form for both, because the trait method they
+/// dispatch to has one name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
@@ -441,6 +815,10 @@ pub enum BinaryOp {
     Mul,
     Div,
     Rem,
+    /// `**`, right-associative (§4.6).
+    Pow,
+    /// `@`, matrix multiplication.
+    MatMul,
     Shl,
     Shr,
     BitAnd,
@@ -465,6 +843,8 @@ impl BinaryOp {
             Mul => "*",
             Div => "/",
             Rem => "%",
+            Pow => "**",
+            MatMul => "@",
             Shl => "<<",
             Shr => ">>",
             BitAnd => "&",
@@ -495,13 +875,13 @@ pub enum PatternKind {
     /// `_`
     Wildcard,
     Literal(Literal),
-    /// A bare name. A unit enum variant such as `None` also lands here: only
+    /// A bare name. A unit choice variant such as `None` also lands here: only
     /// name resolution can tell a binding from a variant, and that is not the
     /// parser's job.
     Binding { mutable: bool, name: Ident },
     /// `Ok(value)`, and `None` once resolution has reclassified it.
     Variant { path: Path, elems: Vec<Pattern> },
-    /// `Doc(title: t)` — a struct pattern, matching the named-argument form
+    /// `Doc(title: t)` — a record pattern, matching the named-argument form
     /// that constructs one.
     Struct { path: Path, fields: Vec<FieldPattern> },
     /// `(a, b)`, two or more elements.

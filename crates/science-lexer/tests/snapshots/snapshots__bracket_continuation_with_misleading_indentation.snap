@@ -1,9 +1,9 @@
 ---
 source: crates/science-lexer/tests/snapshots.rs
-expression: "dump(\"\\\nfn main():\n    call(\n            first,\n  second,\n        [1, 2,\n         3],\n    )\n    after\n\")"
+expression: "dump(\"\\\nfunction main():\n    call(\n            first,\n  second,\n        [1, 2,\n         3],\n    )\n    after\n\")"
 ---
 == source ==
-|fn main():
+|function main():
 |    call(
 |            first,
 |  second,
@@ -14,33 +14,33 @@ expression: "dump(\"\\\nfn main():\n    call(\n            first,\n  second,\n  
 |
 
 == tokens ==
-   0..2     Fn
-   3..7     Ident("main")
-   7..8     LParen
-   8..9     RParen
-   9..10    Colon
-  10..11    Newline
-  11..15    Indent
-  15..19    Ident("call")
-  19..20    LParen
-  33..38    Ident("first")
-  38..39    Comma
-  42..48    Ident("second")
-  48..49    Comma
-  58..59    LBracket
-  59..60    Int { value: 1, base: Dec, suffix: None }
-  60..61    Comma
-  62..63    Int { value: 2, base: Dec, suffix: None }
-  63..64    Comma
-  74..75    Int { value: 3, base: Dec, suffix: None }
-  75..76    RBracket
-  76..77    Comma
-  82..83    RParen
-  83..84    Newline
-  88..93    Ident("after")
-  93..94    Newline
-  94..94    Dedent
-  94..94    Eof
+   0..8     Function
+   9..13    Ident("main")
+  13..14    LParen
+  14..15    RParen
+  15..16    Colon
+  16..17    Newline
+  17..21    Indent
+  21..25    Ident("call")
+  25..26    LParen
+  39..44    Ident("first")
+  44..45    Comma
+  48..54    Ident("second")
+  54..55    Comma
+  64..65    LBracket
+  65..66    Int { value: 1, base: Dec, suffix: None }
+  66..67    Comma
+  68..69    Int { value: 2, base: Dec, suffix: None }
+  69..70    Comma
+  80..81    Int { value: 3, base: Dec, suffix: None }
+  81..82    RBracket
+  82..83    Comma
+  88..89    RParen
+  89..90    Newline
+  94..99    Ident("after")
+  99..100   Newline
+ 100..100   Dedent
+ 100..100   Eof
 
 == diagnostics ==
 (none)

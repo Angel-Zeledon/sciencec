@@ -2,11 +2,11 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![f]))"
 ---
-Module `main` #41 @0..13
-  Fn `f` #42 @0..13
+Module `main` #78 @0..13
+  Fn `f` #79 @0..13
     ret: SelfType -> <error> @2..6
     body: Block @7..13
       tail: Self -> <error> @7..11
 --- diagnostics ---
-SC0208 @2..6 `Self` only exists inside an `impl` or a `trait`
+SC0208 @2..6 `Self` only exists inside an implementation or an interface
 SC0208 @7..11 `self` is only available in a method with a `self` receiver

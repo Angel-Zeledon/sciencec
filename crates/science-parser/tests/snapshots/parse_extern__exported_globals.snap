@@ -1,0 +1,24 @@
+---
+source: crates/science-parser/tests/parse_extern.rs
+expression: "parse_source(r#\"unsafe extern \"C\" library \"hdf5\":\n    type Hid is I64\n    type Herr is I32\n    function H5open() -> Herr\n    static H5T_NATIVE_DOUBLE_g: Hid\n    static H5T_NATIVE_INT_g: Hid\n    static PyExc_TypeError: ffi.Pointer of PyObject\n\"#)"
+---
+Module @0..226
+  Extern "C" unsafe @0..225
+    Library "hdf5" @18..32
+    items
+      ExternAlias `Hid` @38..53
+        type: Path `I64` @50..53
+      ExternAlias `Herr` @58..74
+        type: Path `I32` @71..74
+      ExternFn `H5open` @79..104
+        ret: Path `Herr` @100..104
+      ExternStatic `H5T_NATIVE_DOUBLE_g` @109..140
+        type: Path `Hid` @137..140
+      ExternStatic `H5T_NATIVE_INT_g` @145..173
+        type: Path `Hid` @170..173
+      ExternStatic `PyExc_TypeError` @178..225
+        type: Path `ffi.Pointer` @202..225
+          generics of `Pointer`
+            Path `PyObject` @217..225
+--- diagnostics ---
+(none)

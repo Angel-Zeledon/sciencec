@@ -1,17 +1,27 @@
 ---
 source: crates/science-parser/tests/parse_patterns.rs
-expression: "parse_body(r#\"fn f(pairs: &Array[(Int, Int)]):\n    for (a, b) in pairs:\n        println(a)\n\"#)"
+expression: "parse_body(r#\"function f(pairs: borrowed Array of Pair, n: Int):\n    for (a, b) in pairs:\n        print(a)\n    for i in 0..n:\n        print(i)\n\"#)"
 ---
-Block @37..76
-  tail: For @37..76
-    pattern: Tuple @41..47
-      Binding `a` @42..43
-      Binding `b` @45..46
-    iter: Path `pairs` @51..56
-    body: Block @66..76
-      tail: Call @66..76
-        callee: Path `println` @66..73
+Block @55..128
+  For @55..92
+    pattern: Tuple @59..65
+      Binding `a` @60..61
+      Binding `b` @63..64
+    iter: Path `pairs` @69..74
+    body: Block @84..92
+      tail: Call @84..92
+        callee: Path `print` @84..89
         args
-          Path `a` @74..75
+          Path `a` @90..91
+  tail: For @97..128
+    pattern: Binding `i` @101..102
+    iter: Range @106..110
+      start: Int 0 @106..107
+      end: Path `n` @109..110
+    body: Block @120..128
+      tail: Call @120..128
+        callee: Path `print` @120..125
+        args
+          Path `i` @126..127
 --- diagnostics ---
 (none)

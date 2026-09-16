@@ -1,105 +1,184 @@
-//! `trait` and `impl`, which §4.3 gives five shapes between them: a trait with
-//! required and default methods, a generic trait, an `impl Trait for Type`, an
-//! inherent `impl Type` with associated functions, and the block-less marker
-//! form.
+//! `interface` and the two implementation heads, which §4.4 gives five shapes
+//! between them: an interface with required and default methods, a generic
+//! interface, `Type implements Interface:`, the inherent `Type has:`, and the
+//! block-less marker form. §5.4 adds the associated type that an interface
+//! declares and an implementation binds.
+//!
+//! An implementation head is the one item in the language that starts with a
+//! type rather than with a keyword, so several of these tests are really about
+//! the parser recognising an item it has not been told about by its first word.
 
 mod common;
 use common::{parse_source, parse_source_allowing_errors};
 
-/// A trait with one required method and one with a default body. The two are
+/// An interface with one required method and one with a default body. Both are
 /// the same node; only `body` differs.
 #[test]
-fn trait_with_a_default_method() {
+fn interface_with_a_default_method() {
     insta::assert_snapshot!(parse_source(
-        r#"trait Summarize:
-    fn summarize(&self) -> String
+        r#"interface Summarize:
+    function summarize(self) -> String
 
-    fn preview(&self) -> String:
+    function preview(self) -> String:
         self.summarize().truncate(80)
 "#
     ));
 }
 
-/// §4.3: "a trait may take type parameters. With no associated types in F0,
-/// this is the only way to write `Iterate` or `From`."
+/// §4.4: an interface may take type parameters, written after the name with
+/// `of`.
 #[test]
-fn generic_trait() {
+fn generic_interface() {
     insta::assert_snapshot!(parse_source(
-        r#"trait From[T]:
-    fn from(value: T) -> Self
+        r#"interface From of T:
+    function from(value: T) -> Self
 "#
     ));
 }
 
-/// Supertraits, written `trait A: B + C`. The `:` that introduces them and the
-/// `:` that opens the body are told apart by what follows: a name against the
-/// end of the line.
+/// The interfaces an interface requires, written `interface A: B + C`. The `:`
+/// that introduces them and the `:` that opens the body are told apart by what
+/// follows: a name against the end of the line.
 #[test]
-fn trait_with_supertraits() {
+fn interface_with_required_interfaces() {
     insta::assert_snapshot!(parse_source(
-        r#"trait Pretty[T]: Summarize + Clone:
-    fn pretty(&self) -> T
+        r#"interface Pretty: Summarize + Clone:
+    function pretty(self) -> String
 "#
     ));
 }
 
-/// A trait whose methods take each receiver form.
+/// The same interface with a parameter. `of T` is not bracketed any more, so
+/// the bare form `interface Pretty of T: Summarize + Clone:` has two readings
+/// and the parameter takes the bounds; the parenthesised `of (T)` closes the
+/// parameter list first and leaves the bounds to the interface. Both are
+/// here, side by side, because the difference is invisible otherwise.
 #[test]
-fn trait_receivers() {
+fn a_generic_interface_with_required_interfaces() {
     insta::assert_snapshot!(parse_source(
-        r#"trait Shape:
-    fn area(self) -> Int
-    fn scale(&self) -> Int
-    fn reset(&mut self)
+        r#"interface Pretty of T: Summarize + Clone:
+    function pretty(self) -> T
+
+interface Plain of (T): Summarize + Clone:
+    function plain(self) -> T
 "#
     ));
 }
 
-/// `impl Trait for Type`, the form §4.3 writes down first.
+/// An interface whose methods take each of §4.4's three receiver forms: `self`
+/// borrows, `mutable self` borrows exclusively, and only the annotated
+/// `self: Self` takes the receiver by value.
 #[test]
-fn trait_impl() {
+fn interface_receivers() {
     insta::assert_snapshot!(parse_source(
-        r#"impl Summarize for Doc:
-    fn summarize(&self) -> String:
+        r#"interface Shape:
+    function area(self) -> Int
+    function scale(mutable self) -> Int
+    function consume(self: Self) -> Int
+"#
+    ));
+}
+
+/// `mutable self` on its own, since it is the receiver that changed spelling
+/// most and the one a method that mutates has to reach for.
+#[test]
+fn a_mutable_receiver() {
+    insta::assert_snapshot!(parse_source(
+        r#"Note implements Reset:
+    function reset(mutable self):
+        self.text be ""
+"#
+    ));
+}
+
+/// The by-value receiver on its own. It is written as an ordinary annotated
+/// parameter, and the annotation is dropped: a receiver's type is always the
+/// implementing type.
+#[test]
+fn a_by_value_receiver() {
+    insta::assert_snapshot!(parse_source(
+        r#"Note implements IntoTitle:
+    function into_title(self: Self) -> String:
+        self.text
+"#
+    ));
+}
+
+/// The annotation on a by-value receiver is checked even though it is dropped,
+/// so `self: Int` cannot pass for one.
+#[test]
+fn a_receiver_annotated_with_anything_but_self_is_rejected() {
+    insta::assert_snapshot!(parse_source_allowing_errors(
+        r#"Note has:
+    function take(self: Int) -> Int:
+        1
+"#
+    ));
+}
+
+/// `Type implements Interface:`, the form §4.4 writes down first. The type
+/// comes first and the interface second — the reverse of what the old
+/// `impl Trait for Type` said.
+#[test]
+fn a_type_implements_an_interface() {
+    insta::assert_snapshot!(parse_source(
+        r#"Doc implements Summarize:
+    function summarize(self) -> String:
         self.body.truncate(200)
 "#
     ));
 }
 
-/// A generic trait implemented for a generic type, both sides carrying
-/// arguments.
+/// A generic interface implemented for a generic type, both sides carrying
+/// arguments. The head declares `A` and `B` once and echoes them back as the
+/// arguments of `Pair`.
 #[test]
-fn generic_trait_impl() {
+fn a_generic_type_implements_a_generic_interface() {
     insta::assert_snapshot!(parse_source(
-        r#"impl Swap[Pair[B, A]] for Pair[A, B]:
-    fn swapped(&self) -> Pair[B, A]:
+        r#"Pair of (A, B) implements Swap of Pair of (B, A):
+    function swapped(self) -> Pair of (B, A):
         Pair(first: self.second, second: self.first)
 "#
     ));
 }
 
-/// §4.3's inherent impl: "a type may have methods that come from no trait. A
-/// function in an `impl` with no `self` receiver is an associated function."
+/// The bare `Pair of (A, B) implements Swap:` head of §4.4: the parameters are
+/// declared on the implementing type and nothing else carries arguments.
 #[test]
-fn inherent_impl_with_an_associated_function() {
+fn a_generic_implementation_echoes_its_parameters() {
     insta::assert_snapshot!(parse_source(
-        r#"impl Doc:
-    fn new(title: String) -> Doc:
-        Doc(title: title, body: "")
+        r#"Pair of (A, B) implements Swap:
+    type Swapped is Pair of (B, A)
 
-    fn is_empty(&self) -> Bool:
-        self.body.len() == 0
+    function swapped(self: Self) -> Self.Swapped:
+        Pair(first: self.second, second: self.first)
 "#
     ));
 }
 
-/// An inherent impl on a generic type, which is how `Array[T].new()` gets its
+/// §4.4's inherent block: "a type may have methods that come from no
+/// interface. A function in a `has` block with no `self` receiver is an
+/// associated function."
+#[test]
+fn has_with_an_associated_function() {
+    insta::assert_snapshot!(parse_source(
+        r#"Doc has:
+    function new(title: String) -> Doc:
+        Doc(title: title, body: "")
+
+    function is_empty(self) -> Bool:
+        self.body.length() is 0
+"#
+    ));
+}
+
+/// An inherent block on a generic type, which is how `Array of T` gets its
 /// associated function.
 #[test]
-fn inherent_impl_on_a_generic_type() {
+fn has_on_a_generic_type() {
     insta::assert_snapshot!(parse_source(
-        r#"impl Array[T]:
-    fn new() -> Array[T]:
+        r#"Array of T has:
+    function new() -> Array of T:
         empty()
 "#
     ));
@@ -109,88 +188,200 @@ fn inherent_impl_on_a_generic_type() {
 /// tell it from a method call, and §4.4's rule is that resolution decides.
 #[test]
 fn an_associated_function_call_is_a_method_call_until_resolution() {
-    insta::assert_snapshot!(parse_source("fn main():\n    let d = Doc.new(\"a\")\n"));
+    insta::assert_snapshot!(parse_source("function main():\n    let d be Doc.new(\"a\")\n"));
 }
 
-/// §4.3's marker trait: "a trait with no methods is implemented by a single
-/// line with no block, since there is nothing to indent." Without this rule
-/// `Copy` would be unimplementable.
+/// §4.4's marker interface: "an interface with no methods is implemented by a
+/// single line with no block, since there is nothing to indent." Without this
+/// rule `Copy` would be unimplementable.
 #[test]
-fn marker_trait_impl() {
-    insta::assert_snapshot!(parse_source("impl Copy for Point\n"));
+fn a_marker_implementation_has_no_block() {
+    insta::assert_snapshot!(parse_source("Position implements Copy\n"));
 }
 
-/// The marker form sits among ordinary items without disturbing them.
+/// The marker form sits among ordinary items without disturbing them — the
+/// interesting case, because the line that follows it is another item that
+/// also begins with a type.
 #[test]
-fn marker_trait_impl_between_other_items() {
+fn a_marker_implementation_between_other_items() {
     insta::assert_snapshot!(parse_source(
-        r#"struct Point:
-    x: Int
+        r#"type Position:
+    line: U32
 
-impl Copy for Point
+Position implements Copy
 
-impl Clone for Point:
-    fn clone(&self) -> Point:
-        Point(x: self.x)
+Position implements Clone:
+    function clone(self) -> Position:
+        Position(line: self.line)
 
-fn main():
-    println(1)
+function main():
+    print(1)
 "#
     ));
 }
 
-/// A `where` clause on an `impl`.
+/// A `where` clause on an implementation.
 #[test]
-fn impl_with_a_where_clause() {
+fn an_implementation_with_a_where_clause() {
     insta::assert_snapshot!(parse_source(
-        r#"impl Summarize for Pair[A, B] where A: Clone, B: Clone:
-    fn summarize(&self) -> String:
+        r#"Pair of (A, B) implements Summarize where A: Clone, B: Clone:
+    function summarize(self) -> String:
         "pair"
 "#
     ));
 }
 
-/// §4.3: "where a `where` clause ends." A bound list ends only at `+` or `,`,
+/// §4.4: "where a `where` clause ends." A bound list ends only at `+` or `,`,
 /// so the first `:` that no bound consumes is the one that opens the block.
 #[test]
 fn a_where_clause_ends_at_the_colon_that_opens_the_block() {
     insta::assert_snapshot!(parse_source(
-        r#"fn f[T]() -> T where T: A + B:
+        r#"function f of T() -> T where T: A + B:
     body()
 "#
     ));
 }
 
-/// A trait body that contains something other than a method is reported, and
-/// the methods around it still parse.
+// --- associated types (§5.4) ---------------------------------------------
+
+/// The pair that §5.4 introduces: an interface declares `type Item` and leaves
+/// the type open; the implementation supplies it with `type Item is Int`. The two
+/// members land in `assoc types`, apart from the methods, because their
+/// interleaving carries no meaning.
 #[test]
-fn a_non_method_in_a_trait_body_is_rejected() {
-    insta::assert_snapshot!(parse_source_allowing_errors(
-        r#"trait T:
-    let x = 1
-    fn f(&self) -> Int
+fn an_associated_type_is_declared_in_an_interface_and_bound_in_an_implementation() {
+    insta::assert_snapshot!(parse_source(
+        r#"interface Iterate:
+    type Item
+    function next(mutable self) -> Option of Self.Item
+
+Countdown implements Iterate:
+    type Item is Int
+
+    function next(mutable self) -> Option of Self.Item:
+        None
 "#
     ));
 }
 
-/// `impl` of something that is not a path as a trait.
+/// `Self.Item` in a return position, bare rather than wrapped in `Option`, so
+/// that the `SelfAssoc` node and its span are visible on their own.
 #[test]
-fn a_non_path_trait_is_rejected() {
+fn self_dot_item_names_an_associated_type_in_a_return_position() {
+    insta::assert_snapshot!(parse_source(
+        r#"interface Produce:
+    type Output
+    function produce(self) -> Self.Output
+"#
+    ));
+}
+
+/// §5.4 allows only `Self` as the base of a projection: F0 has no syntax for
+/// the qualified form Rust spells `<T as Iterate>::Item`. `T.Item` is
+/// therefore not a projection at all, and the parser — which has no idea what
+/// `T` is — reads it as the ordinary dotted path it looks like and leaves the
+/// complaint to resolution.
+#[test]
+fn a_projection_through_something_other_than_self_is_a_plain_path() {
+    insta::assert_snapshot!(parse_source(
+        r#"interface Produce of T:
+    function produce(self) -> T.Output
+"#
+    ));
+}
+
+/// `type Item is Int` written in an *interface* is SC0112, and the message
+/// names the form that belongs there: an interface declares the name and
+/// leaves the type to the implementation.
+///
+/// FAILING ON PURPOSE. `parse_member` is told which side it is on and refuses
+/// to read the other side's form at all, so the `Member::AssocBinding` arm of
+/// `parse_interface_body` — which holds this message — cannot be reached, and
+/// what comes out is a bare SC0100 about a stray `is`.
+#[test]
+fn an_associated_type_bound_inside_an_interface_is_rejected() {
+    let report = parse_source_allowing_errors(
+        r#"interface Iterate:
+    type Item is Int
+    function next(mutable self) -> Self.Item
+"#,
+    );
+    insta::assert_snapshot!(report);
+    assert!(
+        report.contains("SC0112"),
+        "the implementation's form written in an interface should be SC0112, naming the form \
+         belongs here; got:\n{report}"
+    );
+}
+
+/// And `type Item` written in an *implementation* is the same code with the
+/// other message: the implementation is the side that owes a type.
+///
+/// FAILING ON PURPOSE, for the mirror-image reason: the `Member::AssocDecl`
+/// arm of `parse_impl` is unreachable, and the bare `expect` of `is` reports
+/// SC0100 first.
+#[test]
+fn an_associated_type_left_unbound_inside_an_implementation_is_rejected() {
+    let report = parse_source_allowing_errors(
+        r#"Countdown implements Iterate:
+    type Item
+    function next(mutable self) -> Self.Item:
+        None
+"#,
+    );
+    insta::assert_snapshot!(report);
+    assert!(
+        report.contains("SC0112"),
+        "the interface's form written in an implementation should be SC0112, saying the \
+         implementation owes the type; got:\n{report}"
+    );
+}
+
+// --- what is rejected ------------------------------------------------------
+
+/// An interface body that contains something that is neither a method nor an
+/// associated type is reported, and the members around it still parse.
+#[test]
+fn a_non_member_in_an_interface_body_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        r#"impl &Doc for Point:
-    fn f(&self) -> Int:
+        r#"interface T:
+    let x be 1
+    function f(self) -> Int
+"#
+    ));
+}
+
+/// `implements` followed by something that is not a path.
+#[test]
+fn a_non_path_interface_is_rejected() {
+    insta::assert_snapshot!(parse_source_allowing_errors(
+        r#"Point implements borrowed Doc:
+    function f(self) -> Int:
         1
 "#
     ));
 }
 
-/// An `impl` body that is indented without a `:` gets the same targeted
-/// message a function does, rather than a complaint about stray indentation.
+/// An implementation is not a name anything can be imported by, so `public` in
+/// front of one is SC0107.
 #[test]
-fn an_impl_body_without_a_colon_is_rejected() {
+fn public_on_an_implementation_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        r#"impl Summarize for Doc
-    fn summarize(&self) -> String:
+        r#"public Doc implements Summarize:
+    function summarize(self) -> String:
+        "a"
+"#
+    ));
+}
+
+/// An implementation body that is indented without a `:` gets the same
+/// targeted message a function does, rather than a complaint about stray
+/// indentation.
+#[test]
+fn an_implementation_body_without_a_colon_is_rejected() {
+    insta::assert_snapshot!(parse_source_allowing_errors(
+        r#"Doc implements Summarize
+    function summarize(self) -> String:
         "a"
 "#
     ));

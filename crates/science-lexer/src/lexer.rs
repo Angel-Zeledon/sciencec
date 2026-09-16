@@ -7,7 +7,9 @@
 //!   lines and comment-only lines do not take part in that computation.
 //! * **Implicit line continuation.** Inside unclosed brackets, line breaks and
 //!   indentation are ignored entirely, so a call can be spread over as many
-//!   lines as it likes.
+//!   lines as it likes. A line beginning with `.` or with `where` continues
+//!   the line above it too: the first is how a method chain is broken across
+//!   lines (§4.6), the second how a long signature is (§4.4).
 //!
 //! The lexer never aborts. Anything it cannot make sense of becomes a
 //! diagnostic plus whatever token keeps the stream usable, so a single pass can
@@ -39,6 +41,10 @@ const E_BAD_SUFFIX: Code = Code(9);
 const E_MALFORMED_NUMBER: Code = Code(10);
 /// A float literal too large or too small to be represented.
 const E_FLOAT_RANGE: Code = Code(11);
+/// `==`, the spelling `syntax-revision-2.md` §1 removed in favour of `is`.
+const E_EQ_SYMBOL: Code = Code(16);
+/// `!=`, the spelling `syntax-revision-2.md` §1 removed in favour of `is not`.
+const E_NOT_EQ_SYMBOL: Code = Code(17);
 
 /// Turns `source` into a token stream.
 ///
@@ -95,10 +101,17 @@ impl<'a> Lexer<'a> {
                 '\n' => {
                     self.bump();
                     if self.depth == 0 {
-                        if self.pending_newline {
-                            self.emit(TokenKind::Newline, start, self.pos);
+                        // §4.6: a chain broken by a leading `.` is still one
+                        // logical line, so it gets neither a `Newline` nor the
+                        // indentation treatment. Asking `pending_newline` first
+                        // is what stops `.foo()` from continuing a line that
+                        // produced no token to continue.
+                        if !(self.pending_newline && self.eat_line_continuation()) {
+                            if self.pending_newline {
+                                self.emit(TokenKind::Newline, start, self.pos);
+                            }
+                            self.start_of_line();
                         }
-                        self.start_of_line();
                     }
                 }
                 ' ' | '\t' | '\r' => {
@@ -248,6 +261,67 @@ impl<'a> Lexer<'a> {
                 // at `content` and token spans must never go backwards.
                 self.indents.push(width);
                 self.emit(TokenKind::Indent, content, content);
+            }
+        }
+    }
+
+    /// Whether the next line continues this one rather than starting a new one.
+    ///
+    /// Two things continue a line, and both are written at its start:
+    ///
+    /// * `.`, which breaks a method chain across lines (§4.6);
+    /// * `where`, which breaks a long signature before its bounds (§4.4).
+    ///
+    /// Called with the cursor just past a line break. When the next line with
+    /// content begins with one of them, the intervening blank and comment-only
+    /// lines are consumed along with the indentation, the cursor is left on the
+    /// continuing token, and the caller suppresses the line structure: no
+    /// `Newline`, no `Indent`, no `Dedent`. Otherwise nothing is consumed and
+    /// the caller carries on as usual.
+    ///
+    /// `..` is excluded deliberately: a range is not a chain link, and no line
+    /// may begin with one. The indentation is not measured either — like the
+    /// inside of a bracket, the leading whitespace of a continuation line means
+    /// nothing, so a tab in it is not the SC0003 of `start_of_line`.
+    fn eat_line_continuation(&mut self) -> bool {
+        // Bytes, not chars: every character scanned for here is ASCII, and a
+        // UTF-8 continuation byte can never be mistaken for one.
+        let bytes = self.src.as_bytes();
+        let mut probe = self.pos;
+        loop {
+            while matches!(bytes.get(probe), Some(b' ' | b'\t' | b'\r')) {
+                probe += 1;
+            }
+            match bytes.get(probe) {
+                // A blank line takes no part, exactly as it takes no part in
+                // the indentation computation.
+                Some(b'\n') => probe += 1,
+                // Neither does a line holding nothing but a comment.
+                Some(b'#') => {
+                    while !matches!(bytes.get(probe), None | Some(b'\n')) {
+                        probe += 1;
+                    }
+                }
+                Some(b'.') => {
+                    // `probe` is on a `.`, so `probe + 1` is a char boundary.
+                    let continues =
+                        self.src[probe + 1..].chars().next().is_some_and(is_ident_start);
+                    if continues {
+                        self.pos = probe;
+                    }
+                    return continues;
+                }
+                // `where` is the only word that continues a line. No statement
+                // may begin with it, so recognising it here costs nothing.
+                Some(b'w') if self.src[probe..].starts_with("where") => {
+                    let after = self.src[probe + "where".len()..].chars().next();
+                    let continues = !after.is_some_and(is_ident_continue);
+                    if continues {
+                        self.pos = probe;
+                    }
+                    return continues;
+                }
+                _ => return false,
             }
         }
     }
@@ -719,7 +793,13 @@ impl<'a> Lexer<'a> {
         let start = self.pos;
         let c = self.bump().expect("the caller checked there is a character");
 
-        // Longest match wins: `<<` before `<`, `->` before `-`, `==` before `=`.
+        // Longest match wins: `<<` before `<`, `==` before `=`, `!=` before
+        // `!`, `->` before `-`, and `..=` before `..` before `.`. The
+        // characters that can begin a longer operator are `<`, `>`, `=`, `!`,
+        // `-` and `.`; each one needs a lookahead arm before its plain arm.
+        // `==` and `!=` are matched here even though §1 removed them from the
+        // language: they are recognised in order to be *reported*, which is
+        // what keeps a stale one from costing a second diagnostic.
         let kind = match c {
             '(' => self.open(TokenKind::LParen),
             '[' => self.open(TokenKind::LBracket),
@@ -731,11 +811,23 @@ impl<'a> Lexer<'a> {
             ',' => TokenKind::Comma,
             ':' => TokenKind::Colon,
             ';' => TokenKind::Semi,
+            // §4.5 writes ranges with dots. A range never follows a float,
+            // because `number` stops at a `.` that no digit follows, so the
+            // two dots always arrive here together.
+            '.' if self.eat('.') => {
+                if self.eat('=') {
+                    TokenKind::DotDotEq
+                } else {
+                    TokenKind::DotDot
+                }
+            }
             '.' => TokenKind::Dot,
-            '?' => TokenKind::Question,
-            '@' => TokenKind::At,
+            '@' => TokenKind::AtSign,
 
             '+' => TokenKind::Plus,
+            // `**` is one operator (§4.6: power, right-associative), not two
+            // stars: Science has no prefix `*`, so nothing else could follow.
+            '*' if self.eat('*') => TokenKind::StarStar,
             '*' => TokenKind::Star,
             '/' => TokenKind::Slash,
             '%' => TokenKind::Percent,
@@ -743,10 +835,35 @@ impl<'a> Lexer<'a> {
             '|' => TokenKind::Pipe,
             '^' => TokenKind::Caret,
 
+            // `->` introduces a return type (§4.4). It has to be tried first:
+            // otherwise `-` wins and the arrow lexes as subtraction followed
+            // by a greater-than.
             '-' if self.eat('>') => TokenKind::Arrow,
             '-' => TokenKind::Minus,
 
-            '=' if self.eat('=') => TokenKind::EqEq,
+            // `==` and `!=` were removed by `syntax-revision-2.md` §1: equality
+            // is `is` and inequality is `is not`, and there is exactly one
+            // spelling for each. The token is still emitted, because the
+            // author's intent is never in doubt — reporting it and carrying on
+            // means a stale `==` costs one diagnostic and no cascade, and the
+            // tree is the one applying the fix would have produced.
+            '=' if self.eat('=') => {
+                let span = self.span(start, self.pos);
+                self.diags.push(
+                    Diagnostic::error(E_EQ_SYMBOL, "equality is written `is`")
+                        .with_label(Label::primary(span, "`==` is not an operator in Science"))
+                        .with_note(
+                            "there is one spelling for each comparison: `is` and `is not` for \
+                             identity, and `>`, `<`, `>=`, `<=` for order",
+                        )
+                        .with_suggestion(Suggestion {
+                            span,
+                            replacement: "is".to_string(),
+                            message: "write the word instead".to_string(),
+                        }),
+                );
+                TokenKind::EqEq
+            }
             '=' if self.eat('>') => TokenKind::FatArrow,
             '=' => TokenKind::Eq,
 
@@ -758,25 +875,64 @@ impl<'a> Lexer<'a> {
             '>' if self.eat('=') => TokenKind::GtEq,
             '>' => TokenKind::Gt,
 
-            // `!` alone is not an operator: negation is spelled `not`.
-            '!' if self.eat('=') => TokenKind::NotEq,
+            // `!=` is still one token, reported and recovered exactly as `==`
+            // is above. It has to be matched before the lone `!` so that a
+            // stale `!=` costs the one diagnostic about its own spelling and
+            // not that one plus a complaint about its first character.
+            '!' if self.eat('=') => {
+                let span = self.span(start, self.pos);
+                self.diags.push(
+                    Diagnostic::error(E_NOT_EQ_SYMBOL, "inequality is written `is not`")
+                        .with_label(Label::primary(span, "`!=` is not an operator in Science"))
+                        .with_note(
+                            "there is one spelling for each comparison: `is` and `is not` for \
+                             identity, and `>`, `<`, `>=`, `<=` for order",
+                        )
+                        .with_suggestion(Suggestion {
+                            span,
+                            replacement: "is not".to_string(),
+                            message: "write the words instead".to_string(),
+                        }),
+                );
+                TokenKind::NotEq
+            }
 
             // A lone `!` is the most likely typo from anyone arriving from C,
             // Rust or Python, so it gets its own message rather than being
-            // told it is unrecognised — it is recognised, just only as `!=`.
+            // told it is unrecognised — `!` begins nothing in Science, since
+            // §1 removed `!=` as well.
             '!' => {
                 self.diags.push(
                     Diagnostic::error(E_UNKNOWN_CHAR, "`!` is not an operator in Science")
                         .with_label(Label::primary(
                             self.span(start, self.pos),
-                            "`!` is only valid as part of `!=`",
+                            "negation is spelled `not`",
                         ))
-                        .with_note("negation is spelled `not`")
+                        .with_note("`!` begins no operator in Science: inequality is `is not`")
                         .with_suggestion(Suggestion {
                             span: self.span(start, self.pos),
                             replacement: "not ".to_string(),
                             message: "if you meant to negate, write".to_string(),
                         }),
+                );
+                TokenKind::Unknown(c)
+            }
+
+            // `?` used to be error propagation and is now spelled `try`, which
+            // goes *before* the expression. Anyone arriving from Rust or Swift
+            // writes the postfix form first, so it gets the same treatment as
+            // `!`: a message about what to write instead of "unrecognised".
+            '?' => {
+                self.diags.push(
+                    Diagnostic::error(E_UNKNOWN_CHAR, "`?` is not an operator in Science")
+                        .with_label(Label::primary(
+                            self.span(start, self.pos),
+                            "error propagation is not written with `?`",
+                        ))
+                        .with_note(
+                            "error propagation is spelled `try`, and it goes before the \
+                             expression: write `try f(x)` rather than `f(x)?`",
+                        ),
                 );
                 TokenKind::Unknown(c)
             }

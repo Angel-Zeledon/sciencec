@@ -1,11 +1,11 @@
 ---
 source: crates/science-parser/tests/parse_stmts.rs
-expression: "parse_source_allowing_errors(\"fn f():\\n    let a: Int\\n    let b = 1\\n\")"
+expression: "parse_source_allowing_errors(\"function f():\\n    let a: Int\\n    let b be 1\\n\")"
 ---
-Module @0..37
-  Fn `f` @0..36
-    body: Block @27..36
-      Let `b` @27..36
-        value: Int 1 @35..36
+Module @0..44
+  Fn `f` @0..43
+    body: Block @33..43
+      Let `b` @33..43
+        value: Int 1 @42..43
 --- diagnostics ---
-SC0100 @22..23 expected `=`, found end of line
+SC0100 @28..29 expected `be`, found end of line

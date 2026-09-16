@@ -1,0 +1,219 @@
+# 20 - Extern blocks
+# Design: docs/superpowers/design/ffi-c-boundary.md §1 (the block, its items
+# and the FFI type vocabulary), §1.6 (integer width and the BlasInt hazard),
+# §3 (what `unsafe` means), §5.1 and §5.2 (linking, `via pkg-config`,
+# `kind static`, `when available`); and
+# docs/superpowers/design/c-binding-coverage.md §4.2 (exported globals),
+# §4.1 (the complex types) and §3.4 (unions).
+#
+# Covers: the block header in all of its forms, the five item forms
+# (`function`, `type`, `const`, `static`, `union`), `symbol` decoupling the
+# Science name from the linker name, both integer-width builds of §1.6, the
+# `ffi` type vocabulary including `Complex32` and `Complex64`, a C-compatible
+# record declared outside the block, and `unsafe:` at the call site.
+#
+# Nothing in this file is safe to call. That is the point of §0 of the design
+# note: the declaration records a claim the compiler will never check, the
+# `unsafe` marks it as such, and the interface a program is meant to use is
+# the hand-written wrapper at the bottom.
+
+# --- §1.1: the block, with the flags discovered by pkg-config ---------------
+
+unsafe extern "C" library "openblas" via pkg-config "openblas":
+
+    # §1.2, the type alias: a spelling for a C typedef.
+    type CblasLayout is CInt
+    type CblasTranspose is CInt
+
+    # §1.2, the constant: a `#define` or an enumerator, transcribed.
+    const CBLAS_ROW_MAJOR be 101 as CblasLayout
+    const CBLAS_COL_MAJOR be 102 as CblasLayout
+    const CBLAS_NO_TRANS be 111 as CblasTranspose
+    const CBLAS_TRANS be 112 as CblasTranspose
+
+    # §1.6, the 32-bit build: the reference and default OpenBLAS. The
+    # ILP64 block below has the same functions under different symbols,
+    # which is what turns choosing the wrong one into a link error rather
+    # than into wrong answers for large matrices.
+    type BlasInt is I32
+
+    # §1.2, the function. `ffi.Span of F64` is a pointer and a length, of
+    # which only the pointer crosses the ABI; the length is there so the
+    # wrapper's bounds check is an expression the compiler checks.
+    function cblas_dgemm(
+        layout: CblasLayout,
+        transpose_a: CblasTranspose,
+        transpose_b: CblasTranspose,
+        m: BlasInt, n: BlasInt, k: BlasInt,
+        alpha: F64,
+        a: ffi.Span of F64, lda: BlasInt,
+        b: ffi.Span of F64, ldb: BlasInt,
+        beta: F64,
+        c: ffi.MutableSpan of F64, ldc: BlasInt,
+    )
+
+    # §4.1 of the coverage audit: the complex types, which half of LAPACK
+    # and every `z`- and `c`-prefixed BLAS routine needs.
+    function cblas_zdotu_sub(
+        n: BlasInt,
+        x: ffi.Span of ffi.Complex64, incx: BlasInt,
+        y: ffi.Span of ffi.Complex64, incy: BlasInt,
+        result: mutable borrowed ffi.Complex64,
+    )
+
+    function cblas_cdotu_sub(
+        n: BlasInt,
+        x: ffi.Span of ffi.Complex32, incx: BlasInt,
+        y: ffi.Span of ffi.Complex32, incy: BlasInt,
+        result: mutable borrowed ffi.Complex32,
+    )
+
+# §1.6: the other half of the hazard. Same names, same argument counts, same
+# semantics, and eight of the arguments twice as wide. The builds that matter
+# ship distinct symbols, and `symbol` is what lets Science say which it means.
+unsafe extern "C" library "openblas64_" kind static:
+
+    type BlasInt64 is I64
+
+    function dgemm_lp64(
+        m: BlasInt64, n: BlasInt64, k: BlasInt64,
+        a: ffi.Span of F64,
+        b: ffi.Span of F64,
+        c: ffi.MutableSpan of F64,
+    ) symbol "dgemm_64_"
+
+# --- §4.2 of the audit: exported globals -----------------------------------
+
+# HDF5 is the case the `static` item exists for. `H5T_NATIVE_DOUBLE` is not a
+# constant: the header defines it as `(H5open(), H5T_NATIVE_DOUBLE_g)`, and
+# the global half of that expression has no other spelling. Without this item
+# HDF5 is ninety per cent function-bindable and zero per cent usable.
+unsafe extern "C" library "hdf5" via pkg-config "hdf5":
+
+    type Hid is I64
+    type Herr is I32
+
+    const H5F_ACC_TRUNC be 2 as CUInt
+    const H5P_DEFAULT be 0 as Hid
+    const H5I_BADID be -1 as Hid
+
+    function H5open() -> Herr
+    function H5Fcreate(
+        name: ffi.CStr,
+        flags: CUInt,
+        create: Hid,
+        access: Hid,
+    ) -> Hid
+    function H5Fclose(file: Hid) -> Herr
+
+    static H5T_NATIVE_DOUBLE_g: Hid
+    static H5T_NATIVE_INT_g: Hid
+    static H5P_CLS_FILE_ACCESS_ID_g: Hid
+
+    # §3.4 of the audit: HDF5 has two unions in its public interface, so
+    # §1.4's claim that no library in the target set needs one is wrong. The
+    # import is the opaque blob §1.4 already described - the right size and
+    # the right alignment, and no way to read the arms. The library's own
+    # accessors are the two functions beside it.
+    union H5L_info2_t: size 32 align 8
+    union H5R_ref_t: size 64 align 8
+
+    function H5Rget_type(reference: borrowed H5R_ref_t) -> CInt
+    function H5Rdestroy(reference: mutable borrowed H5R_ref_t) -> Herr
+
+# --- §5.2: a library that may not be installed ------------------------------
+
+# A program that can use a GPU must still start on a machine without one. The
+# block lowers to a table of function pointers filled in on first use, and
+# gains an `is_available()` of its own; the cost is one indirect call per
+# foreign call, which against a convolution is noise.
+unsafe extern "C" library "cudnn" when available:
+
+    type CudnnStatus is CInt
+    const CUDNN_STATUS_SUCCESS be 0 as CudnnStatus
+
+    function cudnnGetVersion() -> CSizeT
+    function cudnnCreate(
+        handle: mutable borrowed ffi.Uninitialized of CudnnHandle,
+    ) -> CudnnStatus
+    function cudnnDestroy(handle: CudnnHandle) -> CudnnStatus
+
+# --- §1.2: records and handles live outside the block -----------------------
+
+# The block is a list of symbols and nothing else. A handle needs a `Drop`
+# implementation, `Drop` may only be implemented on a type the declaring
+# module owns, so the type is an ordinary Science declaration marked with the
+# layout interface. A single-field record over an FFI type is transparent at
+# the ABI, so this costs not one word more than the pointer it holds.
+type CudnnHandle:
+    raw: ffi.OpaqueHandle
+
+CudnnHandle implements ffi.CLayout
+
+# §1.5: a C enum is imported as a newtype over its integer, never as a
+# `choice`. A library is under no obligation to return a value the header
+# your binding was generated against knew about, and a `choice` value outside
+# its declared variants is undefined behaviour.
+type H5ErrorCode:
+    raw: CInt
+
+H5ErrorCode implements ffi.CLayout
+
+# --- §3 and §1.7: the interface a program actually uses ---------------------
+
+public choice BlasError:
+    Shape(Int, Int)
+    Overflow
+
+type MatrixView:
+    data: ffi.Span of F64
+    rows: Int
+    columns: Int
+    leading: Int
+
+# The signature contains no `ffi` type at all. Everything unverifiable is
+# inside the `unsafe` block, which is short on purpose: if an unsafe block is
+# long, the binding is written wrong.
+public function gemm(
+        a: borrowed MatrixView,
+        b: borrowed MatrixView,
+        c: mutable borrowed MatrixView,
+        alpha: F64,
+        beta: F64) -> Result of ((), BlasError):
+
+    if a.columns is not b.rows:
+        return Err(BlasError.Shape(a.columns, b.rows))
+    if a.leading < a.rows or b.leading < b.rows:
+        return Err(BlasError.Overflow)
+
+    unsafe:
+        cblas_dgemm(
+            layout: CBLAS_COL_MAJOR,
+            transpose_a: CBLAS_NO_TRANS,
+            transpose_b: CBLAS_NO_TRANS,
+            m: a.rows as BlasInt,
+            n: b.columns as BlasInt,
+            k: a.columns as BlasInt,
+            alpha: alpha,
+            a: a.data, lda: a.leading as BlasInt,
+            b: b.data, ldb: b.leading as BlasInt,
+            beta: beta,
+            c: c.data, ldc: c.leading as BlasInt)
+    Ok(())
+
+# The Science half of the macro `H5T_NATIVE_DOUBLE` stands for: the call the
+# macro exists to make, and the global it reads afterwards. Reading an
+# `extern static` is the seventh power `unsafe` grants, because the memory
+# belongs to C and may be uninitialised until the library has been opened.
+public function native_double_type() -> Result of (Hid, BlasError):
+    unsafe:
+        let opened be H5open()
+        if opened < 0:
+            return Err(BlasError.Overflow)
+        Ok(H5T_NATIVE_DOUBLE_g)
+
+# `when available` gives the block a presence test, and a program that may run
+# on a CPU-only node asks before it calls.
+public function cudnn_version() -> Int:
+    unsafe:
+        cudnnGetVersion() as Int

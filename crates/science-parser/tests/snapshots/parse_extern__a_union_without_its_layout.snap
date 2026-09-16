@@ -1,0 +1,21 @@
+---
+source: crates/science-parser/tests/parse_extern.rs
+expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\" library \"hdf5\":\n    union H5R_ref_t:\n    union H5L_info2_t: size 32\n\"#)"
+---
+Module @0..86
+  Extern "C" unsafe @0..85
+    Library "hdf5" @18..32
+    items
+      ExternUnion `H5R_ref_t` @38..54
+        size: (none)
+        align: (none)
+      ExternUnion `H5L_info2_t` @59..85
+        size: 32
+        align: (none)
+--- diagnostics ---
+SC0417 @38..54 `H5R_ref_t` needs its size and its alignment
+  note a C union is imported as an opaque blob of the right size and alignment, because its layout is the C ABI's and nothing in Science may read its arms
+  note take both numbers from `sizeof` and `alignof` on the target, or from what `sciencec bindgen` recorded; the library's own accessors bind as ordinary `function` items
+SC0417 @59..85 `H5L_info2_t` needs its size and its alignment
+  note a C union is imported as an opaque blob of the right size and alignment, because its layout is the C ABI's and nothing in Science may read its arms
+  note take both numbers from `sizeof` and `alignof` on the target, or from what `sciencec bindgen` recorded; the library's own accessors bind as ordinary `function` items

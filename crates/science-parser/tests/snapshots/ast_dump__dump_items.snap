@@ -1,0 +1,74 @@
+---
+source: crates/science-parser/tests/ast_dump.rs
+expression: module.dump()
+---
+Module @0..519
+  Use `text.parser` @0..15
+  Use `text.parser` @16..44
+    imports
+      Ident `Token` @33..38
+      Ident `lex` @40..43
+  Use `text` @45..56
+    imports (empty)
+  Fn `largest` public @60..188
+    generics
+      TypeParam `T` @87..93
+        bounds
+          Bound `Ord` @90..93
+    params
+      Param `items` @95..126
+        type: Borrowed @102..126
+          Path `Array` @111..126
+            generics of `Array`
+              Path `T` @125..126
+    ret: Borrowed @136..146
+      Path `T` @145..146
+    where
+      Predicate @159..167
+        type: Path `T` @159..160
+        bounds
+          Bound `Clone` @162..167
+    body: Block @175..188
+      tail: Method `first` @175..188
+        receiver: Path `items` @175..180
+  Record `Grid` public @210..296
+    generics
+      TypeParam `T` @231..232
+      ConstParam `ROWS` @234..249
+        type: Path `Int` @246..249
+    fields
+      Field `cells` public @256..280
+        type: Path `Array` @270..280
+          generics of `Array`
+            Path `T` @279..280
+      Field `stride` @285..296
+        type: Path `Int` @293..296
+  Choice `Format` @310..375
+    generics
+      TypeParam `T` @327..328
+    where
+      Predicate @335..343
+        type: Path `T` @335..336
+        bounds
+          Bound `Clone` @338..343
+    variants
+      Variant `Plain` @350..355
+      Variant `Rich` @360..375
+        payload
+          Path `String` @365..371
+          Path `T` @373..374
+  Alias `Embedding` public @390..427
+    type: Path `Array` @415..427
+      generics of `Array`
+        Path `F32` @424..427
+  Alias `Handle` @430..458
+    generics
+      TypeParam `T` @445..446
+    type: Path `Box` @450..458
+      generics of `Box`
+        Path `T` @457..458
+  Const `WIDTH` public @460..490
+    type: Path `Int` @480..483
+    value: Int 768 @487..490
+  Const `GREETING` @494..519
+    value: Str "hello" @512..519

@@ -1,12 +1,12 @@
 ---
 source: crates/science-parser/tests/parse_stmts.rs
-expression: "parse_body(\"fn f():\\n    let a = 1\\n    a = 2\\n\")"
+expression: "parse_body(\"function f():\\n    let a be 1\\n    a be 2\\n\")"
 ---
-Block @12..31
-  Let `a` @12..21
-    value: Int 1 @20..21
-  Assign @26..31
-    target: Path `a` @26..27
-    value: Int 2 @30..31
+Block @18..39
+  Let `a` @18..28
+    value: Int 1 @27..28
+  Assign @33..39
+    target: Path `a` @33..34
+    value: Int 2 @38..39
 --- diagnostics ---
 (none)
