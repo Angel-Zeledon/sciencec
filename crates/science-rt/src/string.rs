@@ -331,14 +331,15 @@ pub unsafe extern "C" fn science_string_chars(value: *const ScienceString) -> Sc
     }
 }
 
-/// Advance a [`ScienceChars`], yielding `Option[Char]`.
+/// Advance a [`ScienceChars`], yielding `Char?`.
 ///
-/// This is `Iterate[Char]::next` for `Chars`. §8 names the trait but does not
-/// spell out its method set, so this is the runtime's half of the contract:
-/// the owned-`Option` convention of the crate documentation, §5.3. Returns
-/// `true` after writing the next code point to `out` (a `Char`, one `u32`
-/// scalar value), or `false` when the iterator is exhausted, in which case
-/// `out` is **not written**. An exhausted iterator stays exhausted.
+/// This is `Iterate[Char]::next` for `Chars`, and `collections-and-chains.md`
+/// gives that method the signature `next(mutable self) -> Self.Item?`. This is
+/// the runtime's half of it: the owned-`T?` convention of the crate
+/// documentation, §5.3. Returns `true` after writing the next code point to
+/// `out` (a `Char`, one `u32` scalar value), or `false` when the iterator is
+/// exhausted, in which case `out` is **not written** and the answer is `null`.
+/// An exhausted iterator stays exhausted.
 ///
 /// # Safety
 ///

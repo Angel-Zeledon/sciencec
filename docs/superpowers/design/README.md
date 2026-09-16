@@ -22,6 +22,7 @@ disagrees with it says so explicitly and gives the reason.
 | `stdlib-standard.md` | Level 2: `time`, `os`, `random`, `testing`, `logging`, `text.regex`, `thread`, `net`. | F0 / F1 |
 | `stdlib-shape-and-packages.md` | The policy the three stdlib notes live under: batteries included, the error model's consequences, threads over async, naming, and Level 3. **Read before the other two.** | F0 |
 | `scientific-libraries.md` | The catalogue: `math`, `linalg`, `stats`, `optimize`, `signal`, `chem`, `bio`, `physics`; what links against C; the units-in-the-type decision. | F1+ |
+| `codegen-and-linking.md` | MIR to a native binary: LLVM-C rather than inkwell and why that decides the bootstrap's shape, the C ABI's return classifier, linking, and the first performance target the project has ever written down. **Amends core spec §7.1.** | F1 |
 | `concurrency-and-cancellation.md` | The mechanism under `stdlib-shape-and-packages.md`'s Decision 3, not a second surface: why `scope` turns a leaked thread and a data race into compile errors, what that requires of region inference, and the cancellation and progress design nobody owned. Closes `mcp-servers.md` §18. | F2 |
 | `type-checking-and-mir.md` | Everything between the resolver and codegen: bidirectional checking over annotated signatures, THIR and MIR, flow narrowing and `SC0140` — the half of the error model that shipped without its meaning — and what the type system owes the ML ecosystem, including the `python:` region that is the only way scikit-learn is reachable at all. | F0 design, F1 build |
 | `region-inference.md` | The language's central claim, specified: what a region is, why a *type* gets one variable per borrowed field, what happens when a signature is ambiguous with no syntax to disambiguate it, and the contradiction between interprocedural inference and separate compilation. **Read with `examples/21_compiler_shapes.science`.** | F0 design, F1 build |
@@ -69,6 +70,8 @@ in parallel and four collisions resulted — `SC0010` against the shipped lexer,
 one of them was invisible to the note that caused it, because each had honestly
 checked against everything that existed when it started.
 
+**A fifth, found later.** `SC0458` was claimed by `script-mode.md` *and* by `python-interop.md`'s `SC0450`–`SC0458` block. `python-from-science.md` §9 had already noticed and written the resolution down — the code goes to `script-mode.md` — and the table above was never narrowed to match. It is now `SC0450`–`SC0457`, which is also the highest code that note actually uses. Found by `codegen-and-linking.md` while checking its own neighbours, which is the only way any of these five were ever found.
+
 ### Shipped, in the compiler today
 
 | Codes | Where |
@@ -113,11 +116,12 @@ allocated by a design note and then implemented the same day.
 | `c-binding-coverage.md` | — | — | — | — | — | `SC0490`–`SC0499` |
 | `package-manager.md` | claims no `SC` code at all — see below | | | | | |
 | `self-hosting.md` | claims no `SC` code at all: seed and build mismatches reuse `SP0021`/`SP0022`, and the two-region rejection belongs to the unwritten region-inference note | | | | | |
-| `python-interop.md` | — | — | — | — | — | `SC0450`–`SC0458` |
+| `python-interop.md` | — | — | — | — | — | `SC0450`–`SC0457` |
 | `python-from-science.md` | — | `SC0180`–`SC0189` | — | — | — | `SC0459` |
 | `mcp-servers.md` | — | `SC0190`–`SC0199` | — | `SC0504`–`SC0519` | — | — |
 | `region-inference.md` | — | — | — | — | `SC0330`, `SC0333`–`SC0379` | — |
 | `concurrency-and-cancellation.md` | — | — | — | — | `SC0381`–`SC0398` | — |
+| `codegen-and-linking.md` | — | — | — | — | — | `SC0400`–`SC0409` |
 | `type-checking-and-mir.md` | — | — | — | `SC0520`–`SC0579` | — | — |
 
 ### A namespace outside `SC`

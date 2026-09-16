@@ -1,5 +1,9 @@
 //! The free functions: `print`, `println`, `read_file`, `write_file`.
 //!
+//! `read_file` returns the pair `(String, IoError?)` and `write_file` returns
+//! `IoError?`, so every test here asks the error half through `present` and
+//! frees the value half on **both** paths.
+//!
 //! The file tests touch the real filesystem, so they are skipped under Miri,
 //! which runs with host isolation on.
 
@@ -25,9 +29,9 @@ fn print_and_println_accept_a_string() {
     unsafe {
         let a = s("");
         let b = s("science-rt: print smoke test\n");
+        science_write(&a);
+        science_write(&b);
         science_print(&a);
-        science_print(&b);
-        science_println(&a);
         free(b);
         free(a);
     }
@@ -42,11 +46,11 @@ fn write_then_read_round_trips() {
         let contents = s("hello\nsecond line\ná€\u{1F600}\n");
 
         let written = science_write_file(&p, &contents);
-        assert_eq!(written.tag, LINK_RESULT_OK);
+        assert_eq!(written.present, SCIENCE_NULLABLE_NULL);
 
         let read = science_read_file(&p);
-        assert_eq!(read.tag, LINK_RESULT_OK);
-        let text = read.payload.ok;
+        assert_eq!(read.error.present, SCIENCE_NULLABLE_NULL);
+        let text = read.value;
         assert_eq!(as_str(&text), "hello\nsecond line\ná€\u{1F600}\n");
 
         free(text);
@@ -65,12 +69,12 @@ fn write_file_overwrites() {
         let long = s("a very long first version of the file");
         let short = s("short");
 
-        assert_eq!(science_write_file(&p, &long).tag, LINK_RESULT_OK);
-        assert_eq!(science_write_file(&p, &short).tag, LINK_RESULT_OK);
+        assert_eq!(science_write_file(&p, &long).present, SCIENCE_NULLABLE_NULL);
+        assert_eq!(science_write_file(&p, &short).present, SCIENCE_NULLABLE_NULL);
 
         let read = science_read_file(&p);
-        assert_eq!(read.tag, LINK_RESULT_OK);
-        let text = read.payload.ok;
+        assert_eq!(read.error.present, SCIENCE_NULLABLE_NULL);
+        let text = read.value;
         assert_eq!(as_str(&text), "short");
 
         free(text);
@@ -88,11 +92,11 @@ fn write_then_read_an_empty_file() {
         let path = scratch("empty.txt");
         let p = s(path.to_str().unwrap());
         let empty = science_string_new();
-        assert_eq!(science_write_file(&p, &empty).tag, LINK_RESULT_OK);
+        assert_eq!(science_write_file(&p, &empty).present, SCIENCE_NULLABLE_NULL);
 
         let read = science_read_file(&p);
-        assert_eq!(read.tag, LINK_RESULT_OK);
-        let text = read.payload.ok;
+        assert_eq!(read.error.present, SCIENCE_NULLABLE_NULL);
+        let text = read.value;
         assert_eq!(science_string_len(&text), 0);
 
         free(text);
@@ -110,8 +114,11 @@ fn reading_a_missing_file_is_not_found() {
         let _ = std::fs::remove_file(&path);
         let p = s(path.to_str().unwrap());
         let read = science_read_file(&p);
-        assert_eq!(read.tag, LINK_RESULT_ERR);
-        assert_eq!(read.payload.err, ScienceIoError::NOT_FOUND);
+        assert_eq!(read.error.present, SCIENCE_NULLABLE_PRESENT);
+        assert_eq!(read.error.error, ScienceIoError::NOT_FOUND);
+        // Both halves of the pair are live, so the value half is the caller's
+        // to free even though the read failed.
+        free(read.value);
         free(p);
     }
 }
@@ -124,8 +131,9 @@ fn reading_a_non_utf8_file_is_invalid_data() {
         std::fs::write(&path, [0xFFu8, 0xFE, 0x00, 0x80]).expect("write the fixture");
         let p = s(path.to_str().unwrap());
         let read = science_read_file(&p);
-        assert_eq!(read.tag, LINK_RESULT_ERR);
-        assert_eq!(read.payload.err, ScienceIoError::INVALID_DATA);
+        assert_eq!(read.error.present, SCIENCE_NULLABLE_PRESENT);
+        assert_eq!(read.error.error, ScienceIoError::INVALID_DATA);
+        free(read.value);
         free(p);
         let _ = std::fs::remove_file(&path);
     }
@@ -141,8 +149,8 @@ fn writing_into_a_missing_directory_fails() {
         let p = s(path.to_str().unwrap());
         let contents = s("x");
         let written = science_write_file(&p, &contents);
-        assert_eq!(written.tag, LINK_RESULT_ERR);
-        assert_eq!(written.err, ScienceIoError::NOT_FOUND);
+        assert_eq!(written.present, SCIENCE_NULLABLE_PRESENT);
+        assert_eq!(written.error, ScienceIoError::NOT_FOUND);
         free(contents);
         free(p);
     }
@@ -156,9 +164,36 @@ fn reading_a_directory_is_an_error_not_a_panic() {
         let p = s(dir.to_str().unwrap());
         let read = science_read_file(&p);
         assert_eq!(
-            read.tag, LINK_RESULT_ERR,
+            read.error.present,
+            SCIENCE_NULLABLE_PRESENT,
             "a directory is not readable text"
         );
+        free(read.value);
+        free(p);
+    }
+}
+
+#[cfg(not(miri))]
+#[test]
+fn a_failed_read_still_hands_back_a_usable_empty_string() {
+    // The pair's value half is live on the failing path, so it must be a
+    // well-formed `String` and not a hole the caller has to know to avoid.
+    unsafe {
+        let path = scratch("failed-read-value-half.txt");
+        let _ = std::fs::remove_file(&path);
+        let p = s(path.to_str().unwrap());
+
+        let read = science_read_file(&p);
+        assert_eq!(read.error.present, SCIENCE_NULLABLE_PRESENT);
+
+        let text = read.value;
+        assert_eq!(science_string_len(&text), 0);
+        assert!(!text.ptr.is_null(), "an empty String is dangling, never null");
+        assert_eq!(text.cap, 0, "the failing path allocates nothing");
+        assert_eq!(as_str(&text), "");
+
+        // And freeing it is legal, which is what codegen will emit.
+        free(text);
         free(p);
     }
 }

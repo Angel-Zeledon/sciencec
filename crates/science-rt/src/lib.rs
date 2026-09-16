@@ -34,14 +34,24 @@
 //! **Aggregate returns follow the platform C ABI, not LLVM's structural
 //! return.** Several entry points return a struct by value —
 //! [`science_string_new`], [`science_string_clone`], [`science_string_truncate`],
-//! [`science_array_new`], [`science_map_new`], [`science_string_chars`],
+//! [`science_array_new`], [`science_array_with_capacity`], [`science_map_new`],
+//! [`science_string_chars`],
 //! [`science_read_file`]. Every one of those is three words or more, which both
 //! the System V x86-64 and the Windows x64 conventions classify as MEMORY:
 //! the caller passes a hidden pointer to the return slot and the callee writes
 //! through it. Codegen must emit those calls with an `sret` parameter rather
 //! than an LLVM `ret { ptr, i64, i64 }`, or the two sides will disagree about
-//! where the value lives. [`ScienceIoResultUnit`] is the exception: at two bytes
-//! it comes back in a register on both conventions.
+//! where the value lives. [`ScienceNullableIoError`] is the exception: at two
+//! bytes it comes back in a register on both conventions.
+//!
+//! `science_array_with_capacity` was missing from that list until
+//! `codegen-and-linking.md` was written against this page and checked the
+//! result against the signatures. It returns `ScienceArray` by value — three
+//! words — exactly like `science_array_new` beside it, and a generator that
+//! trusted the list would have emitted a structural return for it. That is
+//! silent memory corruption rather than a compile or link failure, which is the
+//! failure mode this whole section exists to prevent, and it is the reason the
+//! list is now checked by a test rather than maintained by hand.
 //!
 //! # 3. Pointer conventions
 //!
@@ -63,7 +73,7 @@
 //! `Int` in Science is an `i64` here. Sizes and capacities internal to the
 //! runtime, which never surface in a Science signature, are `usize`.
 //!
-//! # 5. The layout of `Option[T]` and `Result[T, E]`
+//! # 5. The layout of `T?` and of a pair return
 //!
 //! This is an ABI commitment. Both the type checker and codegen depend on it,
 //! and changing it later breaks every previously compiled object file.
@@ -74,11 +84,12 @@
 //! **union of the variant payloads**:
 //!
 //! - The discriminant is the smallest unsigned integer that can hold the
-//!   variant count: `u8` up to 256 variants, `u16` beyond. Every enum in the
-//!   F0 standard library has two variants, so every discriminant is a `u8`.
-//! - Discriminant values follow **declaration order**. From §8 that gives
-//!   [`LINK_OPTION_SOME`]` == 0`, [`LINK_OPTION_NONE`]` == 1`,
-//!   [`LINK_RESULT_OK`]` == 0` and [`LINK_RESULT_ERR`]` == 1`.
+//!   variant count: `u8` up to 256 variants, `u16` beyond. `T?` has two cases
+//!   and `IoError` has five, so every discriminant in this crate is a `u8`.
+//! - Discriminant values follow **declaration order**. `T?` is built in rather
+//!   than declared, so its two values are fixed here instead:
+//!   [`SCIENCE_NULLABLE_NULL`]` == 0` and [`SCIENCE_NULLABLE_PRESENT`]` == 1`.
+//!   That constant's own documentation says why null is the zero.
 //! - The discriminant sits at offset 0. The payload union follows at the next
 //!   offset that is a multiple of the union's alignment. The enum's alignment
 //!   is the maximum of the discriminant's and the union's; its size is rounded
@@ -86,8 +97,7 @@
 //! - An enum whose variants all carry no payload is just the discriminant.
 //!   `IoError` is one such: see [`ScienceIoError`].
 //! - A payload of type `()` is zero-sized and contributes nothing to the
-//!   union, so `Result[(), IoError]` is two bytes with alignment 1. See
-//!   [`ScienceIoResultUnit`].
+//!   union, so a variant carrying one costs the discriminant alone.
 //!
 //! ## 5.2 The niche rule
 //!
@@ -95,55 +105,93 @@
 //! payload, every other variant carries none, and that payload has a niche** —
 //! a bit pattern its type can never hold. Then the enum is represented as the
 //! payload alone, and the payload-free variants are encoded in unused niche
-//! values. No discriminant is materialised at all.
+//! values. No discriminant is materialised at all. `T?` is the two-case
+//! instance of that shape and the one that matters most: the present case
+//! carries the payload and `null` carries none.
 //!
-//! In F0 the niche-carrying types are the ones that are never null:
+//! In F0 the niche-carrying types are the ones that are never null, and **this
+//! table is closed**. Decision 6 of `type-checking-and-mir.md` §4.1 grants the
+//! null niche to pointer-like types and says a `T` with no niche gets a
+//! discriminant byte; nothing grants a niche to anything else, and inventing
+//! one — a reserved code point in a small enum, say — would be a representation
+//! no design note licenses.
 //!
 //! | Type | Representation | Niche |
 //! |---|---|---|
 //! | `Box[T]` | `*mut T` | the null pointer |
-//! | `&T` | `*const T` | the null pointer |
-//! | `&mut T` | `*mut T` | the null pointer |
+//! | `borrowed T` | `*const T` | the null pointer |
+//! | `mutable borrowed T` | `*mut T` | the null pointer |
 //!
 //! Therefore:
 //!
-//! - `Option[Box[T]]` is one pointer, with `None` represented as null. It costs
-//!   **not one bit more** than `Box[T]`.
-//! - `Option[&T]` and `Option[&mut T]` are likewise one pointer, `None` null.
-//! - `Option[Int]`, `Option[String]`, `Option[Array[T]]` and every other
-//!   payload without a niche fall back to the tagged form of §5.1. There is no
-//!   niche in an integer, and `String`'s pointer is never null even when the
-//!   string is empty (§7 below), so `String` deliberately offers none either.
-//! - `Result[T, E]` **never** gets the niche treatment, because both of its
-//!   variants carry a payload. It is always tagged.
+//! - `(Box[T])?` is one pointer, with `null` represented as the null pointer.
+//!   It costs **not one bit more** than `Box[T]`.
+//! - `(borrowed T)?` and `(mutable borrowed T)?` are likewise one pointer, with
+//!   `null` again the null pointer.
+//! - `Int?`, `String?`, `(Array[T])?`, `IoError?` and every other payload
+//!   without a niche fall back to the tagged form of §5.1. There is no niche in
+//!   an integer; `String`'s pointer is never null even when the string is empty
+//!   (§7 below), so `String` deliberately offers none either; and `IoError` is a
+//!   plain byte, which [`ScienceNullableIoError`] states at length because it is
+//!   the case where the temptation to invent a niche is strongest.
+//! - A **pair** return never gets the niche treatment, and never gets a
+//!   discriminant either, because it is not an enum. See §5.4.
 //!
 //! Two payload-free variants would need two niche values; F0 has no enum of
 //! that shape in the standard library, but the rule generalises: the `n`
 //! payload-free variants take the first `n` values of the niche, in declaration
 //! order.
 //!
-//! ## 5.3 How the runtime hands back an `Option`
+//! ## 5.3 How the runtime hands back a `T?`
 //!
 //! The runtime is not generic over Science types, so for an unknown `T` it cannot
 //! assemble the tagged layout of §5.1: it does not know `T`'s alignment at the
 //! point where it would have to place the payload. Two conventions follow, and
-//! codegen materialises the enum itself.
+//! codegen materialises the nullable itself.
 //!
-//! - **Returning `Option[&T]` or `Option[&mut T]`** — the runtime returns the
-//!   pointer, possibly null. That *is* the niche representation of §5.2, so
-//!   codegen uses the returned value as the `Option` directly, with no
+//! - **Returning `(borrowed T)?` or `(mutable borrowed T)?`** — the runtime
+//!   returns the pointer, possibly null. That *is* the niche representation of
+//!   §5.2, so codegen uses the returned value as the `T?` directly, with no
 //!   conversion at all. [`science_array_get`], [`science_array_get_mut`] and
 //!   [`science_map_get`] work this way.
-//! - **Returning an owned `Option[T]`** — the runtime returns a `bool` and
+//! - **Returning an owned `T?`** — the runtime returns a `bool` and
 //!   writes the payload through a `*mut u8` out-parameter that the caller
 //!   supplies. `true` means the payload was written and is now the caller's to
 //!   own; `false` means the out slot was **not touched** and the answer is
-//!   `None`. [`science_array_pop`], [`science_map_insert`], [`science_map_remove`] and
-//!   [`science_chars_next`] work this way.
+//!   `null`. [`science_array_pop`], [`science_map_insert`], [`science_map_remove`] and
+//!   [`science_chars_next`] work this way. The returned `bool` is the same byte
+//!   as the discriminant of §5.1, so when `T` has no niche codegen may store it
+//!   straight into the tag.
 //!
-//! Where both `T` and `E` are concrete the runtime does build the enum itself:
-//! [`science_read_file`] and [`science_write_file`] return [`ScienceIoResultString`] and
-//! [`ScienceIoResultUnit`] by value, laid out exactly per §5.1.
+//! Where every type involved is concrete the runtime does build the aggregate
+//! itself: [`science_read_file`] returns [`ScienceStringAndIoError`] and
+//! [`science_write_file`] returns [`ScienceNullableIoError`], by value, laid out
+//! exactly per §5.1 and §5.4.
+//!
+//! ## 5.4 Pairs, which are how a function fails
+//!
+//! `syntax-revision-2.md` §3 makes a fallible function return its value *and* a
+//! nullable error: `-> (T, E?)`. A pair is a **plain struct, and both fields are
+//! live at once**. There is no tag choosing between them, no union, and nothing
+//! for a niche to disambiguate. Field order is declaration order and padding is
+//! the C rule of §2, exactly as for any other aggregate.
+//!
+//! Two consequences codegen must get right, and neither has an analogue in what
+//! this replaced:
+//!
+//! - **The presence test reads the second field, not a tag.** `err?` is the
+//!   niche test or the discriminant load of §5.2 applied to that field alone.
+//!   The first field is not consulted and has no bearing on it.
+//! - **The value half is live on the failing path too, so the caller owns it
+//!   there too.** A failing `read_file` still hands back a `String`, and that
+//!   `String` still has to be freed. The runtime returns the empty string, which
+//!   allocates nothing (§7), so the cost is a call codegen must emit rather than
+//!   memory anyone must find — but omitting the call is a leak on the error
+//!   path, which is the path least likely to be exercised.
+//!
+//! A pair whose first element is `()` degenerates to its second element alone,
+//! by the zero-sized-payload rule of §5.1: [`science_write_file`] returns
+//! [`ScienceNullableIoError`] and not a struct wrapping one.
 //!
 //! # 6. The element-descriptor convention
 //!
@@ -198,7 +246,7 @@
 //! non-null* — the integer value of the alignment, with no provenance —
 //! exactly like an empty `Vec`. Codegen may therefore assume that the `ptr`
 //! field of a live `String` or `Array` is never null, which is what makes
-//! `Option[&T]`'s null niche unambiguous.
+//! `(borrowed T)?`'s null niche unambiguous.
 //!
 //! # 8. Names
 //!
@@ -213,47 +261,79 @@
 //! sentence contradicted its own next example. It is recorded rather than
 //! quietly corrected because this page invites a code generator to be emitted
 //! *from it alone*, without reading a function body — which is the one reading
-//! under which the error was fatal rather than cosmetic. The fossil is the
-//! `LINK_OPTION_*` constants below, from a draft where the prefix was `link_`.
+//! under which the error was fatal rather than cosmetic. Every fossil of that
+//! draft is now gone: the `LINK_OPTION_*` and `LINK_RESULT_*` constants went
+//! with the types they described, and the map's slot bytes were renamed to
+//! `SCIENCE_MAP_SLOT_*`. **There is one prefix in this crate and it is
+//! `science_`**, which is the only form of this sentence a code generator can
+//! be emitted from safely.
 //!
-//! # 8.1 What in this page is stale
+//! `science_print` and `science_write` were also the wrong way round until the
+//! same check: `science_print` wrote its bytes verbatim and `science_println`
+//! added the newline, while revision 2 §3.5 gives `print` the newline and makes
+//! `write` the form that adds nothing. A generator lowering Science's `print`
+//! to a symbol of that name would have produced output with no line breaks in
+//! it — a defect that compiles, links and runs. The symbols now match the
+//! Science spellings they implement, and `science_println` no longer exists.
 //!
-//! This crate was written against the pre-revision-2 error model and §5 and
-//! §9 below still describe it. `Option[T]` is now `T?` and `Result[T, E]` is
-//! gone entirely, replaced by the pair `-> (T, E?)` of `syntax-revision-2.md`
-//! §3.
+//! # 8.1 What on this page was stale, and is not any more
 //!
-//! **The layout rules survive; the names and one shape do not.** `Option[&T]`
-//! became `(&T)?` with the same null niche, so every rule about niches, boxes
-//! and pointer payloads still holds word for word. `Result[T, E]` became a
-//! pair, which is a *different* representation — a tagged union with one live
-//! payload against a struct with two — and `io.rs` carries the three stale
-//! types, marked in place.
+//! This crate was written against the pre-revision-2 error model, and §5 and §9
+//! described it for as long as its replacement was undecided. `Option[T]` is
+//! now `T?` and `Result[T, E]` is gone entirely, replaced by the pair
+//! `-> (T, E?)` of `syntax-revision-2.md` §3. **Both sections are now written
+//! against the new model and `io.rs` implements it.** The record of what was
+//! wrong is kept because a page that invites a code generator to be emitted
+//! from it alone owes its reader the history of its own errors.
 //!
-//! This is written here rather than fixed because the replacement needs the
-//! representation of `T?` for a non-pointer `T`, which
-//! `type-checking-and-mir.md` decides. A code generator emitted from this page
-//! today would be correct about everything except the two `io` entry points.
+//! **The layout rules survived; the names and one shape did not.** `Option[&T]`
+//! became `(borrowed T)?` with the same null niche, so every rule in §5.2 about
+//! niches, boxes and pointer payloads held word for word and was kept word for
+//! word. `Result[T, E]` became a pair, which is a *different* representation — a
+//! tagged union with one live payload against a struct with two — so §5.4 is
+//! new, and `io.rs`'s `ScienceIoResultString`, `ScienceIoResultStringPayload`
+//! and `ScienceIoResultUnit` are replaced by [`ScienceStringAndIoError`] and
+//! [`ScienceNullableIoError`].
 //!
-//! # 9. What §8 asks for that has no symbol here
+//! The one thing that was genuinely blocked was the representation of `T?` for
+//! a `T` that is not pointer-like, and Decision 6 of
+//! `type-checking-and-mir.md` §4.1 settled it: such a `T` gets a discriminant
+//! byte. [`ScienceNullableIoError`] is that decision applied, including the
+//! reasoning for **not** taking the niche that `IoError`'s 251 unused code
+//! points appear to offer.
 //!
-//! Three parts of §8's library are deliberately absent from this crate, because
-//! putting them here would cost a function call for something codegen can emit
-//! as a handful of instructions.
+//! # 9. What the language asks for that has no symbol here
 //!
-//! - **`Option`'s and `Result`'s methods.** `is_some`, `is_ok`, `unwrap` and
-//!   `unwrap_or` are each a discriminant test over the layout of §5, and
-//!   `unwrap` on the wrong variant is a call to [`science_panic_bytes`] with a
-//!   static message. Everything codegen needs to emit them is written down in
-//!   §5; nothing needs to be called.
-//! - **The `?` operator** (§4.4) is the same discriminant test plus an early
-//!   return, and a `From` conversion on the error path. Also codegen's.
-//! - **`Iterate`'s method set.** §8 names the trait and says `Chars` implements
-//!   `Iterate[Char]`, but never spells out the trait's methods, so there was
-//!   nothing to conform to. [`science_chars_next`] is this crate's proposal: one
-//!   method, `next`, following the owned-`Option` convention of §5.3. If the
-//!   type checker settles on a different shape for `Iterate`, that function is
-//!   the only thing that has to move.
+//! Three things a reader of §8 and of the error model might expect to find here
+//! are deliberately absent. Two of them because putting them here would cost a
+//! function call for something codegen emits as a handful of instructions; the
+//! third because it is not a runtime concern at all.
+//!
+//! - **The operations on `T?`.** A presence test is the null-pointer test or
+//!   the discriminant load of §5.2 — one instruction in either representation —
+//!   and a null-coalescing default is that test and a select. Forcing a value
+//!   out of a `T?` where the language allows it at all is the same test and a
+//!   call to [`science_panic_bytes`] with a static message on the null side.
+//!   Everything codegen needs is written down in §5; nothing needs to be called.
+//! - **Narrowing** (`type-checking-and-mir.md` §4.2) is a fact the type checker
+//!   proves, not a value anything holds. Inside `if err?:` the compiler knows
+//!   `err` is non-null and reads the payload without re-testing, and no
+//!   representation changes at the boundary — a narrowed `T?` is the same bytes
+//!   it always was, read under a stronger fact. Nothing here participates.
+//! - **`Iterate`'s method set.** `collections-and-chains.md` gives the interface
+//!   one method, `function next(mutable self) -> Self.Item?`, and Decision 15 of
+//!   `type-checking-and-mir.md` §6.3 leaves it unchanged, adding failure to a
+//!   sibling `TryIterate` instead. [`science_chars_next`] conforms: one `next`,
+//!   following the owned-`T?` convention of §5.3. `TryIterate` exists for the
+//!   `python:` region and has nothing to do in F0, so it gets no symbol here.
+//!
+//! What used to stand in this section and no longer does: `Result`'s methods,
+//! and a `?` operator that propagated a failure through an invisible `From`
+//! conversion. `syntax-revision-2.md` §3 removed the type, re-spelled `?` as the
+//! presence test, and made the caller write the conversion at the `return`. The
+//! only implicit conversion left in the neighbourhood is a concrete error
+//! coercing to `any Error` (Decision 14), which is a box and not a change of
+//! value, and which codegen emits without help from here.
 //!
 //! # 10. There are no threads
 //!

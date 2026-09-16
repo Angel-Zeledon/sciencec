@@ -234,12 +234,12 @@ pub unsafe extern "C" fn science_array_push(
     array.len += 1;
 }
 
-/// `Array::pop(&mut self) -> Option[T]`.
+/// `Array::pop(&mut self) -> T?`.
 ///
-/// The owned-`Option` convention of the crate documentation, §5.3: returns
+/// The owned-`T?` convention of the crate documentation, §5.3: returns
 /// `true` after **moving** the last element into `out`, which the caller now
 /// owns and must eventually destroy, or `false` on an empty array, in which
-/// case `out` is **not written** at all.
+/// case `out` is **not written** at all and the answer is `null`.
 ///
 /// Capacity is not released: an array that has been emptied keeps its buffer.
 ///
@@ -266,13 +266,13 @@ pub unsafe extern "C" fn science_array_pop(
     true
 }
 
-/// `Array::get(&self, index: Int) -> Option[&T]`.
+/// `Array::get(&self, index: Int) -> (borrowed T)?`.
 ///
 /// The niche convention of the crate documentation, §5.3: the return value
-/// **is** the `Option[&T]`. A null pointer is `None`; anything else is
-/// `Some(&T)` and needs no conversion.
+/// **is** the `(borrowed T)?`. A null pointer is `null`; anything else is the
+/// borrow itself and needs no conversion.
 ///
-/// `None` is the answer for `index >= len` and for any negative index, so §8's
+/// `null` is the answer for `index >= len` and for any negative index, so §8's
 /// promise that indexing cannot panic holds for every `Int` a program can
 /// produce.
 ///
@@ -295,10 +295,10 @@ pub unsafe extern "C" fn science_array_get(
     unsafe { array.slot(info, index) }
 }
 
-/// `Array::get_mut(&mut self, index: Int) -> Option[&mut T]`.
+/// `Array::get_mut(&mut self, index: Int) -> (mutable borrowed T)?`.
 ///
 /// As [`science_array_get`], with an exclusive borrow. The return value **is** the
-/// `Option[&mut T]`: null for `None`.
+/// `(mutable borrowed T)?`: the null pointer is `null`.
 ///
 /// # Safety
 ///

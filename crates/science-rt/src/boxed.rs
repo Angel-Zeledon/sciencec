@@ -8,13 +8,13 @@
 //!
 //! The pointer is **never null**, including for a zero-sized `T`, where it is
 //! dangling but aligned. That is what gives `Box[T]` the niche described in the
-//! crate documentation, §5.2, and hence what makes `Option[Box[T]]` cost the
-//! same as `Box[T]`: `None` is the null pointer. Codegen may rely on it
+//! crate documentation, §5.2, and hence what makes `(Box[T])?` cost the
+//! same as `Box[T]`: `null` is the null pointer. Codegen may rely on it
 //! everywhere.
 //!
 //! `Box[dyn Trait]` (§4.3) is the one case that is wider: a pointer to the
 //! value and a pointer to the vtable, in that order. The data pointer carries
-//! the niche, so `Option[Box[dyn Trait]]` is still two words. The vtable itself
+//! the niche, so `(Box[dyn Trait])?` is still two words. The vtable itself
 //! is codegen's to emit and lay out; the runtime stores nothing about it and
 //! offers no entry point for it, because the allocation underneath is made and
 //! released by the same two functions below with the concrete type's

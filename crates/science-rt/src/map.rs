@@ -25,12 +25,12 @@ use crate::abi::ScienceMapInfo;
 use crate::mem::{capacity_overflow, dangling, science_alloc, science_dealloc};
 
 /// Slot state: never used.
-pub const LINK_MAP_SLOT_EMPTY: u8 = 0;
+pub const SCIENCE_MAP_SLOT_EMPTY: u8 = 0;
 /// Slot state: holds a live key and value.
-pub const LINK_MAP_SLOT_OCCUPIED: u8 = 1;
+pub const SCIENCE_MAP_SLOT_OCCUPIED: u8 = 1;
 /// Slot state: held an entry that was removed. Lookups probe past it;
 /// insertions may claim it.
-pub const LINK_MAP_SLOT_TOMBSTONE: u8 = 2;
+pub const SCIENCE_MAP_SLOT_TOMBSTONE: u8 = 2;
 
 /// Science's `Map[K, V]`.
 ///
@@ -40,9 +40,9 @@ pub const LINK_MAP_SLOT_TOMBSTONE: u8 = 2;
 ///   None is ever null; all three are dangling but aligned when `cap == 0`.
 /// - Slot `i` holds a live key at `keys + i * key.size` and a live value at
 ///   `values + i * value.size` exactly when `states[i]` is
-///   [`LINK_MAP_SLOT_OCCUPIED`].
+///   [`SCIENCE_MAP_SLOT_OCCUPIED`].
 /// - `len` is the number of occupied slots, and is what §8's `len` returns.
-/// - `tombstones` is the number of slots in [`LINK_MAP_SLOT_TOMBSTONE`].
+/// - `tombstones` is the number of slots in [`SCIENCE_MAP_SLOT_TOMBSTONE`].
 /// - `cap` is zero, or a power of two. A new `Map` allocates nothing.
 ///
 /// As with `Array`, the key and value types appear nowhere in this struct: a
@@ -140,8 +140,8 @@ impl ScienceMap {
         loop {
             // SAFETY: `index` is masked into range.
             match unsafe { self.state(index) } {
-                LINK_MAP_SLOT_EMPTY => return None,
-                LINK_MAP_SLOT_OCCUPIED => {
+                SCIENCE_MAP_SLOT_EMPTY => return None,
+                SCIENCE_MAP_SLOT_OCCUPIED => {
                     // SAFETY: an occupied slot holds a live key, and `key` is
                     // live; both are of the type `info.key` describes.
                     if unsafe { (info.eq_fn)(self.key_slot(info, index), key) } {
@@ -170,7 +170,7 @@ impl ScienceMap {
         // SAFETY: the caller guarantees `key` is live.
         let mut index = (mix(unsafe { (info.hash_fn)(key) }) as usize) & mask;
         // SAFETY: `index` is masked into range.
-        while unsafe { self.state(index) } != LINK_MAP_SLOT_EMPTY {
+        while unsafe { self.state(index) } != SCIENCE_MAP_SLOT_EMPTY {
             index = (index + 1) & mask;
         }
         // SAFETY: `index` is in range and its slot is empty, so both slots are
@@ -178,7 +178,7 @@ impl ScienceMap {
         unsafe {
             std::ptr::copy_nonoverlapping(key, self.key_slot(info, index), info.key.size);
             std::ptr::copy_nonoverlapping(value, self.value_slot(info, index), info.value.size);
-            *self.states.add(index) = LINK_MAP_SLOT_OCCUPIED;
+            *self.states.add(index) = SCIENCE_MAP_SLOT_OCCUPIED;
         }
         self.len += 1;
     }
@@ -206,7 +206,7 @@ impl ScienceMap {
         // descriptor, which guarantees powers of two.
         unsafe {
             self.states = science_alloc(new_cap, 1);
-            std::ptr::write_bytes(self.states, LINK_MAP_SLOT_EMPTY, new_cap);
+            std::ptr::write_bytes(self.states, SCIENCE_MAP_SLOT_EMPTY, new_cap);
             self.keys = science_alloc(key_bytes, info.key.align);
             self.values = science_alloc(value_bytes, info.value.align);
         }
@@ -216,7 +216,7 @@ impl ScienceMap {
 
         for index in 0..old.cap {
             // SAFETY: `index < old.cap`, so the old state array covers it.
-            if unsafe { old.state(index) } != LINK_MAP_SLOT_OCCUPIED {
+            if unsafe { old.state(index) } != SCIENCE_MAP_SLOT_OCCUPIED {
                 continue;
             }
             // SAFETY: an occupied slot holds a live key and value, and the new
@@ -300,7 +300,7 @@ pub unsafe extern "C" fn science_map_free(map: *mut ScienceMap, info: *const Sci
     if info.key.drop_fn.is_some() || info.value.drop_fn.is_some() {
         for index in 0..map.cap {
             // SAFETY: `index < cap`.
-            if unsafe { map.state(index) } != LINK_MAP_SLOT_OCCUPIED {
+            if unsafe { map.state(index) } != SCIENCE_MAP_SLOT_OCCUPIED {
                 continue;
             }
             if let Some(drop_fn) = info.key.drop_fn {
@@ -336,15 +336,15 @@ pub unsafe extern "C" fn science_map_len(map: *const ScienceMap) -> i64 {
     unsafe { (*map).len as i64 }
 }
 
-/// `Map::insert(&mut self, key: K, value: V) -> Option[V]`.
+/// `Map::insert(&mut self, key: K, value: V) -> V?`.
 ///
 /// Both `key` and `value` are **moved** into the map: after the call the
 /// caller's slots are logically uninitialised and must not be dropped.
 ///
-/// The owned-`Option` convention of the crate documentation, §5.3: returns
+/// The owned-`T?` convention of the crate documentation, §5.3: returns
 /// `true` when the key was already present, having moved the displaced value
 /// into `out_old`, which the caller now owns; returns `false` when the key is
-/// new, in which case `out_old` is **not written**.
+/// new, in which case `out_old` is **not written** and the answer is `null`.
 ///
 /// On a replacement the map **destroys the key it was already holding** and
 /// stores the one it has just been given. The two compare equal by `eq_fn`, so
@@ -382,7 +382,7 @@ pub unsafe extern "C" fn science_map_insert(
     loop {
         // SAFETY: `index` is masked into range.
         match unsafe { map.state(index) } {
-            LINK_MAP_SLOT_EMPTY => {
+            SCIENCE_MAP_SLOT_EMPTY => {
                 // Prefer the earliest tombstone on the probe path, so the chain
                 // stays as short as it can.
                 let slot = match first_tombstone {
@@ -402,12 +402,12 @@ pub unsafe extern "C" fn science_map_insert(
                         map.value_slot(info, slot),
                         info.value.size,
                     );
-                    *map.states.add(slot) = LINK_MAP_SLOT_OCCUPIED;
+                    *map.states.add(slot) = SCIENCE_MAP_SLOT_OCCUPIED;
                 }
                 map.len += 1;
                 return false;
             }
-            LINK_MAP_SLOT_TOMBSTONE => {
+            SCIENCE_MAP_SLOT_TOMBSTONE => {
                 if first_tombstone.is_none() {
                     first_tombstone = Some(index);
                 }
@@ -446,10 +446,11 @@ pub unsafe extern "C" fn science_map_insert(
     }
 }
 
-/// `Map::get(&self, key: &K) -> Option[&V]`.
+/// `Map::get(&self, key: &K) -> (borrowed V)?`.
 ///
 /// The niche convention of the crate documentation, §5.3: the return value
-/// **is** the `Option[&V]`. Null is `None`; anything else is `Some(&V)`.
+/// **is** the `(borrowed V)?`. The null pointer is `null`; anything else is the
+/// borrow itself.
 ///
 /// `key` is borrowed, not moved: the caller still owns it afterwards.
 ///
@@ -489,12 +490,12 @@ pub unsafe extern "C" fn science_map_contains(
     unsafe { (*map).find(&*info, key).is_some() }
 }
 
-/// `Map::remove(&mut self, key: &K) -> Option[V]`.
+/// `Map::remove(&mut self, key: &K) -> V?`.
 ///
-/// The owned-`Option` convention of the crate documentation, §5.3: returns
+/// The owned-`T?` convention of the crate documentation, §5.3: returns
 /// `true` after **moving** the entry's value into `out_value`, which the caller
 /// now owns, or `false` when the key is absent, in which case `out_value` is
-/// **not written**.
+/// **not written** and the answer is `null`.
 ///
 /// The entry's key belonged to the map, so it is destroyed here. The `key`
 /// parameter is only a borrowed probe and is untouched.
@@ -525,7 +526,7 @@ pub unsafe extern "C" fn science_map_remove(
         if let Some(drop_fn) = info.key.drop_fn {
             drop_fn(map.key_slot(info, index));
         }
-        *map.states.add(index) = LINK_MAP_SLOT_TOMBSTONE;
+        *map.states.add(index) = SCIENCE_MAP_SLOT_TOMBSTONE;
     }
     map.len -= 1;
     map.tombstones += 1;

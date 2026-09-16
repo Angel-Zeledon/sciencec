@@ -83,22 +83,32 @@ pub struct ScienceMapInfo {
     pub eq_fn: ScienceEqFn,
 }
 
-/// Discriminant of `Result::Ok`, the first variant declared in §8.
-pub const LINK_RESULT_OK: u8 = 0;
-
-/// Discriminant of `Result::Err`, the second variant declared in §8.
-pub const LINK_RESULT_ERR: u8 = 1;
-
-/// Discriminant of `Option::Some` in the tagged layout, the first variant
-/// declared in §8.
+/// The discriminant of `T?` meaning **null**, in the tagged layout of §5.2.
 ///
 /// Unused when the niche rule of §5.2 applies, because then no discriminant is
-/// materialised.
-pub const LINK_OPTION_SOME: u8 = 0;
+/// materialised at all and the null pointer is the whole answer.
+///
+/// It is zero for two reasons, and both are worth knowing before emitting a
+/// presence test. The absent case is then the all-zero byte pattern in **both**
+/// representations — a null pointer and a null discriminant agree — so `null`
+/// is `memset` to zero whichever form a given `T?` takes. And the discriminant
+/// is bit-for-bit the `Bool` that Science's `?` yields, so codegen emits `err?`
+/// over a tagged nullable as a byte load rather than a comparison.
+///
+/// The cost is that this numbering is the **reverse** of the `Option::Some == 0`
+/// it replaces, which is why the constants that said so were deleted rather
+/// than renamed. Code emitted against the old pair and re-pointed at this one
+/// would be silently, exactly backwards, and a rename would have invited
+/// precisely that.
+pub const SCIENCE_NULLABLE_NULL: u8 = 0;
 
-/// Discriminant of `Option::None` in the tagged layout, the second variant
-/// declared in §8.
-pub const LINK_OPTION_NONE: u8 = 1;
+/// The discriminant of `T?` meaning **present**, in the tagged layout of §5.2.
+///
+/// See [`SCIENCE_NULLABLE_NULL`] for why the two values are numbered this way
+/// round. The payload follows the discriminant at the next offset that is a
+/// multiple of the payload's alignment, and is meaningful only under this
+/// value.
+pub const SCIENCE_NULLABLE_PRESENT: u8 = 1;
 
 impl ScienceTypeInfo {
     /// The stride between consecutive elements: equal to [`Self::size`].

@@ -30,19 +30,19 @@ fn child_entry_point() {
             // Buffered stdout must reach the terminal before the abort, or the
             // program's last words are lost exactly when they matter most.
             let out = s("printed before the panic");
-            science_println(&out);
+            science_write(&out);
             let message = s("and then it panicked");
             science_panic(&message);
         },
         "print" => unsafe {
             let a = s("alpha");
             let b = s("beta");
+            science_write(&a);
+            science_write(&b);
             science_print(&a);
             science_print(&b);
-            science_println(&a);
-            science_println(&b);
             let empty = science_string_new();
-            science_println(&empty);
+            science_print(&empty);
             free(empty);
             free(b);
             free(a);
@@ -117,7 +117,7 @@ fn abort_exits_unsuccessfully() {
 }
 
 #[test]
-fn print_writes_verbatim_and_println_adds_one_newline() {
+fn write_is_verbatim_and_print_adds_one_newline() {
     let output = run_child("print");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
