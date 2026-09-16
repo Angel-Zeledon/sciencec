@@ -1,0 +1,130 @@
+# 10 - Loops
+# Spec: §4.4 "`for x in iterable:` walks anything implementing `Iterate`.
+# `while cond:` and `loop:` with `break` and `continue`."
+#
+# The spec names three looping constructs. This file exercises all three plus
+# every shape they take: block body and inline body, `break`, `continue`,
+# nesting, and a loop whose body is a `match`.
+#
+# NOTE: F0 has no range syntax, so every `for` here walks a library
+# collection.
+
+struct Doc:
+    title: String
+    body: String
+
+# --- 1. `for` over anything implementing `Iterate` --------------------------
+
+fn total(items: &Array[Int]) -> Int:
+    let mut sum = 0
+    for item in items:
+        sum = sum + item
+    sum
+
+fn titles(docs: &Array[Doc]):
+    for doc in docs:
+        println(doc.title)
+
+# `for` over a map yields the pairs.
+fn dump(settings: &Map[String, String]):
+    for entry in settings:
+        println(entry.key)
+        println(entry.value)
+
+# `for` with `continue` to skip, and `break` to stop early.
+fn first_even(items: &Array[Int]) -> Option[Int]:
+    for item in items:
+        if item % 2 != 0:
+            continue
+        return Some(item)
+    None
+
+fn count_until_zero(items: &Array[Int]) -> Int:
+    let mut seen = 0
+    for item in items:
+        if item == 0:
+            break
+        seen = seen + 1
+    seen
+
+# --- 2. `while` -------------------------------------------------------------
+
+fn countdown(from: Int):
+    let mut n = from
+    while n > 0:
+        println(n)
+        n = n - 1
+
+# A `while` whose body is a single inline statement.
+fn drain(stack: &mut Array[Int]):
+    while not stack.is_empty(): stack.pop()
+
+# `while` with a compound condition using `and` / `or`.
+fn advance(index: Int, limit: Int, items: &Array[Int]) -> Int:
+    let mut i = index
+    while i < limit and i < items.len():
+        i = i + 1
+    i
+
+# --- 3. `loop` --------------------------------------------------------------
+
+fn read_until_blank(handle: &mut Reader) -> Int:
+    let mut lines = 0
+    loop:
+        let line = handle.next_line()
+        if line.is_empty():
+            break
+        lines = lines + 1
+    lines
+
+# `loop` whose body is a `match`, with `break` and `continue` in the arms.
+fn consume(tokens: &mut Array[Int]) -> Int:
+    let mut kept = 0
+    loop:
+        match tokens.pop():
+            None:
+                break
+            Some(0):
+                continue
+            Some(value):
+                kept = kept + value
+    kept
+
+# --- 4. Nesting -------------------------------------------------------------
+
+fn grid_sum(rows: &Array[Array[Int]]) -> Int:
+    let mut sum = 0
+    for row in rows:
+        for cell in row:
+            if cell < 0:
+                continue
+            sum = sum + cell
+    sum
+
+# A `while` inside a `loop` inside a `for`.
+fn deeply_nested(rows: &Array[Array[Int]]) -> Int:
+    let mut found = 0
+    for row in rows:
+        let mut index = 0
+        loop:
+            while index < row.len() and row.get(index) == 0:
+                index = index + 1
+            if index >= row.len():
+                break
+            found = found + 1
+            index = index + 1
+    found
+
+struct Reader:
+    path: String
+
+fn main():
+    let mut numbers = Array()
+    numbers.push(4)
+    numbers.push(0)
+    numbers.push(7)
+
+    println(total(&numbers))
+    println(count_until_zero(&numbers))
+    countdown(3)
+    drain(&mut numbers)

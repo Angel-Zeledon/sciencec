@@ -1,0 +1,87 @@
+# 07 - Generics, bounds and `where`
+# Spec: §4.3 generics and bounds, §5.3 monomorphisation.
+#
+# Covers: generic functions with no bound, with one bound, with several bounds
+# joined by `+`, with a `where` clause, generic structs and enums, generic
+# functions over several parameters, and nested generic types.
+
+struct Doc:
+    title: String
+    body: String
+
+struct Pair[A, B]:
+    first: A
+    second: B
+
+struct Wrapper[T]:
+    inner: T
+
+enum Option[T]:
+    Some(T)
+    None
+
+trait Summarize:
+    fn summarize(&self) -> String
+
+    fn preview(&self) -> String:
+        self.summarize().truncate(80)
+
+impl Summarize for Doc:
+    fn summarize(&self) -> String:
+        self.body.truncate(200)
+
+# No bound at all: the body may only move or borrow the value.
+fn identity[T](value: T) -> T:
+    value
+
+# A single bound.
+fn largest[T: Ord](items: &Array[T]) -> &T:
+    let mut best = items.get(0)
+    for item in items:
+        if item > best: best = item
+    best
+
+# Several bounds joined by `+`.
+fn duplicate[T: Clone + Eq](value: &T) -> Pair[T, T]:
+    Pair(first: value.clone(), second: value.clone())
+
+# A `where` clause keeps a long signature readable.
+fn describe[T](x: &T) -> String where T: Summarize + Clone:
+    x.summarize()
+
+# A `where` clause with several bounded parameters.
+fn merge[A, B](left: &A, right: &B) -> String where A: Summarize, B: Summarize + Clone:
+    left.preview().append(right.preview())
+
+# Bounds in the parameter list and a `where` clause at once.
+fn rank[T: Ord](items: &Array[T], fallback: &T) -> &T where T: Clone:
+    if items.is_empty(): fallback else: largest(items)
+
+# Several type parameters, each used in a different position.
+fn swap[A, B](pair: Pair[A, B]) -> Pair[B, A]:
+    Pair(first: pair.second, second: pair.first)
+
+# Nested generic types in the signature.
+fn first_inner[T](items: &Array[Wrapper[T]]) -> Option[&T]:
+    if items.is_empty():
+        None
+    else:
+        Some(&items.get(0).inner)
+
+# A generic type used at several different instantiations: monomorphisation
+# produces one specialised copy for each.
+fn main():
+    let a = identity(1)
+    let b = identity("text")
+    let c = identity(3.5f32)
+
+    let doc = Doc(title: "Monomorphisation", body: "One copy per instantiation.")
+    println(describe(&doc))
+
+    let pair = Pair(first: 1, second: "one")
+    let flipped = swap(pair)
+    println(flipped.first)
+
+    let n = 5
+    let cloned = duplicate(&n)
+    println(cloned.first)

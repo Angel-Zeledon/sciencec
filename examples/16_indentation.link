@@ -1,0 +1,104 @@
+# 16 - Indentation and block nesting
+# Spec: §4.1 indentation, §4.2 blocks.
+#
+# Spaces only. A block opens with `:` + newline + INDENT and closes with
+# DEDENT. Closing several levels at once emits several DEDENTs.
+#
+# This file goes deliberately deep, and closes several levels in one step,
+# which is the case that breaks a naive indentation stack.
+
+enum Format:
+    Plain
+    Markdown
+    Json
+
+struct Doc:
+    title: String
+    body: String
+
+trait Summarize:
+    fn summarize(&self) -> String
+
+    fn preview(&self) -> String:
+        # Level 3: trait body, method body.
+        self.summarize().truncate(80)
+
+impl Summarize for Doc:
+    fn summarize(&self) -> String:
+        self.body.truncate(200)
+
+# Eight levels of nesting, then a single dedent all the way back to the top.
+fn deep(rows: &Array[Array[Int]], format: &Format) -> Int:
+    let mut total = 0
+    for row in rows:
+        for cell in row:
+            if cell > 0:
+                match format:
+                    Json:
+                        while total < cell:
+                            loop:
+                                if total >= cell:
+                                    break
+                                total = total + 1
+                    Plain:
+                        total = total + cell
+                    Markdown:
+                        total = total + 1
+            else:
+                total = total - 1
+    total
+
+# Closing many levels at once: the innermost statement is at level 6 and the
+# next statement is back at level 1.
+fn dedent_several_levels(rows: &Array[Array[Int]]) -> Int:
+    let mut hits = 0
+    for row in rows:
+        for cell in row:
+            if cell != 0:
+                if cell > 0:
+                    if cell > 10:
+                        hits = hits + 1
+    hits
+
+# A block whose body is a single nested block, repeatedly.
+fn ladder(flag: Bool) -> Int:
+    if flag:
+        if flag:
+            if flag:
+                if flag:
+                    if flag:
+                        1
+                    else:
+                        2
+                else:
+                    3
+            else:
+                4
+        else:
+            5
+    else:
+        6
+
+# An indented block that contains a construct using the inline form, so one
+# line closes nothing and the next dedents.
+fn mixed(a: &String, b: &String) -> Int:
+    if a.len() > 0:
+        let chosen = if a.len() > b.len(): a else: b
+        chosen.len()
+    else:
+        0
+
+# Blank lines inside a block do not close it, however many there are.
+fn with_gaps() -> Int:
+    let a = 1
+
+
+    let b = 2
+
+
+
+    a + b
+
+fn main():
+    println(ladder(true))
+    println(with_gaps())

@@ -1,0 +1,68 @@
+# 17 - Modules, imports and visibility
+# Spec: §4.3 "a file is a module; a directory with a `mod.link` is a module
+# containing its siblings." Keywords `use`, `mod`, `pub` are reserved.
+#
+# NOTE: the two `use` forms below are exactly the ones the spec writes down.
+# Everything else here is the smallest reading of `mod` and `pub` consistent
+# with them.
+
+# Import a whole module, referred to afterwards by its path.
+use text.parser
+
+# Import selected names out of a module.
+use text.parser (Token, lex)
+
+# A deeper path, and a multi-name selection.
+use compiler.frontend.lexer (Lexer, TokenKind, Span)
+
+# A sibling module, declared so this file pulls it in.
+mod diagnostics
+
+# A module declared inline, with a body.
+mod formatting:
+    pub struct Options:
+        width: U16
+        colour: Bool
+
+    pub fn default_options() -> Options:
+        Options(width: 80u16, colour: true)
+
+    # Not public: visible only inside `formatting`.
+    fn clamp(width: U16) -> U16:
+        if width < 20u16: 20u16 else: width
+
+    # A nested module inside a module.
+    mod internal:
+        pub fn version() -> Int:
+            1
+
+# Public items of this module.
+pub struct Document:
+    title: String
+    body: String
+
+pub enum Severity:
+    Error
+    Warning
+    Note
+
+pub trait Report:
+    fn report(&self) -> String
+
+pub fn parse(source: &String) -> Array[Token]:
+    lex(source)
+
+# Private by default: no `pub`.
+fn helper(document: &Document) -> Int:
+    document.body.len()
+
+impl Report for Document:
+    fn report(&self) -> String:
+        self.title.clone()
+
+pub fn main():
+    let source = "fn main(): println(\"hi\")"
+    let tokens = parse(&source)
+    let options = formatting.default_options()
+    println(tokens.len())
+    println(options.width)

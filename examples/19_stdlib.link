@@ -1,0 +1,139 @@
+# 19 - The F0 standard library
+# Spec: §8. The whole of it: `Option[T]`, `Result[T, E]`, `Box[T]`, `String`
+# and `&String`, `Array[T]`, `Map[K, V]`, `print`, `println`, `read_file`,
+# `write_file`, and the traits `Copy`, `Clone`, `Drop`, `Eq`, `Ord`,
+# `Iterate`, `From`.
+#
+# NOTE: the spec names the types and the traits but not their method sets.
+# The method names used here are plausible placeholders; what a lexer or
+# parser test cares about is the call syntax, not the name being resolvable.
+
+struct Record:
+    key: String
+    hits: Int
+
+enum LoadError:
+    Missing(String)
+    Corrupt(String)
+
+# --- Option and Result ------------------------------------------------------
+
+fn find(records: &Array[Record], key: &String) -> Option[&Record]:
+    for record in records:
+        if record.key == key:
+            return Some(record)
+    None
+
+fn load(path: &String) -> Result[String, LoadError]:
+    read_file(path)
+
+fn store(path: &String, text: &String) -> Result[(), LoadError]:
+    write_file(path, text)
+
+# --- Box --------------------------------------------------------------------
+
+fn boxed(record: Record) -> Box[Record]:
+    Box(record)
+
+# --- String and &String -----------------------------------------------------
+
+fn strings():
+    # `String` owns its bytes; `&String` is a view of them.
+    let owned: String = "owned, UTF-8"
+    let view: &String = &owned
+    println(owned.len())
+    println(view.is_empty())
+
+# --- Array ------------------------------------------------------------------
+
+fn arrays() -> Int:
+    let mut items: Array[Int] = Array()
+    items.push(1)
+    items.push(2)
+    items.push(3)
+
+    let mut sum = 0
+    for item in items:
+        sum = sum + item
+
+    println(items.len())
+    println(items[0])
+    sum
+
+# --- Map --------------------------------------------------------------------
+
+fn maps() -> Int:
+    let mut counts: Map[String, Int] = Map()
+    counts.insert("alpha", 1)
+    counts.insert("beta", 2)
+
+    match counts.get("alpha"):
+        Some(value): println(value)
+        None: println("absent")
+
+    counts.len()
+
+# --- The library traits -----------------------------------------------------
+
+# `Copy`: assignment duplicates instead of moving.
+#
+# NOTE: `Copy` carries no methods, and F0 has no syntax for an empty block,
+# so there is no way to write `impl Copy for Position` here. How a marker
+# trait is implemented is left open by the spec.
+struct Position:
+    line: U32
+    column: U32
+
+impl Clone for Position:
+    fn clone(&self) -> Position:
+        Position(line: self.line, column: self.column)
+
+impl Clone for Record:
+    fn clone(&self) -> Record:
+        Record(key: self.key.clone(), hits: self.hits)
+
+impl Eq for Record:
+    fn eq(&self, other: &Record) -> Bool:
+        self.key == other.key
+
+impl Ord for Record:
+    fn less(&self, other: &Record) -> Bool:
+        self.hits < other.hits
+
+impl Drop for Record:
+    fn drop(&mut self):
+        println("record dropped")
+
+# `Iterate` is what `for` walks.
+struct Countdown:
+    remaining: Int
+
+impl Iterate[Int] for Countdown:
+    fn next(&mut self) -> Option[Int]:
+        if self.remaining <= 0:
+            None
+        else:
+            self.remaining = self.remaining - 1
+            Some(self.remaining)
+
+# `From` is what `?` uses to widen an error.
+impl From[Record] for String:
+    fn from(record: Record) -> Self:
+        record.key
+
+# --- print and println ------------------------------------------------------
+
+fn main():
+    print("no newline")
+    println("with newline")
+    println(arrays())
+    println(maps())
+    strings()
+
+    for value in Countdown(remaining: 3):
+        println(value)
+
+    match load("link.toml"):
+        Ok(text): println(text.len())
+        Err(Missing(path)): println(path)
+        Err(Corrupt(path)): println(path)

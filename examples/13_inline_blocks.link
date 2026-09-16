@@ -1,0 +1,91 @@
+# 13 - Inline block form
+# Spec: §4.2 "there is also an inline form for single-expression constructs,
+# valid only if the whole thing fits on one line."
+#
+#     if a.len() > b.len(): a else: b
+#
+# This file puts the inline form next to the indented form of the same
+# construct, so a parser test can compare the two.
+
+enum Format:
+    Plain
+    Markdown
+
+# --- `if` / `else` ----------------------------------------------------------
+
+# Inline, as written in the spec.
+fn longest(a: &String, b: &String) -> &String:
+    if a.len() > b.len(): a else: b
+
+# The same thing, indented.
+fn longest_indented(a: &String, b: &String) -> &String:
+    if a.len() > b.len():
+        a
+    else:
+        b
+
+# An inline `if` with no `else`: its type is `()`.
+fn warn_if_empty(text: &String):
+    if text.is_empty(): println("empty")
+
+# An inline `if` used as the value of a binding.
+fn pick(flag: Bool) -> Int:
+    let chosen = if flag: 1 else: 0
+    chosen
+
+# An inline `if` as an argument to a call.
+fn report(flag: Bool):
+    println(if flag: "yes" else: "no")
+
+# An inline `if` as the whole function body, inside a `return`.
+fn sign(n: Int) -> Int:
+    if n < 0: return -1
+    if n > 0: return 1
+    0
+
+# Chained: the `else` of an inline `if` is another inline `if`.
+fn bucket(n: Int) -> String:
+    if n < 10: "small" else: if n < 100: "medium" else: "large"
+
+# --- Function bodies --------------------------------------------------------
+
+# A single-expression function body on its own line, which is the ordinary
+# indented form rather than the inline one.
+fn double(n: Int) -> Int:
+    n * 2
+
+# --- Loops ------------------------------------------------------------------
+
+fn drain(stack: &mut Array[Int]):
+    while not stack.is_empty(): stack.pop()
+
+fn shout(lines: &Array[String]):
+    for line in lines: println(line)
+
+fn spin(limit: &mut Int):
+    loop: break
+
+# --- `match` arms -----------------------------------------------------------
+
+# Every arm inline.
+fn name_of(format: &Format) -> String:
+    match format:
+        Plain: "plain"
+        Markdown: "markdown"
+
+# Arms mixing the inline and the indented form.
+fn describe(format: &Format) -> String:
+    match format:
+        Plain: "plain"
+        Markdown:
+            let prefix = "marked"
+            prefix.append("down")
+
+fn main():
+    println(longest("abc", "de"))
+    println(longest_indented("abc", "de"))
+    println(pick(true))
+    report(false)
+    println(sign(-3))
+    println(bucket(42))
+    println(name_of(&Plain))

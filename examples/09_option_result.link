@@ -1,0 +1,96 @@
+# 09 - Option, Result and the `?` operator
+# Spec: §4.4 the `?` operator, §5.5 absence and failure.
+#
+# There is no `null`. Absence is `Option[T]`; failure is `Result[T, E]`.
+# `?` unwraps `Ok`/`Some` or returns `Err`/`None` early, propagating the
+# error through `From`.
+
+struct Config:
+    host: String
+    port: U16
+
+enum Error:
+    NotFound(String)
+    Malformed(String)
+    Io(String)
+
+enum ParseError:
+    Empty
+    BadDigit(Char)
+
+# `From` is what lets `?` widen one error type into another.
+impl From[ParseError] for Error:
+    fn from(inner: ParseError) -> Self:
+        match inner:
+            Empty: Malformed("empty input")
+            BadDigit(c): Malformed(c.to_string())
+
+# --- Returning Option -------------------------------------------------------
+
+fn first_line(text: &String) -> Option[&String]:
+    if text.is_empty():
+        None
+    else:
+        Some(text.line(0))
+
+fn lookup(settings: &Map[String, String], key: &String) -> Option[&String]:
+    settings.get(key)
+
+# `?` on Option: unwrap Some, or return None from the enclosing function.
+fn host_of(settings: &Map[String, String]) -> Option[String]:
+    let raw = lookup(settings, "host")?
+    let trimmed = first_line(raw)?
+    Some(trimmed.clone())
+
+# --- Returning Result -------------------------------------------------------
+
+fn parse_port(text: &String) -> Result[U16, ParseError]:
+    if text.is_empty():
+        Err(Empty)
+    else:
+        Ok(text.to_u16())
+
+fn read_file_text(path: &String) -> Result[String, Error]:
+    read_file(path)
+
+# `?` on Result, three times in a row, including one that goes through
+# `From[ParseError] for Error`.
+fn read_config(path: &String) -> Result[Config, Error]:
+    let text = read_file_text(path)?
+    let host = parse_host(&text)?
+    let port = parse_port(&text)?
+    Ok(Config(host: host, port: port))
+
+fn parse_host(text: &String) -> Result[String, Error]:
+    match text.find("host="):
+        Some(index): Ok(text.after(index))
+        None: Err(NotFound("host"))
+
+# `?` applied directly to a call, inside a larger expression.
+fn port_plus_one(path: &String) -> Result[U16, Error]:
+    Ok(read_config(path)?.port + 1u16)
+
+# --- Consuming them with `match` --------------------------------------------
+
+fn report(outcome: &Result[Config, Error]) -> String:
+    match outcome:
+        Ok(config): config.host.clone()
+        Err(NotFound(key)): key.clone()
+        Err(Malformed(detail)): detail.clone()
+        Err(Io(detail)): detail.clone()
+
+fn unwrap_or(value: Option[Int], fallback: Int) -> Int:
+    match value:
+        Some(inner): inner
+        None: fallback
+
+fn main():
+    let outcome = read_config("link.toml")
+    println(report(&outcome))
+
+    println(unwrap_or(Some(3), 0))
+    println(unwrap_or(None, 0))
+
+    match port_plus_one("link.toml"):
+        Ok(port): println(port)
+        Err(e): println(report(&Err(e)))

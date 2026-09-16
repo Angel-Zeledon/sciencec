@@ -1,0 +1,109 @@
+# 14 - Implicit line continuation
+# Spec: §4.1 "inside unclosed parentheses or brackets, newlines and
+# indentation are ignored entirely: line continuation is implicit."
+#
+# Every construct below spans several physical lines while being a single
+# logical line. The indentation inside the brackets is decorative: the lexer
+# emits no NEWLINE, INDENT or DEDENT until the bracket closes.
+
+struct Config:
+    host: String
+    port: U16
+    retries: U8
+    verbose: Bool
+
+enum Outcome[T, E]:
+    Ok(T)
+    Err(E)
+
+trait Summarize:
+    fn summarize(&self) -> String
+
+# A signature broken across lines inside its parameter list.
+fn connect(
+    host: &String,
+    port: U16,
+    retries: U8,
+) -> Bool:
+    retries > 0
+
+# The generic parameter list is brackets too, so it continues implicitly.
+fn constrained[
+    A: Summarize,
+    B: Summarize,
+](left: &A, right: &B) -> String:
+    left.summarize()
+
+# A `where` clause spread over the parameter bracket and the body line.
+fn described[T](
+    value: &T,
+) -> String where T: Summarize + Clone:
+    value.summarize()
+
+# A nested generic type broken across lines.
+fn deep(
+    items: &Array[
+        Outcome[
+            Config,
+            String,
+        ],
+    ],
+) -> Int:
+    items.len()
+
+fn main():
+    # A call whose arguments are on separate lines.
+    let ok = connect(
+        "localhost",
+        8080u16,
+        3u8,
+    )
+
+    # Named-argument construction, one field per line.
+    let config = Config(
+        host: "localhost",
+        port: 8080u16,
+        retries: 3u8,
+        verbose: false,
+    )
+
+    # A deeply nested call: the indentation inside is free-form.
+    let nested = connect(
+        &config.host,
+            config.port,
+                config.retries,
+    )
+
+    # A parenthesised expression continuing across lines. Operators may sit
+    # at the end or the start of a line.
+    let arithmetic = (
+        1 +
+        2 *
+        3
+        - 4
+    )
+
+    # A long boolean expression, one operand per line.
+    let predicate = (
+        config.port > 0u16
+        and config.retries > 0u8
+        or config.verbose
+    )
+
+    # Indexing brackets continue too.
+    let items = Array()
+    let element = items[
+        0
+    ]
+
+    # A comment inside brackets is still a comment to end of line, and the
+    # continuation survives it.
+    let commented = connect(
+        "localhost",   # the host
+        8080u16,       # the port
+        # a whole line of comment
+        3u8,
+    )
+
+    println(arithmetic)
+    println(predicate)

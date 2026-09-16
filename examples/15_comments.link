@@ -1,0 +1,46 @@
+# 15 - Comments
+# Spec: §4.1 "`#` to end of line. There are no block comments." And:
+# "blank lines and lines containing only a comment take no part in the
+# indentation calculation."
+
+# A comment at column 0, before anything else.
+
+#A comment with no space after the hash.
+#### Several hashes are just part of the comment text.
+# A comment containing a # hash, a "quoted string", 'c', and 0xFF.
+# A comment with unicode: ¿qué tal? — 你好 — 😀
+
+struct Doc:      # trailing comment after a declaration header
+    title: String   # trailing comment after a field
+    # a comment on its own line, at field indentation
+    body: String
+
+        # A comment indented far past any real block. It does not open one:
+        # comment-only lines are invisible to the indentation stack.
+
+fn main():
+    # A comment as the first thing in a block.
+    let a = 1   # trailing comment after a statement
+
+    # A comment-only line inside a block, followed by a blank line.
+
+    let b = 2
+
+# A comment at column 0 in the middle of a function does not close its block.
+    let c = 3
+
+    if a < b:
+        # A comment as the only content before the real statement.
+        println("less")
+    # A comment between the `if` body and the `else`.
+    else:
+        println("not less")
+
+    while a < b:
+        a = a + 1
+        # A trailing comment at the end of a block.
+
+    # A comment right before the end of the function.
+    println(c)
+
+# A comment as the last line of the file, with no trailing newline issues.

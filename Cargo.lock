@@ -94,6 +94,11 @@ dependencies = [
 [[package]]
 name = "link-parser"
 version = "0.0.1"
+dependencies = [
+ "insta",
+ "link-diagnostics",
+ "link-lexer",
+]
 
 [[package]]
 name = "link-testkit"

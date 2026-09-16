@@ -1,0 +1,90 @@
+# 11 - Literals
+# Spec: §4.1 literals.
+#
+# Covers: decimal, hex, binary and octal integers, digit separators, every
+# integer and float type suffix, exponent notation, every string escape,
+# character literals, booleans, and unit.
+
+fn main():
+    # --- Integers, decimal --------------------------------------------------
+    let zero = 0
+    let small = 42
+    let big = 1234567890
+    let separated = 1_000_000
+    let separated_pairs = 1_2_3
+
+    # --- Integers, other bases ----------------------------------------------
+    let hex_lower = 0xff
+    let hex_upper = 0xFF
+    let hex_mixed = 0xDeadBeef
+    let hex_separated = 0xFF_FF_FF
+    let binary = 0b1010
+    let binary_long = 0b1111_0000_1010_0101
+    let octal = 0o777
+    let octal_separated = 0o7_5_5
+
+    # --- Integer type suffixes ----------------------------------------------
+    let as_i8 = 42i8
+    let as_i16 = 42i16
+    let as_i32 = 42i32
+    let as_i64 = 42i64
+    let as_u8 = 7u8
+    let as_u16 = 7u16
+    let as_u32 = 7u32
+    let as_u64 = 7u64
+
+    # A suffix combines with any base and with separators.
+    let hex_suffixed = 0xFFu8
+    let binary_suffixed = 0b1010i32
+    let octal_suffixed = 0o777u16
+    let separated_suffixed = 1_000i64
+
+    # --- Floats -------------------------------------------------------------
+    let pi = 3.14
+    let tiny = 1e-9
+    let large = 1e9
+    let signed_exponent = 2.5e+3
+    let capital_exponent = 6.02E23
+    let float_separated = 1_000.000_1
+
+    # --- Float type suffixes ------------------------------------------------
+    let as_f32 = 2.5f32
+    let as_f64 = 2.5f64
+    let exponent_suffixed = 1e-9f32
+
+    # --- Strings and their escapes ------------------------------------------
+    let plain = "hola"
+    let empty = ""
+    let unicode_text = "identificadores en el idioma del autor"
+    let newline = "line one\nline two"
+    let tab = "column\tcolumn"
+    let carriage_return = "overwrite\rme"
+    let backslash = "a\\b"
+    let quote = "she said \"hi\""
+    let nul = "ends here\0"
+    let codepoint = "\u{1F600}"
+    let every_escape = "\n\t\r\\\"\0\u{1F600}"
+
+    # --- Characters ---------------------------------------------------------
+    let letter = 'a'
+    let digit = '7'
+    let symbol = ':'
+    let space = ' '
+    let escaped_newline = '\n'
+    let escaped_tab = '\t'
+    let escaped_return = '\r'
+    let escaped_backslash = '\\'
+    let escaped_nul = '\0'
+    let escaped_codepoint = '\u{1F600}'
+    let non_ascii = 'ñ'
+
+    # --- Booleans -----------------------------------------------------------
+    let yes = true
+    let no = false
+
+    # --- Unit ---------------------------------------------------------------
+    let nothing = ()
+
+    println(separated)
+    println(hex_mixed)
+    println(every_escape)

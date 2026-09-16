@@ -1,0 +1,154 @@
+# 18 - Ownership and borrows
+# Spec: §6.1 rules, §6.2 region inference, §4.3 struct fields that are
+# references.
+#
+# Every program here is meant to be *accepted*: the rejected cases live in
+# `tests/ui/`. There is no lifetime syntax anywhere; regions are inferred.
+
+struct Doc:
+    title: String
+    body: String
+
+# A struct whose field is a borrow. Its region parameter is implicit and
+# propagated to every site that instantiates the type (§6.2).
+struct View:
+    source: &Doc
+
+struct Editor:
+    target: &mut Doc
+
+struct Span:
+    text: &String
+    start: Int
+    end: Int
+
+trait Summarize:
+    fn summarize(&self) -> String
+
+impl Summarize for Doc:
+    fn summarize(&self) -> String:
+        self.body.truncate(200)
+
+impl Drop for Doc:
+    fn drop(&mut self):
+        println("doc dropped")
+
+# --- Moves ------------------------------------------------------------------
+
+# Passing by value moves: the caller may not use the value afterwards.
+fn consume(doc: Doc) -> String:
+    doc.title
+
+# Returning moves ownership out.
+fn produce() -> Doc:
+    Doc(title: "owned", body: "...")
+
+# Rebinding moves too.
+fn rebind() -> String:
+    let first = produce()
+    let second = first
+    second.title
+
+# --- Shared borrows ---------------------------------------------------------
+
+# Any number of shared borrows may coexist.
+fn compare(a: &Doc, b: &Doc) -> Bool:
+    a.body.len() > b.body.len()
+
+fn many_shared():
+    let doc = produce()
+    let one = &doc
+    let two = &doc
+    let three = &doc
+    println(compare(one, two))
+    println(three.summarize())
+
+# A borrow returned from a function: its region is inferred from the argument.
+fn longest(a: &String, b: &String) -> &String:
+    if a.len() > b.len(): a else: b
+
+fn title_of(doc: &Doc) -> &String:
+    &doc.title
+
+# --- Exclusive borrows ------------------------------------------------------
+
+# Exactly one exclusive borrow, and never at the same time as a shared one.
+fn retitle(doc: &mut Doc, title: String):
+    doc.title = title
+
+fn exclusive_then_shared():
+    let mut doc = produce()
+    retitle(&mut doc, "renamed")
+    # The exclusive borrow ended with the call, so a shared one is fine now.
+    println(doc.summarize())
+
+# Borrowing two different fields of the same struct at once.
+fn disjoint_fields(doc: &mut Doc) -> Int:
+    let title = &doc.title
+    title.len()
+
+# --- Borrows stored in structs ----------------------------------------------
+
+fn store_a_borrow():
+    let doc = produce()
+    # `view` borrows `doc`; the region of the field is inferred so that the
+    # borrow cannot outlive its referent (§6.1 rule 5).
+    let view = View(source: &doc)
+    println(view.source.summarize())
+    println(title_of(view.source))
+
+fn store_an_exclusive_borrow():
+    let mut doc = produce()
+    let editor = Editor(target: &mut doc)
+    editor.target.title = "edited"
+
+fn span_of(text: &String) -> Span:
+    Span(text: text, start: 0, end: text.len())
+
+# --- Copy types -------------------------------------------------------------
+
+# Types implementing `Copy` are not moved by assignment (§6.1 rule 2).
+fn copies():
+    let a = 42
+    let b = a
+    let c = a
+    println(a + b + c)
+
+    let flag = true
+    let also = flag
+    println(flag and also)
+
+# --- Box: owned indirection -------------------------------------------------
+
+fn boxed() -> Box[Doc]:
+    Box(produce())
+
+fn describe_boxed(value: &Box[Doc]) -> String:
+    value.summarize()
+
+# --- Scopes and drop --------------------------------------------------------
+
+fn scoped():
+    let outer = produce()
+    if outer.body.len() > 0:
+        # `inner` is destroyed at the end of this block; `Drop` runs there.
+        let inner = produce()
+        println(inner.summarize())
+    println(outer.summarize())
+
+fn main():
+    many_shared()
+    exclusive_then_shared()
+    store_a_borrow()
+    store_an_exclusive_borrow()
+    copies()
+    scoped()
+
+    let text = "a borrowed string"
+    let span = span_of(&text)
+    println(span.end)
+
+    println(describe_boxed(&boxed()))
+    println(rebind())
+    println(consume(produce()))
+    println(longest("abc", "de"))

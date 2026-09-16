@@ -1,0 +1,7 @@
+error[LK0004]: this indentation matches no open level
+  --> tests/ui/inconsistent_indentation.link:14:1
+   |
+14 |         let b = 2
+   | ^^^^^^^^ indented 8 columns
+   |
+   = note: the open levels are 0, 4

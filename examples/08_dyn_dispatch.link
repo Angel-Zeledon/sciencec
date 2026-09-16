@@ -1,0 +1,99 @@
+# 08 - Dynamic dispatch
+# Spec: §4.3 "dyn Trait only behind an indirection: &dyn Trait or
+# Box[dyn Trait]", §5.3 (dyn exists for when monomorphisation is the wrong
+# trade-off).
+#
+# Covers: `dyn` behind a shared reference, behind an exclusive reference,
+# behind `Box`, inside a generic container, as a return type, as a struct
+# field, and the contrast with the statically dispatched version of the
+# same call.
+
+struct Doc:
+    title: String
+    body: String
+
+struct Note:
+    text: String
+
+trait Summarize:
+    fn summarize(&self) -> String
+
+    fn preview(&self) -> String:
+        self.summarize().truncate(80)
+
+trait Reset:
+    fn reset(&mut self)
+
+impl Summarize for Doc:
+    fn summarize(&self) -> String:
+        self.body.truncate(200)
+
+impl Summarize for Note:
+    fn summarize(&self) -> String:
+        self.text.clone()
+
+impl Reset for Note:
+    fn reset(&mut self):
+        self.text = ""
+
+# Static dispatch: one specialised copy per `T` (§5.3).
+fn describe_static[T: Summarize](value: &T) -> String:
+    value.preview()
+
+# Dynamic dispatch behind a shared reference.
+fn describe_dyn(value: &dyn Summarize) -> String:
+    value.preview()
+
+# Dynamic dispatch behind an exclusive reference.
+fn clear(value: &mut dyn Reset):
+    value.reset()
+
+# Dynamic dispatch behind `Box`: the value is owned.
+fn describe_boxed(value: Box[dyn Summarize]) -> String:
+    value.summarize()
+
+# `dyn` as a return type, again behind the indirection.
+fn pick(flag: Bool, left: &dyn Summarize, right: &dyn Summarize) -> &dyn Summarize:
+    if flag: left else: right
+
+fn into_summary(flag: Bool) -> Box[dyn Summarize]:
+    if flag:
+        Box(Doc(title: "a", body: "..."))
+    else:
+        Box(Note(text: "..."))
+
+# A heterogeneous collection: the element type is erased, which is exactly
+# what monomorphisation cannot give you.
+fn describe_all(items: &Array[Box[dyn Summarize]]):
+    for item in items:
+        println(item.preview())
+
+# A struct field of `dyn` type, behind a reference.
+struct Renderer:
+    target: &dyn Summarize
+
+# And behind a box, so the struct owns it.
+struct OwningRenderer:
+    target: Box[dyn Summarize]
+
+fn main():
+    let doc = Doc(title: "Dispatch", body: "Static unless you ask otherwise.")
+    let mut note = Note(text: "erased")
+
+    println(describe_static(&doc))
+    println(describe_dyn(&doc))
+    println(describe_dyn(&note))
+
+    clear(&mut note)
+
+    println(describe_boxed(Box(Doc(title: "b", body: "..."))))
+    println(describe_boxed(into_summary(true)))
+
+    let chosen = pick(true, &doc, &note)
+    println(chosen.summarize())
+
+    let renderer = Renderer(target: &doc)
+    println(renderer.target.preview())
+
+    let owning = OwningRenderer(target: into_summary(false))
+    println(owning.target.preview())
