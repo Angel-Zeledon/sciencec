@@ -1,0 +1,22 @@
+---
+source: crates/science-parser/tests/parse_closure_types.rs
+assertion_line: 184
+expression: "parse_source(r#\"def keep of P: (Int) -> Bool(p: P) -> Int:\n    0\n\"#)"
+---
+Module @0..49
+  Fn `keep` @0..48
+    generics
+      TypeParam `P` @12..28
+        bounds
+          ClosureBound @15..28
+            params
+              Path `Int` @16..19
+            ret: Path `Bool` @24..28
+    params
+      Param `p` @29..33
+        type: Path `P` @32..33
+    ret: Path `Int` @38..41
+    body: Block @47..48
+      tail: Int 0 @47..48
+--- diagnostics ---
+(none)

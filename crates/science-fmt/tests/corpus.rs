@@ -258,20 +258,8 @@ fn the_output_is_tidy() {
 /// this test, which is the point — the list has to shrink deliberately rather
 /// than rot.
 ///
-/// * `07_generics.science` — two signatures the file says are "broken inside
-///   the parameter list, where indentation takes no part (§4.2)". The
-///   formatter rebreaks them before `where` instead, which is the house style
-///   of `AGENTS.md` §4 but is not what the comment beside them describes. The
-///   demonstration and the style rule disagree, and that is a language
-///   question rather than a formatter one.
-/// * `08_dyn_dispatch.science` — the one line in the corpus over 88 columns,
-///   which the formatter breaks into three because a doubled
-///   `Array of (Box of any Summarize)` has no good break in it.
-/// * `09_absence_and_failure.science` — one hand-broken signature with no
-///   trailing comma, which the formatter rebreaks. No demonstration is at
-///   stake; it is simply not formatted yet.
-/// The ledger is empty, and that is the interesting state rather than the
-/// boring one.
+/// The ledger is empty, which is the interesting state rather than the boring
+/// one.
 ///
 /// It held three files. Each came off the list for a different reason and none
 /// of them by widening a rule:

@@ -1,0 +1,17 @@
+# UI test: `try`, which revision 2 removed with `Result` (SC0155).
+#
+# The point of this case is the *absence* of a machine-applicable fix. Every
+# other migration code in the same block renames a word — `while` becomes
+# `loop`, `println` becomes `print`, `function` becomes `def` — and each of
+# those carries a `= help:` with a replacement a tool can apply. `try` cannot:
+# the new model turns one expression into a binding, a test and a return, and
+# which value the function should return on the error path is not something
+# the parser can know. So the explanation goes in the note instead, and a
+# `= help:` line appearing here would be the regression.
+#
+# Recovery keeps the operand, so `open(path)` is still parsed and the binding
+# still has a value. One diagnostic, not two.
+
+def read_config(path: Str) -> Str:
+    let text be try open(path)
+    text

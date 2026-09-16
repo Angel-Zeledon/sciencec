@@ -1,0 +1,10 @@
+---
+source: crates/science-parser/tests/parse_closure_types.rs
+assertion_line: 278
+expression: collapsed
+---
+Closure
+  params
+    Path `Int`
+    Path `Bool`
+  ret: Path `Int`

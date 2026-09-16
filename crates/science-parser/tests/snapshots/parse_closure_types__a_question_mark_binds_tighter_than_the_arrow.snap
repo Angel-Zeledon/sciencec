@@ -1,0 +1,10 @@
+---
+source: crates/science-parser/tests/parse_closure_types.rs
+assertion_line: 90
+expression: "shape_of_type(\"(Int) -> Bool?\")"
+---
+Closure
+  params
+    Path `Int`
+  ret: Nullable
+    Path `Bool`

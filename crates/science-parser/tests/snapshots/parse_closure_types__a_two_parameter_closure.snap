@@ -1,0 +1,10 @@
+---
+source: crates/science-parser/tests/parse_closure_types.rs
+assertion_line: 57
+expression: "shape_of_type(\"(F64, Row) -> F64\")"
+---
+Closure
+  params
+    Path `F64`
+    Path `Row`
+  ret: Path `F64`

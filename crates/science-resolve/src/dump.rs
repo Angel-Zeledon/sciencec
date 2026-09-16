@@ -283,10 +283,22 @@ impl DumpIn for GenericParam {
 
 impl DumpIn for Bound {
     fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
-        let header = format!("Bound {}", arrow(defs, self.res));
-        w.node(&header, self.span, |w| {
-            w.list("generics", &nodes(defs, &self.generics));
-        });
+        match &self.kind {
+            BoundKind::Interface { res, generics } => {
+                let header = format!("Bound {}", arrow(defs, *res));
+                w.node(&header, self.span, |w| {
+                    w.list("generics", &nodes(defs, generics));
+                });
+            }
+            // No arrow: a closure bound resolved to no definition, because it
+            // names none. What it resolved to is its parts.
+            BoundKind::Closure { params, ret } => {
+                w.node("ClosureBound", self.span, |w| {
+                    w.list("params", &nodes(defs, params));
+                    w.child("ret", &Node(defs, ret.as_ref()));
+                });
+            }
+        }
     }
 }
 
@@ -451,6 +463,10 @@ impl DumpIn for Type {
             }),
             TypeKind::Tuple(elems) => w.node("Tuple", self.span, |w| {
                 w.items(&nodes(defs, elems));
+            }),
+            TypeKind::Closure { params, ret } => w.node("Closure", self.span, |w| {
+                w.list("params", &nodes(defs, params));
+                w.child("ret", &Node(defs, ret.as_ref()));
             }),
             TypeKind::Unit => w.leaf("Unit", self.span),
             TypeKind::SelfType(res) => {

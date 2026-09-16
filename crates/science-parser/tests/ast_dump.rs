@@ -84,7 +84,25 @@ fn borrowed_ty(mutable: bool, inner: Type, start: u32, end: u32) -> Type {
 fn bound(name: &str, start: u32) -> TypeBound {
     let p = path(name, start);
     let span = p.span;
-    TypeBound { path: p, span }
+    TypeBound { kind: TypeBoundKind::Interface(p), span }
+}
+
+/// `(A) -> B` where a bound belongs: `where F: (Int) -> Bool`
+/// (`collections-and-chains.md` §1.2). The other kind of bound, and the one
+/// that made a bound stop being a path.
+fn closure_bound(params: Vec<Type>, ret: Type, start: u32, end: u32) -> TypeBound {
+    TypeBound {
+        kind: TypeBoundKind::Closure { params, ret: Box::new(ret) },
+        span: sp(start, end),
+    }
+}
+
+/// `(A) -> B` in type position.
+fn closure_ty(params: Vec<Type>, ret: Type, start: u32, end: u32) -> Type {
+    Type {
+        kind: TypeKind::Closure { params, ret: Box::new(ret) },
+        span: sp(start, end),
+    }
 }
 
 /// `T` or `T: Ord` in an `of` list.
@@ -167,8 +185,12 @@ fn dump_items() {
     );
 
     // public def largest of T: Ord(items: borrowed Array of T)
-    //         -> borrowed T where T: Clone:
+    //         -> borrowed T where T: Clone + (borrowed T) -> Bool:
     //     items.first()
+    //
+    // The second bound is `collections-and-chains.md` §1.2's closure bound,
+    // beside an interface bound in the same list: the two shapes a `where`
+    // predicate can hold since a bound stopped being a path.
     let largest = item(
         ItemKind::Fn(FnDecl {
             is_pub: true,
@@ -188,8 +210,16 @@ fn dump_items() {
             ret: Some(borrowed_ty(false, ty("T", 145), 136, 146)),
             where_clause: vec![WherePredicate {
                 ty: ty("T", 159),
-                bounds: vec![bound("Clone", 162)],
-                span: sp(159, 167),
+                bounds: vec![
+                    bound("Clone", 162),
+                    closure_bound(
+                        vec![borrowed_ty(false, ty("T", 180), 171, 181)],
+                        ty("Bool", 186),
+                        170,
+                        190,
+                    ),
+                ],
+                span: sp(159, 190),
             }],
             body: Some(block(
                 Vec::new(),
@@ -1294,14 +1324,27 @@ fn dump_types() {
             214,
             vec![ty("Int", 204), const_arg(Literal::Str("a".to_string()), 209, 212)],
         ),
+        // (Int) -> Bool — a closure type (`collections-and-chains.md` §1.2).
+        closure_ty(vec![ty("Int", 217)], ty("Bool", 225), 216, 229),
+        // () -> Bool — no parameters, which is `Unit` reduced to the empty
+        // list rather than to one parameter of type `()`.
+        closure_ty(Vec::new(), ty("Bool", 237), 231, 241),
+        // (Int) -> (Bool) -> String — right-associative, so the return type is
+        // another closure and not a second parameter list.
+        closure_ty(
+            vec![ty("Int", 244)],
+            closure_ty(vec![ty("Bool", 253)], ty("String", 262), 252, 268),
+            243,
+            268,
+        ),
         // text.parser.Token
         {
-            let p = dotted_path(&["text", "parser", "Token"], 216);
+            let p = dotted_path(&["text", "parser", "Token"], 270);
             let span = p.span;
             Type { kind: TypeKind::Path(p), span }
         },
         // A type that failed to parse.
-        Type { kind: TypeKind::Error, span: sp(236, 241) },
+        Type { kind: TypeKind::Error, span: sp(290, 295) },
     ];
 
     let mut out = String::new();

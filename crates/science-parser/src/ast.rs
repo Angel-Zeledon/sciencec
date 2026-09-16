@@ -82,15 +82,73 @@ pub struct PathSegment {
     pub span: Span,
 }
 
-/// A trait named as a bound: in `of T: Ord`, in `any Summarize`, after
-/// `implements`.
+/// What a type parameter must satisfy: an interface in `of T: Ord`, in
+/// `any Summarize`, after `implements` and in an interface's super list — and,
+/// in the two positions that *constrain* a parameter rather than *name* an
+/// interface, the closure type `(A) -> B`.
 ///
-/// It is a path, but naming the wrapper records which of the two a given path
-/// was, which later phases would otherwise have to rediscover.
+/// **A bound used to be a [`Path`], and that is what the closure-type ask
+/// actually cost.** `where F: (A) -> B` did not parse at all before this — it
+/// was `SC0102`, *expected an identifier, found `(`* — and it would not have
+/// parsed under `def(A) -> B` or `fn(A) -> B` either. So this edit is the
+/// price of `collections-and-chains.md` §1.2 under every spelling that was
+/// considered, none of the three was cheaper than the others on it, and §1.2's
+/// own grammar note calls it "the real cost of the ask". Nor is it confined to
+/// the parser: a bound stops being a path in this AST, in `hir::Bound` and in
+/// the resolver, which had one `resolve_path` where it now has two cases.
+///
+/// The wrapper stays rather than collapsing into [`Type`], for the reason it
+/// always had and one more. The old reason: it records which of the two a
+/// given path was, so later phases do not rediscover it. The new one: a `Type`
+/// would admit `(A, B)` and `borrowed T` here, and those are types that are
+/// not bounds — the enum below says so by having no variant for them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeBound {
-    pub path: Path,
+    pub kind: TypeBoundKind,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeBoundKind {
+    /// An interface named by path: `Ord`, `From of Doc`, `text.Render`.
+    Interface(Path),
+    /// `(A) -> B`, the closure bound of `where F: (A) -> B` and `of F: (A) -> B`.
+    ///
+    /// Admitted only in those two positions. `implements`, `any` and an
+    /// interface's super list still take a path and nothing else, so they
+    /// report exactly what they reported before this variant existed — which
+    /// is why adding it moved no diagnostic and no snapshot.
+    ///
+    /// Held as `params` and `ret` rather than as a [`Type`] whose kind happens
+    /// to be [`TypeKind::Closure`]: the parser already guarantees the shape,
+    /// and a `Type` here would make every reader re-check it.
+    Closure { params: Vec<Type>, ret: Box<Type> },
+}
+
+impl TypeBound {
+    /// The interface this bound names, when it names one.
+    ///
+    /// The `None` arm is the closure bound, which names nothing: it is a
+    /// structure, not a definition, and there is no `DefId` behind it.
+    pub fn path(&self) -> Option<&Path> {
+        match &self.kind {
+            TypeBoundKind::Interface(path) => Some(path),
+            TypeBoundKind::Closure { .. } => None,
+        }
+    }
+
+    /// The bound as a diagnostic should quote it.
+    ///
+    /// A closure bound is elided rather than printed back out, because
+    /// printing it would need a type printer and the parser has none —
+    /// `sciencec fmt` owns that, and §1.2 records it as the one place a
+    /// reversal of this spelling would have to happen.
+    pub fn describe(&self) -> String {
+        match &self.kind {
+            TypeBoundKind::Interface(path) => path.dotted(),
+            TypeBoundKind::Closure { .. } => "(..) -> ..".to_string(),
+        }
+    }
 }
 
 // --- module and items ----------------------------------------------------
@@ -531,6 +589,58 @@ pub enum TypeKind {
     /// generic parameter would need the qualified form Rust spells
     /// `<T as Iterate>::Item`, and F0 has no syntax for it.
     SelfAssoc(Ident),
+    /// `(A) -> B` — a closure type, with no keyword in front of it.
+    ///
+    /// `collections-and-chains.md` §1.2 owns this spelling and adopts it as
+    /// AMENDMENT 1. §5.2 requires every signature to be fully annotated, so a
+    /// combinator that takes a closure needs a name for the closure's type,
+    /// and three notes had been asking for one with no owner between them:
+    /// `ffi-c-boundary.md` §10.1, `scientific-libraries.md` §14.2 and
+    /// `broadcasting.md` §11.6.
+    ///
+    /// **Why no word in front of it.** The mechanical carry-over from
+    /// revision 2's `function(A) returns B` is `def(A) -> B`, and `def` is
+    /// wrong twice over: `f: def(F64) -> F64` is a declaration that lost its
+    /// name rather than a noun naming what the parameter is, and `def(` is
+    /// already what people reach for in *expression* position, where `SC0105`
+    /// answers them — so the two categories would be told apart only by
+    /// whether a `:` follows. `fn` is refused by §4.1's audience test applied
+    /// rather than asserted: of the seven languages this audience writes, one
+    /// spells it `fn`. `(A) -> B` puts no new word in front of anything,
+    /// which is the strongest thing about it — it spends none of §4.1's
+    /// remaining authority to refuse a keyword.
+    ///
+    /// **What it costs.** Two things, and the second is a hole.
+    ///
+    /// 1. **The missing anchor.** `(F64) -> F64` is four punctuation marks and
+    ///    two names, with nothing for the eye to land on, and that is worth
+    ///    more in a dense `where` clause than in a parameter list. Reversing
+    ///    the decision is cheap and deliberately so: all three candidate
+    ///    spellings build *this same node*, so a reversal is one line in
+    ///    `parse_type` and one in `sciencec fmt`'s type printer. What it is
+    ///    not is a regex — finding a closure type is exactly the one-token
+    ///    lookahead past the closing paren that only a parser can make.
+    /// 2. **A closure over a single tuple cannot be spelled.** `(T)` collapses
+    ///    to `T` with no node of its own (see [`TypeKind::Tuple`]), so
+    ///    `((A, B)) -> C` parses as the two-parameter `(A, B) -> C` and there
+    ///    is no third paren that would say otherwise. This is a genuine loss
+    ///    and it is **accepted, not fixed**: §1.3 rules that pairs are records
+    ///    and never tuples, so the only tuple left in F0 is the error model's
+    ///    return shape, and a closure over one is written with the
+    ///    two-parameter form anyway. If F0 grows a reason to pass a tuple as
+    ///    one argument, the answer is a named record, not a third paren.
+    ///
+    /// `->` is right-associative: `(A) -> (B) -> C` is `(A) -> ((B) -> C)`,
+    /// which is currying and the only useful reading. `?` binds tighter,
+    /// because the return type is a recursive `parse_type` call and the `?`
+    /// loop runs inside it: `(A) -> B?` is `(A) -> (B?)`, and a nullable
+    /// closure needs `((A) -> B)?`.
+    ///
+    /// `params` is empty for `() -> B`. A left-hand side that was never
+    /// parenthesised is *one* parameter — `A -> B` and `(A) -> B` are the same
+    /// tree, and must be, because `(T)` has already collapsed by the time the
+    /// arrow is seen and nothing remembers the parentheses.
+    Closure { params: Vec<Type>, ret: Box<Type> },
     /// The `4` in `Window of (Int, 4)`: a const generic argument (§5.3). It is
     /// a value in an argument list that otherwise holds types, which is why it
     /// lives in `TypeKind` rather than anywhere more comfortable.

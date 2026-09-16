@@ -1,0 +1,8 @@
+error[SC0156]: the declaration is written `def`
+  --> tests/ui/parse/function_word.science:19:1
+   |
+19 | function greet(name: Str):
+   | ^^^^^^^^ `function` is not a keyword in Science
+   |
+   = note: `def` declares every function, method and interface member
+   = help: write the declaration as: `def`

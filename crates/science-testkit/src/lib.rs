@@ -69,11 +69,28 @@ pub const EXPECTATION_EXTENSION: &str = "stderr";
 pub const BLESS_ENV_VAR: &str = "SCIENCE_BLESS";
 
 /// How a run should behave.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UiTestOptions {
     /// Rewrite every expectation file with the output obtained, rather than
     /// comparing against it. A missing expectation is written regardless.
     pub bless: bool,
+    /// Descend into subdirectories. On by default.
+    ///
+    /// A suite turns it off when its directory is *sharded* — when one phase's
+    /// cases sit beside another phase's in a subdirectory, because the two are
+    /// compiled by different closures and an expectation blessed from one is
+    /// not the output of the other. The suite that owns the top level walks
+    /// only the top level, and each subdirectory is walked by the suite that
+    /// can render what its cases provoke.
+    pub subdirectories: bool,
+}
+
+impl Default for UiTestOptions {
+    /// Compare rather than bless, and walk the whole tree: what a suite wants
+    /// when its directory is all its own.
+    fn default() -> Self {
+        UiTestOptions { bless: false, subdirectories: true }
+    }
 }
 
 impl UiTestOptions {
@@ -84,7 +101,12 @@ impl UiTestOptions {
     /// `SCIENCE_BLESS=0` means what it looks like it means.
     pub fn from_env() -> Self {
         let bless = std::env::var(BLESS_ENV_VAR).map(|v| v == "1").unwrap_or(false);
-        UiTestOptions { bless }
+        UiTestOptions { bless, ..UiTestOptions::default() }
+    }
+
+    /// The same options, walking only the directory named and not below it.
+    pub fn without_subdirectories(self) -> Self {
+        UiTestOptions { subdirectories: false, ..self }
     }
 }
 
@@ -244,7 +266,7 @@ pub fn run_ui_tests_with(
     let mut report = UiTestReport::new(dir);
 
     let mut cases = Vec::new();
-    if let Err(e) = collect_cases(dir, &mut cases) {
+    if let Err(e) = collect_cases(dir, options.subdirectories, &mut cases) {
         report.failures.push(UiFailure {
             source: dir.to_path_buf(),
             expectation: dir.to_path_buf(),
@@ -361,15 +383,18 @@ fn run_one(
 /// Collect every `.science` file under `dir`, depth first, sorted by name.
 ///
 /// The order is stable so that a failing run is reproducible and the report
-/// reads the same way twice.
-fn collect_cases(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+/// reads the same way twice. `subdirectories` decides whether the walk
+/// descends at all; see [`UiTestOptions::subdirectories`].
+fn collect_cases(dir: &Path, subdirectories: bool, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
     let mut entries: Vec<PathBuf> =
         std::fs::read_dir(dir)?.collect::<Result<Vec<_>, _>>()?.iter().map(|e| e.path()).collect();
     entries.sort();
 
     for entry in entries {
         if entry.is_dir() {
-            collect_cases(&entry, out)?;
+            if subdirectories {
+                collect_cases(&entry, subdirectories, out)?;
+            }
         } else if entry.extension().and_then(|e| e.to_str()) == Some(SOURCE_EXTENSION) {
             out.push(entry);
         }

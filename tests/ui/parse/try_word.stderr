@@ -1,0 +1,7 @@
+error[SC0155]: `try` was removed with the `Result` type
+  --> tests/ui/parse/try_word.science:16:17
+   |
+16 |     let text be try open(path)
+   |                 ^^^ there is no `try` in Science
+   |
+   = note: a function that can fail returns its value and an error: write `let value, err be f()`, then `if err?:` and return

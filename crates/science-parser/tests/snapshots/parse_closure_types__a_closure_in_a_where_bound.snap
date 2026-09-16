@@ -1,0 +1,32 @@
+---
+source: crates/science-parser/tests/parse_closure_types.rs
+assertion_line: 171
+expression: "parse_source(r#\"def keep of P(items: Array of Int, p: P) -> Array of Int where P: (borrowed Int) -> Bool:\n    items\n\"#)"
+---
+Module @0..100
+  Fn `keep` @0..99
+    generics
+      TypeParam `P` @12..13
+    params
+      Param `items` @14..33
+        type: Path `Array` @21..33
+          generics of `Array`
+            Path `Int` @30..33
+      Param `p` @35..39
+        type: Path `P` @38..39
+    ret: Path `Array` @44..56
+      generics of `Array`
+        Path `Int` @53..56
+    where
+      Predicate @63..88
+        type: Path `P` @63..64
+        bounds
+          ClosureBound @66..88
+            params
+              Borrowed @67..79
+                Path `Int` @76..79
+            ret: Path `Bool` @84..88
+    body: Block @94..99
+      tail: Path `items` @94..99
+--- diagnostics ---
+(none)

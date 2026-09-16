@@ -1,0 +1,11 @@
+---
+source: crates/science-parser/tests/parse_closure_types.rs
+assertion_line: 258
+expression: "parse_source_allowing_errors(r#\"interface Pretty: (Int) -> Bool:\n    def pretty(self) -> Int\n\"#)"
+---
+Module @0..61
+  Interface `Pretty` @0..17
+--- diagnostics ---
+SC0102 @18..19 expected an identifier, found `(`
+SC0100 @18..19 expected `:`, found `(`
+SC0101 @18..19 expected a declaration (`function`, `type`, `choice`, `interface`, `const`, `use`, or a type followed by `implements` or `has`), found `(`

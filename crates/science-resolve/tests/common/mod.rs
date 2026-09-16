@@ -83,7 +83,16 @@ pub fn path_generic(sp: &Sp, name: &str, generics: Vec<Type>) -> Path {
 pub fn bound(sp: &Sp, name: &str) -> TypeBound {
     let path = path(sp, &[name]);
     let span = path.span;
-    TypeBound { path, span }
+    TypeBound { kind: TypeBoundKind::Interface(path), span }
+}
+
+/// `(A) -> B` where a bound belongs (`collections-and-chains.md` §1.2). The
+/// other kind of bound, and the reason `resolve_bound` has two cases.
+pub fn bound_closure(params: Vec<Type>, ret: Type) -> TypeBound {
+    let span = merge_all(
+        &params.iter().map(|t| t.span).chain(std::iter::once(ret.span)).collect::<Vec<_>>(),
+    );
+    TypeBound { kind: TypeBoundKind::Closure { params, ret: Box::new(ret) }, span }
 }
 
 fn merge_all(spans: &[Span]) -> Span {
@@ -156,6 +165,14 @@ pub fn ty_self(sp: &Sp) -> Type {
 
 pub fn ty_unit(sp: &Sp) -> Type {
     Type { kind: TypeKind::Unit, span: sp.take(2) }
+}
+
+/// `(A) -> B` in type position (`collections-and-chains.md` §1.2).
+pub fn ty_closure(params: Vec<Type>, ret: Type) -> Type {
+    let span = merge_all(
+        &params.iter().map(|t| t.span).chain(std::iter::once(ret.span)).collect::<Vec<_>>(),
+    );
+    Type { kind: TypeKind::Closure { params, ret: Box::new(ret) }, span }
 }
 
 // --- items ---------------------------------------------------------------

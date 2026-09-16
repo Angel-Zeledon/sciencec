@@ -1,0 +1,18 @@
+---
+source: crates/science-parser/tests/parse_closure_types.rs
+assertion_line: 158
+expression: "parse_source(r#\"def curry() -> (Int) -> (Bool) -> String:\n    0\n\"#)"
+---
+Module @0..48
+  Fn `curry` @0..47
+    ret: Closure @15..40
+      params
+        Path `Int` @16..19
+      ret: Closure @24..40
+        params
+          Path `Bool` @25..29
+        ret: Path `String` @34..40
+    body: Block @46..47
+      tail: Int 0 @46..47
+--- diagnostics ---
+(none)

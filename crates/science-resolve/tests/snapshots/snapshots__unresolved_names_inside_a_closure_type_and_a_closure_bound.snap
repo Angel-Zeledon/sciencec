@@ -1,0 +1,24 @@
+---
+source: crates/science-resolve/tests/snapshots.rs
+assertion_line: 399
+expression: "report(&module(vec![f]))"
+---
+Module `main` #73 @13..32
+  Fn `f` #74 @13..32
+    generics
+      TypeParam `P` #75 @15..16
+        bounds
+          ClosureBound @0..12
+            params
+              Path -> <error> @0..7
+            ret: Path -> `Bool` #14 @8..12
+    params
+      Param `p` #76 @17..30
+        type: Closure @17..28
+          params
+            Path -> <error> @17..23
+          ret: Path -> `Bool` #14 @24..28
+    body: Block @31..32
+--- diagnostics ---
+SC0200 @0..7 cannot find `Missing` in this scope
+SC0200 @17..23 cannot find `Absent` in this scope

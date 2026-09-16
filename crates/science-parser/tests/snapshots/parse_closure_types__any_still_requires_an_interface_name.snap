@@ -1,0 +1,14 @@
+---
+source: crates/science-parser/tests/parse_closure_types.rs
+assertion_line: 237
+expression: "parse_source_allowing_errors(r#\"def f(x: any (Int) -> Bool) -> Int:\n    0\n\"#)"
+---
+Module @0..42
+  Fn `f` @0..41
+    params
+      Param `x` @6..12
+        type: Error @9..12
+--- diagnostics ---
+SC0102 @13..14 expected an identifier, found `(`
+SC0100 @13..14 expected `)`, found `(`
+SC0100 @13..14 expected end of line, found `(`

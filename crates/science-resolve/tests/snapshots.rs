@@ -352,6 +352,71 @@ fn an_each_with_no_call_around_it_has_no_subject() {
     insta::assert_snapshot!(report(&module(vec![f])));
 }
 
+// --- closure types and closure bounds (`collections-and-chains.md` §1.2) ---
+
+/// A closure type in a parameter, in a return position, and as a `where`
+/// bound, all in one declaration.
+///
+/// The point of the snapshot is the arrows in the dump: every name *inside* a
+/// closure resolves exactly as it would outside one, because a closure type is
+/// its parts and nothing else. The closure bound prints as `ClosureBound` with
+/// no arrow of its own, which is the visible half of `Bound` no longer being a
+/// path — there is no definition for it to point at.
+#[test]
+fn closure_types_in_a_parameter_a_return_and_a_bound() {
+    let sp = &Sp::new();
+    let doc = record_item(sp, "Doc", vec![], vec![]);
+
+    // def keep of P(p: P) -> (Doc) -> Bool where P: (borrowed Doc) -> Bool: p
+    let predicate = bound_closure(
+        vec![ty_borrowed(sp, false, ty(sp, "Doc"))],
+        ty(sp, "Bool"),
+    );
+    let keep = func(sp, "keep")
+        .generics(vec![generic(sp, "P", vec![predicate])])
+        .params(vec![param(sp, "p", ty(sp, "P"))])
+        .ret(ty_closure(vec![ty(sp, "Doc")], ty(sp, "Bool")))
+        .body(block(sp, vec![], Some(name(sp, &["p"]))))
+        .item();
+
+    insta::assert_snapshot!(report(&module(vec![doc, keep])));
+}
+
+/// A name that does not resolve, inside a closure type and inside a closure
+/// bound. Each one is reported once, at its own span, and the tree keeps its
+/// shape around the hole — a closure adds no new way for a name to go missing
+/// and no new way to report it.
+#[test]
+fn unresolved_names_inside_a_closure_type_and_a_closure_bound() {
+    let sp = &Sp::new();
+    let predicate = bound_closure(vec![ty(sp, "Missing")], ty(sp, "Bool"));
+    let f = func(sp, "f")
+        .generics(vec![generic(sp, "P", vec![predicate])])
+        .params(vec![param(sp, "p", ty_closure(vec![ty(sp, "Absent")], ty(sp, "Bool")))])
+        .body(block(sp, vec![], None))
+        .item();
+
+    insta::assert_snapshot!(report(&module(vec![f])));
+}
+
+/// A closure bound whose parameter mentions the interface `Summarize`. It is
+/// *not* required to be an interface: `require_kind` stayed on the path arm of
+/// `resolve_bound`, where it belongs, and the types inside a closure bound are
+/// ordinary types resolved as ordinary types.
+#[test]
+fn a_closure_bound_resolves_its_parts_as_types_not_as_interfaces() {
+    let sp = &Sp::new();
+    let doc = record_item(sp, "Doc", vec![], vec![]);
+    let predicate = bound_closure(vec![ty(sp, "Doc")], ty(sp, "Doc"));
+    let f = func(sp, "f")
+        .generics(vec![generic(sp, "F", vec![predicate])])
+        .params(vec![param(sp, "f", ty(sp, "F"))])
+        .body(block(sp, vec![], None))
+        .item();
+
+    insta::assert_snapshot!(report(&module(vec![doc, f])));
+}
+
 // --- associated types (§5.4) --------------------------------------------
 
 #[test]
@@ -562,7 +627,10 @@ fn a_for_over_a_range_and_a_loop_with_a_break() {
 fn bound_path(sp: &Sp, segments: &[&str]) -> science_parser::ast::TypeBound {
     let path = path(sp, segments);
     let span = path.span;
-    science_parser::ast::TypeBound { path, span }
+    science_parser::ast::TypeBound {
+        kind: science_parser::ast::TypeBoundKind::Interface(path),
+        span,
+    }
 }
 
 // --- extern blocks -------------------------------------------------------

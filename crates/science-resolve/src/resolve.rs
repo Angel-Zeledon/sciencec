@@ -1075,13 +1075,19 @@ impl Resolver {
 
         // Nothing to say when a name already failed: the error is reported and
         // a second one about the same line helps nobody.
-        if interface.is_some_and(|b| b.res.is_error())
+        // `interface_res` is `None` only for a closure bound, which cannot
+        // reach here: the grammar admits one where a parameter is constrained
+        // and `implements` is not such a position. Treating `None` as a name
+        // that already failed is the safe reading of a case that does not
+        // arise — it declines to report, and a second diagnostic about a line
+        // that already has one helps nobody.
+        if interface.is_some_and(|b| b.interface_res().is_none_or(|res| res.is_error()))
             || matches!(self_ty.kind, hir::TypeKind::Error)
         {
             return;
         }
 
-        let interface_owner = interface.and_then(|b| b.res.def_id());
+        let interface_owner = interface.and_then(|b| b.interface_res()?.def_id());
         let type_owner = type_owner(self_ty).filter(|id| {
             matches!(self.defs.get(*id).kind, DefKind::Record | DefKind::Choice | DefKind::Primitive)
         });
@@ -1142,6 +1148,10 @@ impl Resolver {
             ast::TypeKind::Tuple(elems) => {
                 hir::TypeKind::Tuple(elems.iter().map(|t| self.resolve_type(t)).collect())
             }
+            ast::TypeKind::Closure { params, ret } => hir::TypeKind::Closure {
+                params: params.iter().map(|t| self.resolve_type(t)).collect(),
+                ret: Box::new(self.resolve_type(ret)),
+            },
             ast::TypeKind::Unit => hir::TypeKind::Unit,
             ast::TypeKind::SelfType => hir::TypeKind::SelfType(self.resolve_self_ty(ty.span)),
             ast::TypeKind::SelfAssoc(name) => hir::TypeKind::SelfAssoc {
@@ -1234,7 +1244,10 @@ impl Resolver {
             let (res, generics) = self.resolve_path(path);
             if let Res::Def(id) = res {
                 if self.defs.get(id).kind == DefKind::Interface {
-                    let bound = hir::Bound { res, generics, span: ty.span };
+                    let bound = hir::Bound {
+                        kind: hir::BoundKind::Interface { res, generics },
+                        span: ty.span,
+                    };
                     return hir::Type { kind: hir::TypeKind::Any(bound), span: ty.span };
                 }
             }
@@ -1293,15 +1306,29 @@ impl Resolver {
         hir::ConstExpr { kind, span: expr.span }
     }
 
+    /// A bound, which since `collections-and-chains.md` §1.2 is one of two
+    /// things rather than always a path.
+    ///
+    /// The closure arm is the whole of what the closure type cost this phase,
+    /// and it is three lines: a closure bound declares no name and names no
+    /// definition, so it resolves as its parts. The `require_kind` call that
+    /// makes a bound *be* an interface stays on the path arm, where it always
+    /// belonged — it is not weakened, it is simply not asked a question about
+    /// a shape that has no name to check.
     fn resolve_bound(&mut self, bound: &ast::TypeBound) -> hir::Bound {
-        let (res, generics) = self.resolve_path(&bound.path);
-        let res = self.require_kind(
-            res,
-            &bound.path,
-            |kind| kind == DefKind::Interface,
-            "an interface",
-        );
-        hir::Bound { res, generics, span: bound.span }
+        let kind = match &bound.kind {
+            ast::TypeBoundKind::Interface(path) => {
+                let (res, generics) = self.resolve_path(path);
+                let res =
+                    self.require_kind(res, path, |kind| kind == DefKind::Interface, "an interface");
+                hir::BoundKind::Interface { res, generics }
+            }
+            ast::TypeBoundKind::Closure { params, ret } => hir::BoundKind::Closure {
+                params: params.iter().map(|t| self.resolve_type(t)).collect(),
+                ret: Box::new(self.resolve_type(ret)),
+            },
+        };
+        hir::Bound { kind, span: bound.span }
     }
 
     /// Rejects a name used in a position its kind cannot fill, e.g. a function

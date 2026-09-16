@@ -1,0 +1,24 @@
+---
+source: crates/science-parser/tests/parse_closure_types.rs
+assertion_line: 26
+expression: "parse_source(r#\"def f(a: (), b: (Int, Bool), c: (Int) -> Bool) -> Int:\n    0\n\"#)"
+---
+Module @0..61
+  Fn `f` @0..60
+    params
+      Param `a` @6..11
+        type: Unit @9..11
+      Param `b` @13..27
+        type: Tuple @16..27
+          Path `Int` @17..20
+          Path `Bool` @22..26
+      Param `c` @29..45
+        type: Closure @32..45
+          params
+            Path `Int` @33..36
+          ret: Path `Bool` @41..45
+    ret: Path `Int` @50..53
+    body: Block @59..60
+      tail: Int 0 @59..60
+--- diagnostics ---
+(none)

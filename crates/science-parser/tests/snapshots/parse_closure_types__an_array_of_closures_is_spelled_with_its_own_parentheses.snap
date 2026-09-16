@@ -1,0 +1,11 @@
+---
+source: crates/science-parser/tests/parse_closure_types.rs
+assertion_line: 131
+expression: "shape_of_type(\"Array of ((Int) -> Bool)\")"
+---
+Path `Array`
+  generics of `Array`
+    Closure
+      params
+        Path `Int`
+      ret: Path `Bool`

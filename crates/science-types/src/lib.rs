@@ -1,6 +1,6 @@
-//! `science-types` — the type checker, starting with its const-expression layer.
+//! `science-types` — the type checker, starting with its representation.
 //!
-//! This crate is empty of type checking. What it holds today is the one thing
+//! This crate holds two layers and no checking. The first is the one thing
 //! `const-expression-arithmetic.md` §10.1 says has to exist *before* a type
 //! checker is written: **the const-expression normal form**, `k + Σ cᵢ·aᵢ`,
 //! and the four commitments that hang off it.
@@ -11,6 +11,22 @@
 //! | item 4 | the normal form *is* the monomorphisation key | [`mono`] |
 //! | item 7 | one-variable linear matching for const-argument inference | [`matching`] |
 //! | item 8 | `SC0260` and `SC0261`, with §9.2's normal-form-and-legend block | [`diagnostics`] |
+//!
+//! The second is **the type representation and the lowering into it** —
+//! `type-checking-and-mir.md` §2 and Decision 24 — which is what inference and
+//! bidirectional checking will both stand on:
+//!
+//! | Note | What it is | Where it lives |
+//! |---|---|---|
+//! | Decision 24 | an interned, index-addressed [`Ty`] over a `mutable self` table | [`ty`] |
+//! | Decision 6 | `T?` as a distinct type, and `T??` collapsed with `SC0520` | [`lower`] |
+//! | §8 item 4 | a const generic argument interned as a [`NormalForm`], not as syntax | [`ty`] |
+//!
+//! The second layer is the first layer's first consumer, and that is the point
+//! of the ordering: `Matrix of (T, a + 1)` and `Matrix of (T, 1 + a)` become
+//! one interned type because [`normalise`] runs before the hash key is built.
+//! An interner keyed on syntax would have been cheap today and a rewrite of the
+//! monomorphisation key later.
 //!
 //! Items 1, 2, 5 and 6 landed in the parser and the resolver before this crate
 //! existed. [`const_expr`] is where the two halves meet: it is the checker's
@@ -57,25 +73,31 @@
 //!   everything its message needs, but the instantiation chain that makes the
 //!   diagnostic survivable is F1's, and a chain rendered before there is a
 //!   monomorphiser to walk would render whatever this crate happened to keep.
-//! - **Type checking, inference, MIR, interface resolution.** None of it. This
-//!   crate has no notion of a type.
+//! - **Inference, bidirectional checking, THIR, MIR, monomorphisation,
+//!   interface resolution, narrowing.** None of it. [`ty`]'s §8 states that
+//!   seam precisely, because the next phase starts at it and a seam a reader
+//!   has to guess at is a seam that moves.
 //!
-//! # 4. Nothing calls any of this yet
+//! # 4. Almost nothing calls any of this yet
 //!
-//! That is expected and it is the point of §10.1: these are the four things
-//! that are cheap now and expensive later. The test suite is the only consumer,
-//! and it is written as the consumer the checker will be.
+//! That is expected and it is the point of §10.1: these are the things that
+//! are cheap now and expensive later. The test suite is the only consumer, and
+//! it is written as the consumer the checker will be.
 
 pub mod const_expr;
 pub mod diagnostics;
+pub mod lowering;
 pub mod matching;
 pub mod mono;
 pub mod normal;
+pub mod ty;
 
 pub use const_expr::{lower, ConstExpr, ConstExprKind};
+pub use lowering::TypeLowerer;
 pub use matching::{match_linear, Match, MatchError};
 pub use mono::MonoKey;
 pub use normal::{equal, normalise, Atom, AtomOrder, ConstEvalError, NormalForm, Term};
+pub use ty::{GenericArg, Ty, TyKind, Types};
 
 /// The diagnostics this crate emits.
 ///
@@ -102,6 +124,14 @@ pub use normal::{equal, normalise, Atom, AtomOrder, ConstEvalError, NormalForm, 
 /// [`diagnostics::cannot_show_equal`]: the block is the explanation, and a
 /// higher-level code attaches it to *its* diagnostic rather than this crate
 /// pushing a second one.
+///
+/// **The second band is `SC0520`-`SC0579`**, which `type-checking-and-mir.md`
+/// §13 claims for the type checker. That note names three — `SC0520` for
+/// `T??`, `SC0521` for a `TryIterate` loop outside a failure context, and
+/// `SC0522` for a generic function across the C boundary — and only the first
+/// belongs to a phase that exists. [`CONST_WHERE_TYPE_EXPECTED`] is allocated
+/// from the same band and is **not** in §13's list; [`lowering`]'s §4 says
+/// what it covers and why the hole it fills is real rather than invented.
 pub mod codes {
     use science_diagnostics::Code;
 
@@ -129,4 +159,31 @@ pub mod codes {
     // chain the whole of its message. The condition this crate can already
     // detect is `matching::MatchError::Indivisible`, which carries the
     // parameter, the coefficient and the offset that message needs.
+
+    // --- the types band, SC0520-SC0579 -----------------------------------
+
+    /// `T??` — Decision 6.
+    ///
+    /// The parser builds one `Nullable` node per `?` deliberately, *"so that
+    /// `T??` … is rejected by the phase that can say why"*. This is that
+    /// phase; [`crate::lowering`]'s §3 is the why.
+    pub const DOUBLE_NULLABLE: Code = Code(520);
+
+    /// A const expression, or a const generic parameter, where a type is
+    /// expected.
+    ///
+    /// **Not one of the three codes `type-checking-and-mir.md` §13 names**,
+    /// and allocated from the band that note claims. The hole is real:
+    /// `parse_type_atom` accepts a const expression wherever it parses a type
+    /// because inside an `of (..)` list there is no ambiguity, and outside one
+    /// there is nobody before this phase who can say so. See
+    /// [`crate::lowering`]'s §4.
+    pub const CONST_WHERE_TYPE_EXPECTED: Code = Code(523);
+
+    // `SC0521` (`TryIterate` outside a failure context) and `SC0522` (a
+    // generic function across the C boundary) are §13's and are deliberately
+    // not defined here. Both are conditions about an *expression* — a `for`
+    // loop, a callback argument — and this crate has no expressions. A code
+    // defined before the phase that reports it is a code whose message is
+    // written against a guess.
 }

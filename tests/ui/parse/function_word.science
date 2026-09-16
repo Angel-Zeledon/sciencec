@@ -1,0 +1,20 @@
+# UI test: `function`, which revision 3 renamed to `def` (SC0156).
+#
+# This one *does* carry a machine-applicable fix — a word for a word, with
+# nothing around it moving — which is the difference from `try` next door.
+#
+# It reports exactly one diagnostic, and that is the interesting part.
+#
+# It reported two when this case was written. `report_function_word` stepped
+# over the word, then `parse_fn` opened with `self.advance()` and ate the
+# function's *name* as though it were the keyword — so `(` was where the
+# parser next looked for an identifier, and the reader was told "expected an
+# identifier, found `(`" about a declaration they had spelled correctly apart
+# from its first word. `report_trait_word` beside it never had the bug,
+# because it reports without consuming and lets the parser do the stepping.
+#
+# The fix was to do the same. This case is what found it: the bug shipped
+# with no test anywhere, and writing the test was what read the output.
+
+function greet(name: Str):
+    print(name)

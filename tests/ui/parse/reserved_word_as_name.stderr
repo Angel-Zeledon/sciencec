@@ -1,0 +1,5 @@
+error[SC0102]: expected an identifier, found `await`, which is reserved for a later phase
+  --> tests/ui/parse/reserved_word_as_name.science:12:5
+   |
+12 | def await(x: Int) -> Int:
+   |     ^^^^^ expected an identifier, found `await`, which is reserved for a later phase

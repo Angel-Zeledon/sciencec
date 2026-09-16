@@ -1,0 +1,16 @@
+# UI test: a const expression multiplying two parameters (SC0157).
+#
+# `const-expression-arithmetic.md` §2.1 keeps const arithmetic linear by the
+# shape of its productions rather than by a check afterwards, which is what
+# lets the normaliser have no case for a non-linear input at all. `*` and `/`
+# therefore need an integer literal on one side, and this is the one place
+# that shape is defended.
+#
+# The other half of the case is the recovery. `N * M` is refused in the middle
+# of an argument list, and the parser steps to the end of that argument so the
+# list still closes — so there is exactly **one** diagnostic here. A second
+# one, about the `)` or about a parameter whose type never finished, would
+# mean the recovery had stopped working.
+
+def f of (const N: Int, const M: Int)(w: Grid of (Int, N * M)):
+    print("x")

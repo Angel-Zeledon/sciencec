@@ -112,7 +112,8 @@ fn blessing_overwrites_an_expectation_that_differs() {
     write(dir.join("case.science"), "x\n");
     write(dir.join("case.stderr"), "stale\n");
 
-    let report = run_ui_tests_with(&dir, UiTestOptions { bless: true }, constant("current\n"));
+    let blessing = UiTestOptions { bless: true, ..UiTestOptions::default() };
+    let report = run_ui_tests_with(&dir, blessing, constant("current\n"));
 
     assert_eq!(report.blessed(), 1);
     assert_eq!(report.failed(), 0);
@@ -125,7 +126,8 @@ fn blessing_rewrites_even_an_expectation_that_already_matches() {
     write(dir.join("case.science"), "x\n");
     write(dir.join("case.stderr"), "same\n");
 
-    let report = run_ui_tests_with(&dir, UiTestOptions { bless: true }, constant("same\n"));
+    let blessing = UiTestOptions { bless: true, ..UiTestOptions::default() };
+    let report = run_ui_tests_with(&dir, blessing, constant("same\n"));
 
     assert_eq!(report.blessed(), 1);
     assert_eq!(report.passed(), 0);
@@ -241,6 +243,37 @@ fn nested_directories_are_walked() {
     let report = run_ui_tests_with(&dir, UiTestOptions::default(), constant("out\n"));
 
     assert_eq!(report.passed(), 2);
+}
+
+#[test]
+fn subdirectories_are_skipped_when_the_directory_is_a_shard() {
+    // A sharded suite: the top level is one phase's, the subdirectory is
+    // another's, and each is walked by the closure that can render it. A
+    // walk that took both would compare a case against an expectation
+    // blessed from a different compiler.
+    let dir = scratch("shard");
+    write(dir.join("top.science"), "x
+");
+    write(dir.join("top.stderr"), "out
+");
+    write(dir.join("parse").join("deep.science"), "x
+");
+    write(dir.join("parse").join("deep.stderr"), "something else
+");
+
+    let report = run_ui_tests_with(
+        &dir,
+        UiTestOptions::default().without_subdirectories(),
+        constant("out
+"),
+    );
+
+    assert_eq!(report.total(), 1, "the subdirectory's case was walked anyway");
+    assert_eq!(report.passed(), 1);
+    assert_eq!(report.failed(), 0);
+    // And the neighbour's expectation was left exactly as it was.
+    assert_eq!(read(dir.join("parse").join("deep.stderr")), "something else
+");
 }
 
 #[test]

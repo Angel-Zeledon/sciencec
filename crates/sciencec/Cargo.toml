@@ -25,3 +25,5 @@ science-parser.workspace = true
 science-resolve.workspace = true
 
 [dev-dependencies]
+# The UI suite for the phases after the lexer: `tests/ui.rs`.
+science-testkit.workspace = true

@@ -240,6 +240,37 @@ fn let_value(module: &Module) -> Option<String> {
     Some(binding.value.dump())
 }
 
+/// The dump of one type expression, with spans stripped.
+///
+/// The type-level counterpart of `shape_of_expr`, and it exists for the same
+/// reason: associativity and binding strength are questions about *shape*, and
+/// `(A) -> (B) -> C` against `((A) -> B) -> C` is a two-line difference buried
+/// under a span on every line. The type is written as a `let` annotation
+/// because that is the one position where a type stands alone with a token on
+/// each side of it that cannot be part of it.
+pub fn shape_of_type(source: &str) -> String {
+    let wrapped = format!("def f():\n    let x: {source} be 0\n");
+    let (tokens, lex_diagnostics) = science_lexer::lex(FILE, &wrapped);
+    assert!(lex_diagnostics.is_empty(), "the source of this test does not lex cleanly");
+    let (module, diagnostics) = science_parser::parse_module(&tokens, FILE);
+    assert!(
+        diagnostics.is_empty(),
+        "`{source}` did not parse: {:?}",
+        diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
+    );
+
+    let ty = let_type(&module)
+        .unwrap_or_else(|| panic!("`{source}` did not produce a `let` annotation"));
+    strip_spans(&ty)
+}
+
+fn let_type(module: &Module) -> Option<String> {
+    use science_parser::ast::{ItemKind, StmtKind};
+    let ItemKind::Fn(decl) = &module.items.first()?.kind else { return None };
+    let StmtKind::Let(binding) = &decl.body.as_ref()?.stmts.first()?.kind else { return None };
+    Some(binding.names.first()?.ty.as_ref()?.dump())
+}
+
 /// Drops the `@start..end` suffix from every line of a dump.
 pub fn strip_spans(dump: &str) -> String {
     dump.lines()

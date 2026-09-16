@@ -1,0 +1,7 @@
+error[SC0157]: a const expression multiplies only by a literal
+  --> tests/ui/parse/const_factor.science:15:58
+   |
+15 | def f of (const N: Int, const M: Int)(w: Grid of (Int, N * M)):
+   |                                                          ^ one side of this needs an integer literal
+   |
+   = note: `const-expression-arithmetic.md` §2.1 keeps const arithmetic linear by grammar: two parameters may be added or subtracted, never multiplied or divided by each other

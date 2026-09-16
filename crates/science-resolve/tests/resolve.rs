@@ -509,7 +509,10 @@ fn orphan_sources(impl_in_type_module: bool) -> Vec<science_resolve::SourceModul
 fn bound_path(sp: &Sp, segments: &[&str]) -> science_parser::ast::TypeBound {
     let path = path(sp, segments);
     let span = path.span;
-    science_parser::ast::TypeBound { path, span }
+    science_parser::ast::TypeBound {
+        kind: science_parser::ast::TypeBoundKind::Interface(path),
+        span,
+    }
 }
 
 #[test]

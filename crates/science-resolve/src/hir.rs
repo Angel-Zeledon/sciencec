@@ -613,18 +613,57 @@ impl GenericArity {
     }
 }
 
-/// An interface named as a bound: in `of T: Ord`, in `any Summarize`, after
-/// `implements`.
+/// What a parameter must satisfy: in `of T: Ord`, in `where F: (A) -> B`, in
+/// `any Summarize`, after `implements`, and in an interface's super list.
 ///
 /// Kept as its own node rather than collapsed into a [`Type`] because the
 /// parser distinguished the two, and because a bound that resolved to
 /// something which is not an interface must say so with the span as written.
+///
+/// **This used to be a flat `{ res, generics, span }`, and widening it is what
+/// the closure type cost this phase.** `collections-and-chains.md` §1.2's
+/// grammar note is explicit that the expensive part of the ask is that a bound
+/// stops being a path, and that the cost is the same under every spelling that
+/// was considered. Here it is one enum, two arms in `resolve_bound`, and an
+/// accessor for the callers that only ever wanted the interface —
+/// [`Bound::interface_res`]. What it is *not* is a new resolution rule: a
+/// closure bound declares no name and mentions none beyond the types inside
+/// it, so it resolves as its parts and nothing else.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bound {
-    pub res: Res,
-    /// Generic arguments on the interface: `From of Doc`.
-    pub generics: Vec<Type>,
+    pub kind: BoundKind,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BoundKind {
+    /// An interface, resolved. `Res::Error` when the name named nothing, or
+    /// named something that is not an interface.
+    Interface {
+        res: Res,
+        /// Generic arguments on the interface: `From of Doc`.
+        generics: Vec<Type>,
+    },
+    /// `(A) -> B`, structural. There is no `Res`, because there is no
+    /// definition: the bound *is* its shape, and whether a given `F` has that
+    /// shape is a question for `science-types`, not for this phase.
+    Closure { params: Vec<Type>, ret: Box<Type> },
+}
+
+impl Bound {
+    /// The interface this bound resolved to, when it names one.
+    ///
+    /// `None` is the closure bound. Callers that answer a question about a
+    /// *definition* — which module owns it, whether it already failed — get
+    /// `None` here and must decide what that means for them, rather than
+    /// receiving a `Res::Error` that would conflate "no name" with "a name
+    /// that did not resolve".
+    pub fn interface_res(&self) -> Option<Res> {
+        match &self.kind {
+            BoundKind::Interface { res, .. } => Some(*res),
+            BoundKind::Closure { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -912,6 +951,18 @@ pub enum TypeKind {
     Any(Bound),
     /// Two or more elements; `(T)` is `T` and produces no node.
     Tuple(Vec<Type>),
+    /// `(A) -> B` — a closure type (`collections-and-chains.md` §1.2).
+    ///
+    /// It arrives here as its parts and nothing more. A closure type names no
+    /// definition, so there is nothing for this phase to resolve about the
+    /// arrow itself; the parameters and the return type are ordinary types and
+    /// are resolved as such.
+    ///
+    /// `params` is empty for `() -> B`. §1.2's one accepted loss survives into
+    /// this phase unchanged: `(T)` collapsed in the parser with no node, so a
+    /// closure over a single tuple is not representable here either, and §1.3
+    /// closes the hole by making pairs records.
+    Closure { params: Vec<Type>, ret: Box<Type> },
     Unit,
     /// `T?` — `T`, or `null` (revision 2 §3.1).
     ///

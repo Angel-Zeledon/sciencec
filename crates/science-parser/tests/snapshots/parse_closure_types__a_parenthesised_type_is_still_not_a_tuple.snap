@@ -1,0 +1,6 @@
+---
+source: crates/science-parser/tests/parse_closure_types.rs
+assertion_line: 38
+expression: "shape_of_type(\"(Int)\")"
+---
+Path `Int`

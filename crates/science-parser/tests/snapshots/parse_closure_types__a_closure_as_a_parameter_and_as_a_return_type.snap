@@ -1,0 +1,28 @@
+---
+source: crates/science-parser/tests/parse_closure_types.rs
+assertion_line: 143
+expression: "parse_source(r#\"def keep(p: (Int) -> Bool) -> Int:\n    0\n\ndef adder(n: Int) -> (Int) -> Int:\n    n\n\"#)"
+---
+Module @0..83
+  Fn `keep` @0..40
+    params
+      Param `p` @9..25
+        type: Closure @12..25
+          params
+            Path `Int` @13..16
+          ret: Path `Bool` @21..25
+    ret: Path `Int` @30..33
+    body: Block @39..40
+      tail: Int 0 @39..40
+  Fn `adder` @42..82
+    params
+      Param `n` @52..58
+        type: Path `Int` @55..58
+    ret: Closure @63..75
+      params
+        Path `Int` @64..67
+      ret: Path `Int` @72..75
+    body: Block @81..82
+      tail: Path `n` @81..82
+--- diagnostics ---
+(none)

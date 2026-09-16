@@ -104,6 +104,24 @@ pub mod codes {
     /// The word `returns` where §4.4 now writes `->`.
     pub const RETURNS_WORD: Code = Code(118);
 
+    /// A bound that opens with `(` and then does not continue with `->`.
+    ///
+    /// `collections-and-chains.md` §1.2 spells a closure type `(A) -> B` and
+    /// notes that the parser may need one code from the syntax block for the
+    /// case where a parenthesised list is followed by the wrong thing; it
+    /// recorded the need without taking a number. This takes it, and takes it
+    /// from the free pool `docs/superpowers/design/README.md` lists rather
+    /// than from the next number after `SC0118`.
+    ///
+    /// It fires in **bound** position only. In type position `(A, B)` with no
+    /// arrow after it is a tuple and needs no diagnostic at all — that is the
+    /// whole of §1.2's one-token test. In bound position there is no second
+    /// reading: no interface name begins with `(`, so the missing arrow is a
+    /// refusal rather than a fork, and saying so here is what keeps it one
+    /// diagnostic instead of the three that follow from a parser left standing
+    /// on a parameter list it cannot use.
+    pub const EXPECTED_BOUND_ARROW: Code = Code(119);
+
     // The migration codes of syntax revision 2. Each names a word the
     // revision removed and says what replaced it, because a reader arriving
     // with pre-revision code gets a keyword that is now an ordinary word, and
@@ -193,6 +211,69 @@ pub mod ffi_codes {
     /// A variadic function in a hand-written `extern` block. Asked for by
     /// number in `c-binding-coverage.md` §7.
     pub const VARIADIC_FUNCTION: Code = Code(434);
+}
+
+/// Where a bound list stands, and therefore whether `(A) -> B` is one of the
+/// things that may appear in it.
+///
+/// `collections-and-chains.md` §1.2 needs the closure bound in the two
+/// positions that *constrain* a parameter, and asks for it nowhere else. The
+/// other three positions *name* an interface — `implements`, `any`, and an
+/// interface's own super list — and a structural type in any of them would be
+/// a thing no later phase could make sense of.
+///
+/// Saying so in the grammar rather than checking it afterwards is what keeps
+/// this addition purely additive: in an [`Interface`](Self::Interface)
+/// position the parser does exactly what it did before the closure type
+/// existed, down to the diagnostic and its span. `implements Ord -> Bool` is
+/// still `SC0100` on the `->`, and `any (A) -> B` is still `SC0102` on the
+/// `(`, because neither ever reaches the fork.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BoundPosition {
+    /// `of T: ..` and `where T: ..` — what a parameter must satisfy, which a
+    /// closure type is one of the ways of saying.
+    Constraint,
+    /// `interface Foo: ..`, `implements ..`, `any ..` — positions that hold an
+    /// interface's name and can hold nothing else.
+    Interface,
+}
+
+/// Which of two nested constructions a `->` after a generic argument belongs
+/// to.
+///
+/// It is the one place `collections-and-chains.md` §1.2's one-token rule had
+/// to be told something, rather than simply reading the token: the arrow is
+/// unambiguous, but *whose* it is depends on whether the argument list was
+/// parenthesised, and that is a fact the argument itself cannot see.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArrowAfter {
+    /// Inside `of (..)`: the parens close the list, so an arrow written inside
+    /// them is the argument's own.
+    Argument,
+    /// After a bare `of T`: the arrow belongs to whatever the path is part of,
+    /// so `Array of Int -> Bool` takes an array and gives a `Bool`.
+    Enclosing,
+}
+
+/// The parameter list a closure type's left-hand side denotes.
+///
+/// The mapping is total, which is the point: `parse_type` never has to know in
+/// advance that it is parsing a parameter list, so there is no backtracking
+/// and no second grammar for parameter lists. `()` is no parameters, a tuple
+/// is its elements, and anything else is one parameter.
+///
+/// It is lossless in one direction only, and §1.2 states the loss: `(T)`
+/// collapses to `T` with no node, so a one-parameter closure whose parameter
+/// is a tuple cannot be spelled — `((A, B)) -> C` arrives here as a `Tuple`
+/// and comes out as two parameters. §1.3 closes that hole by ruling that
+/// pairs are records and never tuples; the same argument covers the `()` case
+/// below it, where a lone unit parameter is unspellable and worth nothing.
+fn closure_params(ty: Type) -> Vec<Type> {
+    match ty.kind {
+        TypeKind::Unit => Vec::new(),
+        TypeKind::Tuple(elems) => elems,
+        _ => vec![ty],
+    }
 }
 
 /// Parses a token stream into a module, along with everything that went wrong.
@@ -777,7 +858,13 @@ impl<'t> Parser<'t> {
     /// the migration that will be needed most: a model's priors are Python's,
     /// and `def-and-lambda.md` §3.2 expected the traffic to run the other way.
     fn report_function_word(&mut self) {
-        let span = self.advance().span; // `function`
+        // Reports without consuming. `parse_fn` opens by advancing over the
+        // declaration keyword, so advancing here too ate the function's
+        // *name* and produced a second, nonsense diagnostic: "expected an
+        // identifier, found `(`" about a name the author spelled correctly.
+        // `report_trait_word` beside this one was already factored this way
+        // and is why it never cascaded.
+        let span = self.span();
         self.diagnostics.push(
             Diagnostic::error(codes::FUNCTION_WORD, "the declaration is written `def`")
                 .with_label(Label::primary(span, "`function` is not a keyword in Science"))
@@ -1658,7 +1745,7 @@ impl<'t> Parser<'t> {
                 }
             }
             TypeKind::Any(bound) => {
-                let what = format!("`any {}`", bound.path.dotted());
+                let what = format!("`any {}`", bound.describe());
                 self.report_not_ffi_representable(
                     ty,
                     &what,
@@ -1671,6 +1758,16 @@ impl<'t> Parser<'t> {
                 "a tuple",
                 "C has no tuple; declare a `type` marked `implements ffi.CLayout` and pass \
                  a pointer to it",
+            ),
+            // A closure is a code pointer *and* its captures, which is the
+            // same two-pointer shape as `any Trait` and no more representable.
+            // A bare C function pointer is a different type and has a spelling
+            // of its own: `ffi-c-boundary.md` §1.2's `ffi.FunctionPointer`.
+            TypeKind::Closure { .. } => self.report_not_ffi_representable(
+                ty,
+                "a closure type",
+                "a closure carries its captures, and C has nowhere to put them; a plain C \
+                 callback is `ffi.FunctionPointer`",
             ),
             // `()` is how a function that returns nothing is written, `Self`
             // cannot occur in a block with no implementation around it, a
@@ -1830,7 +1927,7 @@ impl<'t> Parser<'t> {
             && !matches!(self.peek_ahead(1), TokenKind::Newline)
         {
             self.advance();
-            self.parse_bounds()
+            self.parse_bounds(BoundPosition::Constraint)
         } else {
             Vec::new()
         };
@@ -1844,9 +1941,9 @@ impl<'t> Parser<'t> {
     /// `A + B + C`. The list ends at anything that is not a `+`, which is what
     /// lets a `where` clause end on the `:` that opens the block and an inline
     /// bound end on the `(` that opens the parameter list.
-    fn parse_bounds(&mut self) -> Vec<TypeBound> {
+    fn parse_bounds(&mut self, position: BoundPosition) -> Vec<TypeBound> {
         let mut bounds = Vec::new();
-        while let Some(bound) = self.parse_type_bound() {
+        while let Some(bound) = self.parse_type_bound(position) {
             bounds.push(bound);
             if self.eat(&TokenKind::Plus).is_none() {
                 break;
@@ -1855,10 +1952,73 @@ impl<'t> Parser<'t> {
         bounds
     }
 
-    fn parse_type_bound(&mut self) -> Option<TypeBound> {
+    /// One bound: an interface named by path, or — where `position` admits one
+    /// — the closure type `(A) -> B`.
+    ///
+    /// The fork is the same single token [`Self::parse_type`] uses, moved one
+    /// production up, and it is made *before* the list rather than after it:
+    /// no interface name can begin with `(`, so a `(` here settles the
+    /// question with no lookahead at all.
+    fn parse_type_bound(&mut self, position: BoundPosition) -> Option<TypeBound> {
+        let start = self.span();
+        if position == BoundPosition::Constraint && self.at(&TokenKind::LParen) {
+            let params = self.parse_paren_type(start);
+            return Some(self.closure_bound(params, start));
+        }
         let path = self.parse_path()?;
         let span = path.span;
-        Some(TypeBound { path, span })
+        // `where F: Int -> Bool`. Admitted for the same reason `parse_type`
+        // has to admit it: `(T)` collapses with no node, so by the time the
+        // arrow is read nothing remembers whether a paren was written, and a
+        // grammar that accepted one and refused the other would be describing
+        // a distinction the tree cannot hold.
+        if position == BoundPosition::Constraint && self.at(&TokenKind::Arrow) {
+            let params = Type { kind: TypeKind::Path(path), span };
+            return Some(self.closure_bound(params, start));
+        }
+        Some(TypeBound { kind: TypeBoundKind::Interface(path), span })
+    }
+
+    /// The rest of a closure bound, with its parameter list already parsed.
+    ///
+    /// The `->` is *required* here, where [`Self::parse_type`] merely peeks
+    /// for it: a parenthesised type has a second reading when no arrow
+    /// follows — it is a tuple — and a parenthesised bound has none.
+    fn closure_bound(&mut self, params: Type, start: Span) -> TypeBound {
+        let ret = if self.eat(&TokenKind::Arrow).is_some() {
+            self.parse_type()
+        } else {
+            self.report_bound_arrow(params.span);
+            // Nothing is skipped. The parameter list is already consumed and
+            // the cursor sits on whatever followed the `)`, which is the `+`,
+            // `,` or `:` the enclosing list is waiting for — so the refusal
+            // costs one diagnostic and the rest of the declaration still
+            // parses.
+            Type { kind: TypeKind::Error, span: params.span }
+        };
+        TypeBound {
+            kind: TypeBoundKind::Closure {
+                params: closure_params(params),
+                ret: Box::new(ret),
+            },
+            span: start.merge(self.last_text_span()),
+        }
+    }
+
+    /// `SC0119`, the one code `collections-and-chains.md` §1.2 left as a need.
+    fn report_bound_arrow(&mut self, params: Span) {
+        let found = describe(self.peek());
+        self.diagnostics.push(
+            Diagnostic::error(
+                codes::EXPECTED_BOUND_ARROW,
+                format!("expected `->` after a closure type's parameter list, found {found}"),
+            )
+            .with_label(Label::primary(params, "this is a parameter list, not an interface"))
+            .with_note(
+                "`collections-and-chains.md` §1.2 spells a closure type `(A) -> B`; a bound \
+                 that opens with `(` has no other reading, so the arrow is not optional here",
+            ),
+        );
     }
 
     /// `where T: A + B, U: C`.
@@ -1877,7 +2037,7 @@ impl<'t> Parser<'t> {
             if self.expect(&TokenKind::Colon, "`:`").is_none() {
                 break;
             }
-            let bounds = self.parse_bounds();
+            let bounds = self.parse_bounds(BoundPosition::Constraint);
             predicates.push(WherePredicate { ty, bounds, span: start.merge(self.last_text_span()) });
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
@@ -1937,11 +2097,14 @@ impl<'t> Parser<'t> {
     /// parentheses, and so may one (§4.3).
     fn parse_generic_args(&mut self) -> Vec<Type> {
         if self.eat(&TokenKind::LParen).is_none() {
-            return vec![self.parse_generic_arg()];
+            // The bare form stops before a `->`: see [`Self::parse_type_no_arrow`]
+            // for why the two spellings of a one-argument list have to agree
+            // about which side of the list an arrow falls on.
+            return vec![self.parse_generic_arg(ArrowAfter::Enclosing)];
         }
         let mut args = Vec::new();
         while !self.at(&TokenKind::RParen) {
-            args.push(self.parse_generic_arg());
+            args.push(self.parse_generic_arg(ArrowAfter::Argument));
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
             }
@@ -1984,7 +2147,7 @@ impl<'t> Parser<'t> {
     /// legal unary negation in expression position, and making whitespace
     /// significant in one of the two positions and not the other would be a
     /// rule with exactly one instance in the language.
-    fn parse_generic_arg(&mut self) -> Type {
+    fn parse_generic_arg(&mut self, arrow: ArrowAfter) -> Type {
         let start = self.span();
         if self.at(&TokenKind::Minus) && matches!(self.peek_ahead(1), TokenKind::Int { .. }) {
             let minus = self.advance().span;
@@ -1996,7 +2159,10 @@ impl<'t> Parser<'t> {
             let atom = ConstExpr { kind: ConstExprKind::Neg(Box::new(operand)), span };
             return self.const_expr_from(atom, start);
         }
-        let ty = self.parse_type();
+        let ty = match arrow {
+            ArrowAfter::Argument => self.parse_type(),
+            ArrowAfter::Enclosing => self.parse_type_no_arrow(),
+        };
         // A type followed by a const operator was never a type.
         //
         // The parser cannot tell `N` the type parameter from `N` the const
@@ -2055,6 +2221,7 @@ impl<'t> Parser<'t> {
 
     /// `*` and `/` runs over one atom. The right operand must be a literal.
     fn const_term_from(&mut self, first: ConstExpr) -> ConstExpr {
+        let start_of_term = first.span;
         let mut term = first;
         loop {
             let times = if self.at(&TokenKind::Star) {
@@ -2065,30 +2232,56 @@ impl<'t> Parser<'t> {
                 break;
             };
             let op = self.advance().span;
-            let Some(literal) = literal_of(self.peek()) else {
-                self.report_const_factor(op);
-                // Step over what stood where the literal should have been, so
-                // the argument list closes and the reader gets one error
-                // rather than one plus the three that follow from the parser
-                // still standing on a name it cannot use.
-                self.skip_const_operand();
-                break;
-            };
-            let literal_span = self.advance().span;
-            let span = term.span.merge(literal_span);
-            let kind = if times {
-                ConstExprKind::Mul {
-                    operand: Box::new(term),
-                    factor: literal,
-                    factor_span: literal_span,
+            // §2.1 has **two** multiplication productions — `ConstTerm '*'
+            // IntLiteral` and `IntLiteral '*' ConstTerm` — so `2 * N` is as
+            // legal as `N * 2`. Only the first was implemented, which rejected
+            // a legal program with a message telling its author to do the
+            // thing they had done. Division has one production and keeps the
+            // literal on the right, which is why the two are not symmetric.
+            let left_literal = const_literal_of(&term);
+            let kind = match (literal_of(self.peek()), left_literal, times) {
+                // `e * k` and `e / k`.
+                (Some(literal), _, _) => {
+                    let literal_span = self.advance().span;
+                    let operand = Box::new(term);
+                    if times {
+                        ConstExprKind::Mul { operand, factor: literal, factor_span: literal_span }
+                    } else {
+                        ConstExprKind::Div {
+                            operand,
+                            divisor: literal,
+                            divisor_span: literal_span,
+                        }
+                    }
                 }
-            } else {
-                ConstExprKind::Div {
-                    operand: Box::new(term),
-                    divisor: literal,
-                    divisor_span: literal_span,
+                // `k * e`, the mirrored production. The node is the same one:
+                // multiplication is commutative and the normaliser has one
+                // shape to handle rather than two.
+                (None, Some((literal, literal_span)), true) => {
+                    let Some(operand) = self.parse_const_atom() else {
+                        self.report_const_factor(op, true);
+                        self.skip_const_operand();
+                        break;
+                    };
+                    ConstExprKind::Mul {
+                        operand: Box::new(operand),
+                        factor: literal,
+                        factor_span: literal_span,
+                    }
+                }
+                // Neither side is a literal, or it is `k / e`, which §2.1
+                // has no production for.
+                _ => {
+                    self.report_const_factor(op, times);
+                    // Step over what stood where the literal should have been,
+                    // so the argument list closes and the reader gets one
+                    // error rather than one plus the three that follow from
+                    // the parser still standing on a name it cannot use.
+                    self.skip_const_operand();
+                    break;
                 }
             };
+            let span = start_of_term.merge(self.last_text_span());
             term = ConstExpr { kind, span };
         }
         term
@@ -2141,11 +2334,21 @@ impl<'t> Parser<'t> {
     }
 
     /// §2.1's central refusal, reported rather than parsed around.
-    fn report_const_factor(&mut self, op: Span) {
+    fn report_const_factor(&mut self, op: Span, times: bool) {
+        // The two operators are not symmetric and the message must not
+        // pretend they are: §2.1 admits a literal on *either* side of `*` and
+        // only on the right of `/`. Saying "on one side" for division told a
+        // reader that `2 / N` was a spelling problem when it is a grammar
+        // one, and saying "multiplies" for `/` was simply the wrong word.
+        let (what, where_) = if times {
+            ("multiplies only by a literal", "one side of this needs an integer literal")
+        } else {
+            ("divides only by a literal", "the right of this needs an integer literal")
+        };
         self.diagnostics.push(
-            Diagnostic::error(codes::CONST_FACTOR, "a const expression multiplies only by a literal")
-                .with_label(Label::primary(op, "this operator needs an integer literal on one side"))
-                .with_note("`const-expression-arithmetic.md` §2.1 keeps const arithmetic linear by grammar: two parameters may be added, never multiplied"),
+            Diagnostic::error(codes::CONST_FACTOR, format!("a const expression {what}"))
+                .with_label(Label::primary(op, where_))
+                .with_note("`const-expression-arithmetic.md` §2.1 keeps const arithmetic linear by grammar: two parameters may be added or subtracted, never multiplied or divided by each other"),
         );
     }
 
@@ -2166,7 +2369,58 @@ impl<'t> Parser<'t> {
     /// The recursive calls inside [`Self::parse_type_atom`] come back through
     /// this function, so `borrowed T?` is `borrowed (T?)`: the suffix binds to
     /// the type it follows, not to the whole construction.
+    /// `(A) -> B` is read by **one token of lookahead past the closing paren,
+    /// with no backtracking.**
+    ///
+    /// [`Self::parse_paren_type`] already parses `()`, `(T)` and `(A, B)` to
+    /// completion, and a closure's parameter list has the identical inner
+    /// grammar — a comma-separated list of types — so the same parse serves
+    /// both readings and only the *reduction* differs. After it returns, one
+    /// peek decides: `Arrow` means the thing just parsed was a parameter list,
+    /// anything else means it is what it has always been.
+    ///
+    /// `-> (Config, Error?)`, the error model's return shape on every fallible
+    /// function in the language, is settled by that peek: what follows a
+    /// return type is `where` or `:` and never `->`, so no existing signature
+    /// changes meaning.
+    ///
+    /// The return type is a recursive call, which buys both of §1.2's stated
+    /// associativity rules for nothing: `->` comes out right-associative, so
+    /// `(A) -> (B) -> C` is `(A) -> ((B) -> C)`; and the `?` loop above runs
+    /// *before* the arrow is read and again inside the recursion, so `?` binds
+    /// tighter and `(A) -> B?` is `(A) -> (B?)`.
     fn parse_type(&mut self) -> Type {
+        let start = self.span();
+        let ty = self.parse_type_no_arrow();
+        if self.eat(&TokenKind::Arrow).is_some() {
+            let ret = self.parse_type();
+            return Type {
+                kind: TypeKind::Closure {
+                    params: closure_params(ty),
+                    ret: Box::new(ret),
+                },
+                span: start.merge(self.last_text_span()),
+            };
+        }
+        ty
+    }
+
+    /// A type up to but not including a `->`, which is left for the caller.
+    ///
+    /// One caller wants this, and it is the one place the greedy reading was
+    /// wrong: the **bare** single generic argument of `Array of T`. §4.3 says
+    /// one argument may be written with parentheses or without, so `Array of T`
+    /// and `Array of (T)` are the same type — but in `Array of (T) -> B` the
+    /// parens close the *argument list*, so the arrow is outside it and the
+    /// closure takes the array. If the bare form parsed its argument greedily
+    /// the same source with two parens removed would be an `Array` of closures
+    /// instead, and two spellings §4.3 calls equal would name different types.
+    /// So the arrow falls outside in both, which is also the ML-family reading
+    /// `collections-and-chains.md` §1.2 appeals to: application binds tighter
+    /// than the arrow. A closure *as* a generic argument writes the parens it
+    /// needs — `Array of ((Int) -> Bool)` — exactly as it does in every other
+    /// position where two readings meet.
+    fn parse_type_no_arrow(&mut self) -> Type {
         let start = self.span();
         let mut ty = self.parse_type_atom();
         while self.at(&TokenKind::Question) {
@@ -2218,7 +2472,7 @@ impl<'t> Parser<'t> {
             }
             TokenKind::Any => {
                 self.advance();
-                match self.parse_type_bound() {
+                match self.parse_type_bound(BoundPosition::Interface) {
                     Some(bound) => Type {
                         kind: TypeKind::Any(bound),
                         span: start.merge(self.last_text_span()),
@@ -3503,7 +3757,7 @@ impl<'t> Parser<'t> {
             && !matches!(self.peek_ahead(1), TokenKind::Newline)
         {
             self.advance();
-            self.parse_bounds()
+            self.parse_bounds(BoundPosition::Interface)
         } else {
             Vec::new()
         };
@@ -3640,7 +3894,7 @@ impl<'t> Parser<'t> {
             );
             return None;
         }
-        self.parse_type_bound()
+        self.parse_type_bound(BoundPosition::Interface)
     }
 
     /// One member of an `interface` body: a function, or `type Item`.
@@ -3908,6 +4162,18 @@ fn finish_block(mut stmts: Vec<Stmt>, start: Span) -> Block {
 /// `borrowed T` or an `Array of T` followed by `+` is not arithmetic that was
 /// mis-parsed; it is an error, and returning `None` leaves it to be reported
 /// as the syntax error it is.
+/// The literal a const term turns out to be, for §2.1's mirrored production.
+///
+/// Only a bare literal counts. `(2) * N` is not `k * e` — the parenthesised
+/// form is a `ConstExpr` whose kind is `Lit`, which this does match, and that
+/// is deliberate: the parentheses are not part of the grammar's shape.
+fn const_literal_of(term: &ConstExpr) -> Option<(Literal, Span)> {
+    match &term.kind {
+        ConstExprKind::Lit(literal) => Some((literal.clone(), term.span)),
+        _ => None,
+    }
+}
+
 fn const_atom_of(ty: &Type) -> Option<ConstExpr> {
     match &ty.kind {
         TypeKind::Const(value) => Some(value.clone()),

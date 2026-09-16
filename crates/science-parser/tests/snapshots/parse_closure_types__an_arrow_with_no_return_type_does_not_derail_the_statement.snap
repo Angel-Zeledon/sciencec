@@ -1,0 +1,18 @@
+---
+source: crates/science-parser/tests/parse_closure_types.rs
+assertion_line: 314
+expression: "parse_source_allowing_errors(r#\"def f() -> Int:\n    let g: (Int) -> be 0\n    0\n\"#)"
+---
+Module @0..47
+  Fn `f` @0..46
+    ret: Path `Int` @11..14
+    body: Block @20..46
+      Let `g` @20..40
+        type: Closure @27..35
+          params
+            Path `Int` @28..31
+          ret: Error @36..38
+        value: Int 0 @39..40
+      tail: Int 0 @45..46
+--- diagnostics ---
+SC0104 @36..38 expected a type, found `be`

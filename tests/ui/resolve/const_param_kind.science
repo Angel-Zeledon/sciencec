@@ -1,0 +1,15 @@
+# UI test: a const parameter annotated with something that is not a kind
+# (SC0220).
+#
+# `const N: K` annotates `N` with a **kind**, and §2.3 of
+# `const-expression-arithmetic.md` admits exactly two: `Int` and `Shape`. The
+# parser is unchanged there — it reads whatever `parse_type` accepts — so the
+# refusal belongs to the resolver, which is also why this case lives in the
+# `resolve/` shard and has to lex and parse clean to be about anything.
+#
+# `Str` is the interesting wrong answer: it is a real type, in scope, spelled
+# correctly, and still not a kind. Resolving the annotation as a type would
+# accept it.
+
+def widest of (const N: Str)(rows: Int) -> Int:
+    rows

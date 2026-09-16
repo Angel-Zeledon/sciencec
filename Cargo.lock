@@ -443,6 +443,7 @@ dependencies = [
  "science-fmt",
  "science-parser",
  "science-resolve",
+ "science-testkit",
 ]
 
 [[package]]

@@ -1,0 +1,21 @@
+---
+source: crates/science-resolve/tests/snapshots.rs
+assertion_line: 417
+expression: "report(&module(vec![doc, f]))"
+---
+Module `main` #73 @0..21
+  Record `Doc` #74 @0..3
+  Fn `f` #75 @12..21
+    generics
+      TypeParam `F` #76 @14..15
+        bounds
+          ClosureBound @4..11
+            params
+              Path -> `Doc` #74 @4..7
+            ret: Path -> `Doc` #74 @8..11
+    params
+      Param `f` #77 @16..19
+        type: Path -> `F` #76 @16..17
+    body: Block @20..21
+--- diagnostics ---
+(none)

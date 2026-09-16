@@ -1,5 +1,6 @@
 ---
 source: crates/science-parser/tests/ast_dump.rs
+assertion_line: 1354
 expression: out
 ---
 Borrowed @0..12
@@ -39,5 +40,18 @@ Path `Window` @193..214
   generics of `Window`
     Path `Int` @204..207
     ConstArg Str "a" @209..212
-Path `text.parser.Token` @216..233
-Error @236..241
+Closure @216..229
+  params
+    Path `Int` @217..220
+  ret: Path `Bool` @225..229
+Closure @231..241
+  ret: Path `Bool` @237..241
+Closure @243..268
+  params
+    Path `Int` @244..247
+  ret: Closure @252..268
+    params
+      Path `Bool` @253..257
+    ret: Path `String` @262..268
+Path `text.parser.Token` @270..287
+Error @290..295

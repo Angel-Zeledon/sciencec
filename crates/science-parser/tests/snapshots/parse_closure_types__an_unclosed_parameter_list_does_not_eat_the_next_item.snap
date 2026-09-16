@@ -1,0 +1,24 @@
+---
+source: crates/science-parser/tests/parse_closure_types.rs
+assertion_line: 326
+expression: "parse_source_allowing_errors(r#\"def f(g: (Int -> Bool) -> Int:\n    0\n\ndef h() -> Int:\n    0\n\"#)"
+---
+Module @0..60
+  Fn `f` @0..36
+    params
+      Param `g` @6..29
+        type: Closure @9..29
+          params
+            Closure @10..21
+              params
+                Path `Int` @10..13
+              ret: Path `Bool` @17..21
+          ret: Path `Int` @26..29
+    body: Block @35..36
+      tail: Int 0 @35..36
+  Fn `h` @38..59
+    ret: Path `Int` @49..52
+    body: Block @58..59
+      tail: Int 0 @58..59
+--- diagnostics ---
+SC0100 @29..30 expected `)`, found `:`

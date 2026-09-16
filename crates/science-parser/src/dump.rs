@@ -254,9 +254,19 @@ impl Dump for Path {
 
 impl Dump for TypeBound {
     fn dump_node(&self, w: &mut DumpWriter) {
-        w.node(&named("Bound", &self.path.dotted()), self.span, |w| {
-            dump_path_generics(&self.path, w)
-        });
+        match &self.kind {
+            TypeBoundKind::Interface(path) => {
+                w.node(&named("Bound", &path.dotted()), self.span, |w| {
+                    dump_path_generics(path, w)
+                });
+            }
+            TypeBoundKind::Closure { params, ret } => {
+                w.node("ClosureBound", self.span, |w| {
+                    w.list("params", params);
+                    w.child("ret", ret.as_ref());
+                });
+            }
+        }
     }
 }
 
@@ -573,6 +583,10 @@ impl Dump for Type {
             TypeKind::Any(bound) => w.node("Any", self.span, |w| bound.dump_node(w)),
             TypeKind::Nullable(inner) => w.node("Nullable", self.span, |w| inner.dump_node(w)),
             TypeKind::Tuple(elems) => w.node("Tuple", self.span, |w| w.items(elems)),
+            TypeKind::Closure { params, ret } => w.node("Closure", self.span, |w| {
+                w.list("params", params);
+                w.child("ret", ret.as_ref());
+            }),
             TypeKind::Unit => w.leaf("Unit", self.span),
             TypeKind::SelfType => w.leaf("SelfType", self.span),
             TypeKind::SelfAssoc(name) => w.leaf(&named("SelfAssoc", &name.name), self.span),

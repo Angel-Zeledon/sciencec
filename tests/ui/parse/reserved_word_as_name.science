@@ -1,0 +1,13 @@
+# UI test: a reserved word where a name belongs (SC0102).
+#
+# `await` is reserved for a later phase — it is in `ReservedWord`, lexed as
+# its own token and never as an identifier — so a program that uses it as a
+# function name does not get "already defined" or an unresolved name. It gets
+# the parser refusing the name, with `describe` saying which kind of word it
+# is: reserved, not a keyword in use today.
+#
+# The whole declaration is discarded by the recovery, so this is one
+# diagnostic and the body is not reported over.
+
+def await(x: Int) -> Int:
+    x
