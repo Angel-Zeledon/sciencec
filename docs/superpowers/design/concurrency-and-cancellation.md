@@ -181,11 +181,46 @@ no way around it. Making the flag ambient is the way around it.
 witness chain. A cancellation check is exactly that, and reusing the existing
 lattice means no new keyword and no new inference.
 
-**Decision 4. The observation points are: the top of every loop body, and every
-call to a function whose effect set includes `cancellable`.** Not every
-statement — that is a branch in the innermost loop of every numerical kernel,
-and this language's users measure those loops. The loop head is the natural
-point and it is the one a long computation passes through.
+**Decision 4 — REVERSED. The observation point is wherever the author already
+reports progress, and nowhere else. The compiler inserts nothing.**
+
+This section first decided that the compiler would check at the top of every
+loop body, on the grounds that the loop head is the point a long computation
+passes through. `mcp-servers.md` §9.5 rejected that within the hour and it is
+right. The reversal is recorded rather than edited away, because the first
+answer is the one everybody reaches for and the reasons it fails are not
+obvious.
+
+**Why it fails.** A compiler-inserted check is a memory load and a branch in the
+inner loop of *every numerical kernel in the language*, to improve a protocol's
+user experience. `codegen-and-linking.md` §8 has since written down the
+project's first performance target — C and Rust ±20% — and that target did not
+exist when the first decision was made. A load in the hot loop is precisely what
+misses it.
+
+It is also **unpredictable in a way the author cannot see**: which loops receive
+a check becomes a performance question with no syntax attached to it, so a
+programmer tuning a kernel is tuning against an invisible decision.
+
+And it is not what the protocol asks for. MCP's own model is cooperative —
+*"a server is not obligated to actually stop the work; it is only obligated to
+acknowledge the request"* — so a guarantee bought with a branch in every loop
+buys more than the protocol wants.
+
+**What replaces it, and it is better than a compromise.** `progress.report`
+returns a `Bool`, and it is false when the call has been cancelled. Reporting
+progress and observing cancellation become **one call site**, which means the
+interruption point is the place the author already decided was a sensible place
+to be interrupted. A loop with no progress reporting is a loop the author did
+not think of as long-running, and it is uncancellable — which is a consequence
+of what they wrote rather than of what the compiler guessed.
+
+**The cost, unchanged and now more honest.** A tool whose body is one BLAS call
+cannot be cancelled, and neither can one that never reports. §9.6 of that note
+concedes a sharper version: CPython checks for signals between bytecodes, so a
+pure-Python loop is *more* interruptible than a Science one. That is a real
+place where this language is worse, and the trade is that the Science loop is
+the one running at C speed.
 
 **Decision 5. `cancellable` is inferred, not declared, and it propagates.** A
 function that observes cancellation, or calls one that does, is `cancellable`.
@@ -209,11 +244,23 @@ documentation rather than to pretend the flag is checked.
 
 ### 4.3 Progress
 
-**Decision 6. Progress reporting is the same mechanism with the direction
-reversed — an ambient sink, in the effect set, not in the signature.** For the
-same reason: it would otherwise be a parameter in the generated schema. A tool
-calls `progress.report(done, total)`, the effect propagates, and a tool that
-never reports is a tool the caller sees nothing from, which is legal.
+**Decision 6. Progress reporting is an ambient sink rather than a parameter, and
+it is the same call that observes cancellation.** A parameter would otherwise
+appear in a `tool`'s generated JSON Schema, where it means nothing to the model
+calling the tool.
+
+`progress.report(done, total, message)` returns a `Bool` that is false when the
+call has been cancelled, so the two concerns share one call site — see the
+reversal in Decision 4 for why that is the whole design rather than a
+convenience. `mcp-servers.md` §9.3 places the sink under `stdlib-standard.md`
+§8.2's existing logger exception, *"ambient state is acceptable exactly when it
+cannot change the program's computed result"*, rather than taking a fourth
+effect bit that `effects.md` Decision 2 has closed the set against.
+
+**The message is not decoration.** A promoted long-running call becomes a task,
+and the task extension has **no progress notifications at all** — only a
+free-text status. So the fraction is the half that survives one path and the
+message is the half that survives both.
 
 ---
 
@@ -312,12 +359,16 @@ may not cross a thread boundary, naming the field responsible), `SC0383` (a
 
 ## 9. Risks
 
-**Decision 4's observation points are a guess about where the cost is
-acceptable.** One branch per loop iteration is defensible in a language whose
-users profile their loops, and it is exactly the kind of overhead that shows up
-in a benchmark against C. If it does, the fallback is observation only at calls,
-which makes a pure numerical loop uncancellable — trading the guarantee for the
-speed, in the direction this language usually refuses.
+**Decision 4 was wrong and lasted under an hour.** This section originally
+warned that its own observation points were "a guess about where the cost is
+acceptable" and named the fallback — observation only where the author asks for
+it — as what to do if the branch showed up in a benchmark. It did not take a
+benchmark: `mcp-servers.md` §9.5 rejected the guess on the argument, and
+`codegen-and-linking.md` §8 then supplied the performance target that settles
+it. The risk was correctly identified and the mitigation was correctly named;
+what the section got wrong was betting against both of them. **The remaining
+risk is the reverse one**: a body that never reports progress cannot be
+cancelled at all, and nothing warns the author until a user tries.
 
 **Requirement 3 is new analysis, presented as if it were not.** §2 claims races
 need no new machinery because rule 4 already covers them. That is true of the

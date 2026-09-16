@@ -57,8 +57,18 @@ readability wins and the note says what was traded:
 - §5 trades **the author's freedom** for readability: a tool with no
   documentation does not compile. This is the only place in the language where a
   comment is mandatory, and §5.1 argues that it is not a comment.
-- §9 trades the **speed** claim away entirely. It was measured and it is not the
+- §9 trades **interruptibility** for readability and for speed at once: a
+  cancellation check is a line the author writes, because the alternative is a
+  branch in the inner loop of every numerical kernel in the language.
+- §11 trades the **speed** claim away entirely. It was measured and it is not the
   reason to do this.
+
+Two sections are not about the brief's three words at all, and they are the two
+that decide whether this is worth building. **§9** is there because a scientific
+tool is long-running by nature, so what a general-purpose SDK treats as an edge
+case is this audience's median case. **§10** is there because a result a model
+reports should be checkable by somebody else, and this project has already built
+every piece of that machinery for a different reason.
 
 ---
 
@@ -203,7 +213,7 @@ explicitly, as a deliberate `2025-11-25` decision (SEP-1303).
 
 ### 1.5 Transports and framing
 
-**stdio**, which is the only transport this note ships (§12.4):
+**stdio**, which is the only transport this note ships (§14.4):
 
 - *"Messages are delimited by newlines, and MUST NOT contain embedded newlines."*
   One JSON-RPC message per line.
@@ -241,7 +251,7 @@ send notification types the client has not explicitly requested."*
 about **annotations** specifically — *"clients MUST consider tool annotations to be
 untrusted unless they come from trusted servers."* The broader statement that
 descriptions of tool behaviour should be considered untrusted is on the
-specification's index page rather than in the tools chapter. §8.1 and §17 both
+specification's index page rather than in the tools chapter. §8.1 and §19 both
 depend on this distinction and neither overstates it.
 
 ### 1.7 What was verified, what was not, and what the specification declines to say
@@ -260,14 +270,29 @@ note is wrong in whichever direction the generator is.
 which was unreachable from this machine throughout. Two independent passes agreed,
 and nothing 404'd.
 
-**Not verified:** the extension specifications — Tasks, MCP Apps, Skills — beyond
-their overviews. Nothing in this note depends on them and §13 says none is shipped.
+**The Tasks extension was verified separately and in depth**, because §9 depends on
+it entirely. It does not live in this repository: it has its own,
+`modelcontextprotocol/ext-tasks`, whose `specification/2026-07-28/tasks.md` and
+`schema/2026-07-28/schema.ts` were read end to end. Its `2026-07-28` snapshot is
+marked **`Stable`** and immutable, and SEP-2663 is **Final** — the file exists at
+`seps/2663-tasks-extension.md` in the main repository and is not an open pull
+request. §9.1 quotes it; §19 prices the risk of designing against an extension with
+its own release train.
+
+**Not verified:** the MCP Apps and Skills extensions, beyond their overviews.
+Nothing in this note depends on them and §15 says neither is shipped.
+
+**A documentation bug found while verifying, reported here because someone will
+otherwise copy it.** The `ext-tasks` landing page cites `-32003` for a missing
+required client capability. The normative specification and the core schema both
+use **`-32021`**; the changelog records the renumber. The landing page was not
+updated.
 
 **A published registry exists** at `registry.modelcontextprotocol.io`, under a
 `/v0.1/` path prefix, with an `mcp-publisher` CLI. `.well-known/mcp.json` as a
 server-metadata card is **a proposal, not the specification** — SEP-2127 is an open
 pull request with no Final SEP file — and what shipped instead is the
-transport-agnostic `server/discover`. §13 does not ship a publisher and §18 notes
+transport-agnostic `server/discover`. §15 does not ship a publisher and §20 notes
 why the registry matters anyway.
 
 **The specification says nothing about performance, and this is an exhaustive
@@ -276,14 +301,14 @@ revision plus `draft`, for `performance|latency|startup|cold.?start|benchmark|
 throughput|p95|p99`, returns only incidental prose: no section, no table, no
 number, no target, no budget. The conformance suite tests correctness, not speed.
 The timeouts section specifies **no concrete duration at all** — no default, no
-ceiling, no suggested range. **So the number in §9 is this note's, and it has to be
+ceiling, no suggested range. **So the number in §11 is this note's, and it has to be
 justified here rather than cited.**
 
 **There is an official conformance suite**, at
 `modelcontextprotocol/conformance`, available since 2026-01-23, and an SDK tiering
 policy (SEP-1730, Final). Ten SDKs are official, in three tiers. A Science `mcp`
 package would be a community implementation and **the conformance suite is its test
-target** — §15 asks for that explicitly, because it is the difference between
+target** — §17 asks for that explicitly, because it is the difference between
 claiming compliance and having it checked.
 
 ---
@@ -496,7 +521,7 @@ a strictly larger language change than the one it avoids.
   declaration with five obligations `function` does not have. If that difference
   is judged insufficient, the fallback is Option B and it is a good fallback.
 - **The five obligations are five new ways for a program to fail to compile**, and
-  four of them fire in the type checker, which does not exist. §12 says what can
+  four of them fire in the type checker, which does not exist. §14 says what can
   ship before it; the answer is more than expected, and it is not all of it.
 
 ### 2.6 What would have to be true for Decision 1 to have been wrong
@@ -511,8 +536,8 @@ Three falsifiers, each stated so that it can actually be checked later:
    the wrong shape and a registration API was right all along. **The check:**
    across a sample of published servers, how many call a per-tool registration in
    a loop rather than once per literal tool. If it is most of them, Decision 1 was
-   wrong. §13 keeps a dynamic escape hatch open precisely because this falsifier
-   is live, and §18 says what would make it ship.
+   wrong. §15 keeps a dynamic escape hatch open precisely because this falsifier
+   is live, and §20 says what would make it ship.
 2. **If the type restrictions bite on the common case.** §4's claim is that one
    source of truth removes drift. If most real tools need a parameter shape §4.2
    rejects, authors reach for the `Json` escape hatch on most tools — at which
@@ -525,7 +550,7 @@ Three falsifiers, each stated so that it can actually be checked later:
    *declarations* rather than a different emitter over the same ones, then `tool`
    was an MCP keyword in a disguise and `rust-binding-generation.md`'s Decision 10
    should have caught it. **The
-   check:** write the second backend before the language locks. §18 records this
+   check:** write the second backend before the language locks. §20 records this
    as the open question that most deserves an early answer.
 
 ### 2.7 The exit, if MCP dies
@@ -543,7 +568,7 @@ has no exit.
 
 The test that this layering is real, and it is checkable by a reviewer rather than
 asserted here: **`sciencec` has no MCP-specific diagnostic.** Every code allocated
-in §14 is about a Science type, a Science declaration or a doc comment. Not one
+in §16 is about a Science type, a Science declaration or a doc comment. Not one
 mentions a protocol field, a method name or a revision string. If a future
 reviewer finds a diagnostic in the `SC` namespace that names an MCP concept, the
 layering has leaked and Decision 1 has stopped being true.
@@ -581,7 +606,7 @@ function fit_report(run: String) -> Array of Message:
     [Message.user(f"Summarise the peak fit for run {run}. "
                   f"Call fit_peaks first if you have not already.")]
 
-# registered on the server with `.prompts([…])`; see §11.1
+# registered on the server with `.prompts([…])`; see §13.1
 ```
 
 **Cost, stated.** The asymmetry is visible and someone will ask about it: a server
@@ -644,13 +669,13 @@ The target is a JSON Schema object with `type: "object"`, `properties` and
 |---|---|---|
 | `borrowed T`, `mutable borrowed T` | `SC0192` | There is no caller to borrow from. The value was deserialized a moment ago and the tool owns it. |
 | `function(T) -> U` | `SC0505` | A callable is not data. Nothing on the wire can become one. |
-| `any Interface` | `SC0506` | An interface object's concrete type is unknown at the declaration, so there is no schema to emit. Note this is *not* the same rejection as §4.1's — a sealed interface with a known implementation set could in principle emit a `oneOf`, and §18 records that as deliberately not done. |
+| `any Interface` | `SC0506` | An interface object's concrete type is unknown at the declaration, so there is no schema to emit. Note this is *not* the same rejection as §4.1's — a sealed interface with a known implementation set could in principle emit a `oneOf`, and §20 records that as deliberately not done. |
 | A type parameter `T` | `SC0191` | A generic tool has no single schema. §2.4 item 2. |
 | `Map of (K, V)` where `K` is not `String` | `SC0507` | JSON object keys are strings. |
 | A `choice` with payload-carrying variants | `SC0508` | §4.7. |
 | `Tensor` with a symbolic shape | `SC0509` | §6.1. |
 | `Frame of Dynamic` | `SC0517` | `data-io.md` §4.4's escape hatch is *"for the first five minutes with a new file"* and its schema is not known before the run. A schema that is not known before the run cannot be in `tools/list`. |
-| A recursive record type | `SC0510`, a **warning** | JSON Schema expresses it perfectly with `$defs` and `$ref`. The warning is about the consumer, not the schema: §18. |
+| A recursive record type | `SC0510`, a **warning** | JSON Schema expresses it perfectly with `$defs` and `$ref`. The warning is about the consumer, not the schema: §20. |
 | A type alias expanding to any of the above | `SC0512` | Distinct from the others so the diagnostic can carry **two** spans — the alias at the use site and its definition — which is the case where a single span teaches nothing. |
 
 Every one of these is a check on a Science type. Not one names MCP. That is
@@ -797,7 +822,7 @@ assumed:
 | That note's decision | What this note needs | Fits? |
 |---|---|---|
 | §5.1 — a doc comment is a run of `##` lines **before** the declaration | A description attached to a `tool` | **Yes**, exactly |
-| §5.3 — the lexer keeps `##` runs as trivia on the following token, the parser attaches them to the AST, they survive into HIR, **and this must happen in F0** | The description available to a front-end pass | **Yes**, and it is the reason §12 can ship something before the type checker |
+| §5.3 — the lexer keeps `##` runs as trivia on the following token, the parser attaches them to the AST, they survive into HIR, **and this must happen in F0** | The description available to a front-end pass | **Yes**, and it is the reason §14 can ship something before the type checker |
 | §5.4 — the first line, up to the first blank `##`, is the summary; the rest is the body | A `title` and a `description`, which are two fields (§1.2) | **Yes** — §5.2 below |
 | §5.4 — Markdown, no `@param` tags | A description a model reads | **Yes.** Models read Markdown; and §5.3 below is careful not to reopen the `@param` refusal |
 | §5.2 — the attachment table | A description **per parameter** | **No.** Parameters are not in that table. §5.3 is the one ask this note makes of it |
@@ -822,7 +847,7 @@ style rule a compiler has no business enforcing. It is narrow:
   anywhere"* — arriving at a worse version of the same problem.
 - **It is checkable with what exists.** §5.3's attachment happens in the parser.
   `SC0190` is a parser-level or resolver-level check and needs no types at all,
-  which is why §12 can ship it first.
+  which is why §14 can ship it first.
 
 **Rejected: a lint.** A lint that everyone disables is worse than nothing, and a
 lint that nobody disables is an error with extra steps. **Rejected: requiring it
@@ -1077,7 +1102,7 @@ lose the dimensional check inside the body. Neither is good.
 defers it. **This note is a second caller for it**, and the ask is concrete: a way
 to say, at the declaration, which unit a `Quantity` parameter is *written* in, so
 that the description says "microseconds", the conversion happens at the boundary,
-and the body still holds a `Quantity`. Until that exists, §11's worked example
+and the body still holds a `Quantity`. Until that exists, §13's worked example
 takes seconds and says so in the description, which is honest and slightly
 unpleasant.
 
@@ -1184,7 +1209,7 @@ the return type.
 `outputSchema` is not constrained to `type: "object"` (§1.3) and `structuredContent`
 is any JSON value (§1.4), so `Array of Peak` emits an array-typed schema directly
 with no wrapper object. This is a `2026-07-28` loosening; a note written against an
-earlier revision would have had to invent a wrapper, and §11.2 shows the
+earlier revision would have had to invent a wrapper, and §13.2 shows the
 unwrapped form because that is what the current revision admits.
 
 **The duplication is the specification's, not this note's.** Emitting the same data
@@ -1194,7 +1219,7 @@ a way off. That is a library decision recorded here so that whoever implements i
 does not think they have found a bug.
 
 **`resultType` is always `"complete"`.** The other value, `"input_required"`,
-belongs to elicitation, which §13 does not ship. A Science tool body is a
+belongs to elicitation, which §15 does not ship. A Science tool body is a
 synchronous function that returns a value; there is no point in it at which it can
 ask the user a question. When elicitation is shipped, this is the field that
 changes and the tool signature that would have to change with it, which is worth
@@ -1284,7 +1309,7 @@ and it is still a win no other SDK offers.
 
 **Three: it needs the effect query, which does not exist.** `effects.md` §3.5
 specifies `effects(DefId) -> EffectSet` as a salsa query over the resolved call
-graph. The resolver exists; the query does not. §12 places this.
+graph. The resolver exists; the query does not. §14 places this.
 
 **`idempotentHint: true` from purity deserves one sentence of scepticism.** A pure
 function is idempotent in the sense the annotation means — calling it twice with
@@ -1339,7 +1364,748 @@ diagnostic and no new analysis.
 
 ---
 
-## 9. Speed, measured, and mostly given away
+## 9. Long-running tools, which for this audience is the median case
+
+Every other MCP SDK treats a long operation as unusual. A file read returns in
+milliseconds; a database query returns in tens; the rare slow tool is a special
+case with a special mechanism bolted beside it.
+
+**For a scientific server that ordering is inverted.** A peak fit over a 40 GB run
+takes minutes. A molecular dynamics step takes longer. A structure search, a
+Bayesian sampler, a docking run, a genome alignment — the median tool in the
+audience's world is slow, and "slow" is measured in the units a coffee break is
+measured in. A design that treats this as an edge case has treated the whole
+audience as an edge case.
+
+This section was an open question in an earlier draft of this note, recorded as
+the strongest live argument for rejecting `tool` as a declaration. It is answered
+here, and the answer turned out to be shorter than the objection, for a reason
+that had to be verified rather than guessed.
+
+### 9.1 Decision 14: a long tool is a task, and `tool` gains nothing to say so
+
+The Tasks extension was read the way §1 read everything else, and three facts
+decide this section.
+
+**One: Tasks is not in the specification repository.** It has its own repository,
+`modelcontextprotocol/ext-tasks`, its own schema and its own release train. The
+main repository carries a stub that says only that the extension repository *"contains
+the full specification and documentation for MCP Tasks."*
+
+**Two: it is marked `Stable`, not experimental.** The extension's README carries a
+version table whose `2026-07-28` row reads **`Stable`**, and *"Released schema
+directories are immutable snapshots with version-specific JSON Schema
+identifiers."* SEP-2663 is **Final** — the file exists at `seps/2663-tasks-extension.md`,
+it is not an open pull request — and it states the intent plainly:
+
+> Tasks will become a foundational building block of MCP and are expected to be
+> supported in future protocol versions. […] Once the extension has stabilized and
+> achieved broad adoption, it is intended to be promoted into the core protocol.
+
+There is **no** "experimental", "draft" or "subject to change" banner anywhere on
+the specification, the schema or the rendered page. The only hedges are that
+extensions are *"always disabled by default and require explicit opt-in"* and that
+they *"evolve independently of the core protocol"*. So it is safe to design
+against, with the caveat §19 records.
+
+**Three, and this is the one that decides the section: task creation is purely
+server-directed, and there is no field on `Tool`.** Verbatim:
+
+> Task creation is server-directed: the client signals support by including the
+> extension in its per-request capabilities, and the server decides on a
+> per-request basis whether to materialize a task.
+
+> A server that has negotiated this extension **MAY** return `CreateTaskResult` in
+> lieu of a standard result (e.g. `CallToolResult`) in response to any supported
+> request at its own discretion and on a per-request basis. The server is the sole
+> decider; clients do not signal task preference on the request itself.
+
+And the overview page, in as many words: *"**No per-tool warmup or per-request
+flag.**"*
+
+**This is a deliberate removal, not an omission.** `2025-11-25` had
+`Tool.execution.taskSupport?: "forbidden" | "optional" | "required"`, and
+SEP-2663's motivation is that it was the wrong shape: *"The handshake is fragile.
+[…] A client that wants to opt into tasks must therefore prime its state with a
+`tools/list` call before issuing any task-augmented request. […] This is
+confusing, implicit, and easy to get wrong."*
+
+> **Decision 14. A long-running tool returns a task, and the `tool` declaration
+> says nothing about it. There is no `long` modifier, no `task` keyword and no new
+> field in the schema, because the protocol deliberately removed the per-tool
+> field that would have been the thing to generate. Whether a given call becomes a
+> task is a **dispatch policy** in the `mcp` package.**
+
+This is the best possible outcome for §4 and it is worth being explicit about why:
+**the schema-is-the-signature decision survives Tasks completely untouched.**
+`Tool` gains no field, `inputSchema` is unchanged, `tools/list` is unchanged, and
+`sciencec tools --json` emits exactly what it emitted before. The single largest
+open question against Decision 1 closed without costing Decision 3 anything, and
+it closed because a protocol committee independently reached the conclusion that a
+per-tool declaration was the wrong place for this.
+
+**Had Tasks kept `execution.taskSupport`, this section would read very
+differently**, and it is worth saying so rather than claiming foresight: a per-tool
+protocol field would have been a field on the `Tool` object that no Science type
+produces, which is precisely the *"one exception to the derivation"* §9.2 rejects
+in another form two pages from here.
+
+#### The dispatch policy, since it now has to exist
+
+The protocol made it the server's decision, so somebody has to make it. Two shapes
+were considered.
+
+**Rejected: an author-declared list.** `Server.new(…).tools([…]).as_task([fit_peaks])`
+is honest and it is a worse version of the field the protocol just deleted — it
+requires the author to predict which calls are slow, and `fit_peaks` over 300
+channels is fast while `fit_peaks` over 40 GB is not. The predicate is about the
+*call*, not the *tool*, which is exactly what "per-request basis" means.
+
+> **Decision 14a. The `mcp` package promotes a call to a task on a time
+> threshold. The body runs on a worker thread; if it has not returned within
+> `task_after`, the dispatcher returns a `CreateTaskResult` and the work continues.
+> The default is a few seconds and it is declared once per server.**
+>
+> ```toml
+> [server]
+> task_after = "5s"           # 0 disables promotion; a call then always blocks
+> ```
+
+This is legal because the decision point is *when the server responds*, not when it
+starts work, and the specification's only hard requirement is durability before the
+handle is issued: *"A server **MUST NOT** return `CreateTaskResult` until the task
+is durably created — that is, until a `tasks/get` for the returned `taskId` would
+resolve."* A dispatcher that registers the task before responding satisfies that
+trivially.
+
+It also means **a fast call is never a task** — `d_spacing` returns in microseconds
+and the model gets its answer in one round trip, with no polling, no `taskId` and
+no extra vocabulary — while the same code path handles a fit that runs for an
+hour. The author writes one tool.
+
+#### What the extension actually is, in three lines
+
+Three methods, and two that existed in `2025-11-25` are gone: `tasks/get`,
+`tasks/update`, `tasks/cancel`. `tasks/list` and `tasks/result` were **removed** —
+the first because *"`tasks/list` scoping cannot be defined"* and, on the security
+side, because *"a server cannot inadvertently leak the existence of one caller's
+tasks to another"*; the second because it was *"a blocking trap"*.
+
+Status is one of exactly five strings — `working`, `input_required`, `completed`,
+`failed`, `cancelled` — with the last three terminal. `ttlMs` is **required and
+nullable**; `pollIntervalMs` is optional. Polling `tasks/get` is the default and
+only guaranteed mechanism; push exists as `notifications/tasks` over
+`subscriptions/listen` and is opt-in on both sides.
+
+**Three consequences for a Science server, each of which is a small decision:**
+
+- **`ttlMs` must be honest, and for a stdio server it is short.** A stdio server is
+  a subprocess; its tasks die when the client stops it. There is no `tasks/list`,
+  so a lost `taskId` is unrecoverable by design and the specification tells clients
+  to *"persist task IDs to durable storage"*. A server that cannot honour that
+  should not imply it can: the `mcp` package sets `ttlMs` to the process's own
+  expectation rather than `null`, and `null` — meaning unlimited — is available
+  only for a server that actually persists tasks, which §15 does not ship.
+- **`failed` is not for tool errors, and this is the third time the same split
+  appears.** Verbatim: *"The `failed` status **MUST NOT** be used to represent
+  non-JSON-RPC errors, such as a tool result that completed with `isError: true`.
+  […] the task uses `completed` status and the `result` field **MUST** contain that
+  result."* So §7.1's Decision 10 passes through the task layer unchanged — a
+  Science `Error?` becomes `isError: true` inside a `completed` task. **Science's
+  one-channel error model lands on the same side of the split at both layers**,
+  and it does so without a rule, because a tool body still cannot produce a
+  JSON-RPC error.
+- **`input_required` is not ours.** A task's `inputRequests` carry elicitation,
+  sampling and `roots/list` requests, and §15 ships none of them. A Science task
+  goes `working → completed | failed | cancelled` and never enters
+  `input_required`.
+
+#### The finding that costs the most: tasks have no progress
+
+This is the one that hurts, it is normative, and it would have been easy to get
+wrong from memory:
+
+> `notifications/progress` and `notifications/message` notifications **MUST NOT**
+> be sent on the `subscriptions/listen` stream for a task, and **are not supported
+> on tasks in general in this specification.**
+
+A task's only progress channel is `statusMessage`, a free-text field on the `Task`
+object that a caller sees when it polls. There is no fraction, no total, and no
+push.
+
+So the two paths a Science tool body's progress can take are **not equivalent**,
+and §9.3's API has to be designed for the weaker one:
+
+| | Inline call, client supplied `_meta.progressToken` | Promoted to a task |
+|---|---|---|
+| `notifications/progress` with `progress` / `total` | **Yes** | **Forbidden** |
+| A human-readable message | Yes, the `message` field | Yes, `statusMessage` |
+| Push to the client | Yes | No — the client polls `tasks/get` |
+
+> **Decision 14b. `progress.report` takes a fraction **and** a message, because
+> the message is the half that survives both paths. On an inline call both are
+> sent; on a task the message becomes `statusMessage` and the fraction is
+> formatted into it by the library rather than dropped silently.**
+
+A fraction rendered into text — `"[ 43% ] fitting peak 3 of 7"` — is worse than a
+structured one and it is not nothing, and it is the most the protocol permits. The
+alternative, dropping the fraction on the task path, would make the same tool body
+behave differently depending on a dispatch decision the author did not make.
+
+**Two smaller normative points that the library must absorb so the author never
+meets them.** Progress values *"**MUST** increase with each notification"*, so the
+`mcp` package clamps a non-monotonic report rather than letting a loop written
+backwards produce a protocol violation. And progress tokens are client-supplied and
+optional — *"The receiver is not obligated to provide these notifications"* — so
+`progress.report` on a call with no token is a no-op, which is the same no-op
+§9.3's testability argument depends on.
+
+### 9.2 The sink problem, and the three shapes it could take
+
+A tool body is a function. Progress reporting needs it to reach something that is
+not one of its arguments and not its return value. The three ways to arrange that
+are not equally priced.
+
+**Option A — a distinguished first parameter, excluded from the schema by rule.**
+What most SDKs do. It costs exactly one thing and the cost is larger than it
+looks: **the input schema stops being "the parameter list" and becomes "the
+parameter list, minus a parameter you have to know about".** §4's Decision 3 is a
+derivation, and this makes it a derivation with an exception. Two concrete
+consequences:
+
+- A reader of a `tool` declaration can no longer compute the schema by reading the
+  parameters; they must also know the exception and recognise the type that
+  triggers it. That is precisely the readability the brief put first.
+- §14.3's `sciencec tools --json` — the thing that ships first and proves the whole
+  thesis — needs a type-level special case in the one pass that is supposed to be a
+  mechanical walk. The first exception is cheap; §19 says what exceptions do to a
+  source-of-truth rule, and the request after this one is always `context`, then
+  `session`, then `client`.
+
+**Rejected**, and the amount it costs is that sentence: the derivation would stop
+being total, and a total derivation is the only reason §2 spent a keyword.
+
+**Option B — a fourth effect bit.** This is right about the *shape* — progress is a
+property of a body and not of its signature, which is exactly where effects
+already live in this language, and it is the same reasoning §8 used to get
+`readOnlyHint` out of the effect lattice. It is wrong about the *mechanism*, for a
+reason already settled: `effects.md` Decision 2 closes the set at three bits and
+calls the closure
+*"the most load-bearing sentence in the note"*, and `reproducibility.md` §4.1
+already proposed a fourth bit and **withdrew it** for that reason. This note is not
+going to be the accretion that note refused to be.
+
+It is also unnecessary, because an effect bit answers *"does this body reach X"* and
+does not *supply* X. The bit is not the hard part. The sink is.
+
+**Option C — an ambient sink, under an exception this project already made.**
+
+### 9.3 Decision 15: progress is ambient, and the logger already paid for it
+
+`effects.md` §2.1's inventory lists every ambient channel Science closed, and
+exactly one row reads *"Exists, deliberately"* — the process-global logger. The
+justification, from `stdlib-standard.md` §8.2, is a single test:
+
+> **Ambient state is acceptable exactly when it cannot change the program's
+> computed result.**
+>
+> A global RNG changes the answer. A global logger changes what is printed.
+
+**Progress reporting is on the logger's side of that test and it is not a close
+call.** A progress notification cannot change what a tool computes; it is, almost
+literally, a log line with a number on it. §1.5 even puts them in the same physical
+place: the built-in logging sink writes *"a line per record to standard error"*,
+and stderr is where the stdio transport tells a server to put everything that is
+not a protocol message.
+
+> **Decision 15. Progress is reported through a process-global sink the transport
+> owns, in the same position and under the same justification as
+> `stdlib-standard.md` §8.2's logger. It is not a parameter, it is not in the
+> schema, and it costs `effects.md` no new bit. `progress.report` is seeded into
+> the existing `external` bit, beside `logging`.**
+
+```science
+## Fit Bragg peaks in a window of flight time.
+tool fit_peaks(…) -> (Array of Peak, Error?):
+    …
+    for i in 0..max_peaks:
+        if not progress.report(i as F64 / max_peaks as F64, f"peak {i + 1}"):
+            return ([], ServerError.Cancelled)
+        …
+```
+
+**Rejected: a `Progress` value threaded through the call chain by hand.** Correct,
+explicit, and it means every helper function a tool body calls grows a parameter it
+does not use, which is the colouring problem `stdlib-shape-and-packages.md` §3
+rejected `async` to avoid. The argument that killed `async` kills this.
+
+**Two guards, borrowed wholesale from §8.2 because they are the right ones.** The
+sink is configured once, by the transport, before any tool runs; and a
+`progress.report` in a program with no transport linked is a no-op rather than an
+error, so a tool body is testable outside a server. That second property is what
+makes the ambient form better than the parameter form for the thing authors
+actually do, which is call the function from a unit test.
+
+### 9.4 The cost: a `pure tool` cannot report progress
+
+`progress.report` carries `external`, so it cannot appear in a body the compiler
+must prove effect-free. Stated as the trade it is:
+
+| | `pure tool` | reports progress |
+|---|---|---|
+| Gets | `readOnlyHint: true`, `openWorldHint: false`, `idempotentHint: true`, checked (§8) | a progress stream and a cancellation point (§9.5) |
+| Cannot have | progress, cancellation from inside | the three checked annotations |
+
+The diagnostic is **`effects.md`'s `SC0214` with its witness chain**, unchanged and
+unclaimed — the same amendment §8 already makes, arriving from the other side.
+
+**This is a real loss and it is worth naming the case where it bites.** A long
+optimisation over data passed in as arguments — no file, no clock, no network — is
+genuinely pure, genuinely slow, and genuinely wants a progress bar. It has to
+choose.
+
+**The mitigation that costs nothing:** a `pure tool` is by definition free of side
+effects, so **the transport can bracket it** — report `started` when dispatch
+begins and `complete` when it returns — without the body doing anything at all. So
+a pure tool is not silent; it just cannot say *where it is*. That is the whole
+difference, and for a fit whose duration is predictable it is most of what a caller
+wanted.
+
+**Recorded as an ask rather than a demand** (§17): if `effects.md` ever wants a
+narrowing for "cannot change the computed result", in the shape of its own
+Decision 12's `pure` on an `extern`, then progress reporting is its **second
+caller** after the logger, and both callers pass the same test. This note does not
+ask for it, because one note asking for a narrowing on its own behalf is how closed
+sets stop being closed.
+
+### 9.5 Decision 16: cancellation is cooperative, explicit, and the same call
+
+`stdlib-shape-and-packages.md` Decision 3 gives Science OS threads and no `async`,
+so there is no future to drop and no task to abort. Cancellation is a flag, and the
+only question is **who reads it and where**.
+
+**Before pricing the options: the specification's own model is cooperative, and
+this was verified rather than hoped for.** Of task cancellation, verbatim:
+
+> Cancellation is **cooperative**: The request signals intent, and the server
+> decides whether and when to honor it. **A server is not obligated to actually
+> stop the work**; it is only obligated to acknowledge the request. Eventual
+> transition to `cancelled` is not guaranteed.
+
+And of request cancellation, every obligation is `SHOULD` or `MAY`: a server
+*"**SHOULD** stop processing the cancelled request"* and *"**MAY** ignore
+cancellation notifications if […] the request cannot be cancelled."* So the design
+below is not a concession forced by the absence of `async`. It is the model the
+protocol specifies, and a language that could kill a thread would still be
+implementing this shape.
+
+**Two channels arrive, and the server must fold them into one flag.** This is easy
+to get wrong: `notifications/cancelled` carries a `requestId` and is what an inline
+call is cancelled with — on stdio the client **MUST** send it, because there is no
+stream to close — while a promoted task is cancelled by the `tasks/cancel`
+*request*, keyed on `taskId`, and *"the `notifications/cancelled` notification
+**MUST NOT** be used for task cancellation."* A tool body must not care which one
+happened, so the dispatcher maps both onto the same per-call flag.
+
+Three answers to who reads it, and two are disqualified by things this project has
+already decided.
+
+**Killing the thread — rejected, and not on style grounds.** A thread stopped at an
+arbitrary point holds borrows the region engine proved live, and may hold a lock
+inside OpenBLAS or polars. Core spec §6 is the whole reason this is not available.
+
+**A compiler-inserted check at loop back-edges — rejected, and this one deserves
+emphasis.** It is the ergonomic answer: every loop becomes interruptible and no
+author writes anything. It puts **a load and a branch in the inner loop of every
+numerical kernel in the language**, in a language whose §1 bet is that it beats
+Julia and Mojo at exactly that. A scientific language does not get to put a memory
+read in the hot loop to improve a protocol's user experience. It is also
+unpredictable: which loops get the check becomes a performance question the author
+cannot see.
+
+**Cooperative, at a point the author wrote — accepted.** And it composes with §9.3
+rather than adding a second mechanism:
+
+> **Decision 16. `progress.report(fraction, message)` returns a `Bool`, `true`
+> meaning "keep going". A tool that reports progress gets cancellation at the same
+> points, for free and for no extra syntax. `mcp.cancelled()` exists for a body
+> that wants the check without reporting anything.**
+
+The shape is the one the language already uses everywhere: a thing that can go
+wrong returns something you test, in an `if`, where it happens. `syntax-revision-2.md`
+§3.2's argument for the Go error model — *"the error path is written where it
+happens, in the order it happens"* — is the same argument, and cancellation reads
+like the rest of the language instead of like a framework.
+
+**One obligation the library absorbs so the author never meets it.** The stdio
+chapter says a server *"**SHOULD** stop work on a cancelled request as soon as
+practical and **MUST NOT** send any further messages for it."* A tool body that
+keeps calling `progress.report` after cancellation would violate that `MUST NOT`,
+so the sink is closed by the dispatcher the moment the flag is set and every later
+report is discarded. The author's ignored return value becomes a silent no-op
+rather than a protocol violation, which is the right direction for a mistake to
+fail.
+
+**And a race the author also never meets**: *"cancellation notifications may arrive
+after request processing has completed […] Both parties **MUST** handle these race
+conditions gracefully."* A body that finishes between the flag being set and the
+next check simply returns; the dispatcher drops the result rather than sending a
+response for a cancelled request, which is the specification's own `SHOULD`.
+
+### 9.6 What cannot be cancelled, and the one place Python is better
+
+A tool body that calls `dgemm` on a large matrix, or hands a 40 GB frame to polars,
+is inside foreign code for minutes with no loop of its own. **Nothing in this
+design cancels it.** The `notifications/cancelled` arrives, the flag is set, and
+nobody reads it until the foreign call returns.
+
+This is compliant — cancellation is best-effort by the specification's own wording
+(§9.1) — and it is worse than what a Python server gets for free, which is worth
+saying plainly rather than leaving for a reader to notice:
+
+> **CPython checks for signals between bytecodes, so a pure-Python loop is
+> interruptible without the author doing anything, and `KeyboardInterrupt` reaches
+> a tight loop.** A compiled Science loop is not, unless the author put the check
+> there.
+
+Python's advantage evaporates the moment the work is in C — which for scientific
+Python it almost always is, so `Ctrl-C` during a large NumPy call is famously
+unresponsive too. But for the case where the loop *is* the program, Python wins,
+and this note does not have an answer beyond §9.5's explicit check.
+
+### 9.7 Decision 17: concurrency is 1 by default, and the reason is the thread budget
+
+Every other SDK's server handles concurrent tool calls, because every other SDK's
+tools are I/O-bound and concurrency is free. **For this audience it is not free and
+it is not a win**, and the reason is a problem this repository already found and
+solved for a different caller.
+
+`rust-binding-generation.md` §5.5 and Decision 13 establish the facts: polars'
+`polars_core::POOL` is a process-wide singleton built once and **cannot be
+resized**; OpenBLAS and MKL keep their worker threads parked between calls; and
+Science's own `.parallel()` pool is a singleton sized to the *allocation*, not the
+machine (`stdlib-shape-and-packages.md` §3.6). Decision 13 partitions the budget
+between Science's pool and the foreign one, **statically, at bind time** for an
+`env-at-init` library.
+
+**A server adds a third factor that Decision 13 did not have to consider: the
+number of tool calls in flight.** And the arithmetic is unusually clean, because
+every pool involved is a singleton:
+
+- Two concurrent `fit_peaks` calls do **not** create two thread pools. They queue
+  against the same ones.
+- So concurrency does not increase throughput — the cores were already saturated
+  by the first call — and it does increase the latency of both, plus the memory
+  high-water mark, because two 40 GB frames are live where one was.
+- And the static partition cannot be renegotiated per call. `POLARS_MAX_THREADS`
+  was read at init; §5.6 is explicit that re-setting it *"would be a mechanism that
+  appears to work and does nothing."*
+
+> **Decision 17. A Science MCP server dispatches one tool call at a time by
+> default. Concurrency is opt-in with an explicit bound, and the bound is declared
+> **beside the thread budget** in the manifest rather than in the transport
+> configuration, because it is the same budget being divided.**
+>
+> ```toml
+> [server]
+> concurrent_calls = 1          # default; a bound, never "unbounded"
+> ```
+
+**Cost, stated, and it is the real one:** a slow tool blocks the server, so a model
+that asks for a peak fit cannot also ask for a run list until the fit finishes.
+That is bad, and §9.1's Tasks answer is what makes it acceptable rather than
+merely honest — a long call that becomes a task returns immediately and the
+dispatcher stays free. **The two decisions are one design**: serial dispatch is
+only tolerable because long work does not occupy the dispatcher.
+
+**What the specification says about concurrent execution: nothing, and that
+negative was checked rather than assumed.** A grep across the transport chapters,
+all five pattern chapters, the tools chapter and the architecture chapter turns up
+no guidance on concurrent `tools/call` handling, no per-server request budget, no
+statement about whether two calls to the same tool may run at once, and **no
+explicit permission or requirement for a stdio server to interleave responses** —
+that is implied only by responses being *"correlated by JSON-RPC `id`"*.
+
+**The one sentence that looks like it contradicts Decision 17, and does not.** The
+statelessness chapter says:
+
+> Servers **SHOULD** be prepared to handle requests associated with multiple tasks,
+> threads, or conversations. […] clients may interleave unrelated requests on the
+> same transport, and a server must not treat connection or process identity as a
+> proxy for conversation or session continuity.
+
+That is about **identity**, not scheduling. It forbids inferring state from which
+connection a request arrived on; a serial dispatcher satisfies it completely,
+because it infers nothing. What the passage does establish is that **interleaved
+arrival is expected**, which is the real cost of Decision 17 and is why §9.1 is
+load-bearing: a client is entitled to send `list_runs` while a fit is running, and
+without task promotion it waits behind it.
+
+So Decision 17 is a policy this note is choosing, not a reading of a requirement,
+and a server that wants to be concurrent violates nothing.
+
+---
+
+## 10. Reproducible tool results, which is the strongest thing on offer
+
+Everything in §4 through §9 makes a Science MCP server *better*. This section is
+the one that makes it *different*, and it is not a new idea — it is
+`reproducibility.md` pointed at a boundary that note did not anticipate.
+
+The claim, stated first so the rest can be measured against it:
+
+> **A model that calls a Science tool does not get a number back. It gets a
+> result, with an identity, that somebody else can check.**
+
+No other MCP SDK can offer this, and the reason is not effort. It is that the
+provenance record requires knowing the compiler version, the LLVM version, the
+float flags, the resolved native libraries with their ABI variants and probe
+strings, the package set with digests, and the reachable-effect analysis — and in
+Python or TypeScript none of those things exists, is stable, or is knowable from
+inside the process.
+
+### 10.1 What already exists, and what is left to decide
+
+Four sibling notes have built this and none of them knew it was going to be used
+here.
+
+| Piece | Owner | State |
+|---|---|---|
+| A provenance record on **every** binary and **every** output — R0, unconditional: *"The artefact states what produced it"* | `reproducibility.md` §2.2 | Decided |
+| **Build record** (compiler, LLVM, target, opt level, float channels, `deterministic`, `allow_ambient`, packages, native entries with probe strings) in `.science.provenance` | `native-dependencies.md` Decision 9, extended by `reproducibility.md` §5.2 | Decided |
+| **Run record** — embeds the build record verbatim, adds `argv`, `env`, input digests, resolved natives, `allowed_used`, `exit` | `reproducibility.md` §5.2, Decision 11 | Decided |
+| **Canonical JSON, no floats, SHA-256 identity**, quoted as twelve hex characters (`pv:9f3a1c04e7b2`) | `reproducibility.md` §5.1, Decision 10 | Decided |
+| A `tables` array, written only for reference tables **actually read** | `intrinsics-chem-bio.md` Decision 4.4 | Decided |
+| `--deterministic`, which **forbids** a reachable `ambient` bit, over `effects.md`'s analysis | `reproducibility.md` Decision 7 | Decided |
+| An 8 KB cap with a stated degradation order; `--provenance=minimal` strips paths and environment values | `native-dependencies.md` §5.4, `reproducibility.md` §5.3 | Decided |
+
+So the machinery is complete and **only two questions are open here**: *what is a
+run, when the program is a server?* and *how does the record travel?*
+
+### 10.2 Decision 18: a tool call is a run, and that makes the record better
+
+`reproducibility.md`'s run record is per-process: it carries `argv`, `started` and
+`exit`. A server process serves many calls and exits when the client goes away, so
+a per-process record would describe the *session* and say nothing about any
+individual answer, which is useless.
+
+> **Decision 18. For a server, the unit of a run record is **one tool call**. The
+> build record is per-binary and unchanged. The run record's `argv` is replaced by
+> the tool name and the call's arguments; `exit` is replaced by `isError`; every
+> other field means exactly what it meant.**
+
+```json
+{
+  "schema": 1,
+  "build_id": "9f3a1c04e7b2…",
+  "build": { "…": "the build record, embedded verbatim" },
+  "run": {
+    "started": "2026-09-16T10:41:02Z",
+    "tool": "fit_peaks",
+    "arguments": { "run": "WISH00042117", "bank": 3, "window_lower": 0.0138,
+                   "window_upper": 0.0146, "line_shape": "PseudoVoigt",
+                   "max_peaks": 8 },
+    "inputs": [ { "path": "WISH00042117.parquet", "bytes": 41237882, "sha256": "…" } ],
+    "allowed_used": [],
+    "deterministic": true,
+    "is_error": false
+  }
+}
+```
+
+**The substitution is not a compromise; it is an improvement, and it is worth
+being explicit about why.** `argv` is a list of strings a reviewer has to parse,
+whose meaning lives in a `--help` text that may no longer exist. A tool call's
+arguments are **already a typed JSON object**, and — this is the part that only
+works here — **the schema that describes them is in the same artefact**, because
+`build_id` identifies the binary and the binary's `tools/list` is derivable from
+it. A reviewer holding `pv:9f3a1c04e7b2` can recover not only what was passed but
+what it was allowed to be.
+
+§4's Decision 3 is what makes that true. One source of truth for the schema means
+the record and the interface cannot describe different functions.
+
+**The one field that does not survive the substitution.** `env` is per-process, and
+a server reads its environment once at start-up, not per call. It stays in the
+record and is a property of the session rather than the call, which is accurate
+and slightly odd; the alternative — omitting it — would lose `SPECTRA_RUNS`, which
+is the single most important thing about which runs the server could see.
+
+### 10.3 Decision 19: the identity travels always, the record travels on request
+
+Three carriers were available and the choice between them is decided by §4, not by
+convenience.
+
+**`structuredContent` — rejected, and the reason is Decision 3.** §1.4 binds
+`structuredContent` to `outputSchema`: *"Servers MUST provide structured results
+that conform to this schema."* Putting provenance in `structuredContent` therefore
+means putting it in `outputSchema`, which means the schema derived from a tool's
+return type gains a field that is not in the return type. That is one exception to
+the derivation, and §19 says what exceptions do to a source-of-truth rule. It
+would also put a 3 KB object in the model's context on every call, described by a
+schema the model must read past to find the answer.
+
+**`_meta` — accepted for the identity.** It is the protocol's designated extension
+point, it is present on results, and `2026-07-28` made per-request `_meta` the
+carrier for a stateless protocol (§1.1). A client that does not care ignores it;
+no schema describes it; nothing in `tools/list` grows.
+
+**A `resource_link` content block — accepted for the full record.** `resource_link`
+is one of the five content block discriminators (§1.4), and a record that most
+callers never read is exactly what a link is for.
+
+> **Decision 19. Every tool result carries `_meta["science/provenance"]` — the
+> provenance id and the two bits a caller can act on without fetching anything:
+>
+> ```json
+> "_meta": { "science/provenance":
+>   { "id": "pv:9f3a1c04e7b2", "deterministic": true, "uri": "science://provenance/9f3a1c04e7b2" } }
+> ```
+>
+> The full record is a resource at that URI. `--provenance=inline` puts the whole
+> record in `_meta` instead, for a caller that will fetch it every time anyway.**
+
+**Cost, stated, and this is the design's whole justification.** The id, the flag
+and the URI are about **110 bytes** on a result. The full record is capped at 8 KB
+and is fetched by the callers who want it, which is approximately none of them
+interactively and all of them at publication. **That asymmetry is the argument for
+two tiers rather than one**: the author cannot know at declaration time which
+results will be cited, so the record must always be *made* and must not always be
+*sent*.
+
+**The tension this creates with statelessness, named rather than hidden.**
+`2026-07-28` removed sessions, and a resource that exists only because an earlier
+call happened is server state by any reasonable reading. Three things make it
+tolerable and none of them makes it clean:
+
+- The record is **content-addressed** — the id *is* the SHA-256 of the canonical
+  bytes — so the URI is not a session handle, it is a hash, and any server holding
+  the same binary and the same call can reproduce it.
+- A record is at most 8 KB and a bounded cache of the last few hundred is under a
+  megabyte.
+- If the cache misses, the server **recomputes** the record from the build record
+  and the call it still has in the log, or returns a resource-not-found, which is
+  a resource-shaped failure rather than a protocol one.
+
+It is still state, and a server that is restarted between the call and the fetch
+loses the record. `--provenance=inline` is the escape for anyone who cannot accept
+that, and it costs 8 KB per result.
+
+### 10.4 What `--deterministic` means for a server
+
+`reproducibility.md` Decision 7 makes `--deterministic` an **error** when
+`effects.md`'s `ambient` bit is reachable from `main`, unless the seed is in a
+recorded allow-list. For a server, `main` reaches **every tool**, so one tool that
+reads the clock destroys the determinism claim of every other tool in the binary.
+That is technically correct and practically useless: `list_runs` and `d_spacing`
+did not become non-deterministic because somebody added a `server_time` tool.
+
+The fix costs nothing, because the analysis is already at the right granularity.
+
+> **Decision 20. `--deterministic` keeps `reproducibility.md`'s Decision 7 meaning
+> exactly — it is a whole-binary build flag and it still forbids. Independently
+> and always, the `ambient` bit is computed **per tool**, because
+> `effects.md`'s `effects(DefId)` query is per-definition already, and the
+> per-tool answer is what `_meta`'s `deterministic` flag reports. Nothing new is
+> analysed; the coarsening to whole-binary was the added step, not the per-tool
+> answer.**
+
+So a server built without `--deterministic` still tells the truth about each tool,
+result by result, and a lab that wants the stronger guarantee — *no tool in this
+binary can reach the machine* — takes the flag.
+
+### 10.5 Decision 21: `glob` needs its expansion in the record
+
+`effects.md` §3.2 argues that `external` must not be forbidden, because *"a program
+reads its input file […] two runs over the same file agree."* Input digests are what
+make that true, and they work for `fetch_spectrum`, which reads one named file.
+
+**They do not work for `list_runs`, which is a tool in this note's own worked
+example**, and chasing that case turned up something in
+`reproducibility.md` Decision 8 that is worth reporting carefully, because the
+first version of this section got it wrong.
+
+That decision rejects, under `--deterministic`, *"the `ambient` bit, plus `net`,
+`http` and `os.run` from the `external` set"*, and adds three source-level items
+including *"`list_directory`, until G7 lands and it sorts"*. So a directory listing
+**is** already on the list. But:
+
+- the reason given is **ordering** — G7 is about sorting the result — and
+- the explicit not-rejected list names **`glob`**, beside `read_file`, `print` and
+  `logging`, as part of *"the reproducible half of the library"*.
+
+**Ordering is not the problem here, and `glob` has the same problem
+`list_directory` does.** A sorted glob over a directory an instrument is still
+writing into returns a different set on Tuesday than it did on Monday. Nothing is
+ambient, nothing is unordered, every file that *was* read can be digested — and the
+call is still not reproducible, because **the answer is which files existed, and
+that fact is nowhere in the artefact.**
+
+That is exactly Decision 8's own criterion for rejecting `http`: *"the bytes are not
+in any artefact this design produces. A local input is at least recordable
+(Decision 6 digests it); a URL fetched at run time is recordable only after the
+fact."* A glob expansion is recordable — and nothing currently records it.
+
+> **Decision 21. A `glob` or directory listing performed during a tool call has its
+> **expansion** written into the run record: the pattern, and the sorted list of
+> entries it matched, with a digest for each entry the call went on to read. With
+> the expansion recorded, `glob` meets Decision 8's own recordability test and
+> needs no exclusion. Without it, `glob` is on the wrong side of that test and the
+> not-rejected list is wrong to name it.**
+
+**Rejected: adding `glob` to Decision 8's rejected set.** It would forbid the
+commonest data-loading idiom in the audience's code — `data-io.md`'s own worked
+example opens with `glob("measurements/2026-09-*.csv")` — and it would forbid it in
+the ordinary batch case where the directory is a fixed checkout and the glob is
+perfectly reproducible. The problem is not the call; it is that its result is
+currently invisible.
+
+**Cost.** A run record for a tool that globs a large directory carries a file list,
+and `reproducibility.md` §5.3 caps the record at 8 KB. A ten-thousand-run directory
+does not fit. The degradation is the one that note already specifies — the
+expansion truncates with a recorded count, so the record says *"matched 10,412
+entries, listing truncated"*, which is less useful and is not a lie.
+
+**What remains genuinely unclosed.** Even with the expansion recorded, a *reviewer*
+cannot re-run `list_runs` and get the same answer, because the directory has moved
+on. The record makes the call **auditable** — you can see what it saw — and not
+**repeatable**. That distinction is `reproducibility.md` §2.1's own (*"four
+different things are called reproducible, and conflating them is how claims
+fail"*), and this is a case that lands on the auditable side. §17 asks that note to
+take Decision 21 or reject it; either way its §4.2 should say something about
+`glob`, because a discovery tool over a live data directory is close to universal
+in scientific servers and this note found the hole by accident, in its own example,
+while trying to demonstrate something else.
+
+### 10.6 The sentence a methods section can write
+
+`intrinsics-chem-bio.md` Decision 4.4 calls its version *"the sharpest thing this
+note produces"*. Here is the same sentence, from the other side of a model:
+
+> Peak positions obtained through the `spectra` MCP server
+> (provenance `pv:9f3a1c04e7b2`); OpenBLAS 0.3.26 lp64; CIAAW 2021 masses.
+> The conversation is deposited at … and each tool result carries its record.
+
+And a reviewer runs `sciencec provenance --id pv:9f3a1c04e7b2 ./spectra-mcp` and
+gets yes or no.
+
+**The limit, and it is a real one that nobody else will state.** The provenance
+record describes **the server**, not the model's use of it. A model that calls
+`fit_peaks` correctly, receives a perfectly attested result, misreads which column
+is the width and writes a wrong sentence has produced a false claim with an
+impeccable record attached. Provenance makes the *computation* checkable; it says
+nothing about the *inference* drawn from it, and a note that claimed otherwise
+would be selling the thing this project exists to be sceptical of.
+
+What it does do is move the boundary. Today, a number a model reports from a tool
+call is unattributable — the tool version, the library, the flags and the inputs
+are all gone the moment the response is rendered. After this, the number carries
+twelve hex characters that recover all of it. That is a smaller claim than
+"reproducible science" and it is a true one.
+
+---
+
+## 11. Speed, measured, and mostly given away
 
 The brief asked for the number rather than an implication, so here is the number
 and then the concession.
@@ -1371,7 +2137,7 @@ codegen.
 
 So the number is **roughly a quarter of a second saved per server process**.
 
-> **Decision 14. Start-up speed is not a reason to write an MCP server in Science
+> **Decision 22. Start-up speed is not a reason to write an MCP server in Science
 > and this note does not claim it as one.**
 
 A stdio server is spawned once per session, and 250 ms once per session is below
@@ -1400,7 +2166,7 @@ everywhere, and it is not evidence for anything about servers.
 
 ---
 
-## 10. The boundary where every type-level discipline evaporates
+## 12. The boundary where every type-level discipline evaporates
 
 `unit-literals.md` §13 says this about handing a `Quantity` to C:
 
@@ -1427,7 +2193,7 @@ the right behaviour and it should be read as a feature**: the compiler refuses t
 serialize the value silently and makes the author write the line where the
 discipline is given up.
 
-> **Decision 15. A type whose guarantee is structural rather than numeric does not
+> **Decision 23. A type whose guarantee is structural rather than numeric does not
 > cross this boundary silently. `SC0504`'s message names the guarantee being lost,
 > not merely the type.**
 
@@ -1465,7 +2231,7 @@ about the rest. That is all §4, §5 and §6 are doing.
 
 ---
 
-## 11. A worked example: a time-of-flight diffraction server
+## 13. A worked example: a time-of-flight diffraction server
 
 Not a calculator. This is a server a beamline scientist would actually run: it
 sits on the directory of run files the instrument writes, and lets a model find
@@ -1474,7 +2240,7 @@ lattice spacing. `spectra` is the running example the rest of this repository us
 — `package-manager.md` §4.2's manifest and `strings-formatting-and-docs.md` §5.2's
 768-channel rows are the same program.
 
-### 11.1 The program
+### 13.1 The program
 
 ```science
 ## Time-of-flight diffraction runs, exposed to a model.
@@ -1489,8 +2255,8 @@ use data.parquet (read_parquet)
 use os.env
 use physics.constants (PLANCK, NEUTRON_MASS)
 use physics.units (Time, Length, Angle, ANGSTROM)
-use mcp (Server, Stdio)
-use spectra (fit_window, FitOptions)
+use mcp (Server, Stdio, progress)
+use spectra (fit_one, remove_peak, FitOptions)
 
 ## Which instrument wrote a run.
 choice Instrument:
@@ -1553,6 +2319,7 @@ choice ServerError:
     EmptyWindow
     TooManyPeaks(U8)
     BadGeometry
+    Cancelled
 
 ServerError implements Error:
     function message(self) -> String:
@@ -1563,6 +2330,7 @@ ServerError implements Error:
             EmptyWindow: "the upper window edge is not above the lower"
             TooManyPeaks(n): f"{n} peaks requested; the limit is 32"
             BadGeometry: "the flight path and angle do not describe a detector"
+            Cancelled: "the fit was cancelled"
 
 # `run_path`, `run_log` and `fit_report` are ordinary functions and are elided.
 
@@ -1662,9 +2430,24 @@ tool fit_peaks(
         .shape(line_shape)
         .max_peaks(max_peaks as U32)
 
-    let peaks, err be fit_window(channels, window_lower, window_upper, options)
-    if err?:
-        return ([], err)
+    # Sequential peak stripping: fit the strongest peak, subtract it, repeat.
+    # `report` is the progress point and the cancellation point at once
+    # (§9.5); ignoring its result is legal and means the fit runs to the end.
+    let mutable residual be channels
+    let mutable peaks: Array of Peak be []
+    for i in 0..max_peaks:
+        let fraction be i as F64 / max_peaks as F64
+        if not progress.report(fraction, f"peak {i + 1} of {max_peaks}"):
+            return ([], ServerError.Cancelled)
+
+        let peak, err be fit_one(residual, window_lower, window_upper, options)
+        if err?:
+            return ([], err)
+        if not peak?:
+            break
+
+        residual be remove_peak(residual, peak)
+        peaks.push(peak)
 
     (peaks, null)
 
@@ -1707,7 +2490,7 @@ function main() -> ((), Error?):
     server.run(Stdio.new())
 ```
 
-### 11.2 What `tools/list` produces for one of them
+### 13.2 What `tools/list` produces for one of them
 
 Nobody wrote this. It is the declaration of `fit_peaks` above, mechanically:
 
@@ -1771,7 +2554,7 @@ because §1.3 does **not** constrain it to an object and §1.4 lets
 `structuredContent` be any JSON value; against `2025-06-18` this would have needed
 a wrapper property, and the wrapper would have been in the model's way forever.
 
-### 11.3 Nine things this example is making a case for
+### 13.3 Eleven things this example is making a case for
 
 1. **There is no schema in the source and no schema file in the repository.**
    Every one of the sixty-odd lines of JSON above came from a declaration a human
@@ -1788,7 +2571,7 @@ a wrapper property, and the wrapper would have been in the model's way forever.
    narrower than 32 channels is refused, because the fit is underdetermined below
    that"* is the sentence that stops a model asking for a five-channel fit, and it
    is prose, and it is required by `SC0190` to exist. Requiring a description does
-   not make it a *good* description — §17 says so — but a required field at least
+   not make it a *good* description — §19 says so — but a required field at least
    gets read once.
 5. **The unit problem is visible in the source rather than hidden.** `window_lower`
    is in seconds because `Time of F64` stores SI coherent base units, and a
@@ -1818,14 +2601,25 @@ a wrapper property, and the wrapper would have been in the model's way forever.
    nothing about the declaration makes it special to its neighbours. That is what
    keeps a server from growing a second, internal copy of every tool, which is the
    commonest structural defect in published servers.
+10. **Progress and cancellation are one line and no ceremony.** `fit_peaks` is a
+   minutes-long call, so it is the case §9 exists for: `progress.report` is the
+   only new vocabulary, it is not a parameter, it does not appear in the schema
+   above, and the same call is where the fit can be interrupted. If the call runs
+   past `task_after` the dispatcher hands the model a `taskId` and the loop keeps
+   going, with no change to this source (§9.1).
+11. **Nothing in the example mentions provenance, and every result carries it.**
+   `_meta["science/provenance"]` is added by the dispatcher, not by the author, and
+   the record for a `fit_peaks` call names the run file's digest, OpenBLAS's probe
+   string and the compiler's float flags. §10 is the only section of this note
+   whose payoff is invisible in the source, which is the point of it.
 
 And the thing the example is *not* making a case for, said plainly: none of this
-is faster than the Python equivalent, because `fit_window` is where the time goes
-and the Python version would call a C fitter to do the same work. §9.
+is faster than the Python equivalent, because `fit_one` is where the time goes
+and the Python version would call a C fitter to do the same work. §11.
 
 ---
 
-## 12. What this needs from phases that do not exist, and what can ship now
+## 14. What this needs from phases that do not exist, and what can ship now
 
 The front end today is `science-lexer`, `science-parser`, `science-resolve`,
 `science-diagnostics` and the salsa database; `science-rt` contains `abi.rs` and
@@ -1833,7 +2627,7 @@ nothing else; `sciencec` has one subcommand, `check`. There is **no type checker
 and no codegen**. So the honest question is not "when can this ship" but "how much
 of it is a front-end feature", and the answer is more than expected.
 
-### 12.1 The fact that makes an early stage possible
+### 14.1 The fact that makes an early stage possible
 
 Core spec §5.2 requires **fully annotated signatures**: *"local, signatures are
 fully annotated, inside a body everything is inferred by unification."* A `tool`'s
@@ -1851,17 +2645,17 @@ None of that is type *checking*. It is a walk over resolved declarations. **The
 schema generator is a resolver-level pass and can be written against the compiler
 that exists today.**
 
-### 12.2 The stages
+### 14.2 The stages
 
 | Stage | Needs | Delivers |
 |---|---|---|
 | **0** | Today's front end | `tool` moves from `Reserved(Tool)` to a keyword in `token.rs`; `parse_item` gains an arm; doc comments attach (already an F0 obligation under `strings-formatting-and-docs.md` §5.3). **All nine syntax diagnostics** `SC0190`–`SC0198`, none of which needs a type. |
-| **1** | Stage 0 + resolution | **`sciencec tools --json`** — reads a file, prints the `tools/list` array to stdout. No server, no transport, no codegen. §12.3. |
+| **1** | Stage 0 + resolution | **`sciencec tools --json`** — reads a file, prints the `tools/list` array to stdout. No server, no transport, no codegen. §14.3. |
 | **2** | The type checker | `SC0504`–`SC0518` as errors rather than best-effort. Alias expansion (`SC0512`), the nested-record case (`SC0514`), and the `Record` derivation of `data-io.md` §4.3, without which there is no `outputSchema`. |
 | **3** | `effects.md`'s `effects(DefId)` query | `pure tool`, and the two computable annotations. §8. The query is over the resolved call graph, which exists, so this is closer than stage 2 in real terms and is ordered after it only because it is worth less. |
-| **4** | Codegen, `data.json`, and a runtime | The `mcp` package: framing, dispatch, the stdio transport. §12.4. |
+| **4** | Codegen, `data.json`, and a runtime | The `mcp` package: framing, dispatch, the stdio transport. §14.4. |
 
-### 12.3 What ships first, and why it is worth shipping alone
+### 14.3 What ships first, and why it is worth shipping alone
 
 **`sciencec tools --json` is the whole thesis, minus the server.**
 
@@ -1885,7 +2679,7 @@ It is worth building before anything else for four reasons:
 4. **It costs nothing if Decision 1 is later reversed.** The same pass over Option
    B's record types produces the same JSON.
 
-### 12.4 What stage 4 needs that nobody has written
+### 14.4 What stage 4 needs that nobody has written
 
 - **`data.json`.** `data-io.md` §3 budgets two weeks and `stdlib-standard.md` §6
   decides there is no separate `json` module. It is a hard dependency and it is on
@@ -1897,28 +2691,28 @@ It is worth building before anything else for four reasons:
   behaviour, not the `mcp` package's.
 - **The stdio transport needs nothing else.** Line-delimited JSON over stdin and
   stdout, with diagnostics on stderr, is `print`, `write` and a reader. That is
-  why it is the first and only transport (§13).
+  why it is the first and only transport (§15).
 - **The HTTP transport cannot be built, and this is not a scheduling opinion.**
   `stdlib-standard.md` §3's table lists `http` as Level 3, F2, and **"HTTP/1.1
   client only"**. Streamable HTTP needs an HTTP *server*, which no note in this
   repository plans and which would need TLS and concurrency. It no longer needs a
   session store, because `2026-07-28` removed sessions — so the gap is smaller
-  than it was, and it is still an HTTP server. §13 records it as deliberately not
+  than it was, and it is still an HTTP server. §15 records it as deliberately not
   shipped rather than deferred, because "deferred" implies somebody is scheduled
   to do it.
 - **A test target that already exists.** `modelcontextprotocol/conformance` has
   been available since 2026-01-23 and tests protocol correctness. The `mcp`
   package should be run against it from its first commit rather than after a bug
-  report, and §15 asks for that. It is the difference between claiming compliance
+  report, and §17 asks for that. It is the difference between claiming compliance
   and having it checked, and it is free.
 
 ---
 
-## 13. What is deliberately not being shipped
+## 15. What is deliberately not being shipped
 
 Named, so that each is a decision rather than an omission somebody discovers.
 
-**No HTTP transport.** §12.4. Stdio only. A Science MCP server is a subprocess, so
+**No HTTP transport.** §14.4. Stdio only. A Science MCP server is a subprocess, so
 it cannot be a hosted, remote, multi-tenant server — which is a large part of where
 MCP is going, and this note accepts being on the wrong side of it for the first
 version because the alternative is writing an HTTP server first.
@@ -1971,13 +2765,28 @@ body has no point at which it can ask a question (§7.3).
 rather than this note's.** All three are **deprecated** as of `2026-07-28` (§1.1).
 Building them now would be building toward a removal.
 
+**No task persistence, and therefore no `ttlMs` of `null`.** §9.1. A stdio server's
+tasks die with the process. Persisting them needs a store, a reaper and an answer
+about two servers sharing a directory, and it is the first thing an HTTP transport
+would need anyway.
+
+**No task push; polling only.** `notifications/tasks` over `subscriptions/listen` is
+opt-in on both sides and needs a second streaming concept in the transport, and
+polling `tasks/get` is the specification's default and only guaranteed path. The
+`mcp` package sets `pollIntervalMs` honestly and leaves push for when somebody has
+a client that wants it.
+
+**No task `input_required`.** Its `inputRequests` carry elicitation, sampling and
+`roots/list`, none of which ships. A Science task goes
+`working → completed | failed | cancelled`.
+
 **No `sciencec mcp new` scaffolding command.** Tempting, and it is how every other
 ecosystem onboards. Refused for now because a scaffold is a strong statement about
 the shape of a server, and this note has not yet seen ten real ones.
 
 ---
 
-## 14. Diagnostics allocated
+## 16. Diagnostics allocated
 
 Per `README.md`'s allocation map, this note's blocks are **`SC0190`–`SC0199`** in
 the Syntax range and **`SC0504`–`SC0519`** in the Types second band. No other code
@@ -1991,10 +2800,10 @@ resolved type. They are in the Types band because that is where the allocation i
 and this is recorded so that a later reader does not read the placement as a claim
 about which phase runs them.
 
-### 14.1 Syntax, `SC0190`–`SC0199`
+### 16.1 Syntax, `SC0190`–`SC0199`
 
 Every one of these is checkable by the parser and the resolver, with no types.
-That is §12.2 stage 0.
+That is §14.2 stage 0.
 
 | Code | Fires on | Fix |
 |---|---|---|
@@ -2007,19 +2816,19 @@ That is §12.2 stage 0.
 | `SC0196` | `prompt` or `agent` used in declaration position | Names Decision 2 and says what to write instead: a `function` returning `Array of Message` for a prompt; nothing, yet, for an agent |
 | `SC0197` | A `tool` declared anywhere but module level — inside an `interface`, a `has` block, an `implements` block or a function body | Move it out |
 | `SC0198` | A `tool` with no body, in the shape of an interface method | Give it a body; there is no abstract tool |
-| `SC0199` | **Unallocated.** Held against the dynamic registration form of §13, so that if it ever lands it does not need a code from a fresh block | — |
+| `SC0199` | **Unallocated.** Held against the dynamic registration form of §15, so that if it ever lands it does not need a code from a fresh block | — |
 
-### 14.2 Types, `SC0504`–`SC0519`
+### 16.2 Types, `SC0504`–`SC0519`
 
 | Code | Fires on | Notes |
 |---|---|---|
-| `SC0504` | A `tool` parameter or return type with no JSON representation — the general case | **The message names the guarantee being lost, not just the type.** §10, Decision 15. This is the one whose wording matters most |
+| `SC0504` | A `tool` parameter or return type with no JSON representation — the general case | **The message names the guarantee being lost, not just the type.** §12, Decision 23. This is the one whose wording matters most |
 | `SC0505` | A parameter of a closure type | §4.2 |
 | `SC0506` | A parameter of type `any Interface` | §4.2. Distinct from `SC0504` because the fix is different: name a concrete type |
 | `SC0507` | `Map of (K, V)` where `K` is not `String` | §4.1. Fix: `Map of (String, V)`, or an `Array` of pairs |
 | `SC0508` | A `choice` with payload-carrying variants | §4.7. The message carries the *third* argument — that this is usually two tools — because that is the fix an author can act on |
 | `SC0509` | A `Tensor` whose shape is not all literal | §6.1. Names which axis is symbolic |
-| `SC0510` | **Warning.** A recursive record type in a `tool` signature | The schema is correct (`$defs` + `$ref`). The warning is about consumers, §18 |
+| `SC0510` | **Warning.** A recursive record type in a `tool` signature | The schema is correct (`$defs` + `$ref`). The warning is about consumers, §20 |
 | `SC0511` | A `tool` return type that is none of: `Content`, a record type, a primitive that crosses, or a bare `Error?` | §7 |
 | `SC0512` | A type alias that expands to something unexpressible | **Two spans**: the alias at the use site and its definition. `llm-ergonomics.md` §3's rule 1 — a single span here teaches nothing |
 | `SC0513` | Two `tool` declarations with the same name | The wire name must be unique across the whole server |
@@ -2034,9 +2843,18 @@ That is §12.2 stage 0.
 third falsifier is checked by writing a second backend and that backend needs
 diagnostics of its own, it takes a fresh block rather than borrowing from here.
 
+**§9 and §10 claim no code at all, and that is a result rather than an omission.**
+Long-running tools needed none because Decision 14 adds nothing to a declaration for
+a compiler to check; the one thing that *is* checkable — a `pure tool` that reports
+progress — is `effects.md`'s existing `SC0214` arriving from a new direction (§9.4).
+Provenance needed none because it is a dispatcher behaviour and a build flag, and
+the build flag's diagnostic is `reproducibility.md`'s `SC0217`, also unchanged. Two
+substantial sections that spend no namespace is the strongest available evidence for
+§2.7's claim that the protocol work is not in the language.
+
 ---
 
-## 15. What this note asks of the others
+## 17. What this note asks of the others
 
 | # | Of | Ask | Weight |
 |---|---|---|---|
@@ -2046,15 +2864,22 @@ diagnostics of its own, it takes a fresh block rather than borrowing from here.
 | 4 | Core spec §13 | Move `tool` to the in-use list. Leave `prompt` and `agent` where they are | Mechanical |
 | 5 | Core spec §2 | **F4's row reads "`agent`, `tool`, `prompt` as language constructs" and depends on F3.** A `tool` declaration depends on nothing in F3 — no actors, no `spawn`, no supervision. Split the row: `tool` is F0 syntax with an F1 backend, and F4 keeps `agent` | Real. It is the difference between this shipping and waiting two phases |
 | 6 | `effects.md` | Confirm that `pure` may prefix `tool`, and that `SC0214` covers a `pure tool` whose effect set is non-empty. Decision 5 of that note says `pure` is *"the only word this note spends"*; this is a widening of its surface, not a new word | Small, and it should be that note's call |
-| 7 | `unit-literals.md` §7.3 | A declaration-site display unit, so that a `Quantity` parameter can be written in the unit its audience uses. **Second caller** for a seam that note deferred. §6.2 | Strong. It is the ugliest thing in §11's example |
+| 7 | `unit-literals.md` §7.3 | A declaration-site display unit, so that a `Quantity` parameter can be written in the unit its audience uses. **Second caller** for a seam that note deferred. §6.2 | Strong. It is the ugliest thing in §13's example |
 | 8 | `data-io.md` §3 / `stdlib-standard.md` §6 | `data.json`'s number model: an integer outside ±2⁵³ is an error, not a rounded value. **Second caller** for an open question already filed. §4.3 | Strong |
 | 9 | `data-io.md` §4.3 | Nothing changes; the `Record` derivation gains a **third customer**, which strengthens the README's standing ask for a derive mechanism from two to three | Informational |
 | 10 | `README.md` | The index row and the allocation-table row for this note. The note does not edit it | Mechanical |
-| 11 | Whoever writes the `mcp` package | Run `modelcontextprotocol/conformance` in CI from the first commit, and pin the targeted revision (`2026-07-28`) in `science.toml` so that a revision bump is a visible dependency change rather than a silent one | Strong, and free |
+| 11 | Whoever writes the `mcp` package | Run `modelcontextprotocol/conformance` in CI from the first commit, and pin **both** targeted revisions — the core `2026-07-28` and the `ext-tasks` `2026-07-28` — in `science.toml`, so that either cadence moving is a visible dependency change | Strong, and free |
+| 12 | `effects.md` §3.1 | Seed `progress.report` into the **`external`** bit, beside `logging`, for the reason §8.2 of `stdlib-standard.md` gives for the logger. No new bit is requested and Decision 2's closure is not touched. §9.3 | Small |
+| 13 | `effects.md` Decision 5 | **Record, do not act.** If a narrowing for *"cannot change the computed result"* is ever wanted, progress reporting is its second caller after the logger, and both pass the same test. This note deliberately does **not** ask for it. §9.4 | Informational |
+| 14 | `reproducibility.md` §5.2, Decision 11 | The run record gains a **tool-call form**: `tool` and `arguments` in place of `argv`, `is_error` in place of `exit`. §10.2 | Strong |
+| 15 | `reproducibility.md` §5.3, Decision 12 | The carrier table gains a row for a tool result: the id in `_meta`, the record behind a `resource_link`. It is the first carrier in that table that is a *protocol* rather than a file format. §10.3 | Strong |
+| 16 | `reproducibility.md` §4.2, Decision 8 | **Take Decision 21 or reject it.** That decision's not-rejected list names `glob`, and §10.5 argues `glob` fails its own recordability test unless the expansion is in the run record. This is a disagreement, not a request. §10.5, §18 item 8 | **The sharpest one here** |
+| 17 | `rust-binding-generation.md` Decision 13 | The thread budget gains a third factor. That decision partitions between Science's pool and a foreign `env-at-init` pool; a server multiplies by concurrent calls, and an `env-at-init` partition cannot be renegotiated per call. §9.7 declares the concurrency bound beside the budget for that reason | Real, and it is that note's call |
+| 18 | `stdlib-standard.md` §8.2 | Confirm the progress sink sits beside the logger under the same rules — configured once, by the transport, before any tool runs. §9.3 | Small |
 
 ---
 
-## 16. Contradictions with existing notes, recorded
+## 18. Contradictions with existing notes, recorded
 
 House rule: name the section and give the reason, rather than smoothing it over.
 
@@ -2076,7 +2901,7 @@ Contradicted narrowly by §5.4 above, for `tool` declarations only.
 
 **4. Core spec §2 — F4 depends on F3.** Contradicted. `tool` needs no actor, no
 `spawn` and no supervision; the dependency was inherited from `agent`, which is in
-the same table row and does need them. §15 item 5.
+the same table row and does need them. §17 item 5.
 
 **5. `rust-binding-generation.md` §5.2 Decision 10 — bind the format, not the
 library.** Not contradicted, and §2 had to argue past it, so the argument is put
@@ -2092,7 +2917,32 @@ declaration the effect discipline admits. `pure tool` widens that by one form. T
 mechanism is unchanged — the same query, the same witness chain, the same
 `SC0214` — and it is still an extension of a decision this note does not own.
 
-**7. `reserved-words.md` §3.1 and core spec §13, on `model`.** §11's worked
+**7a. `reproducibility.md` Decision 8's not-rejected list, on `glob`.** A real
+disagreement and the only one in this note that is about somebody else's rule
+rather than somebody else's wording. That decision names `glob` among *"the
+reproducible half of the library"* and separately rejects `list_directory` *"until
+G7 lands and it sorts"*. §10.5 argues that sorting is not the problem, that a glob
+over a live data directory returns a different set on a different day, and that
+this is exactly the recordability test that decision used to reject `http`. The
+proposed fix — record the expansion — keeps `glob` permitted and is offered as
+Decision 21 rather than as an exclusion, because excluding it would forbid
+`data-io.md`'s own worked example.
+
+**7b. `effects.md` Decision 2's closed set, which this note did *not* breach.**
+Recorded because the temptation was real and the refusal costs something. Progress
+reporting is a property of a body rather than a signature, which is where effects
+live, and a `progress` bit would have been the natural design. Decision 2 closes the
+set at three and calls the closure *"the most load-bearing sentence in the note"*;
+`reproducibility.md` §4.1 already proposed a fourth bit and withdrew it. §9.2
+withdraws this one too, and §9.4 pays the price in full: a `pure tool` cannot report
+progress.
+
+**7c. `reproducibility.md` Decision 11's run record is per-process.** §10.2 makes it
+per-call for a server. That is an extension rather than a contradiction, with one
+rough edge stated in place: `env` is read once at start-up, so in a tool-call record
+it describes the session rather than the call.
+
+**8. `reserved-words.md` §3.1 and core spec §13, on `model`.** §13's worked
 example wanted `model` as the parameter naming the fitted line shape, and had to
 write `line_shape` because §13 still reserves the word. That note argued the
 reservation protects a hypothesis F1 does not hold. **This is one more data point
@@ -2101,11 +2951,11 @@ because that is how a collision list earns its entries.
 
 ---
 
-## 17. Risks
+## 19. Risks
 
 **The keyword is the irreversible part, and the falsifiers have not been run.**
 §2.6 names three things that would make Decision 1 wrong, and none of them can be
-checked without real servers. The mitigation is the ordering in §12: build
+checked without real servers. The mitigation is the ordering in §14: build
 `sciencec tools --json` first, generate schemas for ten real tools, and only then
 commit the grammar. **If the grammar lands before that measurement, this note has
 made the mistake it spent §2 arguing against.**
@@ -2135,7 +2985,7 @@ compile-time constant, not a computed string. A server therefore cannot build a
 description out of data it read from somewhere, which is the mechanism behind the
 prompt-injection-through-tool-metadata class of attack the specification warns
 clients about (§1.6). Science gets that property by construction — and **it gets
-it only as long as §13's dynamic registration hatch stays unbuilt**, because that
+it only as long as §15's dynamic registration hatch stays unbuilt**, because that
 hatch takes a description as a runtime `String`. If it is ever built, this
 property is gone and the note should say so there.
 
@@ -2145,21 +2995,44 @@ the specification's own compatibility matrix marks both Modern→Legacy and
 Legacy→Modern as **"Fails"**. There is no degraded mode. So a user whose client
 speaks a revision the `mcp` package does not gets nothing, not less. That is a
 package-manager problem with a package-manager answer
-(`package-manager.md`'s minimal version selection, and §15 item 11's pinned
+(`package-manager.md`'s minimal version selection, and §17 item 11's pinned
 revision), and it is not thereby a pleasant experience. **It is also the single
 best argument for Decision 1's layering**: when this happens, and it will, what
 breaks is a package version, not a program's syntax.
 
-**Progress and cancellation have no design here and a long fit needs both.** §18.
+**Designing against an extension means tracking two release trains.** Tasks is
+`Stable` and SEP-2663 is Final (§1.7), so the wire format is not expected to churn —
+but `ext-tasks` releases on its own cadence, and the extensions policy says a
+breaking change takes **a new identifier** rather than a new version. So the
+identifier is the version pin, and the `mcp` package now has two revisions to track
+where §19's earlier risk assumed one. The mitigation is §17 item 11: pin both, in
+the manifest, where a bump is visible.
 
-**Decision 8 can quietly become false.** If ask 3 in §15 is refused, doc tests
+**A promoted call changes the *shape* of the response, and the trigger is how fast
+the machine is.** This is the most uncomfortable consequence of Decision 14a and it
+should not be buried. A `fit_peaks` call that finishes in four seconds on a
+workstation returns a `CallToolResult`; the same call on a loaded cluster node
+returns a `CreateTaskResult` and a `taskId`. Nothing in the source differs. The
+specification is explicit that clients must cope — *"A client that has negotiated
+this extension **MUST** be prepared to handle either"* — and a client that has
+negotiated the extension and then validates strictly against the **core** schema
+will still break, because `CreateTaskResult` is not in core's
+`CallToolResultResponse` union. `task_after = 0` disables promotion entirely and is
+the escape for anyone who meets such a client.
+
+**A cached provenance record is server state in a protocol that just removed
+state.** §10.3 argues it is tolerable because the record is content-addressed and
+bounded, and it is still state, and a restarted server loses it.
+`--provenance=inline` is the escape and costs 8 KB per result.
+
+**Decision 8 can quietly become false.** If ask 3 in §17 is refused, doc tests
 inside tool descriptions run on a separate target, and a server built without that
 target ships examples nobody verified — while this note still claims they cannot
 be wrong. Whoever refuses that ask should edit §5.4.
 
 ---
 
-## 18. Open questions
+## 20. Open questions
 
 **The second backend, and it should be answered early.** §2.6's third falsifier is
 the one that decides whether Decision 1 was right, and it is the only one that can
@@ -2167,17 +3040,27 @@ be checked *before* real servers exist: write a second emitter — a function-ca
 schema for a chat completions API — over the same `tool` declarations. If it is a
 different emitter over the same declarations, Decision 1 holds. If it needs
 different declarations, `tool` was an MCP keyword. This is a few days of work and
-it is worth more than anything else in §12.
+it is worth more than anything else in §14.
 
-**Progress and cancellation.** A peak fit over a 40 GB run takes minutes. MCP has
-progress notifications and cancellation; a `tool` body is a synchronous function
-with no handle to report through. The obvious fix — a hidden first parameter
-carrying a progress sink — is a parameter that is not in the schema, which is a
-special case in the one mechanism this note is built on. The alternative is a
-thread-local, which `effects.md` §2.1 lists as ambient state that Science closed
-on purpose. **Neither is acceptable and this note does not solve it.** It is the
-strongest argument for the `tool`-as-record Option B, where the handler is an
-ordinary function and can take whatever it likes.
+**Progress and cancellation — answered in §9, and the record of what it looked
+like before is worth keeping.** An earlier draft of this note recorded these as
+unsolved and called them *"the strongest argument for the `tool`-as-record Option
+B"*, on the ground that a progress sink would have to be a parameter that is not in
+the schema. That turned out to be wrong twice over: a sink does not have to be a
+parameter (§9.3 puts it where the logger already is), and Tasks does not want a
+per-tool declaration at all (§9.1), so the mechanism that looked like it would
+force an exception to Decision 3 requires no exception. **What remains open is
+narrower**: whether `task_after` as a single per-server duration is the right
+granularity, or whether it eventually wants to be per-tool — which would reopen
+exactly the question SEP-2663 closed, and should therefore be resisted until
+somebody has a server that needs it.
+
+**Whether a task should survive the process.** §9.1 sets `ttlMs` to the stdio
+process's own expectation, because a subprocess's tasks die with it and there is no
+`tasks/list` to recover a lost `taskId`. A server that persisted tasks to disk could
+set `null` and honour it, and would then need a store, a reaper and a story about
+two servers sharing one directory. Not designed here, and it is the first thing an
+HTTP transport would need.
 
 **What `Content` is, exactly.** Text, image, audio, embedded resource and resource
 link are five variants. As a `choice` in the `mcp` package that is a
@@ -2193,13 +3076,13 @@ substantial part of a model's context on examples. A `--no-examples` build flag 
 the obvious compromise and it reintroduces the possibility of a description that
 differs between builds. Unresolved.
 
-**Whether a server should be an object.** §11 writes tools at module level and
+**Whether a server should be an object.** §13 writes tools at module level and
 composes them in `main`. A server with per-session state — an open file handle, a
 cache, a database connection — has nowhere to put it, because a `tool` is not a
 method (`SC0193`). The options are a `Server` value threaded through by the
 library, module-level `const` state that cannot be mutable, or allowing `tool`
 inside a `has` block after all. **Not decided here**, and it is the question most
-likely to force a revision of the grammar, so §12's ordering matters: it should be
+likely to force a revision of the grammar, so §14's ordering matters: it should be
 answered before the parser arm is written, not after.
 
 **Whether `tools/list_changed` can ever be true for a Science server.** The tool
@@ -2219,7 +3102,7 @@ better in the source, and it is recorded because it was not anticipated.
 
 ---
 
-## 19. Summary of decisions
+## 21. Summary of decisions
 
 | # | Decision | Rejected | Reason | Cost |
 |---|---|---|---|---|
@@ -2236,12 +3119,21 @@ better in the source, and it is recorded because it was not anticipated.
 | 11 | A record return emits `outputSchema` and `structuredContent`, plus the serialized JSON as text | Emitting only one of the two | §1.4 says a server SHOULD do both | Results are roughly twice the size |
 | 12 | `pure tool` computes `readOnlyHint`, `openWorldHint` and `idempotentHint`; an impure tool emits none of them | Emitting `false`; letting the author assert | The effect bits can falsify, not classify, so `false` would be a claim the compiler cannot support | Only two of four annotations, and the client distrusts them anyway |
 | 13 | `SC0519`, a warning: `print` reachable from a `tool` body under the stdio transport | Documentation saying "do not print" | The effect graph already answers it; §1.5 makes it a protocol violation | A warning, not an error, and conservative at dynamic dispatch |
-| 14 | Start-up speed is not claimed as a reason | Claiming it | Measured: ~250 ms per process, once per session. §9 | The argument that survives is deployment, which is a different argument |
-| 15 | A type whose guarantee is structural does not cross silently; `SC0504` names the guarantee being lost | A runtime serialization error; a silent numeric collapse | `PValue`, `Train of R` and friends exist to withhold exactly what JSON would reveal | One more diagnostic whose wording has to be good |
+| 14 | A long tool returns a task; the `tool` declaration says nothing about it, and promotion is a time threshold in the library | A `long` modifier; an author-declared list of slow tools | The protocol **deleted** the per-tool `execution.taskSupport` field in `2026-07-28`; slowness is a property of the call, not the tool. §9.1 | The response *shape* depends on machine speed. §19 |
+| 14b | `progress.report` takes a fraction **and** a message | Fraction only | A task has **no** progress notifications — only free-text `statusMessage`, verified — so the message is the half that survives both paths. §9.1 | On the task path the fraction is rendered into text |
+| 15 | Progress goes through a process-global sink, not a parameter and not a new effect bit | A distinguished parameter excluded from the schema; a fourth effect bit | `stdlib-standard.md` §8.2's logger exception already covers it: it cannot change the computed result. §9.3 | A `pure tool` cannot report progress. §9.4 |
+| 16 | Cancellation is cooperative and shares `progress.report`'s call site | Killing the thread; a compiler-inserted check at loop back-edges | The protocol's own model is cooperative — *"a server is not obligated to actually stop the work"*; and a check in every loop back-edge is disqualified by §1 of the core spec. §9.5 | A body inside BLAS or polars cannot be cancelled at all. §9.6 |
+| 17 | One tool call at a time by default; the bound is declared beside the thread budget | Concurrent by default, as every other SDK | The pools are singletons that cannot be re-partitioned per call, so concurrency buys latency and not throughput. §9.7 | Head-of-line blocking, which is only tolerable because of Decision 14 |
+| 18 | For a server, a run record is **one tool call** | A per-process record | A per-process record would describe the session and no answer. And a tool call's arguments are already typed and already schematised. §10.2 | `env` becomes session-scoped inside a per-call record |
+| 19 | The provenance id travels in `_meta` on every result; the full record is a `resource_link` | `structuredContent`; inline always | `structuredContent` is bound to `outputSchema`, so it would put a field in the schema that no return type produces. §10.3 | ~110 bytes always; a cache that is server state |
+| 20 | `--deterministic` stays whole-binary; the `ambient` bit is reported **per tool**, always | Letting one ambient tool poison the binary's claim | `effects(DefId)` is per-definition already; the coarsening was the added step. §10.4 | None found |
+| 21 | A `glob` writes its **expansion** into the run record | Adding `glob` to the rejected set | It would forbid the commonest data-loading idiom; the problem is that the result is invisible, not that the call is wrong. §10.5 | A large directory truncates under the 8 KB cap; the call becomes auditable, not repeatable |
+| 22 | Start-up speed is not claimed as a reason | Claiming it | Measured: ~250 ms per process, once per session. §11 | The argument that survives is deployment, which is a different argument |
+| 23 | A type whose guarantee is structural does not cross silently; `SC0504` names the guarantee being lost | A runtime serialization error; a silent numeric collapse | `PValue`, `Train of R` and friends exist to withhold exactly what JSON would reveal | One more diagnostic whose wording has to be good |
 
 ---
 
-## 20. The one-paragraph version
+## 22. The one-paragraph version
 
 A Science program can expose itself to a model, and the thing that makes it worth
 doing is not speed and not units — it is that **the schema, the description and
@@ -2252,3 +3144,10 @@ to an SDK that has to introspect at run time or be handed a schema. The price is
 keyword, five compile-time obligations, a narrower set of types than a `function`
 admits, and a mandatory doc comment — and the whole of §2 is about making sure the
 keyword buys an abstraction that outlives the protocol that suggested it.
+
+**And one thing more, which is not about ergonomics at all.** Because every Science
+binary already carries a provenance record, a tool result can carry twelve hex
+characters that recover the compiler, the flags, the linked BLAS, the package
+digests and the inputs — so a number a model reports stops being unattributable.
+That is smaller than "reproducible science" and it is true, and it is the only claim
+in this note that another SDK could not match by trying harder.
