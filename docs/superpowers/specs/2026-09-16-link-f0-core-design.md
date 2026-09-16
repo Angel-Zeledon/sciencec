@@ -99,12 +99,28 @@ break compatibility: `agent`, `tool`, `prompt`, `spawn`, `send`, `receive`,
 A block is introduced with `:` followed by a newline, `INDENT`, statements,
 `DEDENT`.
 
-There is also an **inline form** for single-expression constructs, valid only if
-the whole thing fits on one line:
+There is also an **inline form**:
 
 ```link
 if a.len() > b.len(): a else: b
 ```
+
+The inline body is **exactly one expression**, and it ends where the expression
+grammar says it ends — not at the end of the line. The distinction matters: in
+the example above the `then` body ends mid-line, at `else`, because `else`
+cannot continue an expression. "Fits on one line" is a consequence of this rule,
+not the rule itself, and is not something the parser can check.
+
+Two things follow, and both are errors:
+
+- A statement in an inline body. `fn f(): let x = 1` is rejected (`LK0109`); the
+  body must be an expression.
+- A block form and an inline form on the same construct.
+
+**Dangling `else` binds to the innermost `if`.** In `if a: if b: x else: y`, the
+`else` belongs to `if b`. Recursive descent gives this for free, but it is a
+language rule, not an implementation accident, and code that means the other
+thing must use the block form.
 
 ### 4.3 Declarations
 
@@ -220,7 +236,34 @@ match point:
 ```
 
 Patterns: literals, the `_` wildcard, bindings, enum variants, structs, tuples,
-and alternatives with `|`.
+and alternatives with `|`. A struct pattern mirrors construction, with named
+fields:
+
+```link
+match doc:
+    Doc(title: t, body: _): t
+```
+
+There are **no match guards** in F0; see §12.
+
+Three points where a pattern cannot be disambiguated by syntax alone, and are
+therefore settled during name resolution rather than parsing:
+
+- **A bare name is a binding until resolution says otherwise.** In
+  `match x: None: ...`, the parser cannot know whether `None` introduces a new
+  binding or names a variant. It parses a binding; resolution reclassifies it.
+- **An empty argument list is undecidable.** `Doc()` could be a variant with no
+  payload or a struct with no fields. The parser picks the variant form;
+  resolution corrects it.
+- The same rule decides `Doc(title: "a")` (a struct literal) against `f(1)` (a
+  call) in expression position: **named arguments mean a struct, positional
+  arguments mean a call or variant.**
+
+**The arm separator.** A `match` arm's `:` cannot be found by scanning, because
+`:` also opens blocks, separates a field from its type, a named argument from
+its value, and a generic parameter from its bound. The pattern is parsed by the
+pattern grammar, and whatever follows it is the separator. This rules out any
+tokenizer-level shortcut.
 
 `for x in iterable:` walks anything implementing `Iterate`. `while cond:` and
 `loop:` with `break` and `continue`.
@@ -251,8 +294,18 @@ as
 == != < > <= >=
 and
 or
-=                     (assignment, non-associative)
 ```
+
+**Assignment is not in this table because it is not an expression.** `x = y` is
+a statement. Listing `=` as a low-precedence operator would make
+`let x = if c: a = b else: c` grammatical, which is not intended. The parser
+parses an expression and, on finding a following `=`, treats the whole thing as
+an assignment statement.
+
+**Where a `where` clause ends.** A bound list ends only at `+` or `,`, so in
+`fn f[T]() -> T where T: A + B: body` the first `:` that no bound consumes is
+the one that opens the block. It resolves, but it is the tightest spot in the
+grammar and the place most likely to need a delimiter if the syntax ever grows.
 
 ## 5. Type system
 
@@ -505,6 +558,14 @@ What F0 does **not** include, so it cannot sneak in through the back door:
 
 - Agents, tools, prompts, tensors, concurrency, durability (those are F1–F4).
 - Associated types, trait specialization, const generics.
+- **Match guards** (`Some(n) if n > 0:`). Excluded deliberately, not by
+  oversight: a guarded arm can never count toward exhaustiveness, so admitting
+  them complicates the exhaustiveness checker that §11 requires. Adding them
+  later is an additive AST change plus that checker rule.
+- Destructuring in `let`. A `let` binds one identifier.
+- A `mod` declaration. A file is a module and a directory with `mod.link` is a
+  module, so F0 needs no syntax for it; `mod` stays a reserved word so that
+  adding one later does not break existing code.
 - Closures capturing by reference. F0 closures capture by ownership; the
   by-reference case is revisited in F1.
 - Macros of any kind.
