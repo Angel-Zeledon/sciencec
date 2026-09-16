@@ -77,6 +77,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
+name = "link-db"
+version = "0.0.1"
+
+[[package]]
 name = "link-diagnostics"
 version = "0.0.1"
 dependencies = [
@@ -99,6 +103,14 @@ dependencies = [
  "link-diagnostics",
  "link-lexer",
 ]
+
+[[package]]
+name = "link-resolve"
+version = "0.0.1"
+
+[[package]]
+name = "link-rt"
+version = "0.0.1"
 
 [[package]]
 name = "link-testkit"

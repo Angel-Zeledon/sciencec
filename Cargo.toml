@@ -5,6 +5,9 @@ members = [
     "crates/link-lexer",
     "crates/link-parser",
     "crates/link-testkit",
+    "crates/link-resolve",
+    "crates/link-db",
+    "crates/link-rt",
 ]
 
 [workspace.package]
@@ -17,4 +20,7 @@ link-diagnostics = { path = "crates/link-diagnostics" }
 link-lexer = { path = "crates/link-lexer" }
 link-parser = { path = "crates/link-parser" }
 link-testkit = { path = "crates/link-testkit" }
+link-resolve = { path = "crates/link-resolve" }
+link-db = { path = "crates/link-db" }
+link-rt = { path = "crates/link-rt" }
 insta = "1"
