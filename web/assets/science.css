@@ -43,6 +43,32 @@ body { background: var(--paper); color: var(--ink); font-family: var(--sans);
   font-size: 16px; line-height: 1.6; margin: 0; -webkit-text-size-adjust: 100%; }
 .wrap { max-width: 62rem; margin: 0 auto; padding-inline: 20px; }
 
+/* The documentation runs wider than the landing page, because it has a
+ * sidebar and the landing page does not. At 62rem a 15rem sidebar and its
+ * gutter left the code column 43rem, which is narrower than the listings in
+ * it — so every example scrolled sideways inside its own box. Prose does not
+ * widen with it: `p` is capped at 44rem regardless, so the extra width goes
+ * to the code and the tables, which are the things that wanted it. */
+.wrap.wide { max-width: 84rem; }
+
+/* Anything that legitimately exceeds its column scrolls inside its own box
+ * rather than taking the page with it. This class was already on two tables
+ * in the reference and had no rule behind it at all, which is exactly the
+ * horizontal scroll it was named to prevent. */
+.scroller { overflow-x: auto; margin: 0 0 1.5rem; }
+.scroller > table { margin-bottom: 0; }
+
+/* Tables had no styling whatsoever: browser defaults, collapsed to content
+ * width, with no rule between rows. */
+table { width: 100%; border-collapse: collapse; margin: 0 0 1.5rem;
+  font-size: 0.92rem; }
+th, td { text-align: left; padding: 0.5rem 1rem 0.5rem 0;
+  border-bottom: 1px solid var(--rule); vertical-align: baseline; }
+th { font-family: var(--mono); font-size: 0.72rem; font-weight: 600;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint);
+  border-bottom-color: var(--ink); white-space: nowrap; }
+tbody tr:last-child td { border-bottom: none; }
+
 /* ---- top bar ---- */
 /* The masthead stays put. Every language's documentation does this, for the
  * sidebar's reason: a reference is navigated, and a way back to the index that
