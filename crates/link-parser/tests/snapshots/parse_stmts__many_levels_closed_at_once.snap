@@ -1,0 +1,31 @@
+---
+source: crates/link-parser/tests/parse_stmts.rs
+expression: "parse_body(r#\"fn f() -> Int:\n    for row in rows:\n        for cell in row:\n            if cell != 0:\n                if cell > 0:\n                    hits = hits + 1\n    hits\n\"#)"
+---
+Block @19..160
+  For @19..156
+    pattern: Binding `row` @23..26
+    iter: Path `rows` @30..34
+    body: Block @44..156
+      tail: For @44..156
+        pattern: Binding `cell` @48..52
+        iter: Path `row` @56..59
+        body: Block @73..156
+          tail: If @73..156
+            cond: Binary `!=` @76..85
+              lhs: Path `cell` @76..80
+              rhs: Int 0 @84..85
+            then: Block @103..156
+              tail: If @103..156
+                cond: Binary `>` @106..114
+                  lhs: Path `cell` @106..110
+                  rhs: Int 0 @113..114
+                then: Block @136..151
+                  Assign @136..151
+                    target: Path `hits` @136..140
+                    value: Binary `+` @143..151
+                      lhs: Path `hits` @143..147
+                      rhs: Int 1 @150..151
+  tail: Path `hits` @156..160
+--- diagnostics ---
+(none)

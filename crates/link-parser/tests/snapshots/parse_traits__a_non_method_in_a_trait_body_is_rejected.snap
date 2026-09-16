@@ -1,0 +1,12 @@
+---
+source: crates/link-parser/tests/parse_traits.rs
+expression: "parse_source_allowing_errors(r#\"trait T:\n    let x = 1\n    fn f(&self) -> Int\n\"#)"
+---
+Module @0..46
+  Trait `T` @0..46
+    methods
+      Fn `f` @27..46
+        receiver: &self @32..37
+        ret: Path `Int` @42..45
+--- diagnostics ---
+LK0112 @13..16 expected a method declaration beginning with `fn`, found `let`

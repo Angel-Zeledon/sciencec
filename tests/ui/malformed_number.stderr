@@ -4,7 +4,7 @@ error[LK0010]: `2` is not a valid digit in a binary literal
 8 |     let mask = 0b1012
   |                     ^ invalid digit
 
-error[LK0010]: `8` is not a valid digit in a octal literal
+error[LK0010]: `8` is not a valid digit in an octal literal
  --> tests/ui/malformed_number.link:9:27
   |
 9 |     let permissions = 0o778

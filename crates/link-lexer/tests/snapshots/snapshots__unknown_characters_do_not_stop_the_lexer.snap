@@ -27,7 +27,7 @@ expression: "dump(\"let x = 1 $ 2\\nlet y = `z`\\n\")"
 == diagnostics ==
 LK0001 error: `$` is not a character Link recognises
     primary   10..11: unexpected character
-LK0001 error: ``` is not a character Link recognises
+LK0001 error: `` ` `` is not a character Link recognises
     primary   22..23: unexpected character
-LK0001 error: ``` is not a character Link recognises
+LK0001 error: `` ` `` is not a character Link recognises
     primary   24..25: unexpected character

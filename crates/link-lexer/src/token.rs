@@ -231,6 +231,19 @@ impl IntBase {
         }
     }
 
+    /// The base's name preceded by its article, for diagnostic messages.
+    ///
+    /// Carried here rather than assembled at the call site because "a octal"
+    /// is the kind of wrong that survives a hundred code reviews.
+    pub fn article_name(self) -> &'static str {
+        match self {
+            IntBase::Dec => "a decimal",
+            IntBase::Hex => "a hexadecimal",
+            IntBase::Oct => "an octal",
+            IntBase::Bin => "a binary",
+        }
+    }
+
     /// The base's name, for diagnostic messages.
     pub fn name(self) -> &'static str {
         match self {

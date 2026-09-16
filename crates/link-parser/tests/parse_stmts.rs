@@ -8,8 +8,12 @@ use common::{parse_body, parse_source_allowing_errors, strip_spans};
 #[test]
 fn let_bindings() {
     insta::assert_snapshot!(parse_body(
-        "fn main():\n    let greeting = \"hola\"\n    let mut count = 0\n \
-         let annotated: Int = 42\n    let mut typed: &mut String = &mut owner\n"
+        r#"fn main():
+    let greeting = "hola"
+    let mut count = 0
+    let annotated: Int = 42
+    let mut typed: &mut String = &mut owner
+"#
     ));
 }
 
@@ -19,8 +23,12 @@ fn let_bindings() {
 #[test]
 fn assignment_is_a_statement() {
     insta::assert_snapshot!(parse_body(
-        "fn main():\n    a = b\n    a = a + 1\n    self.text = \"\"\n \
-         editor.target.title = \"edited\"\n    items[0] = 1\n"
+        r#"fn main():
+    a = b
+    a = a + 1
+    self.text = ""
+    editor.target.title = "edited"
+"#
     ));
 }
 
@@ -31,14 +39,49 @@ fn assignment_takes_a_whole_expression() {
     insta::assert_snapshot!(parse_body("fn main():\n    a = if flag: 1 else: 2\n"));
 }
 
+/// An assignment inside an inline body. §4.2 rejects a *statement* there, but
+/// §4.3 writes this very line — `if item > best: best = item` — so assignment
+/// is not the statement it means; see the note on `parse_inline_block`.
+#[test]
+fn an_assignment_is_allowed_in_an_inline_body() {
+    insta::assert_snapshot!(parse_body(
+        r#"fn largest(items: &Array[Int]) -> Int:
+    let mut best = 0
+    for item in items:
+        if item > best: best = item
+    best
+"#
+    ));
+}
+
 /// `return` with and without a value, `break` with and without one, and
 /// `continue`.
 #[test]
 fn jumps() {
     insta::assert_snapshot!(parse_body(
-        "fn f(items: &Array[Int]) -> Option[Int]:\n    for item in items:\n \
-         if item % 2 != 0:\n            continue\n        return Some(item)\n \
-         loop:\n        break\n    return\n"
+        r#"fn f(items: &Array[Int]) -> Option[Int]:
+    for item in items:
+        if item % 2 != 0:
+            continue
+        return Some(item)
+    loop:
+        break
+    return
+"#
+    ));
+}
+
+/// `return` and `break` in an inline body, which the corpus writes as
+/// `if n < 0: return -1` and `loop: break`.
+#[test]
+fn jumps_in_an_inline_body() {
+    insta::assert_snapshot!(parse_body(
+        r#"fn sign(n: Int) -> Int:
+    if n < 0: return -1
+    if n > 0: return 1
+    loop: break
+    0
+"#
     ));
 }
 
@@ -46,7 +89,9 @@ fn jumps() {
 /// it is an expression, becomes the block's tail rather than a statement.
 #[test]
 fn the_last_expression_becomes_the_blocks_tail() {
-    insta::assert_snapshot!(parse_body("fn add(a: Int, b: Int) -> Int:\n    let c = a + b\n    c\n"));
+    insta::assert_snapshot!(parse_body(
+        "fn add(a: Int, b: Int) -> Int:\n    let c = a + b\n    c\n"
+    ));
 }
 
 /// A block whose last statement is not an expression has no tail.
@@ -60,7 +105,14 @@ fn a_block_ending_in_a_statement_has_no_tail() {
 #[test]
 fn a_statement_ending_in_a_block_needs_no_newline() {
     insta::assert_snapshot!(parse_body(
-        "fn f():\n    if c:\n        a\n    b\n    while d:\n        e\n    f\n"
+        r#"fn f():
+    if c:
+        a
+    b
+    while d:
+        e
+    f
+"#
     ));
 }
 
@@ -69,8 +121,14 @@ fn a_statement_ending_in_a_block_needs_no_newline() {
 #[test]
 fn many_levels_closed_at_once() {
     insta::assert_snapshot!(parse_body(
-        "fn f():\n    for row in rows:\n        for cell in row:\n            if cell != 0:\n \
-         if cell > 0:\n                    hits = hits + 1\n    hits\n"
+        r#"fn f() -> Int:
+    for row in rows:
+        for cell in row:
+            if cell != 0:
+                if cell > 0:
+                    hits = hits + 1
+    hits
+"#
     ));
 }
 

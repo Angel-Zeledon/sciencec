@@ -46,8 +46,8 @@ LK0008 error: unterminated character literal
 LK0006 error: unknown escape sequence `\q`
     primary   38..40: unknown escape
     note: the escapes are `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0` and `\u{...}`
-LK0005 error: this integer literal does not fit in 128 bits
+LK0005 error: this integer literal is too large
     primary   57..96: value out of range
-    note: the largest representable value is 340282366920938463463374607431768211455
+    note: the widest integer type is `U64`, whose largest value is 18446744073709551615
 LK0010 error: `2` is not a valid digit in a binary literal
     primary   110..111: invalid digit

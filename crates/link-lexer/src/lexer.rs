@@ -13,7 +13,7 @@
 //! diagnostic plus whatever token keeps the stream usable, so a single pass can
 //! report many problems instead of one.
 
-use link_diagnostics::{Code, Diagnostic, Diagnostics, FileId, Label, Span};
+use link_diagnostics::{Code, Diagnostic, Diagnostics, FileId, Label, Span, Suggestion};
 
 use crate::token::{IntBase, NumSuffix, Token, TokenKind};
 
@@ -340,7 +340,7 @@ impl<'a> Lexer<'a> {
             self.diags.push(
                 Diagnostic::error(
                     E_MALFORMED_NUMBER,
-                    format!("`{c}` is not a valid digit in a {} literal", base.name()),
+                    format!("{} is not a valid digit in {} literal", quoted(c), base.article_name()),
                 )
                 .with_label(Label::primary(self.span(pos, pos + c.len_utf8()), "invalid digit")),
             );
@@ -405,16 +405,18 @@ impl<'a> Lexer<'a> {
             // literal can never legitimately be infinite, so an infinite value
             // here always means the source asked for something unrepresentable.
             // Left undiagnosed it would silently become `inf` at runtime.
+            //
+            // There is no underflow branch: a minus sign lexes as a separate
+            // unary operator, and a genuinely tiny literal like `1e-400`
+            // parses to `0.0`, not to infinity. Nothing can reach it.
             if value.is_infinite() {
-                let too_small = literal.starts_with('-');
                 self.diags.push(
                     Diagnostic::error(E_FLOAT_RANGE, "this float literal is out of range")
-                        .with_label(Label::primary(
-                            self.span(start, self.pos),
-                            if too_small { "value underflows" } else { "value overflows" },
-                        ))
+                        .with_label(Label::primary(self.span(start, self.pos), "value overflows"))
+                        // Printed in exponent form: `f64::MAX` in decimal is 309
+                        // digits, which tells the reader nothing.
                         .with_note(format!(
-                            "the largest finite value representable is {}",
+                            "the largest representable value is {:e}",
                             f64::MAX
                         )),
                 );
@@ -496,15 +498,18 @@ impl<'a> Lexer<'a> {
                 Some(v) => value = v,
                 None => {
                     self.diags.push(
-                        Diagnostic::error(
-                            E_INT_OVERFLOW,
-                            "this integer literal does not fit in 128 bits",
-                        )
+                        // The accumulator is a u128, but quoting its limit is
+                        // unhelpful: §5.1 makes U64 the widest integer type, so
+                        // that is the bound the programmer actually has.
+                        Diagnostic::error(E_INT_OVERFLOW, "this integer literal is too large")
                         .with_label(Label::primary(
                             self.span(start, self.pos),
                             "value out of range",
                         ))
-                        .with_note(format!("the largest representable value is {}", u128::MAX)),
+                        .with_note(format!(
+                            "the widest integer type is `U64`, whose largest value is {}",
+                            u64::MAX
+                        )),
                     );
                     return 0;
                 }
@@ -756,11 +761,31 @@ impl<'a> Lexer<'a> {
             // `!` alone is not an operator: negation is spelled `not`.
             '!' if self.eat('=') => TokenKind::NotEq,
 
+            // A lone `!` is the most likely typo from anyone arriving from C,
+            // Rust or Python, so it gets its own message rather than being
+            // told it is unrecognised — it is recognised, just only as `!=`.
+            '!' => {
+                self.diags.push(
+                    Diagnostic::error(E_UNKNOWN_CHAR, "`!` is not an operator in Link")
+                        .with_label(Label::primary(
+                            self.span(start, self.pos),
+                            "`!` is only valid as part of `!=`",
+                        ))
+                        .with_note("negation is spelled `not`")
+                        .with_suggestion(Suggestion {
+                            span: self.span(start, self.pos),
+                            replacement: "not ".to_string(),
+                            message: "if you meant to negate, write".to_string(),
+                        }),
+                );
+                TokenKind::Unknown(c)
+            }
+
             _ => {
                 self.diags.push(
                     Diagnostic::error(
                         E_UNKNOWN_CHAR,
-                        format!("`{c}` is not a character Link recognises"),
+                        format!("{} is not a character Link recognises", quoted(c)),
                     )
                     .with_label(Label::primary(
                         self.span(start, self.pos),
@@ -840,4 +865,17 @@ fn is_ident_start(c: char) -> bool {
 
 fn is_ident_continue(c: char) -> bool {
     c == '_' || c.is_alphanumeric()
+}
+
+/// Wraps a character in backticks for a diagnostic message.
+///
+/// A backtick inside backticks reads as an empty pair, so it is quoted with
+/// doubled delimiters instead. Rare, but it is exactly the character someone
+/// mistypes when reaching for a quote.
+fn quoted(c: char) -> String {
+    if c == '`' {
+        "`` ` ``".to_string()
+    } else {
+        format!("`{c}`")
+    }
 }

@@ -1,6 +1,6 @@
 ---
 source: crates/link-parser/tests/parse_patterns.rs
-expression: "parse_source_allowing_errors(\"fn f(x: Int) -> Int:\\n    match x:\\n        *: 0\\n        1: 1\\n\")"
+expression: "parse_source_allowing_errors(r#\"fn f(x: Int) -> Int:\n    match x:\n        *: 0\n        1: 1\n\"#)"
 ---
 Module @0..60
   Fn `f` @0..60

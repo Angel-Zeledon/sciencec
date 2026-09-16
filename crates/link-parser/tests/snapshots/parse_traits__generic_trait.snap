@@ -1,0 +1,16 @@
+---
+source: crates/link-parser/tests/parse_traits.rs
+expression: "parse_source(r#\"trait From[T]:\n    fn from(value: T) -> Self\n\"#)"
+---
+Module @0..45
+  Trait `From` @0..45
+    generics
+      TypeParam `T` @11..12
+    methods
+      Fn `from` @19..45
+        params
+          Param `value` @27..35
+            type: Path `T` @34..35
+        ret: SelfType @40..44
+--- diagnostics ---
+(none)

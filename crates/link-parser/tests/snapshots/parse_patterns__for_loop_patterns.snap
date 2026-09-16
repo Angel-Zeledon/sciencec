@@ -1,6 +1,6 @@
 ---
 source: crates/link-parser/tests/parse_patterns.rs
-expression: "parse_body(\"fn f(pairs: &Array[(Int, Int)]):\\n    for (a, b) in pairs:\\n        println(a)\\n\")"
+expression: "parse_body(r#\"fn f(pairs: &Array[(Int, Int)]):\n    for (a, b) in pairs:\n        println(a)\n\"#)"
 ---
 Block @37..77
   tail: For @37..77

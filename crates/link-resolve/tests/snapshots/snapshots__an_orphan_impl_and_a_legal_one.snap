@@ -15,6 +15,6 @@ Module `types` #43 @27..39
     for: Path -> `Doc` #46 @27..30
 --- diagnostics ---
 LK0207 @57..71 this `impl` is an orphan: neither the trait nor the type belongs to this module
-  note the trait `shapes.Summarize` belongs to shapes
-  note the type `types.Doc` belongs to types
+  note the trait `shapes.Summarize` belongs to `shapes`
+  note the type `types.Doc` belongs to `types`
   note move the `impl` into one of those modules, or wrap the type in one of your own

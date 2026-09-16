@@ -1,0 +1,31 @@
+---
+source: crates/link-parser/tests/parse_patterns.rs
+expression: "parse_body(r#\"fn f(x: Int) -> Int:\n    match x:\n        Ok(value): value\n        Err(NotFound(key)): key\n        Option.Some(v): v\n        Option.None: 0\n        Rect(w, h): w\n\"#)"
+---
+Block @25..162
+  tail: Match @25..162
+    scrutinee: Path `x` @31..32
+    arms
+      Arm @42..58
+        pattern: Variant `Ok` @42..51
+          Binding `value` @45..50
+        body: Path `value` @53..58
+      Arm @67..90
+        pattern: Variant `Err` @67..85
+          Variant `NotFound` @71..84
+            Binding `key` @80..83
+        body: Path `key` @87..90
+      Arm @99..116
+        pattern: Variant `Option.Some` @99..113
+          Binding `v` @111..112
+        body: Path `v` @115..116
+      Arm @125..139
+        pattern: Variant `Option.None` @125..136
+        body: Int 0 @138..139
+      Arm @148..161
+        pattern: Variant `Rect` @148..158
+          Binding `w` @153..154
+          Binding `h` @156..157
+        body: Path `w` @160..161
+--- diagnostics ---
+(none)

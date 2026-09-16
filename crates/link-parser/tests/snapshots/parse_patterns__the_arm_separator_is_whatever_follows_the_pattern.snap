@@ -1,6 +1,6 @@
 ---
 source: crates/link-parser/tests/parse_patterns.rs
-expression: "parse_body(\"fn f(p: &Point) -> Int:\\n    match p:\\n        Point(x: x, y: y): x\\n\")"
+expression: "parse_body(r#\"fn f(p: &Point) -> Int:\n    match p:\n        Point(x: x, y: y): x\n\"#)"
 ---
 Block @28..66
   tail: Match @28..66

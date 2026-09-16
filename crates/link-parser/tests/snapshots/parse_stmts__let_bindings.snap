@@ -1,0 +1,19 @@
+---
+source: crates/link-parser/tests/parse_stmts.rs
+expression: "parse_body(r#\"fn main():\n    let greeting = \"hola\"\n    let mut count = 0\n    let annotated: Int = 42\n    let mut typed: &mut String = &mut owner\n\"#)"
+---
+Block @15..130
+  Let `greeting` @15..36
+    value: Str "hola" @30..36
+  Let `count` mut @41..58
+    value: Int 0 @57..58
+  Let `annotated` @63..86
+    type: Path `Int` @78..81
+    value: Int 42 @84..86
+  Let `typed` mut @91..130
+    type: Ref mut @106..117
+      Path `String` @111..117
+    value: Ref mut @120..130
+      Path `owner` @125..130
+--- diagnostics ---
+(none)

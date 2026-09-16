@@ -11,8 +11,12 @@ use common::{parse_source, parse_source_allowing_errors};
 #[test]
 fn trait_with_a_default_method() {
     insta::assert_snapshot!(parse_source(
-        "trait Summarize:\n    fn summarize(&self) -> String\n\n \
-         fn preview(&self) -> String:\n        self.summarize().truncate(80)\n"
+        r#"trait Summarize:
+    fn summarize(&self) -> String
+
+    fn preview(&self) -> String:
+        self.summarize().truncate(80)
+"#
     ));
 }
 
@@ -21,15 +25,21 @@ fn trait_with_a_default_method() {
 #[test]
 fn generic_trait() {
     insta::assert_snapshot!(parse_source(
-        "trait From[T]:\n    fn from(value: T) -> Self\n"
+        r#"trait From[T]:
+    fn from(value: T) -> Self
+"#
     ));
 }
 
-/// Supertraits, written `trait A: B + C`, and a `where` clause on a trait.
+/// Supertraits, written `trait A: B + C`. The `:` that introduces them and the
+/// `:` that opens the body are told apart by what follows: a name against the
+/// end of the line.
 #[test]
 fn trait_with_supertraits() {
     insta::assert_snapshot!(parse_source(
-        "trait Pretty[T]: Summarize + Clone:\n    fn pretty(&self) -> T\n"
+        r#"trait Pretty[T]: Summarize + Clone:
+    fn pretty(&self) -> T
+"#
     ));
 }
 
@@ -37,7 +47,11 @@ fn trait_with_supertraits() {
 #[test]
 fn trait_receivers() {
     insta::assert_snapshot!(parse_source(
-        "trait Shape:\n    fn area(self) -> Int\n    fn scale(&self) -> Int\n    fn reset(&mut self)\n"
+        r#"trait Shape:
+    fn area(self) -> Int
+    fn scale(&self) -> Int
+    fn reset(&mut self)
+"#
     ));
 }
 
@@ -45,7 +59,10 @@ fn trait_receivers() {
 #[test]
 fn trait_impl() {
     insta::assert_snapshot!(parse_source(
-        "impl Summarize for Doc:\n    fn summarize(&self) -> String:\n        self.body.truncate(200)\n"
+        r#"impl Summarize for Doc:
+    fn summarize(&self) -> String:
+        self.body.truncate(200)
+"#
     ));
 }
 
@@ -54,8 +71,10 @@ fn trait_impl() {
 #[test]
 fn generic_trait_impl() {
     insta::assert_snapshot!(parse_source(
-        "impl Swap[Pair[B, A]] for Pair[A, B]:\n    fn swapped(&self) -> Pair[B, A]:\n \
-         Pair(first: self.second, second: self.first)\n"
+        r#"impl Swap[Pair[B, A]] for Pair[A, B]:
+    fn swapped(&self) -> Pair[B, A]:
+        Pair(first: self.second, second: self.first)
+"#
     ));
 }
 
@@ -64,12 +83,29 @@ fn generic_trait_impl() {
 #[test]
 fn inherent_impl_with_an_associated_function() {
     insta::assert_snapshot!(parse_source(
-        "impl Doc:\n    fn new(title: String) -> Doc:\n        Doc(title: title, body: \"\")\n\n \
-         fn is_empty(&self) -> Bool:\n        self.body.len() == 0\n"
+        r#"impl Doc:
+    fn new(title: String) -> Doc:
+        Doc(title: title, body: "")
+
+    fn is_empty(&self) -> Bool:
+        self.body.len() == 0
+"#
     ));
 }
 
-/// The call side of an associated function: `Doc.new(\"a\")`. The parser cannot
+/// An inherent impl on a generic type, which is how `Array[T].new()` gets its
+/// associated function.
+#[test]
+fn inherent_impl_on_a_generic_type() {
+    insta::assert_snapshot!(parse_source(
+        r#"impl Array[T]:
+    fn new() -> Array[T]:
+        empty()
+"#
+    ));
+}
+
+/// The call side of an associated function: `Doc.new("a")`. The parser cannot
 /// tell it from a method call, and §4.4's rule is that resolution decides.
 #[test]
 fn an_associated_function_call_is_a_method_call_until_resolution() {
@@ -88,8 +124,18 @@ fn marker_trait_impl() {
 #[test]
 fn marker_trait_impl_between_other_items() {
     insta::assert_snapshot!(parse_source(
-        "struct Point:\n    x: Int\n\nimpl Copy for Point\n\nimpl Clone for Point:\n \
-         fn clone(&self) -> Point:\n        Point(x: self.x)\n\nfn main():\n    println(1)\n"
+        r#"struct Point:
+    x: Int
+
+impl Copy for Point
+
+impl Clone for Point:
+    fn clone(&self) -> Point:
+        Point(x: self.x)
+
+fn main():
+    println(1)
+"#
     ));
 }
 
@@ -97,8 +143,21 @@ fn marker_trait_impl_between_other_items() {
 #[test]
 fn impl_with_a_where_clause() {
     insta::assert_snapshot!(parse_source(
-        "impl Summarize for Pair[A, B] where A: Clone, B: Clone:\n \
-         fn summarize(&self) -> String:\n        \"pair\"\n"
+        r#"impl Summarize for Pair[A, B] where A: Clone, B: Clone:
+    fn summarize(&self) -> String:
+        "pair"
+"#
+    ));
+}
+
+/// §4.3: "where a `where` clause ends." A bound list ends only at `+` or `,`,
+/// so the first `:` that no bound consumes is the one that opens the block.
+#[test]
+fn a_where_clause_ends_at_the_colon_that_opens_the_block() {
+    insta::assert_snapshot!(parse_source(
+        r#"fn f[T]() -> T where T: A + B:
+    body()
+"#
     ));
 }
 
@@ -107,7 +166,10 @@ fn impl_with_a_where_clause() {
 #[test]
 fn a_non_method_in_a_trait_body_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "trait T:\n    let x = 1\n    fn f(&self) -> Int\n"
+        r#"trait T:
+    let x = 1
+    fn f(&self) -> Int
+"#
     ));
 }
 
@@ -115,7 +177,10 @@ fn a_non_method_in_a_trait_body_is_rejected() {
 #[test]
 fn a_non_path_trait_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "impl &Doc for Point:\n    fn f(&self) -> Int:\n        1\n"
+        r#"impl &Doc for Point:
+    fn f(&self) -> Int:
+        1
+"#
     ));
 }
 
@@ -124,6 +189,9 @@ fn a_non_path_trait_is_rejected() {
 #[test]
 fn an_impl_body_without_a_colon_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "impl Summarize for Doc\n    fn summarize(&self) -> String:\n        \"a\"\n"
+        r#"impl Summarize for Doc
+    fn summarize(&self) -> String:
+        "a"
+"#
     ));
 }

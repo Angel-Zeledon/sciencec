@@ -1,0 +1,20 @@
+---
+source: crates/link-parser/tests/parse_traits.rs
+expression: "parse_source(r#\"impl Summarize for Doc:\n    fn summarize(&self) -> String:\n        self.body.truncate(200)\n\"#)"
+---
+Module @0..91
+  Impl @0..91
+    trait: Bound `Summarize` @5..14
+    type: Path `Doc` @19..22
+    methods
+      Fn `summarize` @28..91
+        receiver: &self @41..46
+        ret: Path `String` @51..57
+        body: Block @67..90
+          tail: Method `truncate` @67..90
+            receiver: Field `body` @67..76
+              base: Self @67..71
+            args
+              Int 200 @86..89
+--- diagnostics ---
+(none)

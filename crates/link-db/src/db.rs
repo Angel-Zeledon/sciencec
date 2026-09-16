@@ -235,8 +235,11 @@ impl LinkDatabase {
         self.source_file(file).path(self)
     }
 
-    /// Whether `file` exists as far as the driver knows. See
-    /// [`SourceFile::present`].
+    /// Whether `file` exists as far as the driver knows.
+    ///
+    /// An empty file and a missing file are different things: the first is a
+    /// module with no items, the second is an unresolved import. Both have
+    /// `""` for their text, and this is what tells them apart.
     ///
     /// # Panics
     /// If the `FileId` was not issued by this database.
@@ -247,11 +250,6 @@ impl LinkDatabase {
     /// Every file that currently exists, in `FileId` order.
     pub fn present_files(&self) -> Vec<FileId> {
         self.workspace().files(self).to_vec()
-    }
-
-    /// How many slots have been handed out, including removed files.
-    pub fn slot_count(&self) -> usize {
-        self.files.len()
     }
 
     // --- the bridge to link-diagnostics -----------------------------------

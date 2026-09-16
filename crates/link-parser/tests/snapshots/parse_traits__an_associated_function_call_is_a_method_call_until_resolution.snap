@@ -1,0 +1,14 @@
+---
+source: crates/link-parser/tests/parse_traits.rs
+expression: "parse_source(\"fn main():\\n    let d = Doc.new(\\\"a\\\")\\n\")"
+---
+Module @0..36
+  Fn `main` @0..36
+    body: Block @15..35
+      Let `d` @15..35
+        value: Method `new` @23..35
+          receiver: Path `Doc` @23..26
+          args
+            Str "a" @31..34
+--- diagnostics ---
+(none)

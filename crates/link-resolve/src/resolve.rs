@@ -737,9 +737,13 @@ impl Resolver {
             let Some(module) = self.defs.module_of(id) else { continue };
             let name = self.defs.path_of(id);
             let module = self.defs.path_of(module);
-            let module = if module.is_empty() { "the crate root".to_string() } else { module };
-            diagnostic = diagnostic
-                .with_note(format!("the {what} `{name}` belongs to {module}"));
+            let module = if module.is_empty() {
+                "the crate root".to_string()
+            } else {
+                format!("`{module}`")
+            };
+            diagnostic =
+                diagnostic.with_note(format!("the {what} `{name}` belongs to {module}"));
         }
         diagnostic = diagnostic.with_note(
             "move the `impl` into one of those modules, or wrap the type in one of your own",
