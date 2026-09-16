@@ -22,6 +22,19 @@
 //! | Decision 6 | `T?` as a distinct type, and `T??` collapsed with `SC0520` | [`lower`] |
 //! | §8 item 4 | a const generic argument interned as a [`NormalForm`], not as syntax | [`ty`] |
 //!
+//! The third is **the relations over that representation** — everything
+//! `ty`'s §8 said the next phase owns, up to but not including an expression:
+//!
+//! | Note | What it is | Where it lives |
+//! |---|---|---|
+//! | Decision 24 | inference variables, and a union-find with `mutable self` | [`infer`] |
+//! | Decisions 6, 14 | assignability: `compatible` plus two coercions and no more | [`assign`] |
+//! | §6 of [`ty`] | alias expansion, with a cycle check that is `SC0524` | [`alias`] |
+//! | §8 of [`ty`] | substitution, the type half and the const half together | [`subst`] |
+//!
+//! [`fold`] is the traversal the last two share, and §5 below is the seam the
+//! phase after this one starts at.
+//!
 //! The second layer is the first layer's first consumer, and that is the point
 //! of the ordering: `Matrix of (T, a + 1)` and `Matrix of (T, 1 + a)` become
 //! one interned type because [`normalise`] runs before the hash key is built.
@@ -73,30 +86,100 @@
 //!   everything its message needs, but the instantiation chain that makes the
 //!   diagnostic survivable is F1's, and a chain rendered before there is a
 //!   monomorphiser to walk would render whatever this crate happened to keep.
-//! - **Inference, bidirectional checking, THIR, MIR, monomorphisation,
-//!   interface resolution, narrowing.** None of it. [`ty`]'s §8 states that
-//!   seam precisely, because the next phase starts at it and a seam a reader
-//!   has to guess at is a seam that moves.
+//! - **Bidirectional checking, THIR, MIR, monomorphisation, method lookup,
+//!   narrowing, exhaustiveness.** None of it, and nothing here walks an
+//!   expression. The third layer stops one step short: it holds the inference
+//!   *variables* and not the rule that makes one, the assignability *relation*
+//!   and not the site that asks it, the substitution and not the call that
+//!   builds it. §5 states that seam precisely, because the next phase starts at
+//!   it and a seam a reader has to guess at is a seam that moves.
 //!
 //! # 4. Almost nothing calls any of this yet
 //!
 //! That is expected and it is the point of §10.1: these are the things that
 //! are cheap now and expensive later. The test suite is the only consumer, and
 //! it is written as the consumer the checker will be.
+//!
+//! # 5. The seam, for the phase that starts at it
+//!
+//! [`ty`]'s §8 stated the seam this layer was written against. This is the next
+//! one, stated to the same standard, because the phase after this one walks
+//! expressions and nothing here does.
+//!
+//! **The order of operations at an annotation** is fixed and is three calls:
+//! [`TypeLowerer::lower`] turns a `hir::Type` into a [`Ty`];
+//! [`Aliases::reveal`] turns that into the alias-free type the relations
+//! compare; [`assignable`] answers whether a value fits, given the
+//! [`Site`]. Skipping the middle call is not a compile error and not a wrong
+//! type — it is `Embedding` failing to match `Array of F32` at one site in ten,
+//! wherever the author happened to write the alias.
+//!
+//! **What the next phase owns, and what each of them needs from here:**
+//!
+//! - **`check_expr` and `synth_expr`** call [`assignable`], and owe it the
+//!   [`Site`] at every use. Passing one everywhere removes a decision from the
+//!   language in silence; [`assign`]'s §5 names both directions of that.
+//! - **A `return` and a call argument** are the two sites that box, and the
+//!   coercion applies to *each element* of a returned tuple rather than to the
+//!   tuple — [`assign`]'s §2, which is Decision 14's own example.
+//! - **The body's variables** are an [`Inference`], one per body, dropped with
+//!   it. [`infer`]'s §1.
+//! - **Decision 2's defaulting** walks [`Inference::unresolved`] at the end of
+//!   the body and needs the prelude's ids for `I64` and `F64`.
+//! - **A call to a generic** builds a [`Substitution::of_generics`] and owes
+//!   the **arity and kind check**, which `lowering`'s §1 defers to whoever
+//!   holds the declaration and the use at once. This layer zips and does not
+//!   check.
+//! - **Method lookup (Decision 11)** supplies [`Substitution::with_self`] with
+//!   the implementation block, which is the `owner` a `SelfType` already
+//!   carries.
+//! - **`SC0140`, `SC0521`, `SC0522`, narrowing and exhaustiveness** need an
+//!   expression, which this crate has never had.
+//!
+//! **Three obligations this layer raises and cannot discharge**, each named
+//! where it is raised rather than collected into a list nobody reads:
+//!
+//! 1. *"`S` implements `Error`"*, owed by every [`Coercion::Box`]. [`assign`]'s
+//!    §3. Until Decision 11's lookup exists, this crate will agree that an `Int`
+//!    may be boxed.
+//! 2. *"this implementation supplies every associated type its interface
+//!    declares"* — §5.4's completeness check, which `science-resolve` names as
+//!    this crate's. An unbound `Self.Item` is left standing by [`subst`]'s §2
+//!    precisely so that the phase which can see both blocks reports it.
+//! 3. *"this instantiation's const arguments are in range"*. [`Substitution`]
+//!    returns [`ConstEvalError`] and reports nothing ([`subst`]'s §4); a caller
+//!    with a span turns it into `SC0260` through
+//!    [`diagnostics::overflowed`], and F1's `SC0262` replaces that with the
+//!    instantiation chain §9.4 asks for.
+//!
+//! **And one thing the next phase must not do.** It must not put an inference
+//! variable in the type table. [`infer`]'s §1 is the argument and §2 is the
+//! cost it buys; the escape route for a nested hole is written there, and it is
+//! not `TyKind::Infer`.
 
+pub mod alias;
+pub mod assign;
 pub mod const_expr;
 pub mod diagnostics;
+pub mod fold;
+pub mod infer;
 pub mod lowering;
 pub mod matching;
 pub mod mono;
 pub mod normal;
+pub mod subst;
 pub mod ty;
 
+pub use alias::Aliases;
+pub use assign::{assignable, Coercion, Coercions, Site};
 pub use const_expr::{lower, ConstExpr, ConstExprKind};
+pub use fold::{fold_children, TypeFolder};
+pub use infer::{InferTy, InferVar, Inference, UnifyError};
 pub use lowering::TypeLowerer;
 pub use matching::{match_linear, Match, MatchError};
 pub use mono::MonoKey;
 pub use normal::{equal, normalise, Atom, AtomOrder, ConstEvalError, NormalForm, Term};
+pub use subst::Substitution;
 pub use ty::{GenericArg, Ty, TyKind, Types};
 
 /// The diagnostics this crate emits.
@@ -179,6 +262,17 @@ pub mod codes {
     /// there is nobody before this phase who can say so. See
     /// [`crate::lowering`]'s §4.
     pub const CONST_WHERE_TYPE_EXPECTED: Code = Code(523);
+
+    /// A type alias that expands into itself.
+    ///
+    /// **Also not one of §13's three**, and from the same band for the same
+    /// reason [`CONST_WHERE_TYPE_EXPECTED`] is: no earlier phase can report it.
+    /// Every name in `type A is B` and `type B is A` resolves, so the resolver
+    /// has nothing to say; the mistake is a property of the *expansion*, and
+    /// [`crate::alias`] is the first thing that expands. Its §2 and §4 are the
+    /// argument, and the check runs over the declarations rather than over the
+    /// uses so that one cycle is one diagnostic.
+    pub const CYCLIC_ALIAS: Code = Code(524);
 
     // `SC0521` (`TryIterate` outside a failure context) and `SC0522` (a
     // generic function across the C boundary) are §13's and are deliberately

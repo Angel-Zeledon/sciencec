@@ -6,7 +6,7 @@
  */
 :root {
   --paper:#f4f6f5; --surface:#ffffff; --sunk:#eceff0; --ink:#121a18;
-  --muted:#5c6b66; --faint:#859590; --rule:#dde3e0;
+  --muted:#5c6b66; --faint:#637370; --rule:#dde3e0;
   --accent:#0d6e62; --accent-soft:#e2efec; --old:#9c5140; --old-soft:#f6e9e5;
   --deep:#0a1614; --deep-ink:#d6e2de; --deep-rule:#1d2e2a;
   /* Syntax — "Science Neon". Declared once and never redefined, because
@@ -19,6 +19,12 @@
   --c-key:#e85aa8; --c-ctl:#e85aa8; --c-type:#4de8ff; --c-fn:#3dfca0;
   --c-str:#f6ff6b; --c-num:#c77dff; --c-par:#ffa23c; --c-op:#e85aa8;
   --c-com:#7080a4; --c-res:#ff6e6e; --c-pun:#8fa0c4;
+  /* The block rail, kept separate from the syntax palette above on purpose:
+   * these four paint a flat 3px tab on the left of a `pre`, never a gradient,
+   * so the block kinds stay tellable apart without competing with the tokens
+   * inside them. Declared once, like the rest of the code chrome, because a
+   * code surface does not change with the page theme. */
+  --rail-code:#3d4f7a; --rail-shell:#2f6b52; --rail-err:#a34848; --rail-legacy:#4a5568;
   --sans:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
   --serif:"IBM Plex Serif",Georgia,"Times New Roman",serif;
   --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
@@ -26,14 +32,14 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --paper:#0d1412; --surface:#141d1a; --sunk:#101816; --ink:#e4ebe8;
-    --muted:#93a29c; --faint:#6d7c77; --rule:#253029;
+    --muted:#93a29c; --faint:#7d8c86; --rule:#253029;
     --accent:#55c4b3; --accent-soft:#14312c; --old:#d4907c; --old-soft:#33211c;
     --deep:#060d0c; --deep-ink:#d6e2de; --deep-rule:#1a2a26;
   }
 }
 :root[data-theme="dark"] {
   --paper:#0d1412; --surface:#141d1a; --sunk:#101816; --ink:#e4ebe8;
-  --muted:#93a29c; --faint:#6d7c77; --rule:#253029;
+  --muted:#93a29c; --faint:#7d8c86; --rule:#253029;
   --accent:#55c4b3; --accent-soft:#14312c; --old:#d4907c; --old-soft:#33211c;
   --deep:#060d0c; --deep-ink:#d6e2de; --deep-rule:#1a2a26;
 }
@@ -136,24 +142,26 @@ pre { position: relative; font-family: var(--mono); font-size: 0.83rem; line-hei
   border: 1px solid var(--code-frame); border-left: 0; border-radius: 0 3px 3px 0;
   padding: 1.1rem 1.25rem; margin: 0 0 1.25rem; overflow-x: auto; tab-size: 4; }
 
-/* The left rail is the one piece of ornament: a 3px cyan-to-magenta bleed
- * painted as a background layer rather than a border, so the gradient runs
- * down the block's full height however tall it grows. */
+/* The left rail is the one piece of ornament, and it is deliberately quiet:
+ * a single flat 3px bar per block kind, not a gradient. A gradient rail reads
+ * as decoration competing with the listing; a flat one reads as a tab colour,
+ * which is what a reference manual uses. Painted as a background layer rather
+ * than a border so it runs down the block's full height however tall it
+ * grows. The hue still tells the block kinds apart — this one for Science
+ * source — but none of them glow or shift. */
 pre[data-science] {
-  background:
-    linear-gradient(180deg, #4de8ff 0%, #8f7bff 55%, #e85aa8 100%) left / 3px 100% no-repeat,
-    var(--code-bg);
+  background: var(--rail-code) left / 3px 100% no-repeat, var(--code-bg);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.30);
 }
 /* A block kept only for comparison: the syntax it shows has been removed from
  * the language. Marked three ways at once — a caption above it, a grey rail
- * instead of the neon one, and a strike through the words that no longer
+ * instead of the live one, and a strike through the words that no longer
  * exist — because a reader skimming will miss any one of them on its own, and
  * mistaking a removed form for a live one is the expensive mistake here. No
  * new palette entry: the rail and the strike both reuse the comment grey,
  * which already means "not the code". */
 pre[data-science][data-legacy] {
-  background: linear-gradient(180deg, #7080a4, #47536f) left / 3px 100% no-repeat, var(--code-bg);
+  background: var(--rail-legacy) left / 3px 100% no-repeat, var(--code-bg);
   box-shadow: none;
 }
 .rm { color: var(--c-com); text-decoration: line-through; }
@@ -161,11 +169,11 @@ pre[data-science][data-legacy] {
   letter-spacing: 0.1em; text-transform: uppercase; color: var(--old); margin: 0 0 0.5rem; }
 
 pre.shell {
-  background: linear-gradient(180deg, #3dfca0, #4de8ff) left / 3px 100% no-repeat, var(--code-bg);
+  background: var(--rail-shell) left / 3px 100% no-repeat, var(--code-bg);
 }
 pre.shell .p { color: #7080a4; } pre.shell .c { color: #3dfca0; }
 pre.err {
-  background: linear-gradient(180deg, #ff6e6e, #ffa23c) left / 3px 100% no-repeat, var(--code-bg);
+  background: var(--rail-err) left / 3px 100% no-repeat, var(--code-bg);
 }
 /* The copy button. Appears on hover and on keyboard focus, sits inside the
  * block's padding so it never covers the first line, and reports what it did
@@ -209,7 +217,9 @@ pre code { background: none; padding: 0; font-size: 1em; }
  * emissive and be wrong at the same time. */
 pre[data-science][data-legacy] span { text-shadow: none; }
 .e-code { color: #ff6e6e; font-weight: 600; } .e-hi { color: #ff6e6e; }
-.e-help { color: #4de8ff; }
+/* Pale, not neon: a `help:` line is prose about the fix, not a token, so it
+ * does not need the cyan that marks a type in the listing above it. */
+.e-help { color: #8ab4c9; }
 
 /* ---- the three bets ---- */
 .bets { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));

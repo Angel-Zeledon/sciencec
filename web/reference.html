@@ -34,7 +34,7 @@
 
 <div class="status">
   <span><span class="dot dot-on"></span>Compiler <b>sciencec</b></span>
-  <span><span class="dot dot-on"></span>Front half <b>736 tests</b>, green</span>
+  <span><span class="dot dot-on"></span>Front half <b>888 tests</b>, green</span>
   <span><span class="dot dot-wip"></span>Types, regions, codegen <b>not started</b></span>
   <span><span class="dot dot-wip"></span>Error model <b>parses</b>, not yet checked</span>
   <span>Files <b>.science</b></span>
@@ -234,6 +234,44 @@ Array of (Map of (String, Int))    # nesting follows the same rule
     core because tensor shapes are built out of them:
     <code>Tensor of (F32, (batch, 768))</code> carries <code>768</code> as an
     argument, and <code>768</code> is not a type.
+  </p>
+
+  <h3>Const-generic arithmetic</h3>
+
+<pre data-science>type Grid of (T, const N: Int):
+    cells: Array of T
+    padded: Grid of (T, N + 1)
+    tripled: Grid of (T, N * 3)
+    doubled: Grid of (T, 2 * N)</pre>
+
+  <p class="note">
+    A const-generic argument may add or subtract two parameters, and may
+    multiply or divide a parameter by an integer literal. Multiplying two
+    parameters together is not linear and the grammar has no production for
+    it &mdash; <code>N * M</code> is <code>SC0157</code>, not a later check,
+    because the parser never builds a node for it in the first place.
+  </p>
+
+  <h3>Closures</h3>
+
+<pre data-science>def apply(f: (Int) -> Bool, x: Int) -> Bool:
+    f(x)
+
+# Right-associative, and `?` binds tighter than `->`,
+# so a nullable closure needs its own parens.
+type Pipeline:
+    step: ((Int) -> Bool)?
+    stages: Array of ((Int) -> Bool)</pre>
+
+  <p class="note">
+    <code>(A) -> B</code> is the type of a closure, with no keyword in front
+    of it &mdash; a bound reads <code>where F: (Int) -> Bool</code> the same
+    way a parameter does. It is right-associative, so
+    <code>(A) -> (B) -> C</code> is <code>(A) -> ((B) -> C)</code>, which is
+    currying. As a generic argument it needs its own parentheses, the same
+    reason <code>Map of (String, Int)</code> does:
+    <code>Array of ((Int) -> Bool)</code>, never
+    <code>Array of (Int) -> Bool</code>.
   </p>
 </section>
 
@@ -672,6 +710,9 @@ unsafe extern "C" library "cudnn" when available:</pre>
       <thead><tr><th>Command</th><th>Does</th></tr></thead>
       <tbody>
         <tr><td class="mono">sciencec check FILE…</td><td class="what">Lex, parse and resolve. Reports every file, continuing past a broken one.</td></tr>
+        <tr><td class="mono">sciencec fmt FILE</td><td class="what">Prints the file, formatted, to stdout. Refuses a file that does not already lex and parse.</td></tr>
+        <tr><td class="mono">sciencec fmt --write FILE…</td><td class="what">Formats the files in place.</td></tr>
+        <tr><td class="mono">sciencec tools --json FILE</td><td class="what">A JSON Schema for every function in the file, derived from its signature.</td></tr>
         <tr><td class="mono">sciencec tokens FILE</td><td class="what">The token stream, with spans.</td></tr>
         <tr><td class="mono">sciencec ast FILE</td><td class="what">The syntax tree.</td></tr>
         <tr><td class="mono">sciencec resolve FILE</td><td class="what">The definition table after name resolution.</td></tr>
@@ -684,6 +725,69 @@ unsafe extern "C" library "cudnn" when available:</pre>
     are no errors, 1 when there are; warnings alone do not fail. Every
     diagnostic carries a code, a primary span, and where a mechanical fix exists,
     the replacement text &mdash; a tool can apply it without reading the prose.
+  </p>
+
+  <h3>A schema from a signature, nothing written by hand</h3>
+
+  <p class="note">
+    <code>tools --json</code> reads a function's own signature and doc comment
+    and produces a JSON Schema an agent can call it by &mdash; the integer
+    bounds come from the type's width, and a <code>choice</code> of unit
+    variants becomes a string <code>enum</code>, with no schema written by the
+    author.
+  </p>
+
+<pre data-science>choice Format:
+    Plain
+    Markdown
+    Json
+
+## Renders a document body under a given byte budget.
+def render(body: String, budget: U16, format: Format) -> String:
+    body</pre>
+
+<pre class="shell"><code><span class="p">$</span> sciencec tools --json render.science</code></pre>
+
+<pre><code>[
+    {
+        "name": "render",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string"
+                },
+                "budget": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                },
+                "format": {
+                    "type": "string",
+                    "enum": [
+                        "Plain",
+                        "Markdown",
+                        "Json"
+                    ]
+                }
+            },
+            "required": [
+                "body",
+                "budget",
+                "format"
+            ]
+        },
+        "description": "Renders a document body under a given byte budget."
+    }
+]</code></pre>
+
+  <p class="note">
+    <code>budget: U16</code> alone produced <code>"minimum": 0, "maximum":
+    65535</code> &mdash; the bounds are the type's, not a range the author
+    wrote out. And the <code>##</code> line above <code>render</code> became
+    <code>"description"</code>: a doc comment is trivia to the lexer but is
+    carried on the token it documents rather than discarded, so it survives to
+    the tools that read the signature after it.
   </p>
 </section>
 
@@ -775,7 +879,10 @@ unsafe extern "C" library "cudnn" when available:</pre>
     its width depends on how the file is displayed and a block would then mean
     different things to different readers. Blank and comment-only lines take no
     part. Comments run from <code>#</code> to end of line; there are no block
-    comments.
+    comments. A run of <code>##</code> immediately above a declaration is a
+    doc comment, and unlike an ordinary comment it is carried through the
+    compiler rather than discarded at the lexer &mdash; see
+    <a href="#toolchain">Toolchain</a> for what reads it.
   </p>
 
 <pre data-science># A line continues when it ends inside an unclosed bracket...
@@ -846,7 +953,7 @@ public type Doc:
 </div>
 
 <footer>
-  Twenty-one worked programs live in <code>examples/</code>; they are input data
+  Twenty-two worked programs live in <code>examples/</code>; they are input data
   for the compiler's own test suites, so anything there that fails to lex, parse
   or resolve is a bug in the compiler rather than a typo to be quietly patched.
   Programs that must <em>fail</em>, each paired with the exact diagnostic it has

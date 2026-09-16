@@ -41,8 +41,9 @@
   </p>
 
   <div class="install">
-<pre class="shell"><code><span class="p">$</span> curl -sSf https://sci-lang.org/install.sh | sh</code></pre>
-    <a class="btn" href="#install">Other platforms</a>
+<pre class="shell"><code><span class="p">$</span> git clone https://github.com/sci-lang/science &amp;&amp; cd science
+<span class="p">$</span> cargo run -p sciencec -- check examples/01_functions.science</code></pre>
+    <a class="btn" href="#install">Build it</a>
     <a class="btn ghost" href="#tour">Take the tour</a>
   </div>
 </header>
@@ -152,6 +153,28 @@ type Grid of (T, const ROWS: Int):
     </div>
   </div>
 
+  <div class="two">
+    <div>
+      <h3>Closures have a type, with no keyword</h3>
+<pre data-science>def apply(f: (Int) -> Bool, x: Int) -> Bool:
+    f(x)
+
+# Right-associative, and `?` binds tighter than `->`,
+# so a nullable closure needs its own parens.
+type Pipeline:
+    step: ((Int) -> Bool)?
+    stages: Array of ((Int) -> Bool)</pre>
+    </div>
+    <div>
+      <h3>Const generics do arithmetic</h3>
+<pre data-science>type Grid of (T, const N: Int):
+    cells: Array of T
+    padded: Grid of (T, N + 1)
+    tripled: Grid of (T, N * 3)
+    doubled: Grid of (T, 2 * N)</pre>
+    </div>
+  </div>
+
   <h3>Borrows, with nothing to annotate</h3>
 
 <pre data-science>def retitle(doc: mutable borrowed Doc, title: String):
@@ -258,51 +281,54 @@ def main():
 <section id="install">
   <h2>Install</h2>
 
-  <div class="two">
-    <div>
-      <h3>macOS and Linux</h3>
-<pre class="shell"><code><span class="p">$</span> curl -sSf https://sci-lang.org/install.sh | sh</code></pre>
-      <h3>Homebrew</h3>
-<pre class="shell"><code><span class="p">$</span> brew install science</code></pre>
-    </div>
-    <div>
-      <h3>Windows</h3>
-<pre class="shell"><code><span class="p">&gt;</span> winget install Science.Science</code></pre>
-      <h3>From source</h3>
-<pre class="shell"><code><span class="p">$</span> git clone https://github.com/sci-lang/science
-<span class="p">$</span> cd science &amp;&amp; cargo build --release</code></pre>
-    </div>
-  </div>
+  <p class="lede">
+    There is no installer, no package and no released binary yet &mdash;
+    <code>sciencec</code> is version <code>0.0.1</code> and lives only as
+    source. Building it needs a Rust toolchain and nothing else; the workspace
+    has exactly one third-party dependency.
+  </p>
+
+<pre class="shell"><code><span class="p">$</span> git clone https://github.com/sci-lang/science &amp;&amp; cd science
+<span class="p">$</span> cargo run -p sciencec -- check examples/01_functions.science
+<span class="p">$</span> echo $?
+0</code></pre>
 
   <h3>Your first program</h3>
 
-<pre class="shell"><code><span class="p">$</span> sciencec check hello.science   <span class="c"># lex, parse, resolve, type-check</span>
-<span class="p">$</span> sciencec build hello.science   <span class="c"># a native binary</span>
-<span class="p">$</span> ./hello</code></pre>
+<pre class="shell"><code><span class="p">$</span> cargo run -p sciencec -- check hello.science
+<span class="p">$</span> cargo run -p sciencec -- fmt hello.science
+<span class="p">$</span> cargo run -p sciencec -- tools --json hello.science</code></pre>
 
   <p class="note">
     <code>check</code> is silent on a clean file and exits 0, so it drops into a
-    shell script or a CI job without ceremony. Diagnostics go to stderr; dumps of
-    the tokens, the syntax tree and the resolved definitions go to stdout, for
-    when you want to see what the compiler saw.
+    shell script or a CI job without ceremony. <code>fmt</code> prints the file
+    formatted to stdout, and refuses to touch one that does not already lex and
+    parse. <code>tools --json</code> prints a JSON Schema for every function in
+    the file, derived from the signature alone. Diagnostics go to stderr; dumps
+    of the tokens, the syntax tree and the resolved definitions go to stdout,
+    for when you want to see what the compiler saw.
   </p>
 
   <h3>What the compiler does today</h3>
 
   <p class="note">
-    <code>sciencec</code> lexes, parses and resolves. Type checking, region
-    inference and code generation are not started, so <code>build</code> is
-    ahead of the compiler that will perform it. Everything on this page and in
-    the <a href="reference.html">reference</a> is the language as designed, and
-    one part of that design has not reached the compiler yet: <strong>the error
-    model</strong>. A function that returns a pair &mdash;
-    <code>-&gt; (Config, Error?)</code> &mdash; along with the nullable type
+    <code>sciencec</code> lexes, parses, resolves, formats and emits tool
+    schemas. There is no <code>build</code> command and no code generator:
+    typing <code>sciencec build</code> exits with <code>error: unknown command
+    &#96;build&#96;</code>, because type checking, region inference and code
+    generation have not been wired into the driver. Everything on this page and
+    in the <a href="reference.html">reference</a> is the language as designed,
+    and most of it is already what <code>sciencec</code> lexes, parses and
+    resolves &mdash; including <strong>the error model</strong>, which used to
+    be the exception here. A function that returns a pair &mdash;
+    <code>-&gt; (Config, Error?)</code> &mdash; the nullable type
     <code>T?</code>, the presence test <code>?</code> and the literal
-    <code>null</code>, is decided and unimplemented. Type it today and you get a
-    syntax error; what the compiler still accepts in its place is
-    <code>Result of (T, E)</code> and <code>try</code>, which the design has
-    removed. The <a href="reference.html#errors">reference shows both</a> and
-    says which is which.
+    <code>null</code> all parse and resolve today. What is not built is what
+    they <em>mean</em>: the narrowing that makes <code>if err?:</code> tell the
+    compiler <code>err</code> is not null, and the diagnostic that refuses a
+    returned error nobody tested. Both need a type checker, and there is not
+    one wired in yet. The <a href="reference.html#errors">reference shows
+    both forms</a> and says which is which.
   </p>
 </section>
 
@@ -325,7 +351,7 @@ def main():
     </a>
     <a class="doc" href="#docs">
       <span class="ttl">Design notes &rarr;</span>
-      <span class="sub">Twenty-six areas decided in the open, each with the alternatives it rejected.</span>
+      <span class="sub">Forty-two areas decided in the open, each with the alternatives it rejected.</span>
     </a>
     <a class="doc" href="#docs">
       <span class="ttl">Examples &rarr;</span>
@@ -345,21 +371,30 @@ def main():
 <section id="source">
   <h2>Source</h2>
   <p class="lede">
-    Seven crates behind one driver. The compiler is a set of memoised queries
-    rather than a pipeline, which is what makes recompilation incremental and
-    what the interactive tier is built out of.
+    Eight crates behind one driver, and all eight are real &mdash; nothing
+    below is a placeholder for a crate that does not exist. The compiler is a
+    set of memoised queries over a shared database rather than a pipeline,
+    which is what will make recompilation incremental once there is more to
+    recompile.
   </p>
 
   <div class="strip">
     <div><dt>science-lexer</dt><dd>Tokens, indentation, literals.</dd></div>
     <div><dt>science-parser</dt><dd>Grammar, syntax tree, <code>extern</code> blocks.</dd></div>
     <div><dt>science-resolve</dt><dd>Names, scopes, definitions.</dd></div>
-    <div><dt>science-types</dt><dd>Type checking, traits, const generics.</dd></div>
-    <div><dt>science-regions</dt><dd>Ownership and region inference.</dd></div>
-    <div><dt>science-codegen</dt><dd>LLVM lowering.</dd></div>
+    <div><dt>science-types</dt><dd>Type checking, traits, const generics &mdash; building, not yet called by <code>check</code>.</dd></div>
+    <div><dt>science-fmt</dt><dd>The formatter behind <code>sciencec fmt</code>.</dd></div>
+    <div><dt>science-db</dt><dd>The query database every other crate reads through.</dd></div>
     <div><dt>science-diagnostics</dt><dd>Rendering, spans, applicable fixes.</dd></div>
-    <div><dt>science-rt</dt><dd>The runtime every binary links.</dd></div>
+    <div><dt>science-rt</dt><dd>The runtime every binary will link, once there is a code generator to call it.</dd></div>
   </div>
+
+  <p class="note">
+    Ownership and region inference, and LLVM code generation, do not exist yet
+    even as empty crates &mdash; there is no <code>science-regions</code> and no
+    <code>science-codegen</code> today. When they land, <code>sciencec
+    build</code> lands with them.
+  </p>
 </section>
 
 <footer>
