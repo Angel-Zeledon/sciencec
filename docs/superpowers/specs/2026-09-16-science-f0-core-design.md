@@ -164,6 +164,14 @@ or the function's second parameter. Several arguments therefore take
 parentheses: `Map of (String, Int)`. Nesting follows the same rule:
 `Array of (Map of (String, Int))`.
 
+**Calling an associated function on a generic type takes parentheses.**
+`Array of Doc.new()` is ambiguous: `.new()` could attach to `Doc` or to
+`Array of Doc`. Science requires `(Array of Doc).new()`. This is ugly and it is
+rare, and the alternative — making the space in `Array of Doc .new()`
+significant — would make whitespace load-bearing, which is worse. The compiler
+reports the ambiguous form specifically (`SC0116`), says which reading it took,
+and offers the parenthesized form as an applicable fix.
+
 ### 4.4 Declarations
 
 ```science
@@ -224,7 +232,7 @@ Doc has methods:
         self.body.len() == 0
 
 let d be Doc.new("a")
-let docs be Array of Doc .new()
+let docs be (Array of Doc).new()()
 ```
 
 **Marker traits** are implemented on one line, since there is nothing to indent:
