@@ -1,0 +1,16 @@
+---
+source: crates/link-resolve/tests/snapshots.rs
+expression: "report(&module(vec![f]))"
+---
+Module `main` #41 @0..33
+  Fn `f` #42 @0..33
+    params
+      Param `a` #43 @12..21
+        type: Path -> <error> @12..19
+    ret: Path -> <error> @22..33
+    body: Block @0..9
+      Path -> <error> @0..7
+--- diagnostics ---
+LK0200 @12..19 cannot find `Missing` in this scope
+LK0200 @22..33 cannot find `AlsoMissing` in this scope
+LK0200 @0..7 cannot find `nowhere` in this scope

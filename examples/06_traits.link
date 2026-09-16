@@ -1,9 +1,11 @@
 # 06 - Traits and impls
-# Spec: §4.3 traits with default methods, §5.4 trait resolution.
+# Spec: §4.3 traits with default methods, generic traits, inherent impls,
+# associated functions and marker traits; §5.4 trait resolution.
 #
 # Covers: a trait with a required method, a trait with a default method that
 # calls the required one, several impls of the same trait, a trait with more
 # than one required method, a generic trait implemented for a generic type,
+# an inherent `impl` with an associated function, a block-less marker impl,
 # and impls of the library traits the compiler knows about (§5.4).
 
 struct Doc:
@@ -17,6 +19,17 @@ struct Pair[A, B]:
     first: A
     second: B
 
+struct Position:
+    line: U32
+    column: U32
+
+# §8 gives `String` no `clone`; an owned copy comes out of `String.new()` and
+# `push_str`, which is all §8 offers for building one.
+fn copy_of(text: &String) -> String:
+    let mut out = String.new()
+    out.push_str(text)
+    out
+
 # A trait with one required method and one default method.
 trait Summarize:
     fn summarize(&self) -> String
@@ -27,7 +40,10 @@ trait Summarize:
 
     # Defaults may be several, and may call each other.
     fn headline(&self) -> String:
-        self.preview().to_upper()
+        let mut out = String.new()
+        out.push_str("# ")
+        out.push_str(&self.preview())
+        out
 
 impl Summarize for Doc:
     fn summarize(&self) -> String:
@@ -36,7 +52,7 @@ impl Summarize for Doc:
 impl Summarize for Note:
     # Only the required method: the defaults are inherited as written.
     fn summarize(&self) -> String:
-        self.text.clone()
+        copy_of(&self.text)
 
     # A default may also be overridden.
     fn preview(&self) -> String:
@@ -49,7 +65,7 @@ trait Render:
 
 impl Render for Doc:
     fn render(&self) -> String:
-        self.title.clone()
+        copy_of(&self.title)
 
     fn width(&self) -> Int:
         self.title.len()
@@ -71,18 +87,36 @@ impl IntoTitle for Note:
     fn into_title(self) -> String:
         self.text
 
-# A generic trait, implemented for a generic type.
+# A generic trait, implemented for a generic type. With no associated types
+# in F0 (§5.4) a type parameter on the trait is the only way to write this.
+# `swapped` takes `self` by value so that the fields can be moved out: `Pair`
+# carries no `Clone` bound.
 trait Swap[T]:
-    fn swapped(&self) -> T
+    fn swapped(self) -> T
 
 impl Swap[Pair[B, A]] for Pair[A, B]:
-    fn swapped(&self) -> Pair[B, A]:
-        Pair(first: self.second.clone(), second: self.first.clone())
+    fn swapped(self) -> Pair[B, A]:
+        Pair(first: self.second, second: self.first)
 
-# Impls of the library traits the compiler recognises (§5.4).
+# --- Inherent impls ---------------------------------------------------------
+
+# Methods that come from no trait at all. One with no `self` receiver is an
+# associated function and is called through the type (§4.3).
+impl Note:
+    fn new(text: String) -> Note:
+        Note(text: text)
+
+    fn empty() -> Note:
+        Note(text: String.new())
+
+    fn is_empty(&self) -> Bool:
+        self.text.is_empty()
+
+# --- The library traits the compiler recognises (§5.4) ----------------------
+
 impl Clone for Note:
     fn clone(&self) -> Note:
-        Note(text: self.text.clone())
+        Note(text: copy_of(&self.text))
 
 impl Eq for Note:
     fn eq(&self, other: &Note) -> Bool:
@@ -96,9 +130,17 @@ impl From[Note] for Doc:
     fn from(note: Note) -> Self:
         Doc(title: "untitled", body: note.text)
 
+# A marker trait has no methods, and F0 has no empty block, so it is
+# implemented by one line with no block at all (§4.3).
+impl Copy for Position
+
+impl Clone for Position:
+    fn clone(&self) -> Position:
+        Position(line: self.line, column: self.column)
+
 fn main():
     let doc = Doc(title: "Regions", body: "A region is a set of program points.")
-    let mut note = Note(text: "inferred, never written")
+    let mut note = Note.new("inferred, never written")
 
     println(doc.summarize())
     println(doc.preview())
@@ -109,6 +151,8 @@ fn main():
     println(note.summarize())
     println(note.preview())
     note.reset()
+
+    println(Note.empty().is_empty())
 
     let pair = Pair(first: 1, second: "one")
     let flipped = pair.swapped()

@@ -12,31 +12,28 @@ Programs that must be *accepted* live in `examples/` instead.
 
 ## Running them
 
-Through [`link-testkit`](../../crates/link-testkit). Nothing runs them yet:
-no crate currently walks this directory. The hookup is six lines, and belongs
-in whichever crate can render the diagnostics these cases provoke — today
-that is `link-lexer`:
+Through [`link-testkit`](../../crates/link-testkit), from
+[`crates/link-lexer/tests/ui.rs`](../../crates/link-lexer/tests/ui.rs):
 
-```rust
-#[test]
-fn ui() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/ui");
-    link_testkit::run_ui_tests(&dir, |path, source| {
-        let mut map = SourceMap::new();
-        // The registered path is what appears after `-->`, so register it
-        // relative to the repository root with forward slashes.
-        let name = format!("tests/ui/{}", path.file_name().unwrap().to_string_lossy());
-        let file = map.add_file(name, source.to_string());
-        let (_tokens, diagnostics) = link_lexer::lex(file, source);
-        link_diagnostics::render_all(&map, &diagnostics)
-    })
-    .assert_success();
-}
+```sh
+cargo test -p link-lexer --test ui
 ```
+
+The hookup lives in whichever crate can render the diagnostics these cases
+provoke — today that is `link-lexer`, which lexes the file and renders what
+comes back through `link_diagnostics::render_all`. When the parser can
+produce `LK0100`-range diagnostics the same six lines move to, or are
+duplicated in, whichever crate renders them.
 
 `link-testkit` deliberately does not do this itself: it takes the compile step
 as a closure so that it stays buildable and testable with no dependency on any
 compiler phase.
+
+The one detail worth getting right is the path registered in the
+`SourceMap`: it is what the renderer prints after `-->`, so it is registered
+as `tests/ui/<name>.link` — relative to the repository root, with forward
+slashes. Register an absolute path instead and every expectation here fails
+on its location line, and would fail differently on Windows and on Linux.
 
 To update the expectations after deliberately changing a message:
 
@@ -50,16 +47,38 @@ dropping in the `.link` file and blessing once.
 
 ## The cases
 
+One case per lexical code, plus one that proves error recovery. Between them
+they cover every diagnostic `link-lexer` can emit.
+
 | Case | Code | What it pins down |
 |---|---|---|
+| `unknown_character` | `LK0001` | Characters that are not part of the language: `$`, a backtick, and a lone `!` — which is the interesting one, because `!=` *is* an operator and §4.4 spells negation `not`. |
 | `tab_in_indentation` | `LK0003` | A tab used to indent a line. §4.1 fixes this code and says no attempt is made to interpret the tab. |
 | `inconsistent_indentation` | `LK0004` | A line indented to a level that is not on the indentation stack: 8 spaces, after the lexer has popped 12 and is left holding 0 and 4. §4.1 fixes this code. |
+| `integer_overflow` | `LK0005` | An integer literal past `u128::MAX`, in decimal and in hex. §4.1 puts no bound in the grammar, so the bound is the lexer's accumulator. |
+| `bad_escape` | `LK0006` | Escapes outside the eight §4.1 lists, reached the way it happens in practice: an undoubled Windows path. Both flavours of the code appear — an unknown escape, and a `\u` with no braces. |
 | `unterminated_string` | `LK0007` | A `"` with no closing `"` before the end of the line. §9 fixes only the range, `LK0001`–`LK0099`; the lexer allocated the number. |
+| `bad_character_literal` | `LK0008` | All three ways §4.1's "exactly one character, in quotes" is broken: empty, too many, never closed. |
+| `invalid_numeric_suffix` | `LK0009` | `42q`, and `2.5i32` — an integer suffix on a float, which gets its own message. |
+| `malformed_number` | `LK0010` | A digit outside its base (`0b1012`, `0o778`) and a prefix with no digits at all (`0x`). |
+| `float_out_of_range` | `LK0011` | A float literal that `str::parse` saturates to infinity rather than rejecting, which is why the lexer has to check for it. |
+| `several_errors_in_one_file` | six codes | Error *recovery*. The lexer never aborts, so one pass reports `LK0001`, `LK0006`, `LK0007`, `LK0009`, `LK0010` and `LK0003`, in source order. No single message is the point here; the count and the order are. |
 
 The `.stderr` files were produced by running the current lexer over these
-three programs and reading the output, which is what blessing is for. They
-are still an *expectation*: if a message changes, the change should be
-visible in `git diff` and defensible, not silently absorbed.
+programs and reading the output, which is what blessing is for. They are
+still an *expectation*: if a message changes, the change should be visible in
+`git diff` and defensible, not silently absorbed.
+
+Three of them pin a message that is currently worse than it should be, and
+are kept that way on purpose so the improvement shows up as a diff:
+
+- `unknown_character` renders a backtick as ``` ``` ``` — the message
+  interpolates the character into backticks without escaping it.
+- `unknown_character` tells someone who typed `!` only that it is not a
+  character Link recognises, when what it should say is that negation is
+  spelled `not`.
+- `float_out_of_range` prints `f64::MAX` as 309 decimal digits instead of
+  `1.7976931348623157e308`, and `malformed_number` says "a octal literal".
 
 ## The format they are in
 
@@ -107,8 +126,9 @@ shape fails before anyone tries to run it.
 
 ## What is still missing
 
-Only the lexical layer is covered. §11 of the spec asks for UI coverage of
-things no phase can produce yet, and each one needs a case here as it lands:
+The lexical layer is complete: every code `link-lexer` can emit has a case
+above. §11 of the spec asks for UI coverage of things no phase can produce
+yet, and each one needs a case here as it lands:
 
 - every ownership violation, with the chain of borrows that explains it
   (`LK0301` and the rest of `LK0300`–`LK0399`);

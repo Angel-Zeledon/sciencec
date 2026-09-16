@@ -5,6 +5,10 @@
 # Every construct below spans several physical lines while being a single
 # logical line. The indentation inside the brackets is decorative: the lexer
 # emits no NEWLINE, INDENT or DEDENT until the bracket closes.
+#
+# Trailing commas are allowed in every parenthesised and bracketed list —
+# arguments, parameters, generic arguments, struct fields and tuples (§4.5) —
+# which is what makes one-item-per-line formatting work.
 
 struct Config:
     host: String
@@ -90,11 +94,19 @@ fn main():
         or config.verbose
     )
 
-    # Indexing brackets continue too.
-    let items = Array()
-    let element = items[
-        0
-    ]
+    # The `[...]` postfix continues too. §8 leaves `Array` with no indexing
+    # operator, so the postfix appears here where it does exist in an
+    # expression: naming a generic instantiation before an associated
+    # function call, with a trailing comma inside (§4.5).
+    let items = Array[
+        Outcome[
+            Config,
+            String,
+        ],
+    ].new()
+    let element = items.get(
+        0,
+    )
 
     # A comment inside brackets is still a comment to end of line, and the
     # continuation survives it.

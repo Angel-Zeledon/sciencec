@@ -1,8 +1,16 @@
 # 13 - Inline block form
-# Spec: §4.2 "there is also an inline form for single-expression constructs,
-# valid only if the whole thing fits on one line."
+# Spec: §4.2. There is an inline form whose body is **exactly one
+# expression**, ending where the expression grammar says it ends rather than
+# at the end of the line:
 #
 #     if a.len() > b.len(): a else: b
+#
+# The `then` body above ends mid-line, at `else`, because `else` cannot
+# continue an expression. "Fits on one line" is a consequence of that rule,
+# not the rule itself.
+#
+# A dangling `else` binds to the innermost `if` (§4.2), which is a language
+# rule rather than an artefact of recursive descent.
 #
 # This file puts the inline form next to the indented form of the same
 # construct, so a parser test can compare the two.
@@ -47,6 +55,19 @@ fn sign(n: Int) -> Int:
 fn bucket(n: Int) -> String:
     if n < 10: "small" else: if n < 100: "medium" else: "large"
 
+# A dangling `else` binds to the innermost `if` (§4.2): the `else` here
+# belongs to `if b`, so the outer `if` is the one with no `else` and the
+# whole thing has type `()`.
+fn dangling(a: Bool, b: Bool):
+    if a: if b: println("both") else: println("only a")
+
+# Code that means the other thing has to use the block form.
+fn not_dangling(a: Bool, b: Bool):
+    if a:
+        if b: println("both")
+    else:
+        println("neither")
+
 # --- Function bodies --------------------------------------------------------
 
 # A single-expression function body on its own line, which is the ordinary
@@ -78,8 +99,12 @@ fn describe(format: &Format) -> String:
     match format:
         Plain: "plain"
         Markdown:
-            let prefix = "marked"
-            prefix.append("down")
+            # §8 gives `String` no concatenation method, so the two halves are
+            # joined with `String.new()` and `push_str`.
+            let mut out = String.new()
+            out.push_str("marked")
+            out.push_str("down")
+            out
 
 fn main():
     println(longest("abc", "de"))
@@ -89,3 +114,6 @@ fn main():
     println(sign(-3))
     println(bucket(42))
     println(name_of(&Plain))
+    println(describe(&Markdown))
+    dangling(true, false)
+    not_dangling(false, false)

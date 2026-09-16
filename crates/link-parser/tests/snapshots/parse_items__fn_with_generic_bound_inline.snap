@@ -17,5 +17,6 @@ Module @0..43
     ret: Ref @35..37
       Path `T` @36..37
     body: Block @38..43
+      tail: Path `items` @38..43
 --- diagnostics ---
 (none)

@@ -1,0 +1,20 @@
+---
+source: crates/link-resolve/tests/snapshots.rs
+expression: "report(&module(vec![first, second, doc]))"
+---
+Module `main` #41 @0..42
+  Fn `twice` #42 @0..7
+    body: Block @6..7
+  Fn `twice` #43 @8..15
+    body: Block @14..15
+  Struct `Doc` #44 @16..42
+    fields
+      Field `title` #45 @16..28
+        type: Path -> `String` #14 @16..22
+      Field `title` #46 @29..38
+        type: Path -> `Int` #15 @29..32
+--- diagnostics ---
+LK0201 @8..13 the name `twice` is defined more than once
+  note @0..5 first defined here
+LK0201 @33..38 the field `title` is defined more than once
+  note @23..28 first defined here

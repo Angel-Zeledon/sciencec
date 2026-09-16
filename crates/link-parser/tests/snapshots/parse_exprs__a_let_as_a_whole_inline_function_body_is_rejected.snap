@@ -1,0 +1,11 @@
+---
+source: crates/link-parser/tests/parse_exprs.rs
+expression: "parse_source_allowing_errors(\"fn f(): let x = 1\\n\")"
+---
+Module @0..18
+  Fn `f` @0..17
+    body: Block @8..17
+      Let `x` @8..17
+        value: Int 1 @16..17
+--- diagnostics ---
+LK0109 @8..11 the body of an inline block must be an expression, and a `let` binding is a statement; write the body as an indented block instead

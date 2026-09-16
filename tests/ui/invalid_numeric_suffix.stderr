@@ -1,0 +1,15 @@
+error[LK0009]: `q` is not a valid numeric literal suffix
+ --> tests/ui/invalid_numeric_suffix.link:9:21
+  |
+9 |     let counted = 42q
+  |                     ^ unknown suffix
+  |
+  = note: the suffixes are `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32` and `f64`
+
+error[LK0009]: `i32` is not a valid suffix for a float literal
+  --> tests/ui/invalid_numeric_suffix.link:10:20
+   |
+10 |     let ratio = 2.5i32
+   |                    ^^^ invalid suffix
+   |
+   = note: float literals only take `f32` or `f64`

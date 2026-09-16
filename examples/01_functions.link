@@ -28,7 +28,9 @@ fn clamp_low(value: Int, floor: Int) -> Int:
 fn longest(a: &String, b: &String) -> &String:
     if a.len() > b.len(): a else: b
 
-# Exclusive borrow: the callee may mutate through it.
+# Exclusive borrow: the callee may mutate through it. References
+# auto-dereference for assignment, and F0 has no explicit dereference
+# operator, so the parameter is written plainly on both sides (§4.5).
 fn bump(counter: &mut Int):
     counter = counter + 1
 

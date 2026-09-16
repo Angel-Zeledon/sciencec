@@ -1,0 +1,31 @@
+error[LK0006]: malformed `\u` escape
+  --> tests/ui/bad_escape.link:11:19
+   |
+11 |     let path = "C:\users\link\bin"
+   |                   ^^ malformed escape
+   |
+   = note: a `\u` escape needs braces, as in `\u{1F600}`
+
+error[LK0006]: unknown escape sequence `\l`
+  --> tests/ui/bad_escape.link:11:25
+   |
+11 |     let path = "C:\users\link\bin"
+   |                         ^^ unknown escape
+   |
+   = note: the escapes are `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0` and `\u{...}`
+
+error[LK0006]: unknown escape sequence `\b`
+  --> tests/ui/bad_escape.link:11:30
+   |
+11 |     let path = "C:\users\link\bin"
+   |                              ^^ unknown escape
+   |
+   = note: the escapes are `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0` and `\u{...}`
+
+error[LK0006]: unknown escape sequence `\q`
+  --> tests/ui/bad_escape.link:12:22
+   |
+12 |     let escaped = "a \q here"
+   |                      ^^ unknown escape
+   |
+   = note: the escapes are `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0` and `\u{...}`

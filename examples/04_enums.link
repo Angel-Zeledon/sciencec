@@ -77,9 +77,19 @@ fn main():
     let left: Either[Int, String] = Left(1)
     let right: Either[Int, String] = Right("one")
 
-    let tree = Node(Box(Leaf(1)), Box(Leaf(2)))
+    # `Box` is built through its associated function (§4.3): named-argument
+    # construction is for structs only.
+    let tree = Node(Box.new(Leaf(1)), Box.new(Leaf(2)))
 
     let text = "borrowed"
     let slot = Filled(&text)
+
+    # A variant may be qualified by its enum, and the two spellings mean the
+    # same thing (§4.5). The qualified form is what disambiguates when two
+    # enums in scope share a variant name.
+    let qualified = Format.Markdown
+    let empty_slot = Slot.Empty
+    let qualified_none: Option[Int] = Option.None
+    let qualified_some = Option.Some(1)
 
     println(number)

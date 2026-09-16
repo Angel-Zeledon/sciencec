@@ -1,5 +1,6 @@
 # 09 - Option, Result and the `?` operator
-# Spec: §4.4 the `?` operator, §5.5 absence and failure.
+# Spec: §4.4 the `?` operator, §5.5 absence and failure, §8 the method sets
+# of `Option` and `Result`.
 #
 # There is no `null`. Absence is `Option[T]`; failure is `Result[T, E]`.
 # `?` unwraps `Ok`/`Some` or returns `Err`/`None` early, propagating the
@@ -18,20 +19,34 @@ enum ParseError:
     Empty
     BadDigit(Char)
 
-# `From` is what lets `?` widen one error type into another.
+# §8 gives `String` no `clone`, so an owned copy is built from `String.new()`
+# and `push_str`.
+fn copy_of(text: &String) -> String:
+    let mut out = String.new()
+    out.push_str(text)
+    out
+
+fn digit_name(c: &Char) -> String:
+    match c:
+        '0': "zero"
+        '1': "one"
+        _: "some other character"
+
+# `From` is what lets `?` widen one error type into another. It is a generic
+# trait: the source type is the trait's parameter (§4.3).
 impl From[ParseError] for Error:
     fn from(inner: ParseError) -> Self:
         match inner:
             Empty: Malformed("empty input")
-            BadDigit(c): Malformed(c.to_string())
+            BadDigit(c): Malformed(digit_name(&c))
 
 # --- Returning Option -------------------------------------------------------
 
-fn first_line(text: &String) -> Option[&String]:
-    if text.is_empty():
-        None
+fn heading(text: &String) -> Option[String]:
+    if text.starts_with("# "):
+        Some(text.truncate(60))
     else:
-        Some(text.line(0))
+        None
 
 fn lookup(settings: &Map[String, String], key: &String) -> Option[&String]:
     settings.get(key)
@@ -39,8 +54,25 @@ fn lookup(settings: &Map[String, String], key: &String) -> Option[&String]:
 # `?` on Option: unwrap Some, or return None from the enclosing function.
 fn host_of(settings: &Map[String, String]) -> Option[String]:
     let raw = lookup(settings, "host")?
-    let trimmed = first_line(raw)?
-    Some(trimmed.clone())
+    let trimmed = heading(raw)?
+    Some(trimmed)
+
+# --- The methods §8 actually gives them -------------------------------------
+
+fn option_methods(settings: &Map[String, String]) -> String:
+    let found = lookup(settings, "host")
+    if found.is_some():
+        println("configured")
+    # `unwrap_or` consumes the `Option` and hands back the fallback on `None`.
+    let port = settings.get("port").unwrap_or("8080")
+    copy_of(port)
+
+fn result_methods(path: &String) -> String:
+    let outcome = read_file(path)
+    if outcome.is_ok():
+        println("read")
+    # `unwrap` panics on `Err`, which is exactly why §8 says so in a comment.
+    outcome.unwrap()
 
 # --- Returning Result -------------------------------------------------------
 
@@ -48,10 +80,16 @@ fn parse_port(text: &String) -> Result[U16, ParseError]:
     if text.is_empty():
         Err(Empty)
     else:
-        Ok(text.to_u16())
+        Ok(8080u16)
 
 fn read_file_text(path: &String) -> Result[String, Error]:
     read_file(path)
+
+fn parse_host(text: &String) -> Result[String, Error]:
+    if text.starts_with("host="):
+        Ok(text.truncate(64))
+    else:
+        Err(NotFound("host"))
 
 # `?` on Result, three times in a row, including one that goes through
 # `From[ParseError] for Error`.
@@ -61,11 +99,6 @@ fn read_config(path: &String) -> Result[Config, Error]:
     let port = parse_port(&text)?
     Ok(Config(host: host, port: port))
 
-fn parse_host(text: &String) -> Result[String, Error]:
-    match text.find("host="):
-        Some(index): Ok(text.after(index))
-        None: Err(NotFound("host"))
-
 # `?` applied directly to a call, inside a larger expression.
 fn port_plus_one(path: &String) -> Result[U16, Error]:
     Ok(read_config(path)?.port + 1u16)
@@ -74,22 +107,40 @@ fn port_plus_one(path: &String) -> Result[U16, Error]:
 
 fn report(outcome: &Result[Config, Error]) -> String:
     match outcome:
-        Ok(config): config.host.clone()
-        Err(NotFound(key)): key.clone()
-        Err(Malformed(detail)): detail.clone()
-        Err(Io(detail)): detail.clone()
+        Ok(config): copy_of(&config.host)
+        Err(NotFound(key)): copy_of(key)
+        Err(Malformed(detail)): copy_of(detail)
+        Err(Io(detail)): copy_of(detail)
 
-fn unwrap_or(value: Option[Int], fallback: Int) -> Int:
+fn or_else(value: Option[Int], fallback: Int) -> Int:
     match value:
         Some(inner): inner
         None: fallback
+
+# An arm of type `Never`: `panic` does not return, and coerces to whatever
+# the other arms produce (§4.5).
+fn must_have_host(outcome: Result[Config, Error]) -> String:
+    match outcome:
+        Ok(config): config.host
+        Err(e): panic("the configuration has no host")
 
 fn main():
     let outcome = read_config("link.toml")
     println(report(&outcome))
 
-    println(unwrap_or(Some(3), 0))
-    println(unwrap_or(None, 0))
+    println(or_else(Some(3), 0))
+    println(or_else(None, 0))
+
+    # Qualified variants name the same things (§4.5).
+    println(or_else(Option.Some(3), 0))
+    println(or_else(Option.None, 0))
+
+    let settings: Map[String, String] = Map[String, String].new()
+    println(option_methods(&settings))
+
+    match host_of(&settings):
+        Some(host): println(host)
+        None: println("no host")
 
     match port_plus_one("link.toml"):
         Ok(port): println(port)

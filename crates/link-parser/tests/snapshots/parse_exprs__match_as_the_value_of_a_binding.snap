@@ -1,0 +1,24 @@
+---
+source: crates/link-parser/tests/parse_exprs.rs
+expression: "parse_source(r#\"fn f() -> String:\n    let label = match x:\n        A: \"a\"\n        B: \"b\"\n    println(label)\n\"#)"
+---
+Module @0..92
+  Fn `f` @0..92
+    ret: Path `String` @10..16
+    body: Block @22..91
+      Let `label` @22..77
+        value: Match @34..77
+          scrutinee: Path `x` @40..41
+          arms
+            Arm @51..57
+              pattern: Binding `A` @51..52
+              body: Str "a" @54..57
+            Arm @66..72
+              pattern: Binding `B` @66..67
+              body: Str "b" @69..72
+      tail: Call @77..91
+        callee: Path `println` @77..84
+        args
+          Path `label` @85..90
+--- diagnostics ---
+(none)

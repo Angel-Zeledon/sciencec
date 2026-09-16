@@ -31,5 +31,6 @@ Module @0..105
       Param `h` @83..102
         type: Path `text.parser.Token` @85..102
     body: Block @104..105
+      tail: Path `x` @104..105
 --- diagnostics ---
 (none)

@@ -1,0 +1,15 @@
+error[LK0005]: this integer literal does not fit in 128 bits
+ --> tests/ui/integer_overflow.link:9:19
+  |
+9 |     let too_big = 340282366920938463463374607431768211456
+  |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ value out of range
+  |
+  = note: the largest representable value is 340282366920938463463374607431768211455
+
+error[LK0005]: this integer literal does not fit in 128 bits
+  --> tests/ui/integer_overflow.link:10:24
+   |
+10 |     let also_too_big = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_F
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ value out of range
+   |
+   = note: the largest representable value is 340282366920938463463374607431768211455

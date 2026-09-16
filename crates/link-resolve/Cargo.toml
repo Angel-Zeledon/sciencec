@@ -5,5 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+link-diagnostics.workspace = true
+link-lexer.workspace = true
+link-parser.workspace = true
 
 [dev-dependencies]
+insta.workspace = true

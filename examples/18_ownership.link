@@ -22,6 +22,14 @@ struct Span:
     start: Int
     end: Int
 
+# A `Copy` type. `Copy` has no methods and F0 has no empty block, so the impl
+# is a single line with no block at all (§4.3).
+struct Position:
+    line: U32
+    column: U32
+
+impl Copy for Position
+
 trait Summarize:
     fn summarize(&self) -> String
 
@@ -82,10 +90,13 @@ fn exclusive_then_shared():
     # The exclusive borrow ended with the call, so a shared one is fine now.
     println(doc.summarize())
 
-# Borrowing two different fields of the same struct at once.
+# Borrowing two different fields of the same struct at once. References
+# auto-dereference for field access, so nothing is written for the `&mut`
+# (§4.5).
 fn disjoint_fields(doc: &mut Doc) -> Int:
     let title = &doc.title
-    title.len()
+    let body = &doc.body
+    title.len() + body.len()
 
 # --- Borrows stored in structs ----------------------------------------------
 
@@ -118,10 +129,18 @@ fn copies():
     let also = flag
     println(flag and also)
 
+    # A user type that implements `Copy` behaves the same way: `start` is
+    # still usable after the assignment, because it was duplicated, not moved.
+    let start = Position(line: 1u32, column: 1u32)
+    let copied = start
+    println(start.line + copied.column)
+
 # --- Box: owned indirection -------------------------------------------------
 
+# `Box` is built through its associated function; named-argument
+# construction is for structs only (§4.3).
 fn boxed() -> Box[Doc]:
-    Box(produce())
+    Box.new(produce())
 
 fn describe_boxed(value: &Box[Doc]) -> String:
     value.summarize()

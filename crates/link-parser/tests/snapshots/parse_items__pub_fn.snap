@@ -5,5 +5,6 @@ expression: "parse_report(vec![Pub, Fn, id(\"main\"), LParen, RParen, Colon, id(
 Module @0..13
   Fn `main` pub @0..13
     body: Block @12..13
+      tail: Path `x` @12..13
 --- diagnostics ---
 (none)

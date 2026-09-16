@@ -34,7 +34,8 @@ impl Summarize for Doc:
 fn identity[T](value: T) -> T:
     value
 
-# A single bound.
+# A single bound. Copied verbatim from §4.3, including `items.get(0)`, which
+# is the one `Array` accessor §8 gives.
 fn largest[T: Ord](items: &Array[T]) -> &T:
     let mut best = items.get(0)
     for item in items:
@@ -49,9 +50,15 @@ fn duplicate[T: Clone + Eq](value: &T) -> Pair[T, T]:
 fn describe[T](x: &T) -> String where T: Summarize + Clone:
     x.summarize()
 
-# A `where` clause with several bounded parameters.
+# A `where` clause with several bounded parameters. §8 gives `String` no
+# concatenation method, so the two previews are joined with `String.new()`
+# and `push_str`.
 fn merge[A, B](left: &A, right: &B) -> String where A: Summarize, B: Summarize + Clone:
-    left.preview().append(right.preview())
+    let mut out = String.new()
+    out.push_str(&left.preview())
+    out.push_str(" / ")
+    out.push_str(&right.preview())
+    out
 
 # Bounds in the parameter list and a `where` clause at once.
 fn rank[T: Ord](items: &Array[T], fallback: &T) -> &T where T: Clone:
@@ -61,12 +68,19 @@ fn rank[T: Ord](items: &Array[T], fallback: &T) -> &T where T: Clone:
 fn swap[A, B](pair: Pair[A, B]) -> Pair[B, A]:
     Pair(first: pair.second, second: pair.first)
 
-# Nested generic types in the signature.
+# Nested generic types in the signature. `Array.get` returns `Option[&T]`
+# (§8): there is no indexing operator that can panic, so the absence is
+# unwrapped with a `match`.
 fn first_inner[T](items: &Array[Wrapper[T]]) -> Option[&T]:
-    if items.is_empty():
-        None
-    else:
-        Some(&items.get(0).inner)
+    match items.get(0):
+        Some(wrapper): Some(&wrapper.inner)
+        None: None
+
+# An inherent impl on a generic type, with an associated function that names
+# its instantiation at the call site: `Wrapper[Int].of(1)`.
+impl Wrapper[T]:
+    fn of(inner: T) -> Wrapper[T]:
+        Wrapper(inner: inner)
 
 # A generic type used at several different instantiations: monomorphisation
 # produces one specialised copy for each.
@@ -85,3 +99,14 @@ fn main():
     let n = 5
     let cloned = duplicate(&n)
     println(cloned.first)
+
+    # An associated function reached through an explicit instantiation, and
+    # the empty `Array` it needs (§4.3): collections are never built with the
+    # named-argument form.
+    let wrapped = Wrapper[Int].of(7)
+    println(wrapped.inner)
+
+    let wrappers: Array[Wrapper[Int]] = Array[Wrapper[Int]].new()
+    match first_inner(&wrappers):
+        Some(value): println(value)
+        None: println("empty")

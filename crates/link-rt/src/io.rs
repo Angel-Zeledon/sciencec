@@ -1,0 +1,206 @@
+//! The free functions of §8: `print`, `println`, `read_file`, `write_file`.
+//!
+//! The two file functions return a `Result`, which is the one place in this
+//! crate where the runtime builds a Link enum itself rather than leaving it to
+//! codegen: both `T` and `E` are concrete here, so their layout is known. See
+//! the crate documentation, §5, for the rule the two types below follow.
+
+use std::io::Write;
+
+use crate::abi::{LINK_RESULT_ERR, LINK_RESULT_OK};
+use crate::string::LinkString;
+
+/// Link's `IoError`.
+///
+/// Every variant is payload-free, so by the general enum rule of the crate
+/// documentation, §5.1, the type **is** its discriminant: one byte, alignment
+/// one. Codegen compares it against the constants below.
+///
+/// The set is deliberately small. F0 has no error hierarchy, no `source`, no
+/// message: §8 names `IoError` and gives it no methods, so anything richer
+/// would be inventing library surface that the spec says does not exist.
+/// [`LinkIoError::OTHER`] is the catch-all, and is where a future phase would
+/// grow new variants without disturbing the numbering of these.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct LinkIoError(pub u8);
+
+impl LinkIoError {
+    /// The path does not exist, or a directory along it does not.
+    pub const NOT_FOUND: Self = Self(0);
+    /// The process is not permitted to do this.
+    pub const PERMISSION_DENIED: Self = Self(1);
+    /// The path already exists and the operation required that it not.
+    pub const ALREADY_EXISTS: Self = Self(2);
+    /// The bytes are not what was expected — for [`link_read_file`], not valid
+    /// UTF-8, which a `String` must be (§5.1).
+    pub const INVALID_DATA: Self = Self(3);
+    /// Anything else.
+    pub const OTHER: Self = Self(4);
+
+    fn from_io(error: &std::io::Error) -> Self {
+        match error.kind() {
+            std::io::ErrorKind::NotFound => Self::NOT_FOUND,
+            std::io::ErrorKind::PermissionDenied => Self::PERMISSION_DENIED,
+            std::io::ErrorKind::AlreadyExists => Self::ALREADY_EXISTS,
+            std::io::ErrorKind::InvalidData => Self::INVALID_DATA,
+            _ => Self::OTHER,
+        }
+    }
+}
+
+/// The payload union of `Result[String, IoError]`.
+///
+/// `ok` is live exactly when the tag is [`LINK_RESULT_OK`]; `err` exactly when
+/// it is [`LINK_RESULT_ERR`]. Reading the other one is reading uninitialised
+/// memory.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union LinkIoResultStringPayload {
+    /// The `Ok(String)` payload.
+    pub ok: LinkString,
+    /// The `Err(IoError)` payload.
+    pub err: LinkIoError,
+}
+
+/// Link's `Result[String, IoError]`, the return type of [`link_read_file`].
+///
+/// Laid out by the general enum rule of the crate documentation, §5.1: a `u8`
+/// discriminant at offset 0, then the payload union at the next multiple of its
+/// alignment. The union is as wide as a `String`, so on a 64-bit target the tag
+/// sits at 0, the payload at 8, and the whole value is 32 bytes aligned to 8.
+///
+/// No niche optimisation applies, and none ever will: `Result` has a payload in
+/// **both** variants, so there is nothing for a niche to disambiguate.
+#[repr(C)]
+pub struct LinkIoResultString {
+    /// [`LINK_RESULT_OK`] or [`LINK_RESULT_ERR`].
+    pub tag: u8,
+    /// The payload of whichever variant `tag` names.
+    pub payload: LinkIoResultStringPayload,
+}
+
+/// Link's `Result[(), IoError]`, the return type of [`link_write_file`].
+///
+/// The `Ok` payload is `()`, which is zero-sized, so the payload union of §5.1
+/// degenerates to the error byte alone and the whole enum is two bytes with
+/// alignment one: the tag at offset 0, the error at offset 1. `err` is
+/// meaningful only when `tag` is [`LINK_RESULT_ERR`].
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct LinkIoResultUnit {
+    /// [`LINK_RESULT_OK`] or [`LINK_RESULT_ERR`].
+    pub tag: u8,
+    /// The `Err(IoError)` payload.
+    pub err: LinkIoError,
+}
+
+/// Link's `print(text: &String)`.
+///
+/// Writes the bytes to standard output verbatim, adding nothing. Standard
+/// output is line buffered, so a `print` with no newline in it may sit in the
+/// buffer until one arrives; [`link_panic`](crate::link_panic) flushes before
+/// aborting so that it is not lost.
+///
+/// A write error is ignored. There is no `Result` in §8's signature to report
+/// one through, and a program whose standard output has gone away has no better
+/// answer available to it than carrying on.
+///
+/// # Safety
+///
+/// `text` must be a non-null, aligned pointer to a live [`LinkString`].
+#[no_mangle]
+pub unsafe extern "C" fn link_print(text: *const LinkString) {
+    // SAFETY: the caller guarantees a live `LinkString`.
+    let bytes = unsafe { (*text).bytes() };
+    let mut out = std::io::stdout().lock();
+    let _ = out.write_all(bytes);
+}
+
+/// Link's `println(text: &String)`.
+///
+/// As [`link_print`], followed by one `\n`. The newline is a line feed on every
+/// platform, including Windows: Link text is UTF-8 and its line terminator is
+/// `\n`, and translating it would make a program's output depend on where it
+/// was compiled.
+///
+/// # Safety
+///
+/// `text` must be a non-null, aligned pointer to a live [`LinkString`].
+#[no_mangle]
+pub unsafe extern "C" fn link_println(text: *const LinkString) {
+    // SAFETY: the caller guarantees a live `LinkString`.
+    let bytes = unsafe { (*text).bytes() };
+    let mut out = std::io::stdout().lock();
+    let _ = out.write_all(bytes);
+    let _ = out.write_all(b"\n");
+}
+
+/// Link's `read_file(path: &String) -> Result[String, IoError]`.
+///
+/// Reads the whole file and returns its contents as a `String`. Because a
+/// `String` is UTF-8 by invariant (§5.1), a file that is not valid UTF-8 is
+/// [`LinkIoError::INVALID_DATA`] rather than a mis-encoded string. Reading raw
+/// bytes is not in F0: §8 has no `Array[U8]` file entry point.
+///
+/// On `Ok` the returned `String` is the caller's to own and eventually free.
+///
+/// # Safety
+///
+/// `path` must be a non-null, aligned pointer to a live [`LinkString`].
+#[no_mangle]
+pub unsafe extern "C" fn link_read_file(path: *const LinkString) -> LinkIoResultString {
+    // SAFETY: the caller guarantees a live `LinkString`, whose bytes are UTF-8.
+    let path = unsafe { (*path).as_str() };
+
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) => return read_err(LinkIoError::from_io(&error)),
+    };
+
+    if std::str::from_utf8(&bytes).is_err() {
+        return read_err(LinkIoError::INVALID_DATA);
+    }
+
+    // SAFETY: just validated as UTF-8, and the vector owns `len` readable
+    // bytes.
+    let text = unsafe { LinkString::from_raw_utf8(bytes.as_ptr(), bytes.len()) };
+    LinkIoResultString {
+        tag: LINK_RESULT_OK,
+        payload: LinkIoResultStringPayload { ok: text },
+    }
+}
+
+/// Link's `write_file(path: &String, contents: &String) -> Result[(), IoError]`.
+///
+/// Creates the file if it does not exist and truncates it if it does. Parent
+/// directories are not created: a missing one is [`LinkIoError::NOT_FOUND`].
+///
+/// # Safety
+///
+/// Both pointers must be non-null, aligned and point to live [`LinkString`]s.
+#[no_mangle]
+pub unsafe extern "C" fn link_write_file(
+    path: *const LinkString,
+    contents: *const LinkString,
+) -> LinkIoResultUnit {
+    // SAFETY: the caller guarantees two live `LinkString`s.
+    let (path, contents) = unsafe { ((*path).as_str(), (*contents).bytes()) };
+    match std::fs::write(path, contents) {
+        Ok(()) => LinkIoResultUnit {
+            tag: LINK_RESULT_OK,
+            err: LinkIoError::OTHER,
+        },
+        Err(error) => LinkIoResultUnit {
+            tag: LINK_RESULT_ERR,
+            err: LinkIoError::from_io(&error),
+        },
+    }
+}
+
+fn read_err(error: LinkIoError) -> LinkIoResultString {
+    LinkIoResultString {
+        tag: LINK_RESULT_ERR,
+        payload: LinkIoResultStringPayload { err: error },
+    }
+}

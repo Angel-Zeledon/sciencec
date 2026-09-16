@@ -1,0 +1,12 @@
+---
+source: crates/link-resolve/tests/snapshots.rs
+expression: "report_crate(vec![(\"main.link\", main), (\"text/mod.link\", text),\n(\"text/parser.link\", parser),])"
+---
+Module `main` #41 @13..28
+Module `text` #42 @0..6
+  Struct `Source` #44 @0..6
+Module `parser` #43 @7..12
+  Fn `lex` #45 @7..12
+    body: Block @11..12
+--- diagnostics ---
+(none)

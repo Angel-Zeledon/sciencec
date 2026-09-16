@@ -1,0 +1,35 @@
+---
+source: crates/link-resolve/tests/snapshots.rs
+expression: "report(&module(vec![doc, helper, f, g, h]))"
+---
+Module `main` #41 @0..82
+  Struct `Doc` #42 @0..16
+    fields
+      Field `title` #43 @0..12
+        type: Path -> `String` #14 @0..6
+  Fn `helper` #44 @17..25
+    body: Block @24..25
+  Fn `f` #45 @26..40
+    body: Block @28..40
+      tail: Call @28..38
+        callee: Path -> `Doc` #42 @28..31
+        args
+          Str "a" @32..35
+  Fn `g` #46 @41..61
+    body: Block @41..61
+      tail: StructLit -> `helper` #44 @41..57
+        fields
+          FieldInit `title` -> <error> @41..57
+            value: Str "a" @41..44
+  Fn `h` #47 @62..82
+    body: Block @62..82
+      tail: StructLit -> `Doc` #42 @62..78
+        fields
+          FieldInit `subtitle` -> <error> @62..78
+            value: Str "a" @62..65
+--- diagnostics ---
+LK0206 @28..38 `Doc` is a struct, so it is built with named arguments
+  note @13..16 this struct is declared here
+LK0206 @45..51 named arguments build a struct, but `helper` is a function
+  note @17..23 defined here
+LK0205 @70..78 `main.Doc` has no field `subtitle`

@@ -1,0 +1,23 @@
+error[LK0001]: `$` is not a character Link recognises
+  --> tests/ui/unknown_character.link:14:22
+   |
+14 |     let priced = 100 $ 2
+   |                      ^ unexpected character
+
+error[LK0001]: ``` is not a character Link recognises
+  --> tests/ui/unknown_character.link:15:18
+   |
+15 |     let quoted = `backtick`
+   |                  ^ unexpected character
+
+error[LK0001]: ``` is not a character Link recognises
+  --> tests/ui/unknown_character.link:15:27
+   |
+15 |     let quoted = `backtick`
+   |                           ^ unexpected character
+
+error[LK0001]: `!` is not a character Link recognises
+  --> tests/ui/unknown_character.link:16:20
+   |
+16 |     let inverted = !true
+   |                    ^ unexpected character

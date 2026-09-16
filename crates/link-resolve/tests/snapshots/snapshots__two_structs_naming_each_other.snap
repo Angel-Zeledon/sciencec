@@ -1,0 +1,15 @@
+---
+source: crates/link-resolve/tests/snapshots.rs
+expression: "report(&module(vec![view, doc]))"
+---
+Module `main` #41 @0..29
+  Struct `View` #42 @0..15
+    fields
+      Field `source` #43 @0..10
+        type: Path -> `Doc` #44 @0..3
+  Struct `Doc` #44 @16..29
+    fields
+      Field `back` #45 @16..25
+        type: Path -> `View` #42 @16..20
+--- diagnostics ---
+(none)

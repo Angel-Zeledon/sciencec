@@ -1,0 +1,41 @@
+error[LK0001]: `$` is not a character Link recognises
+  --> tests/ui/several_errors_in_one_file.link:13:20
+   |
+13 |     let tagged = 1 $ 2
+   |                    ^ unexpected character
+
+error[LK0006]: malformed `\u` escape
+  --> tests/ui/several_errors_in_one_file.link:14:19
+   |
+14 |     let path = "C:\users"
+   |                   ^^ malformed escape
+   |
+   = note: a `\u` escape needs braces, as in `\u{1F600}`
+
+error[LK0007]: unterminated string literal
+  --> tests/ui/several_errors_in_one_file.link:15:16
+   |
+15 |     let open = "never closed
+   |                ^^^^^^^^^^^^^ this string has no closing `"`
+
+error[LK0009]: `q` is not a valid numeric literal suffix
+  --> tests/ui/several_errors_in_one_file.link:16:21
+   |
+16 |     let counted = 42q
+   |                     ^ unknown suffix
+   |
+   = note: the suffixes are `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32` and `f64`
+
+error[LK0010]: `2` is not a valid digit in a binary literal
+  --> tests/ui/several_errors_in_one_file.link:17:21
+   |
+17 |     let mask = 0b1012
+   |                     ^ invalid digit
+
+error[LK0003]: tabs are not allowed in indentation
+  --> tests/ui/several_errors_in_one_file.link:18:1
+   |
+18 | 	let indented_with_a_tab = 0
+   | ^ tab character in the indentation
+   |
+   = note: Link does not interpret tabs: their width depends on how the file is displayed, so a block would mean different things to different readers. Indent with spaces only.

@@ -15,6 +15,13 @@ struct Doc:
 struct Note:
     text: String
 
+# §8 gives `String` no `clone`: an owned copy comes out of `String.new()` and
+# `push_str`.
+fn copy_of(text: &String) -> String:
+    let mut out = String.new()
+    out.push_str(text)
+    out
+
 trait Summarize:
     fn summarize(&self) -> String
 
@@ -30,7 +37,7 @@ impl Summarize for Doc:
 
 impl Summarize for Note:
     fn summarize(&self) -> String:
-        self.text.clone()
+        copy_of(&self.text)
 
 impl Reset for Note:
     fn reset(&mut self):
@@ -56,11 +63,13 @@ fn describe_boxed(value: Box[dyn Summarize]) -> String:
 fn pick(flag: Bool, left: &dyn Summarize, right: &dyn Summarize) -> &dyn Summarize:
     if flag: left else: right
 
+# `Box` is built through its associated function (§4.3); named-argument
+# construction is for structs only.
 fn into_summary(flag: Bool) -> Box[dyn Summarize]:
     if flag:
-        Box(Doc(title: "a", body: "..."))
+        Box.new(Doc(title: "a", body: "..."))
     else:
-        Box(Note(text: "..."))
+        Box.new(Note(text: "..."))
 
 # A heterogeneous collection: the element type is erased, which is exactly
 # what monomorphisation cannot give you.
@@ -86,7 +95,7 @@ fn main():
 
     clear(&mut note)
 
-    println(describe_boxed(Box(Doc(title: "b", body: "..."))))
+    println(describe_boxed(Box.new(Doc(title: "b", body: "..."))))
     println(describe_boxed(into_summary(true)))
 
     let chosen = pick(true, &doc, &note)
@@ -97,3 +106,10 @@ fn main():
 
     let owning = OwningRenderer(target: into_summary(false))
     println(owning.target.preview())
+
+    # The heterogeneous collection, built with `Array[T].new()` and filled
+    # with boxed trait objects.
+    let mut boxes: Array[Box[dyn Summarize]] = Array[Box[dyn Summarize]].new()
+    boxes.push(into_summary(true))
+    boxes.push(into_summary(false))
+    describe_all(&boxes)

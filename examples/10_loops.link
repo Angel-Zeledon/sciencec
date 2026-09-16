@@ -6,8 +6,9 @@
 # every shape they take: block body and inline body, `break`, `continue`,
 # nesting, and a loop whose body is a `match`.
 #
-# NOTE: F0 has no range syntax, so every `for` here walks a library
-# collection.
+# NOTE: §4.5 says there is no range syntax at all — `for` walks a collection
+# and a counting loop is a `while`. Every `for` here therefore walks a
+# library collection.
 
 struct Doc:
     title: String
@@ -25,11 +26,25 @@ fn titles(docs: &Array[Doc]):
     for doc in docs:
         println(doc.title)
 
-# `for` over a map yields the pairs.
-fn dump(settings: &Map[String, String]):
-    for entry in settings:
-        println(entry.key)
-        println(entry.value)
+# §8 does not say `Map` implements `Iterate`, and its method set is closed,
+# so a map is walked through an `Array` of its keys and `Map.get`.
+fn dump(settings: &Map[String, String], keys: &Array[String]):
+    for key in keys:
+        match settings.get(key):
+            Some(value):
+                println(key)
+                println(value)
+            None:
+                println("absent")
+
+# `String.chars` is the one iterator §8 hands out by name: it implements
+# `Iterate[Char]`.
+fn count_spaces(text: &String) -> Int:
+    let mut spaces = 0
+    for c in text.chars():
+        if c == ' ':
+            spaces = spaces + 1
+    spaces
 
 # `for` with `continue` to skip, and `break` to stop early.
 fn first_even(items: &Array[Int]) -> Option[Int]:
@@ -49,6 +64,7 @@ fn count_until_zero(items: &Array[Int]) -> Int:
 
 # --- 2. `while` -------------------------------------------------------------
 
+# A counting loop, which is what F0 has instead of a range (§4.5).
 fn countdown(from: Int):
     let mut n = from
     while n > 0:
@@ -68,13 +84,31 @@ fn advance(index: Int, limit: Int, items: &Array[Int]) -> Int:
 
 # --- 3. `loop` --------------------------------------------------------------
 
+struct Reader:
+    path: String
+    lines: Array[String]
+    cursor: Int
+
+# An inherent impl, so `next_line` needs no trait to arrive through (§4.3).
+impl Reader:
+    fn new(path: String) -> Reader:
+        Reader(path: path, lines: Array[String].new(), cursor: 0)
+
+    fn next_line(&mut self) -> Option[&String]:
+        let line = self.lines.get(self.cursor)
+        self.cursor = self.cursor + 1
+        line
+
 fn read_until_blank(handle: &mut Reader) -> Int:
     let mut lines = 0
     loop:
-        let line = handle.next_line()
-        if line.is_empty():
-            break
-        lines = lines + 1
+        match handle.next_line():
+            None:
+                break
+            Some(line):
+                if line.is_empty():
+                    break
+                lines = lines + 1
     lines
 
 # `loop` whose body is a `match`, with `break` and `continue` in the arms.
@@ -107,7 +141,7 @@ fn deeply_nested(rows: &Array[Array[Int]]) -> Int:
     for row in rows:
         let mut index = 0
         loop:
-            while index < row.len() and row.get(index) == 0:
+            while index < row.len() and is_zero_at(row, index):
                 index = index + 1
             if index >= row.len():
                 break
@@ -115,16 +149,21 @@ fn deeply_nested(rows: &Array[Array[Int]]) -> Int:
             index = index + 1
     found
 
-struct Reader:
-    path: String
+fn is_zero_at(row: &Array[Int], index: Int) -> Bool:
+    match row.get(index):
+        Some(cell): cell == 0
+        None: false
 
 fn main():
-    let mut numbers = Array()
+    # A collection is built through its associated function, never with the
+    # named-argument form reserved for structs (§4.3).
+    let mut numbers = Array[Int].new()
     numbers.push(4)
     numbers.push(0)
     numbers.push(7)
 
     println(total(&numbers))
     println(count_until_zero(&numbers))
+    println(count_spaces("one two three"))
     countdown(3)
     drain(&mut numbers)

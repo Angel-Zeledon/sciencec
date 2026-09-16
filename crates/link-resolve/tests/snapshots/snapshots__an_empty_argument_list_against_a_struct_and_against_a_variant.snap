@@ -1,0 +1,18 @@
+---
+source: crates/link-resolve/tests/snapshots.rs
+expression: "report(&module(vec![empty, choice, f, g]))"
+---
+Module `main` #41 @0..38
+  Struct `Empty` #42 @0..5
+  Enum `Choice` #43 @6..15
+    variants
+      Variant `No` #44 @6..8
+  Fn `f` #45 @16..28
+    body: Block @18..28
+      tail: StructLit -> `Empty` #42 @18..26
+  Fn `g` #46 @29..38
+    body: Block @31..38
+      tail: Call @31..36
+        callee: Path -> `No` #44 @31..33
+--- diagnostics ---
+(none)

@@ -1,0 +1,13 @@
+---
+source: crates/link-resolve/tests/snapshots.rs
+expression: "report(&module(vec![f]))"
+---
+Module `main` #41 @0..12
+  Fn `agent` #42 @0..12
+    body: Block @6..12
+      tail: Path -> <error> @6..10
+--- diagnostics ---
+LK0209 @0..5 `agent` is reserved and cannot be used as a name
+  note it is held back so that a later phase of the language can use it without breaking code written today
+LK0209 @6..10 `tool` is reserved and cannot be used as a name
+  note it is held back so that a later phase of the language can use it without breaking code written today

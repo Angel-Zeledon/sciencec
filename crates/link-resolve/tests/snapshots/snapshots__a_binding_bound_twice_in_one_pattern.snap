@@ -1,0 +1,27 @@
+---
+source: crates/link-resolve/tests/snapshots.rs
+expression: "report(&module(vec![pair, f]))"
+---
+Module `main` #41 @0..45
+  Enum `Two` #42 @9..25
+    variants
+      Variant `Pair` #43 @9..21
+        payload
+          Path -> `Int` #15 @9..12
+          Path -> `Int` #15 @13..16
+  Fn `f` #44 @0..45
+    params
+      Param `t` #45 @30..35
+        type: Path -> `Two` #42 @30..33
+    body: Block @0..45
+      tail: Match @0..43
+        scrutinee: Path -> `t` #45 @36..37
+        arms
+          Arm @0..27
+            pattern: Variant -> `Pair` #43 @0..8
+              Binding `a` #46 @0..1
+              Binding `a` #47 @2..3
+            body: Int 0 @26..27
+--- diagnostics ---
+LK0201 @2..3 the binding `a` is defined more than once
+  note @0..1 first defined here

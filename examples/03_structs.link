@@ -31,12 +31,16 @@ struct Pair[A, B]:
     first: A
     second: B
 
-# A struct with a single field, and one with none.
+# Single-field structs, one generic and one not.
 struct Wrapper[T]:
     inner: T
 
 struct Marker:
     tag: U8
+
+# Marker traits are implemented with a single line and no block, because F0
+# has no empty block (§4.3).
+impl Copy for Marker
 
 fn make_doc() -> Doc:
     # Construction: named arguments, all mandatory, in any order.
@@ -46,9 +50,28 @@ fn make_doc_reordered() -> Doc:
     Doc(body: "...", title: "a")
 
 fn title_of(view: &View) -> &String:
-    # Field access chains through the reference field without any explicit
-    # dereference.
+    # References auto-dereference for field access, so the chain reads
+    # through `source` with nothing written for it: F0 has no explicit
+    # dereference operator at all (§4.5).
     &view.source.title
+
+# A type may have methods that come from no trait, and an `impl` function
+# with no `self` receiver is an associated function called through the type
+# (§4.3).
+impl Doc:
+    fn new(title: String) -> Doc:
+        Doc(title: title, body: String.new())
+
+    fn is_empty(&self) -> Bool:
+        self.body.is_empty()
+
+# Trailing commas are allowed in every parenthesised and bracketed list,
+# construction included (§4.5).
+fn make_pair() -> Pair[Int, Int]:
+    Pair(
+        first: 1,
+        second: 2,
+    )
 
 fn main():
     let doc = make_doc()
@@ -61,6 +84,10 @@ fn main():
     let bundle = Bundle(primary: doc, secondary: make_doc_reordered(), label: "pair")
     println(bundle.label)
     println(bundle.primary.title)
+
+    let scratch = Doc.new("scratch")
+    println(scratch.is_empty())
+    println(make_pair().first)
 
     let coords = Pair(first: 3, second: 4)
     let mixed = Pair(first: "left", second: 7u8)

@@ -1,17 +1,5 @@
 //! A recursive-descent parser over the lexer's token stream.
 //!
-//! # What is here, and what is not
-//!
-//! This is the first batch. It covers the parser's skeleton, top-level `fn`,
-//! `struct`, `enum` and `use` declarations, type expressions, and block
-//! structure. Statements, expressions, patterns, `trait` and `impl` are marked
-//! `todo!()` and land in the next batch, together with the precedence-climbing
-//! loop for §4.4's operator table.
-//!
-//! Because statements are not parsed yet, a block's contents are *skipped*:
-//! the block node comes out with an accurate span and no statements. That is
-//! deliberate, so declarations can be tested now.
-//!
 //! # Error recovery
 //!
 //! The parser never stops at the first error. On a failure it reports a
@@ -20,13 +8,37 @@
 //! therefore reports several problems, which is the whole point of the
 //! `Diagnostics` accumulator.
 //!
-//! # Where the spec and the grammar pull against each other
+//! # The four places the grammar is decided rather than discovered
 //!
-//! §4.4 lists `=` in the precedence table, alongside the operators. It is
-//! non-associative, and Link has no place where the value of an assignment is
-//! useful, so assignment is parsed as a *statement*: parse an expression, and
-//! if a `=` follows, it was an assignment target. That accepts the same
-//! programs and keeps `let x = if c: a = b else: c` from being grammatical.
+//! **Assignment is a statement, not an operator.** §4.4 keeps `=` out of the
+//! precedence table on purpose: listing it would make
+//! `let x = if c: a = b else: c` grammatical. So `parse_stmt` parses an
+//! expression and, on finding a following `=`, treats the whole thing as an
+//! assignment.
+//!
+//! **An inline body ends where the expression ends, not at the newline.**
+//! §4.2 is explicit: in `if c: a else: b` the `then` body stops mid-line, at
+//! `else`, because `else` cannot continue an expression. Recursive descent
+//! gives that for free — the expression parser simply stops — and the same
+//! mechanism gives the dangling `else` its innermost binding.
+//!
+//! **`&` is resolved by position.** In front of an operand it is a reference
+//! (`&x`, `&mut x`); between two operands it is bitwise and. `parse_unary` is
+//! only ever called where an operand is expected and the binary loop only ever
+//! looks for an operator after one, so neither can see the other's `&`.
+//!
+//! **Two ambiguities are left for name resolution**, because §4.4 says they
+//! cannot be settled by syntax: `Doc()` parses as a call, not as a struct with
+//! no fields, and a bare name in a pattern parses as a binding, not as a unit
+//! variant. The same rule decides `Doc(title: "a")` against `f(1)`: named
+//! arguments mean a struct, positional ones mean a call or a variant.
+//!
+//! A third ambiguity follows from `.` serving as both the path separator and
+//! the field-access operator: `Option.Some(x)` (§4.5's qualified variant) is
+//! written exactly like a method call, and `Doc.new("a")` (§4.3's associated
+//! function) exactly like one too. Both parse as `MethodCall`; resolution
+//! reclassifies them. A path in expression position is therefore one segment
+//! long, and every `.` after it belongs to the postfix chain.
 
 use link_diagnostics::{Code, Diagnostic, Diagnostics, FileId, Label, Span};
 use link_lexer::{ReservedWord, Token, TokenKind};
@@ -56,6 +68,14 @@ pub mod codes {
     pub const MISPLACED_PUB: Code = Code(107);
     /// A `self` receiver somewhere other than first in the parameter list.
     pub const MISPLACED_RECEIVER: Code = Code(108);
+    /// A statement where §4.2 requires an inline block's single expression.
+    pub const STATEMENT_IN_INLINE_BLOCK: Code = Code(109);
+    /// Named arguments in front of something that is not a struct's name.
+    pub const MISPLACED_NAMED_ARGUMENT: Code = Code(110);
+    /// `impl <something that is not a path> for ..`.
+    pub const EXPECTED_TRAIT: Code = Code(111);
+    /// Something in a `trait` or `impl` body that is not a method.
+    pub const EXPECTED_METHOD: Code = Code(112);
 }
 
 /// Parses a token stream into a module, along with everything that went wrong.
@@ -172,6 +192,19 @@ impl<'t> Parser<'t> {
         }
     }
 
+    /// Whether the logical line has already ended at the token just consumed.
+    ///
+    /// Two things end one. A `Newline`, obviously — a bodiless `fn` in a trait
+    /// consumes its own, and the enclosing list then has nothing left to take.
+    /// And a `Dedent`: a statement whose last token closed an indented block
+    /// has had its newline emitted *inside* that block, before the `Dedent`, so
+    /// `if c:` with an indented body is one logical line with nothing trailing
+    /// it.
+    fn prev_ends_line(&self) -> bool {
+        self.pos > 0
+            && matches!(self.tokens[self.pos - 1].kind, TokenKind::Dedent | TokenKind::Newline)
+    }
+
     /// A logical line has to end where the parser thinks it does.
     fn expect_line_end(&mut self) {
         match self.peek() {
@@ -179,6 +212,7 @@ impl<'t> Parser<'t> {
                 self.advance();
             }
             TokenKind::Dedent | TokenKind::Eof => {}
+            _ if self.prev_ends_line() => {}
             _ => {
                 let found = describe(self.peek());
                 let span = self.span();
@@ -817,12 +851,14 @@ impl<'t> Parser<'t> {
     /// A block of statements, in either of §4.2's two forms:
     ///
     /// - indented: `:` NEWLINE INDENT statements DEDENT
-    /// - inline: `:` followed by a single expression, on the same line
+    /// - inline: `:` followed by a single expression
+    ///
+    /// The inline form ends where the *expression* ends, not at the end of the
+    /// line. That is the whole of §4.2's rule, and the reason `if c: a else: b`
+    /// works: `else` cannot continue an expression, so the `then` body stops in
+    /// front of it. "Fits on one line" is a consequence, never a test.
     ///
     /// The returned span covers the block's contents, not the `:`.
-    ///
-    /// TODO(batch 2): the contents are skipped rather than parsed. Replace
-    /// `skip_indented_block` and `skip_inline_block` with the statement parser.
     fn parse_block(&mut self) -> Block {
         let colon = self.span();
         if self.expect(&TokenKind::Colon, "`:`").is_none() {
@@ -834,119 +870,988 @@ impl<'t> Parser<'t> {
             if self.expect(&TokenKind::Indent, "an indented block after `:`").is_none() {
                 return empty_block(self.span());
             }
-            let span = self.skip_indented_block();
-            self.eat(&TokenKind::Dedent);
-            return Block { stmts: Vec::new(), tail: None, span };
+            return self.parse_indented_block();
         }
 
-        if matches!(self.peek(), TokenKind::Dedent | TokenKind::Eof) {
-            let span = self.span();
+        self.parse_inline_block()
+    }
+
+    /// The statements between an `Indent` and its `Dedent`, both already
+    /// located by the caller.
+    fn parse_indented_block(&mut self) -> Block {
+        let start = self.span();
+        let mut stmts = Vec::new();
+
+        loop {
+            self.skip_newlines();
+            match self.peek() {
+                TokenKind::Dedent | TokenKind::Eof => break,
+                TokenKind::Indent => {
+                    let span = self.span();
+                    self.error(codes::UNEXPECTED_TOKEN, "unexpected indentation", span);
+                    self.skip_indented_region();
+                    continue;
+                }
+                _ => {}
+            }
+
+            let before = self.pos;
+            match self.parse_stmt() {
+                Some(stmt) => {
+                    stmts.push(stmt);
+                    self.expect_line_end();
+                }
+                None => self.synchronize(),
+            }
+            // Recovery is supposed to consume something; if a future edit ever
+            // makes it stop doing so, a hang is a far worse failure than a
+            // dropped token.
+            if self.pos == before {
+                self.advance();
+            }
+        }
+
+        self.eat(&TokenKind::Dedent);
+        finish_block(stmts, start)
+    }
+
+    /// The single expression of an inline block.
+    ///
+    /// §4.2 makes a statement here an error. `return`, `break`, `continue` and
+    /// an assignment are still accepted: the spec's own examples use all four
+    /// inline — `if item > best: best = item` in §4.3, `if n < 0: return -1`
+    /// and `loop: break` in the corpus — and each of them is an expression of
+    /// type `Never` (§4.5) in everything but where the AST files it. A `let`
+    /// is the one that has no such reading, and is exactly the example §4.2
+    /// rejects.
+    fn parse_inline_block(&mut self) -> Block {
+        let start = self.span();
+        if !self.at_stmt_start() {
             self.error(
                 codes::EXPECTED_BLOCK,
                 "expected an indented block or a single expression after `:`",
+                start,
+            );
+            return empty_block(start);
+        }
+
+        if self.at(&TokenKind::Let) {
+            self.error(
+                codes::STATEMENT_IN_INLINE_BLOCK,
+                "the body of an inline block must be an expression, and a `let` binding is a \
+                 statement; write the body as an indented block instead",
+                start,
+            );
+        }
+
+        let stmts = match self.parse_stmt() {
+            Some(stmt) => vec![stmt],
+            None => {
+                self.synchronize();
+                Vec::new()
+            }
+        };
+        finish_block(stmts, start)
+    }
+
+    /// The body of a `match` arm, which §4.4 makes an expression rather than a
+    /// block so that an inline arm carries the expression itself.
+    fn parse_arm_body(&mut self) -> Expr {
+        let colon = self.span();
+        if self.expect(&TokenKind::Colon, "`:`").is_none() {
+            return error_expr(colon);
+        }
+
+        if self.eat(&TokenKind::Newline).is_some() {
+            if self.expect(&TokenKind::Indent, "an indented block after `:`").is_none() {
+                return error_expr(self.span());
+            }
+            let block = self.parse_indented_block();
+            let span = block.span;
+            return Expr { kind: ExprKind::Block(block), span };
+        }
+
+        let block = self.parse_inline_block();
+        // An inline arm is its expression; wrapping it in a block would add a
+        // node that stands for nothing written.
+        if block.stmts.is_empty() {
+            if let Some(tail) = block.tail {
+                return *tail;
+            }
+        }
+        let span = block.span;
+        Expr { kind: ExprKind::Block(block), span }
+    }
+
+    // --- statements ------------------------------------------------------
+
+    /// One statement: `let`, an assignment, `return`, `break`, `continue`, or
+    /// an expression evaluated for its effect.
+    ///
+    /// The line terminator is the caller's, because a statement ending in an
+    /// indented block has already consumed its own.
+    fn parse_stmt(&mut self) -> Option<Stmt> {
+        let start = self.span();
+        match self.peek() {
+            TokenKind::Let => {
+                self.advance();
+                let mutable = self.eat(&TokenKind::Mut).is_some();
+                let name = self.expect_ident()?;
+                let ty = if self.eat(&TokenKind::Colon).is_some() {
+                    Some(self.parse_type())
+                } else {
+                    None
+                };
+                // F0 has no `let` without an initialiser: `LetStmt::value` is
+                // not an `Option`, and inference is local (§5.2), so a
+                // binding with no value has nothing to infer from.
+                self.expect(&TokenKind::Eq, "`=`")?;
+                let value = self.parse_expr();
+                let span = start.merge(self.prev_span());
+                Some(Stmt { kind: StmtKind::Let(LetStmt { mutable, name, ty, value, span }), span })
+            }
+            TokenKind::Return => {
+                self.advance();
+                let value = if self.at_expr_start() { Some(self.parse_expr()) } else { None };
+                let span = start.merge(self.prev_span());
+                Some(Stmt { kind: StmtKind::Return(value), span })
+            }
+            TokenKind::Break => {
+                self.advance();
+                let value = if self.at_expr_start() { Some(self.parse_expr()) } else { None };
+                let span = start.merge(self.prev_span());
+                Some(Stmt { kind: StmtKind::Break(value), span })
+            }
+            TokenKind::Continue => {
+                self.advance();
+                Some(Stmt { kind: StmtKind::Continue, span: start })
+            }
+            _ => {
+                let expr = self.parse_expr();
+                if self.eat(&TokenKind::Eq).is_some() {
+                    let value = self.parse_expr();
+                    let span = start.merge(self.prev_span());
+                    return Some(Stmt { kind: StmtKind::Assign { target: expr, value }, span });
+                }
+                let span = expr.span;
+                Some(Stmt { kind: StmtKind::Expr(expr), span })
+            }
+        }
+    }
+
+    /// Whether the current token can begin a statement.
+    fn at_stmt_start(&self) -> bool {
+        matches!(
+            self.peek(),
+            TokenKind::Let | TokenKind::Return | TokenKind::Break | TokenKind::Continue
+        ) || self.at_expr_start()
+    }
+
+    /// Whether the current token can begin an expression.
+    ///
+    /// Used where an expression is optional — after `return` and `break` — and
+    /// to tell an empty inline body from a real one.
+    fn at_expr_start(&self) -> bool {
+        use TokenKind::*;
+        matches!(
+            self.peek(),
+            Int { .. }
+                | Float { .. }
+                | Str(_)
+                | Char(_)
+                | True
+                | False
+                | Ident(_)
+                | SelfValue
+                | LParen
+                | Minus
+                | Not
+                | Amp
+                | If
+                | Match
+                | While
+                | Loop
+                | For
+        )
+    }
+
+    // --- expressions -----------------------------------------------------
+
+    /// An expression, by precedence climbing over §4.4's table.
+    ///
+    /// Always returns a node: a failure becomes `ExprKind::Error`, so the tree
+    /// keeps its shape and the phases after this one still have something to
+    /// walk. `=` is not in the table; see the note at the top of this module.
+    fn parse_expr(&mut self) -> Expr {
+        self.parse_binary(1)
+    }
+
+    /// One rung of the table and everything above it.
+    ///
+    /// Every row is left-associative, which is why the recursive call asks for
+    /// `prec + 1`: a second operator of the same row cannot be absorbed by the
+    /// right-hand side and is left for this loop.
+    fn parse_binary(&mut self, min_prec: u8) -> Expr {
+        let start = self.span();
+        let mut lhs = self.parse_cast();
+        while let Some((op, prec)) = binary_op(self.peek()) {
+            if prec < min_prec {
+                break;
+            }
+            self.advance();
+            let rhs = self.parse_binary(prec + 1);
+            let span = start.merge(self.prev_span());
+            lhs = Expr {
+                kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+                span,
+            };
+        }
+        lhs
+    }
+
+    /// `as`, which sits between the unary operators and `*`.
+    fn parse_cast(&mut self) -> Expr {
+        let start = self.span();
+        let mut expr = self.parse_unary();
+        while self.eat(&TokenKind::As).is_some() {
+            let ty = self.parse_type();
+            let span = start.merge(self.prev_span());
+            expr = Expr { kind: ExprKind::Cast { expr: Box::new(expr), ty }, span };
+        }
+        expr
+    }
+
+    /// `-`, `not`, `&` and `&mut`, all of them prefix.
+    ///
+    /// This is the only place a `&` is read as a reference, and it is only ever
+    /// reached where an operand is expected — which is the whole of the rule
+    /// that tells `&x` from `a & b`.
+    fn parse_unary(&mut self) -> Expr {
+        let start = self.span();
+        match self.peek() {
+            TokenKind::Minus => {
+                self.advance();
+                let operand = self.parse_unary();
+                let span = start.merge(self.prev_span());
+                Expr { kind: ExprKind::Unary { op: UnaryOp::Neg, operand: Box::new(operand) }, span }
+            }
+            TokenKind::Not => {
+                self.advance();
+                let operand = self.parse_unary();
+                let span = start.merge(self.prev_span());
+                Expr { kind: ExprKind::Unary { op: UnaryOp::Not, operand: Box::new(operand) }, span }
+            }
+            TokenKind::Amp => {
+                self.advance();
+                let mutable = self.eat(&TokenKind::Mut).is_some();
+                let inner = self.parse_unary();
+                let span = start.merge(self.prev_span());
+                Expr { kind: ExprKind::Ref { mutable, expr: Box::new(inner) }, span }
+            }
+            _ => self.parse_postfix(),
+        }
+    }
+
+    /// The tightest row: call, index, field access and `?`, applied left to
+    /// right to whatever precedes them.
+    fn parse_postfix(&mut self) -> Expr {
+        let start = self.span();
+        let mut expr = self.parse_primary();
+
+        loop {
+            match self.peek() {
+                TokenKind::Dot => {
+                    self.advance();
+                    let Some(name) = self.expect_ident() else {
+                        return error_expr(start.merge(self.prev_span()));
+                    };
+                    expr = if self.at(&TokenKind::LParen) {
+                        if self.at_named_args() {
+                            self.qualified_struct_lit(expr, name, start)
+                        } else {
+                            let args = self.parse_call_args();
+                            let span = start.merge(self.prev_span());
+                            Expr {
+                                kind: ExprKind::MethodCall {
+                                    receiver: Box::new(expr),
+                                    method: name,
+                                    generics: Vec::new(),
+                                    args,
+                                },
+                                span,
+                            }
+                        }
+                    } else {
+                        let span = start.merge(self.prev_span());
+                        Expr { kind: ExprKind::Field { base: Box::new(expr), name }, span }
+                    };
+                }
+                TokenKind::LParen => {
+                    expr = if self.at_named_args() {
+                        self.struct_lit(expr, start)
+                    } else {
+                        let args = self.parse_call_args();
+                        let span = start.merge(self.prev_span());
+                        Expr { kind: ExprKind::Call { callee: Box::new(expr), args }, span }
+                    };
+                }
+                TokenKind::LBracket => {
+                    // `[` after a name is a generic instantiation —
+                    // `Array[Int].new()` (§4.3) — and after anything else it is
+                    // an index. Nothing in the token stream separates
+                    // `Array[Int]` from `items[0]`, so position has to: §8
+                    // gives `Array` and `Map` no indexing operator at all, and
+                    // the instantiation form is the only one that ever follows
+                    // a bare name. The index row of §4.4's table is kept for
+                    // the case a type does define one, where the receiver is
+                    // the result of a call or a field rather than a name.
+                    if instantiable_path(&expr) {
+                        let generics = self.parse_generic_args();
+                        let end = self.prev_span();
+                        if let ExprKind::Path(path) = &mut expr.kind {
+                            if let Some(segment) = path.segments.last_mut() {
+                                segment.generics = generics;
+                                segment.span = segment.span.merge(end);
+                            }
+                            path.span = path.span.merge(end);
+                        }
+                        expr.span = start.merge(end);
+                    } else {
+                        self.advance();
+                        let index = self.parse_expr();
+                        self.expect(&TokenKind::RBracket, "`]`");
+                        let span = start.merge(self.prev_span());
+                        expr = Expr {
+                            kind: ExprKind::Index { base: Box::new(expr), index: Box::new(index) },
+                            span,
+                        };
+                    }
+                }
+                TokenKind::Question => {
+                    self.advance();
+                    let span = start.merge(self.prev_span());
+                    expr = Expr { kind: ExprKind::Try(Box::new(expr)), span };
+                }
+                _ => break,
+            }
+        }
+
+        expr
+    }
+
+    /// `Doc(title: "a")`: the argument list is named, so this is construction.
+    fn struct_lit(&mut self, callee: Expr, start: Span) -> Expr {
+        let ExprKind::Path(path) = callee.kind else {
+            let span = self.span();
+            self.error(
+                codes::MISPLACED_NAMED_ARGUMENT,
+                "named arguments construct a struct, so they need a struct's name in front of them",
                 span,
             );
-            return empty_block(span);
-        }
-
-        let span = self.skip_inline_block();
-        Block { stmts: Vec::new(), tail: None, span }
+            self.parse_field_inits();
+            return error_expr(start.merge(self.prev_span()));
+        };
+        let fields = self.parse_field_inits();
+        let span = start.merge(self.prev_span());
+        Expr { kind: ExprKind::StructLit { path, fields }, span }
     }
 
-    /// Consumes an indented block's contents and returns the span they cover.
-    /// Nested blocks are consumed with it, so a nested `Dedent` never closes
-    /// the outer block early.
-    fn skip_indented_block(&mut self) -> Span {
-        let start = self.span();
-        let mut last = start;
-        let mut depth = 0usize;
-        loop {
-            match self.peek() {
-                TokenKind::Eof => break,
-                TokenKind::Dedent if depth == 0 => break,
-                TokenKind::Dedent => {
-                    depth -= 1;
-                    self.advance();
-                }
-                TokenKind::Indent => {
-                    depth += 1;
-                    self.advance();
-                }
-                _ => {
-                    let token = self.advance();
-                    // Newlines carry no text, so they must not stretch the
-                    // span past the last thing actually written.
-                    if !token.span.is_empty() {
-                        last = token.span;
-                    }
-                }
+    /// The same, with the struct named through a path: `text.Doc(title: "a")`.
+    fn qualified_struct_lit(&mut self, base: Expr, name: Ident, start: Span) -> Expr {
+        let ExprKind::Path(mut path) = base.kind else {
+            let span = self.span();
+            self.error(
+                codes::MISPLACED_NAMED_ARGUMENT,
+                "named arguments construct a struct, so they need a struct's name in front of them",
+                span,
+            );
+            self.parse_field_inits();
+            return error_expr(start.merge(self.prev_span()));
+        };
+        let segment_span = name.span;
+        path.segments.push(PathSegment { name, generics: Vec::new(), span: segment_span });
+        path.span = path.span.merge(segment_span);
+        let fields = self.parse_field_inits();
+        let span = start.merge(self.prev_span());
+        Expr { kind: ExprKind::StructLit { path, fields }, span }
+    }
+
+    /// Whether the `(` about to be read opens a *named* argument list, which
+    /// §4.4 makes the one and only sign of a struct construction.
+    fn at_named_args(&self) -> bool {
+        self.at(&TokenKind::LParen)
+            && matches!(self.peek_ahead(1), TokenKind::Ident(_))
+            && matches!(self.peek_ahead(2), TokenKind::Colon)
+    }
+
+    fn parse_call_args(&mut self) -> Vec<Expr> {
+        let mut args = Vec::new();
+        if self.eat(&TokenKind::LParen).is_none() {
+            return args;
+        }
+        while !self.at(&TokenKind::RParen) {
+            args.push(self.parse_expr());
+            if self.eat(&TokenKind::Comma).is_none() {
+                break;
             }
         }
-        start.merge(last)
+        self.expect(&TokenKind::RParen, "`)`");
+        args
     }
 
-    /// Consumes an inline block's single expression, up to the end of the line.
+    fn parse_field_inits(&mut self) -> Vec<FieldInit> {
+        let mut fields = Vec::new();
+        if self.eat(&TokenKind::LParen).is_none() {
+            return fields;
+        }
+        while !self.at(&TokenKind::RParen) {
+            let start = self.span();
+            let parsed = self
+                .expect_ident()
+                .filter(|_| self.expect(&TokenKind::Colon, "`:`").is_some())
+                .map(|name| {
+                    let value = self.parse_expr();
+                    FieldInit { name, value, span: start.merge(self.prev_span()) }
+                });
+            match parsed {
+                Some(field) => fields.push(field),
+                None => self.recover_in_brackets(),
+            }
+            if self.eat(&TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RParen, "`)`");
+        fields
+    }
+
+    /// A literal, a name, `self`, a parenthesised expression, or one of the
+    /// control-flow forms that §4.4 makes expressions.
+    fn parse_primary(&mut self) -> Expr {
+        let start = self.span();
+
+        if let Some(literal) = literal_of(self.peek()) {
+            self.advance();
+            return Expr { kind: ExprKind::Literal(literal), span: start };
+        }
+
+        match self.peek() {
+            TokenKind::SelfValue => {
+                self.advance();
+                Expr { kind: ExprKind::SelfValue, span: start }
+            }
+            // One segment only: every `.` after it is field access or a method
+            // call, and every `[` after it is an index.
+            TokenKind::Ident(_) => match self.expect_ident() {
+                Some(name) => {
+                    let span = name.span;
+                    let segment = PathSegment { name, generics: Vec::new(), span };
+                    Expr { kind: ExprKind::Path(Path { segments: vec![segment], span }), span }
+                }
+                None => error_expr(start),
+            },
+            TokenKind::LParen => self.parse_paren_expr(start),
+            TokenKind::If => self.parse_if_expr(),
+            TokenKind::Match => self.parse_match_expr(),
+            TokenKind::While => {
+                self.advance();
+                let cond = self.parse_expr();
+                let body = self.parse_block();
+                let span = start.merge(self.prev_span());
+                Expr { kind: ExprKind::While { cond: Box::new(cond), body }, span }
+            }
+            TokenKind::Loop => {
+                self.advance();
+                let body = self.parse_block();
+                let span = start.merge(self.prev_span());
+                Expr { kind: ExprKind::Loop { body }, span }
+            }
+            TokenKind::For => {
+                self.advance();
+                let pattern = self.parse_pattern();
+                self.expect(&TokenKind::In, "`in`");
+                let iter = self.parse_expr();
+                let body = self.parse_block();
+                let span = start.merge(self.prev_span());
+                Expr { kind: ExprKind::For { pattern, iter: Box::new(iter), body }, span }
+            }
+            _ => {
+                let found = describe(self.peek());
+                self.error(
+                    codes::EXPECTED_EXPR,
+                    format!("expected an expression, found {found}"),
+                    start,
+                );
+                // Drop the offending token so the enclosing list or block can
+                // carry on, unless it is the delimiter that list is waiting
+                // for.
+                if !self.at_list_boundary() {
+                    self.advance();
+                }
+                error_expr(start)
+            }
+        }
+    }
+
+    /// `()`, `(e)` and `(a, b)` all start the same way.
+    fn parse_paren_expr(&mut self, start: Span) -> Expr {
+        self.advance(); // `(`
+        if self.eat(&TokenKind::RParen).is_some() {
+            return Expr { kind: ExprKind::Unit, span: start.merge(self.prev_span()) };
+        }
+
+        let first = self.parse_expr();
+        if !self.at(&TokenKind::Comma) {
+            // `(e)` is just `e`: parentheses group and nothing more, so they
+            // leave no node and `e` keeps the span a diagnostic should point at.
+            self.expect(&TokenKind::RParen, "`)`");
+            return first;
+        }
+
+        let mut elems = vec![first];
+        while self.eat(&TokenKind::Comma).is_some() {
+            if self.at(&TokenKind::RParen) {
+                break;
+            }
+            elems.push(self.parse_expr());
+        }
+        self.expect(&TokenKind::RParen, "`)`");
+        Expr { kind: ExprKind::Tuple(elems), span: start.merge(self.prev_span()) }
+    }
+
+    /// `if cond: ..` with an optional `else`.
     ///
-    /// TODO(batch 2): once expressions parse, the end of an inline block is
-    /// wherever the expression ends, not the end of the line. That matters for
-    /// `if c: a else: b`, where the `then` block stops at `else`.
-    fn skip_inline_block(&mut self) -> Span {
+    /// The dangling `else` binds to the innermost `if` (§4.2) because this
+    /// function takes the `else` it finds before returning to its caller.
+    fn parse_if_expr(&mut self) -> Expr {
         let start = self.span();
-        let mut last = start;
-        loop {
-            match self.peek() {
-                TokenKind::Eof | TokenKind::Dedent => break,
-                TokenKind::Newline => {
-                    self.advance();
-                    break;
-                }
-                _ => {
-                    let token = self.advance();
-                    if !token.span.is_empty() {
-                        last = token.span;
-                    }
+        self.advance(); // `if`
+        let cond = self.parse_expr();
+        let then_branch = self.parse_block();
+
+        let else_branch = if self.eat(&TokenKind::Else).is_some() {
+            // `else if` with no `:` of its own chains into a nested `if`;
+            // `else:` gives a block, which is what the corpus writes.
+            let expr = if self.at(&TokenKind::If) {
+                self.parse_if_expr()
+            } else {
+                let block = self.parse_block();
+                let span = block.span;
+                Expr { kind: ExprKind::Block(block), span }
+            };
+            Some(Box::new(expr))
+        } else {
+            None
+        };
+
+        let span = start.merge(self.prev_span());
+        Expr {
+            kind: ExprKind::If(IfExpr { cond: Box::new(cond), then_branch, else_branch, span }),
+            span,
+        }
+    }
+
+    fn parse_match_expr(&mut self) -> Expr {
+        let start = self.span();
+        self.advance(); // `match`
+        let scrutinee = self.parse_expr();
+        let arms = self.parse_indented_body(Self::parse_match_arm);
+        let span = start.merge(self.prev_span());
+        Expr {
+            kind: ExprKind::Match(MatchExpr { scrutinee: Box::new(scrutinee), arms, span }),
+            span,
+        }
+    }
+
+    /// One arm. §4.4: the pattern is parsed by the pattern grammar, and
+    /// whatever follows it is the separator — there is no way to find the `:`
+    /// by scanning, because `:` also appears inside a struct pattern.
+    fn parse_match_arm(&mut self) -> Option<MatchArm> {
+        let start = self.span();
+        let pattern = self.parse_pattern();
+        let body = self.parse_arm_body();
+        Some(MatchArm { pattern, body, span: start.merge(self.prev_span()) })
+    }
+
+    // --- patterns --------------------------------------------------------
+
+    /// A pattern, alternatives included.
+    fn parse_pattern(&mut self) -> Pattern {
+        let start = self.span();
+        let first = self.parse_pattern_primary();
+        if !self.at(&TokenKind::Pipe) {
+            return first;
+        }
+        let mut alts = vec![first];
+        while self.eat(&TokenKind::Pipe).is_some() {
+            alts.push(self.parse_pattern_primary());
+        }
+        Pattern { kind: PatternKind::Or(alts), span: start.merge(self.prev_span()) }
+    }
+
+    /// One alternative: a literal, `_`, a binding, a variant, a struct or a
+    /// tuple.
+    ///
+    /// Unlike an expression, a pattern's path may span several segments: there
+    /// is no field access in a pattern, so a `.` can only be §4.5's qualified
+    /// variant, and a `[` can only be generic arguments.
+    fn parse_pattern_primary(&mut self) -> Pattern {
+        let start = self.span();
+
+        if let Some(literal) = literal_of(self.peek()) {
+            self.advance();
+            return Pattern { kind: PatternKind::Literal(literal), span: start };
+        }
+
+        match self.peek() {
+            TokenKind::Underscore => {
+                self.advance();
+                Pattern { kind: PatternKind::Wildcard, span: start }
+            }
+            TokenKind::Mut => {
+                self.advance();
+                match self.expect_ident() {
+                    Some(name) => Pattern {
+                        kind: PatternKind::Binding { mutable: true, name },
+                        span: start.merge(self.prev_span()),
+                    },
+                    None => Pattern { kind: PatternKind::Error, span: start },
                 }
             }
+            TokenKind::LParen => self.parse_paren_pattern(start),
+            TokenKind::Ident(_) => {
+                let Some(path) = self.parse_path() else {
+                    return Pattern { kind: PatternKind::Error, span: start };
+                };
+                if self.at(&TokenKind::LParen) {
+                    // Named fields mean a struct, positional ones a variant —
+                    // the same rule that decides the expression form (§4.4).
+                    // An empty list takes the variant form, as §4.4 requires.
+                    let kind = if self.at_named_args() {
+                        PatternKind::Struct { path, fields: self.parse_field_patterns() }
+                    } else {
+                        PatternKind::Variant { path, elems: self.parse_pattern_list() }
+                    };
+                    return Pattern { kind, span: start.merge(self.prev_span()) };
+                }
+                // A bare name is a binding until resolution says otherwise
+                // (§4.4). A qualified or generic one cannot be a binding, so
+                // it can only be a unit variant.
+                let bare = path.segments.len() == 1 && path.segments[0].generics.is_empty();
+                let kind = if bare {
+                    PatternKind::Binding { mutable: false, name: path.segments[0].name.clone() }
+                } else {
+                    PatternKind::Variant { path, elems: Vec::new() }
+                };
+                Pattern { kind, span: start.merge(self.prev_span()) }
+            }
+            _ => {
+                let found = describe(self.peek());
+                self.error(
+                    codes::EXPECTED_PATTERN,
+                    format!("expected a pattern, found {found}"),
+                    start,
+                );
+                if !self.at_list_boundary() {
+                    self.advance();
+                }
+                Pattern { kind: PatternKind::Error, span: start }
+            }
         }
-        start.merge(last)
     }
 
-    // --- next batch ------------------------------------------------------
+    /// `()`, `(p)` and `(a, b)`.
+    fn parse_paren_pattern(&mut self, start: Span) -> Pattern {
+        self.advance(); // `(`
+        if self.eat(&TokenKind::RParen).is_some() {
+            return Pattern { kind: PatternKind::Unit, span: start.merge(self.prev_span()) };
+        }
 
-    /// TODO(batch 2): `trait` declarations. The body is an indented list of
-    /// `fn` declarations, with and without bodies, which `parse_fn` and
-    /// `parse_indented_body` already handle between them.
-    fn parse_trait(&mut self, _is_pub: bool, _start: Span) -> Option<TraitDecl> {
-        todo!("trait declarations arrive in the next batch")
+        let first = self.parse_pattern();
+        if !self.at(&TokenKind::Comma) {
+            self.expect(&TokenKind::RParen, "`)`");
+            return first;
+        }
+
+        let mut elems = vec![first];
+        while self.eat(&TokenKind::Comma).is_some() {
+            if self.at(&TokenKind::RParen) {
+                break;
+            }
+            elems.push(self.parse_pattern());
+        }
+        self.expect(&TokenKind::RParen, "`)`");
+        Pattern { kind: PatternKind::Tuple(elems), span: start.merge(self.prev_span()) }
     }
 
-    /// TODO(batch 2): `impl Trait for Type` and `impl Type`.
-    fn parse_impl(&mut self, _start: Span) -> Option<ImplBlock> {
-        todo!("impl blocks arrive in the next batch")
+    /// The positional payload of a variant pattern.
+    fn parse_pattern_list(&mut self) -> Vec<Pattern> {
+        let mut elems = Vec::new();
+        if self.eat(&TokenKind::LParen).is_none() {
+            return elems;
+        }
+        while !self.at(&TokenKind::RParen) {
+            elems.push(self.parse_pattern());
+            if self.eat(&TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RParen, "`)`");
+        elems
     }
 
-    /// TODO(batch 2): statements. `let`, assignment, `return`, `break`,
-    /// `continue`, and expression statements.
-    #[allow(dead_code)]
-    fn parse_stmt(&mut self) -> Option<Stmt> {
-        todo!("statements arrive in the next batch")
+    /// The named fields of a struct pattern: `Doc(title: t, body: _)`.
+    fn parse_field_patterns(&mut self) -> Vec<FieldPattern> {
+        let mut fields = Vec::new();
+        if self.eat(&TokenKind::LParen).is_none() {
+            return fields;
+        }
+        while !self.at(&TokenKind::RParen) {
+            let start = self.span();
+            let parsed = self
+                .expect_ident()
+                .filter(|_| self.expect(&TokenKind::Colon, "`:`").is_some())
+                .map(|name| {
+                    let pattern = self.parse_pattern();
+                    FieldPattern { name, pattern, span: start.merge(self.prev_span()) }
+                });
+            match parsed {
+                Some(field) => fields.push(field),
+                None => self.recover_in_brackets(),
+            }
+            if self.eat(&TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RParen, "`)`");
+        fields
     }
 
-    /// TODO(batch 2): expressions, by precedence climbing over §4.4's table.
-    #[allow(dead_code)]
-    fn parse_expr(&mut self) -> Expr {
-        todo!("expressions arrive in the next batch")
+    // --- traits and impls ------------------------------------------------
+
+    /// `trait Name[T]: Super + Other where ..:` followed by an indented list
+    /// of methods, with or without bodies.
+    fn parse_trait(&mut self, is_pub: bool, start: Span) -> Option<TraitDecl> {
+        self.advance(); // `trait`
+        let name = self.expect_ident()?;
+        let generics = self.parse_generic_params();
+
+        // Two colons can follow, and only one of them is ever present at a
+        // time in the corpus: the one that introduces supertraits is followed
+        // by a name, the one that opens the body by the end of the line.
+        let supertraits = if self.at(&TokenKind::Colon)
+            && !matches!(self.peek_ahead(1), TokenKind::Newline)
+        {
+            self.advance();
+            self.parse_bounds()
+        } else {
+            Vec::new()
+        };
+
+        let where_clause = self.parse_where_clause();
+        let methods = self.parse_indented_body(Self::parse_method);
+
+        Some(TraitDecl {
+            is_pub,
+            name,
+            generics,
+            supertraits,
+            where_clause,
+            methods,
+            span: start.merge(self.prev_span()),
+        })
     }
 
-    /// TODO(batch 2): patterns, including alternatives with `|`.
-    #[allow(dead_code)]
-    fn parse_pattern(&mut self) -> Pattern {
-        todo!("patterns arrive in the next batch")
+    /// `impl Trait for Type:`, `impl Type:` and the block-less marker form.
+    ///
+    /// §4.3 gives all three: an inherent impl has no trait and its bodiless
+    /// functions are associated functions, and `impl Copy for Point` on one
+    /// line with no `:` is how a trait with no methods is implemented, "since
+    /// there is nothing to indent".
+    fn parse_impl(&mut self, start: Span) -> Option<ImplBlock> {
+        self.advance(); // `impl`
+        let generics = self.parse_generic_params();
+
+        // The first type is the trait when a `for` follows and the self type
+        // otherwise, and nothing before the `for` says which it will be.
+        let first = self.parse_type();
+        let (trait_, self_ty) = if self.eat(&TokenKind::For).is_some() {
+            (Some(self.type_as_bound(first)?), self.parse_type())
+        } else {
+            (None, first)
+        };
+
+        let where_clause = self.parse_where_clause();
+
+        let methods = if self.at(&TokenKind::Colon) {
+            self.parse_indented_body(Self::parse_method)
+        } else {
+            if self.at(&TokenKind::Newline) && matches!(self.peek_ahead(1), TokenKind::Indent) {
+                // An indented body with nothing introducing it is a missing
+                // `:`, and saying so here points at the header rather than at
+                // the first method.
+                let span = self.span();
+                self.error(codes::EXPECTED_BLOCK, "expected `:` before the `impl` body", span);
+                self.advance();
+                self.skip_indented_region();
+            } else {
+                // The marker form: one line, no block, no methods.
+                self.expect_line_end();
+            }
+            Vec::new()
+        };
+
+        Some(ImplBlock {
+            generics,
+            trait_,
+            self_ty,
+            where_clause,
+            methods,
+            span: start.merge(self.prev_span()),
+        })
+    }
+
+    /// A trait is named by a path, so anything else in front of `for` is an
+    /// error rather than something a later phase could make sense of.
+    fn type_as_bound(&mut self, ty: Type) -> Option<TypeBound> {
+        match ty.kind {
+            TypeKind::Path(path) => Some(TypeBound { path, span: ty.span }),
+            TypeKind::Error => None,
+            _ => {
+                self.error(
+                    codes::EXPECTED_TRAIT,
+                    "expected a trait name before `for`",
+                    ty.span,
+                );
+                None
+            }
+        }
+    }
+
+    /// One method of a `trait` or `impl` body.
+    fn parse_method(&mut self) -> Option<FnDecl> {
+        let start = self.span();
+        let is_pub = self.eat(&TokenKind::Pub).is_some();
+        if !self.at(&TokenKind::Fn) {
+            let found = describe(self.peek());
+            self.error(
+                codes::EXPECTED_METHOD,
+                format!("expected a method declaration beginning with `fn`, found {found}"),
+                start,
+            );
+            return None;
+        }
+        self.parse_fn(is_pub, start)
     }
 }
 
 fn empty_block(span: Span) -> Block {
     Block { stmts: Vec::new(), tail: None, span: Span::at(span.file, span.start) }
+}
+
+fn error_expr(span: Span) -> Expr {
+    Expr { kind: ExprKind::Error, span }
+}
+
+/// Whether `expr` is a name that could still take generic arguments.
+///
+/// `Array` can; `Array[Int]` already has them, and a call, a field or a
+/// literal never could.
+fn instantiable_path(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Path(path) => {
+            path.segments.last().is_some_and(|segment| segment.generics.is_empty())
+        }
+        _ => false,
+    }
+}
+
+/// Turns a finished list of statements into a block, splitting off the tail.
+///
+/// §4.3: "a function's value is its last expression". Splitting that
+/// expression out here means no later phase has to re-derive which statement
+/// the block evaluates to, and a statement that is *not* an expression simply
+/// leaves the block with no tail.
+///
+/// `start` is where the block's contents begin; it is only used when there are
+/// no statements at all, since a span has to point somewhere.
+fn finish_block(mut stmts: Vec<Stmt>, start: Span) -> Block {
+    let tail = match stmts.last() {
+        Some(Stmt { kind: StmtKind::Expr(_), .. }) => match stmts.pop() {
+            Some(Stmt { kind: StmtKind::Expr(expr), .. }) => Some(Box::new(expr)),
+            _ => unreachable!("just matched an expression statement"),
+        },
+        _ => None,
+    };
+
+    let mut span = None;
+    for stmt in &stmts {
+        span = Some(span.map_or(stmt.span, |s: Span| s.merge(stmt.span)));
+    }
+    if let Some(tail) = &tail {
+        span = Some(span.map_or(tail.span, |s: Span| s.merge(tail.span)));
+    }
+
+    Block {
+        stmts,
+        tail,
+        span: span.unwrap_or_else(|| Span::at(start.file, start.start)),
+    }
+}
+
+/// The literal a token stands for, or `None` when it is not one.
+///
+/// Shared by expressions and patterns, which take literals from exactly the
+/// same set: the two would otherwise drift apart silently.
+fn literal_of(kind: &TokenKind) -> Option<Literal> {
+    Some(match kind {
+        TokenKind::Int { value, base, suffix } => {
+            Literal::Int { value: *value, base: *base, suffix: *suffix }
+        }
+        TokenKind::Float { value, suffix } => Literal::Float { value: *value, suffix: *suffix },
+        TokenKind::Str(value) => Literal::Str(value.clone()),
+        TokenKind::Char(value) => Literal::Char(*value),
+        TokenKind::True => Literal::Bool(true),
+        TokenKind::False => Literal::Bool(false),
+        _ => return None,
+    })
+}
+
+/// §4.4's precedence table, as an operator and the rung it sits on.
+///
+/// Higher binds tighter. The rows above `*` — unary, `as`, and the postfix
+/// chain — are not here: they are not infix, so they belong to the descent
+/// rather than to the climb. `=` is not here either, and §4.4 says why: it is
+/// a statement, not an operator.
+fn binary_op(kind: &TokenKind) -> Option<(BinaryOp, u8)> {
+    use TokenKind as T;
+    Some(match kind {
+        T::Or => (BinaryOp::Or, 1),
+        T::And => (BinaryOp::And, 2),
+
+        T::EqEq => (BinaryOp::Eq, 3),
+        T::NotEq => (BinaryOp::Ne, 3),
+        T::Lt => (BinaryOp::Lt, 3),
+        T::Gt => (BinaryOp::Gt, 3),
+        T::LtEq => (BinaryOp::Le, 3),
+        T::GtEq => (BinaryOp::Ge, 3),
+
+        T::Pipe => (BinaryOp::BitOr, 4),
+        T::Caret => (BinaryOp::BitXor, 5),
+        T::Amp => (BinaryOp::BitAnd, 6),
+
+        T::Shl => (BinaryOp::Shl, 7),
+        T::Shr => (BinaryOp::Shr, 7),
+
+        T::Plus => (BinaryOp::Add, 8),
+        T::Minus => (BinaryOp::Sub, 8),
+
+        T::Star => (BinaryOp::Mul, 9),
+        T::Slash => (BinaryOp::Div, 9),
+        T::Percent => (BinaryOp::Rem, 9),
+
+        _ => return None,
+    })
 }
 
 // --- naming tokens in messages -------------------------------------------

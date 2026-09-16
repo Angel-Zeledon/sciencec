@@ -3,6 +3,13 @@ name = "link-rt"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Minimal runtime statically linked into every Link binary."
+
+# `rlib` so the compiler's own test suite and the integration tests here can
+# link it as a Rust crate; `staticlib` so `linkc` can hand the archive to the
+# system linker when producing a native Link binary.
+[lib]
+crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 

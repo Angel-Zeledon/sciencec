@@ -1,0 +1,18 @@
+---
+source: crates/link-resolve/tests/snapshots.rs
+expression: "report_crate(vec![(\"main.link\", main), (\"text/parser.link\", parser),])"
+---
+Module `main` #41 @12..72
+  Fn `f` #44 @42..72
+    params
+      Param `t` #47 @44..51
+        type: Path -> `Token` #45 @44..49
+    body: Block @52..72
+      tail: Call @52..70
+        callee: Path -> `lex` #46 @52..67
+Module `parser` #43 @0..11
+  Struct `Token` #45 @0..5
+  Fn `lex` #46 @6..11
+    body: Block @10..11
+--- diagnostics ---
+LK0202 @34..41 `missing` is not defined in `text.parser`

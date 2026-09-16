@@ -1,0 +1,13 @@
+---
+source: crates/link-parser/tests/parse_exprs.rs
+expression: "parse_source_allowing_errors(\"fn f():\\n    (a)(title: 1)\\n\")"
+---
+Module @0..26
+  Fn `f` @0..26
+    body: Block @12..25
+      tail: StructLit `a` @12..25
+        fields
+          FieldInit `title` @16..24
+            value: Int 1 @23..24
+--- diagnostics ---
+(none)

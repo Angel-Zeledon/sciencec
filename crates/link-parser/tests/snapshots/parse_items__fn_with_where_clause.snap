@@ -22,5 +22,6 @@ Module @0..56
         bounds
           Bound `Eq` @52..54
     body: Block @55..56
+      tail: Path `x` @55..56
 --- diagnostics ---
 (none)

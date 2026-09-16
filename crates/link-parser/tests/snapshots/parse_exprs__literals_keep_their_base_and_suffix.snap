@@ -1,0 +1,29 @@
+---
+source: crates/link-parser/tests/parse_exprs.rs
+expression: "parse_body(r#\"fn main():\n    let a = 42\n    let b = 0xFF\n    let c = 0b1010\n    let d = 0o777\n    let e = 42i32\n    let f = 3.14\n    let g = 2.5f32\n    let h = \"text\"\n    let i = 'x'\n    let j = true\n    let k = false\n\"#)"
+---
+Block @15..203
+  Let `a` @15..25
+    value: Int 42 @23..25
+  Let `b` @30..42
+    value: Int 255 hex @38..42
+  Let `c` @47..61
+    value: Int 10 bin @55..61
+  Let `d` @66..79
+    value: Int 511 oct @74..79
+  Let `e` @84..97
+    value: Int 42 i32 @92..97
+  Let `f` @102..114
+    value: Float 3.14 @110..114
+  Let `g` @119..133
+    value: Float 2.5 f32 @127..133
+  Let `h` @138..152
+    value: Str "text" @146..152
+  Let `i` @157..168
+    value: Char 'x' @165..168
+  Let `j` @173..185
+    value: Bool true @181..185
+  Let `k` @190..203
+    value: Bool false @198..203
+--- diagnostics ---
+(none)

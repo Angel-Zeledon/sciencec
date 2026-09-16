@@ -1,0 +1,38 @@
+---
+source: crates/link-parser/tests/parse_exprs.rs
+expression: "parse_source(r#\"fn render(token: &Token, format: &Format) -> String:\n    match token:\n        Number(value):\n            match format:\n                Json: value.json()\n                Plain: value.text()\n        Eof: \"\"\n\"#)"
+---
+Module @0..206
+  Fn `render` @0..206
+    params
+      Param `token` @10..23
+        type: Ref @17..23
+          Path `Token` @18..23
+      Param `format` @25..40
+        type: Ref @33..40
+          Path `Format` @34..40
+    ret: Path `String` @45..51
+    body: Block @57..206
+      tail: Match @57..206
+        scrutinee: Path `token` @63..68
+        arms
+          Arm @78..198
+            pattern: Variant `Number` @78..91
+              Binding `value` @85..90
+            body: Block @105..198
+              tail: Match @105..198
+                scrutinee: Path `format` @111..117
+                arms
+                  Arm @135..153
+                    pattern: Binding `Json` @135..139
+                    body: Method `json` @141..153
+                      receiver: Path `value` @141..146
+                  Arm @170..189
+                    pattern: Binding `Plain` @170..175
+                    body: Method `text` @177..189
+                      receiver: Path `value` @177..182
+          Arm @198..205
+            pattern: Binding `Eof` @198..201
+            body: Str "" @203..205
+--- diagnostics ---
+(none)

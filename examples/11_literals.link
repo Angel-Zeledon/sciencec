@@ -4,6 +4,9 @@
 # Covers: decimal, hex, binary and octal integers, digit separators, every
 # integer and float type suffix, exponent notation, every string escape,
 # character literals, booleans, and unit.
+#
+# §4.1 lists the escapes as `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0` and
+# `\u{...}`. All eight appear below, in a string and in a character.
 
 fn main():
     # --- Integers, decimal --------------------------------------------------
@@ -62,8 +65,9 @@ fn main():
     let backslash = "a\\b"
     let quote = "she said \"hi\""
     let nul = "ends here\0"
+    let single_quote = "it\'s escaped here, though inside a string it need not be"
     let codepoint = "\u{1F600}"
-    let every_escape = "\n\t\r\\\"\0\u{1F600}"
+    let every_escape = "\n\t\r\\\"\'\0\u{1F600}"
 
     # --- Characters ---------------------------------------------------------
     let letter = 'a'
@@ -75,6 +79,8 @@ fn main():
     let escaped_return = '\r'
     let escaped_backslash = '\\'
     let escaped_nul = '\0'
+    let escaped_quote = '\"'
+    let escaped_single_quote = '\''
     let escaped_codepoint = '\u{1F600}'
     let non_ascii = 'ñ'
 

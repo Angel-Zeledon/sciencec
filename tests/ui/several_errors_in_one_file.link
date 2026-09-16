@@ -1,0 +1,18 @@
+# UI test: several distinct lexical errors in one file.
+#
+# The lexer never aborts: every error becomes a diagnostic plus whatever
+# token keeps the stream usable, so one pass reports all of them. That is
+# what this case pins down -- not any single message, but the fact that six
+# different codes come out of a single run, in source order.
+#
+# LK0001 unknown character, LK0003 tab in the indentation, LK0006 unknown
+# escape, LK0007 unterminated string, LK0009 invalid suffix, LK0010
+# malformed number.
+
+fn main():
+    let tagged = 1 $ 2
+    let path = "C:\users"
+    let open = "never closed
+    let counted = 42q
+    let mask = 0b1012
+	let indented_with_a_tab = 0

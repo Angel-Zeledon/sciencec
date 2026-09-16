@@ -1,8 +1,13 @@
 //! Helpers shared by the parser's integration tests.
 //!
-//! The lexer is being written in parallel, so these tests never call it. They
-//! build token streams by hand and hand them straight to the parser. That also
-//! keeps the parser's tests honest: they test the parser, not the lexer.
+//! There are two ways in. `stream` builds a token stream by hand: it is what a
+//! test about one exact token sequence wants, and it keeps that test honest by
+//! testing the parser rather than the lexer. `parse_source` and its relatives
+//! go through the real lexer, which is what the expression, statement and
+//! pattern tests use — a precedence test written as forty `TokenKind`s is
+//! unreadable, and a typo in the stream is indistinguishable from a bug in the
+//! parser. Those helpers assert the input lexes clean, so the distinction
+//! never silently blurs.
 
 #![allow(dead_code)]
 
@@ -118,4 +123,101 @@ pub fn parse_report(kinds: Vec<TokenKind>) -> String {
     let tokens = stream(kinds);
     let (module, diagnostics) = link_parser::parse_module(&tokens, FILE);
     report(&module, &diagnostics)
+}
+
+// --- source-driven helpers ------------------------------------------------
+
+/// Lexes `source` and parses it, rendering the result for a snapshot.
+///
+/// The hand-built streams above stay where a test is about one exact token
+/// sequence. For expressions, statements and patterns they stop paying: a
+/// precedence test is unreadable as forty `TokenKind`s, and a mistake in the
+/// stream looks exactly like a bug in the parser. These go through the real
+/// lexer instead, so what the test shows is what a programmer would write.
+///
+/// The lexer's own diagnostics are folded in, so a test can never pass by
+/// silently mis-lexing its input.
+pub fn parse_source(source: &str) -> String {
+    let (tokens, lex_diagnostics) = link_lexer::lex(FILE, source);
+    assert!(
+        lex_diagnostics.is_empty(),
+        "the source of this test does not lex cleanly: {:?}",
+        lex_diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
+    );
+    let (module, diagnostics) = link_parser::parse_module(&tokens, FILE);
+    report(&module, &diagnostics)
+}
+
+/// The same, for sources that are *meant* to produce diagnostics: the lexer's
+/// are kept apart so a snapshot shows which phase complained.
+pub fn parse_source_allowing_errors(source: &str) -> String {
+    let (tokens, _lex_diagnostics) = link_lexer::lex(FILE, source);
+    let (module, diagnostics) = link_parser::parse_module(&tokens, FILE);
+    report(&module, &diagnostics)
+}
+
+/// Parses `source` and returns only the dump of the first function's body,
+/// which is where a statement or expression test actually looks.
+pub fn parse_body(source: &str) -> String {
+    let (tokens, lex_diagnostics) = link_lexer::lex(FILE, source);
+    assert!(lex_diagnostics.is_empty(), "the source of this test does not lex cleanly");
+    let (module, diagnostics) = link_parser::parse_module(&tokens, FILE);
+    let mut out = String::new();
+    for item in &module.items {
+        if let link_parser::ast::ItemKind::Fn(decl) = &item.kind {
+            if let Some(body) = &decl.body {
+                out.push_str(&body.dump());
+            }
+        }
+    }
+    out.push_str("--- diagnostics ---\n");
+    if diagnostics.is_empty() {
+        out.push_str("(none)\n");
+    }
+    for diagnostic in diagnostics.iter() {
+        let span = diagnostic
+            .primary_span()
+            .map(|s| format!("@{}..{}", s.start, s.end))
+            .unwrap_or_else(|| "@?".to_string());
+        out.push_str(&format!("{} {} {}\n", diagnostic.code, span, diagnostic.message));
+    }
+    out
+}
+
+/// The dump of the single expression `source` is a binding for, with spans
+/// stripped. Precedence and associativity are about *shape*, and a span on
+/// every line buries the shape the test is checking.
+pub fn shape_of_expr(source: &str) -> String {
+    let wrapped = format!("fn f():\n    let x = {source}\n");
+    let (tokens, lex_diagnostics) = link_lexer::lex(FILE, &wrapped);
+    assert!(lex_diagnostics.is_empty(), "the source of this test does not lex cleanly");
+    let (module, diagnostics) = link_parser::parse_module(&tokens, FILE);
+    assert!(
+        diagnostics.is_empty(),
+        "`{source}` did not parse: {:?}",
+        diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
+    );
+
+    let value = let_value(&module)
+        .unwrap_or_else(|| panic!("`{source}` did not produce a `let` value"));
+    strip_spans(&value)
+}
+
+/// The dump of the value of the first `let` in the first function.
+fn let_value(module: &Module) -> Option<String> {
+    use link_parser::ast::{ItemKind, StmtKind};
+    let ItemKind::Fn(decl) = &module.items.first()?.kind else { return None };
+    let StmtKind::Let(binding) = &decl.body.as_ref()?.stmts.first()?.kind else { return None };
+    Some(binding.value.dump())
+}
+
+/// Drops the `@start..end` suffix from every line of a dump.
+pub fn strip_spans(dump: &str) -> String {
+    dump.lines()
+        .map(|line| match line.rfind(" @") {
+            Some(at) => &line[..at],
+            None => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }

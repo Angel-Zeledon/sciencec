@@ -14,5 +14,6 @@ Module @0..41
     ret: Ref @32..39
       Path `String` @33..39
     body: Block @40..41
+      tail: Path `a` @40..41
 --- diagnostics ---
 (none)

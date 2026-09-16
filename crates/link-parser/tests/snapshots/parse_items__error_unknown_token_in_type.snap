@@ -8,5 +8,6 @@ Module @0..10
       Param `a` @4..7
         type: Error @6..7
     body: Block @9..10
+      tail: Path `x` @9..10
 --- diagnostics ---
 LK0104 @6..7 expected a type, found `%`

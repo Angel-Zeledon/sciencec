@@ -12,7 +12,10 @@
 #   == != < > <= >=
 #   and
 #   or
-#   =                   (assignment, non-associative)
+#
+# Assignment is deliberately absent from that table: §4.4 says `x = y` is a
+# statement, not an expression, which is why `let x = if c: a = b else: c` is
+# not grammatical. It is still exercised below, as a statement.
 
 struct Point:
     x: Int
@@ -23,6 +26,11 @@ struct Registry:
 
 fn origin() -> Point:
     Point(x: 0, y: 0)
+
+# `?` sits at the tightest level, next to call and field access.
+fn first_x(registry: &Registry) -> Option[Int]:
+    let first = registry.points.get(0)?
+    Some(first.x)
 
 fn main():
     let mut a = 10
@@ -85,17 +93,28 @@ fn main():
     let negate_then_cast = -a as F64
 
     # --- Calls, indexing, field access and `?` are the tightest -------------
-    let registry = Registry(points: Array())
+    #
+    # §8 says `Array` and `Map` are read through `get`, which returns an
+    # `Option`: there is no indexing operator that can panic. The `[...]`
+    # postfix of the precedence table is therefore exercised where it does
+    # appear in expressions — naming a generic instantiation before calling
+    # one of its associated functions.
+    let registry = Registry(points: Array[Point].new())
     let point = origin()
     let field = point.x
-    let nested_field = registry.points.get(0).y
-    let indexed = registry.points[0]
-    let indexed_field = registry.points[0].x
+    let indexed_then_called = Array[Point].new()
+    let indexed_then_field_then_called = Map[String, Int].new().len()
     let called_then_field = origin().y
     let negated_field = -point.x
     let field_arithmetic = point.x * 2 + point.y
 
-    # --- Assignment, lowest and non-associative -----------------------------
+    # Field access through an `Option` goes via `match`, since `get` is the
+    # only accessor.
+    let nested_field = match registry.points.get(0):
+        Some(first): first.y
+        None: 0
+
+    # --- Assignment, which is a statement rather than an operator -----------
     a = b
     a = a + 1
     a = if flag: 1 else: 2
@@ -110,3 +129,8 @@ fn main():
 
     println(bit_precedence)
     println(logical_precedence)
+    println(nested_field)
+
+    match first_x(&registry):
+        Some(x): println(x)
+        None: println("no points")

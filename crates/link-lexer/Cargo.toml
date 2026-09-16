@@ -9,3 +9,4 @@ link-diagnostics.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+link-testkit.workspace = true
