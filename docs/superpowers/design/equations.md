@@ -661,7 +661,7 @@ The derivative is not a demo. Three callers exist in sibling notes today.
 **`optimize` §8.6 has a hole shaped exactly like this.** Its signature reads:
 
 ```science
-gradient: (def(borrowed Vector of (F64, N)) -> Vector of (F64, N))?,
+gradient: ((borrowed Vector of (F64, N)) -> Vector of (F64, N))?,
 ```
 
 with the comment *"given one, lbfgs uses it; without one it falls back to finite

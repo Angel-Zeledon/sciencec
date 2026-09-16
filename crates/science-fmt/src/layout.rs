@@ -49,6 +49,12 @@ impl Group {
     }
 }
 
+/// A half-open run of a group's items that share one output line.
+struct Row {
+    start: usize,
+    end: usize,
+}
+
 /// One comma-separated item. `hi` excludes the comma, which the layout prints
 /// itself so that it lands at the end of the item's last physical line.
 struct Item {
@@ -402,21 +408,77 @@ impl<'a> Layout<'a> {
         let mut out = vec![pad(indent) + &self.flat(lo, group.open + 1)];
         let mut anchor = self.end_of(group.open);
 
-        for item in &group.items {
-            self.place_comments(anchor, self.start_of(item.lo), inner, &mut out);
-            out.extend(self.lay_out(item.lo, item.hi, inner)?);
-            if item.comma.is_some() {
-                out.last_mut().expect("the head line is always there").push(',');
+        for row in self.rows(group) {
+            let (head, tail) = (&group.items[row.start], &group.items[row.end - 1]);
+            self.place_comments(anchor, self.start_of(head.lo), inner, &mut out);
+            if row.end - row.start == 1 {
+                // One item on the line: lay it out properly, so that an item
+                // that is itself too long can still break inside itself.
+                out.extend(self.lay_out(head.lo, head.hi, inner)?);
+                if head.comma.is_some() {
+                    out.last_mut().expect("the head line is always there").push(',');
+                }
+            } else {
+                // Several items the author put on one line: print the run
+                // exactly as one line, commas and all.
+                let end = tail.comma.map_or(tail.hi, |comma| comma + 1);
+                out.push(pad(inner) + &self.flat(head.lo, end));
             }
-            anchor = match item.comma {
+            anchor = match tail.comma {
                 Some(comma) => self.end_of(comma),
-                None => self.end_of(item.hi - 1),
+                None => self.end_of(tail.hi - 1),
             };
         }
 
         self.place_comments(anchor, self.start_of(group.close), inner, &mut out);
         out.push(pad(indent) + &self.flat(group.close, hi));
         Some(out)
+    }
+
+    /// How the items of an exploded group are shared out between lines.
+    ///
+    /// Normally one item per line. The exception is the third state of the
+    /// magic trailing comma described in [`crate`]: a group that has one *and*
+    /// whose items are already spread over more than one line, with at least
+    /// one line holding more than one item, keeps exactly the assignment the
+    /// author wrote. That is `examples/20_extern.science`'s `cblas_dgemm`,
+    /// where `m: BlasInt, n: BlasInt, k: BlasInt` share a line because the
+    /// dimension triple is one thing in the C prototype.
+    ///
+    /// It stays idempotent because the rule is a fixpoint: the output puts the
+    /// items on exactly the lines the input did, so a second pass reads the
+    /// same assignment back and reaches the same answer.
+    ///
+    /// A group with a comment inside it falls back to one item per line. A
+    /// comment belongs to an item, a line the author packed may hold three,
+    /// and there is no way to say which of the three it was against.
+    fn rows(&self, group: &Group) -> Vec<Row> {
+        let one_each =
+            || (0..group.items.len()).map(|i| Row { start: i, end: i + 1 }).collect::<Vec<Row>>();
+        if !group.magic_comma() || group.items.len() < 2 {
+            return one_each();
+        }
+        if !self.comments_in(self.end_of(group.open), self.start_of(group.close)).is_empty() {
+            return one_each();
+        }
+
+        let mut rows: Vec<Row> = Vec::new();
+        let mut previous = usize::MAX;
+        for (i, item) in group.items.iter().enumerate() {
+            let at = self.line_at(self.start_of(item.lo));
+            match rows.last_mut() {
+                Some(row) if at == previous => row.end = i + 1,
+                _ => rows.push(Row { start: i, end: i + 1 }),
+            }
+            previous = at;
+        }
+        // All on one line is the ordinary magic comma: the author asked for
+        // the list to be exploded and there is no grouping to preserve.
+        if rows.len() < 2 || rows.len() == group.items.len() {
+            one_each()
+        } else {
+            rows
+        }
     }
 
     /// Puts the comments written between two tokens back.

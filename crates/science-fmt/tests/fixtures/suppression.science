@@ -1,0 +1,62 @@
+# The escape hatch, in every form it has, and in the forms that are not one.
+type Config:
+    host: String
+    port: U16
+
+def main():
+    # A region. The operators sit where the author put them, which is what
+    # this expression exists to show, and which no trailing comma can hold
+    # because a parenthesized expression has no commas.
+    # fmt: off
+    let arithmetic be (
+        1 +
+        2 *
+        3
+        - 4
+    )
+    # fmt: on
+
+    # The same expression without a marker is one line.
+    let joined be (
+        1 +
+        2 *
+        3
+        - 4
+    )
+
+    # One statement, not a region.
+    # fmt: skip
+    let predicate be (
+        a
+        and b
+        or c
+    )
+
+    # A marker at the end of a line is Black's spelling and does nothing here:
+    # a logical line can span a dozen physical lines, so a trailing comment on
+    # one lands four lines below what it would govern.
+    let trailing be (
+        1 +
+        2
+    )  # fmt: skip
+
+    # Nor does one inside a bracket, where it would be a comment the layout
+    # has to place rather than one that tells the layout to stop.
+    let inside be call(
+        # fmt: off
+        1,
+    )
+
+    # A third state of the trailing comma, and no marker at all: the items
+    # stay on the lines the author shared them out over.
+    dgemm(
+        m: 1, n: 2, k: 3,
+        alpha: 1.0,
+        a: left, lda: 4,
+        b: right, ldb: 5,
+    )
+
+    # The same call with no trailing comma has nothing holding it open.
+    dgemm(
+        m: 1, n: 2, k: 3,
+        alpha: 1.0)

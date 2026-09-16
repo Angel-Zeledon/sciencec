@@ -1,0 +1,26 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_source_allowing_errors(\"def f of (const N: Int, const M: Int)(w: Grid of (Int, N * M)):\n    print(\\\"x\\\")\n\")"
+---
+Module @0..79
+  Fn `f` @0..78
+    generics
+      ConstParam `N` @10..22
+        type: Path `Int` @19..22
+      ConstParam `M` @24..36
+        type: Path `Int` @33..36
+    params
+      Param `w` @38..61
+        type: Path `Grid` @41..61
+          generics of `Grid`
+            Path `Int` @50..53
+            ConstArg @55..60
+              ConstParam `N` @55..56
+    body: Block @68..78
+      tail: Call @68..78
+        callee: Path `print` @68..73
+        args
+          Str "x" @74..77
+--- diagnostics ---
+SC0157 @57..58 a const expression multiplies only by a literal
+  note `const-expression-arithmetic.md` §2.1 keeps const arithmetic linear by grammar: two parameters may be added, never multiplied

@@ -1302,7 +1302,7 @@ Justified by §1.2, one row at a time:
 
 Three notes currently disagree about how to call `sqrt`:
 
-- `scientific-libraries.md` §5.11: `def sqrt(x: F64) returns F64` — a free
+- `scientific-libraries.md` §5.11: `def sqrt(x: F64) -> F64` — a free
   function in `math`.
 - `strings-formatting-and-docs.md` §6.1: `σ * Δt.square_root() * θ.cos()` — methods.
 - `data-io.md` §11.4 flags it as open: *"`square_root()` and the reductions belong
@@ -1390,7 +1390,7 @@ F64 has:
 ## syntax. Not Level 1: the method and tolerance are arguments, so it has
 ## variants by construction (§1.2 Q4).
 def integrate(
-    f: def(F64) -> F64,
+    f: (F64) -> F64,
     lower: F64,
     upper: F64,
 ) -> (F64, QuadratureError?)
@@ -1522,7 +1522,7 @@ Stated so the seams are visible, in the manner `data-io.md` §11 uses.
 
 **Of `scientific-libraries.md`:**
 
-12. **§5.11: `def sqrt(x: F64) returns F64` is the Level 2 form.** The Level 1
+12. **§5.11: `def sqrt(x: F64) -> F64` is the Level 2 form.** The Level 1
     spelling is the method (§8.2). The mapping is mechanical and nothing in the
     catalogue's substance changes.
 

@@ -148,6 +148,31 @@ pub fn literal_too_large(span: Span) -> Diagnostic {
         )
 }
 
+/// A const expression naming something that does not resolve.
+///
+/// Resolution has already reported the unresolved name. This exists so that
+/// lowering has something to return rather than a panic, and it is a
+/// **warning-free silent refusal by design**: the caller drops it, because a
+/// second diagnostic for one mistake is how a compiler acquires cascades.
+pub fn unresolved_const_param(span: Span) -> Diagnostic {
+    Diagnostic::error(codes::NOT_A_CONST_EXPRESSION, "this name did not resolve")
+        .with_label(Label::primary(span, "reported already"))
+}
+
+/// `e / k` — division, which is §4's quotient and is not in F0.
+///
+/// Refused rather than lowered. The normaliser has no rule for a quotient
+/// atom, so accepting this would mean normalising it wrongly, and a checker
+/// that asserts a false equality is worse than one that admits less: the
+/// first is a miscompilation and the second is a diagnostic.
+pub fn division_is_f1(span: Span) -> Diagnostic {
+    Diagnostic::error(codes::NOT_A_CONST_EXPRESSION, "a const expression cannot divide yet")
+        .with_label(Label::primary(span, "division in a const expression is F1"))
+        .with_note(
+            "`const-expression-arithmetic.md` §4 specifies the quotient atom; F0 is the              quotient-free fragment, and multiplying by a literal is what F0 offers instead",
+        )
+}
+
 /// Arithmetic inside a const expression left the range of `i128`.
 ///
 /// The blame lands on the node whose arithmetic overflowed, which is narrower

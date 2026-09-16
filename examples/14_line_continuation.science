@@ -82,7 +82,7 @@ def named_hosts(configs: borrowed Array of Config) -> Array of String:
             config giving config.host,
         )
         # A comment-only line takes no part (§4.2), and the chain survives it.
-        .collect()          # a trailing comment on the last link
+        .collect()  # a trailing comment on the last link
 
 def main():
     # A call whose arguments are on separate lines.
@@ -103,6 +103,10 @@ def main():
     # A deeply nested call: the indentation inside is free-form. A parameter
     # declared `borrowed` is borrowed at the call site without the caller
     # writing anything (§6.3), so `config.host` is passed plainly.
+    #
+    # The free-form indentation is the demonstration, so it is held against
+    # `sciencec fmt`, which would otherwise put every argument on one level.
+    # fmt: skip
     let nested be connect(
         config.host,
             config.port,
@@ -110,7 +114,10 @@ def main():
     )
 
     # A parenthesized expression continuing across lines. Operators may sit
-    # at the end or the start of a line.
+    # at the end or the start of a line. A parenthesized expression has no
+    # commas, so there is no trailing comma to hold it open and the marker is
+    # the only thing that can.
+    # fmt: skip
     let arithmetic be (
         1 +
         2 *
@@ -118,7 +125,9 @@ def main():
         - 4
     )
 
-    # A long boolean expression, one operand per line.
+    # A long boolean expression, one operand per line — held open by a marker
+    # rather than by a comma it cannot have.
+    # fmt: skip
     let predicate be (
         config.port > 0u16
         and config.retries > 0u8
@@ -128,12 +137,14 @@ def main():
     # Naming a generic instantiation before an associated def call needs
     # parentheses (§4.3, `SC0116`), and those parentheses continue like any
     # other, trailing comma included (§4.7).
-    let items be (Array of (
-        Outcome of (
-            Config,
-            String,
+    let items be (
+        Array of (
+            Outcome of (
+                Config,
+                String,
+            )
         )
-    )).new()
+    ).new()
     let element be items.get(
         0,
     )
@@ -141,8 +152,8 @@ def main():
     # A comment inside brackets is still a comment to end of line, and the
     # continuation survives it.
     let commented be connect(
-        "localhost",   # the host
-        8080u16,       # the port
+        "localhost",  # the host
+        8080u16,  # the port
         # a whole line of comment
         3u8,
     )

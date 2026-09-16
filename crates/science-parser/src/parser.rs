@@ -131,6 +131,13 @@ pub mod codes {
     /// takes the next block the allocation map records as free.
     pub const TRY_WORD: Code = Code(155);
 
+    /// `a * b` where neither side is an integer literal.
+    ///
+    /// `const-expression-arithmetic.md` §2.1 keeps const arithmetic linear
+    /// by the shape of its productions rather than by a check, so this is
+    /// the one place the shape has to be defended.
+    pub const CONST_FACTOR: Code = Code(157);
+
     /// The word `function`, which revision 3 replaced with `def`.
     ///
     /// This is the migration every model will need, because a model's priors
@@ -1978,6 +1985,7 @@ impl<'t> Parser<'t> {
     /// significant in one of the two positions and not the other would be a
     /// rule with exactly one instance in the language.
     fn parse_generic_arg(&mut self) -> Type {
+        let start = self.span();
         if self.at(&TokenKind::Minus) && matches!(self.peek_ahead(1), TokenKind::Int { .. }) {
             let minus = self.advance().span;
             let literal = literal_of(self.peek())
@@ -1985,10 +1993,160 @@ impl<'t> Parser<'t> {
             let operand_span = self.advance().span;
             let span = minus.merge(operand_span);
             let operand = ConstExpr { kind: ConstExprKind::Lit(literal), span: operand_span };
-            let value = ConstExpr { kind: ConstExprKind::Neg(Box::new(operand)), span };
-            return Type { kind: TypeKind::Const(value), span };
+            let atom = ConstExpr { kind: ConstExprKind::Neg(Box::new(operand)), span };
+            return self.const_expr_from(atom, start);
         }
-        self.parse_type()
+        let ty = self.parse_type();
+        // A type followed by a const operator was never a type.
+        //
+        // The parser cannot tell `N` the type parameter from `N` the const
+        // parameter — that is a question about scopes and resolution answers
+        // it — so an argument is parsed as a type and *promoted* the moment
+        // an operator proves it was arithmetic. This costs no backtracking
+        // and no second grammar: `4`, `N` and `N + 1` each take the one path
+        // that fits them.
+        if self.at_const_operator() {
+            if let Some(atom) = const_atom_of(&ty) {
+                return self.const_expr_from(atom, start);
+            }
+        }
+        ty
+    }
+
+    /// Whether the cursor is on an operator of §2.1's five.
+    fn at_const_operator(&self) -> bool {
+        matches!(
+            self.peek(),
+            TokenKind::Plus | TokenKind::Minus | TokenKind::Star | TokenKind::Slash
+        )
+    }
+
+    /// The rest of §2.1's grammar, once the first atom is in hand.
+    ///
+    /// `+` and `-` are left-associative and bind loosest; `*` and `/` bind
+    /// tighter and **require a literal** on the operator's right, which is
+    /// the production that makes the whole normaliser linear. `k * e` with
+    /// the literal on the left is the same node with the operands read the
+    /// other way round.
+    fn const_expr_from(&mut self, first: ConstExpr, start: Span) -> Type {
+        let mut lhs = self.const_term_from(first);
+        loop {
+            let add = if self.eat(&TokenKind::Plus).is_some() {
+                true
+            } else if self.at(&TokenKind::Minus) {
+                self.advance();
+                false
+            } else {
+                break;
+            };
+            let Some(rhs_atom) = self.parse_const_atom() else { break };
+            let rhs = self.const_term_from(rhs_atom);
+            let span = start.merge(self.last_text_span());
+            let kind = if add {
+                ConstExprKind::Add(Box::new(lhs), Box::new(rhs))
+            } else {
+                ConstExprKind::Sub(Box::new(lhs), Box::new(rhs))
+            };
+            lhs = ConstExpr { kind, span };
+        }
+        let span = start.merge(self.last_text_span());
+        Type { kind: TypeKind::Const(lhs), span }
+    }
+
+    /// `*` and `/` runs over one atom. The right operand must be a literal.
+    fn const_term_from(&mut self, first: ConstExpr) -> ConstExpr {
+        let mut term = first;
+        loop {
+            let times = if self.at(&TokenKind::Star) {
+                true
+            } else if self.at(&TokenKind::Slash) {
+                false
+            } else {
+                break;
+            };
+            let op = self.advance().span;
+            let Some(literal) = literal_of(self.peek()) else {
+                self.report_const_factor(op);
+                // Step over what stood where the literal should have been, so
+                // the argument list closes and the reader gets one error
+                // rather than one plus the three that follow from the parser
+                // still standing on a name it cannot use.
+                self.skip_const_operand();
+                break;
+            };
+            let literal_span = self.advance().span;
+            let span = term.span.merge(literal_span);
+            let kind = if times {
+                ConstExprKind::Mul {
+                    operand: Box::new(term),
+                    factor: literal,
+                    factor_span: literal_span,
+                }
+            } else {
+                ConstExprKind::Div {
+                    operand: Box::new(term),
+                    divisor: literal,
+                    divisor_span: literal_span,
+                }
+            };
+            term = ConstExpr { kind, span };
+        }
+        term
+    }
+
+    /// `IntLiteral`, a parameter name, `-atom`, or `( ConstExpr )`.
+    fn parse_const_atom(&mut self) -> Option<ConstExpr> {
+        let start = self.span();
+        if self.at(&TokenKind::Minus) {
+            self.advance();
+            let operand = self.parse_const_atom()?;
+            let span = start.merge(operand.span);
+            return Some(ConstExpr { kind: ConstExprKind::Neg(Box::new(operand)), span });
+        }
+        if self.eat(&TokenKind::LParen).is_some() {
+            let inner = self.parse_const_atom()?;
+            let ty = self.const_expr_from(inner, start);
+            self.expect(&TokenKind::RParen, "`)`");
+            let TypeKind::Const(value) = ty.kind else { return None };
+            return Some(value);
+        }
+        if let Some(literal) = literal_of(self.peek()) {
+            let span = self.advance().span;
+            return Some(ConstExpr { kind: ConstExprKind::Lit(literal), span });
+        }
+        let name = self.expect_ident()?;
+        let span = name.span;
+        Some(ConstExpr { kind: ConstExprKind::Param(name), span })
+    }
+
+    /// Consumes the rest of one const argument after a refusal.
+    ///
+    /// Stops at the comma or the bracket that ends the argument, and counts
+    /// nesting so that an inner `(` does not end an outer argument. This is
+    /// the repository's no-cascade rule applied to a position that had no
+    /// recovery before, because before this it had no way to fail.
+    fn skip_const_operand(&mut self) {
+        let mut depth = 0usize;
+        loop {
+            match self.peek() {
+                TokenKind::Eof | TokenKind::Newline => return,
+                TokenKind::Comma if depth == 0 => return,
+                TokenKind::RParen | TokenKind::RBracket if depth == 0 => return,
+                TokenKind::LParen | TokenKind::LBracket => depth += 1,
+                TokenKind::RParen | TokenKind::RBracket => depth -= 1,
+                _ => {}
+            }
+            self.advance();
+        }
+    }
+
+    /// §2.1's central refusal, reported rather than parsed around.
+    fn report_const_factor(&mut self, op: Span) {
+        self.diagnostics.push(
+            Diagnostic::error(codes::CONST_FACTOR, "a const expression multiplies only by a literal")
+                .with_label(Label::primary(op, "this operator needs an integer literal on one side"))
+                .with_note("`const-expression-arithmetic.md` §2.1 keeps const arithmetic linear by grammar: two parameters may be added, never multiplied"),
+        );
     }
 
     /// A type expression: `borrowed T`, `mutable borrowed T`, `any Trait`,
@@ -3743,6 +3901,25 @@ fn finish_block(mut stmts: Vec<Stmt>, start: Span) -> Block {
 /// Shared by expressions, patterns and const generic arguments, which take
 /// literals from exactly the same set: they would otherwise drift apart
 /// silently.
+/// The const atom a parsed type turns out to have been.
+///
+/// Only two shapes can be promoted: a bare one-segment path, which is a
+/// parameter name, and a const argument already recognised as one. A
+/// `borrowed T` or an `Array of T` followed by `+` is not arithmetic that was
+/// mis-parsed; it is an error, and returning `None` leaves it to be reported
+/// as the syntax error it is.
+fn const_atom_of(ty: &Type) -> Option<ConstExpr> {
+    match &ty.kind {
+        TypeKind::Const(value) => Some(value.clone()),
+        TypeKind::Path(path) if path.segments.len() == 1 && path.segments[0].generics.is_empty() => {
+            let name = path.segments[0].name.clone();
+            let span = name.span;
+            Some(ConstExpr { kind: ConstExprKind::Param(name), span })
+        }
+        _ => None,
+    }
+}
+
 fn literal_of(kind: &TokenKind) -> Option<Literal> {
     Some(match kind {
         TokenKind::Int { value, base, suffix } => {

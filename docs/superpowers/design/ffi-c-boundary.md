@@ -101,7 +101,7 @@ Three, and only three.
 
 | Item | Form | Meaning |
 |---|---|---|
-| Function | `def name(params) returns T` | An undefined symbol resolved at link |
+| Function | `def name(params) -> T` | An undefined symbol resolved at link |
 | Type alias | `type Name is T` | A spelling for a C typedef over an FFI-representable type |
 | Constant | `const NAME be literal as T` | A `#define` or enumerator, transcribed |
 
@@ -153,7 +153,7 @@ whole design.
 | `ffi.MutableSpan of T` | `T*`, many elements, `noalias` | yes | yes |
 | `ffi.Pointer of T` | `T*`, nullable, unknown validity | **no** | no |
 | `ffi.OpaqueHandle` | `void*`, non-null, never dereferenced | no | as a field only |
-| `ffi.FunctionPointer of (extern "C" def(...) returns R)` | function pointer | no | as a field only |
+| `ffi.FunctionPointer of (extern "C" (...) -> R)` | function pointer | no | as a field only |
 
 `ffi.Span of T` is `{ borrowed T, Int }` — a pointer with a length, holding a
 borrow whose region is inferred exactly as §4.4 of the core spec infers the
@@ -427,7 +427,7 @@ which of four things is happening, and each has exactly one spelling.
 | A — C borrows ours for the call | Science | `borrowed T`, `ffi.Span of T`, and their mutable forms | The pointer is valid and unaliased for the call; it is not freed during it |
 | B — C hands us something it allocated | Science, by calling C's destructor | A handle type with `implements Drop` | Destroyed exactly once, at a program point the compiler names |
 | C — C takes ownership of ours | C | `move ffi.CBuffer of T` | The value is dead in Science after the call |
-| D — C lends us something it owns | C | `returns borrowed T from p` / `from static` | The borrow does not outlive `p` |
+| D — C lends us something it owns | C | `-> borrowed T from p` / `from static` | The borrow does not outlive `p` |
 
 Everything else is `ffi.Pointer` and `unsafe`, and §2.7 says what "everything
 else" contains.
@@ -493,10 +493,10 @@ causes most of the resource bugs in real C code; it needs a type declaration.
 ```science
 unsafe extern "C" library "cudnn" when available:
     def cudnnCreate(handle: mutable borrowed ffi.Uninitialized of CudnnHandle)
-        returns CudnnStatus
-    def cudnnDestroy(handle: CudnnHandle) returns CudnnStatus
+        -> CudnnStatus
+    def cudnnDestroy(handle: CudnnHandle) -> CudnnStatus
     def cudnnGetErrorString(status: CudnnStatus)
-        returns ffi.CStr from static
+        -> ffi.CStr from static
 
 type CudnnHandle:
     raw: ffi.OpaqueHandle
@@ -539,8 +539,8 @@ than zero:
 ```science
 unsafe extern "C" library "hdf5":
     type Hid is I64
-    def H5Fopen(name: ffi.CStr, flags: CUInt, fapl: Hid) returns Hid
-    def H5Fclose(file: Hid) returns Herr
+    def H5Fopen(name: ffi.CStr, flags: CUInt, fapl: Hid) -> Hid
+    def H5Fclose(file: Hid) -> Herr
 
 type H5File:
     id: Hid
@@ -579,8 +579,8 @@ memory is always allocated by a vendor library:
 ```science
 unsafe extern "C" library "cudart":
     def cudaMalloc(out: mutable borrowed ffi.Uninitialized of ffi.DevicePointer of CVoid,
-                        bytes: CSizeT) returns CudaError
-    def cudaFree(pointer: ffi.DevicePointer of CVoid) returns CudaError
+                        bytes: CSizeT) -> CudaError
+    def cudaFree(pointer: ffi.DevicePointer of CVoid) -> CudaError
 
 type DeviceBuffer of T:
     pointer: ffi.DevicePointer of T
@@ -655,7 +655,7 @@ with `move`:
 
 ```science
 unsafe extern "C" library "somelib":
-    def somelib_adopt(data: move ffi.CBuffer of F64, count: CSizeT) returns CInt
+    def somelib_adopt(data: move ffi.CBuffer of F64, count: CSizeT) -> CInt
 ```
 
 `move` is already reserved (§13, reserved-not-yet-used) and this is what it is
@@ -689,9 +689,9 @@ lifetime syntax to say which. The `extern` grammar therefore has the one region
 construct in the language, and it exists only here:
 
 ```science
-    def cudnnGetErrorString(status: CudnnStatus) returns ffi.CStr from static
+    def cudnnGetErrorString(status: CudnnStatus) -> ffi.CStr from static
     def gsl_matrix_ptr(m: mutable borrowed GslMatrix, i: CSizeT, j: CSizeT)
-        returns mutable borrowed F64 from m
+        -> mutable borrowed F64 from m
 ```
 
 - **`from static`** — the returned borrow outlives everything. `cudaGetErrorString`
@@ -855,7 +855,7 @@ trampoline.
 The type of a C function pointer is spelled with reserved words only:
 
 ```science
-ffi.FunctionPointer of (extern "C" def(F64, ffi.Pointer of CVoid) returns F64)
+ffi.FunctionPointer of (extern "C" (F64, ffi.Pointer of CVoid) -> F64)
 ```
 
 A plain Science function may be given the C ABI and a stable symbol by declaring
@@ -868,8 +868,8 @@ low-level path and it takes no captures.
 a closure**:
 
 ```science
-ffi.Callback.of(closure: mutable borrowed F) returns ffi.Callback of ((A...), R)
-    where F: def(A...) returns R
+ffi.Callback.of(closure: mutable borrowed F) -> ffi.Callback of ((A...), R)
+    where F: (A...) -> R
 ```
 
 `code` is a monomorphized trampoline — one per closure type, which
@@ -884,7 +884,7 @@ user tries to store it somewhere longer-lived they get a region error.
 
 ```science
 public def integrate(
-        integrand: mutable borrowed (def(F64) returns F64),
+        integrand: mutable borrowed ((F64) -> F64),
         lower: F64,
         upper: F64,
         tolerance: F64)
@@ -1021,7 +1021,7 @@ direct `declare`s, the compiler emits a lazily-initialized table of function
 pointers, populated on first use by `dlopen`/`dlsym` (`LoadLibrary`/
 `GetProcAddress` on Windows) inside `science-rt`, and every call becomes an
 indirect call through the table. The block gains a generated
-`is_available() returns Bool` and every function in it becomes a call that
+`is_available() -> Bool` and every function in it becomes a call that
 panics with a clear message if the library is missing.
 
 - **Cost**: one load, one branch, one indirect call per foreign call. Against a
@@ -1182,7 +1182,7 @@ guarantee about it:
 
 ```science
 unsafe extern "C" library "c":
-    def open(path: ffi.CStr, flags: CInt) returns CInt with errno
+    def open(path: ffi.CStr, flags: CInt) -> CInt with errno
 ```
 
 A declaration `with errno` changes the Science-level return type to
@@ -1400,9 +1400,13 @@ Named in this document:
 
 Four places where this design assumes something outside its territory.
 
-1. **Closure type syntax.** §4.3 writes `def(F64) returns F64` as a type. The
-   core spec defines closure *expressions* and never their types. If the core
-   settles on a different spelling, `ffi.Callback`'s bound follows it.
+1. **Closure type syntax — answered.** §4.3 writes `(F64) -> F64` as a type.
+   The core spec defines closure *expressions* and never their types, and this
+   note raised the question first. `collections-and-chains.md` §1.2 has taken
+   the ask and decided it: no keyword, `(A) -> B`, one token of lookahead past
+   the closing paren to tell it from a tuple. `ffi.Callback`'s bound follows it,
+   and so does the function-pointer type in §1.2's table, which is now
+   `ffi.FunctionPointer of (extern "C" (…) -> R)`.
 2. **Named arguments at call sites.** §1.7 permits them for extern calls only.
    The core may prefer them everywhere or nowhere.
 3. **`ffi` as a module in a language whose F0 library is closed.** Everything here

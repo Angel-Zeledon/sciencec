@@ -78,7 +78,7 @@ checked against everything that existed when it started.
 | Codes | Where |
 |---|---|
 | `SC0001`, `SC0003`–`SC0011`, `SC0016`–`SC0017` | `crates/science-lexer/src/lexer.rs` |
-| `SC0100`–`SC0116`, `SC0118`, `SC0138`–`SC0139`, `SC0141`–`SC0144`, `SC0155`–`SC0156` | `crates/science-parser/src/parser.rs` |
+| `SC0100`–`SC0116`, `SC0118`, `SC0138`–`SC0139`, `SC0141`–`SC0144`, `SC0155`–`SC0157` | `crates/science-parser/src/parser.rs` |
 
 `SC0002` is unallocated. `SC0115` (nested `each`), `SC0116` (an ambiguous
 `Array of Doc.new()`) and `SC0118` (`returns` written where `->` belongs) are
@@ -115,7 +115,7 @@ migration is written next to the other keyword migrations. **Both `SC0119` and
 | `uncertainty.md` | — | — | — | `SC0277`–`SC0278` | — | — |
 | `statistical-validity.md` | — | — | — | `SC0288`–`SC0289` | — | — |
 | `reproducibility.md` | — | — | `SC0237`–`SC0240` | — | — | — |
-| `const-expression-arithmetic.md` | — | — | `SC0220`–`SC0221` | `SC0260`–`SC0262` | — | — |
+| `const-expression-arithmetic.md` | — | `SC0157` | `SC0220`–`SC0221` | `SC0260`–`SC0262` | — | — |
 | `effects.md` | — | — | `SC0214`–`SC0219` | — | — | — |
 | `collections-and-chains.md` | — | — | — | `SC0271`–`SC0273` | `SC0331`–`SC0332` | — |
 | `models-and-inference.md` | — | — | — | `SC0251`, `SC0263`–`SC0264` | — | — |
@@ -173,7 +173,7 @@ existing `SC0009`, `script-mode.md` changes `SC0101`'s wording and reuses
 | Range | Free |
 |---|---|
 | Lexical | `SC0002`, `SC0018`–`SC0099` |
-| Syntax | `SC0119`, `SC0136`, `SC0157`–`SC0159`, `SC0161`–`SC0169`, `SC0178`–`SC0179` |
+| Syntax | `SC0119`, `SC0136`, `SC0158`–`SC0159`, `SC0161`–`SC0169`, `SC0178`–`SC0179` |
 | Resolution | `SC0200`–`SC0211`, `SC0222`–`SC0229`, `SC0241`–`SC0245` |
 | Types | `SC0250`, `SC0299`, and `SC0504`–`SC0799` in the second band |
 | Ownership | everything but `SC0301`–`SC0302`, `SC0331`–`SC0332`, `SC0380` |
@@ -201,7 +201,7 @@ building rather than deferring.
 | Ask | Asked by | Notes |
 |---|---|---|
 | **Const-expression arithmetic in type position** | `scientific-libraries.md` §12.4, `broadcasting.md` §11, `unit-literals.md` | The single largest one. Units need exponent addition; shapes need output-shape computation. Build once, two customers. `broadcasting.md` adds that shapes also need type-level *lists*, which is a bigger ask than §12.4 priced. |
-| **Closure types spelled `def(T) -> U`** | `ffi-c-boundary.md` §10.1, `scientific-libraries.md` §14.2, `broadcasting.md` | Three notes, still no owner. The core spec defines closure *expressions* and never their types. **The spelling was carried from `function(T) -> U` mechanically by revision 3 and the justification for it did not survive intact** — it was chosen because it read as a noun naming what the parameter is, and `def` does not. `collections-and-chains.md` §1.2 flags it; whoever takes this ask should re-decide the spelling rather than inherit it. |
+| **Closure types spelled `(A) -> B`** — **owned by `collections-and-chains.md` §1.2; spelling decided, implementation still owed** | `ffi-c-boundary.md` §10.1, `scientific-libraries.md` §14.2, `broadcasting.md` | Three notes, and now an owner. The core spec defines closure *expressions* and never their types. **Decided: no keyword.** `function(T) -> U` was chosen because it read as a noun naming what the parameter is; revision 2 removed `returns` and revision 3 made it `def(T) -> U`, which is a declaration that lost its name, so the ask was re-opened rather than inherited. `(A) -> B` adds no word to §13, spends none of §4.1's remaining authority, and is told from the tuple type `(A, B)` by one token of lookahead past the closing paren. `fn(A) -> B` was refused by the audience test, one of seven. The remaining ask is parser and type-checker work, and it includes one edit nobody had priced: **`parse_type_bound` must stop being a path**, or no `where F: (A) -> B` parses at all. |
 | **Explicit type arguments at call sites** | `data-io.md` §11.2, `scientific-libraries.md` §14.3 | `read_csv of Measurement(...)`. |
 | **A derive mechanism** | `data-io.md` §11.1 (`Record`), `strings-formatting-and-docs.md` (`Inspect`) | Two customers, against §12's "macros are reserved, not implemented". |
 | **An uncertainty type** | `scientific-libraries.md` §14.6, `unit-literals.md`, `strings-formatting-and-docs.md` | Three notes now point at this hole. It is lexical (`9.80665(15)<m/s^2>`) as much as it is a type question, and it gets more expensive as `physics.constants` approaches. |
@@ -219,9 +219,13 @@ building rather than deferring.
   §1.5 and §3.5 (the keyword rule) are the two worth reading before relying on
   either.
 - **Revision-2 syntax.** Notes written before `syntax-revision-2.md` use the
-  older spelling (`returns`, `trait`, `for each`, `println`, `is at least`).
+  older spelling (`trait`, `for each`, `println`, `is at least`, `has methods`).
   That is drift, not disagreement; when one of those notes is next edited, its
-  code samples should move. **The error model is the exception and is no longer
+  code samples should move. **`returns` is the exception and is no longer
+  drift**: all 107 signature-position occurrences have been carried to `->`
+  across 19 files, together with every closure type. The one that remains is in
+  `def-and-lambda.md` §3.3, which quotes the *pre-revision-2* spelling to count
+  its characters, and would stop making its argument if it were migrated. **The error model is the exception and is no longer
   drift**: `Result of (T, E)`, `try`, `Option of T`, `Some`, `None`, `Ok` and
   `Err` have been migrated out of every note, to `(T, E?)`, the `if err?:` shape,
   `T?` and `null`. Where a note's *argument* depended on `Result` being a type

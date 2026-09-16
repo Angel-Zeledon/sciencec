@@ -15,6 +15,12 @@
 //! These files are not `examples/` and are not held to its contract. They are
 //! allowed to be ugly — `messy_spacing.science` is ugly on purpose — and they
 //! are not required to resolve.
+//!
+//! `suppression.science` is the one to read first if you are looking for what
+//! `# fmt: off`, `# fmt: on` and `# fmt: skip` do. It also holds the two
+//! spellings that look like markers and are not — one at the end of a line,
+//! one inside a bracket — because a mechanism's edges are the part a test has
+//! to pin.
 
 use std::path::{Path, PathBuf};
 

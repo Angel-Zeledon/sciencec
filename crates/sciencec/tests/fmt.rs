@@ -108,36 +108,71 @@ fn every_example_checks_the_same_after_formatting() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
+/// A file the formatter certainly wants to change, written by the test rather
+/// than taken from `examples/`, which is now almost entirely a fixed point.
+const UNTIDY: &str = "def  f( ) :\n    let  a   be   (\n        1 +\n        2\n    )\n";
+
 #[test]
 fn fmt_prints_to_stdout_and_leaves_the_file_alone() {
-    let path = repo_root().join("examples").join("14_line_continuation.science");
-    let before = std::fs::read_to_string(&path).expect("readable corpus file");
+    let dir = workspace("fmt-stdout");
+    let path = dir.join("untidy.science");
+    std::fs::write(&path, UNTIDY).expect("a writable file");
 
-    let out = stdout_of(&["fmt", "examples/14_line_continuation.science"]);
-    assert!(!out.is_empty(), "fmt should print the formatted file");
-    assert_ne!(out, before, "this example is one the formatter changes");
+    let name = path.to_string_lossy().into_owned();
+    let out = stdout_of(&["fmt", &name]);
+    assert_eq!(out, "def f():\n    let a be (1 + 2)\n");
 
-    let after = std::fs::read_to_string(&path).expect("readable corpus file");
-    assert_eq!(before, after, "fmt without --write must not touch the file");
+    let after = std::fs::read_to_string(&path).expect("readable");
+    assert_eq!(after, UNTIDY, "fmt without --write must not touch the file");
 }
 
 #[test]
 fn fmt_write_rewrites_the_file_and_is_idempotent_on_disk() {
     let dir = workspace("fmt-write");
-    let copy = dir.join("14_line_continuation.science");
-    let original = repo_root().join("examples").join("14_line_continuation.science");
-    std::fs::copy(&original, &copy).expect("a writable copy");
+    let path = dir.join("untidy.science");
+    std::fs::write(&path, UNTIDY).expect("a writable file");
 
-    let name = copy.to_string_lossy().into_owned();
+    let name = path.to_string_lossy().into_owned();
     let (code, stderr) = sciencec(&["fmt", "--write", &name]);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(stderr, "", "a clean fmt says nothing");
-    let once = std::fs::read_to_string(&copy).expect("readable");
-    assert_ne!(once, std::fs::read_to_string(&original).expect("readable"));
+    let once = std::fs::read_to_string(&path).expect("readable");
+    assert_ne!(once, UNTIDY);
 
     let (code, _) = sciencec(&["fmt", "--write", &name]);
     assert_eq!(code, 0);
-    assert_eq!(once, std::fs::read_to_string(&copy).expect("readable"), "gate E1, on disk");
+    assert_eq!(once, std::fs::read_to_string(&path).expect("readable"), "gate E1, on disk");
+}
+
+/// `# fmt: off` survives `--write`, and holds what it was written to hold.
+#[test]
+fn fmt_write_honours_a_suppression_marker() {
+    let dir = workspace("fmt-marker");
+    let path = dir.join("held.science");
+    let source = "def f():\n    # fmt: off\n    let a be (\n        1 +\n        2\n    )\n    # fmt: on\n    let  b  be  (\n        1 +\n        2\n    )\n";
+    std::fs::write(&path, source).expect("a writable file");
+
+    let name = path.to_string_lossy().into_owned();
+    let (code, stderr) = sciencec(&["fmt", "--write", &name]);
+    assert_eq!(code, 0, "{stderr}");
+    let written = std::fs::read_to_string(&path).expect("readable");
+    assert!(written.contains("let a be (\n        1 +\n        2\n    )"), "{written}");
+    assert!(written.contains("let b be (1 + 2)"), "{written}");
+    assert!(written.contains("# fmt: off") && written.contains("# fmt: on"), "{written}");
+}
+
+/// An unmatched `# fmt: off` is a warning, and a warning does not fail.
+#[test]
+fn an_unmatched_marker_is_reported_but_does_not_fail() {
+    let dir = workspace("fmt-unmatched");
+    let path = dir.join("open.science");
+    std::fs::write(&path, "def f():\n    # fmt: off\n    let  a  be  1\n").expect("writable");
+
+    let name = path.to_string_lossy().into_owned();
+    let (code, stderr) = sciencec(&["fmt", &name]);
+    assert_eq!(code, 0, "a warning must not fail the exit code\n{stderr}");
+    assert!(stderr.contains("warning[SC0901]"), "{stderr}");
+    assert!(stdout_of(&["fmt", &name]).contains("let  a  be  1"), "nothing below it is touched");
 }
 
 #[test]

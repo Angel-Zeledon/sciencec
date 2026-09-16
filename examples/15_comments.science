@@ -12,23 +12,32 @@
 # giving >= — none of them lex, because the line ended at the hash.
 # A comment with unicode: ¿qué tal? — 你好 — 😀
 
-type Doc:      # trailing comment after a declaration header
-    title: String   # trailing comment after a field
+type Doc:  # trailing comment after a declaration header
+    title: String  # trailing comment after a field
     # a comment on its own line, at field indentation
     body: String
 
+# The column below is the whole demonstration, so it is held: `sciencec fmt`
+# otherwise moves a free-standing comment to the block level nearest the
+# column it was written at, which here is the field level.
+# fmt: off
         # A comment indented far past any real block. It does not open one:
         # comment-only lines are invisible to the indentation stack.
+# fmt: on
 
 def main():
     # A comment as the first thing in a block.
-    let mutable a be 1   # trailing comment after a statement
+    let mutable a be 1  # trailing comment after a statement
 
     # A comment-only line inside a block, followed by a blank line.
 
     let b be 2
 
-# A comment at column 0 in the middle of a def does not close its block.
+# fmt: off
+# A comment at column 0 in the middle of a def does not close its block. The
+# two markers around it are column-0 comments in the middle of a block too,
+# so they demonstrate the rule as well as protecting it.
+# fmt: on
     let c be 3
 
     if a < b:

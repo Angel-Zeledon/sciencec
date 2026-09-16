@@ -103,7 +103,10 @@ def first_headline(docs: borrowed Array of Doc) -> String?:
         .map(each.title)
         .first()
 
-# Blank lines inside a block do not close it, however many there are.
+# Blank lines inside a block do not close it, however many there are. The
+# runs below are held against `sciencec fmt`, which collapses a run of blank
+# lines to one.
+# fmt: off
 def with_gaps() -> Int:
     let a be 1
 
@@ -113,6 +116,7 @@ def with_gaps() -> Int:
 
 
     a + b
+# fmt: on
 
 def main():
     print(ladder(true))

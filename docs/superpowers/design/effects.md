@@ -259,7 +259,7 @@ question.
 ### 3.4 Decision: effects are not in the type
 
 > **Decision 3. A function's effect set is a property of its `DefId`, stored
-> beside it, and is never a component of its type. `def(F64) -> F64` is one
+> beside it, and is never a component of its type. `(F64) -> F64` is one
 > type regardless of what the function does.**
 
 This is the most consequential decision in the note and it is a negative one, so
@@ -267,14 +267,15 @@ it is worth the space.
 
 If effects were in the type, then:
 
-- The standing cross-note ask for **closure types spelled `def(T) -> U`**
+- The cross-note ask for **closure types spelled `(T) -> U`**
   (`ffi-c-boundary.md` §10.1, `scientific-libraries.md` §14.2,
-  `broadcasting.md` — three customers) would become an ask for
-  `def(T) -> U does {…}`, and every generic function taking a closure would
+  `broadcasting.md` — three customers, spelling now decided by
+  `collections-and-chains.md` §1.2) would become an ask for
+  `(T) -> U does {…}`, and every generic function taking a closure would
   need to be polymorphic over the effect set or else reject half its callers.
   That is effect-row polymorphism, which is Koka, which is the feature §12
   declined.
-- `map`'s bound would have to read `F: def(Self.Item) -> U` for *some*
+- `map`'s bound would have to read `F: (Self.Item) -> U` for *some*
   effect row, which means the bound is no longer a bound but a schema.
 - Two implementations of the same interface method with different effect sets
   would not satisfy the same signature, so `Doc implements Summarize` would
@@ -978,7 +979,7 @@ an enhancement; a solver written without it must be rewritten to gain it, which
 
 **4. Effects must stay out of unification, per Decision 3.** This is the negative
 constraint and it is the one most easily lost, because the first person to add
-`def(T) -> U` as a closure type — which three notes ask for — will be
+`(T) -> U` as a closure type — which three notes ask for — will be
 tempted to put an effect slot in it "for later". There must be no slot. If a
 later phase wants effect polymorphism, it should be a reopened decision with its
 own note, not a field that was left empty and then filled in.

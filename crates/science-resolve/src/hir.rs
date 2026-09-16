@@ -38,7 +38,7 @@ use science_diagnostics::{FileId, Span};
 // resolution has nothing to say about them, and a second copy would only be a
 // second thing to keep in step with the parser.
 pub use science_parser::ast::{
-    BinaryOp, ConstExpr, ConstExprKind, Ident, Literal, SelfKind, UnaryOp,
+    BinaryOp, Ident, Literal, SelfKind, UnaryOp,
 };
 
 // --- definitions ---------------------------------------------------------
@@ -833,6 +833,58 @@ pub struct ExternUnion {
 }
 
 // --- types ---------------------------------------------------------------
+
+/// A const expression with its parameter names bound.
+///
+/// The AST's node is *not* re-exported here, and that is a change: it was,
+/// until the grammar grew past a literal and a negation. A resolved const
+/// expression has to name its parameters by [`DefId`] rather than by text,
+/// because the normal form of `const-expression-arithmetic.md` §3 orders its
+/// atoms by definition and a name cannot be ordered stably — two parameters
+/// called `N` in different signatures are different atoms.
+///
+/// The cost is that there are now two renderings of a const expression where
+/// there was one, and the dumper says where they may drift.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstExpr {
+    pub kind: ConstExprKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstExprKind {
+    Lit(Literal),
+    Neg(Box<ConstExpr>),
+    /// A const parameter, resolved. `Res::Error` when the name named nothing.
+    Param(Res),
+    Add(Box<ConstExpr>, Box<ConstExpr>),
+    Sub(Box<ConstExpr>, Box<ConstExpr>),
+    /// The factor is a literal by construction — §2.1's productions admit no
+    /// other shape — which is what keeps the normaliser linear.
+    Mul { operand: Box<ConstExpr>, factor: Literal, factor_span: Span },
+    Div { operand: Box<ConstExpr>, divisor: Literal, divisor_span: Span },
+}
+
+impl ConstExpr {
+    /// The signed integer this expression denotes, when it denotes one with
+    /// no parameter in it. Arithmetic over a parameter is `None`; that is
+    /// `science-types`' question, not this phase's.
+    pub fn as_i128(&self) -> Option<i128> {
+        const MIN_MAGNITUDE: u128 = i128::MAX as u128 + 1;
+        match &self.kind {
+            ConstExprKind::Lit(Literal::Int { value, .. }) => i128::try_from(*value).ok(),
+            ConstExprKind::Lit(_) => None,
+            ConstExprKind::Neg(operand) => match &operand.kind {
+                ConstExprKind::Lit(Literal::Int { value, .. }) if *value <= MIN_MAGNITUDE => {
+                    Some((*value as i128).wrapping_neg())
+                }
+                ConstExprKind::Lit(_) => None,
+                _ => operand.as_i128()?.checked_neg(),
+            },
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {

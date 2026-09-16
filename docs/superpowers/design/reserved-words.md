@@ -94,9 +94,9 @@ answer:
 ```science
 let model be load("weights.safetensors")    # `model` in binding position
 let shape be tensor.shape                   # `shape` in binding position
-def forward(tensor: Tensor) returns Tensor:   # parameter named `tensor`
+def forward(tensor: Tensor) -> Tensor:   # parameter named `tensor`
 let yield be produced / theoretical         # `yield` in binding position
-def kde(kernel: Kernel) returns Density:      # parameter named `kernel`
+def kde(kernel: Kernel) -> Density:      # parameter named `kernel`
 ```
 
 §3 handles these.
@@ -370,7 +370,7 @@ residue.
 
 `any` is worth making contextual because its two uses are in **disjoint
 positions**. `any Trait` appears only where a type is expected: after `:`, after
-`returns`, inside `of (…)`, after `as`. A call `any(mask)` appears only where an
+`->`, inside `of (…)`, after `as`. A call `any(mask)` appears only where an
 expression is expected. The parser always knows which it is parsing.
 
 **Recommendation:** treat `any` as a keyword in type position and an identifier

@@ -915,7 +915,7 @@ pretending:
 The edit is **mechanical and it was happening anyway**:
 
 ```
--def sqrt(x: F64) returns F64
+-def sqrt(x: F64) -> F64
 +def sqrt of T(x: T) -> T where T: Real
 ```
 

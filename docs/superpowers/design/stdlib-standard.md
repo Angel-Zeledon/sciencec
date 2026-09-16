@@ -517,7 +517,7 @@ signatures already show them doing. No name from §7.3 moves.
 That section writes
 
 ```
-    def sample(self, key: borrowed Key) returns Self.Sample
+    def sample(self, key: borrowed Key) -> Self.Sample
 ```
 
 and, four lines below, the comment
@@ -1278,9 +1278,9 @@ Science does not have.
 ```science
 Scope has:
     def start of (T, U)(mutable self, over: borrowed T,
-            running: def(borrowed T) -> U) -> Task of U
+            running: (borrowed T) -> U) -> Task of U
 
-def scope of R(body: def(mutable borrowed Scope) -> R) -> R
+def scope of R(body: (mutable borrowed Scope) -> R) -> R
 ```
 
 Every task started in a scope is joined before the scope returns, so the join is a
@@ -1332,7 +1332,7 @@ uses `Sender.try_send`, which is fallible and says so.
 ## `stdlib-shape-and-packages.md` §3.6. The value moves at the call, which
 ## is a program point the region engine already understands.
 Thread has:
-    def start of (T, U)(over: T, running: def(T) -> U) -> Thread of U
+    def start of (T, U)(over: T, running: (T) -> U) -> Thread of U
 
 Thread of T has:
     def join(self) -> (T, ThreadError?)
@@ -1343,7 +1343,7 @@ Channel of T has:
 
 ## Added by this note, in `Mutex.with_lock`'s shape and for its reason.
 RwLock of T has:
-    def with_read of U(self, giving: def(borrowed T) -> U) -> U
+    def with_read of U(self, giving: (borrowed T) -> U) -> U
 
 ## Added by this note. Sequentially consistent; there is no other
 ## ordering, and `T` outside the lock-free set is SC0266. §10.2.
@@ -1351,8 +1351,9 @@ Atomic of T has:
     def fetch_add(self, amount: T) -> T
 ```
 
-The closure type `def(T) -> U` is the spelling the README's standing-asks
-table already lists three customers for. This is the fourth.
+The closure type `(T) -> U` is the spelling `collections-and-chains.md` §1.2
+decided, for the three customers the README's standing-asks table lists. This is
+the fourth.
 
 ### 10.7 Example
 

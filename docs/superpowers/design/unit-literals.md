@@ -23,7 +23,7 @@ shows how a number gets into one:
 
 > ```science
 > # Conversion is explicit and is the only place a bare number becomes a quantity.
-> def metres(value: F64) returns Length of F64
+> def metres(value: F64) -> Length of F64
 > ```
 
 That line is correct and it is the whole problem. A feature reached only through

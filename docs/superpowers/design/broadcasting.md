@@ -726,7 +726,7 @@ un-canonicalisable property, since a formatter could not choose between
 signature is shape-preserving:
 
 ```science
-def map of (U)(self, f: def(T) -> U) -> Tensor of (U, SHAPE)
+def map of (U)(self, f: (T) -> U) -> Tensor of (U, SHAPE)
 ```
 
 A chain over a tensor's elements would erase the shape, which is the one thing a
@@ -1017,9 +1017,11 @@ should be deliberate rather than accidental (§3.6).
 inference. `collections-and-chains.md` §10.2 already asks for this for `sort(by:)`;
 `axis:` is the second consumer and `axes:` the third.
 
-**11.6 Closure types must be spelled.** `def(T) -> U` appears in `map` and
-`combine` (§7.1). `scientific-libraries.md` §14.2 and `ffi-c-boundary.md` §10.1
-have both already asked; this is the third note to depend on it.
+**11.6 Closure types must be spelled — the spelling is now decided.** `(T) -> U`
+appears in `map` and `combine` (§7.1). `scientific-libraries.md` §14.2 and
+`ffi-c-boundary.md` §10.1 had both already asked and this was the third note to
+depend on it; `collections-and-chains.md` §1.2 has since taken the ask and
+settled the syntax. The ask that remains is the implementation.
 
 **11.7 `shape` should stop being a reserved word, and F1 does not want a `shape`
 declaration.** `reserved-words.md` §6 leaves that as an open question for

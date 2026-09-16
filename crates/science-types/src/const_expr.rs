@@ -250,6 +250,44 @@ pub fn lower(expr: &hir::ConstExpr) -> Result<ConstExpr, Diagnostic> {
             }
             Ok(ConstExpr::neg(lower(operand)?, expr.span))
         }
+        // The rest landed when the parser grew §2.1's grammar. This match was
+        // written exhaustive on purpose so that day would fail to compile
+        // here rather than silently lower half a language.
+        hir::ConstExprKind::Param(res) => match res.def_id() {
+            Some(def) => Ok(ConstExpr::param(def, expr.span)),
+            // The name resolved to nothing, and resolution said so. Lowering
+            // a second diagnostic for the same mistake is how a compiler
+            // acquires cascades.
+            None => Err(diagnostics::unresolved_const_param(expr.span)),
+        },
+        hir::ConstExprKind::Add(lhs, rhs) => {
+            Ok(ConstExpr::add(lower(lhs)?, lower(rhs)?, expr.span))
+        }
+        hir::ConstExprKind::Sub(lhs, rhs) => {
+            Ok(ConstExpr::sub(lower(lhs)?, lower(rhs)?, expr.span))
+        }
+        hir::ConstExprKind::Mul { operand, factor, factor_span } => {
+            check_integer_literal(factor, *factor_span)?;
+            let value = literal_value(factor, *factor_span)?;
+            Ok(ConstExpr::scale(lower(operand)?, value, *factor_span, expr.span))
+        }
+        // `e / k` is §4's quotient and F0 is the quotient-free fragment, so
+        // this is refused rather than lowered into a node the normaliser has
+        // no rule for. Accepting it and normalising it wrongly would be the
+        // worse failure: the checker would assert an equality that is false.
+        hir::ConstExprKind::Div { divisor_span, .. } => {
+            Err(diagnostics::division_is_f1(*divisor_span))
+        }
+    }
+}
+
+/// The signed value of an integer literal, once it is known to be one.
+fn literal_value(literal: &Literal, span: Span) -> Result<i128, Diagnostic> {
+    match literal {
+        Literal::Int { value, .. } => {
+            i128::try_from(*value).map_err(|_| diagnostics::literal_too_large(span))
+        }
+        _ => Err(diagnostics::non_integer_literal(span, "not an integer")),
     }
 }
 

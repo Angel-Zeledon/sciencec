@@ -463,16 +463,25 @@ impl DumpIn for Type {
             // The parser's `ConstArg`, under this phase's name for it. The
             // root shares the argument's span, so the two share a line; see
             // the parser's dump for the rule.
+            // The const expression is this phase's own node now, because a
+            // resolved one names its parameters by definition rather than by
+            // text. So this rendering is this phase's too, and it is the one
+            // place a const expression can be printed two ways: the parser's
+            // dump shows the name, and this one shows what it resolved to.
             TypeKind::Const(value) => match &value.kind {
+                // A bare literal stays one line. The root shares the
+                // argument's span, so a wrapper that merely repeats its
+                // child's span is not printed — the same rule the parser's
+                // dump follows, kept here so the two read alike.
                 ConstExprKind::Lit(literal) => {
                     w.leaf(&format!("Const {}", literal_header(literal)), self.span)
                 }
-                // `ConstExpr` is the parser's node, re-exported rather than
-                // redefined, so its `Dump` is the parser's too: there is one
-                // rendering of a const expression, not two that could drift.
-                ConstExprKind::Neg(operand) => {
-                    w.node("Const Neg", self.span, |w| operand.dump_node(w))
-                }
+                // A negation names its operator on the same line for the same
+                // reason: it too shares the argument's span.
+                ConstExprKind::Neg(operand) => w.node("Const Neg", self.span, |w| {
+                    Node(defs, operand.as_ref()).dump_node(w)
+                }),
+                _ => w.node("Const", self.span, |w| Node(defs, value).dump_node(w)),
             },
             TypeKind::Error => w.leaf("Error", self.span),
         }
@@ -489,6 +498,38 @@ impl DumpIn for Block {
                 w.child("tail", &Node(defs, tail.as_ref()));
             }
         });
+    }
+}
+
+impl DumpIn for ConstExpr {
+    fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
+        match &self.kind {
+            ConstExprKind::Lit(literal) => w.leaf(&literal_header(literal), self.span),
+            ConstExprKind::Neg(operand) => {
+                w.node("Neg", self.span, |w| Node(defs, operand.as_ref()).dump_node(w))
+            }
+            ConstExprKind::Param(res) => {
+                w.leaf(&format!("ConstParam {}", arrow(defs, *res)), self.span)
+            }
+            ConstExprKind::Add(lhs, rhs) => w.node("Add", self.span, |w| {
+                Node(defs, lhs.as_ref()).dump_node(w);
+                Node(defs, rhs.as_ref()).dump_node(w);
+            }),
+            ConstExprKind::Sub(lhs, rhs) => w.node("Sub", self.span, |w| {
+                Node(defs, lhs.as_ref()).dump_node(w);
+                Node(defs, rhs.as_ref()).dump_node(w);
+            }),
+            ConstExprKind::Mul { operand, factor, .. } => {
+                w.node(&format!("Mul by {}", literal_header(factor)), self.span, |w| {
+                    Node(defs, operand.as_ref()).dump_node(w)
+                })
+            }
+            ConstExprKind::Div { operand, divisor, .. } => {
+                w.node(&format!("Div by {}", literal_header(divisor)), self.span, |w| {
+                    Node(defs, operand.as_ref()).dump_node(w)
+                })
+            }
+        }
     }
 }
 

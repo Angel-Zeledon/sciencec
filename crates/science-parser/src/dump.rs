@@ -589,6 +589,9 @@ impl Dump for Type {
                 ConstExprKind::Neg(operand) => {
                     w.node("ConstArg Neg", self.span, |w| operand.dump_node(w))
                 }
+                // Everything else hangs its own tree below one header, so the
+                // dump of a const argument reads the same whatever is in it.
+                _ => w.node("ConstArg", self.span, |w| value.dump_node(w)),
             },
             TypeKind::Error => w.leaf("Error", self.span),
         }
@@ -600,6 +603,31 @@ impl Dump for ConstExpr {
         match &self.kind {
             ConstExprKind::Lit(literal) => w.leaf(&literal_header(literal), self.span),
             ConstExprKind::Neg(operand) => w.node("Neg", self.span, |w| operand.dump_node(w)),
+            ConstExprKind::Param(name) => {
+                w.leaf(&named("ConstParam", &name.name), self.span)
+            }
+            ConstExprKind::Add(lhs, rhs) => w.node("Add", self.span, |w| {
+                lhs.dump_node(w);
+                rhs.dump_node(w);
+            }),
+            ConstExprKind::Sub(lhs, rhs) => w.node("Sub", self.span, |w| {
+                lhs.dump_node(w);
+                rhs.dump_node(w);
+            }),
+            // The factor is a literal by construction, so it is printed in
+            // the header rather than as a child: a child would suggest the
+            // grammar admits an expression there, which is the one thing
+            // §2.1 exists to forbid.
+            ConstExprKind::Mul { operand, factor, .. } => {
+                w.node(&format!("Mul by {}", literal_header(factor)), self.span, |w| {
+                    operand.dump_node(w)
+                })
+            }
+            ConstExprKind::Div { operand, divisor, .. } => {
+                w.node(&format!("Div by {}", literal_header(divisor)), self.span, |w| {
+                    operand.dump_node(w)
+                })
+            }
         }
     }
 }

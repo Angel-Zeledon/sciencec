@@ -290,7 +290,7 @@ caller should see in the type."* Folding the methods into `minimise(…, method:
 moves the gradient into `Settings`, one hop further from the signature. That is a
 genuine loss. It is accepted because the alternative is forty entry points whose
 signatures differ in ways the caller must learn one at a time, and it is mitigated
-by making `Settings` a named type with a `gradient: (def(…) -> …)?` field, so
+by making `Settings` a named type with a `gradient: ((…) -> …)?` field, so
 the choice is still in a type — just not in the function's own.
 
 ### 2.6 What the sibling note inherits
@@ -629,11 +629,13 @@ because the argument order is not obvious). An operation with no natural receive
 cannot be in the prelude at all under §8.2's rule — which is a large part of why
 physics cannot be (§4.5).
 
-**Third: `scientific-libraries.md` §5.11's `def sqrt(x: F64) returns F64`
-is superseded**, both in spelling (`returns` → `->`, per `syntax-revision-2.md`
-§4) and in form (free function → method). `stdlib-core.md` §8.2 already says so
-and names the three-way drift it settled; this note is the fourth voice and
-changes nothing.
+**Third: `scientific-libraries.md` §5.11's `def sqrt(x: F64) -> F64`
+is superseded in form** — free function → method. It used to be superseded in
+*spelling* as well, because §5.11 wrote `returns` where `syntax-revision-2.md`
+§4 had put `->`; that half is discharged, the signature above is quoted as that
+note now writes it, and only the form argument is left. `stdlib-core.md` §8.2
+already says so and names the three-way drift it settled; this note is the
+fourth voice and changes nothing.
 
 ### 4.2 Decision 8 — three extension rules
 
@@ -972,7 +974,7 @@ and `elliptic_rf` differ by one character and mean substantially different thing
 
 ```science
 ## Generic over `Real`, per §8 and `uncertainty.md` §6.2. This is the signature
-## `scientific-libraries.md` §5.11 writes as `def erf of T(x: T) returns T
+## `scientific-libraries.md` §5.11 writes as `def erf of T(x: T) -> T
 ## where T: Float`; the bound changes and nothing else does.
 def erf of T(x: T) -> T where T: Real
 
@@ -1074,11 +1076,12 @@ use math (integrate, integrate_estimated, derivative, accelerate)
 
 ## The N2 shape: one operation, the method as an argument. This replaces the
 ## thirteen free functions of `scientific-libraries.md` §5.3 (§2.5).
-## The closure type `def(T) -> T` is the standing cross-note ask that
-## `ffi-c-boundary.md` §10.1 raised and `scientific-libraries.md` §14.2 seconded;
-## this note is the fourth asker (§11).
+## The closure type `(T) -> T` is the cross-note ask that `ffi-c-boundary.md`
+## §10.1 raised and `scientific-libraries.md` §14.2 seconded; the spelling is
+## decided in `collections-and-chains.md` §1.2 and the feature is unbuilt.
+## This note is the fourth asker (§11).
 def integrate of T(
-    f: def(T) -> T,
+    f: (T) -> T,
     lower: T,
     upper: T,
     method: Quadrature,
@@ -1089,7 +1092,7 @@ def integrate of T(
 ## log line. A quadrature result without its estimate is a number nobody can
 ## publish, and a second return is the spelling that makes ignoring it visible.
 def integrate_estimated of T(
-    f: def(T) -> T,
+    f: (T) -> T,
     lower: T,
     upper: T,
     method: Quadrature,
@@ -1099,7 +1102,7 @@ def integrate_estimated of T(
 ## Infinite limits are a domain argument rather than a second function, because
 ## the caller's code is otherwise identical.
 def integrate_infinite of T(
-    f: def(T) -> T,
+    f: (T) -> T,
     domain: InfiniteDomain of T,
     method: Quadrature,
     tolerance: Tolerance,
@@ -1109,7 +1112,7 @@ def integrate_infinite of T(
 ## so it returns the value and its estimated error and no error type. The step is
 ## nullable: given one, it is used; without one, `optimal_step` chooses.
 def derivative of T(
-    f: def(T) -> T,
+    f: (T) -> T,
     x: T,
     order: Int,
     step: T?,
@@ -1245,8 +1248,8 @@ def solve_ode_events of (T, const N: Int)(
 ## A two-point boundary value problem needs an initial guess over a mesh, not an
 ## initial condition, and the type says so rather than the documentation.
 def solve_bvp of (T, const N: Int, const M: Int)(
-    residual: def(T, borrowed Vector of (T, N)) -> Vector of (T, N),
-    boundary: def(borrowed Vector of (T, N), borrowed Vector of (T, N))
+    residual: (T, borrowed Vector of (T, N)) -> Vector of (T, N),
+    boundary: (borrowed Vector of (T, N), borrowed Vector of (T, N))
         -> Vector of (T, N),
     mesh: borrowed Vector of (T, M),
     guess: borrowed Matrix of (T, N, M),
@@ -1381,7 +1384,7 @@ Polynomial of T has:
 ## A least-squares fit in the Chebyshev basis, which is what anybody fitting a
 ## smooth function on an interval should be doing and almost nobody is.
 def chebyshev_fit of T(
-    f: def(T) -> T,
+    f: (T) -> T,
     lower: T,
     upper: T,
     degree: Int,
@@ -1484,7 +1487,7 @@ use math (root, find_all_roots, is_probable_prime, factorise, combinations)
 ## method needs a sign change and an open method does not, and the type is where
 ## that precondition can be checked once.
 def root of T(
-    f: def(T) -> T,
+    f: (T) -> T,
     bracket: Bracket of T,
     method: RootMethod,
     tolerance: Tolerance,
@@ -1495,8 +1498,8 @@ def root of T(
 ## two have genuinely different preconditions and N2's interchangeability test
 ## therefore fails between them.
 def root_with_derivative of T(
-    f: def(T) -> T,
-    derivative: def(T) -> T,
+    f: (T) -> T,
+    derivative: (T) -> T,
     start: T,
     method: RootMethod,
     tolerance: Tolerance,
@@ -1620,7 +1623,7 @@ def hilbert_transform of (const N: Int)(
 ## N2 applied: the inversion method is an argument. Numerical Laplace inversion
 ## is ill-posed, so the error is not optional and the tolerance is not a hint.
 def laplace_invert(
-    transform: def(Complex of F64) -> Complex of F64,
+    transform: (Complex of F64) -> Complex of F64,
     time: F64,
     method: LaplaceInversion,
     tolerance: Tolerance,
@@ -1895,8 +1898,8 @@ def kinetic_energy of T(mass: Mass of T, velocity: Velocity of T)
 ## scaling is what reattaches the units, and it is a required argument rather
 ## than a default, because a default scaling is a silent unit assumption.
 def lagrangian_from_energies of (T, const N: Int)(
-    kinetic: def(borrowed Vector of (T, N), borrowed Vector of (T, N)) -> Energy of T,
-    potential: def(borrowed Vector of (T, N)) -> Energy of T,
+    kinetic: (borrowed Vector of (T, N), borrowed Vector of (T, N)) -> Energy of T,
+    potential: (borrowed Vector of (T, N)) -> Energy of T,
     scaling: borrowed Scaling of (T, N),
 ) -> Lagrangian of (T, N) where T: Real
 
@@ -3008,7 +3011,7 @@ rule with nobody writing a derivative rule. This is the payoff
 functions rather than link them, and `Real` is what collects it.
 
 **`complex_step_derivative` becomes available** (§5.3). It needs `f` generic over
-its argument type; a signature written `def(F64) -> F64` cannot be evaluated
+its argument type; a signature written `(F64) -> F64` cannot be evaluated
 at a complex argument, and one written `function of T(T) -> T where T: Real`
 can — once `Complex of F64` implements `Real`, which is the one extension this
 note asks of `uncertainty.md`'s interface (§11).
@@ -3128,8 +3131,10 @@ the information worth adding.
    §6 is blocked behind it** and so are §5.4's PDEs and §5.7's transforms. This
    note is the fourth asker and the largest consumer by line count.
 
-2. **Closure types spelled `def(T) -> U`.** `ffi-c-boundary.md` §10.1 raised
-   it, `scientific-libraries.md` §14.2 and `broadcasting.md` seconded it. It
+2. **Closure types spelled `(T) -> U`.** `ffi-c-boundary.md` §10.1 raised
+   it, `scientific-libraries.md` §14.2 and `broadcasting.md` seconded it, and
+   `collections-and-chains.md` §1.2 now owns the spelling — the ask that
+   remains is the implementation, not the syntax. It
    appears in `integrate`, `derivative`, `root`, `solve_ode`, `solve_bvp`,
    `laplace_invert`, `lagrangian_from_energies` and `euler_lagrange_residual` —
    eight signatures in this note alone. Fourth asker.

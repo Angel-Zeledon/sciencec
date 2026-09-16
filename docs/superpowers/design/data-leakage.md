@@ -569,7 +569,7 @@ def k_fold of (R, S)(
     data: borrowed Train of R,
     key: Key,
     folds: U64,
-    each_fold: def(borrowed Train of R, borrowed Tune of R) -> S,
+    each_fold: (borrowed Train of R, borrowed Tune of R) -> S,
 ) -> Array of S
 ```
 
@@ -609,13 +609,13 @@ built-in `cross_validate` never quite fits the pipeline they have.
 **Rejected: generative brands.** The complete answer to fold identity is the
 `runST` trick: parameterise every part by a fresh existential brand,
 `Train of (R, B)`, and give `k_fold` a rank-2 signature
-`for<B> def(Train of (R, B), Tune of (R, B)) -> S`, so that fold *k*'s train
+`for<B> (Train of (R, B), Tune of (R, B)) -> S`, so that fold *k*'s train
 and fold *j*'s tune do not unify. It is sound, it is known to work (Haskell's
 `ST`, Rust's `GhostCell`), and it would close the residual hole in §6.4.
 
 It is rejected on price. It needs higher-rank polymorphism, and Science does not
-yet have closure *types* at all — `def(T) -> U` is a standing cross-note ask
-in `README.md` with three customers and no owner. Asking for `for<B> def(…)`
+yet have closure *types* at all — `(T) -> U` is settled as a *spelling* by
+`collections-and-chains.md` §1.2 and is not built. Asking for `for<B> (…)`
 on top of an unresolved ask is asking a type-checker author to build System F
 where they were planning to build Hindley-Milner with annotated signatures (core
 spec §5.2). The residual hole is narrow — it is confusing one fold's parts for
@@ -1431,7 +1431,7 @@ opposite.
     `SC0504` returned to the free list, and the phase-range ruling §9.1 asks for.
     None of them can be made from here.
 12. **Of whoever owns closure types.** `k_fold` and `cross_validate` need
-    `def(T, U) -> S` in a signature, which is `README.md`'s standing
+    `(T, U) -> S` in a signature, which is `README.md`'s standing
     cross-note ask with three existing customers. This note is the fourth and its
     §3.5 does not work without it.
 

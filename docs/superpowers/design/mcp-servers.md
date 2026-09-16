@@ -670,7 +670,7 @@ The target is a JSON Schema object with `type: "object"`, `properties` and
 | Science type | Diagnostic | Why |
 |---|---|---|
 | `borrowed T`, `mutable borrowed T` | `SC0192` | There is no caller to borrow from. The value was deserialized a moment ago and the tool owns it. |
-| `def(T) -> U` | `SC0505` | A callable is not data. Nothing on the wire can become one. |
+| `(T) -> U` | `SC0505` | A callable is not data. Nothing on the wire can become one. |
 | `any Interface` | `SC0506` | An interface object's concrete type is unknown at the declaration, so there is no schema to emit. Note this is *not* the same rejection as §4.1's — a sealed interface with a known implementation set could in principle emit a `oneOf`, and §20 records that as deliberately not done. |
 | A type parameter `T` | `SC0191` | A generic tool has no single schema. §2.4 item 2. |
 | `Map of (K, V)` where `K` is not `String` | `SC0507` | JSON object keys are strings. |

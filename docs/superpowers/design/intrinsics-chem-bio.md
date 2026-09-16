@@ -2830,12 +2830,12 @@ def kmer_counts of T(sequence: borrowed T, k: Int)
 def entropy_of_sequence of T(sequence: borrowed T) -> F64 where T: Sequence
 
 # A window is a genomic interval here, and the statistic is a closure, which is
-# the `def(T) -> U` spelling `scientific-libraries.md` §14.2 asks for.
+# the `(T) -> U` spelling `collections-and-chains.md` §1.2 decided.
 def window_statistic of T(
     sequence: borrowed T,
     width: Int,
     step: Int,
-    statistic: def(borrowed T) -> F64,
+    statistic: (borrowed T) -> F64,
 ) -> Array of F64 where T: Sequence
 ```
 
@@ -3124,7 +3124,7 @@ def bootstrap_tree of T(
     alignment: borrowed MultipleAlignment,
     replicates: Int,
     key: RandomKey,
-    build: def(borrowed DistanceMatrix) -> (Tree, TreeError?),
+    build: (borrowed DistanceMatrix) -> (Tree, TreeError?),
 ) -> (Tree, TreeError?)
 
 def read_newick(text: borrowed String) -> (Tree, NewickError?)
@@ -4153,9 +4153,10 @@ askers; items 4 through 9 are new.
    printed. This note is the second asker after §7's own customers and the one
    with the most legible payoff.
 
-3. **Closure types spelled `def(T) -> U`.** `window_statistic` (§10.3),
+3. **Closure types spelled `(T) -> U`.** `window_statistic` (§10.3),
    `bootstrap_tree` (§10.6) and `solve_kinetics_stiff`'s user-supplied rate laws
-   need it. Fifth asker; no new argument, one more customer.
+   need it. Fifth asker; no new argument, one more customer. The *spelling* is
+   settled by `collections-and-chains.md` §1.2; the implementation is not.
 
 4. **Of `unit-literals.md`:**
    - **Add `L` (and `l`) to the prelude** (§3.2). The litre is SI Table 8, its

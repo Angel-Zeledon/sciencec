@@ -1150,7 +1150,7 @@ impl Resolver {
             },
             // A const generic argument is a literal. There is no name in it, so
             // there is nothing for this phase to say about it.
-            ast::TypeKind::Const(value) => hir::TypeKind::Const(value.clone()),
+            ast::TypeKind::Const(value) => hir::TypeKind::Const(self.resolve_const_expr(value)),
             ast::TypeKind::Error => hir::TypeKind::Error,
         };
         hir::Type { kind, span: ty.span }
@@ -1248,6 +1248,49 @@ impl Resolver {
             };
         }
         self.resolve_type(ty)
+    }
+
+    /// A const expression, with every parameter name bound.
+    ///
+    /// The lookup is the ordinary value lookup: a const generic parameter is
+    /// a name in scope like any other, and `const-expression-arithmetic.md`
+    /// §8.3's `with`-bound parameters are in the same scope for the same
+    /// reason. What this phase does *not* do is check that the name is a
+    /// const parameter rather than a function or a local — that needs a kind,
+    /// and the kind is `science-types`'.
+    fn resolve_const_expr(&mut self, expr: &ast::ConstExpr) -> hir::ConstExpr {
+        let kind = match &expr.kind {
+            ast::ConstExprKind::Lit(literal) => hir::ConstExprKind::Lit(literal.clone()),
+            ast::ConstExprKind::Neg(operand) => {
+                hir::ConstExprKind::Neg(Box::new(self.resolve_const_expr(operand)))
+            }
+            ast::ConstExprKind::Param(name) => {
+                hir::ConstExprKind::Param(self.resolve_name(name))
+            }
+            ast::ConstExprKind::Add(lhs, rhs) => hir::ConstExprKind::Add(
+                Box::new(self.resolve_const_expr(lhs)),
+                Box::new(self.resolve_const_expr(rhs)),
+            ),
+            ast::ConstExprKind::Sub(lhs, rhs) => hir::ConstExprKind::Sub(
+                Box::new(self.resolve_const_expr(lhs)),
+                Box::new(self.resolve_const_expr(rhs)),
+            ),
+            ast::ConstExprKind::Mul { operand, factor, factor_span } => {
+                hir::ConstExprKind::Mul {
+                    operand: Box::new(self.resolve_const_expr(operand)),
+                    factor: factor.clone(),
+                    factor_span: *factor_span,
+                }
+            }
+            ast::ConstExprKind::Div { operand, divisor, divisor_span } => {
+                hir::ConstExprKind::Div {
+                    operand: Box::new(self.resolve_const_expr(operand)),
+                    divisor: divisor.clone(),
+                    divisor_span: *divisor_span,
+                }
+            }
+        };
+        hir::ConstExpr { kind, span: expr.span }
     }
 
     fn resolve_bound(&mut self, bound: &ast::TypeBound) -> hir::Bound {

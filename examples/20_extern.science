@@ -20,7 +20,6 @@
 # --- §1.1: the block, with the flags discovered by pkg-config ---------------
 
 unsafe extern "C" library "openblas" via pkg-config "openblas":
-
     # §1.2, the type alias: a spelling for a C typedef.
     type CblasLayout is CInt
     type CblasTranspose is CInt
@@ -72,7 +71,6 @@ unsafe extern "C" library "openblas" via pkg-config "openblas":
 # semantics, and eight of the arguments twice as wide. The builds that matter
 # ship distinct symbols, and `symbol` is what lets Science say which it means.
 unsafe extern "C" library "openblas64_" kind static:
-
     type BlasInt64 is I64
 
     def dgemm_lp64(
@@ -89,7 +87,6 @@ unsafe extern "C" library "openblas64_" kind static:
 # the global half of that expression has no other spelling. Without this item
 # HDF5 is ninety per cent function-bindable and zero per cent usable.
 unsafe extern "C" library "hdf5" via pkg-config "hdf5":
-
     type Hid is I64
     type Herr is I32
 
@@ -128,7 +125,6 @@ unsafe extern "C" library "hdf5" via pkg-config "hdf5":
 # gains an `is_available()` of its own; the cost is one indirect call per
 # foreign call, which against a convolution is noise.
 unsafe extern "C" library "cudnn" when available:
-
     type CudnnStatus is CInt
     const CUDNN_STATUS_SUCCESS be 0 as CudnnStatus
 
@@ -182,18 +178,24 @@ type MatrixView:
 # tell them apart: the concrete form is the one that keeps `match`
 # exhaustive, and it does not box (§5.5).
 public def gemm(
-        a: borrowed MatrixView,
-        b: borrowed MatrixView,
-        c: mutable borrowed MatrixView,
-        alpha: F64,
-        beta: F64) -> BlasError?:
-
+    a: borrowed MatrixView,
+    b: borrowed MatrixView,
+    c: mutable borrowed MatrixView,
+    alpha: F64,
+    beta: F64
+) -> BlasError?:
     if a.columns is not b.rows:
         return BlasError.Shape(a.columns, b.rows)
     if a.leading < a.rows or b.leading < b.rows:
         return BlasError.Overflow
 
     unsafe:
+        # The arguments are grouped to mirror the C prototype — the dimension
+        # triple on one line, each matrix beside its leading dimension — which
+        # is the same grouping the declaration above uses. The declaration
+        # keeps it through its trailing comma; this call has none, so it says
+        # so directly.
+        # fmt: skip
         cblas_dgemm(
             layout: CBLAS_COL_MAJOR,
             transpose_a: CBLAS_NO_TRANS,

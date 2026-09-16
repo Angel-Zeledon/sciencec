@@ -66,27 +66,164 @@ of user code (§7).
 ### 1.2 The type of a closure argument
 
 Combinators take closures, and §5.2 requires signatures to be fully annotated, so
-a closure needs a nameable type. Science spells it with words it already has:
+a closure needs a nameable type. **This note now owns that spelling** — it was a
+standing cross-note ask in `README.md` with three customers and no owner, and the
+three customers are `ffi-c-boundary.md` §10.1, `scientific-libraries.md` §14.2
+and `broadcasting.md` §11.6.
+
+> **Decision. A closure type is `(A) -> B`. There is no keyword.**
 
 ```science
-def keep of P(self, predicate: P) returns Keep of (Self, P)
-        where P: def(borrowed Self.Item) returns Bool
+def keep of P(self, predicate: P) -> Keep of (Self, P)
+        where P: (borrowed Self.Item) -> Bool
 ```
 
-`def(A) returns B` is a type, formed exactly as a declaration is. No new
-keyword, and it reads inside a `where` clause. **AMENDMENT 1.**
+**AMENDMENT 1.**
 
-**Revision 3 changed the word and half of that sentence with it.** This was
-written when the declaration keyword was `function`, and *formed exactly as a
-declaration is* was doing two jobs: it meant no new keyword, which is still
-true, and it meant the type read as English — `f: function(F64) returns F64` is a
-noun naming what the parameter is. `def` is a verb stem, and `f: def(F64)
-returns F64` does not name anything; it reads as a declaration that lost its
-name. The mechanism is unaffected and the spelling has been carried over
-mechanically, but the *argument* for this spelling over an invented one is
-weaker than it was, and whoever takes this standing ask — `README.md` records
-three customers and no owner — should re-decide it rather than inherit it.
-`syntax-revision-3.md` §7 item 6 flags the same thing from the other side.
+#### What this replaces, and why the old argument could not be carried over
+
+This section used to read `function(A) returns B`, and justified it in one
+sentence: *a type, formed exactly as a declaration is. No new keyword.* That
+sentence was doing two jobs. It meant **no new keyword**, and it meant the type
+**read as English** — `f: function(F64) returns F64` is a noun naming what the
+parameter is.
+
+Two revisions since took both halves apart. `syntax-revision-2.md` §4 removed
+`returns` for `->`, so the spelling used a keyword the compiler rejects
+(`SC0118`). `syntax-revision-3.md` renamed the declaration to `def`, and a
+mechanical carry-over gives `def(A) -> B`, where the second job is simply gone:
+`f: def(F64) -> F64` is not a noun naming anything, it is a declaration that lost
+its name. `syntax-revision-3.md` §7 item 6 flagged it from the other side and
+declined to decide it.
+
+So the question had to be re-opened rather than inherited, and the answer is that
+**the first job never needed a keyword to do it**. `(A) -> B` reads as *takes an
+A, gives a B*. It is what Kotlin and Swift write exactly, what TypeScript writes
+with `=>`, and what the whole ML family writes with the arrow alone. It sidesteps
+the noun-versus-verb problem by having no word to be the wrong part of speech.
+
+#### It does not test the keyword rule, which is the strongest thing about it
+
+`syntax-revision-3.md` §2 left §4.1 weaker than it found it: a whole English word
+by default, a shortening permitted only if it beats the **audience test**, and a
+shortening adopted without beating it named in a register. That rule is now the
+language's only instrument for refusing a keyword, and it has already been
+overruled once.
+
+`(A) -> B` **does not put a single new word in front of it.** The only symbol it
+uses is `->`, which revision 2 §4 already admitted on the ground that every
+reader of Rust, Go, Swift, Kotlin, TypeScript and Python type hints reads it as
+"returns". This spelling adds nothing to §13's list, spends none of §4.1's
+remaining authority, and asks nobody to re-litigate anything.
+
+The rejected alternatives, and what they would have cost:
+
+- **`def(A) -> B`** — the mechanical result, and the cheapest edit. Rejected on
+  reading, for the reason above, and on a second ground the mechanical sweep made
+  visible: `def(` is already spoken for in *expression* position in these notes.
+  `intrinsics-math-physics.md` writes `let spectral be def(wavelength: F64) ->
+  F64:` five times. That form is not a form the language has —
+  `def-and-lambda.md` §4 keeps `each` and `giving` and rejects a third closure
+  form, and `sciencec` answers it with `SC0105` — but it is what people reach
+  for, and giving `def(…)` a second job in type position means the two categories
+  are told apart only by whether the parameters are named and whether a `:`
+  follows. A keyword that means *here comes code* should not also mean *here
+  comes a type that is not code*.
+- **`fn(A) -> B`** — refused by the audience test, applied rather than asserted.
+  Count `fn` across the languages this audience writes: Fortran `FUNCTION`,
+  MATLAB `function`, R `function`, Julia `function`, Python `def`, JavaScript
+  `function`, PHP `fn`. **One of seven**, and the one is PHP's arrow function.
+  That is the same margin on which `def-and-lambda.md` §3.2 refused `def`, and
+  `def` was adopted only by the owner overruling it. Nobody has asked for `fn`.
+  §1.5 of that note already names `fn` in the list the audience test refuses in
+  one sentence each; adopting it here would mean contradicting a refusal written
+  the same day, with no new evidence.
+
+#### The ambiguity with the tuple type, which is the real risk
+
+`(A, B)` is already a tuple, and `-> (Config, Error?)` is the error model's
+return shape on every fallible function in the language. A closure type that
+opens with `(` therefore starts identically to the commonest type in the
+language. Worked against the parser as it stands, in
+`crates/science-parser/src/parser.rs`:
+
+**It is one token of lookahead, after the closing paren, with no backtracking.**
+`parse_type_atom` already dispatches `LParen` to `parse_paren_type`, which parses
+`()`, `(T)` and `(A, B)` to completion. The parameter list of a closure type and
+the element list of a tuple have **identical inner grammar** — a comma-separated
+list of types — so the same parse serves both readings and only the *reduction*
+differs. After `parse_paren_type` returns, `parse_type` peeks once: `Arrow` means
+it was a parameter list, anything else means it was what it is today.
+
+`-> (Config, Error?)` is decided by that one peek: the next token is `:` or
+`where`, never `->`, so it stays a tuple. No existing signature changes meaning.
+
+**`-> (A) -> B` in return position is not ambiguous, but it needs a stated
+associativity.** Nothing in the grammar may follow a return type except `where`
+or `:`, so the second `->` cannot begin anything else and the greedy reading is
+the only reading. `->` is **right-associative**: `(A) -> (B) -> C` is
+`(A) -> ((B) -> C)`, which is currying and the only useful reading.
+
+**`?` binds tighter than `->`.** `(A) -> B?` is `(A) -> (B?)`, because the
+right-hand side is a recursive `parse_type` call and the `?` loop runs inside it.
+A nullable closure needs explicit parentheses: `((A) -> B)?`.
+`scientific-libraries.md` §8.6 writes exactly that for `lbfgs`'s optional
+gradient, and it is the same rule Kotlin and TypeScript have.
+
+**The one real loss, stated.** `(T)` collapses to `T` with no node of its own —
+deliberately, so that parentheses only group — so a **one-parameter closure whose
+parameter is a tuple cannot be spelled**: `((A, B)) -> C` parses as `(A, B) -> C`.
+This is a genuine hole and it is already closed by another rule: §1.3 below rules
+that pairs are records and never tuples, so the only tuples in F0 are the error
+model's return shape, and a closure over one is written with the two-parameter
+form that AMENDMENT 3 produces anyway. If F0 ever grows a reason to pass a tuple
+as one argument, the answer is a named record, not a third paren.
+
+#### The grammar change, concretely
+
+Four edits, and only the third is work:
+
+1. **`parse_type`** — after the `?`-suffix loop, if the next token is `Arrow`,
+   consume it, parse the return type with a recursive `parse_type` (which gives
+   right-associativity for free), and rebuild the type just parsed as the
+   parameter list. The mapping is total and lossless: `Unit` → no parameters,
+   `Tuple(elems)` → `elems`, anything else → one parameter.
+2. **`TypeKind`** — one new variant,
+   `Closure { params: Vec<Type>, ret: Box<Type> }`.
+3. **`parse_type_bound` must stop being a path.** This is the part the ask has
+   never been priced at. A bound is `parse_path()` today and a `TypeBound` holds
+   a `Path`, so `where F: (A) -> B` does not parse *at all* — and would not have
+   parsed under `def(A) -> B` either. Every `where` clause in §1.4 below depends
+   on this. It is the same edit under every candidate spelling and it is the real
+   cost of the ask.
+4. **The lexer** — nothing. `Arrow` came back with revision 2 §4.
+
+Verified against the compiler as it stands: `f: (F64) -> F64` is today two
+`SC0100`s and `f: def(F64) -> F64` is three errors, so neither candidate is
+implemented and neither is cheaper to reach.
+
+**No new diagnostic code is allocated here.** If the parser should say something
+better than `SC0100` when a tuple is followed by `->` before this ships, that is
+one code from the syntax block and it is recorded as a need, not taken.
+
+#### What it costs, and what reversing it costs
+
+**The cost is the missing anchor.** `f: (F64) -> F64` is four punctuation marks
+and two type names, with no word for the eye to land on. `def(F64) -> F64` has a
+visible marker saying *function type here*. That is the whole case for the
+keyword form and it is not nothing — it is worth more in a dense `where` clause
+than in a parameter list.
+
+**Reversing it is close to free, and that is why the better-reading option wins
+over the cheaper-to-type one.** The decision is a *pretty-printer* choice, not a
+structural one: all three candidates produce the identical `Closure` node, so a
+reversal is one line in `parse_type` to require a leading keyword and one line in
+`sciencec fmt`'s type printer to emit it, plus a re-format of the corpus. What
+reversal is *not* is a regex: a text tool cannot find a closure type, because
+finding one is exactly the one-token-after-the-paren test only a parser can make.
+So reversal is cheap **through the formatter** and expensive through anything
+else — which is `self-hosting.md` gate E1 doing the job Decision 6 claimed it
+would, for the second time.
 
 Closures of more than one parameter (`reduce`, `accumulate`) need a spelling too.
 The named form takes a parenthesised list, and `each` — being the name of *the*
@@ -146,61 +283,61 @@ means it buffers the whole stream.
 
 | Method | Signature (abbreviated) | Parallel | Why it earns its place |
 |---|---|---|---|
-| `map(f)` | `map of (U, F)(self, f: F) returns MapOver of (Self, F)` where `F: def(Self.Item) returns U` | safe | The one combinator no pipeline omits. Name kept: §3.2. |
-| `expand(f)` | `expand of (S, F)(self, f: F) returns Expand of (Self, F)` where `F: def(Self.Item) returns S, S: Iterate` | safe | One item becomes many: a document becomes its tokens, a batch becomes its rows. Fused rather than `map` then `flatten` because the intermediate is never wanted. |
-| `flatten()` | `flatten(self) returns Flatten of Self` where `Self.Item: Iterate` | safe | The unfused case, when the nesting arrived from somewhere else. |
-| `owned()` | `owned(self) returns Owned of Self` where `Self.Item` is `borrowed T, T: Clone` | safe | Turns a chain of borrows into a chain of values. Replaces Rust's `cloned` *and* `copied` (§4.4). |
-| `numbered()` | `numbered(self) returns NumberedOver of Self`, `Item = Numbered of Self.Item` | ordered | Row numbers, sample ids, progress reporting. |
-| `accumulate(initial, f)` | `accumulate of (A, F)(self, initial: A, f: F) returns Accumulate of (Self, A, F)` where `F: def(A, Self.Item) returns A` | sequential | Running totals, cumulative sums, moving averages, online state. `reduce` throws the intermediates away; time-series work wants them. |
+| `map(f)` | `map of (U, F)(self, f: F) -> MapOver of (Self, F)` where `F: (Self.Item) -> U` | safe | The one combinator no pipeline omits. Name kept: §3.2. |
+| `expand(f)` | `expand of (S, F)(self, f: F) -> Expand of (Self, F)` where `F: (Self.Item) -> S, S: Iterate` | safe | One item becomes many: a document becomes its tokens, a batch becomes its rows. Fused rather than `map` then `flatten` because the intermediate is never wanted. |
+| `flatten()` | `flatten(self) -> Flatten of Self` where `Self.Item: Iterate` | safe | The unfused case, when the nesting arrived from somewhere else. |
+| `owned()` | `owned(self) -> Owned of Self` where `Self.Item` is `borrowed T, T: Clone` | safe | Turns a chain of borrows into a chain of values. Replaces Rust's `cloned` *and* `copied` (§4.4). |
+| `numbered()` | `numbered(self) -> NumberedOver of Self`, `Item = Numbered of Self.Item` | ordered | Row numbers, sample ids, progress reporting. |
+| `accumulate(initial, f)` | `accumulate of (A, F)(self, initial: A, f: F) -> Accumulate of (Self, A, F)` where `F: (A, Self.Item) -> A` | sequential | Running totals, cumulative sums, moving averages, online state. `reduce` throws the intermediates away; time-series work wants them. |
 
 #### Filtering and selecting (lazy)
 
 | Method | Signature | Parallel | Why |
 |---|---|---|---|
-| `keep(p)` | `keep of P(self, p: P) returns Keep of (Self, P)` | safe | Retain what matches. |
-| `discard(p)` | `discard of P(self, p: P) returns Discard of (Self, P)` | safe | Drop what matches. Both exist because a negated predicate is the commonest readability wart in filtering code, and §4.6's own example is `discard(each.is_empty())`. |
+| `keep(p)` | `keep of P(self, p: P) -> Keep of (Self, P)` | safe | Retain what matches. |
+| `discard(p)` | `discard of P(self, p: P) -> Discard of (Self, P)` | safe | Drop what matches. Both exist because a negated predicate is the commonest readability wart in filtering code, and §4.6's own example is `discard(each.is_empty())`. |
 | `keep_some()` | `keep_some(self) -> KeepSome of Self` where `Self.Item` is `T?` | safe | `map` then `keep_some` is `filter_map` in two honest words, and removes a combinator from the set. |
 | `keep_ok()` | `keep_ok(self) -> KeepOk of Self` where `Self.Item` is `(T, E?)` | safe | The "drop the bad rows" error policy, named at the call site (§6). |
-| `take(n)` | `take(self, n: Int) returns Take of Self` | ordered | §4.6 uses it. Head of the stream, and the reason laziness pays. |
-| `skip(n)` | `skip(self, n: Int) returns Skip of Self` | ordered | Header lines, warm-up steps, burn-in samples. |
-| `take_while(p)` | `take_while of P(self, p: P) returns TakeWhile of (Self, P)` | sequential | Read until a sentinel; stop a sweep when the loss stops falling. |
-| `skip_while(p)` | `skip_while of P(self, p: P) returns SkipWhile of (Self, P)` | sequential | The complement, and the only clean way past a variable-length preamble. |
-| `every(n)` | `every(self, n: Int) returns Every of Self` | ordered | Downsampling: every tenth frame, every hundredth step. This is `step_by`, named for what the user is doing with it. |
-| `unique()` | `unique(self) returns Unique of Self` where `Self.Item: Eq + Hash` | sequential | Deduplication is glue work every dataset needs and nobody wants to write twice. |
-| `unique(by: key)` | `unique of (K, F)(self, by: F) returns UniqueBy of (Self, F)` | sequential | Dedup by id while keeping the whole record. The bare form is the degenerate case of this one. |
+| `take(n)` | `take(self, n: Int) -> Take of Self` | ordered | §4.6 uses it. Head of the stream, and the reason laziness pays. |
+| `skip(n)` | `skip(self, n: Int) -> Skip of Self` | ordered | Header lines, warm-up steps, burn-in samples. |
+| `take_while(p)` | `take_while of P(self, p: P) -> TakeWhile of (Self, P)` | sequential | Read until a sentinel; stop a sweep when the loss stops falling. |
+| `skip_while(p)` | `skip_while of P(self, p: P) -> SkipWhile of (Self, P)` | sequential | The complement, and the only clean way past a variable-length preamble. |
+| `every(n)` | `every(self, n: Int) -> Every of Self` | ordered | Downsampling: every tenth frame, every hundredth step. This is `step_by`, named for what the user is doing with it. |
+| `unique()` | `unique(self) -> Unique of Self` where `Self.Item: Eq + Hash` | sequential | Deduplication is glue work every dataset needs and nobody wants to write twice. |
+| `unique(by: key)` | `unique of (K, F)(self, by: F) -> UniqueBy of (Self, F)` | sequential | Dedup by id while keeping the whole record. The bare form is the degenerate case of this one. |
 
 #### Pairing, grouping, windowing
 
 | Method | Signature | Parallel | Why |
 |---|---|---|---|
-| `zip(other)` | `zip of O(self, other: O) returns Zip of (Self, O)` where `O: Iterate`; `Item = Pair of (Self.Item, O.Item)` | ordered | Features beside labels, predictions beside truth. Not optional in ML glue. |
-| `followed_by(other)` | `followed_by of O(self, other: O) returns Then of (Self, O)` where `O: Iterate of Item = Self.Item` | ordered | Train then validation; this shard then that one. Cheap to specify, irritating to live without. |
-| `batches(n)` | `batches(self, n: Int) returns Batches of Self`; `Item = Array of Self.Item` | ordered | Minibatching. The most domain-specific entry in the set, and the one that most justifies a closed set containing it rather than a library. Disjoint pieces. |
-| `windows(n)` | `windows(self, n: Int) returns Windows of Self`; `Item = Array of Self.Item` | ordered | Rolling means, lags, spectrogram frames. Overlapping, and separate from `batches` for exactly that reason. |
-| `sorted()` | `sorted(self) returns Sorted of Self` where `Self.Item: Ord` | barrier | Buffers, sorts, yields. A barrier, documented as one. |
-| `sorted(by: key)` | `sorted of (K, F)(self, by: F) returns SortedBy of (Self, F)` where `K: Ord` | barrier | Top-k retrieval is `.sorted(by: each.score).reverse().take(10)`. §4.6 already writes `sort(by:)`. |
-| `reverse()` | `reverse(self) returns Reverse of Self` | barrier | Also a buffering barrier. F0 has no double-ended iteration trait and will not grow one: one trait, one direction, and an honest `O(n)` buffer for the one chain per program that runs backwards. |
+| `zip(other)` | `zip of O(self, other: O) -> Zip of (Self, O)` where `O: Iterate`; `Item = Pair of (Self.Item, O.Item)` | ordered | Features beside labels, predictions beside truth. Not optional in ML glue. |
+| `followed_by(other)` | `followed_by of O(self, other: O) -> Then of (Self, O)` where `O: Iterate of Item = Self.Item` | ordered | Train then validation; this shard then that one. Cheap to specify, irritating to live without. |
+| `batches(n)` | `batches(self, n: Int) -> Batches of Self`; `Item = Array of Self.Item` | ordered | Minibatching. The most domain-specific entry in the set, and the one that most justifies a closed set containing it rather than a library. Disjoint pieces. |
+| `windows(n)` | `windows(self, n: Int) -> Windows of Self`; `Item = Array of Self.Item` | ordered | Rolling means, lags, spectrogram frames. Overlapping, and separate from `batches` for exactly that reason. |
+| `sorted()` | `sorted(self) -> Sorted of Self` where `Self.Item: Ord` | barrier | Buffers, sorts, yields. A barrier, documented as one. |
+| `sorted(by: key)` | `sorted of (K, F)(self, by: F) -> SortedBy of (Self, F)` where `K: Ord` | barrier | Top-k retrieval is `.sorted(by: each.score).reverse().take(10)`. §4.6 already writes `sort(by:)`. |
+| `reverse()` | `reverse(self) -> Reverse of Self` | barrier | Also a buffering barrier. F0 has no double-ended iteration trait and will not grow one: one trait, one direction, and an honest `O(n)` buffer for the one chain per program that runs backwards. |
 
 #### Terminals
 
 | Method | Signature | Parallel | Why |
 |---|---|---|---|
-| `collect()` | `collect(self) returns Array of Self.Item` | ordered | Always an `Array`. Never inference-directed (§3.3). |
+| `collect()` | `collect(self) -> Array of Self.Item` | ordered | Always an `Array`. Never inference-directed (§3.3). |
 | `collect_or_error()` | `collect_or_error(self) -> (Array of T, E?)` where `Self.Item` is `(T, E?)` | ordered | The "stop at the first bad row" error policy (§6). |
 | `partition_results()` | `partition_results(self) -> Outcome of (T, E)` | ordered | The "give me both" policy (§6), and the one a scientist actually wants. |
-| `partition(p)` | `partition of P(self, p: P) returns Parts of Self.Item` | ordered | One pass over a source you cannot rewind. That, and only that, is why it exists beside `keep`/`discard`. |
+| `partition(p)` | `partition of P(self, p: P) -> Parts of Self.Item` | ordered | One pass over a source you cannot rewind. That, and only that, is why it exists beside `keep`/`discard`. |
 | `reduce(initial, f)` | `reduce of (A, F)(self, initial: A, f: F) -> A` | ordered | The general fold. One form, always with an initial value — the initial-less variant returns a nullable nobody handles. |
-| `sum()` | `sum(self) returns Total` where `Self.Item: Add of Output = Total` | ordered | Named separately from `reduce` because summation order is a published-results question (§5.1) and the library owes it a defined answer. |
-| `product()` | `product(self) returns Total` where `Self.Item: Mul of Output = Total` | ordered | Same argument; likelihoods and volumes. |
-| `count()` | `count(self) returns Int` | safe | Deliberately not called `length`: `length()` on a collection is `O(1)`, counting a stream consumes it, and two names keep the difference visible. |
+| `sum()` | `sum(self) -> Total` where `Self.Item: Add of Output = Total` | ordered | Named separately from `reduce` because summation order is a published-results question (§5.1) and the library owes it a defined answer. |
+| `product()` | `product(self) -> Total` where `Self.Item: Mul of Output = Total` | ordered | Same argument; likelihoods and volumes. |
+| `count()` | `count(self) -> Int` | safe | Deliberately not called `length`: `length()` on a collection is `O(1)`, counting a stream consumes it, and two names keep the difference visible. |
 | `minimum()` / `maximum()` | `-> Self.Item?` where `Self.Item: Ord` | ordered | Full words, per §4.3's rule against abbreviations. |
 | `minimum(by: key)` / `maximum(by: key)` | `of (K, F)(self, by: F) -> Self.Item?` where `K: Ord` | ordered | The best *record*, not the best score. |
 | `first()` | `first(mutable self) -> Self.Item?` | sequential | Takes `mutable self`, so a chain can be stepped and then resumed. |
 | `find(p)` | `find of P(mutable self, p: P) -> Self.Item?` | sequential | First match, short-circuiting, chain still usable afterwards. |
 | `last()` | `last(self) -> Self.Item?` | ordered | The final state of a run. Walks the whole chain, and says so. |
-| `has_any(p)` / `has_all(p)` | `of P(mutable self, p: P) returns Bool` | safe | Validation predicates. `has_` because `any` is reserved (§4.3, `any Summarize`), and because `if rows.iterate().has_any(each.is_missing())` reads as a sentence. |
-| `group(by: key)` | `group of (K, F)(self, by: F) returns Map of (K, Array of Self.Item)` where `K: Eq + Hash` | ordered | The most frequently rewritten loop in data work. Without it every user writes the same six lines and half of them get the insert-or-append wrong. |
-| `tally(by: key)` | `tally of (K, F)(self, by: F) returns Map of (K, Int)` where `K: Eq + Hash` | ordered | Class balance, label counts, bin counts. `group(by:)` then `count()` allocates every group only to discard it. |
+| `has_any(p)` / `has_all(p)` | `of P(mutable self, p: P) -> Bool` | safe | Validation predicates. `has_` because `any` is reserved (§4.3, `any Summarize`), and because `if rows.iterate().has_any(each.is_missing())` reads as a sentence. |
+| `group(by: key)` | `group of (K, F)(self, by: F) -> Map of (K, Array of Self.Item)` where `K: Eq + Hash` | ordered | The most frequently rewritten loop in data work. Without it every user writes the same six lines and half of them get the insert-or-append wrong. |
+| `tally(by: key)` | `tally of (K, F)(self, by: F) -> Map of (K, Int)` where `K: Eq + Hash` | ordered | Class balance, label counts, bin counts. `group(by:)` then `count()` allocates every group only to discard it. |
 
 Thirty-eight entries. Rust's `Iterator` has upward of seventy.
 
@@ -336,7 +473,7 @@ the tutorial, not the reference.
 ### 2.4 Chains do not cross function boundaries in F0
 
 §5.2 requires fully annotated signatures. Writing
-`returns MapOver of (Keep of (ArrayIterate of Document, ...), ...)` in a signature
+`-> MapOver of (Keep of (ArrayIterate of Document, ...), ...)` in a signature
 is not a language anyone should ship, and the honest alternatives — an opaque
 `some Iterate of Item = T` — are type-system features F0 does not have and §12
 does not budget.
@@ -613,9 +750,9 @@ Each collection carries the same three source methods as **inherent** methods
 
 ```science
 Array of T has methods:
-    def iterate(borrowed self) returns ArrayIterate of T
-    def iterate_mutably(mutable borrowed self) returns ArrayIterateMutably of T
-    def iterate_consuming(self) returns ArrayIterateConsuming of T
+    def iterate(borrowed self) -> ArrayIterate of T
+    def iterate_mutably(mutable borrowed self) -> ArrayIterateMutably of T
+    def iterate_consuming(self) -> ArrayIterateConsuming of T
 ```
 
 `Map` yields `Entry of (K, V)` and additionally offers `keys()`, `values()` and
@@ -1008,8 +1145,9 @@ spec's to assign.
 Numbered as referenced above. Items 4–7 and 8–9 are the load-bearing ones;
 several sit in another designer's territory and are flagged for routing.
 
-1. **Function types are spelled `def(A) returns B`** and may appear in
-   `where` clauses. *(Type system.)*
+1. **Function types are spelled `(A) -> B`**, with no keyword, and may appear in
+   `where` clauses — which means `parse_type_bound` must stop being a path.
+   Decided in §1.2, where the tuple ambiguity is worked out. *(Type system.)*
 2. **Argument labels are part of a method's name**, resolved before type
    inference. Needed to keep §4.6's own `sort(by:)`. *(Resolution.)*
 3. **Multi-parameter closures** are `(a, b) giving expression`; `each` is defined

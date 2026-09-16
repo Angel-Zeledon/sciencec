@@ -702,7 +702,7 @@ into a return code. This is fine and it is worth an example, because it is the
 shape every iteration binding takes:
 
 ```science
-def each_link(group: borrowed H5Group, visit: mutable borrowed (def(borrowed String) -> Bool)) -> Error?:
+def each_link(group: borrowed H5Group, visit: mutable borrowed ((borrowed String) -> Bool)) -> Error?:
     let entry be ffi.Callback.of(visit)
     let status be unsafe:
         H5Literate2(group.id, H5_INDEX_NAME, H5_ITER_NATIVE, null,

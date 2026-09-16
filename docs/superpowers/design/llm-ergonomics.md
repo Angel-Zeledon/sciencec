@@ -166,14 +166,14 @@ consume it all, emit one diagnostic, keep the stream usable.
 error[SC0120]: a shared borrow is written `borrowed T`
   --> model.science:4:14
    |
- 4 | def f(x: &Doc) returns Int:
+ 4 | def f(x: &Doc) -> Int:
    |               ^ Science spells this `borrowed`
    |
    = note: an exclusive borrow is `mutable borrowed T`, and a call site needs
            neither — a parameter declared `borrowed` is borrowed automatically (§6.3)
 help: write the borrow as a word
    |
- 4 | def f(x: borrowed Doc) returns Int:
+ 4 | def f(x: borrowed Doc) -> Int:
    |               ~~~~~~~~
 ```
 
@@ -190,14 +190,14 @@ One new block, `SC0120`–`SC0134`, inside the syntax range §9 allocates.
 | `SC0121` | `&mut T` in type position | `mutable borrowed T` |
 | `SC0122` | `&self` / `&mut self` | `self` / `mutable self` |
 | `SC0123` | `dyn T` | `any T` |
-| `SC0124` | `-> T` where `returns` belongs | `returns T` |
+| `SC0124` | **void since revision 2** — it fired on `-> T` and suggested `returns T`, and revision 2 §4 made `-> T` the correct form. The traffic runs the other way now and it is `SC0118`, which shipped. The code is not reassigned here (see §2.2) |
 | `SC0125` | `Name[T]` in type position | `Name of T`, or `Name of (A, B)` for several |
 | `SC0126` | `name[T](…)` in declaration position | `name of T(…)` |
 | `SC0127` | `fn` starting an item | `def` |
 | `SC0128` | `struct` starting an item | `type` |
 | `SC0129` | `enum` starting an item | `choice` |
 | `SC0130` | `impl Trait for Type:` | `Type implements Trait:` — a reordering fix |
-| `SC0131` | `impl Type:` | `Type has methods:` |
+| `SC0131` | `impl Type:` | `Type has:` — revision 2 §5 dropped the `methods` |
 | `SC0132` | `pub` starting an item | `public` |
 | `SC0133` | `mut` after `let` | `mutable` |
 | `SC0134` | postfix `?` | **void since revision 2** — `?` is the presence test and `try` does not exist. The code is not reassigned here (see §2.2) |
@@ -205,6 +205,54 @@ One new block, `SC0120`–`SC0134`, inside the syntax range §9 allocates.
 `SC0127`–`SC0132` must be checked **before** the `implements` branch in
 `parse_item`, which is what §2.3 diagnosed. That ordering is the whole fix for
 six of the nine bad cases.
+
+### 3.3 `SC0127` and `SC0156` do not merge
+
+`syntax-revision-3.md` §6 left this as this note's question. It arose because the
+`SC0127` row's fix column changed from `function` to `def`, putting it three
+characters from `SC0156`, the `function` → `def` migration, with what looks like
+the same fix.
+
+> **Decision. They are two diagnostics with one shared recovery path, and they
+> stay two.**
+
+**They are not the same diagnosis, because `function` is a word and `fn` is
+not.** Revision 3 §3 freed `function` rather than reserving it — it is an ordinary
+identifier, and `ffi-c-boundary.md` §4.3 already binds it, because GSL's
+`gsl_function` has a field called `function`. `SC0156` therefore has an
+obligation `SC0127` does not: it must be positional, firing only on the word
+followed by a name in item position, and must stay silent where `function` is a
+field or a variable. `fn` carries no such obligation. Merging them would hand the
+merged code the stricter obligation for no reason.
+
+**The message is the product, and the two messages cannot be one.** §3's first
+requirement is *name the construct, not the token*. `SC0156` says "`function` is
+not a keyword in Science", which is a fact about the word list that the reader
+specifically needs, because the word still works as a name. That sentence is
+false of `fn`, which is not a word anyone is binding — it is Rust's keyword, and
+its note belongs to this block's framing: *Rust spells it `fn`, Science spells it
+`def`*. One message would be wrong about `function` or useless about `fn`.
+
+**They are also different migrations, and separating them is the only evidence
+anyone will get.** This block, `SC0120`–`SC0134`, is *what a Rust programmer
+types*; `SC0156` is *what a document written before this morning says*, which is
+humans and this repository's own history. `def-and-lambda.md` §3.5 records a live
+disagreement about which direction of that traffic is heavier — the six-to-one
+audience count was overruled, not refuted — and two counters are the only way
+that question is ever settled by measurement rather than by assertion. A merged
+code destroys the measurement.
+
+**The identical fix is not an argument for merging.** It is an argument that
+both codes converge in one round trip, which they already do: both carry a
+machine-applicable `Suggestion`, and an agent that applies either lands on `def`.
+Nothing is bought.
+
+What the two *should* share is recovery: consume the word, continue as though
+`def` had been written, one error per declaration and no cascade. Revision 3 §6
+already says `SC0156` shares the `SC0138`–`SC0144` code path. **Sharing a path is
+not merging a code**, and `SC0127` should join that path when it is implemented.
+
+**No code is allocated or returned by this ruling.**
 
 `SC0130` needed real work, because the fix is not a substitution at one span:
 `impl Summarize for Doc:` has to become `Doc implements Summarize:`. `Suggestion`

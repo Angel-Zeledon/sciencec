@@ -11,7 +11,7 @@
 use science_lexer::TokenKind::*;
 
 mod common;
-use common::{id, int, parse_report, parse_source_allowing_errors, text};
+use common::{id, int, parse_report, parse_source, parse_source_allowing_errors, text};
 
 // --- functions -----------------------------------------------------------
 
@@ -1121,4 +1121,48 @@ fn a_negative_literal_is_not_a_type() {
         "type Worse is Window of (Int, -\"a\")\n",
         "type Worst is Window of (Int, -true)\n",
     )));
+}
+
+// --- const-expression arithmetic -----------------------------------------
+
+/// `const-expression-arithmetic.md` §2.1's grammar, which the parser accepted
+/// only a literal and a negation of until now.
+///
+/// Everything `science-types` normalises was unreachable from a `.science`
+/// file before this: its `NORMALISE`, its monomorphisation key and its linear
+/// matching had no input, because no const argument in source could name a
+/// const parameter at all.
+#[test]
+fn a_const_argument_may_name_a_parameter_and_do_arithmetic() {
+    insta::assert_snapshot!(parse_source(
+        "def f of (const N: Int)(w: Grid of (Int, N + 1)):
+    print(\"x\")
+"
+    ));
+}
+
+/// §4.6's precedence, unchanged: `*` binds tighter than `+`, and the binaries
+/// are left-associative.
+#[test]
+fn const_arithmetic_keeps_the_languages_precedence() {
+    insta::assert_snapshot!(parse_source(
+        "def f of (const N: Int)(w: Grid of (Int, N * 3 + 1)):
+    print(\"x\")
+"
+    ));
+}
+
+/// The refusal that is the whole design: `*` needs a literal on one side, so
+/// two parameters can be added and never multiplied.
+///
+/// §2.1 calls this the note's most important property — linearity enforced by
+/// the productions rather than by a check afterwards — which is what lets the
+/// normaliser have no case for a non-linear input at all.
+#[test]
+fn two_const_parameters_cannot_be_multiplied() {
+    insta::assert_snapshot!(parse_source_allowing_errors(
+        "def f of (const N: Int, const M: Int)(w: Grid of (Int, N * M)):
+    print(\"x\")
+"
+    ));
 }

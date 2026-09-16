@@ -584,6 +584,26 @@ pub enum ConstExprKind {
     /// The operand keeps its own span, so a diagnostic can point at the
     /// literal, at the `-`, or at the whole negated term.
     Neg(Box<ConstExpr>),
+    /// A const generic parameter by name: the `N` of `Window of (Int, N + 1)`.
+    ///
+    /// Unresolved here. Whether `N` names a const parameter, a type
+    /// parameter or nothing at all is a question about scopes, and the
+    /// parser has none. Resolution binds it.
+    Param(Ident),
+    /// `a + b` and `a - b`, left-associative.
+    Add(Box<ConstExpr>, Box<ConstExpr>),
+    Sub(Box<ConstExpr>, Box<ConstExpr>),
+    /// `e * k` or `k * e`, and `e / k` — where `k` is always a **literal**.
+    ///
+    /// The literal is held in the node rather than as a second operand, and
+    /// that is the whole design of `const-expression-arithmetic.md` §2.1:
+    /// the grammar cannot express `L * K` for two parameters, so the
+    /// normaliser never receives a non-linear input and never needs a case
+    /// for one. **Linearity is enforced by the productions, not by a check
+    /// afterwards.** A `Mul(Box, Box)` would move that guarantee into a
+    /// check, which is exactly what the note spends its §5 avoiding.
+    Mul { operand: Box<ConstExpr>, factor: Literal, factor_span: Span },
+    Div { operand: Box<ConstExpr>, divisor: Literal, divisor_span: Span },
 }
 
 impl ConstExpr {
@@ -617,6 +637,17 @@ impl ConstExpr {
                 ConstExprKind::Lit(_) => None,
                 _ => operand.as_i128()?.checked_neg(),
             },
+            // A const expression naming a parameter has no value until the
+            // parameter does, and `as_i128` is what a phase calls when it
+            // wants one *now*. Arithmetic over a parameter is therefore
+            // `None` here rather than folded: folding `2 * 3` and refusing
+            // `2 * N` would make this function sometimes-constant, which is
+            // worse than never. `science-types` normalises instead.
+            ConstExprKind::Param(_)
+            | ConstExprKind::Add(..)
+            | ConstExprKind::Sub(..)
+            | ConstExprKind::Mul { .. }
+            | ConstExprKind::Div { .. } => None,
         }
     }
 }

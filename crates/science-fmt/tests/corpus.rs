@@ -23,6 +23,17 @@
 //! The fourth property — that every formatted file still passes
 //! `sciencec check` — needs name resolution and so lives in
 //! `crates/sciencec/tests/fmt.rs`, next to the driver that can reach it.
+//!
+//! Two more tests below are about the corpus rather than the formatter, and
+//! they exist because running the formatter over `examples/` is the only thing
+//! that has ever told this crate something it did not already know.
+//! [`UNFORMATTED`] is the ledger of files the formatter and the corpus still
+//! disagree about, with the exact line counts, so the list shrinks
+//! deliberately instead of rotting. And
+//! [`every_corpus_marker_is_load_bearing`] checks that every `# fmt:` marker
+//! checked into `examples/` is protecting something: a marker that protects
+//! nothing is a marker somebody will delete, and a corpus full of them is how
+//! an escape hatch turns into decoration.
 
 use std::path::{Path, PathBuf};
 
@@ -236,4 +247,149 @@ fn the_output_is_tidy() {
             );
         }
     }
+}
+
+/// The corpus files the formatter still wants to change, with how many lines.
+///
+/// **This is a ledger, not a fixture.** Every entry is a place where the
+/// formatter and a checked-in file disagree, and each one is either a bug in
+/// the formatter, a line that should be reformatted, or a demonstration that
+/// needs a `# fmt:` marker. The counts are exact on purpose: closing one breaks
+/// this test, which is the point — the list has to shrink deliberately rather
+/// than rot.
+///
+/// * `07_generics.science` — two signatures the file says are "broken inside
+///   the parameter list, where indentation takes no part (§4.2)". The
+///   formatter rebreaks them before `where` instead, which is the house style
+///   of `AGENTS.md` §4 but is not what the comment beside them describes. The
+///   demonstration and the style rule disagree, and that is a language
+///   question rather than a formatter one.
+/// * `08_dyn_dispatch.science` — the one line in the corpus over 88 columns,
+///   which the formatter breaks into three because a doubled
+///   `Array of (Box of any Summarize)` has no good break in it.
+/// * `09_absence_and_failure.science` — one hand-broken signature with no
+///   trailing comma, which the formatter rebreaks. No demonstration is at
+///   stake; it is simply not formatted yet.
+const UNFORMATTED: &[(&str, usize)] = &[
+    ("07_generics.science", 8),
+    ("08_dyn_dispatch.science", 4),
+    ("09_absence_and_failure.science", 6),
+];
+
+/// Nineteen of the twenty-two corpus files are what the formatter would write.
+#[test]
+fn the_corpus_is_what_the_formatter_would_write_except_for_the_known_ledger() {
+    let mut wrong = Vec::new();
+    for path in &corpus() {
+        let file = name(path);
+        let source = std::fs::read_to_string(path).expect("readable corpus file");
+        let changed = differing_lines(&source, &format(&source));
+        let pinned = UNFORMATTED.iter().find(|(n, _)| *n == file).map_or(0, |(_, n)| *n);
+        if changed != pinned {
+            wrong.push(format!("{file}: the ledger says {pinned} lines, the formatter wants {changed}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// How many lines two texts do not have in common, counted the way `diff` does.
+fn differing_lines(before: &str, after: &str) -> usize {
+    let (before, after): (Vec<&str>, Vec<&str>) = (before.lines().collect(), after.lines().collect());
+    // A full LCS is overkill for a count that only has to be stable, but it is
+    // the only way the number means "lines a reviewer would see marked".
+    let mut table = vec![vec![0usize; after.len() + 1]; before.len() + 1];
+    for i in (0..before.len()).rev() {
+        for j in (0..after.len()).rev() {
+            table[i][j] = if before[i] == after[j] {
+                table[i + 1][j + 1] + 1
+            } else {
+                table[i + 1][j].max(table[i][j + 1])
+            };
+        }
+    }
+    before.len() + after.len() - 2 * table[0][0]
+}
+
+/// Every `# fmt:` marker in the corpus is doing work.
+///
+/// A marker that protects nothing is a marker somebody will delete, and a file
+/// full of them is how an escape hatch turns into decoration. Deleting the
+/// markers from a file that has them must change what the formatter produces —
+/// otherwise there was nothing to hold.
+#[test]
+fn every_corpus_marker_is_load_bearing() {
+    let mut idle = Vec::new();
+    let mut marked = 0usize;
+    for path in &corpus() {
+        let source = std::fs::read_to_string(path).expect("readable corpus file");
+        let stripped: String = source
+            .lines()
+            .filter(|line| !is_marker(line))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        if stripped == source {
+            continue;
+        }
+        marked += 1;
+        if format(&stripped) == stripped {
+            idle.push(format!("{}: its markers protect nothing", name(path)));
+        }
+    }
+    assert!(idle.is_empty(), "{}", idle.join("\n"));
+    assert_eq!(marked, 4, "four corpus files carry markers; see the crate documentation");
+}
+
+fn is_marker(line: &str) -> bool {
+    matches!(line.trim(), "# fmt: off" | "# fmt: on" | "# fmt: skip")
+}
+
+/// A file with markers in it is still a fixed point.
+#[test]
+fn the_marked_examples_format_to_themselves() {
+    for path in &corpus() {
+        let source = std::fs::read_to_string(path).expect("readable corpus file");
+        if !source.lines().any(is_marker) {
+            continue;
+        }
+        assert_eq!(format(&source), source, "{} is not a fixed point", name(path));
+    }
+}
+
+/// How many physical lines of the corpus each marked file holds back, pinned.
+///
+/// The count is the real cost of the escape hatch and the number that should
+/// worry anybody: it is source the formatter will never touch again. Pinning it
+/// means a marker cannot quietly grow to cover a function, and a new one cannot
+/// appear without somebody typing the number.
+const SUPPRESSED: &[(&str, usize)] = &[
+    // Three `# fmt: skip`s: one free-form nested call and two parenthesized
+    // expressions written one operand per line.
+    ("14_line_continuation.science", 19),
+    // Two regions, both holding the column of a comment whose own text says
+    // what that column is.
+    ("15_comments.science", 9),
+    // One region around `with_gaps`, whose runs of blank lines are the point.
+    ("16_indentation.science", 11),
+    // One `# fmt: skip` on the `cblas_dgemm` call site. The six declarations
+    // above it need no marker: their trailing commas hold their grouping.
+    ("20_extern.science", 13),
+];
+
+#[test]
+fn the_markers_hold_back_no_more_of_the_corpus_than_they_are_pinned_to() {
+    let mut wrong = Vec::new();
+    let mut total = 0usize;
+    for path in &corpus() {
+        let file = name(path);
+        let source = std::fs::read_to_string(path).expect("readable corpus file");
+        let held = science_fmt::format_source(FileId(0), &source).suppressed;
+        total += held;
+        let pinned = SUPPRESSED.iter().find(|(n, _)| *n == file).map_or(0, |(_, n)| *n);
+        if held != pinned {
+            wrong.push(format!("{file}: pinned at {pinned} suppressed lines, actually {held}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    // Against a corpus of some three and a half thousand lines.
+    assert!(total < 100, "the escape hatch is being used as a policy: {total} lines");
 }

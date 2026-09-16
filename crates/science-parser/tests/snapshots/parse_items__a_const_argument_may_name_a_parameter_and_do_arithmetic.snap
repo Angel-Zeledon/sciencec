@@ -1,0 +1,25 @@
+---
+source: crates/science-parser/tests/parse_items.rs
+expression: "parse_source(\"def f of (const N: Int)(w: Grid of (Int, N + 1)):\n    print(\\\"x\\\")\n\")"
+---
+Module @0..65
+  Fn `f` @0..64
+    generics
+      ConstParam `N` @10..22
+        type: Path `Int` @19..22
+    params
+      Param `w` @24..47
+        type: Path `Grid` @27..47
+          generics of `Grid`
+            Path `Int` @36..39
+            ConstArg @41..46
+              Add @41..46
+                ConstParam `N` @41..42
+                Int 1 @45..46
+    body: Block @54..64
+      tail: Call @54..64
+        callee: Path `print` @54..59
+        args
+          Str "x" @60..63
+--- diagnostics ---
+(none)

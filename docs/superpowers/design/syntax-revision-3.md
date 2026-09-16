@@ -277,3 +277,14 @@ confuse rather than help, merging them is a one-line change.
    job it has no English claim to, in a position where `function` read as a noun.
    Nobody owns that ask — README's standing-asks table records three customers
    and no owner — so it is flagged here rather than decided.
+
+   > **Taken and decided.** `collections-and-chains.md` §1.2 owns it now and the
+   > spelling is **`(A) -> B`, with no keyword**. The flag above is what carried:
+   > the reading did not survive the rename, so the ask was re-opened rather than
+   > inherited. The answer is that the job `function` was doing — *no new
+   > keyword* — never needed a keyword to do it, and the one symbol involved is
+   > the `->` §4 of revision 2 already admitted. The decision therefore does not
+   > test §4.1's weakened rule at all, which is the most that could be asked of a
+   > note deciding a syntax question the day after that rule was overruled. The
+   > ambiguity with the tuple type is one token of lookahead past the closing
+   > paren; §1.2 works it against `parse_type` and states the grammar change.

@@ -91,23 +91,18 @@
 //! five columns off every declaration in the language. The width question was
 //! settled against numbers that the language then moved.
 //!
-//! **Cost.** 100 is wider than the prose beside it, so a formatted file has a
-//! ragged right edge: comments stop at 76 and code may run to 100. And a limit
-//! nothing in the corpus reaches is a limit the corpus does not test; the
-//! breaking rules are exercised by this crate's own fixtures instead, which is
-//! weaker evidence.
+//! **Cost.** There is still no width that agrees with the corpus, and that is
+//! worth recording rather than hiding. `examples/08_dyn_dispatch.science`
+//! leaves a line at 97 columns unbroken; `examples/00_kitchen_sink.science`
+//! breaks `def best_of …` before its `where` at 95. No single number honours
+//! both. 90 contradicts the first, which is one line and an outlier by the
+//! distribution above; 100 contradicted the second, and two more like it.
 //!
-//! There is still no width that agrees with the corpus, and that is worth
-//! recording rather than hiding. `examples/08_dyn_dispatch.science` leaves a
-//! line at 97 columns unbroken; `examples/00_kitchen_sink.science` breaks
-//! `def best_of …` before its `where` at 95. No single number honours
-//! both, so whichever is chosen the formatter contradicts one of them. 90
-//! contradicts the first, which is one line; 100 contradicted the second, and
-//! two more like it. 90
-//! contradicts the one where the disagreement is *joining* a line, which is
-//! recoverable by narrowing the limit later; the other direction would mean
-//! shipping a formatter that immediately rewrites code somebody wrote on
-//! purpose.
+//! 90 is also close enough to the corpus's working width that the formatter
+//! now breaks lines real code writes flat, which 100 never did. When it gets
+//! that wrong the answer is `# fmt: off` — see [`suppress`] — and not a wider
+//! limit, because a limit wide enough never to be wrong is a limit that does
+//! nothing.
 //!
 //! Excluding the trailing comment from the measurement is deliberate: a line
 //! broken into four because someone wrote a long sentence after it is a line
@@ -134,12 +129,16 @@
 //! argument lists side by side gets one of them broken and leaves the other
 //! flat and over-wide.
 //!
-//! ## A trailing comma is an instruction
+//! ## A trailing comma is an instruction, and it has three states
 //!
-//! **Decision.** A bracket group whose last item is followed by a comma is
-//! exploded however short it is, and a group with no trailing comma is joined
-//! onto one line whenever it fits. The formatter never adds or removes a
-//! comma.
+//! **Decision.** The formatter never adds or removes a comma, and a group's
+//! trailing comma means one of three things:
+//!
+//! | The group | What happens |
+//! |---|---|
+//! | no trailing comma | joined onto one line whenever it fits |
+//! | trailing comma, items all on one line | exploded, one item per line |
+//! | trailing comma, items already on several lines | **kept exactly as the author shared them out** |
 //!
 //! **Reason.** The formatter may not change the token stream, and `(a, b)` and
 //! `(a, b,)` are different token streams. Deciding whether the difference
@@ -148,14 +147,33 @@
 //! in one position and another elsewhere. Since the comma has to be preserved
 //! anyway, it may as well be given a meaning, and Black and Prettier have both
 //! shown that "the author left a trailing comma, so keep this exploded" is a
-//! rule people like. `examples/14_line_continuation.science` puts a trailing
-//! comma on every list it breaks by hand, so the corpus's careful layout
-//! survives contact with the formatter unchanged.
+//! rule people like.
 //!
-//! **Cost.** A list the author broke by hand *without* a trailing comma gets
-//! joined, and `examples/14`'s point about those is lost. And a short list the
-//! author left a comma in stays four lines long when one would do, with no way
-//! to say otherwise except deleting the comma.
+//! The third state is the one those two formatters do not have, and
+//! `examples/20_extern.science` is why. Its BLAS bindings group
+//! `m: BlasInt, n: BlasInt, k: BlasInt` on one line because the dimension
+//! triple is *one thing* in the C prototype, and put each `a`/`lda` pair
+//! together because a matrix and its leading dimension are one argument in two
+//! halves. One item per line is not a tidier version of that; it is a
+//! different statement about what the arguments are. Nothing in the tokens can
+//! tell the formatter which lists are like this, but the author's own line
+//! breaks can, and they are already there.
+//!
+//! It stays idempotent because the rule is a fixpoint on its own output: the
+//! items come out on exactly the lines they went in on, so a second pass reads
+//! back the same assignment and reaches the same answer.
+//!
+//! **Cost.** Three states is two more than a formatter should need, and the
+//! difference between the second and the third is invisible until you count
+//! lines: `f(a, b,)` explodes and the same list broken in two does not. A
+//! grouped line is also printed flat however wide it is, so the author can
+//! push a line past the width limit by grouping — which is the point, and is
+//! still a thing the width no longer governs. A group with a comment inside it
+//! falls back to one item per line, because a comment belongs to an item and a
+//! packed line may hold three of them.
+//!
+//! A list the author broke by hand *without* a trailing comma is still joined,
+//! and for those there is `# fmt: skip`.
 //!
 //! ## Three method calls are a pipeline and go down the page
 //!
@@ -311,6 +329,38 @@
 //! value, and `sciencec fmt` does not print it — a formatter that nagged about
 //! every unusual comment would be a formatter people stopped running.
 //!
+//! ## Saying no: `# fmt: off`, `# fmt: on`, `# fmt: skip`
+//!
+//! Every decision above is a rule about what code usually means, and code that
+//! exists to demonstrate a *property of the language* is the case where the
+//! usual meaning is the wrong one. Running this formatter over `examples/`
+//! found four files in that position at once — a parenthesised expression
+//! written one operand per line to show that it may be, a comment whose text
+//! asserts the column it is written at, a run of blank lines that exists to
+//! show a run of blank lines is legal, and an argument list grouped to mirror a
+//! C prototype. The formatter is right about the language in all four and
+//! destroys the demonstration in all four.
+//!
+//! **Decision.** Three comments — `# fmt: off`, `# fmt: on` and `# fmt: skip`
+//! — turn the formatter off for a region or for one statement. [`suppress`]
+//! holds the decisions, the reasons and the costs; the short version is that
+//! they are comments, so no token and no grammar is invented, and a marker must
+//! stand on a line of its own between statements.
+//!
+//! **What "leave it" means.** The same thing it already meant for a comment the
+//! layout could not place: the source lines are reproduced as written, all
+//! moved together by whatever it takes to put the first of them on its
+//! canonical column. Byte-for-byte would be wrong — the canonical column is
+//! what the lexer measures, so a region left at a column the rest of the file
+//! no longer uses would change the block structure. Moving them together is
+//! what keeps the shape the author wrote.
+//!
+//! **Cost.** "A formatted file is canonical" becomes "a formatted file is
+//! canonical except where it says otherwise", which is weaker and is the price
+//! of the mechanism existing at all. There is no `--force`: a flag that
+//! overrode the markers would make them advisory, and an advisory escape hatch
+//! is not one.
+//!
 //! ## What is never touched
 //!
 //! A token is re-emitted as the exact bytes it was written with, sliced out of
@@ -319,7 +369,7 @@
 //! recoverable from a lexed token, and a formatter that normalised it would be
 //! making a language decision under the cover of a whitespace decision.
 //!
-//! # Refusing a file
+//! # Refusing a file, and complaining about one
 //!
 //! [`format_source`] refuses — returns no text — in exactly two cases:
 //!
@@ -329,10 +379,17 @@
 //! * the formatter's own output does not re-lex to the same token stream, or
 //!   does not carry the same comments. That is a bug in this crate, and it is
 //!   reported as one (`SC0900`) rather than written to the user's disk.
+//!
+//! It also has exactly one thing to say about a file it *did* format: an
+//! unmatched `# fmt: off` is a warning (`SC0901`), because it suppresses
+//! everything below it and nothing else in the output says so. A warning does
+//! not fail the exit code, so a file with one still formats and `sciencec fmt`
+//! still exits 0.
 
 mod layout;
 mod scan;
 mod spacing;
+mod suppress;
 
 use science_diagnostics::{Code, Diagnostic, Diagnostics, FileId, Label, Span};
 use science_lexer::Token;
@@ -345,6 +402,10 @@ use scan::{Comment, LogicalLine};
 /// it was given. Reported instead of emitted.
 const E_FORMATTER_DISAGREES: Code = Code(900);
 
+/// A `# fmt: off` with no `# fmt: on` after it. A warning, not an error: see
+/// [`suppress`].
+const W_UNMATCHED_FMT_OFF: Code = Code(901);
+
 /// The width a formatted line is kept within. See the module documentation.
 pub const MAX_WIDTH: usize = 90;
 
@@ -353,11 +414,24 @@ pub const MAX_WIDTH: usize = 90;
 pub struct Formatting {
     /// The formatted source, or `None` when the formatter refused the file.
     pub text: Option<String>,
-    /// Why it refused. Empty on success: formatting a clean file says nothing.
+    /// Why it refused, or what it wants to say about a marker. Empty when
+    /// there was nothing to report: formatting a clean file says nothing.
     pub diagnostics: Diagnostics,
     /// How many logical lines were reproduced as written because a comment in
     /// them had no position the layout could put it back in.
     pub preserved: usize,
+    /// How many physical lines were reproduced as written because a
+    /// `# fmt: off` or `# fmt: skip` asked for it.
+    pub suppressed: usize,
+}
+
+/// The whole file, printed.
+struct Printed {
+    text: String,
+    preserved: usize,
+    suppressed: usize,
+    /// The byte offset of every `# fmt: off` with no `# fmt: on` after it.
+    unmatched: Vec<usize>,
 }
 
 /// Formats one Science source file.
@@ -369,7 +443,7 @@ pub struct Formatting {
 pub fn format_source(file: FileId, source: &str) -> Formatting {
     let (tokens, diagnostics) = science_lexer::lex(file, source);
     if diagnostics.has_errors() {
-        return Formatting { text: None, diagnostics, preserved: 0 };
+        return Formatting { text: None, diagnostics, preserved: 0, suppressed: 0 };
     }
 
     let comments = scan::comments(source, &tokens);
@@ -390,13 +464,32 @@ pub fn format_source(file: FileId, source: &str) -> Formatting {
             width: MAX_WIDTH,
         },
     };
-    let (text, preserved) = printer.run(&lines, &comments);
+    let printed = printer.run(&lines, &comments);
+    let Printed { text, preserved, suppressed, unmatched } = printed;
+
+    let mut reported = Diagnostics::new();
+    for at in unmatched {
+        let end = source[at..].find('\n').map_or(source.len(), |n| at + n);
+        reported.push(
+            Diagnostic::warning(W_UNMATCHED_FMT_OFF, "`# fmt: off` has no matching `# fmt: on`")
+                .with_label(Label::primary(
+                    Span::new(file, at as u32, end as u32),
+                    "formatting is suppressed from here to the end of the file",
+                ))
+                .with_note(
+                    "the forgiving reading was chosen deliberately: ignoring the marker would \
+                     reformat code that asked to be left alone, which is the one thing the \
+                     marker exists to prevent. Write `# fmt: on` where the exception ends.",
+                ),
+        );
+    }
 
     match verify(file, source, &tokens, &comments, &text) {
-        Ok(()) => Formatting { text: Some(text), diagnostics: Diagnostics::new(), preserved },
+        Ok(()) => {
+            Formatting { text: Some(text), diagnostics: reported, preserved, suppressed }
+        }
         Err(message) => {
-            let mut refusal = Diagnostics::new();
-            refusal.push(
+            reported.push(
                 Diagnostic::error(E_FORMATTER_DISAGREES, "the formatter refused this file")
                     .with_label(Label::primary(
                         Span::new(file, 0, source.len().min(u32::MAX as usize) as u32),
@@ -408,7 +501,7 @@ pub fn format_source(file: FileId, source: &str) -> Formatting {
                          source that caused it.",
                     ),
             );
-            Formatting { text: None, diagnostics: refusal, preserved }
+            Formatting { text: None, diagnostics: reported, preserved, suppressed }
         }
     }
 }
@@ -574,67 +667,85 @@ impl Printer<'_> {
     }
 
     /// Formats the whole file.
-    fn run(&self, lines: &[LogicalLine], comments: &[Comment]) -> (String, usize) {
+    fn run(&self, lines: &[LogicalLine], comments: &[Comment]) -> Printed {
         let units = self.units(lines, comments);
+        let statements: Vec<(usize, usize)> =
+            lines.iter().map(|line| self.extent_of(line)).collect();
+        let free: Vec<usize> = units
+            .iter()
+            .filter_map(|unit| match unit {
+                Unit::Comment { index, .. } => Some(*index),
+                Unit::Line(_) => None,
+            })
+            .collect();
+        let marked =
+            suppress::suppressed(self.source, comments, &free, self.line_starts, &statements);
+
         let mut out: Vec<String> = Vec::new();
         let mut preserved = 0usize;
+        let mut suppressed = 0usize;
         let mut previous: Option<(usize, usize)> = None;
 
-        for unit in &units {
-            let (first, last, depth) = match unit {
-                Unit::Line(line) => (
-                    self.line_at(self.start_of(line.start)),
-                    self.line_at(self.end_of(line.end - 1).saturating_sub(1)),
-                    line.depth,
-                ),
-                Unit::Comment { index, depth } => {
-                    let at = self.line_at(comments[*index].start);
-                    (at, at, *depth)
-                }
-            };
+        let mut i = 0usize;
+        while i < units.len() {
+            let (first, last, depth) = self.extent(&units[i], comments);
 
-            if let Some((previous_last, previous_depth)) = previous {
-                let mut blanks = (previous_last + 1..first)
-                    .filter(|&n| self.line_is_blank(n))
-                    .count()
-                    .min(1);
-                // A blank line between a block's header and its first
-                // statement is a gap nobody meant to leave.
-                if depth > previous_depth {
-                    blanks = 0;
+            // A marker's own line is the first line of its region, so walking
+            // the units in order always meets the marker before anything it
+            // governs.
+            if let Some(region) = marked.regions.iter().find(|r| r.holds(first)) {
+                self.gap(&mut out, previous, first, depth);
+                let mut delta = None;
+                let mut trailing_depth = depth;
+                let mut j = i;
+                while j < units.len() {
+                    let (begins, _, at) = self.extent(&units[j], comments);
+                    if begins > region.last {
+                        break;
+                    }
+                    if delta.is_none() {
+                        if let Unit::Line(line) = &units[j] {
+                            delta = Some(self.delta_for(line, begins));
+                        }
+                    }
+                    trailing_depth = at;
+                    j += 1;
                 }
-                for _ in 0..blanks {
-                    out.push(String::new());
-                }
+                out.extend(self.shifted(region.first, region.last, delta.unwrap_or(0)));
+                suppressed += region.last + 1 - region.first;
+                previous = Some((region.last, trailing_depth));
+                i = j;
+                continue;
             }
 
-            match unit {
+            self.gap(&mut out, previous, first, depth);
+            match &units[i] {
                 Unit::Comment { index, depth } => {
                     let comment = &comments[*index];
                     out.push(
                         " ".repeat(depth * INDENT) + &self.source[comment.start..comment.end],
                     );
                 }
-                Unit::Line(line) => match self.layout.lay_out(
-                    line.start,
-                    line.end,
-                    line.depth * INDENT,
-                ) {
-                    Some(mut laid) => {
-                        if let Some(comment) = self.layout.trailing_comment(line.end) {
-                            let last = laid.last_mut().expect("a laid-out line is never empty");
-                            last.push_str("  ");
-                            last.push_str(&self.source[comment.start..comment.end]);
+                Unit::Line(line) => {
+                    match self.layout.lay_out(line.start, line.end, line.depth * INDENT) {
+                        Some(mut laid) => {
+                            if let Some(comment) = self.layout.trailing_comment(line.end) {
+                                let tail =
+                                    laid.last_mut().expect("a laid-out line is never empty");
+                                tail.push_str("  ");
+                                tail.push_str(&self.source[comment.start..comment.end]);
+                            }
+                            out.extend(laid);
                         }
-                        out.extend(laid);
+                        None => {
+                            preserved += 1;
+                            out.extend(self.shifted(first, last, self.delta_for(line, first)));
+                        }
                     }
-                    None => {
-                        preserved += 1;
-                        out.extend(self.verbatim(line, first, last));
-                    }
-                },
+                }
             }
             previous = Some((last, depth));
+            i += 1;
         }
 
         while out.last().is_some_and(|l| l.is_empty()) {
@@ -644,33 +755,85 @@ impl Printer<'_> {
         if !text.is_empty() {
             text.push('\n');
         }
-        (text, preserved)
+        Printed { text, preserved, suppressed, unmatched: marked.unmatched }
     }
 
-    /// A logical line the layout would not touch, reproduced as written.
-    ///
-    /// Only the indentation moves, and every physical line moves by the same
-    /// amount, so the relative shape the author chose is intact. The first
-    /// line lands on the canonical column — which it must, because that column
-    /// is what the lexer measures — and the rest are inside a bracket or after
-    /// a leading `.`, where §4.2 gives the indentation no meaning at all.
-    fn verbatim(&self, line: &LogicalLine, first: usize, last: usize) -> Vec<String> {
+    /// The physical lines a unit occupies, and the block level it sits at.
+    fn extent(&self, unit: &Unit, comments: &[Comment]) -> (usize, usize, usize) {
+        match unit {
+            Unit::Line(line) => {
+                let (first, last) = self.extent_of(line);
+                (first, last, line.depth)
+            }
+            Unit::Comment { index, depth } => {
+                let at = self.line_at(comments[*index].start);
+                (at, at, *depth)
+            }
+        }
+    }
+
+    /// The first and last physical line of one logical line.
+    fn extent_of(&self, line: &LogicalLine) -> (usize, usize) {
+        (
+            self.line_at(self.start_of(line.start)),
+            self.line_at(self.end_of(line.end - 1).saturating_sub(1)),
+        )
+    }
+
+    /// The blank lines that go between what was printed last and what is about
+    /// to be.
+    fn gap(
+        &self,
+        out: &mut Vec<String>,
+        previous: Option<(usize, usize)>,
+        first: usize,
+        depth: usize,
+    ) {
+        let Some((previous_last, previous_depth)) = previous else { return };
+        let mut blanks =
+            (previous_last + 1..first).filter(|&n| self.line_is_blank(n)).count().min(1);
+        // A blank line between a block's header and its first statement is a
+        // gap nobody meant to leave.
+        if depth > previous_depth {
+            blanks = 0;
+        }
+        for _ in 0..blanks {
+            out.push(String::new());
+        }
+    }
+
+    /// How far a logical line has to move to sit on its canonical column.
+    fn delta_for(&self, line: &LogicalLine, first: usize) -> isize {
         let start = self.start_of(line.start);
         let column = self.source[self.line_starts[first]..start].chars().count();
-        let wanted = line.depth * INDENT;
+        (line.depth * INDENT) as isize - column as isize
+    }
 
+    /// Physical lines `first..=last` as written, every one of them moved by
+    /// the same amount.
+    ///
+    /// Moving them together is what keeps the shape the author chose: the
+    /// first line lands on the canonical column — which it must, because that
+    /// column is what the lexer measures — and everything below it keeps its
+    /// position relative to that. Inside a logical line the rest are within a
+    /// bracket or after a leading `.`, where §4.2 gives indentation no meaning
+    /// at all; inside a suppressed region they are whatever the author wrote,
+    /// which already lexed.
+    fn shifted(&self, first: usize, last: usize, delta: isize) -> Vec<String> {
         (first..=last)
             .map(|n| {
                 let text = self.physical_line(n).trim_end();
                 if text.is_empty() {
                     return String::new();
                 }
-                if wanted >= column {
-                    " ".repeat(wanted - column) + text
-                } else {
-                    let drop = column - wanted;
-                    let keep = text.len() - text.trim_start_matches(' ').len();
-                    text[drop.min(keep)..].to_string()
+                match delta {
+                    0 => text.to_string(),
+                    d if d > 0 => " ".repeat(d as usize) + text,
+                    d => {
+                        let drop = d.unsigned_abs();
+                        let keep = text.len() - text.trim_start_matches(' ').len();
+                        text[drop.min(keep)..].to_string()
+                    }
                 }
             })
             .collect()
@@ -793,6 +956,95 @@ mod tests {
                 "def f():\n    a\n        .{name}()\n        .{name}()\n        .{name}()\n"
             )
         );
+    }
+
+    #[test]
+    fn a_trailing_comma_over_several_lines_keeps_the_authors_grouping() {
+        // The third state: the author wrote three items on two lines, and the
+        // formatter keeps that rather than making it three lines.
+        let source = "def f():\n    g(\n        a, b,\n        c,\n    )\n";
+        assert_eq!(format(source), source);
+
+        // The second state is unchanged: all on one line means "explode".
+        let flat = "def f():\n    g(a, b, c,)\n";
+        assert_eq!(format(flat), "def f():\n    g(\n        a,\n        b,\n        c,\n    )\n");
+    }
+
+    #[test]
+    fn a_grouped_list_with_a_comment_in_it_falls_back_to_one_per_line() {
+        let source = "def f():\n    g(\n        a, b,  # why\n        c,\n    )\n";
+        assert_eq!(
+            format(source),
+            "def f():\n    g(\n        a,\n        b,  # why\n        c,\n    )\n"
+        );
+    }
+
+    #[test]
+    fn fmt_off_and_fmt_on_hold_a_region_as_written() {
+        let source = "def f():\n    # fmt: off\n    let a be (\n        1 +\n        2\n    )\n    # fmt: on\n    let b be (\n        1 +\n        2\n    )\n";
+        let out = format_source(FileId(0), source);
+        let text = out.text.expect("the file formats");
+        assert!(text.contains("let a be (\n        1 +\n        2\n    )"), "{text}");
+        assert!(text.contains("let b be (1 + 2)"), "{text}");
+        assert_eq!(out.suppressed, 6, "the two markers and the four lines between them");
+        assert!(out.diagnostics.is_empty());
+        assert_eq!(format(&text), text, "a suppressed region is still a fixed point");
+    }
+
+    #[test]
+    fn fmt_skip_holds_the_next_statement() {
+        let source =
+            "def f():\n    # fmt: skip\n    let a be (\n        1 +\n        2\n    )\n    let b be (\n        1 +\n        2\n    )\n";
+        let text = format(source);
+        assert!(text.contains("let a be (\n        1 +\n        2\n    )"), "{text}");
+        assert!(text.contains("let b be (1 + 2)"), "{text}");
+    }
+
+    #[test]
+    fn a_region_holds_blank_lines_and_comment_columns() {
+        let source = "# fmt: off\ndef f():\n    let a be 1\n\n\n\n        # far right\n    let b be 2\n# fmt: on\n";
+        assert_eq!(format(source), source);
+    }
+
+    #[test]
+    fn an_unmatched_fmt_off_runs_to_the_end_of_the_file_and_is_warned_about() {
+        let source = "def f():\n    # fmt: off\n    let a be (\n        1 +\n        2\n    )\n";
+        let out = format_source(FileId(0), source);
+        assert_eq!(out.text.as_deref(), Some(source), "nothing below it is touched");
+        assert_eq!(out.diagnostics.len(), 1);
+        assert!(!out.diagnostics.has_errors(), "it is a warning, not an error");
+    }
+
+    /// A marker is a comment, so the verifier already guards it: `verify`
+    /// compares every comment's text before and after, and would refuse the
+    /// file rather than emit one with a marker missing or altered.
+    #[test]
+    fn a_marker_is_a_comment_and_the_verifier_counts_it() {
+        let source = "# fmt: off\ndef f():\n    let  a  be  1\n# fmt: on\ndef g():\n    let  b  be  2\n";
+        let text = format(source);
+        assert_eq!(scan::comments(&text, &science_lexer::lex(FileId(0), &text).0).len(), 2);
+        assert!(text.contains("# fmt: off") && text.contains("# fmt: on"), "{text}");
+        // The region held; the function below it did not.
+        assert!(text.contains("let  a  be  1"), "{text}");
+        assert!(text.contains("let b be 2"), "{text}");
+    }
+
+    #[test]
+    fn a_marker_that_is_not_on_a_line_of_its_own_is_an_ordinary_comment() {
+        // Black's spelling. It does nothing here, and the module documentation
+        // says why: a Science logical line can span a dozen physical lines, so
+        // a trailing comment on one is four lines below what it would govern.
+        let source = "def f():\n    let a be (\n        1 +\n        2\n    )  # fmt: skip\n";
+        let text = format(source);
+        assert!(text.contains("let a be (1 + 2)  # fmt: skip"), "{text}");
+    }
+
+    #[test]
+    fn a_marker_inside_a_bracket_is_an_ordinary_comment() {
+        let source = "def f():\n    g(\n        # fmt: off\n        a,\n    )\n";
+        let text = format(source);
+        assert!(text.contains("# fmt: off"), "{text}");
+        assert_eq!(format(&text), text);
     }
 
     #[test]
