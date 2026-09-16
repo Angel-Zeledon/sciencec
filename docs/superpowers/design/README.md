@@ -22,6 +22,7 @@ disagrees with it says so explicitly and gives the reason.
 | `stdlib-standard.md` | Level 2: `time`, `os`, `random`, `testing`, `logging`, `text.regex`, `thread`, `net`. | F0 / F1 |
 | `stdlib-shape-and-packages.md` | The policy the three stdlib notes live under: batteries included, the error model's consequences, threads over async, naming, and Level 3. **Read before the other two.** | F0 |
 | `scientific-libraries.md` | The catalogue: `math`, `linalg`, `stats`, `optimize`, `signal`, `chem`, `bio`, `physics`; what links against C; the units-in-the-type decision. | F1+ |
+| `concurrency-and-cancellation.md` | The mechanism under `stdlib-shape-and-packages.md`'s Decision 3, not a second surface: why `scope` turns a leaked thread and a data race into compile errors, what that requires of region inference, and the cancellation and progress design nobody owned. Closes `mcp-servers.md` §18. | F2 |
 | `type-checking-and-mir.md` | Everything between the resolver and codegen: bidirectional checking over annotated signatures, THIR and MIR, flow narrowing and `SC0140` — the half of the error model that shipped without its meaning — and what the type system owes the ML ecosystem, including the `python:` region that is the only way scikit-learn is reachable at all. | F0 design, F1 build |
 | `region-inference.md` | The language's central claim, specified: what a region is, why a *type* gets one variable per borrowed field, what happens when a signature is ambiguous with no syntax to disambiguate it, and the contradiction between interprocedural inference and separate compilation. **Read with `examples/21_compiler_shapes.science`.** | F0 design, F1 build |
 | `self-hosting.md` | Writing the Science compiler in Science: the gates, the differential bootstrap against the existing corpus, and the argument that the adversarial test is ~200 lines rather than 17,305. **Read before planning any phase order.** | F0 design, F2+ execution |
@@ -116,6 +117,7 @@ allocated by a design note and then implemented the same day.
 | `python-from-science.md` | — | `SC0180`–`SC0189` | — | — | — | `SC0459` |
 | `mcp-servers.md` | — | `SC0190`–`SC0199` | — | `SC0504`–`SC0519` | — | — |
 | `region-inference.md` | — | — | — | — | `SC0330`, `SC0333`–`SC0379` | — |
+| `concurrency-and-cancellation.md` | — | — | — | — | `SC0381`–`SC0398` | — |
 | `type-checking-and-mir.md` | — | — | — | `SC0520`–`SC0579` | — | — |
 
 ### A namespace outside `SC`
