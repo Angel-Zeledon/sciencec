@@ -1,0 +1,14 @@
+# UI test: a `tool` whose description opens with a blank `##` (SC0195).
+#
+# §5.2 takes the `title` from the first line of the run, which is the split
+# `strings-formatting-and-docs.md` §5.4 already makes for its own reasons. A
+# run that opens blank has no first line to be one.
+#
+# The distinction from SC0190 is the point: there *is* a description here, and
+# all of it is sent. What is missing is the sentence a caller reading only the
+# summary would see.
+
+##
+## Fit peaks in a time-of-flight window.
+tool fit_peaks(run: String) -> Int:
+    0

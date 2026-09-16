@@ -1,0 +1,20 @@
+---
+source: crates/science-parser/tests/parse_tools.rs
+expression: "parse_source_allowing_errors(\"type Doc:\n    title: String\n\nDoc has:\n    ## Summarize the document.\n    tool summarize(self) -> Int:\n        0\n\ndef run() -> Int:\n    ## Fit peaks in a window.\n    tool fit(window: F64) -> Int:\n        0\n    0\n\")"
+---
+Module @0..211
+  Record `Doc` @0..27
+    fields
+      Field `title` @14..27
+        type: Path `String` @21..27
+  Has @29..111
+    type: Path `Doc` @29..32
+  Fn `run` @113..210
+    ret: Path `Int` @126..129
+    body: Block @209..210
+      tail: Int 0 @209..210
+--- diagnostics ---
+SC0197 @73..77 a `tool` is declared at the top level of a module
+  note a tool is offered to its caller by name alone: a method would need a receiver the caller cannot supply, and a declaration inside a body is not visible outside it
+SC0197 @165..169 a `tool` is declared at the top level of a module
+  note a tool is offered to its caller by name alone: a method would need a receiver the caller cannot supply, and a declaration inside a body is not visible outside it

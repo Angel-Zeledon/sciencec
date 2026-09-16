@@ -1,0 +1,13 @@
+---
+source: crates/science-parser/tests/parse_tools.rs
+expression: "parse_source_allowing_errors(\"## Fit peaks in a time-of-flight window.\ntool fit_peaks(window_lower: F64) -> Int\n\")"
+---
+Module @41..82
+  Tool `fit_peaks` @41..81
+    params
+      Param `window_lower` @56..73
+        type: Path `F64` @70..73
+    ret: Path `Int` @78..81
+--- diagnostics ---
+SC0198 @46..55 a `tool` is declared with a body
+  note there is no abstract tool: a signature without a body is an interface's required method, and that is declared with `def`

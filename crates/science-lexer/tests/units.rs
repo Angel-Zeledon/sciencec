@@ -602,7 +602,6 @@ fn words_reserved_for_later_phases_are_not_identifiers() {
     // identifier.
     let expected = [
         ("agent", Agent),
-        ("tool", Tool),
         ("prompt", Prompt),
         ("spawn", Spawn),
         ("send", Send),
@@ -682,6 +681,26 @@ fn extern_and_unsafe_moved_from_a_reservation_to_keywords() {
     // lengthening it.
     assert_eq!(bare("static"), vec![Reserved(ReservedWord::Static)]);
     assert_eq!(bare("union"), vec![Reserved(ReservedWord::Union)]);
+}
+
+#[test]
+fn tool_moved_from_a_reservation_to_a_keyword() {
+    // `mcp-servers.md` Decision 1 spends the word: a `tool` is a callable
+    // exposed to a model, and §2.4's five obligations are what make it a
+    // declaration form rather than an attribute. Decision 2 spends no other:
+    // `agent` and `prompt` stay in the list above, and the test that they do
+    // is the one that would fail if somebody spent all three because they
+    // arrived together.
+    assert_eq!(
+        bare("tool fit(run: String):"),
+        vec![Tool, id("fit"), LParen, id("run"), Colon, id("String"), RParen, Colon]
+    );
+    // A keyword everywhere, like `extern`: a variable named `tool` is not an
+    // identifier in some positions and a declaration in others.
+    assert_eq!(bare("let tool be 1"), vec![Let, Tool, Be, int(1, Dec, None)]);
+    // And the lexer still says nothing about it. Whoever wanted an identifier
+    // is the phase that reports it.
+    assert!(codes("let tool be 1").is_empty());
 }
 
 #[test]

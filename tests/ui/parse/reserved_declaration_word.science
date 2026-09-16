@@ -1,0 +1,23 @@
+# UI test: `prompt` and `agent` in declaration position (SC0196).
+#
+# One case for two words, because they are one decision: `mcp-servers.md`
+# Decision 2 spends `tool` and only `tool`, and someone who reads that three
+# words were reserved together will reasonably expect all three to work.
+#
+# Each carries its own reason, and `prompt`'s is the one that decides it: a
+# prompt's arguments carry no schema at all, so a declaration form would have
+# nothing to derive and nothing to check — which is the whole of the case for
+# `tool`. What is left is a function that returns a list of messages, which is
+# a function. `agent` is the opposite direction and out of scope: it is a
+# program calling a model, not a model calling a program.
+#
+# What this replaces is worth seeing in the diff: without it both words fall
+# through to SC0101, which calls them reserved "for a later phase" — a phrase
+# that reads, to anyone who knows what a compiler phase is, as though a later
+# pass will accept them.
+
+prompt fit_report(run: String) -> Int:
+    0
+
+agent analyst(question: String) -> Int:
+    0

@@ -193,11 +193,13 @@ fn dump_items() {
     // predicate can hold since a bound stopped being a path.
     let largest = item(
         ItemKind::Fn(FnDecl {
+            form: FnForm::Def,
             is_pub: true,
             name: ident("largest", 76),
             generics: vec![type_param("T", 87, 93, vec![bound("Ord", 90)])],
             self_param: None,
             params: vec![Param {
+                doc: None,
                 name: ident("items", 95),
                 ty: borrowed_ty(
                     false,
@@ -389,6 +391,7 @@ fn dump_interfaces_and_implementations() {
     //     def describe(self) -> String:
     //         "an iterator"
     let next = FnDecl {
+        form: FnForm::Def,
         is_pub: false,
         name: ident("next", 57),
         generics: Vec::new(),
@@ -405,6 +408,7 @@ fn dump_interfaces_and_implementations() {
         span: sp(48, 103),
     };
     let count = FnDecl {
+        form: FnForm::Def,
         is_pub: false,
         name: ident("count", 119),
         generics: Vec::new(),
@@ -416,6 +420,7 @@ fn dump_interfaces_and_implementations() {
         span: sp(110, 149),
     };
     let describe = FnDecl {
+        form: FnForm::Def,
         is_pub: false,
         name: ident("describe", 164),
         generics: Vec::new(),
@@ -451,6 +456,7 @@ fn dump_interfaces_and_implementations() {
     //     def next(mutable self) -> Option of Self.Item:
     //         Some(self.value)
     let impl_next = FnDecl {
+        form: FnForm::Def,
         is_pub: false,
         name: ident("next", 304),
         generics: Vec::new(),
@@ -510,6 +516,7 @@ fn dump_interfaces_and_implementations() {
     // Pair of (A, B) implements Swap where A: Clone:
     //     def swapped(self) -> Pair of (B, A)
     let swapped = FnDecl {
+        form: FnForm::Def,
         is_pub: false,
         name: ident("swapped", 499),
         generics: Vec::new(),
@@ -560,6 +567,7 @@ fn dump_interfaces_and_implementations() {
     //     def first(self) -> borrowed Doc:
     //         self[0]
     let first = FnDecl {
+        form: FnForm::Def,
         is_pub: false,
         name: ident("first", 614),
         generics: Vec::new(),
@@ -1416,6 +1424,7 @@ fn dump_extern_blocks() {
                     kind: ExternItemKind::Fn(ExternFn {
                         name: ident("dgemm", 210),
                         params: vec![Param {
+                            doc: None,
                             name: ident("m", 216),
                             ty: ty("BlasInt", 219),
                             span: sp(216, 226),
@@ -1487,6 +1496,7 @@ fn dump_extern_blocks() {
     //         H5open()
     let call = item(
         ItemKind::Fn(FnDecl {
+            form: FnForm::Def,
             is_pub: false,
             name: ident("call", 395),
             generics: Vec::new(),

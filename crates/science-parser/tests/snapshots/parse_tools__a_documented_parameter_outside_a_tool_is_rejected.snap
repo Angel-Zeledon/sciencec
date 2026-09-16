@@ -1,0 +1,15 @@
+---
+source: crates/science-parser/tests/parse_tools.rs
+expression: "parse_source_allowing_errors(\"def fit_peaks(\n        ## The run identifier, as printed in the run log.\n        run: String) -> Int:\n    0\n\")"
+---
+Module @0..108
+  Fn `fit_peaks` @0..107
+    params
+      Param `run` @81..92
+        type: Path `String` @86..92
+    ret: Path `Int` @97..100
+    body: Block @106..107
+      tail: Int 0 @106..107
+--- diagnostics ---
+SC0194 @81..84 only a `tool` documents its parameters one by one
+  note move the text into the `##` comment above the declaration; a `tool` documents a parameter here because each one becomes a described field of the schema its caller reads

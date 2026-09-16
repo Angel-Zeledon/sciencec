@@ -154,9 +154,28 @@ shape fails before anyone tries to run it.
 | Case | Code | What it pins down |
 |---|---|---|
 | `try_word` | `SC0155` | The word revision 2 §3 removed with `Result`. The point is the **absence of a fix**: every other migration code renames a word and carries a `= help:` with a replacement a tool can apply, and this one cannot, because the new model turns one expression into a binding, a test and a return, and which value to return on the error path is not something the parser can know. The explanation is in the note instead, and a `= help:` line appearing here would be the regression. |
-| `function_word` | `SC0156` | The word revision 3 renamed to `def`, which *does* carry an applicable fix — a word for a word, with nothing around it moving. **The second diagnostic in its expectation is a bug**, described in the file and in the section below. |
+| `function_word` | `SC0156` | The word revision 3 renamed to `def`, which *does* carry an applicable fix — a word for a word, with nothing around it moving. It reported **two** diagnostics when the case was written, and the expectation has since shrunk to one; the file says what the second one was and why it happened, because the shape of that bug is the reason every recovery in `SC0190`–`SC0198` reports without consuming. |
 | `const_factor` | `SC0157` | `N * M`, the refusal `const-expression-arithmetic.md` §2.1 exists for. Also its recovery: the parser steps to the end of the const argument so the argument list still closes, and the case proves there is exactly **one** diagnostic and no cascade. |
 | `reserved_word_as_name` | `SC0102` | `def await(…)`. `await` is reserved for a later revision, so it is its own token and never an identifier; the parser refuses the name, and `describe` says which kind of word it is rather than leaving a later phase to complain about something that was never a name. |
+
+The nine below are `mcp-servers.md`'s block, `SC0190`–`SC0198`, and they are
+the whole of that note's §14.2 stage 0: every one of them is checkable by the
+parser with no types at all, which is why the `tool` declaration could land
+before the type checker that enforces *the schema is the signature*. Each case
+is **one mistake and one diagnostic**; a second diagnostic appearing in any of
+these expectations is the regression they exist to catch.
+
+| Case | Code | What it pins down |
+|---|---|---|
+| `tool_without_description` | `SC0190` | Decision 5, the only construct in Science for which documentation is mandatory. The message carries the *reason* — a model reads the description in order to decide whether to call the tool — because without it the diagnostic is "document your code", which a compiler has no business saying. The second note is the other half: an undescribed tool does not error, it is simply never chosen. |
+| `tool_summary_blank` | `SC0195` | The run exists and all of it is sent; what is missing is the summary §5.2 takes the `title` from. The distinction from `SC0190` is the point, and it is the reason two codes were spent rather than one. |
+| `generic_tool` | `SC0191` | `tool f of T(…)`. Also its recovery: the parameter is **kept** after the report, so `T` still resolves where it is used and one stale word does not cost a name-resolution failure per mention. Exactly one diagnostic. |
+| `borrowed_tool_parameter` | `SC0192` | Both spellings, so the deleted span is pinned for `borrowed` alone and for `mutable borrowed` as a pair. Two parameters are two mistakes and two diagnostics, which is the count this case checks rather than a cascade. |
+| `tool_with_receiver` | `SC0193` | The **absence of a fix**, for `try_word`'s reason in a smaller way: deleting `self` from a list that continues would leave a leading comma, so there is nothing a tool can apply and the note says what to do instead. |
+| `parameter_doc_outside_tool` | `SC0194` | Decision 7 scoped to `tool` and to nothing else, so that documenting a `def`'s parameters stays `strings-formatting-and-docs.md`'s open question. No fix: moving prose from one comment into another is an edit, not a substitution. |
+| `reserved_declaration_word` | `SC0196` | One case for two words, because they are one decision — Decision 2 spends `tool` and only `tool`. Each carries its own reason, and what it replaces is the reason it exists: without it both fall through to `SC0101`, which calls them reserved "for a later phase". |
+| `tool_not_at_module_level` | `SC0197` | Two of §16.1's four places, which are the two code paths: `parse_member`, shared by the interface and implementation bodies, and `parse_stmt`. Both report *without consuming*, so the enclosing loop's own recovery drops the declaration and its block in one step — which is exactly what `SC0156` failed to do. |
+| `tool_without_body` | `SC0198` | There is no abstract tool. The neighbour it must not become is a `tool` whose body is indented with no `:`: that already reports the missing colon, and saying the body is absent as well would be a second true statement about one mistake. |
 
 ## The name-resolution cases, in `resolve/`
 
@@ -169,15 +188,17 @@ shape fails before anyone tries to run it.
 Written down rather than quietly blessed, because a test that pins a confusing
 error makes it permanent.
 
-- **`SC0156` cascades, and the second diagnostic is nonsense.** `parse_item`
-  reports the word and steps over it, then calls `parse_fn`, which opens with
-  another `advance()` and so eats the function's *name*. The reader is told
-  `expected an identifier, found `(`` about a declaration they spelled
-  correctly apart from its first word. `report_trait_word` beside it is
-  factored correctly: it advances, and the parser then calls
-  `parse_interface_body`, which does not advance again. `function_word.stderr`
-  pins both diagnostics today; when this is fixed the expectation shrinks to
-  one and the diff will say so.
+- **`SC0156` cascaded, and the second diagnostic was nonsense.** Fixed, and
+  kept here because it is the pattern rather than the incident. `parse_item`
+  reported the word and stepped over it, then called `parse_fn`, which opens
+  with another `advance()` and so ate the function's *name*; the reader was
+  told ``expected an identifier, found `(` `` about a declaration they had
+  spelled correctly apart from its first word. `report_trait_word` beside it
+  never had the bug, because it reports and lets the parser do the stepping.
+  `function_word.stderr` pins one diagnostic now. Every reporter in
+  `SC0190`–`SC0198` was written against this: `report_tool_out_of_place` and
+  `report_reserved_declaration_word` consume nothing and hand `None` to a
+  caller that already synchronises.
 - **`SC0157` says "multiplies" for a division.** The same code is reported for
   `/`, so `Grid of (Int, N / M)` is rejected with *"a const expression
   multiplies only by a literal"* and a note ending *"never multiplied"*.
@@ -195,7 +216,19 @@ error makes it permanent.
   *here*; they should not be the same string.
 - **"reserved for a later phase"** (`SC0102` over a reserved word) reads, to
   anyone who knows what a compiler phase is, as though a later pass will accept
-  it. It means a later revision of the language.
+  it. It means a later revision of the language. `SC0196` now intercepts the
+  two words most likely to be met this way — `prompt` and `agent` in
+  declaration position — so the phrase is left standing for the rest of the
+  list, where nothing yet says what each word is being held for.
+- **`SC0194` and `SC0195` point at the declaration, not at the `##` line they
+  are about.** A doc comment is trivia carried on a token as a bare string, so
+  it has no span at all: `Token::doc` is an `Option<String>` and nothing
+  records where the run was. `SC0195`'s caret therefore lands on the word
+  `tool` and `SC0194`'s on the parameter's name, and in both cases the text the
+  reader has to edit is on the line above the one the renderer prints. Fixing
+  it means giving a doc run a span in the lexer, which every consumer of
+  `Token` then has to be told about; these two expectations pin the imprecise
+  version until somebody does.
 
 ## What is still missing
 
@@ -208,8 +241,9 @@ yet, and each one needs a case here as it lands:
 - a non-exhaustive `match`, listing the patterns that are missing (a code in
   the `SC0250` range, which §9 moved it to from `SC0210`);
 - the rest of the syntax errors (`SC0100`–`SC0199`) and of the name
-  resolution failures (`SC0200`–`SC0299`): `parse/` and `resolve/` cover five
-  codes between them, and every other code those two phases can emit still has
-  no case here. The parser's `extern` block owns `SC0411`–`SC0434` and has
+  resolution failures (`SC0200`–`SC0299`): `parse/` and `resolve/` cover
+  fourteen codes between them, and every other code those two phases can emit
+  still has no case here. The parser's `extern` block owns `SC0411`–`SC0434` and has
   none, `science-types` (`SC0260`, `SC0261`) has none, and `science-fmt`
-  (`SC0900`, `SC0901`) has none.
+  (`SC0900`, `SC0901`) has none. `SC0190`–`SC0198` are covered in full;
+  `SC0199` is held unallocated and must stay that way.

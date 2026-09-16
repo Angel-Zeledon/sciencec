@@ -1,0 +1,10 @@
+---
+source: crates/science-parser/tests/parse_tools.rs
+expression: "parse_source_allowing_errors(\"def f() -> Int:\n    let tool be 1\n\")"
+---
+Module @0..34
+  Fn `f` @0..33
+    ret: Path `Int` @11..14
+    body: Block @20..20
+--- diagnostics ---
+SC0102 @24..28 expected an identifier, found `tool`

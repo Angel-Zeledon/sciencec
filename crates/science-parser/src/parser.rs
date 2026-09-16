@@ -172,6 +172,38 @@ pub mod codes {
     /// them. `SC0136` sits in that note's design block, which is about what
     /// `def` and `lambda` should *be*, not about migrating to them.
     pub const FUNCTION_WORD: Code = Code(156);
+
+    // The `tool` declaration's own block, `SC0190`-`SC0199`, allocated by
+    // `mcp-servers.md` §16.1. Every one of them is checkable here, with no
+    // types at all, which is what makes §14.2's stage 0 a stage rather than a
+    // wish. `SC0199` is held unallocated against the dynamic registration form
+    // of that note's §15 and must not be spent on anything else.
+    //
+    // Not one of them names a protocol. That is §2.7's own test of whether the
+    // layering is real: *"if a future reviewer finds a diagnostic in the `SC`
+    // namespace that names an MCP concept, the layering has leaked and
+    // Decision 1 has stopped being true."*
+
+    /// A `tool` with no `##` run immediately above it.
+    pub const TOOL_WITHOUT_DESCRIPTION: Code = Code(190);
+    /// `tool f of T(..)`. A tool is one entry with one schema (§2.4 item 2).
+    pub const GENERIC_TOOL: Code = Code(191);
+    /// A `tool` parameter declared `borrowed` or `mutable borrowed`.
+    pub const BORROWED_TOOL_PARAMETER: Code = Code(192);
+    /// A `tool` with a `self` or `mutable self` receiver.
+    pub const TOOL_WITH_RECEIVER: Code = Code(193);
+    /// A `##` run before a parameter of something that is not a `tool`.
+    pub const PARAMETER_DOC_OUTSIDE_TOOL: Code = Code(194);
+    /// A `tool` whose description opens with a blank `##` line, leaving no
+    /// summary for the `title` of §5.2 to be.
+    pub const TOOL_SUMMARY_BLANK: Code = Code(195);
+    /// `prompt` or `agent` in declaration position — Decision 2, which spends
+    /// `tool` and only `tool`.
+    pub const RESERVED_DECLARATION_WORD: Code = Code(196);
+    /// A `tool` anywhere but the top level of a module.
+    pub const TOOL_NOT_AT_MODULE_LEVEL: Code = Code(197);
+    /// A `tool` with no body, in the shape of an interface's required method.
+    pub const TOOL_WITHOUT_BODY: Code = Code(198);
 }
 
 /// The `extern` block's own diagnostics.
@@ -608,10 +640,19 @@ impl<'t> Parser<'t> {
         // Dispatching with `at` rather than a `match` on `peek` keeps the
         // borrow of the token from overlapping the parse call in each arm.
         let kind = if self.at(&TokenKind::Function) {
-            ItemKind::Fn(self.parse_fn(is_pub, start)?)
+            ItemKind::Fn(self.parse_fn(FnForm::Def, is_pub, start)?)
         } else if self.at_function_word() {
             self.report_function_word();
-            ItemKind::Fn(self.parse_fn(is_pub, start)?)
+            ItemKind::Fn(self.parse_fn(FnForm::Def, is_pub, start)?)
+        } else if self.at(&TokenKind::Tool) {
+            // Checked before the declaration is read, so that the span the
+            // reader is pointed at is the word `tool` rather than whatever the
+            // signature ended on.
+            self.check_tool_description(doc.as_deref());
+            ItemKind::Fn(self.parse_fn(FnForm::Tool, is_pub, start)?)
+        } else if self.at_reserved_declaration_word() {
+            self.report_reserved_declaration_word();
+            return None;
         } else if self.at(&TokenKind::Type) {
             self.parse_type_item(is_pub, start)?
         } else if self.at(&TokenKind::Choice) {
@@ -655,12 +696,40 @@ impl<'t> Parser<'t> {
 
     // --- functions -------------------------------------------------------
 
-    /// `def name of T(params) -> T where ..:`.
-    fn parse_fn(&mut self, is_pub: bool, start: Span) -> Option<FnDecl> {
-        self.advance(); // `function`
+    /// `def name of T(params) -> T where ..:`, and the same for `tool`.
+    ///
+    /// The two forms share every production. What `form` decides is which of
+    /// `mcp-servers.md` §2.4's obligations are checked on the way past —
+    /// generics (`SC0191`), a receiver (`SC0193`), a borrowed parameter
+    /// (`SC0192`) and a missing body (`SC0198`) — and where a `##` run before
+    /// a parameter is Decision 7's description rather than `SC0194`.
+    fn parse_fn(&mut self, form: FnForm, is_pub: bool, start: Span) -> Option<FnDecl> {
+        self.advance(); // `def` or `tool`
         let name = self.expect_ident()?;
+        // Taken before the list is read so that the fix can delete the `of`
+        // along with what follows it; afterwards the `of` is gone from view.
+        let of_span = self.at(&TokenKind::Of).then(|| self.span());
         let generics = self.parse_generic_params();
-        let (self_param, params) = self.parse_params();
+        if form == FnForm::Tool {
+            self.check_tool_is_concrete(of_span, &generics);
+        }
+        let (self_param, params) = self.parse_params(form);
+        // The receiver is dropped rather than kept, so the tree holds the tool
+        // the author meant and no later phase has to decide what a module-level
+        // function with a receiver is. `report_while_word` recovers the same
+        // way and for the same reason.
+        let self_param = match (form, self_param) {
+            (FnForm::Tool, Some(receiver)) => {
+                self.report_tool_receiver(receiver.span);
+                None
+            }
+            (_, self_param) => self_param,
+        };
+        if form == FnForm::Tool {
+            for param in &params {
+                self.check_tool_parameter_is_owned(&param.ty);
+            }
+        }
         let ret = if self.eat(&TokenKind::Arrow).is_some() {
             Some(self.parse_type())
         } else if self.at_returns_word() {
@@ -689,10 +758,17 @@ impl<'t> Parser<'t> {
             None
         } else {
             self.expect_line_end();
+            // Only on this branch. The one above has already reported a
+            // missing `:` over the same declaration, and saying twice that a
+            // body is absent is the cascade this block exists to avoid.
+            if form == FnForm::Tool {
+                self.report_tool_without_body(&name);
+            }
             None
         };
 
         Some(FnDecl {
+            form,
             is_pub,
             name,
             generics,
@@ -877,6 +953,262 @@ impl<'t> Parser<'t> {
         );
     }
 
+    // --- the `tool` declaration ------------------------------------------
+    //
+    // `mcp-servers.md` §2.4 is the whole case for the keyword: a `tool`
+    // carries five obligations an ordinary `def` does not, and a marker that
+    // carries none is an attribute rather than a declaration form. Four of the
+    // five are checkable here with no types at all, and they are checked here.
+    // The fifth — that every parameter type survives a round trip through JSON
+    // Schema — is `SC0504`-`SC0518` and waits for the type checker.
+    //
+    // Each of these reports once and leaves the parser standing where an
+    // ordinary `def` would have left it, so one mistake costs one diagnostic.
+    // `report_function_word` above is the cautionary tale: it advanced over a
+    // word the parser then advanced over again, and the second diagnostic was
+    // nonsense about a name the author had spelled correctly.
+
+    /// `SC0190` and `SC0195`: a `tool` is declared with a description.
+    ///
+    /// Decision 5 makes this the only construct in Science for which
+    /// documentation is mandatory, and the justification has to be narrow or
+    /// it becomes "document your code", which a compiler has no business
+    /// enforcing. It is narrow: everywhere else a doc comment is read by
+    /// someone who has already decided to call the function, and here it is
+    /// read by the caller *in order to* decide. The compiler knows this
+    /// because the author wrote `tool`.
+    fn check_tool_description(&mut self, doc: Option<&str>) {
+        let span = self.span();
+        let Some(doc) = doc else {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    codes::TOOL_WITHOUT_DESCRIPTION,
+                    "a `tool` is declared with a description",
+                )
+                .with_label(Label::primary(span, "this `tool` has no `##` comment above it"))
+                .with_note(
+                    "the description is what a model reads in order to decide whether to \
+                     call the tool, so it is program data and not documentation",
+                )
+                .with_note(
+                    "an undescribed tool does not fail: it is simply never chosen, and no \
+                     test catches that",
+                ),
+            );
+            return;
+        };
+        // §5.2 splits the run where `strings-formatting-and-docs.md` §5.4
+        // already splits one: the first line is the summary, and the short
+        // title a caller displays is that summary. A run that opens with a
+        // blank `##` has no first line to be it.
+        if doc.lines().next().is_none_or(str::is_empty) {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    codes::TOOL_SUMMARY_BLANK,
+                    "a `tool`'s description opens with its summary",
+                )
+                .with_label(Label::primary(span, "the `##` run above this `tool` starts blank"))
+                .with_note(
+                    "the first line, up to the first blank `##`, is the tool's title; the \
+                     whole comment is its description, summary included",
+                ),
+            );
+        }
+    }
+
+    /// `SC0191`: a `tool` is not generic.
+    ///
+    /// The list a model is given is flat and concrete, with one parameter
+    /// schema per entry, so there is nothing for a type parameter to be
+    /// instantiated at (§2.4 item 2).
+    ///
+    /// The parameters are **kept** in the tree after the report. Dropping them
+    /// would leave every mention of `T` in the signature unresolved, and one
+    /// stale word would cost a diagnostic plus a name-resolution failure per
+    /// use — which is the cascade, arriving from a later phase.
+    fn check_tool_is_concrete(&mut self, of_span: Option<Span>, generics: &[GenericParam]) {
+        let (Some(of_span), Some(last)) = (of_span, generics.last()) else { return };
+        let clause = of_span.merge(last.span);
+        self.diagnostics.push(
+            Diagnostic::error(codes::GENERIC_TOOL, "a `tool` is not generic")
+                .with_label(Label::primary(clause, "a type parameter has no single schema"))
+                .with_note(
+                    "one tool is one entry in the list its caller is given, with one \
+                     parameter schema; write one tool per concrete type",
+                )
+                .with_suggestion(Suggestion {
+                    span: clause,
+                    replacement: String::new(),
+                    message: "make the declaration concrete".to_string(),
+                }),
+        );
+    }
+
+    /// `SC0192`: a `tool` owns its arguments.
+    ///
+    /// There is no caller to borrow from. Every argument arrived from outside
+    /// the program a moment ago and belongs to the tool (§2.4 item 3).
+    fn check_tool_parameter_is_owned(&mut self, ty: &Type) {
+        if !matches!(ty.kind, TypeKind::Borrowed { .. }) {
+            return;
+        }
+        let words = self.borrow_words(ty);
+        self.diagnostics.push(
+            Diagnostic::error(codes::BORROWED_TOOL_PARAMETER, "a `tool` owns its arguments")
+                .with_label(Label::primary(words, "there is nothing here to borrow from"))
+                .with_note(
+                    "a tool's arguments are built from what the caller sent, so the tool is \
+                     the only owner there is",
+                )
+                .with_suggestion(Suggestion {
+                    span: words,
+                    replacement: String::new(),
+                    message: "take the value".to_string(),
+                }),
+        );
+    }
+
+    /// The span of the `borrowed` or `mutable borrowed` that opens a type.
+    ///
+    /// A [`Type`] records *that* it is borrowed and not where the words are,
+    /// because until now nothing needed to point at them. They are recovered
+    /// from the token stream instead of being added to every type in the tree
+    /// for one diagnostic's sake: a borrow prefix is one or two tokens, it
+    /// begins where the type begins, and the scan stops on the third.
+    fn borrow_words(&self, ty: &Type) -> Span {
+        let first = self.tokens.partition_point(|t| t.span.start < ty.span.start);
+        let mut words = None;
+        for token in &self.tokens[first..] {
+            match token.kind {
+                TokenKind::Mutable | TokenKind::Borrowed => {
+                    words = Some(words.map_or(token.span, |s: Span| s.merge(token.span)));
+                }
+                _ => break,
+            }
+        }
+        words.unwrap_or(ty.span)
+    }
+
+    /// `SC0193`: a `tool` is not a method.
+    fn report_tool_receiver(&mut self, span: Span) {
+        self.diagnostics.push(
+            Diagnostic::error(codes::TOOL_WITH_RECEIVER, "a `tool` is not a method")
+                .with_label(Label::primary(span, "a tool has no receiver"))
+                .with_note(
+                    "a tool is called by its name alone, and a caller outside the program \
+                     has no value to bind `self` to; declare it at module level and take \
+                     what it needs as a parameter",
+                ),
+        );
+    }
+
+    /// `SC0194`: only a `tool` documents its parameters one by one.
+    ///
+    /// Decision 7 is deliberately scoped to `tool`, so that the general
+    /// question of documenting a `def`'s parameters stays open and belongs to
+    /// `strings-formatting-and-docs.md`. There is no applicable fix: moving
+    /// prose from one comment into another is an edit, not a substitution.
+    fn report_parameter_doc(&mut self, span: Span) {
+        self.diagnostics.push(
+            Diagnostic::error(
+                codes::PARAMETER_DOC_OUTSIDE_TOOL,
+                "only a `tool` documents its parameters one by one",
+            )
+            .with_label(Label::primary(span, "this `##` comment is attached to a parameter"))
+            .with_note(
+                "move the text into the `##` comment above the declaration; a `tool` \
+                 documents a parameter here because each one becomes a described field of \
+                 the schema its caller reads",
+            ),
+        );
+    }
+
+    /// `SC0197`: a `tool` is declared at the top level of a module.
+    ///
+    /// Reports **without consuming**, for `report_function_word`'s reason in
+    /// reverse: both callers hand a `None` back to a loop that synchronises,
+    /// and synchronising is what drops the declaration and the block under it
+    /// in one step. Advancing here as well would leave the signature's tokens
+    /// to be read as something else.
+    fn report_tool_out_of_place(&mut self) {
+        let span = self.span();
+        self.diagnostics.push(
+            Diagnostic::error(
+                codes::TOOL_NOT_AT_MODULE_LEVEL,
+                "a `tool` is declared at the top level of a module",
+            )
+            .with_label(Label::primary(span, "this one is not"))
+            .with_note(
+                "a tool is offered to its caller by name alone: a method would need a \
+                 receiver the caller cannot supply, and a declaration inside a body is not \
+                 visible outside it",
+            ),
+        );
+    }
+
+    /// `SC0198`: a `tool` has a body.
+    fn report_tool_without_body(&mut self, name: &Ident) {
+        self.diagnostics.push(
+            Diagnostic::error(codes::TOOL_WITHOUT_BODY, "a `tool` is declared with a body")
+                .with_label(Label::primary(name.span, "this one is a signature and nothing else"))
+                .with_note(
+                    "there is no abstract tool: a signature without a body is an \
+                     interface's required method, and that is declared with `def`",
+                ),
+        );
+    }
+
+    /// Whether the cursor is on `prompt <name>` or `agent <name>`.
+    ///
+    /// The lookahead is what makes it *declaration position* rather than any
+    /// use of the word, so the two are told apart the same way `trait` and
+    /// `function` are.
+    fn at_reserved_declaration_word(&self) -> bool {
+        matches!(
+            self.peek(),
+            TokenKind::Reserved(ReservedWord::Prompt | ReservedWord::Agent)
+        ) && matches!(self.peek_ahead(1), TokenKind::Ident(_))
+    }
+
+    /// `SC0196`: `prompt` and `agent` are reserved and declare nothing.
+    ///
+    /// Decision 2 spends `tool` and only `tool`, and this is the diagnostic
+    /// that says so to someone who reasonably expected all three. Without it
+    /// the word falls through to `SC0101`, which describes it as *"reserved
+    /// for a later phase"* — a phrase that reads, to anyone who knows what a
+    /// compiler phase is, as though a later pass will accept it.
+    ///
+    /// Reports without consuming: `parse_item` returns `None` and the module
+    /// loop synchronises over the declaration and its block.
+    fn report_reserved_declaration_word(&mut self) {
+        let span = self.span();
+        let (word, note) = match self.peek() {
+            TokenKind::Reserved(ReservedWord::Prompt) => (
+                "prompt",
+                "a prompt is an ordinary function returning `Array of Message`; its \
+                 arguments carry no schema, so there is nothing for a declaration form to \
+                 derive and nothing for it to check",
+            ),
+            _ => (
+                "agent",
+                "`agent` is the other direction — a program calling a model, rather than a \
+                 model calling a program — and the language has nothing for it yet",
+            ),
+        };
+        self.diagnostics.push(
+            Diagnostic::error(
+                codes::RESERVED_DECLARATION_WORD,
+                format!("`{word}` is reserved and declares nothing"),
+            )
+            .with_label(Label::primary(span, format!("a declaration cannot begin with `{word}`")))
+            .with_note(note)
+            .with_note(
+                "`tool` is the one word of the three that was spent, because it is the one \
+                 whose obligations a compiler can check",
+            ),
+        );
+    }
+
     /// Whether the cursor is on `try <expression>`, the prefix §3 removed.
     ///
     /// The lookahead is what separates the keyword that was from a variable
@@ -931,7 +1263,7 @@ impl<'t> Parser<'t> {
     }
 
     /// `(a: T, b: U)`, optionally opening with a `self` receiver.
-    fn parse_params(&mut self) -> (Option<SelfParam>, Vec<Param>) {
+    fn parse_params(&mut self, form: FnForm) -> (Option<SelfParam>, Vec<Param>) {
         let mut receiver = None;
         let mut params = Vec::new();
 
@@ -951,7 +1283,7 @@ impl<'t> Parser<'t> {
                     );
                 }
             } else {
-                match self.parse_param() {
+                match self.parse_param(form) {
                     Some(param) => params.push(param),
                     None => self.recover_in_brackets(),
                 }
@@ -1002,12 +1334,25 @@ impl<'t> Parser<'t> {
         Some(SelfParam { kind: SelfKind::Value, span: start.merge(self.last_text_span()) })
     }
 
-    fn parse_param(&mut self) -> Option<Param> {
+    fn parse_param(&mut self, form: FnForm) -> Option<Param> {
         let start = self.span();
+        // A parameter's first token is its name, and the lexer hangs a `##`
+        // run on whatever token comes next whether that is a declaration or
+        // not — which is what makes Decision 7 free here and `SC0194`
+        // necessary everywhere else.
+        let doc = self.peek_doc();
         let name = self.expect_ident()?;
         self.expect(&TokenKind::Colon, "`:`")?;
         let ty = self.parse_type();
-        Some(Param { name, ty, span: start.merge(self.last_text_span()) })
+        let doc = match (form, doc) {
+            (FnForm::Tool, doc) => doc,
+            (FnForm::Def, Some(_)) => {
+                self.report_parameter_doc(name.span);
+                None
+            }
+            (FnForm::Def, None) => None,
+        };
+        Some(Param { name, ty, doc, span: start.merge(self.last_text_span()) })
     }
 
     // --- records, choices, aliases and constants --------------------------
@@ -1502,7 +1847,9 @@ impl<'t> Parser<'t> {
                 self.eat(&TokenKind::Comma);
                 break;
             }
-            match self.parse_param() {
+            // `FnForm::Def`: an `extern` function is not a tool, so a `##`
+            // run before one of its parameters is `SC0194` like any other.
+            match self.parse_param(FnForm::Def) {
                 Some(param) => params.push(param),
                 None => self.recover_in_brackets(),
             }
@@ -2796,6 +3143,13 @@ impl<'t> Parser<'t> {
                 self.advance();
                 Some(Stmt { kind: StmtKind::Continue, span: start })
             }
+            // A `tool` inside a body is `SC0197`. Nothing is consumed: the
+            // caller synchronises on `None`, which drops the declaration and
+            // the block under it together.
+            TokenKind::Tool => {
+                self.report_tool_out_of_place();
+                None
+            }
             _ => {
                 let expr = self.parse_expr();
                 // `=` is not an operator in Science and not assignment either
@@ -3936,6 +4290,14 @@ impl<'t> Parser<'t> {
         }
 
         let is_pub = self.eat(&TokenKind::Public).is_some();
+        // An `interface` body and an implementation body share this function,
+        // and a `tool` belongs in neither. Reported here rather than left to
+        // the message below, which would name `tool` as a word that is not
+        // `function` and say nothing about why.
+        if self.at(&TokenKind::Tool) {
+            self.report_tool_out_of_place();
+            return None;
+        }
         if !self.at(&TokenKind::Function) {
             let found = describe(self.peek());
             self.error(
@@ -3948,7 +4310,7 @@ impl<'t> Parser<'t> {
             );
             return None;
         }
-        Some(Member::Method(self.parse_fn(is_pub, start)?))
+        Some(Member::Method(self.parse_fn(FnForm::Def, is_pub, start)?))
     }
 }
 
@@ -3969,7 +4331,7 @@ enum Member {
 /// Written once because it appears in two messages that must not drift apart:
 /// a line that starts with the wrong keyword, and a line that starts with a
 /// name but never reaches `implements`.
-const EXPECTED_DECLARATION: &str = "expected a declaration (`function`, `type`, `choice`, \
+const EXPECTED_DECLARATION: &str = "expected a declaration (`def`, `tool`, `type`, `choice`, \
                                     `interface`, `const`, `use`, or a type followed by \
                                     `implements` or `has`)";
 
@@ -4287,6 +4649,7 @@ fn fixed_text(kind: &TokenKind) -> &'static str {
     use TokenKind::*;
     match kind {
         Function => "def",
+        Tool => "tool",
         Let => "let",
         Be => "be",
         Mutable => "mutable",
@@ -4375,7 +4738,6 @@ fn reserved_text(word: ReservedWord) -> &'static str {
     use ReservedWord::*;
     match word {
         Agent => "agent",
-        Tool => "tool",
         Prompt => "prompt",
         Spawn => "spawn",
         Send => "send",
@@ -4441,6 +4803,19 @@ mod tests {
             codes::EXPECTED_MEMBER,
             codes::NESTED_EACH,
             codes::AMBIGUOUS_GENERIC_CALL,
+            // `mcp-servers.md` §16.1's block. It is the one block in this
+            // range that a sibling note allocated rather than the parser, so
+            // it is the one most able to drift: the check that it has not is
+            // that all nine are here and that `SC0199` is not.
+            codes::TOOL_WITHOUT_DESCRIPTION,
+            codes::GENERIC_TOOL,
+            codes::BORROWED_TOOL_PARAMETER,
+            codes::TOOL_WITH_RECEIVER,
+            codes::PARAMETER_DOC_OUTSIDE_TOOL,
+            codes::TOOL_SUMMARY_BLANK,
+            codes::RESERVED_DECLARATION_WORD,
+            codes::TOOL_NOT_AT_MODULE_LEVEL,
+            codes::TOOL_WITHOUT_BODY,
         ];
         for code in all {
             assert!(

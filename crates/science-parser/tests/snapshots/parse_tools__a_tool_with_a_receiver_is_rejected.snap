@@ -1,0 +1,12 @@
+---
+source: crates/science-parser/tests/parse_tools.rs
+expression: "parse_source_allowing_errors(\"## Summarize the document.\ntool summarize(self) -> Int:\n    0\n\")"
+---
+Module @27..62
+  Tool `summarize` @27..61
+    ret: Path `Int` @51..54
+    body: Block @60..61
+      tail: Int 0 @60..61
+--- diagnostics ---
+SC0193 @42..46 a `tool` is not a method
+  note a tool is called by its name alone, and a caller outside the program has no value to bind `self` to; declare it at module level and take what it needs as a parameter

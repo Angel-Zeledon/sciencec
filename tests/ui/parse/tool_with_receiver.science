@@ -1,0 +1,10 @@
+# UI test: a `tool` with a `self` receiver (SC0193).
+#
+# A tool is called by its name alone, across a boundary, and the caller has no
+# value to bind `self` to. There is no applicable fix: deleting `self` from a
+# list that continues would leave a leading comma, so the note says what to do
+# instead of a `= help:` pretending it can be done mechanically.
+
+## Summarize the document.
+tool summarize(self) -> Int:
+    0

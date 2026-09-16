@@ -408,6 +408,11 @@ fn scratch(name: &str, bytes: &[u8]) -> String {
 }
 
 // --- tools --json --------------------------------------------------------
+//
+// The walk is `mcp-servers.md` §14.3's "one predicate": a file's `tool`
+// declarations are its tool list. Every case below therefore writes `tool`,
+// and every one of them writes a `##` comment above it, because a `tool`
+// without one is `SC0190`.
 
 /// The thesis of `mcp-servers.md` Decision 3, run: a JSON Schema derived from
 /// a signature, with no schema written anywhere by hand.
@@ -419,7 +424,7 @@ fn the_schema_comes_out_of_the_signature() {
     let file = scratch(
         "tools.science",
         b"## Counts events above a threshold.\n\
-          def count_above(samples: Array of F64, floor: U16) -> U64:\n\
+          tool count_above(samples: Array of F64, floor: U16) -> U64:\n\
           \x20   0\n",
     );
     let run = sciencec(&["tools", "--json", &file]);
@@ -442,7 +447,8 @@ fn a_choice_of_unit_variants_becomes_an_enum() {
     let file = scratch(
         "enum.science",
         b"choice Lineshape:\n\x20   Gaussian\n\x20   Lorentzian\n\
-          def fit(profile: Lineshape) -> Int:\n\x20   0\n",
+          ## Fit a line shape to the run.\n\
+          tool fit(profile: Lineshape) -> Int:\n\x20   0\n",
     );
     let run = sciencec(&["tools", "--json", &file]);
     run.succeeded();
@@ -462,7 +468,7 @@ fn a_choice_of_unit_variants_becomes_an_enum() {
 fn a_nullable_parameter_is_not_required() {
     let file = scratch(
         "nullable.science",
-        b"def label(name: String, note: String?) -> Int:\n\x20   0\n",
+        b"## Label a run.\ntool label(name: String, note: String?) -> Int:\n\x20   0\n",
     );
     let run = sciencec(&["tools", "--json", &file]);
     run.succeeded();
@@ -475,7 +481,8 @@ fn a_nullable_parameter_is_not_required() {
 /// be a lie about what the other side can send.
 #[test]
 fn a_u64_has_no_maximum() {
-    let file = scratch("u64.science", b"def total(n: U64) -> Int:\n\x20   0\n");
+    let file =
+        scratch("u64.science", b"## Total the counts.\ntool total(n: U64) -> Int:\n\x20   0\n");
     let run = sciencec(&["tools", "--json", &file]);
     run.succeeded();
     assert!(run.stdout.contains(r#""minimum":0}"#), "{}", run.stdout);
@@ -490,7 +497,8 @@ fn an_unmappable_parameter_is_named_rather_than_dropped() {
     let file = scratch(
         "gap.science",
         b"interface Summarize:\n\x20   def summarize(self) -> String\n\
-          def show(what: any Summarize) -> Int:\n\x20   0\n",
+          ## Show what something says about itself.\n\
+          tool show(what: any Summarize) -> Int:\n\x20   0\n",
     );
     let run = sciencec(&["tools", "--json", &file]);
     run.succeeded();
@@ -504,8 +512,77 @@ fn an_unmappable_parameter_is_named_rather_than_dropped() {
 /// caller cannot tell the two apart.
 #[test]
 fn a_broken_program_emits_no_schema() {
-    let file = scratch("broken.science", b"def f(x: Nonexistent) -> Int:\n\x20   0\n");
+    let file =
+        scratch("broken.science", b"## Do something.\ntool f(x: Nonexistent) -> Int:\n\x20   0\n");
     let run = sciencec(&["tools", "--json", &file]);
     run.failed();
     assert!(run.stdout.is_empty(), "stdout was {:?}", run.stdout);
+}
+
+/// **The predicate.** A `def` is not on the wire, and a file of them declares
+/// no tools.
+///
+/// This is the whole of the change §14.3 predicted, seen from outside: before
+/// `tool` existed this file produced two entries. It now produces one, and it
+/// drops the other *silently* — a function that is not a tool is not a
+/// mistake, it is a function.
+#[test]
+fn a_function_that_is_not_a_tool_is_not_in_the_list() {
+    let file = scratch(
+        "plain.science",
+        b"## Counts events above a threshold.\n\
+          def count_above(samples: Array of F64, floor: U16) -> U64:\n\
+          \x20   0\n\
+          ## Label a run.\n\
+          tool label(name: String) -> Int:\n\x20   0\n",
+    );
+    let run = sciencec(&["tools", "--json", &file]);
+    run.succeeded().silent_stderr();
+    assert!(run.stdout.contains(r#""name":"label""#), "{}", run.stdout);
+    assert!(!run.stdout.contains("count_above"), "{}", run.stdout);
+}
+
+#[test]
+fn a_file_with_no_tools_yields_an_empty_list() {
+    let file = scratch("notools.science", b"def f(x: Int) -> Int:\n\x20   x\n");
+    let run = sciencec(&["tools", "--json", &file]);
+    run.succeeded().silent_stderr();
+    assert_eq!(run.stdout, "[]");
+}
+
+/// **The old walk, pinned byte for byte.**
+///
+/// `--all-functions` is the measurement `mcp-servers.md` §2.6's second
+/// falsifier needs — a census of the type mapping over code written before the
+/// keyword — and a census is worth nothing if the instrument moved under it.
+/// So this asserts the whole of stdout rather than a substring: what is
+/// emitted for a function that is not a `tool` is what was emitted before
+/// `tool` existed, character for character.
+#[test]
+fn the_old_walk_over_every_function_is_unchanged() {
+    let file = scratch(
+        "census.science",
+        b"## Counts events above a threshold.\n\
+          def count_above(samples: Array of F64, floor: U16) -> U64:\n\
+          \x20   0\n",
+    );
+    let run = sciencec(&["tools", "--json", "--all-functions", &file]);
+    run.succeeded().silent_stderr();
+    assert_eq!(
+        run.stdout,
+        concat!(
+            r#"[{"name":"count_above","inputSchema":{"type":"object","properties":{"#,
+            r#""samples":{"type":"array","items":{"type":"number"}},"#,
+            r#""floor":{"type":"integer","minimum":0,"maximum":65535}},"#,
+            r#""required":["samples","floor"]},"#,
+            r#""description":"Counts events above a threshold."}]"#,
+        )
+    );
+}
+
+/// The flag belongs to `tools` alone, the way `--write` belongs to `fmt`.
+#[test]
+fn the_all_functions_flag_is_not_a_file() {
+    let run = sciencec(&["check", "--all-functions"]);
+    run.failed();
 }

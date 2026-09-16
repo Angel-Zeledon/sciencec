@@ -1,4 +1,4 @@
-//! `sciencec tools --json` — a JSON Schema for every function in a file.
+//! `sciencec tools --json` — a JSON Schema for every `tool` in a file.
 //!
 //! `mcp-servers.md` §14.3 calls this *"the whole thesis, minus the server"*
 //! and it is the first thing that note asks anyone to build. The thesis is
@@ -12,21 +12,38 @@
 //! This is the derivation. It settles the claim before a keyword is spent on
 //! it, which is the whole reason it is worth building alone.
 //!
-//! # What it walks, and why not `tool`
+//! # What it walks
 //!
-//! §14.2 stages `tool` as a keyword first and this pass second. **It is built
-//! the other way round here, deliberately.** The pass is the part that can be
+//! §14.2 stages `tool` as a keyword first and this pass second. **It was built
+//! the other way round, deliberately.** The pass is the part that can be
 //! wrong: if the type mapping has holes, they are holes whatever declares the
-//! function, and finding them costs nothing today. A keyword is a language
-//! commitment, and `def-and-lambda.md` is a whole note about how expensive one
-//! is to take back. §14.3's own fourth reason for building this first says the
-//! pass survives the declaration form changing — *"the same pass over Option
-//! B's record types produces the same JSON"* — so building the reversible half
-//! first is what that reason implies.
+//! function, and finding them cost nothing before a keyword was spent on it.
+//! §14.3's own fourth reason for building it first says the pass survives the
+//! declaration form changing — *"the same pass over Option B's record types
+//! produces the same JSON"* — so building the reversible half first is what
+//! that reason implies, and it is what happened.
 //!
-//! So it walks **every function declared at the top level of the file**. The
-//! file is the tool list. When `tool` lands, the walk changes by one predicate
-//! and nothing else.
+//! The measurement is done and the keyword has landed, so §14.3's *"the walk
+//! changes by one predicate and nothing else"* is now true of the code: the
+//! predicate is [`Walk`], and everything below it is untouched. A file's
+//! `tool` declarations are the tool list.
+//!
+//! **[`Walk::EveryFunction`] keeps the old behaviour, and it is a flag rather
+//! than a default.** Two reasons, and the second is the one that decides it.
+//! The small one: every line of Science that exists today was written before
+//! the keyword, so the instrument that measured the mapping would otherwise
+//! have nothing left to measure. The large one: §2.6's second falsifier is a
+//! *census* — "the fraction of tools in the first ten real servers that take a
+//! `Json` parameter" — and a census that can only be run over code already
+//! declared in the form under test is not a check on that form. What it must
+//! never become is a default, because the JSON it emits is a list of callables
+//! offered to a model, and a file's functions are not that list until somebody
+//! has said which ones are.
+//!
+//! The emitted JSON for a function that is not a `tool` is byte for byte what
+//! it was before the keyword existed. That is deliberate: the thesis was
+//! measured against that output, and a measurement whose instrument moved
+//! underneath it is not a measurement.
 //!
 //! # What it needs that does not exist
 //!
@@ -41,11 +58,60 @@
 //! that a type is *wrong* rather than *unmapped* needs the checker. §14.2
 //! stages `SC0504`–`SC0518` as errors at stage 2 for exactly this reason.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use science_diagnostics::Span;
+use science_parser::ast;
 use science_resolve::hir::{
     Choice, Crate, DefId, DefKind, Item, ItemKind, Module, Record, Res, Type, TypeKind,
 };
+
+/// Which of a module's top-level functions the walk emits.
+///
+/// This is the whole of §14.3's "one predicate". It is an enum with two named
+/// arms rather than a `bool` so that the two readings of an empty array — *no
+/// tools are declared* and *tools were not what was asked for* — cannot be
+/// confused at the call site.
+pub enum Walk<'a> {
+    /// The `tool` declarations, and nothing else. The default.
+    Tools(&'a HashSet<Span>),
+    /// Every top-level function, which is what this pass walked before `tool`
+    /// existed. A measurement, not a server's tool list; see the module note.
+    EveryFunction,
+}
+
+impl Walk<'_> {
+    /// Whether this item is one the walk emits.
+    ///
+    /// A `tool` is identified by the span of the item that declared it.
+    /// [`hir::Item`](science_resolve::hir::Item) carries the span of the
+    /// `ast::Item` it was lowered from unchanged, so the match is exact and
+    /// needs no name — which matters, because two `tool`s may share a name
+    /// (that is `SC0513`, and it belongs to a phase that does not exist).
+    fn selects(&self, item: &Item) -> bool {
+        match self {
+            Walk::Tools(spans) => spans.contains(&item.span),
+            Walk::EveryFunction => true,
+        }
+    }
+}
+
+/// The spans of the `tool` declarations at the top level of a parsed module.
+///
+/// Read from the **syntax** tree because that is where the word survives:
+/// `ast::FnForm` records which keyword declared a function, and a `tool` is
+/// otherwise an ordinary function all the way down. Carrying the bit into HIR
+/// would be the tidier answer and it belongs to whoever owns that tree.
+pub fn tool_spans(module: &ast::Module) -> HashSet<Span> {
+    module
+        .items
+        .iter()
+        .filter(|item| {
+            matches!(&item.kind, ast::ItemKind::Fn(decl) if decl.form == ast::FnForm::Tool)
+        })
+        .map(|item| item.span)
+        .collect()
+}
 
 /// What the walk needs that `Crate` does not index.
 ///
@@ -87,11 +153,14 @@ impl<'a> Index<'a> {
 type Mapped = Result<String, String>;
 
 /// Renders the `tools/list` array for one resolved module.
-pub fn render(krate: &Crate, module: &Module) -> String {
+pub fn render(krate: &Crate, module: &Module, walk: &Walk) -> String {
     let index = Index::of(krate, module);
     let mut out = String::from("[");
     let mut first = true;
     for item in &module.items {
+        if !walk.selects(item) {
+            continue;
+        }
         let Some(tool) = tool_of(&index, item) else { continue };
         if !first {
             out.push(',');
@@ -107,7 +176,9 @@ pub fn render(krate: &Crate, module: &Module) -> String {
 fn tool_of(index: &Index, item: &Item) -> Option<String> {
     let ItemKind::Fn(decl) = &item.kind else { return None };
     // A method has a receiver and belongs to a type; only free functions are
-    // callable by name from outside the program.
+    // callable by name from outside the program. Under `Walk::Tools` this can
+    // no longer fire — `SC0193` refuses a receiver on a `tool` — and it stays
+    // because `Walk::EveryFunction` still walks a file that has methods in it.
     if decl.self_param.is_some() {
         return None;
     }
@@ -153,8 +224,11 @@ fn tool_of(index: &Index, item: &Item) -> Option<String> {
     );
 
     // §5: the description is what a model reads to decide whether to call the
-    // tool. It is program data, not documentation, and a tool without one is
-    // `SC0190` once `tool` exists. Here its absence is visible instead.
+    // tool. It is program data, not documentation, and a `tool` without one is
+    // `SC0190`, so under `Walk::Tools` the `else` is unreachable. It is still
+    // written as an option: `Walk::EveryFunction` walks undescribed `def`s,
+    // and a missing description is then visible as an absent field rather than
+    // as an empty one.
     if let Some(doc) = &item.doc {
         entry.push(',');
         entry.push_str(&format!("{}:{}", quoted("description"), quoted(doc)));

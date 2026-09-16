@@ -9,7 +9,7 @@ description = "The Science compiler's command-line driver."
 name = "sciencec"
 path = "src/main.rs"
 
-# No argument-parsing dependency. The surface is five subcommands and three
+# No argument-parsing dependency. The surface is six subcommands and three
 # flags, which is less code than the `clap` derive would be, and the workspace
 # has exactly one third-party dependency today (salsa, in `science-db`) — a
 # driver is the wrong place to double that.
@@ -18,6 +18,13 @@ path = "src/main.rs"
 # `science_db::tokens`, and a driver that could name the lexer directly would
 # eventually call it directly.
 [dependencies]
+# `science-codegen` is the fifth, and it is the one that makes `build` a command
+# rather than an error message. The crate below the line — `science-codegen-llvm`
+# — is deliberately absent: it needs `llvm-sys`, which needs an LLVM 18.1
+# installation, and a workspace that cannot be built without one is a workspace
+# nobody can contribute to. Until that crate exists, `build` reports `SC0400`
+# and names the package.
+science-codegen.workspace = true
 science-db.workspace = true
 science-diagnostics.workspace = true
 science-fmt.workspace = true

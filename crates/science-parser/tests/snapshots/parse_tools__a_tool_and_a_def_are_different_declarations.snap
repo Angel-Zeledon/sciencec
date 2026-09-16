@@ -1,0 +1,21 @@
+---
+source: crates/science-parser/tests/parse_tools.rs
+expression: "parse_source(\"def helper(x: Int) -> Int:\n    x\n\n## Expose the helper.\ntool exposed(x: Int) -> Int:\n    x\n\")"
+---
+Module @0..91
+  Fn `helper` @0..32
+    params
+      Param `x` @11..17
+        type: Path `Int` @14..17
+    ret: Path `Int` @22..25
+    body: Block @31..32
+      tail: Path `x` @31..32
+  Tool `exposed` @56..90
+    params
+      Param `x` @69..75
+        type: Path `Int` @72..75
+    ret: Path `Int` @80..83
+    body: Block @89..90
+      tail: Path `x` @89..90
+--- diagnostics ---
+(none)

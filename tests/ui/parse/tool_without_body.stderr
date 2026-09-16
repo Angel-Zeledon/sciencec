@@ -1,0 +1,7 @@
+error[SC0198]: a `tool` is declared with a body
+  --> tests/ui/parse/tool_without_body.science:12:6
+   |
+12 | tool fit_peaks(window_lower: F64) -> Int
+   |      ^^^^^^^^^ this one is a signature and nothing else
+   |
+   = note: there is no abstract tool: a signature without a body is an interface's required method, and that is declared with `def`

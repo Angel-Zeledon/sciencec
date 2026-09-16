@@ -1,0 +1,26 @@
+# UI test: a `tool` somewhere other than module level (SC0197).
+#
+# §16.1 names four places: an `interface`, a `has` block, an `implements`
+# block and a function body. Two are here, and they are the two code paths —
+# `parse_member`, shared by the interface and implementation bodies, and
+# `parse_stmt`.
+#
+# Both report without consuming. The caller hands `None` back to a loop that
+# synchronises, and synchronising is what drops the declaration and the block
+# under it in one step; advancing here as well would leave the signature's
+# tokens to be read as something else, which is exactly how SC0156 came to
+# cascade.
+
+type Doc:
+    title: String
+
+Doc has:
+    ## Summarize the document.
+    tool summarize(self) -> Int:
+        0
+
+def run() -> Int:
+    ## Fit peaks in a window.
+    tool fit(window: F64) -> Int:
+        0
+    0

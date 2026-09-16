@@ -1,0 +1,12 @@
+---
+source: crates/science-parser/tests/parse_tools.rs
+expression: "parse_source_allowing_errors(\"prompt fit_report(run: String) -> Int:\n    0\n\nagent analyst(question: String) -> Int:\n    0\n\")"
+---
+Module @0..92
+--- diagnostics ---
+SC0196 @0..6 `prompt` is reserved and declares nothing
+  note a prompt is an ordinary function returning `Array of Message`; its arguments carry no schema, so there is nothing for a declaration form to derive and nothing for it to check
+  note `tool` is the one word of the three that was spent, because it is the one whose obligations a compiler can check
+SC0196 @46..51 `agent` is reserved and declares nothing
+  note `agent` is the other direction — a program calling a model, rather than a model calling a program — and the language has nothing for it yet
+  note `tool` is the one word of the three that was spent, because it is the one whose obligations a compiler can check

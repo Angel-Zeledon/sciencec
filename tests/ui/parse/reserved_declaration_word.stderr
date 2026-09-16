@@ -1,0 +1,17 @@
+error[SC0196]: `prompt` is reserved and declares nothing
+  --> tests/ui/parse/reserved_declaration_word.science:19:1
+   |
+19 | prompt fit_report(run: String) -> Int:
+   | ^^^^^^ a declaration cannot begin with `prompt`
+   |
+   = note: a prompt is an ordinary function returning `Array of Message`; its arguments carry no schema, so there is nothing for a declaration form to derive and nothing for it to check
+   = note: `tool` is the one word of the three that was spent, because it is the one whose obligations a compiler can check
+
+error[SC0196]: `agent` is reserved and declares nothing
+  --> tests/ui/parse/reserved_declaration_word.science:22:1
+   |
+22 | agent analyst(question: String) -> Int:
+   | ^^^^^ a declaration cannot begin with `agent`
+   |
+   = note: `agent` is the other direction — a program calling a model, rather than a model calling a program — and the language has nothing for it yet
+   = note: `tool` is the one word of the three that was spent, because it is the one whose obligations a compiler can check

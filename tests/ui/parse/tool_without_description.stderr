@@ -1,0 +1,8 @@
+error[SC0190]: a `tool` is declared with a description
+  --> tests/ui/parse/tool_without_description.science:15:1
+   |
+15 | tool fit_peaks(run: String, window_lower: F64) -> Int:
+   | ^^^^ this `tool` has no `##` comment above it
+   |
+   = note: the description is what a model reads in order to decide whether to call the tool, so it is program data and not documentation
+   = note: an undescribed tool does not fail: it is simply never chosen, and no test catches that

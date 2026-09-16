@@ -332,7 +332,13 @@ impl Dump for WherePredicate {
 
 impl Dump for FnDecl {
     fn dump_node(&self, w: &mut DumpWriter) {
-        let mut header = named("Fn", &self.name.name);
+        // The word the declaration was written with is part of what the tree
+        // says, so a `tool` and a `def` never dump the same.
+        let word = match self.form {
+            FnForm::Def => "Fn",
+            FnForm::Tool => "Tool",
+        };
+        let mut header = named(word, &self.name.name);
         flag(&mut header, self.is_pub, "public");
         w.node(&header, self.span, |w| {
             w.list("generics", &self.generics);
@@ -358,7 +364,13 @@ impl Dump for SelfParam {
 
 impl Dump for Param {
     fn dump_node(&self, w: &mut DumpWriter) {
-        w.node(&named("Param", &self.name.name), self.span, |w| w.child("type", &self.ty));
+        // A documented parameter is a `tool`'s (Decision 7), and the run is
+        // flagged rather than printed: what a description *says* is the
+        // emitter's business, and a multi-line string in a one-line node is
+        // not a tree dump any more.
+        let mut header = named("Param", &self.name.name);
+        flag(&mut header, self.doc.is_some(), "documented");
+        w.node(&header, self.span, |w| w.child("type", &self.ty));
     }
 }
 

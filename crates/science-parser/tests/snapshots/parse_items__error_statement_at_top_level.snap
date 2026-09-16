@@ -8,4 +8,4 @@ Module @0..27
       Field `title` @15..27
         type: Path `String` @21..27
 --- diagnostics ---
-SC0101 @0..3 expected a declaration (`function`, `type`, `choice`, `interface`, `const`, `use`, or a type followed by `implements` or `has`), found `let`
+SC0101 @0..3 expected a declaration (`def`, `tool`, `type`, `choice`, `interface`, `const`, `use`, or a type followed by `implements` or `has`), found `let`

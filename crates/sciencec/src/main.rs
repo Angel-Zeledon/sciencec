@@ -8,11 +8,13 @@
 //!
 //! ```text
 //! sciencec check FILE...     lex, parse and resolve; report what is wrong
+//! sciencec build FILE...     check, then produce an executable
 //! sciencec fmt FILE          print the file, formatted
 //! sciencec fmt --write FILE...  format in place
 //! sciencec tokens FILE       dump the token stream
 //! sciencec ast FILE          dump the syntax tree
 //! sciencec resolve FILE      dump the resolved crate
+//! sciencec tools --json FILE  the JSON Schema of every `tool` in the file
 //! ```
 //!
 //! # Where output goes
@@ -51,12 +53,18 @@ sciencec — the Science compiler
 
 Usage:
     sciencec check FILE...    lex, parse and resolve; report what is wrong
+    sciencec build FILE...    check, then produce an executable
     sciencec fmt FILE         print the file, formatted, to stdout
     sciencec fmt --write F... format the files in place
     sciencec tokens FILE      dump the token stream
     sciencec ast FILE         dump the syntax tree
     sciencec resolve FILE     dump the resolved crate
-    sciencec tools --json FILE   a JSON Schema for every function in the file
+    sciencec tools --json FILE
+                              a JSON Schema for every `tool` in the file
+    sciencec tools --json --all-functions FILE
+                              the same over every top-level function: a
+                              measurement of the type mapping, and not a list
+                              of callables anything should be offered
     sciencec --version        print the version
     sciencec --help           print this message
 
@@ -114,6 +122,15 @@ fn run(args: &[OsString]) -> Outcome {
         _ => (rest.to_vec(), false),
     };
 
+    // `tools` takes a second flag, and it is spelled out rather than folded
+    // into the line above because the two mean opposite things: `--json`
+    // requires nothing of the command, and `--all-functions` changes what it
+    // walks. See `crate::tools` for why that is not the default.
+    let (rest, every_function) = match command.to_str() {
+        Some("tools") => take_flag(&rest, "--all-functions"),
+        _ => (rest, false),
+    };
+
     let files = match collect_files(&rest) {
         Ok(files) => files,
         Err(message) => {
@@ -130,6 +147,17 @@ fn run(args: &[OsString]) -> Outcome {
                 return usage_error("check expects at least one file");
             }
             session.check(&files);
+        }
+        // `build` takes the same operands as `check` and no flags of its own
+        // yet. `--emit`, `-O` and `--target-cpu` are `codegen-and-linking.md`
+        // §8.6 and §7.4's, and they are not spelled here because there is no
+        // backend for them to configure: a flag that is accepted and ignored is
+        // worse than one that is not there.
+        Some("build") => {
+            if files.is_empty() {
+                return usage_error("build expects at least one file");
+            }
+            session.build(&files);
         }
         Some("fmt") => {
             if write {
@@ -151,7 +179,7 @@ fn run(args: &[OsString]) -> Outcome {
             match name {
                 "tokens" => session.dump_tokens(file),
                 "ast" => session.dump_ast(file),
-                "tools" => session.dump_tools(file),
+                "tools" => session.dump_tools(file, every_function),
                 _ => session.dump_resolved(file),
             }
         }
@@ -235,6 +263,21 @@ mod tests {
     #[test]
     fn check_without_files_fails() {
         assert!(matches!(run(&args(&["check"])), Outcome::Failed));
+    }
+
+    #[test]
+    fn build_without_files_fails() {
+        assert!(matches!(run(&args(&["build"])), Outcome::Failed));
+    }
+
+    #[test]
+    fn build_is_a_known_command_even_though_it_cannot_yet_build() {
+        // The distinction `SC0400` exists to make: `build` on a file that does
+        // not exist fails the way `check` does — by naming the file — and not
+        // with `unknown command`. A user who reads "unknown command `build`"
+        // concludes the compiler has no back end planned; one who reads
+        // `SC0400` learns which package to install.
+        assert!(matches!(run(&args(&["build", "no/such/file.science"])), Outcome::Failed));
     }
 
     #[test]

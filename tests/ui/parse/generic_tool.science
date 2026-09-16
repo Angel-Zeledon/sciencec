@@ -1,0 +1,16 @@
+# UI test: a generic `tool` (SC0191).
+#
+# §2.4 item 2: the list a caller is given is flat and concrete, with one
+# parameter schema per entry, so there is nothing for `T` to be instantiated
+# at.
+#
+# Two things this pins. The fix is a deletion, and the renderer shows what
+# disappears rather than an empty pair of backticks — `of T`, the whole clause
+# including the `of`, because deleting the parameter alone would leave a
+# dangling keyword. And there is exactly **one** diagnostic: the parameter is
+# kept in the tree after the report, so `T` still resolves where it is used
+# and one stale word does not cost a name-resolution failure per mention.
+
+## Return the largest of the values.
+tool largest of T(values: Array of T) -> Int:
+    0

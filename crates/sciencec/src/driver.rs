@@ -81,6 +81,44 @@ impl Session {
         emit(&self.db.source_map(), &all);
     }
 
+    /// `sciencec build FILE...`
+    ///
+    /// The front end first, then the back end, and the back end is not reached
+    /// when the front end reported an error — a build reports the *program's*
+    /// problems before the toolchain's, because a user whose file does not
+    /// parse is not helped by being told which LLVM to install.
+    ///
+    /// **What it does today is report `SC0400`.** `codegen-and-linking.md` §11
+    /// defines that code as *"a toolchain feature required to build this
+    /// program is not compiled into this `sciencec`; names the feature and how
+    /// to obtain a build that has it"*, and that is the literal situation: the
+    /// LLVM backend lives in `science-codegen-llvm`, which needs `llvm-sys`,
+    /// which needs an LLVM 18.1 installation. `science-codegen`'s own module
+    /// documentation says what is missing and what installs it.
+    ///
+    /// The command exists anyway, rather than waiting for the backend, for the
+    /// reason the note gives for spending a diagnostic code on this at all: a
+    /// compiler that answers `unknown command \`build\`` is indistinguishable
+    /// from one that was never going to have it, and a compiler that answers
+    /// with `SC0400` has a missing feature it can name.
+    ///
+    /// The decision-making is `science_codegen::driver`'s, not this method's.
+    /// `sciencec`'s manifest argues that the driver is *"a call into an
+    /// existing crate plus the bookkeeping a shell needs"*, and which backends
+    /// exist, what `SC0400` says and how to name the missing package are not
+    /// bookkeeping.
+    pub fn build(&mut self, paths: &[PathBuf]) {
+        self.check(paths);
+        if self.tally.failed() {
+            return;
+        }
+        let inputs = paths.iter().map(|p| display_path(p)).collect();
+        let request = science_codegen::driver::BuildRequest::new(inputs);
+        if let Err(diagnostics) = science_codegen::driver::build(&request) {
+            self.report(diagnostics.into_vec());
+        }
+    }
+
     /// `sciencec fmt FILE...`, and `sciencec fmt --write FILE...`
     ///
     /// A file is formatted only when it lexes and parses clean. Resolution is
@@ -194,11 +232,16 @@ impl Session {
     /// the derivation is the claim, and it can be checked years before there
     /// is a server to run it in.
     ///
+    /// What it walks is the file's `tool` declarations. `every_function` is
+    /// `--all-functions`, which restores the walk this pass had before the
+    /// keyword existed; `crate::tools` argues why that is a flag and not the
+    /// default.
+    ///
     /// Errors stop it. A schema derived from a program that does not resolve
     /// would be a schema for a program that does not exist, and emitting one
     /// is worse than emitting nothing — a caller has no way to tell the two
     /// apart.
-    pub fn dump_tools(&mut self, path: &Path) {
+    pub fn dump_tools(&mut self, path: &Path, every_function: bool) {
         let Some(file) = self.load(path) else { return };
         let syntax = science_db::file_diagnostics(&self.db, file).to_vec();
         if syntax.iter().any(|d| d.severity == science_diagnostics::Severity::Error) {
@@ -213,7 +256,21 @@ impl Session {
             return;
         }
         if let Some(module) = krate.modules.first() {
-            print(&crate::tools::render(&krate, module));
+            // The word a function was declared with lives in the syntax tree,
+            // so the predicate is read from there and the schema from the
+            // resolved one. Both describe the same file; `ast` is a query and
+            // hands back what it already parsed.
+            let spans = if every_function {
+                std::collections::HashSet::new()
+            } else {
+                crate::tools::tool_spans(science_db::ast(&self.db, file).value())
+            };
+            let walk = if every_function {
+                crate::tools::Walk::EveryFunction
+            } else {
+                crate::tools::Walk::Tools(&spans)
+            };
+            print(&crate::tools::render(&krate, module, &walk));
         }
         let mut all = syntax;
         all.extend(diagnostics);

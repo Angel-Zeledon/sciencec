@@ -1,0 +1,7 @@
+error[SC0193]: a `tool` is not a method
+ --> tests/ui/parse/tool_with_receiver.science:9:16
+  |
+9 | tool summarize(self) -> Int:
+  |                ^^^^ a tool has no receiver
+  |
+  = note: a tool is called by its name alone, and a caller outside the program has no value to bind `self` to; declare it at module level and take what it needs as a parameter

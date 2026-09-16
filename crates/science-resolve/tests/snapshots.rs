@@ -238,8 +238,13 @@ fn unresolved_names_in_several_positions_at_once() {
 #[test]
 fn a_reserved_word_used_as_a_name() {
     let sp = &Sp::new();
-    // fn agent(): tool
-    let f = func(sp, "agent").body(block(sp, vec![], Some(name(sp, &["tool"])))).item();
+    // fn agent(): prompt
+    //
+    // Both words are still in §13's reserved list. `tool` was until
+    // `mcp-servers.md` Decision 1 spent it, and it is no longer usable here:
+    // the check below asks the lexer, so a word that became a keyword stops
+    // being a reserved *name* on the same edit.
+    let f = func(sp, "agent").body(block(sp, vec![], Some(name(sp, &["prompt"])))).item();
 
     insta::assert_snapshot!(report(&module(vec![f])));
 }

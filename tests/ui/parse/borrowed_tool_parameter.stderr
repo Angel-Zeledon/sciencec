@@ -1,0 +1,17 @@
+error[SC0192]: a `tool` owns its arguments
+  --> tests/ui/parse/borrowed_tool_parameter.science:12:23
+   |
+12 | tool count_rows(rows: borrowed Array of Int, scratch: mutable borrowed Int) -> Int:
+   |                       ^^^^^^^^ there is nothing here to borrow from
+   |
+   = note: a tool's arguments are built from what the caller sent, so the tool is the only owner there is
+   = help: take the value: delete `borrowed`
+
+error[SC0192]: a `tool` owns its arguments
+  --> tests/ui/parse/borrowed_tool_parameter.science:12:55
+   |
+12 | tool count_rows(rows: borrowed Array of Int, scratch: mutable borrowed Int) -> Int:
+   |                                                       ^^^^^^^^^^^^^^^^ there is nothing here to borrow from
+   |
+   = note: a tool's arguments are built from what the caller sent, so the tool is the only owner there is
+   = help: take the value: delete `mutable borrowed`

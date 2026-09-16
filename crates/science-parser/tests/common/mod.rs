@@ -58,7 +58,7 @@ fn width_of(kind: &TokenKind) -> u32 {
         Let | For | Use | And | Not | Any | Has => 3,
         Null => 4,
         Question => 1,
-        Else | Loop | Each | Type | True | SelfValue | SelfType => 4,
+        Else | Loop | Each | Type | True | Tool | SelfValue | SelfType => 4,
         Match | Break | Where | False | Const => 5,
         Return | Choice | Public | Giving | Extern | Unsafe => 6,
         Mutable => 7,

@@ -1,0 +1,16 @@
+---
+source: crates/science-parser/tests/parse_tools.rs
+expression: "parse_source(\"## Fit peaks in a time-of-flight window.\ntool fit_peaks(\n        ## The run identifier, as printed in the run log.\n        run: String,\n        ## Lower edge of the fit window, in seconds from the pulse.\n        window_lower: F64) -> Int:\n    0\n\")"
+---
+Module @41..245
+  Tool `fit_peaks` @41..244
+    params
+      Param `run` documented @123..134
+        type: Path `String` @128..134
+      Param `window_lower` documented @212..229
+        type: Path `F64` @226..229
+    ret: Path `Int` @234..237
+    body: Block @243..244
+      tail: Int 0 @243..244
+--- diagnostics ---
+(none)

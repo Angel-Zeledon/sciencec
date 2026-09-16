@@ -1,0 +1,15 @@
+error[SC0197]: a `tool` is declared at the top level of a module
+  --> tests/ui/parse/tool_not_at_module_level.science:19:5
+   |
+19 |     tool summarize(self) -> Int:
+   |     ^^^^ this one is not
+   |
+   = note: a tool is offered to its caller by name alone: a method would need a receiver the caller cannot supply, and a declaration inside a body is not visible outside it
+
+error[SC0197]: a `tool` is declared at the top level of a module
+  --> tests/ui/parse/tool_not_at_module_level.science:24:5
+   |
+24 |     tool fit(window: F64) -> Int:
+   |     ^^^^ this one is not
+   |
+   = note: a tool is offered to its caller by name alone: a method would need a receiver the caller cannot supply, and a declaration inside a body is not visible outside it

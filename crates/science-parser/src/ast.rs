@@ -236,13 +236,45 @@ pub struct WherePredicate {
     pub span: Span,
 }
 
-/// A function, a method, or a trait's required method.
+/// Which word declared a function: `def`, or `tool`.
 ///
-/// All three are the same node. `body: None` is a signature without a body,
+/// **The decision.** A `tool` is a field on [`FnDecl`] and not a variant of
+/// [`ItemKind`].
+///
+/// **The reason.** `mcp-servers.md` §2.4 justifies the keyword by five
+/// obligations a `def` does not have, and all five are checked *at the
+/// declaration* — four of them here in the parser. Once they are checked there
+/// is nothing left that makes a `tool` a different kind of node: it has the
+/// same name, the same parameters, the same return type and the same body, and
+/// every phase after this one resolves it identically. A variant would make
+/// every walk over items grow an arm in order to do the same thing in both,
+/// which is the cost §2.5 prices and not the cost it accepts.
+///
+/// **The cost.** The word a declaration was written with is now a field rather
+/// than a shape, so a pass that must not confuse the two has to read it, and
+/// nothing in the type system reminds it to. The one pass that must —
+/// `sciencec tools --json`, whose §14.3 walk selects exactly the tools — is
+/// the reason this is spelled as an enum with two named arms rather than an
+/// `is_tool: bool`, so that its `match` is exhaustive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FnForm {
+    /// `def` — a function, a method, or an interface's required method.
+    Def,
+    /// `tool` — a callable exposed to a model (`mcp-servers.md` Decision 1).
+    Tool,
+}
+
+/// A function, a method, a trait's required method, or a `tool`.
+///
+/// All four are the same node. `body: None` is a signature without a body,
 /// which is what a trait's required method looks like; a trait method with a
-/// default body is just the same node with `body: Some(..)`.
+/// default body is just the same node with `body: Some(..)`. A `tool` is the
+/// same node with `form: FnForm::Tool` — see [`FnForm`] for why it is not a
+/// node of its own.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDecl {
+    /// Which word declared it.
+    pub form: FnForm,
     pub is_pub: bool,
     pub name: Ident,
     /// `def largest of T(..)`: §4.4 puts the parameters after the name,
@@ -285,6 +317,30 @@ pub enum SelfKind {
 pub struct Param {
     pub name: Ident,
     pub ty: Type,
+    /// The `##` run written above this parameter, on a `tool` only.
+    ///
+    /// **The decision.** `mcp-servers.md` Decision 7 lets a `##` run precede a
+    /// parameter of a `tool` declaration, where it becomes that property's
+    /// `description`. It is always `None` on a `def`, where the same run is
+    /// `SC0194`.
+    ///
+    /// **The reason.** A JSON Schema property carries its own `description`,
+    /// and that is where a model looks to learn what a parameter *means* —
+    /// that `window_lower` is an edge and not a centre. §2.5 says outright
+    /// that this is the one thing Option B (a record type plus a derive) would
+    /// have had for free, and that Decision 1 should be reopened without it.
+    /// Keeping it is therefore not a convenience; it is the half of the
+    /// decision that was paid for.
+    ///
+    /// **The cost.** `strings-formatting-and-docs.md` §5.2's attachment table
+    /// does not list parameters, so this is an extension of it, deliberately
+    /// scoped to `tool` so that documenting a `def`'s parameters stays that
+    /// note's open question. Nothing reads this field yet: the schema emitter
+    /// works over HIR, and carrying it that far is §14.2 stage 1's. It is
+    /// stored rather than dropped because §5.3's warning is exactly about this
+    /// — *"once the lexer discards them every tool downstream is built
+    /// assuming they are gone."*
+    pub doc: Option<String>,
     pub span: Span,
 }
 

@@ -1,0 +1,7 @@
+error[SC0195]: a `tool`'s description opens with its summary
+  --> tests/ui/parse/tool_summary_blank.science:13:1
+   |
+13 | tool fit_peaks(run: String) -> Int:
+   | ^^^^ the `##` run above this `tool` starts blank
+   |
+   = note: the first line, up to the first blank `##`, is the tool's title; the whole comment is its description, summary included

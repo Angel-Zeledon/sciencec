@@ -1,0 +1,16 @@
+---
+source: crates/science-parser/tests/parse_tools.rs
+expression: "parse_source_allowing_errors(\"tool fit_peaks(run: String) -> Int:\n    0\n\")"
+---
+Module @0..42
+  Tool `fit_peaks` @0..41
+    params
+      Param `run` @15..26
+        type: Path `String` @20..26
+    ret: Path `Int` @31..34
+    body: Block @40..41
+      tail: Int 0 @40..41
+--- diagnostics ---
+SC0190 @0..4 a `tool` is declared with a description
+  note the description is what a model reads in order to decide whether to call the tool, so it is program data and not documentation
+  note an undescribed tool does not fail: it is simply never chosen, and no test catches that

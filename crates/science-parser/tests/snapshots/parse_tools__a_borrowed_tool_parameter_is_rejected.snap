@@ -1,0 +1,23 @@
+---
+source: crates/science-parser/tests/parse_tools.rs
+expression: "parse_source_allowing_errors(\"## Count the rows of a table.\ntool count_rows(rows: borrowed Array of Int, scratch: mutable borrowed Int) -> Int:\n    0\n\")"
+---
+Module @30..120
+  Tool `count_rows` @30..119
+    params
+      Param `rows` @46..73
+        type: Borrowed @52..73
+          Path `Array` @61..73
+            generics of `Array`
+              Path `Int` @70..73
+      Param `scratch` @75..104
+        type: Borrowed mutable @84..104
+          Path `Int` @101..104
+    ret: Path `Int` @109..112
+    body: Block @118..119
+      tail: Int 0 @118..119
+--- diagnostics ---
+SC0192 @52..60 a `tool` owns its arguments
+  note a tool's arguments are built from what the caller sent, so the tool is the only owner there is
+SC0192 @84..100 a `tool` owns its arguments
+  note a tool's arguments are built from what the caller sent, so the tool is the only owner there is

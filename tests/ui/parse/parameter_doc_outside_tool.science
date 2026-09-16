@@ -1,0 +1,16 @@
+# UI test: a `##` run before a parameter of a `def` (SC0194).
+#
+# `mcp-servers.md` Decision 7 lets a `tool` document each parameter, because
+# each one becomes a described field of the schema its caller reads. It is
+# scoped to `tool` on purpose, so that the general question of documenting a
+# `def`'s parameters stays open and belongs to
+# `strings-formatting-and-docs.md` §5.2 — whose attachment table this extends
+# by exactly one row.
+#
+# No fix: moving prose from one comment into another is an edit, not a
+# substitution, and a `= help:` line appearing here would be the regression.
+
+def fit_peaks(
+        ## The run identifier, as printed in the run log.
+        run: String) -> Int:
+    0

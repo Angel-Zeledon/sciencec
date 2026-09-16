@@ -1,0 +1,12 @@
+# UI test: a `tool` with no body (SC0198).
+#
+# There is no abstract tool. A signature with no body is an interface's
+# required method, and that is declared with `def`.
+#
+# The neighbouring case this must not become: a `tool` whose body is indented
+# with no `:` in front of it already reports the missing colon, and reporting
+# that the body is absent as well would be a second true statement about one
+# mistake. The check is on the one branch where nothing has been said yet.
+
+## Fit peaks in a time-of-flight window.
+tool fit_peaks(window_lower: F64) -> Int

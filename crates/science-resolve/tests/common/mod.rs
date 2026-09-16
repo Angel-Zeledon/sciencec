@@ -206,7 +206,9 @@ pub fn generic_const(sp: &Sp, name: &str, ty: Type) -> GenericParam {
 pub fn param(sp: &Sp, name: &str, ty: Type) -> Param {
     let name = ident(sp, name);
     let span = name.span.merge(ty.span);
-    Param { name, ty, span }
+    // `doc` is Decision 7's per-parameter description, which only a `tool`
+    // may carry; these helpers build `def`s.
+    Param { name, ty, doc: None, span }
 }
 
 /// A function declaration, with everything optional defaulted away.
@@ -219,6 +221,7 @@ pub fn func(sp: &Sp, name: &str) -> FnBuilder {
     let span = name.span;
     FnBuilder {
         decl: FnDecl {
+            form: FnForm::Def,
             is_pub: false,
             name,
             generics: Vec::new(),

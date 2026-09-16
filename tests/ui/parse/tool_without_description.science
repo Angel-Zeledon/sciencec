@@ -1,0 +1,16 @@
+# UI test: a `tool` with no description (SC0190).
+#
+# `mcp-servers.md` Decision 5 makes this the only construct in Science for
+# which documentation is mandatory, and the message has to carry the reason or
+# it becomes "document your code" — a style rule a compiler has no business
+# enforcing. The reason is narrow: everywhere else a doc comment is read by
+# someone who has already decided to call the function, and here it is read by
+# the caller *in order to* decide. The second note is the other half: an
+# undescribed tool does not error, it is simply never chosen, and no test
+# catches that.
+#
+# The `#` comments above this line are ordinary comments and not `##` runs, so
+# they document nothing — which is what makes this file's `tool` undescribed.
+
+tool fit_peaks(run: String, window_lower: F64) -> Int:
+    0

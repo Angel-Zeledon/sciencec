@@ -1,0 +1,13 @@
+# UI test: a `borrowed` parameter on a `tool` (SC0192).
+#
+# §2.4 item 3: there is no caller to borrow from. Every argument was built
+# from what arrived a moment ago and the tool is the only owner there is.
+#
+# Both spellings appear, so the deleted span is pinned for each — `borrowed`
+# alone, and `mutable borrowed` as one word pair. Two parameters are two
+# mistakes and therefore two diagnostics; that is not a cascade, and the count
+# is what this case checks.
+
+## Count the rows of a table.
+tool count_rows(rows: borrowed Array of Int, scratch: mutable borrowed Int) -> Int:
+    0

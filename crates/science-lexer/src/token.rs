@@ -116,6 +116,29 @@ pub enum TokenKind {
     True,
     False,
 
+    /// `tool` — a callable exposed to a model (`mcp-servers.md` Decision 1).
+    ///
+    /// **The decision.** The word leaves [`ReservedWord`] and becomes a
+    /// declaration keyword of its own.
+    ///
+    /// **The reason.** A reservation that buys nothing should be released, and
+    /// this one buys five obligations an ordinary `def` does not have and a
+    /// compiler can check: every parameter type has to survive a round trip
+    /// through JSON Schema, the declaration may not be generic, no parameter
+    /// may be `borrowed`, it must carry a doc comment, and its return type is
+    /// constrained. A marker that changes nothing is an attribute; five
+    /// checkable obligations are a declaration form (§2.4).
+    ///
+    /// **The cost.** `tool` is a second function-declaration form, so every
+    /// pass that walks items grows an arm, and `def-and-lambda.md` refused a
+    /// second spelling of `def` partly on that ground. The difference claimed
+    /// is that a renamed keyword is a *synonym* and this is not.
+    ///
+    /// Nothing here names a protocol. `tool` declares a name, a typed
+    /// parameter list, a required description and a result; MCP is one backend
+    /// over that and lives in a package (§2.5, §2.7).
+    Tool,
+
     /// `null`, the absence of a value in a nullable type (revision 2 §3.1).
     /// A literal and not a prelude value: `T?` is a type the compiler knows,
     /// so the thing that inhabits it has to be a token the lexer knows.
@@ -196,7 +219,6 @@ pub enum TokenKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReservedWord {
     Agent,
-    Tool,
     Prompt,
     Spawn,
     Send,
@@ -280,8 +302,9 @@ impl TokenKind {
 
             "is" => Is,
 
+            "tool" => Tool,
+
             "agent" => Reserved(Agent),
-            "tool" => Reserved(Tool),
             "prompt" => Reserved(Prompt),
             "spawn" => Reserved(Spawn),
             "send" => Reserved(Send),
