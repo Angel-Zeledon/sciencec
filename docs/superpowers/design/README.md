@@ -22,6 +22,8 @@ disagrees with it says so explicitly and gives the reason.
 | `stdlib-standard.md` | Level 2: `time`, `os`, `random`, `testing`, `logging`, `text.regex`, `thread`, `net`. | F0 / F1 |
 | `stdlib-shape-and-packages.md` | The policy the three stdlib notes live under: batteries included, the error model's consequences, threads over async, naming, and Level 3. **Read before the other two.** | F0 |
 | `scientific-libraries.md` | The catalogue: `math`, `linalg`, `stats`, `optimize`, `signal`, `chem`, `bio`, `physics`; what links against C; the units-in-the-type decision. | F1+ |
+| `intrinsics-math-physics.md` | Which mathematical and physical operations are tier 1 (a hardware instruction), tier 2 (a compiler obligation) or tier 3 (an ordinary library function). Establishes the tier test and the N1–N4 naming rule the sibling note follows. | F1+ |
+| `intrinsics-chem-bio.md` | The `chem` and `bio` catalogues under that same test: tier 1 is empty, tier 2 is five SI units, and seven reference tables are *data with releases*, shipped as content-addressed packages pinned by the lockfile. | F1+ |
 | `equations.md` | `equation` as a closed-grammar body that always has a rendering and a derivative; why dimensional checking is *not* what earns it; the LaTeX closure. | F1, conditional |
 | `data-leakage.md` | `Train`/`Tune`/`Holdout`/`Whole` as distinct types; why fitting a scaler before the split cannot compile; and what no compiler can catch. | F1 |
 | `publishable-output.md` | The typed table and figure, PDG significant figures, and the asset bundle a journal template consumes. Concedes literate programming to Quarto and says what survives. | F1+ |
@@ -95,7 +97,7 @@ allocated by a design note and then implemented the same day.
 | `uncertainty.md` | — | — | — | `SC0277`–`SC0278` | — | — |
 | `statistical-validity.md` | — | — | — | `SC0288`–`SC0289` | — | — |
 | `reproducibility.md` | — | — | `SC0237`–`SC0240` | — | — | — |
-| `const-expression-arithmetic.md` | — | — | — | `SC0260`–`SC0262` | — | — |
+| `const-expression-arithmetic.md` | — | — | `SC0220`–`SC0221` | `SC0260`–`SC0262` | — | — |
 | `effects.md` | — | — | `SC0214`–`SC0219` | — | — | — |
 | `collections-and-chains.md` | — | — | — | `SC0271`–`SC0273` | `SC0331`–`SC0332` | — |
 | `models-and-inference.md` | — | — | — | `SC0251`, `SC0263`–`SC0264` | — | — |
@@ -148,7 +150,7 @@ existing `SC0009`, `script-mode.md` changes `SC0101`'s wording and reuses
 |---|---|
 | Lexical | `SC0002`, `SC0018`–`SC0099` |
 | Syntax | `SC0138`–`SC0149`, `SC0155`–`SC0159`, `SC0161`–`SC0169`, `SC0178`–`SC0199` |
-| Resolution | `SC0200`–`SC0211`, `SC0220`–`SC0229`, `SC0241`–`SC0245` |
+| Resolution | `SC0200`–`SC0211`, `SC0222`–`SC0229`, `SC0241`–`SC0245` |
 | Types | `SC0250`, `SC0299`, and `SC0504`–`SC0799` in the second band |
 | Ownership | everything but `SC0301`–`SC0302`, `SC0331`–`SC0332`, `SC0380` |
 | Codegen | `SC0400`–`SC0409` only — see the partition above |
