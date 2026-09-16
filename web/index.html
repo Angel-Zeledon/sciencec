@@ -123,25 +123,25 @@
     body: String
 
 interface Summarize:
-    function summarize(self) -> String
+    def summarize(self) -> String
 
     # A default body may call any
     # other method of the interface.
-    function preview(self) -> String:
+    def preview(self) -> String:
         self.summarize().truncate(80)
 
 Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         self.body.truncate(200)</pre>
     </div>
     <div>
       <h3>Generics and bounds</h3>
-<pre data-science>function best_of of T(
+<pre data-science>def best_of of T(
     left: borrowed T,
     right: borrowed T,
 ) -> String where T: Summarize:
-    if left.summarize().length()
-            >= right.summarize().length():
+    if (left.summarize().length()
+            >= right.summarize().length()):
         left.preview()
     else:
         right.preview()
@@ -154,10 +154,10 @@ type Grid of (T, const ROWS: Int):
 
   <h3>Borrows, with nothing to annotate</h3>
 
-<pre data-science>function retitle(doc: mutable borrowed Doc, title: String):
+<pre data-science>def retitle(doc: mutable borrowed Doc, title: String):
     doc.title be title
 
-function main():
+def main():
     let mutable doc be Doc(title: "a", body: "")
 
     # A parameter declared `borrowed` is borrowed automatically, so the call
@@ -172,7 +172,7 @@ function main():
 
   <h3>Chains, which is the shape most code takes</h3>
 
-<pre data-science>function headlines(docs: borrowed Array of Doc) -> Array of String:
+<pre data-science>def headlines(docs: borrowed Array of Doc) -> Array of String:
     docs
         .iterate()
         .discard(each.is_empty())
@@ -197,7 +197,7 @@ function main():
     type CblasLayout is CInt
     const CBLAS_COL_MAJOR be 102 as CblasLayout
 
-    function cblas_dgemm(
+    def cblas_dgemm(
         layout: CblasLayout,
         m: BlasInt,
         a: ffi.Span of F64,

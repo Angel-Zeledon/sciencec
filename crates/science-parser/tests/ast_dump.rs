@@ -123,7 +123,7 @@ fn stmt(kind: StmtKind, start: u32, end: u32) -> Stmt {
 }
 
 fn item(kind: ItemKind, start: u32, end: u32) -> Item {
-    Item { kind, span: sp(start, end) }
+    Item { kind, span: sp(start, end), doc: None }
 }
 
 // --- items ---------------------------------------------------------------

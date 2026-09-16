@@ -67,15 +67,17 @@ for a compiler is the last place to print syntax the compiler would reject, and
 the corpus exists precisely so that nobody has to invent any.
 
 **With one exception, and the exception is labelled.** The error model of syntax
-revision 2 §3 — `-> (Config, Error?)`, `T?`, postfix `?`, `null` — is decided and
-not yet implemented, so blocks using it are checked against the revision note by
-reading and **cannot** be run through `sciencec`, which would reject them. They
-carry `<span class="cite wip">changing</span>`, the reference page says so at the
-top and again in the Errors section, and the landing page says so beside the
-install command. When the lexer and parser land, drop the markers and run the
-blocks through `check` like everything else. The promise above is that a reader
-is never shown syntax that does not work without being told; it is not that the
-compiler is always ahead of the site.
+revision 2 §3 — `-> (Config, Error?)`, `T?`, postfix `?`, `null` — now parses:
+those blocks go through `check` like every other. What is not implemented is
+their *meaning* — flow narrowing and the unchecked-error diagnostic — which
+needs a type checker that does not exist. So the `changing` markers stay, and
+what they mark has changed underneath them: it used to be "this does not
+compile", and it is now "this compiles and nothing verifies it".
+
+That distinction is the whole promise: a reader is never shown syntax that does
+not work without being told. It was never that the compiler is always ahead of
+the site — and for one afternoon the compiler was ahead, and this paragraph was
+the last thing to know.
 
 **Removed syntax is struck through.** A block marked `<pre data-science
 data-legacy>` is kept for comparison only. It gets a grey rail instead of the
@@ -96,10 +98,13 @@ It also feeds the three word banks at the bottom of `reference.html`, through a
 `data-words` attribute — `keywords`, `reserved`, `never`. A bank without that
 attribute renders empty, silently.
 
-Two entries are knowingly **ahead** of the lexer: `try` has left `CONTROL` and
-`null` has joined it, per revision 2 §3 and §7, while `token.rs` still has
-`"try" => Try` and no `null`. That divergence is the same one the `changing`
-markers describe and it closes the day the error model lands.
+The lists and `token.rs` agree word for word today. Two entries were knowingly
+**ahead** of the lexer for a while — `try` left `CONTROL` and `null` joined it,
+per revision 2 §3 and §7, before `from_word` had either — and the lexer has
+since caught up with both, as it has with revision 3's rename of `function` to
+`def`. Where the two ever diverge again, say so in `highlight.js`'s own comment
+and say which way round: a list that is ahead of the compiler is a decision, and
+a list that is behind it is a bug.
 
 ## Adding a page
 

@@ -91,8 +91,8 @@ The grammar has no name resolution, so it decides the same way
 
 | Rule | Example | Scope |
 |---|---|---|
-| a word in the declaration list | `function`, `type`, `let`, `be` | `keyword.declaration.science` |
-| a word in the control list | `if`, `match`, `is`, `try` | `keyword.control.science` |
+| a word in the declaration list | `def`, `type`, `let`, `be` | `keyword.declaration.science` |
+| a word in the control list | `if`, `match`, `is`, `null` | `keyword.control.science` |
 | a word reserved for F1–F4 | `agent`, `tensor`, `yield` | `invalid.deprecated.reserved.science` |
 | a name followed by `(` | `truncate(80)` | `entity.name.function.science` |
 | a capitalised word | `Doc`, `Option` | `entity.name.type.science` |

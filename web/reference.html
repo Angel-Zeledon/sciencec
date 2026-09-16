@@ -34,9 +34,9 @@
 
 <div class="status">
   <span><span class="dot dot-on"></span>Compiler <b>sciencec</b></span>
-  <span><span class="dot dot-on"></span>Front half <b>661 tests</b>, green</span>
+  <span><span class="dot dot-on"></span>Front half <b>736 tests</b>, green</span>
   <span><span class="dot dot-wip"></span>Types, regions, codegen <b>not started</b></span>
-  <span><span class="dot dot-wip"></span>Error model <b>specified</b>, not built</span>
+  <span><span class="dot dot-wip"></span>Error model <b>parses</b>, not yet checked</span>
   <span>Files <b>.science</b></span>
 </div>
 
@@ -49,12 +49,15 @@
     <a href="#errors">Errors</a> section is the exception</strong>: pairs like
     <code>-&gt; (Config, Error?)</code>, the nullable type <code>T?</code>, the
     presence test <code>?</code> and the literal <code>null</code> are decided
-    and not yet implemented, so a compiler you install today rejects them and
-    still accepts the <code>Result</code>&hairsp;/&hairsp;<code>try</code> forms
-    they replace. That one change alters what programs <em>mean</em> rather than
-    how they are spelled, so it is being staged on its own. Everything marked
-    <span class="cite wip">changing</span> is in that state; everything else is
-    live.
+    and <em>half</em> implemented. The syntax landed: a compiler you install
+    today lexes, parses and resolves every one of them, and no longer accepts
+    the <code>Result</code>&hairsp;/&hairsp;<code>try</code> forms they replace.
+    What has not landed is what they <em>mean</em> — the narrowing that makes
+    <code>if err?:</code> tell the compiler that <code>err</code> is not null,
+    and the check that refuses a returned error nobody tested. Both need a type
+    checker, and there is not one yet. So these blocks compile and are not yet
+    verified, which is a different and smaller gap than the one this paragraph
+    described until the syntax shipped.
   </p>
 </div>
 
@@ -100,7 +103,7 @@
     title: String
     body: String
 
-function main():
+def main():
     let doc be Doc(title: "Regions", body: "A region is a set of program points.")
     print(doc.title)
 
@@ -242,25 +245,36 @@ Array of (Map of (String, Int))    # nesting follows the same rule
     in a <code>where</code> clause; several join with <code>+</code>.
   </p>
 
-<pre data-science>function summarize(doc: borrowed Doc) -> String:
+<pre data-science>def summarize(doc: borrowed Doc) -> String:
     doc.body.truncate(200)
 
-function duplicate of T: Clone + Eq(value: borrowed T) -> Pair of (T, T):
+def duplicate of T: Clone + Eq(value: borrowed T) -> Pair of (T, T):
     Pair(first: value.clone(), second: value.clone())
 
-function best_of of T(left: borrowed T, right: borrowed T) -> String
+def best_of of T(left: borrowed T, right: borrowed T) -> String
         where T: Summarize + Clone:
     if left.summarize().length() >= right.summarize().length():
         left.preview()
     else:
         right.preview()
 
-function paired of (A, B)(first: A, second: B) -> (A, B):
+def paired of (A, B)(first: A, second: B) -> (A, B):
     (first, second)</pre>
 
   <p class="note">
     The last expression of a body is its value; <code>return</code> is for
     leaving early. A function with no return type returns <code>()</code>.
+  </p>
+
+  <p class="note">
+    <strong>If you are arriving from Python</strong>, the word is the same and
+    the declaration is not. <code>def</code> introduces every function form
+    there is &mdash; a free function, a method inside a <code>has</code> block,
+    a required or defaulted member of an <code>interface</code> &mdash; so
+    there is no second spelling to learn for any of them. Parameters carry
+    types, the return type follows <code>-&gt;</code>, and there is no implicit
+    receiver: <code>self</code> is a parameter you write, and writing it is
+    what makes a function a method rather than an associated one.
   </p>
 </section>
 
@@ -273,34 +287,34 @@ function paired of (A, B)(first: A, second: B) -> (A, B):
   </p>
 
 <pre data-science>interface Summarize:
-    function summarize(self) -> String
+    def summarize(self) -> String
 
     # A default body may call any other method of the interface.
-    function preview(self) -> String:
+    def preview(self) -> String:
         self.summarize().truncate(80)
 
 Doc implements Summarize:
-    function summarize(self) -> String:
+    def summarize(self) -> String:
         self.body.truncate(200)
 
 Position implements Copy           # a marker: one line, no block</pre>
 
   <h3>Receivers</h3>
 
-<pre data-science>function summarize(self)            # shared borrow of the receiver
-function reset(mutable self)       # exclusive borrow
-function into_title(self: Self)    # consumes it</pre>
+<pre data-science>def summarize(self)            # shared borrow of the receiver
+def reset(mutable self)       # exclusive borrow
+def into_title(self: Self)    # consumes it</pre>
 
   <h3>Associated types</h3>
 
 <pre data-science>interface Iterate:
     type Item
-    function next(mutable self) -> Self.Item?
+    def next(mutable self) -> Self.Item?
 
 Countdown implements Iterate:
     type Item is Int
 
-    function next(mutable self) -> Self.Item?:
+    def next(mutable self) -> Self.Item?:
         if self.remaining <= 0:
             null
         else:
@@ -316,10 +330,10 @@ Countdown implements Iterate:
   <h3>Methods of your own</h3>
 
 <pre data-science>Note has:
-    function new(text: String) -> Note:
+    def new(text: String) -> Note:
         Note(text: text)
 
-    function is_empty(self) -> Bool:
+    def is_empty(self) -> Bool:
         self.text.is_empty()
 
 let n be Note.new("inferred, never written")</pre>
@@ -332,7 +346,7 @@ let n be Note.new("inferred, never written")</pre>
   <h3>Operators are interfaces</h3>
 
 <pre data-science>Vector2 implements Add:
-    function add(self, other: Vector2) -> Vector2:
+    def add(self, other: Vector2) -> Vector2:
         Vector2(x: self.x + other.x, y: self.y + other.y)</pre>
 
   <p class="note">
@@ -353,16 +367,16 @@ let n be Note.new("inferred, never written")</pre>
     across function boundaries.
   </p>
 
-<pre data-science>function retitle(doc: mutable borrowed Doc, title: String):
+<pre data-science>def retitle(doc: mutable borrowed Doc, title: String):
     doc.title be title
 
-function compare(left: borrowed Doc, right: borrowed Doc) -> Bool:
+def compare(left: borrowed Doc, right: borrowed Doc) -> Bool:
     left.title is right.title
 
 type View:
     source: borrowed Doc           # a record may hold a borrow; the region is inferred
 
-function main():
+def main():
     let mutable doc be Doc(title: "a", body: "")
 
     # A parameter declared `borrowed` is borrowed automatically, so the call
@@ -375,7 +389,7 @@ function main():
 
   <h3>Dynamic dispatch</h3>
 
-<pre data-science>function describe_any(value: borrowed any Summarize) -> String:
+<pre data-science>def describe_any(value: borrowed any Summarize) -> String:
     value.preview()</pre>
 
   <p class="note">
@@ -394,7 +408,7 @@ function main():
 
 <pre data-science># The inline body ends where the EXPRESSION ends, not at the newline: the
 # then-branch stops at `else`, because `else` cannot continue an expression.
-function preview(text: borrowed String, limit: Int) -> String?:
+def preview(text: borrowed String, limit: Int) -> String?:
     if text.is_empty(): null else: text.truncate(limit)</pre>
 
   <p class="note">
@@ -475,7 +489,7 @@ match point:
 
   <h3>A function that can fail returns its value and an error</h3>
 
-<pre data-science>function read_config(path: String) -> (Config, Error?):
+<pre data-science>def read_config(path: String) -> (Config, Error?):
     let text, err be read_file(path)
     if err?:
         return (Config.empty(), err)
@@ -493,7 +507,7 @@ match point:
 
   <p class="note">
     <code>Error</code> is a one-method interface &mdash;
-    <code>function message(self) -&gt; String</code> &mdash; so
+    <code>def message(self) -&gt; String</code> &mdash; so
     <code>Error?</code> in a return position is shorthand for
     <code>(any Error)?</code>. A function may name a concrete
     <code>choice</code> instead, and should when the caller is expected to tell
@@ -533,7 +547,7 @@ match point:
     continuation begins with <code>.</code> continues the line above it.
   </p>
 
-<pre data-science>function headlines(docs: borrowed Array of Doc) -> Array of String:
+<pre data-science>def headlines(docs: borrowed Array of Doc) -> Array of String:
     docs
         .iterate()
         .discard(each.is_empty())
@@ -541,7 +555,7 @@ match point:
         .take(5)
         .collect()
 
-function by_length(docs: borrowed Array of Doc) -> Array of String:
+def by_length(docs: borrowed Array of Doc) -> Array of String:
     docs
         .iterate()
         .map(doc giving doc.summarize())
@@ -586,7 +600,7 @@ function by_length(docs: borrowed Array of Doc) -> Array of String:
     const CBLAS_ROW_MAJOR be 101 as CblasLayout
     const CBLAS_COL_MAJOR be 102 as CblasLayout
 
-    function cblas_dgemm(
+    def cblas_dgemm(
         layout: CblasLayout,
         transpose_a: CblasTranspose,
         m: BlasInt,
@@ -598,7 +612,7 @@ function by_length(docs: borrowed Array of Doc) -> Array of String:
     union H5R_ref_t: size 64 align 8</pre>
 
   <p class="note">
-    Five item forms: <code>function</code>, <code>type</code> alias,
+    Five item forms: <code>def</code>, <code>type</code> alias,
     <code>const</code>, <code>static</code> for a global whose value the loader
     sets, and <code>union</code> as an opaque blob of a known size and alignment.
     <code>symbol</code> decouples the Science name from the linker name.
@@ -620,7 +634,7 @@ unsafe extern "C" library "cudnn" when available:</pre>
 
   <h3>The interface is the wrapper, not the declaration</h3>
 
-<pre data-science>function multiply(a: borrowed Matrix, b: borrowed Matrix) -> (Matrix, BlasError?):
+<pre data-science>def multiply(a: borrowed Matrix, b: borrowed Matrix) -> (Matrix, BlasError?):
     if a.columns is not b.rows:
         return (Matrix.empty(), BlasError.Shape(a.columns, b.rows))
 
@@ -776,7 +790,7 @@ let names be docs
     .collect()
 
 # ...and when it begins with `where`, before a signature's bounds.
-function largest of T(items: borrowed Array of T) -> borrowed T
+def largest of T(items: borrowed Array of T) -> borrowed T
         where T: Ord:
     items.get(0)</pre>
 
@@ -814,10 +828,17 @@ public type Doc:
   </p>
 
   <p class="note">
-    The first list is revision 2's, so <code>try</code> has left it and
-    <code>null</code> has joined it. <code>sciencec</code> has not caught up:
-    its lexer still reserves <code>try</code> and does not know
-    <code>null</code>. <span class="cite wip">changing</span>
+    The first list is the lexer's, word for word. <code>try</code> left it and
+    <code>null</code> joined it with revision 2, and revision 3 replaced
+    <code>function</code> with <code>def</code>; <code>sciencec</code> has
+    caught up with all three, so none of the three is a divergence any more.
+    A word the language removed is still recognised where it used to stand, and
+    reported as a migration rather than treated as a stray name:
+    <code>SC0156</code> for <code>function</code>, which carries
+    <code>def</code> as a fix an editor can apply, and <code>SC0155</code> for
+    <code>try</code>, which carries none on purpose &mdash; the model that
+    replaced it turns one expression into a binding, a test and a return, and
+    no mechanical rewrite can choose what to return.
   </p>
 </section>
 

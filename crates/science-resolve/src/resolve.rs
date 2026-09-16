@@ -554,7 +554,7 @@ impl Resolver {
             }
             _ => unreachable!("the collected definitions fell out of step with the items"),
         };
-        Some(hir::Item { kind, span: item.span })
+        Some(hir::Item { kind, span: item.span, doc: item.doc.clone() })
     }
 
     fn resolve_fn(&mut self, def: DefId, decl: &ast::FnDecl) -> hir::Fn {

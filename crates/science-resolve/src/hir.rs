@@ -370,6 +370,14 @@ pub struct Module {
 pub struct Item {
     pub kind: ItemKind,
     pub span: Span,
+    /// The `##` run written above this item, carried through from the AST.
+    ///
+    /// `strings-formatting-and-docs.md` §5.3 requires doc comments to survive
+    /// this far, and the reason is not `help()`: a tool that asks the compiler
+    /// what a declaration *is* wants the prose beside the signature, and by
+    /// this phase the signature is resolved and the prose would otherwise have
+    /// been dropped two phases ago.
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

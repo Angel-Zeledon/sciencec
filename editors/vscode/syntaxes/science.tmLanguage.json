@@ -131,13 +131,13 @@
 
     "keyword-declaration": {
       "comment": "The words that introduce something. Same split as web/assets/highlight.js DECLARE.",
-      "match": "\\b(function|type|choice|interface|implements|has|of|borrowed|any|use|public|const|extern|unsafe|let|be|mutable|where|giving)\\b",
+      "match": "\\b(def|type|choice|interface|implements|has|of|borrowed|any|use|public|const|extern|unsafe|let|be|mutable|where|giving)\\b",
       "name": "keyword.declaration.science"
     },
 
     "keyword-control": {
       "comment": "Control flow plus the operators and values spelled as words. Same split as highlight.js CONTROL.",
-      "match": "\\b(if|else|match|for|each|in|loop|return|break|continue|try|and|or|not|is|as|self|Self|true|false)\\b",
+      "match": "\\b(if|else|match|for|each|in|loop|return|break|continue|and|or|not|is|as|self|Self|true|false|null)\\b",
       "name": "keyword.control.science"
     },
 

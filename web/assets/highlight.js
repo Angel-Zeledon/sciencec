@@ -15,17 +15,23 @@
   "use strict";
 
   // Declarations and bindings — the words that introduce something.
-  var DECLARE = ("function type choice interface implements has of borrowed any use " +
+  //
+  // `def` replaced `function` in syntax revision 3, and the rename reached the
+  // lexer with it: token.rs has `"def" => Function` and `function` is now an
+  // ordinary identifier. Writing the old word where a declaration belongs is
+  // SC0156, which carries the one-word fix.
+  var DECLARE = ("def type choice interface implements has of borrowed any use " +
     "public const extern unsafe let be mutable where giving").split(" ");
 
   // Control flow, the operators spelled as words, and the literals.
   //
   // `try` left this list with syntax revision 2 §3, which removed `Result` and
   // `try` together; `null` joined it by §7, which notes the literal was missed
-  // in the revision's first draft. Both moves are AHEAD of the lexer: token.rs
-  // still has `"try" => Try` and has no `null` at all, because the error model
-  // is specified and not yet built. This file follows the design, the page says
-  // so in as many words, and the two converge when the lexer lands.
+  // in the revision's first draft. Both moves have since reached the lexer:
+  // token.rs has `"null" => Null` and no `try` at all, so this list and
+  // `from_word` agree word for word. `try` is an ordinary identifier now, and
+  // using it as the old prefix is SC0155 — a migration diagnostic with no fix,
+  // because the new model has no one expression to swap in.
   var CONTROL = ("if else match for each in loop return break continue and or not " +
     "is as self Self true false null").split(" ");
 

@@ -231,6 +231,15 @@ impl<'t> Parser<'t> {
         &self.token_at(offset).kind
     }
 
+    /// The `##` run carried by the token about to be consumed.
+    ///
+    /// Cloned rather than taken: the token stream is borrowed, and a doc run
+    /// is a handful of lines per declaration, so the copy is not worth an
+    /// ownership mechanism to avoid.
+    fn peek_doc(&self) -> Option<String> {
+        self.token_at(0).doc.clone()
+    }
+
     /// The span of the token about to be consumed.
     fn span(&self) -> Span {
         self.token_at(0).span
@@ -493,6 +502,9 @@ impl<'t> Parser<'t> {
     /// the same place.
     fn parse_item(&mut self) -> Option<Item> {
         let start = self.span();
+        // Read before anything is consumed: the run rides on the item's first
+        // token, and `public` is that token when it is present.
+        let doc = self.peek_doc();
         let public = self.eat(&TokenKind::Public).map(|t| t.span);
         let is_pub = public.is_some();
 
@@ -531,7 +543,7 @@ impl<'t> Parser<'t> {
             return None;
         };
 
-        Some(Item { kind, span: start.merge(self.last_text_span()) })
+        Some(Item { kind, span: start.merge(self.last_text_span()), doc })
     }
 
     fn reject_public(&mut self, public: Option<Span>, what: &str) {

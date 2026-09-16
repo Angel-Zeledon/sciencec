@@ -106,6 +106,16 @@ pub struct Module {
 pub struct Item {
     pub kind: ItemKind,
     pub span: Span,
+    /// The `##` run written above this item, if there was one.
+    ///
+    /// It arrives on the item's first token — the lexer carries doc runs as
+    /// trivia — and is lifted here because an item is what a reader documents
+    /// and what a tool asks about. `strings-formatting-and-docs.md` §5.3
+    /// requires it to survive into HIR; this is the first half of that.
+    ///
+    /// `public` sits before the declaration keyword, so the run is read from
+    /// whichever of the two the item actually starts with.
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

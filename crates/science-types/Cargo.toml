@@ -1,0 +1,13 @@
+[package]
+name = "science-types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+science-diagnostics.workspace = true
+science-resolve.workspace = true
+
+[dev-dependencies]
+science-lexer.workspace = true
+science-parser.workspace = true

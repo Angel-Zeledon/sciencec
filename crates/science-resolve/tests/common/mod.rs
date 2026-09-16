@@ -170,7 +170,7 @@ pub fn module(items: Vec<Item>) -> Module {
 }
 
 fn item(kind: ItemKind, span: Span) -> Item {
-    Item { kind, span }
+    Item { kind, span, doc: None }
 }
 
 pub fn generic(sp: &Sp, name: &str, bounds: Vec<TypeBound>) -> GenericParam {

@@ -3,6 +3,21 @@
 All notable changes to the Science extension are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- **`def` replaces `function`** in `keyword.declaration.science`. Syntax
+  revision 3 renamed the declaration, and `TokenKind::from_word` now maps
+  `def`; `function` is an ordinary identifier, so the grammar no longer
+  colours it. Writing it where a declaration belongs is `SC0156`, which
+  carries `def` as a machine-applicable fix.
+- **`try` leaves `keyword.control.science` and `null` joins it.** Revision 2
+  §3 removed `try` with the `Result` type and §7 added the `null` literal;
+  the lexer has since caught up with both, and this grammar was still listing
+  the pre-revision split. `try` is now an ordinary identifier, and using it as
+  the old prefix is `SC0155`.
+
 ## [0.1.0] — 2026-09-16
 
 First release. Everything below is new.
