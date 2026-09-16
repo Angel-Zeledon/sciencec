@@ -222,11 +222,7 @@ impl LinkMap {
             // SAFETY: an occupied slot holds a live key and value, and the new
             // table is empty, so neither is already present.
             unsafe {
-                self.insert_fresh(
-                    info,
-                    old.key_slot(info, index),
-                    old.value_slot(info, index),
-                )
+                self.insert_fresh(info, old.key_slot(info, index), old.value_slot(info, index))
             }
         }
 
@@ -260,7 +256,10 @@ impl LinkMap {
             .saturating_mul(4)
             .saturating_div(3)
             .saturating_add(1);
-        let new_cap = wanted.checked_next_power_of_two().unwrap_or_else(|| capacity_overflow()).max(8);
+        let new_cap = wanted
+            .checked_next_power_of_two()
+            .unwrap_or_else(|| capacity_overflow())
+            .max(8);
         // SAFETY: `new_cap` is a power of two and leaves the table below the
         // load factor; `info` is the caller's obligation.
         unsafe { self.rehash(info, new_cap) }

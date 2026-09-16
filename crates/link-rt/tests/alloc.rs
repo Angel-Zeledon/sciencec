@@ -108,12 +108,16 @@ fn realloc_to_the_same_size_is_valid() {
 #[test]
 fn realloc_preserves_over_alignment() {
     unsafe {
-        let mut p = link_alloc(64, 64);
+        let mut size = 64usize;
+        let mut p = link_alloc(size, 64);
         assert_eq!(p as usize % 64, 0);
-        for size in [128usize, 256, 1024, 4096] {
-            p = link_realloc(p, size / 2, size, 64);
-            assert_eq!(p as usize % 64, 0, "alignment lost growing to {size}");
+        *p = 0x5A;
+        for new_size in [128usize, 256, 1024, 4096, 64, 4096] {
+            p = link_realloc(p, size, new_size, 64);
+            size = new_size;
+            assert_eq!(p as usize % 64, 0, "alignment lost resizing to {size}");
+            assert_eq!(*p, 0x5A, "contents lost resizing to {size}");
         }
-        link_dealloc(p, 4096, 64);
+        link_dealloc(p, size, 64);
     }
 }

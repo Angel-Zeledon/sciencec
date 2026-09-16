@@ -175,7 +175,10 @@ fn pop_of_empty_is_none() {
         let mut a = link_array_new(&info);
         let mut out: i64 = -1;
         assert!(!link_array_pop(&mut a, &info, (&raw mut out).cast::<u8>()));
-        assert_eq!(out, -1, "the out slot is untouched when there is nothing to pop");
+        assert_eq!(
+            out, -1,
+            "the out slot is untouched when there is nothing to pop"
+        );
         link_array_free(&mut a, &info);
     }
 }

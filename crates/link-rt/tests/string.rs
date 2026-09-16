@@ -11,7 +11,10 @@ fn new_is_empty() {
         let mut v = link_string_new();
         assert_eq!(link_string_len(&v), 0);
         assert!(link_string_is_empty(&v));
-        assert!(!v.ptr.is_null(), "an empty String still has a dangling, non-null pointer");
+        assert!(
+            !v.ptr.is_null(),
+            "an empty String still has a dangling, non-null pointer"
+        );
         link_string_free(&mut v);
         assert_eq!(v.len, 0);
         assert_eq!(v.cap, 0);
@@ -213,7 +216,11 @@ fn starts_with() {
         ];
         for (prefix, expected) in cases {
             let p = s(prefix);
-            assert_eq!(link_string_starts_with(&v, &p), expected, "prefix {prefix:?}");
+            assert_eq!(
+                link_string_starts_with(&v, &p),
+                expected,
+                "prefix {prefix:?}"
+            );
             free(p);
         }
         free(v);
@@ -269,7 +276,10 @@ fn chars_of_one_character() {
         assert!(link_chars_next(&mut it, &mut out));
         assert_eq!(out, 0x1F600);
         assert!(!link_chars_next(&mut it, &mut out));
-        assert!(!link_chars_next(&mut it, &mut out), "exhausted stays exhausted");
+        assert!(
+            !link_chars_next(&mut it, &mut out),
+            "exhausted stays exhausted"
+        );
         free(v);
     }
 }

@@ -31,6 +31,18 @@
 //! declaration order, padding is the C rule, and every type's size, alignment
 //! and field offsets are pinned by `tests/layout.rs`.
 //!
+//! **Aggregate returns follow the platform C ABI, not LLVM's structural
+//! return.** Several entry points return a struct by value —
+//! [`link_string_new`], [`link_string_clone`], [`link_string_truncate`],
+//! [`link_array_new`], [`link_map_new`], [`link_string_chars`],
+//! [`link_read_file`]. Every one of those is three words or more, which both
+//! the System V x86-64 and the Windows x64 conventions classify as MEMORY:
+//! the caller passes a hidden pointer to the return slot and the callee writes
+//! through it. Codegen must emit those calls with an `sret` parameter rather
+//! than an LLVM `ret { ptr, i64, i64 }`, or the two sides will disagree about
+//! where the value lives. [`LinkIoResultUnit`] is the exception: at two bytes
+//! it comes back in a register on both conventions.
+//!
 //! # 3. Pointer conventions
 //!
 //! | Form in Link | Form in the ABI |
@@ -195,6 +207,35 @@
 //! exist because codegen needs them and are marked **codegen support** in their
 //! own documentation: drop glue (`link_*_free`), literal construction
 //! (`link_string_from_bytes`), and the capacity hints.
+//!
+//! # 9. What §8 asks for that has no symbol here
+//!
+//! Three parts of §8's library are deliberately absent from this crate, because
+//! putting them here would cost a function call for something codegen can emit
+//! as a handful of instructions.
+//!
+//! - **`Option`'s and `Result`'s methods.** `is_some`, `is_ok`, `unwrap` and
+//!   `unwrap_or` are each a discriminant test over the layout of §5, and
+//!   `unwrap` on the wrong variant is a call to [`link_panic_bytes`] with a
+//!   static message. Everything codegen needs to emit them is written down in
+//!   §5; nothing needs to be called.
+//! - **The `?` operator** (§4.4) is the same discriminant test plus an early
+//!   return, and a `From` conversion on the error path. Also codegen's.
+//! - **`Iterate`'s method set.** §8 names the trait and says `Chars` implements
+//!   `Iterate[Char]`, but never spells out the trait's methods, so there was
+//!   nothing to conform to. [`link_chars_next`] is this crate's proposal: one
+//!   method, `next`, following the owned-`Option` convention of §5.3. If the
+//!   type checker settles on a different shape for `Iterate`, that function is
+//!   the only thing that has to move.
+//!
+//! # 10. There are no threads
+//!
+//! §8 puts concurrency in F1. Nothing here synchronises anything: no container
+//! holds a lock, no counter is atomic, and no entry point is safe to call on
+//! two threads at once against the same value. When F1 arrives, an actor owns
+//! its own data and messages move between actors, so the containers should not
+//! need to change — but that is F1's design to confirm, not an assumption this
+//! crate encodes.
 
 #![warn(missing_docs)]
 #![warn(unsafe_op_in_unsafe_fn)]

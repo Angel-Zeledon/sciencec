@@ -138,7 +138,11 @@ fn every_key_colliding_still_behaves() {
         for i in 0..200i64 {
             assert_eq!(get(&m, &info, i), Some(i + 1000));
         }
-        assert_eq!(get(&m, &info, 200), None, "absent key, full collision chain");
+        assert_eq!(
+            get(&m, &info, 200),
+            None,
+            "absent key, full collision chain"
+        );
         // Remove every other entry, then check the survivors are still found
         // past the tombstones the removals left behind.
         for i in (0..200i64).step_by(2) {
@@ -423,7 +427,11 @@ fn a_map_to_zero_sized_values_is_a_set() {
             assert!(link_map_contains(&m, &info, (&raw const i).cast::<u8>()));
         }
         let absent = 100i64;
-        assert!(!link_map_contains(&m, &info, (&raw const absent).cast::<u8>()));
+        assert!(!link_map_contains(
+            &m,
+            &info,
+            (&raw const absent).cast::<u8>()
+        ));
         link_map_free(&mut m, &info);
     }
 }

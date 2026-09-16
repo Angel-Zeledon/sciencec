@@ -11,7 +11,10 @@ fn box_new_moves_the_value_onto_the_heap() {
         let info = i64_info();
         let value = 1234i64;
         let b = link_box_new(&info, (&raw const value).cast::<u8>());
-        assert!(!b.is_null(), "Box is never null: that is what makes it a niche");
+        assert!(
+            !b.is_null(),
+            "Box is never null: that is what makes it a niche"
+        );
         assert_eq!(b as usize % info.align, 0);
         assert_eq!(*b.cast::<i64>(), 1234);
         *b.cast::<i64>() = 5678;

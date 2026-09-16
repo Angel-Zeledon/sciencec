@@ -94,11 +94,7 @@ impl LinkString {
         // SAFETY: `src` has `len` readable bytes and the fresh allocation has
         // `len` writable ones; two distinct allocations cannot overlap.
         unsafe { std::ptr::copy_nonoverlapping(src, ptr, len) };
-        LinkString {
-            ptr,
-            len,
-            cap: len,
-        }
+        LinkString { ptr, len, cap: len }
     }
 
     /// Make room for `additional` more bytes.

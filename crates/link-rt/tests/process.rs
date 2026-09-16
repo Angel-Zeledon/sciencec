@@ -80,14 +80,20 @@ fn panic_prints_the_message_to_stderr_and_aborts() {
         stderr.contains("panic"),
         "the message must be labelled a panic, got: {stderr:?}"
     );
-    assert!(!output.status.success(), "a panic must not exit successfully");
+    assert!(
+        !output.status.success(),
+        "a panic must not exit successfully"
+    );
 }
 
 #[test]
 fn panic_bytes_prints_the_message_to_stderr_and_aborts() {
     let output = run_child("panic_bytes");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("a runtime-internal failure"), "got: {stderr:?}");
+    assert!(
+        stderr.contains("a runtime-internal failure"),
+        "got: {stderr:?}"
+    );
     assert!(!output.status.success());
 }
 

@@ -155,7 +155,10 @@ fn reading_a_directory_is_an_error_not_a_panic() {
         let dir = std::env::temp_dir();
         let p = s(dir.to_str().unwrap());
         let read = link_read_file(&p);
-        assert_eq!(read.tag, LINK_RESULT_ERR, "a directory is not readable text");
+        assert_eq!(
+            read.tag, LINK_RESULT_ERR,
+            "a directory is not readable text"
+        );
         free(p);
     }
 }
