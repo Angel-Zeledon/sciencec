@@ -1,0 +1,15 @@
+---
+source: crates/link-lexer/tests/snapshots.rs
+expression: "dump(\"# a header\\n\\n      # an indented comment\\n\")"
+---
+== source ==
+|# a header
+|
+|      # an indented comment
+|
+
+== tokens ==
+  40..40    Eof
+
+== diagnostics ==
+(none)

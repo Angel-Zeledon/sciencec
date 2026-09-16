@@ -1,0 +1,12 @@
+---
+source: crates/link-lexer/tests/snapshots.rs
+expression: "dump(\"\")"
+---
+== source ==
+(empty)
+
+== tokens ==
+   0..0     Eof
+
+== diagnostics ==
+(none)

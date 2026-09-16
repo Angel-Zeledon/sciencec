@@ -1,0 +1,45 @@
+---
+source: crates/link-lexer/tests/snapshots.rs
+expression: "dump(\"\\\nfn main():\n    if a:\n        while b:\n            c()\ndone()\n\")"
+---
+== source ==
+|fn main():
+|    if a:
+|        while b:
+|            c()
+|done()
+|
+
+== tokens ==
+   0..2     Fn
+   3..7     Ident("main")
+   7..8     LParen
+   8..9     RParen
+   9..10    Colon
+  10..11    Newline
+  11..15    Indent
+  15..17    If
+  18..19    Ident("a")
+  19..20    Colon
+  20..21    Newline
+  21..29    Indent
+  29..34    While
+  35..36    Ident("b")
+  36..37    Colon
+  37..38    Newline
+  38..50    Indent
+  50..51    Ident("c")
+  51..52    LParen
+  52..53    RParen
+  53..54    Newline
+  54..54    Dedent
+  54..54    Dedent
+  54..54    Dedent
+  54..58    Ident("done")
+  58..59    LParen
+  59..60    RParen
+  60..61    Newline
+  61..61    Eof
+
+== diagnostics ==
+(none)

@@ -219,3 +219,51 @@ impl TokenKind {
         })
     }
 }
+
+impl IntBase {
+    /// The numeric radix this base denotes.
+    pub fn radix(self) -> u32 {
+        match self {
+            IntBase::Dec => 10,
+            IntBase::Hex => 16,
+            IntBase::Oct => 8,
+            IntBase::Bin => 2,
+        }
+    }
+
+    /// The base's name, for diagnostic messages.
+    pub fn name(self) -> &'static str {
+        match self {
+            IntBase::Dec => "decimal",
+            IntBase::Hex => "hexadecimal",
+            IntBase::Oct => "octal",
+            IntBase::Bin => "binary",
+        }
+    }
+}
+
+impl NumSuffix {
+    /// Maps a literal's suffix text to its type, or `None` if unrecognized.
+    ///
+    /// The counterpart to `TokenKind::from_word`: decoding a suffix is a
+    /// property of the enum, not of whoever happens to be scanning.
+    pub fn from_word(word: &str) -> Option<NumSuffix> {
+        Some(match word {
+            "i8" => NumSuffix::I8,
+            "i16" => NumSuffix::I16,
+            "i32" => NumSuffix::I32,
+            "i64" => NumSuffix::I64,
+            "u8" => NumSuffix::U8,
+            "u16" => NumSuffix::U16,
+            "u32" => NumSuffix::U32,
+            "u64" => NumSuffix::U64,
+            "f32" => NumSuffix::F32,
+            "f64" => NumSuffix::F64,
+            _ => return None,
+        })
+    }
+
+    pub fn is_float(self) -> bool {
+        matches!(self, NumSuffix::F32 | NumSuffix::F64)
+    }
+}

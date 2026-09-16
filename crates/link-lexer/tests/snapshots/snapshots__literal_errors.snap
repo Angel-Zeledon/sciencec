@@ -1,0 +1,53 @@
+---
+source: crates/link-lexer/tests/snapshots.rs
+expression: "dump(\"\\\nlet a = \\\"open\nlet b = 'x\nlet c = \\\"bad \\\\q escape\\\"\nlet d = 340282366920938463463374607431768211456\nlet e = 0b1012\n\")"
+---
+== source ==
+|let a = "open
+|let b = 'x
+|let c = "bad \q escape"
+|let d = 340282366920938463463374607431768211456
+|let e = 0b1012
+|
+
+== tokens ==
+   0..3     Let
+   4..5     Ident("a")
+   6..7     Eq
+   8..13    Str("open")
+  13..14    Newline
+  14..17    Let
+  18..19    Ident("b")
+  20..21    Eq
+  22..24    Char('x')
+  24..25    Newline
+  25..28    Let
+  29..30    Ident("c")
+  31..32    Eq
+  33..48    Str("bad q escape")
+  48..49    Newline
+  49..52    Let
+  53..54    Ident("d")
+  55..56    Eq
+  57..96    Int { value: 0, base: Dec, suffix: None }
+  96..97    Newline
+  97..100   Let
+ 101..102   Ident("e")
+ 103..104   Eq
+ 105..111   Int { value: 5, base: Bin, suffix: None }
+ 111..112   Newline
+ 112..112   Eof
+
+== diagnostics ==
+LK0007 error: unterminated string literal
+    primary   8..13: this string has no closing `"`
+LK0008 error: unterminated character literal
+    primary   22..24: this `'` is never closed
+LK0006 error: unknown escape sequence `\q`
+    primary   38..40: unknown escape
+    note: the escapes are `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0` and `\u{...}`
+LK0005 error: this integer literal does not fit in 128 bits
+    primary   57..96: value out of range
+    note: the largest representable value is 340282366920938463463374607431768211455
+LK0010 error: `2` is not a valid digit in a binary literal
+    primary   110..111: invalid digit
