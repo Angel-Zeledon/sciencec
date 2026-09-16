@@ -498,7 +498,42 @@ That note listed six requirements. This note guarantees them:
    against.
 4. **Two-phase borrows exposed**, so `v.push(v.len())` compiles. MIR marks the
    reservation point of an exclusive borrow separately from its activation.
-5. **Drop points explicit before region inference runs.**
+5. **Drop points explicit before region inference runs**, *and elaborated*.
+
+   Making the points explicit is not enough on its own, and saying only that
+   was a hole `codegen-and-linking.md` found by trying to lower against this
+   section. A value may be moved on one path and not another:
+
+   ```science
+   let doc be Doc.new(path)
+   if urgent?:
+       consume(doc)          # moved here, on this path only
+   # is `doc` dropped at the end of the scope, or was it already?
+   ```
+
+   Neither answer is right for both paths, and neither region inference nor
+   codegen can invent one: the region engine needs the drop to already be a
+   point it can constrain against, and codegen needs to know whether to emit
+   the call. **Decision 26: a local that is conditionally moved gets a
+   compiler-generated drop flag — one byte, set where the value is
+   initialised, cleared where it is moved, tested at the drop point — and
+   elaboration runs during MIR construction, before region inference.**
+
+   It is Rust's solution and it is Rust's for the reason that applies here
+   too: the alternative is to reject the program, which forbids an idiom that
+   is ordinary in a language with moves, or to drop unconditionally, which
+   double-frees. `crates/science-rt`'s contract is explicit that a double
+   `_free` is a bug it will not catch, so this is the phase that has to be
+   right.
+
+   **The cost is a byte and a branch per conditionally moved local**, and it
+   is the one place in the language where the compiler adds a runtime check
+   the author did not write. LLVM eliminates the flag entirely when the move
+   is unconditional or the paths rejoin trivially, which is most of them; it
+   cannot when the condition is genuinely dynamic, and then the branch is
+   real. **Flags are generated only for locals the move analysis proves
+   conditionally moved**, never for every local, which is the difference
+   between a rare cost and a tax on every function.
 6. **Stable point identity across the query boundary**, so §10's cache hits.
 
 And one requirement in the other direction, which that note did not anticipate:
