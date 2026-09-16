@@ -1,0 +1,290 @@
+# 21 - The compiler's own shapes
+# Spec: §6 ownership and borrows, §5.5 nullable types.
+# Notes: `self-hosting.md` Decision 1, `region-inference.md`.
+#
+# This file is not a tutorial and it teaches nothing. It exists to be the
+# acceptance test for a claim: that Science needs **no lifetime syntax**,
+# because region inference is complete.
+#
+# Compilers are the hardest case for that claim. They are built out of trees
+# with parent links, symbol tables referenced from everywhere, interned
+# strings shared by the whole program, and arenas that outlive what borrows
+# from them. Rust has explicit lifetimes partly *because* of programs shaped
+# like this one. So if the promise holds anywhere, it has to hold here.
+#
+# Every structure below is taken from the real compiler in `crates/`, not
+# invented:
+#
+#   DefTable / DefId   crates/science-resolve/src/hir.rs
+#   Scopes / Rib       crates/science-resolve/src/scope.rs
+#   Parser             crates/science-parser/src/parser.rs
+#   Diagnostics        crates/science-diagnostics/src/lib.rs
+#   Node of T          crates/science-resolve/src/dump.rs
+#
+# **What this file proves today is only that it lexes, parses and resolves.**
+# There is no type checker and no borrow checker, so nothing here is verified
+# to be *sound* — it is verified to be *sayable*. That is the smaller half,
+# and it is still the half worth having early: a shape that cannot be written
+# down cannot be checked either, and finding that out costs two hundred lines
+# here against seventeen thousand later.
+#
+# The day regions land, this file is the first thing they are run against.
+
+# ---------------------------------------------------------------------------
+# 1. Indices, not pointers
+# ---------------------------------------------------------------------------
+#
+# The real resolver hands out `DefId(u32)` into one flat `Vec<Def>`. That was
+# chosen for resolution reasons — ids survive a table that grows, pointers do
+# not — and it is a fortunate accident for this test: an index borrows
+# nothing, so a graph built from indices asks the borrow checker for nothing
+# either.
+#
+# This is the shape that makes the rest of the file possible, and it is worth
+# being honest about what it means: the hardest structure in a compiler was
+# already written in the one style that has no lifetime question. The test
+# below is therefore easier than the general case, and §5 is where it stops
+# being easy.
+
+type DefId:
+    index: Int
+
+choice DefKind:
+    Module
+    Function
+    Type
+    Field
+    Variant
+    Local
+
+# A definition. `parent` is the enclosing definition — the module for an item,
+# the choice for a variant — and it is `DefId?` rather than `DefId` because the
+# crate root has none. That is the whole of what `Option` used to buy here.
+type Def:
+    id: DefId
+    kind: DefKind
+    name: String
+    parent: DefId?
+
+# The table owns every definition. Nothing else does.
+type DefTable:
+    defs: Array of Def
+
+DefTable has:
+    function new() -> DefTable:
+        DefTable(defs: (Array of Def).new())
+
+    # `alloc` takes `mutable self` and hands back an id, never a borrow. This
+    # is the signature that matters: returning `borrowed Def` here would tie
+    # the borrow to the table and forbid the next `alloc`, which is exactly
+    # the pattern that forces `'a` into Rust signatures.
+    function alloc(mutable self, kind: DefKind, name: String,
+            parent: DefId?) -> DefId:
+        let id be DefId(index: self.defs.len())
+        self.defs.push(Def(id: id, kind: kind, name: name, parent: parent))
+        id
+
+    # A shared borrow out of the table. One region: the result borrows `self`
+    # and nothing else, so there is one relation to infer and no second name
+    # to relate it to.
+    function get(self, id: DefId) -> borrowed Def:
+        self.defs.get(id.index)
+
+    # Walking to the parent returns an id, so the walk holds no borrow across
+    # its own iterations.
+    function parent_of(self, id: DefId) -> DefId?:
+        self.get(id).parent
+
+# ---------------------------------------------------------------------------
+# 2. The scope stack
+# ---------------------------------------------------------------------------
+#
+# `Rib` is a `Vec<(String, DefId)>` in the real resolver, with a comment
+# saying a map was rejected because ribs hold a handful of names and
+# shadowing needs order. Both halves of the pair are owned, so a rib owns its
+# names and borrows nothing.
+
+choice RibKind:
+    Module
+    Function
+    Block
+
+type Binding:
+    name: String
+    def: DefId
+
+type Rib:
+    kind: RibKind
+    bindings: Array of Binding
+
+type Scopes:
+    ribs: Array of Rib
+
+Scopes has:
+    function new() -> Scopes:
+        Scopes(ribs: (Array of Rib).new())
+
+    function push(mutable self, kind: RibKind):
+        self.ribs.push(Rib(kind: kind, bindings: (Array of Binding).new()))
+
+    function pop(mutable self):
+        self.ribs.pop()
+
+    # Lookup returns `DefId?`, not `borrowed Binding?`. The caller wants the
+    # id, and handing back an id ends the borrow at the closing brace instead
+    # of carrying it into whatever the caller does next.
+    #
+    # This is the single most load-bearing signature decision in the file. The
+    # borrowing version is what makes a symbol table hard, and the reason to
+    # avoid it is not the borrow checker — it is that the borrowing version is
+    # wrong anyway, because the caller almost always goes on to mutate.
+    function lookup(self, name: borrowed String) -> DefId?:
+        for rib in self.ribs:
+            for binding in rib.bindings:
+                if binding.name is name:
+                    return binding.def
+        null
+
+# ---------------------------------------------------------------------------
+# 3. A borrow held across a whole walk
+# ---------------------------------------------------------------------------
+#
+# `Parser<'t>` in the real compiler holds `&'t [Token]` for its entire life.
+# This is the first structure here with a borrowed field, and it is the case
+# `ffi-c-boundary.md` §2 depends on by name: **a type with an inferred region
+# parameter**, which the core spec's §6.2 never actually says exists.
+#
+# One borrowed field, one source, one region. Nothing to name.
+
+type Token:
+    kind: Int
+    start: Int
+    end: Int
+
+type Parser:
+    tokens: borrowed Array of Token
+    position: Int
+
+Parser has:
+    function new(tokens: borrowed Array of Token) -> Parser:
+        Parser(tokens: tokens, position: 0)
+
+    function peek(self) -> borrowed Token:
+        self.tokens.get(self.position)
+
+    function advance(mutable self):
+        self.position be self.position + 1
+
+    function at_end(self) -> Bool:
+        self.position >= self.tokens.len()
+
+# ---------------------------------------------------------------------------
+# 4. Two borrows, one structure
+# ---------------------------------------------------------------------------
+#
+# `Node<'a, T>` in the dumper is `(&'a DefTable, &'a T)` — two borrowed
+# fields, and in Rust they were given the *same* name deliberately.
+#
+# This is the case the whole claim turns on. A lifetime annotation earns its
+# keep when a type relates two regions and you have to say how; with one name
+# for both, Rust was saying "these two outlive the same thing", and that is a
+# statement, not an inference.
+#
+# Written without syntax, the question becomes: does inference conclude one
+# region here, or does it need to be told? The honest answer is that nobody
+# knows yet, because there is no inference. What the real compiler gives is
+# evidence and not proof: across 17,305 lines it never once needed two
+# distinct regions in one type.
+
+type Node of T:
+    defs: borrowed DefTable
+    value: borrowed T
+
+Node has:
+    function new of T(defs: borrowed DefTable, value: borrowed T) -> Node of T:
+        Node(defs: defs, value: value)
+
+# ---------------------------------------------------------------------------
+# 5. The shape that is not here, and why
+# ---------------------------------------------------------------------------
+#
+# A bump arena handing out borrows — `fn alloc(&self) -> &T`, where the arena
+# is borrowed shared and the result borrows from it — is the structure
+# `rust-interop.md` §3.7.1 says has no Science spelling. It is absent from
+# this file because it is absent from the compiler: the real one uses the flat
+# table of §1 instead.
+#
+# That is a genuine gap in the evidence and not a result. §1 said the hardest
+# structure was already written in the one style with no lifetime question,
+# and this is the bill for that: the test is easier than the general case by
+# exactly the amount the original authors happened to avoid.
+#
+# Interning is the same story. `Ident` holds an owned `String` today — there
+# is no interner in the front end — so the shape where one table owns every
+# string and hands out shared borrows for the program's whole life is
+# untested here too.
+
+# ---------------------------------------------------------------------------
+# 6. Accumulating while walking
+# ---------------------------------------------------------------------------
+#
+# A resolver pushes diagnostics while holding a borrow of the thing it is
+# walking. In Rust this is the ordinary `&mut self` plus `&tree` pattern and
+# it works because the two are different objects.
+
+type Diagnostic:
+    code: Int
+    message: String
+
+type Diagnostics:
+    items: Array of Diagnostic
+
+Diagnostics has:
+    function new() -> Diagnostics:
+        Diagnostics(items: (Array of Diagnostic).new())
+
+    function push(mutable self, code: Int, message: String):
+        self.items.push(Diagnostic(code: code, message: message))
+
+    function is_empty(self) -> Bool:
+        self.items.len() is 0
+
+# The walk: a shared borrow of the table, an exclusive borrow of the sink, and
+# they are separate parameters so nothing is aliased.
+function walk(defs: borrowed DefTable, out: mutable borrowed Diagnostics):
+    for def in defs.defs:
+        if def.name is "":
+            out.push(200, "a definition with no name")
+
+# ---------------------------------------------------------------------------
+# 7. The whole thing, run
+# ---------------------------------------------------------------------------
+
+function main():
+    let mutable defs be DefTable.new()
+    let root be defs.alloc(DefKind.Module, "main", null)
+    let f be defs.alloc(DefKind.Function, "read_config", root)
+    let p be defs.alloc(DefKind.Local, "path", f)
+
+    # The parent walk: ids all the way up, no borrow outlives a line.
+    let mutable current be p
+    loop:
+        let up be defs.parent_of(current)
+        if up?:
+            current be up
+        else:
+            break
+
+    let mutable scopes be Scopes.new()
+    scopes.push(RibKind.Module)
+    scopes.push(RibKind.Function)
+
+    let found be scopes.lookup("path")
+    if found?:
+        print("resolved")
+    else:
+        print("not in scope")
+
+    let mutable sink be Diagnostics.new()
+    walk(defs, mutable borrowed sink)
+    print(sink.is_empty())
