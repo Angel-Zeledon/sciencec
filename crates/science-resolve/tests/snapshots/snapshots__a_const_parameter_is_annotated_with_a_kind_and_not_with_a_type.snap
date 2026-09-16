@@ -1,0 +1,33 @@
+---
+source: crates/science-resolve/tests/snapshots.rs
+expression: "report(&module(vec![tensor, grid, f]))"
+---
+Module `main` #78 @14..66
+  Record `Tensor` #79 @14..28
+    generics
+      TypeParam `T` #84 @0..1
+      ConstParam `SHAPE` #85 @2..13
+        kind: Shape @2..7
+    fields
+      Field `value` #80 @14..21
+        type: Path -> `T` #84 @14..15
+  Record `Grid` #81 @52..64
+    generics
+      TypeParam `T` #86 @29..30
+      ConstParam `ROWS` #87 @31..39
+        kind: Int @31..34
+      ConstParam `COLS` #88 @40..51
+        kind: (not a kind) @40..46
+    fields
+      Field `value` #82 @52..59
+        type: Path -> `T` #86 @52..53
+  Fn `f` #83 @65..66
+    generics
+      ConstParam `FLAG` #89 @67..76
+        kind: (not a kind) @67..71
+    body: (none)
+--- diagnostics ---
+SC0220 @40..46 a const generic parameter's kind must be `Int` or `Shape`
+  note `const N: K` annotates `N` with a kind, not with a type: `Int` is an integer known at compile time, and `Shape` is a type-level list of them
+SC0220 @67..71 a const generic parameter's kind must be `Int` or `Shape`
+  note `const N: K` annotates `N` with a kind, not with a type: `Int` is an integer known at compile time, and `Shape` is a type-level list of them

@@ -161,6 +161,13 @@ impl DefKind {
     /// and there is no way to tell the two apart without the declared arity of
     /// the thing being applied — which is `science-types`' to know, not this
     /// phase's.
+    ///
+    /// `const-expression-arithmetic.md` §6.4 **extends this one compromise by
+    /// one case rather than introducing a second**: where a parameter's kind
+    /// is [`ConstParamKind::Shape`], a parenthesised list in the matching
+    /// argument position is a shape rather than a tuple type. Same seam, same
+    /// resolution — the declared kind decides, and the declared kind is not
+    /// this phase's to know either.
     pub fn is_type(self) -> bool {
         matches!(
             self,
@@ -404,16 +411,189 @@ pub struct GenericParam {
     pub span: Span,
 }
 
+impl GenericParam {
+    /// Whether this parameter absorbs a run of arguments rather than exactly
+    /// one — `const-expression-arithmetic.md` §10.1 item 6.
+    ///
+    /// Variadic-ness is a property of the **kind**, not of a sigil: a
+    /// [`ConstParamKind::Shape`] parameter *is* a type-level list of const
+    /// `Int` expressions (§6.1 of that note), so one `Shape` parameter stands
+    /// for the whole of `(n, 768)` and for the whole of `(768)` alike. That is
+    /// why item 5 — the closed kind enum — has to land before item 6 can mean
+    /// anything: the kind is where the answer is read from.
+    pub fn is_variadic(&self) -> bool {
+        match &self.kind {
+            GenericParamKind::Type { .. } => false,
+            GenericParamKind::Const { kind, .. } => kind.is_variadic(),
+        }
+    }
+}
+
 /// §5.3's two kinds of generic parameter, kept apart because they live in
 /// different namespaces: a type parameter stands for a type and a const
-/// parameter for a value, and only the second one has a type of its own.
+/// parameter for a value, and only the second one has an annotation of its
+/// own.
 #[derive(Debug, Clone, PartialEq)]
 pub enum GenericParamKind {
     /// `T`, or `T: Ord + Clone`.
     Type { bounds: Vec<Bound> },
     /// `const WIDTH: Int`. The annotation is mandatory, so it is not optional
-    /// here either.
-    Const { ty: Type },
+    /// here either — and it is a **kind**, not a type. See
+    /// [`ConstParamKind`].
+    Const {
+        kind: ConstParamKind,
+        /// The span of the annotation as written, which is what a diagnostic
+        /// about the kind points at. The parser parsed it as a type (see
+        /// `ast::GenericParamKind::Const`);
+        /// nothing of that type survives here, because a kind is not one.
+        annotation: Span,
+    },
+}
+
+/// The closed set of kinds a const generic parameter may be annotated with —
+/// `const-expression-arithmetic.md` §2.3, and F0 commitment 5 of its §10.1.
+///
+/// > **Decision 2.3.** `const N: K` admits exactly `K ∈ { Int, Shape }`.
+/// > `Int` is the F0 kind. `Shape` arrives in F1 (§6). Anything else —
+/// > `const F: Bool`, `const S: String`, `const W: F64` — is `SC0260`.
+///
+/// **This is an enum and not a [`Type`] on purpose.** `Shape` is not a type
+/// and never will be one: it is a type-level *list* of const `Int`
+/// expressions, with no values and no representation. If the annotation
+/// position stayed a type position, `Shape` would arrive in F1 as either a
+/// fake primitive in the prelude or a second annotation position beside the
+/// first, and every phase that matches on a const parameter would be
+/// reopened. §10.1's reason for putting the enum in F0 is exactly that: *"so
+/// the annotation position is a kind position from the first commit rather
+/// than a type position retrofitted into one later."*
+///
+/// The parser is unchanged, per §2.3 — it still reads the annotation with
+/// `parse_type` and accepts whatever it finds, which is the house pattern
+/// `ast::TypeKind::Any` already uses.
+/// The classification and the diagnostic happen here, in the first phase that
+/// runs after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstParamKind {
+    /// `const ROWS: Int` — an integer, and the only kind F0 has a checker for.
+    Int,
+    /// `const SHAPE: Shape` — a type-level list of const `Int` expressions
+    /// (§6.1). §2.3 admits the kind today; the shape *layer* — the seven
+    /// operations of §6.2 and `EQUAL_SHAPE` — is F1's. What F0 owes it is
+    /// that a `Shape` parameter is **variadic** in its declaration's argument
+    /// list, which is what [`GenericArity`] records.
+    Shape,
+    /// Not one of the kinds above. Recovery only, in the manner of
+    /// [`Res::Error`]: the diagnostic has already been reported and nothing
+    /// downstream reports a second one.
+    Error,
+}
+
+impl ConstParamKind {
+    /// The kinds, spelled as the programmer spells them. Closed: adding to it
+    /// is a spec change (§2.2).
+    pub const NAMES: &'static [&'static str] = &["Int", "Shape"];
+
+    /// The kind a one-segment annotation names, or `None` when it names none.
+    pub fn from_name(name: &str) -> Option<ConstParamKind> {
+        match name {
+            "Int" => Some(ConstParamKind::Int),
+            "Shape" => Some(ConstParamKind::Shape),
+            _ => None,
+        }
+    }
+
+    /// How the kind is spelled, for a dump or a diagnostic.
+    pub fn describe(self) -> &'static str {
+        match self {
+            ConstParamKind::Int => "Int",
+            ConstParamKind::Shape => "Shape",
+            ConstParamKind::Error => "(not a kind)",
+        }
+    }
+
+    /// Whether a parameter of this kind absorbs a run of generic arguments
+    /// rather than exactly one.
+    ///
+    /// `Shape` does, because a shape is a list and `broadcasting.md` §11.1
+    /// requires `Tensor of (F32, (768))` and `Tensor of (F32, (n, 768))` to be
+    /// one type constructor at two arities. `Int` does not. [`Self::Error`]
+    /// does not, so that a bad annotation does not silently make a
+    /// declaration accept any number of arguments.
+    pub fn is_variadic(self) -> bool {
+        matches!(self, ConstParamKind::Shape)
+    }
+}
+
+/// How many generic arguments a declaration admits — F0 commitment 6 of
+/// `const-expression-arithmetic.md` §10.1, which is `broadcasting.md` §11.1:
+///
+/// > **11.1 Const generic argument lists must admit variadic arity.**
+/// > `Tensor of (F32, (n, 768))` and `Tensor of (F32, (768))` are one type
+/// > constructor at two arities (§5.2). If F0's resolver checks a
+/// > declaration's generic arguments against a fixed count, F1 cannot express
+/// > rank-polymorphic broadcasting without reopening the resolver and every
+/// > snapshot.
+///
+/// **This is not "stop checking arity".** `Map of (String, Int, Bool)` is
+/// still wrong and [`GenericArity::admits`] still says so. What the type is
+/// for is that the answer is computed from the declaration's *parameter
+/// kinds* rather than from `params.len()`, so that the one declaration that
+/// wants a range gets one and every other declaration keeps its exact count.
+///
+/// A variadic parameter absorbs the arguments the fixed ones do not take, so
+/// the shape of a parameter list is `leading` fixed parameters, then at most
+/// one variadic parameter, then `trailing` fixed parameters. A second
+/// variadic parameter has no unambiguous split and the resolver reports it
+/// (`SC0221`); [`GenericArity::of`] treats the first one as the variadic one
+/// so that the rest of the declaration still has an arity to be checked
+/// against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GenericArity {
+    /// Parameters before the variadic one, each taking exactly one argument.
+    pub leading: usize,
+    /// Parameters after it, each taking exactly one argument.
+    pub trailing: usize,
+    /// Whether a parameter between them absorbs the rest.
+    pub variadic: bool,
+}
+
+impl GenericArity {
+    /// The arity a parameter list declares.
+    pub fn of(params: &[GenericParam]) -> GenericArity {
+        match params.iter().position(GenericParam::is_variadic) {
+            Some(at) => {
+                GenericArity { leading: at, trailing: params.len() - at - 1, variadic: true }
+            }
+            None => GenericArity { leading: params.len(), trailing: 0, variadic: false },
+        }
+    }
+
+    /// The fewest arguments the declaration admits. For a non-variadic list
+    /// this is also the most.
+    pub fn minimum(self) -> usize {
+        self.leading + self.trailing
+    }
+
+    /// Whether `count` arguments fill this declaration.
+    pub fn admits(self, count: usize) -> bool {
+        if self.variadic {
+            count >= self.minimum()
+        } else {
+            count == self.minimum()
+        }
+    }
+
+    /// The arity as a diagnostic says it: `2 generic arguments`, or
+    /// `at least 1 generic argument`.
+    pub fn describe(self) -> String {
+        let n = self.minimum();
+        let plural = if n == 1 { "argument" } else { "arguments" };
+        if self.variadic {
+            format!("at least {n} generic {plural}")
+        } else {
+            format!("{n} generic {plural}")
+        }
+    }
 }
 
 /// An interface named as a bound: in `of T: Ord`, in `any Summarize`, after
@@ -861,4 +1041,93 @@ pub struct FieldPattern {
     pub name: Ident,
     pub pattern: Pattern,
     pub span: Span,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn param(kind: GenericParamKind) -> GenericParam {
+        GenericParam { def: DefId(0), kind, span: BUILTIN_SPAN }
+    }
+
+    fn type_param() -> GenericParam {
+        param(GenericParamKind::Type { bounds: Vec::new() })
+    }
+
+    fn const_param(kind: ConstParamKind) -> GenericParam {
+        param(GenericParamKind::Const { kind, annotation: BUILTIN_SPAN })
+    }
+
+    /// The half of commitment 6 that is *not* "stop checking arity": an
+    /// ordinary declaration keeps its exact count.
+    #[test]
+    fn an_ordinary_declaration_admits_exactly_its_parameter_count() {
+        // `Map of (K, V)`.
+        let arity = GenericArity::of(&[type_param(), type_param()]);
+        assert_eq!(arity, GenericArity { leading: 2, trailing: 0, variadic: false });
+        assert!(!arity.admits(1));
+        assert!(arity.admits(2));
+        assert!(!arity.admits(3), "`Map of (String, Int, Bool)` is still wrong");
+        assert_eq!(arity.describe(), "2 generic arguments");
+    }
+
+    /// A const `Int` parameter is an ordinary one: `Window of (T, const N: Int)`
+    /// takes two arguments and no more.
+    #[test]
+    fn a_const_int_parameter_is_not_variadic() {
+        let arity = GenericArity::of(&[type_param(), const_param(ConstParamKind::Int)]);
+        assert!(!arity.variadic);
+        assert!(arity.admits(2));
+        assert!(!arity.admits(3));
+    }
+
+    /// `broadcasting.md` §11.1: `Tensor of (F32, (768))` and
+    /// `Tensor of (F32, (n, 768))` are one type constructor at two arities.
+    #[test]
+    fn a_shape_parameter_absorbs_the_rest() {
+        // `type Tensor of (T, const SHAPE: Shape)`.
+        let arity = GenericArity::of(&[type_param(), const_param(ConstParamKind::Shape)]);
+        assert_eq!(arity, GenericArity { leading: 1, trailing: 0, variadic: true });
+        assert!(!arity.admits(0), "the element type is still required");
+        for count in 1..=6 {
+            assert!(arity.admits(count), "rank {} is one of the arities", count - 1);
+        }
+        assert_eq!(arity.describe(), "at least 1 generic argument");
+    }
+
+    /// The variadic parameter need not be last: what follows it is counted
+    /// from the right, so the split stays unambiguous.
+    #[test]
+    fn parameters_after_the_variadic_one_are_counted_from_the_right() {
+        let arity = GenericArity::of(&[
+            type_param(),
+            const_param(ConstParamKind::Shape),
+            const_param(ConstParamKind::Int),
+        ]);
+        assert_eq!(arity, GenericArity { leading: 1, trailing: 1, variadic: true });
+        assert!(!arity.admits(1));
+        assert!(arity.admits(2));
+        assert!(arity.admits(9));
+    }
+
+    /// A rejected annotation must not turn into "any arity": that would make
+    /// one bad kind silence every argument-count error on the declaration.
+    #[test]
+    fn a_rejected_kind_is_not_variadic() {
+        let arity = GenericArity::of(&[const_param(ConstParamKind::Error)]);
+        assert!(!arity.variadic);
+        assert!(arity.admits(1));
+        assert!(!arity.admits(2));
+    }
+
+    #[test]
+    fn the_kind_set_is_closed() {
+        for name in ConstParamKind::NAMES {
+            assert!(ConstParamKind::from_name(name).is_some(), "{name} is one of the kinds");
+        }
+        for name in ["Bool", "String", "F64", "Matrix", "int", "shape"] {
+            assert!(ConstParamKind::from_name(name).is_none(), "{name} is not a kind");
+        }
+    }
 }

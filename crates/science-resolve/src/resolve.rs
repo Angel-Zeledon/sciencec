@@ -735,7 +735,7 @@ impl Resolver {
             })
             .collect();
 
-        params
+        let params: Vec<hir::GenericParam> = params
             .iter()
             .zip(ids)
             .map(|(param, def)| {
@@ -743,13 +743,99 @@ impl Resolver {
                     ast::GenericParamKind::Type { bounds } => hir::GenericParamKind::Type {
                         bounds: bounds.iter().map(|b| self.resolve_bound(b)).collect(),
                     },
-                    ast::GenericParamKind::Const { ty } => {
-                        hir::GenericParamKind::Const { ty: self.resolve_type(ty) }
-                    }
+                    ast::GenericParamKind::Const { ty } => hir::GenericParamKind::Const {
+                        kind: self.const_param_kind(ty),
+                        annotation: ty.span,
+                    },
                 };
                 hir::GenericParam { def, kind, span: param.span }
             })
-            .collect()
+            .collect();
+        self.check_one_variadic_at_most(&params);
+        params
+    }
+
+    /// Classifies a const parameter's annotation as one of the kinds
+    /// `const-expression-arithmetic.md` §2.3 admits.
+    ///
+    /// The annotation is a **kind**, not a type, so it is matched on the name
+    /// as written rather than resolved: `Shape` names no type, is in no scope
+    /// and will never be in one, because a shape is a type-level list with no
+    /// values (§6.1). Resolving it would report an unresolved name for the one
+    /// kind that is spelled correctly.
+    ///
+    /// The parser is unchanged, per that note's §2.3, so everything
+    /// `parse_type` accepts arrives here — `borrowed Int`, `Array of Int`,
+    /// `any Ord`, a dotted path. None of them is a kind and all of them are
+    /// [`codes::NOT_A_CONST_PARAM_KIND`].
+    fn const_param_kind(&mut self, ty: &ast::Type) -> hir::ConstParamKind {
+        let named = match &ty.kind {
+            ast::TypeKind::Path(path) => match path.segments.as_slice() {
+                [segment] if segment.generics.is_empty() => Some(&segment.name.name),
+                _ => None,
+            },
+            _ => None,
+        };
+
+        if let Some(kind) = named.and_then(|name| hir::ConstParamKind::from_name(name)) {
+            return kind;
+        }
+
+        let kinds = hir::ConstParamKind::NAMES
+            .iter()
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>()
+            .join(" or ");
+        let label = match named {
+            Some(name) => format!("`{name}` is not a const-parameter kind"),
+            None => "not a const-parameter kind".to_string(),
+        };
+        self.diags.push(
+            Diagnostic::error(
+                codes::NOT_A_CONST_PARAM_KIND,
+                format!("a const generic parameter's kind must be {kinds}"),
+            )
+            .with_label(Label::primary(ty.span, label))
+            .with_note(
+                "`const N: K` annotates `N` with a kind, not with a type: `Int` is an \
+                 integer known at compile time, and `Shape` is a type-level list of them",
+            ),
+        );
+        hir::ConstParamKind::Error
+    }
+
+    /// At most one parameter in a list may absorb a run of arguments
+    /// (`const-expression-arithmetic.md` §10.1 item 6).
+    ///
+    /// With one variadic parameter a declaration's arity is a range and every
+    /// argument still has exactly one parameter to belong to. With two there
+    /// is no split, so the second is reported and
+    /// [`hir::GenericArity::of`] keeps the first.
+    fn check_one_variadic_at_most(&mut self, params: &[hir::GenericParam]) {
+        let mut variadic = params.iter().filter(|param| param.is_variadic());
+        let Some(first) = variadic.next() else { return };
+        for extra in variadic {
+            let name = self.defs.get(extra.def).name.clone();
+            let previous = self.defs.get(first.def).name.clone();
+            self.diags.push(
+                Diagnostic::error(
+                    codes::REPEATED_VARIADIC_PARAM,
+                    "a generic parameter list may declare at most one variadic parameter",
+                )
+                .with_label(Label::primary(
+                    extra.span,
+                    format!("`{name}` also absorbs a run of arguments"),
+                ))
+                .with_label(Label::secondary(
+                    first.span,
+                    format!("`{previous}` already does"),
+                ))
+                .with_note(
+                    "a `Shape` parameter stands for a whole list of const arguments, so two \
+                     of them in one list leave no way to say where the first ends",
+                ),
+            );
+        }
     }
 
     /// The associated types a block declares (§5.4).

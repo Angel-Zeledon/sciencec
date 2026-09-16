@@ -98,6 +98,39 @@ pub mod codes {
     /// it is answered.
     pub const EACH_WITHOUT_SUBJECT: Code = Code(212);
 
+    // `SC0213`-`SC0219` are claimed by `script-mode.md` and `effects.md`; the
+    // const-generic pair below takes the next free block the design index
+    // records, `SC0220`-`SC0229`.
+
+    /// A const generic parameter annotated with something that is not one of
+    /// the kinds `const-expression-arithmetic.md` §2.3 admits.
+    ///
+    /// `const N: K` annotates `N` with a **kind**, and the kinds are `Int` and
+    /// `Shape` — see [`hir::ConstParamKind`](crate::hir::ConstParamKind). The
+    /// parser accepts whatever `parse_type` reads there, per that note's §2.3
+    /// (*"the parser does not change"*), and this is the phase that says what
+    /// is wrong with it.
+    ///
+    /// §2.3 gives the condition the code `SC0260`, which is in
+    /// `science-types`' half of the range and is unavailable here. The
+    /// condition is a property of the declaration and not of any inference, so
+    /// it is answered in this phase with a code from this phase's block; when
+    /// `science-types` exists, `SC0260`'s remaining clauses are the ones about
+    /// const *expressions* rather than about kinds.
+    pub const NOT_A_CONST_PARAM_KIND: Code = Code(220);
+
+    /// A generic parameter list that declares two parameters which each
+    /// absorb a run of arguments.
+    ///
+    /// `const-expression-arithmetic.md` §10.1 item 6 requires a declaration's
+    /// arity to be a range rather than a count, which it is whenever a
+    /// parameter is variadic (today: a `Shape` parameter, §6.1). Two of them
+    /// in one list have no unambiguous split — nothing says how many arguments
+    /// the first takes before the second begins — so the second is reported
+    /// here rather than becoming an arity the type checker cannot check
+    /// against.
+    pub const REPEATED_VARIADIC_PARAM: Code = Code(221);
+
     /// Every code this crate can emit, for the test that keeps them inside
     /// `SC0200`-`SC0249` and distinct.
     pub const ALL: &[Code] = &[
@@ -113,6 +146,8 @@ pub mod codes {
         RESERVED_WORD,
         WRONG_NAMESPACE,
         EACH_WITHOUT_SUBJECT,
+        NOT_A_CONST_PARAM_KIND,
+        REPEATED_VARIADIC_PARAM,
     ];
 
     #[cfg(test)]

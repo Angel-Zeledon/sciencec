@@ -7,7 +7,7 @@ Module `main` #78 @10..78
     generics
       TypeParam `T` #84 @0..1
       ConstParam `N` #85 @2..7
-        type: Path -> `Int` #17 @2..5
+        kind: Int @2..5
     fields
       Field `items` #80 @10..21
         type: Path -> `Array` #20 @10..15
@@ -24,7 +24,7 @@ Module `main` #78 @10..78
   Fn `size` #83 @60..78
     generics
       ConstParam `N` #86 @65..70
-        type: Path -> `Int` #17 @65..68
+        kind: Int @65..68
     ret: Path -> `Int` #17 @71..74
     body: Block @75..78
       tail: Path -> `N` #86 @75..76

@@ -263,10 +263,12 @@ impl DumpIn for GenericParam {
                     w.list("bounds", &nodes(defs, bounds));
                 });
             }
-            GenericParamKind::Const { ty } => {
+            GenericParamKind::Const { kind, annotation } => {
                 let header = defined(defs, "ConstParam", self.def);
                 w.node(&header, self.span, |w| {
-                    w.child("type", &Node(defs, ty));
+                    // The annotation is a kind, not a type, so it has no node
+                    // of its own to descend into — just the word and its span.
+                    w.leaf(&format!("kind: {}", kind.describe()), *annotation);
                 });
             }
         }

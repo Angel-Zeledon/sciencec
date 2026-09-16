@@ -472,6 +472,59 @@ fn a_negated_const_generic_argument() {
     insta::assert_snapshot!(report(&module(vec![quantity, velocity])));
 }
 
+/// `const-expression-arithmetic.md` §2.3, F0 commitment 5: a const
+/// parameter's annotation is a **kind** from a closed set, and the dump shows
+/// it as one — a word and a span, not a reference to a type.
+///
+/// `Shape` is admitted here although the shape *layer* is F1's (§6): the
+/// commitment is that the position is closed from the first commit, so the
+/// kind it will need is in the enum from the first commit too.
+#[test]
+fn a_const_parameter_is_annotated_with_a_kind_and_not_with_a_type() {
+    let sp = &Sp::new();
+    // type Tensor of (T, const SHAPE: Shape): value: T
+    let tensor = record_item(
+        sp,
+        "Tensor",
+        vec![generic(sp, "T", vec![]), generic_const(sp, "SHAPE", ty(sp, "Shape"))],
+        vec![field(sp, "value", ty(sp, "T"))],
+    );
+    // type Grid of (T, const ROWS: Int, const COLS: Matrix): value: T
+    let grid = record_item(
+        sp,
+        "Grid",
+        vec![
+            generic(sp, "T", vec![]),
+            generic_const(sp, "ROWS", ty(sp, "Int")),
+            generic_const(sp, "COLS", ty(sp, "Matrix")),
+        ],
+        vec![field(sp, "value", ty(sp, "T"))],
+    );
+    // function f of (const FLAG: Bool)()
+    let f = func(sp, "f").generics(vec![generic_const(sp, "FLAG", ty(sp, "Bool"))]).item();
+
+    insta::assert_snapshot!(report(&module(vec![tensor, grid, f])));
+}
+
+/// F0 commitment 6: a declaration's arity is a range when a parameter absorbs
+/// a run of arguments, and two such parameters have no split.
+#[test]
+fn two_variadic_parameters_in_one_list_have_no_split() {
+    let sp = &Sp::new();
+    // type Pairing of (const LEFT: Shape, const RIGHT: Shape): value: Int
+    let pairing = record_item(
+        sp,
+        "Pairing",
+        vec![
+            generic_const(sp, "LEFT", ty(sp, "Shape")),
+            generic_const(sp, "RIGHT", ty(sp, "Shape")),
+        ],
+        vec![field(sp, "value", ty(sp, "Int"))],
+    );
+
+    insta::assert_snapshot!(report(&module(vec![pairing])));
+}
+
 // --- loops, ranges and borrows ------------------------------------------
 
 #[test]

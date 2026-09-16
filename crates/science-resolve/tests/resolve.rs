@@ -6,7 +6,9 @@ mod common;
 
 use common::*;
 use science_parser::ast::SelfKind;
-use science_resolve::hir::{self, Crate, DefKind, ExprKind, PatternKind, Res, StmtKind, TypeKind};
+use science_resolve::hir::{
+    self, Crate, DefKind, ExprKind, GenericArity, PatternKind, Res, StmtKind, TypeKind,
+};
 
 // --- reaching into the result -------------------------------------------
 
@@ -36,6 +38,13 @@ fn nth_fn(krate: &Crate, index: usize) -> &hir::Fn {
     match &items(krate)[index].kind {
         hir::ItemKind::Fn(f) => f,
         other => panic!("item {index} is not a function: {other:?}"),
+    }
+}
+
+fn nth_record(krate: &Crate, index: usize) -> &hir::Record {
+    match &items(krate)[index].kind {
+        hir::ItemKind::Record(r) => r,
+        other => panic!("item {index} is not a record: {other:?}"),
     }
 }
 
@@ -757,6 +766,121 @@ fn a_const_generic_parameter_is_its_own_kind_of_definition() {
     );
     assert_eq!(path_res(tail_of(nth_fn(&krate, 0))), Res::Def(n));
     assert_eq!(krate.defs[def_of(&krate, DefKind::TypeParam, "T")].kind, DefKind::TypeParam);
+}
+
+/// `const-expression-arithmetic.md` §2.3: the annotation is a **kind**, and
+/// the kinds are a closed set.
+///
+/// The parser is unchanged and accepts whatever `parse_type` reads there, so
+/// every one of these gets through it; this phase is the one that says so.
+#[test]
+fn a_const_parameter_may_only_be_annotated_with_a_kind() {
+    let sp = &Sp::new();
+    for annotation in [
+        ty(sp, "Bool"),
+        ty(sp, "String"),
+        ty(sp, "F64"),
+        // A type that exists is no better than one that does not: `Matrix`
+        // would be an unresolved name in a type position, and here it is the
+        // kind that is wrong.
+        ty(sp, "Matrix"),
+        ty_generic(sp, "Array", vec![ty(sp, "Int")]),
+        ty_borrowed(sp, false, ty(sp, "Int")),
+        ty_path(sp, &["core", "Int"]),
+    ] {
+        let f = func(sp, "f").generics(vec![generic_const(sp, "N", annotation)]).item();
+        let (_, codes) = resolve(&module(vec![f]));
+        assert_eq!(codes, ["SC0220"], "one diagnostic, and it is about the kind");
+    }
+}
+
+/// The two kinds §2.3 admits, and nothing else, resolve cleanly. `Shape` is
+/// F1's *layer* but F0's kind, which is the point of item 5: the annotation
+/// position is closed from the first commit.
+#[test]
+fn the_two_kinds_resolve_without_a_diagnostic() {
+    let sp = &Sp::new();
+    for kind in ["Int", "Shape"] {
+        let f = func(sp, "f").generics(vec![generic_const(sp, "N", ty(sp, kind))]).item();
+        let (_, codes) = resolve(&module(vec![f]));
+        assert!(codes.is_empty(), "`const N: {kind}` is admissible: {codes:?}");
+    }
+}
+
+/// A bad annotation says one thing once: the name that was written, the kinds
+/// that were admissible, and what the position means.
+#[test]
+fn the_kind_diagnostic_names_the_kinds_a_const_parameter_may_have() {
+    let sp = &Sp::new();
+    let f = func(sp, "f").generics(vec![generic_const(sp, "ROWS", ty(sp, "Matrix"))]).item();
+
+    let diagnostics = diagnose(&module(vec![f]));
+    assert_eq!(codes(&diagnostics), ["SC0220"]);
+    let d = diagnostics.iter().next().unwrap();
+    assert!(d.message.contains("`Int`"), "{}", d.message);
+    assert!(d.message.contains("`Shape`"), "{}", d.message);
+    assert!(
+        d.labels.iter().any(|l| l.message.contains("Matrix")),
+        "the label names what was written"
+    );
+    assert!(
+        d.notes.iter().any(|n| n.contains("kind, not with a type")),
+        "the note says what the position is"
+    );
+}
+
+// --- variadic arity (§10.1 item 6) --------------------------------------
+
+/// `broadcasting.md` §11.1: a declaration's arity is a range when a parameter
+/// absorbs a run of arguments, and an exact count otherwise. Both answers come
+/// out of the resolved parameter list rather than out of `params.len()`.
+#[test]
+fn a_declarations_arity_is_read_from_its_parameter_kinds() {
+    let sp = &Sp::new();
+    // type Tensor of (T, const SHAPE: Shape): value: T
+    let tensor = record_item(
+        sp,
+        "Tensor",
+        vec![generic(sp, "T", vec![]), generic_const(sp, "SHAPE", ty(sp, "Shape"))],
+        vec![field(sp, "value", ty(sp, "T"))],
+    );
+    // type Pair of (K, V): key: K
+    let pair = record_item(
+        sp,
+        "Pair",
+        vec![generic(sp, "K", vec![]), generic(sp, "V", vec![])],
+        vec![field(sp, "key", ty(sp, "K"))],
+    );
+
+    let (krate, codes) = resolve(&module(vec![tensor, pair]));
+    assert!(codes.is_empty(), "{codes:?}");
+
+    let tensor_arity = GenericArity::of(&nth_record(&krate, 0).generics);
+    assert!(tensor_arity.variadic);
+    assert!(tensor_arity.admits(2), "Tensor of (F32, (n, 768))");
+    assert!(tensor_arity.admits(4), "and at rank 3");
+    assert!(!tensor_arity.admits(0), "the element type is still required");
+
+    let pair_arity = GenericArity::of(&nth_record(&krate, 1).generics);
+    assert!(!pair_arity.variadic);
+    assert!(!pair_arity.admits(3), "an ordinary declaration still rejects a third argument");
+}
+
+/// Two variadic parameters leave no way to say where the first ends.
+#[test]
+fn a_second_variadic_parameter_is_reported() {
+    let sp = &Sp::new();
+    let f = func(sp, "f")
+        .generics(vec![
+            generic_const(sp, "A", ty(sp, "Shape")),
+            generic_const(sp, "B", ty(sp, "Shape")),
+        ])
+        .item();
+
+    let diagnostics = diagnose(&module(vec![f]));
+    assert_eq!(codes(&diagnostics), ["SC0221"]);
+    let d = diagnostics.iter().next().unwrap();
+    assert_eq!(d.labels.len(), 2, "the second one and the first one");
 }
 
 // --- reserved words ------------------------------------------------------

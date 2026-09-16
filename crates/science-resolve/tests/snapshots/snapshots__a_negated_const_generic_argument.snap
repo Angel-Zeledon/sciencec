@@ -7,9 +7,9 @@ Module `main` #78 @22..65
     generics
       TypeParam `T` #82 @0..1
       ConstParam `LENGTH` #83 @2..12
-        type: Path -> `Int` #17 @2..5
+        kind: Int @2..5
       ConstParam `TIME` #84 @13..21
-        type: Path -> `Int` #17 @13..16
+        kind: Int @13..16
     fields
       Field `value` #80 @22..29
         type: Path -> `T` #82 @22..23
