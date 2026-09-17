@@ -68,6 +68,14 @@ def shapes(
     boxed: any Error,
     summarizer: any Summarize,
     borrowed_doc: borrowed Doc,
+    mutable_borrowed_doc: mutable borrowed Doc,
+    borrowed_summarizer: borrowed any Summarize,
+    mutable_borrowed_summarizer: mutable borrowed any Summarize,
+    borrowed_failure: borrowed any Error,
+    owned_box: Box of any Summarize,
+    borrowed_docs: Array of (borrowed Doc),
+    borrowed_summarizers: Array of (borrowed any Summarize),
+    borrowed_optional_doc: borrowed (Doc?),
 ) -> Int:
     0
 
@@ -638,12 +646,151 @@ fn a_concrete_type_boxes_into_the_nullable_object_a_fallible_signature_names() {
 #[test]
 fn a_concrete_type_does_not_box_into_an_interface_that_is_not_error() {
     // §6.2: Decision 14 is "the one implicit coercion in the language besides
-    // `T` into `T?`". An `any Summarize` is constructed where it is written.
+    // `T` into `T?`". An owned `any Summarize` is constructed where it is
+    // written, and §5's first bullet is why.
     let mut program = Program::new(FIXTURE);
     let doc = program.ty("shapes", "doc");
     let summarizer = program.ty("shapes", "summarizer");
     assert_eq!(fits(&program, Site::Return, doc, summarizer), None);
     assert_eq!(fits(&program, Site::Argument, doc, summarizer), None);
+}
+
+// --- §4: unsizing behind a borrow ----------------------------------------
+
+#[test]
+fn a_borrow_of_a_concrete_type_unsizes_into_a_borrow_of_an_object() {
+    // §4's decision. `borrowed Doc` into `borrowed any Summarize` allocates
+    // nothing — a pointer that exists, paired with a vtable known here — so
+    // §3.4's "no implicit change of value" has nothing to bite on.
+    let mut program = Program::new(FIXTURE);
+    let borrowed_doc = program.ty("shapes", "borrowed_doc");
+    let borrowed_summarizer = program.ty("shapes", "borrowed_summarizer");
+
+    assert_eq!(
+        fits(&program, Site::Argument, borrowed_doc, borrowed_summarizer),
+        Some(Coercion::Unsize)
+    );
+    // And it is *not* Box. The two produce an object and only one of them
+    // allocates; a lowering handed one variant for both emits a call to the
+    // allocator for the free one.
+    assert_ne!(
+        fits(&program, Site::Argument, borrowed_doc, borrowed_summarizer),
+        Some(Coercion::Box)
+    );
+}
+
+#[test]
+fn unsizing_is_not_gated_on_the_site_and_boxing_is() {
+    // The half of §4 that is invisible in the code that has it. The corpus
+    // needs a site that is neither a return nor an argument:
+    // `Renderer(target: borrowed doc)`, a record field initialiser.
+    let mut program = Program::new(FIXTURE);
+    let borrowed_doc = program.ty("shapes", "borrowed_doc");
+    let borrowed_summarizer = program.ty("shapes", "borrowed_summarizer");
+
+    for site in [Site::Return, Site::Argument, Site::Elsewhere] {
+        assert_eq!(
+            fits(&program, site, borrowed_doc, borrowed_summarizer),
+            Some(Coercion::Unsize),
+            "{site:?}"
+        );
+    }
+}
+
+#[test]
+fn an_exclusive_borrow_unsizes_and_the_mutability_has_to_match() {
+    // `clear(note)` in `examples/08_dyn_dispatch.science` is the first half.
+    // The second is §5's last bullet: weakening an exclusive borrow is
+    // `region-inference.md`'s question, and this table will not do it as a
+    // side effect of unsizing.
+    let mut program = Program::new(FIXTURE);
+    let borrowed_doc = program.ty("shapes", "borrowed_doc");
+    let mutable_doc = program.ty("shapes", "mutable_borrowed_doc");
+    let shared_object = program.ty("shapes", "borrowed_summarizer");
+    let mutable_object = program.ty("shapes", "mutable_borrowed_summarizer");
+
+    assert_eq!(
+        fits(&program, Site::Argument, mutable_doc, mutable_object),
+        Some(Coercion::Unsize)
+    );
+    assert_eq!(fits(&program, Site::Argument, mutable_doc, shared_object), None);
+    // And the unsound direction, which no amount of unsizing may smuggle in.
+    assert_eq!(fits(&program, Site::Argument, borrowed_doc, mutable_object), None);
+}
+
+#[test]
+fn a_concrete_type_does_not_unsize_into_an_owned_object_or_into_a_box() {
+    // The half of the decision that is easy to lose. `Box of any Summarize`
+    // allocates, and §5's first bullet refuses to do that implicitly:
+    // `examples/08_dyn_dispatch.science` writes `Box.new(Doc(..))` and has to
+    // go on writing it.
+    let mut program = Program::new(FIXTURE);
+    let doc = program.ty("shapes", "doc");
+    let borrowed_doc = program.ty("shapes", "borrowed_doc");
+    let owned_box = program.ty("shapes", "owned_box");
+    let summarizer = program.ty("shapes", "summarizer");
+
+    for site in [Site::Return, Site::Argument, Site::Elsewhere] {
+        assert_eq!(fits(&program, site, doc, owned_box), None, "{site:?}");
+        assert_eq!(fits(&program, site, borrowed_doc, owned_box), None, "{site:?}");
+        assert_eq!(fits(&program, site, doc, summarizer), None, "{site:?}");
+    }
+}
+
+#[test]
+fn unsizing_does_not_recurse_into_a_container_and_does_not_upcast_an_object() {
+    // §2 again, for the third conversion: a `borrowed Doc` is one word and a
+    // `borrowed any Summarize` is two, so doing it under `Array of` is a walk
+    // over a container at an assignment that looks free.
+    let mut program = Program::new(FIXTURE);
+    let borrowed_docs = program.ty("shapes", "borrowed_docs");
+    let borrowed_summarizers = program.ty("shapes", "borrowed_summarizers");
+    assert_eq!(fits(&program, Site::Argument, borrowed_docs, borrowed_summarizers), None);
+
+    // And `unsizable`'s two structural refusals: an object behind a borrow is
+    // an upcast, which needs a subinterface relation nobody has specified, and
+    // a nullable behind one asks whether `Doc?` implements the interface.
+    let borrowed_summarizer = program.ty("shapes", "borrowed_summarizer");
+    let borrowed_failure = program.ty("shapes", "borrowed_failure");
+    let borrowed_optional = program.ty("shapes", "borrowed_optional_doc");
+    assert_eq!(fits(&program, Site::Argument, borrowed_summarizer, borrowed_failure), None);
+    assert_eq!(fits(&program, Site::Argument, borrowed_optional, borrowed_summarizer), None);
+}
+
+#[test]
+fn unsizing_does_not_also_widen() {
+    // §4's last paragraph: `borrowed C` into `(borrowed any I)?` would be an
+    // `UnsizeThenWiden`, the note decided nothing about it, and refusing is
+    // the direction that can be reversed.
+    let mut program = Program::new(FIXTURE);
+    let borrowed_doc = program.ty("shapes", "borrowed_doc");
+    let borrowed_summarizer = program.ty("shapes", "borrowed_summarizer");
+    let optional_object = program.types.nullable(borrowed_summarizer);
+    assert_eq!(fits(&program, Site::Argument, borrowed_doc, optional_object), None);
+}
+
+#[test]
+fn unsizing_admits_what_decision_eleven_would_refuse_and_says_so() {
+    // §4's cost, tested so that acquiring the lookup breaks this test rather
+    // than passing silently. `Int` implements nothing, and this crate agrees
+    // it may be unsized — exactly as §3 already agrees an `Int` may be boxed
+    // into an `any Error`.
+    let mut program = Program::new(
+        "\
+interface Summarize:
+    def summarize(self) -> String
+
+def shapes(borrowed_int: borrowed Int, borrowed_summarizer: borrowed any Summarize) -> Int:
+    0
+",
+    );
+    let borrowed_int = program.ty("shapes", "borrowed_int");
+    let borrowed_summarizer = program.ty("shapes", "borrowed_summarizer");
+    assert_eq!(
+        fits(&program, Site::Argument, borrowed_int, borrowed_summarizer),
+        Some(Coercion::Unsize),
+        "the obligation `assign`'s §4 records is still outstanding"
+    );
 }
 
 #[test]
@@ -664,7 +811,8 @@ fn a_borrow_and_a_nullable_do_not_box() {
 
 #[test]
 fn a_coercion_does_not_recurse_into_a_container() {
-    // `assign`'s §2. Both coercions change the representation of the value, so
+    // `assign`'s §2. Every conversion there changes the representation of what
+    // is in the slot, so
     // applying one under a type constructor is a loop over a container that
     // already exists, at an assignment that looks free.
     let mut program = Program::new(FIXTURE);
@@ -676,7 +824,7 @@ fn a_coercion_does_not_recurse_into_a_container() {
     assert_eq!(fits(&program, Site::Argument, docs, optional_docs), None);
     // And the tuple that Decision 14's own example returns: the *type* is not
     // assignable, and the line works because the checker visits the tuple
-    // expression's elements one at a time. `assign`'s §2 and §5.
+    // expression's elements one at a time. `assign`'s §2 and §6.
     let boxed_pair = {
         let boxed = program.ty("shapes", "boxed");
         let doc = program.ty("shapes", "doc");

@@ -142,7 +142,7 @@ def fails() -> Error?:
 #[test]
 fn decision_14s_own_example_works_because_the_tuple_is_visited_elementwise() {
     // `assign`'s §2 says the trap in as many words: `(Doc, MyError)` is *not*
-    // assignable to `(Doc, Error?)`, because neither coercion recurses. This
+    // assignable to `(Doc, Error?)`, because no conversion there recurses. This
     // line compiles only because the thing in return position is a tuple
     // *expression* whose elements the checker visits one at a time, each at
     // `Site::Return`. A checker that compared the synthesised tuple type
@@ -170,7 +170,7 @@ def hand_over() -> Bool:
 
 #[test]
 fn a_concrete_error_does_not_box_anywhere_else() {
-    // `assign`'s §5: *"a checker that passes `Site::Return` everywhere silently
+    // `assign`'s §6: *"a checker that passes `Site::Return` everywhere silently
     // makes boxing universal"*. A `let` is `Site::Elsewhere` and must refuse.
     let checked = program(
         "
@@ -328,6 +328,24 @@ def nothing() -> Bool:
 ",
     );
     assert_eq!(checked.codes(), vec![526]);
+}
+
+#[test]
+fn an_expectation_crosses_an_unsafe_block_the_way_it_crosses_a_plain_one() {
+    // What the keyword changes is which operations the body may name, which is
+    // not checking mode's question. Without this, the tail is synthesised and
+    // the `null` in it has nothing to take its type from — `SC0526` on a line
+    // whose type the signature states. `examples/20_extern.science`'s
+    // `native_double_type` is the case: its whole body is one `unsafe` block
+    // ending in a pair.
+    let checked = program(
+        "
+def native() -> (Doc, Error?):
+    unsafe:
+        (blank(), null)
+",
+    );
+    checked.assert_clean();
 }
 
 // --- the rest of the band -------------------------------------------------
@@ -551,24 +569,129 @@ def kept(owned: String) -> Bool:
     assert_eq!(checked.codes(), vec![525]);
 }
 
-#[test]
-fn auto_borrow_does_not_compose_with_the_object_coercion() {
-    // `assign`'s §4 refuses `T` into `any I` for an interface that is not
-    // `Error`. Composing two refused things one at a time is how a language
-    // acquires a rule nobody decided, so `Doc` does not reach
-    // `borrowed any Summarize`.
-    let checked = program(
-        "
+// --- §4's unsizing, composed with the auto-borrow above -------------------
+
+/// The shape of `examples/08_dyn_dispatch.science`, cut down to the six lines
+/// the decision is about.
+///
+/// The names are the example's own, because the claim being tested is about
+/// that file: `describe_any(doc)` must compile, `clear(note)` must compile,
+/// and `describe_boxed(doc)` must not.
+const DISPATCH: &str = "
 interface Summarize:
     def summarize(self) -> String
 
-def describe(what: borrowed any Summarize) -> Bool:
-    true
+interface Reset:
+    def reset(mutable self)
 
-def show(doc: Doc) -> Bool:
-    describe(doc)
-",
-    );
+def describe_any(value: borrowed any Summarize) -> String:
+    \"\"
+
+def clear(value: mutable borrowed any Reset):
+    let _touched be 1
+
+def describe_boxed(value: Box of any Summarize) -> String:
+    \"\"
+
+type Renderer:
+    target: borrowed any Summarize
+";
+
+#[test]
+fn describe_any_takes_a_doc_by_composing_the_auto_borrow_with_an_unsize() {
+    // The acceptance case, by name. §6.3 says the borrow may be taken and
+    // `assign`'s §4 says the borrow unsizes, and neither step is a rule this
+    // file invented.
+    let checked = program(&format!(
+        "{DISPATCH}
+def main_line(doc: Doc) -> String:
+    describe_any(doc)
+"
+    ));
+    checked.assert_clean();
+
+    // And both nodes are there, in that order, with the borrow underneath.
+    let body = checked.body("main_line");
+    let (_, coerce) = body
+        .exprs()
+        .find(|(_, expr)| matches!(expr.kind, ExprKind::Coerce { .. }))
+        .expect("the argument is coerced");
+    let ExprKind::Coerce { operand, coercion } = coerce.kind else { unreachable!() };
+    assert_eq!(coercion, Coercion::Unsize);
+    assert_eq!(checked.render(coerce.ty), "borrowed any Summarize");
+    assert!(matches!(body.expr(operand).kind, ExprKind::Borrow { mutable: false, .. }));
+    assert_eq!(checked.render(body.ty(operand)), "borrowed Doc");
+}
+
+#[test]
+fn clear_takes_a_note_through_an_exclusive_borrowed_object() {
+    // `clear(note)` in the same file, and the mutability rides through both
+    // steps: the borrow is exclusive and so is the object it unsizes into.
+    let checked = program(&format!(
+        "{DISPATCH}
+def main_line(note: Doc):
+    clear(note)
+"
+    ));
+    checked.assert_clean();
+    let body = checked.body("main_line");
+    let (_, coerce) = body
+        .exprs()
+        .find(|(_, expr)| matches!(expr.kind, ExprKind::Coerce { .. }))
+        .expect("the argument is coerced");
+    let ExprKind::Coerce { operand, coercion } = coerce.kind else { unreachable!() };
+    assert_eq!(coercion, Coercion::Unsize);
+    assert_eq!(checked.render(coerce.ty), "mutable borrowed any Reset");
+    assert!(matches!(body.expr(operand).kind, ExprKind::Borrow { mutable: true, .. }));
+}
+
+#[test]
+fn a_doc_does_not_reach_an_owned_box_of_an_object() {
+    // The half of the decision that is easy to lose. `Box of any Summarize`
+    // allocates, `assign`'s §5 refuses to do that implicitly, and the example
+    // goes on writing `Box.new(Doc(..))`. There is no auto-borrow to compose
+    // with here either: the parameter is not a borrow.
+    let checked = program(&format!(
+        "{DISPATCH}
+def main_line(doc: Doc) -> String:
+    describe_boxed(doc)
+"
+    ));
+    assert_eq!(checked.codes(), vec![525]);
+}
+
+#[test]
+fn a_written_borrow_unsizes_at_a_field_initialiser() {
+    // `Renderer(target: borrowed doc)` — `Site::Elsewhere`, where Decision
+    // 14's boxing does not happen. `assign`'s §4 is not gated on the site
+    // because it emits no code, and this is the line that needs it not to be.
+    let checked = program(&format!(
+        "{DISPATCH}
+def main_line(doc: Doc) -> Renderer:
+    Renderer(target: borrowed doc)
+"
+    ));
+    checked.assert_clean();
+    let body = checked.body("main_line");
+    let (_, coerce) = body
+        .exprs()
+        .find(|(_, expr)| matches!(expr.kind, ExprKind::Coerce { .. }))
+        .expect("the field initialiser is coerced");
+    let ExprKind::Coerce { coercion, .. } = coerce.kind else { unreachable!() };
+    assert_eq!(coercion, Coercion::Unsize);
+}
+
+#[test]
+fn an_object_behind_a_borrow_does_not_upcast_to_another_one() {
+    // `unsizable`'s third refusal, reached through a body: which vtable a
+    // `borrowed any Summarize` would carry as a `borrowed any Reset` needs a
+    // subinterface relation nobody has specified.
+    let checked = program(&format!(
+        "{DISPATCH}
+def main_line(summary: borrowed any Summarize):
+    clear(summary)
+"
+    ));
     assert_eq!(checked.codes(), vec![525]);
 }
 

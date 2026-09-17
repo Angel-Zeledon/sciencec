@@ -47,14 +47,14 @@
 //! [`Site::Return`] at a `return` statement and at the trailing expression of
 //! the *body* block, [`Site::Argument`] at every call argument, and
 //! [`Site::Elsewhere`] at a `let`, an assignment, a field initialiser and a
-//! tuple element. `assign`'s §5 says what getting that wrong costs in each
+//! tuple element. `assign`'s §6 says what getting that wrong costs in each
 //! direction, and the reason the site is threaded through `BodyChecker::check`
 //! rather than inferred from the node is that a trailing expression and a
 //! statement's expression are the same node kind.
 //!
 //! **Decision 14's own motivating example works because of the tuple rule.**
 //! `assign`'s §2: `(Doc, MyError)` is *not* assignable to `(Doc, Error?)`,
-//! because neither coercion recurses. `return (doc, err)` works because the
+//! because no conversion there recurses. `return (doc, err)` works because the
 //! thing in return position is a tuple **expression**, whose elements this
 //! checker visits one at a time — `BodyChecker::check`'s tuple arm — each at
 //! [`Site::Return`]. A checker that compared the synthesised tuple type against
@@ -166,12 +166,16 @@
 //! `String` in the source and two `String`s in the call.
 //! `BodyChecker::compare` says what that can and cannot conclude.
 //!
-//! **What neither of them is**: the concrete-into-object coercion. `Doc` does
-//! not reach `borrowed any Summarize`, because `assign`'s §4 refuses `T` into
-//! `any I` for an interface that is not `Error` and does so by name. The corpus
-//! writes it — `describe_any(doc)` in `examples/08_dyn_dispatch.science` — so
-//! either the corpus or that refusal is wrong, and deciding which is a language
-//! decision rather than a checker's. It is left reported.
+//! **What the first of them composes with** is `assign`'s §4 unsizing, and
+//! that composition is `describe_any(doc)` in
+//! `examples/08_dyn_dispatch.science`. `Doc` reaches `borrowed any Summarize`
+//! in two steps that are each decided elsewhere: §6.3 says the borrow may be
+//! taken, and §4 says a `borrowed Doc` unsizes into a `borrowed any Summarize`
+//! because doing so allocates nothing and changes no value. What does *not*
+//! happen here is the owning form — `Doc` into `Box of any Summarize` — which
+//! `assign`'s §5 still refuses, and which that file still writes out as
+//! `Box.new(Doc(..))`. `BodyChecker::auto_borrow` asks the relation rather than
+//! deciding for itself, so this file knows nothing about interfaces.
 
 use std::collections::HashMap;
 
@@ -494,11 +498,22 @@ impl<'a> BodyChecker<'a> {
     /// *"at call sites"*. A `let x: borrowed String be s` is not one, and
     /// admitting it there would be a language change made by a checker.
     ///
-    /// **The inner match has to be exact.** `Doc` reaches `borrowed Doc`;
-    /// `Doc` does not reach `borrowed any Summarize`, because that is the
-    /// concrete-into-object coercion `assign`'s §4 refuses by name, and
-    /// composing two things the design refuses one at a time is how a language
-    /// acquires a rule nobody decided.
+    /// **What the borrow reaches is [`assignable`]'s question, asked again.**
+    /// This method decides only that a borrow may be *taken* — the target is a
+    /// borrow and the site is a call — and then hands the borrowed type back to
+    /// the relation. `Doc` reaches `borrowed Doc` because `borrowed Doc` is
+    /// compatible with it, and `Doc` reaches `borrowed any Summarize` because
+    /// `borrowed Doc` unsizes into it: `assign`'s §4. The composition is
+    /// deliberate and is what `describe_any(doc)` in
+    /// `examples/08_dyn_dispatch.science` is — one elaboration and one
+    /// coercion, each decided where it lives, rather than a third rule here
+    /// that knows about interfaces.
+    ///
+    /// **Both nodes are emitted.** The borrow the author did not write is an
+    /// [`ExprKind::Borrow`] typed `borrowed Doc`, and the unsizing is an
+    /// [`ExprKind::Coerce`] above it typed as the parameter was written. A
+    /// single node carrying both would hide from MIR the place where the borrow
+    /// is taken, which is the point the region engine needs.
     ///
     /// **And an exclusive auto-borrow invalidates the narrowing**, exactly as a
     /// written one does — `narrow`'s §4 and Decision 8. It is the same event
@@ -516,23 +531,38 @@ impl<'a> BodyChecker<'a> {
         if site != Site::Argument {
             return None;
         }
-        let TyKind::Borrowed { mutable, inner } = *self.types.kind(target) else {
+        let TyKind::Borrowed { mutable, .. } = *self.types.kind(target) else {
             return None;
         };
-        let inner = self.revealed(inner, span);
-        if !self.types.compatible(source, inner) {
-            return None;
-        }
+        // `target` arrived revealed, so this is the revealed borrowed source
+        // and the relation's precondition holds on both sides.
+        let borrowed = self.types.borrowed(mutable, source);
+        // The target is a borrow, so the only verdicts reachable are the two
+        // below: neither Decision 6's nor Decision 14's rule has a borrow on
+        // its right.
+        let coercion = assignable(self.types, self.coercions, site, borrowed, target)?;
         if mutable {
             if let Some(place) = self.body.place_of(expr) {
                 self.facts.invalidate(&place);
             }
         }
-        Some(self.body.push_expr(
-            ExprKind::Borrow { mutable, operand: expr },
-            written_target,
-            span,
-        ))
+        // The borrow alone is typed as the parameter was written, so that a
+        // diagnostic downstream quotes the author's spelling of the alias. The
+        // borrow under a coercion is typed by what it actually is.
+        let borrow_ty = match coercion {
+            Coercion::Identity => written_target,
+            _ => borrowed,
+        };
+        let taken =
+            self.body.push_expr(ExprKind::Borrow { mutable, operand: expr }, borrow_ty, span);
+        Some(match coercion {
+            Coercion::Identity => taken,
+            coercion => self.body.push_expr(
+                ExprKind::Coerce { operand: taken, coercion },
+                written_target,
+                span,
+            ),
+        })
     }
 
     fn mismatch(&mut self, found: Ty, expected: Ty, span: Span) {
@@ -549,12 +579,26 @@ impl<'a> BodyChecker<'a> {
             hir::ExprKind::If(if_expr) => {
                 self.if_expr(if_expr, expr.span, Some((expected, site))).id
             }
-            hir::ExprKind::Block(block) => {
+            // An `unsafe` block is a block. What the keyword changes is which
+            // operations the body may name, and that is not this mode's
+            // question — so an expectation crosses it exactly as it crosses a
+            // plain block. Leaving it out of this arm is not a lost
+            // optimisation: the tail gets synthesised instead, and a `null` or
+            // a bare integer in it then has nothing to take its type from.
+            // `examples/20_extern.science`'s `native_double_type` is the case,
+            // whose whole body is one `unsafe` block ending in
+            // `(H5T_NATIVE_DOUBLE_g, null)`.
+            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
                 let id = self.body.reserve_block(block.span);
                 let filled = self.block(block, Some((expected, site)));
                 let ty = filled.tail.map(|tail| self.body.ty(tail)).unwrap_or(Ty::UNIT);
                 self.body.fill_block(id, filled);
-                self.body.push_expr(ExprKind::Block(id), ty, expr.span)
+                let kind = if matches!(expr.kind, hir::ExprKind::Unsafe(_)) {
+                    ExprKind::Unsafe(id)
+                } else {
+                    ExprKind::Block(id)
+                };
+                self.body.push_expr(kind, ty, expr.span)
             }
             hir::ExprKind::Match(match_expr) => {
                 self.match_expr(match_expr, expr.span, Some((expected, site))).id

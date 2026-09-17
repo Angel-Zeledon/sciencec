@@ -139,7 +139,7 @@
 //!
 //! - **`check_expr` and `synth_expr`** call [`assignable`], and owe it the
 //!   [`Site`] at every use. Passing one everywhere removes a decision from the
-//!   language in silence; [`assign`]'s §5 names both directions of that.
+//!   language in silence; [`assign`]'s §6 names both directions of that.
 //!   — *Taken up by [`check`]'s §1, which funnels every call through one
 //!   function so that there is one thing to audit.*
 //! - **A `return` and a call argument** are the two sites that box, and the
@@ -169,17 +169,24 @@
 //!   narrowing is [`narrow`]. `SC0521`, `SC0522` and exhaustiveness are still
 //!   open, and the `codes` module below says what each is waiting for.*
 //!
-//! **Three obligations this layer raises and cannot discharge**, each named
+//! **Four obligations this layer raises and cannot discharge**, each named
 //! where it is raised rather than collected into a list nobody reads:
 //!
 //! 1. *"`S` implements `Error`"*, owed by every [`Coercion::Box`]. [`assign`]'s
 //!    §3. Until Decision 11's lookup exists, this crate will agree that an `Int`
 //!    may be boxed.
-//! 2. *"this implementation supplies every associated type its interface
+//! 2. *"`C` implements `I`"*, owed by every [`Coercion::Unsize`]. [`assign`]'s
+//!    §4, which admits `borrowed C` into `borrowed any I` because that
+//!    conversion allocates nothing and changes no value. It is the same
+//!    obligation as the one above and wider — one interface there, every
+//!    interface a program declares here — so it is listed separately rather
+//!    than folded in, and until the lookup exists this crate will agree that a
+//!    `borrowed Int` may be unsized to a `borrowed any Summarize`.
+//! 3. *"this implementation supplies every associated type its interface
 //!    declares"* — §5.4's completeness check, which `science-resolve` names as
 //!    this crate's. An unbound `Self.Item` is left standing by [`subst`]'s §2
 //!    precisely so that the phase which can see both blocks reports it.
-//! 3. *"this instantiation's const arguments are in range"*. [`Substitution`]
+//! 4. *"this instantiation's const arguments are in range"*. [`Substitution`]
 //!    returns [`ConstEvalError`] and reports nothing ([`subst`]'s §4); a caller
 //!    with a span turns it into `SC0260` through
 //!    [`diagnostics::overflowed`], and F1's `SC0262` replaces that with the
