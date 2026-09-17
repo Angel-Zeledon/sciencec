@@ -1,9 +1,25 @@
 # Code generation and linking
 
-**Status.** Design. Nothing below is built. `crates/science-codegen` does not
-exist, no `Cargo.toml` in the workspace names `inkwell`, `llvm-sys` or
-`cranelift`, and `sciencec` has four subcommands — `check`, `tokens`, `ast`,
-`resolve` — and no `build`.
+**Status.** **Stage 1 is emitted.** `sciencec build hello.science` produces a
+native executable that prints `hello, world` and exits 0, through every phase
+from the lexer to the linker.
+
+Every clause of what this line used to say has been overtaken:
+`crates/science-codegen` exists and holds layout, the C ABI classifier,
+mangling, descriptors, the runtime boundary and the monomorphisation walk;
+`crates/science-codegen-llvm` holds the backend; and `sciencec build` is a
+command. **No `Cargo.toml` names `inkwell`, `llvm-sys` or `cranelift`, and that
+clause is now a commitment rather than an observation** — the backend is
+`extern "C"` against `LLVM-C`, which is what Decision 1 requires of both
+implementations, and the machine it was built on ships no `llvm-config` and no
+static archives, so `llvm-sys` was not available even had it been wanted.
+
+§10's stage list is amended in place where it named two things that do not
+exist. Decisions 5, 8, 25 and 36 each acquired an amendment from being built
+against; §11's free-code claim went stale; and three silent miscompiles — a
+`main` that never wrote its return value, a null test that loaded a fat
+pointer, and a relocation model that cannot link on Windows x64 — are recorded
+at the sections that were silent about them.
 
 **What this note is.** Everything below monomorphisation: the LLVM binding, the
 lowering of MIR to LLVM IR, data layout, the C ABI, linking, debug info,
@@ -1810,7 +1826,10 @@ no `science_exit`. Codegen must emit `main` itself, and the page never says so
 What is not survivable is the exit contract. `script-mode.md` §2.3 requires
 that a script body returning a non-null error exit with status **1** after
 printing `error: ` and the error's `Display` to **stderr**. The runtime has
-`science_print` and `science_println`, which write to stdout, and
+`science_print`, which writes to stdout — **`science_println` no longer
+exists**; the runtime's §2 records that it and `science_print` were the wrong
+way round and that the survivor is named for the Science spelling it
+implements — and
 `science_panic_bytes`, which writes to stderr and then calls
 `std::process::abort()` — the platform's abort status, which is `SIGABRT` on
 POSIX and `3` on Windows, and is not 1.
@@ -1912,10 +1931,28 @@ print("hello, world")
 Requires, and this is the whole list: the script body of `script-mode.md` §2.1
 lowered to `def main() -> Error?`; a string literal as a
 `private unnamed_addr constant` plus a `science_string_from_bytes` call
-(Decision 15); a `science_println` call; drop glue for one `String`; and the
+(Decision 15); a `science_print` call; a `science_string_free` on the
+temporary; and the
 `sret` convention, immediately, because `science_string_from_bytes` returns
 `ScienceString` by value. One basic block, no CFG, no generics, no layout beyond
 `ScienceString`.
+
+> **AMENDMENT 3: this list had two things in it that do not exist, and the
+> second is the one that would have cost a day.**
+>
+> `science_println` was renamed to `science_print`; the runtime's §2 records
+> that the two were the wrong way round and that the survivor is named for the
+> Science spelling it implements.
+>
+> **And stage 1 needs no drop glue.** Glue is a *function* codegen defines, per
+> Decision 12, for a type whose fields need dropping. A `String` is not such a
+> type: the temporary is freed by a direct `science_string_free` at the site.
+> "Drop glue for one `String`" tells the reader to write a function that must
+> not exist — and to write it in the very first thing they emit, before anything
+> else works well enough to show them it is unnecessary.
+>
+> The list is otherwise exact, and stage 1 has since been emitted from it:
+> `sciencec build hello.science` produces a program that prints and exits 0.
 
 **It goes through MIR even though it does not need to.** A THIR-to-IR shortcut
 for stage 1 is a second lowering that has to be deleted at stage 3, and the
