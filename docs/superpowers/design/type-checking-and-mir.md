@@ -104,6 +104,35 @@ discarded when the body is done.
 default to `I64` and `F64` when unconstrained.** A scientific language that
 silently makes `1` an `I32` will be wrong on somebody's index arithmetic.
 
+> **AMENDMENT 2: this note never mentioned the auto-borrow, and the core spec
+> requires it.** §6.3 of the core spec: *"if a parameter is declared
+> `borrowed T`, the caller writes `compare(a, b)"*. So a call site holding a
+> `T` against a `borrowed T` parameter is not an error — the borrow is inserted.
+>
+> The omission was not academic. The first run of the finished checker over
+> `examples/` produced **147 diagnostics, and roughly 60% of them were a borrow
+> the language had told the author not to write.** A rule the spec states and
+> the design note forgets is worse than one neither has, because the
+> implementation follows the note.
+>
+> **It is an elaboration, not a coercion, and the distinction decides where it
+> lives.** The value is unchanged; what changes is that the checker writes down
+> a `Borrow` node that the author did not. So it belongs in the body checker
+> and not in the assignability relation, whose own §4 refuses to know anything
+> about regions — correctly, since nothing in that table knows what a region is.
+> An auto-borrow that is exclusive invalidates narrowing exactly as a written
+> one does, per Decision 8.
+>
+> **A comparison is not an assignment, and this is the same mistake one layer
+> down.** §5.4 makes `is` one operator dispatching to `Eq`, whose method takes
+> `borrowed self`. So `name is ""` has a `borrowed String` and a `String` in the
+> source text and two `String`s in the call. Demanding that the written types
+> agree reports on the borrow §6.3 exists to remove. Comparisons are checked
+> through borrows for that reason.
+>
+> **Cost:** two places where the checker's tree no longer matches the token
+> stream one-to-one, which is a cost MIR pays rather than the reader.
+
 ---
 
 ## 3. THIR and MIR
@@ -194,6 +223,21 @@ A place is a local, or a field projection from a narrowed place. So:
   return, the *value* half of the pair is known good.
 - `config.port?` narrows `config.port`, not `config`. Writing to `config`
   invalidates it; writing to `config.other` does not.
+
+> **AMENDMENT 1: the `or` rule above is the *then*-branch rule, and the
+> else-branch narrows both operands.** Read literally, "`or` narrows neither"
+> says nothing survives either way, and that is wrong in the direction that
+> loses information. If `a? or b?` is false then neither was present, so the
+> else-branch knows both are null.
+>
+> The reason it has to be said rather than left to the implementation: without
+> it, `not (a? or b?)` narrows less than `not a? and not b?`, which is the same
+> claim written differently. A narrowing that depends on which of two equivalent
+> spellings the author happened to pick is worse than either answer, because the
+> author cannot see why one worked.
+>
+> Implemented as the dual of the `and` rule, and tested as one. **Cost:** none
+> beyond the symmetry — the branch was already being computed for `and`.
 
 **Loops.** A narrowing established before a loop does not survive the back edge
 unless it survives every path through the body. This is a standard forward
@@ -359,6 +403,33 @@ are assigned in source order by the resolver**, which makes the order stable
 across runs without a hash and stable across incremental rebuilds as long as the
 declaration order does not change.
 
+> **AMENDMENT 3: Decision 17 is withdrawn. The atom order is by a rank derived
+> from the declaring item's canonical path and its position in that item's
+> `of`-list, which is what `const-expression-arithmetic.md` §3.1 always said.**
+>
+> The claim above — "stable across runs without a hash" — is false, and the
+> sentence that makes it false is its own second clause. `DefId`s are assigned
+> in source order *within one compilation*, and which source comes first is the
+> order the files were named on the command line. So `sciencec check a.science
+> b.science` and `sciencec check b.science a.science` number the same
+> declarations differently, produce different atom orders, and therefore
+> different normal forms.
+>
+> **Read that against item 4, three paragraphs down: the normal form is the
+> monomorphisation key.** An unstable atom order is an unstable mono key, which
+> is the exact failure item 4 describes — two symbols for one function — arrived
+> at from the other direction, and it would not have been caught by anything
+> item 4 proposes, because both spellings are the *same syntax*.
+>
+> The fix is `AtomOrder` in `science-types`: one pass over the `DefTable`
+> sorting by (canonical path, index) and materialising integer ranks, built once
+> per crate. `Atom::Param` carries the rank *before* the `DefId` so that the
+> derived `Ord` sorts by rank, which is the whole mechanism.
+>
+> **Cost:** the order now depends on names rather than on numbers, so renaming a
+> const parameter can reorder a normal form where renumbering a file no longer
+> can. That is the right trade — a rename is something the author did, and a
+> command-line order is not.
 **Item 4 — the normal form is the monomorphisation key.** `Matrix of (T, a * b)`
 and `Matrix of (T, b * a)` must be one instantiation. Keying on the *syntax*
 emits two symbols for one function, which is a codegen bug found late and fixed

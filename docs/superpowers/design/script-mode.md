@@ -1,7 +1,7 @@
 # Science — Design: script mode, and why the grammar decision is F0's
 
 Date: 2026-09-16
-Status: draft for review
+Status: **implemented** — see "What shipping it settled" below.
 Amends: `docs/superpowers/specs/2026-09-16-science-f0-core-design.md` §2 (adds a
 fourth "F0 must not preclude" constraint), §4.4 and §4.5 (the top-level
 production), §11 (definition of done).
@@ -10,6 +10,55 @@ syntax.
 Related: `data-io.md` §7 and §10, whose worked example this note shortens;
 `python-interop.md` §3.1, §3.3 and §9, whose extension-module case this note must
 not break.
+
+---
+
+## What shipping it settled
+
+This note is built. `print("hello, world")` in a file is a program, and
+`sciencec check` on it exits zero. What the build learned, in the order it
+matters:
+
+**The cost estimate in §10.2 was wrong, in the cheap direction, and §13 braced
+for churn that never came.** §10.2 costed a two-variant enum in `Module.items`,
+a resolver change across two walks, an HIR body, and churn in "every AST-dump
+snapshot containing a module header"; §13 expected snapshot churn "for the third
+time in a day". **Every one of those is zero.** Exactly three snapshots moved:
+two for a message string, one for a file that no longer fails to parse.
+
+The reason is that it shipped as a **desugaring**. `parse_module` gathers the
+top-level statements and appends one generated `def main() -> Error?`. The AST
+does not change and the resolver does not change, so no phase after the parser
+learns the word "script". Three things that costs, and they are the honest
+price of the zero above:
+
+1. Generated nodes have no source text, so their spans are zero-width, and
+   §6.3's rendering ask — "the end of the script", never "`main`" — is still
+   owed by `science-diagnostics`.
+2. A message can name a function nobody wrote. `sciencec tools --json
+   --all-functions` on a script now lists `main`. It is pinned by a test rather
+   than filtered, because filtering it means teaching `sciencec` about scripts,
+   which is exactly what the desugaring buys out.
+3. A hand-written `main` collides — that is `SC0117`, and the script body is
+   then not generated, so one mistake stays one diagnostic.
+
+**§3.3 turned out to be enforced by construction, and `SC0212` has no subject.**
+A top-level `let` binds a local of the generated `main`; a `def` beside it is a
+sibling item, not something nested in that scope. So an item body *cannot* see a
+script binding. All `SC0212` would have added is a better message than
+`SC0200`'s "cannot find `threshold` in this scope", and buying it means teaching
+the resolver which item is the script body.
+
+**`SC0213` and `SC0458` are not implementable yet, for the same reason: neither
+has a subject.** `SC0213` needs "a module reached by `use` in this compilation",
+but the driver resolves every file as its own crate and `use` does not load
+files. `SC0458` needs a `--python` flag that does not exist.
+
+**§8.1 predicted the wrong test would catch it.** It says "a UI test comparing
+rendered output byte for byte will catch it". There was no UI case for `SC0101`
+— the UI suite's own list of gaps admitted as much. What caught it was three
+`insta` snapshots. There is a UI case now, which is the prediction being made
+true after the fact rather than confirmed.
 
 ---
 
@@ -241,6 +290,26 @@ err` **the** idiom for every fallible call, and a top level on which that idiom
 does not typecheck is a top level on which the language's own error model cannot
 be used. A script is mostly IO and IO is mostly fallible; the entry point has to
 be fallible or every script's first line needs a workaround.
+
+> **AMENDMENT: the question §11.3 raises — whether a lone `-> E?` is legal at
+> all, or sugar for `-> ((), E?)` — was already answered by the corpus, and the
+> answer is that it is legal and it is not sugar.**
+> `examples/09_absence_and_failure.science` has declared `def save_config(..) ->
+> Error?` and `def start(..) -> Error?` since before this note was written, both
+> check clean, and that file gives the reason in place: a `def` with no value to
+> hand back returns the error alone, and the pair would have `()` in its first
+> slot with a name bound to it that could do nothing.
+>
+> §11.4's question is answered too: **`Error` is an interface**, declared in the
+> prelude, and `Error?` expands to `(any Error)?`. So the script body's return
+> boxes, as §11.4 guessed it would if the answer went this way.
+>
+> **Cost, and it is a real one:** the script body's tail is therefore *always* a
+> generated `null` and never its last statement. Promoting a trailing expression
+> to the tail — which is what block parsing does everywhere else — would make
+> the value of `print("hello")` the script's return value, and `()` is not an
+> `Error?`. "Falling off the end is an implicit `return null`" above is spelled
+> as that node, not inferred.
 
 This ratifies something `data-io.md` §10 already assumed: its worked example is
 `def main() -> DataError?`, an explicitly fallible `main` — the
@@ -970,10 +1039,24 @@ want in F0:
    implementation.
 3. **Core spec §11: what signatures `main` may have.** §11 never says. This note
    needs `def main()` and `def main() -> Error?` to both be legal, and
-   `data-io.md` §10 already assumed the latter. §11's definition of done should
+   `data-io.md` §10 already assumed the latter. **Satisfied in the
+   implementation, still owed by the spec.** A lone `-> Error?` was already
+   accepted by the compiler and already declared twice in `examples/` before
+   this note was written — see §2.3's amendment. So the ask is now to write down
+   what the compiler does, rather than to decide anything. §11's definition of done should
    also gain one script program — a file with no `main` that compiles, runs, and
    returns a nonzero exit code from a top-level `return err`.
-4. **`syntax-revision-2.md`: is `Error` a concrete type or an interface?** §3
+4. **`syntax-revision-2.md`: is `Error` a concrete type or an interface?**
+   **Answered: an interface.** It is declared as one in the prelude, and
+   `Error?` expands to `(any Error)?`, so the script body boxes — the second of
+   the two branches this item laid out. What the item called "the largest
+   unanswered question this note depends on" was settled by the resolver's
+   builtins before the question was asked; the note could not see it because the
+   note was written against `syntax-revision-2.md` and not against the compiler.
+   The original text follows, because the fork it draws is still the right way
+   to read the consequence.
+
+   §3
    writes `-> (Config, Error?)` throughout without saying which. The script
    body's return type is `Error?`, so the answer lands here: if `Error` is an
    interface it is presumably `any Error?` and the script body boxes; if it is a
@@ -981,7 +1064,13 @@ want in F0:
    explicitly deleted `From` widening. This is the largest unanswered question
    this note depends on and it is not this note's to answer.
 5. **`syntax-revision-2.md`: how does `mutable` distribute over a destructuring
-   `let`?** §3.1 shows `let config, err be read_config(path)` and never shows a
+   `let`?**
+   **Answered: over every name.** `ast::LetStmt` decides it and gives the
+   reason — the list receives one tuple, and a form where half the names were
+   mutable would need a second `mutable` in a position nothing else in the
+   language puts one. Still owed by the note, which is where a reader looks.
+
+   §3.1 shows `let config, err be read_config(path)` and never shows a
    mutable one. `data-io.md` §10 needs `let mutable frame, err be …` for its
    `columns_mutable()` call. Whether `mutable` binds the first name or both is
    unspecified, and a script hits it on the first line that needs a mutable
