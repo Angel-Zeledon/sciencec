@@ -142,15 +142,56 @@ impl Aliases {
         let mut aliases = Aliases::new();
         for module in &krate.modules {
             for item in &module.items {
-                let hir::ItemKind::Alias(alias) = &item.kind else {
-                    continue;
-                };
-                let mut lowerer = TypeLowerer::new(types, &krate.defs, order, diagnostics);
-                let body = lowerer.lower(&alias.ty);
-                aliases.bodies.insert(
-                    alias.def,
-                    AliasBody { params: alias.generics.clone(), body },
-                );
+                match &item.kind {
+                    hir::ItemKind::Alias(alias) => {
+                        let mut lowerer =
+                            TypeLowerer::new(types, &krate.defs, order, diagnostics);
+                        let body = lowerer.lower(&alias.ty);
+                        aliases.bodies.insert(
+                            alias.def,
+                            AliasBody { params: alias.generics.clone(), body },
+                        );
+                    }
+                    // **An `extern` block's `type Herr is I32` is an alias, and
+                    // this table is where it belongs.** `ffi-c-boundary.md`
+                    // §1.3's own table says what it is — *"a spelling for a C
+                    // typedef over an FFI-representable type"* — and a C typedef
+                    // is transparent; `Herr` and `I32` denote one type in the
+                    // header the declaration is transcribing.
+                    //
+                    // **It was collected nowhere until now**, and what that
+                    // cost was invisible for as long as nothing asked a
+                    // question about the *type* behind the name. `Herr` was a
+                    // `TyKind::Named` at a definition with no body, so it
+                    // implemented nothing, had no methods, and equalled only
+                    // itself — which no check in this crate had reason to
+                    // notice until `implements_operand` asked whether the
+                    // `opened` in `examples/20_extern.science`'s
+                    // `if opened < 0:` implements `Ord`. It does: it is an
+                    // `I32`.
+                    //
+                    // **This does not make a C scalar an alias.** `CLong` and
+                    // the rest of `builtins.rs`' `C_SCALARS` are primitives with
+                    // no body here and stay that way, which is §1.6's argument —
+                    // *"a width the author did not think about is how a
+                    // numerical program gets silently wrong answers"* — left
+                    // exactly where it was. What is expanded is only what an
+                    // author wrote `is` after.
+                    hir::ItemKind::Extern(block) => {
+                        for extern_item in &block.items {
+                            let hir::ExternItemKind::Alias(alias) = &extern_item.kind else {
+                                continue;
+                            };
+                            let mut lowerer =
+                                TypeLowerer::new(types, &krate.defs, order, diagnostics);
+                            let body = lowerer.lower(&alias.ty);
+                            aliases
+                                .bodies
+                                .insert(alias.def, AliasBody { params: Vec::new(), body });
+                        }
+                    }
+                    _ => continue,
+                }
             }
         }
         aliases.cut_cycles(types, &krate.defs, diagnostics);

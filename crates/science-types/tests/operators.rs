@@ -462,7 +462,7 @@ fn indexing_dispatches_to_index_for_its_type() {
 type Grid:
     cell: F64
 
-Grid implements Index:
+Grid implements Index of I64:
     def index(self, at: I64) -> borrowed F64:
         borrowed self.cell
 
@@ -488,7 +488,7 @@ fn the_index_operand_is_checked() {
 type Grid:
     cell: F64
 
-Grid implements Index:
+Grid implements Index of I64:
     def index(self, at: I64) -> borrowed F64:
         borrowed self.cell
 
@@ -553,16 +553,15 @@ def also(a: Held, b: Held) -> Bool:
     assert_eq!(ty_of(&checked, "same", |kind| matches!(kind, ExprKind::Binary { .. })), "Bool");
 }
 
-/// `Ord` is **not** dispatched, and the reason is a boundary rather than an
-/// oversight: `<` would need a method whose only sane name is `compare` and
-/// whose return type is an `Ordering` that no note specifies, so writing it
-/// here would invent a Level 1 type as a side effect of an operator.
+/// `<` requires `Ord`, by the same implementation check `is` uses for `Eq`.
 ///
-/// So this compiles, and it should not. It is pinned as a hole rather than left
-/// unmentioned, and what it waits for is named in `binary_operator`'s
-/// documentation.
+/// This used to be pinned as a silence — *"so this compiles, and it should
+/// not"* — and the silence was two questions sharing one refusal. §5.4 makes
+/// `< > <= >=` `Ord`'s, `builtins.rs` says which prelude types implement it,
+/// and a user writes `Held implements Ord:` in their own file, so *"does this
+/// type implement `Ord`"* is answerable and is now answered.
 #[test]
-fn ord_is_not_dispatched_and_a_comparison_of_two_records_is_still_silent() {
+fn a_comparison_requires_ord() {
     let checked = support::check(
         "\
 type Held:
@@ -572,7 +571,125 @@ def before(a: Held, b: Held) -> Bool:
     a < b
 ",
     );
+    assert_eq!(checked.codes(), vec![535]);
+    assert_eq!(checked.messages(), vec!["`Held` does not implement `Ord`"]);
+}
+
+/// And the right program still passes, at each of the four spellings.
+///
+/// **The block has to contain something and the language does not say what.**
+/// `Ord` is declared with no methods, so nothing in the block below is checked
+/// against a declaration and nothing is called; but an `implements` block may
+/// not be empty (`SC0100`), so the author writes a method and picks its name.
+/// That is the residue this change does not close, and `implements_operand`
+/// says so.
+#[test]
+fn a_comparison_on_a_type_that_implements_ord_passes_at_all_four_spellings() {
+    let checked = support::check(
+        "\
+type Held:
+    x: F64
+
+Held implements Ord:
+    def compare(self, other: Held) -> I64:
+        0
+
+def before(a: Held, b: Held) -> Bool:
+    a < b
+
+def after(a: Held, b: Held) -> Bool:
+    a > b
+
+def not_after(a: Held, b: Held) -> Bool:
+    a <= b
+
+def not_before(a: Held, b: Held) -> Bool:
+    a >= b
+",
+    );
     checked.assert_clean();
+    // The node is a `Binary` and not a call: `Ord` is required, never
+    // dispatched.
+    assert_eq!(
+        ty_of(&checked, "before", |kind| matches!(kind, ExprKind::Binary { .. })),
+        "Bool"
+    );
+    assert!(
+        !checked
+            .body("before")
+            .exprs()
+            .any(|(_, expr)| matches!(expr.kind, ExprKind::MethodCall { .. })),
+        "`a < b` must not become a call: `Ord` has no method this crate may name"
+    );
+}
+
+/// The prelude's own numerics are unaffected, because they implement `Ord` and
+/// because `1 < 2` never reaches an implementation at all.
+#[test]
+fn a_comparison_of_two_numbers_is_still_structural() {
+    support::check(
+        "\
+def before(a: I64, b: I64) -> Bool:
+    a < b
+
+def letters(a: Char, b: Char) -> Bool:
+    a < b
+
+def words(a: borrowed String, b: borrowed String) -> Bool:
+    a < b
+",
+    )
+    .assert_clean();
+}
+
+/// A type parameter is silent, which is `methods`' §5 and the restraint the
+/// whole of §6 is under. `examples/07_generics.science` writes exactly this,
+/// under a declared `where T: Ord`, and it must keep compiling.
+#[test]
+fn a_comparison_on_a_type_parameter_reports_nothing() {
+    support::check(
+        "\
+def largest of T(a: borrowed T, b: borrowed T) -> Bool
+        where T: Ord:
+    a > b
+",
+    )
+    .assert_clean();
+}
+
+/// **`Ord` is still not dispatched**, and what that waits for is three things
+/// no note supplies: a method name, an `Ordering` return type that is not in
+/// §8's closed library, and a rule for how four operators sit over one
+/// `compare` — including what `F64`'s NaN does to a total order. This test
+/// pins the remaining hole: an `implements Ord:` block that writes a `compare`
+/// is not consulted, and a comparison of two values it would order wrongly is
+/// not the compiler's business yet.
+#[test]
+fn ord_is_still_not_dispatched_and_its_method_is_not_named() {
+    let checked = support::check(
+        "\
+type Held:
+    x: F64
+
+Held implements Ord:
+    def compare(self, other: Held) -> I64:
+        0
+
+def before(a: Held, b: Held) -> Bool:
+    a < b
+",
+    );
+    checked.assert_clean();
+    // The `compare` above is an ordinary method of the block. Nothing calls it,
+    // and nothing checked its signature against a declaration, because `Ord`
+    // declares none.
+    assert!(
+        !checked
+            .body("before")
+            .exprs()
+            .any(|(_, expr)| matches!(expr.kind, ExprKind::MethodCall { .. })),
+        "nothing may dispatch `<` until a note writes `Ord`'s method down"
+    );
 }
 
 /// **An operator dispatches to the *prelude's* interface and not to a name
@@ -603,4 +720,182 @@ def sum(a: Vector, b: Vector) -> Vector:
     // which is what `Prelude::get` holding the prelude's id is for.
     assert_eq!(checked.codes(), vec![535]);
     assert_eq!(checked.messages(), vec!["`Vector` does not implement `Add`"]);
+}
+
+
+// --- `Index` and `IndexMutably` on the prelude's `Array` -------------------
+//
+// `indexing-and-array-literals.md` §1.1's Decision 2, now declared:
+// `interface Index of Idx: type Output; def index(self, at: Idx) -> borrowed
+// Self.Output`, with `IndexMutably` beside it, and `Array of T implements
+// Index of Int: type Output is T`. Each case below is a pair — the wrong
+// program is refused, the right one passes — because a node typed `Ty::ERROR`
+// would make both silent.
+
+#[test]
+fn an_array_element_has_the_arrays_element_type() {
+    let checked = support::check(
+        "\
+def first(xs: borrowed Array of I64) -> I64:
+    xs[0]
+",
+    );
+    checked.assert_clean();
+    assert_eq!(
+        ty_of(&checked, "first", |kind| matches!(kind, ExprKind::Index { .. })),
+        "borrowed I64"
+    );
+    // §7 reads the `I64` out of the borrow, which is what makes the element
+    // usable as a value.
+    assert_eq!(coercions(&checked, "first"), vec![Coercion::Copy]);
+}
+
+#[test]
+fn an_array_element_used_as_the_wrong_type_is_refused() {
+    // The silence this closes: `a[i]` was `Ty::ERROR` and agreed with
+    // everything, so an element of an `Array of I64` returned as a `String`
+    // checked clean.
+    let checked = support::check(
+        "\
+def first(xs: borrowed Array of I64) -> String:
+    let a be xs[0]
+    return a
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(checked.messages(), vec!["expected `String`, found `borrowed I64`"]);
+}
+
+#[test]
+fn the_element_type_follows_the_arrays_argument() {
+    // Not a fixed answer: `Output` is the block's `T` and the receiver's
+    // argument is what fixes it.
+    let checked = support::check(
+        "\
+def first(xs: borrowed Array of String) -> borrowed String:
+    xs[0]
+",
+    );
+    checked.assert_clean();
+    assert_eq!(
+        ty_of(&checked, "first", |kind| matches!(kind, ExprKind::Index { .. })),
+        "borrowed String"
+    );
+}
+
+#[test]
+fn a_write_through_an_index_is_checked_against_the_element() {
+    let checked = support::check(
+        "\
+def set(xs: mutable borrowed Array of I64):
+    xs[0] be \"nueve\"
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(checked.messages(), vec!["expected `I64`, found `String`"]);
+}
+
+/// §1.1's own example, which is the reason the write's slot is the referent and
+/// not the reference: the right-hand side is an `F64`, and a slot of `mutable
+/// borrowed F64` would refuse it.
+#[test]
+fn the_notes_own_scale_loop_compiles() {
+    support::check(
+        "\
+def scale(values: mutable borrowed Array of F64, factor: F64):
+    for i in 0..values.length():
+        values[i] be values[i] * factor
+",
+    )
+    .assert_clean();
+}
+
+#[test]
+fn the_index_operand_is_checked_against_the_declared_index_type() {
+    let checked = support::check(
+        "\
+def first(xs: borrowed Array of I64, key: String) -> I64:
+    xs[key]
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(checked.messages(), vec!["expected `Int`, found `String`"]);
+}
+
+/// Decision 2's whole content: two interfaces, and a container that implements
+/// only the first may be read and not written.
+#[test]
+fn a_write_through_a_type_with_no_index_mutably_names_that_interface() {
+    let checked = support::check(
+        "\
+type Grid:
+    cell: F64
+
+Grid implements Index of I64:
+    def index(self, at: I64) -> borrowed F64:
+        borrowed self.cell
+
+def read(grid: borrowed Grid) -> F64:
+    grid[0]
+
+def write(grid: mutable borrowed Grid):
+    grid[0] be 1.0
+",
+    );
+    assert_eq!(checked.codes(), vec![535]);
+    assert_eq!(checked.messages(), vec!["`Grid` does not implement `IndexMutably`"]);
+}
+
+#[test]
+fn a_type_that_implements_index_mutably_may_be_written_through() {
+    let checked = support::check(
+        "\
+type Grid:
+    cell: F64
+
+Grid implements IndexMutably of I64:
+    def index_mutably(mutable self, at: I64) -> mutable borrowed F64:
+        mutable borrowed self.cell
+
+def write(grid: mutable borrowed Grid):
+    grid[0] be 1.0
+",
+    );
+    checked.assert_clean();
+}
+
+#[test]
+fn the_write_slot_is_the_referent_and_a_wrong_value_is_still_refused() {
+    let checked = support::check(
+        "\
+type Grid:
+    cell: F64
+
+Grid implements IndexMutably of I64:
+    def index_mutably(mutable self, at: I64) -> mutable borrowed F64:
+        mutable borrowed self.cell
+
+def write(grid: mutable borrowed Grid):
+    grid[0] be \"nueve\"
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(checked.messages(), vec!["expected `F64`, found `String`"]);
+}
+
+/// `Map` is deliberately not indexable, and this pins it rather than leaving it
+/// to be discovered: §1.1 never names `Map`, and §1.3's four discharge rules
+/// are all about an extent. `Map.get` is `(borrowed V)?` and says so.
+#[test]
+fn a_map_is_not_indexable_and_is_silent_about_it() {
+    // Silent rather than refused, because `methods`' §8 makes a prelude head's
+    // method set *open*: "the prelude has not written it down" is not the same
+    // sentence as "this type has no such operation".
+    support::check(
+        "\
+def at(m: borrowed Map of (String, I64), key: borrowed String) -> I64:
+    m[key]
+",
+    )
+    .assert_clean();
 }

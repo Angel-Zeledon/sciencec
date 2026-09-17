@@ -66,7 +66,7 @@ use crate::lowering::TypeLowerer;
 use crate::methods::Methods;
 use crate::normal::AtomOrder;
 use crate::subst::Substitution;
-use crate::ty::{Ty, TyKind, Types};
+use crate::ty::{GenericArg, Ty, TyKind, Types};
 
 /// One parameter of a declared function.
 #[derive(Debug, Clone)]
@@ -189,7 +189,13 @@ const WANTED: &[&str] = &[
     // the only way to ask whether the one a block implements is the prelude's
     // is to hold the prelude's id. The *names of the methods* are not here —
     // they are `check`'s `OPERATORS`, beside the operators they belong to.
-    "Add", "Sub", "Mul", "Div", "Rem", "Pow", "MatMul", "Neg", "Eq", "Index",
+    "Add", "Sub", "Mul", "Div", "Rem", "Pow", "MatMul", "Neg", "Eq", "Ord", "Index",
+    // `IndexMutably`, which is here for `Index`'s reason and is the interface
+    // `a[i] be v` dispatches to. Leaving it off this list is not a silence with
+    // a message — `check`'s `index_expr` finds no interface, types the write at
+    // `Ty::ERROR`, and `ty`'s §5 then makes the slot agree with whatever was
+    // assigned into it.
+    "IndexMutably",
 ];
 
 impl Prelude {
@@ -306,6 +312,14 @@ pub struct Declarations {
     block_assocs: HashMap<DefId, Vec<(String, DefId, Ty)>>,
     /// The interface an implementation block implements, when it names one.
     implemented: HashMap<DefId, DefId>,
+    /// The **arguments** that block wrote for it — the `Int` of `Array of T
+    /// implements Index of Int:` — and the interface's own parameters, paired
+    /// by [`Declarations::interface_arguments`]. §4a.
+    implemented_args: HashMap<DefId, Vec<GenericArg>>,
+    /// An interface's own generic parameters — the `Idx` of `interface Index of
+    /// Idx:`. Keyed on the *interface*, because that is where the method whose
+    /// signature mentions them was written. §4a.
+    interface_generics: HashMap<DefId, Vec<hir::GenericParam>>,
     /// The generic parameters an implementation block declares — the `T` of
     /// `Wrapper of T has:` — which is what a call through that block's methods
     /// solves against the receiver. [`crate::check`]'s `block_substitution`.
@@ -371,6 +385,43 @@ impl Declarations {
     /// The generic parameters an implementation block declares.
     pub fn block_generics(&self, owner: DefId) -> Option<&[hir::GenericParam]> {
         self.block_generics.get(&owner).map(|generics| generics.as_slice())
+    }
+
+    /// §4a. An interface's own parameters, paired with the arguments a block
+    /// supplied for them: `interface Index of Idx:` met by
+    /// `Array of T implements Index of Int:` gives `[(Idx, Int)]`.
+    ///
+    /// **Why this is a third table and not [`Declarations::block_generics`].**
+    /// The parameters belong to the *interface* and the arguments to the
+    /// *block*, and neither one alone can be substituted with: a signature
+    /// inherited from `Index` mentions `Idx`, and only the block says what it
+    /// is. `block_generics` answers the other half — the `T` of `Array of T`,
+    /// which the *receiver* fixes — and the two are solved from different
+    /// places.
+    ///
+    /// **This was invisible until an interface both took a parameter and
+    /// declared a method the implementation did not write.** `From of
+    /// ParseError` is a parameterised interface the corpus has, and every
+    /// implementation of it writes its own `from`, so the signature at the call
+    /// site was already concrete and no substitution was missing. `Array of T
+    /// implements Index of Int:` writes no `index` — the declaration it
+    /// inherits is the one `methods`' §2 contributes — so `Idx` reached the
+    /// call standing, and `xs["key"]` was refused as *expected `Idx`, found
+    /// `String`*: a message naming a parameter the author cannot see.
+    ///
+    /// Empty for a block that named no interface or supplied no arguments,
+    /// which is every block in the language but two.
+    pub fn interface_arguments(&self, block: DefId) -> Vec<(DefId, GenericArg)> {
+        let Some(args) = self.implemented_args.get(&block) else {
+            return Vec::new();
+        };
+        let Some(interface) = self.implemented.get(&block) else {
+            return Vec::new();
+        };
+        let Some(params) = self.interface_generics.get(interface) else {
+            return Vec::new();
+        };
+        params.iter().zip(args).map(|(param, arg)| (param.def, arg.clone())).collect()
     }
 
     /// What `Self` means inside a block. `lib.rs` §5: *"the `owner` a
@@ -594,6 +645,15 @@ impl Declarations {
                     block.interface.as_ref().and_then(|bound| bound.interface_res())
                 {
                     self.implemented.insert(block.def, interface);
+                    if let Some(hir::BoundKind::Interface { generics, .. }) =
+                        block.interface.as_ref().map(|bound| &bound.kind)
+                    {
+                        let args = TypeLowerer::new(types, &krate.defs, order, diagnostics)
+                            .lower_args_public(generics);
+                        if !args.is_empty() {
+                            self.implemented_args.insert(block.def, args);
+                        }
+                    }
                 }
                 let assocs = block
                     .assoc_types
@@ -618,6 +678,10 @@ impl Declarations {
                 // body check without inventing a receiver.
                 let self_ty = types.self_type(interface.def);
                 self.self_types.insert(interface.def, self_ty);
+                if !interface.generics.is_empty() {
+                    self.interface_generics
+                        .insert(interface.def, interface.generics.clone());
+                }
                 for method in &interface.methods {
                     let sig = self.lower_fn(
                         method,

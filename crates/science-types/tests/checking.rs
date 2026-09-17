@@ -1052,3 +1052,227 @@ def stays() -> Bool:
     );
     assert!(!falls_through.body("stays").diverges());
 }
+
+// --- §9: a declaration's parameters, at a pattern -------------------------
+//
+// `check`'s `scrutinee_substitution`. Each of these is a pair: the program that
+// was refused and must now pass, and the neighbouring wrong one that must still
+// be refused — because a payload bound at `Ty::ERROR` would make both silent and
+// only the first half would notice.
+
+const GENERIC_CHOICE: &str = "\
+choice E of (L, R):
+    Left(L)
+    Right(R)
+";
+
+#[test]
+fn a_generic_choices_payload_binds_at_the_scrutinees_arguments() {
+    // The false positive: `n` used to bind at the declaration's `L`, so
+    // returning it where `I64` is written was `SC0525`, *expected `I64`, found
+    // `L`*, on a correct program.
+    let checked = check(&format!(
+        "{GENERIC_CHOICE}
+def f(e: E of (I64, Bool)) -> I64:
+    match e:
+        Left(n): n
+        Right(_): 0
+"
+    ));
+    checked.assert_clean();
+}
+
+#[test]
+fn a_generic_choices_payload_is_still_checked_at_those_arguments() {
+    // The other half. `Right(b)` is a `Bool` at this instantiation, so
+    // returning it as an `I64` is a mistake and the substitution must not have
+    // turned the payload into something that agrees with everything.
+    let checked = check(&format!(
+        "{GENERIC_CHOICE}
+def f(e: E of (I64, Bool)) -> I64:
+    match e:
+        Left(n): n
+        Right(b): b
+"
+    ));
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(checked.messages(), vec!["expected `I64`, found `Bool`"]);
+}
+
+#[test]
+fn a_borrowed_scrutinee_is_read_through_for_its_arguments() {
+    // A borrow is transparent to the substitution for `BodyChecker::field`'s
+    // reason, and the binding is *not* re-borrowed: `n` is an `I64`, not a
+    // `borrowed I64`.
+    let checked = check(&format!(
+        "{GENERIC_CHOICE}
+def f(e: borrowed E of (I64, Bool)) -> I64:
+    match e:
+        Left(n): n
+        Right(_): 0
+"
+    ));
+    checked.assert_clean();
+}
+
+#[test]
+fn a_nested_payload_is_substituted_at_every_depth() {
+    // One substitution applied to the whole declared type, so `Array of T` and
+    // `Pair of (T, T)` are rewritten by the same fold that rewrites a bare `T`.
+    let checked = check(
+        "\
+type Pair of (A, B):
+    left: A
+    right: B
+
+choice Wrap of T:
+    One(Array of T)
+    Two(Pair of (T, T))
+
+def total(w: borrowed Wrap of I64) -> I64:
+    match w:
+        One(xs): 0
+        Two(p): p.left
+",
+    );
+    checked.assert_clean();
+}
+
+#[test]
+fn a_nested_payload_is_still_checked_at_every_depth() {
+    let checked = check(
+        "\
+type Pair of (A, B):
+    left: A
+    right: B
+
+choice Wrap of T:
+    One(Array of T)
+    Two(Pair of (T, T))
+
+def total(w: borrowed Wrap of Bool) -> I64:
+    match w:
+        One(xs): 0
+        Two(p): p.left
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(checked.messages(), vec!["expected `I64`, found `Bool`"]);
+}
+
+#[test]
+fn a_generic_records_field_pattern_binds_at_the_scrutinees_arguments() {
+    // The same hole at the other shape. `BodyChecker::field` already
+    // substituted for `p.left`; the pattern spelling did not.
+    let checked = check(
+        "\
+type Pair of (A, B):
+    left: A
+    right: B
+
+def left_of(p: Pair of (I64, Bool)) -> I64:
+    match p:
+        Pair(left: l, right: _): l
+",
+    );
+    checked.assert_clean();
+}
+
+#[test]
+fn a_generic_records_field_pattern_is_still_checked_at_those_arguments() {
+    let checked = check(
+        "\
+type Pair of (A, B):
+    left: A
+    right: B
+
+def left_of(p: Pair of (I64, Bool)) -> I64:
+    match p:
+        Pair(left: _, right: r): r
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(checked.messages(), vec!["expected `I64`, found `Bool`"]);
+}
+
+#[test]
+fn an_uninstantiated_scrutinee_leaves_the_payload_as_declared() {
+    // The stated cost: inside a generic function there is nothing to
+    // substitute, so the payload is the declaration's `L` and `L` is what the
+    // binding has. That is right — it is the same type the body's own `T` is —
+    // and this pins that the empty answer is not `Ty::ERROR`.
+    let checked = check(
+        "\
+choice E of (L, R):
+    Left(L)
+    Right(R)
+
+def first of (A, B)(e: E of (A, B), fallback: A) -> A:
+    match e:
+        Left(n): n
+        Right(_): fallback
+",
+    );
+    checked.assert_clean();
+}
+
+
+// --- an `extern` block's `type Herr is I32` is an alias ---------------------
+//
+// `alias`' `Aliases::of` collected module-level aliases and nothing else, so an
+// extern alias was a `TyKind::Named` with no body: it equalled only itself,
+// implemented nothing and had no methods. Nothing asked until
+// `implements_operand` asked whether `examples/20_extern.science`'s `opened`
+// implements `Ord`. It does — it is an `I32`.
+
+const EXTERN: &str = "\
+unsafe extern \"C\" library \"hdf5\":
+    type Hid is I64
+    type Herr is I32
+
+    def H5open() -> Herr
+";
+
+#[test]
+fn an_extern_alias_is_revealed_to_the_type_it_names() {
+    let checked = check(&format!(
+        "{EXTERN}
+def opened() -> I32:
+    unsafe:
+        H5open()
+"
+    ));
+    checked.assert_clean();
+}
+
+#[test]
+fn an_extern_alias_still_refuses_the_wrong_type() {
+    // The other half: revealing `Herr` to `I32` must not make it agree with
+    // everything. An `I32` returned where a `String` is written is a mismatch.
+    let checked = check(&format!(
+        "{EXTERN}
+def opened() -> String:
+    unsafe:
+        H5open()
+"
+    ));
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(checked.messages(), vec!["expected `String`, found `Herr`"]);
+}
+
+#[test]
+fn a_comparison_through_an_extern_alias_finds_the_primitives_ord() {
+    // `examples/20_extern.science`'s own line, reduced: `if opened < 0:` where
+    // `opened` is a `Herr`. Before the alias was collected this was
+    // `SC0535`, *`Herr` does not implement `Ord`*, about a type that is an
+    // `I32`.
+    let checked = check(&format!(
+        "{EXTERN}
+def failed() -> Bool:
+    unsafe:
+        let opened be H5open()
+        opened < 0
+"
+    ));
+    checked.assert_clean();
+}

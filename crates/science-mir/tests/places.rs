@@ -22,7 +22,13 @@ fn projections(lowered: &support::Lowered, name: &str) -> Vec<String> {
                 if let Rvalue::Ref { place, .. } | Rvalue::Discriminant(place) = rvalue {
                     out.push(describe(place));
                 }
-                if let Rvalue::Use(operand) = rvalue {
+                // `Rvalue::Coerce` beside `Rvalue::Use`: `assign`'s §7 reads
+                // a value out of a borrow of a `Copy` type, so an `a[i]` whose
+                // element is a scalar arrives as the operand of a coercion
+                // rather than bare. The place under it is the same place, and a
+                // scanner that looked only at `Use` would report the projection
+                // missing the day the prelude gave `Index` a return type.
+                if let Rvalue::Use(operand) | Rvalue::Coerce { operand, .. } = rvalue {
                     if let Some(place) = operand.place() {
                         out.push(describe(place));
                     }

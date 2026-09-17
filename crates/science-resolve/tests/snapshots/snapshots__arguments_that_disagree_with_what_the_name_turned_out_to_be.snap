@@ -2,28 +2,28 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![doc, helper, f, g, h]))"
 ---
-Module `main` #335 @0..82
-  Record `Doc` #336 @0..16
+Module `main` #352 @0..82
+  Record `Doc` #353 @0..16
     fields
-      Field `title` #337 @0..12
+      Field `title` #354 @0..12
         type: Path -> `String` #16 @0..6
-  Fn `helper` #338 @17..25
+  Fn `helper` #355 @17..25
     body: Block @24..25
-  Fn `f` #339 @26..40
+  Fn `f` #356 @26..40
     body: Block @28..40
       tail: Call @28..38
-        callee: Path -> `Doc` #336 @28..31
+        callee: Path -> `Doc` #353 @28..31
         args
           Str "a" @32..35
-  Fn `g` #340 @41..61
+  Fn `g` #357 @41..61
     body: Block @41..61
-      tail: StructLit -> `helper` #338 @41..57
+      tail: StructLit -> `helper` #355 @41..57
         fields
           FieldInit `title` -> <error> @41..57
             value: Str "a" @41..44
-  Fn `h` #341 @62..82
+  Fn `h` #358 @62..82
     body: Block @62..82
-      tail: StructLit -> `Doc` #336 @62..78
+      tail: StructLit -> `Doc` #353 @62..78
         fields
           FieldInit `subtitle` -> <error> @62..78
             value: Str "a" @62..65

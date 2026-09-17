@@ -93,6 +93,13 @@ const LIBRARY_TYPES: &[&str] = &["Array", "Map", "Box", "Chars", "IoError", "Tex
 const INTERFACES: &[&str] = &[
     "Add", "Sub", "Mul", "Div", "Rem", "Pow", "MatMul", "Neg", "Index", "Eq", "Ord", "Copy",
     "Clone", "Drop", "Iterate", "From", "Display",
+    // `IndexMutably`, the eighteenth. §5.4 lists seventeen and does not have
+    // it; `indexing-and-array-literals.md` §1.1's Decision 2 adds it, as the
+    // half of indexing that `a[i] be v` dispatches to — the form §6.5 promises
+    // and the parser already accepts. Declaring `Index` alone would leave every
+    // write through an index unchecked, which is the silence that note's
+    // amendment measures.
+    "IndexMutably",
     // `Error`, the one-method interface of revision 2 §3.4. It is in the
     // prelude and not in a module because `-> (T, Error?)` is the signature of
     // every fallible function in the language, and a name that common cannot
@@ -192,6 +199,11 @@ enum Ty {
     Assoc(&'static str),
     /// `borrowed T`.
     Ref(&'static Ty),
+    /// `mutable borrowed T`. Written out rather than a flag on [`Ty::Ref`]
+    /// because the one declaration that needs it — `IndexMutably.index_mutably`
+    /// — is the only place in this file where the two differ, and a `bool` at
+    /// every `Ref` would be a parameter every other line has to read past.
+    MutRef(&'static Ty),
     /// `T?` (revision 2 §3.1).
     Opt(&'static Ty),
     /// A pair, which is what `-> (T, Error?)` is.
@@ -225,8 +237,11 @@ struct Block {
     ty: &'static str,
     /// The block's own generic parameters — the `T` of `Array of T has:`.
     generics: &'static [&'static str],
-    /// `Some` for `implements`, `None` for the inherent `has:`.
-    interface: Option<&'static str>,
+    /// `Some` for `implements`, `None` for the inherent `has:`, carrying the
+    /// interface's *arguments*: `Array of T implements Index of Int:` is
+    /// `Some(("Index", &[INT]))`. The list is empty for an interface that takes
+    /// no parameter, which is every one of them but two.
+    interface: Option<(&'static str, &'static [Ty])>,
     /// `type Item is Char` — this block's side of §5.4.
     assoc: &'static [(&'static str, Ty)],
     methods: &'static [Method],
@@ -236,34 +251,46 @@ struct Block {
 #[derive(Debug, Clone, Copy)]
 struct InterfaceDecl {
     name: &'static str,
+    /// The interface's own parameters — the `Idx` of `interface Index of Idx:`.
+    /// Empty for every interface that is a bare name.
+    generics: &'static [&'static str],
     /// `type Item`, declared and unanswered.
     assoc: &'static [&'static str],
     methods: &'static [Method],
 }
 
-/// The interfaces that get a method, and why only two do.
+/// The interfaces that get a method, and why only four do.
 ///
 /// **Decision. An interface is declared with its methods only where a note
 /// gives the method's name and its types.** `Error.message` is
 /// `stdlib-core.md` §7.5 verbatim; `Iterate.next` is the one
-/// `collections-and-chains.md` builds its chain vocabulary on. The other
-/// fifteen — `Add`, `Ord`, `Eq`, `Display`, `Index` and the rest — are declared
-/// as **names with implementations and no methods**, which is the whole of what
-/// the bound check needs: `methods`' §7 asks *"does `I64` implement `Ord`"* and
-/// never *"what is `Ord`'s method called"*.
+/// `collections-and-chains.md` builds its chain vocabulary on; `Index.index`
+/// and `IndexMutably.index_mutably` are `indexing-and-array-literals.md`
+/// §1.1's Decision 2, written out in Science in that note and transcribed
+/// below. The other fourteen — `Add`, `Ord`, `Eq`, `Display` and the rest —
+/// are declared as **names with implementations and no methods**, which is the
+/// whole of what the bound check needs: `methods`' §7 asks *"does `I64`
+/// implement `Ord`"* and never *"what is `Ord`'s method called"*.
 ///
-/// **The cost, stated: operator dispatch does not close.** `check`'s §6 wants
-/// *"a rule anywhere saying which method name each operator dispatches to"*,
-/// and writing `Ord.compare -> Ordering` or `Display.display(Formatter)` here
-/// would invent `Ordering` and `Formatter` as well — two Level 1 types no note
-/// has specified, arriving as a side effect of a bound check. A signature
-/// invented in passing is how a language acquires a design nobody argued for,
-/// so the fifteen stay methodless and `check`'s §6 keeps its hole with a
-/// narrower reason: the implementations are there now, and only the method
-/// names are missing.
+/// **The cost, stated: two operators still do not dispatch.** `check`'s §6
+/// wants *"a rule anywhere saying which method name each operator dispatches
+/// to"*, and for `< > <= >=` and for `print` there is none. Writing
+/// `Ord.compare -> Ordering` or `Display.display(Formatter)` here would invent
+/// `Ordering` and `Formatter` — two Level 1 types no note has specified,
+/// arriving as a side effect of a bound check — and `Ord` would need a third
+/// thing besides: a rule for how four operators sit over one `compare`,
+/// including what `F64`'s NaN does to a total order. A signature invented in
+/// passing is how a language acquires a design nobody argued for, so the
+/// fourteen stay methodless.
+///
+/// **What the fourteen do buy, now that the implementations are declared**, is
+/// the *requirement*: `check`'s `implements_operand` refuses `a < b` on a type
+/// that has no `implements Ord:` block without ever naming `Ord`'s method. The
+/// hole that is left is the dispatch and only the dispatch.
 const INTERFACE_DECLS: &[InterfaceDecl] = &[
     InterfaceDecl {
         name: "Error",
+        generics: &[],
         assoc: &[],
         // §7.5's `cause` is *defaulted* — it has a body — and a body is the one
         // thing a declaration cannot carry. Declaring it here would turn a
@@ -277,12 +304,78 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
     },
     InterfaceDecl {
         name: "Iterate",
+        generics: &[],
         assoc: &["Item"],
         methods: &[Method {
             name: "next",
             recv: Some(SelfKind::Mutable),
             params: &[],
             ret: Some(Ty::Opt(&Ty::Assoc("Item"))),
+        }],
+    },
+    // --- `indexing-and-array-literals.md` §1.1, Decision 2 ----------------
+    //
+    // **The third and fourth interfaces to get a method, and they are the
+    // first ones this file declares that §5.4 does not.** The rule above is
+    // unchanged — *an interface is declared with its methods only where a note
+    // gives the method's name **and its types*** — and §1.1 gives both, in
+    // Science, verbatim:
+    //
+    // ```text
+    // interface Index of Idx:
+    //     type Output
+    //     def index(self, at: Idx) -> borrowed Self.Output
+    //
+    // interface IndexMutably of Idx:
+    //     type Output
+    //     def index_mutably(mutable self, at: Idx) -> mutable borrowed Self.Output
+    // ```
+    //
+    // So no name and no type here is invented. What *was* missing is the
+    // shape: an associated type on a **parameterised** interface, which that
+    // note's own amendment names as the blocker — `Iterate.Item` was the only
+    // associated type in the language and `Iterate` takes no parameter. The
+    // shape turned out to be two independent pieces the declarer already had
+    // one of each: `From of ParseError` is a parameterised interface the
+    // corpus writes, `Iterate.Item` is an associated type an implementation
+    // answers, and nothing in `science-types` cared that no declaration put the
+    // two in one interface. [`InterfaceDecl::generics`] and [`Block::interface`]
+    // carrying arguments are the whole of the change.
+    //
+    // **`Self.Output` resolves the way `Self.Item` does**, through
+    // `Declarations::body_substitution`: the implementation's `type Output is
+    // T` is bound under *both* its own definition and the interface's, by name,
+    // and `check`'s `block_substitution` then rewrites the `T` in it with the
+    // receiver's argument. The interface's `Idx` is not in that path at all —
+    // it is a parameter of the *bound*, and the operand's type is read off the
+    // implementation's own `index` exactly as `+`'s is. That is what makes the
+    // parameterised-plus-associated shape cost nothing extra: the two halves
+    // never meet.
+    //
+    // **Two interfaces rather than one**, which is Decision 2's whole content:
+    // a read-only container implements only the first, and `a[i] be v` on one
+    // is `SC0535` naming `IndexMutably` rather than a sentence about
+    // mutability in the abstract.
+    InterfaceDecl {
+        name: "Index",
+        generics: &["Idx"],
+        assoc: &["Output"],
+        methods: &[Method {
+            name: "index",
+            recv: Some(SelfKind::Shared),
+            params: &[("at", Ty::Var("Idx"))],
+            ret: Some(Ty::Ref(&Ty::Assoc("Output"))),
+        }],
+    },
+    InterfaceDecl {
+        name: "IndexMutably",
+        generics: &["Idx"],
+        assoc: &["Output"],
+        methods: &[Method {
+            name: "index_mutably",
+            recv: Some(SelfKind::Mutable),
+            params: &[("at", Ty::Var("Idx"))],
+            ret: Some(Ty::MutRef(&Ty::Assoc("Output"))),
         }],
     },
 ];
@@ -698,8 +791,53 @@ const BLOCKS: &[Block] = &[
     Block {
         ty: "Array",
         generics: &["T"],
-        interface: Some("Iterate"),
+        interface: Some(("Iterate", &[])),
         assoc: &[("Item", Ty::Ref(&Ty::Var("T")))],
+        methods: &[],
+    },
+    // --- `Array of T implements Index of Int`, §1.1 ------------------------
+    //
+    // **`Idx` is `Int`, and it is read off `Array.get` rather than decided
+    // here.** §3.6 declares `def get(self, index: Int) -> (borrowed T)?` and
+    // §1.3's canonical discharged index is `a[i]` inside
+    // `for i in 0..a.length():`, whose bound is `length() -> Int`. So both the
+    // sibling accessor and the loop the note writes hand an `Int`, and the two
+    // spellings of one operation agree.
+    //
+    // **The cost, stated, and it is inherited rather than introduced.** `Int`
+    // and `I64` are separate primitives in this prelude, so `xs[i]` where `i`
+    // is an `I64` is `SC0525` — exactly as `xs.get(i)` already is today. The
+    // disagreement is `stdlib-core.md` §3.6's against Decision 2's integer
+    // literal default, it predates this declaration, and choosing `I64` here to
+    // dodge it would make `a[i]` and `a.get(i)` want different index types,
+    // which is the worse half of the same wart. Named in the report as the
+    // thing to reconcile.
+    //
+    // **`Output is T` and not `borrowed T`**, which is where this differs from
+    // `Iterate.Item` above. The borrow is in the *method's return* — `->
+    // borrowed Self.Output` — so `Output` is the element and the reference is
+    // the interface's, not the associated type's. Writing `borrowed T` here
+    // would make `a[i]` a `borrowed borrowed T`.
+    //
+    // **`Map` is deliberately absent, and it is the same finding
+    // `Map`'s missing `Iterate` is.** `Map of (K, V) implements Index of K`
+    // would be an indexing operation that panics on a key that is not there,
+    // and §1.3's four discharge rules are all about an *extent* — none of them
+    // can speak about a key. §1.1 never names `Map`, so declaring it would be
+    // deciding what `m[k]` does on a miss in a file nobody reads. `Map.get`
+    // returns `(borrowed V)?` and says so.
+    Block {
+        ty: "Array",
+        generics: &["T"],
+        interface: Some(("Index", &[INT])),
+        assoc: &[("Output", Ty::Var("T"))],
+        methods: &[],
+    },
+    Block {
+        ty: "Array",
+        generics: &["T"],
+        interface: Some(("IndexMutably", &[INT])),
+        assoc: &[("Output", Ty::Var("T"))],
         methods: &[],
     },
     // --- Chars ------------------------------------------------------------
@@ -709,7 +847,7 @@ const BLOCKS: &[Block] = &[
     Block {
         ty: "Chars",
         generics: &[],
-        interface: Some("Iterate"),
+        interface: Some(("Iterate", &[])),
         assoc: &[("Item", CHAR)],
         methods: &[],
     },
@@ -840,6 +978,9 @@ impl Declarer<'_> {
             Ty::Ref(inner) => {
                 hir::TypeKind::Borrowed { mutable: false, inner: Box::new(self.ty(inner, scope)) }
             }
+            Ty::MutRef(inner) => {
+                hir::TypeKind::Borrowed { mutable: true, inner: Box::new(self.ty(inner, scope)) }
+            }
             Ty::Opt(inner) => hir::TypeKind::Nullable(Box::new(self.ty(inner, scope))),
             Ty::Pair(left, right) => {
                 hir::TypeKind::Tuple(vec![self.ty(left, scope), self.ty(right, scope)])
@@ -848,11 +989,11 @@ impl Declarer<'_> {
         hir::Type { kind, span: BUILTIN_SPAN }
     }
 
-    fn bound(&self, interface: &str) -> hir::Bound {
+    fn bound(&self, interface: &str, args: &[Ty], scope: &Scope<'_>) -> hir::Bound {
         hir::Bound {
             kind: hir::BoundKind::Interface {
                 res: Res::Def(self.named(interface)),
-                generics: Vec::new(),
+                generics: args.iter().map(|arg| self.ty(arg, scope)).collect(),
             },
             span: BUILTIN_SPAN,
         }
@@ -898,13 +1039,26 @@ impl Declarer<'_> {
                 hir::AssocType { def: id, ty: None, span: BUILTIN_SPAN }
             })
             .collect();
-        let generics = HashMap::new();
+        let mut generics = HashMap::new();
+        let generic_params: Vec<hir::GenericParam> = decl
+            .generics
+            .iter()
+            .map(|name| {
+                let id = self.defs.alloc(DefKind::TypeParam, *name, BUILTIN_SPAN, Some(def));
+                generics.insert(*name, id);
+                hir::GenericParam {
+                    def: id,
+                    kind: hir::GenericParamKind::Type { bounds: Vec::new() },
+                    span: BUILTIN_SPAN,
+                }
+            })
+            .collect();
         let scope = Scope { generics: &generics, assocs: &assocs };
         let methods: Vec<hir::Fn> =
             decl.methods.iter().map(|method| self.function(method, def, &scope)).collect();
         self.item(hir::ItemKind::Interface(hir::Interface {
             def,
-            generics: Vec::new(),
+            generics: generic_params,
             supers: Vec::new(),
             where_clause: Vec::new(),
             assoc_types,
@@ -973,7 +1127,7 @@ impl Declarer<'_> {
         let scope = Scope { generics: &generics, assocs: &assocs };
         let methods: Vec<hir::Fn> =
             block.methods.iter().map(|method| self.function(method, def, &scope)).collect();
-        let interface = block.interface.map(|name| self.bound(name));
+        let interface = block.interface.map(|(name, args)| self.bound(name, args, &scope));
         self.item(hir::ItemKind::Impl(hir::Impl {
             def,
             generics: generic_params,
@@ -991,7 +1145,7 @@ impl Declarer<'_> {
         self.block(&Block {
             ty,
             generics: &[],
-            interface: Some(interface),
+            interface: Some((interface, &[])),
             assoc: &[],
             methods: &[],
         });
@@ -1232,6 +1386,78 @@ mod tests {
         assert!(matches!(get.recv, Some(SelfKind::Shared)));
         assert!(matches!(get.params, [("key", Ty::Ref(Ty::Var("K")))]));
         assert!(matches!(get.ret, Some(Ty::Opt(Ty::Ref(Ty::Var("V"))))));
+    }
+
+    #[test]
+    fn indexing_is_declared_the_way_section_1_1_writes_it() {
+        // Asserted as *text*, for `map_get_borrows_its_map_and_not_its_key`'s
+        // reason: `science-types` reads this through three crates and a test at
+        // the far end would not say which spelling it was reading.
+        //
+        // `indexing-and-array-literals.md` §1.1, Decision 2:
+        //
+        //     interface Index of Idx:
+        //         type Output
+        //         def index(self, at: Idx) -> borrowed Self.Output
+        //
+        //     interface IndexMutably of Idx:
+        //         type Output
+        //         def index_mutably(mutable self, at: Idx)
+        //             -> mutable borrowed Self.Output
+        let read = INTERFACE_DECLS.iter().find(|d| d.name == "Index").expect("`Index`");
+        assert_eq!(read.generics, &["Idx"]);
+        assert_eq!(read.assoc, &["Output"]);
+        let index = read.methods.iter().find(|m| m.name == "index").expect("`Index.index`");
+        assert!(matches!(index.recv, Some(SelfKind::Shared)));
+        assert!(matches!(index.params, [("at", Ty::Var("Idx"))]));
+        assert!(matches!(index.ret, Some(Ty::Ref(Ty::Assoc("Output")))));
+
+        let write =
+            INTERFACE_DECLS.iter().find(|d| d.name == "IndexMutably").expect("`IndexMutably`");
+        assert_eq!(write.generics, &["Idx"]);
+        assert_eq!(write.assoc, &["Output"]);
+        let index_mutably = write
+            .methods
+            .iter()
+            .find(|m| m.name == "index_mutably")
+            .expect("`IndexMutably.index_mutably`");
+        assert!(matches!(index_mutably.recv, Some(SelfKind::Mutable)));
+        assert!(matches!(index_mutably.params, [("at", Ty::Var("Idx"))]));
+        assert!(matches!(index_mutably.ret, Some(Ty::MutRef(Ty::Assoc("Output")))));
+    }
+
+    #[test]
+    fn an_array_is_indexed_by_an_int_and_yields_its_element() {
+        // `Output is T` and not `borrowed T`: the borrow is in the interface's
+        // return, so writing it here too would make `a[i]` a
+        // `borrowed borrowed T`.
+        let blocks: Vec<&Block> = BLOCKS
+            .iter()
+            .filter(|block| {
+                block.ty == "Array"
+                    && matches!(block.interface, Some(("Index" | "IndexMutably", _)))
+            })
+            .collect();
+        assert_eq!(blocks.len(), 2, "`Array` implements both halves of Decision 2");
+        for block in blocks {
+            assert!(matches!(block.interface, Some((_, [Ty::Name("Int")]))));
+            assert!(matches!(block.assoc, [("Output", Ty::Var("T"))]));
+            // The method is the interface's, contributed by `methods`' §2. A
+            // second declaration here would be one the prelude has no body for.
+            assert!(block.methods.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_map_is_not_indexable() {
+        // §1.1 never names `Map`, and §1.3's four discharge rules are all about
+        // an *extent* — none of them can speak about a key. `Map.get` returns
+        // `(borrowed V)?` and says so. Pinned, so that adding `Map implements
+        // Index of K:` is a decision somebody takes rather than a line somebody
+        // adds.
+        assert!(!BLOCKS.iter().any(|block| {
+            block.ty == "Map" && matches!(block.interface, Some(("Index" | "IndexMutably", _)))
+        }));
     }
 
     #[test]

@@ -583,11 +583,15 @@ def name_of(format: borrowed Format) -> I64:
 /// does not depend on the instantiation and needs no substitution to read.
 ///
 /// **The payload is bound and not used**, and that is deliberate rather than
-/// incidental. `check`'s `pattern` gives the binding in `Left(n)` the
-/// *declaration's* `L` rather than the instantiation's `I64`, so `Left(n): n`
-/// at an `I64` return is `SC0525` for a reason that has nothing to do with this
-/// pass — a hole that is `check`'s and was found by writing this test. The
-/// constructor *set* is right either way, which is what is being pinned here.
+/// incidental: what is pinned here is the constructor *set*, which does not
+/// depend on the instantiation.
+///
+/// This test used to carry the hole it found — `check`'s `pattern` gave the
+/// binding in `Left(n)` the *declaration's* `L` rather than the instantiation's
+/// `I64`, so `Left(n): n` at an `I64` return was `SC0525` on a correct program.
+/// It is closed: `check`'s `scrutinee_substitution` is §9, and
+/// `tests/checking.rs` holds the pair of tests that the right program passes
+/// and the wrong one is still refused.
 #[test]
 fn a_generic_choice_is_complete_at_its_declared_variants() {
     let checked = check(

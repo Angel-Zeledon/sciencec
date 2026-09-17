@@ -247,6 +247,13 @@ impl<'a> TypeLowerer<'a> {
         generics.iter().map(|generic| self.lower_arg(generic)).collect()
     }
 
+    /// The same, for a caller outside this module: `items`' §4a lowers the
+    /// arguments of an `implements I of Args` bound, which is a list of
+    /// [`hir::Type`] in exactly the shape a generic use writes.
+    pub fn lower_args_public(&mut self, generics: &[hir::Type]) -> Vec<GenericArg> {
+        self.lower_args(generics)
+    }
+
     fn lower_path(&mut self, res: Res, generics: &[hir::Type], span: Span) -> Ty {
         let def = match res {
             Res::Def(def) => def,
