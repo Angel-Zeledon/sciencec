@@ -97,8 +97,18 @@ should now expect rather than be surprised by.
 
 | Codes | Where |
 |---|---|
-| `SC0001`, `SC0003`–`SC0011`, `SC0016`–`SC0017` | `crates/science-lexer/src/lexer.rs` |
-| `SC0100`–`SC0116`, `SC0118`, `SC0138`–`SC0139`, `SC0141`–`SC0144`, `SC0155`–`SC0157` | `crates/science-parser/src/parser.rs` |
+| `SC0001`, `SC0003`–`SC0011`, `SC0016`–`SC0017` | `crates/science-lexer` |
+| `SC0100`–`SC0112`, `SC0115`–`SC0119`, `SC0138`–`SC0139`, `SC0141`–`SC0144`, `SC0155`–`SC0157`, `SC0190`–`SC0198` | `crates/science-parser` |
+| `SC0411`–`SC0414`, `SC0417`, `SC0420`–`SC0421`, `SC0431`, `SC0434` | `crates/science-parser` — `ffi-c-boundary.md`'s block, emitted where `extern` is *parsed*. A band is a topic, not a crate. |
+| `SC0200`–`SC0212`, `SC0220`–`SC0221` | `crates/science-resolve` |
+| `SC0140`, `SC0260`–`SC0261`, `SC0520`, `SC0523`–`SC0530` | `crates/science-types` |
+| `SC0400`–`SC0409`, `SC0429`, `SC0431`, `SC0461` | `crates/science-codegen` |
+| `SC0900`–`SC0901` | `crates/science-fmt` |
+
+`SC0431` appears twice on purpose and is not a seventh collision: it is
+`ffi-c-boundary.md`'s `F16`/`BF16`-by-value check, which can fire when the
+`extern` block is parsed or when the call is lowered, and both definitions say
+*"referenced, not claimed"* in their doc comments.
 
 `SC0002` is unallocated. `SC0115` (nested `each`), `SC0116` (an ambiguous
 `Array of Doc.new()`) and `SC0118` (`returns` written where `->` belongs) are
@@ -110,8 +120,10 @@ allocated by a design note and then implemented the same day.
 commit that needed them rather than from a note's block. `SC0156` is the
 instructive one: `def-and-lambda.md` §9.3 had pre-allocated `SC0136` for exactly
 that contingency, and the implementation did not use it, because a keyword
-migration is written next to the other keyword migrations. **Both `SC0119` and
-`SC0136` are returned to the free pool** — see the Syntax row below.
+migration is written next to the other keyword migrations. `SC0136` is returned
+to the free pool. **`SC0119` was returned and has since been taken again** —
+it is `EXPECTED_BOUND_ARROW` in the parser — which is why the Syntax row below
+no longer lists it.
 
 ### Claimed by notes
 
@@ -176,13 +188,14 @@ supersedes the sub-range claims inside those two notes:
 
 | Sub-range | Owner |
 |---|---|
-| `SC0400`–`SC0409` | General codegen. Unclaimed. |
+| `SC0400`–`SC0409` | `codegen-and-linking.md`. **Shipped.** |
 | `SC0410`–`SC0449` | `ffi-c-boundary.md` — `extern` declarations and FFI types |
 | `SC0450`–`SC0459` | `python-interop.md` — the Python boundary |
 | `SC0460`–`SC0461` | `ffi-c-boundary.md` — linking |
 | `SC0462`–`SC0470` | `rust-interop.md` |
 | `SC0471`–`SC0479` | `native-dependencies.md` |
-| `SC0480`–`SC0499` | Free |
+| `SC0480`–`SC0489` | `rust-binding-generation.md` |
+| `SC0490`–`SC0499` | `c-binding-coverage.md` |
 
 Notes also *amend* codes they do not own — `unit-literals.md` adds a note to the
 existing `SC0009`, `script-mode.md` changes `SC0101`'s wording and reuses
@@ -193,14 +206,36 @@ existing `SC0009`, `script-mode.md` changes `SC0101`'s wording and reuses
 | Range | Free |
 |---|---|
 | Lexical | `SC0002`, `SC0018`–`SC0099` |
-| Syntax | `SC0119`, `SC0136`, `SC0158`–`SC0159`, `SC0161`–`SC0169`, `SC0178`–`SC0179` |
-| Resolution | `SC0200`–`SC0211`, `SC0222`–`SC0229`, `SC0241`–`SC0245` |
-| Types | `SC0250`, `SC0299`, and `SC0504`–`SC0799` in the second band |
-| Ownership | everything but `SC0301`–`SC0302`, `SC0331`–`SC0332`, `SC0380` |
-| Codegen | `SC0400`–`SC0409` only — see the partition above |
+| Syntax | `SC0113`–`SC0114`, `SC0136`, `SC0158`–`SC0159`, `SC0161`–`SC0169`, `SC0178`–`SC0179` |
+| Resolution | `SC0222`–`SC0229`, `SC0241`–`SC0245` |
+| Types | `SC0250`, `SC0299`, `SC0580`–`SC0799` |
+| Ownership | `SC0300`, `SC0303`–`SC0329`, `SC0399` |
+| Codegen | **none** |
 
 The notes index above is the allocation record. A note that claims a block adds
 its row before writing, not after.
+
+**The free table above was wrong in four of its six rows, and this is the
+seventh finding of the kind.** It is a different failure from the six collisions
+recorded above and worth separating, because the fix is different. Those six
+were two notes claiming one range. This one was the free table falling behind
+the *other tables in this same file*: it still offered `SC0200`–`SC0211` after
+the resolver shipped all twelve, `SC0504`–`SC0799` after `mcp-servers.md` and
+`type-checking-and-mir.md` claimed through `SC0579` in the claims table twenty
+lines up, and `SC0400`–`SC0409` after `codegen-and-linking.md` claimed and
+shipped them. The Ownership row predated `region-inference.md` and
+`concurrency-and-cancellation.md` entirely, so it declared free a range those
+two notes had taken. The codegen partition said `SC0480`–`SC0499` was free while
+the claims table gave it to two notes.
+
+So a note doing what this file tells it to do — check the table before
+allocating — would have been handed a code already in use, four different ways.
+**A derived table that is maintained by hand is a cache with no invalidation.**
+The rows above are now computed against the crates rather than remembered:
+`grep -rhoE 'Code\([0-9]+\)' crates/*/src/` gives what is shipped, and the
+claims table gives what is reserved. Recompute both after any commit that adds a
+code, and prefer deleting this table to leaving it stale — an absent list sends
+the reader to the source, and a wrong one does not.
 
 The Syntax row was wrong until now and said so in both directions at once: it
 offered `SC0138`–`SC0149` as free while the table above recorded `SC0138`–`SC0139`
