@@ -656,6 +656,32 @@ is what makes `values.iterate().sum()` compile when `Item = borrowed F32`, and i
 is the reason `sum()`'s signature is written `where Self.Item: Add of Output =
 Total` rather than returning `Self.Item`.
 
+> **AMENDMENT 7a: the behaviour is right and the mechanism is not what this
+> says.** `borrowed F32 + borrowed F32` is `F32`, and
+> `for n in numbers: total be total + n` compiles — but **no operator interface
+> is implemented for a borrowed operand.** `implements(borrowed F32, Add)`
+> answers *no*. What happens instead is that a borrow of a `Copy` type coerces
+> to a value at each operand, so the addition the checker sees is `F32 + F32`
+> and the implementation it finds is the ordinary one.
+>
+> The difference is not cosmetic and it is worth having in writing:
+>
+> - **It is one rule, not a table.** This amendment as written asks for an
+>   implementation per primitive per operator — ten operators over a dozen
+>   numeric types, each needing `Output` to be the owned form. The coercion
+>   states it once, and gets `borrowed Char == Char` and every future operator
+>   for free.
+> - **It does not reach a non-`Copy` type.** `borrowed String + borrowed String`
+>   does *not* work, where this amendment implies it would. That is the right
+>   answer — concatenating two borrowed strings allocates, and the coercion is
+>   defended on the ground that it changes no value — but it is a narrower
+>   promise than the text above makes.
+>
+> **And the clause after it is not implementable yet.** `sum()`'s signature is
+> given as `where Self.Item: Add of Output = Total` — a bound on an *associated
+> type's equality*. The prelude's operator interfaces have no associated types
+> at all, and `Add` takes no parameter, so that bound has nothing to attach to.
+> `sum()` is not declared, and this is why.
 With those two rules, `.owned()` is needed only where it is genuinely meaningful:
 the user wants values that outlive the source, and the item is not `Copy`. It is
 one method rather than Rust's `cloned` plus `copied`, because the distinction

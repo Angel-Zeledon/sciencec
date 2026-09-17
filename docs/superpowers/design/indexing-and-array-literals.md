@@ -107,6 +107,32 @@ interface IndexMutably of Idx:
     def index_mutably(mutable self, at: Idx) -> mutable borrowed Self.Output
 ```
 
+> **AMENDMENT: neither interface is what the prelude declares, and the gap is
+> the whole of §1.1's ask.** `builtins.rs` has `Index` as a bare name — **no
+> `of Idx` parameter, no `type Output`, no method** — and has no `IndexMutably`
+> at all.
+>
+> Operator dispatch still works, because the operator fixes only the method's
+> *name* and the operand and result types are read off whatever implementation
+> the receiver actually has. So `a[i]` has a type now where it used to be
+> `Ty::ERROR`. Two things it does not buy:
+>
+> - **`Doc implements Index of Int:` cannot be written**, because the prelude's
+>   `Index` takes no parameter. A user type cannot be indexed at all.
+> - **`a[i] be v` is still unchecked**, because that is `IndexMutably`'s and it
+>   does not exist. §6.5 promises the form and the parser accepts it; nothing
+>   verifies it.
+>
+> **What blocks the declaration is `type Output`, not effort.** An associated
+> type on a *parameterised* interface is a shape the prelude has never declared
+> — `Iterate.Item` is the only associated type in the language and `Iterate`
+> takes no parameter. Whoever adds it is deciding how `Self.Output` resolves
+> when `Idx` is what selects the implementation, which is §5.3's question and
+> not this note's.
+>
+> §8 calls `Index` *"the largest type-system ask, and everything in §1 and §2
+> sits on it"*. That is still true, and it is now true with a number attached:
+> the ask is one parameterised interface with one associated type.
 `a[i] be v` requires `IndexMutably`; `a[i]` on the right of a `be` requires
 `Index`. A read-only container implements only the first, and the diagnostic for
 assigning through it names the missing implementation rather than talking about

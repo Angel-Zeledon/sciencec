@@ -49,10 +49,24 @@ script binding. All `SC0212` would have added is a better message than
 `SC0200`'s "cannot find `threshold` in this scope", and buying it means teaching
 the resolver which item is the script body.
 
-**`SC0213` and `SC0458` are not implementable yet, for the same reason: neither
+~~**`SC0213` and `SC0458` are not implementable yet, for the same reason: neither
 has a subject.** `SC0213` needs "a module reached by `use` in this compilation",
 but the driver resolves every file as its own crate and `use` does not load
-files. `SC0458` needs a `--python` flag that does not exist.
+files.~~ **Half of that stopped being true.** `use` loads files now, so a module
+reached by one exists, and **`SC0213` is implemented.** `SC0458` still needs a
+`--python` flag that does not exist.
+
+`SC0213`'s one unlovely part is worth recording, because it is this note's own
+cost coming back around. The parser desugars a script body into a generated
+`main` precisely so that no phase below learns the word "script" — so there is
+no flag to test. What identifies a script body is the property that desugaring
+states as its own cost: **generated nodes have no source text**, so the
+generated `main`'s name span is zero-width where a written one covers four
+bytes. A test pins that against a real parse, so if the parser ever gives the
+generated name a span, that breaks rather than `SC0213` silently ceasing to
+fire.
+
+`SC0212` is still not implemented, and still for the reason above.
 
 **§8.1 predicted the wrong test would catch it.** It says "a UI test comparing
 rendered output byte for byte will catch it". There was no UI case for `SC0101`
@@ -503,6 +517,33 @@ This deliberately does **not** introduce a manifest key. §12 of the core spec
 puts the package manager out of scope for F0, and an entry point that requires a
 manifest would require the manifest. When a manifest arrives it should gain an
 `entry` key that takes precedence over rules 1 and 2, and nothing else changes.
+
+> **AMENDMENT: rule 1 is built, rule 2 is not, and §4 never defines the term
+> both of them use.**
+>
+> "The crate root" appears in rule 2 and nowhere in this note is it said what
+> one is. `package-manager.md` §4.6 asks for it to be renamed "package root"
+> and derives it from the manifest, leaving the case with no manifest
+> undefined — which is every case today. The implementation fills it: **a
+> crate is one entry file plus the transitive closure of the modules its `use`
+> declarations name, rooted at the entry file's directory.** That is
+> `package-manager.md` §4.6's own "a file with no manifest above it is a
+> single-file package named after the file", extended by what `use` reaches.
+>
+> Rule 2 is therefore not implemented, for a reason that is not laziness: it
+> needs a crate root with no file to derive one from, which is the package
+> manager's question and not this note's. The resolver does no I/O — it takes a
+> callback — so when the manifest lands it decides the root and hands it over,
+> and nothing here is unpicked.
+>
+> **`sciencec run` does not exist**, in this section's examples or anywhere. The
+> commands are `check`, `build`, `fmt`, `tools`, `ast`, `resolve`, `tokens`.
+>
+> And `sciencec check a.science b.science` is **several crates, not one**,
+> which this section does not say either way. One crate has one entry and §4.3
+> is written in terms of *the* entry; folding a command line into one crate
+> would make every file after the first a non-entry and report `SC0213` on a
+> directory of ordinary analysis scripts — the opposite of what §4.3 is for.
 
 ### 4.3 Statements in a module that is not the entry
 

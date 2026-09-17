@@ -373,8 +373,23 @@ is **no implicit change of *value***. Boxing preserves the value; `From` did not
 >
 > So the thing this decision counts is **conversions that change a value**, and
 > by that measure there are still two. **State what is being counted**, because
-> a reader counting `Coercion` variants in the implementation now finds five and
-> concludes the note is stale. The owning forms — `C` into `any I` and `C` into
+> a reader counting `Coercion` variants in the implementation finds seven and
+> concludes the note is stale.
+>
+> **AMENDMENT 4a: seven, not five — and the second addition tests the rule
+> harder than the first.** `borrowed T` coerces to `T` when `T: Copy`, in three
+> shapes: the plain copy, the copy widened into `T?`, and the copy through a
+> nullable. The count above survives, on the same measure: a copy of a `Copy`
+> type is the same value. But the defence is weaker than unsizing's and the
+> implementation says so — unsizing emits no code at all, while this one emits
+> a copy, and "the same value" is doing work that "no work happens" did before.
+>
+> It earns the weaker defence because the alternative was nothing. The language
+> has **no dereference operator**, by design, and `Array.get` returns
+> `(borrowed T)?` — so before this there was no spelling in the language that
+> read a `Char` out of a container. A rule admitted to avoid an expressive dead
+> end is a different kind of rule from one admitted for convenience, and the
+> count is not the thing to protect if protecting it costs that. The owning forms — `C` into `any I` and `C` into
 > `Box of any I` — stay written out, and that is the visible half of the trade:
 > the two spellings no longer look alike in the source, which is the point,
 > because one of them allocates.
