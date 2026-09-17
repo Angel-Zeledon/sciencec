@@ -238,8 +238,31 @@ pre { position: relative; font-family: var(--mono); font-size: 0.83rem; line-hei
  * and costs a composited layer. The block is separated from the page by
  * being darker than it and by `--code-frame`, which are the two things that
  * actually do the work. */
+/* **The rail is a one-stop gradient, and it has to be.** It was written
+ * `background: var(--rail-code) left / 3px 100% no-repeat, var(--code-bg)`,
+ * and that put a *colour* in a non-final background layer, which only the
+ * last layer may carry. Every block on the site lost its ground.
+ *
+ * The reason it was not caught by reading the rule is worth keeping, because
+ * it is the opposite of what a reader expects. An invalid value written
+ * literally is a parse error: the declaration is thrown away and the earlier
+ * `pre { background: var(--code-bg) }` still applies, so the block keeps its
+ * ground and merely loses its rail. An invalid value produced by `var()` is
+ * not — substitution happens at computed-value time, far past parsing, so the
+ * declaration *wins the cascade* and then computes to the property's initial
+ * value. For `background` that is `transparent`. The rule that looked like it
+ * added a rail was removing the ground instead, and it did so only because the
+ * colour arrived through a variable.
+ *
+ * `linear-gradient(C, C)` is an image, so it is legal in any layer, and a
+ * two-stop gradient between one colour and itself is flat — which is what the
+ * note above demands. The cost is one gratuitous-looking gradient per block
+ * kind; the alternative is a fifth pair of variables holding the same four
+ * colours pre-wrapped. */
 pre[data-science] {
-  background: var(--rail-code) left / 3px 100% no-repeat, var(--code-bg);
+  background:
+    linear-gradient(var(--rail-code), var(--rail-code)) left / 3px 100% no-repeat,
+    var(--code-bg);
 }
 /* A block kept only for comparison: the syntax it shows has been removed from
  * the language. Marked three ways at once — a caption above it, a grey rail
@@ -252,18 +275,24 @@ pre[data-science] {
  * block had. The live block no longer has one, so the cancellation named a
  * property nothing sets, and it is gone with it. */
 pre[data-science][data-legacy] {
-  background: var(--rail-legacy) left / 3px 100% no-repeat, var(--code-bg);
+  background:
+    linear-gradient(var(--rail-legacy), var(--rail-legacy)) left / 3px 100% no-repeat,
+    var(--code-bg);
 }
 .rm { color: var(--c-com); text-decoration: line-through; }
 .legend { font-family: var(--mono); font-size: 0.7rem; font-weight: 600;
   letter-spacing: 0.1em; text-transform: uppercase; color: var(--old); margin: 0 0 0.5rem; }
 
 pre.shell {
-  background: var(--rail-shell) left / 3px 100% no-repeat, var(--code-bg);
+  background:
+    linear-gradient(var(--rail-shell), var(--rail-shell)) left / 3px 100% no-repeat,
+    var(--code-bg);
 }
 pre.shell .p { color: #7080a4; } pre.shell .c { color: #3dfca0; }
 pre.err {
-  background: var(--rail-err) left / 3px 100% no-repeat, var(--code-bg);
+  background:
+    linear-gradient(var(--rail-err), var(--rail-err)) left / 3px 100% no-repeat,
+    var(--code-bg);
 }
 /* The copy button. Appears on hover and on keyboard focus, sits inside the
  * block's padding so it never covers the first line, and reports what it did
