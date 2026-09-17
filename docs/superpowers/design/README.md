@@ -101,7 +101,7 @@ should now expect rather than be surprised by.
 | `SC0100`–`SC0112`, `SC0115`–`SC0119`, `SC0138`–`SC0139`, `SC0141`–`SC0144`, `SC0151`–`SC0157`, `SC0190`–`SC0198` | `crates/science-parser` |
 | `SC0411`–`SC0414`, `SC0417`, `SC0420`–`SC0421`, `SC0431`, `SC0434` | `crates/science-parser` — `ffi-c-boundary.md`'s block, emitted where `extern` is *parsed*. A band is a topic, not a crate. |
 | `SC0200`–`SC0212`, `SC0220`–`SC0221` | `crates/science-resolve` |
-| `SC0140`, `SC0260`–`SC0261`, `SC0520`, `SC0523`–`SC0536` | `crates/science-types` |
+| `SC0140`, `SC0250`, `SC0260`–`SC0261`, `SC0520`, `SC0523`–`SC0537` | `crates/science-types` |
 | `SC0330`, `SC0333`–`SC0335`, `SC0340` | `crates/science-regions` |
 | `SC0400`–`SC0409`, `SC0429`, `SC0431`, `SC0461`, `SC0522` | `crates/science-codegen` |
 | `SC0900`–`SC0901` | `crates/science-fmt` |
@@ -209,7 +209,7 @@ existing `SC0009`, `script-mode.md` changes `SC0101`'s wording and reuses
 | Lexical | `SC0002`, `SC0018`–`SC0099` |
 | Syntax | `SC0113`–`SC0114`, `SC0136`, `SC0158`–`SC0159`, `SC0161`–`SC0169`, `SC0178`–`SC0179` |
 | Resolution | `SC0222`–`SC0229`, `SC0241`–`SC0245` |
-| Types | `SC0250`, `SC0299`, `SC0580`–`SC0799` |
+| Types | `SC0299`, `SC0580`–`SC0799` |
 | Ownership | `SC0300`, `SC0303`–`SC0329`, `SC0399` |
 | Codegen | **none** |
 

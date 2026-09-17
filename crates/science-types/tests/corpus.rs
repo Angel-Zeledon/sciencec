@@ -431,8 +431,82 @@ fn every_pinned_file_is_in_the_corpus() {
 /// unchanged. Nor is it a claim that the language is finished: the holes
 /// `check`'s §6 names are holes in what is *asked*, and a question nobody asks
 /// reports nothing.
+///
+/// # **It is still 0, and Decision 16 is why that is worth a paragraph**
+///
+/// Exhaustiveness landed — `crates/science-types/src/exhaustive.rs` — and this
+/// number did not move. Every `match` in `examples/` covers every value of its
+/// scrutinee, and no arm in any of them is dead. **That is a finding about the
+/// corpus and not about the check**, and it was not the expected one: the four
+/// preceding sections of this comment are each a record of a new question being
+/// asked and the corpus failing it, so a fifth question that the corpus passes
+/// outright is the first of its kind here.
+///
+/// It is also the reading that has to be defended, because this file's own
+/// warning applies to it exactly — *"a corpus that reports nothing is also what
+/// a checker that has stopped running reports"* — and a new check reporting
+/// nothing on its first contact with real programs is the single most likely
+/// shape of a check that does not run. Three things say it does:
+///
+/// 1. [`the_exhaustiveness_check_had_a_corpus_to_look_at`] counts the `match`
+///    expressions this test walked, and asserts a floor. Silence over zero
+///    matches and silence over forty are the same `Vec` and this is what tells
+///    them apart.
+/// 2. `tests/exhaustiveness.rs` asserts the *witness* and not the refusal, at
+///    every constructor set the language has, so a check that answered
+///    *"exhaustive"* unconditionally fails thirteen of those tests by name.
+/// 3. Removing one arm from one corpus file reports. That is not a test — a
+///    test may not edit `examples/` — and it is how the claim was checked:
+///    `05_match.science`'s `describe` without its `Eof` arm says
+///    `` `borrowed Token` has a value no arm of this `match` covers: `Eof` ``.
+///
+/// **Why the corpus passed, stated rather than assumed.** Its `match`es fall
+/// into three groups and each is exhaustive for its own reason.
+/// `00_kitchen_sink`, `04_enums`, `05_match`, `09_absence_and_failure`,
+/// `13_inline_blocks` and `16_indentation` enumerate every variant of a choice
+/// — several of them say in a comment that this is the point, and
+/// `19_stdlib`'s says *"a new variant added to the choice breaks this def
+/// loudly"*, which was not true until now and is. The matches over an `Int`, a
+/// `Char` and a `String` all carry a `_` or a binding, because §2 of
+/// `exhaustive` makes those sets infinite. And `19_stdlib`'s two matches over
+/// an error sit inside `if err?:`, so Decision 7 has already narrowed the
+/// scrutinee and §3's `null` constructor is not in the set at all — which is
+/// the one place this check and the error model meet, and the corpus is where
+/// it was confirmed to meet quietly.
 #[test]
 fn the_corpus_reports_only_what_no_program_can_say() {
     let total: usize = REMAINING.iter().map(|(_, codes)| codes.len()).sum();
     assert_eq!(total, 0);
+}
+
+/// The evidence that the silence above is a checked silence.
+///
+/// A count with a floor rather than an exact number, because the exact one —
+/// 35 `match`es over 8 files as this was written — moves whenever somebody adds
+/// an example, and this test is not the thing that should notice that. The
+/// floor is well under what the corpus has, and it is far enough above zero
+/// that a pass which stopped walking bodies could not meet it.
+#[test]
+fn the_exhaustiveness_check_had_a_corpus_to_look_at() {
+    use science_types::thir::ExprKind;
+
+    let mut matches = 0;
+    let mut files = 0;
+    for path in corpus() {
+        let source = std::fs::read_to_string(&path).expect("readable corpus file");
+        let checked = support::check_allowing_resolution_errors(&source);
+        let found: usize = checked
+            .bodies
+            .iter()
+            .map(|body| {
+                body.exprs().filter(|(_, e)| matches!(e.kind, ExprKind::Match { .. })).count()
+            })
+            .sum();
+        if found > 0 {
+            files += 1;
+        }
+        matches += found;
+    }
+    assert!(matches >= 25, "the corpus should hold far more than 25 `match`es, found {matches}");
+    assert!(files >= 6, "and they should be spread over the corpus, found {files} files");
 }

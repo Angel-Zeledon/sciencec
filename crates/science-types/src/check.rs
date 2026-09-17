@@ -89,6 +89,14 @@
 //! sees `{unknown}` where a number will be, and that is a hazard for a future
 //! pass that wants to run during checking rather than after it.
 //!
+//! **That hazard arrived and was paid, which is worth recording.** Decision
+//! 16's exhaustiveness reads the scrutinee's type off its node, and a
+//! `match` over an integer literal has [`Ty::ERROR`] there until the writeback
+//! runs — so [`crate::exhaustive`] is the third THIR pass and runs *after*
+//! `check_fn` returns rather than inside it, and [`check_crate`] says so. A
+//! pass that had run during checking would have been silent on every numeric
+//! `match` in the crate and would have looked correct while doing it.
+//!
 //! **Decision 2's defaulting is here and it needs two prelude ids**, which is
 //! `lib.rs` §5's own note: an unconstrained integer literal becomes `I64` and a
 //! float `F64`. A variable with no numeric origin that is still unbound is
@@ -342,6 +350,13 @@ use crate::ty::{GenericArg, Ty, TyKind, Types};
 /// declarations, then bodies, then the THIR passes. `SC0140` runs per body
 /// because it is a per-body question; narrowing runs *during* the body because
 /// its answer is a type.
+///
+/// **Decision 16's exhaustiveness is the third THIR pass and it runs last**,
+/// after the writeback of §4. It has to: a `match` whose scrutinee is still an
+/// inference variable carries [`Ty::ERROR`] on its node until the writeback
+/// runs, and [`crate::exhaustive`]'s §5 refuses to answer about an erroneous
+/// type — so a pass that ran during the body would be silent on every `match`
+/// over a numeric literal in the crate.
 pub fn check_crate(
     krate: &hir::Crate,
     decls: &Declarations,
@@ -357,6 +372,7 @@ pub fn check_crate(
                 let body =
                     check_fn(function, owner, krate, decls, types, aliases, order, diagnostics);
                 crate::unchecked::report(&body, krate, decls, types, diagnostics);
+                crate::exhaustive::report(&body, krate, decls, types, aliases, diagnostics);
                 bodies.push(body);
             });
         }

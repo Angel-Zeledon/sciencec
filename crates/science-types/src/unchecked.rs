@@ -55,9 +55,19 @@
 //! rather than an addition:
 //!
 //! - **A `match` on it.** `match err:` with a `null` arm is a test by another
-//!   spelling. Decision 16's exhaustiveness is not built, so this module cannot
-//!   confirm the arms are the right ones — and reporting a binding the author
-//!   plainly examined would be the fifth entry in the hated list.
+//!   spelling, and reporting a binding the author plainly examined would be the
+//!   fifth entry in the hated list.
+//!
+//!   **This used to say *"Decision 16's exhaustiveness is not built, so this
+//!   module cannot confirm the arms are the right ones"*, and it is built —
+//!   [`crate::exhaustive`] — and this module still does not ask it.** The
+//!   exemption was never conditional on the confirmation: what excuses the
+//!   binding is that the author looked at it, and a `match` that is *wrong*
+//!   about which arms it needs is a `match` the author looked at, reported
+//!   under `SC0250` by the pass that owns that question. Reading this entry as
+//!   waiting for exhaustiveness would narrow it to *"a `match` with a `null`
+//!   arm"*, which would report `SC0140` on `match err:` over a narrowed
+//!   scrutinee — where `exhaustive`'s §3 says there is no `null` arm to write.
 //! - **An argument to a *method* whose parameter is of error type**, which is
 //!   exclusion 2 again and no longer a refusal to guess. It was one: with no
 //!   Decision 11 lookup a method call had no parameter type to compare

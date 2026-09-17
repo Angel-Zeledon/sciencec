@@ -9,8 +9,10 @@
 //! user's structure, and once MIR has flattened `a and b` into blocks and
 //! jumps, a message about it has to reconstruct what was written. §3.1 names
 //! three passes that run here for that reason — narrowing, `SC0140` and
-//! exhaustiveness — and two of them are in this crate ([`crate::narrow`],
-//! [`crate::unchecked`]).
+//! exhaustiveness — and **all three are now in this crate**
+//! ([`crate::narrow`], [`crate::unchecked`], [`crate::exhaustive`]). The third
+//! arrived last and is the one this file was shaped for; §1's next paragraph
+//! is the promise it collected.
 //!
 //! # 1. Each of the three clauses, and what it earns
 //!
@@ -20,6 +22,16 @@
 //! what the checker already knew. The cost is that a type must exist even
 //! where the checker failed, which is [`Ty::ERROR`] and `ty`'s §5 — the tree is
 //! always complete, and a hole in it is a type rather than an absence.
+//!
+//! **That promise was collected, and it held in both directions.**
+//! [`crate::exhaustive`]'s `field_tys` reads the payload types of `Ident(name)`
+//! off the sub-patterns rather than substituting the choice's generics a second
+//! time, and its `pattern_is_unanswerable` reads [`Ty::ERROR`] off a
+//! sub-pattern to decide that a `match` is not worth an opinion — so the cost
+//! paragraph above turned out to carry as much of the pass as the clause did.
+//! **One place it does not reach**, named where it happens rather than left as
+//! a surprise: a record pattern may *omit* a field, and an omitted field has no
+//! node to carry a type, so a record's field types come from the declaration.
 //!
 //! **Method calls resolved.** [`ExprKind::MethodCall`] carries
 //! `method: Option<DefId>`, and it is **filled**: [`crate::methods`] is

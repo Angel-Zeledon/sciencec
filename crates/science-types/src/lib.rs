@@ -103,10 +103,17 @@
 //!   everything its message needs, but the instantiation chain that makes the
 //!   diagnostic survivable is F1's, and a chain rendered before there is a
 //!   monomorphiser to walk would render whatever this crate happened to keep.
-//! - **MIR, monomorphisation, exhaustiveness.** None of it. [`thir`]'s §5
+//! - **MIR and monomorphisation.** None of it. [`thir`]'s §5
 //!   states the seam MIR starts at to the standard §5 below sets, and names
 //!   which of `region-inference.md` §10's six requirements THIR can guarantee
 //!   and which are MIR's by construction.
+//!
+//!   **Exhaustiveness used to be third on that line**, and it is
+//!   [`exhaustive`]: Decision 16's usefulness and exhaustiveness by Maranget's
+//!   algorithm, `SC0250` with the witness in the message, and `SC0537` for an
+//!   arm no value reaches. It is the third of the three THIR passes §3.1 named,
+//!   so that line is now empty of everything except the two IRs this crate does
+//!   not build.
 //!
 //!   **Method lookup used to be listed here** — *"the hole everything else in
 //!   the fourth layer is shaped around"*, the reason `doc.title()` had no type
@@ -177,9 +184,12 @@
 //!   narrowing is [`narrow`]. **`SC0522` shipped, and not from here** — it needs
 //!   the monomorphiser's view of which instantiations cross into C, so
 //!   `science-codegen` emits it and this crate's reservation test, which
-//!   asserts the code is absent from its own list, still passes. `SC0521` and
-//!   exhaustiveness are still open, and the `codes` module below says what each
-//!   is waiting for.*
+//!   asserts the code is absent from its own list, still passes. **Decision
+//!   16's exhaustiveness is [`exhaustive`]**, which reports `SC0250` — the one
+//!   code this crate takes from the low half of the shared types band, and the
+//!   `codes` module below says which three documents put it there. `SC0521` is
+//!   the last of this line still open, and it is waiting on Decision 15's
+//!   `TryIterate`, which does not exist.*
 //!
 //! **Four obligations this layer raised, and the two that are now
 //! discharged**, each named where it is raised rather than collected into a
@@ -222,6 +232,7 @@ pub mod assign;
 pub mod check;
 pub mod const_expr;
 pub mod diagnostics;
+pub mod exhaustive;
 pub mod fold;
 pub mod infer;
 pub mod items;
@@ -288,6 +299,31 @@ pub use ty::{GenericArg, Ty, TyKind, Types};
 /// what it covers and why the hole it fills is real rather than invented.
 pub mod codes {
     use science_diagnostics::Code;
+
+    /// A `match` with a value no arm covers — Decision 16.
+    ///
+    /// **The only code this crate takes from the low half of the shared types
+    /// band, and the reason is that three documents put it there.** §9 of
+    /// `docs/superpowers/specs/2026-09-16-science-f0-core-design.md` settles a
+    /// disagreement between two specs in a sentence written for exactly this:
+    /// *"Exhaustiveness errors belong to the type checker and so take a code in
+    /// the `SC0250` range, not the `SC0210` the previous spec assigned them."*
+    /// `docs/superpowers/design/README.md`'s free table lists `SC0250` as
+    /// unclaimed, and `examples/00_kitchen_sink.science` — acceptance material
+    /// no compiler change may edit — tells its reader in a comment that *"a
+    /// missing variant is an error in the `SC0250` range"*.
+    ///
+    /// **`SC0210` stays reserved and stays unused.** `science-resolve`'s
+    /// `codes` module holds it open *"for `science-types` to use as §4.4 spells
+    /// it"* and its reservation test asserts the resolver never takes it; both
+    /// are still true. That comment is now stale in the direction of guarding a
+    /// number nobody will spend, which is the harmless direction, and the note
+    /// it belongs to is not this crate's to edit.
+    ///
+    /// The message **is the witness** — [`crate::exhaustive`]'s §1 — because a
+    /// diagnostic that says only *"not exhaustive"* makes the reader re-derive
+    /// what they missed.
+    pub const NON_EXHAUSTIVE_MATCH: Code = Code(250);
 
     /// A const expression the language does not admit.
     ///
@@ -570,6 +606,26 @@ pub mod codes {
     /// that landed this code names the row as the thing to extend.
     pub const UNINFERABLE_RECEIVER: Code = Code(536);
 
+    // --- usefulness, `SC0537` --------------------------------------------
+
+    /// An arm of a `match` that no value reaches.
+    ///
+    /// **Decision 16's other half, which the decision does not mention.**
+    /// Maranget's algorithm answers *usefulness*, and exhaustiveness is one
+    /// question asked of it; an arm useless against the arms above it is the
+    /// same answer about a different row. [`crate::exhaustive`]'s §4 is the
+    /// argument for it being an error rather than a warning — no macros, no
+    /// attribute that silences a diagnostic, and a body that is checked and
+    /// lowered although nothing runs it — and the same section prices it, both
+    /// in compile time and in the escape hatch the language cannot offer.
+    ///
+    /// **Not [`NON_EXHAUSTIVE_MATCH`]**, although one recursion produces both.
+    /// That code is about a value the program has no answer for, and its
+    /// message is a value; this one is about a line that cannot run, and its
+    /// message is a place. Sharing a code would mean one of the two messages
+    /// had to stop being about its own subject.
+    pub const UNREACHABLE_ARM: Code = Code(537);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -578,6 +634,7 @@ pub mod codes {
     /// [`crate::unchecked`](crate::unchecked::UNCHECKED_ERROR) and borrowed
     /// rather than claimed.
     pub const ALL: &[Code] = &[
+        NON_EXHAUSTIVE_MATCH,
         NOT_A_CONST_EXPRESSION,
         NOT_PROVABLY_EQUAL,
         DOUBLE_NULLABLE,
@@ -595,6 +652,7 @@ pub mod codes {
         UNSATISFIED_BOUND,
         NO_OPERATOR_IMPLEMENTATION,
         UNINFERABLE_RECEIVER,
+        UNREACHABLE_ARM,
     ];
 
     #[cfg(test)]
