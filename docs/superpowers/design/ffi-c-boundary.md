@@ -336,11 +336,16 @@ is a check and an `unsafe` call, and whose signature contains no `ffi` type at
 all.
 
 ```science
-type MatrixView:
-    data: ffi.Span of F64
+# One record, generic over its storage, so every field and method is written
+# once. See the amendment below §1.7's listing for why this is not two types.
+type MatrixBase of S:
+    data: S
     rows: Int
     columns: Int
     leading: Int        # the "leading dimension" — stride between columns
+
+type MatrixView is MatrixBase of ffi.Span of F64
+type MutableMatrixView is MatrixBase of ffi.MutableSpan of F64
 
 public choice BlasError:
     Shape(Int, Int)
@@ -350,26 +355,25 @@ public choice BlasError:
 public def gemm(
         a: borrowed MatrixView,
         b: borrowed MatrixView,
-        c: mutable borrowed MatrixView,
+        c: mutable borrowed MutableMatrixView,
         alpha: F64,
-        beta: F64)
-        -> ((), BlasError?):
+        beta: F64) -> BlasError?:
 
     if a.columns is not b.rows:
-        return ((), BlasError.Shape(a.columns, b.rows))
+        return BlasError.Shape(a.columns, b.rows)
     if c.rows is not a.rows or c.columns is not b.columns:
-        return ((), BlasError.Shape(c.rows, a.rows))
+        return BlasError.Shape(c.rows, a.rows)
 
     # The obligation the borrow checker cannot discharge, discharged here.
-    let _, err be covers(a, a.columns)
+    let err be covers(a, a.columns)
     if err?:
-        return ((), err)
-    let _, err be covers(b, b.columns)
+        return err
+    let err be covers(b, b.columns)
     if err?:
-        return ((), err)
-    let _, err be covers(c, c.columns)
+        return err
+    let err be covers(c, c.columns)
     if err?:
-        return ((), err)
+        return err
 
     unsafe:
         cblas_dgemm(
@@ -384,17 +388,16 @@ public def gemm(
             b: b.data, ldb: b.leading as BlasInt,
             beta: beta,
             c: c.data, ldc: c.leading as BlasInt)
-    ((), null)
+    null
 
-def covers(m: borrowed MatrixView, columns: Int) -> ((), BlasError?):
+def covers of S(m: borrowed MatrixBase of S, columns: Int) -> BlasError?:
     let needed be m.leading * (columns - 1) + m.rows
-    if m.leading < m.rows: return ((), BlasError.Stride(m.leading, m.rows))
-    if needed > m.data.length(): return ((), BlasError.Overflow)
-    ((), null)
+    if m.leading < m.rows: return BlasError.Stride(m.leading, m.rows)
+    if needed > m.data.length(): return BlasError.Overflow
+    null
 ```
 
-> **AMENDMENT: this example does not type-check, and what it exposes is a hole
-> in the design rather than a typo in the listing.**
+> **AMENDMENT: this example does not type-check, and the fix is in this note.**
 >
 > The type checker reports `expected MutableSpan of F64, found Span of F64` at
 > `c: c.data`. Both ends of the call are right: the `extern` declares `a` and
@@ -408,35 +411,71 @@ def covers(m: borrowed MatrixView, columns: Int) -> ((), BlasError?):
 >
 > No coercion may close this. `Span` into `MutableSpan` is the unsound
 > direction — it hands C a writable pointer to a shared borrow — so the checker
-> is right to refuse it and would be wrong to be talked out of it.
+> is right to refuse and would be wrong to be talked out of it.
 >
-> Three ways out, and they are not equally good:
+> **The fix is one record generic over its storage**, which needs nothing the
+> language does not already have:
 >
-> 1. **Declare `data: ffi.MutableSpan of F64`** and weaken at the two reading
->    call sites. Weakening is the sound direction. But it moves the failure
->    rather than fixing it: a `MatrixView` over data you hold by shared borrow
->    becomes unconstructible, which defeats `a: borrowed MatrixView`.
-> 2. **Two record types**, a reading one and a writing one. Zero new machinery,
->    and it is what C does with `const`. It is also duplication of every field
->    and every method, in the one place a scientific program will have many such
->    views.
-> 3. **The span type follows the borrow of the record.** `a.data` off a
->    `borrowed MatrixView` is an `ffi.Span`; `c.data` off a
->    `mutable borrowed MatrixView` is an `ffi.MutableSpan`. One declaration, no
->    duplication, and the projection is exactly what a reborrow is.
+> ```science
+> type MatrixBase of S:
+>     data: S
+>     rows: Int
+>     columns: Int
+>     leading: Int
 >
-> **Three is the intended answer and this note does not have the authority to
-> ratify it**, because it is a statement about what a field projection off a
-> borrow *means*, which is `region-inference.md`'s. It is recorded here because
-> this is the **first concrete case in the corpus where region inference has to
-> do something that note has not specified**, and it arrived from the FFI
-> boundary rather than from a borrow-checking example, which is where anyone
-> would have looked for it.
+> type MatrixView is MatrixBase of ffi.Span of F64
+> type MutableMatrixView is MatrixBase of ffi.MutableSpan of F64
+> ```
 >
-> Until it is settled the listing below is aspirational at one line, and
-> `examples/20_extern.science` — which copies it — is one of the two remaining
-> diagnostics in the corpus. Said here rather than quietly patched, because
-> patching it to option 1 or 2 would hide the question.
+> That listing checks clean today. `gemm` then takes
+> `a: borrowed MatrixView`, `b: borrowed MatrixView`,
+> `c: mutable borrowed MutableMatrixView`, and every field and method is
+> written once.
+>
+> **The precedent is the strongest kind available here.** This is `ndarray`'s
+> `ArrayBase<S, D>`, with `ArrayView` and `ArrayViewMut` as aliases over it —
+> the actual answer the scientific-computing ecosystem arrived at for the
+> identical problem. §4.2 of `region-inference.md` settled its own question by
+> checking what real code does; this is the same instrument.
+>
+> **Three worse answers, recorded so nobody re-derives them.** Declaring
+> `data: ffi.MutableSpan of F64` and weakening at the reading call sites moves
+> the failure instead of fixing it: a view over data held by shared borrow
+> becomes unconstructible, which defeats `a: borrowed MatrixView`. Two
+> unrelated record types duplicate every field and method in the one place a
+> numerical program will have many views. And making the span's mutability
+> follow the borrow of the record — so `c.data` off a `mutable borrowed`
+> yields a `MutableSpan` — would be a new rule about what a field projection
+> *means*, and it would make an `ffi` type's spelling depend on context, which
+> is the one thing `ffi` types exist to prevent.
+>
+> **This was first recorded as a question for `region-inference.md` and that
+> was wrong.** It is not a region question at all: nothing here is about how
+> long anything lives. It reached that note because the symptom appeared at a
+> borrow and the reflex was to send it where borrows are decided. Written down
+> because the reflex will recur.
+>
+> **Two more things were wrong with the listing, found by compiling it.** The
+> signature broke `-> ((), BlasError?):` onto its own continuation line after
+> the `)`, which does not parse — the parser wants the return arrow on the line
+> the parameter list closes on. Three versions of this same code existed and no
+> two agreed: this note's did not parse, `crates/science-parser`'s fixture put
+> the arrow on the closing line, and `examples/20_extern.science` put the `)` in
+> column zero. Only the last two were ever run.
+>
+> And the listing still returned `((), BlasError?)` — a pair whose first slot is
+> `()`, which `examples/09_absence_and_failure.science` names as the thing not
+> to write, since a name bound to that slot could do nothing. The corpus had
+> already moved to the lone `-> BlasError?`; the note had not. It has now.
+>
+> **The listing above type-checks**, verified by extracting it with the `extern`
+> block from §1.2 and running `sciencec check` over it, which is the only way
+> any of this was going to be found. A design note's code is not compiled by
+> anything, so it drifts silently — and this is the note the FFI work is built
+> on.
+>
+> `examples/20_extern.science` copies this listing and is one of the two
+> remaining diagnostics in the corpus; it follows this note's fix.
 
 Two things in that call site deserve their reasons.
 
