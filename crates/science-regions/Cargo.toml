@@ -1,0 +1,16 @@
+[package]
+name = "science-regions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Region inference and the borrow check — `region-inference.md`, Decisions 1-11."
+
+[dependencies]
+science-diagnostics.workspace = true
+science-resolve.workspace = true
+science-types.workspace = true
+science-mir.workspace = true
+
+[dev-dependencies]
+science-lexer.workspace = true
+science-parser.workspace = true

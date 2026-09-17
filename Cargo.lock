@@ -426,6 +426,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "science-regions"
+version = "0.0.1"
+dependencies = [
+ "science-diagnostics",
+ "science-lexer",
+ "science-mir",
+ "science-parser",
+ "science-resolve",
+ "science-types",
+]
+
+[[package]]
 name = "science-resolve"
 version = "0.0.1"
 dependencies = [
