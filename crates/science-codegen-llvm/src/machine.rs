@@ -89,17 +89,23 @@ use science_codegen::target::{OptLevel, TargetConfig};
 use crate::owned::{Context, Module, TargetMachine, cstr};
 use crate::sys;
 
-/// Register the X86 target.
+/// Register the host's target — X86 or AArch64.
 ///
 /// Idempotent inside LLVM, but called once per process here anyway, because
 /// LLVM's registries are not thread-safe against concurrent registration and
 /// `cargo test` runs test functions on several threads.
 ///
-/// **Only X86.** Cross-compilation is `SC0406` (§5.6), so the target is the
-/// host; `Triple::host()` returns `None` on any host that is not one of the
-/// three; and two of the three are x86-64. A run on `aarch64-apple-darwin`
-/// needs `LLVMInitializeAArch64{TargetInfo,Target,TargetMC,AsmPrinter}` added to
-/// [`crate::sys`] and to this function, and nothing else.
+/// **Only the three hosts `Triple::host()` recognises.** Cross-compilation is
+/// `SC0406` (§5.6), so the target is always the host, and both targets are
+/// registered unconditionally rather than switched on `cfg!` — LLVM's own
+/// registration is idempotent and cheap, and a process that somehow ran on a
+/// fourth host would rather see "no such target" from [`create`] than a
+/// registration this function silently skipped.
+///
+/// This used to be X86 alone, with `aarch64-apple-darwin` named as the one
+/// call away: `Triple::host()` already recognised the triple and gave it its
+/// own ABI convention, and the four `LLVMInitializeAArch64*` entry points were
+/// the only thing standing between that and a run on an Apple Silicon host.
 pub fn initialise() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
@@ -111,6 +117,11 @@ pub fn initialise() {
         // here, and without it `LLVMTargetMachineEmitToFile` reports only that
         // the target does not support this file type.
         sys::LLVMInitializeX86AsmPrinter();
+
+        sys::LLVMInitializeAArch64TargetInfo();
+        sys::LLVMInitializeAArch64Target();
+        sys::LLVMInitializeAArch64TargetMC();
+        sys::LLVMInitializeAArch64AsmPrinter();
     });
 }
 

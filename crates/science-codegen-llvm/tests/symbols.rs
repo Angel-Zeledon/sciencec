@@ -152,9 +152,14 @@ fn exported(nm: &Path, library: &Path) -> Vec<String> {
     let text = String::from_utf8_lossy(&output.stdout);
     let mut names = Vec::new();
     for line in text.lines() {
-        // `00000000 T LLVMContextCreate`, and the `__imp_` alias beside it.
+        // `00000000 T LLVMContextCreate` on Windows and on Linux; on macOS
+        // every C symbol carries Mach-O's leading underscore, `00000000001f660c
+        // T _LLVMContextCreate` — stripped here for the same reason `__imp_`
+        // is, so the one list below reads the same name regardless of which
+        // host ran the test.
         let Some(name) = line.split_whitespace().nth(2) else { continue };
         let name = name.strip_prefix("__imp_").unwrap_or(name);
+        let name = name.strip_prefix('_').unwrap_or(name);
         if name.starts_with("LLVM") {
             names.push(name.to_string());
         }

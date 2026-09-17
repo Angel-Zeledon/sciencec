@@ -271,8 +271,14 @@ fn every_alloca_is_in_the_entry_block_however_late_the_slot_was_invented() {
     ))
     .build_at(&executable(&dir, "allocas"), OptLevel::O0)
     .ir;
+    // Not `"define void @_S4main"`: a script body's `_S4main` returns
+    // `Error?`, which is `void` only on the convention that returns it
+    // through `sret` — SysV and AAPCS64 return it in two registers instead
+    // (`lower_c_main`'s own history), so the return type in this text varies
+    // with the host and the symbol is the only part of the signature that
+    // does not.
     let science_main = ir
-        .split_once("define void @_S4main")
+        .split_once("@_S4main(")
         .expect("the entry point")
         .1
         .split_once("\n}")
@@ -327,7 +333,7 @@ fn the_ir_has_one_block_per_reachable_mir_block_and_they_keep_their_numbers() {
     assert!(reachable.len() > 4, "this program has a loop and a branch in it");
     let ir = lowered.build_at(&executable(&dir, "blocks"), OptLevel::O0).ir;
     let science_main = ir
-        .split_once("define void @_S4main")
+        .split_once("@_S4main(")
         .expect("the entry point")
         .1
         .split_once("\n}")

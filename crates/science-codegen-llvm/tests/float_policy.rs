@@ -24,9 +24,18 @@
 //! that the CPU name is doing something, by asserting the baseline and v3
 //! produce *different* assembly for the same module.
 //!
-//! **The cost.** This asserts about x86-64 and nothing else. An AArch64 host
-//! would need `LLVMInitializeAArch64*` in `crate::sys` first; `machine`'s
-//! `initialise` says so.
+//! **The cost.** This asserts about x86-64 and nothing else, and it builds an
+//! x86-64 target machine regardless of the host — `assembly_for` names
+//! [`Triple::X86_64LinuxGnu`] outright rather than asking [`Triple::host`],
+//! because a CPU string as specific as `x86-64-v3` means nothing on any other
+//! target and LLVM says so by silently ignoring it (`'x86-64-v3' is not a
+//! recognized processor for this target`) rather than refusing. That used to
+//! be `Triple::host()`, which is `SC0406`'s rule read one layer too literally:
+//! the rule is about what `sciencec build` accepts from a user, and building an
+//! x86-64 `TargetMachine` purely to inspect the instructions LLVM selects,
+//! never to run, is not that. `machine::create` takes the triple from
+//! `TargetConfig` and asks nothing about the host itself — see its own
+//! signature — so this was always representable and simply was not asked for.
 
 #![cfg(feature = "llvm")]
 
@@ -71,7 +80,7 @@ fn fused_module(context: &science_codegen_llvm::owned::Context) -> Module {
 }
 
 fn assembly_for(cpu: &str) -> String {
-    let triple = Triple::host().expect("a supported host");
+    let triple = Triple::X86_64LinuxGnu;
     let config = TargetConfig::new(triple, OptLevel::O3);
     let context = machine::context();
     let module = fused_module(&context);
@@ -135,7 +144,7 @@ fn a_times_b_plus_c_is_not_contracted_on_a_cpu_that_has_an_fma_unit() {
 /// `mulsd`.
 #[test]
 fn the_target_cpu_reaches_instruction_selection() {
-    let baseline = assembly_for(Triple::host().expect("a host").baseline_cpu());
+    let baseline = assembly_for(Triple::X86_64LinuxGnu.baseline_cpu());
     let v3 = assembly_for("x86-64-v3");
     assert_ne!(
         baseline, v3,

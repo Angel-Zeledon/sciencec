@@ -189,9 +189,24 @@ fn the_seven_entry_points_render_what_they_are_given() {
     let accumulator = LocalId(1);
     // The accumulator's address, which is every push's first argument.
     let address = science_codegen::backend::ValueId(0);
-    let insts = vec![
-        ExtInst::ReturnSlot { local: LocalId(0), layout: ret_layout },
-        ExtInst::Above(Inst::Store { local: LocalId(0), value: Operand::Null }),
+    // `_0`'s bytes are written the same way regardless of the ABI: a `null`
+    // `Error?`, since this test is not about the return edge. Only *how it
+    // leaves the function* differs — through the hidden pointer `ReturnSlot`
+    // binds to, or as a value this function has to load and return itself —
+    // and `science_main.ret.is_sret()` is the same question `lower_c_main`
+    // asks about the exact same type, for the exact same reason.
+    let mut insts = if science_main.ret.is_sret() {
+        vec![
+            ExtInst::ReturnSlot { local: LocalId(0), layout: ret_layout.clone() },
+            ExtInst::Above(Inst::Store { local: LocalId(0), value: Operand::Null }),
+        ]
+    } else {
+        vec![
+            ExtInst::Above(Inst::Alloca { local: LocalId(0), layout: ret_layout.clone() }),
+            ExtInst::Above(Inst::Store { local: LocalId(0), value: Operand::Null }),
+        ]
+    };
+    insts.extend([
         ExtInst::Above(Inst::Alloca { local: accumulator, layout: string_layout }),
         // The first chunk builds the accumulator; every piece after it appends.
         call(
@@ -245,15 +260,23 @@ fn the_seven_entry_points_render_what_they_are_given() {
         // The free is not optional: `lower_print`'s own note is that the call
         // site owns the temporary and nothing else releases it.
         call("science_string_free", vec![Operand::Value(address)], None),
-    ];
+    ]);
+
+    // On the `sret` convention the write above already left the bytes where
+    // the caller reads them, and the return is `void`. On the other two, the
+    // bytes have to come back as a value — read from the same local they were
+    // written to, the same way `exit_code.rs`'s hand-built `main` reads its
+    // own `Error?` back.
+    let terminator = if science_main.ret.is_sret() {
+        Terminator::Return(None)
+    } else {
+        let return_value = science_codegen::backend::ValueId(1);
+        insts.push(ExtInst::Above(Inst::Load { dest: return_value, local: LocalId(0) }));
+        Terminator::Return(Some(Operand::Value(return_value)))
+    };
 
     let body = ExtBody {
-        blocks: vec![ExtBlock {
-            id: BlockId(0),
-            label: "entry".to_string(),
-            insts,
-            terminator: Terminator::Return(None),
-        }],
+        blocks: vec![ExtBlock { id: BlockId(0), label: "entry".to_string(), insts, terminator }],
     };
 
     let c_main = lowerer.lower_c_main(&science_main).expect("the emitted `main`");

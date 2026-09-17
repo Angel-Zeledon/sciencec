@@ -1120,6 +1120,24 @@ unsafe extern "C" {
     /// file type"* out of [`LLVMTargetMachineEmitToFile`] and no other clue.
     pub fn LLVMInitializeX86AsmPrinter();
 
+    /// `void LLVMInitializeAArch64TargetInfo(void)`
+    ///
+    /// `machine.rs`'s `initialise` named the four AArch64 entry points as
+    /// *"nothing else"* needed for `aarch64-apple-darwin` — `Triple::host`
+    /// already recognises the triple and gives it its own ABI convention, so
+    /// this and the three below it are the omission that comment named, not a
+    /// design gap.
+    pub fn LLVMInitializeAArch64TargetInfo();
+
+    /// `void LLVMInitializeAArch64Target(void)`
+    pub fn LLVMInitializeAArch64Target();
+
+    /// `void LLVMInitializeAArch64TargetMC(void)`
+    pub fn LLVMInitializeAArch64TargetMC();
+
+    /// `void LLVMInitializeAArch64AsmPrinter(void)`
+    pub fn LLVMInitializeAArch64AsmPrinter();
+
     /// `char *LLVMGetDefaultTargetTriple(void)` — caller frees.
     pub fn LLVMGetDefaultTargetTriple() -> *mut c_char;
 

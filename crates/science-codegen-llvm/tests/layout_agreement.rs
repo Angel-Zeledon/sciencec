@@ -129,14 +129,28 @@ fn the_data_layout_string_is_the_target_machines_own() {
     assert!(!text.is_empty(), "LLVM gave an empty `datalayout` string");
     assert!(
         text.contains("i64:64"),
-        "the `datalayout` string does not look like an x86-64 one: {text}"
+        "the `datalayout` string does not look like a 64-bit one: {text}"
     );
     // And the triple LLVM would have chosen on its own agrees with the one
     // `Triple::host` named, which is the check that `SC0406`'s "the host" means
     // the same thing on both sides of Decision 42's line.
+    //
+    // **`arm64` and `aarch64` are the same architecture under two spellings,
+    // and this is where that surfaces.** `LLVMGetDefaultTargetTriple` reports
+    // the host exactly as the local toolchain names it — on Apple Silicon that
+    // is Apple's own `arm64` alias plus a versioned OS component
+    // (`arm64-apple-darwin25.6.0`), not the generic `aarch64` spelling
+    // `Triple::Aarch64AppleDarwin::as_str` uses. `LLVMGetTargetFromTriple`
+    // resolves both to the same target — this is a naming difference, not a
+    // disagreement about which host is running — so the architecture check
+    // accepts either spelling rather than only the one this crate happens to
+    // write.
     let default = machine::default_triple();
+    let arch = triple.as_str().split('-').next().expect("an architecture");
+    let arch_matches = default.starts_with(arch)
+        || (arch == "aarch64" && default.starts_with("arm64"));
     assert!(
-        default.starts_with(triple.as_str().split('-').next().expect("an architecture")),
+        arch_matches,
         "`Triple::host` says `{}` and LLVM says `{default}`",
         triple.as_str()
     );

@@ -382,11 +382,30 @@ pub fn undefined_symbols<'a>(output: &str, declared: &'a [String]) -> Vec<&'a St
 }
 
 /// Whether `output` names `symbol` as a whole identifier.
+///
+/// **Tried both bare and with Mach-O's leading underscore, as two whole
+/// words and not as one looser boundary.** The doc comment above this
+/// function's caller has always claimed the underscore is admitted; the
+/// check here used to require the character *before* the match to be
+/// neither alphanumeric *nor* `_`, which is exactly the character Apple's
+/// `ld` puts there — `"_cosinus", referenced from:` — so the admission the
+/// comment promised never happened and this is the first host to run the
+/// test that would have shown it. Loosening the boundary itself to accept a
+/// leading `_` would also accept `cosinus` as a match inside
+/// `my_cosinus_thing`, which is the false positive the boundary check
+/// exists to refuse; matching `_symbol` as its own whole word instead keeps
+/// the refusal and admits the platform's mangling.
 fn mentions_symbol(output: &str, symbol: &str) -> bool {
+    is_whole_word(output, symbol) || is_whole_word(output, &format!("_{symbol}"))
+}
+
+/// Whether `output` contains `needle` with a non-identifier character (or
+/// the string's edge) on both sides.
+fn is_whole_word(output: &str, needle: &str) -> bool {
     let mut from = 0;
-    while let Some(found) = output[from..].find(symbol) {
+    while let Some(found) = output[from..].find(needle) {
         let start = from + found;
-        let end = start + symbol.len();
+        let end = start + needle.len();
         let before_ok = output[..start]
             .chars()
             .next_back()

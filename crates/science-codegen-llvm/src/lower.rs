@@ -4417,51 +4417,73 @@ impl<'a> Lowerer<'a> {
             };
             return Ok((sig, ExtBody { blocks: vec![entry] }));
         }
-        if !science_main.ret.is_sret() {
-            return Err(Unlowered::new(
-                "an entry point whose return is neither `()` nor an `Error?` through `sret`: \
-                 `script-mode.md` §2.3 fixes the script body's signature at `def main() -> \
-                 Error?` and a hand-written `def main():` returns `()`, and this backend knows \
-                 those two and no third",
-            ));
-        }
+        // `Indirect` and `Direct` are what is left once `Void` has already
+        // returned above — `classify_return_for`'s three functions are
+        // exhaustive over `ReturnClass` and this is the boundary between the
+        // two remaining cases, not a third one.
         let slot = LocalId(0);
         let data = ValueId(0);
         let is_null = ValueId(1);
+        let direct = ValueId(2);
         let message = self.intern_literal(ERROR_MESSAGE);
         let write_error = self.declare("science_write_error_bytes")?;
         let exit = self.declare("science_exit")?;
 
+        let mut entry_insts = vec![ExtInst::Above(Inst::Alloca {
+            local: slot,
+            layout: science_main.ret_layout.clone(),
+        })];
+        if science_main.ret.is_sret() {
+            entry_insts.push(ExtInst::Above(Inst::Call {
+                dest: None,
+                callee: Callee::Science(science_main.symbol.clone()),
+                args: vec![],
+                ret: science_main.ret.clone(),
+                sret_slot: Some(slot),
+            }));
+        } else {
+            // **Windows is the one convention where `Error?` is always
+            // `Indirect`, and hardcoding that shape here — as this function
+            // used to, refusing everything else — is a bug the other two
+            // hosts this crate targets would have found the first time either
+            // one ran this function.** SysV and AAPCS64 return a two-word fat
+            // pointer this small in registers, not through a hidden pointer;
+            // `emit_result`'s ordinary call path already handles a `Direct`
+            // return generically by capturing the callee's result as one
+            // (possibly aggregate) SSA value, and this does the same, then
+            // stores it into `slot` so the niche read below sees the same
+            // bytes in the same place regardless of which convention put them
+            // there.
+            entry_insts.push(ExtInst::Above(Inst::Call {
+                dest: Some(direct),
+                callee: Callee::Science(science_main.symbol.clone()),
+                args: vec![],
+                ret: science_main.ret.clone(),
+                sret_slot: None,
+            }));
+            entry_insts.push(ExtInst::Above(Inst::Store {
+                local: slot,
+                value: Operand::Value(direct),
+            }));
+        }
+        // §3.4: the data pointer and **only** the data pointer. The vtable
+        // word of a null `(any Error)?` is undefined, and it is at offset 8,
+        // so this load must not widen — which is what `Inst::Load` does,
+        // because it loads the local's whole type. `ExtInst::LoadNiche` is the
+        // narrow one and its documentation is the account.
+        entry_insts.push(ExtInst::LoadNiche { dest: data, local: slot });
+        entry_insts.push(ExtInst::Above(Inst::Cmp {
+            dest: is_null,
+            op: science_codegen::backend::CmpOp::Eq,
+            signed: false,
+            lhs: Operand::Value(data),
+            rhs: Operand::Null,
+        }));
+
         let entry = ExtBlock {
             id: BlockId(0),
             label: "entry".to_string(),
-            insts: vec![
-                ExtInst::Above(Inst::Alloca {
-                    local: slot,
-                    layout: science_main.ret_layout.clone(),
-                }),
-                ExtInst::Above(Inst::Call {
-                    dest: None,
-                    callee: Callee::Science(science_main.symbol.clone()),
-                    args: vec![],
-                    ret: science_main.ret.clone(),
-                    sret_slot: Some(slot),
-                }),
-                // §3.4: the data pointer and **only** the data pointer. The
-                // vtable word of a null `(any Error)?` is undefined, and it is
-                // at offset 8, so this load must not widen — which is what
-                // `Inst::Load` does, because it loads the local's whole type.
-                // `ExtInst::LoadNiche` is the narrow one and its documentation
-                // is the account.
-                ExtInst::LoadNiche { dest: data, local: slot },
-                ExtInst::Above(Inst::Cmp {
-                    dest: is_null,
-                    op: science_codegen::backend::CmpOp::Eq,
-                    signed: false,
-                    lhs: Operand::Value(data),
-                    rhs: Operand::Null,
-                }),
-            ],
+            insts: entry_insts,
             terminator: Terminator::Branch {
                 cond: Operand::Value(is_null),
                 then_block: BlockId(1),

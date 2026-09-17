@@ -40,7 +40,7 @@ mod harness;
 
 use harness::{executable, lower, require_runtime, run, scratch};
 use science_codegen::abi::AbiSignature;
-use science_codegen::backend::{BlockId, Inst, LocalId, Operand, Terminator};
+use science_codegen::backend::{BlockId, Inst, LocalId, Operand, Terminator, ValueId};
 use science_codegen::layout::{CgTy, Triple, layout_of};
 use science_codegen::mangle::{MonoKey, mangle};
 use science_codegen::runtime::EXIT_CONTRACT;
@@ -114,8 +114,12 @@ fn a_script_body_that_returns_an_error_exits_one_and_says_something() {
     let mut lowerer = Lowerer::new(triple, &lowered.krate.defs, &lowered.types);
 
     // `Error?` is `(any Error)?`: Decision 13's two-word fat pointer with the
-    // null niche in the data word, returned through `sret` on every supported
-    // convention because it is neither 1, 2, 4 nor 8 bytes.
+    // null niche in the data word. Windows returns it through `sret`, because
+    // 16 bytes is neither 1, 2, 4 nor 8 there; SysV and AAPCS64 return it in
+    // two registers instead, which is `lower_c_main`'s own two-branch shape
+    // now and this test's own two-branch shape below it, for the reason that
+    // function's history states: hardcoding one convention here is exactly
+    // the bug a run on either of the other two hosts would have found.
     let ret_layout = layout_of(triple, &CgTy::nullable(CgTy::Interface));
     let science_main = AbiSignature::science(
         triple,
@@ -123,29 +127,49 @@ fn a_script_body_that_returns_an_error_exits_one_and_says_something() {
         ret_layout.clone(),
         vec![],
     );
-    assert!(
-        science_main.ret.is_sret(),
-        "the whole shape of the emitted `main` rests on `Error?` coming back indirectly"
-    );
 
     // The invented half, and all of it: a non-null data word. Any global's
     // address will do — what a real `Error?` puts here is a box, and `main`
     // never dereferences it. §3.4 is why the vtable word beside it is left
     // undefined and why that is safe: nothing may load it, on either edge.
     let marker = lowerer.intern_literal("a stand-in for a boxed error");
-    let body = ExtBody {
-        blocks: vec![ExtBlock {
-            id: BlockId(0),
-            label: "entry".to_string(),
-            insts: vec![
-                ExtInst::ReturnSlot { local: LocalId(0), layout: ret_layout },
-                ExtInst::Above(Inst::Store {
-                    local: LocalId(0),
-                    value: Operand::GlobalAddr(marker.bytes_symbol.clone()),
-                }),
-            ],
-            terminator: Terminator::Return(None),
-        }],
+    let body = if science_main.ret.is_sret() {
+        ExtBody {
+            blocks: vec![ExtBlock {
+                id: BlockId(0),
+                label: "entry".to_string(),
+                insts: vec![
+                    ExtInst::ReturnSlot { local: LocalId(0), layout: ret_layout },
+                    ExtInst::Above(Inst::Store {
+                        local: LocalId(0),
+                        value: Operand::GlobalAddr(marker.bytes_symbol.clone()),
+                    }),
+                ],
+                terminator: Terminator::Return(None),
+            }],
+        }
+    } else {
+        // The fat pointer comes back as a value here, not through a hidden
+        // pointer: build the same slot, with only the data word written, and
+        // return what a whole-slot load reads back — the vtable word is then
+        // exactly as undefined in the returned value as it is in `slot` on
+        // the `sret` path, and for the same reason.
+        let value = ValueId(0);
+        ExtBody {
+            blocks: vec![ExtBlock {
+                id: BlockId(0),
+                label: "entry".to_string(),
+                insts: vec![
+                    ExtInst::Above(Inst::Alloca { local: LocalId(0), layout: ret_layout }),
+                    ExtInst::Above(Inst::Store {
+                        local: LocalId(0),
+                        value: Operand::GlobalAddr(marker.bytes_symbol.clone()),
+                    }),
+                    ExtInst::Above(Inst::Load { dest: value, local: LocalId(0) }),
+                ],
+                terminator: Terminator::Return(Some(Operand::Value(value))),
+            }],
+        }
     };
 
     let c_main = lowerer.lower_c_main(&science_main).expect("the emitted `main`");

@@ -93,13 +93,26 @@ fn the_module_says_what_stage_one_says_it_should() {
     // and nothing else frees it.
     assert!(ir.contains("@science_string_free("), "the temporary is leaked:
 {ir}");
-    // §3.4: the data pointer and **only** the data pointer. A `load { ptr, ptr }`
-    // here is the bug `ExtInst::LoadNiche` exists to have stopped.
+    // §3.4: the data pointer and **only** the data pointer. An `icmp` against
+    // the *whole* fat pointer would need the vtable word loaded too, whatever
+    // scalar type the load itself came out as — `ExtInst::LoadNiche` exists to
+    // have stopped exactly that.
     assert!(ir.contains("icmp eq ptr"), "the null test is not against a bare pointer:
 {ir}");
+    // **Not "no `load { ptr, ptr }` anywhere".** On SysV and AAPCS64 that
+    // pattern also appears for a completely unrelated, legitimate reason:
+    // `Error?` is 16 bytes, so `_S4main` returns it in two registers rather
+    // than through `sret` (`lower_c_main`'s own history — this is the same
+    // fat pointer, moved by value, never inspected), and `main` loads it back
+    // out of the slot it was stored into before narrowing to the data word for
+    // the test. The invariant this guards is narrower than that: the *null
+    // test itself* must never compare the whole struct, because that is the
+    // one shape that would need the vtable word's bits to decide anything.
     assert!(
-        !ir.contains("load { ptr, ptr }"),
-        "the vtable word of a possibly-null `(any Error)?` was loaded, which §3.4 forbids          even on the path that tests for null:
+        !ir.contains("icmp eq { ptr, ptr }"),
+        "the null test compared the whole fat pointer, not just the data word — that reads \
+         the vtable word of a possibly-null `(any Error)?` on the path that tests for null, \
+         which §3.4 forbids:
 {ir}"
     );
     // Decision 6, on every function without exception.
