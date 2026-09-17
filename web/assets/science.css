@@ -80,12 +80,21 @@
    * 8.74:1, --old 9.21:1. Every one is higher than it was, because the ground
    * went nearly to black and none of the foregrounds moved.
    *
-   * **--accent stays the lilac**, and it matters more now than it did. The
-   * listing's ground was taken back toward blue, which walks it *into*
-   * --c-type's hue family — so an accent anywhere near blue or cyan would
-   * compete with a type name across the boundary, and a grey accent is not
-   * an accent. The lilac is the one colour belonging to neither surface,
-   * which is what makes it read as chrome rather than as part of either.
+   * **--accent is a green, and the constraint it has to clear is the syntax
+   * palette rather than the page.** The listing's ground is a blue-violet, so
+   * an accent near blue or cyan competes with --c-type across the boundary,
+   * and the lilac it used to be sat in the listing's own hue family. A green
+   * is outside both.
+   *
+   * The collision it *could* have had is --c-fn, the function green. They are
+   * separated deliberately and on two axes: 132° against 151°, and 48%
+   * saturation against 76%. Same family, and no reader will mistake a link
+   * for a call — which is the test, since the two appear within a line of
+   * each other whenever prose names a function.
+   *
+   * It is 10.19:1 on the page. The brief was "a little neon, barely" and that
+   * is what the saturation figure is: the full-neon version of this hue is
+   * already in the palette and is the thing to stay away from. */
    * Darkening the page walks it toward the listing, and near black the
    * luminance differences compress, so there is no ground below about
    * #1a2233 that keeps a listing visible as a separate surface at all. This
@@ -102,7 +111,7 @@
    * because it is the pairing that failed the last time this palette moved. */
   --paper:#141416; --surface:#212125; --sunk:#2a2a2f; --ink:#f0f0f3;
   --muted:#c2c2ca; --faint:#adadb8; --rule:#37373e;
-  --accent:#c9a6f5; --accent-soft:#2c2438; --old:#e7ad96; --old-soft:#3a2b24;
+  --accent:#6fd684; --accent-soft:#1b2a20; --old:#e7ad96; --old-soft:#3a2b24;
   /* Reserved, and read by nothing today. These three have never been read by
    * a rule in this file; they are re-toned with the rest rather than left as
    * the old teal, so that a future rule reaching for one gets a colour that
