@@ -635,44 +635,304 @@ def main():
     assert!(text.contains("Ord"), "{text}");
 }
 
-/// An operator applied to an **exclusive** borrow of a scalar now reaches this
-/// crate, and what stops it is this crate's own hole.
+// --- `assign`'s §7: a `Copy` out of a borrow --------------------------------
+
+/// An operator applied to an **exclusive** borrow of a scalar, **built, linked
+/// and run** — and this test used to assert a refusal for it.
 ///
 /// §3 finding 27 was that `science-types` wrapped a shared borrow of a scalar in
 /// a `Coercion::Copy` before an operator saw it and did not wrap an exclusive
 /// one, so `def bump(counter: mutable borrowed Int):` with the body `counter be
 /// counter + 1` — `examples/01_functions.science`'s, and the only spelling §4.7
-/// leaves — arrived here as a pointer. **That hole is closed**, in `assign`'s
-/// §7 and gated to `Site::Operand`, and the file type-checks clean.
+/// leaves — arrived here as a pointer. That hole was closed in `assign`'s §7,
+/// and what stood behind it was this crate's, which is now
+/// `Lowerer::copy_out_of_borrow`: one `ExtInst::LoadAt` through the pointer.
 ///
-/// So the refusal this pins is no longer about the phase above. The coercion is
-/// inserted, and lowering *it* is the construct this backend does not have: a
-/// load through a pointer. The test is kept rather than deleted because the
-/// program is still the last one between that example and an executable — only
-/// the reason has moved one crate down, which is what the assertion now says.
+/// **`bump` is called three times and the count is printed once**, because a
+/// copy that read the wrong slot has two failure modes that a single call
+/// cannot separate. Reading the *address* of the parameter slot rather than the
+/// value gives a large arbitrary number, which one call would also catch; but a
+/// copy that read the caller's slot and a write that wrote the callee's would
+/// print `0` after one call and `0` after three, and a copy that read a stale
+/// value would print `1` after three. Only the sequence distinguishes them.
 #[test]
-fn a_copy_out_of_a_borrow_is_the_construct_this_backend_lacks() {
+fn a_copy_out_of_a_borrow_reads_the_value_behind_it() {
     let source = "def bump(counter: mutable borrowed Int):
     counter be counter + 1
 
 def main():
     let mutable hits be 0
     bump(hits)
+    bump(hits)
+    bump(hits)
+    print(hits)
 ";
-    let text = refusal("mutborrow", source);
-    assert!(text.contains("`Copy` out of a borrow"), "{text}");
-    assert!(text.contains("load through a pointer"), "the refusal names the construct: {text}");
+    assert_eq!(prints("mutborrow", source), "3\n");
 }
 
-/// And the rest of `examples/01_functions.science` builds, links, runs and
-/// prints — which is what makes the sentence above a measurement rather than a
-/// guess.
+/// The same copy out of a **shared** borrow, at the two other positions §7
+/// names: a block's tail and an operand of `+`.
 ///
-/// This is that file with its one `mutable borrowed` statement removed and
-/// nothing else changed: recursion, early `return`, a unit return type, two
-/// shared-borrow parameters, a returned borrow, a moved `String`, `String
-/// .length()`, `is not` against a literal, and `print` of an `Int` and a
-/// `Bool`.
+/// `4294967303` is `2^32 + 7` and is the value the width is read at: a load
+/// narrower than the referent prints `7`, and `7` is a number a reader would
+/// not look at twice. The sum is over two borrows at once, so a copy that
+/// loaded one operand and passed the other through as a pointer prints an
+/// address rather than `4294967310`.
+#[test]
+fn a_copy_out_of_a_shared_borrow_is_the_value_at_its_own_width() {
+    let source = "\
+def read(value: borrowed I64) -> I64:
+    value
+
+def sum(a: borrowed I64, b: borrowed I64) -> I64:
+    a + b
+
+def main():
+    let big be 4294967303i64
+    let seven be 7i64
+    print(read(big))
+    print(sum(big, seven))
+";
+    assert_eq!(prints("copy-i64", source), "4294967303\n4294967310\n");
+}
+
+/// The narrow widths, where a load of the wrong size is the whole hazard.
+///
+/// **`U8` is the one that cannot be got right by accident.** A `borrowed U8` is
+/// a pointer to one byte, and the load LLVM emits is whatever type the layout
+/// says — an eight-byte load from a one-byte slot verifies clean, which is §3
+/// finding 12's shape in the other direction. `200` and `13` are adjacent
+/// locals, so an over-wide load of either reads the other's bytes or the
+/// frame's, and `200 + 13` at eight bits is `213` only if both loads were one
+/// byte wide.
+///
+/// `Char` is a `u32` holding a scalar value and `Bool` is `i8` in memory with
+/// `i1` in a register, which are the two scalars whose in-memory and in-register
+/// forms differ at all.
+#[test]
+fn a_copy_out_of_a_borrow_at_the_narrow_widths() {
+    let source = "\
+def byte(value: borrowed U8) -> U8:
+    value
+
+def add_bytes(a: borrowed U8, b: borrowed U8) -> U8:
+    a + b
+
+def letter(value: borrowed Char) -> Char:
+    value
+
+def flag(value: borrowed Bool) -> Bool:
+    value
+
+def main():
+    let big be 200u8
+    let small be 13u8
+    let c be 'q'
+    let yes be true
+    print(byte(big))
+    print(add_bytes(big, small))
+    print(letter(c))
+    print(flag(yes))
+";
+    assert_eq!(prints("copy-narrow", source), "200\n213\nq\ntrue\n");
+}
+
+/// And a float, which is the load that is not an integer load at all.
+///
+/// A `borrowed F64` read as an `i64` and printed would be `4612811918334230528`
+/// for `2.5`; read as an `F32` it would be a different number of digits. The
+/// sum is here so that the value reaches an *instruction* and not only a
+/// formatter — `2.5 + 0.25` is `2.75` exactly in binary, so a wrong answer here
+/// is a wrong answer and never a rounding question.
+#[test]
+fn a_copy_out_of_a_borrowed_float_is_a_float_load() {
+    let source = "\
+def read(value: borrowed F64) -> F64:
+    value
+
+def add(a: borrowed F64, b: borrowed F64) -> F64:
+    a + b
+
+def main():
+    let a be 2.5f64
+    let b be 0.25f64
+    print(read(a))
+    print(add(a, b))
+";
+    assert_eq!(prints("copy-f64", source), "2.5\n2.75\n");
+}
+
+/// And a **record**, which is the load that is not a scalar load.
+///
+/// §7's rule is conditioned on `Copy` and not on being a scalar, and §4.4's
+/// marker syntax — `Position implements Copy`, one line and no block, which
+/// `examples/06_traits.science` writes — is how a user type acquires it. So a
+/// `borrowed Pair` copies out as a sixteen-byte struct load, and the returned
+/// `Pair` is two words, which §4's classifier returns **indirectly**: the
+/// destination of the copy is finding 5's return slot rather than an `alloca`.
+/// `400` and `9` are `tests/methods.rs`' own adversarial pair — a struct read
+/// through one pointer too many gives the frame slot's address in both fields,
+/// and neither of those numbers is small.
+#[test]
+fn a_copy_out_of_a_borrowed_record_is_an_aggregate_load() {
+    let source = "\
+type Pair:
+    a: I64
+    b: I64
+
+Pair implements Copy
+
+def whole(p: borrowed Pair) -> Pair:
+    p
+
+def main():
+    let p be Pair(a: 400, b: 9)
+    let q be whole(p)
+    print(q.a)
+    print(q.b)
+";
+    assert_eq!(prints("copy-record", source), "400\n9\n");
+}
+
+/// `Coercion::CopyThenWiden`: §7's rule and then Decision 6's, in that order.
+///
+/// **The order is the whole content of the test.** `borrowed Int` into `Int?`
+/// is a load and then a tagged store; the reverse would build a `(borrowed
+/// Int)?` — a pointer with a null niche — and a `?` on it would be asking
+/// whether the *borrow* was null, which is always false, and the payload read
+/// back would be an address. So `256` is the value, for
+/// `tests/past_stage_three.rs`'s reason: Decision 18 puts the tag at offset 0,
+/// and a payload written there instead makes the tag the low byte, which is
+/// zero for `256` and reads back as absent.
+#[test]
+fn a_copy_out_of_a_borrow_then_widened_is_present() {
+    let source = "\
+def maybe(value: borrowed Int) -> Int?:
+    value
+
+def main():
+    let big be 256
+    let small be 42
+    let a be maybe(big)
+    let b be maybe(small)
+    if a?:
+        print(\"a is present\")
+    else:
+        print(\"a is absent\")
+    if b?:
+        print(\"b is present\")
+    else:
+        print(\"b is absent\")
+";
+    assert_eq!(prints("copy-widen", source), "a is present\nb is present\n");
+}
+
+/// And `examples/01_functions.science`, whole — the file this construct was the
+/// last thing between and an executable.
+///
+/// This is that file verbatim, `bump` and all: recursion, early `return`, a
+/// unit return type, two shared-borrow parameters, a returned borrow, a moved
+/// `String`, `String.length()`, `is not` against a literal, `print` of an `Int`
+/// and a `Bool`, and the `mutable borrowed` counter.
+#[test]
+fn the_functions_example_runs_whole() {
+    let source = "\
+def greet():
+    print(\"hello\")
+
+def greet_twice() -> ():
+    greet()
+    greet()
+
+def add(a: Int, b: Int) -> Int:
+    a + b
+
+def clamp_low(value: Int, floor: Int) -> Int:
+    if value < floor:
+        return floor
+    value
+
+def longest(a: borrowed String, b: borrowed String) -> borrowed String:
+    if a.length() > b.length(): a else: b
+
+def bump(counter: mutable borrowed Int):
+    counter be counter + 1
+
+def consume(text: String) -> Int:
+    text.length()
+
+def factorial(n: Int) -> Int:
+    if n <= 1:
+        1
+    else:
+        n * factorial(n - 1)
+
+def has_name(name: borrowed String) -> Bool:
+    name is not \"\"
+
+def main():
+    greet()
+    greet_twice()
+    print(add(2, 3))
+    print(clamp_low(-4, 0))
+    print(factorial(10))
+    print(has_name(\"Kepler\"))
+    print(longest(\"abc\", \"de\"))
+
+    let mutable hits be 0
+    bump(hits)
+    print(hits)
+
+    let owned be \"a sentence\"
+    print(consume(owned))
+";
+    assert_eq!(
+        prints("functions-whole", source),
+        "hello\nhello\nhello\n5\n0\n3628800\ntrue\nabc\n1\n10\n"
+    );
+}
+
+/// The third of §7's variants, which is refused, and the refusal names Decision
+/// 5 rather than a missing instruction.
+///
+/// `(borrowed T)?` into `T?` runs the copy *only when the value is present*,
+/// which is a test and two edges: three basic blocks where MIR has one. Every
+/// ingredient of it is in this crate — `lower_is_present` asks the question for
+/// both of Decision 18's and 19's representations, `copy_out_of_borrow` is the
+/// present edge and `store_null` is the absent one — and what is missing is the
+/// place to put them, because a statement lowers into one block's instruction
+/// list. The half that would fit, a load on the present edge and nothing on the
+/// other, verifies and links and reads uninitialised memory.
+///
+/// **`unwrap` is called and the call is what makes this a test.**
+/// `Lowerer::lower_crate` walks `reachable_from(bodies, main)` and lowers
+/// nothing else, so the same file with the call removed *builds*: the body
+/// carrying the refused coercion is never visited. A refusal test whose fixture
+/// does not call the function it is about asserts nothing.
+#[test]
+fn a_copy_that_runs_only_when_present_is_refused() {
+    let source = "\
+def unwrap(value: (borrowed Int)?) -> Int?:
+    value
+
+def main():
+    let m be unwrap(null)
+    if m?:
+        print(\"present\")
+    else:
+        print(\"absent\")
+";
+    let text = refusal("copy-when-present", source);
+    assert!(text.contains("only when the value is present"), "{text}");
+    assert!(text.contains("Decision 5"), "the refusal names the line it is at: {text}");
+}
+
+/// The rest of `examples/01_functions.science` with its `mutable borrowed`
+/// statement removed, kept beside the whole file above.
+///
+/// It is not redundant with [`the_functions_example_runs_whole`]: this one is
+/// the program that ran before §7's copy was lowered, so a regression in the
+/// copy alone fails one test and not both, which says which half moved.
 #[test]
 fn the_rest_of_the_functions_example_runs() {
     let source = "\

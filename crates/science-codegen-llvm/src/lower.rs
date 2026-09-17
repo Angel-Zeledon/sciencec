@@ -62,7 +62,14 @@
 //!   is not `science_codegen::descriptor::needs_drop`.
 //! - **Decision 6's `T?`**, in both representations: `null` is a tag store or a
 //!   null pointer, `?` is one comparison ([`Lowerer::lower_is_present`]), and
-//!   `T` into `T?` is `Coercion::Widen`.
+//!   `T` into `T?` is `Coercion::Widen` ([`Lowerer::lower_widen`]).
+//! - **`assign`'s §7**, in two of its three shapes: a borrow of a `Copy` type
+//!   read as a value is one load through the pointer
+//!   ([`Lowerer::copy_out_of_borrow`]), and `borrowed T` into `T?` is that load
+//!   and then the widening above, in that order. The third —
+//!   `(borrowed T)?` into `T?` — runs the copy only when the value is present
+//!   and is refused, because a test and two edges are three basic blocks where
+//!   MIR has one and Decision 5 says there is exactly one.
 //!
 //! # What §10's stage 2 and stage 3 ask for that this language does not have
 //!
@@ -443,6 +450,22 @@ pub struct Lowered {
     pub libraries: Vec<String>,
     /// Every foreign symbol declared, for `SC0461`.
     pub foreign: Vec<ForeignSymbol>,
+}
+
+/// Where the payload of a [`Lowerer::lower_widen`] comes from.
+///
+/// Decision 6's widening has two callers that agree about everything except
+/// this. `Coercion::Widen` widens a MIR operand, which is materialised at the
+/// payload's own layout by [`Lowerer::typed_operand`];
+/// `Coercion::CopyThenWiden` widens the result of §7's load, which already
+/// exists as a value and was produced at the *referent's* layout. Naming the
+/// difference is what lets the tag, the payload offset and Decision 19's
+/// asymmetry be decided once.
+enum Widened<'a> {
+    /// The operand the coercion was applied to.
+    Operand(&'a mir::Operand),
+    /// §7's copy, already loaded, with the layout it was loaded at.
+    Copied { value: ValueId, layout: Layout },
 }
 
 /// One `extern` block's function, resolved to what codegen needs of it.
@@ -2042,8 +2065,9 @@ impl<'a> Lowerer<'a> {
             Rvalue::IsPresent(operand) => {
                 self.lower_is_present(body, ctx, operand, dest, insts)
             }
-            // Decision 6's `T` into `T?`. The other seven coercions box, build
-            // a vtable or copy through a borrow, and each is refused by name in
+            // Decision 6's `T` into `T?` and `assign`'s §7 copy out of a
+            // borrow, in two of its three shapes. The other five box, build a
+            // vtable or need a branch, and each is refused by name in
             // [`Lowerer::lower_coercion`].
             Rvalue::Coerce { operand, coercion, .. } => {
                 self.lower_coercion(body, ctx, *coercion, operand, dest, layout, insts)
@@ -2314,16 +2338,29 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    /// Decision 6's widening, and a name for each of the seven this is not.
+    /// Decision 6's widening, §7's copy, and a name for each of the five this
+    /// is not.
     ///
-    /// **`Widen` writes the tag and then the payload, in that order, and
-    /// neither is optional.** A tagged `T?` is a discriminant at offset 0 and a
-    /// payload at `payload_offset`, and a widening that wrote only the payload
-    /// would leave the tag holding whatever the slot held — which for a freshly
-    /// `alloca`'d slot is a value that is `null` about half the time and is
-    /// never reported. A niched `T?` **is** its payload, so there is no tag to
-    /// write and the store is the ordinary one; that asymmetry is Decision 19
-    /// and is why the two arms do not share a line.
+    /// **Three of the eight are lowered.** [`Coercion::Identity`] is the
+    /// assignment underneath it, [`Coercion::Widen`] is
+    /// [`Lowerer::lower_widen`], and `assign`'s §7 —
+    /// *"a borrow of a `Copy` type reads as a value"* — is
+    /// [`Lowerer::copy_out_of_borrow`], a load through the pointer, for
+    /// [`Coercion::Copy`] and for [`Coercion::CopyThenWiden`].
+    ///
+    /// **The order in `CopyThenWiden`'s name is the order of the
+    /// instructions.** §7 says *"§7's rule then Decision 6's, in that order and
+    /// never the reverse"*, and the two orders are different programs: copying
+    /// and then widening loads `T` and stores it into the payload of a `T?`,
+    /// where widening and then copying would build a `(borrowed T)?` and then
+    /// have to read through a pointer that may be absent. So this composes with
+    /// [`Lowerer::lower_widen`] rather than writing a second widening — the
+    /// tag, the payload offset and Decision 19's asymmetry are decided in one
+    /// place, and the only thing [`Coercion::CopyThenWiden`] changes is where
+    /// the payload's *value* comes from.
+    ///
+    /// **[`Coercion::CopyWhenPresent`] is refused and the reason is Decision
+    /// 5.** It is the one of the three with a branch in it.
     #[allow(clippy::too_many_arguments)]
     fn lower_coercion(
         &mut self,
@@ -2344,54 +2381,9 @@ impl<'a> Lowerer<'a> {
                 insts.push(ExtInst::Above(Inst::Store { local: dest, value }));
                 Ok(())
             }
-            Coercion::Widen => match &layout.repr {
-                Repr::Tagged { payload_offset, variants, .. } => {
-                    let present = variants
-                        .iter()
-                        .find(|variant| variant.payload.is_some())
-                        .ok_or_else(|| {
-                            Unlowered::new(
-                                "a widening into a tagged type with no payload-carrying variant",
-                            )
-                        })?;
-                    let payload = present
-                        .payload
-                        .clone()
-                        .expect("the variant was found by having a payload");
-                    let discriminant = present.discriminant;
-                    let payload_offset = *payload_offset;
-                    insts.push(ExtInst::StoreTag { local: dest, discriminant });
-                    let base = ctx.value();
-                    insts.push(ExtInst::LocalAddr { dest: base, local: dest });
-                    let address = ctx.value();
-                    insts.push(ExtInst::FieldAddr {
-                        dest: address,
-                        base: Operand::Value(base),
-                        offset: payload_offset,
-                    });
-                    let value = self.typed_operand(ctx, operand, &payload, insts)?;
-                    insts.push(ExtInst::StoreAt {
-                        address: Operand::Value(address),
-                        layout: payload,
-                        value,
-                    });
-                    Ok(())
-                }
-                // Decision 19: the enum *is* the payload, and a present value
-                // is that payload written as itself. The niche value is the one
-                // bit pattern the payload cannot hold, so writing the payload
-                // is what makes it present — there is nothing else to say.
-                Repr::Niched { payload, .. } => {
-                    let payload = (**payload).clone();
-                    let value = self.typed_operand(ctx, operand, &payload, insts)?;
-                    insts.push(ExtInst::Above(Inst::Store { local: dest, value }));
-                    Ok(())
-                }
-                _ => Err(Unlowered::new(
-                    "a widening into a type that is neither Decision 18's tagged nullable nor \
-                     Decision 19's niched one",
-                )),
-            },
+            Coercion::Widen => {
+                self.lower_widen(ctx, Widened::Operand(operand), dest, layout, insts)
+            }
             Coercion::Box | Coercion::BoxThenWiden => Err(Unlowered::new(
                 "a concrete error boxed into `any Error`, which allocates and fills a vtable: \
                  this backend emits no vtables at all",
@@ -2400,14 +2392,231 @@ impl<'a> Lowerer<'a> {
                 "a borrow or a `Box` unsized into an interface object, which pairs the pointer \
                  with a vtable this backend does not emit",
             )),
-            Coercion::Copy | Coercion::CopyThenWiden | Coercion::CopyWhenPresent => {
-                let _ = body;
-                Err(Unlowered::new(
-                    "a `Copy` out of a borrow, which is a load through a pointer whose `Copy` \
-                     bound nothing here checks",
-                ))
+            // §7, whole: `borrowed T` into `T` is the load and nothing else.
+            // The destination's layout is checked against the referent's rather
+            // than assumed equal to it, because the two come from different
+            // types — `layout` is the `Assign`'s slot and the referent is the
+            // `Ty` the borrow points at — and a disagreement between them is
+            // finding 12's shape, which opaque pointers make invisible to the
+            // verifier.
+            Coercion::Copy => {
+                let (value, referent) = self.copy_out_of_borrow(body, ctx, operand, insts)?;
+                if referent != *layout {
+                    return Err(Unlowered::new(format!(
+                        "a `Copy` out of a borrow of a {}-byte value into a {}-byte slot: §7 \
+                         copies the value as it stands and there is no conversion to put between \
+                         them",
+                        referent.size, layout.size
+                    )));
+                }
+                insts.push(ExtInst::Above(Inst::Store {
+                    local: dest,
+                    value: Operand::Value(value),
+                }));
+                Ok(())
+            }
+            // §7 then Decision 6, in that order. The load happens first and
+            // unconditionally — the borrow itself is not nullable here, only
+            // the destination is — so this is straight-line code and the
+            // widening is the same one `Coercion::Widen` emits.
+            Coercion::CopyThenWiden => {
+                let (value, referent) = self.copy_out_of_borrow(body, ctx, operand, insts)?;
+                let copied = Widened::Copied { value, layout: referent };
+                self.lower_widen(ctx, copied, dest, layout, insts)
+            }
+            // **Refused, and it is Decision 5 rather than a missing
+            // instruction.** `(borrowed T)?` into `T?` is §7's copy *under*
+            // Decision 6's constructor, and `assign`'s own note says what that
+            // costs: *"the copy runs only when the value is present … a
+            // conversion with a branch in it rather than a load"*. The branch
+            // is not optional and cannot be flattened: the absent case is a
+            // null pointer, so a load hoisted above the test dereferences null
+            // on exactly the input the test exists to catch.
+            //
+            // Every ingredient is here — [`Lowerer::lower_is_present`] asks the
+            // question for both of Decision 18's and 19's representations,
+            // [`Lowerer::copy_out_of_borrow`] is the present edge and
+            // [`Lowerer::store_null`] is the absent one — and what is missing is
+            // the place to put them. A statement lowers into one block's
+            // instruction list; this one needs three blocks where MIR has one,
+            // which is the line Decision 5 draws and which
+            // [`Lowerer::lower_binary`] refuses integer `/` for as well. Half of
+            // it — a load on the present edge and an uninitialised slot on the
+            // other — would verify, link and run, which is why it is refused
+            // rather than approximated.
+            Coercion::CopyWhenPresent => Err(Unlowered::new(
+                "a `Copy` out of a `(borrowed T)?`, which `assign`'s §7 runs only when the value \
+                 is present: that is a test and two edges, which is three basic blocks where MIR \
+                 has one, and Decision 5 says \"every MIR basic block becomes exactly one LLVM \
+                 basic block\" — the same line integer `/` is refused at",
+            )),
+        }
+    }
+
+    /// Decision 6's widening, with the payload's value left open.
+    ///
+    /// **It writes the tag and then the payload, in that order, and neither is
+    /// optional.** A tagged `T?` is a discriminant at offset 0 and a payload at
+    /// `payload_offset`, and a widening that wrote only the payload would leave
+    /// the tag holding whatever the slot held — which for a freshly `alloca`'d
+    /// slot is a value that is `null` about half the time and is never
+    /// reported. A niched `T?` **is** its payload, so there is no tag to write
+    /// and the store is the ordinary one; that asymmetry is Decision 19 and is
+    /// why the two arms do not share a line.
+    ///
+    /// **[`Widened`] is what makes [`Coercion::CopyThenWiden`] compose rather
+    /// than copy this function.** Everything above is the same for both
+    /// coercions and only the payload's value differs, so the value is the
+    /// parameter.
+    fn lower_widen(
+        &mut self,
+        ctx: &mut BodyCtx,
+        source: Widened<'_>,
+        dest: LocalId,
+        layout: &Layout,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        match &layout.repr {
+            Repr::Tagged { payload_offset, variants, .. } => {
+                let present = variants
+                    .iter()
+                    .find(|variant| variant.payload.is_some())
+                    .ok_or_else(|| {
+                        Unlowered::new(
+                            "a widening into a tagged type with no payload-carrying variant",
+                        )
+                    })?;
+                let payload =
+                    present.payload.clone().expect("the variant was found by having a payload");
+                let discriminant = present.discriminant;
+                let payload_offset = *payload_offset;
+                insts.push(ExtInst::StoreTag { local: dest, discriminant });
+                let base = ctx.value();
+                insts.push(ExtInst::LocalAddr { dest: base, local: dest });
+                let address = ctx.value();
+                insts.push(ExtInst::FieldAddr {
+                    dest: address,
+                    base: Operand::Value(base),
+                    offset: payload_offset,
+                });
+                let value = self.widened_value(ctx, source, &payload, insts)?;
+                insts.push(ExtInst::StoreAt {
+                    address: Operand::Value(address),
+                    layout: payload,
+                    value,
+                });
+                Ok(())
+            }
+            // Decision 19: the enum *is* the payload, and a present value
+            // is that payload written as itself. The niche value is the one
+            // bit pattern the payload cannot hold, so writing the payload
+            // is what makes it present — there is nothing else to say.
+            Repr::Niched { payload, .. } => {
+                let payload = (**payload).clone();
+                let value = self.widened_value(ctx, source, &payload, insts)?;
+                insts.push(ExtInst::Above(Inst::Store { local: dest, value }));
+                Ok(())
+            }
+            _ => Err(Unlowered::new(
+                "a widening into a type that is neither Decision 18's tagged nullable nor \
+                 Decision 19's niched one",
+            )),
+        }
+    }
+
+    /// The payload a [`Lowerer::lower_widen`] writes, from whichever of the two
+    /// places it comes from.
+    ///
+    /// **The `Copied` arm checks the layout and the `Operand` arm does not have
+    /// to.** [`Lowerer::typed_operand`] *builds* its value at the payload's
+    /// layout, so the widths agree by construction; a copy out of a borrow was
+    /// loaded at the referent's layout, which is a second type, and a
+    /// disagreement between the two is a store of the wrong width into a slot
+    /// inside another object. [`ExtInst::StoreAt`] catches that in the emitter,
+    /// and catching it here as well is the difference between a refusal naming
+    /// the construct and a `BackendError` naming two LLVM types.
+    fn widened_value(
+        &mut self,
+        ctx: &mut BodyCtx,
+        source: Widened<'_>,
+        payload: &Layout,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<Operand, Unlowered> {
+        match source {
+            Widened::Operand(operand) => self.typed_operand(ctx, operand, payload, insts),
+            Widened::Copied { value, layout } => {
+                if layout != *payload {
+                    return Err(Unlowered::new(format!(
+                        "a `CopyThenWiden` whose copy is {} bytes and whose `T?` holds a {}-byte \
+                         payload: §7's rule and Decision 6's disagree about the type in the \
+                         middle",
+                        layout.size, payload.size
+                    )));
+                }
+                Ok(Operand::Value(value))
             }
         }
+    }
+
+    /// `assign`'s §7: the value behind a borrow, loaded.
+    ///
+    /// Gives back the loaded value and **the layout it was loaded at**, which
+    /// is the referent's and not the destination's — the caller checks the two
+    /// against each other, because it is the caller that knows which of §7's
+    /// three shapes this is.
+    ///
+    /// **The operand is a pointer and the result is what it points at**, which
+    /// is one [`ExtInst::LoadAt`] and is the same row of §2.3's table
+    /// [`Lowerer::place_address`]'s `Projection::Deref` arm reads — including
+    /// its guard, that the thing being dereferenced really is
+    /// `Repr::Scalar(Scalar::Pointer(_))`. That guard is load-bearing for
+    /// finding 18's reason: opaque pointers make a pointer to a `T` and a
+    /// pointer to the slot holding a pointer to a `T` the same LLVM type, so a
+    /// source operand that was not a borrow at all would load garbage the
+    /// verifier accepts.
+    ///
+    /// **The `Copy` bound is not checked here and is not this crate's to
+    /// check.** `science-types`' `Coercions::of` discharges it through
+    /// `Methods::declares` before the coercion is ever recorded, and its own
+    /// note gives the reason a `Copy` this crate cannot classify must not be
+    /// admitted: *"the failure would be a silent double drop"*. What is checked
+    /// here is the machine-level precondition — that there is a pointer to load
+    /// through — because that is the part a wrong answer above the line turns
+    /// into a wrong number rather than a diagnostic.
+    fn copy_out_of_borrow(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        operand: &mir::Operand,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(ValueId, Layout), Unlowered> {
+        let source = self.operand_ty(body, operand).ok_or_else(|| {
+            Unlowered::new(
+                "a `Copy` out of an operand with no type: the load's width is the referent's and \
+                 there is nothing here to read it from",
+            )
+        })?;
+        let referent = match self.types.kind(source) {
+            TyKind::Borrowed { inner, .. } => *inner,
+            _ => {
+                return Err(Unlowered::new(format!(
+                    "a `Copy` out of `{}`, which is not a borrow: §7's rule reads through a \
+                     pointer and this operand is not one",
+                    self.types.render(self.defs, source)
+                )));
+            }
+        };
+        let borrow = self.layout_of_ty(source)?;
+        if !matches!(borrow.repr, Repr::Scalar(Scalar::Pointer(_))) {
+            return Err(Unlowered::new(
+                "a `Copy` out of a borrow whose representation is not a pointer",
+            ));
+        }
+        let layout = self.layout_of_ty(referent)?;
+        let address = self.typed_operand(ctx, operand, &borrow, insts)?;
+        let value = ctx.value();
+        insts.push(ExtInst::LoadAt { dest: value, address, layout: layout.clone() });
+        Ok((value, layout))
     }
 
     /// A record literal: Decision 17's fields, written one at a time.

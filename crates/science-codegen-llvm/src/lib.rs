@@ -107,8 +107,9 @@
 //! diagnostic, from a phase this crate must not edit.
 //!
 //! **A method call is emitted, and two of the twenty-two programs in
-//! `examples/` now build, link and run.** `11_literals.science` and
-//! `16_indentation.science` are the two; before this pass it was none, and in
+//! `examples/` built, linked and ran for the first time.** `11_literals
+//! .science` and `16_indentation.science` were the two — `01_functions.science`
+//! joined them when §7's copy landed, below; before that pass it was none, and in
 //! nine of the twenty-two the first refusal was a method call — six of them
 //! refused at the *signature* on the ground that the receiver was *"a `Self`
 //! this crate cannot resolve to a concrete type"*, and three of them
@@ -124,9 +125,28 @@
 //! the prelude's own `String` methods are the `RUNTIME` entry points that
 //! implement them ([`lower::Lowerer::prelude_method`]), and a `def main():`
 //! that returns `()` is an entry point, and `is`/`is not` on a `String` is
-//! `science_string_eq` (finding 28). `tests/methods.rs` is twenty-four
-//! programs, nineteen of them built, linked, run and asked what they printed
+//! `science_string_eq` (finding 28). `tests/methods.rs` is thirty-one
+//! programs, twenty-three of them built, linked, run and asked what they printed
 //! and what status they exited with.
+//!
+//! **A borrow of a `Copy` type reads as a value now, and
+//! `examples/01_functions.science` is the third of the twenty-two that builds,
+//! links and runs.** `assign`'s §7 is the rule — the language has no
+//! dereference operator, so `counter be counter + 1` through a
+//! `mutable borrowed Int` has no other spelling — and its lowering is one
+//! [`emit::ExtInst::LoadAt`] through the pointer
+//! ([`lower::Lowerer::copy_out_of_borrow`]). Two of §7's three variants are
+//! emitted: `Coercion::Copy`, which is the whole of that load, and
+//! `Coercion::CopyThenWiden`, which is that load composed with the widening
+//! `Coercion::Widen` already had ([`lower::Lowerer::lower_widen`], which grew a
+//! parameter for where the payload comes from and no second copy of Decision
+//! 6). The third, `Coercion::CopyWhenPresent`, runs the copy **only when the
+//! value is present** and is refused: a test and two edges are three basic
+//! blocks where MIR has one, which is the line Decision 5 draws and integer `/`
+//! is already refused at. `tests/methods.rs` grew seven programs for it — the
+//! copy at `I64`, at `U8`, at `Char`, at `Bool`, at `F64` and at a record,
+//! because a load of the wrong width is invisible until it prints, and
+//! `examples/01_functions.science` whole.
 //!
 //! Behind those, in the order they were measured: a **generic** function and a
 //! generic type, which nothing monomorphises — which is also what is left of
@@ -204,7 +224,7 @@
 //!
 //! # 3. What was found by running it
 //!
-//! Twenty-eight things that reading could not have established, each recorded
+//! Twenty-nine things that reading could not have established, each recorded
 //! where it bites. The first four were found by writing the crate; the rest
 //! were found by *running* it, which is the difference §10's staging exists to
 //! force. **Twenty-four and twenty-five are the pair to read first if you are
@@ -571,10 +591,13 @@
 //!     borrowed Int`.
 //!
 //!     `examples/01_functions.science`'s `def bump(counter: mutable borrowed
-//!     Int): counter be counter + 1` is the acceptance case, this is what
-//!     stops it, and it is **the last thing standing between that file and an
-//!     executable**: with the statement removed the rest of the program
-//!     builds, links, runs and prints. §4.7 is *"Science has no dereference
+//!     Int): counter be counter + 1` is the acceptance case and this is what
+//!     stopped it. **Both halves are closed now**: `assign`'s §7 inserts the
+//!     coercion and [`lower::Lowerer::copy_out_of_borrow`] lowers it, and that
+//!     file builds, links, runs and prints. What the entry keeps is the
+//!     asymmetry it records — the same function written `borrowed` got a
+//!     coercion and written `mutable borrowed` did not — because that is the
+//!     front-end hole, and the refusal below is what a user met instead of it. §4.7 is *"Science has no dereference
 //!     operator at all"*, so there is no second spelling to reach for —
 //!     `counter be 5` is `SC0525`, *expected `mutable borrowed Int`, found an
 //!     integer literal*, which is the same hole on the assignment's other
@@ -617,8 +640,34 @@
 //!     `tests/methods.rs`'s `string_equality_compares_bytes_and_not_buffers`
 //!     builds the two operands in two allocations for exactly that reason.
 //!
+//! 29. **A function nothing calls is never lowered, so a construct only that
+//!     function contains is never refused.** [`lower::Lowerer::lower_crate`]
+//!     walks `reachable_from(bodies, main)` and skips everything else — which
+//!     is right, because a module's worth of `define`s nobody calls is dead
+//!     weight in the object file — and the consequence is that
+//!     `sciencec build` **succeeds** on a file containing an unlowerable
+//!     function that `main` does not reach. The refusal is not weakened and no
+//!     wrong code is emitted; what is weakened is the *measurement*, and in two
+//!     directions.
+//!
+//!     One is a test that asserts nothing. The first fixture written for
+//!     `Coercion::CopyWhenPresent`'s refusal declared the function and never
+//!     called it, and it built — so the test failed with *"the program built
+//!     and this test is about the refusal"* rather than passing for the wrong
+//!     reason, which is luck: a fixture written the same way against a
+//!     construct that *is* lowered would have passed while exercising nothing.
+//!     Every refusal test in this crate has to call what it is about, and
+//!     `tests/methods.rs`'s `a_copy_that_runs_only_when_present_is_refused`
+//!     says so where a reader will meet it.
+//!
+//!     The other is the corpus measurement itself. *"`examples/` builds three
+//!     of twenty-two"* means *"three of them build the part of themselves that
+//!     `main` reaches"*, and a file whose unreached half is full of constructs
+//!     this backend has never seen counts as a success. That is the honest
+//!     reading of every such number in this file.
+//!
 //! **And nine was itself found this way**, which is the point of the list: the
-//! numbering has grown eight times and each entry is something the notes did
+//! numbering has grown nine times and each entry is something the notes did
 //! not say. Eleven, twelve, thirteen and eighteen were all found by *running* a
 //! program — none of them changes the IR in a way that looks wrong, and twelve
 //! and eighteen both pass the verifier, which is the pair that says opaque
