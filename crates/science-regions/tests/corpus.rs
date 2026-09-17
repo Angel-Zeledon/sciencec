@@ -7,10 +7,28 @@
 //! thousand lines, so what it settles is small — but it is the difference
 //! between a claim and a measurement.
 //!
-//! **`sciencec check` is at zero diagnostics over this directory and this crate
-//! is not wired into it.** These three diagnostics are therefore new
-//! information, and each one is attributed below to a hole that is not this
-//! crate's. Every entry is a test that fails the day its hole closes.
+//! When this file was written, **`sciencec check` was at zero diagnostics over
+//! this directory and this crate was not wired into it**, so its three
+//! diagnostics were new information: one real and two false, each attributed
+//! below to a hole that is not this crate's, and each a test that fails the day
+//! its hole closes.
+//!
+//! **One of them has since closed, and the day it did this test failed, which
+//! is the whole point of holding the census as an exact map.** `science-types`
+//! now auto-borrows a `borrowed T` parameter, so `00_kitchen_sink.science`'s
+//! `SC0334` is gone and [`the_kitchen_sink_no_longer_moves_a_value_that_is_still_borrowed`]
+//! is the record of it. **The census is now two diagnostics in one file, and
+//! both of them are false positives** — which is a worse ratio than it started
+//! with and is the honest one.
+//!
+//! **This crate is also now wired into the driver**, so the census is measured
+//! twice: here, over a pipeline this harness builds by hand, and in
+//! `crates/sciencec/tests/cli.rs`'s `REGIONS`, by running the binary. The two
+//! agree, and they have to, because a disagreement would mean the driver runs a
+//! different pipeline than the one this crate tests. `REGIONS` additionally
+//! records the verdict — no real findings, two false — in a form a test can
+//! check, so that a reader of the compiler's output cannot mistake one kind for
+//! the other.
 
 mod support;
 
@@ -66,67 +84,85 @@ fn census() -> BTreeMap<String, Vec<u16>> {
     out
 }
 
-/// **The measurement.** Three diagnostics, in two files, out of twenty
-/// programs `sciencec check` calls clean.
+/// **The measurement.** Two diagnostics, in one file, out of twenty programs
+/// every phase above this one calls clean.
 ///
 /// Held as an exact map rather than a count, because a change that swapped one
-/// finding for another would leave a count alone.
+/// finding for another would leave a count alone — and because that is exactly
+/// what happened: it was three in two files until `00_kitchen_sink.science`'s
+/// `SC0334` closed, and a count of findings would have hidden which one went.
 #[test]
-fn the_corpus_census_is_three_diagnostics_in_two_files() {
+fn the_corpus_census_is_two_diagnostics_in_one_file() {
     let found = census();
-    let expected: BTreeMap<String, Vec<u16>> = [
-        ("00_kitchen_sink.science".to_string(), vec![334]),
-        ("09_absence_and_failure.science".to_string(), vec![333, 333]),
-    ]
-    .into_iter()
-    .collect();
+    let expected: BTreeMap<String, Vec<u16>> =
+        [("09_absence_and_failure.science".to_string(), vec![333, 333])].into_iter().collect();
     assert_eq!(found, expected, "the census moved");
 }
 
-/// **Finding one, and it is not a false positive.**
+/// **Finding one, closed.** It was the only real one, and this test is what it
+/// left behind.
 ///
-/// `00_kitchen_sink.science` line 365 builds an `Excerpt` holding
-/// `borrowed doc`, and line 368 writes `describe(doc)`, where `describe` is
-/// `def describe of T: Summarize(value: borrowed T)`.
+/// **What it was.** `00_kitchen_sink.science` line 365 builds an `Excerpt`
+/// holding `borrowed doc`, and line 368 writes `describe(doc)`, where
+/// `describe` is `def describe of T: Summarize(value: borrowed T)`. **That call
+/// moved `doc`**: `science-types`'s auto-borrow fired when the parameter was
+/// `borrowed any Summarize` — `describe_any(doc)` two lines later lowered to a
+/// `Ref` — and did **not** fire when it was `borrowed T` for a generic `T`.
+/// `07_generics.science`'s own §11 says *"a parameter declared `borrowed` is
+/// borrowed at the call site without the caller writing anything"*, so it was a
+/// gap and not a design. The consequence was larger than the borrow: lines 369
+/// and 370 go on to use `doc` after it had been moved.
 ///
-/// **That call moves `doc`.** `science-types`'s auto-borrow fires when the
-/// parameter is `borrowed any Summarize` — `describe_any(doc)` two lines later
-/// lowers to a `Ref` — and does **not** fire when it is `borrowed T` for a
-/// generic `T`. `07_generics.science`'s own §11 says *"a parameter declared
-/// `borrowed` is borrowed at the call site without the caller writing
-/// anything"*, so this is a gap and not a design.
+/// **What closed it.** `science-types` now auto-borrows a `borrowed T`
+/// parameter. The old test asserted `SC0334` here and its failure message said,
+/// in as many words, what a failure would mean. It failed, and this is the
+/// record.
 ///
-/// The consequence is larger than the borrow: lines 369 and 370 go on to use
-/// `doc` after it has been moved, which `SC0301` would report if there were a
-/// use-after-move check. Region inference is the first phase with anything to
-/// say about it.
+/// **Why the assertion is not simply deleted, and why it is not the one the old
+/// test used.** The old control was *"some argument of a `describe` call is
+/// moved"*, and **that is still true and always was**: after the fix the call
+/// moves the *reference temporary* the auto-borrow created, so
+/// `Operand::moved_place` is `Some` either way and the control could not tell
+/// the fix from a regression. What distinguishes them is *which place* is
+/// moved, so that is what is asserted: every `describe` call in `main` now
+/// moves a [`science_mir::mir::LocalKind::Temp`], where before it moved the
+/// user's binding — `doc`, `excerpt`, `loaded`, `opened`. A borrow check that
+/// stopped working could not produce that; only the auto-borrow can.
 #[test]
-fn the_kitchen_sink_moves_a_value_that_is_still_borrowed() {
+fn the_kitchen_sink_no_longer_moves_a_value_that_is_still_borrowed() {
     let (_, source) = corpus()
         .into_iter()
         .find(|(name, _)| name == "00_kitchen_sink.science")
         .expect("the kitchen sink");
     let checked = check(&source);
-    assert_eq!(checked.reported(), vec![334]);
+    assert!(checked.reported().is_empty(), "the kitchen sink reports {:?}", checked.reported());
 
-    // The fact underneath it: the argument is a move and not a borrow.
     let body = checked.body("main");
-    let moves = body
-        .blocks()
-        .filter(|(_, block)| match &block.terminator.kind {
-            science_mir::mir::TerminatorKind::Call { callee, args, .. } => {
-                matches!(callee, science_mir::mir::Callee::Def(def)
-                    if checked.krate.defs.get(*def).name == "describe")
-                    && args.iter().any(|arg| arg.moved_place().is_some())
-            }
-            _ => false,
-        })
-        .count();
-    assert!(
-        moves >= 1,
-        "`describe(doc)` is now auto-borrowed, so `science-types`'s auto-borrow gap for \
-         `borrowed T` has closed and this finding is stale"
-    );
+    let mut calls = 0;
+    for (_, block) in body.blocks() {
+        let science_mir::mir::TerminatorKind::Call { callee, args, .. } = &block.terminator.kind
+        else {
+            continue;
+        };
+        if !matches!(callee, science_mir::mir::Callee::Def(def)
+            if checked.krate.defs.get(*def).name == "describe")
+        {
+            continue;
+        }
+        calls += 1;
+        for arg in args.iter() {
+            let Some(place) = arg.moved_place() else { continue };
+            let decl = body.local_decl(place.local);
+            let named = decl.def().map(|def| checked.krate.defs.get(def).name.clone());
+            assert_eq!(
+                named, None,
+                "`describe` moves the binding `{}` again, so the auto-borrow of `borrowed T` \
+                 has regressed and `SC0334` is about to come back",
+                named.clone().unwrap_or_default()
+            );
+        }
+    }
+    assert_eq!(calls, 4, "`main` no longer makes the four `describe` calls this is about");
 }
 
 /// **Finding two, and it *is* a false positive — the measured cost of

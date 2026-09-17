@@ -7,7 +7,7 @@
 //! and what the process exits with.
 //!
 //! ```text
-//! sciencec check FILE...     lex, parse and resolve; report what is wrong
+//! sciencec check FILE...     run the front half; report what is wrong
 //! sciencec build FILE...     check, then produce an executable
 //! sciencec fmt FILE          print the file, formatted
 //! sciencec fmt --write FILE...  format in place
@@ -52,7 +52,7 @@ const USAGE: &str = "\
 sciencec — the Science compiler
 
 Usage:
-    sciencec check FILE...    lex, parse and resolve; report what is wrong
+    sciencec check FILE...    run the front half; report what is wrong
     sciencec build FILE...    check, then produce an executable
     sciencec fmt FILE         print the file, formatted, to stdout
     sciencec fmt --write F... format the files in place

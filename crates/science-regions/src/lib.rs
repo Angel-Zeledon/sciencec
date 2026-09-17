@@ -284,13 +284,19 @@
 //!    belongs. The acceptance case misses this by one step, which is why MIR's
 //!    own suite did not find it.
 //! 10. **A finding about `science-types`, found by running this over
-//!     `examples/`.** `describe(doc)`, where `describe` takes `borrowed T` for
-//!     a generic `T`, **moves** `doc`: auto-borrow fires for
+//!     `examples/`, and since fixed.** `describe(doc)`, where `describe` takes
+//!     `borrowed T` for a generic `T`, **moved** `doc`: auto-borrow fired for
 //!     `borrowed any Summarize` and not for `borrowed T`.
-//!     `00_kitchen_sink.science` therefore moves a value that an `Excerpt` is
-//!     still borrowing, and uses it twice more afterwards. `sciencec check`
-//!     calls that file clean; `tests/corpus.rs` is where it stopped being
-//!     clean.
+//!     `00_kitchen_sink.science` therefore moved a value that an `Excerpt` was
+//!     still borrowing and used it twice more afterwards, and `tests/corpus.rs`
+//!     is where it stopped being clean. `science-types` now auto-borrows a
+//!     `borrowed T` parameter and the `SC0334` is gone; the census moved from
+//!     three diagnostics to two, and
+//!     `the_kitchen_sink_no_longer_moves_a_value_that_is_still_borrowed` is
+//!     both the record and the guard against it coming back. **This is the one
+//!     entry in this list that a note was not the authority on**: the finding
+//!     was made by running the engine, and the fix was made in the crate the
+//!     finding was about.
 //!
 //! # 9. Can this engine be written in Science?
 //!

@@ -7,6 +7,12 @@
 //! them together. Doing so found something, and it is pinned below rather than
 //! papered over: see [`UNRESOLVED`].
 //!
+//! It has since found something twice more, each time from adding the next
+//! phase, and each time the finding is pinned here rather than suppressed.
+//! [`REGIONS`] is the second list: what the borrow check reports over
+//! `examples/`, with each diagnostic marked real or false and with what would
+//! close it.
+//!
 //! Every command runs with the repository root as its working directory,
 //! because that is what makes the `-->` path in a diagnostic read
 //! `examples/01_functions.science` on every platform.
@@ -200,19 +206,88 @@ fn every_example_is_clean_through_lexing_and_parsing() {
 /// the point — the list has to shrink deliberately rather than rot.
 const UNRESOLVED: &[(&str, usize)] = &[("17_modules.science", 7)];
 
+/// One example's region diagnostics, and whether each is a fact about the
+/// program or a fact about a hole in the compiler.
+struct Finding {
+    file: &'static str,
+    /// Every code the file reports, in rendering order.
+    codes: &'static [&'static str],
+    /// **Whether the program is genuinely wrong.**
+    ///
+    /// Pinned rather than left to a comment, because a false positive that is
+    /// only *described* as one in prose is indistinguishable, to the next
+    /// reader and to the next test, from a real finding somebody forgot to fix.
+    real: bool,
+    /// What has to change for this entry to disappear.
+    closed_by: &'static str,
+}
+
+/// **The corpus after region inference was wired in**, and the second kind of
+/// known gap this file records — `UNRESOLVED`'s discipline, applied to
+/// diagnostics rather than to files.
+///
+/// Before this, `sciencec check examples/*.science` reported nothing but
+/// `17_modules.science`'s seven. `crates/science-regions/tests/corpus.rs` had
+/// already run the borrow check over the same directory out of tree and
+/// measured what wiring it in would produce: **three diagnostics in two files,
+/// one real and two false.** That census and this one are the same measurement
+/// taken from two sides — that crate's harness builds the pipeline by hand,
+/// this one runs the binary — and they must agree exactly, because a
+/// disagreement would mean the driver runs a different pipeline than the crate
+/// tests.
+///
+/// **It is now two, and both are false**, because the real one closed between
+/// that census and this wiring. `science-types` now auto-borrows a `borrowed T`
+/// parameter, so `describe(doc)` in `00_kitchen_sink.science` no longer moves a
+/// value an `Excerpt` is still borrowing, and its `SC0334` is gone. That is the
+/// outcome that census's own assertion message predicted in as many words, and
+/// the same crate's `the_kitchen_sink_no_longer_moves_a_value_that_is_still_borrowed`
+/// is the record of it — including the control that separates *"the gap
+/// closed"* from *"the check stopped working"*, which is that the call still
+/// moves something, and what it now moves is the auto-borrow's temporary rather
+/// than the user's binding.
+///
+/// **The two false positives are not suppressed, and that is the decision.**
+/// A compiler that reports two false positives is telling the truth about a
+/// hole in itself; one that hides them to keep a corpus green is not, and this
+/// project's rule against blessing output nobody read applies to silence as
+/// much as to noise. What is owed instead is that nobody later mistakes one for
+/// the other, which is what `real` is for — a verdict a test can check rather
+/// than a sentence in a comment that the next reader has to believe.
+///
+/// `driver::region_check`'s doc comment says precisely what closes them. The
+/// short version is in `closed_by`, and the day it lands this test fails, which
+/// is the point.
+const REGIONS: &[Finding] = &[Finding {
+    file: "09_absence_and_failure.science",
+    codes: &["SC0333", "SC0333"],
+    real: false,
+    // `lookup(settings, key)` is `settings.get(key)`, and `Map.get` has no
+    // declaration, so the callee is opaque and `science-regions`'s `generate`
+    // §5 assumes it may return a reference into *every* argument — the key as
+    // well as the map. The key at both call sites is a string literal whose
+    // temporary dies at the end of the statement.
+    closed_by: "`Map.get` becoming a declaration the method lookup can find",
+}];
+
 #[test]
 fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
     for path in examples() {
         let name = relative(&path);
         let file = path.file_name().unwrap().to_string_lossy().into_owned();
-        let expected = UNRESOLVED.iter().find(|(n, _)| *n == file).map(|(_, count)| *count);
+        let unresolved = UNRESOLVED.iter().find(|(n, _)| *n == file).map(|(_, count)| *count);
+        let regions = REGIONS.iter().find(|it| it.file == file);
+        assert!(
+            unresolved.is_none() || regions.is_none(),
+            "{file} cannot be in both lists: a file that does not resolve is never region-checked"
+        );
         let run = sciencec(&["check", &name]);
 
-        match expected {
-            None => {
+        match (unresolved, regions) {
+            (None, None) => {
                 run.succeeded().silent_stderr();
             }
-            Some(count) => {
+            (Some(count), _) => {
                 run.failed();
                 let reported = run.stderr.matches("error[SC").count();
                 assert_eq!(
@@ -229,8 +304,149 @@ fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
                     );
                 }
             }
+            (None, Some(finding)) => {
+                run.failed();
+                let reported: Vec<&str> = run
+                    .stderr
+                    .lines()
+                    .filter(|l| l.starts_with("error[SC"))
+                    .filter_map(|l| l[6..].split(']').next())
+                    .collect();
+                assert_eq!(
+                    reported, finding.codes,
+                    "{name}'s region findings moved — see `REGIONS`; this entry closes \
+                     when {}\n{}",
+                    finding.closed_by, run.stderr
+                );
+                // Ownership codes and nothing else. A resolution or type error
+                // appearing here would mean an *earlier* phase regressed and
+                // the ordering rule in `driver::type_and_region_check` never
+                // let the borrow check run at all.
+                for code in &reported {
+                    assert!(
+                        code.starts_with("SC03"),
+                        "{name} should only report ownership errors: {code}"
+                    );
+                }
+            }
         }
     }
+}
+
+/// **The verdict, counted.** Two false positives and no real finding.
+///
+/// This is the number the wiring was argued over, so it is asserted rather than
+/// described, and it is the uncomfortable shape: every diagnostic `sciencec`
+/// now adds to `examples/` is about a hole in the compiler rather than about
+/// the program. That is still worth shipping — the alternative is a phase
+/// nobody runs — but it is worth shipping *counted*, so that the ratio is a
+/// number somebody has to change rather than a mood.
+///
+/// When `Map.get` acquires a declaration this becomes zero and zero and the
+/// test fails. Somebody then has to come back and say so.
+#[test]
+fn every_region_finding_in_the_corpus_is_a_false_positive() {
+    let real: usize = REGIONS.iter().filter(|it| it.real).map(|it| it.codes.len()).sum();
+    let false_positives: usize =
+        REGIONS.iter().filter(|it| !it.real).map(|it| it.codes.len()).sum();
+    assert_eq!((real, false_positives), (0, 2));
+}
+
+/// The borrow check is reached, and reaching it is not the same as the file
+/// merely failing.
+///
+/// The `SC0330`–`SC0379` block is `science-regions`'s alone — `science-mir`
+/// reports nothing at all, and `region-inference.md` §12 is where the codes are
+/// allocated — so an `SC0333` out of the binary is proof that `check` runs the
+/// fourth phase and not only the three before it.
+///
+/// **The program is written here rather than taken from `examples/`** on
+/// purpose. Every finding in `REGIONS` is pinned *because* it is expected to
+/// move, and a test of whether the phase runs at all must not be hostage to one
+/// of them: returning a borrow of a local is rule 5 with no hole anywhere near
+/// it, and it will still be an error on the day the containers land.
+#[test]
+fn check_reports_the_borrow_check() {
+    let file = scratch(
+        "leaks_a_borrow.science",
+        concat!(
+            "type Table:\n",
+            "    n: I64\n",
+            "\n",
+            "def leak() -> borrowed Table:\n",
+            "    let t be Table(n: 1)\n",
+            "    borrowed t\n",
+        )
+        .as_bytes(),
+    );
+    let run = sciencec(&["check", &file]);
+    run.failed()
+        .stderr_contains("error[SC0333]")
+        .stderr_contains("is borrowed for longer than")
+        // Decision 9's three spans reach the user, which is the half of the
+        // phase a wiring could drop without the code going missing.
+        .stderr_contains("`t` is borrowed here")
+        .stderr_contains("there is no lifetime syntax to widen");
+    assert_eq!(run.summary(), Some("1 error"), "stderr:\n{}", run.stderr);
+}
+
+/// **The ordering rule, from outside.**
+///
+/// `driver::type_and_region_check` refuses to region-check a body the type
+/// checker rejected, because MIR over `Ty::ERROR` places makes an opaque callee
+/// out of every method call and `science-regions`'s `generate` §7 assumes an
+/// opaque callee borrows everything — so the borrow check would *manufacture*
+/// diagnostics rather than merely miss them.
+///
+/// The file below is that situation, and it was **measured rather than
+/// imagined**: with the skip removed, `sciencec check` on it reports the type
+/// error *and* an `SC0333` against the string literal `"host"`. `lookup`'s body
+/// calls a method `Table` does not have, so the callee is opaque, so the
+/// inferred signature says the result borrows the key as well as the table, so
+/// the result outlives the literal's temporary. That is bit for bit the shape
+/// of `REGIONS`' two false positives — reached here from a type error instead
+/// of from a missing declaration — and the author's only mistake was the
+/// misspelled method.
+///
+/// What must come out is the type error and nothing else.
+#[test]
+fn a_type_error_stops_the_borrow_check_before_it_invents_anything() {
+    let file = scratch(
+        "ill_typed.science",
+        concat!(
+            "type Table:\n",
+            "    n: I64\n",
+            "\n",
+            "def lookup(t: borrowed Table, k: borrowed String) -> borrowed Table:\n",
+            "    t.missing(k)\n",
+            "\n",
+            "def main():\n",
+            "    let t be Table(n: 1)\n",
+            "    let r be lookup(t, \"host\")\n",
+            "    print(r.n)\n",
+        )
+        .as_bytes(),
+    );
+    let run = sciencec(&["check", &file]);
+    run.failed().stderr_contains("error[SC0532]");
+    for line in run.stderr.lines().filter(|l| l.starts_with("error[SC")) {
+        assert!(
+            !line.starts_with("error[SC03"),
+            "regions ran over a body the checker could not type: {line}"
+        );
+    }
+    assert_eq!(run.summary(), Some("1 error"), "stderr:\n{}", run.stderr);
+}
+
+/// `17_modules.science` still behaves: it fails to resolve, so neither the type
+/// checker nor the borrow check ever sees it, and its count is unchanged by the
+/// phase added beneath them.
+#[test]
+fn the_file_that_cannot_resolve_is_unaffected_by_the_phases_below_resolution() {
+    let run = sciencec(&["check", "examples/17_modules.science"]);
+    run.failed();
+    assert_eq!(run.stderr.matches("error[SC").count(), 7, "{}", run.stderr);
+    assert!(!run.stderr.contains("error[SC03"), "{}", run.stderr);
 }
 
 #[test]

@@ -8,11 +8,20 @@
 //! `sciencec watch` gets incrementality for free instead of having to be
 //! rewritten onto the database first.
 //!
-//! The one phase not reached through a query is resolution: `science-db` has
-//! no `resolve` query yet (`pending::hir` is still `unimplemented!()`), so
+//! The phases not reached through a query are everything from resolution down.
+//! `science-db` has a query declared for each of them and a body for none:
+//! `pending::hir`, `pending::thir`, `pending::mir`, `pending::call_graph` and
+//! `pending::region_result` are all still `unimplemented!()`. So
 //! [`Session::resolved`] calls `science_resolve::resolve_module` on the tree
-//! the `ast` query returned. When that query lands this is the only place that
-//! changes.
+//! the `ast` query returned, and [`type_and_region_check`] calls the three
+//! crates below it directly.
+//!
+//! **That is a shortcut and it is named as one at each of the two functions
+//! that take it.** It was one phase's worth of shortcut when the type checker
+//! was wired in and it is three phases' worth now, which is the argument for
+//! the queries rather than against the wiring: a phase nobody can run is worth
+//! nothing, and the day `pending::mir` has a body these two functions are the
+//! only places that change.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -291,6 +300,13 @@ impl Session {
     /// the resolver's unresolved names come back as `Ty::ERROR`, which `ty`'s
     /// §5 makes agree with everything — so a file that failed to resolve would
     /// type-check *silently and wrongly*, which is worse than not checking it.
+    ///
+    /// **The fourth skip — regions after types — is not written here**, and
+    /// that is the one deviation. It lives inside [`type_and_region_check`],
+    /// because what it guards is the set of tables the type checker has just
+    /// finished building, and asking the question out here would mean building
+    /// them twice to ask it. That function's §"the ordering rule" states it and
+    /// says which way it errs.
     fn diagnostics(&self, file: FileId) -> Vec<Diagnostic> {
         let mut all = science_db::file_diagnostics(&self.db, file).to_vec();
         if has_error(&all) {
@@ -301,7 +317,7 @@ impl Session {
         if has_error(&all) {
             return all;
         }
-        all.extend(type_check(&krate));
+        all.extend(type_and_region_check(&krate));
         all
     }
 
@@ -403,7 +419,8 @@ fn has_error(diagnostics: &[Diagnostic]) -> bool {
     diagnostics.iter().any(|d| d.severity == science_diagnostics::Severity::Error)
 }
 
-/// Type-checks one resolved crate and returns what it found.
+/// Type-checks one resolved crate, then region-checks it, and returns what
+/// both found.
 ///
 /// **Why this is here at all.** Until this function existed the driver ran the
 /// lexer, the parser and the resolver, and stopped. `science-types` had a type
@@ -411,29 +428,103 @@ fn has_error(diagnostics: &[Diagnostic]) -> bool {
 /// lookup and two coercions, tested by two hundred and sixty tests — and not
 /// one of its diagnostics could reach a person running `sciencec`. A phase
 /// nobody can invoke is a phase that does not exist for the user, however well
-/// it is tested.
+/// it is tested. `science-regions` was in exactly that state one day later,
+/// with `region-inference.md`'s eleven decisions implemented and its acceptance
+/// case passing, and [`region_check`] is the second half of the same argument.
 ///
 /// **The order is fixed and it is not this function's to choose.** `Aliases`
 /// before `Declarations` because a declaration's annotation may name an alias;
 /// both before `check_crate` because a body is checked against signatures.
 /// `AtomOrder` first of all, because it is what makes a const expression's
 /// normal form reproducible — `normal.rs` §2, and the reason it is built from
-/// the `DefTable` rather than from `DefId`s.
+/// the `DefTable` rather than from `DefId`s. MIR then regions, because regions
+/// are a dataflow over a CFG and THIR is not one — `science-mir`'s §5 is the
+/// seam and it is addressed to exactly one caller.
 ///
-/// **The cost.** Every table is rebuilt per file. That is right for `check`,
-/// which is a batch command over files named on one command line, and wrong
-/// for a language server, which wants them memoised per crate — that is what
-/// `science-db`'s query layer is for, and wiring these stages into it is the
-/// work this function stands in for. `science_db::pending` still has
-/// `unimplemented!` for every stage from HIR onward; this is the shortcut, and
-/// it is named as one so nobody mistakes it for the architecture.
-fn type_check(krate: &Crate) -> Vec<Diagnostic> {
+/// # The ordering rule for regions
+///
+/// **Decision. Regions run only when the type checker reported no error, and
+/// the skip is here rather than in [`Session::diagnostics`] because this is
+/// where the tables it guards are still alive.**
+///
+/// **Reason.** `diagnostics`'s rule sharpens at every step, and this is the
+/// next sharpening. MIR lowered from a body the checker could not type is MIR
+/// over `Ty::ERROR` places, and a region solver handed those errs **both ways
+/// at once**:
+///
+/// * *Silently.* A local whose type mentions `Ty::ERROR` has no reference in
+///   it to find, so `science-regions`'s `regions` §1 gives it no region
+///   variable at all. The reference is gone rather than unconstrained, the
+///   constraints that should have tied it to something are never emitted, and
+///   the check under-approximates — it loses errors.
+/// * *Loudly, and this is the half that decides it.* A call the checker
+///   rejected is still a call in MIR. When it is a method the receiver does not
+///   have, `science-mir`'s `lower` lowers it to a `Callee::Unresolved`, and
+///   `science-regions`'s `generate` §5 assumes an opaque callee *"returns a
+///   reference into every argument it was given"*. §7 of that module states
+///   which way that assumption points — **toward rejecting** — so a type error
+///   does not merely hide region errors, it **manufactures** them, at spans in
+///   code that was never the mistake.
+///
+/// The second bullet is measured, not feared. With this skip removed,
+///
+/// ```text
+/// def lookup(t: borrowed Table, k: borrowed String) -> borrowed Table:
+///     t.missing(k)
+/// ...
+///     let r be lookup(t, "host")
+/// ```
+///
+/// reports `SC0532` — *"`borrowed Table` has no method `missing`"* — **and**
+/// an `SC0333` against the literal `"host"`, because the misspelled method made
+/// the callee opaque and the opaque rule tied the result to the key. A second
+/// ill-typed program gains an `SC0334` the same way. That is the same false
+/// positive `examples/09_absence_and_failure.science` produces, reached from a
+/// typo instead of from a missing declaration.
+/// `tests/cli.rs`'s `a_type_error_stops_the_borrow_check_before_it_invents_anything`
+/// is the first of those programs, pinned.
+///
+/// So the two phases fail in opposite directions and the region checker is the
+/// worse of the two to let run: the type checker over an unresolved file is
+/// wrong in silence, and the region checker over an ill-typed file is wrong out
+/// loud. Skipping it is the only reading under which an `SC0333` from
+/// `sciencec` means what it says.
+///
+/// **The cost.** A file with one type error gets no borrow check at all, so a
+/// genuine `SC0334` sitting beside a misspelled type is reported only after the
+/// spelling is fixed. That is the same cost every earlier skip pays, and it is
+/// the cost `ty`'s §5 chose when it made a hole a value: one mistake, one
+/// message.
+///
+/// # What it costs to run
+///
+/// Every table is rebuilt per file. That was already true of the type checker
+/// and it is more expensive now, because MIR and regions are added to it:
+/// lowering every body, a call graph, Tarjan's algorithm over it, a liveness
+/// fixpoint and a region fixpoint per body. Measured over `examples/` —
+/// twenty-two files, four hundred and forty of them on one command line to get
+/// past process startup — the per-file cost went from about 1.0 ms to about
+/// 1.5 ms, which is half again as much work for the second half of the front
+/// end.
+///
+/// **That is right for `check`**, which is a batch command over files named on
+/// one command line and touches each one once, **and it is now emphatically
+/// wrong for a language server**, which would rebuild an entire crate's MIR on
+/// every keystroke. `science-db`'s query layer is what memoises them, and
+/// `science_db::pending` still has `unimplemented!` for every stage from HIR
+/// onward. **The shortcut's standing is therefore weaker than it was**: it was
+/// a convenience for one phase and it is now the only way to run three, and
+/// `science-regions`'s `analyse_crate` §3 has already said that the cache is
+/// salsa's to own and that computing it here memoises nothing. This is still
+/// the shortcut, and it is still named as one so nobody mistakes it for the
+/// architecture.
+fn type_and_region_check(krate: &Crate) -> Vec<Diagnostic> {
     let order = science_types::AtomOrder::of(&krate.defs);
     let mut types = science_types::Types::new();
     let mut diagnostics = science_diagnostics::Diagnostics::new();
     let mut aliases = science_types::Aliases::of(krate, &mut types, &order, &mut diagnostics);
     let decls = science_types::Declarations::of(krate, &mut types, &order, &mut diagnostics);
-    science_types::check_crate(
+    let thir = science_types::check_crate(
         krate,
         &decls,
         &mut types,
@@ -441,6 +532,75 @@ fn type_check(krate: &Crate) -> Vec<Diagnostic> {
         &order,
         &mut diagnostics,
     );
+    let mut all = diagnostics.into_vec();
+    // The ordering rule above.
+    if has_error(&all) {
+        return all;
+    }
+    all.extend(region_check(krate, &decls, &mut types, &mut aliases, &thir));
+    all
+}
+
+/// Lowers a checked crate to MIR and runs the borrow check over it.
+///
+/// **The decision this settles: region checking runs in `check` by default,
+/// not behind a flag.**
+///
+/// **Reason.** A flag is defensible when the phase is experimental, slow enough
+/// to be opt-in, or wrong often enough that its output is noise. None of the
+/// three holds. What a flag *would* buy is a corpus that reports zero, and
+/// `crates/science-regions/tests/corpus.rs` had already measured what wiring
+/// this in would report and argued that those diagnostics are information
+/// rather than noise. A soundness phase that is permanently optional is a phase
+/// nobody runs, which is the state that crate was in the day before this and
+/// the state `type_and_region_check` exists to end. There is also no version of
+/// the flag that could ever be removed: the false positives close when
+/// `stdlib-core.md`'s containers acquire declarations, and nothing about *that*
+/// day would make anyone delete a `--borrow-check` flag they had grown used to
+/// typing.
+///
+/// **Cost, and it is the uncomfortable shape.** `sciencec check examples/` is
+/// no longer silent: **two diagnostics, and both of them are about a hole in
+/// this compiler rather than about the program.** The census was three when it
+/// was taken, one of them real; that one closed first — `science-types` now
+/// auto-borrows a `borrowed T` parameter — so what wiring the phase in actually
+/// adds to the corpus today is two false positives and no true one. Shipping
+/// that is still right, for the reason above, and the discipline it owes is
+/// that it be *counted*: `tests/cli.rs`'s `REGIONS` pins each diagnostic by
+/// file, code and verdict, and asserts the (real, false) split, so the ratio is
+/// a number somebody has to change rather than a sentence somebody has to
+/// believe. That is `UNRESOLVED`'s discipline applied to a second kind of known
+/// gap — exact, so that closing it breaks the test rather than rotting it.
+///
+/// **What closes them** is out of this crate's reach and is worth naming
+/// exactly, because *"the containers land"* is too vague to check against:
+/// `Map.get` must become a declaration `science-types`'s method lookup can
+/// find, so that `science-mir` lowers `settings.get(key)` to a `Callee::Def`
+/// instead of a `Callee::Unresolved`, so that `science-regions`'s `generate`
+/// takes the `known_callee` path and reads a real summary — *"the result
+/// borrows the map"* — instead of §5's assumption that an opaque callee returns
+/// a reference into every argument, the key included. The same sentence with
+/// `Array.get` and `Iterate.next` in it removes `check`'s §6 suppressions. If
+/// the containers live in another crate rather than in the prelude, Decision
+/// 7's summary serialisation has to exist first, because `summary`'s §2 has no
+/// format to write one into.
+fn region_check(
+    krate: &Crate,
+    decls: &science_types::Declarations,
+    types: &mut science_types::Types,
+    aliases: &mut science_types::Aliases,
+    thir: &[science_types::thir::Body],
+) -> Vec<Diagnostic> {
+    // The lowering context is dropped before the region one is built: both
+    // want `&mut Types` and `&mut Aliases`, and MIR is finished with them.
+    let bodies = {
+        let mut context = science_mir::Context { defs: &krate.defs, decls, types, aliases };
+        science_mir::lower_crate(&mut context, thir)
+    };
+    let graph = science_mir::CallGraph::of(&bodies);
+    let mut diagnostics = science_diagnostics::Diagnostics::new();
+    let mut context = science_regions::Context { defs: &krate.defs, decls, types, aliases };
+    science_regions::analyse_crate(&mut context, &bodies, &graph, &mut diagnostics);
     diagnostics.into_vec()
 }
 

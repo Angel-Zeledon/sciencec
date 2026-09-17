@@ -29,6 +29,12 @@ science-db.workspace = true
 science-diagnostics.workspace = true
 science-fmt.workspace = true
 science-types.workspace = true
+# `science-mir` is here for one reason: region inference runs on MIR, so the
+# lowering is the step between the two phases the driver already runs and the
+# one it now also runs. The driver reads nothing else out of it — no dump, no
+# command — and `driver::region_check` is the only place it is named.
+science-mir.workspace = true
+science-regions.workspace = true
 science-parser.workspace = true
 science-resolve.workspace = true
 
