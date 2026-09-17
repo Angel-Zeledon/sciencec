@@ -1,0 +1,15 @@
+# UI test: a bare variant offered by two choice types (SC0203).
+#
+# §4.5 puts a variant in its module unqualified as well as qualified, and two
+# choice types may share a variant name. Unqualified, `Ready` is either.
+
+choice Signal:
+    Ready
+    Done
+
+choice Job:
+    Ready
+    Failed
+
+def main():
+    let state be Ready

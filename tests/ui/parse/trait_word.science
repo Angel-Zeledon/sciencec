@@ -1,0 +1,9 @@
+# UI test: `trait`, which revision 2 §6 renamed to `interface` (SC0139).
+#
+# The reporter beside this one is the pattern the whole block was written
+# against: it reports and steps over exactly the stale word, so the
+# declaration after it parses as the programmer meant and one dead keyword
+# costs one diagnostic.
+
+trait Report:
+    def report(self) -> String

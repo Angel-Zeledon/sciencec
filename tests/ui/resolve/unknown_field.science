@@ -1,0 +1,10 @@
+# UI test: a record literal naming a field the record does not have (SC0205).
+#
+# Which fields are *missing* is the type checker's; which ones do not exist at
+# all is a name, and names are this phase's.
+
+type Doc:
+    title: String
+
+def main():
+    let d be Doc(title: "a", author: "b")

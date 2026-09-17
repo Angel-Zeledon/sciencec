@@ -1,0 +1,15 @@
+# UI test: a name used in a position its kind cannot fill (SC0211).
+#
+# Both reporters of the code are here, because they are different sentences.
+# `total` resolves — it is right there, four lines up — so neither of these is
+# `SC0200`: the first is a function standing where a type belongs, the second
+# is `ffi`, the prelude's one module, standing where a value belongs.
+
+def total() -> Int:
+    1
+
+def scale(n: total) -> Int:
+    1
+
+def main():
+    let m be ffi

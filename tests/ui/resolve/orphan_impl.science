@@ -1,0 +1,7 @@
+# UI test: an implementation of somebody else's interface for somebody else's
+# type (SC0207).
+#
+# Both `String` and `Clone` belong to the prelude, which is a module no file
+# can name, so §5.4's rule cannot be satisfied from here at all.
+
+String implements Clone

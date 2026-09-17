@@ -1,0 +1,9 @@
+# UI test: `Type has methods:`, where revision 2 §5 writes `Type has:`
+# (SC0141).
+#
+# The fix spans `has methods` and replaces it with `has`, because deleting
+# `methods` alone would leave the two words' spacing to the tool.
+
+Doc has methods:
+    def width(self) -> Int:
+        1

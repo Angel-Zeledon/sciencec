@@ -157,6 +157,24 @@ shape fails before anyone tries to run it.
 | `function_word` | `SC0156` | The word revision 3 renamed to `def`, which *does* carry an applicable fix — a word for a word, with nothing around it moving. It reported **two** diagnostics when the case was written, and the expectation has since shrunk to one; the file says what the second one was and why it happened, because the shape of that bug is the reason every recovery in `SC0190`–`SC0198` reports without consuming. |
 | `const_factor` | `SC0157` | `N * M`, the refusal `const-expression-arithmetic.md` §2.1 exists for. Also its recovery: the parser steps to the end of the const argument so the argument list still closes, and the case proves there is exactly **one** diagnostic and no cascade. |
 | `reserved_word_as_name` | `SC0102` | `def await(…)`. `await` is reserved for a later revision, so it is its own token and never an identifier; the parser refuses the name, and `describe` says which kind of word it is rather than leaving a later phase to complain about something that was never a name. |
+| `returns_word` | `SC0118` | The word §4.4 replaced with `->`. It is not one of revision 2's migrations — it predates them — but it is the same shape: an ordinary identifier where a keyword used to be, reported before the grammar can complain that a name is not the end of a line. Its fix replaces exactly the word the caret is under, which is what three of the six below do not do. |
+
+The six below are `syntax-revision-2.md`'s migration block,
+`SC0138`–`SC0144`.
+Each names a word the revision removed, and each carries a **machine-applicable
+fix** that tooling applies without anyone reading it. The parser's own snapshots
+pin a diagnostic's code, span, message and notes and pin neither the label nor
+the suggestion, so before these cases the replacement text was checked by
+nothing at all.
+
+| Case | Code | What it pins down |
+|---|---|---|
+| `each_after_for` | `SC0138` | `for each x in xs`. The one word in the block that is still a keyword — `each` remains the closure subject of `docs.map(each.title)` — so only the loop dropped it, and the note says so. Its fix spans `for each`, not `each`. |
+| `trait_word` | `SC0139` | The word revision 2 §6 renamed to `interface`. One word for one word, reported without consuming, which is the shape `SC0156`'s bug was fixed into. |
+| `methods_after_has` | `SC0141` | `Type has methods:`. Its fix spans `has methods`. |
+| `while_word` | `SC0142` | The loop §2.2 removed. The only fix here that *discards* text: the replacement spans the whole head, condition included, because `loop` takes none, and what to do with the condition is in the note because it is not a substitution. Recovery drops the condition too, so the tree and the fix agree. |
+| `comparison_phrase` | `SC0143` | All four phrases, because they are one decision — the shape `removed_comparison_symbols` has in the lexical shard. The label interpolates the phrase as written, so each spelling renders its own text, and the two-word and three-word forms take different spans. |
+| `println_word` | `SC0144` | The word §3.5 renamed to `print`. Recovery returns the `print` call that was meant, so the argument is parsed once and no second diagnostic follows about an undefined name. |
 
 The nine below are `mcp-servers.md`'s block, `SC0190`–`SC0198`, and they are
 the whole of that note's §14.2 stage 0: every one of them is checkable by the
@@ -182,6 +200,26 @@ these expectations is the regression they exist to catch.
 | Case | Code | What it pins down |
 |---|---|---|
 | `const_param_kind` | `SC0220` | `const N: Str`. §2.3 admits exactly two kinds, `Int` and `Shape`, and the parser deliberately does not check — it reads whatever `parse_type` accepts — so this is the resolver's refusal. `Str` is the interesting wrong answer: a real type, in scope, spelled correctly, and still not a kind. |
+| `unresolved_name` | `SC0200` | The most-seen error in any compiler: a bare name searched for in the ribs, the module, its variants, the prelude and the crate root, and found in none of them. |
+| `unresolved_variant` | `SC0200` | The code's other sentence. `Signal` resolves and the segment after it does not, so the message names the choice rather than calling the whole path unknown. It has to be a **pattern**: an expression path is one segment and every `.` after it is field access (§4.3), so `Signal.Pending` written as a value never reaches this walk at all. |
+| `duplicate_definition` | `SC0201` | Two `def`s of one name in one module. Two labels: the second declaration is the error and the first is the context. |
+| `unresolved_import` | `SC0202` | `use text.parser` in a crate of one file. The report names the segment that failed, not the whole path. |
+| `ambiguous_name` | `SC0203` | §4.5 puts a variant in its module unqualified as well as qualified, and two choice types may share a variant name. One note per candidate, in declaration order. |
+| `not_a_module` | `SC0204` | `Doc.Title` in type position. Only a module and a choice type have anything a `.` can reach in a path; a record's fields are reached through a value. |
+| `unknown_field` | `SC0205` | A record literal naming a field the record lacks. Which fields are *missing* is the type checker's; which ones do not exist at all is a name. |
+| `construction_mismatch` | `SC0206` | `Doc("a")`. §4.4's second point: positional arguments mean a call or a variant, named arguments mean a record, and the parser cannot see which `Doc(..)` is. |
+| `orphan_impl` | `SC0207` | `String implements Clone`. Both halves belong to the prelude, which is a module no file can name, so §5.4 cannot be satisfied from anywhere. |
+| `self_outside_impl` | `SC0208` | A `self` receiver on a free function. The parser accepts a receiver that is first in its list wherever the list is (`SC0108` is only about a *later* one), so whether anything encloses it is this phase's question. |
+| `wrong_namespace` | `SC0211` | Both reporters, because they are different sentences: a function where a type belongs, and `ffi` — the prelude's one module — where a value belongs. Neither is `SC0200`: both names resolve. |
+| `each_without_subject` | `SC0212` | A bare `each` with no call around it. The parser reports a *nested* `each`, which it can see; it cannot see whether there is an enclosing argument at all, so the bare node arrives here. |
+
+`SC0209`, "one of the words §4.1 reserves for F1-F4, used as a name", has no
+case and **cannot** have one. Every reserved word is its own token kind, and
+`expect_ident` refuses a token that is not `Ident` rather than building an
+`Ident` out of it, so no `ast::Ident` produced by this parser can ever carry
+one. A reserved word in a name position is `SC0102` and a reserved word in an
+expression is `SC0105`; `check_reserved` fires only for a tree some other
+program built. See the entry below.
 
 ## Messages these cases found wrong
 
@@ -230,6 +268,60 @@ error makes it permanent.
   `Token` then has to be told about; these two expectations pin the imprecise
   version until somebody does.
 
+- **Three migration fixes replace more text than their caret covers, and the
+  renderer prints neither span.** `SC0138`, `SC0141` and `SC0142` each put the
+  primary label on one word and the `Suggestion` on a wider span: `each` versus
+  `for each`, `methods` versus `has methods`, `while` versus the whole head
+  `while n > 0`. A tool applies the right thing. A reader sees a caret under
+  `methods` and a line saying *"open the block with: `has`"* and is being told
+  to write what they already wrote — and if they take it literally they get
+  `Doc has has:`. The four sound reporters beside them
+  (`SC0118`, `SC0139`, `SC0143`, `SC0144`) label exactly the span they
+  replace. The cheap
+  repair is to widen the primary label to the suggestion's span, so that the
+  caret and the `= help:` line are about the same text; for `SC0142` that also
+  makes the diagnostic honest, because the condition really is being discarded.
+  `each_after_for.stderr`, `methods_after_has.stderr` and `while_word.stderr`
+  pin the current text.
+- **`SC0203`, `SC0204` and `SC0205` print an absolute crate path where the
+  reader wrote a bare name.** `self.defs.path_of(id)` yields
+  `tests.ui.resolve.unknown_field.Doc` in this shard and `main.Doc` in a
+  one-file program, so the message names something that appears nowhere in the
+  source. `SC0206`, reporting the same record two lines away in the same file,
+  prints `path.dotted()` — `Doc`, as written — which is what all four should
+  do, qualifying only when the definition is in another module. It also makes
+  these expectations depend on the directory the case is filed in, which no
+  other expectation here does.
+- **`SC0203`'s notes offer a path instead of the qualification to write.** The
+  last note says *"write the choice type's name to say which (§4.5)"* and the
+  notes above it say *"it could be `tests.ui.resolve.ambiguous_name.Signal.Ready`"*.
+  The thing to write is `Signal.Ready`. The note should name each candidate the
+  way §4.5 spells it, relative to the use site.
+- **`SC0207` recommends something the compiler has made impossible, and says
+  `core` twice.** For `String implements Clone` it prints *"the interface
+  `core.Clone` belongs to `core`"*, then *"move the implementation into one of
+  those modules, or wrap the type in one of your own"*. `core` is the prelude
+  — the resolver's own documentation says it is "a module no `use` can reach",
+  and that is precisely why this is an orphan — so the first remedy cannot be
+  followed and is printed first. When every owner is the prelude the note
+  should say so and offer only the wrapper. The doubled name is separate and
+  smaller: `belongs to` already carries the module, so the interface should be
+  named `Clone`.
+- **`SC0209` is dead code, and its message is dead text.** It says *"it is held
+  back so that a later phase of the language can use it without breaking code
+  written today"* — a better sentence than the `SC0102` a reader actually gets,
+  which is the "reserved for a later phase" wording criticised above. Nobody
+  will ever see it. Either the parser should hand the reserved name through so
+  this phase can say the better sentence, or `SC0209` should be retired and its
+  wording moved into `SC0102`.
+- **A typo in a qualified variant escapes this phase entirely when it is
+  written as a value.** `Signal.Pending` in expression position is parsed as
+  field access on `Signal`, and field access is not resolved here, so
+  `unresolved_variant` had to be written as a pattern to get a diagnostic at
+  all. The value form is left to `science-types`, which will report it as a
+  missing *field* rather than a missing *variant*. Recorded here because the
+  case next to it shows what the good message looks like.
+
 ## What is still missing
 
 The lexical layer is complete: every code `science-lexer` can emit has a case
@@ -242,8 +334,10 @@ yet, and each one needs a case here as it lands:
   the `SC0250` range, which §9 moved it to from `SC0210`);
 - the rest of the syntax errors (`SC0100`–`SC0199`) and of the name
   resolution failures (`SC0200`–`SC0299`): `parse/` and `resolve/` cover
-  fourteen codes between them, and every other code those two phases can emit
-  still has no case here. The parser's `extern` block owns `SC0411`–`SC0434` and has
-  none, `science-types` (`SC0260`, `SC0261`) has none, and `science-fmt`
+  thirty-two codes between them, and every other code those two phases can
+  emit still has no case here. In the resolver that is `SC0221` and `SC0209`,
+  which cannot be reached at all (above); in the parser it is `SC0100`–
+  `SC0101`, `SC0103`–`SC0112`, `SC0115`–`SC0116` and `SC0119`.
+  The parser's `extern` block owns `SC0411`–`SC0434` and has none, `science-types` (`SC0260`, `SC0261`) has none, and `science-fmt`
   (`SC0900`, `SC0901`) has none. `SC0190`–`SC0198` are covered in full;
   `SC0199` is held unallocated and must stay that way.

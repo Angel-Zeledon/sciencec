@@ -1,0 +1,11 @@
+# UI test: positional arguments where a record wants named ones (SC0206).
+#
+# §4.4's second point: positional arguments mean a call or a variant, named
+# arguments mean a record. The parser cannot tell which `Doc(..)` is, so the
+# refusal is the resolver's.
+
+type Doc:
+    title: String
+
+def main():
+    let d be Doc("a")

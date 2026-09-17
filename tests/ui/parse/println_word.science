@@ -1,0 +1,7 @@
+# UI test: `println`, which revision 2 §3.5 renamed to `print` (SC0144).
+#
+# Recovery returns the `print` call the programmer meant, so the argument is
+# parsed once and there is no second diagnostic about an undefined name.
+
+def main():
+    println("hi")

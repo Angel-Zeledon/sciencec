@@ -1,0 +1,9 @@
+error[SC0203]: `Ready` is a variant of more than one choice type in scope
+  --> tests/ui/resolve/ambiguous_name.science:15:18
+   |
+15 |     let state be Ready
+   |                  ^^^^^ ambiguous
+   |
+   = note: it could be `tests.ui.resolve.ambiguous_name.Signal.Ready`
+   = note: it could be `tests.ui.resolve.ambiguous_name.Job.Ready`
+   = note: write the choice type's name to say which (§4.5)

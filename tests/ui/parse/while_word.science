@@ -1,0 +1,10 @@
+# UI test: `while`, which revision 2 §2.2 removed in favour of `loop`
+# (SC0142).
+#
+# The only migration here whose fix discards text: the replacement spans the
+# whole head, condition included, because `loop` takes none. What the reader
+# has to do with the condition cannot be a substitution, so it is in the note.
+
+def main(n: Int):
+    while n > 0:
+        print(n)

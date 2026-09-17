@@ -1,0 +1,8 @@
+# UI test: a name that resolves to nothing in any scope (SC0200).
+#
+# The most-seen error in any compiler, and what the whole phase exists to
+# produce: the ribs, the module, its variants, the prelude and the crate root
+# are all searched, and `total` is in none of them.
+
+def main():
+    print(total)

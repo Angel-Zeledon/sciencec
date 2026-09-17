@@ -1,0 +1,14 @@
+error[SC0211]: expected a type, but `total` is a function
+  --> tests/ui/resolve/wrong_namespace.science:11:14
+   |
+ 8 | def total() -> Int:
+   |     ----- defined here
+...
+11 | def scale(n: total) -> Int:
+   |              ^^^^^ not a type
+
+error[SC0211]: `ffi` is a module, not a value
+  --> tests/ui/resolve/wrong_namespace.science:15:14
+   |
+15 |     let m be ffi
+   |              ^^^ a module has no value

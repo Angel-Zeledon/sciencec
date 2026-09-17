@@ -1,0 +1,8 @@
+error[SC0142]: the unbounded loop is written `loop`
+ --> tests/ui/parse/while_word.science:9:5
+  |
+9 |     while n > 0:
+  |     ^^^^^ `while` is not a keyword in Science
+  |
+  = note: end it with the condition negated: make `if not …: break` the first statement of the body, or write a count as a range, `for i in 0..n:`
+  = help: open the loop with: `loop`

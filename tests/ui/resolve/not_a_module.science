@@ -1,0 +1,12 @@
+# UI test: a path qualifier that is neither a module nor a choice type
+# (SC0204).
+#
+# Only a module and a choice type have anything a `.` can reach in a path. A
+# record has fields, which are reached through a value and not through the
+# type's name.
+
+type Doc:
+    title: String
+
+def headline(d: Doc.Title) -> Int:
+    1

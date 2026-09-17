@@ -1,0 +1,7 @@
+error[SC0118]: the return type is written `->`
+ --> tests/ui/parse/returns_word.science:8:19
+  |
+8 | def total(n: Int) returns Int:
+  |                   ^^^^^^^ `returns` is not a keyword in Science
+  |
+  = help: write the return type with: `->`

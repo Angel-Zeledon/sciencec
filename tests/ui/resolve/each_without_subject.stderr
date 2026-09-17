@@ -1,0 +1,7 @@
+error[SC0212]: `each` names the subject of the call it is written in, and there is no call here
+ --> tests/ui/resolve/each_without_subject.science:7:18
+  |
+7 |     let title be each
+  |                  ^^^^ no subject to name
+  |
+  = note: `each` stands for one argument's value inside a call, as in `docs.map(each.title)`

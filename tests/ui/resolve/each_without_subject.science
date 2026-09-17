@@ -1,0 +1,7 @@
+# UI test: `each` with no call around it (SC0212).
+#
+# The parser reports a *nested* `each`, which it can see. It cannot see
+# whether there is an enclosing argument at all, so a bare one arrives here.
+
+def main():
+    let title be each

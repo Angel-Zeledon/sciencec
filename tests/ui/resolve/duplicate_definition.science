@@ -1,0 +1,10 @@
+# UI test: the same name declared twice in one module (SC0201).
+#
+# The second declaration is the error and the first is the context, so the
+# diagnostic carries two labels rather than one.
+
+def width() -> Int:
+    1
+
+def width() -> Int:
+    2

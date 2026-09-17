@@ -1,0 +1,8 @@
+error[SC0201]: the name `width` is defined more than once
+ --> tests/ui/resolve/duplicate_definition.science:9:5
+  |
+6 | def width() -> Int:
+  |     ----- first defined here
+...
+9 | def width() -> Int:
+  |     ^^^^^ defined again here

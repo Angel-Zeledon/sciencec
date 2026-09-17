@@ -1,0 +1,35 @@
+error[SC0143]: the comparison is written `>`
+  --> tests/ui/parse/comparison_phrase.science:10:13
+   |
+10 |     print(a is above b)
+   |             ^^^^^^^^ `is above` is not an operator in Science
+   |
+   = note: `is` and `is not` are the only comparisons written as words
+   = help: compare with: `>`
+
+error[SC0143]: the comparison is written `<`
+  --> tests/ui/parse/comparison_phrase.science:11:13
+   |
+11 |     print(a is below b)
+   |             ^^^^^^^^ `is below` is not an operator in Science
+   |
+   = note: `is` and `is not` are the only comparisons written as words
+   = help: compare with: `<`
+
+error[SC0143]: the comparison is written `>=`
+  --> tests/ui/parse/comparison_phrase.science:12:13
+   |
+12 |     print(a is at least b)
+   |             ^^^^^^^^^^^ `is at least` is not an operator in Science
+   |
+   = note: `is` and `is not` are the only comparisons written as words
+   = help: compare with: `>=`
+
+error[SC0143]: the comparison is written `<=`
+  --> tests/ui/parse/comparison_phrase.science:13:13
+   |
+13 |     print(a is at most b)
+   |             ^^^^^^^^^^ `is at most` is not an operator in Science
+   |
+   = note: `is` and `is not` are the only comparisons written as words
+   = help: compare with: `<=`

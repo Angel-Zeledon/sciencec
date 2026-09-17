@@ -1,0 +1,8 @@
+error[SC0144]: the free function is `print`
+ --> tests/ui/parse/println_word.science:7:5
+  |
+7 |     println("hi")
+  |     ^^^^^^^ there is no `println` in Science
+  |
+  = note: `print` writes a newline; `write` is the form that does not
+  = help: write the call as: `print`

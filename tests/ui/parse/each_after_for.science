@@ -1,0 +1,11 @@
+# UI test: `for each x in xs`, which revision 2 §2.1 writes `for x in xs`
+# (SC0138).
+#
+# The one migration in this block whose stale word is still a keyword: `each`
+# remains the implicit closure subject of `docs.map(each.title)`, and only the
+# loop dropped it. The fix therefore spans `for each` and replaces it with
+# `for`, rather than deleting one word.
+
+def main(rows: Array of Int):
+    for each row in rows:
+        print(row)

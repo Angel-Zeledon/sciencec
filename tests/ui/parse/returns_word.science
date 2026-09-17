@@ -1,0 +1,9 @@
+# UI test: `returns`, which §4.4 now writes `->` (SC0118).
+#
+# `returns` is an ordinary identifier now, so without this the signature would
+# end at the parameter list and the reader would be told that a name is not
+# the end of a line — the symptom, not the mistake. The fix is a word for a
+# symbol, with nothing around it moving, so it is machine-applicable.
+
+def total(n: Int) returns Int:
+    n

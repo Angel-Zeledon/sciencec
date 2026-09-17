@@ -1,0 +1,13 @@
+# UI test: the four comparison phrases revision 2 §1 replaced with symbols
+# (SC0143).
+#
+# One case for four phrases, because they are one decision — the same shape as
+# `removed_comparison_symbols` in the lexical shard. All four are here because
+# the label interpolates the phrase as written, so each spelling renders its
+# own text, and the two-word and three-word forms take different spans.
+
+def check(a: Int, b: Int):
+    print(a is above b)
+    print(a is below b)
+    print(a is at least b)
+    print(a is at most b)

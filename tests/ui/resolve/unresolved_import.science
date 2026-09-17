@@ -1,0 +1,6 @@
+# UI test: a `use` naming a module that does not exist (SC0202).
+#
+# The crate here is one file, so `text` is a module no walk can find, and the
+# report names the segment that failed rather than the whole path.
+
+use text.parser

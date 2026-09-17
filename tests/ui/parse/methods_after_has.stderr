@@ -1,0 +1,7 @@
+error[SC0141]: the inherent block is written `Type has:`
+ --> tests/ui/parse/methods_after_has.science:7:9
+  |
+7 | Doc has methods:
+  |         ^^^^^^^ `methods` is not a keyword in Science
+  |
+  = help: open the block with: `has`

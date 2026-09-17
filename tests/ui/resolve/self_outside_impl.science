@@ -1,0 +1,8 @@
+# UI test: a `self` receiver on a free function (SC0208).
+#
+# The parser accepts a receiver that is first in the list wherever the list
+# is; whether there is an implementation around it is a scope question, so
+# this is the resolver's refusal.
+
+def summarize(self) -> Int:
+    1

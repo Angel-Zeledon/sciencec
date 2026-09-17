@@ -1,0 +1,8 @@
+error[SC0206]: `Doc` is a record type, so it is built with named arguments
+  --> tests/ui/resolve/construction_mismatch.science:11:14
+   |
+ 7 | type Doc:
+   |      --- this record type is declared here
+...
+11 |     let d be Doc("a")
+   |              ^^^^^^^^ positional arguments here

@@ -1,0 +1,18 @@
+# UI test: the other flavour of SC0200 — a qualified variant that the choice
+# type does not have.
+#
+# `Signal` resolves; what fails is the segment after it, so the message names
+# the choice rather than saying the whole path is unknown.
+#
+# It has to be a *pattern*. An expression path is one segment and every `.`
+# after it is field access (§4.3), so `Signal.Pending` written as a value
+# never reaches this walk at all and is left to the type checker.
+
+choice Signal:
+    Ready
+    Done
+
+def code_of(s: borrowed Signal) -> Int:
+    match s:
+        Signal.Pending: 1
+        _: 0

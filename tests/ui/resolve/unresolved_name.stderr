@@ -1,0 +1,5 @@
+error[SC0200]: cannot find `total` in this scope
+ --> tests/ui/resolve/unresolved_name.science:8:11
+  |
+8 |     print(total)
+  |           ^^^^^ not found

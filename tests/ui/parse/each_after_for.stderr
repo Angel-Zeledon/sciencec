@@ -1,0 +1,8 @@
+error[SC0138]: the loop is written `for x in xs`
+  --> tests/ui/parse/each_after_for.science:10:9
+   |
+10 |     for each row in rows:
+   |         ^^^^ `each` is not part of the loop
+   |
+   = note: `each` names the subject of a call, as in `docs.map(each.title)`, and nothing else
+   = help: write the loop with: `for`

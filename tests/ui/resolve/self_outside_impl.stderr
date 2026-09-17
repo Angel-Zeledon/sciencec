@@ -1,0 +1,5 @@
+error[SC0208]: `self` is only a parameter of a method
+ --> tests/ui/resolve/self_outside_impl.science:7:15
+  |
+7 | def summarize(self) -> Int:
+  |               ^^^^ there is no implementation or interface around this function

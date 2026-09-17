@@ -1,0 +1,7 @@
+error[SC0139]: the declaration is written `interface`
+ --> tests/ui/parse/trait_word.science:8:1
+  |
+8 | trait Report:
+  | ^^^^^ `trait` is not a keyword in Science
+  |
+  = help: declare the interface with: `interface`

@@ -1,0 +1,5 @@
+error[SC0202]: there is no module `text` in the crate root
+ --> tests/ui/resolve/unresolved_import.science:6:5
+  |
+6 | use text.parser
+  |     ^^^^ no such module
