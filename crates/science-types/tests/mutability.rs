@@ -20,9 +20,18 @@
 //! come out it stays silent rather than guess. Two constructs land there
 //! today: a range has no type at all (`SC0538`'s note: there is no `Range` in
 //! the prelude), so `for i in 0..3` cannot be told its `i` is not mutable;
-//! and a method on a prelude type is not looked up, so `let slot be
-//! items.get_mut(0)` has no type either. Both are pinned below as the
-//! silences they are.
+//! and a method whose name the prelude has not transcribed carries no type, so
+//! `let slot be items.pop()` gives the rule nothing to read. Both are pinned
+//! below as the silences they are.
+//!
+//! **The second one used to be stated as `items.get_mut(0)` and is narrower
+//! now.** `methods`' §8a closed the surrounding hole: a method on a prelude
+//! type *is* looked up, and a name no note gives is `SC0532`. `get_mut` is such
+//! a name — neither `stdlib-core.md` nor `collections-and-chains.md` has it,
+//! and mutable element access is `IndexMutably` — so that call is a diagnostic
+//! rather than a silence. What is left is the narrower case below: `pop` is a
+//! name `stdlib-core.md` §3.2 gives and `builtins.rs` has not written a
+//! signature for, so it resolves to nothing and its binding has no type.
 
 mod support;
 
@@ -155,4 +164,40 @@ def counted() -> Bool:
 ",
     );
     checked.assert_clean();
+}
+
+/// The second silence the header names, pinned.
+///
+/// `pop` is in `builtins.rs`' `UNWRITTEN` — `stdlib-core.md` §3.2 gives the
+/// name and no note gives the signature — so the call resolves to nothing,
+/// `slot` has `Ty::ERROR`, and a rule that reads types has nothing to read.
+/// Writing to it is a program `SC0304` would refuse if it could see it.
+///
+/// **This test flips the day `Array.pop` is transcribed**, and the entry in
+/// `UNWRITTEN` goes with it, which is the handoff that comment describes.
+#[test]
+fn a_binding_from_an_untranscribed_prelude_method_has_no_type_to_check() {
+    let checked = support::check(
+        "\
+def take(items: mutable borrowed Array of I64) -> Bool:
+    let slot be items.pop()
+    slot be 1
+    true
+",
+    );
+    checked.assert_clean();
+}
+
+/// And the half of that pair which is no longer a silence: a name **no** note
+/// gives is reported, so the binding's missing type is at least explained.
+#[test]
+fn a_binding_from_a_name_no_note_gives_is_reported() {
+    let checked = support::check(
+        "\
+def take(items: mutable borrowed Array of I64) -> Bool:
+    let slot be items.get_mut(0)
+    true
+",
+    );
+    assert_eq!(checked.codes(), vec![532]);
 }

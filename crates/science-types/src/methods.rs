@@ -244,6 +244,67 @@
 //! every builtin head today and will stay true until §9 is transcribed whole.
 //! What it costs is `SC0532` on a prelude receiver, which is the same silence
 //! that used to cover the entire call.
+//!
+//! # 8a. The openness is named, and what it cost was the whole library
+//!
+//! §8's line was `Def::is_builtin`, and *"what it costs is `SC0532` on a prelude
+//! receiver"* turned out to be the understatement. Measured, with the exit code
+//! read: `let x be "hi".no_such_method()` **checked clean**, and so did every
+//! misspelling of every method on `String`, `Array` and `Map`. That is the
+//! entire standard-library surface exempt from the check a user type gets —
+//! `p.no_such_method()` on a `Doc` was `SC0532` throughout — and it propagated,
+//! because the unresolved call carries [`Ty::ERROR`](crate::Ty::ERROR) and
+//! `ty`'s §5 makes that agree with everything downstream. `mutability.rs`'
+//! header records one rule it had to decline for exactly that reason: *"a
+//! method on a prelude type is not looked up, so `let slot be
+//! items.get_mut(0)` has no type either"*.
+//!
+//! **Decision. A prelude type's method surface is open at the names a note
+//! gives it and closed everywhere else**, and [`Methods::name_is_answerable`]
+//! is the predicate. The list is `builtins.rs`' `UNWRITTEN`, beside the `BLOCKS`
+//! table it complements, so that transcribing a method and retiring its entry
+//! are one diff.
+//!
+//! §8's argument survives intact and is narrowed rather than overturned:
+//! `text.slice(0..4)` is still a correct program and is still silent, because
+//! `slice` is one of the six `stdlib-core.md` §6.9 methods the `String` block's
+//! own comment names as left out. What is no longer silent is a name no note
+//! anywhere gives.
+//!
+//! **Two heads stay wholly open and are named as such**, which is `WHOLLY_OPEN`:
+//! `Box`, because nothing says whether a call on a `Box of T` reaches `T`'s
+//! methods and the corpus writes three of them; and `Chars`, because its whole
+//! surface is `Iterate`'s thirty-eight provided methods and the prelude declares
+//! `next` alone.
+//!
+//! # 8b. What stays open, and why it is not this predicate's to close
+//!
+//! **A prelude head with no block at all never reaches
+//! [`Methods::name_is_answerable`]**, because [`Methods::receiver`] returns
+//! `None` for it one step earlier — §8's rule, unchanged. So
+//! `(1).no_such_method()` on an `I64` is still silent, and the reason is not the
+//! one §8a just narrowed: `builtins.rs` registers no methods on any numeric
+//! scalar, so there is no index entry and no name to judge against.
+//!
+//! **It is left open deliberately, and the reason is that the note specifies
+//! that surface by *cardinality* and not by name.** `stdlib-core.md` §8.2
+//! decides *"the Level 1 subset is methods on `F32`, `F64` and the integer
+//! types"* and argues it as *"zero new global names against roughly
+//! thirty-five"*; §8.4 is headed *"Five signatures"* and gives five. Between
+//! §8.2's prose and §10's table seventeen names are recoverable — `sqrt`, `sin`,
+//! `cos`, `atan2`, `abs`, `min`, `max`, `round`, `clamp`, `sign`, `trunc`,
+//! `pow`, `is_close`, `to_degrees`, `to_radians`, `ln`, `exp` — and the note
+//! never lists the rest. A `WHOLLY_OPEN` entry built from the seventeen would
+//! report `SC0532` on `x.floor()`, which the note plainly intends and nowhere
+//! writes; a list of the seventeen is therefore a list of the names that happen
+//! to appear in prose, not a list of the surface.
+//!
+//! **So the honest answer is that this half is not closed**, and it closes the
+//! way §8a's half did: someone enumerates §8's thirty-five in `builtins.rs` —
+//! either as `BLOCKS` entries, which is the better end, or as an `UNWRITTEN`
+//! row — and [`Methods::receiver`]'s §8 guard comes off with it. Closing it on
+//! the seventeen would be trading a silence for a false positive, which is the
+//! trade §8 was written to refuse and this section is not reopening.
 
 use std::collections::HashMap;
 
@@ -424,25 +485,63 @@ impl Methods {
     /// Whether *"this type has no method of that name"* is a fact about the
     /// program or a fact about the prelude. §8.
     ///
-    /// **Decision. A builtin head's method set is open and a user type's is
-    /// closed.** A `Doc has:` block is every inherent method `Doc` will ever
-    /// have, so `Found::None` on a `Doc` is `SC0532` and always was. The
-    /// prelude's blocks are a *transcription* of `stdlib-core.md` §9 and they
-    /// are not finished — `String` has thirteen of its nineteen methods and
-    /// `Array` has six of what `collections-and-chains.md` gives it — so
-    /// `Found::None` on a `String` means *"not written down yet"* and reporting
-    /// it would put a diagnostic on `text.slice(0..4)`, which is a correct
-    /// program.
+    /// **This is the *interface* half of §8's question, and it kept the whole of
+    /// it until §8a split the two.** Its callers ask *"does this type implement
+    /// `Display` / `Add` / `Index`"*, and `builtins.rs`' `IMPLEMENTS` table
+    /// answers that for an unapplied prelude type and for nothing else, so a
+    /// `false` from [`Methods::declares`] on a builtin head is not evidence.
+    /// That is §7's argument, and it is unchanged.
     ///
-    /// **What it costs is `SC0532` on every prelude receiver**, which is the
-    /// same silence [`Methods::receiver`] used to produce for every method call
-    /// on a `String`. The narrowing is real but partial: the calls that *do*
-    /// resolve now carry real parameter types and a real return type, and only
-    /// the misspelt name is still unanswered. It closes when §9 is fully
-    /// transcribed, and the test that will notice is that nothing in the corpus
-    /// reaches this predicate any more.
+    /// **The *method-name* half is [`Methods::name_is_answerable`]** and is no
+    /// longer read off `Def::is_builtin`. §8a says why the two had to come
+    /// apart: an interface the prelude has not named is a different silence
+    /// from a method name no note anywhere gives, and this predicate was
+    /// answering `false` to both.
+    ///
+    /// **What it still costs** is `SC0535` and `SC0539`'s operator siblings on
+    /// a prelude receiver — `a + b` on an `Array`, `print(m)` on a `Map` —
+    /// which is the `IMPLEMENTS` table's incompleteness and closes with it.
     pub fn surface_is_closed(&self, defs: &DefTable, head: DefId) -> bool {
         !defs.get(head).is_builtin()
+    }
+
+    /// Whether *"this type has no method of that name"* is a fact about the
+    /// program. §8a.
+    ///
+    /// **Decision. A prelude type's method surface is open at the names a note
+    /// gives it and closed everywhere else.** `builtins.rs`' `UNWRITTEN` is
+    /// that list, `WHOLLY_OPEN` is the two heads where the question itself is
+    /// unwritten, and `builtins::is_unwritten` is the predicate over both. Every
+    /// other name on a prelude receiver is `SC0532`, exactly as it is on a
+    /// `Doc`.
+    ///
+    /// **What this replaces was total silence.** §8 read openness off
+    /// `Def::is_builtin`, so `"hi".no_such_method()` and `(1).no_such_method()`
+    /// checked clean — the entire standard-library surface exempt from the
+    /// check a user type gets, and every misspelling of every method in it
+    /// accepted. That silence also propagated: the call carried `Ty::ERROR`, so
+    /// `mutability.rs`' own header records a rule it had to decline because *"a
+    /// method on a prelude type is not looked up, so `let slot be
+    /// items.get_mut(0)` has no type either"*.
+    ///
+    /// **Why the list is in `builtins.rs` and not here.** It is the complement
+    /// of `BLOCKS` — a name leaves one table exactly when it enters the other —
+    /// and a pair of tables that must move together belongs in one file. The
+    /// cost is that this crate reads a prelude fact through a name rather than
+    /// through a `DefId`, which §8a of `builtins.rs` prices.
+    ///
+    /// **What it costs, stated.** The list is read from two notes and the notes
+    /// are not the whole library: a name a *third* note gives — `data-io.md`'s
+    /// `Path` methods, `strings-formatting-and-docs.md`'s `Formatter` — would
+    /// be reported as `SC0532` although it is `String.slice`'s case exactly.
+    /// No such call is in the corpus today, and the answer when one arrives is
+    /// a line in `UNWRITTEN` citing that note, not a retreat to the blanket.
+    pub fn name_is_answerable(&self, defs: &DefTable, head: DefId, name: &str) -> bool {
+        let def = defs.get(head);
+        if !def.is_builtin() {
+            return true;
+        }
+        !science_resolve::builtins::is_unwritten(&def.name, name)
     }
 
     /// Decision 11's lookup, over the key [`Methods::receiver`] computed.

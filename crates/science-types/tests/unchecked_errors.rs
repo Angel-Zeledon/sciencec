@@ -325,14 +325,22 @@ def given() -> Doc:
 #[test]
 fn an_error_given_to_a_method_this_crate_cannot_resolve_still_counts() {
     // What survives of the refusal, and its domain: the receiver is a
-    // `String`, the prelude registers no methods, and with no candidate there
-    // is no parameter list to read. `method_takes_error` errs the way §5 says
-    // this diagnostic has to err.
+    // `String` and the call resolves to no candidate, so there is no parameter
+    // list to read. `method_takes_error` errs the way §5 says this diagnostic
+    // has to err.
+    //
+    // **The name is `split` and it used to be `append`.** `methods`' §8a made
+    // *"no candidate"* on a prelude receiver two different facts: `append` is a
+    // name no note gives and is now `SC0532`, while `split` is one of the six
+    // `stdlib-core.md` §6.9 methods `builtins.rs`' `String` block leaves out and
+    // is still unresolved-and-silent. This test wants the second, because its
+    // subject is what `SC0140` does with a call it cannot see the parameters of
+    // — not what `SC0532` does with a misspelling.
     let checked = program(
         "
 def given() -> Doc:
     let doc, err be find(\"a\")
-    let _shown be doc.title.append(err)
+    let _shown be doc.title.split(err)
     doc
 ",
     );
@@ -385,7 +393,11 @@ type ConfigError:
     detail: String
 
 ConfigError implements Error:
-    def describe(self) -> String:
+    # `message` and not `describe`: `Error` is the one-method interface of
+    # revision 2 §3.4, and `conform`'s `SC0539` found this fixture calling it by
+    # a name the interface does not declare. The fixture's subject is `SC0140`
+    # and it reads the same with the method named correctly.
+    def message(self) -> String:
         self.detail
 
 def load(key: String) -> (Doc, ConfigError?):

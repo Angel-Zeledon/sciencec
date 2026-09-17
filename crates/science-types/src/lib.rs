@@ -230,6 +230,7 @@
 pub mod alias;
 pub mod assign;
 pub mod check;
+pub mod conform;
 pub mod const_expr;
 pub mod diagnostics;
 pub mod exhaustive;
@@ -472,20 +473,38 @@ pub mod codes {
     /// A method the receiver's type does not have.
     ///
     /// [`NO_SUCH_FIELD`]'s sibling, and reported under the same restraint: only
-    /// where the question is answerable. A receiver of prelude type is still
-    /// that restraint's case, and the reason has moved rather than gone:
-    /// `builtins.rs` used to register no methods at all, and now registers a
-    /// *partial* transcription of `stdlib-core.md` §9 — so
-    /// [`crate::methods::Methods::receiver`] tells apart a builtin head with
-    /// nothing behind it from one with a block, and
-    /// [`crate::methods::Methods::surface_is_closed`] tells apart *"this type
-    /// has no such method"* from *"the prelude has not written it down"*.
-    /// `String.slice(0..4)` is a correct program and neither of them reports on
-    /// it.
+    /// where the question is answerable. **What changed is how much that
+    /// restraint excused.**
     ///
-    /// **Both arms are reachable through a type as well as through a value**
+    /// It used to excuse every receiver of prelude type, because
+    /// [`crate::methods::Methods::surface_is_closed`] read openness off
+    /// `Def::is_builtin` — so `"hi".no_such_method()` checked clean, and with
+    /// it every misspelling of every method in the standard library. That is
+    /// not a narrow silence: it is the entire library surface exempt from the
+    /// check a `Doc` gets, and the unresolved call carries [`crate::Ty::ERROR`]
+    /// into whatever reads its type next.
+    ///
+    /// [`crate::methods::Methods::name_is_answerable`] is the restraint now,
+    /// and `methods`' §8a is the decision: a name a note gives a prelude type
+    /// and `builtins.rs` has not transcribed is *"not written down"* and stays
+    /// silent — `text.slice(0..4)` is still a correct program and is still not
+    /// reported — and every other name on a prelude receiver is this code.
+    /// `builtins.rs`' `UNWRITTEN` is the list, cited entry by entry, and it
+    /// shrinks as `BLOCKS` grows.
+    ///
+    /// **One half of it is still open and is named rather than absorbed.**
+    /// [`crate::methods::Methods::receiver`] answers `None` for a builtin head
+    /// with no block at all, one step before the predicate above, so
+    /// `(1).no_such_method()` on an `I64` reports nothing. `methods`' §8b is
+    /// why: `stdlib-core.md` §8.2 specifies the numeric surface as *"roughly
+    /// thirty-five"* methods and enumerates seventeen, so a list built from the
+    /// note would report on `x.floor()`, which the note intends and never
+    /// writes. Trading that silence for a false positive is the trade the whole
+    /// restraint exists to refuse.
+    ///
+    /// **Every arm is reachable through a type as well as through a value**
     /// now that [`crate::check`]'s `type_receiver` accepts a
-    /// [`DefKind::Primitive`] receiver, which is the same silence arriving
+    /// [`DefKind::Primitive`] receiver, which is the same judgement arriving
     /// through one more spelling and not a second decision.
     ///
     /// [`DefKind::Primitive`]: science_resolve::hir::DefKind::Primitive
@@ -789,6 +808,97 @@ pub mod codes {
     /// unification and this is not that.
     pub const EMPTY_ARRAY_NO_TYPE: Code = Code(282);
 
+    // --- conformance, `SC0539`-`SC0541` -----------------------------------
+    //
+    // [`crate::conform`]'s three, and they are a band of their own rather than
+    // a reuse of Decision 11's because **Decision 11's codes are all reported
+    // at a call and these are all reported at a declaration**. `SC0531`-`SC0533`
+    // answer *"what does this call site resolve to"*; a block that does not
+    // conform is wrong before anything calls it, and the span every one of
+    // these points at is a line in a declaration.
+    //
+    // `type-checking-and-mir.md` §13 numbers none of them, for the reason it
+    // numbers none of `SC0523`-`SC0538`: it was written before anything walked
+    // a declaration, and it assumed an implementation block was checked
+    // without saying what happens when it is not.
+
+    /// An interface method that an `implements` block never implements.
+    ///
+    /// **Not [`NO_SUCH_METHOD`]**, although the two are the same absence seen
+    /// from opposite ends. `SC0532` is reported at a *call*, its subject is a
+    /// name the author typed, and its answer is *"the type does not have it"*.
+    /// This is reported at a *block*, its subject is a name the author did
+    /// **not** type, and its answer is *"the interface requires it"*. Sharing a
+    /// code would mean one of the two messages stopped being about its own
+    /// subject — which is the argument [`UNREACHABLE_ARM`] makes against
+    /// folding into [`NON_EXHAUSTIVE_MATCH`], one construct over.
+    ///
+    /// **Not [`NO_MATCHING_IMPLEMENTATION`]** either. `SC0533` is about
+    /// arguments that fit no instantiation of a method that *exists*; here the
+    /// method does not exist and no argument is involved.
+    ///
+    /// **A defaulted method is not missing.** An interface method with a body
+    /// is Decision 15's default and [`crate::methods`]' §2 already makes it
+    /// callable on an implementor that never mentioned it, so requiring the
+    /// block to restate it would report on `examples/06_traits.science`'s
+    /// `Note implements Summarize:` — a block whose own comment says *"only the
+    /// required method: the defaults are inherited as written"*.
+    ///
+    /// **The fix is the declaration itself**, substituted into this block and
+    /// rendered in surface syntax, which is a line the author pastes.
+    /// [`crate::conform`]'s §5 is the rule that keeps it writable.
+    pub const UNIMPLEMENTED_INTERFACE_METHOD: Code = Code(539);
+
+    /// A method in an `implements` block that the interface does not declare.
+    ///
+    /// **Reported only where the question is answerable**, which is the
+    /// restraint [`NO_SUCH_METHOD`] is under and for the identical reason at
+    /// the other end of the same table: `builtins.rs` declares fourteen prelude
+    /// interfaces as *names with no methods* — deliberately, because `Ord`'s
+    /// method would need an `Ordering` and `Display`'s a `Formatter`, and *"a
+    /// signature invented in passing is how a language acquires a design nobody
+    /// argued for"* — so `Doc implements Clone:` writing a `clone` is a correct
+    /// program that this rule must not see. [`crate::conform`]'s §3 is the
+    /// line, and it is `Def::is_builtin` there as it is in
+    /// [`crate::methods`]' §8.
+    ///
+    /// **Not a lookup failure at all**, which is why it is not
+    /// [`NO_SUCH_METHOD`]: the method is found, and will be found by
+    /// [`crate::methods`]' index, on the type and through the interface alike.
+    /// What is wrong is that an interface's method set would then differ
+    /// between its implementations, so `any Summarize` would mean a different
+    /// thing per implementor and Decision 13's dispatch would have nothing to
+    /// dispatch on.
+    ///
+    /// **The fix is the inherent block**, `Doc has:` — the language's own place
+    /// for a method that answers no interface, which `AGENTS.md`'s table and
+    /// `examples/06_traits.science` both spell.
+    pub const NOT_AN_INTERFACE_METHOD: Code = Code(540);
+
+    /// A method whose signature is not the one its interface declared.
+    ///
+    /// **Not [`MISMATCHED_TYPES`]**, and it is [`UNSATISFIED_BOUND`]'s argument
+    /// at a declaration. `SC0525`'s shape is one expected type taken from one
+    /// annotation at one value; here there is no value, and what disagrees may
+    /// be the receiver, the arity or a type parameter count — none of which is
+    /// a type at all. The message names the whole signature because the whole
+    /// signature is what the author rewrites.
+    ///
+    /// **One code for the receiver, the parameters and the return**, although
+    /// each is a different word in the message. They are one line in the source
+    /// and one edit to fix, and a code per position would be three codes whose
+    /// only difference is which word of one sentence changed — the opposite of
+    /// the case [`UNREACHABLE_ARM`] makes for a code of its own, where the
+    /// *subject* differs and not the wording.
+    ///
+    /// **The comparison is against the substituted declaration.** `Row
+    /// implements Index of Int:` writing `def index(self, at: Int) -> borrowed
+    /// F64` disagrees with `Index`'s declaration at every position and is
+    /// correct; [`crate::conform`]'s §2 lists the three substitutions that have
+    /// to happen first, and all three are functions the body checker already
+    /// uses.
+    pub const MISMATCHED_IMPLEMENTATION: Code = Code(541);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -820,6 +930,9 @@ pub mod codes {
         NOT_DISPLAYABLE,
         ARRAY_ELEMENT_MISMATCH,
         EMPTY_ARRAY_NO_TYPE,
+        UNIMPLEMENTED_INTERFACE_METHOD,
+        NOT_AN_INTERFACE_METHOD,
+        MISMATCHED_IMPLEMENTATION,
     ];
 
     #[cfg(test)]

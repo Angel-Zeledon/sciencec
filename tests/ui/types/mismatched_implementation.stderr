@@ -1,0 +1,35 @@
+error[SC0541]: `render` does not have the signature `Render` declares for it
+  --> tests/ui/types/mismatched_implementation.science:27:9
+   |
+15 |     def render(self, width: Int) -> String
+   |         ------ `render` is declared here
+...
+27 |     def render(self, width: Bool) -> Int:
+   |         ^^^^^^ parameter 1 is `Bool`; `Render` declares `Int`
+   |
+   = note: an implementation is held to the declaration, because a call through the interface — `any Summarize`, or a body checked against a bound — is dispatched at the declared signature and not at this one
+   = note: write the declared signature: `def render(self, width: Int) -> String:`
+
+error[SC0541]: `reset` does not have the signature `Reset` declares for it
+  --> tests/ui/types/mismatched_implementation.science:31:9
+   |
+18 |     def reset(mutable self)
+   |         ----- `reset` is declared here
+...
+31 |     def reset(self):
+   |         ^^^^^ this takes `self`; `Reset` declares `mutable self`
+   |
+   = note: an implementation is held to the declaration, because a call through the interface — `any Summarize`, or a body checked against a bound — is dispatched at the declared signature and not at this one
+   = note: write the declared signature: `def reset(mutable self):`
+
+error[SC0541]: `convert` does not have the signature `Convert` declares for it
+  --> tests/ui/types/mismatched_implementation.science:35:9
+   |
+21 |     def convert(self, from: Source) -> I64
+   |         ------- `convert` is declared here
+...
+35 |     def convert(self, from: Bool) -> I64:
+   |         ^^^^^^^ parameter 1 is `Bool`; `Convert` declares `I64`
+   |
+   = note: an implementation is held to the declaration, because a call through the interface — `any Summarize`, or a body checked against a bound — is dispatched at the declared signature and not at this one
+   = note: write the declared signature: `def convert(self, from: I64) -> I64:`

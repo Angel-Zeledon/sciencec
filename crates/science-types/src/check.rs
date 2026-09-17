@@ -401,6 +401,12 @@ pub fn check_crate(
     order: &AtomOrder,
     diagnostics: &mut Diagnostics,
 ) -> Vec<Body> {
+    // Before the bodies, and that is deliberate: a block that does not conform
+    // is wrong before anything calls it, and an author told *"`render` returns
+    // `Int` and `Render` declares `String`"* would rather have that than a page
+    // of diagnostics about what the wrong return type does inside the body.
+    // `conform`'s own head comment is the decision; this is its one call site.
+    crate::conform::report(krate, decls, types, diagnostics);
     let mut bodies = Vec::new();
     for module in &krate.modules {
         for item in &module.items {
@@ -2948,10 +2954,12 @@ impl<'a> BodyChecker<'a> {
                 self.select(receiver, name, &candidates, args, self_ty)
             }
             Found::None => {
-                // `methods`' §8: a prelude type's method set is a partial
-                // transcription, so *"no such method"* on one is a statement
-                // about `builtins.rs` and not about the program.
-                if !self.decls.methods().surface_is_closed(self.defs, key) {
+                // `methods`' §8a: a prelude type's method set is open at the
+                // names a note gives it and closed everywhere else, so
+                // `text.slice(0..4)` is silent and `text.no_such_method()` is
+                // not. This used to be `surface_is_closed`, which answered
+                // *"builtin"* and exempted the whole standard-library surface.
+                if !self.decls.methods().name_is_answerable(self.defs, key, &name.name) {
                     return Callee::Missing(None);
                 }
                 if !self.types.references_error(receiver) {

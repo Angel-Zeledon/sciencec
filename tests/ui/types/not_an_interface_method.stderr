@@ -1,0 +1,8 @@
+error[SC0540]: `Render` declares no method `width`
+  --> tests/ui/types/not_an_interface_method.science:22:9
+   |
+22 |     def width(self) -> Int:
+   |         ^^^^^ `width` is not one of `Render`'s methods
+   |
+   = note: an `implements` block answers one interface and holds nothing else, so that the methods a type gets from an interface are exactly the ones the interface declares
+   = note: move it to an inherent block: `Doc has:`

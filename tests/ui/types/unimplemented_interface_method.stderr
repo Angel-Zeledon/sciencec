@@ -1,0 +1,11 @@
+error[SC0539]: this block does not implement `Render`'s method `width`
+  --> tests/ui/types/unimplemented_interface_method.science:24:16
+   |
+16 |     def width(self) -> Int
+   |         ----- `width` is declared here, with no body
+...
+24 | Doc implements Render:
+   |                ^^^^^^ `width` is missing from this implementation
+   |
+   = note: an interface method with no body is required of every implementation; one with a body is a default the block may leave out
+   = note: write it in this block: `def width(self) -> Int:`

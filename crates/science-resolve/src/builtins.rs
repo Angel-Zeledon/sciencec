@@ -906,6 +906,169 @@ const BLOCKS: &[Block] = &[
     },
 ];
 
+/// The surface a note gives a prelude type and [`BLOCKS`] has not transcribed.
+///
+/// # Why this table exists
+///
+/// [`BLOCKS`]' own comment says every prelude block is `open`: *"the set of
+/// methods declared on a prelude type is smaller than the set that exists, so a
+/// name this table does not have is 'not written down yet' and never 'no such
+/// method'"*. `science-types`' `Methods::surface_is_closed` read that off
+/// `Def::is_builtin`, and the consequence was total: **`"hi".no_such_method()`
+/// and `(1).no_such_method()` checked clean**, and so did every misspelling of
+/// every method in the standard library. That is the entire library surface
+/// exempt from the check a user type gets, and it is why a binding initialised
+/// from `items.get_mut(0)` had no type for anything downstream to read.
+///
+/// **Decision. The openness is named rather than blanket.** A name a note gives
+/// a prelude type, and that [`BLOCKS`] has not transcribed yet, is *"not
+/// written down"* and stays silent. Every other name on a prelude type is
+/// `SC0532`, exactly as it is on a `Doc`.
+///
+/// **The reason is that "open" was standing in for two different facts.** One
+/// is *"the note says `String.slice` exists and this file has not got to it"* —
+/// a fact about this file, and reporting it would put a diagnostic on a correct
+/// program. The other is *"nothing anywhere says `String.no_such_method`
+/// exists"* — a fact about the program, and it is the one `SC0532` was written
+/// to say. Reading them both off `is_builtin` bought the first at the price of
+/// the second, and the second is the common case: a misspelling is what authors
+/// actually write.
+///
+/// **Every entry is read out of a note, and the note is cited.** A name that is
+/// here because it was convenient would be an exemption, which is the thing
+/// `science-types/tests/corpus.rs` says a list of this shape must not become.
+///
+/// **What it costs, and how it is paid off.** The table is a second place that
+/// has to move when [`BLOCKS`] moves: transcribing `String.slice` means adding
+/// the [`Method`] and deleting the name here, and forgetting the deletion
+/// leaves a silence nothing reports. That is why it lives in this file, beside
+/// the table it complements, rather than in `science-types` where it is read —
+/// two edits in one file are a diff a reviewer sees, and two edits in two
+/// crates are not. `science-types/tests/method_lookup.rs` holds both halves as
+/// a pair — a name here is silent, a name nowhere is `SC0532` — so the day this
+/// table is empty the constant and the predicate that reads it are both
+/// deleted and only the first half of that pair is left.
+///
+/// **The lookup is by name**, because a `DefId` for a prelude type is allocated
+/// at build time and this is a `const`. Prelude type names are unique within
+/// the prelude and a user type cannot shadow one into this table — the
+/// predicate that reads it asks only about a head whose `Def::is_builtin` is
+/// true — so the string comparison is total. It is the lookup the `DefTable`
+/// exists to abolish, performed once per otherwise-unresolved method call.
+const UNWRITTEN: &[(&str, &[&str])] = &[
+    // `String` — the six of `stdlib-core.md` §6.9's nineteen that the `String`
+    // block above leaves out. That block's own comment names all six and gives
+    // the reason for each: `truncate` because §6.9's signature contradicts
+    // eighteen corpus call sites, `slice`/`lines`/`split` because they return
+    // Level 1 types the prelude does not have, and `from_bytes`/`bytes`
+    // because no program in `examples/` calls either.
+    ("String", &[
+        "truncate", "slice", "lines", "split", "from_bytes", "bytes",
+        // And the two that come from an *interface* rather than from §6.9's
+        // block. §6.9 ends `String implements Clone, Eq, Ord, Add, Display`
+        // and [`IMPLEMENTS`] above transcribes it — **with no methods in it**,
+        // because the fourteen methodless interfaces are methodless on
+        // purpose. So `Clone` declares no `clone`, and `text.clone()` resolves
+        // to nothing although §6.2 writes it in as many words: *"`.owned()`
+        // and `.clone()` are both written"*. Measured before it was listed:
+        // `text.clone()` and `text.owned()` were the only two false positives
+        // this whole change produced.
+        //
+        // **This is the methodless-interface decision arriving at a third
+        // place.** `IMPLEMENTS`' own comment prices it for a bound, `conform`'s
+        // §3 prices it for an implementation block, and these two lines are the
+        // same cost at a call. All three retire together, on the day a note
+        // gives `Clone` a method.
+        "clone", "owned",
+    ]),
+    // `Array` — every name either note gives it that the block above does not
+    // have. None of these has a full signature in a note, which is the reason
+    // they are not transcribed: `pop` is `stdlib-core.md` §3.2 (*"`Array` has
+    // `push` and `pop` and no `pop_front`"*) as a name only, `sort` is
+    // `collections-and-chains.md` §3.2 and §3.3, `reserve` is §5.3. The three
+    // `iterate*` are §5.4 and they *do* have signatures — they return
+    // `ArrayIterate of T` and its two siblings, which are types the prelude
+    // does not have, so they are `slice`'s case one type along.
+    //
+    // **`len` is deliberately absent.** `collections-and-chains.md` §3.1 lists
+    // `len()` in the column of names it rejects — *"the abbreviation goes"* —
+    // and §1.4 says `length()` is the `O(1)` one. So `xs.len()` names nothing
+    // any note gives, and `SC0532` on it is true.
+    //
+    // `clone` is the `String` row's last two lines again: [`IMPLEMENTS`]' own
+    // comment says `Array of T implements Clone` *"holds only where `T:
+    // Clone`"* and that a conditional implementation is not something that
+    // table can express — so the implementation is asserted to exist, is not
+    // declared, and its method name is *"not written down"* by the same
+    // argument.
+    ("Array", &[
+        "pop", "sort", "reserve", "iterate", "iterate_mutably", "iterate_consuming", "clone",
+    ]),
+    // `Map` — `keys`, `values` and `values_mutably` are
+    // `collections-and-chains.md` §5.4 by name; the three `iterate*` are the
+    // same section's requirement of *"every collection"*; `from` is §5.5's
+    // `Map.from(..)`.
+    (
+        "Map",
+        &[
+            "keys",
+            "values",
+            "values_mutably",
+            "iterate",
+            "iterate_mutably",
+            "iterate_consuming",
+            "from",
+            // The `Array` row's `clone`, for its reason.
+            "clone",
+        ],
+    ),
+];
+
+/// Prelude types whose method surface is open *entirely*, with the reason.
+///
+/// **Decision. A head is wholly open only where a note would have to be written
+/// before any name on it could be judged** — not where the transcription is
+/// merely behind. [`UNWRITTEN`] is the second case and is a list of names; this
+/// is the first and is a list of types, because there is no name to list when
+/// the question itself is unanswered.
+///
+/// - **`Box`.** Nothing in `stdlib-core.md` or `collections-and-chains.md` says
+///   whether a method call on a `Box of T` reaches `T`'s methods. Both notes
+///   mention `Box` only as a bare name in a list of Level 1 types; neither
+///   gives it a `has:` block, a `get`, or a dereference rule. The corpus writes
+///   `boxed.summarize()` on a `Box of any Summarize` in three files — including
+///   `08_dyn_dispatch.science`, which exists to demonstrate exactly that — so
+///   the calls are attested and the rule that makes them legal is not written.
+///   Reporting `SC0532` on them would be refusing the corpus's own showcase on
+///   the strength of a note nobody has written; inventing the transparency here
+///   would be taking a language decision in passing, which is what the
+///   methodless-interface comment above refuses one construct over. Silence is
+///   the third answer and the honest one.
+///
+/// - **`Chars`.** Its whole surface is `Iterate`'s thirty-eight provided
+///   methods (`collections-and-chains.md` §1.4), and the prelude declares
+///   `Iterate` with `next` alone. Listing thirty-eight names in [`UNWRITTEN`]
+///   would be transcribing the vocabulary into the wrong table; the type is
+///   open until `Iterate` carries them.
+///
+/// **What it costs is `SC0532` on these two heads**, which is the blanket
+/// silence this whole change is narrowing, surviving in two named places
+/// instead of everywhere. Each closes on its own note, and each has a test in
+/// `science-types/tests/method_lookup.rs` that fails when it does.
+const WHOLLY_OPEN: &[&str] = &["Box", "Chars"];
+
+/// Whether *"this prelude type has no method of that name"* is a statement
+/// about the program or about [`BLOCKS`].
+///
+/// `true` means the prelude has not written the name down and the caller must
+/// stay silent; `false` means nothing gives the name and `SC0532` is true.
+/// `science-types`' `Methods::surface_is_closed` is the only caller, and its
+/// doc comment carries the decision.
+pub fn is_unwritten(ty: &str, method: &str) -> bool {
+    WHOLLY_OPEN.contains(&ty)
+        || UNWRITTEN.iter().any(|(name, methods)| *name == ty && methods.contains(&method))
+}
+
 /// The free functions' signatures.
 ///
 /// **`read_file` takes a `borrowed String`, and `stdlib-core.md` §5.2 says it

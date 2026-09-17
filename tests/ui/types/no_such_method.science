@@ -1,11 +1,20 @@
 # UI test: a method the receiver's type does not have (SC0532).
 #
 # `SC0528`'s sibling, under the same restraint: reported only where the
-# question is answerable. `builtins.rs` registers no methods at all, so a call
-# on a `String` is a question this compiler cannot ask rather than one it
-# answers with no — which is why the receiver here is a type the file declares.
-# A record with no methods at all is still a type with an answer, and the
-# answer is no.
+# question is answerable. What changed is the size of that restraint.
+#
+# **It used to exempt the whole standard library.** `Methods::surface_is_closed`
+# read openness off `Def::is_builtin`, so `"hi".no_such_method()` checked clean
+# and only a type the file declared could be answered about. `methods`' §8a
+# names the openness instead: a name a note gives a prelude type and
+# `builtins.rs` has not transcribed is still silent, and every other name on a
+# prelude receiver is this code — which is why the second and third calls below
+# are here beside the first.
+#
+# What is *not* here is the half that stays open, and it stays open for a
+# different reason: `builtins.rs` registers no methods on any numeric scalar, so
+# `(1).no_such_method()` never reaches a lookup at all. `methods`' §8b prices
+# that and says what closing it needs.
 
 type Doc:
     title: String
@@ -13,3 +22,7 @@ type Doc:
 def main():
     let doc be Doc(title: "a")
     print(doc.name_of())
+    let text be String.new()
+    print(text.name_of())
+    let items be (Array of I64).new()
+    print(items.name_of())

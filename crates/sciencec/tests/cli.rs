@@ -358,7 +358,31 @@ const REGIONS: &[Finding] = &[];
 /// `the_corpus_unsizes_in_exactly_these_places` counts the six sites *up* on
 /// the same corpus — a third place, and the one that does not go quiet when a
 /// phase stops running.
-const TYPE_CHECKER_FINDINGS: &[(&str, usize)] = &[];
+/// # It is not empty any more, and what refilled it is a check that started
+///
+/// `science-types`' `methods` §8a closed a hole this list could not have seen:
+/// a prelude type's method surface was open at **every** name, so
+/// `"hi".no_such_method()` checked clean and the whole standard library was
+/// exempt from the lookup a user type gets. Two files write a method name no
+/// note gives, and they are now reported.
+///
+/// **Each entry carries the code it is pinned for**, which the shape `(file,
+/// count, code)` is: the list used to hold `SC0525` alone and hard-coded it in
+/// the assertion, and a second kind of finding could not be told from a first
+/// one drifting. `science-types/tests/corpus.rs`' `REMAINING` argues both
+/// entries against the note that governs them — `get_mut` is in neither
+/// `stdlib-core.md` nor `collections-and-chains.md`, and `len` is a name
+/// `collections-and-chains.md` §3.1 **rejects** by name in favour of `length`
+/// — so these are the corpus being wrong rather than the compiler.
+///
+/// **The property that made emptiness readable still holds, in reverse.**
+/// `science-types/tests/corpus.rs` pins the identical four facts against the
+/// library rather than the binary, so a change that silences them here has to
+/// silence them in two places at once.
+const TYPE_CHECKER_FINDINGS: &[(&str, usize, &str)] = &[
+    ("19_stdlib.science", 1, "error[SC0532]"),
+    ("21_compiler_shapes.science", 3, "error[SC0532]"),
+];
 
 #[test]
 fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
@@ -367,7 +391,7 @@ fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
         let file = path.file_name().unwrap().to_string_lossy().into_owned();
         let unresolved = UNRESOLVED.iter().find(|(n, _)| *n == file).map(|(_, count)| *count);
         let regions = REGIONS.iter().find(|it| it.file == file);
-        let borrows = TYPE_CHECKER_FINDINGS.iter().find(|(n, _)| *n == file);
+        let borrows = TYPE_CHECKER_FINDINGS.iter().find(|(n, _, _)| *n == file);
         assert!(
             unresolved.is_none() || regions.is_none(),
             "{file} cannot be in both lists: a file that does not resolve is never region-checked"
@@ -376,7 +400,7 @@ fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
 
         match (unresolved, regions) {
             (None, None) if borrows.is_some() => {
-                let (_, count) = borrows.expect("checked just above");
+                let (_, count, code) = borrows.expect("checked just above");
                 run.failed();
                 let reported = run.stderr.matches("error[SC").count();
                 assert_eq!(
@@ -385,12 +409,13 @@ fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
 {}",
                     run.stderr
                 );
-                // `SC0525` and nothing else. If this file ever reports a
+                // The pinned code and nothing else. If this file ever reports a
                 // second *kind* of error, the entry is hiding something.
                 for line in run.stderr.lines().filter(|l| l.starts_with("error[SC")) {
                     assert!(
-                        line.starts_with("error[SC0525]"),
-                        "{name} is pinned for a mismatch the corpus has to fix,                          and reported something else: {line}"
+                        line.starts_with(code),
+                        "{name} is pinned for {code}, which the corpus has to fix, \
+                         and reported something else: {line}"
                     );
                 }
             }

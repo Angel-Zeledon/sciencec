@@ -1,0 +1,36 @@
+# UI test: methods whose signatures are not the ones their interfaces declared
+# (SC0541).
+#
+# `conform`'s §1 puts the receiver, the parameters and the return under one
+# code, because they are one line the author writes and one line they rewrite.
+# All three are here so that the three primary labels can be read beside each
+# other: each names what was found and what the interface declares.
+#
+# `Convert of I64` is the fourth case in one file — §2's substitution. The
+# declaration says `Source` and the block supplied `I64`, so the message names
+# `I64`. A diagnostic that printed `Source` would be naming a parameter the
+# author of the block cannot see.
+
+interface Render:
+    def render(self, width: Int) -> String
+
+interface Reset:
+    def reset(mutable self)
+
+interface Convert of Source:
+    def convert(self, from: Source) -> I64
+
+type Doc:
+    title: String
+
+Doc implements Render:
+    def render(self, width: Bool) -> Int:
+        1
+
+Doc implements Reset:
+    def reset(self):
+        let x be 1
+
+Doc implements Convert of I64:
+    def convert(self, from: Bool) -> I64:
+        1

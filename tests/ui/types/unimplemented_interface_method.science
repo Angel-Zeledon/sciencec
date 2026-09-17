@@ -1,0 +1,26 @@
+# UI test: an `implements` block that does not implement one of the interface's
+# methods (SC0539).
+#
+# `conform`'s §1: the subject is the *block*, which named an interface and did
+# not finish. `render` is written, `width` is not, and `width` has no body on
+# the interface — so it is a requirement rather than a default, which is the
+# distinction the first note draws.
+#
+# `preview` is here to prove the other half in the same file: it is declared
+# *with* a body, so the block is under no obligation to restate it and nothing
+# is reported about it. A rule that could not tell the two apart would report
+# twice here and would be wrong once.
+
+interface Render:
+    def render(self) -> String
+    def width(self) -> Int
+
+    def preview(self) -> String:
+        self.render()
+
+type Doc:
+    title: String
+
+Doc implements Render:
+    def render(self) -> String:
+        String.new()

@@ -1,7 +1,23 @@
 error[SC0532]: `Doc` has no method `name_of`
-  --> tests/ui/types/no_such_method.science:15:15
+  --> tests/ui/types/no_such_method.science:24:15
    |
-15 |     print(doc.name_of())
+24 |     print(doc.name_of())
    |               ^^^^^^^ no such method
+   |
+   = note: method lookup finds the inherent methods of the type and the methods of the interfaces it implements, and neither has this name
+
+error[SC0532]: `String` has no method `name_of`
+  --> tests/ui/types/no_such_method.science:26:16
+   |
+26 |     print(text.name_of())
+   |                ^^^^^^^ no such method
+   |
+   = note: method lookup finds the inherent methods of the type and the methods of the interfaces it implements, and neither has this name
+
+error[SC0532]: `Array of I64` has no method `name_of`
+  --> tests/ui/types/no_such_method.science:28:17
+   |
+28 |     print(items.name_of())
+   |                 ^^^^^^^ no such method
    |
    = note: method lookup finds the inherent methods of the type and the methods of the interfaces it implements, and neither has this name

@@ -1,0 +1,23 @@
+# UI test: a method in an `implements` block that the interface does not
+# declare (SC0540).
+#
+# `conform`'s §1: the subject is the *method*. It is a good method in the wrong
+# block, and the note names the block it belongs in — `Doc has:`, which is the
+# language's own place for a method that answers no interface.
+#
+# The interface is a *user* interface on purpose. §3's restraint keeps this
+# code away from the fourteen methodless prelude interfaces, where `Clone`
+# declaring no `clone` is a fact about `builtins.rs` and not about the program.
+
+interface Render:
+    def render(self) -> String
+
+type Doc:
+    title: String
+
+Doc implements Render:
+    def render(self) -> String:
+        String.new()
+
+    def width(self) -> Int:
+        1

@@ -927,20 +927,19 @@ def grow():
 
 // --- the negative: what a builtin still does not answer --------------------
 
-/// **`Methods::surface_is_closed` is why this reports nothing**, and the test
-/// is written as a pair so that the silence is visible as a *decision* rather
-/// than as a gap somebody forgot.
+/// **`methods`' §8a, as a pair.** *"This type has no method of that name"* is a
+/// fact about the program on a user type and on a prelude type alike; what
+/// differs is whether the prelude's transcription is the reason the name is
+/// absent.
 ///
-/// A user's `Doc has:` block is every inherent method `Doc` will ever have, so
-/// a name it does not have is `SC0532`. The prelude's blocks are a partial
-/// transcription of `stdlib-core.md` §9 — `String` has thirteen of its nineteen
-/// — so a name they do not have means *"not written down yet"*, and reporting
-/// it would put a diagnostic on `text.slice(0..4)`, which is a correct program.
-///
-/// The day §9 is transcribed whole, the second half of this test is what has to
-/// change, and `methods`'s §8 says so.
+/// The second half is the one that used to be silent unconditionally, and that
+/// silence was the whole standard-library surface: `builtins.rs`' blocks are a
+/// partial transcription of `stdlib-core.md` §9, `surface_is_closed` read that
+/// off `Def::is_builtin`, and `text.shorten()` therefore checked exactly as
+/// clean as `text.length()`. It is now judged against `UNWRITTEN`, and
+/// `shorten` is in neither note.
 #[test]
-fn a_missing_method_reports_on_a_user_type_and_is_silent_on_a_builtin() {
+fn a_missing_method_reports_on_a_user_type_and_on_a_builtin_alike() {
     let user = program(
         "
 def read(doc: Doc) -> String:
@@ -955,21 +954,130 @@ def read(text: borrowed String) -> Int:
     text.shorten()
 ",
     );
-    builtin.assert_clean();
+    assert_eq!(builtin.codes(), vec![532]);
+    assert_eq!(builtin.messages(), vec!["`borrowed String` has no method `shorten`"]);
 }
 
-/// The same silence through a *type* receiver, which is the arm this change
-/// opened: `String.bogus()` now reaches the index where it used to stop at
-/// `type_receiver`, and `surface_is_closed` is what keeps it quiet.
+/// The probe that proved the hole, as it was measured: exit 0, no diagnostic,
+/// on a program whose every method call is a name that does not exist.
+///
+/// It is here rather than in `tests/ui/` because half of it is a program that
+/// must stay clean, and `tests/ui/` takes diagnostics only.
 #[test]
-fn a_missing_associated_function_on_a_builtin_is_silent_for_the_same_reason() {
+fn every_misspelling_on_a_prelude_receiver_is_reported() {
+    let checked = check(
+        "\
+def probe(text: borrowed String, items: borrowed Array of I64) -> Bool:
+    let a be text.no_such_method()
+    let b be items.no_such_method()
+    true
+",
+    );
+    assert_eq!(checked.codes(), vec![532, 532]);
+}
+
+/// And the other half of §8a, which is the reason the rule is a *list* and not
+/// a flag: these are correct programs.
+///
+/// `truncate` and `slice` are two of the six `stdlib-core.md` §6.9 methods the
+/// `String` block's own comment names as left out, and `pop` and `iterate` are
+/// `collections-and-chains.md`'s. Every one of them is in `builtins.rs`'
+/// `UNWRITTEN`, and every one goes when the signature lands.
+#[test]
+fn a_name_a_note_gives_and_the_prelude_has_not_written_is_silent() {
+    check(
+        "\
+def uses(text: mutable borrowed String, items: mutable borrowed Array of I64) -> Bool:
+    text.truncate(4)
+    let s be text.slice(0..4)
+    let p be items.pop()
+    let it be items.iterate()
+    true
+",
+    )
+    .assert_clean();
+}
+
+/// The two names that come from a methodless prelude *interface* rather than
+/// from a type's own block.
+///
+/// `stdlib-core.md` §6.9 ends `String implements Clone, Eq, Ord, Add, Display`
+/// and §6.2 writes *"`.owned()` and `.clone()` are both written"*, but
+/// `builtins.rs` declares those fourteen interfaces as names with **no
+/// methods** — deliberately, because `Ord`'s would need an `Ordering` — so
+/// `text.clone()` resolves to nothing.
+///
+/// **These were the only two false positives closing §8a produced**, and they
+/// were found by reading the method names the `web/` listings call rather than
+/// by reasoning about the table. They are in `UNWRITTEN` with the citation, and
+/// they retire on the day a note gives `Clone` a method.
+#[test]
+fn a_method_of_a_methodless_prelude_interface_is_silent() {
+    check(
+        "def copies(text: borrowed String) -> Bool:
+    let a be text.clone()
+    let b be text.owned()
+    true
+",
+    )
+    .assert_clean();
+}
+
+/// `WHOLLY_OPEN`'s first entry. Nothing in `stdlib-core.md` or
+/// `collections-and-chains.md` says whether a call on a `Box of T` reaches
+/// `T`'s methods, and `examples/08_dyn_dispatch.science` writes three of them.
+/// Reporting would be refusing the corpus's own showcase on the strength of a
+/// note nobody has written.
+///
+/// **This is the test that fails the day the deref rule is decided**, which is
+/// the right outcome either way: if `Box` is transparent the call resolves, and
+/// if it is not this becomes a diagnostic with a real message.
+#[test]
+fn a_method_through_a_box_is_open_because_no_note_says_otherwise() {
+    check(
+        "\
+type Doc:
+    title: String
+
+Doc has:
+    def summarize(self) -> Int:
+        1
+
+def read(doc: Doc) -> Bool:
+    let boxed be Box.new(doc)
+    let n be boxed.summarize()
+    true
+",
+    )
+    .assert_clean();
+}
+
+/// The same judgement through a *type* receiver, which is the arm
+/// `type_receiver` opened: `String.bogus()` reaches the index, and `bogus` is
+/// no more a name than `text.bogus()` was.
+#[test]
+fn a_missing_associated_function_on_a_builtin_is_reported_for_the_same_reason() {
     let checked = check(
         "\
 def scratch() -> String:
     String.bogus()
 ",
     );
-    checked.assert_clean();
+    assert_eq!(checked.codes(), vec![532]);
+}
+
+/// And its pair: `from_bytes` is one of §6.9's nineteen, so an associated
+/// function the prelude has not transcribed is still silent.
+#[test]
+fn an_untranscribed_associated_function_on_a_builtin_is_silent() {
+    check(
+        "\
+def scratch(bytes: borrowed Array of U8) -> Bool:
+    let s, err be String.from_bytes(bytes)
+    true
+",
+    )
+    .assert_clean();
 }
 
 /// A prelude head the index has **no entry for at all** — `Methods::receiver`'s
