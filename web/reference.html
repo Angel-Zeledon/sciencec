@@ -15,7 +15,7 @@
 
 <div class="wrap wide"><div class="top">
   <div class="mark"><span class="glyph">&#8730;</span><span class="name"><a href="index.html" style="color:inherit;text-decoration:none">Science</a></span></div>
-  <nav><a href="index.html">Home</a><a href="syntax.html">Syntax</a><a href="index.html#status">Status</a><a href="index.html#docs">Docs</a></nav>
+  <nav><a href="index.html">Home</a><a href="tutorial.html">Tutorial</a><a href="syntax.html">Syntax</a><a href="index.html#status">Status</a><a href="index.html#docs">Docs</a></nav>
 </div></div>
 
 <div class="wrap wide reference">
@@ -52,11 +52,17 @@
     This page describes <strong>syntax revision 3</strong>, the language as
     designed, and it separates that everywhere from what <code>sciencec</code>
     does today. Every Science listing below was extracted from this file,
-    written to disk and run through <code>sciencec check</code> &mdash; <strong>forty-seven of
-    them, clean</strong>. Two more are marked
-    where they stand and are excluded: one <strong>fragment</strong>, whose
-    <code>use</code> line names a module that would have to exist beside it,
-    and one block of <strong>removed syntax</strong>, kept only for comparison.
+    written to disk and run through <code>sciencec check</code> &mdash;
+    <strong>fifty-eight of them, fifty-seven clean</strong>. Two more are
+    marked where they stand and are excluded: one <strong>fragment</strong>,
+    whose <code>use</code> line names a module that would have to exist beside
+    it, and one block of <strong>removed syntax</strong>, kept only for
+    comparison. The one that does not check clean sits in
+    <a href="#bindings">Bindings and literals</a>; its whole subject is a
+    check the compiler is being taught while this page is being written, so
+    the listing and the compiler disagree by exactly the amount that work has
+    landed. It is marked <span class="cite wip">changing</span> where it
+    stands.
   </p>
   <p style="margin-top:0.7rem">
     <strong>A listing ending in a comment that shows output was built with
@@ -239,7 +245,7 @@ channels 1 and 2 hold 6080 counts</code></pre>
         <tr><td class="mono">type checking</td><td class="what">Wired in and run by default</td><td class="what">Bidirectional over annotated signatures. It ships <code>match</code> exhaustiveness (<code>SC0250</code>), flow narrowing of <code>T?</code>, <code>SC0140</code>, const-expression normalisation, interface-bound checking, and the interpolation checks (<code>SC0274</code>, <code>SC0275</code>).</td></tr>
         <tr><td class="mono">MIR</td><td class="what">Lowered for every body <code>check</code> reaches</td><td class="what">A control-flow graph with explicit moves, borrows and drops. It exists because region inference is a flow problem and a tree cannot express one.</td></tr>
         <tr><td class="mono">regions, borrows</td><td class="what">Wired in and run by default</td><td class="what">Interprocedural, in reverse topological order of the call graph. Four checks fire: <code>SC0330</code> conflicting borrows, <code>SC0333</code> a borrow outliving its referent, <code>SC0334</code> a move while borrowed, <code>SC0340</code> a signature the body does not determine.</td></tr>
-        <tr><td class="mono">move checking</td><td class="what"><b>Not implemented</b></td><td class="what"><code>SC0301</code> and <code>SC0302</code> &mdash; use after move &mdash; are the core spec's codes and nothing constructs them. <a href="#ownership">Ownership and borrows</a> says what that costs, because it is the one place this page's rules and this compiler disagree about a program.</td></tr>
+        <tr><td class="mono">move checking</td><td class="what"><b>Reported, with four declines</b></td><td class="what"><code>SC0301</code> &mdash; use after move &mdash; is reported from the region crate against the mid-level IR's move analysis. It declines to report a conditional move, a move through a field, a use with no reaching move, and a move of a value that owns nothing. <code>SC0302</code> is constructed nowhere. <a href="#ownership">Ownership and borrows</a> gives each decline and what it costs.</td></tr>
         <tr><td class="mono">code generation</td><td class="what">Real, and bounded</td><td class="what">LLVM 18.1 through the LLVM-C API, an object file, a linker driver, and the <code>science-rt</code> archive. <code>sciencec build hello.science</code> writes <code>hello</code> beside the source and it runs. The subset is below.</td></tr>
         <tr><td class="mono">formatting</td><td class="what">Shipped</td><td class="what"><code>sciencec fmt</code>. It refuses any file that does not already lex and parse.</td></tr>
         <tr><td class="mono">tool schemas</td><td class="what">Shipped</td><td class="what"><code>sciencec tools --json</code> derives JSON Schema from a <code>tool</code>'s signature. See <a href="#tools">Tools and schemas</a>.</td></tr>
@@ -827,20 +833,52 @@ print(f"{n}")
   </p>
 
   <p class="note">
-    <strong>None of that is enforced today, and the gap is total.</strong>
-    Assigning to a binding that was never declared <code>mutable</code> is
-    accepted by every phase, builds, and runs. Writing through a shared borrow
-    is accepted too. There is no diagnostic to quote here because none is
-    emitted; the code below is a whole program that <code>check</code>s clean,
-    builds, and prints <code>3</code>. Read every <code>mutable</code> on this
-    page as documentation of the rule and not as a description of what the
-    compiler currently refuses. <span class="cite wip">changing</span>
+    <strong>This is enforced, and until recently it was not.</strong> The word
+    lexed, parsed, resolved and arrived at the binding &mdash; where nothing
+    ever read it. The program below used to check, build, link, run and print
+    <code>3</code>. It is now <code>SC0304</code>, and the note carries the
+    one-word fix.
   </p>
 
-<pre data-science>let count be 0                     # no `mutable`
-count be 3                         # and this is accepted anyway
-print(f"{count}")
-# 3</pre>
+<pre data-science data-expect-error>let count be 0                     # no `mutable`
+count be 3                         # SC0304: `count` is not mutable
+print(f"{count}")</pre>
+
+<pre class="err"><code><span class="e-code">error[SC0304]</span>: `count` is not mutable
+ <span class="e-hi">--&gt;</span> counter.science:2:1
+  |
+1 | let count be 0
+  |     <span class="e-hi">-----</span> declared here, without `mutable`
+2 | count be 3
+  | <span class="e-hi">^^^^^</span> assigned here
+  |
+  = <span class="e-help">note</span>: declare it `let mutable count`</code></pre>
+
+  <p class="note">
+    <strong>The rule stops at the first borrow, and that is the half worth
+    stating.</strong> <code>def bump(counter: mutable borrowed I64)</code>
+    writing <code>counter be counter + 1</code> is not reassigning
+    <code>counter</code>; it is writing the referent, which is what
+    <code>mutable borrowed</code> exists to permit. So the walk from the target
+    toward its root stops as soon as it crosses a borrow, and from there the
+    borrow rules govern rather than this one &mdash; including when the
+    reference is reached through a binding that is itself immutable, because
+    the storage written belongs to the referent and no binding in that body
+    owns it.
+  </p>
+
+  <p class="note">
+    <strong>Two constructs are not yet caught, and the reason is the same for
+    both.</strong> The rule reads types, so it runs after inference writes
+    back, and where a type still did not come out it stays silent rather than
+    guess. A range carries no type at all &mdash; there is no <code>Range</code>
+    in the prelude, which is <a href="#arrays">the same absence</a>
+    <code>SC0538</code> reports &mdash; so <code>for i in 0..3:</code> cannot be
+    told its <code>i</code> is not mutable, although <code>for mutable i in
+    0..3:</code> parses and checks. A method on a prelude type is not looked up
+    either, so a binding initialised from one has no type to read.
+    <span class="cite wip">changing</span>
+  </p>
 
   <h3>Assignment, and the two spellings that do not exist</h3>
 
@@ -3972,9 +4010,6 @@ print(f"{sum.x is 4.0}")</pre>
       valid Python, and is the best-known footgun in that library. Here it is
       use-after-move, <code>SC0301</code>, a compile error &mdash; and it falls
       out of ownership rather than being a feature anybody added.
-      <strong>This is the one place Science is designed to be strictly stronger
-      than the best existing practice in the field, and it is also the one
-      place the compiler does not yet keep the promise.</strong> See below.
     </p>
     <p style="margin-top:0.6rem">
       <strong>No pauses</strong>, which matters for acquisition, control loops
@@ -4023,41 +4058,149 @@ print(view.source.title)</pre>
     a consequence of those six.
   </p>
 
-  <div class="callout">
-    <h3>Rule three is not enforced, and nothing else on this page is in that state</h3>
-    <p>
-      <strong><code>SC0301</code> and <code>SC0302</code> &mdash; use after
-      move &mdash; are not implemented.</strong> No crate constructs either
-      code. A program that passes an owned value to two functions in a row
-      checks clean, and the second call reads memory the first one released.
-      The MIR crate carries the move analysis the check would need and
-      deliberately declines to share its lattice with a check that does not
-      exist, which is an honest place to be and not a finished one.
-    </p>
-    <p style="margin-top:0.6rem">
-      It matters more than a missing diagnostic usually does, because
-      <strong><code>print</code> of a <code>String</code> moves its
-      argument</strong>. Printing the same binding twice is a use after move,
-      it compiles, and the second line comes out empty &mdash; see
-      <a href="#strings">Strings and formatting</a>. Every <em>other</em>
-      ownership rule below is checked by a pass that runs on every
-      <code>sciencec check</code>; this one is the hole.
-      <span class="cite wip">changing</span>
-    </p>
+  <h3>Move, and the four shapes a move is not reported in</h3>
+
+<pre class="err"><code><span class="e-code">error[SC0301]</span>: use of a moved value
+ <span class="e-hi">--&gt;</span> twice.science:9:10
+  |
+8 | let a be take(d)
+  |          ------- `d` is moved here
+9 | let b be take(d)
+  |          <span class="e-hi">^^^^^^^</span> ...and moved again here, after the move
+  |
+  = note: every value has one owner, and assigning, passing or returning it transfers that owner (&sect;6.1 rules 1 and 2), so the name is empty afterwards (rule 3)
+  = note: borrow at the earlier use instead of moving, or give the second use a value of its own; a type that is not `Copy` is never copied implicitly</code></pre>
+
+  <p class="note">
+    <strong>Rule three is enforced, and the rule it is enforced by is stated
+    in one sentence:</strong> one <code>SC0301</code> per local, at the first
+    point in the body where that local's state is <em>gone</em>, the move that
+    put it there can be named, that move was of the whole local, and the
+    local's type owns something. Each of those four conditions is a refusal to
+    guess, and each of them lets a real mistake through. They are worth
+    knowing individually, because they are the difference between a check you
+    can rely on and a check you can only be surprised by.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>What is not reported</th><th>Why</th><th>What it costs</th></tr></thead>
+      <tbody>
+        <tr><td class="what">A move on <em>some</em> paths &mdash; inside one arm of an <code>if</code>, or carried round a loop's back edge</td><td class="what">The analysis says <em>maybe</em>, and <em>maybe</em> is also what a correct program reaches: it is the state the drop flag exists for.</td><td class="what">A genuine conditional use-after-move compiles. <code>rustc</code> reports these.</td></tr>
+        <tr><td class="what">A use with no move that reaches it</td><td class="what"><em>Gone</em> is also what a local that never held a value says, because giving a local room is not giving it a value. That is use of uninitialised storage &mdash; a different mistake with no code allocated to it.</td><td class="what">Uninitialised reads are not diagnosed by anything.</td></tr>
+        <tr><td class="what">A move out of a <em>field</em> &mdash; <code>take(d.title)</code> then <code>take(d.body)</code></td><td class="what">The move analysis tracks whole locals, not paths, so moving <code>d.title</code> marks <code>d</code>. Reporting the second use would refuse a correct program, so a move through a projection disqualifies the local outright.</td><td class="what">Two moves out of the <em>same</em> field are missed.</td></tr>
+        <tr><td class="what">A move of a value that owns nothing &mdash; a record of two <code>Int</code>s</td><td class="what">Whether a user type is <code>Copy</code> needs an implementation lookup this compiler does not have, so refusing it would charge the author for a <code>Copy</code> the language would derive.</td><td class="what">Nothing: moving a bag of scalars frees nothing and dangles nothing, so the only loss is the report.</td></tr>
+      </tbody>
+    </table>
   </div>
 
   <p class="note">
-    <strong>Auto-borrow at call sites.</strong> If a parameter is declared
-    <code>borrowed T</code>, the caller writes <code>compare(a, b)</code> and
-    not <code>compare(borrowed a, borrowed b)</code>. The signature still says
-    <code>borrowed</code>, so a reader keeps the information; only the noise at
-    the call site goes. Rust rejected this and Mojo adopted it, and for this
-    audience Mojo is right &mdash; a scientist reading
+    <strong>Two more, from further upstream.</strong> A move through a call
+    whose signature the lowering cannot see is invisible, because every
+    argument of such a call is lowered as a copy &mdash; deliberately, since
+    calling a move a copy hides an error and calling a copy a move costs at
+    worst one unnecessary drop flag. And a move <em>out of a closure
+    capture</em> is modelled as an exclusive borrow, so it is invisible too.
+    Both are the same trade in the same direction: <strong>this check loses
+    errors rather than inventing them</strong>, and every line above says which
+    ones.
+  </p>
+
+  <p class="note">
+    <strong>What a move leaves behind is nothing, and taking the name back is
+    legal.</strong> After <code>take(d)</code>, <code>d</code> names no value;
+    writing <code>d be Doc(title: "b")</code> gives it one again, and every use
+    after that is fine. A write to the <em>whole</em> local is not a use, it is
+    a new value &mdash; which is the rule that makes the reassignment work. A
+    write to a <em>projection</em>, <code>d.title be "x"</code>, <em>is</em> a
+    use, because it needs the rest of <code>d</code> to still be there.
+  </p>
+
+  <p class="note">
+    <strong><code>SC0302</code> is allocated and reported from nowhere, and
+    that is a decision rather than a gap.</strong> The note that reserved it
+    described it as conflicting borrows, which is rule 4, which is already
+    <code>SC0330</code>; emitting both would be two codes for one violation.
+    What it is still owed is a specialisation for an <code>extern</code>
+    declaration, and F0 has no such declaration to read.
+  </p>
+
+  <h3>Borrow: two kinds, and every position each may stand in</h3>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Position</th><th><code>borrowed T</code></th><th><code>mutable borrowed T</code></th></tr></thead>
+      <tbody>
+        <tr><td class="what">A parameter</td><td class="what">yes, and auto-borrowed at the call</td><td class="what">yes, and auto-borrowed at the call</td></tr>
+        <tr><td class="what">A return type</td><td class="what">yes &mdash; subject to <code>SC0340</code></td><td class="what">yes &mdash; subject to <code>SC0340</code></td></tr>
+        <tr><td class="what">A record field</td><td class="what">yes; the region is inferred per value</td><td class="what">yes</td></tr>
+        <tr><td class="what">A <code>let</code> annotation</td><td class="what">yes, but auto-borrow does not apply &mdash; write the word</td><td class="what">same</td></tr>
+        <tr><td class="what">An expression</td><td class="what"><code>borrowed doc</code>, a prefix operator</td><td class="what"><code>mutable borrowed doc</code></td></tr>
+        <tr><td class="what">A receiver</td><td class="what">spelled <code>self</code>; there is no <code>borrowed self</code></td><td class="what">spelled <code>mutable self</code></td></tr>
+        <tr><td class="what">A <code>tool</code> parameter</td><td class="what">no &mdash; <code>SC0192</code></td><td class="what">no &mdash; <code>SC0192</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <strong>The spelling is exactly <code>mutable borrowed</code>, in that
+    order, and <code>mutable</code> in a type never means anything else.</strong>
+    There is no third kind of borrow and no unique/owned qualifier. Two
+    English words where Rust has <code>&amp;</code> and <code>&amp;mut</code>
+    is the whole of the trade: it is longer to type and it is the thing a
+    reader who has never seen the language can still read.
+  </p>
+
+  <p class="note">
+    <strong><code>mutable</code> on a <em>binding</em> is a different word
+    doing a different job.</strong> <code>let mutable x be 0</code> says the
+    name may be assigned again; <code>mutable borrowed T</code> says the
+    borrow may write through. They share a keyword and nothing else, and the
+    one place they meet is that taking a <code>mutable borrowed</code> of a
+    binding requires the binding to be <code>mutable</code>. The language
+    specifies that requirement; the diagnostic for it is <code>SC0304</code>,
+    <em><code>x</code> is not mutable</em>, whose suggested fix is written
+    four ways &mdash; declare it <code>let mutable x</code>, bind it
+    <code>mutable x</code> in the pattern, take the receiver as
+    <code>mutable self</code>, or, for a parameter, bind a local, because a
+    parameter cannot be declared mutable. <span class="cite wip">changing</span>
+  </p>
+
+  <h3>Auto-borrow at call sites, and the one rule it obeys</h3>
+
+  <p class="note">
+    <strong>If a parameter is declared <code>borrowed T</code>, the caller
+    writes <code>compare(a, b)</code> and not
+    <code>compare(borrowed a, borrowed b)</code>.</strong> The signature still
+    says <code>borrowed</code>, so a reader keeps the information; only the
+    noise at the call site goes. Rust rejected this and Mojo adopted it, and
+    for this audience Mojo is right &mdash; a scientist reading
     <code>gemm(&amp;a, &amp;b, &amp;mut c)</code> is reading three sigils that
-    tell them nothing they could not have read in the signature. An explicit
-    borrow stays legal where it clarifies, and it is <em>required</em> where
-    the position is not a call site, as in the <code>View</code> construction
-    above.
+    tell them nothing they could not have read in the signature.
+  </p>
+
+  <p class="note">
+    <strong>It applies at an argument and nowhere else.</strong>
+    <code>let x: borrowed String be s</code> is not a call site, so no borrow
+    is inserted there and the word has to be written; admitting it would be a
+    language change made by a type checker. What the checker does is exactly
+    what the author was allowed to leave out &mdash; it writes down an
+    ordinary borrow node &mdash; so the mid-level IR sees the same tree
+    whether or not you typed the word, and the region engine gets a program
+    point for the borrow either way. An explicit borrow stays legal where it
+    clarifies, and it is <em>required</em> where the position is not a call
+    site, as in the <code>View</code> construction above.
+  </p>
+
+  <p class="note">
+    <strong>And it stops at a branch.</strong> In
+    <code>show(if flag: "yes" else: "no")</code> the call site is the
+    argument, not the two arms, so a <code>borrowed String</code> expectation
+    is not pushed inward. Pushing it in made each arm borrow its own
+    temporary, whose storage ends inside the arm, and the region checker then
+    reported <code>SC0333</code> on a correct program &mdash; right about the
+    MIR, wrong about the program. Three of the four branching forms are
+    treated that way.
   </p>
 
   <p class="note">
@@ -4071,17 +4214,186 @@ print(view.source.title)</pre>
     the note.
   </p>
 
+  <p class="note">
+    <strong>It also concealed a real bug for a while, which is the honest
+    other half.</strong> Auto-borrow fired for <code>borrowed any
+    Summarize</code> and not for <code>borrowed T</code> where <code>T</code>
+    was generic, so <code>describe(doc)</code> silently <em>moved</em>
+    <code>doc</code>; the corpus's largest example then moved a value that
+    another value was still borrowing and used it twice more. The region
+    engine found it, the type checker was fixed, and a test now stands on the
+    program. A convenience that inserts something invisible is a convenience
+    that can fail to insert it invisibly.
+  </p>
+
+  <h3>Two-phase borrows, so that <code>b.push(b.size())</code> compiles</h3>
+
+<pre data-science>type Buffer:
+    total: Int
+
+Buffer has:
+    def size(self) -&gt; Int:
+        self.total
+
+    def push(mutable self, value: Int):
+        self.total be self.total + value
+
+def grow(buffer: mutable borrowed Buffer):
+    # The exclusive borrow of `buffer` is RESERVED here and ACTIVATED after
+    # the argument has been evaluated, so the shared borrow inside the
+    # argument does not overlap it.
+    buffer.push(buffer.size())</pre>
+
+  <p class="note">
+    <strong>An exclusive borrow taken in argument position is two-phase;
+    every other exclusive borrow is single-phase.</strong> A borrow bound to a
+    name &mdash; <code>let r be mutable borrowed x</code> &mdash; is used an
+    unknown number of times, and two-phasing that would be unsound. The
+    distinction is carried all the way down: the mid-level IR has a
+    <em>reserve</em> borrow kind and an explicit <em>activate</em> statement
+    emitted immediately before the call, and the region engine treats a
+    reserved borrow as not-yet-exclusive for the window between them.
+  </p>
+
+  <p class="note">
+    <strong>The window is a reachability question, not an interval.</strong>
+    It is the set of program points reachable from the reservation that can
+    also reach the activation, with the activation itself outside it &mdash;
+    computed in both directions rather than as <em>every point between them in
+    the numbering</em>, because an argument list can contain an
+    <code>if</code> and the numbering is not a path. This is the sort of
+    detail that is invisible when it is right and produces an error on a
+    correct program when it is wrong.
+  </p>
+
+  <p class="note">
+    <strong>What the design notes did not settle.</strong> Neither note says
+    what a reservation may coexist with, and in particular whether it must be
+    compatible with a <em>pre-existing shared borrow</em> that ends before the
+    activation. That makes rule 4 a three-state question &mdash; shared,
+    reserved, exclusive &mdash; where it was written as a two-state one, and
+    the implementation answered it by splitting the access: the reservation is
+    not an exclusive access and the activation is. That split is what makes
+    <code>let s be borrowed v</code> followed by <code>v.push(s.length())</code>
+    compile.
+  </p>
+
+  <h3>A borrow ends at its last use, and captures are borrows</h3>
+
+<pre data-science>def apply(f: (Int) -&gt; Int, n: Int) -&gt; Int:
+    f(n)
+
+let offset be 3
+# `offset` is captured by borrow, and the borrow lasts as long as the
+# closure value does — not to the end of the block.
+print(f"{apply(x giving x + offset, 2)}")</pre>
+
+  <p class="note">
+    <strong>That listing has no output under it because it does not
+    build.</strong> A closure's <em>captures</em> are analysed, lowered and
+    region-checked; its <em>body</em> is not lowered at all, because the
+    resolver does not mint a definition for the closure itself, so there is
+    nothing for the back end to emit. Everything this section says about
+    captures is checked on every <code>sciencec check</code>; none of it runs.
+    <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
+    <strong>Every capture is a borrow of the captured place</strong>, taken
+    where the closure value is created and held for as long as that value is
+    live &mdash; shared, unless the body writes through the place, in which
+    case exclusive. There is <em>no</em> by-value capture and no copy capture,
+    not even for a <code>Copy</code> type, and there is no <code>move</code>
+    keyword to ask for one: <code>move</code> is reserved for a later phase
+    and writing it today is a parse error.
+  </p>
+
+  <p class="note">
+    <strong>The argument for one uniform rule is that no F0 program can tell
+    the difference.</strong> Copy-capturing an <code>Int</code> and
+    borrow-capturing it differ observably &mdash; the closure sees the old
+    value or the new one &mdash; but under a uniform borrow capture the
+    program that would notice <em>does not compile</em>, because the write to
+    the captured binding conflicts with the closure's live shared borrow under
+    rule 4. So the language has not yet had to decide, and it has not decided.
+    Rust's three-way <code>Fn</code>/<code>FnMut</code>/<code>FnOnce</code>
+    split is not available here anyway, because a closure's type is a bare
+    arrow with no trait behind it.
+  </p>
+
+  <p class="note">
+    <strong>Captures are keyed on the binding, never on a projection out of
+    it.</strong> A body that names <code>config.port</code> captures
+    <code>config</code>. That is coarser than Rust's per-field capture and it
+    is deliberately matched to the move analysis, which tracks whole locals
+    too &mdash; two passes that disagree about granularity produce answers
+    that cannot be compared.
+  </p>
+
+  <h3>Drops, and the three things that can happen at one</h3>
+
+  <p class="note">
+    <strong>Leaving a scope drops what the scope holds, in reverse order of
+    creation.</strong> A <code>return</code> leaves every scope, a
+    <code>break</code> leaves every scope down to the loop's, a
+    <code>continue</code> the same. That is the entire timing rule, and it is
+    the one thing ownership buys that a garbage collector cannot: the
+    <em>point</em> at which a device buffer is freed is a point the compiler
+    can name.
+  </p>
+
+  <p class="note">
+    <strong>A conditionally moved local gets a drop flag</strong> &mdash; one
+    byte, set where the value is initialised, cleared where it is moved,
+    tested at the drop. The elaboration runs during MIR construction, before
+    region inference, and it has exactly three outcomes: a local that is
+    definitely live at the drop keeps the drop and gets no flag; one that is
+    definitely gone has the drop deleted outright; and only the
+    <em>maybe</em> case pays a byte and a branch. The largest program in the
+    corpus produces <strong>zero drop flags</strong>, because it contains no
+    conditional move &mdash; which is the measurement that says the flag is a
+    fallback rather than a tax.
+  </p>
+
+  <p class="note">
+    <strong><code>Drop</code> is a name in the prelude and not yet a
+    mechanism.</strong> It is declared as an interface with no method in it,
+    because the note that would give <code>drop</code> a signature has not
+    been written; a type may be declared to implement it and nothing reads the
+    declaration. The back end is where this becomes visible: a drop of a
+    <code>String</code> emits one call to free it, a drop of something that
+    owns nothing emits a jump, and <strong>anything else &mdash; a flagged
+    drop, or a drop of a value whose release would need generated glue &mdash;
+    is <code>SC0400</code>, refused loudly rather than skipped</strong>,
+    because skipping a drop-flag update is a double free.
+    <span class="cite wip">changing</span>
+  </p>
+
   <h3>What a region is, and why you never write one</h3>
 
   <p class="note">
     A <strong>region</strong> is the set of program points at which a borrow is
-    live. That is a control-flow property, not a lexical one: a borrow ends at
-    its last use, not at the closing of a block. The compiler assigns a fresh
-    region variable to every borrow and to every reference inside a type,
-    collects outlives constraints from assignments, calls and returns,
-    propagates them to a fixed point, and then checks for conflicts. It does
-    this over a control-flow graph, which is why the compiler has a mid-level
-    IR at all.
+    live &mdash; literally a set of <code>(block, statement)</code> pairs, held
+    as a bitset, ordered by inclusion. That is a control-flow property, not a
+    lexical one: a borrow ends at its last use, not at the closing of a block.
+    The compiler assigns a fresh region variable to every borrow and to every
+    reference inside a type, collects outlives constraints from assignments,
+    calls and returns, propagates them to a fixed point, and then checks for
+    conflicts. It does this over a control-flow graph, which is why the
+    compiler has a mid-level IR at all.
+  </p>
+
+  <p class="note">
+    <strong>The propagation has one shape and it is worth seeing.</strong> For
+    a constraint <em><code>'a</code> outlives <code>'b</code> at point
+    p</em>, walk forward from p's successors; at each point, stop if
+    <code>'b</code> does not reach it, otherwise add it to <code>'a</code> and
+    carry on. Three lower bounds seed the whole thing: a local's region holds
+    every point the local is live, a parameter's region holds every point at
+    all, and a loan's region starts <em>empty</em> and grows only through the
+    constraints. <strong>There is no upper bound anywhere in the
+    solver</strong>, and that single fact is why one of the diagnostics below
+    has never fired.
   </p>
 
   <p class="note">
@@ -4090,9 +4402,11 @@ print(view.source.title)</pre>
     that remains available when the guess is wrong; Science has no syntax to
     fall back on, so a function's parameter and return regions are simply
     <em>an analysis result</em>. Functions are analysed in reverse topological
-    order of the call graph, and mutual recursion is resolved by a fixed point
-    over each strongly connected component. Once you are willing to read the
-    body, guessing from the signature is strictly worse than reading it.
+    order of the call graph &mdash; Tarjan's algorithm, iterative &mdash; and
+    mutual recursion is resolved by a fixed point over each strongly connected
+    component, every member starting from the empty summary. Starting from the
+    opaque one would also terminate and would conclude that every recursive
+    function returns a borrow of everything, which is sound and useless.
   </p>
 
   <p class="note">
@@ -4131,12 +4445,15 @@ print(view.source.title)</pre>
     <strong>One thing the claim does not say, and should not be read as
     saying.</strong> Region inference is interprocedural <em>within</em> a
     crate. Across a crate boundary the inferred relation &mdash; for each
-    return region, which parameter regions constrain it &mdash; is serialised
-    into crate metadata, because otherwise a module could not be checked
-    without its dependencies' bodies. That summary carries exactly the same
-    information a lifetime annotation does. The claim is that a
-    <em>programmer</em> never writes a region. It was never that the compiler
-    does not need one.
+    return region, which parameter regions constrain it &mdash; would be
+    serialised into crate metadata, because otherwise a module could not be
+    checked without its dependencies' bodies. That summary carries exactly the
+    same information a lifetime annotation does. <strong>It is computed today
+    and it is not written anywhere</strong>, because there is no crate metadata
+    format to write it into; a call to a function in another crate is answered
+    with <em>assume the worst</em>. The claim is that a <em>programmer</em>
+    never writes a region. It was never that the compiler does not need one.
+    <span class="cite wip">changing</span>
   </p>
 
   <h3>What a borrow error looks like</h3>
@@ -4149,7 +4466,9 @@ print(view.source.title)</pre>
     is. The "still needed here" span is the load-bearing one, and it is the one
     a solver that merged its constraints for speed can never produce, which is
     why provenance on every constraint was a decision taken before the solver
-    was written rather than after.
+    was written rather than after. The constraint set is deliberately
+    <em>not</em> deduplicated: the four lines that would shrink it would also
+    delete the answer to <em>why is this borrow still alive at line 90</em>.
   </p>
 
 <pre class="err"><code><span class="e-code">error[SC0330]</span>: `doc.body` is borrowed here and borrowed exclusively before the borrow ends
@@ -4179,6 +4498,34 @@ print(view.source.title)</pre>
     note on each is the one doing the teaching: a language that has removed a
     syntax has to say what to write <em>instead</em>, because there is no
     annotation for the reader to reach for.
+  </p>
+
+  <h3>The ownership band, in full</h3>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Code</th><th>Says</th><th>State</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">SC0301</td><td class="what">use of a moved value</td><td class="what">reported, with the four declines above</td></tr>
+        <tr><td class="mono">SC0304</td><td class="what"><code>x</code> is not mutable</td><td class="what">the rule the language specifies for assignment and for taking an exclusive borrow <span class="cite wip">changing</span></td></tr>
+        <tr><td class="mono">SC0330</td><td class="what">borrowed here and borrowed exclusively before the borrow ends</td><td class="what">reported &mdash; rule 4</td></tr>
+        <tr><td class="mono">SC0333</td><td class="what">borrowed for longer than it exists</td><td class="what">reported &mdash; rule 5</td></tr>
+        <tr><td class="mono">SC0334</td><td class="what">moved while it is still borrowed</td><td class="what">reported</td></tr>
+        <tr><td class="mono">SC0335</td><td class="what">borrows from sources with no common region</td><td class="what">constructed in code; has never fired, and the solver's shape says it cannot</td></tr>
+        <tr><td class="mono">SC0340</td><td class="what">the body does not determine what its result borrows from</td><td class="what">reported, and narrower than specified</td></tr>
+        <tr><td class="mono">SC0302, SC0331, SC0332, SC0341, SC0380</td><td class="what">reserved by four design notes</td><td class="what">constructed nowhere; each one is a specialisation of a code that exists, or belongs to a phase that does not</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <strong>Two checks are suppressed in a body that calls something the
+    compiler cannot name</strong>, and both suppressions are recorded as
+    temporary: <code>SC0340</code> is not reported there, and rule 5 is not
+    checked against a local an earlier phase could not build. A hole makes
+    moves invisible rather than spurious, so the move check needs no such
+    suppression &mdash; which is why it is the one rule on this page with no
+    asterisk attached to a missing callee.
   </p>
 
   <h3>Dynamic dispatch</h3>
@@ -4213,15 +4560,48 @@ def describe_each of T(value: borrowed T) -&gt; String where T: Summarize:
     <code>SC0400</code>, and so is a call to a generic function. Both check.
     <span class="cite wip">changing</span>
   </p>
+
+  <div class="callout">
+    <h3>If you are arriving from Rust: the model is yours and three things you rely on are gone</h3>
+    <p>
+      The six rules are Rust's six rules and the region engine is a
+      non-lexical one, so the intuitions transfer whole. What is gone:
+      <strong>lifetime syntax</strong>, in every position, including the
+      elided ones &mdash; a function whose regions do not determine each other
+      is refused rather than annotated. <strong>Binding modes and
+      <code>ref</code></strong>. And <strong><code>.clone()</code> and
+      <code>*x</code></strong>: <code>Clone</code> and <code>Copy</code> are
+      interfaces with no methods on them and there is no dereference operator,
+      so the way a borrow becomes a value is the copy-out rule &mdash; a
+      shared borrow of a <code>Copy</code> type is assignable to the value
+      type, and nothing else is.
+    </p>
+    <p style="margin-top:0.6rem">
+      What is added: <strong>auto-borrow</strong> at arguments, which removes
+      most of the sigils; <strong>one region variable per borrowed
+      field</strong> rather than one name shared across a type, which is
+      strictly more precise; and a <strong>narrower <code>Copy</code></strong>
+      in the lowering than in the type system, deliberately, so that a
+      <code>Move</code> is never mistaken for a <code>Copy</code>. Note the
+      direction: <code>String</code> is <em>not</em> <code>Copy</code> here
+      either, and <code>mutable borrowed T</code> is never assignable to
+      <code>T</code> even when <code>T</code> is.
+    </p>
+  </div>
 </section>
 
 <!-- ==================================================================== -->
 <section id="control">
   <h2>Control flow<a class="anchor" href="#control" aria-label="Link to this section">#</a></h2>
   <p class="lede">
-    <code>if</code>/<code>else</code> is an expression. A block is an indented
-    body after <code>:</code>, or a single expression written inline. There are
-    exactly two loops.
+    <code>if</code>/<code>else</code> is an expression, and so is <code>match</code>.
+    A block is an indented body after <code>:</code>, or a single expression
+    written inline. There are exactly two loops, six words in the whole group
+    &mdash; <code>if</code>, <code>else</code>, <code>match</code>,
+    <code>for</code>, <code>loop</code>, and the three jumps
+    <code>break</code>, <code>continue</code>, <code>return</code> &mdash; and
+    the list of forms that do <em>not</em> exist is longer than the list that
+    does.
   </p>
 
 <pre data-science>type State:
@@ -4245,6 +4625,8 @@ def count_to(width: Int, n: Int) -&gt; Int:
         total be total + i
 
     for i in 0..=n:                # inclusive: it visits `n`
+        if i is 3:
+            continue               # skip one turn, keep the loop
         total be total + i
 
     total
@@ -4261,16 +4643,405 @@ def refine_until_stable(start: State) -&gt; State:
 
     state</pre>
 
+  <h3>Every form, and the exact shape of each</h3>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Form</th><th>Written</th><th>Value</th><th>Position</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">if</td><td class="mono">if c: a else: b</td><td class="what">the branches' common type</td><td class="what">expression or statement</td></tr>
+        <tr><td class="mono">if, no else</td><td class="mono">if c: a</td><td class="what"><code>()</code></td><td class="what">statement, in practice</td></tr>
+        <tr><td class="mono">match</td><td class="mono">match e: <em>arms</em></td><td class="what">the arms' common type</td><td class="what">expression or statement</td></tr>
+        <tr><td class="mono">for</td><td class="mono">for p in e: <em>body</em></td><td class="what"><code>()</code></td><td class="what">statement</td></tr>
+        <tr><td class="mono">loop</td><td class="mono">loop: <em>body</em></td><td class="what"><code>()</code></td><td class="what">statement</td></tr>
+        <tr><td class="mono">break</td><td class="mono">break</td><td class="what">diverges; the loop stays <code>()</code></td><td class="what">inside a loop body</td></tr>
+        <tr><td class="mono">continue</td><td class="mono">continue</td><td class="what">diverges; carries nothing</td><td class="what">inside a loop body</td></tr>
+        <tr><td class="mono">return</td><td class="mono">return e, or return</td><td class="what">diverges</td><td class="what">anywhere in a body</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <p class="note">
-    <strong>Every <code>for</code> loop in that block checks and none of them
-    builds.</strong> A <code>for</code> lowers to a call to <code>next</code>
-    on an iterator, the checker resolves that call, and the tree it hands on
-    has no field to record what it resolved &mdash; so it reaches MIR
-    unresolved and the back end refuses it. <code>for i in 0..10:</code> is
-    included. This is the single largest hole between <code>check</code> and
-    <code>build</code>, it is a plumbing gap rather than a design question, and
-    it is why the runnable examples on this page count with <code>loop</code>
-    or not at all. <span class="cite wip">changing</span>
+    <strong>Two of those rows are the decision worth defending.</strong>
+    <code>break</code> carries nothing out and <code>loop</code> has no value,
+    so a loop is a statement in everything but its filing &mdash; where Rust
+    writes <code>let x be loop: … break v</code>, Science writes a
+    <code>mutable</code> binding above the loop and assigns into it. The gain
+    is that <code>loop</code> needs no unification between its
+    <code>break</code>s and no type at all, so its body can be read
+    one line at a time; the cost is one extra binding at every place a loop
+    computes an answer, and that binding has to be <code>mutable</code> when
+    the value it holds would otherwise have been final.
+  </p>
+
+  <p class="note">
+    <strong>There is a sharp edge here and it is worth knowing before you
+    meet it.</strong> <code>break n</code> <em>parses</em>. The operand is
+    parsed, resolved and type-checked &mdash; it can have effects, so it is
+    evaluated &mdash; and then its type is thrown away and the loop is
+    <code>()</code> as before. So a loop written with <code>break n</code> in
+    the belief that the loop yields <code>n</code> checks clean and yields
+    nothing, and the mistake surfaces only if the loop sits in a position that
+    wanted a value, as <code>SC0525</code>: <em>expected <code>Int</code>,
+    found <code>()</code></em>, reported against the <code>loop</code> line
+    rather than against the <code>break</code>. Accepting the operand is
+    deliberate &mdash; it keeps the door open for giving <code>loop</code> a
+    value later without a grammar change &mdash; and the cost is that today
+    the grammar promises something the type system does not deliver.
+    <span class="cite wip">changing</span>
+  </p>
+
+  <h3><code>if</code> is an expression, and <code>elif</code> is not a word</h3>
+
+<pre data-science>def band(n: Int) -&gt; Int:
+    if n &gt; 100:
+        3
+    else:
+        if n &gt; 10:
+            2
+        else:
+            1
+
+# `else:` followed by an inline `if` is the same thing on one line, and it is
+# the chain a Python reader is looking for.
+def band_inline(n: Int) -&gt; Int:
+    if n &gt; 100: 3 else: if n &gt; 10: 2 else: 1
+
+let value be if band(5) &gt; 1: 10 else: 20
+print(f"{value}")</pre>
+
+  <p class="note">
+    <strong>There is no <code>elif</code> and no <code>else if</code> as a
+    single construct</strong>, and the reason is that there does not need to
+    be one: <code>else</code> takes a block, an <code>if</code> is an
+    expression, and an expression is a legal inline block, so
+    <code>else: if …</code> already <em>is</em> the chain. Python needs
+    <code>elif</code> because its <code>else:</code> would force a second
+    indentation level; Science's inline body does not. Writing
+    <code>elif</code> anyway is not a friendly migration diagnostic &mdash; it
+    is three ordinary parse errors, because <code>elif</code> lexes as an
+    identifier and the parser has no idea what you meant. That is a gap in the
+    migration band, which covers <code>while</code>, <code>trait</code>,
+    <code>function</code>, <code>println</code> and <code>try</code> but not
+    this. <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
+    <strong>An <code>if</code> with no <code>else</code> has type
+    <code>()</code>,</strong> so it is a statement in everything but name and
+    a <code>let</code> cannot take its value. The alternative &mdash; giving
+    it <code>T?</code> and filling in <code>null</code> &mdash; was not taken,
+    because it would make the commonest statement in any program silently
+    produce a value, and a nullable one at that. The branches of an
+    <code>if</code> that <em>is</em> used for its value must agree on a type
+    exactly; there is no numeric widening between them and no common
+    supertype.
+  </p>
+
+  <p class="note">
+    <strong>A branch that cannot finish does not have to agree.</strong>
+    <code>panic</code> returns <code>Never</code>, so
+    <code>if b: 1 else: panic("no")</code> is an <code>Int</code>, and the
+    same is true of a branch ending in <code>return</code>. This is the only
+    subtyping in the language, it exists for exactly this reason, and
+    <code>Never</code> is a prelude type you can write but never construct.
+  </p>
+
+  <h3><code>while</code> is not in the language, and the compiler says so by name</h3>
+
+<pre class="err"><code><span class="e-code">error[SC0142]</span>: the unbounded loop is written `loop`
+ <span class="e-hi">--&gt;</span> spin.science:2:1
+  |
+2 | while n &lt; 3:
+  | <span class="e-hi">^^^^^^^^^^^</span> `while` is not a keyword in Science, and `loop` takes no condition
+  |
+  = note: end it with the condition negated: make `if not …: break` the first statement of the body, or write a count as a range, `for i in 0..n:`
+  = help: open the loop with: `loop`</code></pre>
+
+  <p class="note">
+    <strong>A condition-driven loop is <code>loop:</code> with an early
+    <code>break</code>, which is two lines longer.</strong> That is Go's trade
+    and its known cost, taken for a specific reason: ranges already cover the
+    counting case <code>while</code> is usually misused for, and the language
+    would otherwise carry two forms where one does.
+    <code>loop while condition:</code> was considered and held back, because
+    it reintroduces exactly the second form this decision exists to remove
+    &mdash; and it is source-compatible to add later if the verbosity is
+    genuinely felt. What the decision bought immediately is the diagnostic
+    above: because <code>while</code> is a reserved word rather than an
+    identifier, the compiler can meet the habit where it happens and say what
+    to write instead, which a language that simply lacked the word could not.
+  </p>
+
+  <p class="note">
+    <strong>The cost that is not the two lines.</strong> <code>loop:</code>
+    with the test at the bottom is a <em>do-while</em>, and
+    <code>loop:</code> with the test at the top is a <code>while</code>; the
+    reader has to look at the body to find out which, where the keyword used
+    to say it in the first word. The design's answer is that the body is one
+    screen and is going to be read anyway, which is true of the loops in a
+    numerical kernel and less true of the loops in a parser.
+  </p>
+
+  <h3><code>for</code>, its ranges, and what the loop variable owns</h3>
+
+<pre data-science>def total_of(xs: borrowed Array of Int) -&gt; Int:
+    let mutable total be 0
+
+    # The binder is a pattern, so a tuple element can be taken apart here.
+    for x in xs:
+        total be total + x
+
+    total
+
+def pairs_of(ps: borrowed Array of (Int, Int)) -&gt; Int:
+    let mutable total be 0
+    for (left, right) in ps:
+        total be total + left * right
+    total
+
+def characters(text: borrowed String) -&gt; Int:
+    let mutable n be 0
+    for _ in text.chars():         # `_` in a binder discards the item
+        n be n + 1
+    n</pre>
+
+  <p class="note">
+    <strong>Ranges use <code>..</code>, never <code>:</code>.</strong>
+    <code>0..n</code> is half-open and <code>0..=n</code> is inclusive, so
+    <code>for i in 0..n:</code> is the counting loop and there is no
+    off-by-one to memorise. The colon is not available for a slicing notation
+    because <code>:</code> already opens blocks and separates match arms,
+    fields, named arguments and bounds, and a character with five jobs cannot
+    take a sixth. Ranges sit below everything on the precedence ladder, so
+    <code>0..n - 1</code> counts to <code>n - 1</code>.
+  </p>
+
+  <p class="note">
+    <strong><code>for x in xs:</code> borrows.</strong> Iterating a collection
+    does not consume it, and consuming is written out with
+    <code>iterate_consuming()</code>. This is a deliberate correction of the
+    single most-reported wart in Rust's collection API, where <code>for x in
+    v</code> silently moves and burns every beginner once. The prelude keeps
+    the promise: <code>Array of T implements Iterate</code> with
+    <code>Item is borrowed T</code>, so the loop variable is a borrow, and
+    <a href="#interfaces">the <code>Copy</code> rule</a> is what makes
+    arithmetic on it legal.
+  </p>
+
+  <p class="note">
+    <strong>The element type is <code>Iterate.next</code>'s return with its
+    <code>?</code> removed, and nothing else is consulted.</strong> The
+    checker does not desugar the loop into a call it then re-resolves; it
+    looks the implementation up and reads <code>Item</code> off it. The saving
+    is a whole resolution round trip per loop. The price is visible when there
+    is no implementation to read: <code>for x in doc:</code> over a record
+    that implements nothing binds <code>x</code> at the error type and
+    <strong>reports nothing at all</strong>, so the loop checks clean and the
+    mistake surfaces as a confusing message somewhere downstream, or as
+    nothing. <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
+    <strong>Both ends of a range are required, and there is no descending
+    form.</strong> <code>..n</code>, <code>n..</code> and a bare
+    <code>..</code> do not parse: an open end would have to be told apart from
+    a <code>..</code> that ends a line, and no method in F0 takes one, because
+    <code>Array</code> has no slicing. There is no <code>step</code>
+    &mdash; <code>step</code> is an ordinary identifier you may bind &mdash;
+    and no <code>reversed()</code> in the prelude, so counting down is a
+    <code>loop</code> with a decrement. <code>for i in 5..0:</code> checks
+    clean and describes an empty range; the parser's reversed-range
+    diagnostic, <code>SC0154</code> &mdash; <em>this range starts at 3 and
+    ends at 1, so it holds nothing</em> &mdash; is aimed at the index bracket
+    and does not look at a loop header.
+  </p>
+
+  <h3>Blocks are indentation, and the inline body is an expression</h3>
+
+  <p class="note">
+    A block opens with <code>:</code> at the end of a line and is the run of
+    lines indented past the opener; the lexer turns that into
+    <code>Indent</code> and <code>Dedent</code> tokens, one <code>Dedent</code>
+    per level closed, and the parser never sees a column number. Written
+    inline, a block is <em>one expression</em> and it ends where the
+    expression ends &mdash; <code>if a: b else: c</code> works because
+    <code>else</code> cannot continue an expression, not because the whole
+    thing fits on a line.
+  </p>
+
+  <p class="note">
+    <strong>An inline body may be an expression, an assignment, or
+    <code>return</code>&thinsp;/&thinsp;<code>break</code>&thinsp;/&thinsp;<code>continue</code>.</strong>
+    It may not be a <code>let</code>, which would bind a name nothing could
+    then use, and the compiler says exactly that rather than reporting a
+    parse failure:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0109]</span>: the body of an inline block must be an expression, and a `let` binding is a statement; write the body as an indented block instead
+ <span class="e-hi">--&gt;</span> inline.science:2:15
+  |
+2 |     if n &gt; 0: let x be 1 else: 0
+  |               <span class="e-hi">^^^</span></code></pre>
+
+  <p class="note">
+    <strong>A dangling <code>else</code> binds to the innermost
+    <code>if</code></strong>, which is the only rule available once
+    <code>else:</code> may follow an inline body, and it is the rule every
+    reader already expects. Where it is genuinely ambiguous to a human, the
+    fix is the indented form, and the formatter will write it that way.
+  </p>
+
+  <p class="note">
+    <strong>Three things continue a line, and a trailing operator is not one
+    of them.</strong> Inside an unclosed bracket, line breaks and indentation
+    are ignored entirely, so a call or a list may be spread over as many lines
+    as it likes. Outside a bracket, exactly two things continue the line
+    above: a line beginning with <code>.</code>, which is how a method chain
+    is broken up &mdash; see <a href="#chains">Chains and closures</a> &mdash;
+    and a line beginning with <code>where</code>, which is how a long
+    signature is. Nothing else. <code>let n be 1 +</code> with the
+    <code>2</code> on the next line is <code>SC0105</code>, <em>expected an
+    expression, found end of line</em>, and the fix is a pair of parentheses.
+    There is no backslash.
+  </p>
+
+  <p class="note">
+    <strong>The two allowances are each one token wide, and that is the whole
+    argument for them.</strong> A leading <code>.</code> counts only when a
+    letter follows it, so <code>..</code> never continues a line &mdash; a
+    range is not a chain link. A leading <code>where</code> counts only when
+    the word ends there, so a variable called <code>whereabouts</code> is
+    safe, and it costs nothing because no statement may begin with
+    <code>where</code> anyway. A general rule &mdash; <em>a line ending in a
+    binary operator continues</em> &mdash; was not taken, because the
+    formatter has to model every continuation rule in order to be idempotent,
+    and a rule keyed on the <em>first</em> token of the next line is one the
+    formatter can decide without looking ahead.
+  </p>
+
+  <p class="note">
+    <strong>Indent with spaces.</strong> A tab in indentation is
+    <code>SC0003</code>, not a width the lexer guesses: <em>Science does not
+    interpret tabs: their width depends on how the file is displayed, so a
+    block would mean different things to different readers.</em> An
+    indentation that matches no open level is <code>SC0004</code>, and the
+    message lists the levels that <em>are</em> open, which is the fact the
+    reader needs and the one a column number does not give.
+    <strong>And <code>match</code> has no inline form</strong>: its arms are
+    always an indented block, because the arm separator is <code>:</code> and
+    an inline <code>match</code> would put three colons on one line with no
+    rule to tell them apart.
+  </p>
+
+  <h3><code>where</code> is for bounds and for nothing else</h3>
+
+<pre data-science>interface Summarize:
+    def summarize(self) -&gt; String
+
+interface Titled:
+    def title(self) -&gt; String
+
+# One bound per clause, comma-separated; `where` never introduces a guard,
+# a loop condition or a pattern test.
+def describe of T(value: borrowed T) -&gt; String where T: Summarize, T: Titled:
+    value.title()</pre>
+
+  <p class="note">
+    <code>where</code> attaches to a declaration and constrains a type
+    parameter. It is not a match guard, it is not a comprehension filter, and
+    it is not a loop condition &mdash; three jobs the word does in three
+    other languages, which is exactly why it is worth saying it does none of
+    them here. <strong>Two bounds on one parameter are written as two
+    clauses</strong>, <code>T: Summarize, T: Titled</code>, rather than with a
+    <code>+</code>: the language has no type-level operator, and inventing one
+    for this position would be a second grammar for a list.
+  </p>
+
+  <h3>Divergence, the tail expression, and the hole in the middle</h3>
+
+  <p class="note">
+    <strong>A function's value is its last expression; <code>return</code> is
+    for leaving early.</strong> There is no implicit <code>null</code> return
+    and no falling off the end into a default &mdash; a body whose tail is a
+    statement has type <code>()</code>, and against a declared
+    <code>-&gt; Int</code> that is <code>SC0525</code>, <em>expected
+    <code>Int</code>, found <code>()</code></em>, reported at the tail. That
+    is how a missing <code>return</code> is caught: not by a dedicated
+    control-flow pass, but by the ordinary type of the body.
+  </p>
+
+  <p class="note">
+    <strong>Which means the check is exactly as good as the tail's type, and
+    in three shapes it is not good enough.</strong> A body whose tail is
+    <code>if b: return 1</code> &mdash; an <code>if</code> with no
+    <code>else</code>, whose only branch diverges &mdash; is accepted against
+    <code>-&gt; I64</code>, builds, runs, and hands back whatever was in the
+    slot when <code>b</code> is false. <code>break</code> or
+    <code>continue</code> written outside any loop is accepted by every phase
+    that runs on <code>check</code>, and the jump is then silently dropped.
+    And <strong>two branches of an <code>if</code> need not agree with each
+    other when nothing else said what the type should be</strong>: in
+    <code>let x be if c: 1 else: "a"</code> the then-branch simply wins,
+    <code>x</code> is an <code>Int</code>, and no diagnostic is produced.
+    Write the expected type &mdash; <code>let x: Int be …</code>, or a
+    <code>-&gt; Int</code> on the enclosing function &mdash; and both branches
+    are checked against it, one <code>SC0525</code> each.
+    <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
+    <strong>There is no reachability pass at all</strong>, which is the
+    common cause of the second and third of those. Statements after a
+    <code>return</code> are not reported; they are lowered into a MIR block
+    nothing jumps to, deliberately, because skipping them would make the
+    lowering depend on a reachability judgement it has no reason to make. The
+    one place dead code <em>is</em> refused is a <code>match</code> arm
+    &mdash; <code>SC0537</code>, in <a href="#patterns">Patterns</a> &mdash;
+    and that one falls out of the exhaustiveness algorithm rather than from a
+    pass written for it.
+  </p>
+
+  <h3>Every loop and branch form that does not exist</h3>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Not in the language</th><th>What to write</th><th>Why it is out</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">while c:</td><td class="mono">loop: / if not c: break</td><td class="what">Two unbounded-loop forms where one does. <code>SC0142</code> names it.</td></tr>
+        <tr><td class="mono">do … while c</td><td class="mono">loop: with the test last</td><td class="what">Same form, different placement of one <code>if</code>.</td></tr>
+        <tr><td class="mono">repeat / until</td><td class="mono">loop:</td><td class="what">Not reserved, not planned; a third spelling of the second.</td></tr>
+        <tr><td class="mono">elif</td><td class="mono">else: if c:</td><td class="what">The inline body already makes the chain one level deep.</td></tr>
+        <tr><td class="mono">switch / case</td><td class="mono">match</td><td class="what">A <code>switch</code> that falls through is the bug <code>match</code> exists to remove.</td></tr>
+        <tr><td class="mono">break label / continue label</td><td class="mono">a flag, or a function</td><td class="what">No loop labels. A loop deep enough to need one is a function.</td></tr>
+        <tr><td class="mono">break value</td><td class="mono">a mutable binding above the loop</td><td class="what"><code>loop</code> has no value, so nothing has to unify.</td></tr>
+        <tr><td class="mono">for (i = 0; i &lt; n; i++)</td><td class="mono">for i in 0..n:</td><td class="what">Three clauses to say one thing, and two of them can disagree.</td></tr>
+        <tr><td class="mono">for i in 0..n step 2</td><td class="mono">loop:, or index arithmetic</td><td class="what">No stride form; <code>step</code> is an ordinary identifier.</td></tr>
+        <tr><td class="mono">[f(x) for x in xs]</td><td class="mono">xs.iterate().map(…).collect()</td><td class="what">No comprehensions. <code>SC0153</code> prints the chain that replaces it.</td></tr>
+        <tr><td class="mono">if let / while let</td><td class="mono">if x?: with narrowing</td><td class="what">There is no <code>Option</code> to destructure. See <a href="#errors">Errors</a>.</td></tr>
+        <tr><td class="mono">goto</td><td class="mono">&mdash;</td><td class="what">Not reserved. The MIR has jumps; the language does not expose them.</td></tr>
+        <tr><td class="mono">try / except / raise / throw</td><td class="mono">-&gt; (T, Error?)</td><td class="what">See <a href="#errors">Errors</a>. <code>try</code> was removed and is <code>SC0155</code>.</td></tr>
+        <tr><td class="mono">pass</td><td class="mono">nothing, or <code>()</code></td><td class="what">A block is never empty in a language without a colon-only statement.</td></tr>
+        <tr><td class="mono">yield</td><td class="mono">&mdash;</td><td class="what">Reserved for a later phase; generators need a decision about state machines nobody has taken.</td></tr>
+        <tr><td class="mono">async / await</td><td class="mono">&mdash;</td><td class="what">Reserved. Both words are taken so that adding them later is not a breaking change.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>What of this builds, and what only checks</h3>
+
+  <p class="note">
+    <strong>Every <code>for</code> loop above checks and none of them
+    builds.</strong> A <code>for</code> lowers through range and iterator
+    temporaries that reach the back end untyped, and
+    <code>sciencec build</code> refuses to emit a value whose type is the
+    error type: <code>SC0400</code>, naming <em>a <code>for</code> loop's
+    range and iterator temporaries</em> as one of the four shapes it has met.
+    <code>for i in 0..10:</code> is included. This is the single largest hole
+    between <code>check</code> and <code>build</code>, it is a plumbing gap
+    rather than a design question, and it is why the runnable examples on
+    this page count with <code>loop</code> or not at all.
+    <span class="cite wip">changing</span>
   </p>
 
 <pre data-science>def double(n: Int) -&gt; Int:
@@ -4286,52 +5057,65 @@ print(f"{n}")
 # 32</pre>
 
   <p class="note">
-    <strong>The inline body rule is about expressions, not about lines.</strong>
-    In <code>if a: b else: c</code> the then-branch stops at <code>else</code>
-    because <code>else</code> cannot continue an expression &mdash; fitting on
-    one line is a consequence of that rule, not the rule. An inline body may be
-    an expression, an assignment, or
-    <code>return</code>&thinsp;/&thinsp;<code>break</code>&thinsp;/&thinsp;<code>continue</code>.
-    It may not be a <code>let</code>, which would bind a name nothing could
-    then use; that is <code>SC0109</code>. A dangling <code>else</code> binds
-    to the innermost <code>if</code>.
+    <strong>That listing is the shape that runs today, and the shape of it is
+    load-bearing.</strong> <code>n</code> gets its type from
+    <code>double</code>'s signature rather than from an integer literal, and
+    that is what keeps it out of <code>SC0400</code>: a
+    <code>let mutable n be 0</code> whose only arithmetic is against other
+    literals reaches the back end with no type at all and is refused. The
+    workaround is a suffix &mdash; <code>0i64</code> &mdash; or a call, as
+    here.
   </p>
 
-  <p class="note">
-    <strong><code>while</code> is not in the language.</strong> A
-    condition-driven loop is <code>loop:</code> with an early
-    <code>break</code>, which is two lines longer. That is Go's trade and its
-    known cost, taken for a specific reason: ranges already cover the counting
-    case <code>while</code> is usually misused for, and the language would
-    otherwise carry two forms where one does. <code>loop while condition:</code>
-    was considered and held back, because it reintroduces exactly the second
-    form this decision exists to remove &mdash; and it is source-compatible to
-    add later if the verbosity is genuinely felt.
-  </p>
+  <div class="callout">
+    <h3>If you are arriving from Python: the loops are two, and <code>for</code> is the one that changed least</h3>
+    <p>
+      <code>for x in xs:</code> means what you expect, and
+      <code>for i in 0..n:</code> is <code>range(n)</code> with the bounds
+      written where you can see them. After that, four habits:
+      <strong><code>while</code> is gone</strong> and the compiler will tell
+      you so by name; <strong><code>elif</code> is gone</strong> and the
+      compiler will not; <strong>there is no <code>else</code> on a
+      loop</strong>, a Python feature almost nobody uses correctly;
+      and <strong>a comprehension is not a control-flow form here</strong>,
+      because there are no comprehensions &mdash; see
+      <a href="#arrays">Arrays and indexing</a> for why, which turns out to be
+      an argument about the formatter.
+    </p>
+    <p style="margin-top:0.6rem">
+      The one that will actually cost you an afternoon is that
+      <strong><code>if</code> is an expression</strong>. Python's conditional
+      expression is <code>a if c else b</code>, with the condition in the
+      middle; Science's is <code>if c: a else: b</code>, with the condition
+      first, and it is the same construct as the statement rather than a
+      second one. So there is no ternary to learn, and no rule about when you
+      may use which.
+    </p>
+  </div>
 
-  <p class="note">
-    <strong>Ranges use <code>..</code>, never <code>:</code>.</strong>
-    <code>0..n</code> is half-open and <code>0..=n</code> is inclusive, so
-    <code>for i in 0..n:</code> is the counting loop and there is no off-by-one
-    to memorise. The colon is not available for a slicing notation because
-    <code>:</code> already opens blocks and separates match arms, fields, named
-    arguments and bounds, and a character with five jobs cannot take a sixth.
-    Ranges sit below everything on the precedence ladder, so <code>0..n -
-    1</code> counts to <code>n - 1</code>.
-  </p>
-
-  <p class="note">
-    <strong><code>for x in xs:</code> borrows.</strong> It is the same
-    construct as <code>xs.iterate()</code>, so iterating a collection does not
-    consume it, and consuming is written out with
-    <code>iterate_consuming()</code>. This is a deliberate correction of the
-    single most-reported wart in Rust's collection API, where <code>for x in
-    v</code> silently moves and burns every beginner once. The prelude keeps
-    the promise: <code>Array of T implements Iterate</code> with
-    <code>Item is borrowed T</code>, so the loop variable is a borrow, and
-    <a href="#interfaces">the <code>Copy</code> rule</a> is what makes
-    arithmetic on it legal.
-  </p>
+  <div class="callout">
+    <h3>If you are arriving from Rust or Go: <code>loop</code> is Rust's minus its value, and that is deliberate</h3>
+    <p>
+      Rust's <code>loop</code> is an expression and <code>break v</code>
+      carries a value out of it; Science's is a statement and
+      <code>break</code> carries nothing. The reason is not simplicity for its
+      own sake &mdash; it is that a <code>loop</code> with a value has to
+      unify every <code>break</code> in its body, which means the type of a
+      loop depends on a set of statements scattered through it, and that is
+      the one place Rust's inference regularly produces an error whose cause is
+      nowhere near its span. Go made the same call and nobody misses it.
+    </p>
+    <p style="margin-top:0.6rem">
+      From Go: <code>for</code> here is only the range form. Go's
+      <code>for</code>-as-<code>while</code> and bare <code>for</code> are
+      <code>loop:</code>; Go's labelled <code>break</code> has no equivalent;
+      Go's <code>switch</code> is <code>match</code>, and it is exhaustive,
+      which Go's is not. From Rust: <code>if let</code> and
+      <code>while let</code> do not exist, because the thing they destructure
+      &mdash; <code>Option</code> &mdash; does not. Their replacement is
+      <code>if x?:</code> and narrowing, in <a href="#errors">Errors</a>.
+    </p>
+  </div>
 </section>
 
 <!-- ==================================================================== -->
@@ -4341,7 +5125,8 @@ print(f"{n}")
     <code>match</code> is exhaustive, and the diagnostic for a missing case
     <em>is the witness</em> &mdash; the value nothing covers, printed as source
     you can paste. An arm is inline after its <code>:</code>, or an indented
-    block.
+    block. There are eight pattern forms, no guards, and no bindings inside an
+    alternation.
   </p>
 
 <pre data-science>choice Format:
@@ -4387,10 +5172,190 @@ def where_is(point: borrowed Point) -&gt; String:
         Point(x: x, y: 0): "on the X axis"
         Point(x: x, y: _): "general"</pre>
 
+  <h3>The eight forms, and nothing else</h3>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Form</th><th>Written</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">wildcard</td><td class="mono">_</td><td class="what">Matches anything, binds nothing.</td></tr>
+        <tr><td class="mono">literal</td><td class="mono">0, 3.5, 'a', "text", true, null</td><td class="what">Matches that value. Every literal form the language has.</td></tr>
+        <tr><td class="mono">binding</td><td class="mono">other, mutable n</td><td class="what">Matches anything and names it. <code>mutable</code> is written before the name.</td></tr>
+        <tr><td class="mono">variant</td><td class="mono">Json, Format.Json, Word(w)</td><td class="what">A <code>choice</code> variant, qualified or bare, with its payload positionally.</td></tr>
+        <tr><td class="mono">record</td><td class="mono">Point(x: 0, y: y)</td><td class="what">Field name, colon, a pattern. Omitted fields are wildcards.</td></tr>
+        <tr><td class="mono">tuple</td><td class="mono">(a, b)</td><td class="what">Two elements or more; a trailing comma is allowed.</td></tr>
+        <tr><td class="mono">unit</td><td class="mono">()</td><td class="what">Matches the one value of type <code>()</code>.</td></tr>
+        <tr><td class="mono">alternation</td><td class="mono">A | B | C</td><td class="what">Any of several patterns &mdash; none of which may bind.</td></tr>
+        <tr><td class="mono">nesting</td><td class="mono">One(Point(x: 0, y: _))</td><td class="what">Not a form: every position above takes a full pattern.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <p class="note">
-    <strong>Exhaustiveness is the whole reason <code>choice</code>
-    exists</strong>, and it is checked. Leave an arm out and the compiler names
-    the value you left out:
+    <strong>A bare name is a binding until resolution says otherwise.</strong>
+    The parser cannot tell <code>Json</code> from <code>other</code> &mdash;
+    they are the same token in the same position &mdash; so it produces a
+    binding, and the resolver rewrites it into a variant if a variant of that
+    name is in scope. <strong>The cost of that rule lands on a
+    typo.</strong> A misspelled <em>payload</em> variant,
+    <code>Circl(r)</code>, is <code>SC0200</code>, <em>cannot find
+    <code>Circl</code> in this scope</em>, because a bare name followed by a
+    parenthesis cannot be a binding. A misspelled <em>unit</em> variant
+    &mdash; <code>Markdow</code> for <code>Markdown</code> &mdash; is a
+    perfectly good binding name and matches everything. Write it in the middle
+    of a <code>match</code> and you get <code>SC0537</code> against the arm
+    <em>below</em> it, which is a true statement about a program you did not
+    write. Write it last and <strong>the file checks clean</strong>: one arm
+    silently answers for a case, the exhaustiveness check is satisfied by a
+    catch-all nobody meant, and nothing is reported at all.
+    <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
+    <strong>A variant may be written qualified or bare</strong>:
+    <code>Plain</code> and <code>Format.Plain</code> are the same pattern. The
+    bare form is what a match arm usually wants, since the scrutinee's type
+    already says which <code>choice</code> is meant; the qualified form is
+    there for when two choices in scope have a variant with the same name. A
+    pattern's path may have several segments for exactly this reason and no
+    other &mdash; there is no field access in a pattern, so a <code>.</code>
+    inside one can only be a qualification.
+  </p>
+
+  <h3>Record patterns match by name, and the field you leave out is a wildcard</h3>
+
+<pre data-science>type Reading:
+    sensor: Int
+    celsius: Int
+    flagged: Bool
+
+def describe(r: borrowed Reading) -&gt; String:
+    match r:
+        # `flagged` is not named, so it is not asked about.
+        Reading(sensor: 0, celsius: c): "sensor zero"
+        # The name left of the colon is the FIELD; the thing right of it is
+        # the pattern. That is the same order construction uses.
+        Reading(sensor: s, celsius: _, flagged: true): "flagged"
+        Reading(sensor: s, celsius: c, flagged: false): "ordinary"</pre>
+
+  <p class="note">
+    Omitting a field is the same as writing <code>_</code> for it, so there is
+    no <code>..</code> rest pattern and no need for one: the rest is whatever
+    you did not mention. That is a smaller grammar than Rust's, and it costs
+    one thing &mdash; a record pattern does not say, by its shape, whether the
+    author considered every field. Adding a field to a record therefore does
+    not break any <code>match</code>, which is the opposite of the trade
+    <code>choice</code> makes, and the asymmetry is deliberate: adding a
+    variant is a new <em>case</em> to answer for, adding a field is not.
+  </p>
+
+  <p class="note">
+    <strong>Whether the constructor is a record or a variant is decided by the
+    punctuation, not by a lookup.</strong> Named fields mean a record,
+    positional elements mean a variant &mdash; the same rule that decides the
+    expression form. Get it the wrong way round and it is
+    <code>SC0206</code>: <em><code>Rect</code> is a record type, so its
+    pattern names its fields</em>, with the declaration shown as a second
+    span. An unknown field is <code>SC0205</code>.
+  </p>
+
+  <h3>An alternation may not bind</h3>
+
+<pre class="err"><code><span class="e-code">error[SC0201]</span>: the binding `n` is defined more than once
+ <span class="e-hi">--&gt;</span> token.science:7:18
+  |
+7 |         A(n) | B(n): n
+  |           - first defined here
+  |                  <span class="e-hi">^</span> defined again here</code></pre>
+
+  <p class="note">
+    <strong>So <code>A(n) | B(n)</code> is refused, and the refusal is worth
+    the two arms it costs you.</strong> Every alternative of an alternation
+    binds into one scope, so two alternatives that bind the same name are two
+    definitions of it &mdash; and the alternative rule, <em>the same name in
+    every alternative is one binding</em>, needs a check that the
+    alternatives agree on its type and a lowering that knows which alternative
+    matched. Neither exists. Refusing the shape outright is the honest version
+    of that: the alternation is for <em>cases you do not need to tell
+    apart</em>, which is what <code>0 | 1 | 2</code> and
+    <code>Symbol(',') | Symbol(';')</code> are, and the moment you want the
+    payload you want two arms anyway.
+  </p>
+
+  <p class="note">
+    A dead alternative <em>inside</em> a live arm is not reported:
+    <code>Plain | Plain | Markdown</code> checks clean. The usefulness
+    algorithm asks about rows, and an arm is one row; asking about each
+    alternative separately is a second traversal for a mistake nobody makes
+    twice, and it was declined on that basis.
+  </p>
+
+  <h3>Nullable patterns, and the constructor that has no name</h3>
+
+<pre data-science>def label(n: Int?) -&gt; String:
+    match n:
+        null: "absent"
+        0: "zero"
+        _: "present"
+
+choice Format:
+    Plain
+    Json
+
+def name_or(format: borrowed Format?) -&gt; String:
+    match format:
+        null: "none"
+        Plain: "plain"
+        Json: "json"</pre>
+
+  <p class="note">
+    <strong>A <code>T?</code> has exactly two constructors, and only one of
+    them can be written.</strong> One is <code>null</code>. The other is
+    <em>present</em>, and it is spelled by writing a pattern of
+    <code>T</code>: there is no <code>Some</code>, because
+    <code>Some</code>, <code>None</code>, <code>Ok</code> and <code>Err</code>
+    were removed with <code>Option</code> and <code>Result</code>. So the
+    second listing above answers for all three values of
+    <code>Format?</code> with three arms and no wrapper anywhere, which is the
+    whole point of making <code>T?</code> a type rather than a library
+    generic.
+  </p>
+
+  <p class="note">
+    <strong>The price of an unspellable constructor is paid in the
+    diagnostic.</strong> A <code>match</code> over an <code>I64?</code> that
+    answers only <code>null</code> is told that a value is uncovered and the
+    witness printed is <code>_</code> &mdash; because the compiler would have
+    to write <code>Present(_)</code>, and that is not a thing you could paste
+    into an arm. It is the one place the witness cannot be source, and it is
+    the direct cost of the syntax that makes every other nullable
+    <code>match</code> read well.
+  </p>
+
+  <p class="note">
+    <strong>And a binding arm under a nullable binds at the nullable
+    type.</strong> In <code>match n: null: 0 / v: v</code> the name
+    <code>v</code> has type <code>Int?</code> and not <code>Int</code>, so
+    using it as a number is <code>SC0525</code>: <em>expected
+    <code>Int</code>, found <code>Int?</code></em>. The present constructor is
+    invisible to the binder as well as to the printer. The way to get the
+    payload is <a href="#errors">narrowing</a> &mdash; <code>if n?:</code>
+    &mdash; which is flow-sensitive and knows what a <code>match</code> arm
+    does not. That asymmetry between the two ways of asking about a nullable
+    is real and it is not designed; it is where the two features meet and have
+    not been introduced. <span class="cite wip">changing</span>
+  </p>
+
+  <h3>Exhaustiveness is the whole reason <code>choice</code> exists</h3>
+
+  <p class="note">
+    The check is Maranget's usefulness algorithm &mdash; the standard one,
+    from <em>Warnings for pattern matching</em> &mdash; with one change that
+    is the reason the diagnostics read the way they do: <strong>the recursion
+    carries the value it found, so the answer <em>is</em> the
+    witness.</strong> An algorithm that returned a yes or a no would leave the
+    message to be assembled afterwards by something that had thrown away what
+    it knew.
   </p>
 
 <pre class="err"><code><span class="e-code">error[SC0250]</span>: `Format` has a value no arm of this `match` covers: `Markdown`
@@ -4406,23 +5371,103 @@ def where_is(point: borrowed Point) -&gt; String:
     that says only "not exhaustive" makes the reader re-derive what they
     missed, which for a record pattern means working out which combination of
     fields no arm reaches. So the compiler prints uncovered <em>values</em>
-    &mdash; <code>Point(x: 0, y: y)</code>, in the shape the reader can paste
-    into a new arm &mdash; in the declaration order of the <code>choice</code>,
-    with <code>, and N more</code> when the list is long.
+    &mdash; <code>Point(x: _, y: _)</code>, with the field names, in the shape
+    the reader can paste into a new arm &mdash; in the declaration order of
+    the <code>choice</code>. Borrows are peeled first, so a
+    <code>borrowed Format</code> scrutinee names <code>Markdown</code> and not
+    <code>borrowed Markdown</code>. The type is printed as the alias you
+    wrote, not as its expansion.
+  </p>
+
+  <h3>Where the witness is coarse, and where the count stops counting</h3>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Scrutinee</th><th>Constructor set</th><th>Witness</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">choice</td><td class="what">its variants</td><td class="what">named: <code>Markdown</code>, <code>B(_)</code></td></tr>
+        <tr><td class="mono">Bool</td><td class="what">two</td><td class="what">named: <code>false</code></td></tr>
+        <tr><td class="mono">T?</td><td class="what">two</td><td class="what"><code>null</code>, or <code>_</code> for the present half</td></tr>
+        <tr><td class="mono">record</td><td class="what">one</td><td class="what"><code>Point(x: _, y: _)</code></td></tr>
+        <tr><td class="mono">tuple</td><td class="what">one</td><td class="what"><code>(_, _)</code></td></tr>
+        <tr><td class="mono">()</td><td class="what">one</td><td class="what"><code>()</code></td></tr>
+        <tr><td class="mono">Never</td><td class="what">none at all</td><td class="what">vacuously exhaustive: no arms needed</td></tr>
+        <tr><td class="mono">Int, Float, Char, String</td><td class="what">treated as infinite</td><td class="what"><code>_</code>: a catch-all is always required</td></tr>
+        <tr><td class="mono">a type parameter, any I, Array of T</td><td class="what">unknown</td><td class="what"><code>_</code>: a catch-all is always required</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <strong><code>Char</code> is finite and is deliberately treated as
+    infinite.</strong> Enumerating a million code points to prove a
+    <code>match</code> complete would be correct and useless; requiring a
+    <code>_</code> arm costs one line and is what every such
+    <code>match</code> wants anyway. The same reasoning covers the integers,
+    where it is not a choice.
   </p>
 
   <p class="note">
-    A wildcard <code>_</code> arm switches exhaustiveness off, and that is the
-    trade: use a wildcard where the cases are genuinely open-ended (an integer,
-    a character) and name every variant where they are not. The difference
-    shows up the day somebody adds a variant &mdash; a wildcard absorbs it
-    silently, and a complete set of arms stops the build in every place that
-    has to decide what to do about it.
+    <strong>The witness does not refine a literal.</strong> Given arms
+    <code>A(0)</code> and nothing else over a <code>choice</code> of
+    <code>A(Int)</code>, the uncovered set is <em>every <code>A</code> whose
+    payload is not zero</em>, and what is printed is <code>A(_)</code>. Given
+    <code>Point(x: 0, y: 0)</code> and <code>Point(x: 0, y: y)</code>, the
+    witness is <code>Point(x: _, y: _)</code>. The shape is always right and
+    the values in it are as specific as the constructor set allows, which for
+    an infinite set is not specific at all. Pasting the witness in as a new
+    arm therefore always fixes the error, and sometimes produces an arm you
+    then have to narrow by hand.
   </p>
 
   <p class="note">
-    <strong>And a wildcard that covers nothing is an error too.</strong> An arm
-    no value reaches is <code>SC0537</code>, and there is no attribute to
+    <strong>Three witnesses are shown and the remainder is counted, and the
+    count saturates.</strong> Collection stops at twice what is shown, so a
+    <code>choice</code> with four uncovered variants says <em><code>V1</code>,
+    <code>V2</code>, <code>V3</code>, and 1 more</em>, and a
+    <code>choice</code> with twenty uncovered variants also says
+    <em>and 3 more</em>. That is a bound on the work rather than a count of
+    the problem, and a reader who takes the number literally will be wrong in
+    the one direction that is safe: there are never fewer left than it says.
+    <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
+    <strong>The check gives up rather than guess, in five situations.</strong>
+    An erroneous scrutinee type, an unresolved pattern anywhere in any arm, an
+    alias that will not reveal, a scrutinee whose constructors cannot be
+    enumerated &mdash; and a budget: a hundred thousand steps per
+    <code>match</code>, after which it reports nothing at all. Unreachability
+    is quadratic in the number of arms, which is what the budget is really
+    guarding. Every one of those is a missed error rather than a wrong one,
+    which is the direction a check whose false positives would be hated has to
+    fail in.
+  </p>
+
+  <p class="note">
+    <strong>And when it is silent, the fall-through is not a panic.</strong>
+    MIR terminates the path past the last arm with an unreachable terminator
+    rather than a trap, on the ground that deciding what an inexhaustive
+    <code>match</code> does at run time is the exhaustiveness check's decision
+    and not the lowering's. So an inexhaustive <code>match</code> that got
+    past one of the five silences above is undefined behaviour and not a
+    diagnostic. <span class="cite wip">changing</span>
+  </p>
+
+  <h3>A wildcard arm switches the check off, and a dead one is an error</h3>
+
+  <p class="note">
+    <code>_</code> switches exhaustiveness off, and that is the trade: use a
+    wildcard where the cases are genuinely open-ended (an integer, a
+    character) and name every variant where they are not. The difference shows
+    up the day somebody adds a variant &mdash; a wildcard absorbs it silently,
+    and a complete set of arms stops the build in every place that has to
+    decide what to do about it.
+  </p>
+
+  <p class="note">
+    <strong>And a wildcard that covers nothing is an error too.</strong> An
+    arm no value reaches is <code>SC0537</code>, and there is no attribute to
     silence it, because an arm is checked and lowered whether or not anything
     reaches it &mdash; a dead one is code that cannot run and therefore cannot
     be found to be wrong.
@@ -4436,31 +5481,170 @@ def where_is(point: borrowed Point) -&gt; String:
   |
   = note: an arm is checked and lowered whether or not anything reaches it, so a dead one is code that cannot run and cannot be found to be wrong; there is no attribute that silences this, so the fix is to delete the arm or to move it above the one that shadows it</code></pre>
 
+  <h3>There are no guards, and the replacement is an <code>if</code> in the arm</h3>
+
+<pre data-science>def size_of(n: Int) -&gt; String:
+    match n:
+        0: "zero"
+        # No `n if n &gt; 100:` — the condition goes in the body, where
+        # exhaustiveness does not have to reason about it.
+        other: if other &gt; 100: "large" else: "small"</pre>
+
   <p class="note">
-    A variant may be written qualified or bare: <code>Plain</code> and
-    <code>Format.Plain</code> are the same pattern. The bare form is what a
-    match arm usually wants, since the scrutinee's type already says which
-    <code>choice</code> is meant; the qualified form is there for when two
-    choices in scope have a variant with the same name.
+    <strong>Writing <code>x if x &gt; 3: …</code> is a parse error</strong>
+    &mdash; <code>SC0100</code>, <em>expected <code>:</code>, found
+    <code>if</code></em> &mdash; because the pattern grammar ends at the
+    pattern and the separator has to be the next token. There is no
+    <code>where</code> form either. That is an absence rather than a refusal:
+    no note ever specified guards, so there is no diagnostic explaining them
+    and no plan recorded for adding them. <span class="cite wip">changing</span>
   </p>
 
   <p class="note">
-    Record patterns match by field name, and <code>_</code> inside one means
-    <em>this field, whatever it is</em>. Note that <code>Point(x: x, y:
-    _)</code> binds <code>x</code> and ignores <code>y</code>: the name left of
-    the colon is the field and the thing right of it is the pattern, which is
-    the same order construction uses.
+    <strong>The absence is load-bearing in one direction.</strong> A guard is
+    a condition the usefulness algorithm cannot evaluate, so every language
+    that has guards has to treat a guarded row as covering nothing &mdash;
+    which means <code>Some(x) if x &gt; 0</code> followed by
+    <code>Some(x) if x &lt;= 0</code> is not exhaustive and never can be. With
+    no guards, every row in the matrix is a real row, the witness is always a
+    real value, and the two diagnostics above are exact rather than
+    conservative. The cost is the extra indentation level in the listing
+    above, paid on every arm that wanted a condition.
+  </p>
+
+  <h3>Where a pattern may stand, and where it may not</h3>
+
+  <p class="note">
+    <strong>Two positions: a <code>match</code> arm, and a <code>for</code>
+    binder.</strong> That is the whole list. <code>for (left, right) in
+    ps:</code> takes a pattern apart, and so does <code>for _ in xs:</code>.
   </p>
 
   <p class="note">
-    <strong>Arms are tested in order, one at a time; there is no decision
-    tree.</strong> That is a statement about the generated code rather than
-    about the language, and it is here because it is observable: a
-    two-variant <code>choice</code> lowers to two comparisons and not one
-    jump table, so a <code>match</code> is not a constant-time dispatch and a
-    long one is a chain. The reordering that would make it one is an
-    optimisation nobody has written.
+    <strong>A <code>let</code> is not a pattern position.</strong>
+    <code>let a, b be f()</code> is a <em>flat list of names</em>, not a tuple
+    pattern: no nesting, no literals, no variants, no <code>_</code>. Even
+    <code>let _ be f()</code> is refused &mdash; <code>SC0102</code>,
+    <em>expected an identifier, found <code>_</code></em>. The reason is the
+    one that runs through this whole section: a pattern in a
+    <code>let</code> is either irrefutable, in which case it is a list of
+    names wearing brackets, or refutable, in which case the language owes an
+    answer for what happens when it does not match &mdash; and the form that
+    can be checked for exhaustiveness is <code>match</code>. Keeping patterns
+    out of <code>let</code> is how the language avoids owing that answer. The
+    arity is still checked, by the type checker: <code>SC0529</code>,
+    <em>this <code>let</code> binds 2 names and the value is not a
+    tuple</em>.
   </p>
+
+  <p class="note">
+    <strong>A refutable pattern in a <code>for</code> binder is the hole that
+    rule leaves.</strong> <code>for Circle(r) in shapes:</code> parses,
+    resolves, type-checks and lowers &mdash; to an unconditional
+    take-it-apart-and-bind, with no test. Exhaustiveness only ever visits a
+    <code>match</code>. So the one position that takes a full pattern and has
+    nowhere to put a failure is the one position nothing checks.
+    <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
+    <strong>Function and closure parameters are not patterns either.</strong>
+    A parameter is a name and a type; a closure's parameter is a name. So
+    there is no destructuring in a signature, which keeps a signature readable
+    as a contract rather than as an implementation detail.
+  </p>
+
+  <h3>Every pattern form that does not exist</h3>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Not in the language</th><th>What to write</th><th>Why it is out</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">0..5 in a pattern</td><td class="mono">0 | 1 | 2 | 3 | 4, or an <code>if</code> in the arm</td><td class="what"><code>..</code> is an expression; <code>PatternKind</code> has no arm for a range.</td></tr>
+        <tr><td class="mono">n @ Some(x)</td><td class="mono">bind the whole, take it apart in the body</td><td class="what"><code>@</code> is the matrix-multiply operator.</td></tr>
+        <tr><td class="mono">Point(x: 0, ..)</td><td class="mono">Point(x: 0)</td><td class="what">An omitted field already is a wildcard.</td></tr>
+        <tr><td class="mono">[a, b, rest]</td><td class="mono">indexing and <code>length()</code></td><td class="what">No slice patterns; <code>Array</code> has no slicing either.</td></tr>
+        <tr><td class="mono">ref x, ref mutable x</td><td class="mono">&mdash;</td><td class="what">No binding modes. A scrutinee is borrowed and the binder follows it.</td></tr>
+        <tr><td class="mono">-1 as a pattern</td><td class="mono">an <code>if</code> in the arm</td><td class="what">A literal pattern is a literal; unary minus is an operator.</td></tr>
+        <tr><td class="mono">Some(x) / None</td><td class="mono">a pattern of <code>T</code>, and <code>null</code></td><td class="what"><code>Option</code> was removed; the four names are free identifiers now.</td></tr>
+        <tr><td class="mono">x if cond</td><td class="mono">an <code>if</code> in the arm body</td><td class="what">No guards. See above.</td></tr>
+        <tr><td class="mono">a pattern in a <code>let</code></td><td class="mono">a flat list of names</td><td class="what">A refutable binding would owe an answer for the failure.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Arms are tested in order, and nothing is checked against the scrutinee's type</h3>
+
+  <p class="note">
+    <strong>There is no decision tree.</strong> A two-variant
+    <code>choice</code> lowers to two comparisons and not one jump table, so a
+    <code>match</code> is not a constant-time dispatch and a long one is a
+    chain. That is a statement about the generated code rather than about the
+    language, and it is here because it is observable. The reordering that
+    would make it a tree is an optimisation nobody has written, and the order
+    itself is guaranteed: a pattern's arms are tested top to bottom.
+  </p>
+
+  <p class="note">
+    <strong>And the pattern is never checked against the scrutinee's
+    type.</strong> A <code>"hello"</code> arm on an <code>Int</code>
+    scrutinee, or a <code>Circle(r)</code> arm on a <code>Format</code>, is
+    not a type error &mdash; there is no diagnostic code for a
+    pattern/scrutinee mismatch, and a literal pattern is simply given the
+    scrutinee's own type without unifying. A tuple pattern of the wrong width
+    is silent too. What you get instead is whatever <code>SC0250</code> says
+    about the constructors that <em>are</em> missing, which is a message about
+    the right <code>match</code> and the wrong mistake.
+    <span class="cite wip">changing</span>
+  </p>
+
+  <div class="callout">
+    <h3>If you are arriving from Rust: the shapes are yours, and four habits are not</h3>
+    <p>
+      <code>match</code>, alternation, record and variant patterns, nesting
+      and exhaustiveness all mean what they mean in Rust, and the witness in
+      the diagnostic is better than the one you are used to. Four things are
+      not there. <strong>Guards</strong> &mdash; the condition goes in the arm
+      body. <strong>Bindings inside an alternation</strong> &mdash;
+      <code>A(n) | B(n)</code> is refused rather than unified.
+      <strong>Range patterns</strong> and <strong><code>@</code></strong>
+      &mdash; neither exists, and <code>@</code> is an operator here.
+      And <strong><code>if let</code></strong>, which has nothing to
+      destructure: its replacement is <code>if x?:</code> and flow-sensitive
+      narrowing, which is strictly more useful for the nullable case and
+      strictly less useful for everything else.
+    </p>
+    <p style="margin-top:0.6rem">
+      One difference goes the other way. Rust's <code>match</code> on a
+      reference makes you think about binding modes; Science peels the borrow
+      before the check and has no binding modes at all, so
+      <code>match format:</code> over a <code>borrowed Format</code> is
+      written exactly like a <code>match</code> over an owned one, and the
+      witness names <code>Markdown</code> rather than a reference to it.
+    </p>
+  </div>
+
+  <div class="callout">
+    <h3>If you are arriving from Python: this is not <code>match</code> 3.10, and the difference is the error</h3>
+    <p>
+      Python's structural pattern matching looks similar and answers a
+      different question: it is a dispatch over shapes with a
+      <code>case _:</code> at the bottom, and nothing tells you when you have
+      missed a case, because in a dynamically typed language there is no
+      closed set to miss. Here the set is closed by <code>choice</code>, the
+      compiler knows it, and the missing case is named. That is the entire
+      reason <code>choice</code> is in the language.
+    </p>
+    <p style="margin-top:0.6rem">
+      Two traps for the Python reader. A <strong>bare name is a
+      binding</strong>, exactly as in Python &mdash; <code>case Json:</code>
+      in Python binds too, and the fix there is a dotted name, which is the
+      same fix here: <code>Format.Json</code>. And there is
+      <strong>no <code>|</code> with bindings</strong>, no
+      <code>*rest</code>, no mapping patterns and no class patterns with
+      positional arguments unless the type is a <code>choice</code> variant.
+    </p>
+  </div>
 </section>
 
 <!-- ==================================================================== -->
@@ -4593,6 +5777,53 @@ pending be "science.toml"
 print(f"{pending?}")
 if pending?:
     print(pending)</pre>
+
+  <h3><code>null</code> and <code>?</code>, as typing rules</h3>
+
+  <p class="note">
+    <strong><code>null</code> is a literal with no default type, and it is the
+    only literal in the language that has none.</strong> An integer literal
+    with nothing to constrain it falls back to <code>I64</code> and a float to
+    <code>F64</code>; <code>null</code> falls back to nothing, because no type
+    is inhabited by <code>null</code> alone. So <code>let x be null</code> is
+    <code>SC0526</code>, <em>the type of this value cannot be inferred</em>,
+    and the fix is always to say which nullable it is: an annotation, a
+    parameter, or a declared return type.
+  </p>
+
+  <p class="note">
+    <strong>And it is the one literal that takes the whole expectation rather
+    than its payload.</strong> Every other literal widens into a nullable
+    &mdash; <code>let n: Int? be 3</code> types <code>3</code> as
+    <code>Int</code> and then widens &mdash; whereas <code>null</code> binds
+    to <code>Int?</code> itself. That asymmetry is the point of making
+    <code>T?</code> a distinct type: <code>null</code> inhabits the nullable
+    and nothing else, so it is refused at every shape the checker can classify
+    and admitted at the few it cannot. In a mismatch it is reported literally,
+    as <em>found <code>null</code></em>, because there is no type name to
+    print.
+  </p>
+
+  <p class="note">
+    <strong><code>e?</code> has type <code>Bool</code> whatever
+    <code>e</code> is.</strong> The operand is synthesised, never checked
+    against an expectation, and if its revealed type is not nullable the
+    result is <code>SC0530</code> &mdash; <em>this value is never
+    absent</em>, with the note <em><code>?</code> tests a <code>T?</code> for
+    a value; on a <code>T</code> it is always true</em>. The node is still
+    built and still typed <code>Bool</code>, so one mistake produces one
+    diagnostic and not a cascade. A type the phase cannot classify &mdash; a
+    parameter, <code>Self</code> &mdash; is admitted in silence, which is the
+    direction a diagnostic about an always-true test has to err in.
+  </p>
+
+  <p class="note">
+    <strong><code>T??</code> is <code>SC0520</code>, <em>a type is nullable
+    once</em></strong>, refused at the point the type is written rather than
+    collapsed silently. The same argument one level down at the value is what
+    <code>SC0530</code> is: a construct that can only ever produce one answer
+    is never what anybody meant.
+  </p>
 
   <h3>Narrowing, exactly</h3>
 
@@ -4747,36 +5978,242 @@ def save(path: borrowed String, text: borrowed String) -&gt; Error?:
   |
   = note: test it with `if err?:`, pass it on, or return it &mdash; or rename it to `_err` to say the failure is deliberately ignored</code></pre>
 
+  <h3>How a binding becomes a candidate: a type test, or a position</h3>
+
   <p class="note">
-    It is a forward reachability question over the typed tree and not a full
-    dataflow &mdash; mark every binding whose type is an <code>E?</code> where
-    <code>E</code> implements <code>Error</code>, mark every <code>?</code>
-    that reads it, report the ones with no reader &mdash; so it is linear in
-    the size of the body. Four exclusions keep it from being hated: a binding
-    that is <em>returned</em> passes the obligation to the caller; one
-    <em>passed</em> to a function taking <code>E?</code> does the same; one
-    whose value is statically <code>null</code>; and one in a function that
-    cannot return. <strong>That list came from reading the corpus rather than
-    from running the analysis over it</strong>, and the design records it as a
-    guess.
+    <strong>It is a forward reachability question over the typed tree and not
+    a full dataflow</strong> &mdash; mark every candidate binding, mark every
+    <code>?</code> that reads it, report the ones with no reader &mdash; so it
+    is linear in the size of the body. <strong>There is deliberately no fixed
+    point.</strong> A <code>?</code> on <em>one</em> path is the author having
+    thought about it; a diagnostic that demanded one on every path would fire
+    on <code>if urgent?: check(err)</code> and be wrong about a program that
+    is fine.
+  </p>
+
+  <p class="note">
+    <strong>What makes a binding a candidate is the interesting half, and
+    there are two answers, either of which is enough.</strong> The
+    <em>type</em> test is the specified one: an <code>E?</code> where
+    <code>E</code> is <code>any Error</code>, or a named type this crate
+    declares <code>implements Error:</code>. The <em>position</em> test is the
+    one the implementation added, and it exists because the type test, read
+    literally, is silent on exactly the program a beginner writes &mdash; a
+    bare <code>choice</code> with no <code>implements</code> line, returned as
+    the second half of a pair. Conditioning the guard on a declaration the
+    language does not require anywhere would have lost the whole point of the
+    model on the file that needed it most.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>The position test asks</th><th>Because</th></tr></thead>
+      <tbody>
+        <tr><td class="what">two or more names in the <code>let</code></td><td class="what"><code>-&gt; (T, E?)</code> is a pair. A single binding is <code>-&gt; E?</code> alone, where there is no position to read and every <code>T?</code> in the language would otherwise owe a test.</td></tr>
+        <tr><td class="what">the <em>last</em> of them</td><td class="what">The model puts the error after the value and nowhere else. <code>let a, b, c be f()</code> asks about <code>c</code>.</td></tr>
+        <tr><td class="what">of nullable type</td><td class="what">That is the whole of what the type contributes here: <em>which</em> nullable is the position's answer, not the type's.</td></tr>
+        <tr><td class="what">whose initialiser is a call</td><td class="what">That is what <em>fallible</em> means &mdash; a function returned this pair. <code>let a, b be (x, y)</code> is a tuple you wrote, and its second element was never anyone's failure.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <strong>The four conditions are conjunctive, and you can see each of them
+    by moving one thing.</strong> <code>let n, maybe be load()</code> where
+    <code>load</code> returns <code>(Int, Int?)</code> is reported, although
+    <code>Int</code> implements no interface at all. Put the nullable first
+    &mdash; <code>-&gt; (Int?, Int)</code> &mdash; and it is not. Make it the
+    only binding and it is not. Build the pair by hand instead of calling and
+    it is not. <strong>The cost is stated rather than denied:</strong> a
+    genuine <code>def midpoint() -&gt; (F64, F64?)</code> is now reported for a
+    nullable that is not a failure at all. Three things were weighed against
+    it &mdash; the corpus contains no such signature across ten declarations
+    in four files, the language gives that shape no other meaning, and the
+    escape is one character.
+  </p>
+
+  <h3>The four exclusions, and the three readers nobody wrote down</h3>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>What excuses a binding</th><th>Why it is not a mistake</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">err?, anywhere</td><td class="what">The whole point. Once, on any path.</td></tr>
+        <tr><td class="mono">return err, or the body's tail</td><td class="what">Passing the obligation to the caller is the model working.</td></tr>
+        <tr><td class="mono">f(err) at a parameter of type E?</td><td class="what">Same reason, one call down.</td></tr>
+        <tr><td class="mono">let missing: Error? be null</td><td class="what">There is nothing to check.</td></tr>
+        <tr><td class="what">a body that cannot return</td><td class="what">Both halves: a declared <code>-&gt; Never</code>, and a body that diverges on every path. Nothing downstream will ever see the error.</td></tr>
+        <tr><td class="mono">_err</td><td class="what">Deliberate ignoring, spelled with a leading underscore.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+<pre data-science>choice LoadError:
+    NotFound(String)
+
+LoadError implements Error:
+    def message(self) -&gt; String:
+        "not found"
+
+def load(path: borrowed String) -&gt; (Int, LoadError?):
+    (0, null)
+
+def handle(err: LoadError?) -&gt; Int:
+    0
+
+# 1. Returned: the obligation goes to the caller.
+def passed_up(path: borrowed String) -&gt; (Int, LoadError?):
+    let value, err be load(path)
+    (value, err)
+
+# 2. Passed to a parameter of error type.
+def handed_on(path: borrowed String) -&gt; Int:
+    let value, err be load(path)
+    handle(err)
+
+# 3. Statically null: there is nothing to test.
+def nothing_to_test() -&gt; Int:
+    let err: LoadError? be null
+    0
+
+# 4. A body that cannot return.
+def gives_up(path: borrowed String) -&gt; Never:
+    let value, err be load(path)
+    panic("stop")
+
+# And the opt-out, which is one character.
+def deliberate(path: borrowed String) -&gt; Int:
+    let value, _err be load(path)
+    value</pre>
+
+  <p class="note">
+    <strong>Three more readers count and the specification names none of
+    them</strong>, each one a refusal to guess. A <code>match</code> on the
+    binding counts &mdash; and notably the pass does <em>not</em> then ask
+    whether the <code>match</code> answered for <code>null</code>, although
+    the exhaustiveness check that could tell it is now built. An argument to a
+    method whose parameter is of error type counts, and so does an argument to
+    a method the checker could not resolve at all, because a binding passed to
+    an unknown callee is not a binding this pass should demand a test for. And
+    a read wrapped in a coercion or a narrowing counts, because those are
+    nodes the checker inserted and not something the author wrote.
   </p>
 
   <p class="note">
     <strong>Deliberately ignoring a failure is spelled with a leading
     underscore.</strong> <code>let text, _err be read_file(path)</code> says so
-    in the source, needs no grammar, and is greppable. The cost is that
-    <code>_</code> as a prefix acquires a meaning it did not have.
+    in the source, needs no grammar, and is greppable &mdash; <em>show me
+    every ignored error</em> is a question reviewers actually ask. It is a
+    literal test on the first character of the name; the resolver does not
+    treat the underscore specially, so <code>_err</code> is an ordinary name
+    that can be read, shadowed and returned like any other, and the only thing
+    the underscore does is silence this one diagnostic. <strong>Nothing warns
+    that a <code>_err</code> was used after all</strong>, because the other
+    convention &mdash; an underscore meaning <em>unused</em> &mdash; is not the
+    one this language chose. The cost is that <code>_</code> as a prefix
+    acquires a meaning it did not have.
+  </p>
+
+  <h3>What <code>SC0140</code> cannot see</h3>
+
+  <p class="note">
+    <strong>The gap is one shape wide.</strong> An error type reached through
+    a type parameter's bound &mdash; <code>where E: Error</code>, with the
+    pair arriving as a parameter rather than from a call &mdash; is a
+    candidate for neither test, because the implementation table answers from
+    <em>written</em> implementations only and there is no call to read a
+    position off. That is the safe direction for a diagnostic whose false
+    positives would make it hated, and it is the same direction the exclusions
+    are written in.
   </p>
 
   <p class="note">
-    <strong>And one place the new model is straightforwardly worse.</strong>
-    Two fallible steps inside a single method chain produce two error types,
-    and the conversion has been relocated to the caller's <code>return</code>
-    &mdash; but a chain has no <code>return</code>. The old model's
-    <code>try</code> converted through <code>From</code> at exactly that point.
-    There is no mechanism to point at yet, and the design note says so rather
-    than writing it up as anything else.
+    <strong>Write the <code>implements Error</code> block when you declare the
+    <code>choice</code> regardless.</strong> It is one method,
+    <code>message</code>. The type test is the one that follows the value out
+    of the pair and into the rest of the program; the position test only ever
+    fires at the <code>let</code> that received it.
   </p>
+
+  <h3>Where the model is straightforwardly worse</h3>
+
+  <p class="note">
+    <strong>Two fallible steps inside a single method chain produce two error
+    types</strong>, and the conversion has been relocated to the caller's
+    <code>return</code> &mdash; but a chain has no <code>return</code>. The
+    old model's <code>try</code> converted through <code>From</code> at
+    exactly that point. There is no mechanism to point at yet, and the design
+    note says so rather than writing it up as anything else.
+  </p>
+
+  <p class="note">
+    <strong>And a second one, which is the honest reading of the whole
+    section: the guard is a diagnostic and not a type.</strong> A
+    <code>Result</code> made ignoring a failure impossible <em>by
+    construction</em> &mdash; there was no way to get the value out without
+    meeting the error. <code>SC0140</code> is a pass that can be widened, can
+    be narrowed, and has a list of exclusions that came from reading a corpus
+    rather than from a proof. It closes the shapes that were measured, in a
+    language whose type system could not have been asked the question. That is
+    a smaller claim than <code>Result</code>'s and it is the one this design
+    can support.
+  </p>
+
+  <div class="callout">
+    <h3>If you are arriving from Go: this is your shape with the thing you keep asking for</h3>
+    <p>
+      <code>value, err := f()</code> becomes <code>let value, err be f()</code>
+      and <code>if err != nil {</code> becomes <code>if err?:</code>. The
+      three-line tax is the same tax, for the same reason, and the corpus file
+      that was rewritten against this model roughly <em>doubled in
+      length</em>. What you get for it is the two things Go does not have.
+      <strong>Ignoring an error is a compile error</strong> rather than a
+      linter's opinion, and <strong>the compiler narrows</strong>: after
+      <code>if err?: return …</code> it agrees with you that there is no
+      failure left, and <code>value</code> is usable without a second check.
+      Go's <code>err</code> is still an <code>error</code> interface on the
+      line after you handled it.
+    </p>
+    <p style="margin-top:0.6rem">
+      Three things are gone. There is <strong>no <code>nil</code> for
+      anything but a nullable</strong>, so a nil map or a nil receiver is not
+      a category that exists. There is <strong>no <code>panic</code>/
+      <code>recover</code></strong> pair &mdash; <code>panic</code> exists and
+      returns <code>Never</code>, and nothing catches it. And
+      <strong><code>errors.Is</code> and <code>errors.As</code> have no
+      counterpart</strong>: telling error cases apart is what a concrete
+      <code>choice</code> and an exhaustive <code>match</code> are for, which
+      is why a library is expected to export a concrete error type and not
+      <code>Error?</code>.
+    </p>
+  </div>
+
+  <div class="callout">
+    <h3>If you are arriving from Rust: you are giving up <code>?</code> and getting narrowing</h3>
+    <p>
+      The trade is stark and worth stating without softening. You lose
+      <code>Result</code>, <code>Option</code>, the propagation
+      <code>?</code>, <code>From</code>-based widening, and every combinator
+      on them &mdash; <code>map_err</code>, <code>ok_or</code>,
+      <code>unwrap_or</code>, <code>and_then</code>. One fallible call goes
+      from one line to three. You gain a nullable that is a language type
+      rather than a library generic, so <code>T?</code> needs no wrapper and
+      no <code>.unwrap()</code>; flow-sensitive narrowing, so
+      <code>if x?:</code> retypes the place for the rest of the branch; and a
+      compile error for an unchecked failure, which <code>#[must_use]</code>
+      only warns about.
+    </p>
+    <p style="margin-top:0.6rem">
+      The character <code>?</code> means something else here and that is the
+      trap. <code>err?</code> is a <code>Bool</code>. It does not propagate, it
+      does not unwrap, and it never returns from the enclosing function. It is
+      also <em>postfix over the chain to its left</em>, where Rust's
+      <code>?</code> is postfix over the expression to its left and the
+      removed <code>try</code> was prefix over the chain to its right &mdash;
+      three different scopes for one idea, which is why the design treated
+      this as a rewrite of that precedence rung rather than a rename.
+    </p>
+  </div>
 
   <h3>What it replaces &mdash; removed, shown only for comparison</h3>
 
@@ -4848,6 +6285,8 @@ def by_length(docs: borrowed Array of Doc) -&gt; Array of String:
         .sorted(by: line giving line.length())
         .collect()</pre>
 
+  <h3>Lazy adapters, eager terminals, and three barriers</h3>
+
   <p class="note">
     <strong>Adapters are lazy; terminals are eager; there is no eager
     mode.</strong> <code>docs.iterate().map(each.title)</code> allocates
@@ -4861,6 +6300,17 @@ def by_length(docs: borrowed Array of Doc) -&gt; Array of String:
     putting a <code>.sorted(…)</code> before a <code>.discard(…)</code> sorts
     rows you are about to throw away. That is the one performance trap laziness
     leaves open, and it is a documentation problem rather than a language one.
+  </p>
+
+  <p class="note">
+    <strong>A chain continues across lines because a line that begins with
+    <code>.</code> continues the line above it.</strong> That is a lexer rule,
+    it is one of exactly two outside a bracket, and it counts only when a
+    letter follows the dot &mdash; so a <code>..</code> never continues a
+    line, because a range is not a chain link. Written on one line the chain
+    needs no rule at all; the allowance exists so that the vertical form,
+    which is how a six-stage pipeline is meant to be read, does not have to be
+    wrapped in parentheses.
   </p>
 
   <h3>Two closure forms, and the one case that needs the second</h3>
@@ -4926,6 +6376,74 @@ def by_length(docs: borrowed Array of Doc) -&gt; Array of String:
     one optional parameter today, so <code>reduce</code> and
     <code>accumulate</code> cannot yet be written.
     <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
+    <strong><code>each</code> is a keyword, so it cannot be shadowed and it
+    cannot stand alone.</strong> <code>let each be 3</code> is
+    <code>SC0102</code>, and <code>let x be each + 1</code> outside any call
+    is <code>SC0212</code>: <em><code>each</code> names the subject of the
+    call it is written in, and there is no call here</em>. Two
+    <code>each</code> in the <em>same</em> argument are fine &mdash;
+    <code>each.title.length() + each.title.length()</code> names one subject
+    twice &mdash; which is why the nesting rule above is about an
+    <em>enclosing</em> <code>each</code> and nothing else.
+  </p>
+
+  <h3>A closure's type is an arrow, and the value's grammar is narrower than it</h3>
+
+<pre data-science>def apply(f: (Int) -&gt; Int, n: Int) -&gt; Int:
+    f(n)
+
+# The type admits any arity. `() -&gt; Int` and `(Int, Int) -&gt; Int` are types
+# you may write today, and there is no way to write a value of either.
+def call_nothing(f: () -&gt; Int) -&gt; Int:
+    f()
+
+def call_two(f: (Int, Int) -&gt; Int) -&gt; Int:
+    f(1, 2)
+
+# A closure is also a bound: `where F: (Int) -&gt; Int` is the generic form,
+# which monomorphises where the `any`-free arrow parameter above does not.
+def apply_generic of F(f: F, n: Int) -&gt; Int where F: (Int) -&gt; Int:
+    f(n)
+
+def increment() -&gt; (Int) -&gt; Int:
+    x giving x + 1
+
+let doubled be x giving x * 2
+print(f"{apply(doubled, 21)}")</pre>
+
+  <p class="note">
+    <strong>A closure type has no keyword and is not an interface.</strong>
+    <code>(A) -&gt; B</code> is the whole notation. That is what removes
+    Rust's <code>Fn</code>/<code>FnMut</code>/<code>FnOnce</code> choice from
+    the surface &mdash; there is no trait to pick &mdash; and it is also why
+    <a href="#ownership">captures</a> can be uniform: with no three-way
+    classification in the type, there is nothing for a capture mode to
+    correspond to.
+  </p>
+
+  <p class="note">
+    <strong>The type grammar and the value grammar do not line up, and the
+    mismatch is a real limit.</strong> A closure <em>type</em> takes any
+    number of parameters; a closure <em>value</em> carries one optional
+    parameter and nothing else. So <code>(acc, x) giving acc + x</code> does
+    not parse, <code>giving 3</code> does not parse, and
+    <code>reduce</code>, <code>accumulate</code> and <code>zip</code>'s
+    two-argument forms cannot be written even though their signatures are
+    expressible. That is the most consequential unbuilt thing in this section.
+    <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
+    <strong>And the body is one expression, with no block form</strong>, which
+    is the layout grammar protecting itself: a parameter list followed by
+    <code>:</code> and a newline is, in shape, a block opener, and a grammar
+    where <code>:</code> sometimes opens a block and sometimes opens a closure
+    is a grammar the formatter cannot be idempotent over. The cost lands on
+    exactly the closure that wanted a temporary, and the workaround is a named
+    function.
   </p>
 
   <h3>Naming, where it differs from what you know</h3>
@@ -5047,16 +6565,62 @@ def by_length(docs: borrowed Array of Doc) -&gt; Array of String:
   </p>
 
   <p class="note">
+    <strong>Read that openness precisely, because it is the one thing on this
+    page that could mislead you.</strong> <code>xs.flurble()</code> on an
+    <code>Array</code> checks clean; <code>d.flurble()</code> on a record you
+    declared is <code>SC0532</code>, <em><code>Doc</code> has no method
+    <code>flurble</code></em>. The openness is a property of
+    <em>prelude</em> types only, and it exists so that a table which is
+    admittedly incomplete does not reject programs the language will accept.
+    The consequence for a reader of this section is that a misspelled adapter
+    is not a compile error today, and a correct adapter is not a working
+    program either.
+  </p>
+
+  <p class="note">
     What <em>is</em> written down is small and worth knowing, because it is
     what a program can call today. <code>Array of T</code> has
     <code>new</code>, <code>push</code>, <code>get</code>, <code>length</code>
-    and <code>is_empty</code>. <code>Map of (K, V)</code> has
-    <code>new</code>, <code>insert</code>, <code>get</code>,
-    <code>contains</code>, <code>remove</code>, <code>length</code> and
-    <code>is_empty</code> &mdash; <code>contains</code> rather than
-    <code>has</code>, because <code>has</code> is a keyword.
-    <code>String</code> has thirteen of the nineteen its design gives it, and
-    <code>Box of T</code> has <code>new</code> and nothing else.
+    and <code>is_empty</code> &mdash; and <code>get</code> returns
+    <code>(borrowed T)?</code>, so the index that might miss is the one that
+    hands back a nullable. <code>Map of (K, V)</code> has <code>new</code>,
+    <code>insert</code>, <code>get</code>, <code>contains</code>,
+    <code>remove</code>, <code>length</code> and <code>is_empty</code>
+    &mdash; <code>contains</code> rather than <code>has</code>, because
+    <code>has</code> is a keyword. <code>String</code> has thirteen of the
+    nineteen its design gives it, <code>Chars</code> has none at all, and
+    <code>Box of T</code> has <code>new</code> and nothing else. There is no
+    <code>Set</code>, no <code>Range</code>, no <code>Lines</code> and no
+    <code>Split</code> &mdash; which is <em>why</em> six of
+    <code>String</code>'s nineteen are missing: three of them return a type
+    that does not exist.
+  </p>
+
+  <p class="note">
+    <strong><code>Array.pop</code> is deliberately absent, and the reason is
+    the discipline this whole section runs on.</strong> The design names it
+    and gives it no signature. Deciding whether it returns <code>T</code> or
+    <code>T?</code>, and what it does when the array is empty, would settle a
+    language question in a table nobody reads, on the evidence of one call
+    site. So it is not there. The same argument keeps
+    <code>mean</code>, <code>variance</code> and <code>median</code> out of
+    the chain vocabulary: they need a dtype-promotion policy and a defined
+    summation order, which are numerics decisions rather than iteration
+    decisions.
+  </p>
+
+  <p class="note">
+    <strong>Four free functions and one that has no signature.</strong> The
+    prelude exports <code>print</code>, <code>write</code>,
+    <code>panic</code>, <code>read_file</code> and <code>write_file</code>.
+    The last three have signatures &mdash; <code>panic(message: borrowed
+    String) -&gt; Never</code>, <code>read_file(path) -&gt; (String,
+    IoError?)</code>, <code>write_file(path, text) -&gt; IoError?</code>.
+    <code>print</code> and <code>write</code> have names and no signature at
+    all, so the <em>arity</em> is checked and the argument's type is not: that
+    <code>print</code> is unary is a fact about the call, and that its
+    argument must be printable is a fact about the value that nothing below
+    the type checker can carry. <span class="cite wip">changing</span>
   </p>
 
   <p class="note">
@@ -5068,6 +6632,97 @@ def by_length(docs: borrowed Array of Doc) -&gt; Array of String:
     miss in a file nobody reads. Walking a map today goes through an
     <code>Array</code> of its keys.
   </p>
+
+  <h3>The one thing you can write today that iterates</h3>
+
+<pre data-science>type Counter:
+    seen: Int
+
+# `Iterate` is one associated type and one method, and it is the whole
+# interface. `for` reads `Item` off the implementation directly — it does
+# not desugar into a call it then re-resolves.
+Counter implements Iterate:
+    type Item is Int
+
+    def next(mutable self) -&gt; Int?:
+        self.seen be self.seen + 1
+        self.seen
+
+def count_three() -&gt; Int:
+    let mutable total be 0
+    for value in Counter(seen: 0):
+        total be total + value
+        if total &gt; 5:
+            break
+    total</pre>
+
+  <p class="note">
+    <strong><code>next</code> returns <code>Self.Item?</code>, and the
+    exhausted case is <code>null</code>.</strong> No <code>Option</code>, no
+    sentinel, no separate <code>has_next</code>. That is the clearest single
+    payoff of making <code>T?</code> a language type rather than a library
+    generic: the most-implemented interface in any language ends up with one
+    method whose signature needs no wrapper.
+  </p>
+
+  <p class="note">
+    <strong>It checks and it does not build</strong>, for the same reason
+    every <code>for</code> does &mdash; the loop's <code>next</code> call
+    reaches the back end unresolved, because the typed tree has no field to
+    record the method the checker already found. The seam is one field wide
+    and there is a test in the workspace written to fail on the day it is
+    filled. <span class="cite wip">changing</span>
+  </p>
+
+  <div class="callout">
+    <h3>If you are arriving from pandas or NumPy: the pipeline is the unit, and it is lazy</h3>
+    <p>
+      <code>df[df.x &gt; 0].assign(y = …).head(5)</code> materialises at every
+      step; the chain here materialises once, at
+      <code>.collect()</code>. Over a file that does not fit in memory that is
+      the difference between a program and a crash, and over one that does it
+      is six allocations you did not make. The trap is the one named above:
+      three adapters buffer, so <code>.sorted()</code> before
+      <code>.discard()</code> sorts rows you are about to throw away, and the
+      compiler will not tell you.
+    </p>
+    <p style="margin-top:0.6rem">
+      Two habits do not survive. <strong>There is no boolean-mask
+      indexing</strong> &mdash; <code>xs[mask]</code> is not a thing, because
+      it would produce a slice and there is no slice type; the chain's
+      <code>keep</code> is what replaces it, and it reads in the order it
+      happens. And <strong>there are no comprehensions</strong>, which the
+      compiler will tell you, at some length: <code>SC0153</code> prints the
+      chain that replaces the bracket you wrote.
+    </p>
+  </div>
+
+  <div class="callout">
+    <h3>If you are arriving from Rust: the set is half the size and the names moved</h3>
+    <p>
+      <code>Iterator</code> has upward of seventy methods; this vocabulary is
+      closed at thirty-eight, and the difference is not laziness about writing
+      them &mdash; a combinator earns its place by being something a working
+      pipeline writes <em>often</em>, and a closed set containing everything
+      expressible is not closed. <code>for_each</code>,
+      <code>inspect</code>, <code>filter_map</code>, <code>fold</code> beside
+      <code>reduce</code>, <code>nth</code>, <code>cycle</code>,
+      <code>peekable</code> and <code>dedup</code> are each refused with a
+      reason.
+    </p>
+    <p style="margin-top:0.6rem">
+      Three mechanical differences. <strong><code>collect()</code> always
+      returns an <code>Array</code></strong> &mdash; never
+      inference-directed, never annotated, never a turbofish; other targets
+      are constructors. <strong>A chain cannot cross a function
+      boundary</strong>, so a function returns a collection and the
+      <code>.collect()</code> is where you pay for it. And
+      <strong><code>iter</code>/<code>iter_mut</code>/<code>into_iter</code>
+      are <code>iterate</code>/<code>iterate_mutably</code>/<code>iterate_consuming</code></strong>,
+      because three semantics need three names and a preposition should not be
+      doing a verb's job.
+    </p>
+  </div>
 </section>
 
 <!-- ==================================================================== -->
@@ -5947,7 +7602,7 @@ public def title_of(doc: borrowed Doc) -&gt; borrowed String:
         <tr><td class="mono">SC0100–SC0199</td><td class="what">Syntax</td><td class="what">The largest shipped block, including the two migration diagnostics and the nine <code>tool</code> checks.</td></tr>
         <tr><td class="mono">SC0200–SC0249</td><td class="what">Resolution</td><td class="what">Shipped, with <code>SC0210</code> deliberately unallocated &mdash; the spec assigns it to a non-exhaustive <code>match</code>, which the type checker reports instead.</td></tr>
         <tr><td class="mono">SC0250–SC0299</td><td class="what">Types and interfaces</td><td class="what">Shipped: exhaustiveness, const arithmetic, interpolation, and <code>SC0140</code> out of band from the syntax range.</td></tr>
-        <tr><td class="mono">SC0300–SC0399</td><td class="what">Ownership and regions</td><td class="what">Five codes defined, four that fire. <code>SC0301</code> and <code>SC0302</code> are the core spec's and are unimplemented.</td></tr>
+        <tr><td class="mono">SC0300–SC0399</td><td class="what">Ownership and regions</td><td class="what">Seven codes are constructed and six of them fire: <code>SC0301</code>, <code>SC0304</code>, <code>SC0330</code>, <code>SC0333</code>, <code>SC0334</code> and <code>SC0340</code>, with <code>SC0335</code> reachable in code and never reached in practice. <code>SC0302</code>, <code>SC0331</code>, <code>SC0332</code>, <code>SC0341</code> and <code>SC0380</code> are reserved by design notes and constructed nowhere.</td></tr>
         <tr><td class="mono">SC0400–SC0499</td><td class="what">Codegen and linking</td><td class="what">Six reach a user: <code>SC0400</code>, <code>SC0401</code>, <code>SC0402</code>, <code>SC0403</code>, <code>SC0406</code>, <code>SC0461</code>. Several more are defined and constructed only in passes the driver does not run.</td></tr>
         <tr><td class="mono">SC0500–SC0799</td><td class="what">Types and traits, continued</td><td class="what">Where the bulk of the type checker's messages actually live.</td></tr>
         <tr><td class="mono">SC0900–SC0999</td><td class="what">Tooling</td><td class="what">Not the compiler: a complaint from a program that reads Science rather than compiles it. Two codes, both the formatter's.</td></tr>

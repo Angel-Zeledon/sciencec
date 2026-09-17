@@ -1,0 +1,1903 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tutorial &middot; Science</title>
+<meta name="description" content="Learn Science from nothing: install the compiler, run a program, and work up through bindings, control flow, functions, your own types, match, ownership, errors, interfaces and generics, and calling C. Every example is real source that was checked, and fifteen of them were built, run, and had their output pasted in.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;1,400&display=swap">
+<link rel="stylesheet" href="assets/science.css">
+</head>
+<body>
+
+<div class="wrap wide"><div class="top">
+  <div class="mark"><span class="glyph">&#8730;</span><span class="name"><a href="index.html" style="color:inherit;text-decoration:none">Science</a></span></div>
+  <nav><a href="index.html">Home</a><a href="tutorial.html" aria-current="true">Tutorial</a><a href="reference.html">Reference</a><a href="syntax.html">Syntax</a><a href="rationale.html">Rationale</a></nav>
+</div></div>
+
+<div class="wrap wide reference">
+
+<header class="masthead">
+  <p class="eyebrow">Tutorial &middot; eleven chapters, read in order</p>
+  <h1>Learn Science by <em>running</em> it</h1>
+  <p class="standfirst">
+    This page assumes you have never seen Science and teaches it from the first
+    command. Each chapter gives you a reason before it gives you a construct,
+    and every construct arrives in a program you can type, compile and run.
+    <strong>Read it top to bottom.</strong> Chapter 7 depends on chapter 5,
+    chapter 5 depends on chapter 2, and skipping is how the ownership chapter
+    stops making sense.
+  </p>
+  <p class="standfirst" style="margin-top:1rem">
+    The other three pages are not a tutorial and do not try to be. The
+    <a href="reference.html">reference</a> explains what a construct means. The
+    <a href="syntax.html">syntax</a> page is the inventory of everything that
+    can be written. The <a href="rationale.html">rationale</a> argues for the
+    spellings against the ones they beat. <a href="#next">Where to go next</a>
+    says which one to open, and when.
+  </p>
+</header>
+
+<div class="status">
+  <span><span class="dot dot-on"></span>Chapters <b>11</b></span>
+  <span><span class="dot dot-on"></span>Science listings <b>29</b> &mdash; 21 clean, 8 deliberate errors</span>
+  <span><span class="dot dot-on"></span>Of the 21, built and run <b>15</b>, output pasted</span>
+  <span><span class="dot dot-wip"></span>Check clean, refuse to build <b>6</b>, each said so in its chapter</span>
+  <span>Compiler <b>sciencec</b> 0.0.1</span>
+</div>
+
+<div class="revision">
+  <h2>What was run to write this page, and what the numbers mean</h2>
+  <p>
+    <strong>Every Science listing below was extracted from this file's own
+    source, written to a scratch file, and put through
+    <code>sciencec check</code> with its exit code read</strong> &mdash; not
+    its output searched for the word "error", which reports a clean file for a
+    compiler that never started. Twenty-one exit 0. The other eight are on
+    this page in order to fail, each beside the diagnostic it produces.
+  </p>
+  <p style="margin-top:0.7rem">
+    <strong>Fifteen of the twenty-one were then compiled with
+    <code>sciencec build</code>, linked, executed, and their real stdout pasted
+    underneath as a trailing comment.</strong> Nothing in an output comment was
+    typed by hand.
+  </p>
+  <p style="margin-top:0.7rem">
+    <strong>Six check clean and the backend refuses them</strong>, and each is
+    marked in the chapter that teaches it rather than left for you to discover:
+    the declared <code>main</code> in <a href="#install">chapter 1</a>, the
+    counting loop in <a href="#control">chapter 3</a>, the method block in
+    <a href="#types">chapter 5</a>, the error pair in
+    <a href="#errors">chapter 8</a>, and both the interface and the generic in
+    <a href="#interfaces">chapter 9</a>. This is the most important thing to
+    understand about the compiler's current state, and
+    <a href="#install">chapter 1</a> states it before you write a line:
+    <code>check</code> runs the whole front end and accepts a great deal more
+    of this language than <code>build</code> can emit.
+  </p>
+  <p style="margin-top:0.7rem">
+    <strong>Every error message reproduced here is the compiler's own
+    stderr</strong>, produced by writing that exact program to disk and running
+    it, down to the span underlines and the note wording. Teaching a language
+    through its diagnostics is this project's stated design principle; an
+    invented error message would contradict the thing being taught.
+  </p>
+  <p style="margin-top:0.7rem">
+    <strong>The compiler was built from a clean checkout, in an empty
+    <code>target/</code>, and every number above comes from that binary.</strong>
+    The boundary between <code>check</code> and <code>build</code> moves, and it
+    moves in one direction. If a listing here is marked as refused and your
+    compiler builds it, your compiler is right and this page is behind.
+  </p>
+</div>
+
+<div class="docs">
+<aside class="sidebar">
+  <div class="groups">
+    <h2>Start</h2>
+    <ul>
+      <li><a href="#install">1 &middot; Install and run</a></li>
+    </ul>
+    <h2>The basics</h2>
+    <ul>
+      <li><a href="#values">2 &middot; Values and bindings</a></li>
+      <li><a href="#control">3 &middot; Control flow</a></li>
+      <li><a href="#functions">4 &middot; Functions</a></li>
+    </ul>
+    <h2>Your own types</h2>
+    <ul>
+      <li><a href="#types">5 &middot; <code>type</code> and <code>choice</code></a></li>
+      <li><a href="#match">6 &middot; <code>match</code> and patterns</a></li>
+    </ul>
+    <h2>The centre</h2>
+    <ul>
+      <li><a href="#ownership">7 &middot; Ownership</a></li>
+    </ul>
+    <h2>Larger programs</h2>
+    <ul>
+      <li><a href="#errors">8 &middot; Absence and failure</a></li>
+      <li><a href="#interfaces">9 &middot; Interfaces, generics</a></li>
+      <li><a href="#foreign">10 &middot; Talking to C</a></li>
+    </ul>
+    <h2>After this</h2>
+    <ul>
+      <li><a href="#next">11 &middot; Where to go next</a></li>
+    </ul>
+  </div>
+</aside>
+
+<main>
+
+<!-- ==================================================================== -->
+<section id="install">
+  <h2>1 &middot; Install and run<a class="anchor" href="#install" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    There is no installer and no released binary. You build the compiler from
+    source, once, and then you have a <code>sciencec</code> that turns a file
+    into a native executable. This chapter ends with you running a program you
+    wrote.
+  </p>
+
+  <h3>What you need first</h3>
+  <p>
+    A Rust toolchain, because the compiler is written in Rust. And LLVM 18.1,
+    because the backend calls LLVM-C directly and links against it. The version
+    matters: the backend is written against 18.1's C API, and a different major
+    version is a link error rather than a warning.
+  </p>
+
+<pre class="shell"><code><span class="p">$</span> <span class="c">winget install LLVM.LLVM --version 18.1.8</span></code></pre>
+
+  <p class="note">
+    That is the Windows command. On macOS it is
+    <code>brew install llvm@18</code>, and on Debian the LLVM apt repository's
+    <code>llvm-18-dev</code>. Whichever you use, <strong>note where it put its
+    <code>bin</code> directory</strong> &mdash; you need it on <code>PATH</code>
+    in a moment, and the failure when it is missing is silent.
+  </p>
+
+  <h3>Build the compiler</h3>
+  <p>
+    Two <code>cargo build</code> commands. The order does not matter and both
+    are needed. The first produces the runtime archive that every compiled
+    Science program links against. The second produces the compiler, with its
+    LLVM backend switched on.
+  </p>
+
+<pre class="shell"><code><span class="p">$</span> <span class="c">git clone https://github.com/Angel-Zeledon/sciencec.git</span>
+<span class="p">$</span> <span class="c">cd sciencec</span>
+<span class="p">$</span> <span class="c">cargo build -p science-rt</span>
+   Compiling science-rt v0.0.1 (/tmp/sciencec/crates/science-rt)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.60s
+<span class="p">$</span> <span class="c">cargo build -p sciencec --features llvm</span>
+   Compiling science-mir v0.0.1 (/tmp/sciencec/crates/science-mir)
+   Compiling science-codegen v0.0.1 (/tmp/sciencec/crates/science-codegen)
+   Compiling salsa-macros v0.28.2
+   Compiling science-regions v0.0.1 (/tmp/sciencec/crates/science-regions)
+   Compiling salsa v0.28.2
+   Compiling science-db v0.0.1 (/tmp/sciencec/crates/science-db)
+   Compiling sciencec v0.0.1 (/tmp/sciencec/crates/sciencec)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 58s</code></pre>
+
+  <p class="note">
+    That is the tail of a build from an empty <code>target/</code> on one
+    laptop: two minutes, with the rest of the workspace scrolling past above the
+    seven lines shown. Both artefacts land in <code>target/debug/</code> &mdash;
+    <code>sciencec</code>, and beside it <code>science_rt.lib</code>, which is
+    where <code>build</code> looks for the runtime.
+  </p>
+
+  <div class="callout">
+    <h3>The two failures that cost an afternoon, and how each one looks</h3>
+    <p>
+      <strong><code>--features llvm</code> is not the default.</strong> Without
+      it the backend compiles to a stub, and <code>build</code> stops at
+      <code>SC0400</code> saying no backend is compiled in. That is deliberate:
+      the workspace has to build for a contributor who has no LLVM installed.
+    </p>
+    <p style="margin-top:0.7rem">
+      <strong><code>cargo build -p science-rt</code> is a separate command
+      because Cargo builds a dependency's <code>rlib</code> and not its
+      <code>staticlib</code>.</strong> Building <code>sciencec</code> does not
+      produce <code>science_rt.lib</code>. Skip it and <code>build</code> stops
+      at <code>SC0402</code> &mdash; the message lists the two directories it
+      searched and names the command that fixes it.
+    </p>
+  </div>
+
+  <h3>Put LLVM on <code>PATH</code>, before anything else</h3>
+  <p>
+    A <code>sciencec</code> built with <code>--features llvm</code> loads DLLs
+    out of LLVM's own <code>bin</code> directory. If that directory is not on
+    <code>PATH</code> the process <strong>exits 127 and prints nothing at
+    all</strong> &mdash; no diagnostic, no usage message, no clue. A script that
+    tests for the absence of an error will call that a pass.
+  </p>
+
+<pre class="shell"><code><span class="p">$</span> <span class="c">export PATH="/c/Program Files/LLVM/bin:$PATH"</span>
+<span class="p">$</span> <span class="c">sciencec --version</span>
+sciencec 0.0.1</code></pre>
+
+  <p class="note">
+    <strong>Check the exit code, never the absence of output.</strong>
+    <code>sciencec check</code> on a clean file prints nothing and exits 0, so
+    "no output" is the success case and the silent-failure case at once.
+    Everything on this page was verified by reading <code>$?</code>, which is
+    also how you should drive it from a script or a CI job.
+  </p>
+
+  <h3>Your first program</h3>
+  <p>
+    A file is a module, and its top-level statements are its program. There is
+    no <code>main</code> to declare and no ceremony to write. Put this in
+    <code>hello.science</code>:
+  </p>
+
+<pre data-science>print("hello, world")
+# hello, world</pre>
+
+<pre class="shell"><code><span class="p">$</span> <span class="c">sciencec check hello.science</span>
+<span class="p">$</span> <span class="c">echo $?</span>
+0
+<span class="p">$</span> <span class="c">sciencec build hello.science</span>
+<span class="p">$</span> <span class="c">./hello</span>
+hello, world
+<span class="p">$</span> <span class="c">echo $?</span>
+0</code></pre>
+
+  <p class="note">
+    The trailing <code># hello, world</code> is this page's convention: a
+    comment at the end of a listing holds that program's real stdout. Comments
+    run from <code>#</code> to the end of the line. Where a listing has no such
+    comment it was checked and not run, and the chapter says why.
+  </p>
+
+  <h3>Write the script form, not <code>main</code></h3>
+  <p>
+    A file may have top-level statements <em>or</em> a <code>main</code>, never
+    both &mdash; two answers to "what runs first" is an error. Both are
+    legitimate Science, and <strong>this tutorial writes every program in the
+    script form</strong>, for one blunt reason:
+  </p>
+
+<pre data-science>def main():
+    print("hello, world")</pre>
+
+<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build an entry point whose `Error?` does not come back through `sret`; stage 1 only knows the two-word interface object
+  = note: this `sciencec` implements &#167;10's stages 0 to 3 of `codegen-and-linking.md` and some of what comes after &mdash; a script body, string literals and `print`, `extern "C"` declarations and the calls to them, the CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, `T?`, and drops of values that own nothing &mdash; and refuses everything else rather than lowering a construct no execution test has ever run
+1 error</code></pre>
+
+  <p>
+    That program <em>checks</em> clean and exits 0. It does not build, today,
+    because the backend's entry-point lowering has not caught up with the
+    declared <code>main</code> form. The script form has no such gap, so it is
+    the one every listing here uses &mdash; and it is also the shorter, better
+    thing to write for a program of this size.
+  </p>
+
+  <div class="callout">
+    <h3>Read this before chapter 2: <code>check</code> and <code>build</code> are far apart</h3>
+    <p>
+      <code>sciencec check</code> runs the entire front end &mdash; lexing,
+      parsing, name resolution, type checking, and the borrow checker. It is
+      complete enough that every listing on this page passes it.
+      <code>sciencec build</code> emits a <strong>real but bounded
+      subset</strong>: the backend admits a construct only once a program using
+      it has been built, linked, run and checked against its expected output,
+      and refuses everything else rather than emitting something nobody has
+      executed.
+    </p>
+    <p style="margin-top:0.7rem">
+      That rule was not free advice. Five silent miscompiles have been caught by
+      running the output rather than reading it. So a program can exit 0 from
+      <code>check</code> and be refused by <code>build</code> with an
+      <code>SC0400</code> that names exactly what it could not lower. Six
+      listings on this page are in that state, each flagged where it appears.
+      When you hit one of your own, the compiler's message is more current than
+      anything written here.
+    </p>
+  </div>
+</section>
+
+<!-- ==================================================================== -->
+<section id="values">
+  <h2>2 &middot; Values and bindings<a class="anchor" href="#values" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    You cannot learn a language whose output you cannot see, so this chapter
+    gets you printing first. It introduces one word, <code>be</code>, that does
+    two jobs, and the string form that lets every later chapter show its work.
+  </p>
+
+  <h3>One word binds, and the same word assigns</h3>
+  <p>
+    <code>let name be value</code> introduces a name. <code>name be value</code>
+    assigns to one that already exists. <code>=</code> is not an assignment
+    operator in Science at all, and writing one is a parse error that names the
+    word you wanted.
+  </p>
+  <p>
+    A binding is immutable unless it says <code>mutable</code>. The type
+    annotation after the name is optional and inferred when you leave it off.
+  </p>
+
+<pre data-science>let celsius be 21.5
+let kelvin be celsius + 273.15
+print(f"{celsius} C is {kelvin} K")
+
+let mutable samples: Int be 0
+samples be samples + 1
+samples be samples + 1
+print(f"{samples} samples")
+# 21.5 C is 294.65 K
+# 2 samples</pre>
+
+  <p>
+    <code>f"&hellip;"</code> is an interpolating string: anything inside braces
+    is an expression, evaluated and rendered into the string. This tutorial
+    leans on it from here on, because it turns any expression into something you
+    can see.
+  </p>
+
+  <div class="callout">
+    <h3>Three things this chapter has to tell you, because you meet all three today</h3>
+    <p>
+      <strong>Print through <code>f"&hellip;"</code>, always.</strong>
+      <code>print(x)</code> where <code>x</code> is not already a
+      <code>String</code> checks clean and does not build: <code>print</code>
+      takes <code>borrowed any Display</code>, and the backend emits no vtables
+      yet. <code>print(f"{x}")</code> goes through the interpolation builder
+      instead and works for every type on this page. It is why you will not see
+      a bare <code>print(n)</code> in any listing here.
+    </p>
+    <p style="margin-top:0.7rem">
+      <strong><code>mutable</code> is not enforced yet.</strong>
+      <code>let n be 0</code> followed by <code>n be 3</code> checks, builds,
+      and prints <code>3</code>. The keyword records your intent and a reader can
+      rely on it; the compiler does not yet. Write it correctly anyway &mdash;
+      the check is coming, and code written without it will not survive it.
+    </p>
+    <p style="margin-top:0.7rem">
+      <strong>Annotate a mutable number you intend to do arithmetic on.</strong>
+      <code>let mutable n be 3</code> then <code>n be n - 1</code> checks clean
+      and then fails to <em>build</em>: the literal's type is left unresolved
+      and the backend refuses a value whose type it does not have.
+      <code>let mutable n: Int be 3</code> builds. That is why every counter on
+      this page carries its type.
+    </p>
+  </div>
+
+  <h3>The primitive types, and the literals that reach them</h3>
+  <p>
+    Science has twelve numeric types and no implicit conversion between any two
+    of them. A literal takes its type from a suffix, from an annotation, or from
+    what it is used with. Converting is always written out, with
+    <code>as</code>, including when it loses precision.
+  </p>
+
+<pre data-science>let counted be 1_000_000
+let mask be 0xFF
+let flags be 0b1010
+let small be 7u8
+let precise be 2.5f32
+let avogadro be 6.02e23
+
+let widened be small as I64
+let truncated be 2.9 as I64
+
+print(f"{counted} {mask} {flags} {small} {precise} {avogadro}")
+print(f"{widened} {truncated}")
+# 1000000 255 10 7 2.5 6.02e23
+# 7 2</pre>
+
+<pre data-science>let label be "station-7"
+let ready be true
+let initial be 's'
+print(f"{label} {ready} {initial}")
+# station-7 true s</pre>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Type</th><th>Suffix</th><th>What it is</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">I8 I16 I32 I64</td><td class="mono">i8 i16 i32 i64</td><td class="what">Signed integers. <code>Int</code> is another name for <code>I64</code>.</td></tr>
+        <tr><td class="mono">U8 U16 U32 U64</td><td class="mono">u8 u16 u32 u64</td><td class="what">Unsigned integers.</td></tr>
+        <tr><td class="mono">F32 F64</td><td class="mono">f32 f64</td><td class="what">Floats. <code>Float</code> is another name for <code>F64</code>.</td></tr>
+        <tr><td class="mono">F16 BF16</td><td class="what">&mdash;</td><td class="what">Half precision. No suffix; reached through an annotation.</td></tr>
+        <tr><td class="mono">Bool</td><td class="what">&mdash;</td><td class="what"><code>true</code> and <code>false</code>.</td></tr>
+        <tr><td class="mono">Char</td><td class="what">&mdash;</td><td class="what">One Unicode scalar, in single quotes: <code>'x'</code>.</td></tr>
+        <tr><td class="mono">String</td><td class="what">&mdash;</td><td class="what">An owned, growable string. Literals are <code>"&hellip;"</code>.</td></tr>
+        <tr><td class="mono">()</td><td class="what">&mdash;</td><td class="what">Unit. One value, written <code>()</code>. What a function with no result returns.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    Two wrinkles worth knowing before they cost you ten minutes.
+    <code>Int</code> and <code>I64</code> are the same type but are not yet
+    interchangeable everywhere in the checker: a function declared
+    <code>-&gt; I64</code> whose body returns a <code>String.length()</code> is
+    <code>SC0525</code>, because <code>length</code> is declared
+    <code>Int</code> &mdash; match the spelling the other side uses. And in the
+    <em>backend</em> the aliases are not equal either: a value annotated
+    <code>F64</code> builds where the same value annotated <code>Float</code>
+    does not. The <code>String</code> methods &mdash;
+    <code>String.new()</code>, <code>push_str</code>, <code>length</code>,
+    <code>is_empty</code> &mdash; all check and none of them build yet, which is
+    why every string on this page is a literal.
+  </p>
+
+  <h3>Where Python is better at this, and it is not close</h3>
+  <div class="two">
+    <div>
+      <h3>Python</h3>
+<pre class="foreign">counted = 1_000_000
+small = 7
+huge = 2 ** 200      # exact
+share = counted / 7</pre>
+    </div>
+    <div>
+      <h3>Science</h3>
+<pre class="foreign">let counted be 1_000_000
+let small be 7u8
+# no arbitrary precision
+let share be counted / 7</pre>
+    </div>
+  </div>
+  <p>
+    Python has one integer type and one float type. The integer is arbitrary
+    precision, so <code>2 ** 200</code> is exact and nothing overflows, and
+    there is no suffix to learn and no <code>as</code> to write. For a script
+    that adds two numbers together, <strong>Python is strictly less to know and
+    cannot get the wrong answer by silent truncation</strong>. That is a real
+    advantage and not a small one.
+  </p>
+  <p>
+    What Science buys with the twelve types is that an <code>F32</code> array is
+    four bytes an element because you said so, and a <code>U8</code> pixel
+    buffer is one. That trade is only worth taking when the size of the thing in
+    memory is part of the problem you are solving. If it is not, Python is the
+    better tool, and this page would rather say so than pretend otherwise.
+  </p>
+
+  <h3>Three mistakes you will make in the first hour</h3>
+  <p>
+    Each of these is a real diagnostic, produced by writing the program and
+    running <code>check</code>. Read the <code>help:</code> line &mdash; where a
+    mechanical fix exists, the compiler carries the replacement text, so an
+    editor or an agent can apply it without reading the prose.
+  </p>
+
+<pre data-science>let n be 3
+if n == 3:
+    print("three")</pre>
+
+<pre class="err"><code><span class="e-code">error[SC0016]</span>: equality is written `is`
+ --&gt; equality.science:2:6
+  |
+2 | if n == 3:
+  |      <span class="e-hi">^^</span> `==` is not an operator in Science
+  |
+  = note: there is one spelling for each comparison: `is` and `is not` for identity, and `&gt;`, `&lt;`, `&gt;=`, `&lt;=` for order
+  = <span class="e-help">help: write the word instead: `is`</span>
+1 error</code></pre>
+
+  <p>
+    Identity is written with words and order with symbols, and neither has an
+    alternative. <code>a is b</code>, <code>a is not b</code>,
+    <code>a &gt; b</code>, <code>a &lt;= b</code>. Mixing them in one expression
+    is normal and correct: <code>if name is not "" and hits &gt;= 10:</code>.
+  </p>
+
+<pre data-science>let label be "station-7"
+print(f"{label.length}")</pre>
+
+<pre class="err"><code><span class="e-code">error[SC0528]</span>: `String` has no field `length`
+ --&gt; field.science:2:16
+  |
+2 | print(f"{label.length}")
+  |                <span class="e-hi">^^^^^^</span> no such field
+1 error</code></pre>
+
+  <p>
+    <strong>Parentheses mean call; their absence means a field.</strong> There
+    is no uniform access in Science and no property syntax:
+    <code>label.length()</code> is a method call, <code>label.length</code> is a
+    field access, and they are different things the compiler will not guess
+    between. This rule is absolute, and it is the one Python and JavaScript
+    arrivals trip over most.
+  </p>
+
+<pre data-science>let shape be 3
+print(f"{shape}")</pre>
+
+<pre class="err"><code><span class="e-code">error[SC0102]</span>: expected an identifier, found `shape`, which is reserved for a later phase
+ --&gt; reserved.science:1:5
+  |
+1 | let shape be 3
+  |     <span class="e-hi">^^^^^</span> expected an identifier, found `shape`, which is reserved for a later phase
+
+<span class="e-code">error[SC0105]</span>: expected an expression, found `shape`, which is reserved for a later phase
+ --&gt; reserved.science:2:10
+  |
+2 | print(f"{shape}")
+  |          <span class="e-hi">^^^^^</span> expected an expression, found `shape`, which is reserved for a later phase
+2 errors</code></pre>
+
+  <p>
+    Some words are held for phases the language has not reached. The ones you
+    are most likely to reach for in this domain are <code>shape</code>,
+    <code>model</code>, <code>tensor</code>, <code>mod</code>,
+    <code>kernel</code>, <code>yield</code>, <code>union</code>,
+    <code>assert</code> and <code>import</code>. Write <code>dims</code>,
+    <code>weights</code>, <code>values</code>, <code>remainder</code>,
+    <code>window</code>, <code>produced</code>, <code>merged</code>,
+    <code>check</code>. Deliberately <em>not</em> reserved, because they are
+    what this audience actually types: <code>grad</code>, <code>dim</code>,
+    <code>dims</code>, <code>axis</code>, <code>device</code>,
+    <code>dtype</code>, <code>unit</code>, <code>alias</code>. The full tables
+    are on <a href="syntax.html#words">the syntax page</a>.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="control">
+  <h2>3 &middot; Control flow<a class="anchor" href="#control" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    Blocks are indentation, opened by a <code>:</code>. There is no
+    <code>while</code>. There are two loops and a conditional, and the
+    conditional is an expression &mdash; which removes most of the reasons you
+    would otherwise reach for a mutable variable.
+  </p>
+
+  <h3><code>if</code>, and the inline form</h3>
+  <p>
+    An <code>if</code> may have an indented body, or a body written inline after
+    the <code>:</code>. The inline body ends <em>where the expression ends</em>,
+    not at the end of the line &mdash; which is why <code>if a: b else: c</code>
+    parses at all. <code>else</code> cannot continue an expression, so the
+    then-branch is finished the moment the parser meets it. "Fits on one line" is
+    a consequence of that rule, not the rule itself.
+  </p>
+  <p>
+    An <code>if</code> has a value, so it can be the whole body of a function.
+  </p>
+
+<pre data-science>def band(celsius: F64) -&gt; I64:
+    if celsius &lt; 0.0:
+        return 0i64
+    if celsius &lt; 25.0: 1i64 else: 2i64
+
+print(f"{band(-4.0)} {band(21.5)} {band(40.0)}")
+# 0 1 2</pre>
+
+  <p class="note">
+    An inline body may be an expression, an assignment, or <code>return</code>,
+    <code>break</code> or <code>continue</code>. It may <strong>not</strong> be
+    a <code>let</code>, which would bind a name nothing could then use. A
+    dangling <code>else</code> binds to the innermost <code>if</code>, and that
+    is a language rule rather than an artefact of how the parser is written.
+  </p>
+
+  <h3><code>loop</code>, <code>break</code>, <code>continue</code></h3>
+  <p>
+    <code>loop:</code> runs its body until something breaks out. It takes no
+    condition. A condition goes in the body, negated, as the first statement.
+  </p>
+
+<pre data-science>let mutable reading: Int be 5
+loop:
+    if reading &lt;= 0:
+        break
+    if reading is 3:
+        reading be reading - 1
+        continue
+    print(f"reading {reading}")
+    reading be reading - 1
+print("done")
+# reading 5
+# reading 4
+# reading 2
+# reading 1
+# done</pre>
+
+  <h3>Where <code>while</code> would have been better, and it would have</h3>
+  <div class="two">
+    <div>
+      <h3>Python</h3>
+<pre class="foreign">while reading &gt; 0:
+    print(reading)
+    reading -= 1</pre>
+    </div>
+    <div>
+      <h3>Science</h3>
+<pre class="foreign">loop:
+    if reading &lt;= 0:
+        break
+    print(f"{reading}")
+    reading be reading - 1</pre>
+    </div>
+  </div>
+  <p>
+    <strong>Python's header states the loop's condition in the one place a
+    reader looks for it, in the positive, in four words.</strong> Science spends
+    three lines, buries the condition one line inside the body, and makes you
+    negate it &mdash; and negating a condition is where off-by-one bugs come
+    from. For this loop Python is plainly better and nothing about the Science
+    version is an improvement.
+  </p>
+  <p>
+    What <code>loop</code> buys is that there is exactly one unbounded loop
+    form, so a reader never has to work out whether a given loop tests at the
+    top or the bottom, and a loop that is really a count is pushed into the
+    range form below, where it belongs. Whether that is worth three lines is a
+    judgement. The compiler at least tells you which word it wants:
+  </p>
+
+<pre data-science>let mutable i: Int be 0
+while i &lt; 3:
+    i be i + 1</pre>
+
+<pre class="err"><code><span class="e-code">error[SC0142]</span>: the unbounded loop is written `loop`
+ --&gt; loopword.science:2:1
+  |
+2 | while i &lt; 3:
+  | <span class="e-hi">^^^^^^^^^^^</span> `while` is not a keyword in Science, and `loop` takes no condition
+  |
+  = note: end it with the condition negated: make `if not …: break` the first statement of the body, or write a count as a range, `for i in 0..n:`
+  = <span class="e-help">help: open the loop with: `loop`</span>
+1 error</code></pre>
+
+  <h3><code>for &hellip; in</code>, over a range or a collection</h3>
+  <p>
+    A count is a range. <code>0..n</code> is half-open and stops one short of
+    <code>n</code>; <code>0..=n</code> includes it. Either end may be any
+    expression. The same <code>for</code> walks a collection.
+  </p>
+
+<pre data-science>let mutable total: Int be 0
+for i in 0..5:
+    total be total + i
+print(f"{total}")</pre>
+
+  <div class="callout">
+    <h3>That listing checks and does not build &mdash; the second of six on this page</h3>
+    <p>
+      <code>sciencec check</code> exits 0 on it. <code>sciencec build</code>
+      refuses it, because the front end leaves the loop's range and iterator
+      temporaries untyped and the backend will not emit a value whose type it
+      does not have. Verbatim:
+    </p>
+  </div>
+
+<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build a value the front end left untyped: its `Ty` is `TyKind::Error` and no diagnostic was reported for it. The three this compiler has met are a call to `print` or `write`, whose signatures `science-resolve`'s `builtins.rs` withdrew; a `for` loop's range and iterator temporaries; and a discriminant temporary, which is handled rather than refused
+  = note: this `sciencec` implements &#167;10's stages 0 to 3 of `codegen-and-linking.md` and some of what comes after &mdash; a script body, string literals and `print`, `extern "C"` declarations and the calls to them, the CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, `T?`, and drops of values that own nothing &mdash; and refuses everything else rather than lowering a construct no execution test has ever run
+1 error</code></pre>
+
+  <p>
+    That note is worth reading once, slowly. It is the boundary this whole page
+    is written against, and it is the compiler's own list rather than somebody's
+    summary of one. <strong>Until the range temporaries are typed, write a
+    counting loop as a <code>loop</code> with an annotated counter</strong>
+    &mdash; which is what the listing above it does, and that one builds and
+    runs.
+  </p>
+
+  <p class="note">
+    <code>break</code> and <code>continue</code> end or skip the innermost loop,
+    and read the same over a range as over a collection. There is no labelled
+    break.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="functions">
+  <h2>4 &middot; Functions<a class="anchor" href="#functions" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    <code>def</code> declares a function. A parameter's type is mandatory; the
+    return type follows <code>-&gt;</code> and is omitted when there is nothing
+    to return. The body's last expression is the function's value, and
+    <code>return</code> exists for leaving early.
+  </p>
+
+  <h3>The four things a signature says</h3>
+  <p>
+    Read <code>def kelvin(celsius: F64) -&gt; F64:</code> as: the name, the
+    parameters with their types, what comes back, and &mdash; from
+    <a href="#ownership">chapter 7</a> onwards &mdash; whether each parameter is
+    taken or borrowed. That last piece is what makes a Science signature carry
+    more than most, and it is why <code>borrowed</code> appears below before it
+    has been explained.
+  </p>
+
+<pre data-science>def kelvin(celsius: F64) -&gt; F64:
+    celsius + 273.15
+
+def announce(label: borrowed String):
+    print(f"--- {label} ---")
+
+def safe_band(celsius: F64) -&gt; I64:
+    if celsius &lt; -273.15:
+        return -1i64
+    if celsius &lt; 25.0: 1i64 else: 2i64
+
+announce("readings")
+print(f"{kelvin(21.5)}")
+print(f"{safe_band(-300.0)} {safe_band(21.5)}")
+# --- readings ---
+# 294.65
+# -1 1</pre>
+
+  <p>
+    <code>announce</code> has no <code>-&gt;</code>, so it returns unit,
+    <code>()</code>. Writing <code>-&gt; ()</code> means the same thing.
+    <code>kelvin</code> has no <code>return</code>: its last expression is its
+    value, which is the ordinary way to write a function that computes one
+    thing.
+  </p>
+
+  <p class="note">
+    <strong>A function cannot read a script binding.</strong> The top-level
+    statements of a file are a body of their own, and the names they bind are
+    local to it; a <code>def</code> sees other items &mdash; functions, types,
+    choices, constants &mdash; and its own parameters, and nothing else. That is
+    why everything a function needs above is passed in.
+  </p>
+
+  <h3>The strict <code>()</code> rule</h3>
+  <p>
+    This came up in chapter 2 as a mistake. Here is the rule it comes from.
+    <strong>A call always takes parentheses, and their absence always means a
+    field.</strong> <code>text.length()</code> calls a method;
+    <code>doc.title</code> reads a field; <code>doc.title()</code> would call a
+    method named <code>title</code>, which is a different thing that may not
+    exist. There is no form in which the parentheses are optional &mdash; not
+    for a zero-argument method, not for a method used as a value, not anywhere.
+  </p>
+  <p>
+    The payoff is that you can tell from the call site alone, with no knowledge
+    of the type, whether a line runs code. That matters for reading code you did
+    not write, which is most code.
+  </p>
+
+  <h3>Where Ruby is better at this</h3>
+  <div class="two">
+    <div>
+      <h3>Ruby</h3>
+<pre class="foreign">class Doc
+  attr_reader :title
+  def width = title.length
+end
+
+doc.title      # a field today
+doc.width      # a method today
+               # callers cannot tell,
+               # and do not need to</pre>
+    </div>
+    <div>
+      <h3>Science</h3>
+<pre class="foreign">type Doc:
+    title: String
+
+Doc has:
+    def width(self) -&gt; Int:
+        self.title.length()
+
+doc.title        # a field, forever
+doc.width()      # a method, forever</pre>
+    </div>
+  </div>
+  <p>
+    <strong>Ruby's uniform access principle is a genuinely better property for a
+    library author.</strong> A field can become a computed method without
+    touching a single caller, so the public surface of a type is not frozen by
+    the day-one decision about how a value is stored. In Science that change is
+    a breaking change: every <code>doc.title</code> has to become
+    <code>doc.title()</code>.
+  </p>
+  <p>
+    Science takes the other side because the cost lands on a different person.
+    Ruby moves it from the library author to every reader, who now cannot tell
+    whether a line is a memory read or an arbitrary amount of work &mdash; which
+    in numerical code, inside a loop, is the difference that matters. Neither
+    answer is free. This one is at least visible from the call site.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="types">
+  <h2>5 &middot; Your own types<a class="anchor" href="#types" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    Two declarations cover the shapes data takes. <code>type</code> is a record
+    &mdash; a value with named fields, all present at once. <code>choice</code>
+    is a sum &mdash; a value that is exactly one of several named cases. A
+    third, <code>has</code>, hangs functions off a type.
+  </p>
+
+  <h3><code>type</code>: a record</h3>
+  <p>
+    Fields are declared one per line under the name. Construction takes
+    <strong>named arguments, all of them mandatory, in any order</strong>. There
+    is no positional form and no partial construction, so a record that exists
+    has every field. A field is read with <code>.</code> and no parentheses.
+  </p>
+
+  <h3><code>choice</code>: one of several cases</h3>
+  <p>
+    Variants are listed one per line. A variant may carry a positional payload
+    or nothing at all. It may be named bare or qualified by its type &mdash;
+    <code>Ground</code> and <code>Station.Ground</code> mean the same thing, and
+    the qualified form is what disambiguates when two choices in scope share a
+    variant name.
+  </p>
+
+<pre data-science>type Reading:
+    sample: I64
+    celsius: F64
+
+choice Station:
+    Ground
+    Balloon(F64)
+    Buoy(F64, F64)
+
+def kelvin(r: borrowed Reading) -&gt; F64:
+    r.celsius + 273.15
+
+def altitude(station: Station) -&gt; F64:
+    match station:
+        Ground: 0.0
+        Balloon(metres): metres
+        Buoy(latitude, longitude): 0.0
+
+let r be Reading(sample: 1i64, celsius: 21.5)
+print(f"sample {r.sample} at {r.celsius} C = {kelvin(r)} K")
+print(f"{altitude(Balloon(1200.0))} {altitude(Ground)}")
+# sample 1 at 21.5 C = 294.65 K
+# 1200.0 0.0</pre>
+
+  <p>
+    <code>match</code> is the next chapter. It appears here because there is no
+    other way to get at a <code>choice</code>'s payload, and a chapter that
+    introduced <code>choice</code> without showing you how to read one would be
+    teaching half a construct.
+  </p>
+
+  <h3><code>has</code>: methods and associated functions</h3>
+  <p>
+    A <code>Type has:</code> block holds functions that belong to the type and
+    come from no interface. One whose first parameter is <code>self</code> is a
+    method, called as <code>value.name()</code>. One with no <code>self</code>
+    is an associated function, called through the type as
+    <code>Type.name()</code> &mdash; which is how a type gets a constructor.
+  </p>
+
+<pre data-science>type Reading:
+    sample: I64
+    celsius: F64
+
+Reading has:
+    def at(sample: I64, celsius: F64) -&gt; Reading:
+        Reading(sample: sample, celsius: celsius)
+
+    def kelvin(self) -&gt; F64:
+        self.celsius + 273.15
+
+let r be Reading.at(1i64, 21.5)
+print(f"{r.kelvin()}")</pre>
+
+  <div class="callout">
+    <h3>That listing checks and does not build &mdash; the third of six</h3>
+    <p>
+      Methods are the construct being worked on right now, and today the
+      backend cannot resolve the receiver. <code>check</code> exits 0 &mdash;
+      the method is found, the receiver is typed, the borrow checker runs
+      &mdash; and <code>build</code> stops here:
+    </p>
+  </div>
+
+<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build a call to the method `kelvin`: its receiver is a `Self` this crate cannot resolve to a concrete type, and Decision 11's method lookup does not put what it found in the tree
+  = note: this `sciencec` implements &#167;10's stages 0 to 3 of `codegen-and-linking.md` and some of what comes after &mdash; a script body, string literals and `print`, `extern "C"` declarations and the calls to them, the CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, `T?`, and drops of values that own nothing &mdash; and refuses everything else rather than lowering a construct no execution test has ever run
+1 error</code></pre>
+
+  <p>
+    <strong>Write methods anyway</strong> &mdash; they are the right way to
+    organise a type and they type-check today. But if you want a program that
+    runs this week, a free function taking <code>borrowed Reading</code> does
+    the same job and builds, which is why the listing above it is written that
+    way.
+  </p>
+
+  <p class="note">
+    <strong>A record whose fields are numbers builds and runs; one with a
+    <code>String</code> field does not.</strong> Storing a string into a record
+    needs an owned allocation the backend has no slot for yet. It
+    <em>checks</em> clean. Every record on this page is numeric for that reason,
+    not because records are meant to be.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Written</th><th>Means</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">type Reading:</td><td class="what">A record. Fields indented under it, one per line.</td></tr>
+        <tr><td class="mono">type Celsius is F64</td><td class="what">A type <em>alias</em>. A different declaration, told apart by <code>is</code>.</td></tr>
+        <tr><td class="mono">choice Station:</td><td class="what">A sum type. Variants indented under it, one per line.</td></tr>
+        <tr><td class="mono">Reading(sample: 1i64, celsius: 21.5)</td><td class="what">Construction. Named, mandatory, any order.</td></tr>
+        <tr><td class="mono">Balloon(1200.0)</td><td class="what">A variant with a payload. Positional, because a variant's payload is.</td></tr>
+        <tr><td class="mono">Reading has:</td><td class="what">Inherent functions. A <code>self</code> first parameter makes it a method.</td></tr>
+        <tr><td class="mono">type Pair of (A, B):</td><td class="what">Generic parameters. Two or more take parentheses; see <a href="#interfaces">chapter 9</a>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ==================================================================== -->
+<section id="match">
+  <h2>6 &middot; <code>match</code>, patterns, exhaustiveness<a class="anchor" href="#match" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    <code>match</code> takes a value and a list of patterns and produces the
+    body of the first pattern that fits. It is an expression, so it has a value.
+    And it is <strong>exhaustive</strong>: if there is a value no arm covers,
+    that is a compile error rather than a silent fall-through, and the error
+    names the value you forgot.
+  </p>
+
+  <h3>The pattern forms</h3>
+  <p>
+    A pattern is a variant with its payload bound to names, a literal, a tuple
+    of patterns, a record with its fields named, a bare name that catches
+    everything and binds it, or <code>_</code> which catches everything and
+    binds nothing. Alternatives are joined with <code>|</code>. An arm's body is
+    inline after the <code>:</code>, or indented under it.
+  </p>
+
+<pre data-science>choice Station:
+    Ground
+    Balloon(F64)
+    Buoy(F64, F64)
+
+def altitude(station: Station) -&gt; F64:
+    match station:
+        Ground: 0.0
+        Balloon(metres): metres
+        Buoy(latitude, longitude): 0.0
+
+def quadrant(point: (I64, I64)) -&gt; I64:
+    match point:
+        (0, 0): 0i64
+        (x, 0): 1i64
+        (0, y): 2i64
+        (_, _): 3i64
+
+def band(n: I64) -&gt; I64:
+    match n:
+        0 | 1 | 2: 0i64
+        3 | 4: 1i64
+        _: 2i64
+
+print(f"{altitude(Balloon(1200.0))}")
+print(f"{quadrant((0i64, 3i64))}")
+print(f"{band(4i64)} {band(9i64)}")
+# 1200.0
+# 2
+# 1 2</pre>
+
+  <p class="note">
+    Both <code>altitude</code> functions on this page take <code>Station</code>
+    by value rather than <code>borrowed Station</code>, and that is the
+    backend's constraint rather than the language's: a <code>match</code> on a
+    borrowed choice checks clean and does not build, because reading the
+    discriminant through a borrow is a lowering the backend has not run. Take
+    the choice by value until it does.
+  </p>
+
+  <h3>What the compiler says when an arm is missing</h3>
+  <p>
+    Delete the <code>Buoy</code> arm and the program stops compiling. The
+    diagnostic does not say "non-exhaustive"; it names the shape of the value
+    that has no answer, so you can paste it back in as the arm you need.
+  </p>
+
+<pre data-science>choice Station:
+    Ground
+    Balloon(F64)
+    Buoy(F64, F64)
+
+def altitude(station: Station) -&gt; F64:
+    match station:
+        Ground: 0.0
+        Balloon(metres): metres
+
+print(f"{altitude(Ground)}")</pre>
+
+<pre class="err"><code><span class="e-code">error[SC0250]</span>: `Station` has a value no arm of this `match` covers: `Buoy(_, _)`
+ --&gt; missing_arm.science:7:11
+  |
+7 |     match station:
+  |           <span class="e-hi">^^^^^^^</span> this is `Station`
+  |
+  = note: a `match` answers for every value or the program has no answer for the rest (&#167;4.5); write an arm for `Buoy(_, _)` — or a `_` arm, which covers everything the arms above leave
+1 error</code></pre>
+
+  <p>
+    <strong>This is the property that makes <code>choice</code> worth
+    using.</strong> Add a fourth variant to <code>Station</code> six months from
+    now and every <code>match</code> in the program that does not handle it
+    fails to compile, by name, with a file and a line. A <code>_</code> arm
+    switches that off, which is sometimes right and is always a decision you
+    made on purpose.
+  </p>
+
+  <h3>Where Rust is better: there are no pattern guards</h3>
+  <div class="two">
+    <div>
+      <h3>Rust</h3>
+<pre class="foreign">match reading {
+    n if n &lt; 0   =&gt; "below",
+    n if n &lt; 25  =&gt; "mild",
+    _            =&gt; "hot",
+}</pre>
+    </div>
+    <div>
+      <h3>Science</h3>
+<pre class="foreign">match reading:
+    n:
+        if n &lt; 0: "below"
+        else: if n &lt; 25: "mild"
+        else: "hot"</pre>
+    </div>
+  </div>
+  <p>
+    Rust lets a condition live in the pattern column, so a <code>match</code>
+    stays a table you read down: every line is <em>test on the left, result on
+    the right</em>. Science has no guard &mdash; <code>n if n &gt; 0:</code> is a
+    parse error &mdash; so the condition moves into the arm body and the table
+    collapses into one arm with an <code>if</code> chain inside it.
+    <strong>For a match whose cases are numeric ranges rather than variants,
+    Rust reads better, and the Science version is worse than the plain
+    <code>if</code> chain it is pretending not to be.</strong>
+  </p>
+  <p>
+    There is no <code>@</code> binding either, so you cannot name the whole
+    value and destructure it in the same pattern. Both absences are on the
+    syntax page's list, with the diagnostic each one currently produces.
+  </p>
+
+  <p class="note">
+    An arm may also not produce a value at all. <code>panic("…")</code> has type
+    <code>Never</code>, which fits wherever a value is wanted, so one arm can
+    bail out while the others produce an <code>F64</code>.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="ownership">
+  <h2>7 &middot; Ownership<a class="anchor" href="#ownership" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    This is the chapter the language is for. Science has no garbage collector
+    and no reference counting: every value has exactly one owner, and the
+    compiler releases it at a program point it can name. What is unusual is not
+    that rule &mdash; Rust has it &mdash; but that <strong>you never write a
+    region, ever, anywhere</strong>. There is no lifetime syntax in the grammar
+    to write, so there is nothing to elide and nothing to get wrong.
+  </p>
+
+  <h3>The rules, in the order you will meet them</h3>
+  <ol>
+    <li>Every value has one owner.</li>
+    <li>Assigning, passing or returning a value <strong>moves</strong> it: the old name is empty afterwards.</li>
+    <li>A type that implements <code>Copy</code> is duplicated instead of moved.</li>
+    <li>A value may be borrowed <strong>shared</strong> any number of times, or <strong>exclusively</strong> once, never both at once.</li>
+    <li>No borrow outlives what it points at.</li>
+    <li>Leaving scope destroys the value, running <code>Drop</code> if it has one.</li>
+  </ol>
+
+  <h3>A move, and what it costs you</h3>
+  <p>
+    A <code>String</code> owns a heap allocation, so passing one to a function
+    hands over that allocation. The function now owns it, and the caller's name
+    is empty. Here is the same call written twice:
+  </p>
+
+<pre data-science>def announce(label: String):
+    print(f"--- {label} ---")
+
+let label be "station-7"
+announce(label)
+announce(label)</pre>
+
+<pre class="err"><code><span class="e-code">error[SC0301]</span>: use of a moved value
+ --&gt; moved.science:6:1
+  |
+5 | announce(label)
+  | <span class="e-hi">---------------</span> `label` is moved here
+6 | announce(label)
+  | <span class="e-hi">^^^^^^^^^^^^^^^</span> ...and moved again here, after the move
+  |
+  = note: every value has one owner, and assigning, passing or returning it transfers that owner (&#167;6.1 rules 1 and 2), so the name is empty afterwards (rule 3)
+  = note: borrow at the earlier use instead of moving, or give the second use a value of its own; a type that is not `Copy` is never copied implicitly
+1 error</code></pre>
+
+  <p>
+    <strong>Read the three parts.</strong> The dashes on line 5 are where
+    ownership left. The carets on line 6 are where it was needed again. The
+    first note states the rule that was broken and cites it. The second offers
+    the two fixes, and the first of them is the one you want here:
+    <code>announce</code> does not need to own the label, it only needs to read
+    it. Say so in the signature.
+  </p>
+
+<pre data-science>def announce(label: borrowed String):
+    print(f"--- {label} ---")
+
+let label be "station-7"
+announce(label)
+announce(label)
+# --- station-7 ---
+# --- station-7 ---</pre>
+
+  <p>
+    One word changed, in one place, and it is in the <em>signature</em> rather
+    than at either call site. That is the second half of the design:
+    <strong>a parameter declared <code>borrowed</code> is borrowed for you at
+    the call site.</strong> You write <code>announce(label)</code>, not
+    <code>announce(borrowed label)</code>. The signature still says which it is,
+    so a reader keeps the information and only the noise goes. You write
+    <code>borrowed</code> yourself where the position is not a call site &mdash;
+    constructing a record that holds a borrow, for instance, or binding one
+    directly.
+  </p>
+
+  <h3>Shared and exclusive</h3>
+  <p>
+    <code>borrowed T</code> is a shared borrow: read-only, and any number may
+    coexist. <code>mutable borrowed T</code> is exclusive: it may write, and
+    while it is alive nothing else may touch the value at all. Assignment
+    through a borrow is written plainly, because Science has no dereference
+    operator &mdash; <code>r.celsius be r.celsius + 1i64</code> reads and writes
+    through the borrow with nothing written for it.
+  </p>
+
+<pre data-science>type Reading:
+    celsius: I64
+
+def warm(r: mutable borrowed Reading):
+    r.celsius be r.celsius + 1i64
+
+def report(r: borrowed Reading) -&gt; I64:
+    r.celsius
+
+let mutable r be Reading(celsius: 21i64)
+warm(r)
+warm(r)
+print(f"{report(r)}")
+# 23</pre>
+
+  <h3>The error that settles the whole bet</h3>
+  <p>
+    Rule 4 is the one that is hard to get right without annotations, so it is
+    the one worth watching the compiler enforce. This program takes a shared
+    borrow of <code>r</code>, then writes through <code>r</code> itself while
+    that borrow is still going to be used.
+  </p>
+
+<pre data-science>type Reading:
+    celsius: I64
+
+let mutable r be Reading(celsius: 21i64)
+let snapshot be borrowed r
+r.celsius be 22i64
+print(f"{snapshot.celsius}")</pre>
+
+<pre class="err"><code><span class="e-code">error[SC0330]</span>: `r` is borrowed here and modified before the borrow ends
+ --&gt; overlap.science:6:14
+  |
+5 | let snapshot be borrowed r
+  |                 <span class="e-hi">----------</span> `r` is borrowed here, shared
+6 | r.celsius be 22i64
+  |              <span class="e-hi">^^^^^</span> ...and modified here, which needs it exclusively
+7 | print(f"{snapshot.celsius}")
+  |       <span class="e-hi">---------------------</span> the first borrow is still needed here
+  |
+  = note: a shared borrow and an exclusive one cannot overlap (&#167;6.1 rule 4)
+  = note: the borrow ends at its last use, so moving the last use above the conflicting line is enough; binding what is needed before it is the other fix
+1 error</code></pre>
+
+  <p>
+    <strong>Read this one line by line, because it is the whole argument.</strong>
+  </p>
+  <ul>
+    <li>
+      <strong>Line 5 is where the borrow is born.</strong> Not where
+      <code>r</code> is declared &mdash; where this particular borrow starts.
+      Nothing in the source says so; the compiler worked it out.
+    </li>
+    <li>
+      <strong>Line 6 is the violation</strong>, and the caret is on the
+      <em>write</em>, not on a second borrow. Writing a place something else
+      holds shared is what rule 4 forbids, and the message names which kind of
+      access each side needed.
+    </li>
+    <li>
+      <strong>Line 7 is the load-bearing one.</strong> "The first borrow is
+      still needed here" is <em>why</em> line 6 is an error at all. A borrow
+      ends at its last use, not at the end of the block, so the compiler had to
+      find that last use before it could know the two overlapped. Delete line 7
+      and the program compiles.
+    </li>
+    <li>
+      <strong>The fix is a reordering, and the compiler says which one.</strong>
+      Move the last use above the conflicting line. That is not generated from a
+      template; it is a consequence of the same analysis that produced the third
+      span.
+    </li>
+  </ul>
+
+<pre data-science>type Reading:
+    celsius: I64
+
+let mutable r be Reading(celsius: 21i64)
+let snapshot be borrowed r
+print(f"{snapshot.celsius}")
+r.celsius be 22i64
+print(f"{r.celsius}")
+# 21
+# 22</pre>
+
+  <p>
+    <strong>Now count the annotations in everything above: there are
+    none.</strong> No <code>'a</code>, no <code>&lt;'a, 'b&gt;</code>, no
+    <code>where 'b: 'a</code>. Three spans across three lines, a rule citation
+    and a mechanical fix &mdash; and the only thing you wrote was the word
+    <code>borrowed</code> in a signature. That is the claim the language is
+    built on, and this diagnostic is where you can check it rather than take it.
+  </p>
+
+  <h3>Where Java and Python are better, and for most programs they are</h3>
+  <div class="two">
+    <div>
+      <h3>Python</h3>
+<pre class="foreign">snapshot = reading
+reading.celsius = 22
+print(snapshot.celsius)
+# prints 22. No error, ever.
+# The GC decides when to free.</pre>
+    </div>
+    <div>
+      <h3>Science</h3>
+<pre class="foreign">let snapshot be borrowed r
+r.celsius be 22i64
+print(f"{snapshot.celsius}")
+# SC0330. Reorder, or copy.
+# Freed at a point you can name.</pre>
+    </div>
+  </div>
+  <p>
+    <strong>A garbage collector is the better answer for most programs, and this
+    page will not pretend otherwise.</strong> You never write
+    <code>borrowed</code>, never reorder two lines to satisfy a checker, never
+    read <code>SC0330</code>, and nothing you write can use memory after it is
+    freed. The cost is a pause you cannot schedule and a heap you cannot
+    predict, and for an enormous amount of software neither of those costs
+    anything at all.
+  </p>
+  <p>
+    They cost something when you are holding a forty-gigabyte array on a node
+    you are billed for by the second, which is the situation this language is
+    designed for. That is a narrow claim and it is the honest one. Notice also
+    what the Python column is <em>not</em> doing: it is not copying. Both
+    languages hand you a second name for the same object here and both print
+    through it. The only difference is that one of them checks that the first
+    name has not moved out from under you.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="errors">
+  <h2>8 &middot; Absence and failure<a class="anchor" href="#errors" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    Two different problems, deliberately given two different shapes. A value
+    that <em>might not be there</em> has a nullable type, <code>T?</code>. An
+    operation that <em>might fail</em> returns what it produced <em>and</em>
+    what went wrong, as a pair. There is no exception, no <code>try</code>, and
+    no stack unwinding.
+  </p>
+
+  <h3>Absence: <code>T?</code> and the postfix <code>?</code></h3>
+  <p>
+    <code>Int?</code> is a type whose values are the <code>Int</code>s and
+    <code>null</code>. There is nothing to wrap and nothing to unwrap. The one
+    operation it has is the postfix <code>?</code>, which asks whether a value
+    is there and evaluates to a <code>Bool</code>.
+  </p>
+
+<pre data-science>let mutable measured: Int? be null
+print(f"{measured?}")
+measured be 42
+print(f"{measured?}")
+# false
+# true</pre>
+
+  <p>
+    <code>?</code> produces a <code>Bool</code> and never the value, which is
+    why that prints <code>false</code> and <code>true</code> rather than
+    <code>null</code> and <code>42</code>. You reach the value by
+    <strong>narrowing</strong>: inside <code>if measured?:</code> the compiler
+    knows <code>measured</code> is not null, so you write <code>measured</code>
+    and use it as an <code>Int</code>, with no cast and no unwrap.
+  </p>
+
+  <h3>Failure: the <code>(T, Error?)</code> pair</h3>
+  <p>
+    A function that can fail returns two things: the value it produced, and an
+    error that is <code>null</code> when nothing went wrong. The caller unpacks
+    both with one <code>let</code>, tests the error with <code>?</code>, and
+    handles it before touching the value.
+  </p>
+
+<pre data-science>choice PortError:
+    Missing
+    NotANumber(Int)
+
+def parse_port(text: borrowed String) -&gt; (Int, PortError?):
+    if text.is_empty():
+        return (0, PortError.Missing)
+    if text is not "8080":
+        return (0, PortError.NotANumber(text.length()))
+    (8080, null)
+
+def explain(err: PortError) -&gt; String:
+    match err:
+        Missing: "no port was given"
+        NotANumber(n): "the port is not a number"
+
+let port, err be parse_port("")
+if err?:
+    print(explain(err))
+else:
+    print(f"{port}")</pre>
+
+  <div class="callout">
+    <h3>That listing checks and does not build &mdash; the fourth of six</h3>
+    <p>
+      It exits 0 from <code>check</code>, exhaustiveness test and narrowing and
+      all. <code>build</code> stops at the first <code>String</code> method:
+      <em>"cannot build a call to <code>is_empty</code>, which this crate was
+      given no MIR body for"</em>. Write error handling this way; you cannot run
+      it yet.
+    </p>
+  </div>
+
+  <p>
+    Three things happen in the last four lines and all three are worth naming.
+    <strong>The unpack</strong> &mdash; <code>let port, err be f()</code> &mdash;
+    is the one place destructuring exists in the language, and it exists because
+    this is the shape every fallible call takes. <strong>The test</strong> is
+    <code>if err?:</code>, the same postfix <code>?</code> the nullable used,
+    because an error that did not happen is an absent value. <strong>The
+    narrowing</strong> means that inside the branch <code>err</code> is a
+    <code>PortError</code> and not a <code>PortError?</code>, so it goes
+    straight into <code>explain</code> with nothing written for it.
+  </p>
+
+  <h3>Forgetting to check is an error, not a habit</h3>
+  <p>
+    The obvious failure of a returned-error model is that you can ignore the
+    error; Go's most-cited flaw is exactly this. Science makes it a compile
+    error, and gives you a way to say you meant it.
+  </p>
+
+<pre data-science>choice PortError:
+    Missing
+    NotANumber(Int)
+
+def parse_port(text: borrowed String) -&gt; (Int, PortError?):
+    if text.is_empty():
+        return (0, PortError.Missing)
+    (8080, null)
+
+let port, err be parse_port("")
+print(f"{port}")</pre>
+
+<pre class="err"><code><span class="e-code">error[SC0140]</span>: `err` is never checked for an error
+  --&gt; unchecked.science:10:11
+   |
+10 | let port, err be parse_port("")
+   |           <span class="e-hi">^^^</span> bound here and never tested
+   |
+   = note: test it with `if err?:`, pass it on, or return it — or rename it to `_err` to say the failure is deliberately ignored
+1 error</code></pre>
+
+  <p>
+    A leading underscore is how you say the failure is deliberately dropped.
+    That is a word you have to type, in the file, where a reviewer will see it.
+  </p>
+
+  <h3>Why there is no <code>try</code></h3>
+  <p>
+    There was one, in an earlier revision, and it was removed along with
+    <code>Result</code> and <code>Option</code>. The short version: the error
+    path is now written where it happens, in the order it happens, for a reader
+    rather than for a writer. The cost is that three fallible calls are nine
+    lines rather than three.
+  </p>
+  <p>
+    <strong>Rust's <code>?</code> is better at this, and the design notes say so
+    outright</strong> &mdash; it composes, and <code>Result</code> makes
+    ignoring a failure a type error rather than a separate check like
+    <code>SC0140</code>. The full argument, with the same function written in
+    five languages and a paragraph on what each of them gets right, is in the
+    rationale's <a href="rationale.html#errors">error model</a>. It is not
+    repeated here: that is an argument about a decision, and this is a page
+    about writing the result.
+  </p>
+
+  <h3>Where Rust is better at absence, too</h3>
+  <div class="two">
+    <div>
+      <h3>Rust</h3>
+<pre class="foreign">let port = config.get("port")
+    .and_then(|s| s.parse().ok())
+    .filter(|p| *p &gt; 1024)
+    .unwrap_or(8080);</pre>
+    </div>
+    <div>
+      <h3>Science</h3>
+<pre class="foreign">let mutable port: Int be 8080
+let raw be config.get("port")
+if raw?:
+    let parsed be to_port(raw)
+    if parsed?:
+        if parsed &gt; 1024:
+            port be parsed</pre>
+    </div>
+  </div>
+  <p>
+    <code>Option&lt;T&gt;</code> is an ordinary type with a method set, so a
+    chain of optional steps is a chain. <code>T?</code> is not a type you can
+    call methods on: it has <code>?</code> and nothing else &mdash; no
+    <code>is_some</code>, no <code>unwrap</code>, no <code>unwrap_or</code>, no
+    <code>map</code> &mdash; because there is no wrapper type left for those
+    methods to hang off. <strong>Four optional steps in Rust are four lines; in
+    Science they are four nested <code>if</code>s, and the nesting is
+    real.</strong>
+  </p>
+  <p>
+    What it buys is that <code>T?</code> costs nothing at a boundary: a field, a
+    parameter and a return may all be nullable and none of them wraps anything.
+    Whether that is the better trade depends on how much of your code chains
+    optionals, and in numerical code the answer is usually "very little".
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="interfaces">
+  <h2>9 &middot; Interfaces and generics<a class="anchor" href="#interfaces" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    An <code>interface</code> names a set of methods. A type declares that it
+    provides them in a separate block, written
+    <code>Type implements Interface:</code> &mdash; the reverse of Rust's
+    <code>impl Trait for Type</code>, and it reads as a sentence about the type.
+    A generic function takes a type parameter with <code>of</code> and
+    constrains it with an interface.
+  </p>
+
+  <h3><code>interface</code> and <code>implements</code></h3>
+  <p>
+    An interface declares method signatures with no bodies. It may also supply a
+    <strong>default body</strong>, which an implementation inherits unless it
+    overrides it. The implementation block supplies the rest.
+  </p>
+
+<pre data-science>interface Volume:
+    def litres(self) -&gt; F64
+
+type Flask:
+    millilitres: F64
+
+type Drum:
+    litres_held: F64
+
+Flask implements Volume:
+    def litres(self) -&gt; F64:
+        self.millilitres / 1000.0
+
+Drum implements Volume:
+    def litres(self) -&gt; F64:
+        self.litres_held
+
+let f be Flask(millilitres: 250.0)
+let d be Drum(litres_held: 200.0)
+print(f"{f.litres()} {d.litres()}")</pre>
+
+  <p class="note">
+    <strong>That listing checks and does not build &mdash; the fifth of
+    six</strong>, and for the same reason the method block in
+    <a href="#types">chapter 5</a> does not: the call is a method call, and the
+    backend cannot yet resolve the receiver. The declarations, the two
+    implementations and the coherence checking all pass <code>check</code>.
+  </p>
+
+  <p class="note">
+    An interface with no methods at all is a marker, implemented on one line
+    with no block: <code>Position implements Copy</code>. The library interfaces
+    you will meet first are <code>Copy</code>, <code>Clone</code>,
+    <code>Eq</code>, <code>Ord</code>, <code>Display</code> (what
+    <code>print</code> requires), <code>Drop</code>, and the operator interfaces
+    &mdash; <code>Add</code>, <code>Sub</code>, <code>Mul</code> and the rest
+    &mdash; which is how a user type takes part in arithmetic.
+  </p>
+
+  <h3>Generics: <code>of T</code>, bounds, and <code>where</code></h3>
+  <p>
+    <code>def name of T(&hellip;)</code> declares a function generic over
+    <code>T</code>. A bound goes after the parameter with a colon, or in a
+    <code>where</code> clause at the end when the signature gets long. Two or
+    more type parameters take parentheses, because the comma would otherwise be
+    ambiguous inside a parameter list:
+    <code>def swap of (A, B)(&hellip;)</code>.
+  </p>
+
+<pre data-science>interface Volume:
+    def litres(self) -&gt; F64
+
+type Flask:
+    millilitres: F64
+
+Flask implements Volume:
+    def litres(self) -&gt; F64:
+        self.millilitres / 1000.0
+
+def fuller of T: Volume(a: borrowed T, b: borrowed T) -&gt; F64:
+    if a.litres() &gt; b.litres(): a.litres() else: b.litres()
+
+def total of T(a: borrowed T, b: borrowed T) -&gt; F64 where T: Volume:
+    a.litres() + b.litres()
+
+let small be Flask(millilitres: 250.0)
+let large be Flask(millilitres: 750.0)
+print(f"{fuller(small, large)} {total(small, large)}")</pre>
+
+  <div class="callout">
+    <h3>That listing checks and does not build &mdash; the last of six</h3>
+    <p>
+      Generics are monomorphised: one specialised copy of the function for each
+      set of type arguments it is called with. Nothing runs that walk yet, so a
+      call to a generic function is refused &mdash; <em>"cannot build a call to
+      the generic function <code>fuller</code>, which nothing has
+      monomorphised"</em>. The same applies to an interface's <em>default</em>
+      method body, whose <code>self</code> is a different concrete type in every
+      implementation.
+    </p>
+  </div>
+
+  <p class="note">
+    <code>of</code> is also how a generic type is written: <code>Array of
+    Doc</code>, <code>Map of (String, Int)</code>, <code>Array of (Map of
+    (String, Int))</code>. One argument needs no parentheses and two or more do,
+    and nesting follows the same rule. Naming a generic type before a
+    <code>.</code> needs its own parentheses too &mdash;
+    <code>(Array of Doc).new()</code>, never <code>Array of Doc.new()</code>,
+    because the second does not say whether <code>.new</code> belongs to
+    <code>Doc</code> or to the whole type.
+  </p>
+
+  <h3>Where Java and TypeScript are better: <code>&lt;T&gt;</code> never needs parentheses</h3>
+  <div class="two">
+    <div>
+      <h3>TypeScript</h3>
+<pre class="foreign">function swap&lt;A, B&gt;(p: Pair&lt;A, B&gt;): Pair&lt;B, A&gt;
+
+type Grid = Map&lt;string, Array&lt;number&gt;&gt;;</pre>
+    </div>
+    <div>
+      <h3>Science</h3>
+<pre class="foreign">def swap of (A, B)(p: Pair of (A, B)) -&gt; Pair of (B, A)
+
+type Grid is Map of (String, Array of F64)</pre>
+    </div>
+  </div>
+  <p>
+    <strong>Angle brackets are self-delimiting and <code>of</code> is not.</strong>
+    <code>&lt;A, B&gt;</code> is unambiguous with one argument or six, at any
+    nesting depth, and anyone who has written Java, C#, TypeScript or Rust
+    already reads it without thinking. <code>of</code> needs parentheses the
+    moment there are two arguments, and again the moment you nest, and that is a
+    rule you have to remember rather than a shape you can see. For this one
+    construct the familiar notation is simply better.
+  </p>
+  <p>
+    What <code>of</code> buys is elsewhere in the grammar: <code>&lt;</code> and
+    <code>&gt;</code> stay unambiguously comparison operators, so the parser
+    never needs the disambiguation pass that C++ and Java both carry. That is a
+    real benefit to the compiler and a mild cost to you, and which side you land
+    on probably depends on how often you write six-parameter generics.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="foreign">
+  <h2>10 &middot; Talking to C<a class="anchor" href="#foreign" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    Every floating-point routine worth using is already written in C. Science
+    calls them directly &mdash; no binding generator, no wrapper library, no
+    marshalling layer. An <code>extern "C"</code> block declares what a library
+    provides, and an <code>unsafe</code> block is where you are allowed to call
+    it.
+  </p>
+
+  <h3>The block, and what it claims</h3>
+  <p>
+    <code>unsafe extern "C" library "m":</code> opens a block of declarations
+    for the C math library. Inside it you write signatures with no bodies, in
+    Science's own type vocabulary. <strong>Nothing in that block is checked
+    against anything.</strong> It is a claim about what is in the library, and
+    if the claim is wrong the program is wrong in a way no compiler will catch
+    &mdash; which is exactly why the block says <code>unsafe</code> out loud,
+    and why reaching into it takes a second <code>unsafe</code> at the call
+    site.
+  </p>
+
+<pre data-science>unsafe extern "C" library "m":
+    def sqrt(x: F64) -&gt; F64
+    def cos(x: F64) -&gt; F64
+
+def hypotenuse(a: F64, b: F64) -&gt; F64:
+    unsafe:
+        sqrt(a * a + b * b)
+
+let straight be unsafe:
+    cos(0.0)
+
+print(f"{hypotenuse(3.0, 4.0)}")
+print(f"{straight}")
+# 5.0
+# 1.0</pre>
+
+  <p>
+    That program compiles to a native executable, links against libm, and prints
+    those two numbers. It is the whole of the FFI story for a function taking
+    and returning a scalar. An <code>unsafe</code> block is an expression, so it
+    can be a function's body or the right-hand side of a binding &mdash; but it
+    cannot go inside an <code>f"&hellip;"</code>, where the <code>:</code> is
+    read as the start of a format specification.
+  </p>
+
+  <h3>The wrapper is the interface, and the <code>unsafe</code> block is short</h3>
+  <p>
+    Look at where <code>unsafe</code> sits in <code>hypotenuse</code>: around
+    the call, and nothing else. The arithmetic is outside it. That is the
+    discipline the whole design rests on &mdash; <strong>if an
+    <code>unsafe</code> block is long, the binding is written wrong</strong>
+    &mdash; and it is why the thing you export from a module is never the
+    <code>extern</code> declaration.
+  </p>
+  <p>
+    A real binding has three layers. The <code>extern</code> block, which
+    nothing outside the module calls. A safe Science function whose signature
+    contains no foreign type at all, which checks what the C function assumes
+    &mdash; that the shapes match, that a length fits, that a handle is open
+    &mdash; and returns an ordinary Science error if they do not. And the
+    <code>unsafe</code> block inside it, which is the two or three lines that
+    actually cross the boundary. Callers get the middle layer and never see the
+    other two.
+  </p>
+
+  <p class="note">
+    The vocabulary for the harder cases &mdash; <code>ffi.Span of F64</code> for
+    a pointer and a length, <code>ffi.CStr</code>, <code>ffi.Complex64</code>,
+    <code>ffi.OpaqueHandle</code>, <code>symbol "…"</code> to decouple the
+    Science name from the linker name, <code>via pkg-config</code>,
+    <code>kind static</code>, and <code>when available</code> for a library that
+    may not be installed &mdash; is in the reference's
+    <a href="reference.html#foreign">foreign function interface</a> section, and
+    demonstrated across a full OpenBLAS and HDF5 binding in
+    <code>examples/20_extern.science</code>.
+  </p>
+
+  <h3>Where Python is better, and for exploratory work it is not close</h3>
+  <div class="two">
+    <div>
+      <h3>Python</h3>
+<pre class="foreign">import numpy as np
+np.linalg.norm([3.0, 4.0])
+# 5.0
+#
+# no compiler, no declaration,
+# no rebuild, no `unsafe`</pre>
+    </div>
+    <div>
+      <h3>Science</h3>
+<pre class="foreign">unsafe extern "C" library "m":
+    def sqrt(x: F64) -&gt; F64
+
+def hypotenuse(a: F64, b: F64) -&gt; F64:
+    unsafe:
+        sqrt(a * a + b * b)</pre>
+    </div>
+  </div>
+  <p>
+    <strong>Every BLAS and LAPACK routine you were going to bind is already
+    bound for you in NumPy and SciPy, and has been for twenty years.</strong>
+    You import it, you call it, and you are wrong about a shape at runtime
+    instead of at compile time &mdash; which, during exploration, is the better
+    place to be wrong. There is no build step to wait for and no declaration to
+    keep in sync with a header that changed.
+  </p>
+  <p>
+    Science's version is more work and it buys two things. The wrapper's checks
+    &mdash; the shape test, the leading-dimension test &mdash; run as ordinary
+    Science errors rather than as a segfault three calls later. And there is no
+    interpreter between the loop and the library, which is the difference that
+    matters when the loop <em>is</em> the program. If you are exploring, use
+    Python. If you are shipping the kernel, this is what it costs.
+  </p>
+
+  <h3>Putting it together</h3>
+  <p>
+    Here is a program using nearly everything in this tutorial: a record, a
+    <code>choice</code>, two <code>match</code>es, three shared borrows,
+    interpolation, and a real call into libm. It builds and runs.
+  </p>
+
+<pre data-science>unsafe extern "C" library "m":
+    def sqrt(x: F64) -&gt; F64
+
+type Reading:
+    sample: I64
+    celsius: F64
+
+choice Station:
+    Ground
+    Balloon(F64)
+    Buoy(F64, F64)
+
+def kelvin(r: borrowed Reading) -&gt; F64:
+    r.celsius + 273.15
+
+def altitude(station: Station) -&gt; F64:
+    match station:
+        Ground: 0.0
+        Balloon(metres): metres
+        Buoy(latitude, longitude): 0.0
+
+def spread(low: borrowed Reading, high: borrowed Reading) -&gt; F64:
+    let difference be high.celsius - low.celsius
+    unsafe:
+        sqrt(difference * difference)
+
+def label_for(station: Station) -&gt; String:
+    match station:
+        Ground: "ground"
+        Balloon(metres): "balloon"
+        Buoy(latitude, longitude): "buoy"
+
+let low be Reading(sample: 1i64, celsius: 18.0)
+let high be Reading(sample: 2i64, celsius: 21.5)
+
+print(f"sample {low.sample}: {low.celsius} C = {kelvin(low)} K")
+print(f"sample {high.sample}: {high.celsius} C = {kelvin(high)} K")
+print(f"spread {spread(low, high)} C")
+print(f"{label_for(Balloon(1200.0))} at {altitude(Balloon(1200.0))} m")
+# sample 1: 18.0 C = 291.15 K
+# sample 2: 21.5 C = 294.65 K
+# spread 3.5 C
+# balloon at 1200.0 m</pre>
+</section>
+
+<!-- ==================================================================== -->
+<section id="next">
+  <h2>11 &middot; Where to go next<a class="anchor" href="#next" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    You can now read and write Science. What this page deliberately left out is
+    depth, inventory and argument &mdash; one page each.
+  </p>
+
+  <h3>The three pages, and what each is for</h3>
+  <div class="docs" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));gap:1rem">
+    <a class="doc" href="reference.html">
+      <span class="ttl">reference.html</span>
+      <span class="sub">
+        <strong>What a construct means.</strong> Twenty-three sections on
+        bindings, strings and formatting, the type system, arrays and slices,
+        functions, interfaces, ownership, control flow, patterns, errors,
+        chains, the C boundary, <code>tool</code> declarations and the
+        toolchain. Open it when you know what you want to write and need the
+        semantics, the method set, or the edge case.
+      </span>
+    </a>
+    <a class="doc" href="syntax.html">
+      <span class="ttl">syntax.html</span>
+      <span class="sub">
+        <strong>Whether a thing can be written, and how it is spelled.</strong>
+        Every construct with its shape, all 68 words the lexer knows and whether
+        each means anything today, the precedence table read off the parser, and
+        &mdash; the section to check before you spend an afternoon &mdash; what
+        parses and is not built, with the diagnostic each one produces.
+      </span>
+    </a>
+    <a class="doc" href="rationale.html">
+      <span class="ttl">rationale.html</span>
+      <span class="sub">
+        <strong>Why it is spelled that way.</strong> Twelve decisions, each with
+        the argument that lost and what it cost, and twenty-two side-by-side
+        comparisons with Python, Go, Rust, Java, JavaScript and R &mdash;
+        including the places another language does it better. Read it when a
+        spelling annoys you; the case against it is usually already there.
+      </span>
+    </a>
+  </div>
+
+  <h3>The other three things worth your time</h3>
+  <p>
+    <strong><code>examples/</code> in the repository</strong> holds twenty-two
+    programs, one per feature, that are guaranteed to lex and parse &mdash; they
+    are input to the test suite, so a change that breaks one is a bug in the
+    change rather than a typo in the corpus. If you are unsure how something is
+    written, look there first. <code>examples/README.md</code> says what each
+    one covers.
+  </p>
+  <p>
+    <strong><code>tests/ui/</code></strong> is the opposite corpus: programs
+    that must <em>fail</em>, each paired with the exact diagnostic it has to
+    produce, byte for byte. It is the fastest way to find out what the compiler
+    says about a mistake before you make it.
+  </p>
+  <p>
+    <strong><a href="index.html#status">The status section</a> on the home
+    page</strong> lists what has been run and what has not, with the command
+    that settles each claim. The boundary between <code>check</code> and
+    <code>build</code> moves; that section, and the compiler's own
+    <code>SC0400</code> note, are the two places that track it &mdash; and the
+    compiler is always the more current of the two.
+  </p>
+
+  <h3>The exercise this page is set up for</h3>
+  <p>
+    Take the program at the end of <a href="#foreign">chapter 10</a> and extend
+    it. Add a <code>Sonde(F64, F64)</code> variant to <code>Station</code> and
+    let the compiler tell you every <code>match</code> that now has a hole. Add
+    a <code>warmer_than(a: borrowed Reading, b: borrowed Reading) -&gt;
+    Bool</code>. Give <code>spread</code> a <code>PortError</code>-style pair
+    return for the case where the two readings are from different stations, and
+    watch <code>SC0140</code> catch you the first time you forget to check it.
+    The first two still build and run; the third checks and does not, and it is
+    the one that teaches you the most.
+  </p>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="links">
+    <a href="index.html">Home</a>
+    <a href="reference.html">Reference</a>
+    <a href="syntax.html">Syntax</a>
+    <a href="rationale.html">Rationale</a>
+    <a href="#install">Top of page</a>
+  </div>
+  Twenty-nine Science listings on this page were extracted from this file and
+  run through <code>sciencec check</code> with the exit code read: twenty-one
+  exit 0, and eight are here in order to fail, each beside its own diagnostic.
+  Fifteen of the twenty-one were then built with <code>sciencec build</code>,
+  linked and executed, and the trailing <code>#</code> comment on each is that
+  program's real stdout &mdash; all fifteen matched. The other six check clean
+  and the backend refuses them, and each says so in its own chapter rather than
+  leaving a reader to discover it: the declared <code>main</code> in
+  <a href="#install">chapter 1</a>, the counting loop in
+  <a href="#control">chapter 3</a>, the method block in
+  <a href="#types">chapter 5</a>, the error pair in
+  <a href="#errors">chapter 8</a>, and the interface and the generic call in
+  <a href="#interfaces">chapter 9</a>. Every diagnostic reproduced here is the
+  compiler's own stderr, produced by writing that exact program to disk and
+  running it.
+</footer>
+
+</div>
+
+<script src="assets/highlight.js"></script>
+</body>
+</html>

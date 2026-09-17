@@ -224,6 +224,26 @@
       });
     });
     pre.appendChild(button);
+
+    // Keep the button in the block's visible top-right corner.
+    //
+    // The button is `position: absolute` inside a `pre` that is
+    // `overflow-x: auto`, and an absolutely positioned child of a scroll
+    // container is laid out against the *scroll* origin, not the visible
+    // one. So it scrolled away with the code. On a desktop that is a rare
+    // annoyance; on a phone almost every listing on this site is wider than
+    // the screen, so the first sideways swipe took the only copy control off
+    // the left edge for good.
+    //
+    // The stylesheet reads `--scroll-x` and cancels it out with `translate`.
+    // Writing a custom property rather than the transform directly keeps the
+    // decision about *how* the button moves in the stylesheet with the rest
+    // of the motion, and keeps this to reporting a number. Passive, because
+    // it never calls preventDefault and a scroll handler that might is a
+    // scroll handler the browser cannot fast-path.
+    pre.addEventListener("scroll", function () {
+      pre.style.setProperty("--scroll-x", pre.scrollLeft + "px");
+    }, { passive: true });
   }
 
   function settle(button, word) {

@@ -94,7 +94,8 @@
    *
    * It is 10.19:1 on the page. The brief was "a little neon, barely" and that
    * is what the saturation figure is: the full-neon version of this hue is
-   * already in the palette and is the thing to stay away from. */
+   * already in the palette and is the thing to stay away from.
+   *
    * Darkening the page walks it toward the listing, and near black the
    * luminance differences compress, so there is no ground below about
    * #1a2233 that keeps a listing visible as a separate surface at all. This
@@ -166,6 +167,13 @@
    * cost of a collision is still a reader re-reading a caption to find out
    * which kind of not-Science they are looking at. */
   --rail-foreign:#6b5a8a;
+  /* Layout, not colour. The masthead is `position: sticky` at `top: 0`, so
+   * every other sticky thing on the page and every anchor jump has to clear
+   * it. It was cleared by nothing: the sidebar stuck at 1.5rem and a section
+   * jumped to 1.5rem, both of which land *under* a 77px bar. One number,
+   * declared here and overridden once at the width where the bar gets
+   * shorter, so the two readers of it cannot drift apart. */
+  --top-h: 4.85rem;
   --sans:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
   --serif:"IBM Plex Serif",Georgia,"Times New Roman",serif;
   --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
@@ -194,8 +202,24 @@ body { background: var(--paper); color: var(--ink); font-family: var(--sans);
  * that twenty is a measurable fraction of the line. Declared as a rule rather
  * than left to the 20px, because at 320px a pair of 20px gutters is an eighth
  * of the screen. */
-.wrap { max-width: 62rem; margin: 0 auto; padding-inline: 20px; }
-@media (max-width: 30rem) { .wrap { padding-inline: 16px; } }
+/* `padding-inline`, never the `padding` shorthand: the shorthand would let a
+ * later rule that only meant to set a vertical value zero the sides, and a
+ * zeroed side gutter is the single failure this whole file is guarding
+ * against. Vertical padding on a page section is set with `padding-block`
+ * everywhere below for the same reason.
+ *
+ * `max()` against the safe-area insets because the pages ask for
+ * `viewport-fit=cover`: on a notched phone held sideways the inset is ~44px
+ * and a flat 16px would put the first character under the camera cutout.
+ * `max()` means the gutter is *at least* 16px at every width and grows only
+ * where the hardware takes the space. */
+.wrap { max-width: 62rem; margin: 0 auto;
+  padding-inline: max(20px, env(safe-area-inset-left, 0px))
+                  max(20px, env(safe-area-inset-right, 0px)); }
+@media (max-width: 30rem) {
+  .wrap { padding-inline: max(16px, env(safe-area-inset-left, 0px))
+                          max(16px, env(safe-area-inset-right, 0px)); }
+}
 
 /* The documentation runs wider than the landing page, because it has a
  * sidebar and the landing page does not. At 62rem a 15rem sidebar and its
@@ -259,7 +283,11 @@ h1 em { font-style: normal; color: var(--accent); }
 .deck strong { color: var(--ink); font-weight: 500; }
 
 .install { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
-.install pre { margin: 0; flex: 1 1 22rem; }
+/* `min-width: 0` because a flex item's automatic minimum is its content's
+ * min-content width, and a listing's min-content width is its longest line.
+ * The `overflow-x: auto` on `pre` already zeroes it in every browser that
+ * implements that carve-out; this says so rather than relying on it. */
+.install pre { margin: 0; flex: 1 1 22rem; min-width: 0; }
 .btn { font-family: var(--mono); font-size: 0.82rem; text-decoration: none;
   padding: 0.7em 1.2em; border-radius: 3px; border: 1px solid var(--accent);
   background: var(--accent); color: var(--paper); white-space: nowrap; }
@@ -270,6 +298,13 @@ h1 em { font-style: normal; color: var(--accent); }
 section { padding-block: 4rem; border-bottom: 1px solid var(--rule); }
 section:last-of-type { border-bottom: none; }
 h2 { font-size: 1.7rem; font-weight: 600; letter-spacing: -0.022em; margin: 0 0 0.5rem; }
+/* `h1` asks for this on its own line already. The other two headings want it
+ * for the same reason and want it most at 360px, where a 1.7rem heading is
+ * three words a line and an unbalanced break leaves one word alone on the
+ * last. `pretty` on running text is the cheaper cousin: it only fixes the
+ * last line, which is the orphan a narrow column produces constantly. */
+h2, h3 { text-wrap: balance; }
+p, .deck, .lede, .standfirst, .doc .sub, .strip dd, .bet p { text-wrap: pretty; }
 .lede { font-family: var(--serif); color: var(--muted); max-width: 44rem; margin: 0 0 2rem; font-size: 1.02rem; }
 h3 { font-family: var(--mono); font-size: 0.76rem; font-weight: 600; letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--muted); margin: 2.25rem 0 0.75rem; }
@@ -378,7 +413,21 @@ pre.foreign {
   font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--code-ink); background: var(--code-bg);
   border: 1px solid var(--code-frame); border-radius: 3px;
-  padding: 0.25rem 0.5rem; cursor: pointer; opacity: 0; transition: opacity 0.12s; }
+  padding: 0.25rem 0.5rem; cursor: pointer; opacity: 0; transition: opacity 0.12s;
+  /* **The block scrolls and the button used to go with it.** `position:
+   * absolute` inside an `overflow-x: auto` box is positioned against the
+   * padding box's *scroll* origin, so on a phone — where nearly every listing
+   * on this site is wider than the screen — the first sideways swipe carried
+   * the button off the left edge and it could not be got back without
+   * scrolling home. `--scroll-x` is set by `assets/highlight.js` on the
+   * block's scroll event and the button cancels it out, so the button is
+   * pinned to the *visible* top-right corner at any scroll offset.
+   *
+   * On the `translate` property rather than inside `transform`, because
+   * `transform` is transitioned below with everything else on the site and a
+   * 140ms ease on a value that changes every scroll frame is a button that
+   * swims. `translate` composes with `transform` and is not transitioned. */
+  translate: var(--scroll-x, 0px) 0; }
 pre:hover .copy, .copy:focus-visible { opacity: 1; }
 .copy:hover { border-color: var(--c-type); color: var(--c-type); }
 .copy[data-done] { opacity: 1; border-color: var(--c-fn); color: var(--c-fn); }
@@ -387,8 +436,19 @@ pre:hover .copy, .copy:focus-visible { opacity: 1; }
 @media (hover: none) { .copy { opacity: 1; } }
 
 code { font-family: var(--mono); font-size: 0.87em; background: var(--sunk);
-  padding: 0.1em 0.35em; border-radius: 2px; }
-pre code { background: none; padding: 0; font-size: 1em; }
+  padding: 0.1em 0.35em; border-radius: 2px;
+  /* An inline chip is usually one identifier and an identifier has no break
+   * opportunity in it, so at 360px a chip like `ScienceCompilerOptions` is
+   * wider than the column it sits in and hangs out of the callout that holds
+   * it. `anywhere` rather than `break-word` because only `anywhere` lowers
+   * the element's *min-content* width, which is what a grid track and a flex
+   * item measure — `break-word` would still let a chip force a column wide.
+   * It breaks nothing that fits: the rule only applies where a line would
+   * otherwise overflow. */
+  overflow-wrap: anywhere; }
+/* A listing is `white-space: pre` and has a scroller of its own; it scrolls
+ * rather than wrapping, and that is the whole contract of a code block. */
+pre code { background: none; padding: 0; font-size: 1em; overflow-wrap: normal; }
 .k  { color: var(--c-key); font-weight: 500; }   /* declaration keyword */
 .kc { color: var(--c-ctl); font-weight: 500; }   /* control flow */
 .t  { color: var(--c-type); }                    /* type, by capitalisation */
@@ -419,13 +479,13 @@ pre code { background: none; padding: 0; font-size: 1em; }
 .e-help { color: #8ab4c9; }
 
 /* ---- the three bets ---- */
-.bets { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+.bets { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
   gap: 2rem 2.5rem; margin-top: 2rem; }
 .bet h3 { margin-top: 0; color: var(--accent); }
 .bet p { font-family: var(--serif); font-size: 0.96rem; color: var(--muted); margin: 0; }
 
 /* ---- feature strip ---- */
-.strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr));
+.strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(13.5rem, 100%), 1fr));
   gap: 1.75rem; margin-top: 1.75rem; }
 .strip div { border-top: 2px solid var(--rule); padding-top: 0.8rem; }
 .strip dt { font-family: var(--mono); font-size: 0.78rem; color: var(--ink);
@@ -433,11 +493,11 @@ pre code { background: none; padding: 0; font-size: 1em; }
 .strip dd { font-family: var(--serif); font-size: 0.92rem; color: var(--muted); margin: 0; }
 
 /* ---- two-up ---- */
-.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: 1.5rem; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr)); gap: 1.5rem; }
 .two h3 { margin-top: 0; }
 
 /* ---- docs cards ---- */
-.docs { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+.docs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
   gap: 1rem; margin-top: 1.5rem; }
 .doc { display: block; border: 1px solid var(--rule); border-radius: 3px;
   padding: 1.05rem 1.2rem; text-decoration: none; background: var(--surface); }
@@ -507,9 +567,25 @@ footer .links a { font-family: var(--mono); font-size: 0.78rem; color: var(--acc
 .docs { display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 0 3.5rem;
   align-items: start; }
 .docs > main { min-width: 0; }
+/* **`.docs` is two different components sharing one class name.** The landing
+ * page uses it for a row of cards; a documentation page uses it for the
+ * sidebar-and-prose layout above. The layout rule is further down the file,
+ * so it was winning on the landing page too and rendering four cards into a
+ * fixed 15rem column and a remainder.
+ *
+ * Told apart by what is inside rather than by a second class, because the
+ * markup belongs to pages this file does not own. If `:has()` is missing the
+ * rule is dropped and the landing page falls back to exactly what it renders
+ * today, so the failure mode is the current behaviour rather than a new one. */
+.docs:has(> .doc) {
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+  gap: 1rem; align-items: stretch;
+}
 
-.sidebar { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 1.5rem);
-  max-height: calc(100vh - 3rem); overflow-y: auto; overscroll-behavior: contain;
+.sidebar { position: sticky;
+  top: calc(env(safe-area-inset-top, 0px) + var(--top-h) + 1rem);
+  max-height: calc(100vh - var(--top-h) - 2.5rem);
+  overflow-y: auto; overscroll-behavior: contain;
   padding-block: 0.5rem 2rem; }
 .sidebar h2 { font-family: var(--mono); font-size: 0.68rem; font-weight: 600;
   letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint);
@@ -526,27 +602,188 @@ footer .links a { font-family: var(--mono); font-size: 0.78rem; color: var(--acc
  * behaviour a framework would ship a hook for. */
 .sidebar a.here { color: var(--ink); border-left-color: var(--accent); }
 
-.reference section { border-bottom: none; padding-block: 0 3.5rem; scroll-margin-top: 1.5rem; }
-.reference h2 { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; font-size: 1.5rem; }
+.reference section { border-bottom: none; padding-block: 0 3.5rem;
+  scroll-margin-top: calc(var(--top-h) + 1rem); }
+/* **Scoped to a section's own heading, and it has to be.** This was
+ * `.reference h2`, and `.reference` is on the wrapper around *everything* on
+ * a documentation page — the sidebar and the revision note included. At
+ * (0,1,1) it ties with `.sidebar h2` and `.revision h2` and, being further
+ * down the file, won both: the sidebar's group labels were rendering at 24px
+ * as flex containers instead of at 0.68rem as micro-labels, which is most of
+ * why the sidebar was three screenfuls tall on a phone, and the revision
+ * note's heading was doing the same. `.revision h2` already carried an
+ * explicit `display: block` — a cancellation of this rule, written without
+ * the cause being found. Every section on every page carries its h2 as a
+ * direct child, so this selector reaches exactly what the rule was for. */
+.reference section > h2 { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; font-size: 1.5rem; }
 
 /* An anchor beside every section heading, the way every docs site does it:
  * visible on hover, always reachable by keyboard, and a real link so it can
  * be copied from the context menu. */
-.reference h2 .anchor { font-family: var(--mono); font-size: 0.85rem; font-weight: 400;
+.reference section > h2 .anchor { font-family: var(--mono); font-size: 0.85rem; font-weight: 400;
   color: var(--faint); text-decoration: none; opacity: 0; transition: opacity 0.12s; }
-.reference h2:hover .anchor, .reference h2 .anchor:focus-visible { opacity: 1; }
-.reference h2 .anchor:hover { color: var(--accent); }
+.reference section > h2:hover .anchor,
+.reference section > h2 .anchor:focus-visible { opacity: 1; }
+.reference section > h2 .anchor:hover { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
-  .reference h2 .anchor { transition: none; }
+  .reference section > h2 .anchor { transition: none; }
 }
+
+/* ===================================================================== *
+ * Narrow widths
+ *
+ * Three breakpoints, in one place, largest first, each with one job. They
+ * were not in one place before: a `60rem` block sat here and a `30rem` block
+ * sat up beside `.wrap`, and between them they had never been checked at a
+ * real phone width. The numbers below were measured at 360, 390, 414, 768
+ * and 1024.
+ *
+ *   60rem (960px) - the two-column documentation layout stops fitting.
+ *                   The sidebar stops being a column.
+ *   48rem (768px) - the masthead's row stops fitting. Touch is assumed
+ *                   from here down for anything that is only a hit area.
+ *   30rem (480px) - a phone. The gutter narrows and the vertical rhythm,
+ *                   which was set for a laptop, is pulled in.
+ *
+ * Nothing below changes a colour token, a syntax colour, or the resting
+ * state of any animation.
+ * ===================================================================== */
 
 @media (max-width: 60rem) {
   .docs { display: block; }
-  .sidebar { position: static; max-height: none; overflow: visible;
-    margin-bottom: 2.5rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--rule); }
-  .sidebar .groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+
+  /* **The sidebar becomes a bounded, scrolling block - it does not vanish.**
+   * Stacked and unbounded it was measured at 1078px on `syntax.html` at
+   * 360px wide: three screenfuls of table of contents standing between the
+   * reader and the first sentence of the page, which is worse than no table
+   * of contents at all. Bounded, it is one screenful at most and the page
+   * starts where the reader expects.
+   *
+   * Scrolling rather than collapsing because collapsing wants a disclosure
+   * control, a control wants an element to hang off, and the markup of these
+   * pages is not this file's to change. A bounded scroller needs nothing but
+   * a height - and, unlike a collapsed one, it still shows the reader that a
+   * contents list exists and roughly how long it is.
+   *
+   * `min(24rem, 55vh)`: the viewport share keeps it to about half a short
+   * phone, and the absolute cap stops it eating a tablet's whole first
+   * screen just because the tablet is tall. */
+  .sidebar {
+    position: static;
+    max-height: min(24rem, 55vh);
+    overflow-y: auto; overscroll-behavior: contain;
+    margin-bottom: 2.5rem;
+    padding-block: 0 0.9rem; padding-inline: 0.9rem;
+    border: 1px solid var(--rule); border-radius: 3px;
+  }
+  /* A box that is cut off at a height needs to say it is a box. Without a
+   * label a bounded list reads as a rendering fault - as the page having run
+   * out rather than the list having been contained. Generated rather than
+   * marked up for the reason above, and it is a label rather than a control,
+   * so nothing is hidden behind it. Sticky, so it is still there once the
+   * reader has scrolled the list. */
+  .sidebar::before {
+    content: "On this page";
+    display: block; position: sticky; top: 0; z-index: 1;
+    margin-inline: -0.9rem; padding-block: 0.7rem 0.5rem; padding-inline: 0.9rem;
+    background: var(--paper); border-bottom: 1px solid var(--rule);
+    font-family: var(--mono); font-size: 0.68rem; font-weight: 600;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint);
+  }
+  .sidebar .groups { display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr));
     gap: 0 1.5rem; }
-  .reference h2 .anchor { opacity: 1; }
+  /* `:first-child` counts elements, and `::before` is not one, so the first
+   * group heading still matches the `margin-top: 0` rule above and would sit
+   * flush against the label. */
+  .sidebar h2:first-child { margin-top: 0.9rem; }
+
+  /* A 0.87rem link with 0.3rem of padding is a 28px target. These are the
+   * densest links on the site and the only way through a 120-section
+   * reference, so they are the ones that have to be hittable. */
+  .sidebar a { padding-block: 0.55rem; }
+  footer .links a { display: inline-block; padding-block: 0.4rem; }
+  /* The wordmark is a link back to the index on every documentation page and
+   * it was a 68x16 target. `inline-block` so the padding has an effect at
+   * all, and the baseline an `inline-block` reports is still its last text
+   * baseline, so it stays aligned with the glyph beside it in `.mark`. */
+  .mark .name a { display: inline-block; padding-block: 0.45rem; }
+
+  /* No hover to reveal it, so the section anchor is always shown - and it is
+   * an 8px wide `#`, which is a target nobody hits. The padding is cancelled
+   * by an equal negative margin so the heading's baseline does not move. */
+  .reference section > h2 .anchor { opacity: 1;
+    padding: 0.4rem 0.5rem; margin: -0.4rem -0.3rem; }
+}
+
+@media (max-width: 48rem) {
+  /* **The masthead is sticky, and at 360px it was 155px of sticky.** The nav
+   * wrapped to two rows under the wordmark and took a quarter of the screen
+   * with it, permanently, on every page - the one thing a sticky bar must
+   * not do. One row now, with the links scrolling sideways in their own box
+   * if there are more of them than fit, which is what a tab strip on a phone
+   * has always done. */
+  .top { flex-wrap: nowrap; gap: 0.75rem; padding-block: 0.85rem; }
+  .mark { flex: none; }
+  .top nav {
+    flex-wrap: nowrap; min-width: 0;
+    overflow-x: auto; overscroll-behavior-x: contain;
+    gap: 1.1rem; scrollbar-width: none;
+  }
+  .top nav::-webkit-scrollbar { display: none; }
+  .top nav a { white-space: nowrap; padding-block: 0.5rem; }
+  /* The travelling bar is kept - on wider screens. It is drawn at
+   * `left: -0.75rem`, which inside a scroller of its own is 12px of scroll
+   * width per link and a bar drawn over the previous link's last letter.
+   * Contained to the layout it was designed for rather than removed. */
+  .top nav a::before { display: none; }
+  :root { --top-h: 4.25rem; }
+}
+
+@media (max-width: 30rem) {
+  /* The vertical rhythm was set at a laptop, where 4rem between sections is
+   * a breath. On a 640px-tall phone the same 4rem is a tenth of the screen
+   * spent twice per section, and the page reads as mostly gaps. */
+  section { padding-block: 2.75rem; }
+  .hero { padding-block: 2rem 2.5rem; }
+  .masthead { padding-block: 2rem 1.5rem; }
+  .reference section { padding-block: 0 2.5rem; }
+  footer { padding-block: 2rem 3rem; }
+  /* 1.25rem of side padding inside a block that is already inside a 16px
+   * gutter leaves a 328px screen 288px of code. */
+  pre { padding: 0.9rem 1rem; }
+  .callout, .revision { padding: 0.9rem 1rem; }
+
+  /* The ladder puts its gloss on the far right of the same row as the rungs.
+   * At this width there is no far right, so the gloss takes its own line and
+   * reads left like everything else. */
+  .ladder li { flex-wrap: wrap; gap: 0.5rem 1rem; }
+  .ladder .gloss { margin-left: 0; text-align: left; flex-basis: 100%; }
+
+  .sidebar { max-height: min(20rem, 50vh); }
+}
+
+/* Hit areas, keyed to the input device rather than to the width, because a
+ * finger is not narrow - it is blunt, and it is just as blunt on a tablet at
+ * 1024px. Everything here grows a *target*; nothing here grows a glyph. */
+@media (pointer: coarse) {
+  .sidebar a { padding-block: 0.6rem; }
+  .top nav a { padding-block: 0.55rem; }
+  footer .links a { display: inline-block; padding-block: 0.45rem; }
+  .mark .name a { display: inline-block; padding-block: 0.5rem; }
+  .top nav a { padding-inline: 0.35rem; margin-inline: -0.35rem; }
+  /* Both of these grow a target without moving a glyph, for the reason the
+   * copy button does below: the anchor is a single `#` and the heading it
+   * hangs off has its own baseline, so widening the ink would push the
+   * heading around on the one screen size with no room to push it. */
+  .reference section > h2 .anchor { position: relative;
+    padding: 0.4rem 0.5rem; margin: -0.4rem -0.3rem; }
+  .reference section > h2 .anchor::after { content: ""; position: absolute; inset: -8px -12px; }
+  /* The copy button is 47x24, and it sits over the first line of the listing,
+   * so making the button itself 44px tall would hide two lines instead of
+   * one. The target grows and the button does not: an invisible pad on a
+   * pseudo-element, which is the one way to have both. */
+  .copy::after { content: ""; position: absolute; inset: -10px; }
 }
 td.mono { font-family: var(--mono); font-size: 0.82rem; }
 td.what { font-family: var(--serif); color: var(--muted); }
@@ -573,11 +810,16 @@ td.what { font-family: var(--serif); color: var(--muted); }
  * so that two things moving at once do not look like two decisions. 140ms is
  * below the ~200ms at which a transition starts reading as an animation
  * rather than as responsiveness. */
-a, .btn, .doc, .bet, .copy, nav a, .card {
+a, .btn, .doc, .bet, nav a, .card {
   transition: color 140ms ease, background-color 140ms ease,
               border-color 140ms ease, transform 140ms ease,
               box-shadow 140ms ease;
 }
+/* `.copy` was in the list above and is not any more. It keeps the same colour
+ * and border curve as everything else, and loses only `transform` — which it
+ * never used, and which now shares a compositor with the scroll-pinning
+ * `translate` above. Its `opacity: 0.12s` is declared with the rest of it. */
+.copy { transition: opacity 0.12s, color 140ms ease, border-color 140ms ease; }
 
 /* A card lifts by one pixel. Not three: a card that jumps announces itself,
  * and these sit in a grid where several are visible at once. */
@@ -625,9 +867,10 @@ nav a::before {
 }
 nav a:hover::before, nav a[aria-current="true"]::before { transform: scaleY(1); }
 
-/* A code block's copy button already appears on hover; this gives it the
- * same curve as everything else rather than its own. */
-pre:hover .copy { transform: translateY(0); }
+/* A `pre:hover .copy { transform: translateY(0) }` stood here. It set the
+ * identity transform on an element nothing ever translated, so it animated
+ * nothing; it is gone with the button's `transform` transition, and the
+ * button's scroll-pinning `translate` has the compositor to itself. */
 
 @media (prefers-reduced-motion: reduce) {
   /* One switch for the whole file. `animation-duration: 1ms` rather than
