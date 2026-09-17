@@ -29,24 +29,25 @@
  * than inset into it — an editor pane on a desktop, which is the other
  * convention and the one asked for here.
  *
- * `--code-bg` sits **1.19:1 above `--paper`**, and that is tighter than the
+ * `--code-bg` sits **1.22:1 above `--paper`**, and that is tighter than the
  * 1.29:1 the inset arrangement had. It is tight for a reason worth stating
- * rather than hiding: a violet light enough to carry the syntax palette is
+ * rather than hiding: a ground light enough to carry the syntax palette is
  * fairly high on the ramp, so a *grey* page has to go nearly to black before
  * it separates at all, and past about #141416 there is nothing left to
  * spend. **`--code-frame` therefore does more work here than it did before**,
- * and it was lifted to #4d4468 — 2.05:1 against the page and 1.72:1 against
+ * and it was lifted to #3f4670 — 2.03:1 against the page and 1.66:1 against
  * the listing — because at this separation the boundary does not survive
  * with the border removed, where under the old arrangement it did.
  *
  * **The syntax palette had to move for the first time, by one colour.** Every
  * one of its ten hues is measured against `--code-bg`, and lifting that
- * ground from a near-black to a violet cost each of them about a fifth of
+ * ground from a near-black to a mid tone cost each of them about a fifth of
  * its contrast. Nine survived; `--c-com`, already the tightest at 4.84:1,
- * fell to 3.91:1 and is now `#9a93b0` — a grey-violet rather than the old
- * grey-blue, which also stops a comment reading as a foreign hue on this
- * ground. `--c-pun` was warmed with it for the same reason. The tightest
- * pairing in the listing is now `--c-key` at 4.75:1.
+ * fell below the floor and is now `#8d98ba` at 5.25:1 — **the same grey-blue
+ * family it always was, lifted rather than re-hued**, because the ground it
+ * sits on is blue again. `--c-pun` was lifted with it. The tightest pairing
+ * in a listing is now `--c-key` at 4.62:1, which is the number to watch if
+ * this ground is ever lightened further.
  *
  * **Three legible levels.** `--surface` (a card, a chip inside a callout) is
  * 1.51:1 above the page and `--sunk` (an inline `code` chip) is 1.99:1 above
@@ -69,7 +70,7 @@
    *
    * **The page and the listing traded places.** The ground was a slate navy,
    * then a violet charcoal; it is a near-black grey now, and the violet it
-   * used to be is the *listing's* ground. So the violet did not leave the
+   * used to be is the *listing's* ground, taken back toward blue. So the violet did not leave the
    * page so much as move behind the code, which is where the argument for
    * choosing it applies most: the syntax palette's three loudest hues are a
    * pink, a purple and a cyan, and they sit on a violet as one decision where
@@ -79,11 +80,12 @@
    * 8.74:1, --old 9.21:1. Every one is higher than it was, because the ground
    * went nearly to black and none of the foregrounds moved.
    *
-   * **--accent stays the lilac**, though the page is no longer violet, and
-   * that is deliberate rather than left over: with the listing violet, a blue
-   * or cyan accent would compete with --c-type across the boundary, and a
-   * grey accent is not an accent. It is the one colour that now belongs to
-   * neither surface, which is what makes it read as chrome.
+   * **--accent stays the lilac**, and it matters more now than it did. The
+   * listing's ground was taken back toward blue, which walks it *into*
+   * --c-type's hue family — so an accent anywhere near blue or cyan would
+   * compete with a type name across the boundary, and a grey accent is not
+   * an accent. The lilac is the one colour belonging to neither surface,
+   * which is what makes it read as chrome rather than as part of either.
    * Darkening the page walks it toward the listing, and near black the
    * luminance differences compress, so there is no ground below about
    * #1a2233 that keeps a listing visible as a separate surface at all. This
@@ -118,24 +120,30 @@
    * listing's colours are fixed, and re-toning the page could not reach
    * them. Every value below is measured against --code-bg and clears 4.5:1
    * there; the tightest is --c-com at 4.84. */
-  --code-bg:#272231; --code-ink:#e4dff0; --code-frame:#4d4468;
+  --code-bg:#1f2540; --code-ink:#dfe4f2; --code-frame:#3f4670;
   --c-key:#e85aa8; --c-ctl:#e85aa8; --c-type:#4de8ff; --c-fn:#3dfca0;
   --c-str:#f6ff6b; --c-num:#c77dff; --c-par:#ffa23c; --c-op:#e85aa8;
-  --c-com:#9a93b0; --c-res:#ff6e6e; --c-pun:#a79fbd;
+  --c-com:#8d98ba; --c-res:#ff6e6e; --c-pun:#9ba6c4;
   /* The block rail, kept separate from the syntax palette above on purpose:
-   * these four paint a flat 3px tab on the left of a `pre`, never a gradient,
+   * these five paint a flat 3px tab on the left of a `pre`, never a gradient,
    * so the block kinds stay tellable apart without competing with the tokens
    * inside them. Declared once, like the rest of the code chrome.
    *
    * The rail is decoration, not information: a removed-syntax block is also
    * captioned and struck through, and a shell block also carries its `$`.
    * Nothing on this site is told apart by rail colour alone, which is why
-   * these four are allowed to sit between 2.4:1 and 3.3:1 against the
-   * listing behind them, and between 1.6:1 and 2.3:1 against the page on
-   * their other edge. Lifting the page moved the second of those numbers and
-   * not the first, which is the expected direction: the rail belongs to the
-   * listing. */
-  --rail-code:#3d4f7a; --rail-shell:#2f6b52; --rail-err:#a34848; --rail-legacy:#4a5568;
+   * these five are allowed to sit between 2.4:1 and 3.2:1 against the
+   * listing behind them.
+   *
+   * **Two of them were lifted when the listing's ground was.** `--rail-code`
+   * and `--rail-legacy` were the two nearest the old near-black, and against
+   * the mid-tone ground they fell to 1.86:1 and 2.00:1 — below the range this
+   * paragraph states, which is the sort of thing that goes unnoticed because
+   * nothing *fails*, the tab simply stops being visible. They are #5470a8 and
+   * #697489 now, at 3.05:1 and 3.19:1, and the range above is a claim this
+   * file is checked against rather than a description of what happened to be
+   * true once. */
+  --rail-code:#5470a8; --rail-shell:#2f6b52; --rail-err:#a34848; --rail-legacy:#697489;
   /* A fifth, for a listing in *another* language. `rationale.html` sets the
    * same program side by side in Python, Rust, Go, Java and JavaScript, and
    * those blocks were rendering with no rail at all — so they read as "not
