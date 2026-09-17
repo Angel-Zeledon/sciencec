@@ -1,0 +1,17 @@
+error[SC0152]: a negative index does not count from the end in Science
+  --> tests/ui/parse/negative_index.science:16:21
+   |
+16 |     let last be row[-1]
+   |                     ^^ an index runs from `0` up to the extent
+   |
+   = note: Python reads `a[-1]` as the last element, which is what makes `a[i - 1]` in a loop read the last element at an `i` of zero instead of failing
+   = help: read the last element with: `.last()`
+
+error[SC0152]: a negative index does not count from the end in Science
+  --> tests/ui/parse/negative_index.science:17:23
+   |
+17 |     let before be row[-2]
+   |                       ^^ an index runs from `0` up to the extent
+   |
+   = note: Python reads `a[-1]` as the last element, which is what makes `a[i - 1]` in a loop read the last element at an `i` of zero instead of failing
+   = note: count from the end in the text instead: `xs[xs.length() - 2]`

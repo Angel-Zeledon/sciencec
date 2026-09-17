@@ -1,0 +1,18 @@
+# UI test: `a[-1]`, which §4.5 refuses to read as the last element (SC0152).
+#
+# Python's negative indexing is the strongest habit this language has to
+# unteach, and §4.5's argument is not that it reads badly: it is that
+# `a[i - 1]` in a loop is correct at every `i` except `0`, where Python
+# silently reads the *last* element instead of failing. A wrong answer with no
+# diagnostic is the exact class of bug the language exists against.
+#
+# Two spans, two shapes. The fix for `-1` replaces the *bracket* with
+# `.last()`, which needs no text from the base and produces exactly what §4.5
+# names. `-2` gets no fix at all, because the replacement there is
+# `a[a.length() - 2]`, which needs the base written twice and cannot be built
+# from spans; it gets the note instead.
+
+def ends(row: Array of Int) -> Int:
+    let last be row[-1]
+    let before be row[-2]
+    return last + before

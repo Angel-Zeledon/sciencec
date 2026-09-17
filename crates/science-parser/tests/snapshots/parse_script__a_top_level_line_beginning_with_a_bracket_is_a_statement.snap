@@ -1,0 +1,23 @@
+---
+source: crates/science-parser/tests/parse_script.rs
+expression: "parse_source(\"let xs be [1, 2, 3]\nprint(xs[0])\n\")"
+---
+Module @0..33
+  Fn `main` @0..32
+    ret: Nullable @32..32
+      Path `Error` @32..32
+    body: Block @0..32
+      Let `xs` @0..19
+        value: ArrayLit @10..19
+          Int 1 @11..12
+          Int 2 @14..15
+          Int 3 @17..18
+      Call @20..32
+        callee: Path `print` @20..25
+        args
+          Index @26..31
+            base: Path `xs` @26..28
+            index: Int 0 @29..30
+      tail: Null @32..32
+--- diagnostics ---
+(none)

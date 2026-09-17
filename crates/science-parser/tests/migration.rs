@@ -367,3 +367,35 @@ fn a_pre_revision_file_reports_every_word_once() {
     );
     insta::assert_snapshot!(parse_source_allowing_errors(source));
 }
+
+// --- what the array literal did to the lookahead ---------------------------
+
+/// `while[0]` is read as the stale loop, not as an index into a variable
+/// named `while`, and `n is above [0]` as the stale comparison phrase.
+///
+/// **This is a deliberate consequence** of putting `[` in `starts_expr`, and
+/// it is recorded as a test rather than left to be discovered. The migration
+/// lookahead asks whether an expression follows the freed word, and after
+/// `indexing-and-array-literals.md` §3.1 one can begin with `[`.
+///
+/// `(` has had exactly this property since these codes were written —
+/// `while(0)` is already the stale loop — so the behaviour is consistent
+/// rather than newly surprising, and the traffic runs one way: array literals
+/// did not exist in the language before this commit, so no pre-revision
+/// program can have a `while` whose condition begins with `[`. What is lost is
+/// a reading nobody has written; what is gained covers every file the
+/// migration is for.
+#[test]
+fn a_bracket_after_a_freed_word_is_read_as_the_migration() {
+    assert_eq!(
+        codes("def h(while: Array of Int, above: Array of Int, n: Int):\n    let a be while[0]\n"),
+        ["SC0142", "SC0100"],
+        "`while[0]` is the removed loop, and the `SC0100` after it is the block \
+         the recovery then wanted - the same pair `while(0)` has always produced"
+    );
+    assert_eq!(
+        codes("def h(above: Array of Int, n: Int):\n    let b be n is above [0]\n"),
+        ["SC0143"],
+        "`is above` is the removed comparison phrase, as it is before a `(`"
+    );
+}

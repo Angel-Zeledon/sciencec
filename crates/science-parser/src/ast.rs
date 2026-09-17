@@ -933,6 +933,31 @@ pub enum ExprKind {
     Field { base: Box<Expr>, name: Ident },
     /// `base[index]`.
     Index { base: Box<Expr>, index: Box<Expr> },
+    /// `[a, b, c]` and `[]` — the array literal of
+    /// `indexing-and-array-literals.md` §3.1.
+    ///
+    /// **The decision** is that the elements are held as written and nothing
+    /// else: the node records a bracketed list and no element type, no length
+    /// that anything is asked to believe, and no collection other than
+    /// `Array`. §3.1 makes the type `Array of T` *always* — a literal is never
+    /// inference-directed into a `Set` or a `Map` — so there is nothing for a
+    /// syntax node to choose between, and `[` in prefix position is the whole
+    /// of what distinguishes this from [`ExprKind::Index`] (§6.2).
+    ///
+    /// **The reason** the list may be empty is that §3.3 gives `[]` its
+    /// element type from the expected type at its position, which is a fact
+    /// about the type checker and not about the text. A parser that refused
+    /// the empty form would be answering a question it cannot see the
+    /// premises of; a parser that invented a placeholder element would be
+    /// putting a value in the tree that nobody wrote.
+    ///
+    /// **The cost** is that an empty literal is indistinguishable here from a
+    /// literal whose elements all failed to parse, and both arrive at the
+    /// checker as a zero-length list. The second case has already reported
+    /// itself, so the checker's `SC0282` fires twice for one mistake unless it
+    /// checks first whether anything upstream failed — which is the rule every
+    /// other phase after a recovering parser already lives by.
+    ArrayLit(Vec<Expr>),
     /// `Doc(title: "a", body: "b")` — construction with named arguments, which
     /// §4.4 makes mandatory for records. Syntactically this is a call whose
     /// arguments are named; nothing but the names distinguishes the two.

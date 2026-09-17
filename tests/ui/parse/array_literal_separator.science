@@ -1,0 +1,18 @@
+# UI test: `[1 2]`, an array literal whose elements are not separated
+# (SC0100).
+#
+# This is a no-cascade case rather than a new code. The list reports the
+# missing separator itself, where both tokens are in scope, and then recovers
+# to the `]`; if it left the complaint to the `expect` that closes the
+# bracket, the statement would fail a second time when the line did not end,
+# and one mistake would print twice. That is exactly the failure this whole
+# change was written to remove — `let xs be [1, 2]` used to print `SC0105`
+# and then `SC0100` — so reintroducing it one bracket over would be a poor
+# trade.
+#
+# The binding after it parses clean, which is the other half of the claim.
+
+def main():
+    let xs be [1 2]
+    let ys be [3, 4]
+    print(ys)

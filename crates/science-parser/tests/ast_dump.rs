@@ -1128,6 +1128,19 @@ fn dump_statements_and_expressions() {
         // parser keeps both so later phases still see a tree.
         stmt(StmtKind::Error, 655, 665),
         stmt(StmtKind::Expr(expr(ExprKind::Error, 670, 680)), 670, 680),
+        // [1, 2] — the array literal of `indexing-and-array-literals.md`
+        // §3.1. Its elements are dumped as items rather than as named
+        // children, the way a tuple's are: they are a list and nothing but a
+        // list, and a name per element would print the index twice.
+        stmt(
+            StmtKind::Expr(expr(
+                ExprKind::ArrayLit(vec![int(1, 686, 687), int(2, 689, 690)]),
+                685,
+                691,
+            )),
+            685,
+            691,
+        ),
         // (10, 0xa, 0o12, 0b1010, 1i8, .., 1.5f64)
         stmt(StmtKind::Expr(every_literal_form(700)), 700, 800),
     ];

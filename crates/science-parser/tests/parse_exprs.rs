@@ -963,6 +963,150 @@ fn indexing_applies_to_a_receiver_that_is_not_a_name() {
     );
 }
 
+// --- array literals, and the bracket's two meanings ----------------------
+
+/// §6.2's whole rule: `[` in prefix position opens a literal.
+///
+/// There is no lookahead here and no backtracking. In a Pratt parser a prefix
+/// bracket is the null denotation and a postfix one is the left denotation,
+/// which is the same way `(` has always told grouping from a call.
+#[test]
+fn a_prefix_bracket_opens_an_array_literal() {
+    assert_shape(
+        "[1, 2, 3]",
+        "
+        ArrayLit
+          Int 1
+          Int 2
+          Int 3
+        ",
+    );
+}
+
+/// §6.2's table, row four: `[1, 2][0]` is a literal and then an index.
+///
+/// The second `[` follows a `]`, which ends an expression, so it is postfix.
+/// This is the case that proves the rule is position and not spelling.
+#[test]
+fn a_bracket_after_a_literal_indexes_it() {
+    assert_shape(
+        "[1, 2][0]",
+        "
+        Index
+          base: ArrayLit
+            Int 1
+            Int 2
+          index: Int 0
+        ",
+    );
+}
+
+/// §3.1's `identity`: a nested literal is an `Array of (Array of T)` and
+/// nothing cleverer. The inner `[` follows `[` and `,`, both prefix.
+#[test]
+fn a_nested_literal_is_a_literal_at_both_levels() {
+    assert_shape(
+        "[[1, 0], [0, 1]]",
+        "
+        ArrayLit
+          ArrayLit
+            Int 1
+            Int 0
+          ArrayLit
+            Int 0
+            Int 1
+        ",
+    );
+}
+
+/// `[]` parses, and it parses to a literal with no elements.
+///
+/// §3.3 gives it its element type from the expected type at its position,
+/// which is a question for the checker; the parser's only job is not to
+/// invent an answer. `SC0282` — an empty literal with no expected type — is
+/// the type side's, and this test is what says the parser hands it something
+/// to fire on.
+#[test]
+fn an_empty_literal_is_a_literal_with_no_elements() {
+    assert_shape("[]", "ArrayLit");
+}
+
+/// §3.1: the trailing comma needs no rule, because §4.7 already allows one
+/// "in every bracketed and parenthesized list" and this is one.
+#[test]
+fn a_trailing_comma_leaves_the_shape_alone() {
+    let plain = shape_of_expr("[1, 2]");
+    let trailing = shape_of_expr("[1, 2,]");
+    assert_eq!(plain, trailing);
+}
+
+/// §6.2: "whitespace is not load-bearing". `a [1]` is an index, the same as
+/// `a[1]`.
+///
+/// §4.3 already refused to make the space in `Array of Doc .new()`
+/// significant; making it significant here and nowhere else would be the
+/// worst of both.
+#[test]
+fn a_space_before_an_index_bracket_changes_nothing() {
+    assert_eq!(shape_of_expr("a[1]"), shape_of_expr("a [1]"));
+}
+
+/// A literal is an ordinary expression, so it is an argument like any other.
+///
+/// This is the case `data-io.md` §11.6 was waiting for: `null_values(["",
+/// "NA"])` instead of three calls to `null_value`.
+#[test]
+fn a_literal_is_an_argument() {
+    assert_shape(
+        "f([1, 2])",
+        "
+        Call
+          callee: Path `f`
+          args
+            ArrayLit
+              Int 1
+              Int 2
+        ",
+    );
+}
+
+/// A slice is an index whose position is a range (§2.1), and it needed no new
+/// syntax at all: §4.5 had already chosen `..` and `..=`.
+///
+/// §2.2's open-ended forms — `a[..5]`, `a[2..]`, `a[..]` — are **not** here.
+/// They would need `ExprKind::Range` to carry optional ends, which is a change
+/// to a node the checker already matches on, and this commit does not make it.
+#[test]
+fn a_slice_is_an_index_whose_position_is_a_range() {
+    assert_shape(
+        "a[1..5]",
+        "
+        Index
+          base: Path `a`
+          index: Range
+            start: Int 1
+            end: Int 5
+        ",
+    );
+}
+
+/// The row associates left, so `a[i].field[j]` groups as `((a[i]).field)[j]`
+/// (§6.1).
+#[test]
+fn indexing_field_access_and_indexing_again_associate_left() {
+    assert_shape(
+        "a[0].field[1]",
+        "
+        Index
+          base: Field `field`
+            base: Index
+              base: Path `a`
+              index: Int 0
+          index: Int 1
+        ",
+    );
+}
+
 // --- control flow as an expression ---------------------------------------
 
 /// §4.5's inline form, as the spec writes it. The `then` body ends at `else`,
@@ -1260,4 +1404,45 @@ fn a_chain_broken_over_lines_is_still_one_expression() {
         .collect()
 "
     ));
+}
+
+/// `SC0152`'s fix replaces the *bracket*, and the UI snapshot cannot say so.
+///
+/// The rendered expectation shows the `= help:` text and never the span it
+/// applies to, so a fix pointing at the wrong characters is invisible there.
+/// `migration.rs` learned that and asserts the replaced text for every
+/// migration code; this is the same assertion for the one fix in this block.
+/// `a.last()` needs the text of `a`, which the parser does not have; replacing
+/// `[-1]` with `.last()` needs only the bracket and produces the same program.
+#[test]
+fn the_negative_index_fix_replaces_the_bracket_and_nothing_else() {
+    let source = "def f(row: Array of Int) -> Int:\n    return row[-1]\n";
+    let (tokens, lexical) = science_lexer::lex(common::FILE, source);
+    assert!(lexical.iter().next().is_none(), "the source should lex clean");
+    let (_, diagnostics) = science_parser::parse_module(&tokens, common::FILE);
+    let mut found = diagnostics.iter();
+    let diagnostic = found.next().expect("`row[-1]` should be reported");
+    assert!(found.next().is_none(), "one negative index is one diagnostic");
+    assert_eq!(diagnostic.code.to_string(), "SC0152");
+
+    let fix = diagnostic.suggestions.first().expect("`-1` should offer a fix");
+    assert_eq!(&source[fix.span.start as usize..fix.span.end as usize], "[-1]");
+    assert_eq!(fix.replacement, ".last()");
+}
+
+/// `a[-2]` gets no fix at all, and that is the decision rather than an
+/// oversight.
+///
+/// §4.5's second replacement is `a[a.length() - 2]`, which needs the base
+/// written twice; the parser holds tokens and spans and cannot build it. A
+/// note carries it instead, which is `try_word.science`'s rule: a fix that
+/// might be wrong is worse than a note that is right.
+#[test]
+fn a_negative_index_other_than_one_offers_a_note_and_no_fix() {
+    let source = "def f(row: Array of Int) -> Int:\n    return row[-2]\n";
+    let (tokens, _) = science_lexer::lex(common::FILE, source);
+    let (_, diagnostics) = science_parser::parse_module(&tokens, common::FILE);
+    let diagnostic = diagnostics.iter().next().expect("`row[-2]` should be reported");
+    assert_eq!(diagnostic.code.to_string(), "SC0152");
+    assert!(diagnostic.suggestions.is_empty(), "no fix can be built from spans alone");
 }

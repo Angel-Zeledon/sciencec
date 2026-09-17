@@ -1,0 +1,23 @@
+# UI test: a comprehension, which `indexing-and-array-literals.md` §5 rejects
+# in favour of the chain (SC0153).
+#
+# §7.1 requires this to be caught on the AST rather than left to the type
+# checker, and the reason is the shape of the failure without it: a
+# comprehension type-checks as nothing at all, so what the reader would get is
+# a complaint about a missing `,` before `for`, a second about the end of the
+# line, and nothing whatever about the construct they wrote.
+#
+# The point of this case is therefore the count. One diagnostic covers the
+# whole bracket, recovery consumes it, and the `let` that follows still parses
+# — which is what the second binding here is for.
+#
+# There is no `= help:` and there should not be. §5.3 prints a rewrite, and
+# that rewrite is three sub-expressions reordered with the loop variable
+# rewritten to `each`; it is source text, and the parser holds tokens. A fix
+# that guessed at three spellings would be worse than the note that names the
+# shape, which is `try_word.science`'s rule applied a second time.
+
+def main(xs: Array of Int):
+    let scaled be [x * 2 for x in xs if x > 0]
+    let total be 0
+    print(total)

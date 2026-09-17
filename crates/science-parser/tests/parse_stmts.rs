@@ -206,3 +206,21 @@ fn inline_and_block_bodies_agree() {
     let block = parse_body("def f() -> Int:\n    1\n");
     assert_eq!(strip_spans(&inline), strip_spans(&block));
 }
+
+/// `return` and `break` decide whether they carry a value by asking
+/// `starts_expr`, so an array literal after either one is the case that says
+/// `[` is in that list.
+///
+/// This is half of the bug the literal was added to fix: before `[` was in
+/// `starts_expr`, `return [1, 2]` returned *nothing* and then failed on the
+/// `[` it had left behind, which is one mistake and two diagnostics.
+#[test]
+fn return_and_break_carry_an_array_literal() {
+    insta::assert_snapshot!(parse_body(
+        "def pick(ready: Bool) -> Array of Int:
+    if ready: return [0]
+    loop:
+        break [1, 2]
+"
+    ));
+}

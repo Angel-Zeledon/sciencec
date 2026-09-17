@@ -739,6 +739,12 @@ impl Dump for Expr {
                 w.child("base", &**base);
                 w.child("index", &**index);
             }),
+            // Its elements are dumped as items rather than as named children,
+            // the way `Tuple`'s are: they are a list and nothing but a list,
+            // and a name per element would be an index printed twice.
+            ExprKind::ArrayLit(elements) => {
+                w.node("ArrayLit", self.span, |w| w.items(elements))
+            }
             ExprKind::StructLit { path, fields } => {
                 w.node(&named("StructLit", &path.dotted()), self.span, |w| {
                     dump_path_generics(path, w);

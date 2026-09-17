@@ -1,0 +1,24 @@
+# UI test: the two index forms `indexing-and-array-literals.md` specifies and
+# this commit does not implement.
+#
+# §2.5 asks that "the parser and the AST should carry index arity and
+# open-ended ranges from the first commit, so that F1 adds a type rule and not
+# a syntax revision." That ask is **not** discharged here, and this case exists
+# to record the state it is left in rather than to let it be discovered.
+#
+# The reason is the same for both. `m[i, j]` needs `ExprKind::Index` to hold a
+# list of positions instead of one expression, and `samples[..5]` needs
+# `ExprKind::Range` to hold optional ends. Both are nodes the resolver and the
+# type checker already match on, so either reshaping is a change to two crates
+# this commit does not own, made while one of them is being changed by someone
+# else. The literal needed neither, which is why it could land alone.
+#
+# What is pinned here is the *count*. `m[i, j]` is one diagnostic: the index
+# bracket recovers to its own `]` rather than stopping on the comma, so the
+# `]` is not reported a second time at the end of the line. `samples[..5]` is
+# two, and the second one is the price of a `..` the grammar cannot start an
+# expression with. Neither can be one until the grammar carries the form.
+
+def views(m: Array of Int, samples: Array of Int):
+    let cell be m[1, 1]
+    let head be samples[..5]

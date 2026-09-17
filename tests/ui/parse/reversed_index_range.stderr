@@ -1,0 +1,15 @@
+error[SC0154]: this range starts at 5 and ends at 1, so it holds nothing
+  --> tests/ui/parse/reversed_index_range.science:17:26
+   |
+17 |     let empty be samples[5..1]
+   |                          ^^^^ the start is past the end
+   |
+   = note: no fix is offered because which of the two bounds is wrong is not something the compiler can know
+
+error[SC0154]: this range starts at 9 and ends at 2, so it holds nothing
+  --> tests/ui/parse/reversed_index_range.science:18:25
+   |
+18 |     let also be samples[9..=2]
+   |                         ^^^^^ the start is past the end
+   |
+   = note: no fix is offered because which of the two bounds is wrong is not something the compiler can know

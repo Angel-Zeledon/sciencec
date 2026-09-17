@@ -1,0 +1,8 @@
+error[SC0153]: Science has no comprehensions; write the chain
+  --> tests/ui/parse/array_comprehension.science:21:19
+   |
+21 |     let scaled be [x * 2 for x in xs if x > 0]
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this bracket holds a comprehension, not a list
+   |
+   = note: the chain does the same thing, lazily and in reading order: `source.iterate().keep(<condition>).map(<expression>).collect()`
+   = note: `keep` comes before `map`, and `each` names the element, so the chain declares no loop variable

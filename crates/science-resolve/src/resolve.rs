@@ -1712,6 +1712,40 @@ impl Resolver {
                 base: Box::new(self.resolve_expr(base)),
                 index: Box::new(self.resolve_expr(index)),
             },
+            // `[a, b, c]` — the array literal of
+            // `indexing-and-array-literals.md` §3.1.
+            //
+            // **The seam.** This phase has nothing to decide about a literal:
+            // it binds no name, opens no scope, and §3.1 fixes its type as
+            // `Array of T` with no help from anything the resolver knows. What
+            // is left to do is resolve the elements, which is done here for
+            // its diagnostics — a misspelling inside `[a, b]` is the
+            // resolver's to report, and reporting it is worth more than the
+            // node.
+            //
+            // **The cost, stated plainly, because it is the one compromise in
+            // this change.** The HIR has no array literal, so the resolved
+            // elements are dropped and the expression lowers to `Error`, which
+            // is the same standing `Index` has today: `science-types` gives
+            // `hir::ExprKind::Index` `Ty::ERROR` and no diagnostic, so `xs[0]`
+            // on an `I64` checks clean. A literal therefore checks clean too,
+            // and neither `SC0281` nor `SC0282` can fire until the node exists
+            // to carry the elements.
+            //
+            // **Why it was not carried further.** Adding `hir::ExprKind::
+            // ArrayLit` is two lines here and a compile error in
+            // `science-types`, whose exhaustive matches in `check::synth` and
+            // `narrow::walk_expr` would both stop building — and that crate is
+            // being changed concurrently by someone else. The node, the two
+            // arms and `SC0280`—`SC0282` belong in one commit, made by
+            // whoever owns the checker; splitting it across two crates buys a
+            // broken workspace and nothing else.
+            ast::ExprKind::ArrayLit(elements) => {
+                for element in elements {
+                    self.resolve_expr(element);
+                }
+                hir::ExprKind::Error
+            }
             ast::ExprKind::StructLit { path, fields } => self.resolve_struct_lit(path, fields),
             ast::ExprKind::Tuple(elems) => {
                 hir::ExprKind::Tuple(elems.iter().map(|e| self.resolve_expr(e)).collect())

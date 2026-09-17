@@ -157,6 +157,29 @@ pub mod codes {
     /// takes the next block the allocation map records as free.
     pub const TRY_WORD: Code = Code(155);
 
+    // `indexing-and-array-literals.md` §7.1's block, `SC0150`-`SC0154`, which
+    // `docs/superpowers/design/README.md` records as that note's claim on the
+    // syntax range. Four of the five are here. `SC0150` — an open-ended range
+    // outside an index bracket — is not, because nothing in this phase can yet
+    // produce an open-ended range to be outside one: see
+    // `Parser::parse_range`'s note on what F0 does and does not spell.
+    //
+    // All four are decided on the AST, before types, which is §7.1's own
+    // requirement for two of them. It matters most for `SC0153`: a
+    // comprehension type-checks as nothing at all, so a phase that let it
+    // through would report the absence of a chain three times and the
+    // comprehension never.
+
+    /// An empty index bracket: `a[]` (§7.1).
+    pub const EMPTY_INDEX: Code = Code(151);
+    /// A literal negative index: `a[-1]` (§4.5, §7.1).
+    pub const NEGATIVE_INDEX: Code = Code(152);
+    /// A comprehension: `[` … `for` … `]` (§5.3, §7.1).
+    pub const COMPREHENSION: Code = Code(153);
+    /// A range with literal bounds whose start exceeds its end: `a[5..1]`
+    /// (§7.1).
+    pub const REVERSED_RANGE: Code = Code(154);
+
     /// `a * b` where neither side is an integer literal.
     ///
     /// `const-expression-arithmetic.md` §2.1 keeps const arithmetic linear
@@ -637,6 +660,39 @@ impl<'t> Parser<'t> {
                     self.advance();
                 }
             }
+        }
+    }
+
+    /// Drops tokens up to and including this index bracket's own `]`.
+    ///
+    /// **Why not [`Self::recover_in_brackets`]**, which is the recovery every
+    /// other bracketed list uses: that one stops at a `,`, because inside a
+    /// list the next element follows one. An index bracket has no list in it
+    /// that F0 reads. §2.5 specifies `m[i, j]` as one index position of arity
+    /// two and leaves it to F1, so in F0 the comma is part of the mistake; a
+    /// recovery that stopped on it would leave the `]` to be reported a second
+    /// time when the line failed to end, and one mistake would print twice.
+    ///
+    /// **The cost** is that everything between the `,` and the `]` is dropped
+    /// unread, so a second error inside a rank-2 index is not reported until
+    /// the first is gone. That is the ordinary price of recovering past a
+    /// construct the grammar does not have, and it buys the count.
+    fn recover_to_index_close(&mut self) {
+        let mut depth = 0usize;
+        loop {
+            match self.peek() {
+                TokenKind::Eof | TokenKind::Newline | TokenKind::Dedent => return,
+                // Not this bracket's: it belongs to whatever encloses it.
+                TokenKind::RParen | TokenKind::RBrace if depth == 0 => return,
+                TokenKind::RBracket if depth == 0 => {
+                    self.advance();
+                    return;
+                }
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => depth -= 1,
+                _ => {}
+            }
+            self.advance();
         }
     }
 
@@ -3566,6 +3622,57 @@ impl<'t> Parser<'t> {
     /// migration diagnostics look one token ahead: `while` is an ordinary
     /// identifier now, and what tells `while n > 0:` from a variable named
     /// `while` is whether an expression follows it.
+    ///
+    /// # `[` is in this list, and it moves six other decisions
+    ///
+    /// **The decision** is that `[` goes in here with no exception anywhere,
+    /// because this predicate answers a question about the grammar — *can an
+    /// expression begin with this token* — and after
+    /// `indexing-and-array-literals.md` §3.1 the answer is yes. An exception
+    /// in one caller would make the predicate say something false in order to
+    /// make one caller say something true, and it would say it in the last
+    /// place a reader of that caller would look.
+    ///
+    /// Six callers read it, and each was checked rather than assumed:
+    ///
+    /// * [`Self::at_expr_start`] decides whether `return` and `break` carry a
+    ///   value. `return [1, 2]` must return the array, and before this change
+    ///   it returned nothing and then failed on the `[`. **Right, and it is
+    ///   half the bug this change exists to fix.**
+    /// * [`Self::at_stmt_start`] decides whether `:` is followed by an inline
+    ///   body. `if ready: return [0]` now has one. **Right**, and a bare
+    ///   `if c: [1, 2]` is an inline body whose value is an array, which is
+    ///   useless and not ill-formed — the same standing `if c: 1` has.
+    /// * [`Self::at_top_level_statement`] decides whether a top-level line is
+    ///   a statement (`script-mode.md` §8.2). Nothing in the language
+    ///   *declares* with a `[`, so the arm this reaches is the one for "a
+    ///   statement exactly when it could be one". **Right**, and it is what
+    ///   makes `print([1, 2])` legal in a script.
+    /// * [`Self::at_while_word`] and [`Self::at_try_word`] tell `while n > 0:`
+    ///   and `try f()` — the forms revisions 2 and 3 removed — from ordinary
+    ///   variables called `while` and `try`. Adding `[` means `while[0]`,
+    ///   which is an index into a variable named `while`, now reports
+    ///   `SC0142` instead. **This is a real change and it is accepted**, for
+    ///   two reasons. `LParen` has had exactly this property since the
+    ///   migration codes were written — `while(0)` is already read as the
+    ///   stale loop — so the behaviour is consistent rather than newly
+    ///   surprising; and the traffic runs one way, because no pre-revision
+    ///   program can have a `while` whose condition begins with `[`. Array
+    ///   literals did not exist in the language until this commit, so the
+    ///   reading that is lost is one nobody has written and the reading that
+    ///   is gained covers every file the migration is for.
+    /// * [`Self::stale_comparison_phrase`] is the same shape one rung up:
+    ///   `n is above [0]` was a comparison against element zero of an array
+    ///   named `above`, and is now `SC0143` offering `n > [0]`. **Accepted for
+    ///   the same reason**, and with the same `LParen` precedent —
+    ///   `n is above(0)` already reports the phrase.
+    ///
+    /// **The cost**, stated once: a program that names a variable `while`,
+    /// `try`, `above`, `below`, `least` or `most` and then indexes it gets a
+    /// migration diagnostic instead of an index. There is no fix for that
+    /// which is not a lookahead for the `:` that a block header ends with, and
+    /// a lookahead that scans to the end of a line to decide what its first
+    /// word meant is the thing §4.6 refuses everywhere else.
     fn starts_expr(&self, kind: &TokenKind) -> bool {
         use TokenKind::*;
         matches!(
@@ -3580,6 +3687,7 @@ impl<'t> Parser<'t> {
                 | SelfValue
                 | SelfType
                 | LParen
+                | LBracket
                 | Minus
                 | Not
                 | Null
@@ -3885,10 +3993,23 @@ impl<'t> Parser<'t> {
                         Expr { kind: ExprKind::Call { callee: Box::new(expr), args }, span }
                     };
                 }
+                // §6.2: `[` in *postfix* position — immediately after a
+                // complete primary — is an index, and binds with call and
+                // field access so that `a[i].f[j]` is `((a[i]).f)[j]`.
                 TokenKind::LBracket => {
+                    let open = self.span();
                     self.advance();
-                    let index = self.parse_expr();
-                    self.expect(&TokenKind::RBracket, "`]`");
+                    let index = match self.eat(&TokenKind::RBracket) {
+                        Some(close) => self.report_empty_index(open.merge(close.span)),
+                        None => {
+                            let index = self.parse_expr();
+                            if self.expect(&TokenKind::RBracket, "`]`").is_none() {
+                                self.recover_to_index_close();
+                            }
+                            self.check_index_position(&index, open.merge(self.last_text_span()));
+                            index
+                        }
+                    };
                     let span = start.merge(self.last_text_span());
                     expr = Expr {
                         kind: ExprKind::Index { base: Box::new(expr), index: Box::new(index) },
@@ -4130,6 +4251,11 @@ impl<'t> Parser<'t> {
                 None => error_expr(start),
             },
             TokenKind::LParen => self.parse_paren_expr(start),
+            // §6.2: `[` in *prefix* position opens a literal. There is no
+            // rule to apply and no lookahead to do — this is the null
+            // denotation and [`Self::parse_postfix`]'s arm is the left one,
+            // exactly as `(` is grouping here and a call there.
+            TokenKind::LBracket => self.parse_array_lit(start),
             TokenKind::If => self.parse_if_expr(),
             TokenKind::Match => self.parse_match_expr(),
             TokenKind::Loop => {
@@ -4239,6 +4365,268 @@ impl<'t> Parser<'t> {
         }
         self.expect(&TokenKind::RParen, "`)`");
         Expr { kind: ExprKind::Tuple(elems), span: start.merge(self.last_text_span()) }
+    }
+
+    /// `[a, b, c]` and `[]` — the array literal of
+    /// `indexing-and-array-literals.md` §3.1.
+    ///
+    /// **The decision** is that this is an ordinary comma-separated list with
+    /// no rule of its own: the loop below is `parse_call_args`'s loop with the
+    /// delimiters changed and nothing added. §4.7 already allows a trailing
+    /// comma "in every bracketed and parenthesized list", and a bracketed list
+    /// is what this is, so the trailing comma needs no rule either.
+    ///
+    /// **The reason** that is worth saying out loud is the formatter. Its
+    /// magic trailing comma reads the *comma*, not the node — `science-fmt`
+    /// never looks at the tree — so a literal whose trailing comma were
+    /// special here would lay out differently from every other list, for a
+    /// reason no reader could see from the text.
+    ///
+    /// **The cost** is that `[]` and a literal whose elements all failed to
+    /// parse arrive at the checker as the same zero-length node; see
+    /// [`ExprKind::ArrayLit`].
+    fn parse_array_lit(&mut self, start: Span) -> Expr {
+        if let Some(close) = self.comprehension_bracket() {
+            return self.report_comprehension(start, close);
+        }
+        self.advance(); // `[`
+
+        let mut elements = Vec::new();
+        while !self.at(&TokenKind::RBracket) {
+            elements.push(self.parse_expr());
+            // `[1 2]`: the element ended and what follows is neither a
+            // separator nor the close. Reported here, where the list is in
+            // scope and the message can name both tokens, and then recovered
+            // to the next landmark — leaving it to the `expect` below would
+            // report a second time when the line failed to end, which is the
+            // two-diagnostics-for-one-mistake this change exists to remove.
+            //
+            // A list boundary is the other half of that count. `[1, 2` with
+            // no `]` has one mistake and it is the missing bracket, so the
+            // loop stops without a word and the `expect` below is the only
+            // place that speaks. This is also why recovery may never eat one:
+            // see `at_list_boundary`.
+            if !self.at(&TokenKind::Comma) && !self.at(&TokenKind::RBracket) {
+                if self.at_list_boundary() {
+                    break;
+                }
+                self.expect(&TokenKind::RBracket, "`,` or `]`");
+                self.recover_in_brackets();
+            }
+            if self.eat(&TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RBracket, "`]`");
+
+        let span = start.merge(self.last_text_span());
+        Expr { kind: ExprKind::ArrayLit(elements), span }
+    }
+
+    /// The offset of this bracket's `]`, when what stands in it is Python's
+    /// comprehension rather than a list of elements (§5.3).
+    ///
+    /// The mark is a `for` at the bracket's own depth that is not the first
+    /// token inside it, and both halves earn their place. The **depth** leaves
+    /// `[[y for y in ys]]`'s inner comprehension to the inner bracket, so one
+    /// mistake is reported by one bracket. The **position** keeps
+    /// `[for x in xs: f(x)]` out of the net: §4.5 makes `for` an expression,
+    /// so an array holding one is a legal if pointless thing to write, and a
+    /// comprehension always has its output expression in front of the `for`
+    /// because that is the whole of what the form is for.
+    ///
+    /// The scan is bounded by the bracket and never crosses a layout token —
+    /// which inside an unclosed bracket the lexer does not emit anyway. The
+    /// arms for them are what makes this total on a file that did not lex.
+    fn comprehension_bracket(&self) -> Option<usize> {
+        let mut depth = 0usize;
+        let mut saw_for = false;
+        let mut offset = 1;
+        loop {
+            match self.peek_ahead(offset) {
+                TokenKind::Eof | TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent => {
+                    return None
+                }
+                TokenKind::RParen | TokenKind::RBrace if depth == 0 => return None,
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
+                TokenKind::RBracket if depth == 0 => return saw_for.then_some(offset),
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => depth -= 1,
+                TokenKind::For if depth == 0 && offset > 1 => saw_for = true,
+                _ => {}
+            }
+            offset += 1;
+        }
+    }
+
+    /// `SC0153`: a comprehension, reported on the whole bracket (§5.3).
+    ///
+    /// **The decision** is that this is caught here and not left to fall out
+    /// of the grammar, which is §7.1's own requirement: a comprehension
+    /// type-checks as nothing at all, so what falls out is a complaint about a
+    /// missing `,` followed by a complaint about the end of the line, and
+    /// nothing at all about the construct. This is `llm-ergonomics.md`'s play
+    /// — catch the habit the other language taught and name the local
+    ///   form — against the strongest habit Python has.
+    ///
+    /// **There is no machine-applicable fix, and that is deliberate.** The
+    /// rewrite §5.3 prints is three sub-expressions reordered with the loop
+    /// variable rewritten to `each`, and it is *source text*. This phase holds
+    /// tokens and spans and no text at all, so the fix it could build would be
+    /// a guess at three spellings. [`Self::report_try_word`] settled what to
+    /// do about that: a fix that might be wrong is worse than a note that is
+    /// right. The note carries the shape, which is what the reader has to
+    /// learn anyway.
+    ///
+    /// **The cost** is that the bracket is dropped whole — recovery consumes
+    /// it and leaves an error node — so a name misspelled inside the
+    /// comprehension is not reported until the comprehension is gone. That is
+    /// the right order, because the reader fixes the construct first, and it
+    /// is what keeps this one diagnostic instead of one per element.
+    fn report_comprehension(&mut self, start: Span, close: usize) -> Expr {
+        let span = start.merge(self.token_at(close).span);
+        self.diagnostics.push(
+            Diagnostic::error(
+                codes::COMPREHENSION,
+                "Science has no comprehensions; write the chain",
+            )
+            .with_label(Label::primary(
+                span,
+                "this bracket holds a comprehension, not a list",
+            ))
+            .with_note(
+                "the chain does the same thing, lazily and in reading order: \
+                 `source.iterate().keep(<condition>).map(<expression>).collect()`",
+            )
+            .with_note(
+                "`keep` comes before `map`, and `each` names the element, so the chain \
+                 declares no loop variable",
+            ),
+        );
+        // Everything up to and including the `]`. The offset is exact, so
+        // nothing after the bracket is eaten and the next statement parses.
+        for _ in 0..=close {
+            self.advance();
+        }
+        error_expr(span)
+    }
+
+    /// `SC0151`: `a[]`, an index bracket with no index in it.
+    ///
+    /// **The decision** is a code of its own rather than the `SC0105` that
+    /// falls out — *expected an expression, found `]`* — because the two name
+    /// different things. `SC0105` says a token stands where one may not; this
+    /// says the bracket is missing its index, which is what the reader did.
+    ///
+    /// **§7.1 offers two fixes and this offers one.** Its first is `a[..]`,
+    /// the whole thing as a view, and F0 does not spell a bare `..` — see
+    /// [`Self::parse_range`]. A fix that does not parse is worse than one
+    /// fix, so the open-ended form waits for the grammar that carries it.
+    ///
+    /// **The cost** is a line: the tree keeps an `Index` whose index is an
+    /// error node, rather than becoming an error node whole. That is what
+    /// leaves the base to be resolved, so a misspelling in `frame[]`'s `frame`
+    /// is still reported.
+    fn report_empty_index(&mut self, span: Span) -> Expr {
+        self.diagnostics.push(
+            Diagnostic::error(codes::EMPTY_INDEX, "this index bracket has no index in it")
+                .with_label(Label::primary(span, "`[]` indexes nothing"))
+                .with_note(
+                    "an index bracket holds one index position: `a[0]`, `a[i]`, or a \
+                     range, `a[1..5]`",
+                ),
+        );
+        error_expr(span)
+    }
+
+    /// The two things §7.1 can decide about an index position with no types.
+    ///
+    /// **Both are literal-only, and the line is drawn there on purpose.**
+    /// `a[-1]` is a mistake in the text; `a[-n]` is a program whose `n` might
+    /// be anything, and saying something about it needs the range analysis
+    /// §1.3 hands to `SC0286` in `science-types`. Asking only about what is
+    /// written is what keeps these two free of false positives, and a
+    /// diagnostic with false positives in the highest-traffic expression in
+    /// the language would be turned off in a week.
+    ///
+    /// **The cost** is that the rule does not compose: `a[-1..2]` has a
+    /// negative bound and is not reported, because the index position is a
+    /// range and not a negative literal. Widening it means deciding what
+    /// `a[-1..-1]` should say, and §7.1 gives one code for one shape.
+    fn check_index_position(&mut self, index: &Expr, bracket: Span) {
+        match &index.kind {
+            ExprKind::Unary { op: UnaryOp::Neg, operand } => {
+                if let ExprKind::Literal(Literal::Int { value, .. }) = &operand.kind {
+                    self.report_negative_index(index.span, bracket, *value);
+                }
+            }
+            ExprKind::Range { start, end, .. } => {
+                if let (Some(low), Some(high)) = (int_literal(start), int_literal(end)) {
+                    if low > high {
+                        self.report_reversed_range(index.span, low, high);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// `SC0152`: `a[-1]`, which §4.5 refuses to read as the last element.
+    ///
+    /// **The decision to give this its own code** is §4.5's: the Python muscle
+    /// memory is strong enough that the mistake will be common, and the fix is
+    /// mechanical. Left to the type checker it would arrive as `SC0286` — an
+    /// index that could not be proved in range — which is true and is not what
+    /// happened.
+    ///
+    /// **The fix is the bracket, not the expression.** `a.last()` needs the
+    /// text of `a`, which this phase does not have; replacing `[-1]` with
+    /// `.last()` needs only the bracket's span and produces the same text. It
+    /// is offered for `-1` alone, because §4.5's second replacement,
+    /// `a[a.length() - n]`, needs the base twice and cannot be built from
+    /// spans at all. That one is a note.
+    fn report_negative_index(&mut self, index: Span, bracket: Span, value: u128) {
+        let mut diagnostic = Diagnostic::error(
+            codes::NEGATIVE_INDEX,
+            "a negative index does not count from the end in Science",
+        )
+        .with_label(Label::primary(index, "an index runs from `0` up to the extent"))
+        .with_note(
+            "Python reads `a[-1]` as the last element, which is what makes `a[i - 1]` \
+             in a loop read the last element at an `i` of zero instead of failing",
+        );
+        if value == 1 {
+            diagnostic = diagnostic.with_suggestion(Suggestion {
+                span: bracket,
+                replacement: ".last()".to_string(),
+                message: "read the last element with".to_string(),
+            });
+        } else {
+            diagnostic = diagnostic.with_note(format!(
+                "count from the end in the text instead: `xs[xs.length() - {value}]`"
+            ));
+        }
+        self.diagnostics.push(diagnostic);
+    }
+
+    /// `SC0154`: `a[5..1]`, a range with literal bounds that holds nothing.
+    ///
+    /// **No fix is offered and §7.1 says why**: which of the two bounds is the
+    /// wrong one is not something the compiler can know. Saying that in the
+    /// message is better than guessing and better than saying nothing — a
+    /// reader told only that the range is empty will re-read the bound they
+    /// already believe.
+    fn report_reversed_range(&mut self, span: Span, low: u128, high: u128) {
+        self.diagnostics.push(
+            Diagnostic::error(
+                codes::REVERSED_RANGE,
+                format!("this range starts at {low} and ends at {high}, so it holds nothing"),
+            )
+            .with_label(Label::primary(span, "the start is past the end"))
+            .with_note(
+                "no fix is offered because which of the two bounds is wrong is not \
+                 something the compiler can know",
+            ),
+        );
     }
 
     /// `if cond: ..` with an optional `else`.
@@ -4804,6 +5192,18 @@ fn empty_block(span: Span) -> Block {
 
 fn error_expr(span: Span) -> Expr {
     Expr { kind: ExprKind::Error, span }
+}
+
+/// The value of an integer literal written with no sign, or `None`.
+///
+/// The suffix is ignored: `a[5u32..1u32]` is the same mistake as `a[5..1]`,
+/// and how wide a bound is has nothing to do with whether it is past the other
+/// one. The base is ignored for the same reason — `a[0x5..0x1]` counts.
+fn int_literal(expr: &Expr) -> Option<u128> {
+    match &expr.kind {
+        ExprKind::Literal(Literal::Int { value, .. }) => Some(*value),
+        _ => None,
+    }
 }
 
 /// The type an implementation head names, rebuilt from the head path and the

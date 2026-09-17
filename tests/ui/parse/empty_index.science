@@ -1,0 +1,17 @@
+# UI test: `a[]`, an index bracket with nothing in it (SC0151).
+#
+# The code exists to say something `SC0105` cannot. *Expected an expression,
+# found `]`* is true and describes a token; what happened is that the bracket
+# has no index, and a reader who wrote `row[]` knows where the `]` is.
+#
+# §7.1 offers two fixes for this and the compiler offers one. The other is
+# `a[..]`, the whole thing as a view, and F0 does not spell a bare `..` — see
+# the note on `parse_range`. A `= help:` offering text that does not parse
+# would be worse than a note that names what a bracket holds.
+#
+# The base is still resolved: the tree keeps an `Index` whose index is an
+# error node rather than collapsing to one, so a misspelling in the thing
+# being indexed is still the resolver's to find.
+
+def first(row: Array of Int) -> Int:
+    return row[]

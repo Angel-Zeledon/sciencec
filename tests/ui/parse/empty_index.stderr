@@ -1,0 +1,7 @@
+error[SC0151]: this index bracket has no index in it
+  --> tests/ui/parse/empty_index.science:17:15
+   |
+17 |     return row[]
+   |               ^^ `[]` indexes nothing
+   |
+   = note: an index bracket holds one index position: `a[0]`, `a[i]`, or a range, `a[1..5]`

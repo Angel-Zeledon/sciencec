@@ -1,0 +1,5 @@
+error[SC0100]: expected `,` or `]`, found a number literal
+  --> tests/ui/parse/array_literal_separator.science:16:18
+   |
+16 |     let xs be [1 2]
+   |                  ^ expected `,` or `]`, found a number literal

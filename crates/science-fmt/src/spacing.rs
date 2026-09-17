@@ -226,6 +226,24 @@ mod tests {
         assert!(!glued(&K::Arrow, &K::LParen, false));
     }
 
+    /// The bracket's two meanings, as spacing sees them.
+    ///
+    /// `indexing-and-array-literals.md` §6.2 decides the reading by parser
+    /// position, and this table has always agreed with it by accident: a `[`
+    /// after something that ends an expression is an index and is glued, and a
+    /// `[` after `be`, `return` or a comma opens a literal and keeps its
+    /// space. The rule needed no change when literals were added, which is
+    /// what this test is here to say.
+    #[test]
+    fn a_prefix_bracket_opens_a_literal_and_a_postfix_one_indexes() {
+        assert!(glued(&K::Ident("xs".into()), &K::LBracket, false));
+        assert!(glued(&K::RParen, &K::LBracket, false));
+        assert!(glued(&K::RBracket, &K::LBracket, false));
+        assert!(!glued(&K::Be, &K::LBracket, false));
+        assert!(!glued(&K::Return, &K::LBracket, false));
+        assert!(!glued(&K::Comma, &K::LBracket, false));
+    }
+
     #[test]
     fn a_binary_minus_keeps_its_spaces_and_a_unary_one_does_not() {
         assert!(!glued(&K::Minus, &K::Int { value: 1, base: science_lexer::IntBase::Dec, suffix: None }, false));

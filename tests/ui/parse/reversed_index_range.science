@@ -1,0 +1,19 @@
+# UI test: `a[5..1]`, a slice whose literal bounds hold nothing (SC0154).
+#
+# The rule is literal-only on purpose. `a[n..m]` with `n` above `m` is the
+# same empty slice and it is not reported here, because saying so needs the
+# range analysis §1.3 hands to `SC0286` in the type checker. Drawing the line
+# at what is written in the text is what keeps this free of false positives in
+# the highest-traffic expression in the language.
+#
+# No `= help:`, and §7.1 says why in as many words: which of the two bounds is
+# the wrong one is not something the compiler can know. The message says so,
+# because a reader told only that the range is empty will re-read the bound
+# they already believe.
+#
+# The inclusive form is the same mistake and is caught by the same rule.
+
+def windows(samples: Array of Int) -> Int:
+    let empty be samples[5..1]
+    let also be samples[9..=2]
+    return 0

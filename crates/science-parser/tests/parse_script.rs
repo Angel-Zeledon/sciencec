@@ -244,3 +244,18 @@ fn public_has_no_meaning_on_a_statement() {
 fn a_token_that_begins_neither_a_declaration_nor_a_statement() {
     insta::assert_snapshot!(parse_source_allowing_errors(")\n"));
 }
+
+/// A top-level line that begins with `[` is a statement.
+///
+/// §8.2's rule is that anything which is not one of the declaration words is
+/// a statement exactly when it could be one, and "could be one" is
+/// `starts_expr`. Nothing in the language declares with a `[`, so putting `[`
+/// in that predicate moves this line into the script body and nowhere else.
+#[test]
+fn a_top_level_line_beginning_with_a_bracket_is_a_statement() {
+    insta::assert_snapshot!(parse_source(
+        "let xs be [1, 2, 3]
+print(xs[0])
+"
+    ));
+}

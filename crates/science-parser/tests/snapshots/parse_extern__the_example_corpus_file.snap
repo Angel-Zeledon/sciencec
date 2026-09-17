@@ -2,7 +2,7 @@
 source: crates/science-parser/tests/parse_extern.rs
 expression: parse_source(source)
 ---
-Module @1138..9389
+Module @1138..10148
   Extern "C" unsafe @1138..2982
     Library "openblas" @1156..1200
       pkg-config: Str "openblas" @1190..1200
@@ -228,153 +228,165 @@ Module @1138..9389
           Path `Int` @6604..6607
           Path `Int` @6609..6612
       Variant `Overflow` @6618..6626
-  Record `MatrixView` @6628..6718
+  Record `MatrixBase` @7276..7357
+    generics
+      TypeParam `S` @7295..7296
     fields
-      Field `data` @6649..6670
-        type: Path `ffi.Span` @6655..6670
+      Field `data` @7302..7309
+        type: Path `S` @7308..7309
+      Field `rows` @7314..7323
+        type: Path `Int` @7320..7323
+      Field `columns` @7328..7340
+        type: Path `Int` @7337..7340
+      Field `leading` @7345..7357
+        type: Path `Int` @7354..7357
+  Alias `MatrixView` @7359..7407
+    type: Path `MatrixBase` @7378..7407
+      generics of `MatrixBase`
+        Path `ffi.Span` @7392..7407
           generics of `Span`
-            Path `F64` @6667..6670
-      Field `rows` @6675..6684
-        type: Path `Int` @6681..6684
-      Field `columns` @6689..6701
-        type: Path `Int` @6698..6701
-      Field `leading` @6706..6718
-        type: Path `Int` @6715..6718
-  Fn `gemm` public @7327..8474
+            Path `F64` @7404..7407
+  Alias `MutableMatrixView` @7408..7470
+    type: Path `MatrixBase` @7434..7470
+      generics of `MatrixBase`
+        Path `ffi.MutableSpan` @7448..7470
+          generics of `MutableSpan`
+            Path `F64` @7467..7470
+  Fn `gemm` public @8079..9233
     params
-      Param `a` @7348..7370
-        type: Borrowed @7351..7370
-          Path `MatrixView` @7360..7370
-      Param `b` @7376..7398
-        type: Borrowed @7379..7398
-          Path `MatrixView` @7388..7398
-      Param `c` @7404..7434
-        type: Borrowed mutable @7407..7434
-          Path `MatrixView` @7424..7434
-      Param `alpha` @7440..7450
-        type: Path `F64` @7447..7450
-      Param `beta` @7456..7465
-        type: Path `F64` @7462..7465
-    ret: Nullable @7471..7481
-      Path `BlasError` @7471..7480
-    body: Block @7487..8474
-      If @7487..7564
-        cond: Binary `!=` @7490..7513
-          lhs: Field `columns` @7490..7499
-            base: Path `a` @7490..7491
-          rhs: Field `rows` @7507..7513
-            base: Path `b` @7507..7508
-        then: Block @7523..7564
-          Return @7523..7564
-            value: Method `Shape` @7530..7564
-              receiver: Path `BlasError` @7530..7539
+      Param `a` @8100..8122
+        type: Borrowed @8103..8122
+          Path `MatrixView` @8112..8122
+      Param `b` @8128..8150
+        type: Borrowed @8131..8150
+          Path `MatrixView` @8140..8150
+      Param `c` @8156..8193
+        type: Borrowed mutable @8159..8193
+          Path `MutableMatrixView` @8176..8193
+      Param `alpha` @8199..8209
+        type: Path `F64` @8206..8209
+      Param `beta` @8215..8224
+        type: Path `F64` @8221..8224
+    ret: Nullable @8230..8240
+      Path `BlasError` @8230..8239
+    body: Block @8246..9233
+      If @8246..8323
+        cond: Binary `!=` @8249..8272
+          lhs: Field `columns` @8249..8258
+            base: Path `a` @8249..8250
+          rhs: Field `rows` @8266..8272
+            base: Path `b` @8266..8267
+        then: Block @8282..8323
+          Return @8282..8323
+            value: Method `Shape` @8289..8323
+              receiver: Path `BlasError` @8289..8298
               args
-                Field `columns` @7546..7555
-                  base: Path `a` @7546..7547
-                Field `rows` @7557..7563
-                  base: Path `b` @7557..7558
-      If @7569..7647
-        cond: Binary `or` @7572..7612
-          lhs: Binary `<` @7572..7590
-            lhs: Field `leading` @7572..7581
-              base: Path `a` @7572..7573
-            rhs: Field `rows` @7584..7590
-              base: Path `a` @7584..7585
-          rhs: Binary `<` @7594..7612
-            lhs: Field `leading` @7594..7603
-              base: Path `b` @7594..7595
-            rhs: Field `rows` @7606..7612
-              base: Path `b` @7606..7607
-        then: Block @7622..7647
-          Return @7622..7647
-            value: Field `Overflow` @7629..7647
-              base: Path `BlasError` @7629..7638
-      Unsafe @7653..8465
-        body: Block @8026..8465
-          tail: StructLit `cblas_dgemm` @8026..8465
+                Field `columns` @8305..8314
+                  base: Path `a` @8305..8306
+                Field `rows` @8316..8322
+                  base: Path `b` @8316..8317
+      If @8328..8406
+        cond: Binary `or` @8331..8371
+          lhs: Binary `<` @8331..8349
+            lhs: Field `leading` @8331..8340
+              base: Path `a` @8331..8332
+            rhs: Field `rows` @8343..8349
+              base: Path `a` @8343..8344
+          rhs: Binary `<` @8353..8371
+            lhs: Field `leading` @8353..8362
+              base: Path `b` @8353..8354
+            rhs: Field `rows` @8365..8371
+              base: Path `b` @8365..8366
+        then: Block @8381..8406
+          Return @8381..8406
+            value: Field `Overflow` @8388..8406
+              base: Path `BlasError` @8388..8397
+      Unsafe @8412..9224
+        body: Block @8785..9224
+          tail: StructLit `cblas_dgemm` @8785..9224
             fields
-              FieldInit `layout` @8051..8074
-                value: Path `CBLAS_COL_MAJOR` @8059..8074
-              FieldInit `transpose_a` @8088..8115
-                value: Path `CBLAS_NO_TRANS` @8101..8115
-              FieldInit `transpose_b` @8129..8156
-                value: Path `CBLAS_NO_TRANS` @8142..8156
-              FieldInit `m` @8170..8190
-                value: Cast @8173..8190
-                  expr: Field `rows` @8173..8179
-                    base: Path `a` @8173..8174
-                  type: Path `BlasInt` @8183..8190
-              FieldInit `n` @8204..8227
-                value: Cast @8207..8227
-                  expr: Field `columns` @8207..8216
-                    base: Path `b` @8207..8208
-                  type: Path `BlasInt` @8220..8227
-              FieldInit `k` @8241..8264
-                value: Cast @8244..8264
-                  expr: Field `columns` @8244..8253
-                    base: Path `a` @8244..8245
-                  type: Path `BlasInt` @8257..8264
-              FieldInit `alpha` @8278..8290
-                value: Path `alpha` @8285..8290
-              FieldInit `a` @8304..8313
-                value: Field `data` @8307..8313
-                  base: Path `a` @8307..8308
-              FieldInit `lda` @8315..8340
-                value: Cast @8320..8340
-                  expr: Field `leading` @8320..8329
-                    base: Path `a` @8320..8321
-                  type: Path `BlasInt` @8333..8340
-              FieldInit `b` @8354..8363
-                value: Field `data` @8357..8363
-                  base: Path `b` @8357..8358
-              FieldInit `ldb` @8365..8390
-                value: Cast @8370..8390
-                  expr: Field `leading` @8370..8379
-                    base: Path `b` @8370..8371
-                  type: Path `BlasInt` @8383..8390
-              FieldInit `beta` @8404..8414
-                value: Path `beta` @8410..8414
-              FieldInit `c` @8428..8437
-                value: Field `data` @8431..8437
-                  base: Path `c` @8431..8432
-              FieldInit `ldc` @8439..8464
-                value: Cast @8444..8464
-                  expr: Field `leading` @8444..8453
-                    base: Path `c` @8444..8445
-                  type: Path `BlasInt` @8457..8464
-      tail: Null @8470..8474
-  Fn `native_double_type` public @8979..9185
-    ret: Tuple @9014..9031
-      Path `Hid` @9015..9018
-      Nullable @9020..9030
-        Path `BlasError` @9020..9029
-    body: Block @9037..9185
-      tail: Unsafe @9037..9185
-        body: Block @9053..9185
-          Let `opened` @9053..9075
-            value: Call @9067..9075
-              callee: Path `H5open` @9067..9073
-          If @9084..9149
-            cond: Binary `<` @9087..9097
-              lhs: Path `opened` @9087..9093
-              rhs: Int 0 @9096..9097
-            then: Block @9111..9149
-              Return @9111..9149
-                value: Tuple @9118..9149
-                  Path `H5I_BADID` @9119..9128
-                  Field `Overflow` @9130..9148
-                    base: Path `BlasError` @9130..9139
-          tail: Tuple @9158..9185
-            Path `H5T_NATIVE_DOUBLE_g` @9159..9178
-            Null @9180..9184
-  Fn `cudnn_version` public @9309..9388
-    ret: Path `Int` @9339..9342
-    body: Block @9348..9388
-      tail: Unsafe @9348..9388
-        body: Block @9364..9388
-          tail: Cast @9364..9388
-            expr: Call @9364..9381
-              callee: Path `cudnnGetVersion` @9364..9379
-            type: Path `Int` @9385..9388
+              FieldInit `layout` @8810..8833
+                value: Path `CBLAS_COL_MAJOR` @8818..8833
+              FieldInit `transpose_a` @8847..8874
+                value: Path `CBLAS_NO_TRANS` @8860..8874
+              FieldInit `transpose_b` @8888..8915
+                value: Path `CBLAS_NO_TRANS` @8901..8915
+              FieldInit `m` @8929..8949
+                value: Cast @8932..8949
+                  expr: Field `rows` @8932..8938
+                    base: Path `a` @8932..8933
+                  type: Path `BlasInt` @8942..8949
+              FieldInit `n` @8963..8986
+                value: Cast @8966..8986
+                  expr: Field `columns` @8966..8975
+                    base: Path `b` @8966..8967
+                  type: Path `BlasInt` @8979..8986
+              FieldInit `k` @9000..9023
+                value: Cast @9003..9023
+                  expr: Field `columns` @9003..9012
+                    base: Path `a` @9003..9004
+                  type: Path `BlasInt` @9016..9023
+              FieldInit `alpha` @9037..9049
+                value: Path `alpha` @9044..9049
+              FieldInit `a` @9063..9072
+                value: Field `data` @9066..9072
+                  base: Path `a` @9066..9067
+              FieldInit `lda` @9074..9099
+                value: Cast @9079..9099
+                  expr: Field `leading` @9079..9088
+                    base: Path `a` @9079..9080
+                  type: Path `BlasInt` @9092..9099
+              FieldInit `b` @9113..9122
+                value: Field `data` @9116..9122
+                  base: Path `b` @9116..9117
+              FieldInit `ldb` @9124..9149
+                value: Cast @9129..9149
+                  expr: Field `leading` @9129..9138
+                    base: Path `b` @9129..9130
+                  type: Path `BlasInt` @9142..9149
+              FieldInit `beta` @9163..9173
+                value: Path `beta` @9169..9173
+              FieldInit `c` @9187..9196
+                value: Field `data` @9190..9196
+                  base: Path `c` @9190..9191
+              FieldInit `ldc` @9198..9223
+                value: Cast @9203..9223
+                  expr: Field `leading` @9203..9212
+                    base: Path `c` @9203..9204
+                  type: Path `BlasInt` @9216..9223
+      tail: Null @9229..9233
+  Fn `native_double_type` public @9738..9944
+    ret: Tuple @9773..9790
+      Path `Hid` @9774..9777
+      Nullable @9779..9789
+        Path `BlasError` @9779..9788
+    body: Block @9796..9944
+      tail: Unsafe @9796..9944
+        body: Block @9812..9944
+          Let `opened` @9812..9834
+            value: Call @9826..9834
+              callee: Path `H5open` @9826..9832
+          If @9843..9908
+            cond: Binary `<` @9846..9856
+              lhs: Path `opened` @9846..9852
+              rhs: Int 0 @9855..9856
+            then: Block @9870..9908
+              Return @9870..9908
+                value: Tuple @9877..9908
+                  Path `H5I_BADID` @9878..9887
+                  Field `Overflow` @9889..9907
+                    base: Path `BlasError` @9889..9898
+          tail: Tuple @9917..9944
+            Path `H5T_NATIVE_DOUBLE_g` @9918..9937
+            Null @9939..9943
+  Fn `cudnn_version` public @10068..10147
+    ret: Path `Int` @10098..10101
+    body: Block @10107..10147
+      tail: Unsafe @10107..10147
+        body: Block @10123..10147
+          tail: Cast @10123..10147
+            expr: Call @10123..10140
+              callee: Path `cudnnGetVersion` @10123..10138
+            type: Path `Int` @10144..10147
 --- diagnostics ---
 (none)

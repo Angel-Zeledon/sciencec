@@ -1,0 +1,17 @@
+error[SC0100]: expected `]`, found `,`
+  --> tests/ui/parse/index_arity_and_open_ranges.science:23:20
+   |
+23 |     let cell be m[1, 1]
+   |                    ^ expected `]`, found `,`
+
+error[SC0105]: expected an expression, found `..`
+  --> tests/ui/parse/index_arity_and_open_ranges.science:24:25
+   |
+24 |     let head be samples[..5]
+   |                         ^^ expected an expression, found `..`
+
+error[SC0100]: expected `]`, found a number literal
+  --> tests/ui/parse/index_arity_and_open_ranges.science:24:27
+   |
+24 |     let head be samples[..5]
+   |                           ^ expected `]`, found a number literal

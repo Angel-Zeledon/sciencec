@@ -34,3 +34,33 @@ def two_chains(left: borrowed Doc, right: borrowed Doc) -> Bool:
 # A chain that does not end the line is left alone for the same reason.
 def not_the_tail(doc: borrowed Doc) -> Int:
     doc.summarize().truncate(80).length() + 1
+
+# An array literal is a bracket group like any other, so a literal too long for
+# the width explodes one element per line at +4, with the `]` back at the
+# original indent. `indexing-and-array-literals.md` does not say where a long
+# literal breaks; this is the rule the crate already had, applied unchanged.
+def balmer_series() -> Array of F64:
+    [486.135, 434.047, 410.174, 397.007, 388.905, 383.539, 379.791, 377.063, 375.015, 373.437]
+
+# A trailing comma keeps a short literal exploded. The author asked for it, and
+# the literal needs no rule of its own to get it: the magic comma reads the
+# comma, not the node.
+def null_values() -> Array of String:
+    [
+        "",
+        "NA",
+    ]
+
+# The widest group wins, and here that is the argument list, so the call breaks
+# first and the literal is laid out again inside it.
+def read_frame(options: borrowed CsvOptions) -> Int:
+    options.null_values(["", "NA", "-999", "missing", "unknown", "n/a", "NULL", "nil", "-"])
+
+# A nested literal breaks at the outer bracket: one row per line, which is the
+# shape a reader wants from a matrix and falls out of the same rule.
+def identity() -> Array of (Array of F64):
+    [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+
+# An empty literal is a group with no items, so nothing explodes it.
+def nothing() -> Array of Int:
+    []
