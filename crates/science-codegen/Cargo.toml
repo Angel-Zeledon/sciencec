@@ -28,6 +28,36 @@ description = "The target-independent half of the Science code generator: layout
 [dependencies]
 science-diagnostics.workspace = true
 
+# `science-mir`, `science-types` and `science-resolve` arrive with `mono.rs`,
+# and they are the one place this crate reaches *above* the line rather than
+# below it.
+#
+# `lib.rs` §2 used to say "this crate does not depend on `science-resolve`,
+# `science-types` or `science-parser`", and the reason it gave was correct and
+# is unchanged: **layout and ABI classification are defined over `CgTy`, not
+# over the checker's types**, so a layout engine that reached into the HIR is a
+# layout engine a second backend cannot reuse. Nothing in `layout`, `abi`,
+# `descriptor`, `runtime` or `target` names any of these three, and
+# `tests/independence.rs` is that claim as a test.
+#
+# The monomorphisation walk is the one item in Decision 42's table that is
+# *defined over the input*. It consumes MIR bodies, the checker's `Ty` and the
+# resolver's `DefTable`, because the thing it computes is "which instantiations
+# does this program's MIR reach", and every word of that question is spelled in
+# those three crates. Writing it against `CgTy` would mean lowering every type
+# in the program to `CgTy` first — which is the layout engine's input, is lossy
+# on purpose (`CgTy::Ptr` has no pointee), and would make the mono key
+# non-injective. `mono.rs` §4 is that argument in full.
+#
+# The cost: `cargo test -p science-codegen` now builds the front half, and the
+# dependency graph of this crate is no longer "diagnostics and nothing". The
+# direction is still downward-only — none of the three names this crate — so
+# Decision 42's `cargo`-checkable line between `science-codegen` and
+# `science-codegen-llvm` is untouched.
+science-mir.workspace = true
+science-resolve.workspace = true
+science-types.workspace = true
+
 # `science-rt` is a **test** dependency and must never become an ordinary one.
 #
 # Codegen does not call the runtime; it emits calls to it. What the tests use it
@@ -42,3 +72,10 @@ science-diagnostics.workspace = true
 # `cargo test -p science-codegen` builds the runtime. It is a few seconds.
 [dev-dependencies]
 science-rt.workspace = true
+
+# The front of the pipeline, for `tests/mono.rs` alone. `science-mir`'s own
+# harness gives the argument: the thing under test is the shape the checker
+# happens to produce, so a hand-built MIR body would test this crate against a
+# fixture rather than against the compiler.
+science-lexer.workspace = true
+science-parser.workspace = true

@@ -65,6 +65,7 @@
 //! | Layout: sizes, alignments, offsets, niches (§3) | [`layout`] |
 //! | ABI classification: `sret`, by-pointer arguments, parameter attributes (§4) | [`abi`] |
 //! | Mangling and the symbol table (§2.7, Decision 4, `SC0404`) | [`mangle`] |
+//! | The monomorphisation walk (§2.7, Decision 4) | [`mono`] |
 //! | Descriptor contents and the drop-glue rule (§2.5, §3.5) | [`descriptor`] |
 //! | Which operations are runtime calls (§2.6) | [`runtime`] |
 //! | The float policy's obligations (§7.3) | [`target`] |
@@ -77,24 +78,38 @@
 //! became an `fmul` and an `fadd` and not an `fma`, and that a call returning
 //! `ScienceString` carried an `sret` parameter.
 //!
-//! # 2. This is not a lowering of the language, and will not become one here
+//! # 2. This is not a lowering of the language, and one module is the exception
 //!
-//! There is no type checker in this workspace and no MIR.
-//! `type-checking-and-mir.md` is the note that produces the input this crate is
-//! specified against, and it has not been built. Therefore:
+//! **This section used to open with *"there is no type checker in this
+//! workspace and no MIR"*, and that is no longer true.** `science-types` and
+//! `science-mir` are built, `sciencec check` runs the whole front half, and the
+//! thing that was missing when this crate was written — the input a
+//! monomorphisation walk consumes — is here. [`mono`] is the walk, and it is
+//! the one module in this crate that names the front end.
 //!
-//! - **This crate does not depend on `science-resolve`, `science-types` or
-//!   `science-parser`.** It is defined over [`layout::CgTy`], a small type
-//!   model that MIR will lower *into*. That is the correct seam and not a
+//! The seam the rest of the crate keeps is unchanged, and the argument for it
+//! is unchanged with it:
+//!
+//! - **Layout, ABI classification, descriptors, the runtime table, mangling and
+//!   the target configuration are defined over [`layout::CgTy`]**, a small type
+//!   model that MIR lowers *into*. That is the correct seam and not a
 //!   workaround: Decision 42 puts layout and ABI above the line precisely so
 //!   that they answer questions about *types*, not about syntax, and a layout
 //!   engine that reaches into the HIR is a layout engine a second backend
-//!   cannot reuse.
-//! - **There is no `lower_hir` function, no monomorphisation walk and no drop
-//!   elaboration**, because each of those consumes something that does not
-//!   exist. The monomorphisation *key* has a place in [`mangle`] because
-//!   Decision 16 needs it and `SC0404` checks it; the *walk* that produces keys
-//!   does not.
+//!   cannot reuse. `tests/independence.rs` is that claim as a test, module by
+//!   module, because a seam enforced by a reviewer is §15's eroding interface.
+//! - **[`mono`] is the exception, and it is one by definition rather than by
+//!   convenience.** Decision 42's table puts *"the monomorphisation walk"*
+//!   above the line, and the question it answers — *which instantiations does
+//!   this program's MIR reach* — is spelled in `science-mir`'s bodies, the
+//!   checker's `Ty` and the resolver's `DefTable`. `Cargo.toml` is the full
+//!   argument and `mono`'s §4 is why the answer cannot be routed through
+//!   [`layout::CgTy`] on the way.
+//! - **There is still no `lower_hir` function and no drop elaboration here.**
+//!   Drop elaboration is `science-mir`'s, by Decision 13. A `Ty -> CgTy`
+//!   lowering does not exist, which is what keeps the drop glue of Decision 12
+//!   and the descriptors of Decision 20 out of [`mono`]; that module's §10 says
+//!   so and says what it would need.
 //! - The narrow program the note's stage 1 names — `print("hello, world")` — is
 //!   present as a **lowering shape** in [`backend`]'s instruction set and in
 //!   `tests/stage_one.rs`, not as a compiled binary. The instruction set is
@@ -202,6 +217,15 @@
 //! nothing else. See [`diagnostics`]. `SC0400` is the code this crate uses
 //! most, because "a toolchain feature required to build this program is not
 //! compiled into this `sciencec`" is the literal state of the compiler.
+//!
+//! Two changes came with [`mono`] and both are recorded at the constant rather
+//! than only here. `SC0407` — one of §11's three codes *"reserved for the ABI
+//! classifier of §4.3"* — is **spent** on a monomorphisation walk that does not
+//! terminate, leaving two reserved where the sentence that reserved them asks
+//! for one; §11's table should say two and this crate cannot amend it. And
+//! `SC0522` — `type-checking-and-mir.md`'s Decision 18 — is **referenced, not
+//! claimed**, from the phase that `science-types` says is the one able to see
+//! the condition.
 
 #![warn(missing_docs)]
 
@@ -212,6 +236,7 @@ pub mod diagnostics;
 pub mod driver;
 pub mod layout;
 pub mod mangle;
+pub mod mono;
 pub mod runtime;
 pub mod stub;
 pub mod target;

@@ -55,9 +55,30 @@ pub mod code {
     /// The requested target triple is not the host's.
     pub const SC0406: Code = Code(406);
 
-    /// Reserved for the ABI classifier of §4.3. Unused.
+    /// A generic function instantiates itself at a larger type without end.
+    ///
+    /// **This spends one of §11's three reserved codes, and the spend is a
+    /// decision rather than an accident.** §11 holds `SC0407`-`SC0409` for
+    /// *"the ABI classifier of §4.3, which will want at least one code for an
+    /// aggregate shape it cannot classify"*, and reserving three was called
+    /// *"cheaper than reopening the partition"*. Taking the first of the three
+    /// leaves two, which is twice what the sentence that reserved them asks
+    /// for.
+    ///
+    /// **The reason it is taken from here and not from a neighbour.** The
+    /// README's partition gives every other number in `SC0400`-`SC0499` to
+    /// another note, and the codegen band's free list is empty. The condition
+    /// is general codegen — a monomorphisation walk that does not terminate is
+    /// not an FFI question, not a Python question and not a linking question —
+    /// so the alternatives were a code from somebody else's topic or no code at
+    /// all, and an `unimplemented!` is not a diagnostic.
+    ///
+    /// **The cost, stated because §11 is the authority and this crate cannot
+    /// amend it:** §11's table still says three reserved and should say two,
+    /// and `docs/` is not edited here for the reason the module note gives.
+    /// Whoever maintains that row owes it one line.
     pub const SC0407: Code = Code(407);
-    /// Reserved. Unused.
+    /// Reserved for the ABI classifier of §4.3. Unused.
     pub const SC0408: Code = Code(408);
     /// Reserved. Unused.
     pub const SC0409: Code = Code(409);
@@ -72,6 +93,27 @@ pub mod code {
     /// declaration. Referenced, not claimed; §5.5 specifies its rendering and
     /// §11 gives `SC0402` as the fallback.
     pub const SC0461: Code = Code(461);
+
+    /// `type-checking-and-mir.md`'s: a generic function across the C boundary.
+    /// Referenced, not claimed.
+    ///
+    /// Decision 18: *"a generic Science function may be **called** from an FFI
+    /// wrapper, but a function declared in an `extern` block is monomorphic,
+    /// and a generic function may not be passed as a C callback without an
+    /// explicit instantiation. The error is `SC0522` and it names the
+    /// instantiation to write."*
+    ///
+    /// **It is emitted from here because this is the phase that can see the
+    /// condition, and `science-types` says so itself.** That crate's `codes`
+    /// module reserves `SC0522` and declines to define it: *"`SC0522` is a
+    /// declaration check — a generic function reached through an `extern` block
+    /// — and needs the monomorphiser's view of which instantiations cross."*
+    /// This is the monomorphiser. That crate's own test that `SC0521` and
+    /// `SC0522` are absent from *its* list still passes; §11's *"amended, not
+    /// claimed"* rule and this crate's existing `SC0429`, `SC0431` and `SC0461`
+    /// are the precedent, and the README's own words are *"a band is a topic,
+    /// not a crate"*.
+    pub const SC0522: Code = Code(522);
 }
 
 /// The whole range this crate claims, for the test that asserts it emits
@@ -164,6 +206,111 @@ pub fn cross_compilation_unsupported(requested: &str, host: &str) -> Diagnostic 
         .with_note("F0 does not cross-compile")
 }
 
+/// `SC0407`: a generic function instantiates itself at a larger type forever.
+///
+/// **The diagnostic names the chain, not a depth.** `f of T` calling
+/// `f of (Array of T)` produces `f[Int]`, `f[Array of Int]`,
+/// `f[Array of (Array of Int)]` and so on, and a message that says *"recursion
+/// limit reached (128)"* tells the reader the compiler gave up without telling
+/// them which call to look at. The chain is the evidence: every link is a call
+/// site the walk actually took, and the reader can see the growth by reading
+/// down the list.
+///
+/// `growth` is the index of the link inside which the walk found an earlier
+/// link's arguments — the *cause* — or `None` when the chain was cut by the
+/// depth backstop instead, in which case the chain is still printed and the
+/// note says which of the two rules fired. [`crate::mono`]'s §6 is why there
+/// are two rules and what the second one is for.
+pub fn cyclic_instantiation(chain: &[String], growth: Option<usize>, span: Span) -> Diagnostic {
+    let last = chain.last().map(String::as_str).unwrap_or("this function");
+    let mut diagnostic = Diagnostic::error(
+        code::SC0407,
+        format!("`{last}` instantiates itself at a larger type without end"),
+    )
+    .with_label(Label::primary(span, "instantiated from here"))
+    .with_note("the instantiation chain, outermost first:");
+    for (at, link) in chain.iter().enumerate() {
+        // The chain is the message, and a chain of sixty-five links is not a
+        // message. The head and the tail are where the answer is — the head
+        // says where the growth started and the tail says what it grew into —
+        // and the middle is the same shape repeated, so it is counted rather
+        // than printed. The link `growth` names is always shown: it is the
+        // cause, and eliding the cause would leave a message that says less
+        // than a depth number would have.
+        if let Some(skipped) = elided(chain.len(), at, growth) {
+            if skipped > 0 {
+                diagnostic = diagnostic.with_note(format!("  ... {skipped} more ..."));
+            }
+            continue;
+        }
+        let marker = match growth {
+            Some(index) if index == at => "  <- this one contains an earlier one",
+            _ => "",
+        };
+        diagnostic = diagnostic.with_note(format!("  {at}. {link}{marker}"));
+    }
+    diagnostic = match growth {
+        Some(_) => diagnostic.with_note(
+            "each instantiation is strictly larger than the one it came from, so the set of \
+             copies to emit is infinite",
+        ),
+        None => diagnostic.with_note(
+            "the chain stopped growing only because the walk did; the containment rule did not \
+             fire, so the links above are the whole of what it can say",
+        ),
+    };
+    diagnostic.with_note("give the recursive call a concrete type argument, or make it a loop")
+}
+
+/// Whether a chain link is elided, and how many links this one stands for.
+///
+/// `Some(0)` means *"elided, and an earlier note already said how many"*;
+/// `Some(n)` means *"elided, and this is where the count goes"*. Splitting it
+/// that way keeps the caller a single pass over the chain.
+fn elided(length: usize, at: usize, growth: Option<usize>) -> Option<usize> {
+    const HEAD: usize = 4;
+    const TAIL: usize = 4;
+    if length <= HEAD + TAIL + 1 {
+        return None;
+    }
+    if at < HEAD || at + TAIL >= length || growth == Some(at) {
+        return None;
+    }
+    if at == HEAD {
+        return Some(length - HEAD - TAIL);
+    }
+    Some(0)
+}
+
+/// `SC0522`: a generic function passed across the C boundary.
+///
+/// `type-checking-and-mir.md` Decision 18 requires that the message *"names the
+/// instantiation to write"*, and this is the half of the obligation that cannot
+/// be met today: **Science has no syntax for an explicit type argument at a use
+/// site.** The README lists *"explicit type arguments at call sites"* as a
+/// standing cross-note ask with two claimants and no decision, so there is no
+/// spelling to name. The note says so rather than inventing one, because a
+/// suggestion the compiler would then reject is worse than no suggestion.
+///
+/// [`code::SC0522`] says why the code is emitted from this crate.
+pub fn generic_across_c_boundary(function: &str, extern_fn: &str, span: Span) -> Diagnostic {
+    Diagnostic::error(
+        code::SC0522,
+        format!("`{function}` is generic and cannot be passed to `{extern_fn}` as a callback"),
+    )
+    .with_label(Label::primary(
+        span,
+        "a C function pointer has one address; a generic has one per instantiation",
+    ))
+    .with_note(format!(
+        "`{extern_fn}` is declared in an `extern` block, so its parameters are C types"
+    ))
+    .with_note(
+        "this needs an explicit instantiation, and Science has no syntax for one yet — write a \
+         non-generic wrapper that calls it at the type you want, and pass the wrapper",
+    )
+}
+
 /// Whether a code belongs to the range this crate claims.
 pub fn is_claimed(code: Code) -> bool {
     CLAIMED.contains(&code.0)
@@ -183,6 +330,11 @@ mod tests {
             symbol_collision("_S1f", "f[Int]", "f[I64]"),
             not_a_constant(Span::new(science_diagnostics::FileId(0), 0, 1)),
             cross_compilation_unsupported("aarch64-apple-darwin", "x86_64-pc-windows-msvc"),
+            cyclic_instantiation(
+                &["f[Int]".to_string(), "f[Array of Int]".to_string()],
+                Some(1),
+                Span::new(science_diagnostics::FileId(0), 0, 1),
+            ),
         ];
         for diagnostic in &ours {
             assert!(is_claimed(diagnostic.code), "{} is outside SC0400-SC0409", diagnostic.code);
@@ -190,17 +342,78 @@ mod tests {
     }
 
     #[test]
-    fn the_reserved_codes_are_reserved_and_not_used() {
-        // If one of these ever appears in a constructor, this test is the
-        // reminder that §11 has to be amended first.
-        for code in [code::SC0407, code::SC0408, code::SC0409] {
+    fn the_two_still_reserved_codes_are_reserved_and_not_used() {
+        // `SC0407` is spent — see its own documentation for the argument and
+        // the amendment it owes §11. If either of the other two ever appears
+        // in a constructor, this test is the reminder that §11 has to be
+        // amended first.
+        for code in [code::SC0408, code::SC0409] {
             assert!(is_claimed(code));
         }
     }
 
     #[test]
+    fn sc0407_names_the_chain_and_not_a_depth() {
+        let chain = vec![
+            "reduce[Int]".to_string(),
+            "reduce[Array of Int]".to_string(),
+            "reduce[Array of (Array of Int)]".to_string(),
+        ];
+        let span = Span::new(science_diagnostics::FileId(0), 0, 1);
+        let diagnostic = cyclic_instantiation(&chain, Some(2), span);
+        let notes = diagnostic.notes.join("\n");
+        for link in &chain {
+            assert!(notes.contains(link.as_str()), "the chain is the message: {notes}");
+        }
+        assert!(
+            !notes.contains("128"),
+            "a depth number is what the chain replaces: {notes}"
+        );
+    }
+
+    #[test]
+    fn a_long_chain_keeps_its_head_its_tail_and_its_cause() {
+        // A sixty-five-link chain is not a message. What has to survive is the
+        // start, the end, the count of what was dropped, and the link that
+        // caused it.
+        let chain: Vec<String> = (0..40).map(|n| format!("step[{n}]")).collect();
+        let span = Span::new(science_diagnostics::FileId(0), 0, 1);
+        let diagnostic = cyclic_instantiation(&chain, Some(20), span);
+        let notes = diagnostic.notes.join("\n");
+        assert!(notes.contains("step[0]"), "{notes}");
+        assert!(notes.contains("step[39]"), "{notes}");
+        assert!(notes.contains("step[20]"), "the cause is never elided: {notes}");
+        assert!(notes.contains("more ..."), "{notes}");
+        assert!(!notes.contains("step[15]"), "the middle is counted, not printed: {notes}");
+        assert!(diagnostic.notes.len() < 20, "{} notes", diagnostic.notes.len());
+    }
+
+    #[test]
+    fn a_short_chain_is_printed_whole() {
+        let chain: Vec<String> = (0..5).map(|n| format!("f[{n}]")).collect();
+        let span = Span::new(science_diagnostics::FileId(0), 0, 1);
+        let diagnostic = cyclic_instantiation(&chain, Some(4), span);
+        let notes = diagnostic.notes.join("\n");
+        for link in &chain {
+            assert!(notes.contains(link.as_str()), "{notes}");
+        }
+        assert!(!notes.contains("more ..."), "{notes}");
+    }
+
+    #[test]
+    fn sc0522_is_borrowed_and_says_what_cannot_be_written() {
+        let span = Span::new(science_diagnostics::FileId(0), 0, 1);
+        let diagnostic = generic_across_c_boundary("identity", "qsort", span);
+        assert_eq!(diagnostic.code, code::SC0522);
+        assert!(!is_claimed(diagnostic.code), "SC0522 is `science-types`' band, referenced only");
+        let notes = diagnostic.notes.join("\n");
+        assert!(notes.contains("no syntax for one yet"), "{notes}");
+        assert!(notes.contains("wrapper"), "the message has to name a way out: {notes}");
+    }
+
+    #[test]
     fn borrowed_codes_are_outside_the_claimed_range_which_is_the_point() {
-        for code in [code::SC0429, code::SC0431, code::SC0461] {
+        for code in [code::SC0429, code::SC0431, code::SC0461, code::SC0522] {
             assert!(!is_claimed(code), "{code} would be a claim on someone else's range");
         }
     }

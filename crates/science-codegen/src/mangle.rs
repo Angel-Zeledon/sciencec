@@ -116,38 +116,98 @@ impl MonoKey {
 /// `E` separates the path from the arguments and is unambiguous because a
 /// length prefix always begins with a digit and `E` is not one.
 pub fn mangle(key: &MonoKey) -> String {
+    let encoded: Vec<String> = key
+        .args
+        .iter()
+        .map(|arg| match arg {
+            MonoArg::Ty(ty) => encode_ty(ty),
+            MonoArg::Const(value) => encode_const(*value),
+        })
+        .collect();
+    assemble(&key.path, &encoded)
+}
+
+/// The grammar of Decision 16, assembled from pieces somebody else encoded.
+///
+/// **The decision.** `_S`, the length prefixes and the `E` separator live in
+/// exactly one function, and everything that produces a Science symbol calls
+/// it. The *type* encoding is a parameter.
+///
+/// **The reason.** There are two type encodings in this crate and there have to
+/// be: [`encode_ty`] encodes a [`CgTy`], which is the layout model and is
+/// deliberately lossy — [`CgTy::Ptr`] carries no pointee and [`CgTy::Interface`]
+/// carries no interface — while [`crate::mono`] encodes the checker's `Ty`,
+/// where `Box of Int` and `Box of String` have to be two symbols. `mono`'s §4
+/// is why the lossy one cannot be the mangler's. What must *not* be duplicated
+/// is the frame around them: two spellings of the length prefix is two symbol
+/// schemes, and a linker would tell you about it a stage too late.
+///
+/// **The cost.** One indirection, and a caller that can pass a nonsense
+/// argument string. The argument encoding is checked by the encoders' own
+/// tests; this function checks nothing, because there is nothing here to check
+/// that is not already a property of its inputs.
+pub fn assemble(path: &[String], encoded_args: &[String]) -> String {
     let mut out = String::from("_S");
-    for component in &key.path {
+    for component in path {
         out.push_str(&component.len().to_string());
         out.push_str(component);
     }
-    if !key.args.is_empty() {
+    if !encoded_args.is_empty() {
         out.push('E');
-        for arg in &key.args {
-            match arg {
-                MonoArg::Ty(ty) => out.push_str(&encode_ty(ty)),
-                MonoArg::Const(value) => {
-                    // Negative const arguments exist — `const SHIFT be -1` is
-                    // legal — and a minus sign inside a length-prefixed field
-                    // is fine because the length counts bytes.
-                    let digits = value.to_string();
-                    out.push('K');
-                    out.push_str(&digits.len().to_string());
-                    out.push_str(&digits);
-                }
-            }
+        for arg in encoded_args {
+            out.push_str(arg);
         }
     }
     out
 }
 
-/// Encode a type for a symbol name.
+/// A const argument, length-prefixed.
+///
+/// Negative const arguments exist — `const SHIFT be -1` is legal — and a minus
+/// sign inside a length-prefixed field is fine because the length counts bytes.
+pub fn encode_const(value: i128) -> String {
+    let digits = value.to_string();
+    format!("K{}{}", digits.len(), digits)
+}
+
+/// Encode a [`CgTy`] for a symbol name.
 ///
 /// One-letter tags for the scalars and a length-prefixed name for anything
 /// nominal. The encoding is *structural* for the anonymous shapes and *nominal*
 /// for the named ones, which is the right way round: two records with the same
 /// field types are different types and must mangle differently, and two
 /// `Array of F64` are the same type wherever they were written.
+///
+/// # This is not injective over Science types, and that is why it is not the
+/// # monomorphiser's encoder
+///
+/// A [`CgTy`] is the *layout* model, and [`layout::CgTy`]'s own documentation
+/// says what it keeps: *"the set of distinctions that change a layout or an ABI
+/// classification, and nothing else"*. Two of those erasures are visible from
+/// here:
+///
+/// - [`CgTy::Ptr`] carries a [`PtrKind`] and no pointee, so `Box of Int` and
+///   `Box of String` both encode `Pb`.
+/// - [`CgTy::Interface`] carries no interface, so `any Summarize` and
+///   `any Report` both encode `D`.
+///
+/// Both are right for layout — a pointer is a word whatever it points at — and
+/// both are wrong for a symbol name. `f of (Box of Int)` and
+/// `f of (Box of String)` are two instantiations that must be two symbols, and
+/// through this function they are one, which is `SC0404` raised against a
+/// program that has nothing wrong with it.
+///
+/// **So the monomorphisation walk does not use this function.**
+/// [`crate::mono`] encodes the checker's `Ty` instead and shares only
+/// [`assemble`]; `mono`'s §4 is the whole argument and `tests/mono.rs` is the
+/// test that `Box of Int` and `Box of String` come out different there.
+///
+/// What this function is still for is the items whose key really is a `CgTy`:
+/// the type-info descriptors of Decision 20 and the drop glue of Decision 12,
+/// neither of which is emitted yet. When they are, they inherit this defect,
+/// and the fix is the same one `mono` took.
+///
+/// [`layout::CgTy`]: crate::layout::CgTy
 fn encode_ty(ty: &CgTy) -> String {
     match ty {
         CgTy::Unit => "u".to_string(),
@@ -287,6 +347,35 @@ mod tests {
         let twice = mangle(&key.clone());
         assert_eq!(once, twice);
         assert_eq!(once, "_S1m1fElK3768");
+    }
+
+    #[test]
+    fn a_cgty_pointer_is_not_injective_and_that_is_why_mono_does_not_use_it() {
+        // The defect [`encode_ty`] documents, as a fact a test holds rather
+        // than a sentence a reader has to notice. `CgTy::Ptr` carries a kind
+        // and no pointee, so `f of (Box of Int)` and `f of (Box of String)`
+        // are one symbol through this encoder — `SC0404` raised against a
+        // program with nothing wrong with it.
+        //
+        // If this ever *fails*, `CgTy` has grown a pointee and `crate::mono`'s
+        // §4 should be re-read: the second encoder may no longer be needed.
+        let boxed = MonoKey::generic(&["f"], vec![MonoArg::Ty(CgTy::Ptr(PtrKind::Box))]);
+        assert_eq!(mangle(&boxed), "_S1fEPb");
+        let summarize = MonoKey::generic(&["g"], vec![MonoArg::Ty(CgTy::Interface)]);
+        assert_eq!(mangle(&summarize), "_S1gED");
+        // `crate::mono` encodes the checker's `Ty` instead, and
+        // `tests/mono.rs::two_pointer_instantiations_are_two_symbols` is the
+        // other half of this pair.
+    }
+
+    #[test]
+    fn the_grammar_is_assembled_in_one_place() {
+        // `assemble` is what the two type encoders share, and sharing it is
+        // what keeps there from being two symbol schemes.
+        assert_eq!(assemble(&["f".to_string()], &[]), "_S1f");
+        assert_eq!(assemble(&["f".to_string()], &["Z".to_string()]), "_S1fEZ");
+        assert_eq!(encode_const(-1), "K2-1");
+        assert_eq!(encode_const(768), "K3768");
     }
 
     #[test]
