@@ -147,34 +147,92 @@ impl Session {
     /// problems before the toolchain's, because a user whose file does not
     /// parse is not helped by being told which LLVM to install.
     ///
-    /// **What it does today is report `SC0400`.** `codegen-and-linking.md` §11
-    /// defines that code as *"a toolchain feature required to build this
-    /// program is not compiled into this `sciencec`; names the feature and how
-    /// to obtain a build that has it"*, and that is the literal situation: the
-    /// LLVM backend lives in `science-codegen-llvm`, which needs `llvm-sys`,
-    /// which needs an LLVM 18.1 installation. `science-codegen`'s own module
-    /// documentation says what is missing and what installs it.
+    /// **The decision-making is still not this method's.** `science-codegen` is
+    /// above Decision 42's line and `science-codegen-llvm` is below it; what
+    /// this method contributes is the front end's output and a path to write
+    /// to. Which backends exist, what `SC0400` says and how to name the missing
+    /// package are [`science_codegen_llvm`]'s, and the call is the same call in
+    /// both builds of this crate — see the manifest's `[features]`.
     ///
-    /// The command exists anyway, rather than waiting for the backend, for the
-    /// reason the note gives for spending a diagnostic code on this at all: a
-    /// compiler that answers `unknown command \`build\`` is indistinguishable
-    /// from one that was never going to have it, and a compiler that answers
-    /// with `SC0400` has a missing feature it can name.
+    /// **Without `--features llvm` it reports `SC0400`, unchanged**, because
+    /// that is what a contributor with no LLVM sees and it is the message that
+    /// tells them what to do. §11 defines the code as *"a toolchain feature
+    /// required to build this program is not compiled into this `sciencec`;
+    /// names the feature and how to obtain a build that has it"*, which is the
+    /// literal situation.
     ///
-    /// The decision-making is `science_codegen::driver`'s, not this method's.
-    /// `sciencec`'s manifest argues that the driver is *"a call into an
-    /// existing crate plus the bookkeeping a shell needs"*, and which backends
-    /// exist, what `SC0400` says and how to name the missing package are not
-    /// bookkeeping.
+    /// # One file is one crate is one executable
+    ///
+    /// [`Session::check`]'s §"What several files mean" settles that each file
+    /// named is its own crate, and `build` follows it rather than inventing a
+    /// second rule: **`sciencec build a.science b.science` produces two
+    /// executables.** Each goes beside its own source file, named after it
+    /// (`hello.science` → `hello.exe` on Windows, `hello` elsewhere).
+    ///
+    /// **Beside the source and not in the working directory**, which is the one
+    /// place this differs from `cc` and from `rustc`. `package-manager.md`
+    /// Decision 7 removes environment-dependent inputs from a build's output,
+    /// and the working directory is one: `sciencec build examples/hello.science`
+    /// would otherwise put `hello.exe` somewhere that depends on where the user
+    /// was standing. The cost is that a build writes into the source tree, which
+    /// is the wrong default the day there is a `target/` directory to write to
+    /// instead — and there is no package manager yet, so there is not one.
     pub fn build(&mut self, paths: &[PathBuf]) {
-        self.check(paths);
-        if self.tally.failed() {
-            return;
+        let mut entries: Vec<(PathBuf, FileId)> = Vec::with_capacity(paths.len());
+        for path in paths {
+            if let Some(file) = self.load(path) {
+                if !entries.iter().any(|(_, seen)| *seen == file) {
+                    entries.push((path.clone(), file));
+                }
+            }
         }
-        let inputs = paths.iter().map(|p| display_path(p)).collect();
-        let request = science_codegen::driver::BuildRequest::new(inputs);
-        if let Err(diagnostics) = science_codegen::driver::build(&request) {
-            self.report(diagnostics.into_vec());
+        for (path, file) in &entries {
+            let mut all = self.diagnostics(path, *file);
+            if has_error(&all) {
+                self.report(all);
+                continue;
+            }
+            // The front end runs a second time, and it is not free. `diagnostics`
+            // throws its MIR away because `check` has no use for it, and holding
+            // it would mean threading `Types` and `Vec<Body>` back out of every
+            // command. The day `science_db::pending::mir` has a body, both calls
+            // become one query and this paragraph goes with them — that is the
+            // same shortcut this module's header names, counted a fourth time.
+            match self.emit_executable(path, *file) {
+                Ok(()) => {}
+                Err(diagnostics) => all.extend(diagnostics),
+            }
+            self.report(all);
+        }
+    }
+
+    /// The back half of [`Session::build`] for one entry: MIR, then the backend.
+    ///
+    /// Split out so that the front end's diagnostics and the back end's are
+    /// reported in one batch by the caller, which is what makes a build's output
+    /// ordered the way `check`'s is.
+    fn emit_executable(&mut self, path: &Path, file: FileId) -> Result<(), Vec<Diagnostic>> {
+        let (sources, _) = self.crate_sources(path, file);
+        let (krate, _) = self.resolved(&sources);
+        let Some(lowered) = lower_to_mir(&krate) else {
+            // Unreachable in practice: `diagnostics` has already run the same
+            // phases and the caller stopped on an error. Kept as a value rather
+            // than an `expect`, because "the type checker reported nothing and
+            // then refused to hand over a body" is a compiler bug and a panic is
+            // the one way to report it that a user cannot act on.
+            return Err(vec![science_codegen::diagnostics::no_entry_point(&display_path(path))]);
+        };
+        let request = science_codegen::driver::BuildRequest::new(vec![display_path(path)]);
+        let input = science_codegen_llvm::BuildInput {
+            request: &request,
+            defs: &krate.defs,
+            types: &lowered.types,
+            bodies: &lowered.bodies,
+            output: executable_path(path),
+        };
+        match science_codegen_llvm::build(&input) {
+            Ok(_) => Ok(()),
+            Err(diagnostics) => Err(diagnostics.into_vec()),
         }
     }
 
@@ -658,6 +716,34 @@ fn has_error(diagnostics: &[Diagnostic]) -> bool {
 /// the shortcut, and it is still named as one so nobody mistakes it for the
 /// architecture.
 fn type_and_region_check(krate: &Crate) -> Vec<Diagnostic> {
+    check_and_lower(krate).diagnostics
+}
+
+/// A crate that type-checked, plus the two things a backend needs from it.
+///
+/// The `Types` table travels with the bodies because a MIR body is a graph of
+/// `Ty` handles and a handle without its table is a number. `DefTable` is not
+/// here because the caller already owns the `Crate` it belongs to.
+struct Checked {
+    diagnostics: Vec<Diagnostic>,
+    types: science_types::Types,
+    bodies: Vec<science_mir::mir::Body>,
+}
+
+/// The front end's back half, kept rather than discarded.
+///
+/// **Why this exists as a separate function from [`type_and_region_check`].**
+/// `check` wants the diagnostics and nothing else; `build` wants the MIR as
+/// well. Lowering twice to serve both would be two traversals and — worse — two
+/// `Types` tables, so the `Ty` handles in one set of bodies would not be
+/// comparable against the other's. One function produces all three and each
+/// caller takes what it needs.
+///
+/// `bodies` is empty when the type checker reported an error, because the
+/// ordering rule at [`region_check`] means MIR was never built; a caller that
+/// wants to know whether it has a program asks `has_error` on the diagnostics,
+/// not whether the vector is empty — a crate can legitimately have no bodies.
+fn check_and_lower(krate: &Crate) -> Checked {
     let order = science_types::AtomOrder::of(&krate.defs);
     let mut types = science_types::Types::new();
     let mut diagnostics = science_diagnostics::Diagnostics::new();
@@ -674,10 +760,28 @@ fn type_and_region_check(krate: &Crate) -> Vec<Diagnostic> {
     let mut all = diagnostics.into_vec();
     // The ordering rule above.
     if has_error(&all) {
-        return all;
+        return Checked { diagnostics: all, types, bodies: Vec::new() };
     }
-    all.extend(region_check(krate, &decls, &mut types, &mut aliases, &thir));
-    all
+    let (regions, bodies) = region_check(krate, &decls, &mut types, &mut aliases, &thir);
+    all.extend(regions);
+    Checked { diagnostics: all, types, bodies }
+}
+
+/// The MIR of a crate that checked clean, or `None` when it did not.
+///
+/// The diagnostics are dropped here on purpose: the caller
+/// ([`Session::emit_executable`]) has already reported them through
+/// [`Session::diagnostics`], and reporting them twice would double every count
+/// in the summary.
+fn lower_to_mir(krate: &Crate) -> Option<Checked> {
+    let checked = check_and_lower(krate);
+    if has_error(&checked.diagnostics) { None } else { Some(checked) }
+}
+
+/// Where a built executable goes: beside its source, with the platform's
+/// extension. See [`Session::build`] for why it is not the working directory.
+fn executable_path(source: &Path) -> PathBuf {
+    if cfg!(windows) { source.with_extension("exe") } else { source.with_extension("") }
 }
 
 /// Lowers a checked crate to MIR and runs the borrow check over it.
@@ -729,7 +833,7 @@ fn region_check(
     types: &mut science_types::Types,
     aliases: &mut science_types::Aliases,
     thir: &[science_types::thir::Body],
-) -> Vec<Diagnostic> {
+) -> (Vec<Diagnostic>, Vec<science_mir::mir::Body>) {
     // The lowering context is dropped before the region one is built: both
     // want `&mut Types` and `&mut Aliases`, and MIR is finished with them.
     let bodies = {
@@ -740,7 +844,10 @@ fn region_check(
     let mut diagnostics = science_diagnostics::Diagnostics::new();
     let mut context = science_regions::Context { defs: &krate.defs, decls, types, aliases };
     science_regions::analyse_crate(&mut context, &bodies, &graph, &mut diagnostics);
-    diagnostics.into_vec()
+    // The bodies are handed back rather than dropped: `build` needs exactly the
+    // ones the borrow check just approved, and lowering a second set to get them
+    // would be a second `Types` table. See [`check_and_lower`].
+    (diagnostics.into_vec(), bodies)
 }
 
 #[cfg(test)]

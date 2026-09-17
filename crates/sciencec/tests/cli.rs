@@ -1197,3 +1197,66 @@ fn the_census_of_a_script_names_the_generated_main() {
         r#"[{"name":"main","inputSchema":{"type":"object","properties":{},"required":[]}}]"#
     );
 }
+
+// --- `build` --------------------------------------------------------------
+
+/// `build` reports the program's problems before the toolchain's.
+///
+/// A file that does not check is not a file anyone is helped by being told which
+/// LLVM to install for, and the ordering is the same in both builds of this
+/// crate — the back end is not reached when the front end failed.
+#[test]
+fn a_build_of_a_broken_program_reports_the_program_and_not_the_backend() {
+    let file = scratch("build_broken.science", b"print(nonexistent_name)\n");
+    let run = sciencec(&["build", &file]);
+    run.failed();
+    assert!(
+        !run.stderr.contains("SC0400"),
+        "the backend's absence was reported over the program's error:\n{}",
+        run.stderr
+    );
+}
+
+/// **The message a contributor without LLVM sees, and it must not change by
+/// accident.**
+///
+/// `codegen-and-linking.md` §11 gives `SC0400`'s contract as *"names the feature
+/// and how to obtain a build that has it"*, and both halves are asserted: the
+/// backend's name, and the two things that actually obtain one — an LLVM 18.1
+/// installation and `--features llvm`. The second is the half the message this
+/// replaces did not have; it told the reader to set `LLVM_SYS_181_PREFIX`, which
+/// is `llvm-sys`'s variable, and `science-codegen-llvm` does not use `llvm-sys`.
+///
+/// `#[cfg(not(feature = "llvm"))]` because with the feature this command
+/// *builds*, which is the other test's business.
+#[cfg(not(feature = "llvm"))]
+#[test]
+fn a_build_without_the_backend_is_sc0400_and_says_what_turns_it_on() {
+    let file = scratch("build_hello.science", b"print(\"hello, world\")\n");
+    let run = sciencec(&["build", &file]);
+    run.failed()
+        .stderr_contains("SC0400")
+        .stderr_contains("no `llvm` backend is compiled into this `sciencec`")
+        .stderr_contains("--features llvm")
+        .stderr_contains("18.1");
+    assert_eq!(run.summary(), Some("1 error"), "stderr:\n{}", run.stderr);
+}
+
+/// With the backend, the same command produces a program that prints
+/// `hello, world` and exits 0. §10's stage 1 and its gate, through the command
+/// line a user actually types.
+#[cfg(feature = "llvm")]
+#[test]
+fn a_build_with_the_backend_produces_a_program_that_runs() {
+    let file = scratch("build_run_hello.science", b"print(\"hello, world\")\n");
+    let run = sciencec(&["build", &file]);
+    run.succeeded().silent_stderr();
+    let executable = Path::new(&file).with_extension(if cfg!(windows) { "exe" } else { "" });
+    assert!(executable.is_file(), "no executable at {}", executable.display());
+    let program = Command::new(&executable).output().expect("the program runs");
+    assert_eq!(
+        String::from_utf8_lossy(&program.stdout).replace("\r\n", "\n"),
+        "hello, world\n"
+    );
+    assert_eq!(program.status.code(), Some(0));
+}

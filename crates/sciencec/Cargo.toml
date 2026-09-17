@@ -9,6 +9,13 @@ description = "The Science compiler's command-line driver."
 name = "sciencec"
 path = "src/main.rs"
 
+# `llvm` forwards to `science-codegen-llvm`'s own feature and adds nothing here.
+# Off by default: that is CI's configuration and the one a contributor without
+# LLVM gets, and in it `sciencec build` reports `SC0400` with the install note.
+[features]
+default = []
+llvm = ["science-codegen-llvm/llvm"]
+
 # No argument-parsing dependency. The surface is six subcommands and three
 # flags, which is less code than the `clap` derive would be, and the workspace
 # has exactly one third-party dependency today (salsa, in `science-db`) — a
@@ -19,12 +26,17 @@ path = "src/main.rs"
 # eventually call it directly.
 [dependencies]
 # `science-codegen` is the fifth, and it is the one that makes `build` a command
-# rather than an error message. The crate below the line — `science-codegen-llvm`
-# — is deliberately absent: it needs `llvm-sys`, which needs an LLVM 18.1
-# installation, and a workspace that cannot be built without one is a workspace
-# nobody can contribute to. Until that crate exists, `build` reports `SC0400`
-# and names the package.
+# rather than an error message.
 science-codegen.workspace = true
+# `science-codegen-llvm` is the sixth, and it is **not optional**, which is the
+# whole point. Without its own `llvm` feature that crate compiles to a stub with
+# no LLVM anywhere in it — no `build.rs` work, no link directive, no `llvm-sys`
+# — whose `build` returns `SC0400`. So the rule `driver.rs` states is kept ("a
+# workspace that cannot be built without one is a workspace nobody can
+# contribute to") without a `#[cfg]` anywhere in this crate: there is one call
+# site for `build`, and the feature decides what it does rather than whether it
+# exists. `cargo build -p sciencec --features llvm` is the build that can link.
+science-codegen-llvm.workspace = true
 science-db.workspace = true
 science-diagnostics.workspace = true
 science-fmt.workspace = true

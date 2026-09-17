@@ -20,11 +20,36 @@
 //! > (Decision 15); a `science_println` call; drop glue for one `String`; and
 //! > the `sret` convention, immediately.*
 //!
+//! **Two of the five items in that list are not what the emitted module
+//! contains, and both are the note being slightly out of date rather than
+//! wrong.** There is no `science_println`: `science-rt` §8 records that the
+//! symbol was renamed, and the newline-adding form is `science_print` — which is
+//! what is called. And there is no *drop glue*: glue is
+//! `science_codegen::descriptor::DropGlue::Emitted`, a function this crate would
+//! define, and a `String` does not need one — the temporary is freed by a direct
+//! `science_string_free` call at the site that made it, which is
+//! `DropGlue::RuntimeCall`. §10's list should say so, because "drop glue for one
+//! `String`" tells a reader to write a function that must not exist.
+//!
 //! Everything else is refused as `SC0400`, which §11 defines as *"a toolchain
 //! feature required to build this program is not compiled into this
 //! `sciencec`"* — and an unlowered MIR construct is literally that. The refusal
 //! names the construct, so that a user who writes a loop is told "loops" and not
 //! "internal error".
+//!
+//! # Decision 5 holds here, and one block is invented rather than merged
+//!
+//! Decision 5 says *"every MIR basic block becomes exactly one LLVM basic
+//! block"*. Every block of the *user's* `main` does: [`Lowerer::lower_body`]
+//! walks `body.blocks()` and emits one [`ExtBlock`] per MIR block, and nothing
+//! merges or splits. `science-mir`'s §4 item 2 records that a **flagged drop**
+//! breaks the decision by becoming three blocks; stage 1 refuses a flagged drop
+//! outright (`StatementKind::SetDropFlag` is `SC0400`), so this crate has not
+//! met the contradiction yet and the amendment that note asks for is still owed.
+//!
+//! What this crate does add is a whole function with no MIR behind it —
+//! [`Lowerer::lower_c_main`]'s three blocks — which Decision 5 does not cover
+//! because Decision 5 is about *lowering* a body and C's `main` is not one.
 //!
 //! **The cost of refusing rather than half-lowering** is that the set of
 //! programs this compiler builds is tiny and the boundary is sharp. §10's own
@@ -63,7 +88,7 @@
 //! can construct one. When `science_exit` and a non-aborting stderr writer
 //! exist, this is four lines.
 
-use science_codegen::abi::{AbiParam, AbiSignature, ArgClass, ParamAttrs, ReturnClass};
+use science_codegen::abi::{AbiParam, AbiSignature, ArgClass, ParamAttrs};
 use science_codegen::backend::{
     BlockId, Callee, Inst, LocalId, Operand, Terminator, ValueId,
 };
@@ -243,6 +268,22 @@ impl<'a> Lowerer<'a> {
             } else {
                 PtrKind::Borrow
             })),
+            // `Error?` is spelled `Nullable(Named { def: Error })` in the type
+            // table, not `Nullable(Object)`: `syntax-revision-2.md` §3.4 makes
+            // `Error?` shorthand for `(any Error)?`, and the shorthand is
+            // expanded by `assign`'s subtyping rather than by a rewrite of the
+            // type, so what reaches codegen still names the interface. Decision
+            // 13's representation is the same either way — a two-word fat
+            // pointer with the niche in the data word — so this arm and the
+            // `Object` one above produce the same `CgTy`, and they have to,
+            // because `_S4main`'s `sret` slot is written by one and read by the
+            // other.
+            TyKind::Named { def, args }
+                if args.is_empty()
+                    && self.defs.get(*def).kind == science_resolve::hir::DefKind::Interface =>
+            {
+                Ok(CgTy::Interface)
+            }
             TyKind::Named { def, args } if args.is_empty() => {
                 let name = self.defs.get(*def).name.as_str();
                 match name {
@@ -311,6 +352,7 @@ impl<'a> Lowerer<'a> {
             return Err(Unlowered::new("a function with parameters"));
         }
         let return_local = mir::Local::from_index(0);
+        let return_id = LocalId(return_local.index() as u32);
         let ret_layout = self.layout_of_ty(body.local_decl(return_local).ty)?;
         let key = MonoKey::plain(&["main"]);
         let sig = AbiSignature::science(self.target, mangle(&key), ret_layout.clone(), vec![]);
@@ -324,10 +366,46 @@ impl<'a> Lowerer<'a> {
         // statements should become and do not yet.
         let mut entry_insts: Vec<ExtInst> = Vec::new();
         let mut locals: Vec<(LocalId, Layout)> = Vec::new();
+        let mut untyped: Vec<LocalId> = Vec::new();
         for (local, decl) in body.locals() {
-            let layout = self.layout_of_ty(decl.ty)?;
             let id = LocalId(local.index() as u32);
-            entry_insts.push(ExtInst::Above(Inst::Alloca { local: id, layout: layout.clone() }));
+            // **`print`'s result temporary has no type, and that is a finding
+            // about the front end rather than about this program.**
+            // `science-resolve`'s `builtins.rs` leaves `print` and `write`
+            // deliberately undeclared — it wrote the signature, measured seven
+            // false positives on the corpus, and withdrew it — so the checker
+            // has no return type for the call and gives the temporary
+            // `Ty::ERROR`, **with no diagnostic**, which is §5's "the mistake
+            // has already been reported" rule firing on a mistake nobody made.
+            //
+            // `hello, world` is therefore a program that type-checks clean and
+            // arrives here with an untypeable local in it. An `alloca` cannot
+            // be emitted for it: `layout_of` needs a `CgTy` and there is none.
+            //
+            // It is *skipped* rather than refused because nothing reads it —
+            // `print` returns `void`, the temporary is dead on arrival, and
+            // refusing would make the one program stage 1 exists to compile
+            // uncompilable over a slot with nothing in it. Any statement that
+            // does touch it is refused below, by name, so the skip cannot
+            // become a silent wrong answer. The fix is above this crate: a
+            // signature for `print`, or a `Ty::UNIT` for a call to a builtin
+            // that has none.
+            if matches!(self.types.kind(decl.ty), TyKind::Error) {
+                untyped.push(id);
+                continue;
+            }
+            let layout = self.layout_of_ty(decl.ty)?;
+            // `_0` of an `sret` function is the **caller's** slot, not a slot of
+            // this frame. `crate::emit::ExtInst::ReturnSlot` is the account and
+            // the bug it closes; the short version is that an `alloca` here is a
+            // private copy nothing ever returns.
+            if id == return_id && sig.ret.is_sret() {
+                entry_insts
+                    .push(ExtInst::ReturnSlot { local: id, layout: layout.clone() });
+            } else {
+                entry_insts
+                    .push(ExtInst::Above(Inst::Alloca { local: id, layout: layout.clone() }));
+            }
             locals.push((id, layout));
         }
 
@@ -336,7 +414,7 @@ impl<'a> Lowerer<'a> {
         for (id, block) in body.blocks() {
             let mut insts = if id.index() == 0 { std::mem::take(&mut entry_insts) } else { Vec::new() };
             for statement in &block.statements {
-                self.lower_statement(&statement.kind, &locals, &mut values, &mut insts)?;
+                self.lower_statement(&statement.kind, &locals, &untyped, &mut values, &mut insts)?;
             }
             let terminator =
                 self.lower_terminator(&block.terminator.kind, &locals, &mut values, &mut insts)?;
@@ -354,6 +432,7 @@ impl<'a> Lowerer<'a> {
         &mut self,
         kind: &StatementKind,
         locals: &[(LocalId, Layout)],
+        untyped: &[LocalId],
         _values: &mut ValueCounter,
         insts: &mut Vec<ExtInst>,
     ) -> Result<(), Unlowered> {
@@ -374,6 +453,15 @@ impl<'a> Lowerer<'a> {
                     return Err(Unlowered::new("an assignment through a field or an index"));
                 }
                 let local = LocalId(place.local.index() as u32);
+                if untyped.contains(&local) {
+                    // The skipped slot of `lower_body`, now written to. See the
+                    // comment there: the skip is only sound while nothing
+                    // touches the local, and this is where that stops being
+                    // true.
+                    return Err(Unlowered::new(
+                        "an assignment to the result of `print` or `write`, which the front end                          leaves untyped — `science-resolve`'s `builtins.rs` withdrew their                          signatures and a call to one has no return type to lay out",
+                    ));
+                }
                 let layout = locals
                     .iter()
                     .find(|(id, _)| *id == local)
@@ -384,7 +472,7 @@ impl<'a> Lowerer<'a> {
                         self.store_null(local, &layout, insts)
                     }
                     Rvalue::Use(mir::Operand::Const(Constant::Unit)) => Ok(()),
-                    other => Err(Unlowered::new(format!("{}", describe_rvalue(other)))),
+                    other => Err(Unlowered::new(describe_rvalue(other))),
                 }
             }
         }
@@ -586,8 +674,11 @@ impl<'a> Lowerer<'a> {
                 }),
                 // §3.4: the data pointer and **only** the data pointer. The
                 // vtable word of a null `(any Error)?` is undefined, and it is
-                // at offset 8, so this load must not widen.
-                ExtInst::Above(Inst::Load { dest: data, local: slot }),
+                // at offset 8, so this load must not widen — which is what
+                // `Inst::Load` does, because it loads the local's whole type.
+                // `ExtInst::LoadNiche` is the narrow one and its documentation
+                // is the account.
+                ExtInst::LoadNiche { dest: data, local: slot },
                 ExtInst::Above(Inst::Cmp {
                     dest: is_null,
                     op: science_codegen::backend::CmpOp::Eq,

@@ -61,33 +61,58 @@
 //! else. That is §4.1's failure mode pointed at the compiler instead of at
 //! `dgemm`.
 //!
-//! **Three checks, and none of them is "I was careful".**
+//! **Four checks, and none of them is "I was careful".** All four are written
+//! and all four run; `tests/` is where each one lives.
 //!
 //! 1. **The symbol exists.** `tests/symbols.rs` parses this file, extracts every
 //!    name in the block, runs `llvm-nm` over `LLVM-C.lib`, and fails on any name
-//!    the import library does not export. That catches a typo and a function
-//!    that does not exist in 18.1 — including the one this file hit:
+//!    the import library does not export. All 100 are exported by this
+//!    installation's 1226. That catches a typo and a function that does not
+//!    exist in 18.1 — including the one this file hit:
 //!    `LLVMConstStringInContext2` is LLVM 19 and is **not** exported here, so
-//!    the 18-era `LLVMConstStringInContext` is what is declared.
-//! 2. **The arity and the types are checked by the IR that comes back.** Every
+//!    the 18-era `LLVMConstStringInContext` is what is declared. The same file
+//!    asserts the *reverse* list: the three fast-math setters and the four
+//!    superseded spellings stay undeclared, which is §7.3 obligation 1 made
+//!    structural rather than aspirational.
+//! 2. **Every transcribed enum constant is checked against what LLVM does with
+//!    it.** `tests/abi_claims.rs` passes each one to the function it belongs to
+//!    and reads the mnemonic back out of the IR: all ten `LLVMIntPredicate`
+//!    members, all six ordered `LLVMRealPredicate` members, `LLVMTypeKind`'s
+//!    float cases, `LLVMLinkage`'s `private` and `internal`, `LLVMUnnamedAddr`,
+//!    the two attribute indices, and `LLVMCodeGenFileType`. **This is the check
+//!    the list most needed**, because a wrong enum constant is the only class of
+//!    error here that compiles, links, verifies *and computes the wrong answer*:
+//!    a wrong name fails to link and a wrong arity crashes.
+//! 3. **The arity and the types are checked by the IR that comes back.** Every
 //!    module this crate builds is printed with `LLVMPrintModuleToString` and the
 //!    text is asserted against what was intended, and `tests/roundtrip.rs` feeds
-//!    that text back to `clang -x ir`, which re-parses it with LLVM 18's own
-//!    parser and assembles it. A declaration with the wrong argument count or
-//!    the wrong pointer/integer split produces a module that says something
-//!    other than what was asked for, and the text is where that shows. This is
-//!    the check that catches ABI mistakes, because it compares *behaviour* and
-//!    not spelling.
-//! 3. **`LLVMVerifyModule` runs on every module**, Decision 34, before anything
+//!    a module declaring **all 45** runtime entry points back to `clang -x ir`,
+//!    which re-parses it with LLVM 18's own parser and assembles it to an
+//!    object. `clang` was built from the headers this machine does not have, so
+//!    it is the only reader here that knows what the C API's callers were
+//!    supposed to produce. A declaration with the wrong argument count or the
+//!    wrong pointer/integer split produces a module that says something other
+//!    than what was asked for, and the text is where that shows. This is the
+//!    check that catches ABI mistakes, because it compares *behaviour* and not
+//!    spelling.
+//! 4. **`LLVMVerifyModule` runs on every module**, Decision 34, before anything
 //!    is emitted — and the crate calls it a second time inside `emit`, because
 //!    *"verifying twice costs milliseconds; emitting an unverified module costs
 //!    a miscompile"*.
 //!
-//! **What none of the three catches**, stated so nobody assumes otherwise: a
+//! **What none of the four catches**, stated so nobody assumes otherwise: a
 //! parameter that is `unsigned` where this file says `u64`, in a function whose
 //! result this crate never inspects. Every declaration below is called by
 //! `crate::emit` or `crate::owned`, and every call's effect is asserted
 //! somewhere, which is the only reason the risk is bounded rather than open.
+//!
+//! **The ones still taken on trust, named so that a reader knows the list is not
+//! empty:** `LLVMSetAlignment`'s `unsigned Bytes` and `LLVMCreateEnumAttribute`'s
+//! `uint64_t Val`, both of which are exercised only with small values, so a
+//! width error in either would not show; and `LLVMABISizeOfType`'s
+//! `unsigned long long` return, which `tests/layout_agreement.rs` compares
+//! against `science-codegen`'s own numbers for seventeen scalars and eight
+//! aggregates — which is as close to a width check as this machine can get.
 //!
 //! # 2. What is declared, and what is not
 //!
@@ -337,6 +362,11 @@ pub mod type_kind {
     pub const FLOAT: c_uint = 2;
     /// `double`.
     pub const DOUBLE: c_uint = 3;
+    /// `iN`. Asked by [`crate::emit`]'s `switch`, which builds a case constant
+    /// with `LLVMConstInt` against the switched value's type: `LLVMConstInt` on
+    /// a type that is not an integer is an assertion failure in a debug LLVM and
+    /// undefined in a release one, and this installation is a release one.
+    pub const INTEGER: c_uint = 8;
 }
 
 /// `LLVMVerifierFailureAction`.

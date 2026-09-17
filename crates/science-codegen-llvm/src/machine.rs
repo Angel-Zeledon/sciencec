@@ -135,10 +135,29 @@ fn codegen_level(opt: OptLevel) -> std::ffi::c_uint {
 
 /// Create a target machine for `config`.
 ///
-/// `RelocMode` is `PIC` on ELF and Mach-O and `Static` on Windows: `link.exe`
-/// and `lld-link` build a relocatable image from non-PIC objects and ASLR is a
-/// header flag rather than a code-generation mode there, while a non-PIC object
-/// on Linux cannot go into a PIE, which is every distribution's default.
+/// **`RelocMode` is `PIC` on all three targets, including Windows, and the
+/// Windows half is a correction rather than a preference.** This module
+/// previously chose `Static` there, on the reasoning that `link.exe` builds a
+/// relocatable image from non-PIC objects and that ASLR on Windows is a header
+/// flag rather than a code-generation mode. Both sentences are true and the
+/// conclusion does not follow: on `x86_64-pc-windows-msvc`, `Reloc::Static`
+/// makes LLVM address a global with a **32-bit absolute** relocation, and every
+/// Windows x64 image is large-address-aware, so the linker refuses it:
+///
+/// ```text
+/// hello.obj : error LNK2017: 'ADDR32' relocation to '.rdata' invalid
+///                            without /LARGEADDRESSAWARE:NO
+/// LINK : fatal error LNK1165
+/// ```
+///
+/// That is the first string literal in `hello, world`, and it is a link failure
+/// rather than a miscompile only because the address happened to be in
+/// `.rdata`. `PIC` emits the RIP-relative form instead, which is what `clang`
+/// itself uses for this triple — its default relocation model on Windows x64 is
+/// `pic`, not `static`. The cost is nothing on this target: RIP-relative
+/// addressing is the x86-64 norm and Windows x64 has no `-fno-pic` ABI to be
+/// compatible with.
+///
 /// `CodeModel::Small` everywhere, which is what every C compiler on these three
 /// targets does for an executable.
 pub fn create(config: &TargetConfig, cpu: &str, features: &str) -> Result<TargetMachine, String> {
@@ -156,10 +175,7 @@ pub fn create(config: &TargetConfig, cpu: &str, features: &str) -> Result<Target
     }
     let cpu = cstr(cpu);
     let features = cstr(features);
-    let reloc = match config.triple() {
-        Triple::X86_64WindowsMsvc => sys::reloc::STATIC,
-        _ => sys::reloc::PIC,
-    };
+    let reloc = sys::reloc::PIC;
     let machine = unsafe {
         sys::LLVMCreateTargetMachine(
             target,

@@ -51,11 +51,19 @@
 //!    `x86_64-pc-windows-msvc` links against the MSVC CRT and the Windows SDK,
 //!    so the install-time requirement Decision 25 names is routed rather than
 //!    removed.
-//! 3. **`-fuse-ld` is not passed**, so the linker is whatever `clang` picks —
-//!    `lld-link` on Windows when it is beside it, `ld.lld`/`ld.bfd` on Linux.
-//!    That is one more thing the build record does not name, and §12 item 12
-//!    already asks for the pipeline and the CPU to be recorded; the linker
-//!    belongs on the same list.
+//! 3. **`-fuse-ld` is not passed**, so the linker is whatever `clang` picks, and
+//!    **on this machine it is not `lld-link`.** `clang -v` shows it invoking
+//!    `…/VC/Tools/MSVC/<version>/bin/Hostx64/x64/link.exe`, found through
+//!    `vswhere`, with the MSVC and Windows SDK `-libpath:` flags filled in — so
+//!    the tool Decision 25 names *is* what links, and what `clang` supplies is
+//!    exactly the environment discovery this module says is the reason not to
+//!    invoke it directly. `lld-link.exe` sits beside `clang.exe` in the LLVM
+//!    installation and is not chosen; `clang` prefers the platform linker for
+//!    an MSVC target. That is one more thing the build record does not name, and
+//!    §12 item 12 already asks for the pipeline and the CPU to be recorded; the
+//!    linker belongs on the same list, and *which* linker — not just which
+//!    driver — is the part that is missing, because [`Driver`] records the
+//!    program it ran and the program it ran is a driver.
 //! 4. **`SCIENCE_LINKER` and `CC` are environment variables**, and
 //!    `package-manager.md` Decision 7 removes environment-dependent inputs from
 //!    output for reproducibility. The resolved driver is therefore returned

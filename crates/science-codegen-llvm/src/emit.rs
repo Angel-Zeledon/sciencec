@@ -16,9 +16,10 @@
 //!
 //! **The cost, and this crate paid it immediately.** §8.4 says the discipline
 //! *"actually fails, because the fastest way to fix a bug at eleven at night is
-//! always to let the backend peek at something above the line"*. There is one
-//! place below where this crate reaches for something the line does not carry,
-//! and rather than peek it is named: [`ExtInst::LocalAddr`]. See §2.
+//! always to let the backend peek at something above the line"*. There are three
+//! places below where this crate reaches for something the line does not carry,
+//! and rather than peek they are named: [`ExtInst::LocalAddr`],
+//! [`ExtInst::ReturnSlot`] and [`ExtInst::LoadNiche`]. See §2.
 //!
 //! # 1. Types: the layout is `science-codegen`'s and LLVM is told, not asked
 //!
@@ -42,25 +43,40 @@
 //! `LLVMStructCreateNamed` is declared and unused for that reason; the fix is a
 //! field on `Layout`, which is above the line.
 //!
-//! # 2. The one thing the interface cannot say
+//! # 2. The three things the interface cannot say
 //!
 //! `science_codegen::backend::Operand` has `Value`, `ConstInt`, `ConstFloat`,
-//! `GlobalAddr` and `Null`. **There is no way to name the address of a local**,
-//! and §10's stage 1 needs one on its second instruction: `science_print` takes
-//! `*const ScienceString`, and the string it prints lives in the `alloca` that
-//! the `sret` call before it filled in.
+//! `GlobalAddr` and `Null`, and `Inst` has `Alloca`, `Load`, `Store`, two
+//! binaries, a `Cmp` and a `Call`. Stage 1 — one script body, one string
+//! literal, one `print` — needs three things that vocabulary cannot express, and
+//! each one is a variant of [`ExtInst`] rather than a peek:
 //!
-//! `science-codegen`'s own `tests/stage_one.rs` runs into this and passes
-//! `Operand::Value(ValueId(0))` — a value no instruction in that body produces.
-//! Against a text backend that renders `%0` and nobody notices. Against LLVM it
-//! is an undefined reference, which is how this was found.
+//! 1. **The address of a local** ([`ExtInst::LocalAddr`]). `science_print` takes
+//!    `*const ScienceString`, and the string it prints lives in the `alloca`
+//!    that the `sret` call before it filled in. `science-codegen`'s own
+//!    `tests/stage_one.rs` runs into this and passes
+//!    `Operand::Value(ValueId(0))` — a value no instruction in that body
+//!    produces. Against a text backend that renders `%0` and nobody notices;
+//!    against LLVM it is an undefined reference, which is how it was found.
+//! 2. **The hidden return slot** ([`ExtInst::ReturnSlot`]). MIR's `_0` *is* the
+//!    caller's slot when the return is classified `Indirect`, and Decision 8's
+//!    *"every local becomes an `alloca`"* makes a private copy of it instead.
+//!    This one was silent: the emitted `main` read an untouched slot and took
+//!    the error branch.
+//! 3. **The niche of a nullable, alone** ([`ExtInst::LoadNiche`]). `Inst::Load`
+//!    loads a local's whole type, and §3.4 forbids loading the vtable word of a
+//!    possibly-null interface object *"including on the path that tests for
+//!    null"*.
 //!
-//! [`ExtInst`] is the minimum repair: the above-the-line [`Inst`] embedded
-//! unchanged, plus exactly one new form. It is a local extension and it is meant
-//! to be deleted — when `science_codegen::backend::Inst` grows an `AddrOf`,
-//! [`ExtInst`] collapses to `Inst` and this section goes with it. Both entry
-//! points run the same emitter, so the trait's `define_function` and the
-//! extension's `define_function_ext` cannot drift.
+//! Every one is a local extension and every one is meant to be deleted: when
+//! `Inst` grows an `AddrOf`, `Operand` grows a `Param`, and either grows a field
+//! projection, [`ExtInst`] collapses to `Inst` and this section goes with it.
+//! Both entry points run the same emitter, so the trait's `define_function` and
+//! the extension's `define_function_ext` cannot drift.
+//!
+//! **A fourth gap is named and not repaired.** `Operand::ConstInt` carries an
+//! `i128` and no type, so a constant's width has to be inferred; see
+//! [`LlvmBackend::width_hint`] for what that costs and where it stops.
 //!
 //! # 3. Verification is not optional and runs twice
 //!
@@ -75,7 +91,7 @@ use std::ffi::c_uint;
 
 use science_codegen::abi::{AbiParam, AbiSignature, ArgClass, ReturnClass};
 use science_codegen::backend::{
-    Backend, BackendError, Block, BlockId, Body, Callee, CmpOp, EmitKind, FloatOp, FuncId, Inst,
+    Backend, BackendError, BlockId, Body, Callee, CmpOp, EmitKind, FloatOp, FuncId, Inst,
     IntOp, LocalId, Operand, Terminator, ValueId,
 };
 use science_codegen::descriptor::{MapInfo, StringLiteral, TypeInfo};
@@ -106,6 +122,60 @@ pub enum ExtInst {
         /// Where the pointer goes.
         dest: ValueId,
         /// Whose address.
+        local: LocalId,
+    },
+    /// Bind a local to the function's hidden `sret` pointer instead of giving
+    /// it an `alloca`.
+    ///
+    /// **The second hole, and it is the one that produces a wrong answer rather
+    /// than a verifier failure.** Decision 8 says *"every MIR local becomes an
+    /// `alloca` in the function's entry block"*, and MIR's local `_0` is the
+    /// return place. For a function classified `Indirect` those two sentences
+    /// contradict each other: `_0` **is** the caller's slot, reached through the
+    /// hidden parameter, and an `alloca` for it is a second, private copy that
+    /// the `ret` never transfers anywhere. `science_codegen::backend::Operand`
+    /// has no `Param` form — [`BodyState::sret`] is populated and unreadable for
+    /// exactly this reason — so there is no way to say "`_0` lives there"
+    /// without one new instruction.
+    ///
+    /// The failure it fixes is silent: `_S4main` stored `null` into its own
+    /// stack slot, returned, and `main` read an untouched slot and took the
+    /// error branch on whatever the stack happened to hold. Nothing verifies
+    /// differently and nothing links differently; the program simply aborts
+    /// instead of printing.
+    ///
+    /// Like [`ExtInst::LocalAddr`] this is meant to be deleted, and it collapses
+    /// the same way: when `Inst` can name a parameter, `_0` is bound by an
+    /// ordinary instruction and this variant goes.
+    ReturnSlot {
+        /// The local the hidden pointer stands for — `_0` in every case F0 can
+        /// build, and not assumed to be, because the emitter can check.
+        local: LocalId,
+        /// `_0`'s layout, which is the function's `ret_layout`. Carried so the
+        /// slot can be typed for a later `Load` without asking the signature
+        /// twice.
+        layout: Layout,
+    },
+    /// Load a `Repr::Niched` local's **niche scalar**, and nothing else.
+    ///
+    /// **Not `Inst::Load`, and the difference is §3.4's rule.** `Inst::Load`
+    /// loads a local's whole type. For `(any Error)?` that is `{ ptr, ptr }`,
+    /// and §3.4 says *"the vtable slot of a null trait object is undefined and
+    /// codegen must never load it — including on the path that tests for
+    /// null"*. Loading the pair is an `icmp` between a struct and a pointer,
+    /// which the verifier rejects — so this one is loud rather than silent, and
+    /// it is the reason `hello, world` did not compile rather than the reason it
+    /// would have misbehaved.
+    ///
+    /// Restricted to a niche at offset 0, because [`crate::sys`] declares no
+    /// `LLVMBuildGEP2` — §2 of that module says why — so there is no way to
+    /// address a field that is not the first. Every niche F0 can build is at 0
+    /// (§3.4 puts it in the payload's first pointer), and a niche that is not is
+    /// refused by the emitter rather than loaded from the wrong place.
+    LoadNiche {
+        /// Where the scalar goes.
+        dest: ValueId,
+        /// The nullable local.
         local: LocalId,
     },
 }
@@ -255,6 +325,11 @@ impl LlvmBackend {
 
     /// A [`Layout`] as an LLVM type, with padding materialised.
     ///
+    /// Public so that `tests/layout_agreement.rs` can ask LLVM's own
+    /// `DataLayout` what it makes of the type this builds. That test is the only
+    /// place two independent implementations of §3.2 can be compared without a C
+    /// compiler, and it needs this function to have one of them.
+    ///
     /// See the module documentation §1 for why the padding is explicit. The
     /// `Tagged` case is the one that is *not* structural: a discriminant plus a
     /// union has no LLVM spelling, so it becomes an array of `align`-sized
@@ -263,7 +338,7 @@ impl LlvmBackend {
     /// does; `Error?` is `Nullable(Interface)`, and an interface object has a
     /// null niche in its data pointer (Decision 19), so it takes the `Niched`
     /// path and never the tagged one.
-    fn llvm_type(&self, layout: &Layout) -> sys::LLVMTypeRef {
+    pub fn llvm_type(&self, layout: &Layout) -> sys::LLVMTypeRef {
         match &layout.repr {
             Repr::Zero => self.anon_struct(&mut []),
             Repr::Scalar(scalar) => self.scalar_ty(*scalar),
@@ -401,12 +476,23 @@ impl LlvmBackend {
                     "the body reads %{id}, which no instruction in it produces"
                 ))
             })?,
+            // **The expectation is filtered by kind, not trusted.**
+            // `LLVMConstInt` of a `double` and `LLVMConstReal` of an `i64` are
+            // assertion failures in a debug LLVM and undefined in a release one,
+            // and the releases are what ship. An expectation of the wrong kind
+            // means the interface above the line said "integer constant" where
+            // the other operand is a float — a disagreement this level cannot
+            // resolve — so the constant takes its default type and the verifier
+            // reports the mismatch, which is the loud outcome rather than the
+            // undefined one.
             Operand::ConstInt(value) => {
-                let ty = expected.unwrap_or_else(|| self.int_ty(64));
+                let ty = expected
+                    .filter(|ty| self.type_kind_of(*ty) == sys::type_kind::INTEGER)
+                    .unwrap_or_else(|| self.int_ty(64));
                 unsafe { sys::LLVMConstInt(ty, *value as u64, 1) }
             }
             Operand::ConstFloat(value) => {
-                let ty = expected.unwrap_or_else(|| unsafe {
+                let ty = expected.filter(|ty| self.type_is_float(*ty)).unwrap_or_else(|| unsafe {
                     sys::LLVMDoubleTypeInContext(self.context.raw())
                 });
                 unsafe { sys::LLVMConstReal(ty, *value) }
@@ -502,6 +588,49 @@ impl LlvmBackend {
                 let slot = state.local(*local)?;
                 state.values.insert(dest.0, slot);
             }
+            ExtInst::ReturnSlot { local, layout } => {
+                let slot = state.sret.ok_or_else(|| {
+                    BackendError::Other(format!(
+                        "local _{} is bound to the hidden return slot of a function that does \
+                         not have one",
+                        local.0
+                    ))
+                })?;
+                let ty = self.llvm_type(layout);
+                state.locals.insert(local.0, (slot, ty, layout.clone()));
+            }
+            ExtInst::LoadNiche { dest, local } => {
+                let (slot, _, layout) = state.local_entry(*local)?;
+                let Repr::Niched { niche, payload, .. } = &layout.repr else {
+                    return Err(BackendError::Other(format!(
+                        "local _{} is read for a niche and its representation has none",
+                        local.0
+                    )));
+                };
+                if niche.offset != 0 {
+                    return Err(BackendError::Unsupported {
+                        what: format!(
+                            "a niche at offset {}: reading it needs a `getelementptr` and \
+                             `crate::sys` declares none",
+                            niche.offset
+                        ),
+                    });
+                }
+                let scalar = science_codegen::layout::scalar_leaves(payload)
+                    .into_iter()
+                    .find(|(offset, _)| *offset == 0)
+                    .map(|(_, scalar)| scalar)
+                    .ok_or_else(|| {
+                        BackendError::Other(format!(
+                            "local _{} has a niche at offset 0 and no scalar there",
+                            local.0
+                        ))
+                    })?;
+                let ty = self.scalar_ty(scalar);
+                let name = cstr(&format!("v{}", dest.0));
+                let value = unsafe { sys::LLVMBuildLoad2(b, ty, slot, name.as_ptr()) };
+                state.values.insert(dest.0, value);
+            }
             ExtInst::Above(Inst::Alloca { local, layout }) => {
                 let ty = self.llvm_type(layout);
                 let name = cstr(&format!("l{}", local.0));
@@ -525,8 +654,9 @@ impl LlvmBackend {
                 unsafe { sys::LLVMBuildStore(b, v, slot) };
             }
             ExtInst::Above(Inst::IntBinary { dest, op, lhs, rhs }) => {
-                let l = self.operand(state, lhs, None)?;
-                let r = self.operand(state, rhs, None)?;
+                let hint = self.width_hint(state, lhs, rhs).or_else(|| Some(self.int_ty(64)));
+                let l = self.operand(state, lhs, hint)?;
+                let r = self.operand(state, rhs, hint)?;
                 let build = match op {
                     IntOp::Add => sys::LLVMBuildAdd,
                     IntOp::Sub => sys::LLVMBuildSub,
@@ -547,8 +677,9 @@ impl LlvmBackend {
             }
             ExtInst::Above(Inst::FloatBinary { dest, op, lhs, rhs }) => {
                 let double = unsafe { sys::LLVMDoubleTypeInContext(self.context.raw()) };
-                let l = self.operand(state, lhs, Some(double))?;
-                let r = self.operand(state, rhs, Some(double))?;
+                let hint = self.width_hint(state, lhs, rhs).or(Some(double));
+                let l = self.operand(state, lhs, hint)?;
+                let r = self.operand(state, rhs, hint)?;
                 // No flags are set on the result, here or anywhere: §7.3
                 // obligation 1, and `LLVMSetFastMathFlags` is not declared.
                 let build = match op {
@@ -562,10 +693,15 @@ impl LlvmBackend {
                 state.values.insert(dest.0, unsafe { build(b, l, r, name.as_ptr()) });
             }
             ExtInst::Above(Inst::Cmp { dest, op, signed, lhs, rhs }) => {
-                let l = self.operand(state, lhs, None)?;
-                let r = self.operand(state, rhs, None)?;
+                let hint = self.width_hint(state, lhs, rhs);
+                let l = self.operand(state, lhs, hint)?;
+                let r = self.operand(state, rhs, hint)?;
                 let name = cstr(&format!("v{}", dest.0));
-                let is_float = self.value_is_float(l);
+                // **Either side, not the left one.** `Cmp { lhs: ConstInt(0),
+                // rhs: Value(a double) }` is an `Operand` pair the interface
+                // above the line can build, and asking only `lhs` answers
+                // "integer" for it.
+                let is_float = self.value_is_float(l) || self.value_is_float(r);
                 let value = if is_float {
                     let predicate = match op {
                         CmpOp::Eq => sys::real_predicate::OEQ,
@@ -600,6 +736,64 @@ impl LlvmBackend {
         Ok(())
     }
 
+    /// The type a constant operand should take, read off whichever operand is
+    /// a value.
+    ///
+    /// **The defect this closes.** [`LlvmBackend::operand`] types an
+    /// `Operand::ConstInt` as `i64` and an `Operand::ConstFloat` as `double`
+    /// when it is given no expectation, and the three binary instructions gave
+    /// it none: `IntBinary` passed `None` for both sides and `FloatBinary`
+    /// passed `double` for both. So `x + 1` on an `I32` built
+    /// `add i32 %x, i64 1`, and `x < 1.0` on an `F32` built
+    /// `fcmp olt float %x, double 1.0`. Both are verifier failures rather than
+    /// miscompiles — Decision 34 catches them — and both make every
+    /// non-`Int`/non-`F64` arithmetic expression in the language uncompilable
+    /// the day stage 3 reaches one. Nothing in stage 1 reaches one, which is why
+    /// the module compiled with the defect in it.
+    ///
+    /// `science_codegen::backend::Operand::ConstInt` carries an `i128` and no
+    /// type, so the width has to come from somewhere; the other operand is the
+    /// only place, and it is exact whenever it is a value. Two constants
+    /// compared against each other still fall back to the default, which is the
+    /// one case where the interface above the line genuinely does not say.
+    fn width_hint(
+        &self,
+        state: &BodyState,
+        lhs: &Operand,
+        rhs: &Operand,
+    ) -> Option<sys::LLVMTypeRef> {
+        for operand in [lhs, rhs] {
+            if let Operand::Value(ValueId(id)) = operand {
+                if let Some(value) = state.values.get(id) {
+                    return Some(unsafe { sys::LLVMTypeOf(*value) });
+                }
+            }
+        }
+        None
+    }
+
+    /// Whether a value is an integer of exactly `bits` bits.
+    ///
+    /// `LLVMGetIntTypeWidth` would answer directly and is not declared;
+    /// comparing against a freshly built `iN` is the same answer through the
+    /// declarations that already exist, because LLVM interns types in a context
+    /// and two `i1`s from one context are one pointer.
+    fn value_is_int_of_width(&self, value: sys::LLVMValueRef, bits: u32) -> bool {
+        let ty = unsafe { sys::LLVMTypeOf(value) };
+        self.type_kind_of(ty) == sys::type_kind::INTEGER && ty == self.int_ty(bits)
+    }
+
+    /// An LLVM type's kind.
+    fn type_kind_of(&self, ty: sys::LLVMTypeRef) -> c_uint {
+        unsafe { sys::LLVMGetTypeKind(ty) }
+    }
+
+    /// Whether a type is `float` or `double`.
+    fn type_is_float(&self, ty: sys::LLVMTypeRef) -> bool {
+        let kind = self.type_kind_of(ty);
+        kind == sys::type_kind::FLOAT || kind == sys::type_kind::DOUBLE
+    }
+
     /// Whether a value's type is a float, so that [`CmpOp`] picks `fcmp` over
     /// `icmp`.
     ///
@@ -608,8 +802,7 @@ impl LlvmBackend {
     /// has. Asking LLVM is exact; inferring it from whatever produced the value
     /// would be a second model of a fact the value already carries.
     fn value_is_float(&self, value: sys::LLVMValueRef) -> bool {
-        let kind = unsafe { sys::LLVMGetTypeKind(sys::LLVMTypeOf(value)) };
-        kind == sys::type_kind::FLOAT || kind == sys::type_kind::DOUBLE
+        self.type_is_float(unsafe { sys::LLVMTypeOf(value) })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -747,19 +940,53 @@ impl LlvmBackend {
             Terminator::Goto(target) => unsafe {
                 sys::LLVMBuildBr(b, state.block(*target)?);
             },
-            Terminator::Branch { cond, then_block, else_block } => unsafe {
+            Terminator::Branch { cond, then_block, else_block } => {
                 let c = self.operand(state, cond, Some(self.int_ty(1)))?;
-                sys::LLVMBuildCondBr(b, c, state.block(*then_block)?, state.block(*else_block)?);
-            },
+                // **`i1`, and it is checked rather than assumed.** §3.1 makes
+                // `Bool` *"`i1` in registers and `i8` in memory"*, and
+                // [`LlvmBackend::scalar_ty`] answers with the memory form — so a
+                // condition that came from `Inst::Load` of a `Bool` local is an
+                // `i8`, and `br i8` is a verifier failure. The repair is a
+                // `trunc`, and `LLVMBuildTrunc` is deliberately **not** declared:
+                // `sys.rs`'s rule is *"declare only what you call"*, nothing in
+                // stage 1 can produce a loaded `Bool` condition, and a
+                // declaration nobody calls is a claim nobody checks. So this
+                // refuses, by name, and the day a `Bool` local reaches a branch
+                // the refusal says which line to write.
+                if !self.value_is_int_of_width(c, 1) {
+                    return Err(BackendError::Unsupported {
+                        what: "a branch on a condition that is not `i1` — §3.1's memory form of                                `Bool` is `i8` and narrowing it needs a `trunc`, which                                `crate::sys` does not declare"
+                            .to_string(),
+                    });
+                }
+                unsafe {
+                    sys::LLVMBuildCondBr(
+                        b,
+                        c,
+                        state.block(*then_block)?,
+                        state.block(*else_block)?,
+                    );
+                }
+            }
             Terminator::Switch { value, arms, default } => unsafe {
                 let discr = self.operand(state, value, None)?;
+                let tag_ty = sys::LLVMTypeOf(discr);
+                // The case constants below are built against this type. It has
+                // to be an integer: `LLVMConstInt` of a `ptr` or a struct is an
+                // assertion in a debug LLVM and silence in a release one, and
+                // the releases are what ship.
+                if sys::LLVMGetTypeKind(tag_ty) != sys::type_kind::INTEGER {
+                    return Err(BackendError::Unsupported {
+                        what: "a `switch` on a value that is not an integer; Decision 18 makes                                every discriminant a `u8`, `u16` or `u32`, so this is a                                discriminant that was read from the wrong place"
+                            .to_string(),
+                    });
+                }
                 let switch = sys::LLVMBuildSwitch(
                     b,
                     discr,
                     state.block(*default)?,
                     arms.len() as c_uint,
                 );
-                let tag_ty = sys::LLVMTypeOf(discr);
                 for (discriminant, target) in arms {
                     // The case value must have the switched value's exact
                     // type. Decision 18 makes a discriminant `u8` up to 256
@@ -858,8 +1085,12 @@ struct BodyState {
     /// operand and then find where the values come from".
     #[allow(dead_code)]
     params: BTreeMap<usize, sys::LLVMValueRef>,
-    /// The hidden return slot of an `sret` function, for the same reason.
-    #[allow(dead_code)]
+    /// The hidden return slot of an `sret` function.
+    ///
+    /// Reachable only through [`ExtInst::ReturnSlot`], which is the third thing
+    /// the interface above the line cannot spell: `Operand` has no `Param` form,
+    /// so a body cannot name its own hidden pointer and MIR's `_0` cannot be
+    /// bound to it without a local extension.
     sret: Option<sys::LLVMValueRef>,
 }
 

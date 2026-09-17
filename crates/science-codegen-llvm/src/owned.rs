@@ -259,12 +259,25 @@ impl TargetData {
     /// §3's layout is `science-codegen`'s answer and this is LLVM's; a code
     /// generator that asked LLVM for an offset would have moved Decision 42's
     /// line, and a *test* that compares the two is the reason to have both.
-    pub fn size_of(&self, ty: sys::LLVMTypeRef) -> u64 {
+    ///
+    /// # Safety
+    ///
+    /// `ty` must be a live `LLVMTypeRef` from a context that is still alive.
+    /// An `LLVMTypeRef` is context-owned (see this module's ownership table), so
+    /// it dangles the moment its [`Context`] is dropped, and LLVM dereferences
+    /// it here. That is a caller obligation no signature can express, which is
+    /// why the function is `unsafe` rather than merely containing an `unsafe`
+    /// block.
+    pub unsafe fn size_of(&self, ty: sys::LLVMTypeRef) -> u64 {
         unsafe { sys::LLVMABISizeOfType(self.0, ty) }
     }
 
     /// LLVM's own alignment for a type, in bytes.
-    pub fn align_of(&self, ty: sys::LLVMTypeRef) -> u64 {
+    ///
+    /// # Safety
+    ///
+    /// As [`TargetData::size_of`].
+    pub unsafe fn align_of(&self, ty: sys::LLVMTypeRef) -> u64 {
         unsafe { sys::LLVMABIAlignmentOfType(self.0, ty) as u64 }
     }
 }
@@ -422,7 +435,14 @@ impl Attrs {
     }
 
     /// `sret(<ty>)` — a type attribute, which is why it takes a type.
-    pub fn sret(&self, ty: sys::LLVMTypeRef) -> sys::LLVMAttributeRef {
+    ///
+    /// # Safety
+    ///
+    /// `ty` must be a live `LLVMTypeRef` belonging to the same context this
+    /// table was built from. LLVM reads through it to name the attribute's
+    /// type, and a type from a *different* context is accepted, stored, and
+    /// dangles when that context dies.
+    pub unsafe fn sret(&self, ty: sys::LLVMTypeRef) -> sys::LLVMAttributeRef {
         unsafe { sys::LLVMCreateTypeAttribute(self.context, self.sret, ty) }
     }
 }

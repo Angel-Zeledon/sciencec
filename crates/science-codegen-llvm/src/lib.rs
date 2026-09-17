@@ -35,9 +35,14 @@
 //! - **`--features llvm` compiles [`sys`], [`owned`], [`machine`], [`emit`],
 //!   [`lower`] and [`link`]**, and `build.rs` fails loudly, at build time, with
 //!   the name of the missing directory if LLVM is not where it said.
-//! - **`sciencec` depends on this crate optionally**, behind its own `llvm`
-//!   feature, which is off. A default `cargo build` of the compiler produces a
-//!   compiler that reports `SC0400` with its install note, exactly as before.
+//! - **`sciencec` depends on this crate unconditionally** and forwards its own
+//!   `llvm` feature to this one's, which is off. The dependency is not optional
+//!   because it does not need to be: without the feature this crate is six
+//!   hundred lines with no LLVM anywhere in them, and an unconditional
+//!   dependency keeps `sciencec` free of `#[cfg]` — there is one call site for
+//!   [`build`] and the feature decides what it does rather than whether it
+//!   exists. A default `cargo build` of the compiler produces a compiler that
+//!   reports `SC0400` with its install note, exactly as before.
 //! - So `cargo test --workspace` and `cargo clippy --workspace` need no LLVM,
 //!   which is the configuration CI has.
 //!
@@ -46,8 +51,11 @@
 //! takes a second invocation with `--features llvm`, and a contributor without
 //! LLVM cannot run it at all. That is the same bargain `llvm-sys` would have
 //! imposed and it is smaller, because here the *crate* still compiles — only
-//! five modules are absent — so a change that breaks this crate's interface with
-//! `science-codegen` still breaks the default build.
+//! six modules are absent — so a change that breaks this crate's interface with
+//! `science-codegen` still breaks the default build. Two test files run in that
+//! configuration and are not nothing: `tests/symbols.rs` reads [`sys`] as text
+//! and holds the shape of the `extern` block, and `tests/diagnostics.rs` holds
+//! `SC0400`.
 //!
 //! **A second cost, and it is Windows-specific and real.** The backend links
 //! `LLVM-C.dll` dynamically, and Windows resolves a DLL through the executable's
@@ -70,31 +78,58 @@
 //!
 //! Two places strain it and both are named rather than hidden:
 //!
-//! - [`emit::ExtInst::LocalAddr`] — the interface above the line has no operand
-//!   for the address of a local, and §10's stage 1 needs one on its second
-//!   instruction. `emit`'s §2 is the account.
+//! - [`emit::ExtInst`] — the interface above the line cannot name the address of
+//!   a local, the hidden return slot, or one field of a local, and §10's stage 1
+//!   needs all three. `emit`'s §2 is the account, variant by variant.
 //! - [`lower`] — MIR-to-`Inst` is an above-the-line job and `science-codegen`
 //!   has nowhere to put it, so it is written here against that crate's
 //!   vocabulary and should move.
 //!
 //! # 3. What was found by running it
 //!
-//! Four things that reading could not have established, each recorded where it
-//! bites:
+//! Nine things that reading could not have established, each recorded where it
+//! bites. The first four were found by writing the crate; the rest were found by
+//! *running* it, which is the difference §10's staging exists to force.
 //!
 //! 1. **Decision 36 is unimplementable through LLVM-C**, which has no
 //!    `TargetOptions` surface at all. [`machine`] is the account and the
 //!    replacement obligation, and `tests/float_policy.rs` is the empirical
-//!    check that the policy holds anyway.
+//!    check that the policy holds anyway — `a * b + c` at `-O3` on an
+//!    FMA-capable CPU emits `vmulsd` and `vaddsd` and no `vfmadd`.
 //! 2. **`science_codegen::runtime::RtParam` erases `*const` from `*mut`**, so
 //!    Decision 24's `readonly`/`noalias` cannot be emitted on any runtime
 //!    declaration without guessing. [`lower::runtime_signature`] emits none.
-//! 3. **`science_codegen::backend` cannot name a local's address or a
-//!    parameter.** Two operands missing; the first blocks stage 1 and is worked
-//!    around here, the second blocks everything after it.
+//! 3. **`science_codegen::backend` cannot name a local's address, a parameter,
+//!    or one field of a local.** Three holes; [`emit`] §2 is the account and
+//!    [`emit::ExtInst`] is the minimum repair for each.
 //! 4. **Decision 25's `link.exe` is not reachable** without reimplementing the
 //!    MSVC environment discovery that Decision 25 gives as the reason to use a C
 //!    driver in the first place. [`link`] uses `clang` and says what that costs.
+//! 5. **Decision 8 and the `sret` convention contradict each other on `_0`.**
+//!    MIR's return local *is* the caller's slot when the return is `Indirect`,
+//!    and an `alloca` for it is a private copy nothing returns. The emitted
+//!    `main` read an untouched stack slot and took the error branch.
+//!    [`emit::ExtInst::ReturnSlot`].
+//! 6. **`Reloc::Static` does not link on `x86_64-pc-windows-msvc`.** It makes
+//!    LLVM address a global with a 32-bit absolute relocation and every Windows
+//!    x64 image is large-address-aware, so the linker refuses the first string
+//!    literal in `hello, world` with `LNK2017`. [`machine::create`] now uses
+//!    `PIC` on all three targets, which is what `clang` itself does here.
+//! 7. **`print` and `write` have no declared signature**, so a call to one types
+//!    as `Ty::ERROR` **with no diagnostic** and `hello, world` arrives at the
+//!    backend with an untypeable local in it. `science-resolve`'s `builtins.rs`
+//!    wrote the signature, measured seven corpus false positives and withdrew
+//!    it; [`lower`] skips the dead slot and refuses anything that touches it.
+//! 8. **A constant operand took its default width rather than the other
+//!    operand's**, so `x + 1` on an `I32` built `add i32 %x, i64 1`. A verifier
+//!    failure, and unreachable from any program this compiler can compile, which
+//!    is exactly why it survived. `tests/emitter.rs` is where the arithmetic is
+//!    exercised at all.
+//! 9. **`Error?` reaches codegen as `Nullable(Named)`, not `Nullable(Object)`.**
+//!    The `(any Error)?` expansion is `assign`'s subtyping rather than a rewrite
+//!    of the type, so [`lower::Lowerer::cg_ty`] has to read the definition's
+//!    kind. Decision 13's representation is the same either way, and it has to
+//!    be: one arm writes `_S4main`'s `sret` slot and the other reads it.
 
 #![warn(missing_docs)]
 
@@ -227,8 +262,69 @@ pub struct Built {
 pub fn build(input: &BuildInput) -> Result<Built, Diagnostics> {
     let _ = input;
     let mut diagnostics = Diagnostics::new();
-    diagnostics.push(science_codegen::driver::no_backend());
+    diagnostics.push(no_backend());
     Err(diagnostics)
+}
+
+/// The `SC0400` a `sciencec` built without `--features llvm` reports.
+///
+/// **The decision.** This crate emits its own `SC0400` rather than
+/// `science_codegen::driver::no_backend`'s, and the only thing that differs is
+/// the `how` half — the sentence telling the reader what to do.
+///
+/// **The reason.** That sentence is a set of instructions, and
+/// `science-codegen`'s version instructs the reader to install `llvm-config`
+/// and set **`LLVM_SYS_181_PREFIX`**. Both belong to `llvm-sys`, and
+/// [`sys`]'s §0 is the record of why this crate does not and cannot use it: the
+/// Windows binary release of LLVM 18.1.8 ships neither `llvm-config.exe` nor
+/// the ~100 static archives `llvm-sys` links, so a contributor who followed the
+/// old note would install LLVM, set the variable, and still have no backend —
+/// because the variable was never the thing that was missing. What was missing
+/// is `--features llvm`, which no version of that message mentions.
+/// `science-codegen`'s own text is left alone because that crate is above
+/// Decision 42's line and has no feature flag of its own to name; it is this
+/// crate that knows what turns the backend on.
+///
+/// **The cost.** Two `SC0400` texts exist in the workspace and only one of them
+/// is reachable from `sciencec`, so the other can rot without anything failing.
+/// `tests/diagnostics.rs` pins this one against [`llvm_prefixes`], which is the
+/// half that would actually go stale — the variable names — and
+/// `science-codegen`'s own tests still pin its.
+///
+/// `SCIENCE_LLVM_PREFIX` is named first because it is this crate's own;
+/// `LLVM_SYS_181_PREFIX` is still read, and is still mentioned, because a
+/// contributor who followed the older note will already have set it and should
+/// be told it works rather than left to discover it does.
+pub fn no_backend() -> science_diagnostics::Diagnostic {
+    science_codegen::diagnostics::backend_not_compiled_in("llvm", install_instructions())
+}
+
+/// How to obtain a `sciencec` with a backend, on this host.
+///
+/// Three steps and they are all required: install LLVM 18.1, tell the build
+/// where it is if it is not in the default place, and **turn the feature on** —
+/// which is the step the message this replaces did not have.
+pub fn install_instructions() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "install LLVM 18.1.8 — `winget install LLVM.LLVM --version 18.1.8` — and rebuild with \
+         `cargo build -p sciencec --features llvm`. The backend links `lib/LLVM-C.lib` and loads \
+         `bin/LLVM-C.dll` at run time, so the installation's `bin` directory has to be on `PATH`; \
+         set `SCIENCE_LLVM_PREFIX` (or `LLVM_SYS_181_PREFIX`) to the install root if it is not \
+         the default one under Program Files. This backend does not use `llvm-sys`, so no \
+         `llvm-config` and no static archives are needed"
+    } else if cfg!(target_os = "macos") {
+        "install LLVM 18.1 — `brew install llvm@18` — and rebuild with \
+         `cargo build -p sciencec --features llvm`, setting `SCIENCE_LLVM_PREFIX` (or \
+         `LLVM_SYS_181_PREFIX`) to `$(brew --prefix llvm@18)` if it is not \
+         `/opt/homebrew/opt/llvm@18`. The backend links `libLLVM.dylib` directly, so no \
+         `llvm-sys` and no `llvm-config` are needed"
+    } else {
+        "install LLVM 18.1 — `apt install llvm-18` or your distribution's equivalent — and \
+         rebuild with `cargo build -p sciencec --features llvm`, setting `SCIENCE_LLVM_PREFIX` \
+         (or `LLVM_SYS_181_PREFIX`) to the install root if it is not `/usr/lib/llvm-18`. The \
+         backend links `libLLVM-18.so` directly, so no `llvm-sys`, no `llvm-config` and no \
+         `-dev` package are needed"
+    }
 }
 
 /// Build a program: MIR to an object file to an executable.

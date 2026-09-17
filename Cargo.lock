@@ -489,6 +489,7 @@ name = "sciencec"
 version = "0.0.1"
 dependencies = [
  "science-codegen",
+ "science-codegen-llvm",
  "science-db",
  "science-diagnostics",
  "science-fmt",
