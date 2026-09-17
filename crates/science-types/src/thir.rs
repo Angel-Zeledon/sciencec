@@ -337,9 +337,27 @@ pub enum ExprKind {
     /// point at which the narrowing was *used*, not the point at which it was
     /// established.
     Narrow(ExprId),
-    /// An expression whose type could not be found, because the mistake was
-    /// already reported or because this phase cannot answer. `ty` is
-    /// [`Ty::ERROR`] and `ty`'s §5 is what keeps that to one diagnostic.
+    /// A value this phase did not build.
+    ///
+    /// **Two cases, and they are not the same case.** Usually the type could
+    /// not be found — the mistake was already reported, or this phase cannot
+    /// answer — and then `ty` is [`Ty::ERROR`], which is `ty`'s §5 and what
+    /// keeps a hole to one diagnostic.
+    ///
+    /// **But `ty` is not always [`Ty::ERROR`], and the array literal is why.**
+    /// `[1, 2, 3]` is typed in full by [`crate::check`]'s `array_lit` —
+    /// Decision 10 makes it an `Array of T` and the elements are unified and
+    /// reported on — and there is no THIR variant to carry its *shape*,
+    /// because `science-mir` matches this enum exhaustively in three places and
+    /// a new variant is a compile error in a crate that change did not own. So
+    /// the type travels and the shape stops here.
+    ///
+    /// **Nothing downstream may read the two together.** This variant means
+    /// *"no value was built"*; whether the type is known is a separate
+    /// question, and a consumer that infers `Ty::ERROR` from the kind is
+    /// reading a coincidence. `science-mir`'s arm is already written that way:
+    /// it emits `Rvalue::Error` into a destination whose type comes from the
+    /// **place**, not from this node.
     Error,
 }
 

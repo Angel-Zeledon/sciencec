@@ -626,6 +626,52 @@ pub mod codes {
     /// had to stop being about its own subject.
     pub const UNREACHABLE_ARM: Code = Code(537);
 
+    // --- the range index, `SC0538` ---------------------------------------
+
+    /// A range used as an index, which would be a slice.
+    ///
+    /// **Decision. `xs[1..3]` is refused, and `Slice of T` is not built.**
+    /// `indexing-and-array-literals.md` §2.3 makes `a[1..5]` a `Slice of T` —
+    /// `{ borrowed T, Int }`, a view that does not copy — and that type exists
+    /// nowhere: the prelude declares no `Slice`, so `Slice of Int` in a
+    /// signature is `SC0200` from the resolver, and there is no implementation
+    /// of `Index` at a range for anything.
+    ///
+    /// **The reason it is a refusal and not a type.** What was there before was
+    /// worse than either: a range expression carries no type (`check`'s
+    /// `synth` gives it [`crate::Ty::ERROR`] because §6 has no `Range` in the
+    /// prelude to give it), and `Index.index` wants an `Int`, so the untyped
+    /// index and the `Int` **agreed by cancelling** — `ty`'s §5 absorption
+    /// working exactly as designed on two values neither of which was wrong —
+    /// and `xs[1..3]` came out as one *element*. A wrong type with no
+    /// diagnostic is the one outcome this crate's §6 is written to keep from
+    /// happening silently.
+    ///
+    /// **What it costs, stated plainly.** Slicing is specified in full and
+    /// does not work, and this code is where the author finds out. Building
+    /// `Slice of T` instead is a prelude type with a region parameter, an
+    /// `Index` implementation at a range for every container, a `MutableSlice`
+    /// beside it through `IndexMutably`, §2.4's borrow rules over a view that
+    /// pins its source, and `SC0285` for a provably out-of-range slice — five
+    /// things in four crates, of which this one owns one. Reporting is the
+    /// smaller honest answer and the larger one stays available: when `Slice`
+    /// exists this code is deleted rather than narrowed, because its whole
+    /// condition is *"the type it would produce does not exist"*.
+    ///
+    /// **Not [`NO_OPERATOR_IMPLEMENTATION`]**, although the lookup that fails
+    /// is `Index`'s. `SC0535` says *"write the `implements Index:` block"*, and
+    /// there is no block anyone can write: the argument type has no spelling.
+    /// Offering a fix that cannot be taken is worse than saying what is
+    /// missing.
+    ///
+    /// **The domain is syntactic and that is deliberate.** It is a range
+    /// *written in an index bracket*, which is the only place one can be: both
+    /// ends are required outside brackets (§2.2, still unimplemented), so
+    /// `let r be 1..3` types at [`crate::Ty::ERROR`] and there is no range
+    /// value to reach an index through a name. A method that takes a range —
+    /// `text.slice(0..4)` — is a call and not an index, and is untouched.
+    pub const RANGE_INDEX_NEEDS_SLICE: Code = Code(538);
+
     /// A value interpolated into an `f"…"` that does not implement `Display`.
     ///
     /// **From `strings-formatting-and-docs.md`'s block, not from this crate's
@@ -674,6 +720,75 @@ pub mod codes {
     /// because they are two sentences.
     pub const NOT_DISPLAYABLE: Code = Code(275);
 
+    // --- the array literal, `SC0281`-`SC0282` -----------------------------
+    //
+    // **From `indexing-and-array-literals.md`'s block, not from this crate's
+    // own.** `docs/superpowers/design/README.md` allocates `SC0280`-`SC0287`
+    // to that note; §7.2 is the table and §3 is the decision each of these two
+    // implements. They are here rather than in a module of their own for
+    // [`NOT_DISPLAYABLE`]'s reason: a code is defined where the check that
+    // emits it lives, and both of these are `check`'s `array_lit`.
+    //
+    // **The other six are deliberately not defined**, under the discipline
+    // `SC0521`, `SC0522` and `SC0274` get above — a code whose condition
+    // cannot arise is a code whose message is written against a guess.
+    // `SC0280` (indexing a type that implements neither `Index` nor
+    // `IndexMutably`) is already reported as `SC0535`, which says the same
+    // sentence for every operator; `SC0283` (index arity) needs `m[i, j]`,
+    // which the parser accepts and §2.5 puts in F1; `SC0284` needs
+    // `Tensor.from`; `SC0285` and `SC0286` are the bounds obligation, which is
+    // a pass over a bounds fact and not a type (`check`'s §6, item 3 of
+    // `index_expr`); and `SC0287` is `SC0535` at `IndexMutably`.
+
+    /// Elements of an array literal that do not agree in type. §3.2.
+    ///
+    /// **Decision 10 fixes the literal's type as `Array of T` where `T` is the
+    /// unification of the element types, and §5.1 admits no implicit numeric
+    /// conversion**, so `[1, 2.0]` is an error for the same reason `1 + 2.0`
+    /// is. That is the note's own defence of this code and it is why the code
+    /// exists rather than the first element simply winning.
+    ///
+    /// **Not [`MISMATCHED_TYPES`]**, although it is a value that does not fit.
+    /// `SC0525`'s shape is one expected type taken from *one annotation a
+    /// human wrote*, which is what makes its message nameable; here the
+    /// expectation was taken from a sibling element, and the message has to
+    /// show that element as well as the one that disagrees. §7.2 asks for
+    /// exactly that — *"primary on the first element that differs, secondary
+    /// on the element that fixed the type"* — and a code whose message is
+    /// `expected Int, found F64` with one span would have thrown the secondary
+    /// away.
+    ///
+    /// **An *annotated* literal is [`MISMATCHED_TYPES`] and not this**, and
+    /// the split is the same argument read the other way. `let xs: Array of
+    /// String be [1, 2, 3]` pushes `String` inward through Decision 11's arm,
+    /// so there *is* one expected type, it did come from one annotation a
+    /// human wrote, and there is no sibling element to point at — which is
+    /// `SC0525`'s shape exactly. Reporting it here instead would mean printing
+    /// a secondary label at an element that fixed nothing.
+    ///
+    /// So the division is by where the expectation came from: from a sibling,
+    /// this; from an annotation, `SC0525`. §3.2's examples are all the first
+    /// kind and §3.3's are all the second.
+    pub const ARRAY_ELEMENT_MISMATCH: Code = Code(281);
+
+    /// `[]` with no expected type. Decision 11, §3.3.
+    ///
+    /// **Not [`TYPE_ANNOTATIONS_NEEDED`]**, although both are *"nothing fixed
+    /// this"*, and the difference is the one §3.3 is written to preserve.
+    /// `SC0526` is `infer`'s hole *inside a known constructor* and is reported
+    /// once per inference class at the end of a body; this is a syntactic
+    /// property of one expression, known the instant it is reached, and its fix
+    /// is stated in the note — *"the annotation, naming a candidate type when
+    /// exactly one is visible"*. Folding it into `SC0526` would defer a
+    /// question that has already been answered and would lose the span of the
+    /// `[]`.
+    ///
+    /// **The bidirectional push it is the failure case of is bounded on
+    /// purpose.** §3.3 names the cost itself: an expected type is driven into
+    /// one expression form and no other, because §5.2 describes inference as
+    /// unification and this is not that.
+    pub const EMPTY_ARRAY_NO_TYPE: Code = Code(282);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -701,7 +816,10 @@ pub mod codes {
         NO_OPERATOR_IMPLEMENTATION,
         UNINFERABLE_RECEIVER,
         UNREACHABLE_ARM,
+        RANGE_INDEX_NEEDS_SLICE,
         NOT_DISPLAYABLE,
+        ARRAY_ELEMENT_MISMATCH,
+        EMPTY_ARRAY_NO_TYPE,
     ];
 
     #[cfg(test)]

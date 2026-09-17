@@ -405,7 +405,9 @@ def ignores() -> Doc:
 #[test]
 fn a_nullable_that_is_not_an_error_is_not_a_candidate() {
     // §5 of `unchecked`: the condition is `E?` where `E` implements `Error`,
-    // and this pass answers it only for `any Error`. A `Doc?` owes nothing.
+    // and `Doc` implements nothing. There is no *position* to read either —
+    // §5b needs a pair from a call, and this is one binding of a `null` — so
+    // an ordinary optional owes nothing.
     let checked = program(
         "
 def optional() -> Bool:
@@ -428,4 +430,144 @@ def receives(err: Error?) -> Bool:
 ",
     );
     checked.assert_clean();
+}
+
+// --- §5b: the error position of a fallible call ---------------------------
+//
+// The condition §5 states is *"`E?` where `E` implements `Error`"*, and read
+// literally it leaves the diagnostic silent on the program a beginner writes:
+// a `choice` used as the error of a `-> (T, E?)` with no `implements Error:`
+// block anywhere. `syntax-revision-2.md` §3.4 recommends exactly that shape
+// for a concrete error, and `examples/00_kitchen_sink.science` writes it. So
+// the *position* is a second way in, and these are its tests — the wrong
+// program refused, the right one still passing, and the cost named.
+
+/// The fixture the hole was measured with, minus the body.
+const CONCRETE: &str = "\
+choice ParseError:
+    Bad(I64)
+
+def parse(s: borrowed String) -> (I64, ParseError?):
+    (0, null)
+";
+
+#[test]
+fn an_error_type_that_implements_nothing_is_still_a_candidate() {
+    let checked = check(&format!(
+        "{CONCRETE}
+def ignores() -> Bool:
+    let value, err be parse(\"x\")
+    true
+"
+    ));
+    assert_eq!(checked.codes(), vec![140]);
+    assert_eq!(checked.messages(), vec!["`err` is never checked for an error".to_string()]);
+}
+
+#[test]
+fn the_same_program_with_the_test_written_still_passes() {
+    // The other half of the pair. A check that refuses everything is not
+    // progress, and the exclusions are reached through the *same* function —
+    // widening the candidate set changes which bindings are asked, never what
+    // excuses one.
+    check(&format!(
+        "{CONCRETE}
+def checks() -> Bool:
+    let value, err be parse(\"x\")
+    if err?:
+        return false
+    true
+"
+    ))
+    .assert_clean();
+}
+
+#[test]
+fn a_positional_candidate_is_excused_by_being_returned() {
+    // Exclusion 1, unchanged, over a binding that is a candidate only by
+    // position.
+    check(&format!(
+        "{CONCRETE}
+def passes_on() -> (I64, ParseError?):
+    let value, err be parse(\"x\")
+    (value, err)
+"
+    ))
+    .assert_clean();
+}
+
+#[test]
+fn a_positional_candidate_is_silenced_by_the_underscore() {
+    // Decision 10, unchanged, for the same reason.
+    check(&format!(
+        "{CONCRETE}
+def ignores() -> Bool:
+    let value, _err be parse(\"x\")
+    true
+"
+    ))
+    .assert_clean();
+}
+
+#[test]
+fn only_the_last_binding_of_the_pair_is_read_positionally() {
+    // §3.1 puts the error after the value. A nullable in the *value* position
+    // is an optional result and owes nothing, and one diagnostic comes out,
+    // not two.
+    let checked = check(
+        "\
+choice ParseError:
+    Bad(I64)
+
+type Doc:
+    title: String
+
+def parse(s: borrowed String) -> (Doc?, ParseError?):
+    (null, null)
+
+def ignores() -> Bool:
+    let doc, err be parse(\"x\")
+    true
+",
+    );
+    assert_eq!(checked.codes(), vec![140]);
+}
+
+#[test]
+fn a_pair_that_did_not_come_from_a_call_is_not_read_positionally() {
+    // *Fallible* means a function returned this pair. A tuple the author
+    // built and then destructured has no failure in it, and §3's model never
+    // claimed it did.
+    check(
+        "\
+type Doc:
+    title: String
+
+def ignores(pair: (I64, Doc?)) -> Bool:
+    let value, maybe be pair
+    true
+",
+    )
+    .assert_clean();
+}
+
+#[test]
+fn the_cost_a_non_error_nullable_in_the_error_position_is_reported() {
+    // **This is the stated cost of §5b and it is deliberate.** `F64?` is not
+    // an error type by anybody's reading, and it is in the position §3.1
+    // reserves for one. The corpus contains no such signature — every
+    // multi-value return in `examples/` is `(T, E?)` — and the escape is
+    // Decision 10's one character. Pinning it here means a future change to
+    // the rule has to come past this test rather than past a silence.
+    let checked = check(
+        "\
+def midpoint(lo: F64, hi: F64) -> (F64, F64?):
+    (lo, null)
+
+def ignores() -> Bool:
+    let mid, rest be midpoint(0.0, 1.0)
+    true
+",
+    );
+    assert_eq!(checked.codes(), vec![140]);
 }

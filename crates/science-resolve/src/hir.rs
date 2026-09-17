@@ -1095,6 +1095,17 @@ pub enum ExprKind {
     /// `base.name`. The field stays a name, for the same reason.
     Field { base: Box<Expr>, name: Ident },
     Index { base: Box<Expr>, index: Box<Expr> },
+    /// `[a, b, c]` and `[]` — the array literal of
+    /// `indexing-and-array-literals.md` §3.1.
+    ///
+    /// **Resolution decides nothing about it**, which is why the node survives
+    /// unchanged in shape: a literal binds no name and opens no scope, and
+    /// Decision 10 fixes its type as `Array of T` with no help from anything
+    /// this phase knows. The elements are resolved because a misspelling inside
+    /// `[a, b]` is this phase's to report; the *node* is here so that
+    /// `science-types` has the elements to unify and an empty literal to ask
+    /// for an expected type (`SC0281` and `SC0282`).
+    ArrayLit(Vec<Expr>),
     /// `Doc(title: "a")`: named arguments (§4.4). Also where `Doc()` lands
     /// once resolution has seen that `Doc` is a fieldless record.
     StructLit { res: Res, fields: Vec<FieldInit> },

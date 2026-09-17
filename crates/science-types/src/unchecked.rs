@@ -115,7 +115,7 @@
 //! nothing could discharge it.
 //!
 //! **[`Methods::implements`] discharges it, and this is the predicate that
-//! section said it would hand over.** [`is_error_nullable`] now answers for
+//! section said it would hand over.** [`is_error_nullable`] answers for
 //! `any Error` *and* for any type the crate declares `implements Error:`, which
 //! is what §5 wrote and what `examples/09_absence_and_failure.science` returns
 //! from half its functions.
@@ -124,6 +124,74 @@
 //! from written implementations only, so an error type reached through a type
 //! parameter's bound is still not a candidate. That is the safe direction for
 //! this diagnostic and the same one §2's list is written in.
+//!
+//! # 5b. The error *position*, which the type test cannot see
+//!
+//! §5's condition, read literally, leaves the diagnostic silent on the program
+//! a beginner writes:
+//!
+//! ```science
+//! choice ParseError:
+//!     Bad(I64)
+//!
+//! def parse(s: borrowed String) -> (I64, ParseError?):
+//!     (0, null)
+//!
+//! let value, err be parse("x")        # nothing reported
+//! ```
+//!
+//! `ParseError` implements nothing, so §5's test says no and the whole point of
+//! the Go-style model is lost on exactly the file that needed it most. Adding
+//! `ParseError implements Error:` makes it fire, which means the diagnostic was
+//! conditioned on a declaration the language does not require anywhere.
+//!
+//! **It does not require it.** `syntax-revision-2.md` §3.4 gives the error type
+//! two spellings and only one of them is an interface: *"a function may instead
+//! name a **concrete** error type, and should when the caller is expected to
+//! distinguish cases"*, whose own example is a bare `choice ConfigError:` with
+//! no implementation block. `examples/00_kitchen_sink.science` writes
+//! `-> (Format, ParseError?)` for a `ParseError` that implements nothing, and
+//! only converts to `LoadError` — the type that *does* implement `Error` — at
+//! the caller's `return`. So a type's implementation list is the wrong thing to
+//! ask, because the concrete form is the one §3.4 recommends.
+//!
+//! **Decision. A binding is of error type when [`is_error_nullable`] says so,
+//! *or* when it is the error position of a fallible call**: the **last** of
+//! several bindings in one `let`, of nullable type, whose initialiser is a call.
+//! That is `-> (T, E?)` received the one way §3.1 gives for receiving it —
+//! *"multiple returns … destructuring at the binding is how it is received"* —
+//! and the position is the model's own, not a heuristic laid over it.
+//!
+//! **The four exclusions are untouched.** They are about what *dealing with*
+//! an error looks like, and none of them mentions the error's type; widening
+//! the candidate set changes which bindings are asked, never what excuses one.
+//! [`read_anywhere`] is the same function it was.
+//!
+//! **What it costs, stated plainly.** A pair whose second element is a nullable
+//! that is *not* an error — `def midpoint() -> (F64, F64?)` — is now reported,
+//! and the author must test it, return it, pass it on, or spell Decision 10's
+//! underscore. Three things make that the right trade rather than a hated false
+//! positive:
+//!
+//! - **The corpus has no such signature.** Every multi-value return in
+//!   `examples/` is `(T, E?)`: ten declarations across four files, and the
+//!   error type is a `choice`, a record, `IoError` or `any Error` in every one
+//!   of them. §15 records that §2's exclusion list *"came from reading the
+//!   corpus, not from running the analysis over it"*, and this was read the
+//!   same way.
+//! - **The language gives the shape no other meaning.** §3 introduced multiple
+//!   returns *for* the error pair; a second, non-error use of the same shape
+//!   would be a convention nothing has written down.
+//! - **The escape is one character and it already exists.** Decision 10's
+//!   `_rest` is exactly the spelling for *"this nullable is not a failure"*,
+//!   and it is greppable, which §5 of the note says is the point.
+//!
+//! **What it still does not reach.** A single binding of a concrete error type
+//! — `let err be fallible()` where the def returns `E?` alone — is a candidate
+//! only through [`is_error_nullable`], because there is no position to read: one
+//! binding is not a pair, and every `T?` would otherwise be an error. The
+//! corpus's `let write_err be store(..)` is that shape, and it is caught by the
+//! type test because `IoError` is an error type the prelude declares.
 
 use science_diagnostics::{Diagnostic, Diagnostics, Label, Span};
 use science_resolve::hir::{self, DefId, DefTable};
@@ -192,7 +260,9 @@ fn collect(
             let StmtKind::Let { bindings, value } = &stmt.kind else { continue };
             for (at, def) in bindings.iter().enumerate() {
                 let Some(ty) = body.local_ty(*def) else { continue };
-                if !is_error_nullable(decls, types, coercions, ty) {
+                let by_type = is_error_nullable(decls, types, coercions, ty);
+                let by_position = is_error_position(body, types, *value, ty, bindings.len(), at);
+                if !by_type && !by_position {
                     continue;
                 }
                 // Decision 10.
@@ -236,6 +306,43 @@ fn is_error_nullable(
     // type the index can answer about.
     matches!(types.kind(*inner), TyKind::Named { .. })
         && decls.methods().implements(types, *inner, error)
+}
+
+/// §5b's condition: the error position of a fallible call.
+///
+/// Three facts, and each one is doing work:
+///
+/// - **Several bindings**, because `-> (T, E?)` is a pair and a single binding
+///   is `-> E?` alone, where there is no position to read and every `T?` in the
+///   language would otherwise owe a test.
+/// - **The last of them**, because §3.1 puts the error after the value and
+///   nowhere else. `let a, b, c be f()` asks about `c`.
+/// - **The initialiser is a call**, because that is what *fallible* means: a
+///   function returned this pair. `let a, b be (x, y)` is a tuple the author
+///   wrote and its second element was never anyone's failure — and it is also
+///   exclusion 3's shape, which [`is_statically_null`] already answers.
+///
+/// The type still has to be nullable. That is §5's word *"nullable"* and it is
+/// the whole of what the type contributes here: **which** nullable is the
+/// position's answer, not the type's.
+fn is_error_position(
+    body: &Body,
+    types: &Types,
+    value: ExprId,
+    ty: Ty,
+    bindings: usize,
+    at: usize,
+) -> bool {
+    if bindings < 2 || at + 1 != bindings {
+        return false;
+    }
+    if !matches!(types.kind(ty), TyKind::Nullable(_)) {
+        return false;
+    }
+    matches!(
+        body.expr(peel(body, value)).kind,
+        ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+    )
 }
 
 /// Exclusion 3. `let missing: Error? be null`, and the `err` half of a pair

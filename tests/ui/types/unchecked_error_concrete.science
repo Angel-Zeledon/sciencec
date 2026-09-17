@@ -1,0 +1,25 @@
+# UI test: a concrete error type that implements nothing (SC0140), reached
+# through the error *position* rather than through the type.
+#
+# `unchecked`'s §5b. The condition `type-checking-and-mir.md` §5 states is
+# *"`E?` where `E` implements `Error`"*, and read literally it is silent on
+# exactly this program — which is the one `syntax-revision-2.md` §3.4
+# recommends: *"a function may instead name a concrete error type, and should
+# when the caller is expected to distinguish cases"*, with a bare `choice` and
+# no implementation block. `examples/00_kitchen_sink.science` writes it.
+#
+# So the last binding of a several-binding `let`, of nullable type, whose
+# initialiser is a call, is the error of a `-> (T, E?)` received the one way
+# §3.1 gives for receiving one. The four exclusions are untouched: `_err`, a
+# `return`, a parameter of error type and a body that cannot return all still
+# excuse it.
+
+choice ParseError:
+    Bad(I64)
+
+def parse(s: borrowed String) -> (I64, ParseError?):
+    (0, null)
+
+def main():
+    let value, err be parse("x")
+    print("never tested")

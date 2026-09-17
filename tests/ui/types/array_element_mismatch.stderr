@@ -1,0 +1,8 @@
+error[SC0281]: the elements of this array literal do not have one type
+  --> tests/ui/types/array_element_mismatch.science:14:20
+   |
+14 |     let bad be [1, 2.0]
+   |                 - this is an integer literal
+   |                    ^^^ this is a floating-point literal
+   |
+   = note: an array literal is an `Array of T` where `T` is the unification of its elements (§3.1), and there is no implicit numeric conversion (§5.1): write the suffix, the `as`, or the literal you meant

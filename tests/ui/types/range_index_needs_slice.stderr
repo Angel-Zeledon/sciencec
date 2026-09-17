@@ -1,0 +1,7 @@
+error[SC0538]: a range index would produce a slice, and there is no `Slice` type
+  --> tests/ui/types/range_index_needs_slice.science:16:14
+   |
+16 |     let s be xs[1..3]
+   |              ^^^^^^^^ slicing a `borrowed Array of I64` is not implemented
+   |
+   = note: `a[1..5]` is specified as a `Slice of T` — a borrow and a length, which does not copy (§2.3) — and this compiler declares no such type. Index one element at a time, or iterate: `xs.iterate().skip(1).take(2)`

@@ -1,0 +1,14 @@
+# UI test: `[]` with nothing to say what it holds (SC0282).
+#
+# Decision 11: an empty literal takes its element type from the expected type
+# at its position, and `let nothing be []` has none. That bidirectional push is
+# bounded on purpose — §3.3 prices it as *"an expected type pushed into one
+# expression form"* — so the failure case is a diagnostic and not a deferred
+# inference variable.
+#
+# `let empty: Array of F64 be []` is the same literal, accepted, and is in
+# `crates/science-types/tests/array_literals.rs` beside this one.
+
+def nothing() -> Bool:
+    let nothing be []
+    true

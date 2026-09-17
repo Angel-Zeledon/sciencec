@@ -906,6 +906,22 @@ impl<'a> BodyChecker<'a> {
             hir::ExprKind::Closure { param, body } => {
                 self.closure(*param, body, expr.span, Some(expected)).id
             }
+            // Decision 11's bidirectional push, and the whole of it: an
+            // expected `Array of E` drives `E` into every element, an empty
+            // literal takes `E` and reports nothing, and anything else falls
+            // through to synthesis — where the literal gets its own type and
+            // `demand` reports the mismatch against the annotation once.
+            // §3.3 prices this as *"a bounded amount of bidirectional
+            // checking — an expected type pushed into one expression form"*,
+            // and this arm is that bound.
+            hir::ExprKind::ArrayLit(elements) => {
+                let revealed = self.revealed(expected, expr.span);
+                if let Some(element_ty) = self.array_element(revealed) {
+                    return self.array_lit_expecting(elements, element_ty, expected, expr.span);
+                }
+                let typed = self.synth(expr);
+                self.demand(typed, expected, site, expr.span)
+            }
             hir::ExprKind::Tuple(elements) => {
                 // §2: the elements are visited one at a time, at this site,
                 // which is what makes Decision 14's own example compile.
@@ -1352,6 +1368,7 @@ impl<'a> BodyChecker<'a> {
             hir::ExprKind::Index { base, index } => {
                 self.index_expr(base, index, span, Indexing::Read)
             }
+            hir::ExprKind::ArrayLit(elements) => self.array_lit(elements, span),
             hir::ExprKind::StructLit { res, fields } => self.record_lit(*res, fields, span),
             hir::ExprKind::Tuple(elements) => {
                 let mut ids = Vec::with_capacity(elements.len());
@@ -3633,6 +3650,263 @@ impl<'a> BodyChecker<'a> {
         self.diagnostics.push(no_operator_implementation(span, symbol, &rendered, interface));
     }
 
+    /// `[a, b, c]` and `[]` — `indexing-and-array-literals.md` §3.
+    ///
+    /// **Decision. The literal is typed here and lowered to
+    /// [`ExprKind::Error`] at that type.** Decision 10 fixes the result as
+    /// `Array of T`, **always**, where `T` is the *unification* of the element
+    /// types; Decision 11 lets an empty `[]` take `T` from an expectation and
+    /// makes it [`codes::EMPTY_ARRAY_NO_TYPE`] when there is none; and §3.2
+    /// makes elements that do not unify [`codes::ARRAY_ELEMENT_MISMATCH`].
+    /// All three are here.
+    ///
+    /// **Why the THIR node is a hole at a known type, which is the one thing
+    /// in this function that looks wrong and is not.** THIR has no
+    /// array-literal variant and cannot grow one from this crate: `science-mir`
+    /// matches [`crate::thir::ExprKind`] exhaustively in three places, and a
+    /// new variant there is a compile error in a crate this change does not
+    /// own. So the literal's *type* travels and its *shape* does not, and
+    /// [`ExprKind::Error`] is what carries a value this phase declines to
+    /// build. MIR turns it into `Rvalue::Error`, and `science-codegen-llvm`
+    /// refuses the program **by name** at `SC0400` — measured, it refuses the
+    /// local's `Array of I64` as one of §2.6's runtime containers before it
+    /// ever reaches the rvalue, which is a better message than the hole would
+    /// have produced. `let a be [1]` was already the smallest program that
+    /// cannot be built, by that crate's own §2; what changes is that the type
+    /// in the refusal is now right.
+    ///
+    /// **What that costs, stated plainly.** Two things.
+    ///
+    /// 1. **`ExprKind::Error`'s documented contract said `ty` is
+    ///    [`Ty::ERROR`]**, and this is the first node that breaks it. That
+    ///    contract is amended where it is written rather than worked around:
+    ///    the variant now means *"a value this phase did not build"*, and
+    ///    whether it knows the type is a separate question. Nothing downstream
+    ///    reads the two together — MIR's arm emits `Rvalue::Error` into a
+    ///    destination whose type comes from the *place*, not from the node.
+    /// 2. **The element expressions are in the arena and nothing points at
+    ///    them.** They are checked, they carry their types, and they are
+    ///    unreachable from the root. That is deliberate: dropping them would
+    ///    lose the narrowing invalidations and the [`crate::unchecked`] readers
+    ///    that a walk over [`crate::thir::Body::exprs`] finds, and `f"{err}"`
+    ///    inside a literal is a reader whether or not MIR ever visits it.
+    ///
+    /// **The bidirectional half is `check`'s arm and not this one.** An
+    /// expectation of `Array of E` pushes `E` into every element through
+    /// [`BodyChecker::check`], so `let xs: Array of String be [1, 2, 3]`
+    /// reports [`codes::MISMATCHED_TYPES`] against the annotation — Decision
+    /// 1's shape, one expected type from one annotation — and this function's
+    /// [`codes::ARRAY_ELEMENT_MISMATCH`] is left for the case it is named for,
+    /// which is elements disagreeing with *each other*.
+    fn array_lit(&mut self, elements: &[hir::Expr], span: Span) -> Typed {
+        if elements.is_empty() {
+            // Decision 11's failure case. Reaching this function at all means
+            // `check`'s arm found no `Array of E` to push inward, so there is
+            // no expected element type whatever the surrounding annotation
+            // said.
+            self.diagnostics.push(empty_array_no_type(span));
+            return self.error_expr(span);
+        }
+        // The element nodes go into the arena and nothing keeps their ids: see
+        // the second cost above. They are reachable by a walk and not by a
+        // pointer, which is what the missing THIR variant costs.
+        //
+        // The type so far, and the element that last made it concrete — §7.2's
+        // *"secondary on the element that fixed the type"*. It starts at the
+        // first element whether or not that element knows its own type, so a
+        // literal-only array points at its first entry.
+        let mut settled: Option<(InferTy, Span)> = None;
+        for element in elements {
+            let typed = self.synth(element);
+            let Some((so_far, fixed_at)) = settled else {
+                settled = Some((typed.ty, element.span));
+                continue;
+            };
+            match self.unify_element(so_far, typed.ty, element.span) {
+                Some(joined) => {
+                    // A class that was a hole and is now a type was fixed
+                    // *here*, so this is the element a later disagreement
+                    // should point at.
+                    let fixed_at = match (so_far, joined) {
+                        (InferTy::Var(_), InferTy::Known(_)) => element.span,
+                        _ => fixed_at,
+                    };
+                    settled = Some((joined, fixed_at));
+                }
+                None => {
+                    let found = self.render_infer(typed.ty);
+                    let expected = self.render_infer(so_far);
+                    self.diagnostics.push(array_element_mismatch(
+                        element.span,
+                        &expected,
+                        &found,
+                        fixed_at,
+                    ));
+                    // The type so far is kept, so a third element disagreeing
+                    // with the same first one reports against the first and
+                    // not against the wreckage of the second.
+                }
+            }
+        }
+        let element_ty = match settled.map(|(ty, _)| ty) {
+            Some(InferTy::Known(ty)) => ty,
+            // Decision 2's default, run here rather than at
+            // [`BodyChecker::finish`], for the reason `demand`'s §5b runs it
+            // early one construct over: `infer`'s §2 has no `Array of ?0` to
+            // intern, so the element type has to be a `Ty` *now* or the
+            // literal has no type at all. An unsuffixed integer literal is
+            // `I64` and an unsuffixed float is `F64`, which is §3.2's own
+            // sentence about a literal array.
+            Some(InferTy::Var(var)) => match self.default_of(var) {
+                Some(ty) => {
+                    let _ = self.infer.bind(self.types, var, ty);
+                    ty
+                }
+                // `[null]`: a class with no default. `finish` reports
+                // `SC0526` for it, so this says nothing and takes the error
+                // type, and `ty`'s §5 keeps the count at one.
+                None => Ty::ERROR,
+            },
+            None => Ty::ERROR,
+        };
+        let ty = self.array_of(element_ty);
+        let id = self.body.push_expr(ExprKind::Error, ty, span);
+        Typed { id, ty: InferTy::Known(ty) }
+    }
+
+    /// `[a, b, c]` with `Array of E` expected: §3.3's bounded push inward.
+    ///
+    /// Every element is [`BodyChecker::check`]ed at `E`, so a wrong element
+    /// reports [`codes::MISMATCHED_TYPES`] against the annotation and an empty
+    /// literal reports nothing at all. `Site::Elsewhere` because a literal is
+    /// not a call and not a return: Decision 14's boxing has no position here,
+    /// and an element that would need it is a mismatch the author fixes by
+    /// writing the box.
+    fn array_lit_expecting(
+        &mut self,
+        elements: &[hir::Expr],
+        element_ty: Ty,
+        expected: Ty,
+        span: Span,
+    ) -> ExprId {
+        for element in elements {
+            self.check(element, element_ty, Site::Elsewhere);
+        }
+        self.body.push_expr(ExprKind::Error, expected, span)
+    }
+
+    /// What an `Array of T` holds, when the type is one.
+    ///
+    /// The head has to be the **prelude's** `Array` — a user is free to declare
+    /// a type of that name — which is why `Array` is on `items`' `WANTED` list
+    /// rather than found by string comparison here.
+    fn array_element(&mut self, ty: Ty) -> Option<Ty> {
+        let array = self.decls.prelude().get("Array")?;
+        let TyKind::Named { def, args } = self.types.kind(ty) else {
+            return None;
+        };
+        if *def != array || args.len() != 1 {
+            return None;
+        }
+        match args[0] {
+            GenericArg::Type(element) => Some(element),
+            _ => None,
+        }
+    }
+
+    /// `Array of T`, interned. [`Ty::ERROR`] where there is no prelude to name
+    /// `Array` with, which is `Prelude::is_available`'s admission.
+    fn array_of(&mut self, element: Ty) -> Ty {
+        match self.decls.prelude().get("Array") {
+            Some(array) => self.types.named(array, vec![GenericArg::Type(element)]),
+            None => Ty::ERROR,
+        }
+    }
+
+    /// Two element types made one. §3.1's *"the unification of the element
+    /// types"*, and `None` where they do not unify.
+    ///
+    /// **Unification and not assignability**, which is `infer`'s §5 taken at
+    /// its word: there is no slot here, so there is no site, so there is
+    /// nothing for a coercion to be a fact about. `[doc, excerpt]` is not an
+    /// `Array of any Summarize` and Decision 12 of `assign` is not consulted.
+    ///
+    /// The two literal cases are the ones [`Inference::unify`] cannot answer on
+    /// its own, because a numeric literal's *kind* lives in this checker's side
+    /// table and not in the classes:
+    ///
+    /// - **A literal against a type.** [`Inference::bind`] would accept
+    ///   anything, so `["a", 1]` would bind the integer's class to `String`
+    ///   and report nothing. [`BodyChecker::literal_admits`] is §5's question
+    ///   and is asked first.
+    /// - **A literal against a literal.** Two unbound classes union with no
+    ///   complaint, so `[1, 2.0]` would join and then default to whichever
+    ///   kind `widen_numeric` preferred. §3.2 names that exact array as
+    ///   `SC0281` — *"`Int` and `F64` do not unify"* — and the kinds are what
+    ///   say so.
+    fn unify_element(&mut self, so_far: InferTy, found: InferTy, span: Span) -> Option<InferTy> {
+        match (so_far, found) {
+            (InferTy::Var(left), InferTy::Var(right)) => {
+                if let (Some(a), Some(b)) = (self.literal_kind(left), self.literal_kind(right)) {
+                    if a != b {
+                        return None;
+                    }
+                }
+                self.infer.unify(self.types, so_far, found).ok()
+            }
+            (InferTy::Var(var), InferTy::Known(ty))
+            | (InferTy::Known(ty), InferTy::Var(var)) => {
+                if !self.element_admits(var, ty, span) {
+                    return None;
+                }
+                self.infer.bind(self.types, var, ty).ok().map(InferTy::Known)
+            }
+            _ => self.infer.unify(self.types, so_far, found).ok(),
+        }
+    }
+
+    /// [`BodyChecker::literal_admits`] with `null`'s case answered rather than
+    /// refused.
+    ///
+    /// `demand` peels a nullable off the slot before it asks, so by the time
+    /// that function sees a `Numeric::Null` the answer is an unconditional no.
+    /// There is no slot here: `[null, found]` takes its type *from* `found`, so
+    /// the question is whether `found`'s type is one `null` inhabits, which is
+    /// §5's rule asked in the only direction this construct has.
+    fn element_admits(&mut self, var: InferVar, ty: Ty, span: Span) -> bool {
+        if self.literal_kind(var) != Some(Numeric::Null) {
+            return self.literal_admits(var, ty, span);
+        }
+        if !self.decls.prelude().is_available() {
+            return true;
+        }
+        let revealed = self.revealed(ty, span);
+        matches!(self.types.kind(revealed), TyKind::Nullable(_)) || is_opaque(self.types, revealed)
+    }
+
+    /// Decision 2's default for a literal's class, when it has one.
+    fn default_of(&mut self, var: InferVar) -> Option<Ty> {
+        match self.literal_kind(var)? {
+            Numeric::Integer => self.decls.prelude().default_int(self.types),
+            Numeric::Float => self.decls.prelude().default_float(self.types),
+            Numeric::Null => None,
+        }
+    }
+
+    /// A type in progress, rendered for a message.
+    ///
+    /// A class that is still a hole is named by what it came from —
+    /// [`BodyChecker::numeric_name`]'s wording, which is what `demand` prints
+    /// in the same situation — so `[1, 2.0]` reads *"expected an integer
+    /// literal, found a floating-point literal"* rather than naming two
+    /// defaults the author did not write.
+    fn render_infer(&mut self, ty: InferTy) -> String {
+        match self.infer.resolve(ty) {
+            InferTy::Known(known) => format!("`{}`", self.types.render(self.defs, known)),
+            InferTy::Var(var) => self.numeric_name(var).to_string(),
+        }
+    }
+
     /// `a[i]` — §6's last hole, and the one that keeps its node.
     ///
     /// **Decision. Indexing dispatches to `Index.index` for its *type*, and the
@@ -3725,7 +3999,26 @@ impl<'a> BodyChecker<'a> {
             }
             _ => self.synth(base),
         };
+        // §2, and [`codes::RANGE_INDEX_NEEDS_SLICE`] is the argument. A range
+        // in an index bracket is a *slice*, the type it produces does not
+        // exist, and the range expression's own [`Ty::ERROR`] would otherwise
+        // agree with whatever `Index.index` declared its parameter to be —
+        // handing back one element for an expression that asked for several.
+        // Reported before the lookup, because the lookup is not what failed.
+        let slicing = matches!(index.kind, hir::ExprKind::Range { .. });
         let index = self.synth(index);
+        if slicing {
+            let written = self.known_or_error(base.ty);
+            let revealed = self.revealed(written, span);
+            if !self.types.references_error(revealed) {
+                let rendered = self.types.render(self.defs, revealed);
+                self.diagnostics.push(range_index_needs_slice(span, &rendered));
+            }
+            let id = self
+                .body
+                .push_expr(ExprKind::Index { base: base.id, index: index.id }, Ty::ERROR, span);
+            return Typed { id, ty: InferTy::Known(Ty::ERROR) };
+        }
         let mut ty = Ty::ERROR;
         let mut index_id = index.id;
         let written = self.known_or_error(base.ty);
@@ -4691,6 +4984,72 @@ fn not_displayable(span: Span, ty: &str) -> Diagnostic {
         "an interpolation renders its value through `Display`. A nullable does not implement it \
          until it is narrowed, and a value that implements nothing needs an `implements Display:` \
          block before it can be printed",
+    )
+}
+
+/// `SC0281` — two elements of an array literal that do not unify.
+///
+/// **Both spans, which is the whole reason this is not `SC0525`.** §7.2 asks
+/// for *"primary on the first element that differs, secondary on the element
+/// that fixed the type"*, because with no annotation in sight neither element
+/// is more right than the other and a message with one span would have picked
+/// a winner silently.
+///
+/// `expected` and `found` arrive rendered, backticks and all, because one of
+/// them may be a phrase — *"an integer literal"* — rather than a type. That is
+/// `demand`'s wording for a class that has not settled, and §3.2's own example
+/// is exactly that case: `[1, 2.0]` has no two types to print yet.
+fn array_element_mismatch(
+    span: Span,
+    expected: &str,
+    found: &str,
+    fixed_at: Span,
+) -> Diagnostic {
+    Diagnostic::error(
+        codes::ARRAY_ELEMENT_MISMATCH,
+        "the elements of this array literal do not have one type",
+    )
+    .with_label(Label::primary(span, format!("this is {found}")))
+    .with_label(Label::secondary(fixed_at, format!("this is {expected}")))
+    .with_note(
+        "an array literal is an `Array of T` where `T` is the unification of its elements \
+         (§3.1), and there is no implicit numeric conversion (§5.1): write the suffix, the \
+         `as`, or the literal you meant",
+    )
+}
+
+/// `SC0282` — `[]` where nothing says what it holds.
+///
+/// **The fix is the annotation**, and the message says where it goes rather
+/// than naming a candidate type. §7.2 asks for the candidate *"when exactly one
+/// is visible"*, and at this point exactly none is: reaching this function
+/// means `check`'s arm found no `Array of E` expectation, so there is nothing
+/// to name.
+fn empty_array_no_type(span: Span) -> Diagnostic {
+    Diagnostic::error(codes::EMPTY_ARRAY_NO_TYPE, "this empty array literal has no element type")
+        .with_label(Label::primary(span, "nothing here says what `[]` holds"))
+        .with_note(
+            "an empty literal takes its element type from the expected type at its position \
+             (§3.3), and there is none here: annotate the binding — `let xs: Array of F64 be []`",
+        )
+}
+
+/// `SC0538` — a range written as an index.
+///
+/// **The message names the missing *type*, not a missing implementation.**
+/// There is no block the author can write to make this work and no argument
+/// they can pass instead, so the only honest thing to offer is the shape that
+/// does exist today.
+fn range_index_needs_slice(span: Span, ty: &str) -> Diagnostic {
+    Diagnostic::error(
+        codes::RANGE_INDEX_NEEDS_SLICE,
+        "a range index would produce a slice, and there is no `Slice` type",
+    )
+    .with_label(Label::primary(span, format!("slicing a `{ty}` is not implemented")))
+    .with_note(
+        "`a[1..5]` is specified as a `Slice of T` — a borrow and a length, which does not copy \
+         (§2.3) — and this compiler declares no such type. Index one element at a time, or \
+         iterate: `xs.iterate().skip(1).take(2)`",
     )
 }
 

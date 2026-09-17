@@ -2006,37 +2006,36 @@ impl Resolver {
             // `[a, b, c]` — the array literal of
             // `indexing-and-array-literals.md` §3.1.
             //
-            // **The seam.** This phase has nothing to decide about a literal:
-            // it binds no name, opens no scope, and §3.1 fixes its type as
-            // `Array of T` with no help from anything the resolver knows. What
-            // is left to do is resolve the elements, which is done here for
-            // its diagnostics — a misspelling inside `[a, b]` is the
-            // resolver's to report, and reporting it is worth more than the
-            // node.
+            // **The seam, now crossed.** This phase still has nothing to
+            // decide about a literal: it binds no name, opens no scope, and
+            // §3.1 fixes its type as `Array of T` with no help from anything
+            // the resolver knows. What it does is resolve the elements — a
+            // misspelling inside `[a, b]` is the resolver's to report — and
+            // **keep them**, which is what this arm used to throw away.
             //
-            // **The cost, stated plainly, because it is the one compromise in
-            // this change.** The HIR has no array literal, so the resolved
-            // elements are dropped and the expression lowers to `Error`, which
-            // is the same standing `Index` has today: `science-types` gives
-            // `hir::ExprKind::Index` `Ty::ERROR` and no diagnostic, so `xs[0]`
-            // on an `I64` checks clean. A literal therefore checks clean too,
-            // and neither `SC0281` nor `SC0282` can fire until the node exists
-            // to carry the elements.
+            // **What the throwing away cost, for the record.** The elements
+            // were resolved and dropped and the expression lowered to `Error`,
+            // so `let counts: Array of String be [1, 2, 3]` checked clean and
+            // `let counts be [1, 2, 3]` bound `counts` at the error type,
+            // which then agreed with every slot downstream of it. Neither
+            // `SC0281` nor `SC0282` could fire, because the node that carries
+            // the elements did not exist. The edit that closes it is this line,
+            // [`hir::ExprKind::ArrayLit`], the two arms in `science-types`'
+            // `check::synth` and `narrow::walk_expr` that stop building
+            // without one, and the two codes in that crate's `codes` module.
             //
-            // **Why it was not carried further.** Adding `hir::ExprKind::
-            // ArrayLit` is two lines here and a compile error in
-            // `science-types`, whose exhaustive matches in `check::synth` and
-            // `narrow::walk_expr` would both stop building — and that crate is
-            // being changed concurrently by someone else. The node, the two
-            // arms and `SC0280`—`SC0282` belong in one commit, made by
-            // whoever owns the checker; splitting it across two crates buys a
-            // broken workspace and nothing else.
-            ast::ExprKind::ArrayLit(elements) => {
-                for element in elements {
-                    self.resolve_expr(element);
-                }
-                hir::ExprKind::Error
-            }
+            // **What is still not crossed, and is not this phase's.** THIR has
+            // no array-literal node either, so `science-types` types the
+            // literal and lowers it to `thir::ExprKind::Error` at the type it
+            // computed; MIR turns that into `Rvalue::Error` and
+            // `science-codegen-llvm` refuses it **by name**. So `[1, 2, 3]`
+            // now type-checks and still does not build, and the refusal is a
+            // diagnostic rather than a wrong answer. Closing that is three arms
+            // in `science-mir`, whose exhaustive matches over `thir::ExprKind`
+            // are what a new THIR variant would break.
+            ast::ExprKind::ArrayLit(elements) => hir::ExprKind::ArrayLit(
+                elements.iter().map(|element| self.resolve_expr(element)).collect(),
+            ),
             ast::ExprKind::StructLit { path, fields } => self.resolve_struct_lit(path, fields),
             ast::ExprKind::Tuple(elems) => {
                 hir::ExprKind::Tuple(elems.iter().map(|e| self.resolve_expr(e)).collect())

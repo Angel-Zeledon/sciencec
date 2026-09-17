@@ -395,7 +395,10 @@ fn walk_expr(expr: &hir::Expr, out: &mut Vec<DefId>) {
                 walk_expr(&field.value, out);
             }
         }
-        hir::ExprKind::Tuple(elements) => {
+        // A tuple and an array literal are the same walk: a sequence of
+        // ordinary operand positions, none of which invalidates anything by
+        // being one. What is being looked for is inside the elements.
+        hir::ExprKind::Tuple(elements) | hir::ExprKind::ArrayLit(elements) => {
             for element in elements {
                 walk_expr(element, out);
             }

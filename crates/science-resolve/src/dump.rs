@@ -638,6 +638,11 @@ impl DumpIn for Expr {
                 w.child("base", &Node(defs, base.as_ref()));
                 w.child("index", &Node(defs, index.as_ref()));
             }),
+            // Named for the AST node it came from, so that `sciencec ast` and
+            // `sciencec resolve` print the same word for the same literal.
+            ExprKind::ArrayLit(elements) => w.node("ArrayLit", self.span, |w| {
+                w.items(&nodes(defs, elements));
+            }),
             ExprKind::StructLit { res, fields } => {
                 let header = format!("StructLit {}", arrow(defs, *res));
                 w.node(&header, self.span, |w| {

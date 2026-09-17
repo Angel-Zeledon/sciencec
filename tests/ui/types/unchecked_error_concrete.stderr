@@ -1,0 +1,7 @@
+error[SC0140]: `err` is never checked for an error
+  --> tests/ui/types/unchecked_error_concrete.science:24:16
+   |
+24 |     let value, err be parse("x")
+   |                ^^^ bound here and never tested
+   |
+   = note: test it with `if err?:`, pass it on, or return it — or rename it to `_err` to say the failure is deliberately ignored

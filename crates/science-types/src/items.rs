@@ -224,6 +224,18 @@ const WANTED: &[&str] = &[
     // rather than about the value, and it is the half of that decision the
     // phases below this one do not have to move for.
     "print", "write",
+    // `Array`, which `check`'s `array_lit` builds. It is the first *type
+    // constructor* on this list and the first entry here for a reason that is
+    // not "tell it from a user's declaration of the same name": Decision 10 of
+    // `indexing-and-array-literals.md` says `[e, e]` is an `Array of T`
+    // **always**, so the checker has to be able to *name* `Array`, not merely
+    // recognise it. Without this line the literal has no head to hang its
+    // element type on and §3.1's "always" has nothing to be about.
+    //
+    // A compilation with no prelude answers `None` and `array_lit` then types
+    // the literal at `Ty::ERROR` — the same admission every other judgement in
+    // `check` makes through `Prelude::is_available`, for the same reason.
+    "Array",
 ];
 
 impl Prelude {

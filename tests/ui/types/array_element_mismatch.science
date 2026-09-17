@@ -1,0 +1,15 @@
+# UI test: elements of an array literal that do not unify (SC0281).
+#
+# `indexing-and-array-literals.md` §3.2's own example. Decision 10 makes the
+# literal an `Array of T` where `T` is the *unification* of the element types,
+# and §5.1 admits no implicit numeric conversion — so this is an error for the
+# same reason `1 + 2.0` is, and the note says so rather than making literals
+# the one place widening happens.
+#
+# Both spans, because with no annotation in sight neither element is more
+# right than the other: §7.2 asks for the primary on the element that differs
+# and the secondary on the element that fixed the type.
+
+def bad() -> Bool:
+    let bad be [1, 2.0]
+    true
