@@ -1834,9 +1834,25 @@ implements — and
 `std::process::abort()` — the platform's abort status, which is `SIGABRT` on
 POSIX and `3` on Windows, and is not 1.
 
-> **A hello world can be emitted from this page. A `main` that returns an error
-> cannot.** There is no symbol that writes to stderr without aborting, and no
-> symbol that exits with a chosen code.
+> ~~**A hello world can be emitted from this page. A `main` that returns an
+> error cannot.** There is no symbol that writes to stderr without aborting, and
+> no symbol that exits with a chosen code.~~
+>
+> **Both halves are now false.** `science_write_error_bytes` writes and returns;
+> `science_exit` flushes and exits with a chosen code. The emitted `main` reports
+> and exits 1, verified as a compiled program with both its stderr and its status
+> asserted. The runtime's entry-point count went 45 to 47 and the `sret` set
+> stayed at nine — derived, not decided, which is the check that list has failed
+> twice.
+>
+> **What remains is the rendering, and it is not this page's.** §2.3 of
+> `script-mode.md` asks for the error's `Display`, and `Display` is declared in
+> the prelude with **no methods** — naming `display(Formatter)` would invent a
+> Level 1 type no note specifies. So the message says a script failed and cannot
+> say which error, and says so in the message itself rather than pretending. The
+> alternative was for the *backend* to invent `Formatter`, which is a design
+> decision arriving sideways from the component with the least standing to make
+> it.
 
 **Finding 6 — a representation the page permits and the crate does not
 survive.** This is §2.6's static-string-literal case. The page's §7 establishes

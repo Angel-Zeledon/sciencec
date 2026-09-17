@@ -336,6 +336,22 @@ signatures `main` may have.
 **Decision.** `return` at the top level is legal, means "stop the script", and
 carries an optional `Error?`. Bare `return` is sugar for `return null`.
 
+> **AMENDMENT: it is not.** `sciencec check` on a file containing only `return`
+> reports `SC0525`, *expected `any Error?`, found `()`* — a bare `return` yields
+> unit, and nothing turns unit into `null`. This is the front end's, not the
+> backend's, and it was found by the backend trying to build each of §2.3's exit
+> rows as a real program.
+>
+> Of the three spellings §2.3 gives an exit code of 0, **`return null` is the
+> only one that compiles**. Falling off the end is not testable from a backend
+> either: an empty script body produces no MIR body at all, so there is nothing
+> to emit.
+>
+> The decision is right and the sugar is unimplemented. Implementing it is a
+> coercion from `()` to `Error?` at a `return`, in the position §5's list of
+> refusals would have to gain a line for — which is why it is recorded here
+> rather than fixed in passing.
+
 ```science
 let files, err be glob("data/*.csv")
 if err?:
