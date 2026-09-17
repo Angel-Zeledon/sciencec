@@ -1,0 +1,14 @@
+[package]
+name = "science-mir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+science-diagnostics.workspace = true
+science-resolve.workspace = true
+science-types.workspace = true
+
+[dev-dependencies]
+science-lexer.workspace = true
+science-parser.workspace = true

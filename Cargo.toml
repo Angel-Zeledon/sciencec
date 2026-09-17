@@ -8,6 +8,7 @@ members = [
     "crates/science-testkit",
     "crates/science-resolve",
     "crates/science-types",
+    "crates/science-mir",
     "crates/science-db",
     "crates/science-rt",
     "crates/science-codegen",
@@ -27,6 +28,7 @@ science-fmt = { path = "crates/science-fmt" }
 science-testkit = { path = "crates/science-testkit" }
 science-resolve = { path = "crates/science-resolve" }
 science-types = { path = "crates/science-types" }
+science-mir = { path = "crates/science-mir" }
 science-db = { path = "crates/science-db" }
 science-rt = { path = "crates/science-rt" }
 science-codegen = { path = "crates/science-codegen" }

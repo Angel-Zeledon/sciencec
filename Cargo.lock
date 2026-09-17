@@ -406,6 +406,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "science-mir"
+version = "0.0.1"
+dependencies = [
+ "science-diagnostics",
+ "science-lexer",
+ "science-parser",
+ "science-resolve",
+ "science-types",
+]
+
+[[package]]
 name = "science-parser"
 version = "0.0.1"
 dependencies = [
