@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Science Programming Language</title>
-<meta name="description" content="A compiled language for scientific computing and machine learning. Units, shapes and random keys checked before the run starts.">
+<meta name="description" content="A compiled language for scientific computing and machine learning. Ownership with full region inference, and no lifetime syntax to write.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,386 +21,485 @@
     <span class="name">Science</span>
   </div>
   <nav>
-    <a href="#tour">Tour</a>
-    <a href="#interop">Interop</a>
-    <a href="#tools">Tools</a>
-    <a href="#install">Install</a>
-    <a href="#docs">Docs</a>
-    <a href="#source">Source</a>
+    <a href="#why">Why</a>
+    <a href="#ownership">Ownership</a>
+    <a href="#against">Comparisons</a>
+    <a href="#status">Status</a>
+    <a href="reference.html">Reference</a>
+    <a href="rationale.html">Rationale</a>
   </nav>
 </div>
 
 <header class="hero">
-  <h1>The compiler checks your <em>units</em>, your <em>shapes</em> and your <em>random keys</em>.</h1>
+  <h1>Ownership you never have to <em>annotate</em>.</h1>
 
   <p class="deck">
-    Science is a compiled language for scientific computing and machine learning.
-    Native binaries through LLVM, ownership and borrows verified at compile time,
-    no garbage collector and <strong>no lifetime annotations to write</strong>.
-    Built for people who arrive from NumPy and PyTorch, not from systems
-    programming.
+    Science is a compiled language for scientific computing and machine
+    learning, written for people who arrive from NumPy and PyTorch and have
+    never written a lifetime annotation. It keeps what ownership buys &mdash;
+    no garbage collector, and memory released at a program point the compiler
+    can name &mdash; and refuses the notation that normally pays for it:
+    <strong>the programmer never writes a region, and the compiler infers them
+    across function boundaries</strong>. Blocks are indentation, keywords are
+    English words, and C libraries are called directly, because every
+    floating-point routine worth using is already written in C.
   </p>
 
   <div class="install">
-<pre class="shell"><code><span class="p">$</span> git clone https://github.com/sci-lang/science &amp;&amp; cd science
-<span class="p">$</span> cargo run -p sciencec -- check examples/01_functions.science</code></pre>
-    <a class="btn" href="#install">Build it</a>
-    <a class="btn ghost" href="#tour">Take the tour</a>
+<pre class="shell"><code><span class="p">$</span> <span class="c">sciencec build hello.science</span>
+<span class="p">$</span> <span class="c">./hello</span>
+hello, world
+<span class="p">$</span> <span class="c">echo $?</span>
+0</code></pre>
+    <a class="btn" href="#status">What actually works</a>
+    <a class="btn ghost" href="#ownership">Read the program</a>
   </div>
+
+  <p class="note">
+    <code>hello.science</code> is one line, <code>print("hello, world")</code>,
+    and that transcript is the compiler's own gate test rather than a mock-up:
+    it is <code>hello_world_runs_and_exits_zero</code> in
+    <code>crates/science-codegen-llvm/tests/hello.rs</code>, which builds the
+    program, links it, runs it, and asserts both the bytes and the exit status.
+    Building <code>sciencec</code> with its backend needs a Rust toolchain and
+    an LLVM 18.1 installation; without one, <code>build</code> stops at
+    <code>SC0400</code> and says exactly why.
+  </p>
 </header>
 
 <!-- ==================================================================== -->
 <section id="why">
-  <h2>Three things nobody checks, checked</h2>
+  <h2>Why it exists</h2>
   <p class="lede">
-    Julia has the REPL and the ecosystem and cannot check a shape, a unit or a
-    reused random key before running. Mojo has ownership and GPUs and no shapes
-    in its types. JAX has the right transformation model and no static types.
-    Science aims at the combination.
+    Three refusals, each with the thing it is refusing for. None of them is
+    free, and the prices are in <a href="rationale.html">the rationale</a>
+    rather than hidden.
   </p>
 
   <div class="bets">
     <div class="bet">
-      <h3>Units</h3>
+      <h3>Catch it before the run</h3>
       <p>
-        A dimension lives in the type. Adding a mass to a length does not
-        compile, and neither does a conversion applied twice. The Mars Climate
-        Orbiter failure, moved from the run to the build.
+        Julia has the REPL and the ecosystem and cannot check a shape, a unit
+        or a reused random key before running. Mojo has ownership and GPUs and
+        no shapes in its types. JAX has the right transformation model and no
+        static types. Science aims at the combination; the phase that exists
+        today is the ownership half of it, and the typed-shape half is
+        specified and not built.
       </p>
     </div>
     <div class="bet">
-      <h3>Shapes</h3>
+      <h3>Without asking for annotations</h3>
       <p>
-        A tensor carries its shape as type arguments, so a matrix multiply whose
-        inner dimensions disagree is a compile error. Broadcasting is explicit:
-        <code>a .+ b</code> says you meant it; <code>a + b</code> requires the
-        shapes to match.
+        A scientist who has to learn <code>'a</code> before writing a
+        derivative will write the derivative in Python instead. So regions are
+        an analysis result rather than a declaration: there are no elision
+        rules, because elision is a syntactic guess made before the body is
+        read, and the compiler reads the body anyway.
       </p>
     </div>
     <div class="bet">
-      <h3>Random keys</h3>
+      <h3>Without leaving the C ecosystem</h3>
       <p>
-        A key is consumed when it is used, so reusing one is a compile error
-        rather than a silently correlated result. JAX has the design. A language
-        can enforce it.
+        <code>dgemm</code> is thirty years of hand-written assembly per
+        microarchitecture. A language that cannot call it is not a scientific
+        language, whatever its type system can prove, so the C boundary is a
+        declaration in the language rather than a generated wrapper layer.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== -->
+<section id="ownership">
+  <h2>The claim, and the program that carries it</h2>
+  <p class="lede">
+    Two borrows go into <code>denser</code> and one comes back out. Which one
+    it is depends on the values, so the compiler has to prove the returned
+    borrow outlives the call. In Rust that proof is spelled
+    <code>&lt;'a&gt;</code> three times in the signature. Here it is nowhere,
+    and the guarantee is the same.
+  </p>
+
+<pre data-science>type Sample:
+    kelvin: F64
+    grams: F64
+
+# Two borrows go in and one comes back. Which one depends on the values, so
+# the compiler has to prove the answer outlives the call. That proof is the
+# whole of what a lifetime annotation would have told it.
+def denser(a: borrowed Sample, b: borrowed Sample) -> borrowed Sample:
+    if a.grams >= b.grams:
+        a
+    else:
+        b
+
+let core be Sample(kelvin: 5778.0, grams: 12.5)
+let shell be Sample(kelvin: 4100.0, grams: 3.25)
+
+# `denser` declares its parameters `borrowed`, so the call site is bare.
+let winner be denser(core, shell)
+print(f"{winner.kelvin} K at {winner.grams} g")   # => 5778.0 K at 12.5 g</pre>
+
+  <p class="note">
+    Checked and built with <code>sciencec check density.science</code> and
+    <code>sciencec build density.science</code>; the trailing comment is what
+    the linked binary printed. The call site is <code>denser(core, shell)</code>
+    and not <code>denser(&amp;core, &amp;shell)</code> because a parameter
+    declared <code>borrowed</code> is borrowed automatically &mdash; Rust
+    rejected that, Mojo adopted it, and for this audience Mojo is right.
+  </p>
+
+  <h3>The checking is real, which is the only way the claim means anything</h3>
+
+  <p>
+    Inference without enforcement is a language that compiles everything.
+    Overlap a shared borrow with an exclusive one and the same compiler that
+    asked for no annotations refuses the program, points at all three lines
+    that make the conflict, and names the two fixes.
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0330]</span>: `core` is borrowed here and borrowed exclusively before the borrow ends
+  <span class="e-hi">--&gt;</span> overlap.science:10:1
+   |
+ 9 | let view be borrowed core
+   |             <span class="e-hi">-------------</span> `core` is borrowed here, shared
+10 | warm(core)
+   | <span class="e-hi">^^^^^^^^^^</span> ...and borrowed here, exclusively
+11 | print(f"{view.kelvin}")
+   |       <span class="e-hi">----------------</span> the first borrow is still needed here
+   |
+   = note: a shared borrow and an exclusive one cannot overlap (&#167;6.1 rule 4)
+   = note: the borrow ends at its last use, so moving the last use above the conflicting line is enough; binding what is needed before it is the other fix</code></pre>
+
+  <p class="note">
+    Verbatim from <code>sciencec check overlap.science</code>, which exits 1.
+    <code>examples/21_compiler_shapes.science</code> is the harder version of
+    this test: a flat index-keyed table with parent links, a type holding a
+    borrowed array in a field, a boxed recursive tree and a work-queue
+    traversal, all taken from the Rust compiler in <code>crates/</code> rather
+    than invented, and it passes the borrow checker with no region written
+    anywhere.
+  </p>
+
+  <div class="callout">
+    <h3>What the refusal costs</h3>
+    <p>
+      Removing the syntax removes options with it, and they are named rather
+      than discovered later. There is no <code>RefCell</code>, so no shared
+      mutable state; no <code>Rc</code>, so no cyclic ownership and no
+      child-to-parent back pointer; and an arena that hands out borrows needs
+      <code>unsafe</code> and a hand-written invariant, exactly as Rust's own
+      arenas do. Across a crate boundary the inferred relation has to be
+      serialised into metadata, because a signature that no longer carries its
+      regions cannot be compiled against on its own. A language that says
+      &ldquo;no annotations&rdquo; and then needs <code>unsafe</code> for an
+      interner has an asterisk on its headline; this is where the asterisk is.
+    </p>
+  </div>
+
+  <h3>The rest of it reads the way the audience already writes</h3>
+
+<pre data-science>choice Phase:
+    Solid
+    Liquid
+    Gas
+
+type Reading:
+    kelvin: F64
+    pascals: F64
+
+def phase_of(r: borrowed Reading) -> Phase:
+    if r.kelvin &lt; 273.15:
+        Solid
+    else:
+        if r.kelvin &lt; 373.15:
+            Liquid
+        else:
+            Gas
+
+def report(r: borrowed Reading):
+    match phase_of(r):
+        Solid: print(f"{r.kelvin} K: solid")
+        Liquid: print(f"{r.kelvin} K: liquid")
+        Gas: print(f"{r.kelvin} K: gas")
+
+report(Reading(kelvin: 260.0, pascals: 101325.0))    # => 260.0 K: solid
+report(Reading(kelvin: 400.0, pascals: 101325.0))    # => 400.0 K: gas</pre>
+
+  <p class="note">
+    Built and run the same way. Equality is <code>is</code> and ordering is
+    <code>&gt;=</code>, with no second spelling of either, so a formatter has
+    nothing to normalise and generated code cannot drift. The full surface is
+    in the <a href="reference.html">reference</a>.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="against">
+  <h2>Measured against what you already use</h2>
+  <p class="lede">
+    Four comparisons, each making one point. The long form &mdash; including
+    the ones where Science comes off worse &mdash; is in
+    <a href="rationale.html">the rationale</a>.
+  </p>
+
+  <h3>Rust &mdash; the same guarantee, none of the notation</h3>
+  <p>
+    <code>denser</code> above is
+    <code>fn denser&lt;'a&gt;(a: &amp;'a Sample, b: &amp;'a Sample) -&gt; &amp;'a Sample</code>
+    in Rust, and the call site is <code>denser(&amp;core, &amp;shell)</code>.
+    Science writes neither the parameter nor the ampersands, and still rejects
+    the overlapping-borrow program above with a span on every line involved.
+    The difference is not politeness: Rust's elision rules are a convenience
+    over a syntax that stays available when the guess is wrong, and Science has
+    no syntax to fall back on, so inference has to be total. That is the
+    expensive half of the design, and it is why interprocedural analysis is
+    mandatory here and optional there.
+  </p>
+
+  <h3>Python &mdash; the same mistake, one run earlier</h3>
+  <p>
+    Passing a string where a float belongs is a <code>TypeError</code> in
+    Python at the moment the line executes, which on a training job is after
+    the data has loaded. Here it is a compile error with a span, and the
+    program never starts:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0525]</span>: expected `F64`, found `String`
+ <span class="e-hi">--&gt;</span> ratio.science:5:15
+  |
+5 | print(f"{half(reading)}")
+  |               <span class="e-hi">^^^^^^^</span> this is `String`</code></pre>
+
+  <p class="note">
+    <code>sciencec check ratio.science</code>, exit 1. Python's own type hints
+    would have described the same mistake and not stopped it, because nothing
+    in CPython checks them.
+  </p>
+
+  <h3>Go &mdash; the error model, and not the memory model</h3>
+  <p>
+    Science took Go's answer to failure over the alternatives: a function that
+    can fail returns its value beside an error, <code>-&gt; (T, Error?)</code>,
+    and <code>?</code> is a <em>total</em> presence test that produces a
+    <code>Bool</code> and cannot return from the function around it. It did not
+    take Go's answer to memory. The written-down run-time target is scalar code
+    within roughly 20% of an equivalent Rust program, with Go expected behind
+    both, and the reason given is structural rather than effort: no write
+    barrier on pointer writes, monomorphisation instead of one copy per GC
+    shape, and an optimiser that can vectorise. The same note prices the other
+    side honestly &mdash; Go is the right target for <em>compile</em> time and
+    the project expects to miss it badly, for the three reasons it lists.
+    <strong>Both of those are targets. Nothing has been benchmarked, and no
+    number on this page is a measurement of speed.</strong>
+  </p>
+
+  <h3>C &mdash; declared, linked, and nothing in between</h3>
+  <p>
+    There is no header parser, no generated shim crate and no wrapper layer.
+    An <code>extern</code> block is a declaration in the language, and the
+    program below links against libm and runs.
+  </p>
+
+<pre data-science># libm is a C library nobody is going to rewrite. Declaring it is the whole
+# of the binding: no header parse, no generated shim, no wrapper crate.
+unsafe extern "C" library "m":
+    def cos(x: F64) -> F64
+    def sqrt(x: F64) -> F64
+
+let c be unsafe: cos(0.0)
+let r be unsafe: sqrt(2.0)
+print(f"cos(0) = {c}, sqrt(2) = {r}")
+# => cos(0) = 1.0, sqrt(2) = 1.4142135623730951</pre>
+
+  <p class="note">
+    Built with <code>sciencec build libm.science</code> and run; the trailing
+    comment is the binary's output. The backend itself is held to the same
+    rule: it talks to LLVM through <code>extern "C"</code> against LLVM-C, and
+    no crate in the workspace depends on <code>inkwell</code>,
+    <code>llvm-sys</code> or <code>cranelift</code> &mdash; which is a
+    commitment, not an accident, because a Science-hosted backend could not
+    call a Rust wrapper.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="status">
+  <h2>Where the compiler actually is</h2>
+  <p class="lede">
+    <code>sciencec</code> is version <code>0.0.1</code> and there is no
+    installer, no package and no released binary. What follows is split into
+    what has been run and what has not, because a page that overstates is one a
+    single question destroys.
+  </p>
+
+  <h3>Claims, and the command that settles each one</h3>
+
+  <div class="scroller">
+  <table>
+    <thead>
+      <tr><th>Claim</th><th>How it was checked</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="what"><code>build</code> produces a native executable that prints and exits 0</td>
+        <td class="mono">sciencec build hello.science &amp;&amp; ./hello</td>
+      </tr>
+      <tr>
+        <td class="what">A program calling <code>cos</code> through <code>extern "C"</code> links against libm and runs</td>
+        <td class="mono">sciencec build libm.science &amp;&amp; ./libm</td>
+      </tr>
+      <tr>
+        <td class="what">The type checker runs from the command line</td>
+        <td class="mono">sciencec check ratio.science &#8594; SC0525</td>
+      </tr>
+      <tr>
+        <td class="what">MIR and region inference run from the command line</td>
+        <td class="mono">sciencec check overlap.science &#8594; SC0330</td>
+      </tr>
+      <tr>
+        <td class="what">1,913 tests pass, none fail, none are ignored</td>
+        <td class="mono">cargo test --workspace --features llvm</td>
+      </tr>
+      <tr>
+        <td class="what">21 of the 22 example programs pass <code>check</code></td>
+        <td class="mono">sciencec check examples/*.science</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p class="note">
+    The test count is a snapshot and the command beside it is the point: it
+    went from 1,884 to 1,913 during the afternoon this page was written, so
+    take the number as evidence that the suite is run rather than as a
+    constant.
+  </p>
+
+  <p class="note">
+    The twenty-second is <code>17_modules.science</code>, and it fails for a
+    reason worth stating rather than hiding: it opens with
+    <code>use text.parser</code>, and this repository contains no
+    <code>text</code> module, so <code>SC0202</code> is correct and the file is
+    a fixture ahead of its fixtures. The corpus is input data for the test
+    suites, so anything else there that failed would be a bug in the compiler
+    rather than a typo to patch.
+  </p>
+
+  <h3>What is not built, in the compiler's own words</h3>
+
+  <p>
+    <code>check</code> is much further along than <code>build</code>. The
+    program below passes the whole front half &mdash; it lexes, parses,
+    resolves, type-checks and clears the borrow checker &mdash; and then the
+    backend refuses it, because <code>String.length</code> has no MIR body to
+    emit:
+  </p>
+
+<pre data-science>let name be "Ada"
+print(f"{name.length()}")   # `check` exits 0; `build` refuses, below</pre>
+
+<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build a call to `length`, which this crate was given no MIR body for
+  = note: this `sciencec` implements &#167;10's stages 0 to 3 of `codegen-and-linking.md` and some of what comes after &mdash; a script body, string literals and `print`, `extern "C"` declarations and the calls to them, the CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, `T?`, and drops of values that own nothing &mdash; and refuses everything else rather than lowering a construct no execution test has ever run</code></pre>
+
+  <div class="two">
+    <div>
+      <h3>Reaches a binary today</h3>
+      <p class="note">
+        A script body. String literals, <code>print</code> and
+        <code>f"&hellip;"</code> interpolation. <code>extern "C"</code>
+        declarations and the calls to them. The control-flow graph, including
+        <code>if</code>/<code>else</code> and <code>loop</code> with
+        <code>break</code>. Scalar arithmetic and <code>as</code> casts.
+        Functions with parameters, including borrowed ones. Records,
+        <code>choice</code>s, <code>match</code> and tuples. <code>T?</code>.
+        Drops of values that own nothing.
+      </p>
+    </div>
+    <div>
+      <h3>Does not, yet</h3>
+      <p class="note">
+        Method calls. Generics. Arrays and indexing. Drop glue for a value that
+        owns anything &mdash; a record with a <code>String</code> field is
+        refused. <code>for &hellip; in</code> over a range, whose iterator
+        temporaries the front end still leaves untyped. Every one of these
+        <em>checks</em> and exits 0; none of them lowers, and the compiler says
+        so at the point it gives up rather than emitting something it has never
+        run.
       </p>
     </div>
   </div>
 
-  <h3>What that looks like when you get it wrong</h3>
+  <p class="note">
+    Both lists were probed one program at a time against the tree on the day
+    this page was written, not copied from a roadmap, and the boundary between
+    them moves &mdash; tuples and casts crossed it while the page was being
+    checked. The quoted note above is the compiler's own and is the version
+    that ships with it; <code>build</code> on anything in the right-hand column
+    prints its own reason, which is always more current than this paragraph.
+  </p>
 
-<pre class="err"><code><span class="e-code">error[SC0256]</span>: this equation does not balance
-  <span class="e-hi">--&gt;</span> orbit.science:14:12
-   |
-14 |     let energy: Energy of F64 be mass * speed
-   |                                  <span class="e-hi">^^^^^^^^^^^^</span> this is `kg&#183;m/s`, and `Energy` is `kg&#183;m&#178;/s&#178;`
-   |
-   = difference: <span class="e-hi">m/s</span>
-<span class="e-help">help</span>: `speed` appears once; squaring it balances both sides
-   |
-14 |     let energy: Energy of F64 be mass * speed ** 2
-   |                                               <span class="e-help">++++</span></code></pre>
+  <p>
+    The reason the refusals are this specific is a rule the backend is held to:
+    every construct it admits is gated by a program that is built, linked, run
+    and checked for its output. That rule was not free advice. Five silent
+    miscompiles have been found by running the output rather than reading it
+    &mdash; a <code>main</code> that never wrote its return value, an
+    eight-byte store into a one-byte slot that passes
+    <code>LLVMVerifyModule</code>, a <code>needs_drop</code> blind to every
+    runtime aggregate, a lowering hole that suppressed the borrow checker over
+    whole bodies, and a pointer-to-pointer the verifier structurally cannot
+    catch. In this half of a compiler, silence does not mean it works.
+  </p>
+
+  <h3>The toolchain, as it exists</h3>
+
+<pre class="shell"><code><span class="p">$</span> <span class="c">sciencec --version</span>
+sciencec 0.0.1
+<span class="p">$</span> <span class="c">sciencec check density.science</span>
+<span class="p">$</span> <span class="c">echo $?</span>
+0
+<span class="p">$</span> <span class="c">sciencec build density.science &amp;&amp; ./density</span>
+5778.0 K at 12.5 g</code></pre>
 
   <p class="note">
-    Every diagnostic carries a code, a span and &mdash; where a mechanical fix
-    exists &mdash; the replacement text, so an editor or an agent can apply it
+    <code>check</code> is silent on a clean file and exits 0, so it drops into
+    a shell script or a CI job without ceremony. Diagnostics go to stderr and
+    dumps go to stdout, which is what makes the dumps pipeable. Every
+    diagnostic carries a code and a span, and where a mechanical fix exists it
+    carries the replacement text too, so an editor or an agent can apply it
     without reading the prose.
   </p>
-</section>
-
-<!-- ==================================================================== -->
-<section id="tour">
-  <h2>The language</h2>
-  <p class="lede">
-    Keywords are English words where no symbol is universal, and symbols where
-    one is. Blocks are indentation. There is exactly one way to write each
-    operation.
-  </p>
-
-  <div class="two">
-    <div>
-      <h3>Types and interfaces</h3>
-<pre data-science>type Doc:
-    title: String
-    body: String
-
-interface Summarize:
-    def summarize(self) -> String
-
-    # A default body may call any
-    # other method of the interface.
-    def preview(self) -> String:
-        self.summarize().truncate(80)
-
-Doc implements Summarize:
-    def summarize(self) -> String:
-        self.body.truncate(200)</pre>
-    </div>
-    <div>
-      <h3>Generics and bounds</h3>
-<pre data-science>def best_of of T(
-    left: borrowed T,
-    right: borrowed T,
-) -> String where T: Summarize:
-    if (left.summarize().length()
-            >= right.summarize().length()):
-        left.preview()
-    else:
-        right.preview()
-
-# Const generics carry shapes.
-type Grid of (T, const ROWS: Int):
-    cells: Array of T</pre>
-    </div>
-  </div>
-
-  <div class="two">
-    <div>
-      <h3>Closures have a type, with no keyword</h3>
-<pre data-science>def apply(f: (Int) -> Bool, x: Int) -> Bool:
-    f(x)
-
-# Right-associative, and `?` binds tighter than `->`,
-# so a nullable closure needs its own parens.
-type Pipeline:
-    step: ((Int) -> Bool)?
-    stages: Array of ((Int) -> Bool)</pre>
-    </div>
-    <div>
-      <h3>Const generics do arithmetic</h3>
-<pre data-science>type Grid of (T, const N: Int):
-    cells: Array of T
-    padded: Grid of (T, N + 1)
-    tripled: Grid of (T, N * 3)
-    doubled: Grid of (T, 2 * N)</pre>
-    </div>
-  </div>
-
-  <h3>Borrows, with nothing to annotate</h3>
-
-<pre data-science>def retitle(doc: mutable borrowed Doc, title: String):
-    doc.title be title
-
-def main():
-    let mutable doc be Doc(title: "a", body: "")
-
-    # A parameter declared `borrowed` is borrowed automatically, so the call
-    # site is bare. The signature still carries the information.
-    retitle(doc, "renamed")</pre>
-
-  <p class="note">
-    Regions are inferred, including across function boundaries. There is no
-    <code>'a</code> to write and no garbage collector underneath &mdash; the
-    guarantee without the notation.
-  </p>
-
-  <h3>Chains, which is the shape most code takes</h3>
-
-<pre data-science>def headlines(docs: borrowed Array of Doc) -> Array of String:
-    docs
-        .iterate()
-        .discard(each.is_empty())
-        .map(each.title)
-        .take(5)
-        .collect()</pre>
-</section>
-
-<!-- ==================================================================== -->
-<section id="interop">
-  <h2>Your existing code still works</h2>
-  <p class="lede">
-    Essentially every floating-point operation that matters already lives in a C
-    or Fortran library somebody else tuned. <code>dgemm</code> is thirty years of
-    hand-written assembly per microarchitecture. A language that cannot call
-    these is not a scientific language, whatever its type system can prove.
-  </p>
-
-  <h3>C and Fortran, declared and linked</h3>
-
-<pre data-science>unsafe extern "C" library "openblas" via pkg-config "openblas":
-    type CblasLayout is CInt
-    const CBLAS_COL_MAJOR be 102 as CblasLayout
-
-    def cblas_dgemm(
-        layout: CblasLayout,
-        m: BlasInt,
-        a: ffi.Span of F64,
-    ) symbol "cblas_dgemm"</pre>
-
-  <p class="note">
-    <code>via pkg-config</code> takes the flags from the system, which is the
-    only thing that gets BLAS right across machines. <code>when available</code>
-    makes a library optional and loaded on first use, so a program that can use a
-    GPU still starts on a node without one.
-  </p>
-
-  <div class="strip">
-    <div>
-      <dt>Python, zero-copy</dt>
-      <dd>A tensor's header is a DLPack <code>DLTensor</code> field for field, so handing an array to NumPy, PyTorch or JAX is a cast rather than a copy.</dd>
-    </div>
-    <div>
-      <dt>Called from Python</dt>
-      <dd>Compile a file into a CPython extension module and replace one hot function inside the program you already have.</dd>
-    </div>
-    <div>
-      <dt>Rust crates</dt>
-      <dd>Bindings generated from a crate's own public interface, with layout and signature assertions discharged by rustc itself.</dd>
-    </div>
-    <div>
-      <dt>Arrow and Parquet</dt>
-      <dd>A dataframe column <em>is</em> an Arrow buffer, so the handoff to polars or DuckDB costs nothing.</dd>
-    </div>
-  </div>
-</section>
-
-<!-- ==================================================================== -->
-<section id="tools">
-  <h2>A tool a model can call, with no schema to write</h2>
-  <p class="lede">
-    An MCP server makes its tools discoverable by publishing a JSON Schema for
-    each one. Every SDK for it asks you to write that schema beside the handler
-    and keep the two in step by hand; Python&rsquo;s reads the signature back at
-    run time, TypeScript&rsquo;s takes a schema you hand it. Science has neither
-    reflection nor a way to check that two artefacts agree, so the schema is
-    <em>derived</em> from the signature or the claim is empty.
-  </p>
-
-<pre data-science>choice Lineshape:
-    Gaussian
-    Lorentzian
-    PseudoVoigt
-
-## Integrates a spectral peak under a chosen line shape.
-tool integrate_peak(counts: Array of F64, window: U16,
-        profile: Lineshape) -&gt; F64:
-    0.0</pre>
-
-<pre class="shell"><code><span class="p">$</span> <span class="c">sciencec tools --json peaks.science</span>
-[{"name":"integrate_peak",
-  "inputSchema":{"type":"object","properties":{
-    "counts":{"type":"array","items":{"type":"number"}},
-    "window":{"type":"integer","minimum":0,"maximum":65535},
-    "profile":{"type":"string",
-               "enum":["Gaussian","Lorentzian","PseudoVoigt"]}},
-    "required":["counts","window","profile"]},
-  "description":"Integrates a spectral peak under a chosen line shape."}]</code></pre>
-
-  <p>
-    Nothing in that output was written twice. <code>window</code> is a
-    <code>U16</code>, so the model is told the value is between 0 and 65535 &mdash;
-    a bound no other SDK&rsquo;s <code>int</code> carries. <code>Lineshape</code> is
-    an ordinary <code>choice</code>, which is how Science already spells
-    alternatives, and it arrives as the exact set of strings the tool accepts.
-    The description is the <code>##</code> comment, because the description is
-    what a model reads to decide whether to call the tool: it is program data,
-    not documentation, and a tool without one does not fail &mdash; it is simply
-    never chosen.
-  </p>
-  <p>
-    One thing is deliberately missing. A <code>U64</code> gets
-    <code>minimum: 0</code> and <strong>no maximum</strong>, because
-    2<sup>64</sup>&minus;1 cannot be written exactly as a JSON number and
-    emitting it would be a lie about what the caller can send.
-  </p>
-</section>
-
-<!-- ==================================================================== -->
-<section id="different">
-  <h2>Decisions you will notice</h2>
 
   <dl class="strip">
     <div>
-      <dt>One spelling per operation</dt>
-      <dd>Equality is <code>is</code>, ordering is <code>&gt;=</code>. No second way to write either, so a formatter has nothing to normalise and generated code cannot drift.</dd>
+      <dt>check / build</dt>
+      <dd>Run the front half and report what is wrong; then, for <code>build</code>, produce an executable.</dd>
     </div>
     <div>
-      <dt>Fixes, not just messages</dt>
-      <dd>A diagnostic carries the replacement text and the span it applies to. Errors never cascade: one mistake costs one message.</dd>
+      <dt>fmt</dt>
+      <dd>Print the file formatted to stdout, or rewrite it with <code>--write</code>. It refuses any file that does not already lex and parse, because reformatting a guessed token stream is how a formatter eats a program.</dd>
     </div>
     <div>
-      <dt>Explicit broadcasting</dt>
-      <dd>NumPy will happily add a <code>(3,1)</code> to a <code>(1,3)</code> and hand you a <code>(3,3)</code> you did not want. Here that needs a dot.</dd>
+      <dt>tokens / ast / resolve</dt>
+      <dd>Dump the token stream, the syntax tree or the resolved crate, for when you want to see what the compiler saw.</dd>
     </div>
     <div>
-      <dt>Reproducible by construction</dt>
-      <dd>No ambient random generator, no <code>seed()</code>, and a provenance record in the binary that names every library it linked.</dd>
+      <dt>tools --json</dt>
+      <dd>A JSON Schema for every <code>tool</code> in the file, derived from the signature rather than written beside it.</dd>
     </div>
   </dl>
-</section>
-
-<!-- ==================================================================== -->
-<section id="install">
-  <h2>Install</h2>
-
-  <p class="lede">
-    There is no installer, no package and no released binary yet &mdash;
-    <code>sciencec</code> is version <code>0.0.1</code> and lives only as
-    source. Building it needs a Rust toolchain and nothing else; the workspace
-    has exactly one third-party dependency.
-  </p>
-
-<pre class="shell"><code><span class="p">$</span> git clone https://github.com/sci-lang/science &amp;&amp; cd science
-<span class="p">$</span> cargo run -p sciencec -- check examples/01_functions.science
-<span class="p">$</span> echo $?
-0</code></pre>
-
-  <h3>Your first program</h3>
-
-<pre class="shell"><code><span class="p">$</span> cargo run -p sciencec -- check hello.science
-<span class="p">$</span> cargo run -p sciencec -- fmt hello.science
-<span class="p">$</span> cargo run -p sciencec -- tools --json hello.science</code></pre>
-
-  <p class="note">
-    <code>check</code> is silent on a clean file and exits 0, so it drops into a
-    shell script or a CI job without ceremony. <code>fmt</code> prints the file
-    formatted to stdout, and refuses to touch one that does not already lex and
-    parse. <code>tools --json</code> prints a JSON Schema for every function in
-    the file, derived from the signature alone. Diagnostics go to stderr; dumps
-    of the tokens, the syntax tree and the resolved definitions go to stdout,
-    for when you want to see what the compiler saw.
-  </p>
-
-  <h3>What the compiler does today</h3>
-
-  <p class="note">
-    <code>sciencec</code> lexes, parses, resolves, formats and emits tool
-    schemas. <code>build</code> exists now and does real work &mdash; layout,
-    the C ABI, symbol mangling, monomorphisation &mdash; and then stops
-    cleanly, because there is no LLVM backend compiled in on the machine this
-    site is written on:
-  </p>
-
-<pre class="err"><code><span class="e-code">error[SC0400]</span>: no `llvm` backend is compiled into this `sciencec`
-  = note: `science-codegen` computes layout, the C ABI, symbol names and the runtime boundary, but emitting an object file needs a backend and none is linked in
-  = note: install LLVM 18.1.8 &mdash; `winget install LLVM.LLVM --version 18.1.8` or `choco install llvm --version=18.1.8` &mdash; then set `LLVM_SYS_181_PREFIX` to the install root, and rebuild `sciencec` with the `science-codegen-llvm` backend</code></pre>
-
-  <p class="note">
-    Type checking and region inference still are not wired into the driver,
-    so <code>build</code>'s middle is a well-defined gap rather than a filled
-    one &mdash; what runs today is <code>check</code>'s lex-parse-resolve,
-    then codegen's target-independent half directly. Everything on this page
-    and in the <a href="reference.html">reference</a> is the language as
-    designed, and most of it is already what <code>sciencec</code> lexes,
-    parses and resolves &mdash; including <strong>the error model</strong>,
-    which used to be the exception here. A function that returns a pair
-    &mdash; <code>-&gt; (Config, Error?)</code> &mdash; the nullable type
-    <code>T?</code>, the presence test <code>?</code> and the literal
-    <code>null</code> all parse and resolve today. What is not built is what
-    they <em>mean</em>: the narrowing that makes <code>if err?:</code> tell the
-    compiler <code>err</code> is not null, and the diagnostic that refuses a
-    returned error nobody tested. Both need a type checker, and there is not
-    one wired in yet. The <a href="reference.html#errors">reference shows
-    both forms</a> and says which is which.
-  </p>
 </section>
 
 <!-- ==================================================================== -->
 <section id="docs">
   <h2>Documentation</h2>
   <p class="lede">
-    The specification is the authority. The design notes decide one area each,
-    state what they rejected and why, and price what they ask of the others.
+    The specification is the authority. Forty-two design notes decide one area
+    each, state what they rejected and why, and price what they ask of the
+    others &mdash; including, in several places, a conclusion reached against
+    the brief the note was given.
   </p>
 
   <div class="docs">
@@ -408,74 +507,41 @@ tool integrate_peak(counts: Array of F64, window: U16,
       <span class="ttl">Language reference &rarr;</span>
       <span class="sub">Syntax, ownership, interfaces, foreign code and the toolchain, in one page.</span>
     </a>
+    <a class="doc" href="rationale.html">
+      <span class="ttl">Rationale &rarr;</span>
+      <span class="sub">The comparisons at length, with the cases where another language wins.</span>
+    </a>
     <a class="doc" href="#docs">
       <span class="ttl">The specification &rarr;</span>
       <span class="sub">Phases, syntax, types, ownership, diagnostics. What the compiler is held to.</span>
     </a>
     <a class="doc" href="#docs">
-      <span class="ttl">Design notes &rarr;</span>
-      <span class="sub">Forty-two areas decided in the open, each with the alternatives it rejected.</span>
-    </a>
-    <a class="doc" href="#docs">
       <span class="ttl">Examples &rarr;</span>
-      <span class="sub">Worked programs, one per feature, used directly as the compiler's test data.</span>
+      <span class="sub">Twenty-two programs, one per feature, used directly as the compiler's test data.</span>
     </a>
   </div>
 
   <p class="note">
-    The example programs are input data for the test suites, so anything there
-    that fails to compile is a bug in the compiler rather than a typo to be
-    quietly patched. Programs that must <em>fail</em>, each paired with the exact
-    diagnostic it has to produce, live beside them.
-  </p>
-</section>
-
-<!-- ==================================================================== -->
-<section id="source">
-  <h2>Source</h2>
-  <p class="lede">
-    Nine crates behind one driver, and all nine are real &mdash; nothing below
-    is a placeholder for a crate that does not exist. The compiler is a set of
-    memoised queries over a shared database rather than a pipeline, which is
-    what will make recompilation incremental once there is more to recompile.
-  </p>
-
-  <div class="strip">
-    <div><dt>science-lexer</dt><dd>Tokens, indentation, literals.</dd></div>
-    <div><dt>science-parser</dt><dd>Grammar, syntax tree, <code>extern</code> blocks.</dd></div>
-    <div><dt>science-resolve</dt><dd>Names, scopes, definitions.</dd></div>
-    <div><dt>science-types</dt><dd>Type checking, traits, const generics &mdash; building, not yet called by <code>check</code>.</dd></div>
-    <div><dt>science-fmt</dt><dd>The formatter behind <code>sciencec fmt</code>.</dd></div>
-    <div><dt>science-db</dt><dd>The query database every other crate reads through.</dd></div>
-    <div><dt>science-diagnostics</dt><dd>Rendering, spans, applicable fixes.</dd></div>
-    <div><dt>science-codegen</dt><dd>Layout, the C ABI, mangling, monomorphisation &mdash; the half of code generation that does not need a backend.</dd></div>
-    <div><dt>science-rt</dt><dd>The runtime every binary will link, once a backend can call it.</dd></div>
-  </div>
-
-  <p class="note">
-    Ownership and region inference do not exist yet even as an empty crate
-    &mdash; there is no <code>science-regions</code> today, and nothing calls
-    it into <code>check</code>. Nor does the other half of code generation:
-    <code>science-codegen</code> hands a finished lowering to a backend, and
-    the LLVM one, <code>science-codegen-llvm</code>, is deliberately absent,
-    because it needs an LLVM 18.1 installation and a workspace nobody can
-    build without one is a workspace nobody can contribute to. Until it
-    exists, <code>sciencec build</code> gets exactly as far as
-    <a href="reference.html#toolchain">the reference shows</a> and stops.
+    Programs that must <em>fail</em> live beside them in <code>tests/ui/</code>,
+    each paired with the exact diagnostic it has to produce, rendered byte for
+    byte. That is why the error blocks on this page are transcripts rather than
+    illustrations.
   </p>
 </section>
 
 <footer>
   <div class="links">
-    <a href="#source">GitHub</a>
-    <a href="#docs">Reference</a>
-    <a href="#install">Install</a>
+    <a href="https://github.com/sci-lang/science">Source</a>
+    <a href="reference.html">Reference</a>
+    <a href="rationale.html">Rationale</a>
+    <a href="#status">Status</a>
     <a href="#docs">Design notes</a>
   </div>
-  Science is a young language and the surface is still moving in places. Where a
-  decision is not settled, the design notes say so rather than papering over it
-  &mdash; the interesting ones are where a note reached a conclusion against the
-  brief it was given.
+  Science is a young language and the surface is still moving in places. Every
+  Science listing on this page was run through <code>sciencec</code> before it
+  was published, and every trailing <code>#</code> comment is what the compiled
+  program printed. Where a decision is not settled, the design notes say so
+  rather than papering over it.
 </footer>
 
 </div>
