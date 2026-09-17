@@ -75,12 +75,20 @@ def go():
 "
     );
     let checked = check(&source);
-    let borrows: usize = checked.body("go").borrows().len();
+    let body = checked.body("go");
+    // The borrows **of `config`**, for the reason
+    // [`a_closure_capture_is_a_borrow_this_engine_can_see`] gives one test
+    // over: `print(config.port)` renders through §1.7's builder now and the
+    // builder borrows its own accumulator. What this test is about is that
+    // nothing borrows `config` a second time, so a conflict check quantified
+    // over borrows *of the narrowed place* finds nothing to compare.
+    let borrows: usize = support::borrows_of(&checked, body, "config").len();
     assert_eq!(
         borrows, 1,
-        "the fixture no longer demonstrates what it exists for: it has {borrows} borrows"
+        "the fixture no longer demonstrates what it exists for: `config` has {borrows} borrows"
     );
 }
+
 
 /// The ordinary case still compiles: a narrowing with no borrow anywhere near
 /// it is not made harder by the amendment.
@@ -157,8 +165,17 @@ def go():
         })
         .count();
     assert_eq!(closures, 1, "the fixture no longer builds a closure");
-    assert_eq!(body.borrows().len(), 1, "the capture of `doc` is a borrow");
-    assert_eq!(body.borrows()[0].kind, science_mir::BorrowKind::Shared);
+    // **The borrows *of `doc`*, and not every borrow in the body.** It was the
+    // total until `science-mir`'s §7 item 17 made `print(n)` render `n` through
+    // §1.7's builder, which takes a `mutable borrowed String` of an accumulator
+    // this fixture does not contain a name for. That loan is real and it is
+    // nothing to do with the capture, so counting it here would make this test
+    // fail for a reason that is not its subject — and dropping the count
+    // altogether would let the capture's borrow disappear unnoticed, which is
+    // the thing the test exists to prevent.
+    let of_doc = support::borrows_of(&checked, body, "doc");
+    assert_eq!(of_doc.len(), 1, "the capture of `doc` is a borrow");
+    assert_eq!(of_doc[0].kind, science_mir::BorrowKind::Shared);
     assert_eq!(checked.reported(), Vec::<u16>::new(), "{:?}", codes(&checked.regions));
 }
 

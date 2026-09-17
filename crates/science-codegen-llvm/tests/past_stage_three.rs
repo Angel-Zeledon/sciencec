@@ -744,11 +744,19 @@ fn what_is_refused_names_itself() {
         // and `tests/casts.rs` and the tuple section above are the programs
         // that run them. What is left of a cast's refusal is the pairs §5.1
         // does not define, which is that file's `what_no_cast_may_do`.
+        // **`refuse-method` used to be here and is not, and it is the largest
+        // thing this list has lost.** `Doc has: def get(self) -> Int` builds,
+        // links and runs; `tests/methods.rs` is twenty-four programs of it, and
+        // crate §3 finding 24 is why the refusal it replaced was false about
+        // every program that reached it. What is left of a method's refusal —
+        // an `interface`'s default body, and a call through `any I` — lives in
+        // that file, because it is about methods rather than about this file's
+        // boundary.
         (
-            "refuse-method",
-            "type Doc:\n    n: Int\n\nDoc has:\n    def get(self) -> Int:\n        self.n\n\n\
-             let d be Doc(n: 1)\nlet v be d.get()\nprint(\"x\")\n",
-            "",
+            "refuse-closure",
+            "def sink(f: (Int) -> Int) -> Int:\n    1\n\n\
+             let n be sink(item giving item)\nprint(\"x\")\n",
+            "closure",
         ),
     ];
     for (name, source, word) in cases {

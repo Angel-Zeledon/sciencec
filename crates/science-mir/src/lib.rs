@@ -257,13 +257,22 @@
 //! the authority and a correction that lives only in code is a correction
 //! nobody reads.
 //!
-//! **Fourteen, and two of them are now closed rather than open.** Items 9 and
+//! **Seventeen, and two of them are now closed rather than open.** Items 9 and
 //! 10 were both *"a note prescribes something the ABI below it cannot
 //! express"*, and both were closed by changing the ABI rather than by softening
 //! the note: `science_string_with_capacity` for §1.7's capacity, and an
 //! `Rvalue::Cast` lowering for `science_string_push_i64`'s sign extension. They
 //! are left in the list with their history because the list is a record of what
 //! reading could not establish, not a list of open bugs.
+//!
+//! **Fifteen, sixteen and seventeen were all found the same way and it is worth
+//! saying how.** `science-codegen-llvm` grew the ability to emit a method call,
+//! and `examples/` was then built one file at a time — twenty-two programs, a
+//! refusal each, and each refusal read as a *question about this crate* rather
+//! than as a missing backend feature. Two of the three answers were wrong
+//! lowerings that nothing had ever executed, which is §10's staging working
+//! exactly as it was meant to: the first program that runs a construct is the
+//! first thing that can say whether the construct was lowered correctly.
 //!
 //! 1. **`region-inference.md` §10 item 5 asks for less than §12 delivers, and
 //!    §12 is right.** Item 5 asks only that drop points be *explicit*; §12's
@@ -343,11 +352,21 @@
 //!    that information"* — is now false twice over: something reads it, and the
 //!    place it was asked to be put is a place it cannot go.
 //! 6. **`examples/21_compiler_shapes.science` lowers, and what it is missing is
-//!    a standard library and not a MIR.** Eighteen bodies, 89 blocks, 353
-//!    points, twelve borrows of which seven are two-phase, ten drops and
+//!    a standard library and not a MIR.** Eighteen bodies, 97 blocks, 377
+//!    points, twenty-two borrows of which eleven are two-phase, five drops and
 //!    **zero drop flags** — the program has no conditional move, so Decision
 //!    26's mechanism is not exercised by the acceptance case and
 //!    `tests/drops.rs` carries that burden on a fixture written for it.
+//!
+//!    **The numbers moved again with item 17, and one line of the file is the
+//!    whole of it.** `print(sink.is_empty())` is a `print` of a `Bool`, which
+//!    is now §1.7's builder and one `print`: against the counts in the third
+//!    paragraph below, that is 377 points rather than 366, twenty-two borrows
+//!    rather than twenty-one, and five drops rather than four — the extra loan
+//!    is the accumulator's and the extra drop is the rendered `String`'s. They
+//!    are re-measured rather than left standing because this paragraph is the
+//!    only place the acceptance case's shape is written down, and a count
+//!    nobody updates is a count nobody can use.
 //!
 //!    **The hole count has more than halved and what is left is one seam and
 //!    one absence.** It read *"sixteen of its calls have no callee"*; it is
@@ -554,6 +573,82 @@
 //!     because that is the only instrument that separates a
 //!     `science_string_free` of the right buffer from one of the wrong buffer:
 //!     the IR, the verifier and even the *count* of releases are identical.
+//! 15. **§4.7's *"borrows auto-dereference for assignment"* is implemented on
+//!     neither side of `be`, and the two sides belong to two crates.** §4 of
+//!     [`lower`] inserts a `Deref` for a *read* through a reference —
+//!     `self.tokens` is `(*_1).tokens` — and `StmtKind::Assign` took its
+//!     target from [`lower::Builder::as_place`] and wrote to it as it stood,
+//!     so `counter be 1` where `counter` is a `mutable borrowed Int` lowered
+//!     to `_1 = 1`: an `Int` stored into the slot holding the reference.
+//!     [`lower::Builder::assign_target`] is this crate's half.
+//!
+//!     **The other half is `science-types`' and it is the half a user meets.**
+//!     `counter be 5` does not check — `SC0525`, *expected `mutable borrowed
+//!     Int`, found an integer literal* — because the checker compares the
+//!     target's declared type against the value's and dereferences nothing.
+//!     And `counter be counter + 1`, which is
+//!     `examples/01_functions.science`'s and which §4.7 leaves as the only
+//!     spelling the language has, checks *because* the checker types
+//!     `mutable borrowed Int + 1` as `mutable borrowed Int` — an operator
+//!     applied to a reference, with no `Coercion::Copy` in front of it, where
+//!     the same function written `borrowed` gets one. So the program that
+//!     reaches this crate's hole is refused for the checker's hole first,
+//!     by `science-codegen-llvm`'s `lower_binary`, which names the seam.
+//!
+//!     **Why the half is written anyway, with nothing to exercise it.** The
+//!     two fail in opposite directions. A checker that starts dereferencing
+//!     the target types the value at the *referent*, and a MIR that then wrote
+//!     `_1 = <Int>` would be storing an `Int` into a reference's slot with
+//!     nothing to report it: this crate emits no diagnostics (§3),
+//!     `science-regions` would read a write *to* the reference rather than
+//!     *through* it — a different fact for rules 4 and 5 — and codegen would
+//!     stop it with *"a constant of a type this backend cannot build"*, a
+//!     message about a constant for a mistake in a place. A lowering that is
+//!     right for a shape that has not arrived blocks nothing; it is the
+//!     *refusal* for a shape that has not arrived that costs, and
+//!     `science-codegen-llvm`'s §3 finding 24 is what that costs.
+//!
+//!     **It is items 3, 4, 7 and 14's shape for the fifth time**, and the
+//!     fifth time is what makes it a class rather than a coincidence: an
+//!     implicit step this lowering owes, owed in more than one place, supplied
+//!     in the place somebody had a test for.
+//! 16. **A `match` whose scrutinee is a borrow read the *reference's*
+//!     discriminant.** `def name_of(format: borrowed Format)` is how the corpus
+//!     spells every `match` over a choice the function does not own, and
+//!     [`lower::Builder::lower_match`] took the scrutinee's place with no §4
+//!     step, so [`mir::Rvalue::Discriminant`] named a local of reference type
+//!     and every [`mir::Projection::Downcast`] under it did too.
+//!
+//!     This one is item 15's twin and it failed *louder*, which is the only
+//!     reason to record them separately: `science-codegen-llvm` asked the
+//!     place's type whether it was a `choice`, found a `borrowed Format`, and
+//!     refused. A refusal is a better ending than a silent write, and it is
+//!     still the wrong message — *"a discriminant read of a value that is not a
+//!     `choice`"* names a type where the mistake is a missing dereference.
+//! 17. **`print(x)` and `print(f"{x}")` are one construct and were two
+//!     lowerings, and only one of them could be executed.**
+//!     `strings-formatting-and-docs.md` §4.1 is
+//!     `def print(value: borrowed any Display)`, so `print(42)` *renders*; this
+//!     crate emitted §1.7's builder for an `ExprKind::FString` and a bare call
+//!     for an `ExprKind::Call` at `print`, and `science-codegen-llvm` — which
+//!     has no renderer of its own — refused everything but a `String`.
+//!
+//!     **The reason the repair belongs here and not there** is the same one
+//!     item 12 gives about a cast: the type is in the tree and not in the
+//!     operand. `print(42)`'s argument reaches MIR as
+//!     `Constant::Literal(Literal::Int)`, whose width is a *suffix* and whose
+//!     absence is a default the checker resolved and MIR did not record — so a
+//!     backend choosing an entry point from the operand would be choosing a
+//!     signedness, and `print(18446744073709551615u64)` through
+//!     `science_string_push_i64` prints `-1`. THIR has the type,
+//!     [`lower::Builder::push_of`] already reads it, and
+//!     [`lower::Builder::lower_print_rendered`] is the four lines that hand the
+//!     argument to the builder as a one-hole `f"…"`.
+//!
+//!     **What it says about §1.6 and §1.7** is that the two notes describe one
+//!     mechanism and only one of them named it. §1.7 is written about `f"…"`;
+//!     §4.1's `print` is written about `Display`; nothing says the second is
+//!     the first with one hole and no text, and it is.
 
 pub mod callgraph;
 pub mod capture;

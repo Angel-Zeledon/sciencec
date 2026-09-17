@@ -31,11 +31,17 @@ def go():
     let checked = check(source);
     let body = checked.body("go");
     let analysis = checked.analysis_of("go");
-    assert_eq!(body.borrows().len(), 1, "the fixture takes one borrow");
-    let region = analysis.loan_region(body.borrows()[0].id);
+    // **The loan of `doc`, and not the only loan in the body.** It was the only
+    // one until `science-mir`'s §7 item 17 made `print(look(s))` render its
+    // `Int` through §1.7's builder, which takes a `mutable borrowed String` of
+    // an accumulator no name in this fixture reaches. The loan this test is
+    // about is the one the author wrote, so it is selected rather than indexed.
+    let loans = support::borrows_of(&checked, body, "doc");
+    assert_eq!(loans.len(), 1, "the fixture takes one borrow of `doc`");
+    let region = analysis.loan_region(loans[0].id);
     assert!(region.len() > 1, "the loan's region is {} point(s)", region.len());
     assert!(
-        !region.contains(analysis.index.index(body.borrows()[0].reserved)),
+        !region.contains(analysis.index.index(loans[0].reserved)),
         "the reservation point itself is in the region, so the region starts one point early"
     );
 }

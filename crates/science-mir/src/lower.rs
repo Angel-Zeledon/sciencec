@@ -864,6 +864,10 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                         (Place::local(temp), block)
                     }
                 };
+                // §4.7's *"borrows auto-dereference for assignment"*, which is
+                // §4's rule on the other side of `be`. See
+                // [`Builder::assign_target`].
+                let place = self.assign_target(place, self.thir.ty(*value));
                 block = self.expr_into(place, *value, next);
             }
             StmtKind::Return(value) => {
@@ -1319,6 +1323,15 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 (Place::local(temp), next)
             }
         };
+        // §4 again, on the scrutinee. `match format:` where `format` is a
+        // `borrowed Format` — which is how every `def name_of(format: borrowed
+        // Format)` in the corpus spells it — asks about the *referent's*
+        // discriminant, and there is no other thing it could be asking about:
+        // a reference has no variants. Without the step, the tag read and
+        // every [`Projection::Downcast`] under it name the local holding the
+        // reference, which is the same mistake §9 fixed one construct over for
+        // a receiver and §7 item 7 records.
+        let place = self.auto_deref(place);
         let join = self.new_block();
         for arm in arms {
             let body_block = self.new_block();
@@ -1562,6 +1575,15 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 Callee::Indirect(operand)
             }
         };
+        // §10's builder again, for the one call in the language that renders
+        // its argument. See [`Builder::lower_print_rendered`].
+        if let Callee::Def(def) = callee {
+            if let [only] = args {
+                if self.prints_by_rendering(def, *only) {
+                    return self.lower_print_rendered(dest, def, *only, block, span);
+                }
+            }
+        }
         // §5's exception, asked as the condition it states rather than as the
         // one spelling of it that used to be checked.
         let opaque = self.has_no_signature(&callee);
@@ -1572,6 +1594,113 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             block = next;
         }
         self.emit_call(dest, callee, operands, block, span)
+    }
+
+    /// Whether `print(x)` has to render `x` before it can print it.
+    ///
+    /// True for the prelude's `print` called on one argument whose type is not
+    /// a `String` **and which [`Builder::push_of`] has an entry point for**.
+    ///
+    /// **Both exclusions are load-bearing and the second one was measured.** A
+    /// `String` already prints without rendering and the builder would cost it
+    /// an allocation and a copy. A type the builder *cannot* render would be
+    /// rewritten into a call sequence that ends in an
+    /// [`Unresolved::Display`] — the same refusal, reached through a longer
+    /// program — and the rewrite is not free: §1.6 makes a hole a **borrow**,
+    /// so `print(config.port)` would acquire a loan the author did not write.
+    /// `science-regions`' `tests/narrowing.rs` is a fixture whose whole point
+    /// is that its body contains *one* borrow, and it contains a `print` of an
+    /// `Int?`; rendering that would have made the fixture stop demonstrating
+    /// what it exists for. A rewrite this crate performs must not change the
+    /// borrows of a program it cannot lower anyway.
+    ///
+    /// `write` is **not** included either: it is the same shape and
+    /// `science-codegen-llvm` lowers no call to it at all, so routing it
+    /// through the builder would replace one refusal with another that named a
+    /// construct further from the one the author wrote.
+    fn prints_by_rendering(&mut self, def: DefId, arg: ExprId) -> bool {
+        let entry = self.context.defs.get(def);
+        if !entry.is_builtin() || entry.name != "print" {
+            return false;
+        }
+        let ty = self.thir.ty(arg);
+        let stripped = self.stripped(ty);
+        if self.context.decls.prelude().is(self.context.types, stripped, "String") {
+            return false;
+        }
+        !matches!(self.push_of(ty), Push::Missing)
+    }
+
+    /// `print(x)` where `x` is not a `String`, as `print(f"{x}")`.
+    ///
+    /// # The decision
+    ///
+    /// The argument is rendered into a temporary `String` by §1.7's builder —
+    /// the same [`Builder::lower_fstring`] an `f"…"` uses, given one part and
+    /// that part a hole — and `print` is then called on the temporary.
+    ///
+    /// # The reason
+    ///
+    /// `strings-formatting-and-docs.md` §4.1 is `def print(value: borrowed any
+    /// Display)`, so what `print(42)` means is *"render `42` through `Display`
+    /// and write the result"*. There is exactly one renderer in this compiler
+    /// and it is the f-string builder: `science-rt`'s seven
+    /// `science_string_push_*` entry points, reached through
+    /// [`Builder::push_of`], with [`Builder::widen_hole`]'s cast in front of
+    /// the six narrow integer widths. Emitting anything else would be a second
+    /// renderer, and §7 item 10 is what happens when two phases disagree about
+    /// one of these entry points.
+    ///
+    /// **`print(f"{x}")` already worked and `print(x)` did not**, which is the
+    /// measurement this closes: the two spellings mean the same thing and only
+    /// one of them reached an executable. A `Display` this crate cannot render
+    /// is still [`Unresolved::Display`], carried by the builder, and the
+    /// refusal that names the type is `science-codegen-llvm`'s — so a user type
+    /// with an `implements Display:` block is refused *by its type* rather than
+    /// by *"a `print` of a value that is not a `String`"*, which named the
+    /// construct and not the cause.
+    ///
+    /// # The cost
+    ///
+    /// **One allocation and one free per `print` of a number**, where a
+    /// renderer that wrote into the sink would need neither. §1.7 permits that
+    /// elision and calls it *"opt-in to the implementation"*;
+    /// [`Builder::lower_fstring`]'s own note declines it for an `f"…"` written
+    /// as `print`'s argument, and declining it here keeps the two spellings one
+    /// lowering rather than two.
+    ///
+    /// **The temporary is `Copy`, not `Move`**, which is §5's rule for a callee
+    /// with no signature and is what leaves the `String` for [`crate::drops`]
+    /// to release. `science-codegen-llvm`'s `lower_print` then prints without
+    /// freeing and the scope's `Drop` frees — which is finding 23's
+    /// arrangement, reused rather than re-derived.
+    fn lower_print_rendered(
+        &mut self,
+        dest: Place,
+        print: DefId,
+        arg: ExprId,
+        block: BlockId,
+        span: Span,
+    ) -> BlockId {
+        let Some(string) = self.context.decls.prelude().ty(self.context.types, "String") else {
+            // No prelude means no `String` to build, which is every
+            // hand-assembled definition table in this crate's own tests. The
+            // call is emitted unrendered and refused downstream by the type it
+            // carries, which is the same answer as before this function
+            // existed.
+            let (operand, next) = self.operand(arg, block);
+            return self.emit_call(dest, Callee::Def(print), vec![force_copy(operand)], next, span);
+        };
+        let rendered = self.temp(string, span, block);
+        let parts = [thir::FStringPart::Hole(arg)];
+        let block = self.lower_fstring(Place::local(rendered), &parts, block, span);
+        self.emit_call(
+            dest,
+            Callee::Def(print),
+            vec![Operand::Copy(Place::local(rendered))],
+            block,
+            span,
+        )
     }
 
     /// Whether this crate knows how the callee takes its arguments. §5.
@@ -2348,6 +2477,81 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 Some((place.project(Projection::Index { index: temp, ty }), block))
             }
             _ => None,
+        }
+    }
+
+    /// An assignment's target, dereferenced as far as the value's type asks.
+    ///
+    /// # The decision
+    ///
+    /// `counter be 1`, where `counter` is `mutable borrowed Int`, assigns to
+    /// `(*_1)` and not to `_1`. The walk stops as soon as the place's type is
+    /// the value's, so `r be borrowed y` — where `r` is itself a reference and
+    /// the value is one too — assigns to `r` and derefs nothing.
+    ///
+    /// # The reason
+    ///
+    /// The core spec's §4.7 is *"borrows auto-dereference for assignment"*, and
+    /// **Science has no dereference operator at all**, so a write through a
+    /// reference has no other spelling: `def bump(counter: mutable borrowed
+    /// Int): counter be counter + 1` in `examples/01_functions.science` is what
+    /// the rule exists for and the language gives the author nothing else to
+    /// write. §4 of this file already inserts the same step on a *read* through
+    /// a field; this is its other half, and `thir::StmtKind::Assign` carries
+    /// the target expression exactly as written, so nothing above this crate
+    /// supplies it.
+    ///
+    /// **It is half a repair and the other half is above Decision 42's line**,
+    /// which is why this entry says what it can be held to rather than claiming
+    /// the acceptance case. `science-types` types `counter be 5` as
+    /// `SC0525`, *expected `mutable borrowed Int`, found an integer literal* —
+    /// it compares the target's declared type against the value's and inserts
+    /// no dereference — and it types `counter + 1` as `mutable borrowed Int`,
+    /// so the one spelling that *does* check has a value whose type already
+    /// equals the target's and the walk below stops immediately. So `bump` is
+    /// not fixed by this function; it is refused by
+    /// `science-codegen-llvm`'s `lower_binary`, which names the seam.
+    ///
+    /// **What this is for, then, is the shape the repair above will produce.**
+    /// A checker that dereferences the target types the value at the
+    /// *referent*, and a MIR that then wrote `_1 = <Int>` would be storing an
+    /// `Int` into a slot holding a reference — with nothing to report it: this
+    /// crate emits no diagnostics (§3), `science-regions` would read a write
+    /// *to* the reference rather than *through* it, which is a different fact
+    /// for rules 4 and 5, and `science-codegen-llvm` would stop it with *"a
+    /// constant of a type this backend cannot build"*, a message about a
+    /// constant for a mistake in a place. `tests/places.rs` pins it on a
+    /// fixture that lowers without checking, which is what this crate's
+    /// harness exists to allow.
+    ///
+    /// # The cost
+    ///
+    /// **A rule written against a phase that has not landed is a rule nothing
+    /// exercises**, and that is exactly the shape §3 finding 24 of
+    /// `science-codegen-llvm` is about — a guard for a case that does not
+    /// arrive. The difference, and the reason this one is kept: that guard was
+    /// a *refusal* and it blocked every correct program; this is a *lowering*
+    /// and it blocks nothing, because a target whose type already equals the
+    /// value's is returned untouched.
+    ///
+    /// The stopping condition is a type equality and not a subtyping question,
+    /// so a target and a value that are *compatible* rather than *equal* —
+    /// which `crate::assign`'s coercions decide and this crate cannot — stop
+    /// the walk one step early or one step late. Every such pair in F0 arrives
+    /// with a `thir::ExprKind::Coerce` around the value, whose own type is the
+    /// target's, so the equality is exact for everything that reaches here.
+    fn assign_target(&mut self, mut place: Place, value_ty: Ty) -> Place {
+        let value_ty = self.revealed(value_ty);
+        loop {
+            let written = self.place_ty(&place);
+            let ty = self.revealed(written);
+            if ty == value_ty {
+                return place;
+            }
+            let TyKind::Borrowed { inner, .. } = *self.context.types.kind(ty) else {
+                return place;
+            };
+            place = place.project(Projection::Deref { ty: inner });
         }
     }
 

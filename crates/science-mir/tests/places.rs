@@ -295,3 +295,109 @@ fn a_receiver_with_no_place_of_its_own_is_borrowed_from_its_temporary() {
     );
     assert!(body.index_temps_are_single_assignment());
 }
+
+/// §4.7's *"borrows auto-dereference for assignment"*: the target of a `be` is
+/// the referent, not the reference.
+///
+/// `def bump(counter: mutable borrowed Int): counter be counter + 1` is
+/// `examples/01_functions.science`'s, and Science has **no dereference
+/// operator**, so there is no other thing the author could have written.
+///
+/// **The fixture does not type-check and that is the subject.** `science-mir`'s
+/// §7 item 15: the checker compares the target's declared type against the
+/// value's and dereferences nothing, so `counter be 5` is `SC0525` — and this
+/// crate's harness lowers a program the checker complained about *on purpose*,
+/// for the reason it states, so the MIR half of §4.7 can be held to something
+/// before the front-end half lands. Without it, a checker that starts typing
+/// the value at the referent gets a MIR that stores an `Int` into a slot
+/// holding a reference, which nothing between here and LLVM reports.
+#[test]
+fn an_assignment_through_an_exclusive_borrow_names_the_referent() {
+    let source = "def set(counter: mutable borrowed Int):\n    counter be 5\n";
+    let lowered = lower(source);
+    let body = lowered.body("set");
+    let target = body
+        .blocks()
+        .flat_map(|(_, block)| block.statements.iter())
+        .find_map(|statement| match &statement.kind {
+            StatementKind::Assign { place, rvalue: Rvalue::Use(_) }
+                if place.local == Local::from_index(1) =>
+            {
+                Some(place.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no assignment to the parameter: {}", lowered.dump("set")));
+    assert_eq!(describe(&target), "*", "{}", lowered.dump("set"));
+}
+
+/// A reference **is** reassignable when the value is a reference too, so the
+/// walk stops on a type equality rather than on the shape of the place.
+#[test]
+fn a_reference_assigned_a_reference_is_not_dereferenced() {
+    let source = concat!(
+        "def f(a: borrowed Int, b: borrowed Int) -> Int:\n",
+        "    let mutable r be a\n",
+        "    r be b\n",
+        "    r\n",
+    );
+    let lowered = lower(source);
+    let body = lowered.body("f");
+    let binding = body
+        .locals()
+        .find(|(_, decl)| matches!(decl.kind, science_mir::mir::LocalKind::Binding(_)))
+        .map(|(local, _)| local)
+        .unwrap_or_else(|| panic!("no binding: {}", lowered.dump("f")));
+    for (_, block) in body.blocks() {
+        for statement in &block.statements {
+            if let StatementKind::Assign { place, .. } = &statement.kind {
+                if place.local == binding {
+                    assert_eq!(
+                        describe(place),
+                        "",
+                        "a reference assigned a reference is written whole: {}",
+                        lowered.dump("f")
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// §4 again, on a `match` scrutinee: the tag read is the *referent's*.
+///
+/// `def name_of(format: borrowed Format)` is how the corpus spells every
+/// `match` over a choice it does not own. Without the step the discriminant
+/// read and every `Downcast` under it name the local holding the reference,
+/// which `science-codegen-llvm` refused as *"a discriminant read of a value
+/// that is not a `choice`"* — a message about a type, for a missing
+/// dereference.
+#[test]
+fn a_match_on_a_borrowed_choice_reads_through_the_borrow() {
+    let source = concat!(
+        "choice Format:\n",
+        "    Plain\n",
+        "    Markdown\n",
+        "\n",
+        "def name_of(format: borrowed Format) -> Int:\n",
+        "    match format:\n",
+        "        Plain: 1\n",
+        "        Markdown: 2\n",
+    );
+    let lowered = lower(source);
+    let body = lowered.body("name_of");
+    let reads: Vec<String> = body
+        .blocks()
+        .flat_map(|(_, block)| block.statements.iter())
+        .filter_map(|statement| match &statement.kind {
+            StatementKind::Assign { rvalue: Rvalue::Discriminant(place), .. } => {
+                Some(describe(place))
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(!reads.is_empty(), "the fixture must read a tag: {}", lowered.dump("name_of"));
+    for read in &reads {
+        assert_eq!(read, "*", "{}", lowered.dump("name_of"));
+    }
+}

@@ -135,3 +135,33 @@ impl Checked {
         self.regions.iter().map(|d| d.code.0).collect()
     }
 }
+
+/// Every [`science_mir::BorrowData`] in `body` whose referent is the local a
+/// named binding or parameter lives in.
+///
+/// **Why a filter rather than `borrows()[0]`.** Several fixtures here are about
+/// *the* loan in a body and used to say so by counting. `science-mir`'s §7
+/// item 17 made `print(n)` of a non-`String` render through
+/// `strings-formatting-and-docs.md` §1.7's builder, and the builder takes a
+/// `mutable borrowed String` of an accumulator the fixture has no name for — a
+/// real loan, of a temporary, with nothing to do with what the test asserts.
+/// Counting it would make those tests fail for a reason that is not their
+/// subject; dropping the count would let the loan they *are* about disappear
+/// unnoticed. Selecting by name keeps both halves.
+pub fn borrows_of<'a>(
+    checked: &Checked,
+    body: &'a Body,
+    name: &str,
+) -> Vec<&'a science_mir::BorrowData> {
+    let local = body
+        .locals()
+        .find(|(_, decl)| match decl.kind {
+            science_mir::LocalKind::Binding(def) | science_mir::LocalKind::Param(def) => {
+                checked.krate.defs.get(def).name == name
+            }
+            _ => false,
+        })
+        .map(|(local, _)| local)
+        .unwrap_or_else(|| panic!("the fixture has no binding called `{name}`"));
+    body.borrows().iter().filter(|data| data.place.local == local).collect()
+}

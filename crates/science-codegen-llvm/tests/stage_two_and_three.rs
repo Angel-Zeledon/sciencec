@@ -521,17 +521,24 @@ fn the_boundary_is_where_it_says_it_is() {
         // **A cast used to be here.** `Rvalue::Cast` has a lowering and
         // `tests/casts.rs` runs every pair §5.1 defines; the pairs it does not
         // define are refused there.
-        // A method's receiver is a `Self` this crate cannot resolve to a
-        // concrete type. **The refusal is at the signature and not at the call
-        // site**, which is a finding: `science-mir` *does* resolve a method
-        // call to a `Callee::Def` when it can — `Unresolved::Method` is the
-        // case it cannot — so the body is reachable and is classified before
-        // anything looks at the call.
+        // **A method used to be here and it built the day somebody asked what
+        // its receiver's type actually was.** The refusal read *"its receiver
+        // is a `Self` this crate cannot resolve to a concrete type"*, and MIR's
+        // `_1` for `P has: def get(self)` is a `borrowed P` — substituted by
+        // `science-types` before THIR exists. Crate §3 finding 24;
+        // `tests/methods.rs` is the programs.
+        //
+        // What is left of it is the one receiver that really is a `Self`: the
+        // **default body** of a method an `interface` declares, which needs one
+        // copy per implementor and is therefore the same refusal `generic`
+        // below gets.
         (
-            "method",
-            "type P:\n    x: Int\n\nP has:\n    def get(self) -> Int:\n        self.x\n\n\
-             let p be P(x: 1)\nlet v be p.get()\nprint(\"x\")\n",
-            "the method `get`",
+            "interface-default",
+            "interface S:\n    def size(self) -> Int\n\n    def twice(self) -> Int:\n        \
+             self.size() + self.size()\n\ntype P:\n    x: Int\n\nP implements S:\n    \
+             def size(self) -> Int:\n        self.x\n\nlet p be P(x: 1)\n\
+             let v be p.twice()\nprint(\"x\")\n",
+            "monomorphis",
         ),
         // Nothing monomorphises, so a generic function's parameter reaches here
         // as a `TyKind::Param` with no layout.

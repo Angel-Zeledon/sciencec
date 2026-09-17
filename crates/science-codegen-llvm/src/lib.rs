@@ -106,14 +106,39 @@
 //! finding 20: the unannotated literal types as `(<error>, <error>)`, with no
 //! diagnostic, from a phase this crate must not edit.
 //!
-//! Behind those, in the order they were measured: a **method call**, whose
-//! receiver is a `Self` this crate cannot resolve and which is refused at the
-//! *signature* rather than at the call site; a **generic** function, which
-//! nothing monomorphises; **drop glue** for anything that owns something other
-//! than a bare `String`, which is Decision 12's emitted function; and integer
-//! `/`, `%`, `<<` and `>>`, which are refused **deliberately** rather than for
-//! want of an instruction — see [`lower::Lowerer::lower_binary`]. Every refusal
-//! is `SC0400` and names the construct.
+//! **A method call is emitted, and two of the twenty-two programs in
+//! `examples/` now build, link and run.** `11_literals.science` and
+//! `16_indentation.science` are the two; before this pass it was none, and in
+//! nine of the twenty-two the first refusal was a method call — six of them
+//! refused at the *signature* on the ground that the receiver was *"a `Self`
+//! this crate cannot resolve to a concrete type"*, and three of them
+//! `String.length()` and `String.new()`, which have no Science body and never
+//! will. **That first sentence was false** — finding 24 —
+//! and what it hid is that everything a method needs was already here: the
+//! receiver arrives as an ordinary parameter whose type `science-types`
+//! substituted before THIR was built, §4's classifier already says how it
+//! crosses, and `science-mir`'s §9 already decides what it points at. Three
+//! more things came with it because nothing could be *observed* without them:
+//! `print` of anything but a `String` is §1.7's builder and one `print`
+//! ([`lower::Lowerer::lower_print`] and `science-mir`'s `lower_print_rendered`),
+//! the prelude's own `String` methods are the `RUNTIME` entry points that
+//! implement them ([`lower::Lowerer::prelude_method`]), and a `def main():`
+//! that returns `()` is an entry point, and `is`/`is not` on a `String` is
+//! `science_string_eq` (finding 28). `tests/methods.rs` is twenty-four
+//! programs, nineteen of them built, linked, run and asked what they printed
+//! and what status they exited with.
+//!
+//! Behind those, in the order they were measured: a **generic** function and a
+//! generic type, which nothing monomorphises — which is also what is left of
+//! the method refusal, because an `interface`'s **default body** is one body
+//! per implementor; a call through **`any I`**, which needs Decision 13's
+//! vtable and is now refused as one; §2.6's **runtime containers**, `Array`
+//! and `Map` and `Box`, which need a `ScienceTypeInfo` descriptor this backend
+//! emits none of; **drop glue** for anything that owns something other than a
+//! bare `String`, which is Decision 12's emitted function; and integer `/`,
+//! `%`, `<<` and `>>`, which are refused **deliberately** rather than for want
+//! of an instruction — see [`lower::Lowerer::lower_binary`]. Every refusal is
+//! `SC0400` and names the construct.
 //!
 //! # 1. Why it is a separate crate, and how the workspace builds without LLVM
 //!
@@ -179,10 +204,14 @@
 //!
 //! # 3. What was found by running it
 //!
-//! Twenty-three things that reading could not have established, each recorded
+//! Twenty-eight things that reading could not have established, each recorded
 //! where it bites. The first four were found by writing the crate; the rest
 //! were found by *running* it, which is the difference §10's staging exists to
-//! force.
+//! force. **Twenty-four and twenty-five are the pair to read first if you are
+//! adding a construct**: one is a refusal that had outlived its reason and
+//! blocked the whole corpus, and the other is what was standing behind it —
+//! a symbol collision that links, runs, and prints the wrong function's
+//! answer.
 //!
 //! 1. **Decision 36 is unimplementable through LLVM-C**, which has no
 //!    `TargetOptions` surface at all. [`machine`] is the account and the
@@ -444,8 +473,152 @@
 //!     versions; `tests/printing.rs` runs the program and reads its stdout,
 //!     which is the only instrument that does.
 //!
+//! 24. **The refusal that named a method's receiver as an unresolved `Self`
+//!     was guarding against a shape that does not arrive.** Its sentence was
+//!     *"its receiver is a `Self` this crate cannot resolve to a concrete
+//!     type, and Decision 11's method lookup does not put what it found in the
+//!     tree"*, and both halves are wrong about the program in front of it.
+//!     `science-types`' `Declarations::body_substitution` binds `Self` to the
+//!     implementation block's own type before the body is checked, so MIR's
+//!     `_1` for `Doc has: def is_empty(self)` is a local of type
+//!     `borrowed Doc` — already substituted, already in `Body::params`'s dense
+//!     prefix, already what every statement in the body was lowered against.
+//!     And Decision 11's lookup *does* put what it found in the tree: THIR's
+//!     `MethodCall::method` carries the `DefId`, `science-mir` turns it into a
+//!     `Callee::Def`, and `science-mir`'s §7 item 3 has depended on that since
+//!     `v.push(v.len())` started working.
+//!
+//!     **What the sentence was describing is one block and not all of them.**
+//!     An `interface` records `Self` as `TyKind::SelfType` — *"as its own
+//!     meaning … what makes a default method body check without inventing a
+//!     receiver"* — so a *default body* really is written against a type that
+//!     is different for every implementor, and one body has to become one
+//!     function each. That is monomorphisation, it is above Decision 42's line,
+//!     and it is what the refusal says now.
+//!
+//!     **It is finding 19's shape and the largest instance of it**: a refusal
+//!     that names a construct correctly and hides how little was missing. For
+//!     an inherent or implementation method the missing amount was **nothing**
+//!     — the receiver is a parameter, §4's classifier had always classified
+//!     it, and `lower_science_call` had always passed it — and what that cost
+//!     was nine of the twenty-two programs in `examples/`, which is every one
+//!     whose first refusal was a method call. The guard was written when no
+//!     method *could* be emitted and it outlived its reason silently, which is
+//!     the same way finding 15's `needs_drop` and finding 17's `needs_drop`
+//!     outlived theirs. Two things were genuinely missing and both are small:
+//!     the prelude's own `String` methods have no Science body and needed a
+//!     table naming the `RUNTIME` entry point each one is
+//!     ([`lower::Lowerer::prelude_method`]), and finding 25 was waiting behind
+//!     the refusal.
+//! 25. **Two methods with the same name on two different types mangled to one
+//!     symbol, and the program ran and printed one of them twice.**
+//!     `DefTable::path_of` skips a definition whose name is empty and
+//!     `science-resolve` gives an implementation block exactly that — *"an
+//!     `impl` block has none and carries `\"\"`"* — so `Left has: def value`
+//!     and `Right has: def value` are both `fixture.value`, both
+//!     `_S7fixture5value`, and the module carries two definitions of one
+//!     symbol. LLVM renames the second, every call binds to the first, and
+//!     `print(Left(n: 1).value())` and `print(Right(n: 1).value())` print the
+//!     same number.
+//!
+//!     **It is finding 16's other half.** That one is about the file stem being
+//!     *in* the path when Decision 16 says it should not be; this is about the
+//!     block being *out* of it when it must be in. Both come from the same
+//!     place — codegen mangles a path built for diagnostics — and this one is
+//!     repaired here, in [`lower::Lowerer::path_components`], because what
+//!     codegen needs is a key and not a printable path, and a block has no name
+//!     to print.
+//!
+//!     **It was found by a test, and only by the values in it.** Nothing in the
+//!     IR looks wrong: two functions, two calls, and LLVM's own rename makes
+//!     the module verify. The two methods in `tests/methods.rs` return
+//!     `self.n + 1000` and `self.n + 2000` from the same input, so the wrong
+//!     answer is a different number rather than a different shape — which is
+//!     the instrument findings 12, 18 and 23 all needed and the reason this
+//!     class of mistake has now been found five times.
+//! 26. **`print(x)` and `print(f"{x}")` mean the same thing and only the second
+//!     one reached an executable.** §4.1's `def print(value: borrowed any
+//!     Display)` says `print` *renders*; this crate had one renderer, §1.7's
+//!     builder, and reached it only from an `f"…"` node. So `print(42)` was
+//!     *"a `print` of a value that is not a `String`"* — a refusal naming the
+//!     construct, for a program one desugaring away from working — while
+//!     `print(f"{42}")` built, linked and ran.
+//!
+//!     **The repair is in `science-mir` and not here**, which is the part worth
+//!     recording. The type of the argument is what chooses the entry point, and
+//!     MIR's operand does not carry one: `print(42)` is
+//!     `Operand::Const(Literal::Int)`, whose width is a *suffix* and whose
+//!     absence is the default — so a codegen that picked `science_string_push_i64`
+//!     for it would be choosing a signedness, and `print(18446744073709551615u64)`
+//!     would print `-1`. THIR has the type, `science-mir`'s `Builder::push_of`
+//!     already reads it, and `lower_print_rendered` is four lines that hand the
+//!     argument to the builder as a one-hole `f"…"`. **No renderer was added
+//!     here** — there is still exactly one in the compiler — which is the
+//!     evidence that the two spellings really were one construct.
+//!
+//! 27. **Two more front-end holes, both finding 7's shape, both measured by
+//!     building `examples/` one file at a time.** Neither is this crate's to
+//!     fix and both are recorded because a refusal here is where a user meets
+//!     them.
+//!
+//!     **A `borrowed` scalar is read through a coercion and a
+//!     `mutable borrowed` one is not.** `def f(c: borrowed Int) -> Int: c + 1`
+//!     arrives with `science-types`' `Coercion::Copy` around the operand and
+//!     lowers to `_2 = copy _1 as Copy; _0 = move _2 + 1`. The same function
+//!     written `mutable borrowed` checks clean, gets **no** coercion, and
+//!     lowers to `_0 = move _1 + 1` — a reference as the operand of an
+//!     addition, with the binary's own type then read back as `mutable
+//!     borrowed Int`.
+//!
+//!     `examples/01_functions.science`'s `def bump(counter: mutable borrowed
+//!     Int): counter be counter + 1` is the acceptance case, this is what
+//!     stops it, and it is **the last thing standing between that file and an
+//!     executable**: with the statement removed the rest of the program
+//!     builds, links, runs and prints. §4.7 is *"Science has no dereference
+//!     operator at all"*, so there is no second spelling to reach for —
+//!     `counter be 5` is `SC0525`, *expected `mutable borrowed Int`, found an
+//!     integer literal*, which is the same hole on the assignment's other
+//!     side. The repair is one crate up, in the checker's operand handling and
+//!     in its assignment rule; what this crate owes is a refusal that says so,
+//!     and [`lower::Lowerer::lower_binary`] carries it. Without that arm the
+//!     pointer reaches a constant's layout and the build ends in `SC0402` with
+//!     *"a constant of a type this backend cannot build"* — a message about a
+//!     constant, from below the linker, for a mistake two phases up.
+//!     `science-mir`'s §7 item 15 is the MIR half, written and unreachable
+//!     until the checker's half lands.
+//!
+//!     **`let chosen be if flag: 1 else: 0` binds a local whose `Ty` is
+//!     `TyKind::Error`, with no diagnostic.** `let chosen be if flag: 1i64
+//!     else: 0i64` does not. That is finding 20's mechanism exactly — a type
+//!     read out of an integer literal before inference has defaulted it — met
+//!     at an `if` expression instead of at a tuple, which says the bug is in
+//!     `known_or_error`'s callers generally and not in the `Tuple` arm.
+//!     `examples/13_inline_blocks.science` is refused here for it, by the
+//!     `UNTYPED` message, and the refusal names the phase.
+//!
+//! 28. **`name is not ""` was refused as *"a string literal read as a value"*,
+//!     and the construct it could not name was equality.** §4.6 gives the
+//!     language one spelling of equality and `stdlib-core.md` makes `String
+//!     implements Eq`, so `a is b` on two strings is an ordinary comparison
+//!     whose operands happen to be three words each. It reached
+//!     [`lower::Lowerer::lower_binary`], which asks `scalar_of` for a width;
+//!     the literal beside it reached `lower_operand`, which has no way to
+//!     build a `String` from a constant in an expression position; and the
+//!     refusal that came out named the literal.
+//!
+//!     **What makes it worth a number is what the scalar path would have done
+//!     if it had not refused.** `CmpOp::Eq` on a `{ ptr, len, cap }` compares
+//!     *pointers*, which answers *"is this the same buffer"* and not *"is this
+//!     the same text"* — so two strings with equal bytes in two allocations
+//!     would have been unequal, and nothing in the IR, the verifier or the
+//!     linker distinguishes the two questions. That is the family of findings
+//!     12, 18 and 23 again: a wrongness the representation cannot express.
+//!     `science_string_eq` is in `RUNTIME` and compares the bytes;
+//!     `tests/methods.rs`'s `string_equality_compares_bytes_and_not_buffers`
+//!     builds the two operands in two allocations for exactly that reason.
+//!
 //! **And nine was itself found this way**, which is the point of the list: the
-//! numbering has grown seven times and each entry is something the notes did
+//! numbering has grown eight times and each entry is something the notes did
 //! not say. Eleven, twelve, thirteen and eighteen were all found by *running* a
 //! program — none of them changes the IR in a way that looks wrong, and twelve
 //! and eighteen both pass the verifier, which is the pair that says opaque
@@ -454,7 +627,11 @@
 //! wrong about the caller that arrived later. Nineteen is the other recurring
 //! shape: a refusal that names a construct correctly and hides how little was
 //! missing — and twenty is that shape's consequence, because a refusal that
-//! hides how little was missing also hides what was standing behind it.
+//! hides how little was missing also hides what was standing behind it —
+//! and **twenty-four is that shape's largest instance and twenty-eight its
+//! smallest**, one a refusal that blocked every program in the corpus for a
+//! reason that was not true of any of them, the other a refusal that named a
+//! literal when what it could not build was equality.
 //!
 //! **Twelve, eighteen and twenty-three are one family and it is the family to
 //! read first if you are changing an operand.** Twelve is a width the opaque

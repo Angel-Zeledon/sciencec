@@ -277,10 +277,13 @@ pub const ERROR_MESSAGE: &str = "error: the script returned an error, and this c
 /// a range was refused with a sentence about a function it does not call. A
 /// refusal that names the wrong construct is worse than one that names two.
 const UNTYPED: &str = "a value the front end left untyped: its `Ty` is `TyKind::Error` and no \
-                       diagnostic was reported for it. The three this compiler has met are a call \
+                       diagnostic was reported for it. The four this compiler has met are a call \
                        to `print` or `write`, whose signatures `science-resolve`'s `builtins.rs` \
-                       withdrew; a `for` loop's range and iterator temporaries; and a \
-                       discriminant temporary, which is handled rather than refused";
+                       withdrew; a `for` loop's range and iterator temporaries; a binding whose \
+                       value is an `if` expression over integer literals — `let n be if f: 1 \
+                       else: 0`, which `let n be if f: 1i64 else: 0i64` fixes and which is §3's \
+                       finding 20 met at an `if` rather than at a tuple; and a discriminant \
+                       temporary, which is handled rather than refused";
 
 /// How deep [`Lowerer::cg_ty`] follows a type before it gives up.
 ///
@@ -320,11 +323,12 @@ impl Unlowered {
         construct_not_lowered(
             &self.construct,
             "this `sciencec` implements §10's stages 0 to 3 of `codegen-and-linking.md` and some \
-             of what comes after — a script body, string literals and `print`, `extern \"C\"` \
-             declarations and the calls to them, the CFG, scalar arithmetic, functions with \
-             parameters, records, `choice`s and `match`, `T?`, and drops of values that own \
-             nothing — and refuses everything else rather than lowering a construct no execution \
-             test has ever run",
+             of what comes after — a script body, string literals and `print` of anything the \
+             `f\"…\"` builder renders, `extern \"C\"` declarations and the calls to them, the \
+             CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, \
+             `T?`, methods and associated functions on a concrete type, the prelude's `String` \
+             methods, and drops of values that own nothing — and refuses everything else rather \
+             than lowering a construct no execution test has ever run",
         )
     }
 }
@@ -1143,6 +1147,29 @@ impl<'a> Lowerer<'a> {
                 continue;
             }
             let signature = self.science_signature(body)?;
+            // **Two definitions, one symbol, and nothing else would notice.**
+            // A module with two `define`s of one name links: LLVM renames the
+            // second, every call resolves to the first, and the program runs
+            // and prints one function's answer twice. That is finding 25's
+            // failure mode and it is worse than a linker error, so the class is
+            // closed from both ends — [`Lowerer::path_components`] gives a
+            // method the name of the type it belongs to, and this refuses
+            // whatever that still does not separate rather than emitting it.
+            if let Some(other) = self
+                .science
+                .iter()
+                .find(|(_, existing)| existing.symbol == signature.symbol)
+                .map(|(def, _)| *def)
+            {
+                return Err(Unlowered::new(format!(
+                    "two definitions that mangle to one symbol, `{}`: `{}` and `{}`. Decision 16 \
+                     builds a symbol out of the definition's path, and the path of a method runs \
+                     through a block `science-resolve` leaves unnamed",
+                    signature.symbol,
+                    self.defs.path_of(other),
+                    self.defs.path_of(body.def()),
+                )));
+            }
             self.science.insert(body.def(), signature);
         }
 
@@ -1175,8 +1202,11 @@ impl<'a> Lowerer<'a> {
     /// carries, and the two disagreeing is a signature mismatch that links.
     ///
     /// `Declarations` is still consulted, for the two shapes MIR cannot
-    /// distinguish and this backend cannot emit: a generic function and a
-    /// method.
+    /// distinguish and this backend cannot emit: a generic function, and the
+    /// **default body** of a method an `interface` declares — which is the one
+    /// method whose receiver really is a `Self` with no concrete type behind
+    /// it. Every other method's receiver arrives here already substituted and
+    /// is lowered as the ordinary parameter it is.
     ///
     /// **No parameter attributes are emitted, and that is finding 14 rather
     /// than laziness.** Decision 24 wants `readonly nocapture` on a shared
@@ -1201,12 +1231,47 @@ impl<'a> Lowerer<'a> {
                          runs it yet"
                     )));
                 }
+                // **A method's receiver is a parameter like any other, and the
+                // one thing that made it not one was a guess.** This used to
+                // refuse every method outright, saying *"its receiver is a
+                // `Self` this crate cannot resolve to a concrete type"*. That
+                // sentence is false for an inherent or implementation method
+                // and was finding 24: MIR's `_1` for `Doc has: def is_empty
+                // (self)` has type `borrowed Doc`, already substituted by
+                // `science-types`' body substitution, so there was never a
+                // `Self` here to resolve.
+                //
+                // **What is left is the one block where `Self` really does
+                // stand**, and `Declarations::self_ty` is how it is asked
+                // rather than guessed: an `interface` block records `Self` as
+                // `TyKind::SelfType` *"as its own meaning … what makes a
+                // default method body check without inventing a receiver"*,
+                // and an implementation block records the type it was written
+                // for. A default body is therefore one body per interface and
+                // needs one *copy* per implementor, which is
+                // monomorphisation and is above Decision 42's line.
+                //
+                // **The cost is that the refusal moved and did not shrink.** A
+                // generic implementation block — `Grid of T has:` — has a
+                // concrete-looking `Self` of `Grid of T` and is caught below,
+                // by `layout_of_ty` refusing `TyKind::Param`, which names the
+                // parameter rather than the method. That is one refusal for
+                // two causes and it is the same one a generic free function
+                // gets.
                 if signature.self_param.is_some() {
-                    return Err(Unlowered::new(format!(
-                        "a call to the method `{name}`: its receiver is a `Self` this crate \
-                         cannot resolve to a concrete type, and Decision 11's method lookup does \
-                         not put what it found in the tree"
-                    )));
+                    let owner_self = signature.owner.and_then(|owner| decls.self_ty(owner));
+                    if matches!(owner_self, Some(ty) if matches!(self.types.kind(ty), TyKind::SelfType { .. }))
+                    {
+                        let owner = signature.owner.expect("`self_ty` answered for it");
+                        let interface = self.defs.get(owner).name.clone();
+                        return Err(Unlowered::new(format!(
+                            "a call to `{name}`, the default body a method declared on \
+                             `interface {interface}` carries: its `self` is `Self`, which is a \
+                             different concrete type in every implementation, so one body has to \
+                             become one function per implementor — which is monomorphisation, \
+                             and Decision 42 puts that walk above this crate"
+                        )));
+                    }
                 }
             }
         }
@@ -1254,12 +1319,73 @@ impl<'a> Lowerer<'a> {
         if self.entry == Some(def) {
             return mangle(&MonoKey::plain(&["main"]));
         }
-        let path = self.defs.path_of(def);
-        let components: Vec<&str> = path.split('.').filter(|part| !part.is_empty()).collect();
-        if components.is_empty() {
+        let parts = self.path_components(def);
+        if parts.is_empty() {
             return mangle(&MonoKey::plain(&[self.defs.get(def).name.as_str()]));
         }
+        let components: Vec<&str> = parts.iter().map(|part| part.as_str()).collect();
         mangle(&MonoKey::plain(&components))
+    }
+
+    /// `DefTable::path_of`'s walk, with an implementation block named after the
+    /// type it was written for.
+    ///
+    /// **This is finding 25 and it was a symbol collision that ran.**
+    /// `path_of` skips a definition whose name is empty, and `science-resolve`
+    /// gives an implementation block exactly that: *"an `impl` block has none
+    /// and carries `\"\"`"*. So `Left has: def value` and `Right has: def
+    /// value` both have the path `fixture.value`, both mangle to
+    /// `_S7fixture5value`, and the module gets two definitions of one symbol —
+    /// which links, runs, and calls the first of them for both. Two types with
+    /// a method of the same name is the most ordinary program in the language.
+    ///
+    /// **The type's name is the distinguishing component and it is read from
+    /// `Declarations::self_ty`**, which is the same answer
+    /// [`Lowerer::science_signature`] asks for and the one Decision 16 wants:
+    /// *"deterministic from the source alone"*, with no hash and no `DefId`
+    /// anywhere in it. `Doc has:` contributes `Doc`.
+    ///
+    /// **It is not repaired in `path_of`**, although that is where the hole is:
+    /// that function is `science-resolve`'s, its answer is a user-visible path
+    /// that diagnostics print, and a block has no name to print. What codegen
+    /// needs is a *key*, which is a different question with a different right
+    /// answer.
+    ///
+    /// **What it still does not separate**, and [`Lowerer::lower_crate`]'s
+    /// duplicate check is the other half: two blocks for the same type — `Doc
+    /// has:` beside `Doc implements Sized:`, or two `implements` blocks for two
+    /// interfaces — contribute the same component, so two methods of one name
+    /// on one type still collide. Every such program is an ambiguity
+    /// `science-types`' `methods`' §6 reports at the call site, so nothing that
+    /// checks clean can reach it; the duplicate check is there because *"nothing
+    /// can reach it"* is the sentence this finding is about.
+    fn path_components(&self, def: DefId) -> Vec<String> {
+        let mut parts: Vec<String> = Vec::new();
+        let mut cursor = Some(def);
+        while let Some(current) = cursor {
+            let entry = self.defs.get(current);
+            if entry.kind == DefKind::Impl {
+                if let Some(name) = self.block_type_name(current) {
+                    parts.push(name);
+                }
+            } else if !entry.name.is_empty() {
+                parts.push(entry.name.clone());
+            }
+            cursor = entry.parent;
+        }
+        parts.reverse();
+        parts
+    }
+
+    /// The name of the type an implementation block was written for.
+    fn block_type_name(&self, block: DefId) -> Option<String> {
+        let ty = self.decls?.self_ty(block)?;
+        match self.types.kind(ty) {
+            TyKind::Named { def, .. } => Some(self.defs.get(*def).name.clone()),
+            TyKind::Object { interface, .. } => Some(self.defs.get(*interface).name.clone()),
+            TyKind::SelfType { owner } => Some(self.defs.get(*owner).name.clone()),
+            _ => None,
+        }
     }
 
     /// The literals and declarations interned so far, with `definitions`,
@@ -1757,14 +1883,25 @@ impl<'a> Lowerer<'a> {
         if !place.projection.is_empty() {
             return Err(Unlowered::new("a discriminant read written through a field"));
         }
-        if !source.projection.is_empty() {
-            return Err(Unlowered::new(
-                "a discriminant read through a field or an index: the tag is loaded from a \
-                 local's own address and this instruction set has no typed load from a computed \
-                 one",
-            ));
-        }
-        let source_ty = body.local_decl(source.local).ty;
+        // **The tag is at offset 0, always** — Decision 18 — so a projected
+        // source needs the address of the `choice` and nothing more. This used
+        // to refuse every one of them, saying *"this instruction set has no
+        // typed load from a computed one"*; [`ExtInst::LoadAt`] is exactly
+        // that and has been since records landed. What made the refusal
+        // reachable is `science-mir`'s §4 dereference on a `match` scrutinee:
+        // `match format:` where `format` is a `borrowed Format` is
+        // `discriminant((*_1))`, which is the spelling every `def
+        // name_of(format: borrowed Format)` in the corpus produces.
+        let source_ty = match source.projection.last() {
+            None => body.local_decl(source.local).ty,
+            Some(mir::Projection::Downcast { .. }) => {
+                return Err(Unlowered::new(
+                    "a discriminant read of a value that has already been downcast to one \
+                     variant: the tag it would load is the one the downcast assumed",
+                ));
+            }
+            Some(projection) => projection.ty(),
+        };
         let choice = match self.types.kind(source_ty) {
             TyKind::Named { def, .. } if self.defs.get(*def).kind == DefKind::Choice => *def,
             _ => {
@@ -1798,15 +1935,33 @@ impl<'a> Lowerer<'a> {
                     local: dest,
                     layout: tag_layout.clone(),
                 }));
-                ctx.layouts.insert(dest.0, tag_layout);
+                ctx.layouts.insert(dest.0, tag_layout.clone());
             }
         }
         ctx.discriminants.insert(dest.0, choice);
 
-        let source_id = LocalId(source.local.index() as u32);
-        ctx.layout(source_id)?;
         let value = ctx.value();
-        insts.push(ExtInst::LoadTag { dest: value, local: source_id });
+        if source.projection.is_empty() {
+            let source_id = LocalId(source.local.index() as u32);
+            ctx.layout(source_id)?;
+            insts.push(ExtInst::LoadTag { dest: value, local: source_id });
+        } else {
+            let (address, at) = self.place_address(ctx, source, insts)?;
+            // The same question [`ExtInst::LoadTag`] asks of a local, asked of
+            // the projected place instead: a niched layout has no tag to load
+            // and reading one would branch a `switch` on an address.
+            if !matches!(at.repr, Repr::Tagged { .. }) {
+                return Err(Unlowered::new(
+                    "a discriminant read through a projection whose layout is not Decision 18's \
+                     tagged one",
+                ));
+            }
+            insts.push(ExtInst::LoadAt {
+                dest: value,
+                address: Operand::Value(address),
+                layout: tag_layout.clone(),
+            });
+        }
         insts.push(ExtInst::Above(Inst::Store { local: dest, value: Operand::Value(value) }));
         Ok(())
     }
@@ -2565,6 +2720,43 @@ impl<'a> Lowerer<'a> {
                      no destination names",
                 )
             })?;
+        // **`is` and `is not` on a `String` are a runtime call and not an
+        // instruction**, and this is the arm that says so before `scalar_of`
+        // refuses the aggregate. §4.6 gives the language one spelling of
+        // equality and `stdlib-core.md` makes `String implements Eq`, so
+        // `name is not ""` — `examples/01_functions.science`'s — is an
+        // ordinary comparison whose operands happen to be three words each.
+        // `science_string_eq` is `RUNTIME`'s and compares the bytes.
+        if self.is_string(self.referent(operand_ty)) {
+            return self.lower_string_comparison(ctx, op, lhs, rhs, dest, insts);
+        }
+        // **A reference as the operand of an operator is a front-end hole, and
+        // this is where a user meets it.** §3's finding 27: `science-types`
+        // wraps a *shared* borrow of a scalar in a `Coercion::Copy` before it
+        // reaches an operator and does not wrap an *exclusive* one, so
+        // `def bump(counter: mutable borrowed Int): counter be counter + 1` —
+        // which is `examples/01_functions.science`'s and which §4.7 gives the
+        // author no other way to write — arrives here as `_1 + 1` with `_1`
+        // holding a pointer.
+        //
+        // **Refused by name rather than by accident.** Without this arm the
+        // pointer reaches `typed_operand`, the constant beside it is given a
+        // pointer layout, and the build ends in `SC0402` with *"a constant of a
+        // type this backend cannot build"* — a message about a constant, from
+        // below the linker, for a mistake two phases up. Decision 19 makes a
+        // pointer a scalar, so nothing between here and LLVM would have
+        // objected on its own.
+        if let TyKind::Borrowed { mutable, .. } = *self.types.kind(operand_ty) {
+            let written = if mutable { "mutable borrowed" } else { "borrowed" };
+            return Err(Unlowered::new(format!(
+                "`{}` applied to a `{written} {}`: an operator reads its operands and this one is \
+                 a reference. `science-types` inserts the dereferencing coercion for a shared \
+                 borrow of a scalar and not for an exclusive one, so the operand reaches this \
+                 crate as a pointer — a hole above Decision 42's line, not below it",
+                op.as_str(),
+                self.render_referent(operand_ty)
+            )));
+        }
         let scalar = self.scalar_of(operand_ty)?;
         let operand_layout = layout_of(self.target, &self.cg_ty(operand_ty)?);
         let signed = match scalar {
@@ -2694,6 +2886,164 @@ impl<'a> Lowerer<'a> {
             None => Some(body.local_decl(place.local).ty),
             Some(mir::Projection::Downcast { .. }) => None,
             Some(projection) => Some(projection.ty()),
+        }
+    }
+
+    /// A type with one enclosing borrow taken off.
+    ///
+    /// [`Lowerer::render_referent`] is the same walk for a message; this is it
+    /// for a question, and the two are separate because one returns a string a
+    /// user reads and the other a `Ty` a predicate asks about.
+    fn referent(&self, ty: Ty) -> Ty {
+        match self.types.kind(ty) {
+            TyKind::Borrowed { inner, .. } => *inner,
+            _ => ty,
+        }
+    }
+
+    /// `a is b` and `a is not b` on a `String`: `science_string_eq`.
+    ///
+    /// **The decision. Equality on a `String` is a call, and `is not` is that
+    /// call and one `icmp`.** `science_string_eq` takes two `*const
+    /// ScienceString` and compares the bytes; there is no
+    /// `science_string_ne`, and inverting the answer here is cheaper and
+    /// shorter than a second entry point.
+    ///
+    /// **The reason it is not the scalar path.** `CmpOp::Eq` on a three-word
+    /// aggregate is not an instruction LLVM has, and the layout is
+    /// `{ ptr, len, cap }` — so a comparison that reached [`Inst::Cmp`] would
+    /// be comparing *pointers*, which answers *"are these the same buffer"*
+    /// and not *"are these the same text"*. Two strings with equal bytes and
+    /// different allocations are `is` and would have compared unequal, and
+    /// nothing in the IR or the verifier distinguishes the two questions.
+    ///
+    /// **Only `is` and `is not`.** `<` and `>` on a `String` are
+    /// `stdlib-core.md`'s `Ord` and `science_string_cmp` exists for them, but
+    /// the ordering the runtime implements is a byte ordering and no note in
+    /// this repository says that is the ordering the language means; a
+    /// collation question answered by whichever function was nearest is the
+    /// kind of guess §11 exists to refuse.
+    ///
+    /// **A literal operand is Decision 15's temporary and it is freed here.**
+    /// `"" ` has no MIR local, so this call site builds the `ScienceString`,
+    /// compares it, and releases it before the result is stored — the same
+    /// build/use/free trio [`Lowerer::lower_print`] emits for `print("…")`, and
+    /// for the same reason: nothing else in the program can own it.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_string_comparison(
+        &mut self,
+        ctx: &mut BodyCtx,
+        op: BinaryOp,
+        lhs: &mir::Operand,
+        rhs: &mir::Operand,
+        dest: LocalId,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        if !matches!(op, BinaryOp::Eq | BinaryOp::Ne) {
+            return Err(Unlowered::new(format!(
+                "`{}` on a `String`: `science_string_cmp` is in `RUNTIME` and orders by bytes, \
+                 and no note in this repository says a byte ordering is the ordering \
+                 `stdlib-core.md`'s `String implements Ord` means",
+                op.as_str()
+            )));
+        }
+        let (left, left_temp) = self.string_pointer(ctx, lhs, insts)?;
+        let (right, right_temp) = self.string_pointer(ctx, rhs, insts)?;
+        let equal = self.declare("science_string_eq")?;
+        let value = ctx.value();
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: Some(value),
+            callee: Callee::Runtime("science_string_eq"),
+            args: vec![Operand::Value(left), Operand::Value(right)],
+            ret: equal.ret.clone(),
+            sret_slot: None,
+        }));
+        for slot in [left_temp, right_temp].into_iter().flatten() {
+            let free = self.declare("science_string_free")?;
+            let address = ctx.value();
+            insts.push(ExtInst::LocalAddr { dest: address, local: slot });
+            insts.push(ExtInst::Above(Inst::Call {
+                dest: None,
+                callee: Callee::Runtime("science_string_free"),
+                args: vec![Operand::Value(address)],
+                ret: free.ret.clone(),
+                sret_slot: None,
+            }));
+        }
+        let result = if op == BinaryOp::Eq {
+            value
+        } else {
+            // The same negation `UnaryOp::Not` emits, and the only one this
+            // instruction set has: a comparison against zero.
+            let negated = ctx.value();
+            insts.push(ExtInst::Above(Inst::Cmp {
+                dest: negated,
+                op: CmpOp::Eq,
+                signed: false,
+                lhs: Operand::Value(value),
+                rhs: Operand::ConstInt(0),
+            }));
+            negated
+        };
+        insts.push(ExtInst::Above(Inst::Store { local: dest, value: Operand::Value(result) }));
+        Ok(())
+    }
+
+    /// One operand of a `String` comparison, as the `*const ScienceString` the
+    /// entry point wants.
+    ///
+    /// The second half of the answer is the slot this call site has to free, if
+    /// it built one. Three shapes reach here and they are the three
+    /// [`Lowerer::lower_print`] already distinguishes: a literal, which is a
+    /// temporary this crate owns; a place whose slot *holds* a pointer, which
+    /// is a `borrowed String` and whose value is the argument; and a place that
+    /// *is* a `String`, whose address is.
+    ///
+    /// **A `Move` of a whole `String` is refused rather than compared.** MIR
+    /// spells a read of a non-`Copy` place as a move, so `s is ""` where `s` is
+    /// an owned `String` arrives with its only owner consumed by a comparison
+    /// that does not consume anything — drop elaboration has deleted the
+    /// binding's `Drop` and nothing here would free it. That is finding 23's
+    /// shape with the leak on the other side, and the repair is a `copy` one
+    /// phase up rather than a `science_string_free` guessed at here.
+    fn string_pointer(
+        &mut self,
+        ctx: &mut BodyCtx,
+        operand: &mir::Operand,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(ValueId, Option<LocalId>), Unlowered> {
+        match operand {
+            mir::Operand::Const(Constant::Literal(Literal::Str(text))) => {
+                let layout = layout_of(self.target, &RtAggregate::String.cg_ty());
+                let slot = self.temp(ctx, layout);
+                self.build_string(text, slot, insts)?;
+                let address = ctx.value();
+                insts.push(ExtInst::LocalAddr { dest: address, local: slot });
+                Ok((address, Some(slot)))
+            }
+            mir::Operand::Copy(place) | mir::Operand::Move(place) => {
+                let (address, layout) = self.place_address(ctx, place, insts)?;
+                if matches!(layout.repr, Repr::Scalar(Scalar::Pointer(_))) {
+                    let pointer = ctx.value();
+                    insts.push(ExtInst::LoadAt {
+                        dest: pointer,
+                        address: Operand::Value(address),
+                        layout,
+                    });
+                    return Ok((pointer, None));
+                }
+                if matches!(operand, mir::Operand::Move(_)) {
+                    return Err(Unlowered::new(
+                        "a comparison that MIR spells as a `move` of a whole `String`: a \
+                         comparison reads and does not consume, so the operand should be a \
+                         `copy` and the buffer's release should stay with the binding's `Drop`",
+                    ));
+                }
+                Ok((address, None))
+            }
+            _ => Err(Unlowered::new(
+                "a `String` compared against an operand that is neither a literal nor a place",
+            )),
         }
     }
 
@@ -3125,11 +3475,29 @@ impl<'a> Lowerer<'a> {
         if self.defs.get(def).kind == DefKind::ExternFn {
             self.lower_foreign_call(ctx, def, args, destination, insts)?;
         } else if self.defs.get(def).is_builtin() && self.defs.get(def).name == "print" {
-            self.lower_print(ctx, args, insts)?;
+            self.lower_print(body, ctx, args, insts)?;
         } else if let Some(sig) = self.science.get(&def).cloned() {
             self.lower_science_call(ctx, &sig, args, destination, insts)?;
+        } else if let Some(symbol) = self.prelude_method(def) {
+            self.lower_runtime_call(ctx, symbol, args, destination, insts)?;
         } else {
             let name = self.defs.get(def).name.clone();
+            // **Decision 13's vtable, named as itself.** A method the lookup
+            // resolved to a declaration inside an `interface` block, with no
+            // body anywhere, is a call through `any I` and nothing else: a
+            // receiver whose type is concrete selects the implementation's own
+            // method (`science-types`' `methods`'s `head` answers the
+            // interface only for a `TyKind::Object`), and an interface method
+            // that *has* a default body is refused one layer up, at its
+            // signature. So this arm is dynamic dispatch, and saying so is
+            // worth more than saying there is no body.
+            if let Some(interface) = self.declaring_interface(def) {
+                return Err(Unlowered::new(format!(
+                    "a call to the method `{name}` through `any {interface}`: Decision 13 \
+                     dispatches it through a vtable and this backend emits none — there is one \
+                     body per implementation and the receiver is the only thing that says which"
+                )));
+            }
             // Reachable and not in the table means the walk did not see it,
             // which for a `Callee::Def` means the crate has no body for it: a
             // builtin with no signature, or a declaration `science-mir`
@@ -3179,11 +3547,51 @@ impl<'a> Lowerer<'a> {
     /// they run the program and read what it wrote.
     fn lower_print(
         &mut self,
+        body: &MirBody,
         ctx: &mut BodyCtx,
         args: &[mir::Operand],
         insts: &mut Vec<ExtInst>,
     ) -> Result<(), Unlowered> {
         let string_layout = layout_of(self.target, &RtAggregate::String.cg_ty());
+        // **A `borrowed String` is already the pointer `science_print` wants**,
+        // and it is the one operand shape that is neither a slot this call site
+        // built nor a slot it can take the address of: the local holds the
+        // address of somebody else's `ScienceString`, so the value in the slot
+        // *is* the argument and there is nothing here to free. `def longest(a:
+        // borrowed String, …) -> borrowed String` returns one, which is how it
+        // reaches `print`.
+        //
+        // **The type is checked and not the layout**, for [`Lowerer::is_string`]'s
+        // reason one level out: a `borrowed Doc` has the same `Ptr` layout and
+        // handing its address to `science_print` reads a record's first three
+        // words as a `{ ptr, len, cap }`.
+        if let [operand @ (mir::Operand::Move(place) | mir::Operand::Copy(place))] = args {
+            let borrowed_string = self
+                .operand_ty(body, operand)
+                .map(|ty| match self.types.kind(ty) {
+                    TyKind::Borrowed { inner, .. } => self.is_string(*inner),
+                    _ => false,
+                })
+                .unwrap_or(false);
+            if borrowed_string {
+                let (address, layout) = self.place_address(ctx, place, insts)?;
+                let pointer = ctx.value();
+                insts.push(ExtInst::LoadAt {
+                    dest: pointer,
+                    address: Operand::Value(address),
+                    layout,
+                });
+                let print = self.declare("science_print")?;
+                insts.push(ExtInst::Above(Inst::Call {
+                    dest: None,
+                    callee: Callee::Runtime("science_print"),
+                    args: vec![Operand::Value(pointer)],
+                    ret: print.ret.clone(),
+                    sret_slot: None,
+                }));
+                return Ok(());
+            }
+        }
         // `frees` is the decision above, taken here where all three operand
         // shapes are in view rather than at the call that emits it.
         let (slot, frees) = match args {
@@ -3203,15 +3611,18 @@ impl<'a> Lowerer<'a> {
                 let local = LocalId(place.local.index() as u32);
                 let layout = ctx.layout(local)?.clone();
                 if layout != string_layout {
-                    return Err(Unlowered::new(
-                        "a `print` of a value that is not a `String`: `print` takes \
-                         `borrowed any Display`, this backend emits no vtables, and there is no \
-                         `display` method on `Display` to call through even if it did",
-                    ));
+                    return Err(Unlowered::new(self.undisplayable(body, &args[0])));
                 }
                 (local, matches!(args[0], mir::Operand::Move(_)))
             }
-            _ => return Err(Unlowered::new("a `print` of anything but a `String`")),
+            [operand] => return Err(Unlowered::new(self.undisplayable(body, operand))),
+            _ => {
+                return Err(Unlowered::new(
+                    "a `print` of something other than one value: §4.1 declares \
+                     `def print(value: borrowed any Display)` and this call has a different \
+                     number of arguments",
+                ));
+            }
         };
 
         // The address of the slot, which is the operand the interface above the
@@ -3239,6 +3650,35 @@ impl<'a> Lowerer<'a> {
             }));
         }
         Ok(())
+    }
+
+    /// A `print` of something the one renderer in this compiler cannot render,
+    /// named by its **type**.
+    ///
+    /// **The refusal used to name the construct and it named the wrong one.**
+    /// It read *"a `print` of a value that is not a `String`"*, which is true
+    /// of `print(42)` — a program that builds now — and tells the author of
+    /// `print(doc)` nothing they did not know. What is missing is a renderer,
+    /// the renderer is §1.7's builder, and the builder's coverage is a list of
+    /// `science_string_push_*` entry points, so the useful sentence names the
+    /// type that is not on it. This is the same repair and the same wording
+    /// `mir::Unresolved::Display`'s arm already carries one call over.
+    fn undisplayable(&self, body: &MirBody, operand: &mir::Operand) -> String {
+        let named = self.operand_ty(body, operand).map(|ty| self.render_referent(ty));
+        match named {
+            Some(name) => format!(
+                "a `print` of a value of type `{name}`: §4.1 declares `print` as \
+                 `def print(value: borrowed any Display)` and the only renderer in this compiler \
+                 is §1.7's builder, whose entry points cover `Int`/`I64`, `U64`, `F64`, `F32`, \
+                 `Bool`, `Char` and `String`. §3.1's `Formatter` — which is what a user type \
+                 would render through — is specified by no note and declared by no prelude, and \
+                 this backend emits no vtable to reach one with"
+            ),
+            None => "a `print` of a value whose type this crate cannot name: `print` renders \
+                     through `Display`, the only renderer is §1.7's builder, and its entry \
+                     points cover the prelude's scalars and `String`"
+                .to_string(),
+        }
     }
 
     /// A call MIR makes to a `science-rt` entry point by name.
@@ -3358,6 +3798,89 @@ impl<'a> Lowerer<'a> {
             )));
         }
         self.emit_result(ctx, Callee::Runtime(entry.symbol), &sig.ret, lowered, destination, insts)
+    }
+
+    /// The interface a method was **declared** on, when that is where the call
+    /// resolved to.
+    ///
+    /// `None` for an inherent method, for a method written inside an
+    /// `implements` block, and for anything that is not a method at all —
+    /// `Signature::owner` is the *block* a method belongs to, and only an
+    /// `interface` block has [`DefKind::Interface`].
+    fn declaring_interface(&self, def: DefId) -> Option<String> {
+        let owner = self.decls?.signature(def)?.owner?;
+        (self.defs.get(owner).kind == DefKind::Interface)
+            .then(|| self.defs.get(owner).name.clone())
+    }
+
+    /// The `science-rt` entry point a **prelude** method is, if it is one.
+    ///
+    /// # The decision
+    ///
+    /// A method the prelude declares and gives no body to is lowered to the
+    /// [`RUNTIME`] symbol that implements it, from a closed table written out
+    /// here.
+    ///
+    /// # The reason
+    ///
+    /// `science-resolve`'s `builtins.rs` declares `String has: def length
+    /// (self) -> Int` and stops — there is no Science body anywhere, and there
+    /// cannot be one, because the answer is a field of a `ScienceString` and
+    /// Science has no way to name it. So the call arrives as a
+    /// [`mir::Callee::Def`] with nothing behind it, and the two honest answers
+    /// are this table or a refusal. `science-rt` already exports every one of
+    /// these under `#[no_mangle]`, `science_codegen::runtime::RUNTIME`
+    /// already declares each with a classified signature, and
+    /// `tests/symbols.rs` already checks the two against each other — so what
+    /// is missing is only the sentence that says which Science name means
+    /// which symbol.
+    ///
+    /// **It is keyed on the block's `Self` and on the name, and both halves are
+    /// required.** A user may write `type String:` of their own and give it a
+    /// `length`; [`Declarations::self_ty`] of the *block* is what says whether
+    /// the receiver is the prelude's, and `is_builtin` on the method is what
+    /// says the declaration came from the prelude rather than from a user's
+    /// `String has:` extension. Keying on the method name alone is
+    /// [`Lowerer::cg_ty`]'s restricted name lookup without `cg_ty`'s excuse.
+    ///
+    /// # The cost
+    ///
+    /// **This table is hand-maintained and the one in `RUNTIME` is derived**,
+    /// which is §9.2's shape with the two halves one crate apart: a prelude
+    /// method added to `builtins.rs` is not added here, and the symptom is a
+    /// refusal rather than a wrong answer. `tests/methods.rs` pins each row by
+    /// running a program that prints what the entry point returned, so a row
+    /// that names the wrong symbol fails on the number and not on the shape.
+    ///
+    /// **Four rows and not thirty.** Every other prelude method either needs
+    /// §2.6's `ScienceTypeInfo` descriptor, which this backend emits none of
+    /// (`Array`, `Map`, `Box`), or has no `RUNTIME` entry point at all. A row
+    /// is added when a program that runs it is added with it.
+    fn prelude_method(&self, def: DefId) -> Option<&'static str> {
+        /// `(the block's `Self`, the method) -> the entry point`.
+        const PRELUDE_METHODS: &[(&str, &str, &str)] = &[
+            ("String", "length", "science_string_len"),
+            ("String", "is_empty", "science_string_is_empty"),
+            ("String", "new", "science_string_new"),
+            ("String", "push_str", "science_string_push_str"),
+        ];
+        if !self.defs.get(def).is_builtin() {
+            return None;
+        }
+        let owner = self.decls?.signature(def)?.owner?;
+        let self_ty = self.decls?.self_ty(owner)?;
+        let TyKind::Named { def: receiver, args } = self.types.kind(self_ty) else {
+            return None;
+        };
+        if !args.is_empty() || !self.defs.get(*receiver).is_builtin() {
+            return None;
+        }
+        let receiver = self.defs.get(*receiver).name.as_str();
+        let method = self.defs.get(def).name.as_str();
+        PRELUDE_METHODS
+            .iter()
+            .find(|(ty, name, _)| *ty == receiver && *name == method)
+            .map(|(_, _, symbol)| *symbol)
     }
 
     /// A call to another Science function: Decision 22's private convention.
@@ -3642,10 +4165,50 @@ impl<'a> Lowerer<'a> {
             foreign: false,
             nounwind: true,
         };
+        // **An entry point that cannot fail is rows 1 to 3 and no branch.**
+        // §2.3's table is written about the *script body*, whose signature that
+        // note fixes at `def main() -> Error?`; a file that writes `def main():`
+        // out by hand returns `()`, `sciencec check` accepts it, and the core
+        // spec's §11 — as §2.3 itself records — *"never says what signatures
+        // `main` may have"*. So there is no error to test, the failing row is
+        // unreachable by construction rather than by analysis, and the C `main`
+        // is the call and `science_exit(0)`.
+        //
+        // **`science_exit(0)` and not `ret i32 0`**, for the same reason the
+        // `ok` block below gives: the process's last `write` may be sitting in
+        // `science-rt`'s own `LineWriter`, which the C runtime's exit does not
+        // know about.
+        if matches!(science_main.ret, ReturnClass::Void) {
+            let exit = self.declare("science_exit")?;
+            let entry = ExtBlock {
+                id: BlockId(0),
+                label: "entry".to_string(),
+                insts: vec![
+                    ExtInst::Above(Inst::Call {
+                        dest: None,
+                        callee: Callee::Science(science_main.symbol.clone()),
+                        args: vec![],
+                        ret: science_main.ret.clone(),
+                        sret_slot: None,
+                    }),
+                    ExtInst::Above(Inst::Call {
+                        dest: None,
+                        callee: Callee::Runtime("science_exit"),
+                        args: vec![Operand::ConstInt(0)],
+                        ret: exit.ret.clone(),
+                        sret_slot: None,
+                    }),
+                ],
+                terminator: Terminator::Unreachable,
+            };
+            return Ok((sig, ExtBody { blocks: vec![entry] }));
+        }
         if !science_main.ret.is_sret() {
             return Err(Unlowered::new(
-                "an entry point whose `Error?` does not come back through `sret`; stage 1 only \
-                 knows the two-word interface object",
+                "an entry point whose return is neither `()` nor an `Error?` through `sret`: \
+                 `script-mode.md` §2.3 fixes the script body's signature at `def main() -> \
+                 Error?` and a hand-written `def main():` returns `()`, and this backend knows \
+                 those two and no third",
             ));
         }
         let slot = LocalId(0);
