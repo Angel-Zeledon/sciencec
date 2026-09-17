@@ -351,7 +351,9 @@ use crate::methods::{Candidate, Form, Found};
 use crate::narrow::{self, Fact, Facts};
 use crate::normal::AtomOrder;
 use crate::subst::Substitution;
-use crate::thir::{self, Block, Body, ExprId, ExprKind, PatId, PatKind, Stmt, StmtKind};
+use crate::thir::{
+    self, Block, Body, ExprId, ExprKind, FStringPart, PatId, PatKind, Stmt, StmtKind,
+};
 use crate::ty::{GenericArg, Ty, TyKind, Types};
 
 /// Checks every body in the crate, and runs the THIR analyses over each.
@@ -1100,6 +1102,111 @@ impl<'a> BodyChecker<'a> {
         }
     }
 
+    /// `f"…"` — §1.1's interpolating literal.
+    ///
+    /// **The decision. The literal has type `String`, every hole is
+    /// synthesised, and every hole's type is required to implement
+    /// `Display`.** Nothing else is decided here: no rendering is chosen, no
+    /// method is named, and the node keeps its parts.
+    ///
+    /// **The reason `Display` is required and not *dispatched to*.** §3.1
+    /// respecifies `Display` as `def display(self, into: mutable borrowed
+    /// Formatter)`, and `science-resolve`'s `builtins` declares it with **no
+    /// methods**, three times over, because naming that method would invent a
+    /// `Formatter` no note specifies. That refusal stands. What a bound check
+    /// needs is the *relation* — *"does this type implement `Display`"* — and
+    /// the relation is declared for every prelude type. So this asks the
+    /// question the prelude can answer and does not ask the one it cannot,
+    /// which is [`Self::implements_operand`]'s rule applied to a second
+    /// construct.
+    ///
+    /// **The cost, and it is the whole of what this check cannot do.** A user
+    /// type with an `implements Display:` block satisfies this check, and
+    /// nothing anywhere can call its `display`, because there is no method name
+    /// to call. The interpolation of a user type is therefore *accepted here
+    /// and refused by codegen*, which is a worse place to find out. The
+    /// alternative — restricting the check to the prelude types that have a
+    /// renderer — would put a list of what the backend happens to support into
+    /// the type system, and that list would be wrong the day the backend grew.
+    ///
+    /// **A hole whose type is still a variable is not reported.** Decision 2
+    /// defaults an unconstrained numeric literal, and the default runs after
+    /// this; asking now would report `f"{1 + 1}"` as a value of undetermined
+    /// type. [`Self::known_or_error`] turning a variable into [`Ty::ERROR`] is
+    /// what makes the silence fall out rather than needing an arm.
+    fn fstring(&mut self, parts: &[hir::FStringPart], span: Span) -> Typed {
+        let mut lowered = Vec::with_capacity(parts.len());
+        for part in parts {
+            match part {
+                hir::FStringPart::Text(text) => lowered.push(FStringPart::Text(text.clone())),
+                hir::FStringPart::Hole(expr) => {
+                    let typed = self.synth(expr);
+                    self.requires_display(typed, expr.span);
+                    lowered.push(FStringPart::Hole(typed.id));
+                }
+            }
+        }
+        let ty = match self.decls.prelude().ty(self.types, "String") {
+            Some(ty) => InferTy::Known(ty),
+            None => InferTy::Known(Ty::ERROR),
+        };
+        self.push_typed(ExprKind::FString(lowered), ty, span)
+    }
+
+    /// `SC0275`: the hole's type must implement `Display`.
+    ///
+    /// Conservative in the four ways [`Self::implements_operand`] is, and for
+    /// the same reasons: an unresolved variable, a type that already carries an
+    /// error, a receiver with no head, and a type whose method surface is open
+    /// are each a *"cannot say"* rather than a *"no"*.
+    ///
+    /// **`T?` is reported although those guards would let it through, and it is
+    /// the only type here that gets its own arm.** §3.4 decides that a nullable
+    /// does not implement `Display`, and unlike §3.4's other three refusals
+    /// this one is *knowable*: `T?` is a type the compiler builds, no file can
+    /// write `I64? implements Display:`, and so the absence is a fact rather
+    /// than an untranscribed prelude row. The value of reporting it is what
+    /// §3.4 says it is — *"a silent `null` or an empty cell in a published
+    /// table is the failure this prevents"* — and the fix is a narrowing the
+    /// author writes.
+    ///
+    /// **The other three of §3.4's refusals are not reported, and this is the
+    /// hole to record.** An array, a map and a closure all reach here and all
+    /// pass, because `builtins.rs`' `IMPLEMENTS` table has no `Array` row at
+    /// all — deliberately, since `Array of T implements Clone` holds only where
+    /// `T: Clone` and a conditional implementation is not something that index
+    /// can express. So *"`Array` does not implement `Display`"* is
+    /// indistinguishable here from *"nobody has written `Array`'s row yet"*,
+    /// and reporting the first on the evidence for the second is the mistake
+    /// `Methods::answers_for` exists to prevent. §3.4's array decision is
+    /// therefore **specified and unenforced**, and closing it means giving the
+    /// prelude a way to say that an implementation is absent on purpose.
+    fn requires_display(&mut self, operand: Typed, span: Span) {
+        let Some(display) = self.decls.prelude().get("Display") else { return };
+        let written = self.known_or_error(operand.ty);
+        let revealed = self.revealed(written, span);
+        if self.types.references_error(revealed) {
+            return;
+        }
+        if matches!(self.types.kind(revealed), TyKind::Nullable(_)) {
+            let rendered = self.types.render(self.defs, revealed);
+            self.diagnostics.push(not_displayable(span, &rendered));
+            return;
+        }
+        let Some(head) = self.decls.methods().receiver(self.defs, self.types, revealed) else {
+            return;
+        };
+        if !self.decls.methods().surface_is_closed(self.defs, head) {
+            return;
+        }
+        if self.decls.methods().declares(self.types, revealed, display) {
+            return;
+        }
+        let self_ty = self.receiver_self_ty(revealed, span);
+        let rendered = self.types.render(self.defs, self_ty);
+        self.diagnostics.push(not_displayable(span, &rendered));
+    }
+
     fn numeric_name(&self, var: InferVar) -> &'static str {
         match self.literal_kind(var) {
             Some(Numeric::Integer) => "an integer literal",
@@ -1115,6 +1222,7 @@ impl<'a> BodyChecker<'a> {
         let span = expr.span;
         match &expr.kind {
             hir::ExprKind::Literal(literal) => self.literal(literal, span),
+            hir::ExprKind::FString(parts) => self.fstring(parts, span),
             hir::ExprKind::Path { res, generics } => self.path(*res, generics, span),
             hir::ExprKind::SelfValue(res) => match res {
                 Res::Def(def) => {
@@ -4304,6 +4412,27 @@ fn no_operator_implementation(
     .with_note(format!(
         "every operator is an interface method (§5.4): the block \n         `{ty} implements {interface}:` is what gives `{ty}` this operator"
     ))
+}
+
+/// `SC0275` — a value interpolated into an `f"…"` that cannot be rendered.
+///
+/// **The message names the interface and not the machinery**, because
+/// `Display` is the thing the author can act on: §3.4 decides that arrays,
+/// maps, closures and `T?` deliberately do **not** implement it, and each of
+/// those refusals has an answer the author can write — narrow the nullable,
+/// take the length, name the field. A message about a missing renderer would
+/// describe the compiler instead of the program.
+fn not_displayable(span: Span, ty: &str) -> Diagnostic {
+    Diagnostic::error(
+        codes::NOT_DISPLAYABLE,
+        format!("`{ty}` cannot be interpolated: it does not implement `Display`"),
+    )
+    .with_label(Label::primary(span, format!("this is `{ty}`")))
+    .with_note(
+        "an interpolation renders its value through `Display`. A nullable does not implement it \
+         until it is narrowed, and a value that implements nothing needs an `implements Display:` \
+         block before it can be printed",
+    )
 }
 
 fn mismatched_types(span: Span, expected: &str, found: &str) -> Diagnostic {

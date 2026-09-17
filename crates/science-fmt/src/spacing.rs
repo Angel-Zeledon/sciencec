@@ -40,6 +40,9 @@ pub fn ends_expression(kind: &K) -> bool {
             | K::Question
             | K::Underscore
             | K::Each
+            // An `f"…"` ends where its closing quote does, so `f"{n}".len()`
+            // is a method call on a literal exactly as `"a".len()` is.
+            | K::FStrEnd
     )
 }
 
@@ -48,6 +51,27 @@ pub fn ends_expression(kind: &K) -> bool {
 /// `prev_unary` says whether `prev` is a unary `-`; the caller computes it once
 /// per token, because it depends on the token *before* `prev`.
 pub fn glued(prev: &K, next: &K, prev_unary: bool) -> bool {
+    // An `f"…"` is glued end to end, and this comes before everything else.
+    //
+    // **The decision.** No space is ever written between any two of the five
+    // tokens an interpolating literal is made of, nor between `{` and the
+    // expression inside it.
+    //
+    // **The reason.** Here the table's own safety argument does not hold. Its
+    // opening sentence is that a missing entry *"costs a space that should not
+    // be there, which is ugly and not wrong"* — true everywhere a space is
+    // between two tokens of code, and false inside a string, where a space is a
+    // character of the value. `f"n is {n}"` rendered with the default rule
+    // would come back as `f" n is { n } "`, which lexes to the same tokens and
+    // is a different program. So the f-string tokens are listed as glued rather
+    // than left to the default, and this comment is why the usual "a missing
+    // entry is only ugly" reasoning does not cover them.
+    if matches!(next, K::FStrText(_) | K::InterpStart | K::InterpEnd | K::FStrEnd)
+        || matches!(prev, K::FStrStart | K::FStrText(_) | K::InterpStart)
+    {
+        return true;
+    }
+
     // Decided by the right-hand token first: a closer, a separator or a
     // postfix never has a space in front of it, whatever precedes it.
     match next {

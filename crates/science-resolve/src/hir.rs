@@ -1062,9 +1062,26 @@ pub struct Expr {
     pub span: Span,
 }
 
+/// One piece of an [`ExprKind::FString`], after resolution.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FStringPart {
+    /// Literal text, escapes and doubled braces already resolved.
+    Text(String),
+    /// `{ expression }`.
+    Hole(Expr),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     Literal(Literal),
+    /// `f"mean {μ}"`, with its holes resolved and its fragments as written.
+    ///
+    /// The node survives resolution unchanged in shape, because nothing about
+    /// an interpolation is a name question: §1.6 makes it borrow its operands,
+    /// which is the ordinary auto-borrow applied to an ordinary expression, and
+    /// every name that needs resolving is inside a hole and gets resolved as
+    /// itself.
+    FString(Vec<FStringPart>),
     /// A resolved name: a local, a parameter, a function, a unit variant, or a
     /// type used as a constructor.
     Path { res: Res, generics: Vec<Type> },

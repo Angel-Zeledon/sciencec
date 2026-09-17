@@ -186,10 +186,43 @@ pub struct Expr {
 /// [`ExprKind::Local`] rather than a path, a field is a [`DefId`] rather than
 /// an [`Ident`](science_resolve::hir::Ident), and two nodes exist that the HIR
 /// has no spelling for — [`ExprKind::Coerce`] and [`ExprKind::Narrow`].
+/// One piece of an [`ExprKind::FString`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum FStringPart {
+    /// Literal text, escapes and doubled braces already resolved.
+    Text(String),
+    /// `{ expression }`. §1.6: an interpolation *borrows* its operand, so the
+    /// expression here is the operand itself and the borrow is the ordinary
+    /// auto-borrow the lowering applies.
+    Hole(ExprId),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     /// A literal, as the parser read it. §4.
     Literal(Literal),
+    /// `f"mean {μ}"`. Its type is `String` and its holes are checked.
+    ///
+    /// **The decision. The node survives type checking; it is not desugared
+    /// here.** What this phase adds is the type of every hole and the check
+    /// that the type implements `Display`.
+    ///
+    /// **The reason.** `strings-formatting-and-docs.md` §1.7 makes the
+    /// expansion *"a builder over the fragments, with the capacity
+    /// pre-computed"*, and the builder is a sequence of runtime calls —
+    /// `science_string_new` and one `science_string_push_*` per part. None of
+    /// those has a Science spelling, and inventing one so that this phase could
+    /// desugar into a `Call` would put a name in the prelude that no note
+    /// gives: `stdlib-core.md` §6.9 has no `to_string`, and §3.1's `Formatter`
+    /// is the design `builtins.rs` has refused three times. So the node carries
+    /// the shape to the phase that has a symbol table, which is codegen.
+    ///
+    /// **The cost, stated exactly.** `science-mir` cannot lower this, and says
+    /// so where it meets it. Nothing below this line can print a number until
+    /// the builder exists, and the builder is two edits in crates this one does
+    /// not own: a MIR lowering that emits the calls, and a codegen arm that
+    /// accepts a `Callee::Runtime`.
+    FString(Vec<FStringPart>),
     /// A read of a local, a parameter, or a closure's subject.
     Local(DefId),
     /// `self`.

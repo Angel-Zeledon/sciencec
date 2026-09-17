@@ -37,7 +37,14 @@ pub struct Comment {
 pub fn comments(source: &str, tokens: &[Token]) -> Vec<Comment> {
     let mut literals: Vec<(usize, usize)> = tokens
         .iter()
-        .filter(|t| matches!(t.kind, TokenKind::Str(_) | TokenKind::Char(_)))
+        // `FStrText` joins the two, and it has to: a `#` inside the literal
+        // half of an `f"…"` is text, exactly as a `#` inside a `"…"` is, and
+        // the lexer has already decided which bytes those are. A `#` inside a
+        // *hole* is not masked and should not be — it is `SC0175`, and the
+        // lexer reports it.
+        .filter(|t| {
+            matches!(t.kind, TokenKind::Str(_) | TokenKind::Char(_) | TokenKind::FStrText(_))
+        })
         .map(|t| (t.span.start as usize, t.span.end as usize))
         .collect();
     literals.sort_unstable();

@@ -1,0 +1,49 @@
+error[SC0170]: this interpolation has no closing `}`
+ --> tests/ui/interpolation_errors.science:6:13
+  |
+6 |     print(f"{n")
+  |             ^ this `{` opens an interpolation
+  |               - the literal ends here
+  |
+  = note: inside an `f"…"` a literal brace is written `{{`
+
+error[SC0171]: a `}` with nothing it closes
+ --> tests/ui/interpolation_errors.science:7:14
+  |
+7 |     print(f"a}b")
+  |              ^ this `}` closes no interpolation
+  |
+  = note: inside an `f"…"` a literal brace is written `}}`
+  = help: for a literal brace, write: `}}`
+
+error[SC0173]: a format specification, which this compiler does not implement
+ --> tests/ui/interpolation_errors.science:8:15
+  |
+8 |     print(f"{n:.3f}")
+  |               ^^^^ no part of the format mini-language is built
+  |
+  = note: `f"{value}"` is the whole of what this compiler reads: an expression, rendered by its `Display`. The fill, alignment, sign, width, grouping, precision and type codes, and the `!i` conversion, are specified and unbuilt
+
+error[SC0174]: an interpolation with nothing in it
+ --> tests/ui/interpolation_errors.science:9:13
+  |
+9 |     print(f"{}")
+  |             ^^ name the value
+  |
+  = note: there are no positional fields: `print` takes one value, so `{}` has no argument list to refer to
+
+error[SC0175]: a `#` comment inside an interpolation
+  --> tests/ui/interpolation_errors.science:10:16
+   |
+10 |     print(f"{n # why}")
+   |                ^ this would comment out the rest of the literal
+   |
+   = note: an interpolation holds one expression: no `let`, no statement, no comment and no line break
+
+error[SC0177]: `rf"…"` is not a string literal
+  --> tests/ui/interpolation_errors.science:11:11
+   |
+11 |     print(rf"{n}")
+   |           ^^ the literal prefixes do not combine
+   |
+   = note: there are exactly three literal kinds: `"…"` is text, `f"…"` interpolates, and `r"…"` processes no escapes. A raw interpolating string is a fourth set of rules for a case nobody has demonstrated

@@ -1000,6 +1000,39 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             ExprKind::MethodCall { receiver, method, args } => {
                 self.lower_method_call(dest, *receiver, *method, args, block, span)
             }
+            // `f"…"`, which this crate cannot lower and says so here rather
+            // than in a comment somewhere else.
+            //
+            // **What it would emit.** §1.7 of
+            // `docs/superpowers/design/strings-formatting-and-docs.md` makes an
+            // f-string *"a builder over the fragments"*, and the builder is a
+            // sequence of [`Callee::Runtime`] calls against a `String`
+            // temporary: `science_string_new` for the accumulator, then one
+            // `science_string_push_bytes` per text run and one
+            // `science_string_push_i64` / `_u64` / `_f64` / `_f32` / `_bool` /
+            // `_char` / `science_string_push_str` per hole, chosen by the
+            // hole's type. Every one of those symbols exists in `science-rt`.
+            //
+            // **Why it is not emitted.** The accumulator has to be passed as
+            // `mutable borrowed String`, so the sequence is a `Ref` per call
+            // and a temporary per fragment, and `science-codegen-llvm`'s
+            // `lower_call` refuses a [`Callee::Runtime`] outright today — so
+            // the MIR would be built, analysed, and then declined one crate
+            // later with a worse message than this one. The two edits are a
+            // pair and they belong to the same change.
+            //
+            // **Why the holes are not walked.** Lowering them would make each
+            // one an operand of a call that is not emitted, and MIR would
+            // record a *move* of a `String` hole into nothing — while §1.6 says
+            // an interpolation **borrows**. A wrong move in the IR is worse
+            // than no IR: `science-regions` would report an ownership error
+            // about a line that is correct. [`crate::capture`] does walk them,
+            // with `Ctx::Read`, because a closure's capture set is a question
+            // about names and not about ownership.
+            ExprKind::FString(_) => {
+                self.assign(block, dest, Rvalue::Error, span);
+                block
+            }
             ExprKind::Error => {
                 self.assign(block, dest, Rvalue::Error, span);
                 block

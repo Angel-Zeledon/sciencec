@@ -916,6 +916,32 @@ pub struct Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     Literal(Literal),
+    /// `f"mean {μ}"` — `strings-formatting-and-docs.md` §1.1's interpolating
+    /// literal, held as the alternation of text and expressions it is.
+    ///
+    /// **The decision.** An f-string is its own expression kind, not sugar the
+    /// parser expands. The node carries the fragments as written and the hole
+    /// expressions as parsed, and nothing else: no concatenation, no builder,
+    /// no call.
+    ///
+    /// **The reason.** §1.7 says what an f-string compiles to — *"a builder
+    /// over the fragments, with the capacity pre-computed … so the common case
+    /// is one allocation"* — and that is a lowering, not a syntax. Expanding it
+    /// here would mean choosing the expansion before the type checker has seen
+    /// the holes, which is exactly the choice §1.7 leaves to the
+    /// implementation; and it would need a Science-level name for *"render
+    /// this number"*, which no note gives, so the parser would be inventing
+    /// library surface on its way past. Holding the parts is the reading that
+    /// commits to nothing.
+    ///
+    /// **The cost.** Every pass that walks expressions grows an arm for a node
+    /// whose children are in a `Vec` of a second enum, and the two phases that
+    /// lower — HIR and THIR — carry the shape rather than being rid of it.
+    /// §1.7's permitted elision, rendering straight into the sink when the
+    /// literal is `print`'s argument and is never bound, stays available
+    /// precisely because the node survives to the point where the sink is
+    /// known.
+    FString(Vec<FStringPart>),
     /// A name, possibly qualified and possibly with generic arguments.
     Path(Path),
     /// `self`.
@@ -1065,6 +1091,21 @@ pub enum Literal {
     /// `null`. A literal rather than a prelude value, because `T?` is a type
     /// the compiler knows and what inhabits it has to be known with it.
     Null,
+}
+
+/// One piece of an [`ExprKind::FString`].
+///
+/// A `Text` run is never empty and two never sit side by side: the lexer emits
+/// one token per run, so a literal of `n` holes has at most `n + 1` of these.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FStringPart {
+    /// Literal text, with escapes and §1.3's `{{` / `}}` already resolved.
+    Text(String),
+    /// `{ expression }`. §1.4 admits an arbitrary expression here, and §1.6
+    /// makes the interpolation *borrow* it rather than move it — a fact this
+    /// node records by holding the expression and letting the later phases
+    /// apply the ordinary auto-borrow.
+    Hole(Expr),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

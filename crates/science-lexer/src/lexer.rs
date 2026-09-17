@@ -46,6 +46,38 @@ const E_EQ_SYMBOL: Code = Code(16);
 /// `!=`, the spelling `syntax-revision-2.md` §1 removed in favour of `is not`.
 const E_NOT_EQ_SYMBOL: Code = Code(17);
 
+// --- The `f"…"` block (SC0170-SC0177) ------------------------------------
+//
+// These six are in the **syntax** band and are emitted here, in the lexer.
+// `docs/superpowers/design/README.md` allocates `SC0170`-`SC0177` to
+// `strings-formatting-and-docs.md` §7, and its crate table says in as many
+// words that *"a band is a topic, not a crate"* — `ffi-c-boundary.md`'s
+// `SC0411`-`SC0434` are already emitted from the parser on that rule. The
+// topic here is the shape of an interpolating literal, and the only phase that
+// can see that shape is the one reading the characters: by the time the parser
+// has a token stream, an unterminated interpolation has already become a token
+// stream that stops.
+//
+// The two codes in the block that are **not** here are the two that need a
+// scope. `SC0172` — a plain `"…"` whose every name resolves — cannot be
+// decided before name resolution, and `SC0176` — a `##` run attached to
+// nothing — is the parser's, since only the parser knows what a declaration
+// is. Neither is implemented, and neither can be implemented here.
+
+/// An interpolation with no closing `}` before the literal ends. §1.4.
+const E_UNTERMINATED_INTERP: Code = Code(170);
+/// A `}` inside an `f"…"` with no opener. §1.3.
+const E_UNPAIRED_BRACE: Code = Code(171);
+/// A format specification, which §2 specifies and this compiler does not
+/// implement. See [`Lexer::interpolation`].
+const E_FORMAT_SPEC: Code = Code(173);
+/// `f"{}"` — an interpolation with nothing in it. §2.6.
+const E_EMPTY_INTERP: Code = Code(174);
+/// A `#` comment inside an interpolation. §1.4 restriction 3.
+const E_STATEMENT_IN_INTERP: Code = Code(175);
+/// `rf"…"`, or any other combination of literal prefixes. §1.3.
+const E_PREFIX_COMBINATION: Code = Code(177);
+
 /// Turns `source` into a token stream.
 ///
 /// The stream always ends with `Eof`, preceded by any pending `Dedent`s. The
@@ -111,39 +143,53 @@ impl<'a> Lexer<'a> {
         self.start_of_line();
 
         while let Some(c) = self.peek() {
-            let start = self.pos;
-            match c {
-                '\n' => {
-                    self.bump();
-                    if self.depth == 0 {
-                        // §4.6: a chain broken by a leading `.` is still one
-                        // logical line, so it gets neither a `Newline` nor the
-                        // indentation treatment. Asking `pending_newline` first
-                        // is what stops `.foo()` from continuing a line that
-                        // produced no token to continue.
-                        if !(self.pending_newline && self.eat_line_continuation()) {
-                            if self.pending_newline {
-                                self.emit(TokenKind::Newline, start, self.pos);
-                            }
-                            self.start_of_line();
+            if c == '\n' {
+                let start = self.pos;
+                self.bump();
+                if self.depth == 0 {
+                    // §4.6: a chain broken by a leading `.` is still one
+                    // logical line, so it gets neither a `Newline` nor the
+                    // indentation treatment. Asking `pending_newline` first is
+                    // what stops `.foo()` from continuing a line that produced
+                    // no token to continue.
+                    if !(self.pending_newline && self.eat_line_continuation()) {
+                        if self.pending_newline {
+                            self.emit(TokenKind::Newline, start, self.pos);
                         }
+                        self.start_of_line();
                     }
                 }
-                ' ' | '\t' | '\r' => {
-                    // Whitespace between tokens. Tabs are only rejected in the
-                    // indentation, which `start_of_line` has already handled.
-                    self.bump();
-                }
-                '#' => self.skip_comment(),
-                '"' => self.string(),
-                '\'' => self.character(),
-                c if c.is_ascii_digit() => self.number(),
-                c if is_ident_start(c) => self.word(),
-                _ => self.operator(),
+                continue;
             }
+            self.scan(c);
         }
 
         self.finish();
+    }
+
+    /// One token — everything except the line break.
+    ///
+    /// **Split out of [`Lexer::run`]** so that the interior of an
+    /// interpolation is scanned by the same code that scans everything else,
+    /// which is the whole of what `strings-formatting-and-docs.md` §1.5 asks
+    /// for when it says the interior must be *tokenized*. The line break stays
+    /// in `run`, because a line break is the one thing an interpolation cannot
+    /// contain (§1.4 restriction 2) and the indentation machine has no
+    /// business inside one.
+    fn scan(&mut self, c: char) {
+        match c {
+            ' ' | '\t' | '\r' => {
+                // Whitespace between tokens. Tabs are only rejected in the
+                // indentation, which `start_of_line` has already handled.
+                self.bump();
+            }
+            '#' => self.skip_comment(),
+            '"' => self.string(),
+            '\'' => self.character(),
+            c if c.is_ascii_digit() => self.number(),
+            c if is_ident_start(c) => self.word(),
+            _ => self.operator(),
+        }
     }
 
     /// Closes the last logical line and every open block, then emits `Eof`.
@@ -380,6 +426,38 @@ impl<'a> Lexer<'a> {
         self.eat_ident();
         let src = self.src;
         let text = &src[start..self.pos];
+
+        // §1.3's two literal prefixes, recognised here because a prefix is
+        // word-shaped and the word is what has just been read.
+        //
+        // **The decision.** A word is a prefix only when it is spelled out of
+        // `f` and `r`, is at most two characters, and a `"` follows it with no
+        // space. Everything else stays an identifier followed by a string,
+        // exactly as it was.
+        //
+        // **The reason.** §1.3 checks that `f` and `r` do not become reserved
+        // words — calls are always parenthesised and there is no juxtaposition
+        // operator, so `f"x"` can only be a prefixed literal. That argument
+        // covers `f` and `r` and no other word: `extern"C"` is a real, if
+        // unusual, spelling of a real declaration, and a rule that read any
+        // word before a quote as a prefix would turn it into `SC0177`. The
+        // two-character combinations are matched *in order to be refused*,
+        // which is what `SC0177` is for and what keeps `rf"…"` from lexing as
+        // an identifier `rf` beside a string.
+        if self.peek() == Some('"') && is_prefix_word(text) {
+            if text == "f" {
+                self.fstring(start);
+            } else if text == "r" {
+                self.raw_string(start);
+            } else {
+                self.report_prefix_combination(start, text);
+                // Recovery: read it as an ordinary literal, which is the one
+                // of the three readings that always exists.
+                self.string_at(start);
+            }
+            return;
+        }
+
         let kind = if text == "_" {
             TokenKind::Underscore
         } else {
@@ -633,6 +711,12 @@ impl<'a> Lexer<'a> {
 
     fn string(&mut self) {
         let start = self.pos;
+        self.string_at(start);
+    }
+
+    /// A `"…"`, whose token span begins at `start` — which is the quote for a
+    /// plain literal and the prefix for a rejected one.
+    fn string_at(&mut self, start: usize) {
         self.bump(); // opening quote
         let mut out = String::new();
 
@@ -663,6 +747,378 @@ impl<'a> Lexer<'a> {
         }
 
         self.emit(TokenKind::Str(out), start, self.pos);
+    }
+
+    /// `r"..."` -- §1.3's raw literal: no escape processing, no interpolation.
+    ///
+    /// **The decision.** Every byte between the quotes is text, and the first
+    /// `"` ends it.
+    ///
+    /// **The reason.** §1.3 buys this form for LaTeX, regular expressions and
+    /// Windows paths -- the three places where `\` is data and doubling it is
+    /// what people get wrong. It is also §1.2's suppression for `SC0172`: a
+    /// raw literal is never inspected for a forgotten `f`.
+    ///
+    /// **The cost**, which §1.3 states rather than hides: a raw literal has no
+    /// way to contain a `"`. `r#"..."#` is the known extension, it is
+    /// source-compatible to add, and it is deferred until a caller needs it. A
+    /// raw literal carries no marker into the token stream, because nothing
+    /// after the lexer needs to know how a `String` was spelled.
+    fn raw_string(&mut self, start: usize) {
+        self.bump(); // opening quote
+        let text_start = self.pos;
+        loop {
+            match self.peek() {
+                None | Some('\n') => {
+                    self.diags.push(
+                        Diagnostic::error(E_UNTERMINATED_STRING, "unterminated string literal")
+                            .with_label(Label::primary(
+                                self.span(start, self.pos),
+                                "this raw string has no closing `\"`",
+                            ))
+                            .with_note(
+                                "a raw string is never continued onto the next line, and it \
+                                 cannot contain a `\"` at all",
+                            ),
+                    );
+                    let text = self.src[text_start..self.pos].to_string();
+                    self.emit(TokenKind::Str(text), start, self.pos);
+                    return;
+                }
+                Some('"') => {
+                    let end = self.pos;
+                    self.bump();
+                    let text = self.src[text_start..end].to_string();
+                    self.emit(TokenKind::Str(text), start, self.pos);
+                    return;
+                }
+                Some(_) => {
+                    self.bump();
+                }
+            }
+        }
+    }
+
+    /// `f"..."` -- §1.3's interpolating literal, as the five tokens of
+    /// [`TokenKind::FStrStart`] and its neighbours.
+    ///
+    /// **The decision.** The literal becomes `FStrStart`, then an alternation
+    /// of `FStrText` runs and `InterpStart`-`InterpEnd` pairs whose interiors
+    /// are ordinary tokens, then `FStrEnd`. The delimiters are always emitted,
+    /// **including on every error path**, so the shape the parser matches on is
+    /// the same whatever the text did.
+    ///
+    /// **The reason.** §1.4 admits an arbitrary expression in a hole and
+    /// §1.5 says what that costs: the interior has to be tokenized, because
+    /// `f"{m["a"]}"` has a `"` that does not end the literal and `f"{f"{x}"}"`
+    /// has braces that are not the match. Emitting those tokens into the one
+    /// stream -- rather than into a payload the parser re-lexes -- means the
+    /// parser calls `parse_expr` on a hole exactly as it does everywhere else,
+    /// and a caret inside a hole is a span in the file with no arithmetic
+    /// between it and the source.
+    ///
+    /// **The cost.** `{` and `}` inside an `f"..."` are `InterpStart` and
+    /// `InterpEnd`, not `LBrace` and `RBrace`, so a consumer matching on brace
+    /// tokens does not see them; and §1.3's escaping rule -- a literal brace is
+    /// `{{` -- exists here and in no other literal, which is exactly what
+    /// §1.2 bought by marking the form.
+    fn fstring(&mut self, start: usize) {
+        self.bump(); // opening quote
+        self.emit(TokenKind::FStrStart, start, self.pos);
+
+        let mut text = String::new();
+        let mut text_start = self.pos;
+        let mut terminated = false;
+
+        loop {
+            match self.peek() {
+                None | Some('\n') => {
+                    self.diags.push(
+                        Diagnostic::error(E_UNTERMINATED_STRING, "unterminated string literal")
+                            .with_label(Label::primary(
+                                self.span(start, self.pos),
+                                "this string has no closing `\"`",
+                            )),
+                    );
+                    break;
+                }
+                Some('"') => {
+                    terminated = true;
+                    break;
+                }
+                Some('\\') => self.escape(&mut text),
+                // §1.3: a literal brace inside `f"..."` is doubled. The pair is
+                // consumed as one character of text, so `f"{{a}}"` is the four
+                // characters `{a}` and holds no interpolation at all.
+                Some('{') if self.peek_at(1) == Some('{') => {
+                    text.push('{');
+                    self.bump();
+                    self.bump();
+                }
+                Some('}') if self.peek_at(1) == Some('}') => {
+                    text.push('}');
+                    self.bump();
+                    self.bump();
+                }
+                Some('{') => {
+                    self.flush_fragment(&mut text, text_start);
+                    let closed = self.interpolation();
+                    text_start = self.pos;
+                    if !closed {
+                        // The interpolation has reported. When what stopped it
+                        // was this literal's own closing quote, consume it, so
+                        // that the rest of the line lexes as the code it is
+                        // rather than as the inside of a string.
+                        if self.peek() == Some('"') {
+                            terminated = true;
+                        }
+                        break;
+                    }
+                }
+                Some('}') => {
+                    let at = self.pos;
+                    self.bump();
+                    self.diags.push(
+                        Diagnostic::error(
+                            E_UNPAIRED_BRACE,
+                            "a `}` with nothing it closes",
+                        )
+                        .with_label(Label::primary(
+                            self.span(at, self.pos),
+                            "this `}` closes no interpolation",
+                        ))
+                        .with_note("inside an `f\"…\"` a literal brace is written `}}`")
+                        .with_suggestion(Suggestion {
+                            span: self.span(at, self.pos),
+                            replacement: "}}".to_string(),
+                            message: "for a literal brace, write".to_string(),
+                        }),
+                    );
+                    // Recovery: the brace was almost certainly meant as text.
+                    text.push('}');
+                }
+                Some(c) => {
+                    text.push(c);
+                    self.bump();
+                }
+            }
+        }
+
+        self.flush_fragment(&mut text, text_start);
+        let end_start = self.pos;
+        if terminated {
+            self.bump(); // closing quote
+        }
+        self.emit(TokenKind::FStrEnd, end_start, self.pos);
+    }
+
+    /// Emits the pending run of literal text, if there is any.
+    fn flush_fragment(&mut self, text: &mut String, from: usize) {
+        if text.is_empty() {
+            return;
+        }
+        let value = std::mem::take(text);
+        self.emit(TokenKind::FStrText(value), from, self.pos);
+    }
+
+    /// One `{...}`, with the cursor on the `{`.
+    ///
+    /// Returns whether the interpolation was closed. A `false` means the
+    /// literal ended inside it and [`Lexer::fstring`] must stop without
+    /// reporting the same mistake a second time: `SC0170` already names both
+    /// the `{` and the place the literal ran out.
+    ///
+    /// **The format specification is refused, not parsed.** §2 specifies a
+    /// mini-language after a `:` -- fill, alignment, sign, width, grouping,
+    /// precision and a type code -- and §2.4 makes it checkable against the
+    /// argument's static type. None of it is implemented. A `:` or a `!` at the
+    /// hole's own bracket depth is therefore `SC0173`, which says so and names
+    /// the one form that does work. Accepting a spec and ignoring it would
+    /// print a number to seventeen digits where the author asked for three,
+    /// which is §0's whole complaint; parsing the grammar and ignoring it
+    /// would be worse, because it would look supported.
+    ///
+    /// **What the `:` costs, stated.** A `:` at the hole's depth ends the
+    /// expression, so `f"{if flag: "yes" else: "no"}"` reads as the expression
+    /// `if flag` with a specification after it. That is §2.1's grammar working
+    /// as written rather than a shortcut taken here -- Python has the same seam
+    /// -- and the answer is parentheses.
+    fn interpolation(&mut self) -> bool {
+        let brace = self.pos;
+        self.bump(); // `{`
+        self.emit(TokenKind::InterpStart, brace, self.pos);
+
+        let outer = self.depth;
+        // A hole suspends the line structure exactly as an unclosed bracket
+        // does; §1.5 asks for this and the mechanism already existed.
+        self.depth = outer + 1;
+
+        let before = self.tokens.len();
+        let mut closed = false;
+        let mut spec: Option<usize> = None;
+
+        loop {
+            match self.peek() {
+                None | Some('\n') => {
+                    let at = self.pos;
+                    self.diags.push(
+                        Diagnostic::error(
+                            E_UNTERMINATED_INTERP,
+                            "this interpolation has no closing `}`",
+                        )
+                        .with_label(Label::primary(
+                            self.span(brace, brace + 1),
+                            "this `{` opens an interpolation",
+                        ))
+                        .with_label(Label::secondary(self.span(at, at), "the literal ends here"))
+                        .with_note("inside an `f\"…\"` a literal brace is written `{{`"),
+                    );
+                    break;
+                }
+                Some('}') if self.depth == outer + 1 => {
+                    closed = true;
+                    break;
+                }
+                // A `"` inside a hole normally opens a nested literal, which
+                // is what makes `f"{m[\"a\"]}"` work at all. When nothing on
+                // the rest of the line closes it, it is not a nested literal:
+                // it is this literal's own closing quote, met early because
+                // the `}` is missing.
+                //
+                // **The reason this branch exists at all** is §1.5's second
+                // named cost, *"a single missing `}` produces fifty cascading
+                // diagnostics"*. Without it, `f"{n"` reports an unterminated
+                // *string* from the interior scan and then an unterminated
+                // *interpolation* from here, in that order — two diagnostics
+                // for one missing character, the first of which names a string
+                // the author never wrote. One line of lookahead buys exactly
+                // one diagnostic, and it is `SC0170`.
+                Some('"') if !self.quote_pairs_on_this_line() => {
+                    let at = self.pos;
+                    self.diags.push(
+                        Diagnostic::error(
+                            E_UNTERMINATED_INTERP,
+                            "this interpolation has no closing `}`",
+                        )
+                        .with_label(Label::primary(
+                            self.span(brace, brace + 1),
+                            "this `{` opens an interpolation",
+                        ))
+                        .with_label(Label::secondary(self.span(at, at + 1), "the literal ends here"))
+                        .with_note("inside an `f\"…\"` a literal brace is written `{{`"),
+                    );
+                    break;
+                }
+                // §1.4 restriction 3. A `#` would swallow the closing brace and
+                // the quote, so it is reported here rather than allowed to turn
+                // the rest of the line into a comment.
+                Some('#') if self.depth == outer + 1 && spec.is_none() => {
+                    let at = self.pos;
+                    self.diags.push(
+                        Diagnostic::error(
+                            E_STATEMENT_IN_INTERP,
+                            "a `#` comment inside an interpolation",
+                        )
+                        .with_label(Label::primary(
+                            self.span(at, at + 1),
+                            "this would comment out the rest of the literal",
+                        ))
+                        .with_note(
+                            "an interpolation holds one expression: no `let`, no statement, no \
+                             comment and no line break",
+                        ),
+                    );
+                    break;
+                }
+                Some(':' | '!') if self.depth == outer + 1 && spec.is_none() => {
+                    spec = Some(self.pos);
+                    self.bump();
+                }
+                Some(c) => {
+                    if spec.is_some() {
+                        // Inside a specification nothing is tokenized: it is
+                        // characters until the brace that ends the hole.
+                        self.bump();
+                    } else {
+                        self.scan(c);
+                    }
+                }
+            }
+        }
+
+        let interior = self.tokens.len() > before;
+        let end = self.pos;
+        if closed {
+            self.bump(); // `}`
+        }
+        self.depth = outer;
+
+        if let Some(at) = spec {
+            self.diags.push(
+                Diagnostic::error(
+                    E_FORMAT_SPEC,
+                    "a format specification, which this compiler does not implement",
+                )
+                .with_label(Label::primary(
+                    self.span(at, end),
+                    "no part of the format mini-language is built",
+                ))
+                .with_note(
+                    "`f\"{value}\"` is the whole of what this compiler reads: an expression, \
+                     rendered by its `Display`. The fill, alignment, sign, width, grouping, \
+                     precision and type codes, and the `!i` conversion, are specified and unbuilt",
+                ),
+            );
+        } else if !interior {
+            self.diags.push(
+                Diagnostic::error(E_EMPTY_INTERP, "an interpolation with nothing in it")
+                    .with_label(Label::primary(self.span(brace, self.pos), "name the value"))
+                    .with_note(
+                        "there are no positional fields: `print` takes one value, so `{}` has no \
+                         argument list to refer to",
+                    ),
+            );
+        }
+
+        self.emit(TokenKind::InterpEnd, end, self.pos);
+        closed
+    }
+
+    /// Whether a `"` at the cursor has a partner before the line ends.
+    ///
+    /// Escapes are honoured, because a nested literal may itself contain a
+    /// quote and then the partner is the third one, not the second.
+    fn quote_pairs_on_this_line(&self) -> bool {
+        let mut chars = self.src[self.pos..].chars();
+        chars.next(); // the quote under the cursor
+        while let Some(c) = chars.next() {
+            match c {
+                '\n' => return false,
+                '\\' => {
+                    chars.next();
+                }
+                '"' => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// §1.3: the prefixes do not combine.
+    fn report_prefix_combination(&mut self, start: usize, text: &str) {
+        let span = self.span(start, start + text.len());
+        self.diags.push(
+            Diagnostic::error(
+                E_PREFIX_COMBINATION,
+                format!("`{text}\"…\"` is not a string literal"),
+            )
+            .with_label(Label::primary(span, "the literal prefixes do not combine"))
+            .with_note(
+                "there are exactly three literal kinds: `\"…\"` is text, `f\"…\"` \
+                 interpolates, and `r\"…\"` processes no escapes. A raw interpolating string \
+                 is a fourth set of rules for a case nobody has demonstrated",
+            ),
+        );
     }
 
     fn character(&mut self) {
@@ -1055,6 +1511,16 @@ const REPLACEMENT: char = '\u{FFFD}';
 
 /// Identifiers may start with any Unicode letter or `_`: keywords are English,
 /// names are written in the author's language.
+/// Whether a word that a `"` immediately follows is one of §1.3's prefixes, or
+/// a combination of them that exists in order to be refused.
+///
+/// The set is closed at `f`, `r` and the four two-letter words over them. It is
+/// deliberately not "any short word": `extern"C"` must keep lexing as a keyword
+/// beside a string.
+fn is_prefix_word(text: &str) -> bool {
+    !text.is_empty() && text.len() <= 2 && text.bytes().all(|b| b == b'f' || b == b'r')
+}
+
 fn is_ident_start(c: char) -> bool {
     c == '_' || c.is_alphabetic()
 }

@@ -598,6 +598,14 @@ impl DumpIn for Expr {
     fn dump_in(&self, defs: &DefTable, w: &mut DumpWriter) {
         match &self.kind {
             ExprKind::Literal(literal) => w.leaf(&literal_header(literal), self.span),
+            ExprKind::FString(parts) => w.node("FString", self.span, |w| {
+                for part in parts {
+                    match part {
+                        FStringPart::Text(text) => w.leaf(&format!("Text {text:?}"), self.span),
+                        FStringPart::Hole(expr) => w.child("hole", &Node(defs, expr)),
+                    }
+                }
+            }),
             ExprKind::Path { res, generics } => {
                 let header = format!("Path {}", arrow(defs, *res));
                 w.node(&header, self.span, |w| {

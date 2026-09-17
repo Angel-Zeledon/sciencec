@@ -3680,6 +3680,7 @@ impl<'t> Parser<'t> {
             Int { .. }
                 | Float { .. }
                 | Str(_)
+                | FStrStart
                 | Char(_)
                 | True
                 | False
@@ -4213,6 +4214,63 @@ impl<'t> Parser<'t> {
         fields
     }
 
+    /// `f"..."`, from the five token kinds the lexer emits for one.
+    ///
+    /// **The decision.** The parser trusts the shape. `FStrStart` is always
+    /// matched by an `FStrEnd`, every `InterpStart` by an `InterpEnd`, and the
+    /// loop below therefore has no recovery of its own: it reads parts until
+    /// the end token and stops.
+    ///
+    /// **The reason.** The lexer emits the delimiters on every path, including
+    /// the four that report, so there is no token stream in which the shape is
+    /// broken. A second layer of recovery here would be recovery from a state
+    /// that cannot arise, and every diagnostic it produced would be a second
+    /// complaint about a mistake `SC0170`-`SC0177` has already named — which is
+    /// §1.5's *"fifty cascading diagnostics"* arriving one phase later.
+    ///
+    /// **The cost.** An empty hole is an `ExprKind::Error` with **no
+    /// diagnostic from here**, because `SC0174` is the diagnostic and saying it
+    /// twice helps nobody. A reader of this function has to know that to see
+    /// why the silent arm is right.
+    fn parse_fstring(&mut self, start: Span) -> Expr {
+        self.advance(); // `f"`
+        let mut parts = Vec::new();
+        loop {
+            match self.peek() {
+                TokenKind::FStrText(text) => {
+                    let text = text.clone();
+                    self.advance();
+                    parts.push(FStringPart::Text(text));
+                }
+                TokenKind::InterpStart => {
+                    let brace = self.span();
+                    self.advance();
+                    // The lexer has already reported the empty hole; it
+                    // reaches here as a hole with nothing in it, and the tree
+                    // keeps its shape with an error node.
+                    let expr = if self.at(&TokenKind::InterpEnd) {
+                        error_expr(brace)
+                    } else {
+                        self.parse_expr()
+                    };
+                    self.expect(&TokenKind::InterpEnd, "the `}` of an interpolation");
+                    parts.push(FStringPart::Hole(expr));
+                }
+                TokenKind::FStrEnd => {
+                    self.advance();
+                    break;
+                }
+                // Unreachable on any stream this lexer produces: it emits
+                // `FStrEnd` before end of file on every path. Written rather
+                // than unwrapped, because a parser that panics on a malformed
+                // file is the one failure mode the whole crate is built to
+                // avoid.
+                _ => break,
+            }
+        }
+        Expr { kind: ExprKind::FString(parts), span: start.merge(self.last_text_span()) }
+    }
+
     /// A literal, a name, `self`, `each`, a parenthesised expression, or one of
     /// the control-flow forms that §4.5 makes expressions.
     fn parse_primary(&mut self) -> Expr {
@@ -4224,6 +4282,7 @@ impl<'t> Parser<'t> {
         }
 
         match self.peek() {
+            TokenKind::FStrStart => self.parse_fstring(start),
             TokenKind::SelfValue => {
                 self.advance();
                 Expr { kind: ExprKind::SelfValue, span: start }
@@ -5485,6 +5544,9 @@ fn describe(kind: &TokenKind) -> String {
         Eof => "end of file".to_string(),
         Int { .. } | Float { .. } => "a number literal".to_string(),
         Str(_) => "a string literal".to_string(),
+        FStrStart | FStrText(_) | FStrEnd => "an interpolating string literal".to_string(),
+        InterpStart => "the `{` of an interpolation".to_string(),
+        InterpEnd => "the `}` of an interpolation".to_string(),
         Char(_) => "a character literal".to_string(),
         Ident(name) => format!("`{name}`"),
         Unknown(c) => format!("`{c}`"),

@@ -427,6 +427,17 @@ fn walk_expr(expr: &hir::Expr, out: &mut Vec<DefId>) {
             walk_block(body, out);
         }
         hir::ExprKind::Unsafe(block) | hir::ExprKind::Block(block) => walk_block(block, out),
+        // A hole may hold a method call, which may take `mutable self`, so an
+        // interpolation is walked like any other compound expression. §1.6
+        // makes the *interpolation* borrow rather than move, which is a fact
+        // about the operand and not about what the operand does.
+        hir::ExprKind::FString(parts) => {
+            for part in parts {
+                if let hir::FStringPart::Hole(expr) = part {
+                    walk_expr(expr, out);
+                }
+            }
+        }
         hir::ExprKind::Literal(_)
         | hir::ExprKind::Path { .. }
         | hir::ExprKind::SelfValue(_)

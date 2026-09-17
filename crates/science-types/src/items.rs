@@ -196,6 +196,21 @@ const WANTED: &[&str] = &[
     // `Ty::ERROR`, and `ty`'s §5 then makes the slot agree with whatever was
     // assigned into it.
     "IndexMutably",
+    // `Display`, which `check`'s `fstring` asks about for every hole of an
+    // `f"…"`. It is here for `Iterate`'s reason — a user may declare an
+    // `interface Display:` of their own, and holding the prelude's id is the
+    // only way to tell the two apart — and for one more that the operator
+    // interfaces above do not have: it is the first name on this list that is
+    // asked about **without an operator to hang the question on**. `+` reaches
+    // `Add` through a token; an interpolation reaches `Display` through a
+    // literal, so the name has to be looked up by itself.
+    //
+    // It buys the *relation* and not a method. `builtins.rs` declares `Display`
+    // with no methods, three times over, because writing
+    // `display(Formatter)` would invent a `Formatter` no note specifies; that
+    // refusal is untouched by this line, which asks only whether a type has an
+    // `implements Display:` block.
+    "Display",
 ];
 
 impl Prelude {

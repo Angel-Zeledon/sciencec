@@ -112,6 +112,40 @@ pub enum TokenKind {
     Str(String),
     Char(char),
 
+    // --- The interpolating literal, `f"…"` (§1.3) -------------------------
+    //
+    /// **The decision.** An `f"…"` is not one token. It opens with
+    /// [`TokenKind::FStrStart`], alternates [`TokenKind::FStrText`] runs with
+    /// `{`-delimited interpolations whose interiors are **ordinary tokens**,
+    /// and closes with [`TokenKind::FStrEnd`].
+    ///
+    /// **The reason.** §1.4 admits an arbitrary expression inside a hole, and
+    /// §1.5 says why that forces the interior to be tokenized rather than
+    /// scanned: `f"{m["a"]}"` contains a `"` that does not end the literal and
+    /// `f"{f"{x}"}"` contains braces that are not the match. Once the interior
+    /// is tokenized, emitting those tokens into the one stream is strictly
+    /// less machinery than carrying them inside a token and re-lexing them
+    /// later — the parser gets an expression the same way it gets every other
+    /// expression, and a span inside a hole is a span in the file with no
+    /// arithmetic in between.
+    ///
+    /// **The cost.** Every consumer that walks the token stream — the
+    /// formatter's scanner, the parser's `describe`, any future language
+    /// server — now meets five token kinds that have no text of their own in
+    /// the ordinary sense, and a `{` inside an `f"…"` is an
+    /// [`TokenKind::InterpStart`] rather than an [`TokenKind::LBrace`], so a
+    /// consumer matching on brace tokens will not see it.
+    FStrStart,
+    /// A run of literal text inside an `f"…"`, with escapes and
+    /// `{{` / `}}` already resolved. Never empty.
+    FStrText(String),
+    /// The `{` that opens an interpolation.
+    InterpStart,
+    /// The `}` that closes one.
+    InterpEnd,
+    /// The closing `"` of an `f"…"`.
+    FStrEnd,
+
     Ident(String),
 
     // --- Keywords ---------------------------------------------------------

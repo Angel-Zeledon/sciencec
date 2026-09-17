@@ -1,0 +1,11 @@
+# `f"…"` and `r"…"`, which the corpus does not reach.
+#
+# The interesting line is the messy one: a space inside a hole is code and goes
+# away, a space inside a text run is data and stays.
+def report(frame: Frame, name: String):
+    print(f"kept {frame.len()} of {frame.total()} rows")
+    print(f"station {name} ")
+    print(f"{{literal braces}}")
+    print(r"\frac{a}{b}")
+    print(f"")
+    let width be f"{f"{name}"}".len()

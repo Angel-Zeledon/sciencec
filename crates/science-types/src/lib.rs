@@ -626,6 +626,33 @@ pub mod codes {
     /// had to stop being about its own subject.
     pub const UNREACHABLE_ARM: Code = Code(537);
 
+    /// A value interpolated into an `f"…"` that does not implement `Display`.
+    ///
+    /// **From `strings-formatting-and-docs.md`'s block, not from this crate's
+    /// own.** `docs/superpowers/design/README.md` allocates `SC0274`-`SC0275`
+    /// to that note and §7 of the note explains why the pair is in the types
+    /// band rather than the syntax one: *"they cannot be decided before type
+    /// checking — the spec is syntactically well-formed and the question is
+    /// whether the *argument* fits it"*. This is the second of the pair.
+    ///
+    /// **`SC0274` is deliberately not defined**, and the reason is the same
+    /// discipline `SC0521` and `SC0522` get above. `SC0274` is the format spec
+    /// failing to match its argument's type — *"a float code on an integer, an
+    /// integer code on a float, a precision on a non-float non-`String`"* —
+    /// and there are no format specs: the lexer refuses every one with
+    /// `SC0173`. A code whose condition cannot arise is a code whose message
+    /// is written against a guess.
+    ///
+    /// **What this code does *not* cover, although §7's row says it should.**
+    /// That row also names *"`print` given more than one argument"* and *"a
+    /// `T?` interpolated without narrowing"*. The first is `SC0527` today,
+    /// because `print` has no declared signature at all (see
+    /// `science-resolve`'s `builtins`), and the second falls out of this check
+    /// rather than needing its own arm: the prelude gives no `T?` a `Display`
+    /// implementation, so `f"{x}"` on a nullable is this code with the
+    /// nullable's rendering in it.
+    pub const NOT_DISPLAYABLE: Code = Code(275);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -653,6 +680,7 @@ pub mod codes {
         NO_OPERATOR_IMPLEMENTATION,
         UNINFERABLE_RECEIVER,
         UNREACHABLE_ARM,
+        NOT_DISPLAYABLE,
     ];
 
     #[cfg(test)]

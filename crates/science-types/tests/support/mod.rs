@@ -157,6 +157,7 @@ impl Checked {
 pub fn describe(kind: &ExprKind) -> String {
     match kind {
         ExprKind::Literal(_) => "literal",
+        ExprKind::FString(_) => "fstring",
         ExprKind::Local(_) => "local",
         ExprKind::SelfValue(_) => "self",
         ExprKind::Item(_) => "item",

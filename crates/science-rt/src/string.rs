@@ -97,6 +97,29 @@ impl ScienceString {
         ScienceString { ptr, len, cap: len }
     }
 
+    /// Append `bytes` to this string.
+    ///
+    /// The caller owns the UTF-8 invariant: `bytes` must be a whole number of
+    /// well-formed sequences, which is why every caller in this crate has a
+    /// `&str` in hand. UTF-8 is self-synchronising, so appending one valid
+    /// sequence to another yields a valid one.
+    ///
+    /// # Safety
+    ///
+    /// `self` must be a live `ScienceString`, and `bytes` must be valid UTF-8
+    /// that does not alias this string's buffer.
+    pub(crate) unsafe fn append(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        // SAFETY: `self` is live, as the caller guarantees.
+        unsafe { self.reserve(bytes.len()) };
+        // SAFETY: the reservation just made `bytes.len()` writable bytes at
+        // `len`, and the source does not alias the destination.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(self.len), bytes.len()) };
+        self.len += bytes.len();
+    }
+
     /// Make room for `additional` more bytes.
     ///
     /// # Safety

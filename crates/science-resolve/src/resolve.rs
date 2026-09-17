@@ -1950,6 +1950,17 @@ impl Resolver {
     fn resolve_expr(&mut self, expr: &ast::Expr) -> hir::Expr {
         let kind = match &expr.kind {
             ast::ExprKind::Literal(literal) => hir::ExprKind::Literal(literal.clone()),
+            ast::ExprKind::FString(parts) => hir::ExprKind::FString(
+                parts
+                    .iter()
+                    .map(|part| match part {
+                        ast::FStringPart::Text(text) => hir::FStringPart::Text(text.clone()),
+                        ast::FStringPart::Hole(expr) => {
+                            hir::FStringPart::Hole(self.resolve_expr(expr))
+                        }
+                    })
+                    .collect(),
+            ),
             ast::ExprKind::Path(path) => {
                 let (res, generics) = self.resolve_path(path);
                 let res = self.reject_module_as_value(res, path);

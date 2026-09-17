@@ -1,0 +1,11 @@
+# `strings-formatting-and-docs.md` §7, the half the lexer owns.
+#
+# Each line is a different member of the SC0170 block, so that the block's
+# messages are pinned byte for byte rather than described.
+def report(n: I64, name: String):
+    print(f"{n")
+    print(f"a}b")
+    print(f"{n:.3f}")
+    print(f"{}")
+    print(f"{n # why}")
+    print(rf"{n}")

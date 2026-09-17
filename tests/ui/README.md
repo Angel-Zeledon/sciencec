@@ -124,6 +124,7 @@ them they cover every diagnostic `science-lexer` can emit.
 | `float_out_of_range` | `SC0011` | A float literal that `str::parse` saturates to infinity rather than rejecting, which is why the lexer has to check for it. |
 | `removed_comparison_symbols` | `SC0016`, `SC0017` | The two spellings `syntax-revision-2.md` §1 removed. `==` and `!=` are still lexed as `EqEq` and `NotEq` so the expression parses as though the fix had been applied, and each costs exactly one diagnostic with an applicable fix — `is` and `is not`. The ordering symbols in the same file are untouched. |
 | `several_errors_in_one_file` | six codes | Error *recovery*. The lexer never aborts, so one pass reports `SC0001`, `SC0006`, `SC0007`, `SC0009`, `SC0010` and `SC0003`, in source order. No single message is the point here; the count and the order are. |
+| `interpolation_errors` | six codes | The `f"…"` block — `SC0170`, `SC0171`, `SC0173`, `SC0174`, `SC0175` and `SC0177`. **These are syntax-band codes emitted by the lexer**, which the crate table in `docs/superpowers/design/README.md` licenses in as many words: *"a band is a topic, not a crate"*. The topic is the shape of an interpolating literal, and the only phase that can see that shape is the one reading the characters. The count is half the point: six mistakes on six lines cost six diagnostics and no cascade, which is what `strings-formatting-and-docs.md` §1.5 warns a mode stack can lose. |
 
 The `.stderr` files were produced by running the current lexer over these
 programs and reading the output, which is what blessing is for. They are
@@ -259,11 +260,16 @@ program built. See the entry below.
 
 ## The type-checking cases, in `types/`
 
-Fifteen cases for fourteen codes, which is every code `science-types` can
+Sixteen cases for fifteen codes, which is every code `science-types` can
 report from an expression plus the three its earlier layers report from a
 declaration. `SC0531` gets two, because its two reporters are two different
 sentences about two different mistakes — the shape `wrong_namespace` has in
 `resolve/`.
+
+One of the fifteen is not from this crate's own bands: `SC0275` belongs to
+`strings-formatting-and-docs.md`, which §7 of that note puts in the types band
+deliberately, because *"the spec is syntactically well-formed and the question
+is whether the argument fits it"*.
 
 | Case | Code | What it pins down |
 |---|---|---|
@@ -281,6 +287,7 @@ sentences about two different mistakes — the shape `wrong_namespace` has in
 | `ambiguous_instances` | `SC0531` | The code's other sentence: **one method at two instantiations of one interface**, where the *arguments* select and did not narrow to one. The argument is a bare `1` on purpose — a literal has no type until a signature expects one, and which signature that is is exactly what the call is deciding, so it refutes no candidate. That circularity is the second note, and it is the one thing this reporter can offer that its neighbour cannot: something the author can do. |
 | `no_such_method` | `SC0532` | `SC0528`'s sibling, under the same restraint: reported **only where the question is answerable**. `builtins.rs` registers no methods at all, so a call on a `String` is a question this compiler cannot ask rather than one it answers with no — which is why the receiver is a type the file declares. A record with no methods at all is still a type with an answer, and the case proves the answer is no rather than silence. |
 | `no_matching_implementation` | `SC0533` | `ambiguous_instances` from the other side: there, more than one implementation took what was supplied; here, none did. **Not `SC0525`** — that code's whole shape is one expected type from one annotation, and here there are as many expected types as there are implementations, so reporting it as a mismatch would mean choosing one implementation to blame the argument against, which is the choice this call could not make. |
+| `interpolated_value_is_not_displayable` | `SC0275` | A hole of an `f"…"` whose type cannot be rendered. **Two cases in one file on purpose**: a `T?`, which §3.4 refuses so that *"a silent `null` or an empty cell in a published table"* cannot happen, and a record that implements nothing. The nullable is the one the compiler can be *certain* about — no file can write `I64? implements Display:` — while the record is certain for `implements_operand`'s reason, that a user type's surface is closed. What is **not** here is the array: §3.4 refuses it too, and `builtins.rs` has no `Array` row to refuse it with, so the compiler cannot tell a deliberate absence from an untranscribed one. That gap is pinned in `science-types/tests/interpolation.rs` rather than here, because a UI case cannot assert a silence. |
 | `unsatisfied_bound` | `SC0534` | Decision 11's fourth case, the one the decision assumes rather than numbers. `def describe of T: Summarize(..)` is a promise the body is checked against, and until this code existed nothing held a *call* to it, so `T` unified with anything and the bound was decoration. **Not `SC0525`** either: an interface is not a type a value can have, so there is no *expected* to print. The secondary label is the bound as written, because a call held to something written elsewhere and not shown where is a message that asks the reader to go and find it. The argument is a parameter and not a literal, because a literal is an inference variable at the call and a hole satisfies everything. |
 
 `SC0260` and `SC0261` — the const-expression codes — have no case here yet, and

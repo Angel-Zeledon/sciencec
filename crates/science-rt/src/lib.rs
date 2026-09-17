@@ -88,6 +88,29 @@
 //! reader who had to decide by hand whether two new symbols joined a list of
 //! nine would have had to be right, and instead nobody had to decide.
 //!
+//! **The seven entry points added after *that* gave the same answer, and one
+//! of them gave it twice.** `format.rs` is what renders a number into a
+//! `String`, which is the whole of what `strings-formatting-and-docs.md` §1.1
+//! needs and the whole of what this crate could not do: fourteen `String`
+//! functions and not one that turned an `I64` into text. All seven —
+//! [`science_string_push_bytes`], [`science_string_push_i64`],
+//! [`science_string_push_u64`], [`science_string_push_f64`],
+//! [`science_string_push_f32`], [`science_string_push_bool`] and
+//! [`science_string_push_char`] — append to a `String` the caller owns and
+//! return `()`. **None is classified MEMORY on either convention, so the
+//! derived set is still nine**, and the count of entry points goes from 47 to
+//! 54.
+//!
+//! The "twice" is worth stating, because it is the first time this section's
+//! rule has *changed a design* rather than audited one. The obvious shape for
+//! a renderer is `science_i64_to_string(x) -> ScienceString`, and that is
+//! three words, therefore MEMORY, therefore the tenth member of a list that
+//! has been wrong twice. It is also two allocations and a free per hole, where
+//! §1.7 asks for *"one allocation"* in the common case. The push shape fixes
+//! both at once and neither was traded for the other: `format.rs`'s own
+//! documentation is the argument, and this paragraph is the record that the
+//! `sret` question and the allocation question had the same answer.
+//!
 //! # 3. Pointer conventions
 //!
 //! | Form in Science | Form in the ABI |
@@ -396,6 +419,7 @@ mod abi;
 mod array;
 mod boxed;
 mod exit;
+mod format;
 mod io;
 mod map;
 mod mem;
@@ -406,6 +430,7 @@ pub use abi::*;
 pub use array::*;
 pub use boxed::*;
 pub use exit::*;
+pub use format::*;
 pub use io::*;
 pub use map::*;
 pub use mem::*;

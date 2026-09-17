@@ -1,0 +1,15 @@
+error[SC0275]: `I64?` cannot be interpolated: it does not implement `Display`
+ --> tests/ui/types/interpolated_value_is_not_displayable.science:8:14
+  |
+8 |     print(f"{found}")
+  |              ^^^^^ this is `I64?`
+  |
+  = note: an interpolation renders its value through `Display`. A nullable does not implement it until it is narrowed, and a value that implements nothing needs an `implements Display:` block before it can be printed
+
+error[SC0275]: `Station` cannot be interpolated: it does not implement `Display`
+ --> tests/ui/types/interpolated_value_is_not_displayable.science:9:14
+  |
+9 |     print(f"{s}")
+  |              ^ this is `Station`
+  |
+  = note: an interpolation renders its value through `Display`. A nullable does not implement it until it is narrowed, and a value that implements nothing needs an `implements Display:` block before it can be printed

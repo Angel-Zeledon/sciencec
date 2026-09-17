@@ -717,6 +717,17 @@ impl Dump for Expr {
     fn dump_node(&self, w: &mut DumpWriter) {
         match &self.kind {
             ExprKind::Literal(literal) => w.leaf(&literal_header(literal), self.span),
+            // A text run is a leaf carrying its own span, so a dump shows
+            // where a fragment ends and a hole begins without the reader
+            // counting characters.
+            ExprKind::FString(parts) => w.node("FString", self.span, |w| {
+                for part in parts {
+                    match part {
+                        FStringPart::Text(text) => w.leaf(&format!("Text {text:?}"), self.span),
+                        FStringPart::Hole(expr) => w.child("hole", expr),
+                    }
+                }
+            }),
             ExprKind::Path(path) => {
                 w.node(&named("Path", &path.dotted()), self.span, |w| dump_path_generics(path, w))
             }

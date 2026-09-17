@@ -95,7 +95,7 @@
 use science_diagnostics::Span;
 use science_resolve::hir::{DefId, SelfKind};
 use science_types::items::Declarations;
-use science_types::thir::{self, ExprId, ExprKind, PatId, PatKind, StmtKind};
+use science_types::thir::{self, ExprId, ExprKind, FStringPart, PatId, PatKind, StmtKind};
 
 /// How a closure's body uses a binding it did not introduce. §5.
 ///
@@ -225,6 +225,15 @@ impl Walker<'_> {
             ExprKind::Tuple(elements) => {
                 for element in elements {
                     self.bind_expr(*element);
+                }
+            }
+            // An interpolation's holes are ordinary expressions and bind
+            // ordinary names.
+            ExprKind::FString(parts) => {
+                for part in parts {
+                    if let FStringPart::Hole(hole) = part {
+                        self.bind_expr(*hole);
+                    }
                 }
             }
             ExprKind::Unary { operand, .. }
@@ -417,6 +426,19 @@ impl Walker<'_> {
             ExprKind::Range { start, end, .. } => {
                 self.expr(*start, Ctx::Consume(*start));
                 self.expr(*end, Ctx::Consume(*end));
+            }
+            // §1.6: *"an interpolation borrows its operands. `f"{doc}"` does
+            // not move `doc`."* That is the whole reason this is `Ctx::Read`
+            // and not `Ctx::Consume`, and the note gives the reason in one
+            // line: a debugging `print` that moves the value you were about to
+            // use is an ownership error caused by a line the author added to
+            // understand a different problem.
+            ExprKind::FString(parts) => {
+                for part in parts {
+                    if let FStringPart::Hole(hole) = part {
+                        self.expr(*hole, Ctx::Read);
+                    }
+                }
             }
             // A nested closure's captures are this closure's captures too,
             // wherever they reach past both. The inner walk classifies them and

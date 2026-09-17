@@ -1,0 +1,9 @@
+# `strings-formatting-and-docs.md` §3.4: what deliberately does not implement
+# `Display`, and what the author writes instead.
+
+type Station:
+    id: String
+
+def report(found: I64?, s: Station):
+    print(f"{found}")
+    print(f"{s}")
