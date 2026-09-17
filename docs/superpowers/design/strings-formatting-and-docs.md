@@ -240,6 +240,26 @@ JavaScript and now Python all pay exactly this cost. It is paid once.
 **Decision.** An interpolation borrows its operands. `f"{doc}"` does not move
 `doc`.
 
+> **AMENDMENT: "borrows" is what this section says and "does not consume" is
+> what it means, and the difference is not pedantic — it is two rules where
+> this states one.**
+>
+> The implementation renders a hole by calling a runtime entry point, and **six
+> of the seven take their argument in a register**: an `Int`, a `U64`, an `F64`,
+> an `F32`, a `Bool`, a `Char`. Only a `String` is passed through a pointer. So
+> a *loan* at a parameter declared `i64` is not a conservative version of the
+> right answer — it is a different answer, about a machine that is not the one
+> being targeted.
+>
+> The two rules the lowering actually needs: **read a `Copy` type**, which
+> leaves the original behind and is what this decision is protecting; and
+> **borrow a `String`**, which is the case where a loan is the mechanism rather
+> than a description of one.
+>
+> Read the paragraph below this one and it is already arguing the right thing:
+> the footgun it names is *"a debugging `print` that moves the value you were
+> about to use"* — **consumption**, not loans. The decision is correct and its
+> title names the mechanism instead of the guarantee.
 This falls out of `Display` taking `self` — the shared-borrow receiver, not
 the by-value `self: Self` (§3.1) — and §6.3's auto-borrow, but it must be
 stated, because in a language with ownership the alternative is a
@@ -258,6 +278,21 @@ needed.
 capacity pre-computed from the literal fragments plus a per-type estimate for
 each hole, so the common case is one allocation.
 
+> **AMENDMENT: the capacity has nowhere to go.** The estimate is computable —
+> the literal fragments are known and a per-type bound for each hole is
+> arithmetic — and `science-rt` has **54 entry points, not one of which takes a
+> capacity**. There is no `science_string_with_capacity` and no
+> `science_string_reserve`. So the accumulator starts at the growth floor and
+> the common case is one allocation **per growth**, not one.
+>
+> This is a performance property specified through an ABI that cannot express
+> it, and it went unnoticed because nothing could emit the builder at all until
+> the lowering landed. Worth stating as a class: a note may specify a *cost* its
+> own interface makes unreachable, and only an implementation finds that out.
+>
+> The permitted elision in the next paragraph is also not taken. It is opt-in
+> by its own wording, and this implementation has not opted in, so an f-string
+> handed straight to `print` still builds the whole `String` first.
 **The compiler is permitted, not required, to elide the allocation** when an
 f-string appears directly as the argument to `print`, `write`, `panic` or their
 stderr twins and is never bound: the fragments are rendered straight into the
