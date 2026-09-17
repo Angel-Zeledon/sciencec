@@ -143,14 +143,24 @@ fn the_call_graph_has_no_cycle_in_this_program() {
     );
 }
 
-/// **The third and largest finding.** What the example needs that this crate
-/// cannot give: every method it calls on `Array` — `new`, `len`, `get`, `push`,
-/// `pop` — is a method on a type with no declaration, so the callee is a hole.
+/// **The third and largest finding — and it has halved.**
 ///
-/// Region inference over this program will therefore be reasoning about calls
-/// whose signatures it does not have, which is not a MIR gap: it is
-/// `stdlib-core.md`'s `Array` not existing as a declaration the checker can
-/// see. The number is asserted so that it goes *down* visibly when it does.
+/// It read: every method the example calls on `Array` — `new`, `len`, `get`,
+/// `push`, `pop` — is a method on a type with no declaration, so the callee is
+/// a hole, and region inference over this program would be reasoning about
+/// calls whose signatures it does not have. Sixteen of them. *"The number is
+/// asserted so that it goes down visibly when it does."*
+///
+/// It went down, to eight, because the prelude gained declarations for `Array`
+/// and `Map`. The eight that remain are `Array.new`, `Array.pop` and the
+/// `Map`/`Array` methods the transcription deliberately stopped short of, plus
+/// the three `for` loops — and those three have a different blocker now:
+/// `Iterate.next` *is* declared, but whether `Array of T`'s `Item` is `T` or
+/// `borrowed T` decides whether every loop in the language copies its element,
+/// and no note has said which.
+///
+/// The bound is kept as a bound rather than pinned exactly, for the reason it
+/// was written: it is here to go down.
 #[test]
 fn the_calls_it_cannot_resolve_are_the_container_methods() {
     let lowered = acceptance();
@@ -165,7 +175,10 @@ fn the_calls_it_cannot_resolve_are_the_container_methods() {
         .collect();
     let methods = unresolved.iter().filter(|which| **which == Unresolved::Method).count();
     let iterate = unresolved.iter().filter(|which| **which == Unresolved::IterateNext).count();
-    assert!(methods >= 10, "only {methods} unresolved method calls; {unresolved:?}");
+    assert!(
+        (1..=8).contains(&methods),
+        "expected at most eight unresolved method calls, found {methods}; {unresolved:?}"
+    );
     assert_eq!(iterate, 3, "the example writes three `for` loops");
 }
 

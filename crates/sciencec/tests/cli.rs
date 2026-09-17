@@ -258,17 +258,37 @@ struct Finding {
 /// `driver::region_check`'s doc comment says precisely what closes them. The
 /// short version is in `closed_by`, and the day it lands this test fails, which
 /// is the point.
-const REGIONS: &[Finding] = &[Finding {
-    file: "09_absence_and_failure.science",
-    codes: &["SC0333", "SC0333"],
-    real: false,
-    // `lookup(settings, key)` is `settings.get(key)`, and `Map.get` has no
-    // declaration, so the callee is opaque and `science-regions`'s `generate`
-    // §5 assumes it may return a reference into *every* argument — the key as
-    // well as the map. The key at both call sites is a string literal whose
-    // temporary dies at the end of the statement.
-    closed_by: "`Map.get` becoming a declaration the method lookup can find",
-}];
+/// **Empty, and it was not always.** It held two `SC0333` against
+/// `09_absence_and_failure.science`, both false: `lookup(settings, key)` is
+/// `settings.get(key)`, `Map.get` had no declaration, so the callee was opaque
+/// and the region engine assumed it might return a reference into *every*
+/// argument — the key as well as the map. That entry's `closed_by` read
+/// *"`Map.get` becoming a declaration the method lookup can find"*, and it is
+/// what happened. The field earned its place: the prediction was written down
+/// before anyone knew when it would be met, and it was met exactly.
+///
+/// An empty list is a worse guard than a full one, because it is also what a
+/// borrow checker that stopped running would produce. What keeps it honest is
+/// that the same corpus is walked by `science-regions`'s own census and by the
+/// test below, so silence has to be silence in two places at once.
+const REGIONS: &[Finding] = &[];
+
+/// Files the *type* checker reports on, which is a third kind of gap.
+///
+/// Both are one finding in two shapes and neither is a mistake in the
+/// checker: a value cannot be read out of a borrow. `Array.get` is
+/// `-> (borrowed T)?` per `stdlib-core.md` §3.6, so `items.get(i)` hands back
+/// a borrow — and the prelude declares `Copy` *and* `Clone` as interfaces with
+/// **no methods on either**, and the language has no dereference operator. So
+/// there is no spelling that turns a `borrowed Char` into a `Char`.
+///
+/// Three sibling sites were fixed rather than pinned, because they were the
+/// corpus's fault: `largest`, `DefTable.get` and `Parser.peek` each promised a
+/// total result from a partial accessor, and type-checked only while
+/// `Array.get` had no declaration and returned an error type that agreed with
+/// everything. These two are different — no rewrite of them is available.
+const NO_VALUE_OUT_OF_A_BORROW: &[(&str, usize)] =
+    &[("06_traits.science", 1), ("10_loops.science", 1)];
 
 #[test]
 fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
@@ -277,6 +297,7 @@ fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
         let file = path.file_name().unwrap().to_string_lossy().into_owned();
         let unresolved = UNRESOLVED.iter().find(|(n, _)| *n == file).map(|(_, count)| *count);
         let regions = REGIONS.iter().find(|it| it.file == file);
+        let borrows = NO_VALUE_OUT_OF_A_BORROW.iter().find(|(n, _)| *n == file);
         assert!(
             unresolved.is_none() || regions.is_none(),
             "{file} cannot be in both lists: a file that does not resolve is never region-checked"
@@ -284,6 +305,25 @@ fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
         let run = sciencec(&["check", &name]);
 
         match (unresolved, regions) {
+            (None, None) if borrows.is_some() => {
+                let (_, count) = borrows.expect("checked just above");
+                run.failed();
+                let reported = run.stderr.matches("error[SC").count();
+                assert_eq!(
+                    reported, *count,
+                    "{name} reports a different number of errors than pinned
+{}",
+                    run.stderr
+                );
+                // `SC0525` and nothing else. If this file ever reports a
+                // second *kind* of error, the entry is hiding something.
+                for line in run.stderr.lines().filter(|l| l.starts_with("error[SC")) {
+                    assert!(
+                        line.starts_with("error[SC0525]"),
+                        "{name} is pinned for a borrow that cannot be read out,                          and reported something else: {line}"
+                    );
+                }
+            }
             (None, None) => {
                 run.succeeded().silent_stderr();
             }
@@ -333,23 +373,30 @@ fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
     }
 }
 
-/// **The verdict, counted.** Two false positives and no real finding.
+/// **The verdict, counted — and it is now zero and zero.**
 ///
-/// This is the number the wiring was argued over, so it is asserted rather than
-/// described, and it is the uncomfortable shape: every diagnostic `sciencec`
-/// now adds to `examples/` is about a hole in the compiler rather than about
-/// the program. That is still worth shipping — the alternative is a phase
-/// nobody runs — but it is worth shipping *counted*, so that the ratio is a
-/// number somebody has to change rather than a mood.
+/// This test used to assert two false positives and no real finding, and said:
+/// *"when `Map.get` acquires a declaration this becomes zero and zero and the
+/// test fails. Somebody then has to come back and say so."* `Map.get` acquired
+/// a declaration. This is somebody coming back to say so.
 ///
-/// When `Map.get` acquires a declaration this becomes zero and zero and the
-/// test fails. Somebody then has to come back and say so.
+/// The shape that was uncomfortable is gone: every diagnostic the borrow check
+/// adds to `examples/` was about a hole in the compiler rather than about the
+/// program, and it was shipped anyway on the argument that the alternative is a
+/// phase nobody runs. Shipping it *counted* is what made the repair legible —
+/// the entry named what would close it before anyone knew when, and that is
+/// what closed it.
+///
+/// It keeps asserting the pair rather than being deleted, because the
+/// interesting number is the **real** one. A real finding appearing here means
+/// the borrow checker has caught something in the corpus, and that deserves to
+/// break a test and be read, not to be absorbed into a list.
 #[test]
-fn every_region_finding_in_the_corpus_is_a_false_positive() {
+fn the_borrow_check_reports_nothing_in_the_corpus() {
     let real: usize = REGIONS.iter().filter(|it| it.real).map(|it| it.codes.len()).sum();
     let false_positives: usize =
         REGIONS.iter().filter(|it| !it.real).map(|it| it.codes.len()).sum();
-    assert_eq!((real, false_positives), (0, 2));
+    assert_eq!((real, false_positives), (0, 0));
 }
 
 /// The borrow check is reached, and reaching it is not the same as the file

@@ -171,6 +171,48 @@
 //! **The cost is real and is the largest hole in this crate.** A program that
 //! borrows through a closure is not checked by whatever runs on this. `lib.rs`
 //! §7 lists it first among the findings for that reason.
+//!
+//! # 9. The receiver of a method call is reborrowed, not borrowed
+//!
+//! §4's rule is *"a field or an index taken through a `borrowed T` has a
+//! [`Projection::Deref`] inserted from the base's revealed type"*, and the
+//! receiver of a method call was the one construct that took a base through a
+//! borrow and did not get one.
+//!
+//! **Decision. The borrow this lowering inserts for a `shared self` or
+//! `mutable self` receiver is taken from the receiver place after §4's
+//! dereferences, and its type is read off that place rather than off the
+//! receiver's THIR node.** Inside a method whose own receiver is a reference,
+//! `self.other()` is `_4 = borrowed (*_1)` — a reborrow of what `self` points
+//! at — and not `_4 = borrowed _1`.
+//!
+//! **The reason is that the alternative is not a worse spelling of the same
+//! loan, it is a different loan.** A borrow of `_1` points at this frame's own
+//! storage, which ends at this body's exit, so read by the rule that says a
+//! borrow may not outlive its referent, *every* method returning a borrow
+//! derived from a call on `self` is refused — and the type that reaches the
+//! callee is `borrowed (borrowed Table)` where its parameter is
+//! `borrowed Table`. Science has no dereference operator (`AGENTS.md` §1), so
+//! the author cannot write the reborrow and this is the only level that can
+//! insert it. `science-regions`'s `generate`'s §6 is the same finding from
+//! below, written as a workaround because it was found from there.
+//!
+//! **What it costs.** The borrow's destination temporary is now allocated
+//! *after* the receiver's own place is built, because the type of the
+//! reference is not known until the dereferences are. For a receiver that
+//! brings temporaries of its own — the value for `f().len()`, the index for
+//! `xs[i].len()` — that moves them ahead of the reference temporary, so those
+//! locals are numbered in the other order from what this crate emitted before.
+//! Point identity is unaffected (§10 item 6 is about editing *another* body),
+//! each local is still written exactly once, and no consumer reads a local's
+//! number for meaning.
+//!
+//! **What it deliberately does not change.** A borrow the author *wrote* over
+//! a reference-typed local — `let s be borrowed r`, where `r` is
+//! `borrowed Row` — is still a borrow of `r`'s own storage, because the
+//! checker gave it the type `borrowed (borrowed Row)` and that is what it is.
+//! The deref is inserted where a *type* demanded it, never where a written
+//! borrow said otherwise.
 
 use std::collections::HashMap;
 
@@ -1241,11 +1283,18 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         match self_kind {
             Some(kind @ (SelfKind::Shared | SelfKind::Mutable)) => {
                 let mutable = kind == SelfKind::Mutable;
-                let ty = self.thir.ty(receiver);
+                let (place, next) = self.borrow_source(receiver, block, span);
+                block = next;
+                // §9. A receiver that is already a reference is reborrowed
+                // through, and the type is read off the place the deref
+                // produced rather than off the receiver's THIR node, so the
+                // reference handed to the callee has the callee's parameter
+                // type by construction.
+                let place = self.auto_deref(place);
+                let ty = self.place_ty(&place);
                 let borrowed = self.context.types.borrowed(mutable, ty);
                 let temp = self.temp(borrowed, span, block);
-                block =
-                    self.lower_borrow(Place::local(temp), mutable, receiver, block, span, true);
+                block = self.borrow_place(Place::local(temp), mutable, place, block, span, true);
                 operands.push(Operand::Move(Place::local(temp)));
             }
             Some(SelfKind::Value) => {
@@ -1336,7 +1385,16 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         span: Span,
         in_argument: bool,
     ) -> BlockId {
-        let (place, block) = match self.as_place(operand, block) {
+        let (place, block) = self.borrow_source(operand, block, span);
+        self.borrow_place(dest, mutable, place, block, span, in_argument)
+    }
+
+    /// The place a borrow of this expression is taken *from*.
+    ///
+    /// Split out of [`Builder::lower_borrow`] because §9's receiver reborrow
+    /// needs the place before the borrow is taken, to project through it.
+    fn borrow_source(&mut self, operand: ExprId, block: BlockId, span: Span) -> (Place, BlockId) {
+        match self.as_place(operand, block) {
             Some(found) => found,
             // `borrowed f()` — a borrow of a value with no place. The value
             // goes into a temporary, which is then the referent, and the
@@ -1349,7 +1407,24 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 let next = self.expr_into(Place::local(temp), operand, block);
                 (Place::local(temp), next)
             }
-        };
+        }
+    }
+
+    /// Takes the borrow, once the referent is a place.
+    ///
+    /// The half that decides the [`BorrowKind`] — §6's reservation set — and so
+    /// the half a caller must not reimplement: a receiver reborrow reaches
+    /// here with the same `in_argument` a written borrow does, and is
+    /// classified by the same two bits.
+    fn borrow_place(
+        &mut self,
+        dest: Place,
+        mutable: bool,
+        place: Place,
+        block: BlockId,
+        span: Span,
+        in_argument: bool,
+    ) -> BlockId {
         let kind = match (mutable, in_argument) {
             (false, _) => BorrowKind::Shared,
             (true, true) => BorrowKind::TwoPhase,

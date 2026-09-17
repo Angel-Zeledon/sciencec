@@ -152,3 +152,43 @@ fn push_of_len_reserves_before_the_argument_and_activates_after() {
         "the exclusive borrow was activated before the argument was evaluated"
     );
 }
+
+/// The reservation set is identified syntactically — *an exclusive borrow in
+/// argument position* — and §9's reborrow does not change which borrows are in
+/// it.
+///
+/// A deref inserted at a receiver changes the place a borrow names, not where
+/// the borrow stands: `mutable self` is still argument position, so the borrow
+/// is still reserved and activated, and `two_phase_of` still finds it by the
+/// temporary its reference was stored in.
+#[test]
+fn a_reborrowed_receiver_is_still_two_phase() {
+    let source = concat!(
+        "type Bag:\n",
+        "    total: Int\n",
+        "\n",
+        "Bag has:\n",
+        "    def add(mutable self, value: Int):\n",
+        "        self.total be self.total + value\n",
+        "\n",
+        "    def add_twice(mutable self, value: Int):\n",
+        "        self.add(value)\n",
+        "        self.add(value)\n",
+    );
+    let lowered = lower(source);
+    let body = lowered.body("add_twice");
+    assert_eq!(body.borrows().len(), 2, "each `self.add(..)` reserves one borrow");
+    for data in body.borrows() {
+        assert_eq!(
+            data.kind,
+            BorrowKind::TwoPhase,
+            "a receiver reborrow left the reservation set"
+        );
+        assert!(data.activation.is_some(), "a two-phase borrow was never activated");
+        assert!(
+            !data.place.is_local(),
+            "the receiver was borrowed rather than reborrowed: {}",
+            science_mir::dump::body(&lowered.krate.defs, body)
+        );
+    }
+}

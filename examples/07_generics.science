@@ -33,8 +33,14 @@ def identity of T(value: T) -> T:
     value
 
 # A single bound, written in the parameter list. Copied from §4.4, including
-# `items.get(0)`, which is the one `Array` accessor §8 gives.
-def largest of T: Ord(items: borrowed Array of T) -> borrowed T:
+# `items.get(0)`, which is the one `Array` accessor §3.6 gives.
+#
+# The return is nullable and that is not a stylistic choice: `get` is
+# `-> (borrowed T)?`, so an empty array has no first element and `largest` has
+# no answer to give. It used to be written `-> borrowed T`, which type-checked
+# only while `Array.get` had no declaration and everything it returned was an
+# error type that agreed with anything.
+def largest of T: Ord(items: borrowed Array of T) -> (borrowed T)?:
     let mutable best be items.get(0)
     for item in items:
         if item > best: best be item

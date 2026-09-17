@@ -122,6 +122,22 @@
 //!   point and — for a two-phase borrow — its activation point. You do not have
 //!   to scan for `Ref` rvalues, and you should not: the table is built after
 //!   elaboration, so its points are the final ones.
+//!
+//!   **A borrow this lowering inserted names the referent, not the reference.**
+//!   The receiver borrow of `self.other()`, inside a method whose own receiver
+//!   is already a reference, is `borrowed (*_1)` and never `borrowed _1`
+//!   ([`lower`]'s §9). So a borrow whose place is a whole local is a borrow of
+//!   *that local's storage*, and rule 5's comparison against
+//!   [`mir::Body::storage_dead_points`] of `place.local` is the right question
+//!   to ask about it. A consumer does not have to special-case a reference-
+//!   typed local to avoid refusing every method that returns a borrow derived
+//!   from a call on `self`.
+//!
+//!   The one borrow left whose place is a whole local of reference type is one
+//!   the *author wrote* — `let s be borrowed r`, where `r` is `borrowed Row` —
+//!   and there the loan really is of `r`'s own storage: the checker typed it
+//!   `borrowed (borrowed Row)`, and refusing it when it escapes is correct,
+//!   not a false positive.
 //! - **Aliasing** is [`mir::Place::may_overlap`], which is *may*;
 //!   [`PartialEq`] on a [`mir::Place`] is *definitely*. That documentation
 //!   argues that one predicate cannot be conservative in both directions, and
@@ -253,6 +269,32 @@
 //!    with both borrows reaching the solver separately and nothing here
 //!    relating them. That is the right answer for MIR to give and it is
 //!    untested until there is a solver.
+//! 7. **Neither note says what a method call's receiver borrow is taken
+//!    *from*, and the obvious answer is wrong.** §12 asks for the receiver to
+//!    be auto-borrowed and stops there. This crate borrowed the receiver's
+//!    place, which for a method called on a `self` that is itself a reference
+//!    is the local holding the reference — so the loan pointed at the callee's
+//!    own frame, and read by rule 5 every method returning a borrow derived
+//!    from a call on `self` outlives its referent. [`lower`]'s §9 is the fix:
+//!    the same dereference §4 already inserts for a *field* of `self`.
+//!
+//!    **The evidence finding is why this crate's own suite walked past it.**
+//!    `examples/21_compiler_shapes.science` reaches the borrow-inserting arm
+//!    nowhere: every `self.foo()` in it is a container method with no
+//!    declaration, so the receiver is copied rather than borrowed, and
+//!    `parent_of` — the one call on `self` to a method that *is* declared —
+//!    lowers to [`mir::Rvalue::Error`], because its own value depends on an
+//!    `Array.get` that does not resolve. The fixtures that do take receiver
+//!    borrows (`tests/two_phase.rs`'s `v.push(v.len())`) call them on *owned*
+//!    locals, where borrowing the local is right. And the one test that looks
+//!    through a `self` at all asserts `(*_1).tokens` — a *field* of the
+//!    receiver, one construct short of the receiver itself. Sixty tests, and
+//!    the gap between them was one step wide.
+//!
+//!    It was found from `science-regions`, which reached it by asking what a
+//!    loan points at rather than what a place looks like. That is the second
+//!    time item 3's shape has occurred: a lowering gap that does not fail, it
+//!    goes quiet.
 
 pub mod callgraph;
 pub mod drops;

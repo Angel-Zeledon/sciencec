@@ -86,13 +86,17 @@ DefTable has:
     # A shared borrow out of the table. One region: the result borrows `self`
     # and nothing else, so there is one relation to infer and no second name
     # to relate it to.
-    def get(self, id: DefId) -> borrowed Def:
+    def get(self, id: DefId) -> (borrowed Def)?:
         self.defs.get(id.index)
 
     # Walking to the parent returns an id, so the walk holds no borrow across
     # its own iterations.
     def parent_of(self, id: DefId) -> DefId?:
-        self.get(id).parent
+        # `get` is partial, so the field read is behind a presence test. The
+        # narrowing of §4.2 is what makes the second line a field access on a
+        # `borrowed Def` rather than on a `(borrowed Def)?`.
+        let found be self.get(id)
+        if found?: found.parent else: null
 
 # ---------------------------------------------------------------------------
 # 2. The scope stack
@@ -171,7 +175,7 @@ Parser has:
     def new(tokens: borrowed Array of Token) -> Parser:
         Parser(tokens: tokens, position: 0)
 
-    def peek(self) -> borrowed Token:
+    def peek(self) -> (borrowed Token)?:
         self.tokens.get(self.position)
 
     def advance(mutable self):

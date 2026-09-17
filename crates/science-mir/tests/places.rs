@@ -187,3 +187,105 @@ fn a_narrowed_read_is_the_same_place() {
         "the narrowed read named a place other than the parameter"
     );
 }
+
+/// §4's rule at the *receiver of a method call*, which is the one place it was
+/// missed.
+///
+/// Inside a method whose own receiver is already a reference, `self.other()`
+/// must reborrow what `self` points at. Borrowing `_1` itself would be a loan
+/// of the callee's own storage: `_1` dies at the end of this frame, so the
+/// reference a caller is handed back would point at a dead one, and the type
+/// would be `borrowed (borrowed Table)` where the callee's parameter is
+/// `borrowed Table`.
+#[test]
+fn a_method_call_on_a_borrowed_receiver_reborrows_the_referent() {
+    let source = concat!(
+        "type Table:\n",
+        "    count: Int\n",
+        "\n",
+        "Table has:\n",
+        "    def size(self) -> Int:\n",
+        "        self.count\n",
+        "\n",
+        "    def doubled(self) -> Int:\n",
+        "        self.size() + self.size()\n",
+    );
+    let lowered = lower(source);
+    let body = lowered.body("doubled");
+    let self_local = Local::from_index(1);
+    assert_eq!(body.borrows().len(), 2, "each `self.size()` takes one receiver borrow");
+    for data in body.borrows() {
+        assert_eq!(data.place.local, self_local, "the receiver borrow is not of `self`");
+        assert!(
+            matches!(data.place.projection.as_slice(), [Projection::Deref { .. }]),
+            "`self.size()` borrowed the local holding the reference rather than \
+             its referent: {}",
+            science_mir::dump::body(&lowered.krate.defs, body)
+        );
+        let rendered = lowered.types.render(&lowered.krate.defs, data.destination.ty(body));
+        assert_eq!(
+            rendered, "borrowed Table",
+            "the receiver reference has the wrong type for the parameter it fills"
+        );
+    }
+    // §10 item 2, on the projection this inserted: the `Deref`'s type comes
+    // from the local's revealed declaration and not from either call's node, so
+    // the two receivers denote *one* place rather than two that print alike.
+    assert_eq!(
+        body.borrows()[0].place,
+        body.borrows()[1].place,
+        "two calls on one receiver produced two places"
+    );
+}
+
+/// §9's cost, on the shape that pays it.
+///
+/// A receiver with no place of its own gets a temporary, and §9 moved the
+/// *reference* temporary to after it, because the type of the reference is not
+/// known until the dereferences are. What must still be true is that the
+/// referent is that temporary — a `Row` is not a reference, so no dereference
+/// is inserted here — and that every local is still written once, which is what
+/// index equality rests on.
+#[test]
+fn a_receiver_with_no_place_of_its_own_is_borrowed_from_its_temporary() {
+    let source = concat!(
+        "type Row:
+",
+        "    value: Int
+",
+        "
+",
+        "Row has:
+",
+        "    def plus(self, n: Int) -> Int:
+",
+        "        self.value + n
+",
+        "
+",
+        "def make() -> Row:
+",
+        "    Row(value: 3)
+",
+        "
+",
+        "def f(n: Int) -> Int:
+",
+        "    make().plus(n)
+",
+    );
+    let lowered = lower(source);
+    let body = lowered.body("f");
+    assert_eq!(
+        body.borrows().len(),
+        1,
+        "the fixture must take a receiver borrow, or it asserts nothing: {}",
+        lowered.dump("f")
+    );
+    assert!(
+        body.borrows()[0].place.is_local(),
+        "the referent is the value temporary and nothing is projected off it: {}",
+        lowered.dump("f")
+    );
+    assert!(body.index_temps_are_single_assignment());
+}
