@@ -551,8 +551,22 @@ pub enum Unresolved {
     /// lookup; `science-types`'s `check`'s §6 calls it *"the largest hole in
     /// the layer"*.
     Method,
-    /// The `next()` of a `for` loop. `Iterate` does not exist, so the loop's
-    /// *shape* is lowered and its callee is not. [`crate::lower`]'s §7.
+    /// The `next()` of a `for` loop.
+    ///
+    /// **The reason has changed and the variant has not.** It used to be that
+    /// `Iterate` did not exist. It does — `science-resolve`'s `builtins` gives
+    /// it `def next(mutable self) -> Self.Item?` and `Array of T` an
+    /// implementation — and `science-types`'s `check`'s `iterate_item` *finds*
+    /// the candidate, which is how a loop over an `Array` binds its pattern at
+    /// `borrowed T`. What it does not do is put it in the tree:
+    /// `thir::ExprKind::For` has no field for a callee, so this crate cannot
+    /// name what that lookup found without redoing the lookup, and method
+    /// lookup is Decision 11's and lives one level up.
+    ///
+    /// [`crate::lower`]'s §7.2 states the seam — `ExprKind::For` needs
+    /// `next: Option<DefId>` — and §7.1 is what the loop *does* carry in the
+    /// meantime: a shared borrow of its subject, which is the half of a `for`
+    /// that this crate owns and the half rule 4 needs.
     IterateNext,
     /// An operator or an index on a user type, which is Decision 11 again.
     Operator,

@@ -28,6 +28,8 @@
 //!   T = (any Error)?  and  may_box(S)  and  boxes(site) =>  BoxThenWiden
 //!   T = borrowed[m] any I  and  S = borrowed[m] C
 //!                and  unsizable(C)  and  C implements I =>  Unsize
+//!   T = Box of any I  and  S = Box of C
+//!                and  unsizable(C)  and  C implements I =>  UnsizeInBox
 //!   T = any Error  and  may_box(S)  and  boxes(site)    =>  Box
 //!   copies(S, T)                                        =>  Copy
 //!   otherwise                                           =>  not assignable
@@ -41,12 +43,13 @@
 //! whose mutability is `m` — the same `m` on both sides, because changing that
 //! is not this table's question.
 //!
-//! **Three of those eight rules ask [`crate::methods`] a question**, and that is
-//! new: §3 and §4 both used to be *proposals with an obligation attached*,
-//! admitted on shape alone and left for a caller to check. Decision 11's index
-//! is the caller that can, so the relation asks it directly and the obligation
-//! is gone rather than moved. §7's rule was built after the index and has never
-//! been anything else.
+//! **Three of those nine rules ask [`crate::methods`] a question** — counted by
+//! decision rather than by row, because §4's two rows ask one question of two
+//! indirections — and that is new: §3 and §4 both used to be *proposals with an
+//! obligation attached*, admitted on shape alone and left for a caller to
+//! check. Decision 11's index is the caller that can, so the relation asks it
+//! directly and the obligation is gone rather than moved. §7's rule was built
+//! after the index and has never been anything else.
 //!
 //! **The first rule subsumes every case where nothing has to happen**,
 //! including `S = T?` into `T?` and anything involving [`Ty::ERROR`] — which is
@@ -54,11 +57,12 @@
 //!
 //! # 2. The coercions are top-level, and that is a decision
 //!
-//! **Decision. No conversion here recurses into a type.** `Array of T` is not
-//! assignable to `Array of T?`, `(A) -> B` is not assignable to `(A) -> B?`, a
-//! tuple of a concrete error is not assignable to a tuple of `any Error`, and
-//! an `Array of (borrowed Doc)` is not assignable to an `Array of (borrowed any
-//! Summarize)`.
+//! **Decision. No conversion here recurses into a type, with the two
+//! exceptions this section names and for the one reason it gives.** `Array of
+//! T` is not assignable to `Array of T?`, `(A) -> B` is not assignable to `(A)
+//! -> B?`, a tuple of a concrete error is not assignable to a tuple of `any
+//! Error`, and an `Array of (borrowed Doc)` is not assignable to an `Array of
+//! (borrowed any Summarize)`.
 //!
 //! The reason is that every one of them *changes the representation of what is
 //! in the slot*: Decision 6's `T?` is a niche or a discriminant byte beside the
@@ -70,16 +74,32 @@
 //! the same thing for the same reason, and the refusal is what keeps a coercion
 //! a fact about one value rather than a loop.
 //!
-//! **There is exactly one exception and it is [`Coercion::CopyWhenPresent`],
-//! which §7 argues for.** `(borrowed T)?` reaches `T?` when `T` is `Copy`, and
-//! that is a conversion under a type constructor. It is admitted because
-//! neither half of the paragraph above holds of it: `T?` holds one optional
-//! element rather than a length, so the rewrite is `O(1)` and not proportional
-//! to anything; and a copy of a `Copy` type is the same value, so there is no
-//! *change* of value for `syntax-revision-2.md` §3.4 to forbid — only a
-//! duplication of one. Every other constructor keeps the rule, and the
-//! exception is one variant so that a later reader can see its whole extent by
-//! grepping for the name.
+//! **There are exactly two exceptions, they are exempt for the same two
+//! reasons, and the paragraph above is written as a conjunction so that the
+//! test is one test.** A conversion under a constructor is refused when the
+//! rewrite is proportional to a length **and** the value changes. Neither
+//! exception is either.
+//!
+//! - **[`Coercion::CopyWhenPresent`], which §7 argues for.** `(borrowed T)?`
+//!   reaches `T?` when `T` is `Copy`. `T?` holds one optional element rather
+//!   than a length, so the rewrite is `O(1)` and not proportional to anything;
+//!   and a copy of a `Copy` type is the same value, so there is no *change* of
+//!   value for `syntax-revision-2.md` §3.4 to forbid — only a duplication of
+//!   one.
+//! - **[`Coercion::UnsizeInBox`], which §4 argues for.** `Box of C` reaches
+//!   `Box of any I` when `C` implements `I`. `Box of T` holds one element
+//!   rather than a length, so again the rewrite is `O(1)`; and the element is
+//!   not rewritten at all — the pointer that was in the box is the pointer that
+//!   is in the result, and what is added beside it is a vtable constant. There
+//!   is no allocation, nothing moves, and §3.4 has nothing to bite on.
+//!
+//! **This section used to grant the exemption to the first and withhold it from
+//! the second, and that was the disagreement the corpus found.** The reason
+//! stated here is a property of the *constructor* — one element, not rewritten
+//! — and `Box` has it exactly as `?` does. Saying so about one of them and not
+//! the other was an omission, not a distinction. Every other constructor keeps
+//! the rule, and each exception is one variant so that a later reader can see
+//! its whole extent by grepping for the name.
 //!
 //! **What it costs is the motivating example of Decision 14 itself.** That
 //! decision was written against `return (doc, err)` with a concrete `err`
@@ -119,14 +139,25 @@
 //! is `check`'s §5 read across at the one place where it is a coercion rather
 //! than a literal.
 //!
-//! # 4. Unsizing behind a borrow
+//! # 4. Unsizing behind an indirection
 //!
-//! **Decision. `borrowed C` is assignable to `borrowed any I`, and `mutable
-//! borrowed C` to `mutable borrowed any I`, for every interface `I`. The owning
+//! **Decision. `borrowed C` is assignable to `borrowed any I`, `mutable
+//! borrowed C` to `mutable borrowed any I`, and `Box of C` to `Box of any I`,
+//! for every interface `I` the crate declares `C` implements. The *bare* owning
 //! forms — `C` into `any I`, and `C` into `Box of any I` — stay explicit.**
-//! This is [`Coercion::Unsize`], and it is a variant of its own rather than a
-//! second spelling of [`Coercion::Box`]: they are different operations, and a
-//! lowering that cannot tell them apart emits an allocation for the free one.
+//! The first two are [`Coercion::Unsize`] and the third is
+//! [`Coercion::UnsizeInBox`]; §4a below is the argument for the third and the
+//! reason it is a variant rather than a widening of the first. All of them are
+//! variants of their own rather than second spellings of [`Coercion::Box`]:
+//! they are different operations, and a lowering that cannot tell them apart
+//! emits an allocation for the free one.
+//!
+//! **Read the decision's second sentence precisely, because one word in it is
+//! the whole of what did not change.** `C` into `Box of any I` is still
+//! refused: an author writes `Box.new(doc)` and always did. What §4a admits is
+//! what `Box.new(doc)` *produces* — a `Box of Doc` — reaching a `Box of any
+//! Summarize`. The allocation is still written down at the place it happens,
+//! which is the property §5's first bullet exists to protect.
 //!
 //! **The reason is that the refusal this replaces conflated two operations, and
 //! only one of them is a coercion in the sense §6.2 is counting.**
@@ -176,45 +207,111 @@
 //! have been faked with a list of error-shaped types; this one could not,
 //! because the interface is whatever the program wrote.
 //!
-//! **Three things it deliberately does not reach**, each a separate decision.
+//! **Two things it deliberately does not reach**, each a separate decision, and
+//! **neither of which the corpus writes** — a clause that is checked rather than
+//! asserted, because `tests/corpus.rs` pins what the corpus says exactly.
 //!
-//! **The clause that stood here said "none of which the corpus writes", and it
-//! was false — the corpus writes the first one six times.** It was true when
-//! written only because `Box` had no declaration, so `Box.new(doc)` came back
-//! `Ty::ERROR` and agreed with everything. Giving the prelude that declaration
-//! is what made the six visible, which is the third time this week a
-//! declaration has revealed something an error type was absorbing.
+//! - **A mutability change alongside the unsizing** (§5's last bullet):
+//!   `mutable borrowed Doc` does not reach `borrowed any Summarize` in one
+//!   step, because weakening a borrow is `region-inference.md`'s question and
+//!   nothing in this table knows what a region is.
+//! - **`borrowed C` into `(borrowed any I)?`**, which would be an
+//!   `UnsizeThenWiden` and is refused for the reason §5 refuses the other
+//!   two-step forms — the note did not decide it, and refusing is the direction
+//!   that can be reversed.
 //!
-//! Worse, §5 below points *at* the form §4 refuses: it says an owned
-//! `any Summarize` "is constructed where it is written — `Box.new(doc)` — and
-//! the corpus already writes every one of them that way". So the file tells an
-//! author to write the thing the file refuses. That is not a defect in
-//! `examples/` and not a wrong signature; it is two sentences here that do not
-//! agree, and closing it is `type-checking-and-mir.md` §6.2's, because §6.2
-//! owns the count of implicit coercions.
+//! **There were three, and the third was *an unsizing under a type constructor*
+//! (§2).** It is now §4a's rule for the one constructor whose exemption §2
+//! states, and refused for every other. The clause that stood here closed the
+//! three with *"and none of which the corpus writes"*, and of the third that
+//! was false: the corpus writes it six times, and it was invisible only because
+//! `Box` had no declaration, so `Box.new(doc)` came back `Ty::ERROR` and agreed
+//! with everything. What made the six appear is what made every `Box.new` in
+//! the corpus checkable at all.
 //!
-//! The three:
+//! # 4a. Unsizing under `Box`
 //!
-//! an unsizing under a type
-//! constructor (§2); a mutability change alongside the unsizing (§5's last
-//! bullet); and `borrowed C` into `(borrowed any I)?`, which would be an
-//! `UnsizeThenWiden` and is refused for the reason §5 refuses the other
-//! two-step forms — the note did not decide it, and refusing is the direction
-//! that can be reversed.
+//! **Decision. `Box of C` is assignable to `Box of any I` when the crate
+//! declares `C implements I:`.** This is [`Coercion::UnsizeInBox`].
+//!
+//! **The reason is that it is the same operation as [`Coercion::Unsize`], one
+//! indirection over.** `science-rt`'s `boxed` module states the representation
+//! and leaves nothing to infer: a `Box of C` **is** a `*mut C`, one word, and
+//! *"`Box[dyn Trait]` (§4.3) is the one case that is wider: a pointer to the
+//! value and a pointer to the vtable, in that order"*. So the conversion is a
+//! pointer that already exists, paired with a vtable the compiler knows at this
+//! site — no call to an allocator, nothing copied, and the pointee never
+//! touched. That is [`Coercion::Unsize`]'s sentence with `borrowed` struck out,
+//! and it is why §2's refusal does not reach it: §2 refuses a rewrite
+//! proportional to a container's length, and `Box` holds one element which this
+//! does not rewrite.
+//!
+//! **What this file got wrong, in its own words.** §5's first bullet says an
+//! owned `any Summarize` *"is constructed where it is written — `Box.new(doc)`
+//! — and the corpus already writes every one of them that way"*, and §4's
+//! third refusal rejected exactly that. The file told an author to write the
+//! form the file refused. Nothing in `examples/` was wrong and no signature was
+//! wrong; two sentences here were, and a compiler that could type `Box.new` was
+//! the first thing able to hold both at once.
+//!
+//! **It does not change `type-checking-and-mir.md` §6.2's count**, by §6.2's
+//! own AMENDMENT 4 test: what that count counts is conversions that change a
+//! *value*. [`Coercion::Box`] moves a value to the heap and is counted.
+//! [`Coercion::Unsize`] changes only how a value is pointed at and is not.
+//! This one changes only how a value is pointed at, does not move it, and does
+//! not allocate — the allocation happened at the `Box.new` the author wrote —
+//! so it is on [`Coercion::Unsize`]'s side of that line and adds nothing.
+//!
+//! **It is not gated on the site**, for [`Coercion::Unsize`]'s reason: nothing
+//! names a position for a conversion that emits no code, and the corpus needs
+//! it at both a `return` (`into_summary`'s two arms) and an argument
+//! (`describe_boxed(Box.new(..))`).
+//!
+//! **The obligation is §4's, unchanged**: the shape on both sides — a `Box` on
+//! the left, a `Box` of an object on the right, and a referent `unsizable`
+//! admits — and then [`Methods::implements`] on whether the crate declares `C
+//! implements I:`. A `Box of Int` does not reach a `Box of any Summarize`.
+//!
+//! **What it costs, stated plainly:**
+//!
+//! - **`Box` is now a name this module must know**, and it is the first
+//!   non-interface on [`Coercions`]' list. That type's doc comment carries the
+//!   argument; the short form is that §2's exemption is a property of one
+//!   constructor, so the rule cannot be structural and the constructor has to
+//!   be identified by name.
+//! - **The free of the allocation becomes indirect.** A `Box of Doc` is
+//!   released by `science_box_free` with `Doc`'s descriptor, known statically;
+//!   a `Box of any Summarize` is released through the vtable, because codegen
+//!   cannot see what is behind it. `science-codegen`'s `descriptor`'s
+//!   `needs_drop` already says exactly this of `CgTy::Interface`, and
+//!   `science-rt`'s `boxed` already says the vtable is codegen's to lay out.
+//!   The cost is real and it is not new: it was incurred the moment `Box of any
+//!   I` became a type a signature could name, which the corpus does in four
+//!   places that have nothing to do with this rule.
+//! - **The conversion consumes the box.** `Box of C` is not `Copy`, so the
+//!   operand is moved, and an author who wanted to keep the concrete box no
+//!   longer can at that expression. That is true of every use of a `Box` and is
+//!   not this rule's doing, but it is the one respect in which this variant is
+//!   unlike [`Coercion::Unsize`], whose operand is a shared borrow and survives.
+//! - **`Array of (Box of C)` still does not reach `Array of (Box of any I)`.**
+//!   The exemption is for `Box` and for `?`, one level, by §2's test; nesting it
+//!   under a container puts the length back and the refusal with it.
 //!
 //! # 5. What is deliberately not a coercion
 //!
-//! - **`T` into `any I`, and `T` into `Box of any I` — the owning forms of
+//! - **`T` into `any I`, and `T` into `Box of any I` — the bare owning forms of
 //!   §4.** Both change the value, which is what §6.2 is counting and what
 //!   `syntax-revision-2.md` §3.4 refuses to do implicitly: the first is
 //!   Decision 14's box, admitted for `Error` alone and only where
 //!   `boxes(site)` holds; the second is an allocation, admitted nowhere. An
 //!   owned `any Summarize` is constructed where it is written — `Box.new(doc)`
-//!   — and the corpus already writes every one of them that way. The cost is
-//!   that the two forms no longer look alike in the source: `describe_any(doc)`
-//!   passes a borrow that §4 unsizes for free, and `describe_boxed(doc)` does
-//!   not compile. That is the intended reading, because the second allocates
-//!   and the reader should be able to see where.
+//!   — and the corpus already writes every one of them that way, **and §4a is
+//!   what makes that sentence true rather than an instruction the file then
+//!   refused**. The cost is that the two forms no longer look alike in the
+//!   source: `describe_any(doc)` passes a borrow that §4 unsizes for free, and
+//!   `describe_boxed(doc)` does not compile while `describe_boxed(Box.new(doc))`
+//!   does. That is the intended reading, because the allocation is in the
+//!   second spelling and the reader should be able to see where.
 //! - **`T?` into `any Error`, and `E?` into `(any Error)?`.** Boxing a value
 //!   that may be absent is a conversion that runs or does not depending on the
 //!   value, and `syntax-revision-2.md` §3.4's rule — no implicit change of
@@ -384,13 +481,22 @@ impl Site {
 /// reverse — and a lowering that reads a struct of flags has to know that from
 /// somewhere else.
 ///
-/// **[`Coercion::Box`] and [`Coercion::Unsize`] are not one variant**, although
-/// both produce an interface object. §4 is the argument: one allocates and one
-/// does not, and a lowering handed a single "make an object" variant has to
-/// decide which by re-inspecting the types — which is exactly the inspection
-/// this enum exists to have already done. The failure mode of getting it wrong
-/// is a heap allocation emitted for a conversion that is a pointer and a
-/// constant.
+/// **[`Coercion::Box`], [`Coercion::Unsize`] and [`Coercion::UnsizeInBox`] are
+/// three variants**, although all three produce an interface object. §4 is the
+/// argument for the first split: one allocates and two do not, and a lowering
+/// handed a single "make an object" variant has to decide which by re-inspecting
+/// the types — which is exactly the inspection this enum exists to have already
+/// done. The failure mode of getting it wrong is a heap allocation emitted for a
+/// conversion that is a pointer and a constant.
+///
+/// **The second split — [`Coercion::Unsize`] from [`Coercion::UnsizeInBox`] —
+/// is about ownership rather than about cost.** Both build the same fat
+/// pointer from the same two words. What differs is what the result owns: the
+/// first produces a borrow, which owns nothing and drops to nothing, and the
+/// second produces a box, whose drop releases the allocation through the
+/// vtable. A lowering handed one variant for both would have to re-derive that
+/// from the target type, and the failure mode is a leak in one direction and a
+/// double free in the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Coercion {
     /// The types already agree. Nothing is emitted.
@@ -413,6 +519,20 @@ pub enum Coercion {
     /// added beside it is a vtable the compiler knows at this site. Lowering
     /// emits a pair, not a call to an allocator.
     Unsize,
+    /// §4a: `Box of C` into `Box of any I`, subject to §4's obligation.
+    ///
+    /// **This one does not allocate either.** The allocation was made by the
+    /// `Box.new` the author wrote; this pairs the pointer that came out of it
+    /// with the same vtable [`Coercion::Unsize`] would have used. It is §2's
+    /// second exception, and the reason it is not [`Coercion::Unsize`] is that
+    /// the result **owns** what it points at: its drop releases the allocation
+    /// through the vtable, where a borrow's drops to nothing.
+    ///
+    /// **The operand is consumed.** A `Box` is not `Copy`, so the box the
+    /// conversion reads is moved out of, and MIR lowers the operand as a move
+    /// without being told to — `lower`'s `is_copy` answers no for a
+    /// `TyKind::Named` that is not a primitive.
+    UnsizeInBox,
     /// §7: `borrowed T` into `T`, where `T` implements `Copy`.
     ///
     /// **This one is a load.** The value behind the borrow is duplicated, and
@@ -433,34 +553,51 @@ pub enum Coercion {
     CopyWhenPresent,
 }
 
-/// The two definitions this relation has to know by name.
+/// The three definitions this relation has to know by name.
 ///
 /// `any Error` is a type mentioning the prelude's `Error` interface, `Copy` is
-/// the interface §7's rule is conditioned on, and the prelude does not export
+/// the interface §7's rule is conditioned on, `Box` is the one type constructor
+/// §4a looks through, and the prelude does not export
 /// its ids: `resolve_module` hands back a
 /// [`hir::Crate`](science_resolve::hir::Crate) whose `DefTable` contains the
 /// prelude's definitions but names none of them. So [`Coercions::of`] finds
-/// them by the only property that identifies them — a builtin definition, of
-/// interface kind, of that name — once, at the top of a compilation.
+/// them by the only property that identifies them — a builtin definition, of a
+/// particular kind, of that name — once, at the top of a compilation.
 ///
 /// **What it costs is a scan of the definition table**, which is the lookup the
 /// HIR exists to abolish, performed once. The honest fix is for the resolver to
 /// publish the handful of prelude ids that later phases need by name; that is
 /// `science-resolve`'s decision and this crate should not make it by reaching
-/// into `builtins`. The cost has not changed shape now that there are two names
-/// rather than one — it is the same single pass — but the list is the thing
-/// that will grow, and it is stated here so that the third name is an argument
-/// rather than a habit.
+/// into `builtins`. The cost has not changed shape now that there are three
+/// names rather than one — it is the same single pass.
 ///
-/// Both are [`Option`] because a table built by hand — every test in this crate
-/// that does not go through the resolver — has no prelude at all. With no
+/// **The third name was to be an argument rather than a habit, and this is the
+/// argument.** `Box` is not an interface and it is not a question about
+/// implementations; it is the one *type constructor* this relation looks
+/// through, and §2 says that looking through a constructor is precisely what
+/// this relation refuses. The exemption is therefore a property of one named
+/// constructor and cannot be structural: a [`TyKind::Named`] carries a
+/// [`DefId`] and nothing in a [`Ty`] says which [`DefId`] is the prelude's
+/// `Box`. A rule that guessed — by arity, or by "one type argument" — would
+/// admit `Vec of C` into `Vec of any I` for any one-parameter type a user
+/// declared, which is §2's refusal with the name filed off.
+///
+/// **It also widens what `of` looks for**, and that is the second half of the
+/// cost. `Error` and `Copy` are [`DefKind::Interface`]; `builtins.rs` allocates
+/// `Box` as a [`DefKind::Primitive`], alongside `Array`, `Map`, `String` and
+/// `Chars`. So the scan can no longer filter on one kind, and the kind is now
+/// part of each name's own query rather than a precondition of the pass.
+///
+/// All three are [`Option`] because a table built by hand — every test in this
+/// crate that does not go through the resolver — has no prelude at all. With no
 /// `Error` in it Decision 14's rule cannot fire, with no `Copy` in it §7's
-/// cannot, and the relation is `compatible` plus Decision 6, which is exactly
-/// right for a table with no interfaces in it.
+/// cannot, with no `Box` in it §4a's cannot, and the relation is `compatible`
+/// plus Decision 6, which is exactly right for a table with no prelude in it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Coercions {
     error: Option<DefId>,
     copy: Option<DefId>,
+    boxed: Option<DefId>,
 }
 
 impl Coercions {
@@ -470,16 +607,18 @@ impl Coercions {
         Coercions::default()
     }
 
-    /// Finds the prelude's `Error` and `Copy` interfaces.
+    /// Finds the prelude's `Error` and `Copy` interfaces and its `Box`.
     pub fn of(defs: &DefTable) -> Coercions {
-        let find = |name: &str| {
+        let find = |kind: DefKind, name: &str| {
             defs.iter()
-                .find(|def| {
-                    def.kind == DefKind::Interface && def.name == name && def.is_builtin()
-                })
+                .find(|def| def.kind == kind && def.name == name && def.is_builtin())
                 .map(|def| def.id)
         };
-        Coercions { error: find("Error"), copy: find("Copy") }
+        Coercions {
+            error: find(DefKind::Interface, "Error"),
+            copy: find(DefKind::Interface, "Copy"),
+            boxed: find(DefKind::Primitive, "Box"),
+        }
     }
 
     /// The interface `any Error` names, when there is one.
@@ -490,6 +629,29 @@ impl Coercions {
     /// The interface §7's rule is conditioned on, when there is one.
     pub fn copy_interface(self) -> Option<DefId> {
         self.copy
+    }
+
+    /// The prelude's `Box`, when there is one: §4a's constructor.
+    pub fn box_type(self) -> Option<DefId> {
+        self.boxed
+    }
+
+    /// What a `Box of T` holds, when `ty` is one.
+    ///
+    /// Exactly one type argument: `Box` takes one, so a `Box of (A, B)` is a
+    /// mistake the arity check reports and not a thing to look through. A
+    /// `GenericArg::Const` or a `GenericArg::Error` in that position answers
+    /// `None` for the same reason — it is not a type, so there is nothing for
+    /// §4a to ask [`Methods::implements`] about.
+    pub fn box_element(self, types: &Types, ty: Ty) -> Option<Ty> {
+        let boxed = self.boxed?;
+        let TyKind::Named { def, args } = types.kind(ty) else {
+            return None;
+        };
+        if *def != boxed || args.len() != 1 {
+            return None;
+        }
+        args[0].as_type()
     }
 
     /// Whether this type is exactly `any Error`.
@@ -594,7 +756,28 @@ pub fn assignable(
         return Some(Coercion::Unsize);
     }
 
-    // Rule 7. Decision 14.
+    // Rule 7. §4a's unsizing, one indirection over. Not gated on the site for
+    // rule 6's reason, and reached only through the prelude's `Box`: §2's
+    // exemption is a property of that one constructor and of Decision 6's `?`,
+    // and of nothing structural.
+    if let Some(object) = coercions.box_element(types, target) {
+        if let TyKind::Object { interface, .. } = *types.kind(object) {
+            if let Some(referent) = coercions.box_element(types, source) {
+                // §4's obligation, asked about the boxed type exactly as rule 6
+                // asks it about the borrowed one.
+                if unsizable(types, referent) && methods.implements(types, referent, interface) {
+                    return Some(Coercion::UnsizeInBox);
+                }
+            }
+        }
+        // No `return None` here, deliberately: a `Box of any I` target that
+        // this rule refuses is still a target rules 8 and 9 may answer about,
+        // and both of them answer no on their own terms. Rule 6 returns early
+        // because a *borrowed* target is a shape nothing below it can match;
+        // a `Box of T` is a `TyKind::Named` and that is not true of it.
+    }
+
+    // Rule 8. Decision 14.
     if site.boxes()
         && coercions.is_any_error(types, target)
         && may_box(types, methods, coercions, source)
@@ -602,7 +785,7 @@ pub fn assignable(
         return Some(Coercion::Box);
     }
 
-    // Rule 8. §7. Not gated on the site: a copy of a `Copy` type is the same
+    // Rule 9. §7. Not gated on the site: a copy of a `Copy` type is the same
     // value, so there is no position at which it would be a surprise, and the
     // corpus needs it at a block's tail as well as at a `return`.
     if copies(types, methods, coercions, source, target) {
@@ -672,8 +855,17 @@ fn boxable(types: &Types, source: Ty) -> bool {
     )
 }
 
-/// Whether `referent` — the type behind the source borrow — is a shape that
-/// could implement an interface.
+/// Whether `referent` — the type behind the source indirection, which is a
+/// borrow for rule 6 and a `Box` for rule 7 — is a shape that could implement
+/// an interface.
+///
+/// **One predicate for both rules, and that is deliberate**, where `boxable`
+/// and `copyable` are separate from it. The three bullets below are reasons
+/// about *what is being pointed at*, and they do not mention what is doing the
+/// pointing: `borrowed (Doc?)` and `Box of (Doc?)` are refused by the same
+/// sentence, so splitting them would be two copies of one argument rather than
+/// two arguments. The other two predicates stayed separate because their
+/// reasons genuinely differ; this one has nothing to differ about.
 ///
 /// This is the *structural* half of §4's question, and it is all of it that can
 /// be answered without Decision 11's lookup. It refuses the same three shapes
@@ -685,12 +877,18 @@ fn boxable(types: &Types, source: Ty) -> bool {
 ///   reason: the note decided nothing about implementations on `T?`.
 /// - **Another borrow.** `borrowed (borrowed Doc)` would be asking whether a
 ///   reference implements the interface, which is a decision about auto-deref
-///   that nothing in the language has taken.
+///   that nothing in the language has taken. `Box of (borrowed Doc)` is the
+///   same question and gets the same answer.
 /// - **Another interface object.** `borrowed any Summarize` into
-///   `borrowed any Reset` is an upcast between objects. It is cheap — it
-///   rewrites the vtable half of a pair — but *which* vtable needs the
+///   `borrowed any Reset` is an upcast between objects, and `Box of any
+///   Summarize` into `Box of any Reset` is the same upcast owned. It is cheap —
+///   it rewrites the vtable half of a pair — but *which* vtable needs the
 ///   subinterface relation nobody has specified, so it is refused here exactly
 ///   as `boxable` refuses it.
+///
+///   **This one also refuses the identity that is already rule 1's.** `Box of
+///   any Summarize` into `Box of any Summarize` is `compatible` and never
+///   reaches rule 7, so the refusal here costs nothing a program writes.
 ///
 /// Everything else — a named type, a type parameter with a bound, `Self` — is
 /// admitted here and goes on to [`Methods::implements`].

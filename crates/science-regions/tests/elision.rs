@@ -149,15 +149,28 @@ def only(x: borrowed Int) -> borrowed Int:
 /// declaration does not report `SC0340`, because the return is unconstrained
 /// on account of the missing signature rather than on account of the program.
 /// [`science_regions::check`]'s §6.
+///
+/// **The fixture moved, and why it moved is the point of holding it.** It used
+/// to be `(Array of Int).new().get(0)`, and that is no longer a call with no
+/// declaration: the prelude declares `Array.new` and `Array.get`, and
+/// `science-types` now solves a generic block's type parameters at an
+/// associated call. So the program type-checks — and once it does, what it
+/// reports is a **real** `SC0333`, because the array it borrows out of is a
+/// temporary that dies at the end of the statement. The old fixture's failure
+/// message said in as many words what to do when that day came, and this is it.
+///
+/// What replaces it is `Map.values()`, which `collections-and-chains.md` §1.3
+/// has a design for and the prelude has no declaration of, for the reason
+/// `builtins.rs` gives at length: what a `Map` iterates is `Entry of (K, V)`,
+/// and `Entry` is not a Level 1 record. **Any fixture here is a moving target
+/// by construction** — it needs a hole to stand in — so when this one closes
+/// too, the question to ask is whether the suppression has anything left to
+/// suppress at all rather than which hole to move to next.
 #[test]
 fn a_missing_container_declaration_suppresses_sc0340_rather_than_causing_it() {
     let source = "\
-type Store:
-    value: Int
-
-Store has:
-    def make() -> borrowed Int:
-        (Array of Int).new().get(0)
+def make(m: borrowed Map of (String, Int)) -> borrowed Int:
+    m.values().get(0)
 ";
     let checked = check(source);
     assert_eq!(

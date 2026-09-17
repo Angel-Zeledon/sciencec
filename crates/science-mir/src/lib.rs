@@ -263,9 +263,30 @@
 //!    that test. §14's *"the failure looks like a region bug rather than a
 //!    lowering gap"* has a third possibility, which is that it looks like
 //!    nothing at all.
-//! 4. **Neither note says what a `for` lowers to, and `Iterate` does not
-//!    exist.** [`lower`]'s §7 decides; the decision is visible in the IR as
-//!    [`mir::Unresolved::IterateNext`] rather than hidden as an assumption.
+//! 4. **Neither note says what a `for` lowers to, and the half of that which
+//!    is a *language* question was answered somewhere else entirely.** This
+//!    entry used to end *"and `Iterate` does not exist"*. It does now, and with
+//!    it the question splits in two.
+//!
+//!    **The callee is still a hole and it is now a seam rather than an
+//!    absence.** `science-types`'s `check` resolves `Iterate.next` — that is
+//!    where a loop's binding type comes from — and then discards the candidate,
+//!    so `thir::ExprKind::For` arrives here with `{ pattern, iter, body }` and
+//!    nothing to call. [`lower`]'s §7.2 says exactly what THIR must add
+//!    (`next: Option<DefId>`, from the `candidate.method` `iterate_item`
+//!    already holds) and why this crate must not answer it itself.
+//!    [`mir::Unresolved::IterateNext`] carries the hole in the IR rather than
+//!    hiding it as an assumption, as before.
+//!
+//!    **The borrow was never a hole — it was a wrong answer, and nothing said
+//!    so.** A `for` *moved* its subject into a temporary. The acceptance case's
+//!    `Scopes.lookup` therefore lowered `for rib in self.ribs:` to
+//!    `_4 = move (*_1).ribs` — a move of a field out of a *shared borrow* of
+//!    `self` — and no phase reported it, because `SC0334` fires on a move that
+//!    overlaps a live borrow and there was no borrow to overlap. That is item
+//!    3's shape for the third time: **a lowering gap that does not fail, it
+//!    goes quiet.** [`lower`]'s §7.1 is the fix and it is read out of
+//!    `collections-and-chains.md` §4.2 and §4.4 rather than decided here.
 //! 5. **Neither note mentions closures at all**, and a closure is where a
 //!    borrow escapes a body. This entry used to say *"[`lower`]'s §8 refuses it
 //!    by name; this is the largest hole in the crate"*, and the word doing the
@@ -305,13 +326,21 @@
 //!    26's mechanism is not exercised by the acceptance case and
 //!    `tests/drops.rs` carries that burden on a fixture written for it.
 //!
-//!    Sixteen of its calls have no callee: every `Array` and `Map` method it
-//!    uses — `new`, `len`, `get`, `push`, `pop` — is a method on a type with no
-//!    declaration the checker can see, and its three `for` loops call an
-//!    `Iterate` that does not exist. **Region inference run over this file
-//!    today would be reasoning about calls whose signatures are absent**, and
-//!    that is the honest state of the acceptance case: the *shapes* are all
-//!    here and expressible, and `stdlib-core.md`'s containers are not.
+//!    **The hole count has more than halved and what is left is one seam and
+//!    one absence.** It read *"sixteen of its calls have no callee"*; it is
+//!    seven, because the prelude gained `Array` and `Map`. Four are
+//!    [`mir::Unresolved::Method`] — the container methods the prelude still
+//!    stops short of — and **three are the three `for` loops**, one each, and
+//!    those are no longer blocked by anything a note has to decide: `Iterate`
+//!    is declared, `check` resolves it, and `thir::ExprKind::For` does not
+//!    carry the answer. §7 item 4 and [`lower`]'s §7.2 are the seam.
+//!
+//!    **What region inference gets out of the file did change**, and not
+//!    through the callee. Its three `for` loops now contribute three shared
+//!    loans — `(*_1).ribs`, `(*_8).bindings`, and `walk`'s — where before they
+//!    contributed three moves nobody checked. Twenty-one borrows rather than
+//!    eighteen, four drops rather than nine (a borrowed subject is not a
+//!    temporary that has to be dropped), and 366 points rather than 371.
 //!
 //!    Its §4 — `Node of T` with two borrowed fields, *"the case the whole claim
 //!    turns on"* — lowers to two shared-borrow parameters stored into one

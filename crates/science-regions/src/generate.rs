@@ -59,8 +59,19 @@
 //!
 //! `science-mir`'s §5 puts this squarely here: *"decide what your engine does
 //! about an unresolved callee and say so; silently assuming the safest thing is
-//! acceptable only if you state which way 'safe' points"*. Sixteen of the
-//! acceptance case's calls have no callee.
+//! acceptable only if you state which way 'safe' points"*. Seven of the
+//! acceptance case's calls have no callee, down from sixteen, and **three of
+//! the seven are its three `for` loops** — one element-producing call each,
+//! [`science_mir::mir::Unresolved::IterateNext`], waiting on a THIR field
+//! rather than on a declaration (`science-mir`'s `lower` §7.2).
+//!
+//! The rule below is therefore what stands between a loop's element and its
+//! source: the element comes back from an opaque callee whose one argument is
+//! the loop's shared reference, so §5 ties the element's region to that loan
+//! and nothing else does. `science-mir`'s `lower` §7.1 is what made that
+//! argument a reference; before it, the argument was a temporary the subject
+//! had been *moved* into, and the rule tied every element to a temporary that
+//! dies with the body.
 //!
 //! > **Decision. A callee with no summary — unresolved, cross-crate, builtin,
 //! > or called indirectly — is assumed to return a reference into every

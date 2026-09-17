@@ -1008,37 +1008,53 @@ def size() -> Int:
     checked.assert_clean();
 }
 
-// --- the finding this change exposed --------------------------------------
+// --- the finding this change exposed, and what closed it ------------------
 
-/// **`Box of C` does not reach `Box of any I`, and `assign`'s §4 says so.**
+/// **`Box of C` reaches `Box of any I`, and `assign`'s §4a says so.**
 ///
-/// Six corpus sites write exactly this and were invisible while `Box.new`
-/// resolved to nothing. It is pinned here as well as in `tests/corpus.rs`
-/// because the corpus test pins a *code* against a file and this pins the
-/// relation: the mismatch is between two `Box`es, the coercion that would close
-/// it is an unsizing under a type constructor, and `assign`'s §4 lists that by
-/// name as one of *"three things it deliberately does not reach"*.
+/// This test asserted the reverse, and the reversal is the finding rather than
+/// a change of taste. Six corpus sites write exactly this and were invisible
+/// while `Box.new` resolved to nothing; when the declaration landed, the
+/// refusal they met was `assign`'s §4 listing *an unsizing under a type
+/// constructor* among *"three things it deliberately does not reach"* — while
+/// the same file's §5 told an author to write *"`Box.new(doc)`"*, in those
+/// words. Two sentences, one file, no agreement.
 ///
-/// The same file's §5 says *"an owned `any Summarize` is constructed where it is
-/// written — `Box.new(doc)` — and the corpus already writes every one of them
-/// that way"*, so the program is the one the note endorses and the refusal is
-/// the one the note wrote. That is the finding, and neither half of it is this
-/// test's to change.
+/// **What it is pinned here for is unchanged by which way it now goes.** The
+/// corpus test pins a *code* against a file; this pins the **relation**, and
+/// the relation is that a mismatch between two `Box`es is settled by a question
+/// about the element rather than by one about `Box`. The refusal below the
+/// admission is that same question answered no, and it still names both
+/// `Box`es.
 #[test]
-fn a_box_of_a_concrete_type_does_not_reach_a_box_of_an_interface_object() {
+fn a_box_of_a_concrete_type_reaches_a_box_of_an_interface_object() {
     let checked = program(
         "
 def into_summary(doc: Doc) -> Box of any Summarize:
     Box.new(doc)
 ",
     );
-    assert_eq!(checked.codes(), vec![525]);
+    checked.assert_clean();
+
+    // The refusal that did not move: `Untouched` implements nothing, so the
+    // same shape is the same mismatch, with the message this test used to
+    // assert of `Doc`.
+    let refused = program(
+        "
+type Untouched:
+    detail: String
+
+def into_summary(value: Untouched) -> Box of any Summarize:
+    Box.new(value)
+",
+    );
+    assert_eq!(refused.codes(), vec![525]);
     assert_eq!(
-        checked.messages(),
-        vec!["expected `Box of any Summarize`, found `Box of Doc`".to_string()]
+        refused.messages(),
+        vec!["expected `Box of any Summarize`, found `Box of Untouched`".to_string()]
     );
 
-    // The control, and it is the half `assign`'s §4 *did* admit: behind a
+    // The control, and it is the half `assign`'s §4 admitted first: behind a
     // borrow the same unsizing is free and happens.
     let borrowed = program(
         "

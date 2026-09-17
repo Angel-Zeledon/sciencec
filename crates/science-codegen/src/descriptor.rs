@@ -87,6 +87,32 @@ pub fn needs_drop(ty: &CgTy, has_drop_impl: &dyn Fn(&str) -> bool) -> bool {
         CgTy::Ptr(kind) => matches!(kind, crate::layout::PtrKind::Box),
         // A trait object's drop goes through its vtable, so it always needs
         // glue: codegen cannot see what is behind it.
+        //
+        // **This answer is right for an owning object and wrong for a borrowed
+        // one, and `CgTy` cannot tell them apart.** `Box of any I` and
+        // `borrowed any I` are both [`CgTy::Interface`] — two words, same
+        // layout, same ABI class, same niche — and the model erases exactly the
+        // distinction `PtrKind` keeps for thin pointers, where the arm above
+        // answers yes for `Box` and no for `Borrow`. A `borrowed any Summarize`
+        // that reached here would be given drop glue it must not have.
+        //
+        // **It is written down rather than fixed, and the reason is that it has
+        // no caller.** There is no `Ty -> CgTy` lowering in this crate — the
+        // crate note's §2 says so and says what is missing — so nothing can
+        // construct this arm's input from a program, and a distinction added
+        // ahead of its consumer is a distinction no test can hold to account.
+        // The defect is also not new and not a coercion's: `borrowed any
+        // Summarize` is a record field in `examples/08_dyn_dispatch.science`
+        // and has been since that file was written, and `Box of any Summarize`
+        // was a type four signatures there could name before anything coerced
+        // into one.
+        //
+        // **What closes it** is one more distinction in [`CgTy::Interface`] —
+        // owning or borrowed, exactly as [`crate::layout::PtrKind`] draws it —
+        // taken together with the lowering that would first need it. That is
+        // `codegen-and-linking.md` Decision 42's model to change, not this
+        // function's, and this comment exists so that whoever writes the
+        // lowering meets the question before the bug.
         CgTy::Interface => true,
         CgTy::Nullable(inner) => needs_drop(inner, has_drop_impl),
         CgTy::Array { elem, len } => *len > 0 && needs_drop(elem, has_drop_impl),
@@ -366,6 +392,11 @@ mod tests {
         assert!(needs_drop(&plain, &|name| name == "Handle"));
     }
 
+    /// **`always` is this model's word, not the language's.** The arm's comment
+    /// says why: `Box of any I` and `borrowed any I` are one [`CgTy`], the
+    /// answer here is the owning one, and the borrowed one is wrong. Pinning it
+    /// keeps the wrong answer from being taken as an oversight and keeps the
+    /// day it is fixed to a line in a diff.
     #[test]
     fn a_trait_object_always_needs_glue_because_codegen_cannot_see_behind_it() {
         assert!(needs_drop(&CgTy::Interface, &no_drop_impls));

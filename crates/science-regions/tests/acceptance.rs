@@ -221,6 +221,25 @@ fn the_intersection_of_nodes_two_regions_is_not_empty() {
 }
 
 /// The solver converges, and §3's *"linear in practice"* is a number.
+///
+/// **The number moved from three to seven, and the body it moved on is
+/// `Scopes.lookup`.** `science-mir`'s `lower` §7.1 gave a `for` a shared borrow
+/// of its subject, and `lookup` is two nested `for`s over a field of a
+/// reference, so the constraint graph acquired a chain: `self`'s region bounds
+/// the outer loan, the outer loan bounds the element `rib`, `rib` bounds the
+/// inner loan taken through it, the inner loan bounds `binding`, and
+/// `binding.definition` is returned. [`science_regions::solve`]'s §2 sweeps the
+/// constraint list in the order it was generated and a sub-region must grow
+/// before its super-region can, so a chain of *n* dependent constraints costs
+/// up to *n* sweeps whenever the list order runs against it.
+///
+/// **So the factor this asserts is the depth of the deepest borrow chain, not
+/// the size of the body** — `main` is 137 points and converges in two. The
+/// bound is eight because seven is the worst in all of `examples/`, and it is
+/// kept as a bound for the reason `solve`'s §4 states: *"linear in practice"*
+/// is worth having as a number a test can fail on rather than as a claim. A
+/// solver that applied constraints in dependency order would flatten it, and
+/// that is a change to [`science_regions::solve`] and not to this bound.
 #[test]
 fn the_solver_converges_quickly_on_the_whole_file() {
     let checked = acceptance();
@@ -230,7 +249,7 @@ fn the_solver_converges_quickly_on_the_whole_file() {
         .map(|body| checked.analysis.body(body.def()).expect("analysed").solution.iterations())
         .max()
         .expect("bodies");
-    assert!(worst <= 4, "the fixpoint took {worst} sweeps on a body with no cycle worth that");
+    assert!(worst <= 8, "the fixpoint took {worst} sweeps on a body with no cycle worth that");
 }
 
 /// Two runs agree. §10 item 6, one level on: a summary that moved between runs

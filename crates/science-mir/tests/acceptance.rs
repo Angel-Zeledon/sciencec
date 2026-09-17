@@ -152,15 +152,28 @@ fn the_call_graph_has_no_cycle_in_this_program() {
 /// asserted so that it goes down visibly when it does."*
 ///
 /// It went down, to eight, because the prelude gained declarations for `Array`
-/// and `Map`. The eight that remain are `Array.new`, `Array.pop` and the
-/// `Map`/`Array` methods the transcription deliberately stopped short of, plus
-/// the three `for` loops — and those three have a different blocker now:
-/// `Iterate.next` *is* declared, but whether `Array of T`'s `Item` is `T` or
-/// `borrowed T` decides whether every loop in the language copies its element,
-/// and no note has said which.
+/// and `Map`, and then to seven. What remains is the `Map`/`Array` methods the
+/// transcription deliberately stopped short of, plus the three `for` loops.
 ///
-/// The bound is kept as a bound rather than pinned exactly, for the reason it
-/// was written: it is here to go down.
+/// **The three `for` loops are no longer waiting on a language decision.** This
+/// comment used to say they were blocked on *"whether `Array of T`'s `Item` is
+/// `T` or `borrowed T`"*. `collections-and-chains.md` §4.1 and §4.3 had already
+/// answered that, the prelude now says `type Item is borrowed T`, and
+/// `science-types`'s `check`'s `iterate_item` resolves `Iterate.next` against
+/// it — which is where a loop's binding type comes from today. It then keeps
+/// the type and discards the candidate, so `thir::ExprKind::For` carries no
+/// callee for `science-mir`'s `lower` to use. **The blocker is a THIR field,
+/// and `lower`'s §7.2 names it**: `next: Option<DefId>`.
+///
+/// What did change is the *other* half of a `for`, which was never a hole and
+/// was wrong: `lower`'s §7.1 gives each loop a shared borrow of its subject
+/// where it used to move it, so this file's three loops now reach region
+/// inference as three loans instead of three unchecked moves. The count below
+/// is unmoved by that, deliberately — a borrow is not a callee.
+///
+/// The `Method` bound is kept as a bound rather than pinned exactly, for the
+/// reason it was written: it is here to go down. `IterateNext` is pinned at
+/// three because it is one per `for` and the file writes three.
 #[test]
 fn the_calls_it_cannot_resolve_are_the_container_methods() {
     let lowered = acceptance();

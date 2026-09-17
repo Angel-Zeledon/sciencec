@@ -479,6 +479,51 @@ def main():
 }
 
 #[test]
+fn a_box_of_a_type_and_a_box_of_an_object_are_two_symbols() {
+    // §4, for the pair `science-types`' `assign` §4a made reachable without an
+    // explicit annotation. `Box of Doc` and `Box of any Summarize` are now two
+    // types one expression can have — the second is what the first coerces to —
+    // so a walk that gave them one symbol would emit one body for two layouts:
+    // a thin pointer and a fat one.
+    //
+    // Through `mangle::encode_ty` they are `Pb` and `D`, which happens to
+    // differ; the pair that encoder *does* collapse is `borrowed any I` against
+    // `Box of any I`, both `D`, and the `needs_drop` note in `descriptor` is
+    // where that is written down. This pass does not use that encoder at all,
+    // and what it distinguishes is the interface by canonical path — which is
+    // the property `SC0404` would otherwise fire on.
+    let source = "\
+interface Summarize:
+    def summarize(self) -> String
+
+type Doc:
+    title: String
+
+Doc implements Summarize:
+    def summarize(self) -> String:
+        self.title
+
+def hold of T(value: Box of T) -> Bool:
+    true
+
+def main():
+    let concrete be hold(Box.new(Doc(title: \"a\")))
+    let erased: Box of any Summarize be Box.new(Doc(title: \"b\"))
+    let dynamic be hold(erased)
+";
+    let mut lowered = lower(source);
+    let set = lowered.mono(RootSet::EntryPoint);
+    let symbols: Vec<&str> = set
+        .emission_order()
+        .filter(|item| item.description.starts_with("hold"))
+        .map(|item| item.symbol.as_str())
+        .collect();
+    assert_eq!(symbols.len(), 2, "{}", set.render());
+    assert_ne!(symbols[0], symbols[1]);
+    assert!(codes_of(&set).is_empty(), "{}", set.render());
+}
+
+#[test]
 fn no_symbol_collision_is_reported_over_the_corpus() {
     // `SC0404` is an internal consistency check: it firing on real code means
     // the mangler is wrong, not the program. Running it over every example is

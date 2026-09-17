@@ -50,6 +50,16 @@ def hold(h: borrowed Holder) -> Int:
 ///
 /// The program below moves a value into a container while a borrow of it is
 /// live. It is accepted, and it should not be.
+///
+/// **The hole is narrower than it was, and the fixture moved to say so.** It
+/// used to call `list.push(doc)`, and `Array.push` now has a declaration — so
+/// that program is a resolved call, the argument is a real move, and `SC0334`
+/// fires on it correctly. The claim is unchanged and its *reach* has shrunk to
+/// exactly the calls that are still holes, which is what the fixture now uses:
+/// `Array.insert` is in `stdlib-core.md` §3.6 and not in the prelude. Each
+/// declaration that lands takes another program out of this hole, and the day
+/// there is no undeclared container method left to write, the hole is closed
+/// and this test should be deleted rather than re-pointed.
 #[test]
 fn a_move_through_an_unresolved_call_is_invisible() {
     let source = "\
@@ -63,7 +73,7 @@ def go():
     let mutable list be (Array of Doc).new()
     let doc be Doc(title: 0)
     let s be borrowed doc
-    list.push(doc)
+    list.insert(0, doc)
     print(look(s))
 ";
     let checked = check(source);

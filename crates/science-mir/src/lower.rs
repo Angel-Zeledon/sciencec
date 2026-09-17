@@ -135,25 +135,100 @@
 //! borrow to reserve and the case is not exercised. That is a finding about the
 //! phase above, not a gap here, and `lib.rs`'s §7 records it.
 //!
-//! # 7. `for`, whose callee does not exist
+//! # 7. `for`: a borrow this level owns, and a callee it does not
 //!
-//! `Iterate` is not declared — `science-types`'s `check`'s §6 says a `for`
-//! binds its pattern at `Ty::ERROR` — so there is no `next()` to call.
+//! This section used to read *"`for`, whose callee does not exist"*, and the
+//! reason it gave was that `Iterate` was not declared. It is declared now —
+//! `science-resolve`'s `builtins` gives it `def next(mutable self) ->
+//! Self.Item?`, and `Array of T implements Iterate: type Item is borrowed T` —
+//! so the section splits into two questions with two different owners, and the
+//! old wording answered neither of them.
 //!
-//! **Decision. A `for` is lowered to the CFG shape a `for` has, with the
-//! element-producing call marked [`Unresolved::IterateNext`].** A header block,
-//! a presence test, a body, a back edge, an exit.
+//! ## 7.1 The loop's borrow, which is this level's to get right
 //!
-//! *The alternative was to refuse*, and refusing would mean
+//! `collections-and-chains.md` §4.2's AMENDMENT 11 is unconditional:
+//! *"`for x in xs:` desugars to `xs.iterate()`* — *it borrows"*, and its §4.4
+//! gives that borrow in one row: *"`iterate()` | borrows the source, shared,
+//! for the chain's life"*. A loop holds it across every iteration.
+//!
+//! > **Decision. A `for` takes one shared borrow of its subject's place,
+//! > created before the header and read once per turn, and the
+//! > element-producing call reads through that reference rather than through
+//! > the subject.**
+//!
+//! *What it replaces.* The subject used to be *moved* into a temporary
+//! (`_2 = move _1`) and copied into the call. That is `iterate_consuming()`'s
+//! row of §4.4 in the position §4.2 gives to `iterate()`'s, so the most
+//! ordinary loop in the language consumed the thing it iterated, and
+//! `for doc in docs:` followed by any use of `docs` was a use-after-move that
+//! no phase reported because the callee was a hole.
+//!
+//! *Why shared, when `next` is declared `mutable self`.* The two borrows are of
+//! two different things. §4.4's shared borrow is of the **source**; `next`'s
+//! exclusive receiver is of the **chain**, whose cursor it advances. A bare
+//! `for` is `iterate()`, and the three sources of §4.1 are distinguished in the
+//! *subject expression* rather than in the loop — `xs.iterate_mutably()` and
+//! `xs.iterate_consuming()` are ordinary method calls that this lowering
+//! already handles, and what the `for` then borrows is the chain they returned.
+//! So one rule covers all three rows, and it is §4.2's own word for the only
+//! row a bare `for` can be.
+//!
+//! *Why not exclusive anyway, to be safe.* It is not the safe direction, it is
+//! a different program. An exclusive borrow of the subject refuses
+//! `for x in xs: print(xs.length())` — a read of the collection being read —
+//! which §4.4 admits and which is the shape a `for` over a shared source is
+//! for. The `Item` type is what settles it: `borrowed T` means the loop hands
+//! out shared views, and a shared view needs no more than a shared borrow to
+//! come from. `mutable borrowed T` would need an exclusive one, and that is
+//! `iterate_mutably()`, which is a different call in the subject.
+//!
+//! *The cost*, stated: the chain is not materialised, so the exclusive borrow
+//! of the chain that `next(mutable self)` implies is not in the IR. Nothing can
+//! observe its absence today, because the only thing that would conflict with
+//! it is a second use of the same chain and a bare `for` makes exactly one. It
+//! arrives with `iterate()`, alongside the callee below.
+//!
+//! ## 7.2 The callee, which is not
+//!
+//! **Decision. The element-producing call keeps [`Unresolved::IterateNext`],
+//! and the reason has changed.** It used to be that there was no `next` to
+//! name. There is one, and `science-types`'s `check` already finds it:
+//! `iterate_item` runs `Methods::lookup(key, "next", Form::Value)`, checks the
+//! candidate came from `Iterate`, and reads the loop's binding out of the
+//! candidate's return type. It then **discards the candidate and keeps only the
+//! type**, so `thir::ExprKind::For` arrives here as `{ pattern, iter, body }`
+//! with no callee in it.
+//!
+//! *Deciding which `next` a `for` calls is method lookup*, and method lookup is
+//! `science-types`'s: it needs the receiver key, the candidate set, the
+//! interface check and `block_substitution`, none of which this crate has or
+//! should grow. A second implementation here would be a second answer to
+//! Decision 11 living in the wrong crate, and the first one to drift would be
+//! the one nobody ran.
+//!
+//! **The seam, precisely.** `thir::ExprKind::For` needs a fourth field,
+//! `next: Option<DefId>`, filled from the `candidate.method` that
+//! `check::iterate_item` already has in hand at the point it reads
+//! `signature(candidate.method)?.ret`. `None` keeps exactly the cases that
+//! function already returns `None` for — no `Iterate` implementation in the
+//! index (`Map`, today), a type parameter or a tuple subject, a `next` from
+//! somewhere other than `Iterate` — and those stay [`Unresolved::IterateNext`],
+//! which is what the variant is for. With the field, the callee is
+//! `Callee::Def(def)` at one line of `lower_for` and the hole closes for every
+//! `for` over an `Array` or a `Chars` at once.
+//!
+//! *Why the shape is still lowered rather than refused.* The original reason
+//! holds and is now smaller: refusing would mean
 //! `examples/21_compiler_shapes.science` — the acceptance case this whole note
 //! exists for — does not lower, because `Scopes.lookup` and `walk` are both
 //! `for` loops. A CFG with a named hole in it is worth more to the phase that
-//! consumes this than no CFG.
+//! consumes this than no CFG, and the borrow of §7.1 is in that CFG whether or
+//! not the callee is.
 //!
-//! *The cost* is that if Decision 15's `TryIterate` lands with a failure edge,
-//! this shape acquires a third successor and the lowering changes. It is
-//! written as one function, `Builder::lower_for`, so that the change is one
-//! place.
+//! *The other cost* is unchanged: if Decision 15's `TryIterate` lands with a
+//! failure edge, this shape acquires a third successor and the lowering
+//! changes. It is written as one function, `Builder::lower_for`, so that the
+//! change is one place.
 //!
 //! # 8. Closures: the captures are lowered, the body is not
 //!
@@ -1025,7 +1100,8 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         exit
     }
 
-    /// §7. The shape of a `for`, with a named hole where `next()` goes.
+    /// §7. The shape of a `for`: one shared borrow of its subject, and a
+    /// named hole where the `next()` that reads through it goes.
     fn lower_for(
         &mut self,
         dest: Place,
@@ -1035,9 +1111,23 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         mut block: BlockId,
         span: Span,
     ) -> BlockId {
-        let iter_ty = self.thir.ty(iter);
-        let iterator = self.temp(iter_ty, span, block);
-        block = self.expr_into(Place::local(iterator), iter, block);
+        // §7.1. The loop's own borrow. `borrow_source` is the same helper a
+        // written `borrowed x` goes through, so a subject with no place — the
+        // chain temporary of `for x in xs.iterate_consuming():` — lands in a
+        // temporary with a storage-dead point rather than in a special case,
+        // and `auto_deref` is §9's rule: the loan names the referent and never
+        // the reference, so rule 5 compares it against the right storage.
+        let (source, next) = self.borrow_source(iter, block, span);
+        block = next;
+        let source = self.auto_deref(source);
+        let source_ty = self.place_ty(&source);
+        let iterator_ty = self.context.types.borrowed(false, source_ty);
+        let iterator = self.temp(iterator_ty, span, block);
+        // `in_argument` is `false`: a loop's borrow is not an argument borrow.
+        // It is created once, read once per turn, and lives across the whole
+        // loop, which is the opposite of the single-use-at-one-call shape §6
+        // reserves two phases for.
+        block = self.borrow_place(Place::local(iterator), false, source, block, span, false);
 
         // The element the loop produces, and the presence test over it. Both
         // are allocated outside the loop for `lower_loop`'s reason.
@@ -1052,6 +1142,12 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         let exit = self.new_block();
         self.terminate(block, TerminatorKind::Goto { target: head }, span);
 
+        // §7.2. The one line the seam is behind: when `thir::ExprKind::For`
+        // carries the `next` that `check`'s `iterate_item` already resolves,
+        // this is `Callee::Def(def)` and nothing else here changes. The
+        // argument is a `Copy` either way — it is a reference — so §5's rule
+        // that every operand of an unresolved call is a copy is met without a
+        // `force_copy` and stays met when the callee arrives.
         self.terminate(
             head,
             TerminatorKind::Call {
@@ -1713,6 +1809,12 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             // A coercion over a borrow — `assign`'s §4 unsizing — is still a
             // borrow in argument position, and the borrow underneath it is the
             // one that wants two phases.
+            //
+            // **The guard is on the operand and not on the coercion**, which is
+            // what keeps §4a's `Box of C` into `Box of any I` out of this arm
+            // without naming it. That one's operand is a `Box.new` call, there
+            // is no loan under it to reserve, and the ordinary `operand` path
+            // below is the right one for it.
             ExprKind::Coerce { operand, coercion }
                 if matches!(thir.expr(*operand).kind, ExprKind::Borrow { .. }) =>
             {

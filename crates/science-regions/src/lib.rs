@@ -64,18 +64,28 @@
 //!    says, *"a convenience that discarded information"*, and the inferred
 //!    answer keeps it. This is the note's central bet and it is won on this
 //!    program.
-//! 2. **Sixteen of its calls have no callee**, and [`generate`]'s §5 says what
-//!    this engine assumes about one. The assumption is load-bearing in a way
-//!    the note did not anticipate: `DefTable.get`'s body is
-//!    `self.defs.get(id.index)`, whose only call is an unresolved `Array`
-//!    method, and the *only* reason its return is tied to `self` is the rule
-//!    that an opaque callee may hand back a reference into anything reachable
-//!    from its arguments — including through the `self` the argument was
-//!    projected out of. **Decision 6's verdict on this file is currently being
-//!    delivered by a conservatism about a hole**, and when `stdlib-core.md`'s
-//!    `Array` becomes a declaration, that path is replaced by a real signature.
-//!    It should give the same answer. Nobody has checked, because there is no
-//!    declaration to check against.
+//! 2. **Seven of its calls have no callee** — it was sixteen — and
+//!    [`generate`]'s §5 says what this engine assumes about one. The assumption
+//!    is load-bearing in a way the note did not anticipate: `DefTable.get`'s
+//!    body is `self.defs.get(id.index)`, whose only call is an unresolved
+//!    `Array` method, and the *only* reason its return is tied to `self` is the
+//!    rule that an opaque callee may hand back a reference into anything
+//!    reachable from its arguments — including through the `self` the argument
+//!    was projected out of. **Decision 6's verdict on this file is currently
+//!    being delivered by a conservatism about a hole**, and when
+//!    `stdlib-core.md`'s `Array` becomes a declaration, that path is replaced
+//!    by a real signature. It should give the same answer. Nobody has checked,
+//!    because there is no declaration to check against.
+//!
+//!    **Three of the seven are the three `for` loops, and what that costs is
+//!    now separable from what it used to cost.** A `for`'s own borrow is no
+//!    longer part of the hole: `science-mir`'s `lower` §7.1 gives each loop a
+//!    shared loan of its subject, so rule 4 runs over a loop the same way it
+//!    runs over anything else and `tests/iteration.rs` is what it refuses.
+//!    What is still owed to the hole is Decision 6: a body containing a `for`
+//!    has [`analysis::BodyAnalysis::calls_a_hole`] set, so [`check`]'s §6
+//!    excuses it from `SC0340`. `science-mir`'s `lower` §7.2 is the seam that
+//!    closes it, and it is a THIR field rather than a declaration.
 //! 3. **The file exercises no closure and no interior mutability**, so §9's
 //!    three unsupported shapes are not tested by it. Closures are no longer a
 //!    hole — §6 — but the corpus cannot say so: every closure in `examples/`
@@ -109,12 +119,24 @@
 //! - a reference from a call with no reference-carrying argument —
 //!   [`generate`]'s §7's conservatism finds a source whenever the call has one
 //!   to find, which in practice it does;
-//! - **a reference that arrives through a container or a `for` loop.** This is
-//!   the one that actually happens — four bodies in `examples/` — and it is
-//!   not ambiguity: `Array.get` has no declaration, so the binding is typed
-//!   `Ty::ERROR`, so the reference is *gone* rather than unconstrained.
-//!   [`check`]'s §6 suppresses it, `tests/corpus.rs` counts it, and it closes
-//!   when the containers do;
+//! - **a reference that arrives through a container or a `for` loop.** This was
+//!   the one that actually happened — four bodies in `examples/` — and it is
+//!   not ambiguity: the binding was typed `Ty::ERROR`, so the reference was
+//!   *gone* rather than unconstrained. [`check`]'s §6 suppresses it,
+//!   `tests/corpus.rs` counts it, and **it is down to one body**, which is
+//!   `07_generics.science`'s `first_inner`.
+//!
+//!   **The `for` half of it has closed for a reason worth separating from the
+//!   container half.** A loop's binding is a real type now — the prelude says
+//!   `Array of T implements Iterate: type Item is borrowed T` — and a loop's
+//!   *subject* is a real loan, because `science-mir`'s `lower` §7.1 gives a
+//!   `for` a shared borrow where it used to have a move. So a body that returns
+//!   a reference it got out of a loop is **determined**: the element comes back
+//!   from an opaque callee holding that loan, [`generate`]'s §5 ties it to the
+//!   loan, and the loan is tied to the subject. What a `for` still costs is one
+//!   level up — its callee is a hole, so the body has `calls_a_hole` set and
+//!   [`check`]'s §6 excuses it from Decision 6 whether or not it needed
+//!   excusing. `tests/iteration.rs` holds that distinction;
 //! - **a function that cannot return.** Two mutually recursive functions whose
 //!   only path to a result is each other converge, correctly, on *"the result
 //!   borrows from nothing"*.

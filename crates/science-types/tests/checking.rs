@@ -763,6 +763,173 @@ def main_line(summary: borrowed any Summarize):
     assert_eq!(checked.codes(), vec![525]);
 }
 
+// --- §4a's unsizing under `Box`, by the corpus shape it was admitted for --
+
+/// The shape of the six sites, with the example's own names.
+///
+/// `Note` is here because two of the six are `Box.new(Note(..))` rather than
+/// `Box.new(Doc(..))`, and one concrete type would let a rule that had somehow
+/// been keyed on `Doc` pass. `Untouched` implements nothing and is what the
+/// negatives are written against.
+const BOXED_DISPATCH: &str = "
+interface Summarize:
+    def summarize(self) -> String
+
+type Note:
+    text: String
+
+type Untouched:
+    detail: String
+
+Doc implements Summarize:
+    def summarize(self) -> String:
+        self.title
+
+Note implements Summarize:
+    def summarize(self) -> String:
+        self.text
+
+def describe_boxed(value: Box of any Summarize) -> String:
+    \"\"
+";
+
+/// Every coercion in a body, in the order the checker made them.
+fn coercions(checked: &support::Checked, name: &str) -> Vec<Coercion> {
+    checked
+        .body(name)
+        .exprs()
+        .filter_map(|(_, expr)| match expr.kind {
+            ExprKind::Coerce { coercion, .. } => Some(coercion),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn into_summary_returns_two_different_boxed_concrete_types() {
+    // Two of the six, by name: `into_summary`'s arms in
+    // `examples/08_dyn_dispatch.science`. `Site::Return`, and two concrete
+    // types so that the rule is not reading one of them.
+    let checked = program(&format!(
+        "{BOXED_DISPATCH}
+def into_summary(flag: Bool) -> Box of any Summarize:
+    if flag:
+        Box.new(Doc(title: \"a\"))
+    else:
+        Box.new(Note(text: \"...\"))
+"
+    ));
+    checked.assert_clean();
+    assert_eq!(
+        coercions(&checked, "into_summary"),
+        vec![Coercion::UnsizeInBox, Coercion::UnsizeInBox],
+    );
+}
+
+#[test]
+fn as_summary_returns_a_boxed_concrete_type_from_every_match_arm() {
+    // Three more of the six: `as_summary` in
+    // `examples/00_kitchen_sink.science`, whose arms are a `match` rather than
+    // an `if`. The site is the same and so is the answer, which is the point —
+    // §4a is a rule about types and not about which statement reached it.
+    let checked = program(&format!(
+        "{BOXED_DISPATCH}
+choice Format:
+    Json
+    Plain
+    Markdown
+
+def as_summary(format: borrowed Format) -> Box of any Summarize:
+    match format:
+        Json: Box.new(Doc(title: \"json\"))
+        Plain: Box.new(Doc(title: \"plain\"))
+        Markdown: Box.new(Note(text: \"# ...\"))
+"
+    ));
+    checked.assert_clean();
+    assert_eq!(
+        coercions(&checked, "as_summary"),
+        vec![Coercion::UnsizeInBox, Coercion::UnsizeInBox, Coercion::UnsizeInBox],
+    );
+}
+
+#[test]
+fn the_sixth_site_is_an_argument_and_the_node_carries_the_object_type() {
+    // The last of the six: `describe_boxed(Box.new(Doc(..)))` in `main`.
+    // `Site::Argument`, and the one of the six where the operand is a call
+    // rather than the tail of a branch — which is why `science-mir`'s
+    // `argument` does *not* take its two-phase path for it.
+    let checked = program(&format!(
+        "{BOXED_DISPATCH}
+def main_line() -> String:
+    describe_boxed(Box.new(Doc(title: \"b\")))
+"
+    ));
+    checked.assert_clean();
+    let body = checked.body("main_line");
+    let (_, coerce) = body
+        .exprs()
+        .find(|(_, expr)| matches!(expr.kind, ExprKind::Coerce { .. }))
+        .expect("the argument is coerced");
+    let ExprKind::Coerce { operand, coercion } = coerce.kind else { unreachable!() };
+    assert_eq!(coercion, Coercion::UnsizeInBox);
+    assert_eq!(checked.render(coerce.ty), "Box of any Summarize");
+    // The operand is the `Box.new` the author wrote, at its own type. That is
+    // where the allocation is, and §4a's claim is that the conversion adds no
+    // second one.
+    assert_eq!(checked.render(body.ty(operand)), "Box of Doc");
+    // And it is not a `Borrow`, which is the fact `science-mir`'s `argument`
+    // keys its two-phase path on: a coercion over a borrow reserves a loan
+    // there, and this one has no loan under it to reserve.
+    assert!(!matches!(body.expr(operand).kind, ExprKind::Borrow { .. }));
+}
+
+#[test]
+fn a_box_of_a_type_that_implements_nothing_still_does_not_reach_the_object() {
+    // §4's obligation through a body. `Untouched` is declared in the same
+    // fixture as `Doc` and `Note` and implements nothing, so this is the rule
+    // refusing rather than the index being empty.
+    let checked = program(&format!(
+        "{BOXED_DISPATCH}
+def main_line() -> String:
+    describe_boxed(Box.new(Untouched(detail: \"x\")))
+"
+    ));
+    assert_eq!(checked.codes(), vec![525]);
+}
+
+#[test]
+fn a_bare_concrete_type_still_does_not_reach_a_box_of_an_object() {
+    // §4's decision keeps its second sentence: `Box.new` is written, and what
+    // §4a admits is what `Box.new` produces. `describe_boxed(doc)` is still
+    // the line that does not compile, and `assign`'s §5 says it should stay
+    // that way so that the allocation is visible in the source.
+    let checked = program(&format!(
+        "{BOXED_DISPATCH}
+def main_line(doc: Doc) -> String:
+    describe_boxed(doc)
+"
+    ));
+    assert_eq!(checked.codes(), vec![525]);
+}
+
+#[test]
+fn a_box_under_a_container_still_does_not_unsize() {
+    // §2's exemption is one constructor deep. `examples/08_dyn_dispatch.science`
+    // builds its `Array of (Box of any Summarize)` by pushing values that are
+    // already objects, which is why this refusal costs the corpus nothing.
+    let checked = program(&format!(
+        "{BOXED_DISPATCH}
+def describe_all(items: borrowed Array of (Box of any Summarize)) -> Bool:
+    true
+
+def main_line(docs: borrowed Array of (Box of Doc)) -> Bool:
+    describe_all(docs)
+"
+    ));
+    assert_eq!(checked.codes(), vec![525]);
+}
+
 // --- `Self` and the block's associated types ------------------------------
 
 #[test]

@@ -315,10 +315,11 @@ const REGIONS: &[Finding] = &[];
 /// rather than in the return type, and it closes the same way: one presence
 /// test. The fix is the corpus's and this entry is its handoff.
 ///
-/// **And the fifth of the family is here, six times, in two files.** It is the
-/// first one that is neither the checker being right about a program nor the
-/// checker being right about a gap: it is two sentences of `assign.rs` that do
-/// not agree, and a declaration landing is what made them meet.
+/// **And the fifth of the family was here, six times, in two files, and it is
+/// gone.** It was the first one that was neither the checker being right about
+/// a program nor the checker being right about a gap: it was two sentences of
+/// `assign.rs` that did not agree, and a declaration landing is what made them
+/// meet.
 ///
 /// `BodyChecker::type_receiver` accepted `Record | Choice | Alias | Interface |
 /// Union`, and `builtins.rs` allocates `Array`, `Map`, `Box`, `String` and
@@ -328,30 +329,36 @@ const REGIONS: &[Finding] = &[];
 /// in most of the files this test walks. Accepting `Primitive` gives all of
 /// them a type.
 ///
-/// What then reports is `Box.new(Doc(..))` in a slot declared `Box of any
+/// What then reported was `Box.new(Doc(..))` in a slot declared `Box of any
 /// Summarize`: the argument fixes `T`, the call is `Box of Doc`, and `Box of
 /// Doc` reaching `Box of any Summarize` is an unsizing under a type
 /// constructor — `assign`'s §4, first of *"three things it deliberately does
 /// not reach"*. The same file's §5 says an owned `any Summarize` *"is
 /// constructed where it is written — `Box.new(doc)` — and the corpus already
-/// writes every one of them that way"*. Both sentences are in `assign.rs` and
-/// the corpus obeys the second.
+/// writes every one of them that way"*. Both sentences were in `assign.rs` and
+/// the corpus obeyed the second.
 ///
-/// **Two files came off this list in the same change** — `18_ownership` and
-/// `19_stdlib`, whose `Box.new` returns a concrete `Box of Doc` and `Box of
-/// Record` and now checks against a real signature.
+/// **`assign`'s §4a is the sentence that now agrees with both**, and nothing in
+/// `examples/` moved to meet it: `Box of C` unsizes to `Box of any I` for the
+/// reason §2 already exempts `(borrowed T)?` from reaching `T?` — one element,
+/// not rewritten, no allocation, no value changed. `Coercion::UnsizeInBox` is
+/// the variant, `science-mir`'s `tests/unsize.rs` is it arriving in MIR on
+/// these same two files, and `science-codegen`'s `tests/mono.rs` is the symbol
+/// for what it produces being its own.
 ///
-/// `science-types/tests/corpus.rs` pins the identical facts against the library
-/// rather than the binary, and carries the three ways this closes. That is what
-/// makes silence here have to be silence in two places at once.
-const TYPE_CHECKER_FINDINGS: &[(&str, usize)] = &[
-    ("00_kitchen_sink.science", 3),
-    // `07_generics` came off this list: `largest` compared a `borrowed T`
-    // against the `(borrowed T)?` that `get` returns, and now narrows first.
-    // The entry was closed by editing the program, which is what an entry
-    // here is *for* — the other two cannot be closed that way.
-    ("08_dyn_dispatch.science", 3),
-];
+/// **Four files came off this list across the two changes** — `18_ownership`
+/// and `19_stdlib`, whose `Box.new` returns a concrete `Box of Doc` and `Box of
+/// Record`, when the declaration landed; then `00_kitchen_sink` and
+/// `08_dyn_dispatch` when the coercion did.
+///
+/// **The list is empty and the test still walks every file**, which is the
+/// property that makes emptiness readable. `science-types/tests/corpus.rs` pins
+/// the identical facts against the library rather than the binary, so silence
+/// here has to be silence in two places at once, and `science-mir`'s
+/// `the_corpus_unsizes_in_exactly_these_places` counts the six sites *up* on
+/// the same corpus — a third place, and the one that does not go quiet when a
+/// phase stops running.
+const TYPE_CHECKER_FINDINGS: &[(&str, usize)] = &[];
 
 #[test]
 fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {

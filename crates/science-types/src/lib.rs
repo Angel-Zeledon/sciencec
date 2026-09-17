@@ -189,13 +189,16 @@
 //!    §3. — **Discharged** by [`Methods::implements`]: the rule asks whether
 //!    the crate declares `S implements Error:`, and this crate no longer
 //!    agrees that an `Int` may be boxed.
-//! 2. *"`C` implements `I`"*, owed by every [`Coercion::Unsize`]. [`assign`]'s
-//!    §4, which admits `borrowed C` into `borrowed any I` because that
-//!    conversion allocates nothing and changes no value. It is the same
-//!    obligation as the one above and wider — one interface there, every
+//! 2. *"`C` implements `I`"*, owed by every [`Coercion::Unsize`] and by every
+//!    [`Coercion::UnsizeInBox`]. [`assign`]'s §4 and §4a, which admit
+//!    `borrowed C` into `borrowed any I` and `Box of C` into `Box of any I`
+//!    because those conversions allocate nothing and change no value. It is the
+//!    same obligation as the one above and wider — one interface there, every
 //!    interface a program declares here — which is why it was listed
 //!    separately. — **Discharged by the same predicate**, and the width is why
-//!    the predicate had to be an index rather than a list of names.
+//!    the predicate had to be an index rather than a list of names. The second
+//!    rule raised no new obligation, which is the clearest statement of what it
+//!    is: one question, asked about two indirections.
 //! 3. *"this implementation supplies every associated type its interface
 //!    declares"* — §5.4's completeness check, which `science-resolve` names as
 //!    this crate's. An unbound `Self.Item` is left standing by [`subst`]'s §2
