@@ -1,0 +1,14 @@
+---
+source: crates/science-parser/tests/parse_exprs.rs
+expression: "parse_body(\"def run() -> ((), Error?):\n    unsafe:\n        go()\n    ((), null)\n\")"
+---
+Block @31..66
+  Unsafe @31..51
+    body: Block @47..51
+      tail: Call @47..51
+        callee: Path `go` @47..49
+  tail: Tuple @56..66
+    Unit @57..59
+    Null @61..65
+--- diagnostics ---
+(none)

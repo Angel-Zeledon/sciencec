@@ -391,6 +391,31 @@ impl<'t> Parser<'t> {
         }
     }
 
+    /// Whether the last token consumed was the `Dedent` closing an indented
+    /// block.
+    ///
+    /// Everywhere else a line ends with a `Newline`, and that token is what
+    /// stops the postfix row from running on into the next line. An indented
+    /// block does not get one: `parse_indented_block` eats its `Dedent` and
+    /// leaves the cursor on the first token of the following line, so the row
+    /// sees `(` or `[` with nothing in between and reads a call or an index.
+    ///
+    /// `if c:` / `return e` / `(x, y)` parsed as a **call on the `if`** with
+    /// `x` and `y` for arguments, silently. It cost nothing to write and it
+    /// reached six functions in `examples/`; the type checker found it, since
+    /// a call to an `if` is the first thing that fails to type.
+    ///
+    /// Asking about the `Dedent` rather than about which primary was parsed is
+    /// what keeps this true for a form nobody has written yet: whatever ends
+    /// by closing a block ends its line by doing so.
+    ///
+    /// A chain broken over lines is untouched. §4.6 makes `.foo()` on the next
+    /// line one logical line, and the lexer implements that by emitting no
+    /// layout token at all — so there is no `Dedent` before it to find.
+    fn just_closed_an_indented_block(&self) -> bool {
+        self.pos > 0 && matches!(self.tokens[self.pos - 1].kind, TokenKind::Dedent)
+    }
+
     /// The span of the last consumed token that stands for written text, which
     /// is what closes a node.
     ///
@@ -3728,6 +3753,12 @@ impl<'t> Parser<'t> {
     fn parse_postfix(&mut self) -> Expr {
         let start = self.span();
         let mut expr = self.parse_primary();
+
+        // The block this primary closed was the end of its line. See
+        // `just_closed_an_indented_block`.
+        if self.just_closed_an_indented_block() {
+            return expr;
+        }
 
         loop {
             match self.peek() {

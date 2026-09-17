@@ -1,0 +1,17 @@
+---
+source: crates/science-parser/tests/parse_exprs.rs
+expression: "parse_body(\"def split(c: Bool) -> (I64, I64):\n    if c:\n        return (0, 0)\n    (1, 2)\n\")"
+---
+Block @38..76
+  If @38..65
+    cond: Path `c` @41..42
+    then: Block @52..65
+      Return @52..65
+        value: Tuple @59..65
+          Int 0 @60..61
+          Int 0 @63..64
+  tail: Tuple @70..76
+    Int 1 @71..72
+    Int 2 @74..75
+--- diagnostics ---
+(none)

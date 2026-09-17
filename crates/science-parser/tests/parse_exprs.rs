@@ -1201,3 +1201,63 @@ fn negation_in_expressions_is_untouched_by_const_arguments() {
         ",
     );
 }
+
+// --- where the postfix row has to stop ------------------------------------
+
+/// A parenthesised expression on the line after an indented block is that
+/// line's expression, not a call on the block above it.
+///
+/// This is a regression test for a silent misparse. Every other line ends with
+/// a `Newline`, and that token is what stops the postfix row; an indented
+/// block ends with a `Dedent` instead, which `parse_indented_block` eats,
+/// leaving the cursor on the next line with no boundary in between. So the row
+/// carried on and read `(x, y)` as an argument list.
+///
+/// It reached six functions in `examples/` and the §1.7 `dgemm` binding, whose
+/// `unsafe:` block was followed by `((), null)` and came out as a **call on the
+/// `unsafe` block** with `()` and `null` for arguments. Nothing caught it,
+/// because the only thing watching that file was a snapshot, and a snapshot
+/// records whatever it is given. The type checker found it — a call whose
+/// callee is an `if` is the first thing that fails to type.
+#[test]
+fn a_parenthesised_line_after_a_block_is_not_a_call_on_it() {
+    insta::assert_snapshot!(parse_body(
+        "def split(c: Bool) -> (I64, I64):
+    if c:
+        return (0, 0)
+    (1, 2)
+"
+    ));
+}
+
+/// The same for `unsafe:`, which is how the bug actually shipped.
+#[test]
+fn a_tuple_after_an_unsafe_block_is_not_a_call_on_it() {
+    insta::assert_snapshot!(parse_body(
+        "def run() -> ((), Error?):
+    unsafe:
+        go()
+    ((), null)
+"
+    ));
+}
+
+/// The fix keys on the `Dedent`, not on which primary was parsed, so a chain
+/// broken over several lines must still be one expression.
+///
+/// §4.6 makes a leading `.` continue the logical line, and the lexer
+/// implements that by emitting no layout token at all — so there is no
+/// `Dedent` in front of `.iterate()` for the fix to trip over. That is the
+/// reason the two rules do not collide, and it is worth a test because it is a
+/// property of the *lexer* that this parser change silently depends on.
+#[test]
+fn a_chain_broken_over_lines_is_still_one_expression() {
+    insta::assert_snapshot!(parse_body(
+        "def titles(docs: Array of Doc) -> Array of String:
+    docs
+        .iterate()
+        .map(each.title)
+        .collect()
+"
+    ));
+}

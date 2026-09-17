@@ -1,0 +1,15 @@
+---
+source: crates/science-parser/tests/parse_exprs.rs
+expression: "parse_body(\"def titles(docs: Array of Doc) -> Array of String:\n    docs\n        .iterate()\n        .map(each.title)\n        .collect()\n\")"
+---
+Block @55..122
+  tail: Method `collect` @55..122
+    receiver: Method `map` @55..103
+      receiver: Method `iterate` @55..78
+        receiver: Path `docs` @55..59
+      args
+        Closure @92..102
+          body: Field `title` @92..102
+            base: Each @92..96
+--- diagnostics ---
+(none)

@@ -354,20 +354,19 @@ Module @1138..9389
           Let `opened` @9053..9075
             value: Call @9067..9075
               callee: Path `H5open` @9067..9073
-          tail: Call @9084..9185
-            callee: If @9084..9149
-              cond: Binary `<` @9087..9097
-                lhs: Path `opened` @9087..9093
-                rhs: Int 0 @9096..9097
-              then: Block @9111..9149
-                Return @9111..9149
-                  value: Tuple @9118..9149
-                    Path `H5I_BADID` @9119..9128
-                    Field `Overflow` @9130..9148
-                      base: Path `BlasError` @9130..9139
-            args
-              Path `H5T_NATIVE_DOUBLE_g` @9159..9178
-              Null @9180..9184
+          If @9084..9149
+            cond: Binary `<` @9087..9097
+              lhs: Path `opened` @9087..9093
+              rhs: Int 0 @9096..9097
+            then: Block @9111..9149
+              Return @9111..9149
+                value: Tuple @9118..9149
+                  Path `H5I_BADID` @9119..9128
+                  Field `Overflow` @9130..9148
+                    base: Path `BlasError` @9130..9139
+          tail: Tuple @9158..9185
+            Path `H5T_NATIVE_DOUBLE_g` @9159..9178
+            Null @9180..9184
   Fn `cudnn_version` public @9309..9388
     ret: Path `Int` @9339..9342
     body: Block @9348..9388
