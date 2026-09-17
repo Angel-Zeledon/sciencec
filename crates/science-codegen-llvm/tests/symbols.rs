@@ -1,5 +1,15 @@
-//! Check 1 of `sys.rs` §1: every name in the `extern` block is a symbol this
-//! LLVM exports, and nothing that should be absent is present.
+//! The two symbol boundaries this crate sits between, each checked in both
+//! directions.
+//!
+//! **Below it, LLVM**: check 1 of `sys.rs` §1 — every name in the `extern` block
+//! is a symbol this LLVM exports, and nothing that should be absent is present.
+//! That is the whole of this file down to the last section.
+//!
+//! **Above it, `science-rt`**: every `#[no_mangle]` the runtime defines is an
+//! entry point `science_codegen::runtime::RUNTIME` declares, and every symbol
+//! that table declares is one the runtime defines. Same class of defect, same
+//! method, different pair of files; the last section is the account and it was
+//! added when finding 5's two entry points were.
 //!
 //! **The decision.** This file parses `src/sys.rs` **as text** and runs
 //! `llvm-nm` over the import library. It does not link against LLVM and it is
@@ -202,4 +212,117 @@ fn the_llvm_19_string_constructor_is_genuinely_absent() {
         exports.iter().any(|name| name == "LLVMConstStringInContext"),
         "the 18-era `LLVMConstStringInContext` is missing, which no LLVM 18 should be"
     );
+}
+
+// --- the runtime side ------------------------------------------------------
+//
+// Everything above is about `sys.rs` and LLVM's own exports. The same class of
+// defect exists at the other boundary and had no test: **a symbol the emitter
+// declares and the runtime does not define is a link error at the end of a long
+// build, and a symbol the runtime defines and the emitter never declares is
+// dead weight the linker still carries.** `science_codegen::runtime::RUNTIME`
+// is the emitter's side of that boundary and `science-rt`'s `#[no_mangle]`
+// functions are the runtime's, and until finding 5 added two entry points
+// nothing compared them.
+//
+// Read as text, for the reason the LLVM half is read as text: it runs in **CI's
+// configuration**, with no `llvm` feature and no LLVM installation, which is
+// where a new entry point is most likely to be added and least likely to be
+// linked. The cost is the same cost — a text parse is not a parse — so the
+// extractor asserts the shape it expects rather than passing with nothing in
+// hand.
+
+/// Every `#[no_mangle] … extern "C" fn` in `science-rt`'s sources, by name.
+fn runtime_definitions() -> Vec<String> {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crates/")
+        .join("science-rt")
+        .join("src");
+    let mut names = Vec::new();
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&src)
+        .unwrap_or_else(|e| panic!("`{}` is readable: {e}", src.display()))
+        .map(|entry| entry.expect("a directory entry").path())
+        .filter(|path| path.extension().is_some_and(|e| e == "rs"))
+        .collect();
+    files.sort();
+    assert!(files.len() > 5, "only {} modules under {}", files.len(), src.display());
+    for file in &files {
+        let text = std::fs::read_to_string(file).expect("a readable module");
+        let mut tagged = false;
+        for line in text.lines() {
+            let line = line.trim();
+            if line == "#[no_mangle]" {
+                tagged = true;
+                continue;
+            }
+            if !tagged {
+                continue;
+            }
+            tagged = false;
+            // `pub extern "C" fn NAME(` or `pub unsafe extern "C" fn NAME(`.
+            let Some(rest) = line.split(" fn ").nth(1) else {
+                panic!("`{}` has a `#[no_mangle]` on something this extractor cannot read: {line}",
+                       file.display());
+            };
+            let (name, _) = rest.split_once('(').expect("a parameter list on the same line");
+            names.push(name.to_string());
+        }
+    }
+    names
+}
+
+#[test]
+fn every_runtime_definition_is_an_entry_point_codegen_knows_about() {
+    use science_codegen::runtime::RUNTIME;
+
+    let defined = runtime_definitions();
+    assert!(
+        defined.len() > 40,
+        "only {} `#[no_mangle]` functions were extracted, which is far short of the table — the \
+         extractor is reading `science-rt` wrong rather than the crate being small",
+        defined.len()
+    );
+    for name in &defined {
+        assert!(name.starts_with("science_"), "`{name}` breaks §8's one-prefix rule");
+    }
+
+    let declared: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
+    let undeclared: Vec<&String> =
+        defined.iter().filter(|name| !declared.contains(&name.as_str())).collect();
+    assert!(
+        undeclared.is_empty(),
+        "`science-rt` exports {} symbol(s) `RUNTIME` does not declare: {undeclared:?}\n\
+         §2.6 says the table is the whole list, so an entry point nothing declares is one \
+         nothing can call — dead code in every binary this compiler produces.",
+        undeclared.len()
+    );
+    let undefined: Vec<&&str> =
+        declared.iter().filter(|symbol| !defined.iter().any(|name| name == *symbol)).collect();
+    assert!(
+        undefined.is_empty(),
+        "`RUNTIME` declares {} symbol(s) `science-rt` does not define: {undefined:?}\n\
+         That is an unresolved external at the end of a link, which is the slowest place in the \
+         build to find a typo.",
+        undefined.len()
+    );
+    assert_eq!(defined.len(), declared.len());
+}
+
+/// The two symbols `script-mode.md` §2.3's fourth row needs, at the boundary
+/// they cross.
+///
+/// The test above would catch either one going missing; this one says what they
+/// are for, so that a later reader deleting an "unused" runtime function finds
+/// out here rather than in a linker's output.
+#[test]
+fn finding_fives_two_symbols_are_defined_and_declared() {
+    use science_codegen::runtime::{EXIT_CONTRACT, runtime_fn};
+
+    let defined = runtime_definitions();
+    for symbol in [EXIT_CONTRACT.eprint_symbol, EXIT_CONTRACT.exit_symbol] {
+        let symbol = symbol.expect("§9.3 finding 5 is discharged and both are named");
+        assert!(defined.iter().any(|name| name == symbol), "`science-rt` lost `{symbol}`");
+        assert!(runtime_fn(symbol).is_some(), "`RUNTIME` lost `{symbol}`");
+    }
 }

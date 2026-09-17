@@ -129,7 +129,7 @@
 //!
 //! - **Finding 1** (`science_array_with_capacity` missing from §2's `sret`
 //!   list) is discharged by [`runtime::RUNTIME`] carrying a return type per
-//!   entry point and `tests/runtime_abi.rs` classifying all 45 rather than
+//!   entry point and `tests/runtime_abi.rs` classifying every one of them rather than
 //!   copying a list. A list maintained by hand is what failed; a list derived
 //!   from signatures cannot fail the same way.
 //!
@@ -163,14 +163,20 @@
 //! exactly why a codegen that conflated them would be correct by accident; the
 //! type model refuses the accident.
 //!
-//! **Findings 5 and 6 are not fixed and cannot be fixed here.** Finding 5 is
-//! that the runtime has no program entry point, no `science_exit`, and no
-//! symbol that writes to stderr without aborting — so `script-mode.md` §2.3's
-//! contract (print `error: `, exit **1**) has nothing to lower to. §9.4 is
-//! right that a hello world can be emitted from the page and a `main` that
-//! returns an error cannot, and this crate ran into the same wall from the
-//! other side: [`runtime::EXIT_CONTRACT`] is the record of what is missing and
-//! it names no symbol, because there is none. Finding 6 is the
+//! **Finding 5 was not fixable here and has since been fixed there; finding 6
+//! still cannot be fixed here.** Finding 5 was that the runtime had no program
+//! entry point, no `science_exit`, and no symbol that writes to stderr without
+//! aborting — so `script-mode.md` §2.3's contract (print `error: `, exit **1**)
+//! had nothing to lower to, and §9.4 was right that a hello world could be
+//! emitted from the page and a `main` that returns an error could not.
+//! [`runtime::EXIT_CONTRACT`] was the record of what was missing and named no
+//! symbol, because there was none; `science-rt` now has both and it names them,
+//! so [`runtime::ExitContract::is_satisfiable`] is true and
+//! `science-codegen-llvm`'s emitted `main` implements the table. **The half
+//! that is still open is the rendering rather than the exit**: §2.3 asks for the
+//! error's `Display` and the prelude declares `Display` with no method, so what
+//! is printed after `error: ` is a fixed message and
+//! [`runtime::ExitContract::renders_the_error`] is `false`. Finding 6 is the
 //! `cap == 0 => len == 0` invariant, and this crate's response is Decision 15,
 //! implemented as a rule with no escape hatch: [`descriptor::StringLiteral`]
 //! can only produce the `science_string_from_bytes` form. There is no

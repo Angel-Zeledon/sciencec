@@ -251,18 +251,26 @@ fn the_lowering_is_byte_identical_across_runs() {
 }
 
 #[test]
-fn a_main_that_returns_an_error_has_nothing_to_lower_to() {
+fn a_main_that_returns_an_error_now_has_something_to_lower_to() {
     // §9.3's finding 5, asserted rather than remembered. `script-mode.md` §2.3
     // requires a failing script body to print `error: ` to stderr and exit 1.
-    // The runtime has `science_print` and `science_write`, which write to
-    // stdout; and `science_panic_bytes`, which writes to stderr and then aborts
-    // — `SIGABRT` on POSIX, `3` on Windows, and not 1.
+    // For as long as the runtime's only stderr writer was `science_panic_bytes`
+    // — which aborts, `SIGABRT` on POSIX and `3` on Windows, and not 1 — that
+    // was unsatisfiable, and this test asserted the gap.
+    //
+    // It now asserts the repair. The requirements are unchanged; what changed is
+    // that two symbols exist to meet them.
     let contract = science_codegen::runtime::EXIT_CONTRACT;
     assert_eq!(contract.required_status, 1);
     assert_eq!(contract.required_stream, "stderr");
     assert_eq!(contract.required_prefix, "error: ");
     assert!(
-        !contract.is_satisfiable(),
-        "if this fails, `science-rt` has grown an exit path and stage 1's second half is unblocked"
+        contract.is_satisfiable(),
+        "stage 1's second half needs a stderr writer that returns and a chosen exit status"
     );
+    // What is still owed, and it is the rendering rather than the exit:
+    // `script-mode.md` §2.3 asks for the error's `Display` and the prelude
+    // declares `Display` with no method. `science-codegen-llvm`'s
+    // `tests/exit_code.rs` is where the message that stands in for it is pinned.
+    assert!(!contract.renders_the_error());
 }

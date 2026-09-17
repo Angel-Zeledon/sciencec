@@ -33,7 +33,7 @@ use science_codegen_llvm::lower::runtime_signatures;
 
 /// Every runtime entry point declared, plus a string literal, in one module.
 ///
-/// **All 45, not the four `hello` calls.** A declaration is only checked by the
+/// **Every entry point, not the four `hello` calls.** A declaration is only checked by the
 /// calls that build it, and this is the cheapest way to exercise every shape
 /// `AbiSignature` can take on this target: nine `sret` returns, the `bool`
 /// returns, the pointer returns, the `Never` of `science_panic_bytes`, and the

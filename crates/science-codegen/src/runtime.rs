@@ -1,7 +1,7 @@
 //! The runtime boundary: §2.6, and the place §9's findings become facts a test
 //! checks.
 //!
-//! **The decision.** The 45 `science_`-prefixed entry points are described here
+//! **The decision.** The 47 `science_`-prefixed entry points are described here
 //! as data — a signature per symbol — and never as prose. Everything a code
 //! generator needs to emit a call is read out of [`RUNTIME`]: the return
 //! convention, the descriptor's parameter position, and whether a length is a
@@ -17,9 +17,9 @@
 //! codegen side of that, and it does not keep a list at all. It keeps
 //! signatures and derives the list.
 //!
-//! **The cost.** Forty-five signatures transcribed by hand, which is a
+//! **The cost.** Forty-seven signatures transcribed by hand, which is a
 //! transcription that can be wrong in exactly the way the thing it replaces was
-//! wrong. Two mitigations: `tests/runtime_abi.rs` asserts the count is 45, that
+//! wrong. Two mitigations: `tests/runtime_abi.rs` asserts the count is 47, that
 //! every symbol is `science_`-prefixed and unique, and that the derived `sret`
 //! set matches the eight the runtime's §2 now names; and the runtime crate is a
 //! dev-dependency, so a test can compare the *layouts* against the real Rust
@@ -67,7 +67,7 @@
 //! its scope to edit. [`RUNTIME`] carries the signature, the set is derived, and
 //! `tests/runtime_abi.rs` fails if anyone makes it eight again.
 //!
-//! # Decision 14: these 45 are the only runtime calls F0 emits
+//! # Decision 14: these 47 are the only runtime calls F0 emits
 //!
 //! > *Everything else is inline. No entry point is added to `science-rt` to make
 //! > codegen simpler; the runtime page's §9 already states the principle —
@@ -284,6 +284,20 @@ pub enum RtParam {
     Usize,
     /// `i64`: Science's `Int`.
     Int,
+    /// `i32`: a process exit status, and nothing else.
+    ///
+    /// **One entry point takes this and the variant exists for it**:
+    /// `science_exit(code: i32)`. C's `exit` takes an `int`, so a 64-bit
+    /// status would be a different signature from the one the platform has —
+    /// and unlike [`RtParam::Usize`] against [`RtParam::Int`], where finding 3
+    /// is that the two are the same width on every F0 target and the
+    /// distinction is bookkeeping, this one is a real width difference that a
+    /// call site gets wrong in a register.
+    ///
+    /// It is deliberately not spelled `Int`: Science has no 32-bit `Int`, and
+    /// nothing in the language reaches this parameter. The exit status is the
+    /// emitted `main`'s own value, not a Science one.
+    I32,
 }
 
 /// One runtime entry point.
@@ -344,7 +358,7 @@ const D: RtParam = RtParam::Descriptor;
 const Z: RtParam = RtParam::Usize;
 const N: RtParam = RtParam::Int;
 
-/// The 45 entry points. §2.6: *"They are the whole list."*
+/// The 47 entry points. §2.6: *"They are the whole list."*
 ///
 /// Ordered by module and then as `science-rt` declares them, which is neither
 /// alphabetical nor arbitrary: it is the order a reader comparing this table
@@ -369,6 +383,14 @@ pub const RUNTIME: &[RuntimeFn] = &[
     // Descriptor **first**. This is the pair finding 4 is about.
     RuntimeFn { symbol: "science_box_new", params: &[D, P], ret: RtRet::Ptr },
     RuntimeFn { symbol: "science_box_free", params: &[D, P], ret: RtRet::Void },
+    // --- exit.rs ---
+    // §9.3's finding 5, discharged. These are the two symbols the note asks for
+    // by name — *"a stderr writer that does not abort, and
+    // `science_exit(code: I32)`"* — and they are what makes `script-mode.md`
+    // §2.3's fourth row reachable. Neither returns an aggregate, so neither
+    // joins the nine, which the derived set says without anybody deciding.
+    RuntimeFn { symbol: "science_write_error_bytes", params: &[P, Z], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_exit", params: &[RtParam::I32], ret: RtRet::Never },
     // --- io.rs ---
     RuntimeFn { symbol: "science_write", params: &[P], ret: RtRet::Void },
     RuntimeFn { symbol: "science_print", params: &[P], ret: RtRet::Void },
@@ -482,28 +504,39 @@ pub fn owned_nullable_return(payload: &CgTy) -> OwnedNullableReturn {
 /// What `script-mode.md` §2.3 requires of a program's exit and what
 /// `science-rt` provides for it.
 ///
-/// **§9.3's finding 5, and it is not fixed.** There is no `science_main`, no
-/// runtime initialisation, no teardown, no `argv` access and no `science_exit`.
-/// Codegen emitting `main` itself is survivable — that is what a code generator
-/// does. The exit contract is not:
+/// **§9.3's finding 5, discharged in its mechanical half and not in its whole.**
+/// The finding was that a failing `main` *"cannot be emitted"*: there was no
+/// symbol that wrote to stderr without aborting, and none that exited with a
+/// chosen status. `science-rt` now has both — [`ExitContract::eprint_symbol`]
+/// and [`ExitContract::exit_symbol`] name them — so
+/// [`ExitContract::is_satisfiable`] is true and the emitted `main` implements
+/// §2.3's table rather than aborting on its fourth row.
 ///
-/// > *A hello world can be emitted from this page. A `main` that returns an
-/// > error cannot.* There is no symbol that writes to stderr without aborting,
-/// > and no symbol that exits with a chosen code.
+/// **What is still short is the rendering, and
+/// [`ExitContract::display_is_renderable`] is the record of it.** §2.3 asks for
+/// `error: ` followed by *the `Display` of the error*. `Display` is declared in
+/// the prelude as an interface **with no methods**, because — in
+/// `science-resolve`'s `builtins.rs`, which made the call — writing
+/// `Display.display(Formatter)` would invent `Formatter`, a Level 1 type no
+/// note specifies, as a side effect of a bound check. So there is no method to
+/// call, no vtable slot to call it through, and nothing for codegen to emit but
+/// a fixed message.
 ///
-/// `science_print` and `science_write` go to stdout. `science_panic_bytes`
-/// writes to stderr and then calls `std::process::abort()` — the platform's
-/// abort status, `SIGABRT` on POSIX and `3` on Windows, and not `1`.
-///
-/// This constant is empty of symbols on purpose. It is the record of a gap, and
-/// the day somebody adds `science_eprint` and `science_exit` to the runtime,
-/// this is the item that tells them what the two of them are for.
+/// That is the honest state and it is deliberately not repaired here. Inventing
+/// a `Formatter` to satisfy a table in a design note would be `assign.rs` §3's
+/// named failure — a signature invented in passing is how a language acquires a
+/// design nobody argued for — and it would be invented by the *backend*, which
+/// is the component with the least standing to decide it. Printing something
+/// true and less than promised costs a user the error's identity on a path they
+/// can still see, diagnose and exit from; inventing the type costs the language
+/// a decision.
 pub const EXIT_CONTRACT: ExitContract = ExitContract {
     required_status: 1,
     required_prefix: "error: ",
     required_stream: "stderr",
-    eprint_symbol: None,
-    exit_symbol: None,
+    eprint_symbol: Some("science_write_error_bytes"),
+    exit_symbol: Some("science_exit"),
+    display_is_renderable: false,
 };
 
 /// See [`EXIT_CONTRACT`].
@@ -521,12 +554,42 @@ pub struct ExitContract {
     /// The runtime symbol that exits with a chosen status. `None`: there is
     /// none.
     pub exit_symbol: Option<&'static str>,
+    /// Whether codegen can render the error itself, rather than a placeholder.
+    ///
+    /// `false`, and it is the half of §2.3 that the two symbols above do not
+    /// buy. See [`EXIT_CONTRACT`] for why, and what the alternative would have
+    /// cost. It is a field rather than a comment so that the day `Display`
+    /// grows a method, the test asserting this is `false` fails and points at
+    /// the message that should stop being a placeholder.
+    pub display_is_renderable: bool,
 }
 
 impl ExitContract {
-    /// Whether the runtime can currently implement the contract.
+    /// Whether the runtime has the two symbols a failing exit needs.
+    ///
+    /// **This asks about the mechanism and not about the message.** A `true`
+    /// here means the emitted `main` can write to stderr and end the process
+    /// with status 1; [`ExitContract::display_is_renderable`] is the separate
+    /// question of whether what it writes is the error rather than a stand-in
+    /// for it. Folding the two into one predicate would have made the contract
+    /// unsatisfiable for as long as `Display` has no method, which would hide
+    /// the exit status behind the rendering and leave a program that returns an
+    /// error aborting with 3 — the state this replaced.
     pub fn is_satisfiable(&self) -> bool {
         self.eprint_symbol.is_some() && self.exit_symbol.is_some()
+    }
+
+    /// [`ExitContract::display_is_renderable`], read through a call.
+    ///
+    /// The field is `const`, so `assert!(!EXIT_CONTRACT.display_is_renderable)`
+    /// is an assertion the compiler folds away and clippy's
+    /// `assertions_on_constants` says so. Reading it through a method keeps the
+    /// four places that assert it — here, `tests/runtime_abi.rs`,
+    /// `tests/stage_one.rs` and `science-codegen-llvm`'s `tests/exit_code.rs` —
+    /// assertions rather than comments, which matters because every one of them
+    /// is a tripwire meant to fire on a change somebody else makes.
+    pub fn renders_the_error(&self) -> bool {
+        self.display_is_renderable
     }
 }
 
@@ -535,8 +598,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn there_are_forty_five_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 45, "§2.6: \"they are the whole list\"");
+    fn there_are_forty_seven_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 47, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");
@@ -644,16 +707,25 @@ mod tests {
     }
 
     #[test]
-    fn the_exit_contract_is_not_satisfiable_and_that_is_the_finding() {
-        assert!(!EXIT_CONTRACT.is_satisfiable());
+    fn the_exit_contract_is_satisfiable_and_names_two_symbols_the_table_has() {
+        assert!(EXIT_CONTRACT.is_satisfiable());
         assert_eq!(EXIT_CONTRACT.required_status, 1);
-        assert!(EXIT_CONTRACT.eprint_symbol.is_none());
-        assert!(EXIT_CONTRACT.exit_symbol.is_none());
-        // And nothing in the table can stand in for them: the only stderr
-        // writer aborts.
-        assert!(runtime_fn("science_eprint").is_none());
-        assert!(runtime_fn("science_exit").is_none());
+        // Naming a symbol the table does not have is a link error at the end of
+        // a long build, so the contract's two names are looked up rather than
+        // trusted.
+        for symbol in [EXIT_CONTRACT.eprint_symbol, EXIT_CONTRACT.exit_symbol] {
+            let symbol = symbol.expect("finding 5's two symbols");
+            assert!(runtime_fn(symbol).is_some(), "`{symbol}` is not in the table");
+        }
+        // The writer returns, which is the whole difference from the panic path
+        // beside it; the exit does not.
+        assert_eq!(runtime_fn("science_write_error_bytes").unwrap().ret, RtRet::Void);
+        assert_eq!(runtime_fn("science_exit").unwrap().ret, RtRet::Never);
         assert_eq!(runtime_fn("science_panic_bytes").unwrap().ret, RtRet::Never);
+        // And the half that is still owed. When this fails, `Display` has grown
+        // a method and the placeholder in `science-codegen-llvm`'s `lower` is
+        // the thing to delete.
+        assert!(!EXIT_CONTRACT.renders_the_error());
     }
 
     #[test]

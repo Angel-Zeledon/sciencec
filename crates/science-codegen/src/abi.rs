@@ -250,7 +250,7 @@ pub enum ArgClass {
 ///
 /// One rule, and it is "pass a pointer". Legal because both sides are compiled
 /// by the same compiler at the same version; safe because it is the same
-/// convention `science-rt` already uses, every one of whose 45 entry points
+/// convention `science-rt` already uses, every one of whose entry points
 /// takes aggregates as `*const`/`*mut` and never by value.
 pub fn classify_science_argument(layout: &Layout) -> ArgClass {
     if layout.size == 0 {

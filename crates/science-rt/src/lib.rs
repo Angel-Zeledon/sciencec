@@ -2,8 +2,9 @@
 //!
 //! This crate is statically linked into every binary `sciencec` produces. It is
 //! the whole of what runs beneath a Science program: allocation over the system
-//! allocator, `panic` with a message and abort, and the memory representation
-//! of every type in the F0 standard library (§8 of the F0 design).
+//! allocator, `panic` with a message and abort, the two symbols a program ends
+//! through (`exit.rs`), and the memory representation of every type in the F0
+//! standard library (§8 of the F0 design).
 //!
 //! Everything below is the contract between this crate and `science-codegen`. It
 //! is written so that codegen can be emitted from this page alone, without
@@ -75,6 +76,17 @@
 //! silent memory corruption rather than a compile or link failure, which is the
 //! failure mode this whole section exists to prevent, and it is the reason the
 //! list is now checked by a test rather than maintained by hand.
+//!
+//! **The first entry points added after that repair were checked against this
+//! list rather than added to it, and the check is what says they do not
+//! belong.** [`science_write_error_bytes`] and [`science_exit`] — `exit.rs`'s
+//! two, the ones `script-mode.md` §2.3's failing row needs — return `()` and
+//! `!` respectively. Neither returns an aggregate, so neither is classified
+//! MEMORY on any convention and neither takes an `sret` parameter; the derived
+//! set is the same nine it was, while the count of entry points went from 45 to
+//! 47. That is the lesson above working in the direction it was written for: a
+//! reader who had to decide by hand whether two new symbols joined a list of
+//! nine would have had to be right, and instead nobody had to decide.
 //!
 //! # 3. Pointer conventions
 //!
@@ -277,10 +289,20 @@
 //! `Array::push` is `science_array_push`. Entry points with no counterpart in §8
 //! exist because codegen needs them and are marked **codegen support** in their
 //! own documentation: drop glue (`science_*_free`), literal construction
-//! (`science_string_from_bytes`), and the capacity hints.
+//! (`science_string_from_bytes`), the capacity hints, and `exit.rs`'s two.
+//!
+//! [`science_write_error_bytes`] is named against a spelling §8 does **not**
+//! have and `stdlib-core.md` §4.1 does: `write_error` is the stderr form that
+//! adds nothing and `print_error` is the form that appends a newline, dividing
+//! stderr exactly as `write` and `print` divide stdout. Only the `write_error`
+//! side exists here, because codegen composes the whole message — prefix,
+//! text and line terminator — as one static constant and has no call site for
+//! the other. Naming it for the spelling it will implement rather than for
+//! what it does today is this paragraph's own rule applied in advance, and the
+//! next paragraph is the record of what happens when it is not.
 //!
 //! This paragraph said `link_`-prefixed until it was checked against the crate:
-//! all 45 exported symbols are `science_`-prefixed and always were, and the
+//! all exported symbols are `science_`-prefixed and always were, and the
 //! sentence contradicted its own next example. It is recorded rather than
 //! quietly corrected because this page invites a code generator to be emitted
 //! *from it alone*, without reading a function body — which is the one reading
@@ -373,6 +395,7 @@
 mod abi;
 mod array;
 mod boxed;
+mod exit;
 mod io;
 mod map;
 mod mem;
@@ -382,6 +405,7 @@ mod string;
 pub use abi::*;
 pub use array::*;
 pub use boxed::*;
+pub use exit::*;
 pub use io::*;
 pub use map::*;
 pub use mem::*;

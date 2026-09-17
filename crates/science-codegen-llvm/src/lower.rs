@@ -60,33 +60,64 @@
 //!
 //! # The entry point, and §9.3's finding 5 met from the other side
 //!
-//! `science-rt` has no program entry point, no `science_exit`, and no symbol
-//! that writes to stderr without aborting. [`EXIT_CONTRACT`] in
-//! `science_codegen::runtime` records that, and
-//! `science-codegen`'s `tests/stage_one.rs` asserts that it is unsatisfiable.
-//!
-//! So this module emits `main` itself, as §9.3 says it must, and the emitted
-//! `main` is honest about the half it cannot do:
+//! `science-rt` has no program entry point, so this module emits `main` itself,
+//! as §9.3 says it must. What it emits is `script-mode.md` §2.3's exit table,
+//! row for row:
 //!
 //! - the Science entry is `_S4main`, mangled by Decision 16, returning `Error?`
 //!   through `sret` because `Error?` is `(any Error)?`, two words, and Windows
 //!   x64 returns anything that is not 1, 2, 4 or 8 bytes by hidden pointer;
-//! - C's `main` calls it, tests **the data pointer and only the data pointer**
-//!   — §3.4: *"the vtable slot of a null trait object is undefined and codegen
-//!   must never load it — including on the path that tests for null"* — and
-//!   returns 0 when it is null;
-//! - and on the non-null edge it calls `science_panic_bytes` with a message
-//!   saying why it cannot do what `script-mode.md` §2.3 requires, then
-//!   `unreachable`.
+//! - C's `main` calls it, then tests **the data pointer and only the data
+//!   pointer** — §3.4: *"the vtable slot of a null trait object is undefined and
+//!   codegen must never load it — including on the path that tests for null"*;
+//! - null is rows 1 to 3 (falling off the end, `return`, `return` of a null
+//!   error, which are one value and one edge): `science_exit(0)`;
+//! - non-null is row 4: `science_write_error_bytes` with a static message, then
+//!   `science_exit(1)`;
+//! - row 5, `panic(…)`, does not come through here at all. It is
+//!   `science_panic_bytes` at the panicking call site and it still aborts, and
+//!   `panic.rs`'s argument for that is untouched by anything here.
 //!
-//! **That last bullet is wrong and is deliberately wrong.** §2.3 requires
-//! `error: ` plus the error's `Display` on stderr and exit **1**;
-//! `science_panic_bytes` writes to stderr and then calls `abort()`, which is
-//! `SIGABRT` on POSIX and 3 on Windows. It is the closest reachable behaviour
-//! and it is reachable only by the program the compiler cannot yet produce —
-//! nothing in stage 1 can return a non-null error, because nothing in stage 1
-//! can construct one. When `science_exit` and a non-aborting stderr writer
-//! exist, this is four lines.
+//! **This used to abort, and the record of why is worth keeping.** Until
+//! `science-rt` grew [`exit.rs`'s two symbols][exit], the fourth row had nothing
+//! to lower to: the only stderr writer was `science_panic_bytes`, which aborts,
+//! and `abort()` is `SIGABRT` on POSIX and 3 on Windows and is not 1. So the
+//! emitted `main` called it with a message explaining that it could not do what
+//! §2.3 requires — the closest reachable behaviour, and reachable only by a
+//! program the compiler could not produce. [`EXIT_CONTRACT`] was the record of
+//! the gap; it now names the two symbols and
+//! [`ExitContract::is_satisfiable`](science_codegen::runtime::ExitContract::is_satisfiable)
+//! is true.
+//!
+//! [exit]: https://docs.rs/science-rt
+//!
+//! # What the failing row actually prints, and how far short it falls
+//!
+//! §2.3 asks for `error: ` and then **the `Display` of the error**. What is
+//! emitted is [`ERROR_MESSAGE`]: the required prefix, then a fixed phrase, then
+//! a newline. The error's identity is not in it.
+//!
+//! **The reason is that `Display` is not reachable, not that rendering it is
+//! hard.** `science-resolve`'s `builtins.rs` declares `Display` as an interface
+//! **with no methods**, and says why: naming `Display.display(Formatter)` would
+//! invent `Formatter`, a Level 1 type no note specifies, as a side effect of a
+//! bound check. There is therefore no method name, no vtable slot, and nothing
+//! for a `call` here to go through. `Error.message(shared self) -> String` *is*
+//! declared — it is `stdlib-core.md` §7.5 verbatim — and is no better off: no
+//! implementation of it exists anywhere in `science-rt`, this backend emits no
+//! vtables at all, and calling through a slot nothing fills is a jump to
+//! whatever the second word of the fat pointer holds.
+//!
+//! **The cost, stated plainly: a user is told that something failed and is not
+//! told what.** That is a real loss and it is the smaller one. The alternative
+//! is for a code generator to invent `Formatter` — to pick a signature for a
+//! type two design notes decline to specify — which is the failure
+//! `science-types`'s `assign.rs` §3 names: a decision nobody argued for,
+//! arriving as a side effect of something else, and arriving from the component
+//! with the least standing to make it. The placeholder is deleted the day
+//! `Display` has a method; `EXIT_CONTRACT.display_is_renderable` is `false`
+//! until then and a test asserts it, so the deletion is prompted rather than
+//! remembered.
 
 use science_codegen::abi::{AbiParam, AbiSignature, ArgClass, ParamAttrs};
 use science_codegen::backend::{
@@ -104,6 +135,33 @@ use science_types::Types;
 use science_types::ty::TyKind;
 
 use crate::emit::{ExtBlock, ExtBody, ExtInst};
+
+/// What the emitted `main` writes to standard error when the script body
+/// returns a non-null error.
+///
+/// **It opens with `script-mode.md` §2.3's required prefix and then says
+/// something true and smaller than §2.3 asks for.** The note asks for the
+/// error's `Display`; the prelude's `Display` has no method, so there is
+/// nothing to call and no vtable slot to call it through. The module
+/// documentation is the full argument, including why inventing `Formatter` to
+/// close the gap would be the worse trade.
+///
+/// The prefix is asserted against
+/// [`science_codegen::runtime::EXIT_CONTRACT`]`.required_prefix` by
+/// `tests/exit_code.rs` rather than spliced in here: a `const` built by
+/// concatenation reads worse than the bytes it produces, and the bytes are what
+/// a user sees.
+///
+/// The trailing newline is this constant's and not the runtime's.
+/// `science_write_error_bytes` is `stdlib-core.md` §4.1's `write_error` — the
+/// form that adds nothing — so the line terminator has to be here. It is `\n`
+/// on every platform, for `science_print`'s reason: Science text is UTF-8 and
+/// its terminator is `\n`, and translating it would make output depend on where
+/// the compiler was built.
+pub const ERROR_MESSAGE: &str = "error: the script returned an error, and this compiler cannot \
+                                 say which one — `script-mode.md` §2.3 asks for the error's \
+                                 `Display`, and the prelude declares `Display` with no method to \
+                                 call\n";
 
 /// Why a program could not be lowered.
 ///
@@ -148,7 +206,7 @@ impl Unlowered {
 /// `noalias nocapture` on an exclusive one, and
 /// [`science_codegen::runtime::RtParam`] has **one** pointer variant: it does
 /// not distinguish `*const ScienceString` from `*mut ScienceString`. Every one
-/// of the 45 signatures makes the distinction in Rust —
+/// of the signatures makes the distinction in Rust —
 /// `science_print(text: *const ScienceString)` against
 /// `science_string_free(value: *mut ScienceString)` — and the table that codegen
 /// reads erases it. Emitting `readonly` on a guess is §4.4's failure mode with
@@ -174,6 +232,7 @@ pub fn runtime_signature(target: Triple, entry: &RuntimeFn) -> AbiSignature {
                 RtParam::Descriptor | RtParam::Pointer => CgTy::Ptr(PtrKind::Raw),
                 RtParam::Usize => CgTy::Int(IntTy::Usize),
                 RtParam::Int => CgTy::Int(IntTy::I64),
+                RtParam::I32 => CgTy::Int(IntTy::I32),
             };
             AbiParam {
                 name: format!("a{index}"),
@@ -229,13 +288,21 @@ impl<'a> Lowerer<'a> {
         }
         let entry = runtime_fn(symbol)
             .ok_or_else(|| Unlowered::new(format!("a call to `{symbol}`, which is not one of \
-                                                   `science-rt`'s 45 entry points")))?;
+                                                   `science-rt`'s entry points")))?;
         let sig = runtime_signature(self.target, entry);
         self.declarations.push(sig.clone());
         Ok(sig)
     }
 
-    fn intern_literal(&mut self, text: &str) -> StringLiteral {
+    /// Intern a string literal, returning the global codegen will emit for it.
+    ///
+    /// **Public for `tests/exit_code.rs`**, which needs a global whose address
+    /// is not null — that is the whole of what a non-null `(any Error)?`'s data
+    /// word has to be for `main` to take §2.3's fourth row. Asking the lowerer
+    /// for one rather than inventing a symbol name keeps the test's global in
+    /// the same [`Lowered::literals`] the emitter defines from, so a test cannot
+    /// name a global the module does not have.
+    pub fn intern_literal(&mut self, text: &str) -> StringLiteral {
         if let Some(existing) = self.literals.iter().find(|l| l.bytes == text.as_bytes()) {
             return existing.clone();
         }
@@ -335,16 +402,31 @@ impl<'a> Lowerer<'a> {
 
         let science_main = self.lower_body(entry)?;
         let c_main = self.lower_c_main(&science_main.0)?;
-        let mut definitions = vec![science_main, c_main];
+        Ok(self.finish(vec![science_main, c_main]))
+    }
+
+    /// The literals and declarations interned so far, with `definitions`,
+    /// as one module.
+    ///
+    /// **Public for the same caller [`Lowerer::intern_literal`] is public for**:
+    /// `tests/exit_code.rs` writes a `_S4main` that no Science program can
+    /// produce and needs the rest of the module — the literals, the runtime
+    /// declarations [`Lowerer::lower_c_main`] added — assembled the way
+    /// [`Lowerer::lower_crate`] assembles it. Sharing the function rather than
+    /// the recipe is what keeps the test from drifting: a declaration this
+    /// lowerer adds and the test forgot is `main` calling a symbol the module
+    /// does not declare, which the emitter reports as an internal error at the
+    /// end of a build rather than as a missing line in a test.
+    pub fn finish(&mut self, mut definitions: Vec<(AbiSignature, ExtBody)>) -> Lowered {
         // Decision 4: *"every monomorphised item is emitted in sorted order of
-        // its mangled symbol name."* Three lines, and it closes Gate J's named
+        // its mangled symbol name."* One line, and it closes Gate J's named
         // hazard by construction rather than by testing.
         definitions.sort_by(|a, b| a.0.symbol.cmp(&b.0.symbol));
-        Ok(Lowered {
+        Lowered {
             literals: std::mem::take(&mut self.literals),
             declarations: std::mem::take(&mut self.declarations),
             definitions,
-        })
+        }
     }
 
     fn lower_body(&mut self, body: &MirBody) -> Result<(AbiSignature, ExtBody), Unlowered> {
@@ -626,9 +708,19 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// C's `main`, which `science-rt` does not provide. See the module
-    /// documentation.
-    fn lower_c_main(
+    /// C's `main`, which `science-rt` does not provide: `script-mode.md` §2.3's
+    /// exit table in three blocks. See the module documentation for the table
+    /// and for what the failing block prints.
+    ///
+    /// **Public, and it is the acceptance test that makes it so.** §2.3's
+    /// failing row is reachable from no Science program this compiler can build
+    /// — a non-null `Error?` needs a concrete error, a box and a vtable, and
+    /// stage 1 has none of the three — so `tests/exit_code.rs` pairs this
+    /// function with a `_S4main` it writes itself, links the result and runs it.
+    /// A test that built its own `main` beside this one would assert the table
+    /// against a copy of the table; this way it asserts the emitted `main`, and
+    /// the only invented half is the value that `main` reads.
+    pub fn lower_c_main(
         &mut self,
         science_main: &AbiSignature,
     ) -> Result<(AbiSignature, ExtBody), Unlowered> {
@@ -650,12 +742,9 @@ impl<'a> Lowerer<'a> {
         let slot = LocalId(0);
         let data = ValueId(0);
         let is_null = ValueId(1);
-        let message = self.intern_literal(
-            "error: the script body returned an error, and this compiler cannot print it or exit \
-             1 — `science-rt` has no stderr writer that does not abort and no `science_exit` \
-             (codegen-and-linking.md §9.3, finding 5)",
-        );
-        let panic = self.declare("science_panic_bytes")?;
+        let message = self.intern_literal(ERROR_MESSAGE);
+        let write_error = self.declare("science_write_error_bytes")?;
+        let exit = self.declare("science_exit")?;
 
         let entry = ExtBlock {
             id: BlockId(0),
@@ -693,26 +782,62 @@ impl<'a> Lowerer<'a> {
                 else_block: BlockId(2),
             },
         };
+        // Rows 1 to 3 of §2.3, which are one edge: falling off the end is an
+        // implicit `return null`, a bare `return` is sugar for `return null`,
+        // and `return err` with a null `err` is that same value written out.
+        // Three rows in the note because three things a user types; one block
+        // here because the compiler cannot tell them apart and must not.
+        //
+        // **`science_exit(0)` rather than `ret i32 0`, and the difference is a
+        // flush.** A Science binary's entry point is this function, so Rust's
+        // `lang_start` never runs and nothing is registered to flush the
+        // `LineWriter` inside `science-rt`'s `std::io::stdout()`. Returning
+        // would end the process through the C runtime, which flushes C's stdio
+        // and knows nothing about that buffer. `print` appends a newline and a
+        // `LineWriter` flushes on one, so today nothing is lost; `write` does
+        // not, and the first program that ends with one would lose its last
+        // line. `exit.rs` is the account.
         let ok = ExtBlock {
             id: BlockId(1),
             label: "ok".to_string(),
-            insts: vec![],
-            terminator: Terminator::Return(Some(Operand::ConstInt(0))),
-        };
-        let failed = ExtBlock {
-            id: BlockId(2),
-            label: "failed".to_string(),
             insts: vec![ExtInst::Above(Inst::Call {
                 dest: None,
-                callee: Callee::Runtime("science_panic_bytes"),
-                args: vec![
-                    Operand::GlobalAddr(message.bytes_symbol.clone()),
-                    Operand::ConstInt(message.len() as i128),
-                ],
-                ret: panic.ret.clone(),
+                callee: Callee::Runtime("science_exit"),
+                args: vec![Operand::ConstInt(0)],
+                ret: exit.ret.clone(),
                 sret_slot: None,
             })],
             // Decision 6: `call` then `unreachable`, never `invoke`.
+            terminator: Terminator::Unreachable,
+        };
+        // Row 4: `error: ` and something true on stderr, then status 1. The two
+        // calls are in that order and the order is the contract — a status
+        // without the message is a program that fails silently, and a message
+        // without the status is one a shell believes.
+        let failed = ExtBlock {
+            id: BlockId(2),
+            label: "failed".to_string(),
+            insts: vec![
+                ExtInst::Above(Inst::Call {
+                    dest: None,
+                    callee: Callee::Runtime("science_write_error_bytes"),
+                    args: vec![
+                        Operand::GlobalAddr(message.bytes_symbol.clone()),
+                        Operand::ConstInt(message.len() as i128),
+                    ],
+                    ret: write_error.ret.clone(),
+                    sret_slot: None,
+                }),
+                ExtInst::Above(Inst::Call {
+                    dest: None,
+                    callee: Callee::Runtime("science_exit"),
+                    args: vec![Operand::ConstInt(
+                        science_codegen::runtime::EXIT_CONTRACT.required_status as i128,
+                    )],
+                    ret: exit.ret.clone(),
+                    sret_slot: None,
+                }),
+            ],
             terminator: Terminator::Unreachable,
         };
         Ok((sig, ExtBody { blocks: vec![entry, ok, failed] }))

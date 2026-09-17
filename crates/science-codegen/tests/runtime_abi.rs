@@ -1,4 +1,4 @@
-//! The 45 entry points, classified — and the two properties a hand-maintained
+//! The 47 entry points, classified — and the two properties a hand-maintained
 //! list cannot have.
 //!
 //! **What this file is for.** §9.2's finding was a list that fell out of step
@@ -162,22 +162,40 @@ fn the_emitted_function_pointer_signatures_are_available_to_a_code_generator() {
 }
 
 #[test]
-fn the_exit_contract_is_still_unsatisfiable() {
-    // §9.3's finding 5. This test is a tripwire, not a check: it fails on the
-    // day the runtime grows the two symbols, which is the day somebody should
-    // come back and lower `def main() -> Error?`.
-    assert!(!EXIT_CONTRACT.is_satisfiable());
-    for symbol in ["science_exit", "science_eprint", "science_main"] {
-        assert!(runtime_fn(symbol).is_none(), "{symbol} exists now; see finding 5");
+fn the_exit_contract_is_satisfiable_and_still_cannot_render_the_error() {
+    // §9.3's finding 5, in the state it is now in. The mechanical half is
+    // closed: `science-rt` has a stderr writer that returns and a symbol that
+    // exits with a chosen status, so a `main` that returns an error can be
+    // lowered and `script-mode.md` §2.3's fourth row is reachable.
+    assert!(EXIT_CONTRACT.is_satisfiable());
+    assert_eq!(EXIT_CONTRACT.eprint_symbol, Some("science_write_error_bytes"));
+    assert_eq!(EXIT_CONTRACT.exit_symbol, Some("science_exit"));
+    for symbol in [EXIT_CONTRACT.eprint_symbol, EXIT_CONTRACT.exit_symbol] {
+        let symbol = symbol.expect("both are named");
+        assert!(runtime_fn(symbol).is_some(), "{symbol} is named and not in the table");
     }
+    // And the half that is open, as the tripwire the old version of this test
+    // was: it fails on the day `Display` grows a method, which is the day the
+    // placeholder in `science-codegen-llvm`'s `lower::ERROR_MESSAGE` should
+    // become the error itself.
+    assert!(!EXIT_CONTRACT.renders_the_error());
+    // `science_main` is still absent, and deliberately: finding 5's *"there is
+    // no program entry point"* is answered by codegen emitting `main`, not by
+    // the runtime growing one.
+    assert!(runtime_fn("science_main").is_none());
 }
 
 #[test]
-fn nothing_outside_the_forty_five_is_callable() {
-    // Decision 14: "Those 45 symbols are the only runtime calls F0 emits.
+fn nothing_outside_the_table_is_callable() {
+    // Decision 14: "Those symbols are the only runtime calls F0 emits.
     // Everything else is inline. No entry point is added to `science-rt` to
     // make codegen simpler."
-    assert_eq!(RUNTIME.len(), 45);
+    //
+    // Forty-five until finding 5 was discharged; forty-seven now. The two that
+    // joined are the two `codegen-and-linking.md` §13 asks for by name, and
+    // they are not a convenience for codegen — without them §2.3's fourth row
+    // has nothing to lower to at all.
+    assert_eq!(RUNTIME.len(), 47);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

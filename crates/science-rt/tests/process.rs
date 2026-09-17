@@ -1,6 +1,7 @@
-//! `science_panic` aborts the process, so it cannot be observed from inside the
-//! process that calls it. These tests re-run this same test binary as a child,
-//! ask it to do one thing, and inspect what came out.
+//! `science_panic` aborts the process and `science_exit` ends it, so neither
+//! can be observed from inside the process that calls it. These tests re-run
+//! this same test binary as a child, ask it to do one thing, and inspect what
+//! came out.
 //!
 //! Skipped under Miri, which cannot spawn processes.
 
@@ -53,6 +54,26 @@ fn child_entry_point() {
         "panic_bytes" => unsafe {
             let message = b"a runtime-internal failure";
             science_panic_bytes(message.as_ptr(), message.len());
+        },
+        // `script-mode.md` §2.3's fourth row, as the emitted `main` performs
+        // it: the whole message including the prefix and the newline is the
+        // caller's, then the status.
+        "script_failed" => unsafe {
+            let out = s("printed before the failure");
+            science_write(&out);
+            free(out);
+            let message = b"error: something went wrong\n";
+            science_write_error_bytes(message.as_ptr(), message.len());
+            science_exit(1);
+        },
+        // Rows 1 to 3. The `write` has no newline in it, so nothing but
+        // `science_exit`'s own flush can get it out of the buffer — which is
+        // the reason the emitted `main` ends here rather than at a `ret`.
+        "script_ok" => unsafe {
+            let out = s("no newline in sight");
+            science_write(&out);
+            free(out);
+            science_exit(0);
         },
         other => panic!("unknown child role {other:?}"),
     }
@@ -123,5 +144,54 @@ fn write_is_verbatim_and_print_adds_one_newline() {
     assert!(
         stdout.contains("alphabetaalpha\nbeta\n\n"),
         "unexpected stdout: {stdout:?}"
+    );
+}
+
+/// The failing row of `script-mode.md` §2.3, end to end through the two symbols
+/// the emitted `main` calls.
+///
+/// **Both halves, because either alone is half a test.** A status of 1 with
+/// nothing on stderr is a program that fails silently; a message with the abort
+/// status is what this replaced. The third assertion is the one that says it is
+/// not a panic: `science_panic_bytes` prefixes `panic: `, and a failing script
+/// is not a crash.
+#[test]
+fn write_error_bytes_then_exit_is_status_one_with_the_message_on_stderr() {
+    let output = run_child("script_failed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "stderr was: {stderr:?}");
+    assert!(
+        stderr.contains("error: something went wrong\n"),
+        "the message must reach stderr verbatim, got: {stderr:?}"
+    );
+    assert!(!stderr.contains("panic:"), "a failing script is not a panic, got: {stderr:?}");
+    // And stdout is flushed rather than lost, for the same reason the panic
+    // path flushes: the last thing printed is usually the explanation.
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("printed before the failure"),
+        "stdout was lost"
+    );
+}
+
+/// `science_exit(0)` is a successful exit, and it takes the buffer with it.
+///
+/// The `write` in the child has no newline, so a `LineWriter` holds it. Nothing
+/// in a Science binary flushes at exit — Rust's `lang_start` never runs, because
+/// the entry point is the `main` codegen emitted — so if this passes it is
+/// because `science_exit` flushed, and if `science_exit` stopped flushing this
+/// is the test that notices.
+#[test]
+fn exit_zero_succeeds_and_flushes_what_print_left_behind() {
+    let output = run_child("script_ok");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim(),
+        "",
+        "a successful exit says nothing on stderr"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("no newline in sight"),
+        "an unterminated line was buffered and never flushed: {:?}",
+        String::from_utf8_lossy(&output.stdout)
     );
 }

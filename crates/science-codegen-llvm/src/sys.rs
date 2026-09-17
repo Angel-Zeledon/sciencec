@@ -86,7 +86,8 @@
 //! 3. **The arity and the types are checked by the IR that comes back.** Every
 //!    module this crate builds is printed with `LLVMPrintModuleToString` and the
 //!    text is asserted against what was intended, and `tests/roundtrip.rs` feeds
-//!    a module declaring **all 45** runtime entry points back to `clang -x ir`,
+//!    a module declaring **every one of** `science-rt`'s runtime entry points back to
+//!    `clang -x ir`,
 //!    which re-parses it with LLVM 18's own parser and assembles it to an
 //!    object. `clang` was built from the headers this machine does not have, so
 //!    it is the only reader here that knows what the C API's callers were

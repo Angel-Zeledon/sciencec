@@ -114,7 +114,7 @@ pub enum ExtInst {
     ///
     /// **This is the hole, and it is one instruction wide.** Decision 22 passes
     /// every aggregate argument *"by pointer to a caller-owned slot"*, and the
-    /// runtime boundary does the same — every one of the 45 entry points takes
+    /// runtime boundary does the same — every one of the entry points takes
     /// aggregates as `*const`/`*mut`. So the commonest operand in the language's
     /// commonest call shape is "the address of that local", and it has no
     /// spelling.

@@ -15,6 +15,17 @@
 //! `self-hosting.md` §1.2's sentence — *"Science cannot produce an executable"* —
 //! is the thing this removes, for one program.
 //!
+//! **And the exit status is now the language's, not the platform's.** The
+//! emitted `main` implements `script-mode.md` §2.3's table: a null `Error?` is
+//! `science_exit(0)`, a non-null one is a message on stderr and
+//! `science_exit(1)`. It used to be `science_panic_bytes` and an abort on the
+//! failing edge, because §9.3's finding 5 was that `science-rt` had no stderr
+//! writer that returned and no chosen exit status; it has both now.
+//! [`lower`]'s own documentation is the account, including **what the failing
+//! edge prints and how far short of §2.3 that falls** — the note asks for the
+//! error's `Display`, the prelude declares `Display` with no method, and a
+//! placeholder that says so is what a user gets.
+//!
 //! **What is not true.** Stage 2 is not started: no `extern` block is lowered,
 //! nothing has been linked against a C library, and the five notes resting on
 //! *"a declaration becomes an LLVM `declare` and the system linker resolves
@@ -87,7 +98,7 @@
 //!
 //! # 3. What was found by running it
 //!
-//! Nine things that reading could not have established, each recorded where it
+//! Ten things that reading could not have established, each recorded where it
 //! bites. The first four were found by writing the crate; the rest were found by
 //! *running* it, which is the difference §10's staging exists to force.
 //!
@@ -130,6 +141,16 @@
 //!    of the type, so [`lower::Lowerer::cg_ty`] has to read the definition's
 //!    kind. Decision 13's representation is the same either way, and it has to
 //!    be: one arm writes `_S4main`'s `sret` slot and the other reads it.
+//! 10. **`script-mode.md` §2.4's *"bare `return` is sugar for `return null`"* is
+//!     not implemented.** A script whose body is a lone `return` does not
+//!     typecheck: `sciencec check` reports `SC0525`, *expected `any Error?`,
+//!     found `()`*. Found while writing `tests/exit_code.rs`, which wanted the
+//!     three null-returning spellings of §2.3's table and could compile one of
+//!     them — `return null`. Not this crate's to fix, and recorded here because
+//!     it is the second row of a table this crate now implements the rest of.
+//!
+//! **And nine was itself found this way**, which is the point of the list: the
+//! numbering has grown twice and each entry is something the notes did not say.
 
 #![warn(missing_docs)]
 
@@ -343,8 +364,6 @@ pub fn install_instructions() -> &'static str {
 /// 4. [`link`] drives `clang` over the object and `science_rt.lib`.
 #[cfg(feature = "llvm")]
 pub fn build(input: &BuildInput) -> Result<Built, Diagnostics> {
-    use science_codegen::backend::Backend;
-
     let mut diagnostics = Diagnostics::new();
     let host = Triple::host();
     let Some(triple) = host else {
@@ -374,16 +393,41 @@ pub fn build(input: &BuildInput) -> Result<Built, Diagnostics> {
             return Err(diagnostics);
         }
     };
-
-    let mut backend = emit::LlvmBackend::new();
     let module_name = input
         .request
         .inputs
         .first()
         .map(|name| name.as_str())
         .unwrap_or("science");
+    emit_and_link(&lowered, module_name, &config, &input.output)
+}
+
+/// Steps 2 to 4 of [`build`]: a lowered module to an executable.
+///
+/// **Split out for one caller and it is a test.** `tests/exit_code.rs` has to
+/// build a module whose `_S4main` returns a **non-null** `Error?`, which no
+/// Science program this compiler can compile produces — stage 1 cannot
+/// construct a concrete error, box it, or fill a vtable — so it writes that one
+/// function itself and pairs it with the real
+/// [`lower::Lowerer::lower_c_main`]. Everything from here down is then the same
+/// code `build` runs, rather than a second copy of it in a test: the same
+/// declaration order, the same verifier, the same Decision 33 pipeline, the
+/// same linker. A test that duplicated this would be asserting against its own
+/// copy of the thing under test.
+#[cfg(feature = "llvm")]
+pub fn emit_and_link(
+    lowered: &lower::Lowered,
+    module_name: &str,
+    config: &TargetConfig,
+    output: &std::path::Path,
+) -> Result<Built, Diagnostics> {
+    use science_codegen::backend::Backend;
+
+    let mut diagnostics = Diagnostics::new();
+    let triple = config.triple();
+    let mut backend = emit::LlvmBackend::new();
     let mut run = || -> Result<(), science_codegen::backend::BackendError> {
-        backend.begin_module(module_name, &config)?;
+        backend.begin_module(module_name, config)?;
         for literal in &lowered.literals {
             backend.define_string_bytes(literal)?;
         }
@@ -406,7 +450,7 @@ pub fn build(input: &BuildInput) -> Result<Built, Diagnostics> {
         return Err(diagnostics);
     }
 
-    let object = object_path(&input.output);
+    let object = object_path(output);
     if let Err(error) = backend.emit_object_to(&object) {
         diagnostics.push(internal_error(&error));
         return Err(diagnostics);
@@ -427,15 +471,15 @@ pub fn build(input: &BuildInput) -> Result<Built, Diagnostics> {
             return Err(diagnostics);
         }
     };
-    if let Err(error) = link::link(&driver, &object, &runtime, &input.output, triple) {
+    if let Err(error) = link::link(&driver, &object, &runtime, output, triple) {
         diagnostics.push(error.to_diagnostic());
         return Err(diagnostics);
     }
     let _ = std::fs::remove_file(&object);
 
     Ok(Built {
-        executable: input.output.clone(),
-        config,
+        executable: output.to_path_buf(),
+        config: config.clone(),
         ir,
         linker: driver.program.display().to_string(),
     })
