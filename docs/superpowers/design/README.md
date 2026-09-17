@@ -98,10 +98,10 @@ should now expect rather than be surprised by.
 | Codes | Where |
 |---|---|
 | `SC0001`, `SC0003`–`SC0011`, `SC0016`–`SC0017` | `crates/science-lexer` |
-| `SC0100`–`SC0112`, `SC0115`–`SC0119`, `SC0138`–`SC0139`, `SC0141`–`SC0144`, `SC0155`–`SC0157`, `SC0190`–`SC0198` | `crates/science-parser` |
+| `SC0100`–`SC0112`, `SC0115`–`SC0119`, `SC0138`–`SC0139`, `SC0141`–`SC0144`, `SC0151`–`SC0157`, `SC0190`–`SC0198` | `crates/science-parser` |
 | `SC0411`–`SC0414`, `SC0417`, `SC0420`–`SC0421`, `SC0431`, `SC0434` | `crates/science-parser` — `ffi-c-boundary.md`'s block, emitted where `extern` is *parsed*. A band is a topic, not a crate. |
 | `SC0200`–`SC0212`, `SC0220`–`SC0221` | `crates/science-resolve` |
-| `SC0140`, `SC0260`–`SC0261`, `SC0520`, `SC0523`–`SC0530` | `crates/science-types` |
+| `SC0140`, `SC0260`–`SC0261`, `SC0520`, `SC0523`–`SC0532` | `crates/science-types` |
 | `SC0400`–`SC0409`, `SC0429`, `SC0431`, `SC0461` | `crates/science-codegen` |
 | `SC0900`–`SC0901` | `crates/science-fmt` |
 
