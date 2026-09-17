@@ -236,15 +236,19 @@ fn a_switch_types_its_cases_from_the_value_it_switches_on() {
     }
 }
 
-/// A branch on a value that is not `i1` is refused rather than emitted.
+/// A branch on §3.1's `i8` memory form of a `Bool` is narrowed, not refused.
 ///
 /// §3.1 makes `Bool` *"`i1` in registers and `i8` in memory"*, so a condition
-/// loaded from a `Bool` local is an `i8` and `br i8` is invalid. The repair is a
-/// `trunc` and `crate::sys` declares none — *"declare only what you call"* — so
-/// the emitter says which line is missing instead of building something the
-/// verifier would reject with a less useful message.
+/// loaded from a `Bool` local is an `i8` and `br i8` is invalid. This used to
+/// be a refusal naming the missing `trunc`, because nothing stage 1 could
+/// compile produced a loaded `Bool` condition and `sys.rs`'s rule is *"declare
+/// only what you call"*. Every `if` in the language produces one, so the
+/// instruction is declared and the narrowing is emitted — and the two halves
+/// below are what a wrong repair would get wrong: `trunc` and not `icmp ne`,
+/// which would be a second spelling of the same thing with a different answer
+/// for a slot holding something other than 0 or 1.
 #[test]
-fn a_branch_on_a_loaded_bool_is_refused_by_name() {
+fn a_branch_on_a_loaded_bool_is_narrowed_to_i1() {
     let (mut insts, value) = loaded(CgTy::Bool);
     insts.push(ExtInst::Above(Inst::Alloca {
         local: LocalId(1),
@@ -276,11 +280,109 @@ fn a_branch_on_a_loaded_bool_is_refused_by_name() {
             },
         ],
     };
-    let error = backend
-        .define_function_ext(id, &signature, &body)
-        .expect_err("an `i8` condition is not a branch condition");
-    assert!(
-        error.to_string().contains("trunc"),
-        "the refusal must name the instruction that is missing, and it said: {error}"
-    );
+    backend.define_function_ext(id, &signature, &body).expect("an `i8` condition narrows");
+    backend.verify().expect("the module verifies");
+    let ir = backend.ir();
+    assert!(ir.contains("trunc i8 "), "the narrowing is not a `trunc`:
+{ir}");
+    assert!(ir.contains("br i1 "), "the branch does not take an `i1`:
+{ir}");
+}
+
+/// A store of a comparison's `i1` into a `Bool` slot widens with `zext`.
+///
+/// The other direction of §3.1's rule, and the one where the wrong instruction
+/// is a wrong *value* rather than a verifier failure: `sext i1 -> i8` of `true`
+/// is `0xff`, which is a bit pattern no `Bool` may hold, which the `trunc` on
+/// the branch above reads as `true`, and which `not` — were it a bitwise
+/// complement — would turn into `0x00`, reading as `false`. Nothing in the IR
+/// looks wrong at any step.
+#[test]
+fn a_comparison_stored_into_a_bool_slot_is_widened_with_zext() {
+    let config = TargetConfig::new(triple(), OptLevel::O0);
+    let mut backend = LlvmBackend::new();
+    backend.begin_module("store", &config).expect("a module");
+    let signature =
+        AbiSignature::science(triple(), "_S1f", layout_of(triple(), &CgTy::Unit), vec![]);
+    let id = backend.declare_function(&signature).expect("a declaration");
+    let body = ExtBody {
+        blocks: vec![ExtBlock {
+            id: BlockId(0),
+            label: "entry".to_string(),
+            insts: vec![
+                ExtInst::Above(Inst::Alloca {
+                    local: LocalId(0),
+                    layout: layout_of(triple(), &CgTy::Int(IntTy::I64)),
+                }),
+                ExtInst::Above(Inst::Alloca {
+                    local: LocalId(1),
+                    layout: layout_of(triple(), &CgTy::Bool),
+                }),
+                ExtInst::Above(Inst::Load { dest: ValueId(0), local: LocalId(0) }),
+                ExtInst::Above(Inst::Cmp {
+                    dest: ValueId(1),
+                    op: CmpOp::Gt,
+                    signed: true,
+                    lhs: Operand::Value(ValueId(0)),
+                    rhs: Operand::ConstInt(5),
+                }),
+                ExtInst::Above(Inst::Store {
+                    local: LocalId(1),
+                    value: Operand::Value(ValueId(1)),
+                }),
+            ],
+            terminator: Terminator::Return(None),
+        }],
+    };
+    backend.define_function_ext(id, &signature, &body).expect("an `i1` store widens");
+    backend.verify().expect("the module verifies");
+    let ir = backend.ir();
+    assert!(ir.contains("zext i1 "), "the widening is not a `zext`:
+{ir}");
+    assert!(!ir.contains("sext i1 "), "`sext i1 -> i8` of `true` is `0xff`:
+{ir}");
+    assert!(ir.contains("store i8 "), "the `Bool` slot is `i8` in memory (§3.1):
+{ir}");
+}
+
+/// Unary `-` on a float is `fneg` and not `fsub 0.0, x`.
+///
+/// **The difference is one value and it is a real one.** At `x == +0.0` the
+/// subtraction gives `+0.0` and the negation gives `-0.0`, and
+/// `reproducibility.md` Decision 3 forbids a value-changing float transform
+/// whoever makes it. `ExtInst::Neg` exists for this; an integer negation would
+/// have been `IntBinary { Sub, 0, x }` and needed nothing.
+#[test]
+fn negating_a_float_is_fneg_and_negating_an_integer_is_not() {
+    for (ty, expected, rejected) in [
+        (CgTy::Float(FloatTy::F64), "fneg double", "fsub double 0"),
+        (CgTy::Int(IntTy::I64), "sub i64 0", "fneg"),
+    ] {
+        let (insts, value) = loaded(ty.clone());
+        let mut insts = insts;
+        insts.push(ExtInst::Neg { dest: ValueId(9), operand: Operand::Value(value) });
+        let config = TargetConfig::new(triple(), OptLevel::O0);
+        let mut backend = LlvmBackend::new();
+        backend.begin_module("neg", &config).expect("a module");
+        let signature =
+            AbiSignature::science(triple(), "_S1f", layout_of(triple(), &CgTy::Unit), vec![]);
+        let id = backend.declare_function(&signature).expect("a declaration");
+        let body = ExtBody {
+            blocks: vec![ExtBlock {
+                id: BlockId(0),
+                label: "entry".to_string(),
+                insts,
+                terminator: Terminator::Return(None),
+            }],
+        };
+        backend.define_function_ext(id, &signature, &body).expect("a negation");
+        backend.verify().expect("the module verifies");
+        let ir = backend.ir();
+        assert!(ir.contains(expected), "expected `{expected}` in:
+{ir}");
+        assert!(!ir.contains(rejected), "`{rejected}` is the wrong lowering:
+{ir}");
+        // §7.3 obligation 1, on every module this file builds.
+        assert_eq!(science_codegen::target::first_fast_math_flag(&ir), None, "{ir}");
+    }
 }

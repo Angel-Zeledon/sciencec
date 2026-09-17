@@ -251,23 +251,64 @@ pub fn system_libraries(triple: Triple) -> Vec<&'static str> {
     }
 }
 
-/// Link one object file and the runtime into an executable.
+/// A library a program's `extern` blocks asked to be linked against.
+///
+/// A name and nothing else: `via pkg-config`, `kind static` and
+/// `when available` are §5.4's and are refused above, by name, rather than
+/// carried here half-implemented.
+pub type Library = String;
+
+/// The `-l` flags one library name becomes on a target.
+///
+/// **Two names are special on Windows and the specialness is real rather than
+/// a convenience.** §5.2's table gives the Windows link name as `openblas.lib`
+/// and `clang` accepts `-lopenblas` for it, so the translation Decision 25
+/// budgets for is not needed — *except* for `c` and `m`, which name the POSIX
+/// C standard library and its maths half. On MSVC those are not separate
+/// libraries at all: both are inside the UCRT, which the driver already links
+/// into every image, and there is no `c.lib` or `m.lib` for `link.exe` to
+/// find. Passing them through produces `LNK1181: cannot open input file
+/// 'm.lib'` for a program whose only sin was to declare `library "m"` the way
+/// §10's stage 2 spells it.
+///
+/// So on `x86_64-pc-windows-msvc` those two names resolve to **no flag**, and
+/// the symbols resolve out of the CRT the driver links anyway. Everything else
+/// is passed through unchanged, on all three targets.
+///
+/// **What this costs:** a Windows user who genuinely has a third-party
+/// `m.lib` cannot name it. That is a narrow loss against making the note's own
+/// stage-2 program unbuildable on the platform this compiler is developed on.
+pub fn library_flags(triple: Triple, name: &str) -> Vec<String> {
+    if triple == Triple::X86_64WindowsMsvc && matches!(name, "c" | "m") {
+        return Vec::new();
+    }
+    vec![format!("-l{name}")]
+}
+
+/// Link one object file, the runtime and the declared libraries into an
+/// executable.
 ///
 /// **Link order is the thing that goes wrong first** (§5.4): the program's
-/// objects, then `science-rt`, then the declared libraries in dependency order,
-/// then the system libraries. There are no declared libraries yet — stage 2's
-/// `extern` blocks are not lowered — so the order here is three of the four.
+/// objects, then `science-rt`, then the declared libraries in dependency
+/// order, then the system libraries. `libraries` is Decision 28's *"source
+/// order of their `library` clauses"*, and it is the third of the four.
 pub fn link(
     driver: &Driver,
     object: &Path,
     runtime: &Path,
     output: &Path,
     triple: Triple,
+    libraries: &[Library],
 ) -> Result<(), LinkError> {
     let mut command = Command::new(&driver.program);
     command.arg(object);
     command.arg(runtime);
     command.arg("-o").arg(output);
+    for library in libraries {
+        for flag in library_flags(triple, library) {
+            command.arg(flag);
+        }
+    }
     for library in system_libraries(triple) {
         command.arg(format!("-l{library}"));
     }
@@ -283,6 +324,85 @@ pub fn link(
             Err(LinkError::Failed { command: rendered, output })
         }
     }
+}
+
+/// Which declared foreign symbols a linker's output says are undefined.
+///
+/// **Decision 29's condition, made a function rather than a guess.** The
+/// decision is that `SC0461` is emitted *"for an undefined symbol that
+/// codegen's own table can attribute to an `extern` declaration"*, and §5.5's
+/// rule for everything else is that a diagnostic which *"pretends to have
+/// understood a linker error it did not understand is worse than one that
+/// hands over the raw text"*. So this looks for a marker meaning *not found*
+/// **and** for the symbol as a whole word, and reports nothing on a failure
+/// that merely happens to mention the name.
+///
+/// # The markers are error codes on Windows, and that is a finding
+///
+/// The obvious marker is `link.exe`'s prose, *"unresolved external symbol"*.
+/// **`link.exe` is localised.** On the machine this was written on it says:
+///
+/// ```text
+/// p.obj : error LNK2019: símbolo externo cosinus sin resolver al que se hace
+/// referencia en la función _S4main
+/// ```
+///
+/// — so an English substring match finds nothing, `SC0461` is never emitted,
+/// and §10 stage 2's gate silently fails on every non-English Windows install.
+/// It is invisible to a test written on an English machine, which is the only
+/// kind of test anyone would have written.
+///
+/// `LNK2019` and `LNK2001` are **not** translated: they are MSVC diagnostic
+/// identifiers, stable across versions and locales, and they are what is
+/// matched. The three Unix markers stay prose because `ld`, `lld` and the
+/// Apple linker have no such identifiers; a translated GNU `ld` would fall
+/// through to `SC0402` with its text intact, which is the honest failure and
+/// not a wrong answer.
+///
+/// **Forcing the linker into English was the other option and it was
+/// rejected.** `VSLANG=1033` in the child's environment would make the output
+/// matchable — and §5.5 requires that output to be printed *verbatim* to the
+/// user, so it would also mean showing a Spanish-speaking user an English
+/// linker error to make the compiler's own parsing easier. The error codes
+/// cost nothing and take nothing away.
+///
+/// The symbol match is on a whole word, because `cos` is a substring of `cosh`
+/// and of every path with `cos` in it. Mach-O's leading underscore is
+/// admitted, since that is the platform's spelling of the same symbol.
+pub fn undefined_symbols<'a>(output: &str, declared: &'a [String]) -> Vec<&'a String> {
+    const CODES: [&str; 2] = ["LNK2019", "LNK2001"];
+    const PROSE: [&str; 3] = ["undefined reference", "undefined symbol", "undefined symbols"];
+    let lowered = output.to_lowercase();
+    let marked = CODES.iter().any(|code| output.contains(code))
+        || PROSE.iter().any(|marker| lowered.contains(marker));
+    if !marked {
+        return Vec::new();
+    }
+    declared.iter().filter(|symbol| mentions_symbol(output, symbol)).collect()
+}
+
+/// Whether `output` names `symbol` as a whole identifier.
+fn mentions_symbol(output: &str, symbol: &str) -> bool {
+    let mut from = 0;
+    while let Some(found) = output[from..].find(symbol) {
+        let start = from + found;
+        let end = start + symbol.len();
+        let before_ok = output[..start]
+            .chars()
+            .next_back()
+            .map(|c| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(true);
+        let after_ok = output[end..]
+            .chars()
+            .next()
+            .map(|c| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(true);
+        if before_ok && after_ok {
+            return true;
+        }
+        from = end;
+    }
+    false
 }
 
 /// The command line, for `SC0402`, which prints it verbatim.
@@ -308,11 +428,19 @@ impl LinkError {
     /// `SC0401` for no driver, `SC0402` for everything else — §5.5's
     /// *"`SC0461` is emitted for an undefined symbol that codegen's own table
     /// can attribute to an `extern` declaration. Any other linker failure is
-    /// `SC0402`."* There is no `extern` declaration table yet, because stage 2
-    /// is not built, so every failure here is the second case, which is the
-    /// honest one: *"a diagnostic that pretends to have understood a linker
-    /// error it did not understand is worse than one that hands over the raw
-    /// text with the command that produced it."*
+    /// `SC0402`."*
+    ///
+    /// **This function only ever produces the second.** The table exists now —
+    /// `lower::Lowered::foreign` — but it belongs to the module, not to a
+    /// `LinkError`, so `crate::emit_and_link` reads it, calls
+    /// [`undefined_symbols`], and pushes an `SC0461` per attributed symbol
+    /// **before** pushing this. Both are reported: the `SC0461`s say which
+    /// declarations failed and the `SC0402` says what was run, because a reader
+    /// whose `library` clause named the wrong library needs the flags as much
+    /// as the span. What stays unattributed stays §5.5's honest answer: *"a
+    /// diagnostic that pretends to have understood a linker error it did not
+    /// understand is worse than one that hands over the raw text with the
+    /// command that produced it."*
     pub fn to_diagnostic(&self) -> science_diagnostics::Diagnostic {
         use science_codegen::diagnostics::{linker_failed, no_linker_driver};
         match self {

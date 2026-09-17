@@ -949,6 +949,49 @@ unsafe extern "C" {
         name: *const c_char,
     ) -> LLVMValueRef;
 
+    /// `LLVMValueRef LLVMBuildNeg(LLVMBuilderRef, LLVMValueRef V, const char *Name)`
+    ///
+    /// `not` and unary `-` are §4.6's two prefix operators and both are
+    /// stage 3's. `LLVMBuildNeg` emits `sub 0, v` with no `nsw`, which is the
+    /// wrapping negation the core spec's release semantics asks for; see
+    /// [`crate::lower`]'s overflow note for what is *not* emitted and why.
+    pub fn LLVMBuildNeg(b: LLVMBuilderRef, v: LLVMValueRef, name: *const c_char)
+    -> LLVMValueRef;
+
+    /// `LLVMValueRef LLVMBuildFNeg(LLVMBuilderRef, LLVMValueRef V, const char *Name)`
+    ///
+    /// A float negation is a sign-bit flip and is exact, so it is one of the
+    /// few float operations §7.3 has nothing to say about.
+    pub fn LLVMBuildFNeg(b: LLVMBuilderRef, v: LLVMValueRef, name: *const c_char)
+    -> LLVMValueRef;
+
+    /// `LLVMValueRef LLVMBuildZExt(LLVMBuilderRef, LLVMValueRef Val, LLVMTypeRef DestTy, const char *Name)`
+    ///
+    /// §3.1: *"`Bool` is `i1` in registers and `i8` in memory."* A comparison
+    /// produces the register form and a `Bool` local's slot is the memory
+    /// form, so a store of one into the other is this instruction. Zero- and
+    /// not sign-extension: `sext i1 -> i8` of `true` is `0xff`.
+    pub fn LLVMBuildZExt(
+        b: LLVMBuilderRef,
+        value: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const c_char,
+    ) -> LLVMValueRef;
+
+    /// `LLVMValueRef LLVMBuildTrunc(LLVMBuilderRef, LLVMValueRef Val, LLVMTypeRef DestTy, const char *Name)`
+    ///
+    /// The other direction of the same rule: `br` takes an `i1` and a `Bool`
+    /// loaded from its slot is an `i8`. `crate::emit`'s branch used to refuse
+    /// this case by name, saying *"narrowing it needs a `trunc`, which
+    /// `crate::sys` does not declare"* — stage 3 is the day a `Bool` local
+    /// reaches a branch, and this is the line that refusal named.
+    pub fn LLVMBuildTrunc(
+        b: LLVMBuilderRef,
+        value: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const c_char,
+    ) -> LLVMValueRef;
+
     // --- target, target machine, emission ---------------------------------
 
     /// `void LLVMInitializeX86TargetInfo(void)`

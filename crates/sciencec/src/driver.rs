@@ -223,10 +223,16 @@ impl Session {
             return Err(vec![science_codegen::diagnostics::no_entry_point(&display_path(path))]);
         };
         let request = science_codegen::driver::BuildRequest::new(vec![display_path(path)]);
+        // Decision 28 makes the source order of the `library` clauses the link
+        // order, so the blocks are collected in source order and handed over as
+        // a list rather than a set.
+        let externs = science_codegen_llvm::extern_blocks(&krate);
         let input = science_codegen_llvm::BuildInput {
             request: &request,
             defs: &krate.defs,
             types: &lowered.types,
+            decls: &lowered.decls,
+            externs: &externs,
             bodies: &lowered.bodies,
             output: executable_path(path),
         };
@@ -727,6 +733,10 @@ fn type_and_region_check(krate: &Crate) -> Vec<Diagnostic> {
 struct Checked {
     diagnostics: Vec<Diagnostic>,
     types: science_types::Types,
+    /// The declared signatures, kept because an `extern "C"` function has no
+    /// MIR body and its parameter and return types reach the backend through
+    /// nothing else. `science_codegen_llvm::BuildInput::decls` is the account.
+    decls: science_types::Declarations,
     bodies: Vec<science_mir::mir::Body>,
 }
 
@@ -760,11 +770,11 @@ fn check_and_lower(krate: &Crate) -> Checked {
     let mut all = diagnostics.into_vec();
     // The ordering rule above.
     if has_error(&all) {
-        return Checked { diagnostics: all, types, bodies: Vec::new() };
+        return Checked { diagnostics: all, types, decls, bodies: Vec::new() };
     }
     let (regions, bodies) = region_check(krate, &decls, &mut types, &mut aliases, &thir);
     all.extend(regions);
-    Checked { diagnostics: all, types, bodies }
+    Checked { diagnostics: all, types, decls, bodies }
 }
 
 /// The MIR of a crate that checked clean, or `None` when it did not.

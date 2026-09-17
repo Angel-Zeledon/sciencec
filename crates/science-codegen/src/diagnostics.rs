@@ -311,6 +311,68 @@ pub fn generic_across_c_boundary(function: &str, extern_fn: &str, span: Span) ->
     )
 }
 
+/// `SC0461`: an `extern` declaration's symbol is not in any library that was
+/// linked.
+///
+/// **Borrowed, not claimed.** `SC0461` is `ffi-c-boundary.md`'s code and §11's
+/// rule is *"amended, not claimed"* — the same standing
+/// [`generic_across_c_boundary`] has for `SC0522`. The text is written here
+/// because this is where the fact is known; the range stays that note's, and
+/// [`is_claimed`] says so.
+///
+/// **Decision 29's condition is that codegen can attribute the symbol**, and
+/// the caller checks it: `science_codegen_llvm::link::undefined_symbols` looks
+/// for a marker meaning *not found* and for the symbol as a whole word, and
+/// hands over the ones it matched. A failure it cannot attribute stays
+/// [`linker_failed`]'s `SC0402`, which §5.5 calls the honest answer: *"a
+/// diagnostic that pretends to have understood a linker error it did not
+/// understand is worse than one that hands over the raw text."*
+///
+/// **What the message contains, and the second half is §10 stage 2's gate.**
+/// The declaration's span, *and the library clause*: the gate is *"`SC0461`
+/// naming the declaration's span **and the library clause**, and not `ld`'s
+/// output"*. A reader whose `cos` did not resolve needs to be told which
+/// library was searched, because the usual cause is that it was the wrong one.
+///
+/// **`flags` is what the linker was actually given for that library, and it
+/// is a parameter because the answer is not always `-l` plus the name.** On
+/// `x86_64-pc-windows-msvc` the names `c` and `m` are inside the CRT the
+/// driver already links and produce no flag at all, so a message that said
+/// *"that library was on the link line"* would be telling a Windows reader
+/// something false about the only two library names §10's stage 2 uses. The
+/// caller knows the mapping; this function prints what it is told.
+pub fn undefined_foreign_symbol(
+    name: &str,
+    symbol: &str,
+    library: Option<&str>,
+    flags: &[String],
+    span: Span,
+) -> Diagnostic {
+    let mut diagnostic =
+        Diagnostic::error(code::SC0461, format!("the linker could not find `{symbol}`"))
+            .with_label(Label::primary(span, "declared here"));
+    if name != symbol {
+        diagnostic =
+            diagnostic.with_note(format!("`{name}` is declared with `symbol \"{symbol}\"`"));
+    }
+    diagnostic = match (library, flags.is_empty()) {
+        (Some(library), false) => diagnostic.with_note(format!(
+            "the block declares `library \"{library}\"`, and the linker was given {}",
+            flags.join(" ")
+        )),
+        (Some(library), true) => diagnostic.with_note(format!(
+            "the block declares `library \"{library}\"`, which this target resolves inside the C \
+             runtime the linker driver already links, so no flag was passed for it"
+        )),
+        (None, _) => diagnostic
+            .with_note("the block has no `library` clause, so nothing was added to the link line"),
+    };
+    diagnostic.with_note(
+        "check the spelling against the library's own headers: a C symbol is not mangled, so \
+         what is written here is what the linker looked for",
+    )
+}
+
 /// Whether a code belongs to the range this crate claims.
 pub fn is_claimed(code: Code) -> bool {
     CLAIMED.contains(&code.0)
@@ -409,6 +471,49 @@ mod tests {
         let notes = diagnostic.notes.join("\n");
         assert!(notes.contains("no syntax for one yet"), "{notes}");
         assert!(notes.contains("wrapper"), "the message has to name a way out: {notes}");
+    }
+
+    #[test]
+    fn sc0461_is_borrowed_and_names_the_library_clause() {
+        let span = Span::new(science_diagnostics::FileId(0), 0, 1);
+        let flags = ["-lm".to_string()];
+        let diagnostic = undefined_foreign_symbol("cosinus", "cosinus", Some("m"), &flags, span);
+        assert_eq!(diagnostic.code, code::SC0461);
+        assert!(!is_claimed(diagnostic.code), "SC0461 is `ffi-c-boundary.md`'s band");
+        assert!(diagnostic.message.contains("cosinus"));
+        let notes = diagnostic.notes.join("\n");
+        // §10 stage 2's gate: the span **and the library clause**.
+        assert!(notes.contains("library \"m\""), "{notes}");
+        assert!(notes.contains("-lm"), "the flag that was passed is the actionable half: {notes}");
+        assert!(
+            diagnostic.labels.iter().any(|label| label.span == span),
+            "the declaration's span is the other half of what the gate asks for"
+        );
+    }
+
+    /// The Windows row: a `library` clause that produces no flag says so.
+    ///
+    /// A message claiming `m.lib` was searched, on a target where `m` is
+    /// inside the UCRT and nothing was passed, sends the reader to look at a
+    /// library path that has nothing to do with the failure.
+    #[test]
+    fn sc0461_does_not_claim_a_flag_that_was_never_passed() {
+        let span = Span::new(science_diagnostics::FileId(0), 0, 1);
+        let diagnostic = undefined_foreign_symbol("cosinus", "cosinus", Some("m"), &[], span);
+        let notes = diagnostic.notes.join("\n");
+        assert!(notes.contains("no flag was passed"), "{notes}");
+        assert!(!notes.contains("-lm"), "{notes}");
+    }
+
+    #[test]
+    fn sc0461_says_when_there_was_no_library_clause() {
+        let span = Span::new(science_diagnostics::FileId(0), 0, 1);
+        let diagnostic = undefined_foreign_symbol("f", "f_", None, &[], span);
+        let notes = diagnostic.notes.join("\n");
+        assert!(notes.contains("no `library` clause"), "{notes}");
+        // A renamed symbol is named on both sides, because the reader wrote one
+        // of the two and the linker looked for the other.
+        assert!(notes.contains("`f` is declared with `symbol \"f_\"`"), "{notes}");
     }
 
     #[test]

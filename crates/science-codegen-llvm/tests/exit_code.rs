@@ -10,10 +10,9 @@
 //! **Why the second one is not a Science program, and it is not a shortcut.**
 //! §2.3's fourth row needs a non-null `(any Error)?`. Producing one from source
 //! means a concrete error type, a `BoxThenWiden` coercion, a heap box and a
-//! vtable with `Error.message` in it, and stage 1 has none of the four —
-//! `lower` refuses a script body that is anything but a string literal and a
-//! `print`. So the row would be untestable until stage 3, which is exactly the
-//! state that let it sit unreachable and aborting.
+//! vtable with `Error.message` in it, and this backend has none of the four.
+//! So the row would be untestable until stage 4, which is exactly the state
+//! that let it sit unreachable and aborting.
 //!
 //! What this file does instead is invent the **value** and keep everything else
 //! real: the `main` under test is the one [`Lowerer::lower_c_main`] emits, the
@@ -37,82 +36,18 @@
 
 #![cfg(feature = "llvm")]
 
+mod harness;
+
+use harness::{executable, lower, require_runtime, run, scratch};
 use science_codegen::abi::AbiSignature;
 use science_codegen::backend::{BlockId, Inst, LocalId, Operand, Terminator};
-use science_codegen::driver::BuildRequest;
 use science_codegen::layout::{CgTy, Triple, layout_of};
 use science_codegen::mangle::{MonoKey, mangle};
 use science_codegen::runtime::EXIT_CONTRACT;
 use science_codegen::target::{OptLevel, TargetConfig};
 use science_codegen_llvm::emit::{ExtBlock, ExtBody, ExtInst};
+use science_codegen_llvm::emit_and_link;
 use science_codegen_llvm::lower::{ERROR_MESSAGE, Lowerer};
-use science_codegen_llvm::{BuildInput, build, emit_and_link};
-use science_diagnostics::{Diagnostics, FileId};
-use science_mir::mir::Body;
-use science_resolve::hir;
-use science_types::items::Declarations;
-use science_types::{Aliases, AtomOrder, Types, check_crate, thir};
-
-struct Lowered {
-    krate: hir::Crate,
-    types: Types,
-    bodies: Vec<Body>,
-}
-
-/// One program, all the way to MIR — `tests/hello.rs`'s harness, unchanged.
-fn lower(source: &str) -> Lowered {
-    let file = FileId(0);
-    let (tokens, lexed) = science_lexer::lex(file, source);
-    assert!(!lexed.has_errors(), "the fixture must lex");
-    let (ast, parsed) = science_parser::parse_module(&tokens, file);
-    assert!(!parsed.has_errors(), "the fixture must parse");
-    let (krate, resolution) = science_resolve::resolve_module(file, "exit.science", &ast);
-    assert!(!resolution.has_errors(), "the fixture must resolve");
-
-    let order = AtomOrder::of(&krate.defs);
-    let mut types = Types::new();
-    let mut diagnostics = Diagnostics::new();
-    let mut aliases = Aliases::of(&krate, &mut types, &order, &mut diagnostics);
-    let decls = Declarations::of(&krate, &mut types, &order, &mut diagnostics);
-    let thir: Vec<thir::Body> =
-        check_crate(&krate, &decls, &mut types, &mut aliases, &order, &mut diagnostics);
-    assert!(
-        !diagnostics.has_errors(),
-        "the fixture must check: {:?}",
-        diagnostics.iter().map(|d| d.code.0).collect::<Vec<_>>()
-    );
-    let bodies = {
-        let mut context = science_mir::Context {
-            defs: &krate.defs,
-            decls: &decls,
-            types: &mut types,
-            aliases: &mut aliases,
-        };
-        science_mir::lower_crate(&mut context, &thir)
-    };
-    Lowered { krate, types, bodies }
-}
-
-fn scratch(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("science-exit-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    dir
-}
-
-fn require_runtime() {
-    if science_codegen_llvm::link::find_runtime().is_err() {
-        panic!(
-            "`science_rt.lib` was not found. Cargo builds a dependency's rlib and not its \
-             staticlib, so run `cargo build -p science-rt` — or `cargo test --workspace \
-             --features llvm`, which builds every member."
-        );
-    }
-}
-
-fn executable(dir: &std::path::Path, stem: &str) -> std::path::PathBuf {
-    dir.join(if cfg!(windows) { format!("{stem}.exe") } else { stem.to_string() })
-}
 
 /// Rows 1 to 3: a script body that hands back a null error exits 0 and says
 /// nothing.
@@ -135,38 +70,19 @@ fn executable(dir: &std::path::Path, stem: &str) -> std::path::PathBuf {
 #[test]
 fn a_script_body_that_returns_null_exits_zero_and_says_nothing() {
     let lowered = lower("return null\n");
-    let dir = scratch("null");
-    let output = executable(&dir, "ok");
-    let request = BuildRequest::new(vec!["exit.science".to_string()]);
-    let input = BuildInput {
-        request: &request,
-        defs: &lowered.krate.defs,
-        types: &lowered.types,
-        bodies: &lowered.bodies,
-        output: output.clone(),
-    };
+    let dir = scratch("exit", "null");
     require_runtime();
-    let built = match build(&input) {
-        Ok(built) => built,
-        Err(diagnostics) => panic!(
-            "the build failed:\n{}",
-            diagnostics
-                .iter()
-                .map(|d| format!("{}: {}", d.code, d.message))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ),
-    };
+    let built = lowered.build_at(&executable(&dir, "ok"), OptLevel::O2);
 
-    let run = std::process::Command::new(&built.executable).output().expect("the program runs");
-    let stderr = String::from_utf8_lossy(&run.stderr).to_string();
+    let ran = run(&built);
     assert_eq!(
-        run.status.code(),
+        ran.status,
         Some(0),
-        "`script-mode.md` §2.3: a script body whose error is null exits 0. stderr: {stderr}"
+        "`script-mode.md` §2.3: a script body whose error is null exits 0. stderr: {}",
+        ran.stderr
     );
-    assert_eq!(stderr, "", "a script that did not fail must say nothing on stderr");
-    assert_eq!(String::from_utf8_lossy(&run.stdout), "", "and nothing on stdout either");
+    assert_eq!(ran.stderr, "", "a script that did not fail must say nothing on stderr");
+    assert_eq!(ran.stdout, "", "and nothing on stdout either");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -201,8 +117,12 @@ fn a_script_body_that_returns_an_error_exits_one_and_says_something() {
     // null niche in the data word, returned through `sret` on every supported
     // convention because it is neither 1, 2, 4 nor 8 bytes.
     let ret_layout = layout_of(triple, &CgTy::nullable(CgTy::Interface));
-    let science_main =
-        AbiSignature::science(triple, mangle(&MonoKey::plain(&["main"])), ret_layout.clone(), vec![]);
+    let science_main = AbiSignature::science(
+        triple,
+        mangle(&MonoKey::plain(&["main"])),
+        ret_layout.clone(),
+        vec![],
+    );
     assert!(
         science_main.ret.is_sret(),
         "the whole shape of the emitted `main` rests on `Error?` coming back indirectly"
@@ -231,7 +151,7 @@ fn a_script_body_that_returns_an_error_exits_one_and_says_something() {
     let c_main = lowerer.lower_c_main(&science_main).expect("the emitted `main`");
     let module = lowerer.finish(vec![(science_main, body), c_main]);
 
-    let dir = scratch("error");
+    let dir = scratch("exit", "error");
     let output = executable(&dir, "failing");
     require_runtime();
     let config = TargetConfig::new(triple, OptLevel::O0);
@@ -266,24 +186,21 @@ fn a_script_body_that_returns_an_error_exits_one_and_says_something() {
         built.ir
     );
 
-    let run = std::process::Command::new(&built.executable).output().expect("the program runs");
-    let stderr = String::from_utf8_lossy(&run.stderr).replace("\r\n", "\n");
+    let ran = run(&built);
     assert_eq!(
-        run.status.code(),
+        ran.status,
         Some(EXIT_CONTRACT.required_status),
         "`script-mode.md` §2.3: a non-null error is status 1, and not the abort status. \
-         stderr: {stderr}"
+         stderr: {}",
+        ran.stderr
     );
     assert!(
-        stderr.starts_with(EXIT_CONTRACT.required_prefix),
-        "§2.3 requires the `error: ` prefix; stderr was {stderr:?}"
+        ran.stderr.starts_with(EXIT_CONTRACT.required_prefix),
+        "§2.3 requires the `error: ` prefix; stderr was {:?}",
+        ran.stderr
     );
-    assert_eq!(stderr, ERROR_MESSAGE, "the message is the constant, verbatim");
-    assert_eq!(
-        String::from_utf8_lossy(&run.stdout),
-        "",
-        "§2.3 puts the error on stderr, and nothing goes to stdout"
-    );
+    assert_eq!(ran.stderr, ERROR_MESSAGE, "the message is the constant, verbatim");
+    assert_eq!(ran.stdout, "", "§2.3 puts the error on stderr, and nothing goes to stdout");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

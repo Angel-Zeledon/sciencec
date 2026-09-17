@@ -16,10 +16,11 @@
 //!
 //! **The cost, and this crate paid it immediately.** §8.4 says the discipline
 //! *"actually fails, because the fastest way to fix a bug at eleven at night is
-//! always to let the backend peek at something above the line"*. There are three
+//! always to let the backend peek at something above the line"*. There are five
 //! places below where this crate reaches for something the line does not carry,
 //! and rather than peek they are named: [`ExtInst::LocalAddr`],
-//! [`ExtInst::ReturnSlot`] and [`ExtInst::LoadNiche`]. See §2.
+//! [`ExtInst::ReturnSlot`], [`ExtInst::LoadNiche`], [`ExtInst::Neg`] and
+//! [`ExtInst::Const`]. See §2.
 //!
 //! # 1. Types: the layout is `science-codegen`'s and LLVM is told, not asked
 //!
@@ -43,13 +44,13 @@
 //! `LLVMStructCreateNamed` is declared and unused for that reason; the fix is a
 //! field on `Layout`, which is above the line.
 //!
-//! # 2. The three things the interface cannot say
+//! # 2. The five things the interface cannot say
 //!
 //! `science_codegen::backend::Operand` has `Value`, `ConstInt`, `ConstFloat`,
 //! `GlobalAddr` and `Null`, and `Inst` has `Alloca`, `Load`, `Store`, two
-//! binaries, a `Cmp` and a `Call`. Stage 1 — one script body, one string
-//! literal, one `print` — needs three things that vocabulary cannot express, and
-//! each one is a variant of [`ExtInst`] rather than a peek:
+//! binaries, a `Cmp` and a `Call`. Stages 1 to 3 need five things that
+//! vocabulary cannot express, and each one is a variant of [`ExtInst`] rather
+//! than a peek. The first three are stage 1's:
 //!
 //! 1. **The address of a local** ([`ExtInst::LocalAddr`]). `science_print` takes
 //!    `*const ScienceString`, and the string it prints lives in the `alloca`
@@ -68,15 +69,39 @@
 //!    possibly-null interface object *"including on the path that tests for
 //!    null"*.
 //!
+//! Stage 3 adds two more:
+//!
+//! 4. **Unary `-`** ([`ExtInst::Neg`]). `Inst` has no unary form at all. An
+//!    integer negation would not have needed one — `IntBinary { Sub, 0, x }` is
+//!    what `LLVMBuildNeg` emits — and a float negation does, because
+//!    `fsub 0.0, x` is not `fneg x` at `x == +0.0`.
+//! 5. **A constant with a type** ([`ExtInst::Const`]). This one closes a hole
+//!    that was producing a **wrong answer**, and the entry below is the version
+//!    that was wrong.
+//!
 //! Every one is a local extension and every one is meant to be deleted: when
 //! `Inst` grows an `AddrOf`, `Operand` grows a `Param`, and either grows a field
 //! projection, [`ExtInst`] collapses to `Inst` and this section goes with it.
 //! Both entry points run the same emitter, so the trait's `define_function` and
 //! the extension's `define_function_ext` cannot drift.
 //!
-//! **A fourth gap is named and not repaired.** `Operand::ConstInt` carries an
-//! `i128` and no type, so a constant's width has to be inferred; see
-//! [`LlvmBackend::width_hint`] for what that costs and where it stops.
+//! **The gap that was named and not repaired, and what it cost.**
+//! `Operand::ConstInt` carries an `i128` and no type, so a constant's width has
+//! to be inferred, and [`LlvmBackend::width_hint`] infers it from the *other*
+//! operand. This section used to say that the failures were *"verifier failures
+//! rather than miscompiles — Decision 34 catches them"*, and **that is false
+//! for the store the arithmetic feeds.** `0i8 - 128i8` is two constants, so
+//! there is no other operand: both took the default `i64`, the subtraction was
+//! `i64`, and `store i64 %v, ptr %slot` into a one-byte `alloca` is *valid IR*,
+//! because opaque pointers removed the only thing that related a store's width
+//! to its destination's. It verified, it linked, it wrote eight bytes into one,
+//! and the only symptom was a comparison that answered `false`.
+//!
+//! [`ExtInst::Const`] is half the repair — [`crate::lower`] materialises every
+//! constant at the type the checker gave the expression, so nothing it emits
+//! depends on the hint — and `Inst::Store`'s width check is the other half,
+//! because the hint is still reachable from a hand-built body and a backend
+//! cannot make this class loud any later than at the store.
 //!
 //! # 3. Verification is not optional and runs twice
 //!
@@ -177,6 +202,70 @@ pub enum ExtInst {
         dest: ValueId,
         /// The nullable local.
         local: LocalId,
+    },
+    /// Materialise a constant at a layout's own type.
+    ///
+    /// **The fifth hole, and it is the one that was a wrong answer rather than
+    /// a refusal.** §2's list already named `Operand::ConstInt`'s missing type
+    /// as a gap and said [`LlvmBackend::width_hint`] covers it by reading the
+    /// *other* operand — which works whenever the other operand is a value and
+    /// does nothing when it is not. `0i8 - 128i8` is two constants, so the
+    /// hint is empty, both take the default `i64`, the subtraction is `i64`,
+    /// and the result is stored into a one-byte slot.
+    ///
+    /// **`store i64 %v, ptr %slot` is valid IR.** Opaque pointers removed the
+    /// only thing that related a store's width to its destination's, so the
+    /// verifier passes it, the program links, and it writes eight bytes into
+    /// one byte of stack — a wrong value and a smashed neighbour, with nothing
+    /// in the IR that looks wrong. §2's note claimed this class was *"verifier
+    /// failures rather than miscompiles"*; that is true of `add i32 %x, i64 1`
+    /// and false of the store it feeds.
+    ///
+    /// So [`crate::lower`] no longer relies on the hint: every constant it puts
+    /// into an arithmetic instruction goes through this variant first, at the
+    /// layout the type checker gave the expression, and the hint is left for
+    /// the hand-built bodies in `tests/emitter.rs` that exercise it. The other
+    /// half of the repair is in `Inst::Store`, which now refuses a width it was
+    /// not expecting instead of writing it.
+    Const {
+        /// Where the typed constant goes.
+        dest: ValueId,
+        /// The type to build it at.
+        layout: Layout,
+        /// The constant. `Operand::Value` is refused: this exists to give a
+        /// constant a type, and a value already has one.
+        value: Operand,
+    },
+    /// Negation: §4.6's unary `-`.
+    ///
+    /// **The fourth hole, and it is an omission rather than a disagreement.**
+    /// `science_codegen::backend::Inst` has `IntBinary`, `FloatBinary` and
+    /// `Cmp` and no unary form at all, so §4.6's prefix `-` has no spelling
+    /// above the line.
+    ///
+    /// **Integer negation would not have needed a variant** — `IntBinary` with
+    /// `Sub`, a zero left operand and no `nsw` is exactly what LLVM's own
+    /// `LLVMBuildNeg` emits — **and float negation does, and the difference is
+    /// a signed zero.** `fsub double 0.0, x` is not `fneg x`: at `x == +0.0`
+    /// the subtraction gives `+0.0` and the negation gives `-0.0`, and
+    /// `reproducibility.md`'s policy forbids a value-changing float transform
+    /// whoever makes it. One variant covering both is better than a correct
+    /// lowering for one type and a wrong one for the other.
+    ///
+    /// §4.6's other prefix operator, `not`, is **not** here and needs nothing:
+    /// [`crate::lower`] emits it as `Cmp { Eq, x, 0 }`, which is right at both
+    /// of §3.1's widths for a `Bool` where a bitwise complement is right at
+    /// neither.
+    ///
+    /// It collapses the way the others do: when `Inst` grows a unary form, this
+    /// is `Above(..)` and goes.
+    Neg {
+        /// Where the result goes.
+        dest: ValueId,
+        /// What is negated. Integer or float, decided by the operand's type —
+        /// asked of LLVM rather than carried, for
+        /// [`LlvmBackend::value_is_float`]'s reason: the value already knows.
+        operand: Operand,
     },
 }
 
@@ -649,9 +738,65 @@ impl LlvmBackend {
                 state.values.insert(dest.0, value);
             }
             ExtInst::Above(Inst::Store { local, value }) => {
-                let (slot, ty, _) = state.local_entry(*local)?;
+                let (slot, ty, layout) = state.local_entry(*local)?;
                 let v = self.operand(state, value, Some(ty))?;
+                // §3.1's two forms of `Bool`, met from the register side. A
+                // comparison produces an `i1` and a `Bool` local's slot is an
+                // `i8`, so every `flag be i > 5` is this widening. The widening
+                // is `zext` and not `sext` because `sext i1 -> i8` of `true` is
+                // `0xff`.
+                let v = self.widen_bool(v, ty);
+                // **The width is checked, because nothing else checks it.**
+                // Opaque pointers removed the relationship between a store's
+                // value type and its destination's, so `store i64 %v, ptr %slot`
+                // into a one-byte `alloca` verifies, links, and writes eight
+                // bytes into one. That is not a hypothetical: it is what
+                // `let b be 0i8 - 128i8` emitted before `ExtInst::Const`
+                // existed, and the only symptom was a comparison that answered
+                // `false`. A backend cannot make this loud any later than here.
+                let value_ty = unsafe { sys::LLVMTypeOf(v) };
+                if value_ty != ty && Some(value_ty) != self.niche_ty(&layout) {
+                    return Err(BackendError::Other(format!(
+                        "local _{} is {} and the value stored into it is {}; opaque pointers                          make the mismatch legal IR, so it is caught here or not at all",
+                        local.0,
+                        self.describe_type(ty),
+                        self.describe_type(value_ty)
+                    )));
+                }
                 unsafe { sys::LLVMBuildStore(b, v, slot) };
+            }
+            ExtInst::Const { dest, layout, value } => {
+                if matches!(value, Operand::Value(_)) {
+                    return Err(BackendError::Other(
+                        "`ExtInst::Const` gives a constant a type, and a value already has one"
+                            .to_string(),
+                    ));
+                }
+                let ty = self.llvm_type(layout);
+                let v = self.operand(state, value, Some(ty))?;
+                if unsafe { sys::LLVMTypeOf(v) } != ty {
+                    return Err(BackendError::Unsupported {
+                        what: format!(
+                            "a constant of a type this backend cannot build at {}",
+                            self.describe_type(ty)
+                        ),
+                    });
+                }
+                state.values.insert(dest.0, v);
+            }
+            ExtInst::Neg { dest, operand } => {
+                let value = self.operand(state, operand, None)?;
+                let name = cstr(&format!("v{}", dest.0));
+                let result = if self.value_is_float(value) {
+                    unsafe { sys::LLVMBuildFNeg(b, value, name.as_ptr()) }
+                } else {
+                    // No `nsw`: see `crate::lower::Lowerer::lower_binary`'s note
+                    // on overflow. `neg` of `Int.min` wraps to `Int.min`, which
+                    // is the release semantics the core spec asks for and is
+                    // not undefined.
+                    unsafe { sys::LLVMBuildNeg(b, value, name.as_ptr()) }
+                };
+                state.values.insert(dest.0, result);
             }
             ExtInst::Above(Inst::IntBinary { dest, op, lhs, rhs }) => {
                 let hint = self.width_hint(state, lhs, rhs).or_else(|| Some(self.int_ty(64)));
@@ -770,6 +915,79 @@ impl LlvmBackend {
             }
         }
         None
+    }
+
+    /// §3.1's `i1`-to-`i8` widening, applied only where it is exactly that.
+    ///
+    /// **Narrow on purpose.** The only pair this touches is `i1` into `i8`;
+    /// every other mismatch between a value and the slot it is stored into is
+    /// left alone so that the verifier reports it. A general "coerce the value
+    /// to the slot's type" helper would turn a lowering bug — an `i64` stored
+    /// into an `i32` local — into a silent truncation, which is the class of
+    /// failure §10's staging exists to avoid.
+    fn widen_bool(
+        &self,
+        value: sys::LLVMValueRef,
+        slot_ty: sys::LLVMTypeRef,
+    ) -> sys::LLVMValueRef {
+        if self.value_is_int_of_width(value, 1) && slot_ty == self.int_ty(8) {
+            let name = cstr("b");
+            unsafe { sys::LLVMBuildZExt(self.builder.raw(), value, slot_ty, name.as_ptr()) }
+        } else {
+            value
+        }
+    }
+
+    /// The type of a niched layout's niche scalar at offset 0, if it has one.
+    ///
+    /// **The one store whose value is narrower than its slot on purpose.**
+    /// Decision 19 puts the absent case of a `T?` in the payload's first
+    /// pointer, so `_0 = null` for an `Error?` is `store ptr null` into a
+    /// `{ ptr, ptr }` slot: eight bytes of sixteen, with the vtable word left
+    /// undefined, which §3.4 requires rather than merely permits — *"the vtable
+    /// slot of a null trait object is undefined and codegen must never load
+    /// it"*. [`ExtInst::LoadNiche`] is the same asymmetry read back, and this
+    /// is what keeps the store's width check from rejecting its own half.
+    fn niche_ty(&self, layout: &Layout) -> Option<sys::LLVMTypeRef> {
+        let Repr::Niched { niche, payload, .. } = &layout.repr else { return None };
+        if niche.offset != 0 {
+            return None;
+        }
+        science_codegen::layout::scalar_leaves(payload)
+            .into_iter()
+            .find(|(offset, _)| *offset == 0)
+            .map(|(_, scalar)| self.scalar_ty(scalar))
+    }
+
+    /// A type's kind and, for an integer, whether it is the one expected —
+    /// enough for a message that says which two widths disagreed.
+    ///
+    /// `LLVMPrintTypeToString` would say it exactly and is not declared;
+    /// `sys.rs`'s rule is *"declare only what you call"*, and a declaration
+    /// added for an error path is one no test exercises. The integer widths
+    /// this compiler can build are few enough to name.
+    fn describe_type(&self, ty: sys::LLVMTypeRef) -> String {
+        if self.type_kind_of(ty) == sys::type_kind::INTEGER {
+            for bits in [1u32, 8, 16, 32, 64, 128] {
+                if ty == self.int_ty(bits) {
+                    return format!("i{bits}");
+                }
+            }
+            return "an integer of some other width".to_string();
+        }
+        let kind = self.type_kind_of(ty);
+        if kind == sys::type_kind::FLOAT {
+            "float".to_string()
+        } else if kind == sys::type_kind::DOUBLE {
+            "double".to_string()
+        } else {
+            // Every remaining kind this compiler can build is a pointer, a
+            // struct or an array, and `sys::type_kind` names none of them —
+            // `tests/abi_claims.rs` checks each named constant against what
+            // LLVM does with it, so a constant added for a message would be a
+            // claim nothing verifies.
+            "a pointer or an aggregate".to_string()
+        }
     }
 
     /// Whether a value is an integer of exactly `bits` bits.
@@ -942,20 +1160,32 @@ impl LlvmBackend {
             },
             Terminator::Branch { cond, then_block, else_block } => {
                 let c = self.operand(state, cond, Some(self.int_ty(1)))?;
-                // **`i1`, and it is checked rather than assumed.** §3.1 makes
-                // `Bool` *"`i1` in registers and `i8` in memory"*, and
-                // [`LlvmBackend::scalar_ty`] answers with the memory form — so a
-                // condition that came from `Inst::Load` of a `Bool` local is an
-                // `i8`, and `br i8` is a verifier failure. The repair is a
-                // `trunc`, and `LLVMBuildTrunc` is deliberately **not** declared:
-                // `sys.rs`'s rule is *"declare only what you call"*, nothing in
-                // stage 1 can produce a loaded `Bool` condition, and a
-                // declaration nobody calls is a claim nobody checks. So this
-                // refuses, by name, and the day a `Bool` local reaches a branch
-                // the refusal says which line to write.
+                // **`i1`, and §3.1's other form is narrowed rather than
+                // refused.** `Bool` is *"`i1` in registers and `i8` in
+                // memory"*, and [`LlvmBackend::scalar_ty`] answers with the
+                // memory form — so a condition that came from `Inst::Load` of a
+                // `Bool` local is an `i8` and `br i8` is a verifier failure.
+                // This used to refuse, by name, because nothing in stage 1 could
+                // produce a loaded `Bool` condition and `sys.rs`'s rule is
+                // *"declare only what you call"*. Stage 3's every `if` produces
+                // one, so `LLVMBuildTrunc` is now called and therefore declared.
+                //
+                // `trunc i8 -> i1` keeps the low bit, which is the right answer
+                // for the only two values a `Bool` slot may hold. It is also
+                // why `crate::lower` emits `not x` as `x == 0` rather than as
+                // a bitwise complement: a `Bool` whose slot held `0xff` would
+                // truncate to `true`, and a complement of the memory form is
+                // exactly how `0xff` would get in there.
+                let c = if self.value_is_int_of_width(c, 8) {
+                    let name = cstr("cond");
+                    unsafe { sys::LLVMBuildTrunc(b, c, self.int_ty(1), name.as_ptr()) }
+                } else {
+                    c
+                };
                 if !self.value_is_int_of_width(c, 1) {
                     return Err(BackendError::Unsupported {
-                        what: "a branch on a condition that is not `i1` — §3.1's memory form of                                `Bool` is `i8` and narrowing it needs a `trunc`, which                                `crate::sys` does not declare"
+                        what: "a branch on a condition that is neither `i1` nor §3.1's `i8` \
+                               memory form of a `Bool`"
                             .to_string(),
                     });
                 }

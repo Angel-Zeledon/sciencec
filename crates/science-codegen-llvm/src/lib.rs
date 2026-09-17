@@ -26,13 +26,37 @@
 //! error's `Display`, the prelude declares `Display` with no method, and a
 //! placeholder that says so is what a user gets.
 //!
-//! **What is not true.** Stage 2 is not started: no `extern` block is lowered,
-//! nothing has been linked against a C library, and the five notes resting on
-//! *"a declaration becomes an LLVM `declare` and the system linker resolves
-//! it"* are still untested. Stage 3's control flow exists in the instruction set
-//! and is not reachable from any source program, because [`lower`] refuses
-//! everything but a script body, a string literal and `print`. The refusal is
-//! `SC0400` and it names the construct.
+//! **Stages 2 and 3 are now emitted too.** An `extern "C"` declaration becomes
+//! an LLVM `declare`, its `library` clause becomes a link decision, and a call
+//! to it is Decision 40's direct `call`: `cos(0.0)` through `library "m"`
+//! builds, links and returns `1.0`, which is §10's stage 2 gate, and a
+//! misspelled symbol is `SC0461` against its declaration rather than the
+//! linker's raw text. **The five notes resting on *"a declaration becomes an
+//! LLVM `declare` and the system linker resolves it"* have been tested by
+//! execution, and the proposition holds.** Stage 3's CFG is reachable from
+//! source: `loop:`, `break`, `if`/`else`, and §4.6's operators on scalars at
+//! their own width and signedness.
+//!
+//! **What is not true.** §10's stage 2 and stage 3 each write their program
+//! with `print(f"{x}")`, and **there is no string interpolation in this
+//! language** — `f"…"` is in no phase of the front end and in no corpus file,
+//! and there is no integer-to-string entry point in the runtime either, so
+//! there is no way for any program to print a number. §10's stage 3 program is
+//! a `for` loop, and **a `for` loop does not reach this backend**: its `next`
+//! is `science_mir::mir::Unresolved::IterateNext`, which
+//! `science_types::thir::ExprKind::For` has no field to carry. Both are holes
+//! above this crate; [`lower`]'s own documentation is the account and
+//! `tests/stage_two_and_three.rs` is what was built instead.
+//!
+//! **The smallest program that still cannot be built is a `match`.** A
+//! two-variant payload-free `choice` has no `Ty -> CgTy` arm, so §3.3's tagged
+//! layout is never computed and `TerminatorKind::Switch` is refused before it
+//! is reached. After that: a second function (`Operand` has no `Param` form), a
+//! record (`Inst` has no field projection), a value whose `Drop` MIR emits
+//! (Decision 12's glue), and integer `/`, `%`, `<<` and `>>`, which are
+//! refused **deliberately** rather than for want of an instruction — see
+//! [`lower::Lowerer::lower_binary`]. Every refusal is `SC0400` and names the
+//! construct.
 //!
 //! # 1. Why it is a separate crate, and how the workspace builds without LLVM
 //!
@@ -149,8 +173,41 @@
 //!     them — `return null`. Not this crate's to fix, and recorded here because
 //!     it is the second row of a table this crate now implements the rest of.
 //!
+//! 11. **`science_exit` did not flush C's buffered output, so the whole of
+//!     stage 2 was silently discarded.** `putchar(65)` through an `extern`
+//!     block emitted `call i32 @putchar(i32 65)`, verified, linked, exited 0
+//!     and **printed nothing**: the byte was in the C runtime's `stdout` when
+//!     `std::process::exit` ended the process. `exit.rs` claimed *"`atexit`
+//!     handlers and C stdio flushing happen"*; the first half was true.
+//!     Invisible at a terminal, because a console is line-buffered and a pipe
+//!     is not — so it appears only under a harness that captures output, which
+//!     is the only kind §10's discipline permits. `science-rt`'s `flush_all` is
+//!     the repair and the account.
+//! 12. **A store whose value is wider than its slot is legal IR, and it was
+//!     being emitted.** `let b be 0i8 - 128i8` is two constants;
+//!     `Operand::ConstInt` carries no type, `emit`'s `width_hint` reads the
+//!     *other* operand and there was none, so both took the default `i64` and
+//!     the result was stored into a one-byte `alloca`. **Opaque pointers
+//!     removed the only thing that related a store's width to its
+//!     destination's**, so `LLVMVerifyModule` passed it — which makes §2 of
+//!     [`emit`] wrong where it says this class is *"verifier failures rather
+//!     than miscompiles"*. [`emit::ExtInst::Const`] gives every constant its
+//!     own type on the way in, and `Inst::Store` now refuses a width it was not
+//!     expecting, so the class is closed from both ends.
+//! 13. **`link.exe` is localised, and `SC0461` was matching English prose.** On
+//!     this machine an unresolved symbol reads *"símbolo externo cosinus sin
+//!     resolver"*, so a search for *"unresolved external"* finds nothing and
+//!     Decision 29's diagnostic never fires — on every non-English Windows
+//!     install, invisibly, and undetectably from an English one. `LNK2019` and
+//!     `LNK2001` are not translated and are what is matched;
+//!     [`link::undefined_symbols`] is the account, including why forcing the
+//!     linker into English was the wrong repair.
+//!
 //! **And nine was itself found this way**, which is the point of the list: the
-//! numbering has grown twice and each entry is something the notes did not say.
+//! numbering has grown four times and each entry is something the notes did not
+//! say. Eleven, twelve and thirteen were all found by *running* a program —
+//! none of them changes the IR in a way that looks wrong, and two of them pass
+//! the verifier.
 
 #![warn(missing_docs)]
 
@@ -237,6 +294,26 @@ fn default_prefixes() -> &'static [&'static str] {
     }
 }
 
+/// Every `extern` block in a crate, in source order.
+///
+/// **Here rather than in `science-resolve`, and outside the feature gate.**
+/// The *order* is codegen's question — Decision 28 makes the source order of
+/// the `library` clauses the link order — and nothing above the line has asked
+/// for the list. It sits in this module rather than in [`lower`] because
+/// `sciencec` builds the list whether or not it has a backend to hand it to,
+/// and a `sciencec` compiled without `--features llvm` still has to compile.
+pub fn extern_blocks(krate: &science_resolve::hir::Crate) -> Vec<&science_resolve::hir::ExternBlock> {
+    krate
+        .modules
+        .iter()
+        .flat_map(|module| module.items.iter())
+        .filter_map(|item| match &item.kind {
+            science_resolve::hir::ItemKind::Extern(block) => Some(block),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Everything a build needs that this crate does not compute.
 ///
 /// The front end is `sciencec`'s to run — it owns the file I/O, the module
@@ -250,6 +327,22 @@ pub struct BuildInput<'a> {
     pub defs: &'a DefTable,
     /// The crate's types.
     pub types: &'a Types,
+    /// The crate's declared signatures.
+    ///
+    /// **Added for §10's stage 2, and the alternative was worse.** An
+    /// `extern "C"` function has no MIR body, so its parameter and return
+    /// types reach codegen through nothing else: `DefTable` carries a name, a
+    /// kind and a span, and `hir::ExternFn` carries the *syntax* of a
+    /// parameter list, which this crate would have to resolve —
+    /// `type BlasInt is I32` is an alias — to get a type out of. That is a
+    /// second, worse copy of the type checker living in the backend.
+    /// [`science_types::items::Declarations`] is the table the checker built
+    /// and the one the call site was checked against.
+    pub decls: &'a science_types::items::Declarations,
+    /// The crate's `extern` blocks, in source order — which Decision 28 makes
+    /// significant, because it is the order the `library` clauses reach the
+    /// linker in. [`lower::Lowerer::extern_blocks`] collects them.
+    pub externs: &'a [&'a science_resolve::hir::ExternBlock],
     /// Every MIR body in the crate.
     pub bodies: &'a [MirBody],
     /// Where the executable goes.
@@ -385,7 +478,13 @@ pub fn build(input: &BuildInput) -> Result<Built, Diagnostics> {
     let config = TargetConfig::new(triple, input.request.opt)
         .with_no_noalias(input.request.no_noalias);
 
-    let mut lowerer = lower::Lowerer::new(triple, input.defs, input.types);
+    let mut lowerer = lower::Lowerer::with_externs(
+        triple,
+        input.defs,
+        input.types,
+        input.decls,
+        input.externs,
+    );
     let lowered = match lowerer.lower_crate(input.bodies) {
         Ok(lowered) => lowered,
         Err(unlowered) => {
@@ -471,7 +570,45 @@ pub fn emit_and_link(
             return Err(diagnostics);
         }
     };
-    if let Err(error) = link::link(&driver, &object, &runtime, output, triple) {
+    if let Err(error) = link::link(&driver, &object, &runtime, output, triple, &lowered.libraries)
+    {
+        // Decision 29: `SC0461` for an undefined symbol codegen's own table can
+        // attribute to an `extern` declaration, and `SC0402` for everything
+        // else. The table is `lowered.foreign` and it exists as of stage 2; the
+        // attribution is `link::undefined_symbols`, which requires both a
+        // marker word meaning "not found" and the symbol as a whole
+        // identifier, so a linker failure that merely mentions the name is
+        // still §5.5's raw text.
+        //
+        // **Both are reported when one is attributed.** The `SC0461`s say which
+        // declarations failed; the `SC0402` still carries the command line and
+        // the linker's output, because a reader whose library was the wrong one
+        // needs to see the flags that were passed. A codegen that swallowed the
+        // linker's text on the strength of a substring match would be hiding
+        // the evidence for its own guess.
+        if let link::LinkError::Failed { output: text, .. } = &error {
+            let symbols: Vec<String> =
+                lowered.foreign.iter().map(|entry| entry.symbol.clone()).collect();
+            for symbol in link::undefined_symbols(text, &symbols) {
+                let entry = lowered
+                    .foreign
+                    .iter()
+                    .find(|entry| entry.symbol == *symbol)
+                    .expect("the symbol came from this list");
+                let flags = entry
+                    .library
+                    .as_deref()
+                    .map(|library| link::library_flags(triple, library))
+                    .unwrap_or_default();
+                diagnostics.push(science_codegen::diagnostics::undefined_foreign_symbol(
+                    &entry.name,
+                    &entry.symbol,
+                    entry.library.as_deref(),
+                    &flags,
+                    entry.span,
+                ));
+            }
+        }
         diagnostics.push(error.to_diagnostic());
         return Err(diagnostics);
     }

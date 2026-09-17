@@ -80,8 +80,20 @@ fn assembly_for(cpu: &str) -> String {
     assert_eq!(module.verify(), Ok(()), "the fixture module must verify");
     machine::optimise(&module, &target, OptLevel::O3).expect("the `default<O3>` pipeline");
 
-    let dir = std::env::temp_dir()
-        .join(format!("science-fp-{}-{}", std::process::id(), cpu.replace('-', "_")));
+    // **A counter, not the CPU name.** Two tests in this file ask for
+    // `x86-64-v3`, so a directory named after the CPU is the *same* directory
+    // for both — and `cargo test` runs them on two threads, so one deletes the
+    // scratch directory while the other is reading the file it just wrote.
+    // The symptom is an intermittent "path not found" on a test that has
+    // nothing to do with paths, which is worth a `static` to be rid of.
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let unique = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "science-fp-{}-{}-{}",
+        std::process::id(),
+        cpu.replace('-', "_"),
+        unique
+    ));
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let path = dir.join("fused.s");
     machine::emit_to_file(&module, &target, &path, sys::file_type::ASSEMBLY).expect("assembly");

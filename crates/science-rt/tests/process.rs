@@ -75,6 +75,18 @@ fn child_entry_point() {
             free(out);
             science_exit(0);
         },
+        // The other buffered layer, and the one nothing used to empty. C's
+        // `stdout` is a different buffer from Rust's `LineWriter`, and a
+        // Science program that calls a C library writes through it. `putchar`
+        // rather than a Science entry point because the entry points all go
+        // through Rust; this is the layer under them.
+        "c_stdio" => unsafe {
+            unsafe extern "C" {
+                fn putchar(c: core::ffi::c_int) -> core::ffi::c_int;
+            }
+            putchar(b'A' as core::ffi::c_int);
+            science_exit(0);
+        },
         other => panic!("unknown child role {other:?}"),
     }
 }
@@ -170,6 +182,37 @@ fn write_error_bytes_then_exit_is_status_one_with_the_message_on_stderr() {
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("printed before the failure"),
         "stdout was lost"
+    );
+}
+
+/// `science_exit` empties **C's** buffered output too, and that is the half
+/// that was missing.
+///
+/// **The program that found it wrote one byte and printed nothing.**
+/// `codegen-and-linking.md` §10's stage 2 is a call into a C library, and the
+/// smallest program that proves the path works is one whose output the C
+/// library writes — `putchar(65)` through an `extern "C"` block. It emitted the
+/// right call, linked, exited 0 and produced no output, because
+/// `std::process::exit` on `x86_64-pc-windows-msvc` ends the process without
+/// running the C runtime's stream teardown. This module's own documentation
+/// claimed *"`atexit` handlers and C stdio flushing happen"*; the first half
+/// was true.
+///
+/// **It is invisible at a terminal**, which is why it survived being tried by
+/// hand: a console stream is line-buffered and a pipe is not, so the byte comes
+/// out when a person runs the program and is lost under every harness that
+/// captures the output. This test captures it, which is the only way to see it.
+#[test]
+fn exit_flushes_what_a_c_library_wrote() {
+    let output = run_child("c_stdio");
+    assert_eq!(output.status.code(), Some(0));
+    // The child is a test binary, so libtest's own banner is on the same
+    // stream; the byte is the last thing written and `ends_with` is the
+    // assertion that does not depend on what libtest printed first.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.ends_with('A'),
+        "a byte written through C's `stdout` was still in its buffer at exit: {stdout:?}"
     );
 }
 

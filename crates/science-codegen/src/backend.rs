@@ -43,6 +43,17 @@
 //! aggregate, generic and interface-dispatch operations of stages 4 to 6 are
 //! not here at all.
 //!
+//! **What stages 2 and 3 found missing, measured by emitting them.**
+//! `science-codegen-llvm`'s `emit` §2 is the list, and it is five: the address
+//! of a local, the hidden `sret` slot, a nullable's niche alone, a unary
+//! operator, and **a constant with a type**. The last is the one that was a
+//! wrong answer rather than a refusal: [`Operand::ConstInt`] carries an `i128`
+//! and no width, so `0i8 - 128i8` — two constants, nothing to infer a width
+//! from — was computed at `i64` and stored into a one-byte slot, which opaque
+//! pointers make legal IR that `LLVMVerifyModule` accepts. An interface that
+//! carried the layout on the instruction, as `Alloca` already does, could not
+//! have expressed it.
+//!
 //! # `LLVMVerifyModule` is not optional
 //!
 //! Decision 34: *"`LLVMVerifyModule` runs at every level including `-O0`, and a
@@ -108,8 +119,24 @@ pub enum IntOp {
     Add,
     Sub,
     Mul,
-    /// Signed division. Division by zero is a panic the caller has already
-    /// guarded, not a trap the backend inserts.
+    /// Signed division.
+    ///
+    /// **"Division by zero is a panic the caller has already guarded, not a
+    /// trap the backend inserts" — and no caller guards it.** That sentence
+    /// was this variant's whole specification and it describes a phase that
+    /// does not exist: nothing in THIR, MIR or the checker emits a test against
+    /// zero before a `/`, and `science-codegen-llvm` found this by trying to
+    /// lower one. LLVM's `sdiv` at a zero divisor is **undefined** — not a
+    /// trap, not a panic — and `INT_MIN / -1` is undefined too, so a backend
+    /// that took the sentence at its word would emit a program the optimiser
+    /// may reason backwards from.
+    ///
+    /// So the LLVM backend **refuses** integer `/` and `%` by name, and §2.6's
+    /// operation table owes an answer to a question it did not ask: whose
+    /// guard, and at which level. The two candidates are a MIR statement pair
+    /// (which keeps Decision 5's one-block-per-block, and costs MIR a notion of
+    /// a panicking edge) and a backend expansion (which is two extra LLVM
+    /// blocks per division and breaks that decision).
     SDiv,
     UDiv,
     SRem,

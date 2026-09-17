@@ -1,4 +1,5 @@
-//! MIR to the backend's instruction set, for §10's stages 0 and 1.
+//! MIR to the backend's instruction set: §10's stages 0 to 3, and the exact
+//! edge of what is not.
 //!
 //! **Where this belongs, and it is not here.** Decision 42's table puts
 //! *"which operations are runtime calls"* above the line and leaves *"emitting
@@ -12,30 +13,70 @@
 //! `crate::sys` removed from scope, and `tests/independence.rs` in
 //! `science-codegen` is the model for making that a fact rather than a claim.
 //!
-//! **What is lowered.** §10's stage 1 and nothing beyond it:
+//! # What is lowered
 //!
-//! > *`print("hello, world")` … the script body of `script-mode.md` §2.1
-//! > lowered to `def main() -> Error?`; a string literal as a
-//! > `private unnamed_addr constant` plus a `science_string_from_bytes` call
-//! > (Decision 15); a `science_println` call; drop glue for one `String`; and
-//! > the `sret` convention, immediately.*
+//! **Stage 1** — `print("hello, world")` — is §10's list, and two of its five
+//! items are not what the emitted module contains. There is no
+//! `science_println`: `science-rt` §8 records that the symbol was renamed and
+//! the newline-adding form is `science_print`, which is what is called. And
+//! there is no *drop glue*: glue is
+//! `science_codegen::descriptor::DropGlue::Emitted`, a function this crate
+//! would define, and a `String` does not need one — the temporary is freed by
+//! a direct `science_string_free` at the site that made it, which is
+//! `DropGlue::RuntimeCall`. Both are recorded as amendment 3 in §10 itself.
 //!
-//! **Two of the five items in that list are not what the emitted module
-//! contains, and both are the note being slightly out of date rather than
-//! wrong.** There is no `science_println`: `science-rt` §8 records that the
-//! symbol was renamed, and the newline-adding form is `science_print` — which is
-//! what is called. And there is no *drop glue*: glue is
-//! `science_codegen::descriptor::DropGlue::Emitted`, a function this crate would
-//! define, and a `String` does not need one — the temporary is freed by a direct
-//! `science_string_free` call at the site that made it, which is
-//! `DropGlue::RuntimeCall`. §10's list should say so, because "drop glue for one
-//! `String`" tells a reader to write a function that must not exist.
+//! **Stage 2** — a call into a C library — is [`Lowerer::lower_foreign_call`]
+//! and [`Lowerer::declare_foreign`]: an `extern "C"` declaration becomes an
+//! LLVM `declare` classified by §4.2's
+//! [`classify_extern_argument`] and [`classify_extern_return`], a call becomes
+//! Decision 40's *"direct `call` to the declared symbol"*, and the block's
+//! `library` clause becomes a link decision in [`crate::link`]. `SC0461`
+//! attributes an undefined symbol back to its declaration.
 //!
-//! Everything else is refused as `SC0400`, which §11 defines as *"a toolchain
+//! **Stage 3** — control flow and integers — is the CFG (an `If` becomes a
+//! `br`, a `Goto` becomes a `br`, and Decision 5's one-block-per-block holds),
+//! `alloca`-per-local **including the slots codegen invents** ([`BodyCtx`]'s
+//! note is why that stopped being free the moment a loop existed), and
+//! §4.6's operators on scalars at their own width and signedness
+//! ([`Lowerer::lower_binary`]).
+//!
+//! # What §10's stage 2 and stage 3 ask for that this language does not have
+//!
+//! Both of §10's programs print a computed value with `print(f"{x}")`.
+//! **There is no string interpolation in this language.** `f"…"` is not in the
+//! lexer, the parser, the AST or the corpus, and `print(f"{x}")` is a parse
+//! error; there is also no integer- or float-to-string entry point among
+//! `science-rt`'s 47, so there is no other spelling of it either. Both gates
+//! are therefore met by a program whose *branch* depends on the value —
+//! `if x is 1.0: print("1")` — which exercises everything the gate is about and
+//! prints what it asks for. `tests/stage_two_and_three.rs` is the record.
+//!
+//! §10's stage 3 program is `for i in 0..10:`. **A `for` loop does not reach
+//! this backend at all**: its `next` arrives as
+//! [`science_mir::mir::Unresolved::IterateNext`], because
+//! `science_types::thir::ExprKind::For` has no field for the callee the
+//! checker's `iterate_item` found, and its range and iterator temporaries are
+//! typed `TyKind::Error` with no diagnostic. That is a hole above this crate
+//! and `science-mir`'s own note on the variant already states it. `loop:` with
+//! a `break` is the same CFG in a form the front end delivers.
+//!
+//! # What is refused, and why refusing is the whole discipline
+//!
+//! Everything not lowered is `SC0400`, which §11 defines as *"a toolchain
 //! feature required to build this program is not compiled into this
 //! `sciencec`"* — and an unlowered MIR construct is literally that. The refusal
-//! names the construct, so that a user who writes a loop is told "loops" and not
-//! "internal error".
+//! names the construct, so that a user who writes a `match` is told "a `match`"
+//! and not "internal error".
+//!
+//! **Two of the refusals are not about effort.** Integer `/` and `%` and the
+//! two shifts are constructs this crate could emit an instruction for and
+//! *must not*: LLVM's `sdiv` is **undefined** at a zero divisor rather than a
+//! trap, and a shift by at least the operand's width is poison, and the guard
+//! that would stop either is specified nowhere and emitted by nothing above
+//! this crate. `science_codegen::backend::IntOp`'s own note says *"division by
+//! zero is a panic the caller has already guarded"*; no caller guards it.
+//! [`Lowerer::lower_binary`] is the argument in full, including what emitting
+//! the guard here would cost Decision 5.
 //!
 //! # Decision 5 holds here, and one block is invented rather than merged
 //!
@@ -43,9 +84,20 @@
 //! block"*. Every block of the *user's* `main` does: [`Lowerer::lower_body`]
 //! walks `body.blocks()` and emits one [`ExtBlock`] per MIR block, and nothing
 //! merges or splits. `science-mir`'s §4 item 2 records that a **flagged drop**
-//! breaks the decision by becoming three blocks; stage 1 refuses a flagged drop
+//! breaks the decision by becoming three blocks; a flagged drop is refused
 //! outright (`StatementKind::SetDropFlag` is `SC0400`), so this crate has not
 //! met the contradiction yet and the amendment that note asks for is still owed.
+//!
+//! **What a reader of `Built::ir` sees is not quite one-to-one, and the reason
+//! is not this crate.** That field holds the module *after* Decision 33's
+//! pipeline, and even at `-O0` the pipeline drops a basic block with no
+//! predecessors — which `loop:` with a `break` produces, because MIR leaves an
+//! unreachable arm behind on purpose (`science-mir`'s §2: *"a `Goto` chain that
+//! a peephole would collapse is left alone, because … Decision 5 wants a MIR
+//! dump and an IR dump to be diffable"*). So the claim is exact for the
+//! emitter's output and holds on *reachable* blocks for anything downstream of
+//! the pipeline, and `tests/stage_two_and_three.rs` asserts the second because
+//! the second is what a reader can observe.
 //!
 //! What this crate does add is a whole function with no MIR behind it —
 //! [`Lowerer::lower_c_main`]'s three blocks — which Decision 5 does not cover
@@ -119,20 +171,27 @@
 //! until then and a test asserts it, so the deletion is prompted rather than
 //! remembered.
 
-use science_codegen::abi::{AbiParam, AbiSignature, ArgClass, ParamAttrs};
+use std::collections::BTreeMap;
+
+use science_codegen::abi::{
+    AbiParam, AbiSignature, ArgClass, ParamAttrs, classify_extern_argument,
+    classify_extern_return,
+};
 use science_codegen::backend::{
-    BlockId, Callee, Inst, LocalId, Operand, Terminator, ValueId,
+    BlockId, Callee, CmpOp, Inst, IntOp, FloatOp, LocalId, Operand, Terminator, ValueId,
 };
 use science_codegen::descriptor::StringLiteral;
 use science_codegen::diagnostics::backend_not_compiled_in;
-use science_codegen::layout::{CgTy, IntTy, Layout, PtrKind, Repr, Triple, layout_of};
+use science_codegen::layout::{CgTy, IntTy, Layout, PtrKind, Repr, Scalar, Triple, layout_of};
 use science_codegen::mangle::{MonoKey, mangle};
 use science_codegen::runtime::{RUNTIME, RtAggregate, RtParam, RtRet, RuntimeFn, runtime_fn};
-use science_diagnostics::Diagnostic;
+use science_diagnostics::{Diagnostic, Span};
 use science_mir::mir::{self, Body as MirBody, Constant, Rvalue, StatementKind, TerminatorKind};
-use science_resolve::hir::{DefTable, Literal};
+use science_parser::ast::{BinaryOp, UnaryOp};
+use science_resolve::hir::{self, DefId, DefKind, DefTable, Literal};
 use science_types::Types;
-use science_types::ty::TyKind;
+use science_types::items::Declarations;
+use science_types::ty::{Ty, TyKind};
 
 use crate::emit::{ExtBlock, ExtBody, ExtInst};
 
@@ -163,6 +222,27 @@ pub const ERROR_MESSAGE: &str = "error: the script returned an error, and this c
                                  `Display`, and the prelude declares `Display` with no method to \
                                  call\n";
 
+/// What a local with no type is refused as.
+///
+/// **One sentence for two causes, because the compiler cannot tell them
+/// apart.** A local whose `Ty` is `TyKind::Error` reaches this backend with
+/// **no diagnostic having been reported** — §5's *"the mistake has already been
+/// reported"* rule firing on a mistake nobody made — so there is nothing here
+/// that says which expression produced it. Two are known and both are named:
+/// a call to `print` or `write`, whose signatures `science-resolve`'s
+/// `builtins.rs` wrote, measured seven corpus false positives on, and withdrew;
+/// and a `for` loop, whose range and iterator temporaries the checker leaves
+/// untyped for the same reason its `next` callee is
+/// [`science_mir::mir::Unresolved::IterateNext`].
+///
+/// An earlier version of this message named `print` alone, so a `for` loop over
+/// a range was refused with a sentence about a function it does not call. A
+/// refusal that names the wrong construct is worse than one that names two.
+const UNTYPED: &str = "a value the front end left untyped: its `Ty` is `TyKind::Error` and no \
+                       diagnostic was reported for it. The two this compiler has met are a call \
+                       to `print` or `write`, whose signatures `science-resolve`'s `builtins.rs` \
+                       withdrew, and a `for` loop's range and iterator temporaries";
+
 /// Why a program could not be lowered.
 ///
 /// One variant, carrying the construct's name, because every refusal is the
@@ -186,8 +266,9 @@ impl Unlowered {
     pub fn to_diagnostic(&self) -> Diagnostic {
         backend_not_compiled_in(
             &self.construct,
-            "this `sciencec` implements §10's stages 0 and 1 of `codegen-and-linking.md` — a \
-             script body, a string literal and `print` — and refuses everything else rather than \
+            "this `sciencec` implements §10's stages 0 to 3 of `codegen-and-linking.md` — a \
+             script body, string literals and `print`, `extern \"C\"` declarations and the calls \
+             to them, the CFG, and scalar arithmetic — and refuses everything else rather than \
              lowering a construct no execution test has ever run",
         )
     }
@@ -257,14 +338,51 @@ pub fn runtime_signatures(target: Triple) -> Vec<AbiSignature> {
     RUNTIME.iter().map(|entry| runtime_signature(target, entry)).collect()
 }
 
+/// A foreign symbol this module declares, and where it was declared.
+///
+/// **The span is the whole point.** Decision 29 makes `SC0461` *"an undefined
+/// symbol that codegen's own table can attribute to an `extern`
+/// declaration"*, and this is that table: without it a missing `cos` is
+/// `link.exe`'s `LNK2019` handed to the user verbatim as `SC0402`, which
+/// §5.5 calls the honest answer *only* for a failure codegen did not
+/// understand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignSymbol {
+    /// The linker name — the `symbol "…"` clause when there is one, and the
+    /// Science name otherwise.
+    pub symbol: String,
+    /// The Science name, for the message.
+    pub name: String,
+    /// The declaration's span.
+    pub span: Span,
+    /// The `library` clause's name, for §10 stage 2's gate: *"naming the
+    /// declaration's span **and the library clause**"*.
+    pub library: Option<String>,
+}
+
 /// A lowered module: what the backend is asked to emit, in order.
 pub struct Lowered {
     /// The string literals, in the order they were interned.
     pub literals: Vec<StringLiteral>,
-    /// Declarations for every runtime entry point the module calls.
+    /// Declarations for every runtime entry point and foreign symbol the
+    /// module calls.
     pub declarations: Vec<AbiSignature>,
     /// Definitions, in Decision 4's sorted-by-symbol order.
     pub definitions: Vec<(AbiSignature, ExtBody)>,
+    /// The `library` clauses of every `extern` block that contributed a
+    /// declaration, in **source order** — Decision 28, which makes that order
+    /// significant and says so.
+    pub libraries: Vec<String>,
+    /// Every foreign symbol declared, for `SC0461`.
+    pub foreign: Vec<ForeignSymbol>,
+}
+
+/// One `extern` block's function, resolved to what codegen needs of it.
+struct Foreign {
+    symbol: String,
+    library: Option<String>,
+    span: Span,
+    variadic: bool,
 }
 
 /// The whole of what this backend can lower.
@@ -272,14 +390,83 @@ pub struct Lowerer<'a> {
     target: Triple,
     defs: &'a DefTable,
     types: &'a Types,
+    decls: Option<&'a Declarations>,
+    foreign: BTreeMap<DefId, Foreign>,
+    /// Source order of the `library` clauses, and the set of the ones actually
+    /// reached. Decision 28's order is the first; the second is what keeps a
+    /// program that declares a block it never calls from failing to link
+    /// against a library it never needed.
+    library_order: Vec<String>,
+    libraries_used: Vec<String>,
     literals: Vec<StringLiteral>,
     declarations: Vec<AbiSignature>,
+    declared_foreign: Vec<ForeignSymbol>,
 }
 
 impl<'a> Lowerer<'a> {
     /// A lowerer for one crate.
+    ///
+    /// No `extern` blocks and no declarations: [`Lowerer::with_externs`] is
+    /// the form stage 2 needs, and this one is kept because two tests build a
+    /// module with no foreign anything in it and asking them for two empty
+    /// tables would be asking them to name a thing they do not have.
     pub fn new(target: Triple, defs: &'a DefTable, types: &'a Types) -> Lowerer<'a> {
-        Lowerer { target, defs, types, literals: Vec::new(), declarations: Vec::new() }
+        Lowerer {
+            target,
+            defs,
+            types,
+            decls: None,
+            foreign: BTreeMap::new(),
+            library_order: Vec::new(),
+            libraries_used: Vec::new(),
+            literals: Vec::new(),
+            declarations: Vec::new(),
+            declared_foreign: Vec::new(),
+        }
+    }
+
+    /// A lowerer that can reach §10 stage 2: the `extern` blocks, and the
+    /// declaration table their signatures come from.
+    ///
+    /// **The signature is read from `Declarations` and not from the HIR**,
+    /// although the HIR's `ExternFn` carries a parameter list. The HIR's
+    /// parameters are *syntax* — `type BlasInt is I32` is an alias this crate
+    /// would have to resolve — and resolving it here is a second, worse copy of
+    /// the type checker. `Declarations::signature` is the one the checker
+    /// already built and the one the call site was checked against, so a
+    /// disagreement between the declaration and the call is impossible by
+    /// construction rather than by testing.
+    pub fn with_externs(
+        target: Triple,
+        defs: &'a DefTable,
+        types: &'a Types,
+        decls: &'a Declarations,
+        blocks: &[&hir::ExternBlock],
+    ) -> Lowerer<'a> {
+        let mut lowerer = Lowerer::new(target, defs, types);
+        lowerer.decls = Some(decls);
+        for block in blocks {
+            let library = block.library.as_ref().map(|library| library.name.clone());
+            if let Some(name) = &library {
+                if !lowerer.library_order.contains(name) {
+                    lowerer.library_order.push(name.clone());
+                }
+            }
+            for item in &block.items {
+                let hir::ExternItemKind::Fn(function) = &item.kind else { continue };
+                let name = defs.get(function.def).name.clone();
+                lowerer.foreign.insert(
+                    function.def,
+                    Foreign {
+                        symbol: function.symbol.clone().unwrap_or(name),
+                        library: library.clone(),
+                        span: defs.get(function.def).span,
+                        variadic: function.variadic,
+                    },
+                );
+            }
+        }
+        lowerer
     }
 
     fn declare(&mut self, symbol: &str) -> Result<AbiSignature, Unlowered> {
@@ -422,11 +609,31 @@ impl<'a> Lowerer<'a> {
         // its mangled symbol name."* One line, and it closes Gate J's named
         // hazard by construction rather than by testing.
         definitions.sort_by(|a, b| a.0.symbol.cmp(&b.0.symbol));
+        // Decision 28's source order, filtered to the blocks a call actually
+        // reached. `library_order` is the order; `libraries_used` is the set.
+        let used = std::mem::take(&mut self.libraries_used);
+        let libraries: Vec<String> = self
+            .library_order
+            .iter()
+            .filter(|name| used.contains(name))
+            .cloned()
+            .collect();
         Lowered {
             literals: std::mem::take(&mut self.literals),
             declarations: std::mem::take(&mut self.declarations),
             definitions,
+            libraries,
+            foreign: std::mem::take(&mut self.declared_foreign),
         }
+    }
+
+    /// A slot codegen invents, in the entry block.
+    fn temp(&self, ctx: &mut BodyCtx, layout: Layout) -> LocalId {
+        let id = LocalId(ctx.next_temp);
+        ctx.next_temp += 1;
+        ctx.entry.push(ExtInst::Above(Inst::Alloca { local: id, layout: layout.clone() }));
+        ctx.layouts.insert(id.0, layout);
+        id
     }
 
     fn lower_body(&mut self, body: &MirBody) -> Result<(AbiSignature, ExtBody), Unlowered> {
@@ -446,9 +653,13 @@ impl<'a> Lowerer<'a> {
         // have shared one. `-O2`'s `StackColoring` pass recovers it only when
         // it is given `llvm.lifetime` intrinsics, which is what those two
         // statements should become and do not yet.
-        let mut entry_insts: Vec<ExtInst> = Vec::new();
-        let mut locals: Vec<(LocalId, Layout)> = Vec::new();
-        let mut untyped: Vec<LocalId> = Vec::new();
+        let mut ctx = BodyCtx {
+            layouts: BTreeMap::new(),
+            untyped: Vec::new(),
+            entry: Vec::new(),
+            next_value: 0,
+            next_temp: body.local_count() as u32,
+        };
         for (local, decl) in body.locals() {
             let id = LocalId(local.index() as u32);
             // **`print`'s result temporary has no type, and that is a finding
@@ -473,7 +684,7 @@ impl<'a> Lowerer<'a> {
             // signature for `print`, or a `Ty::UNIT` for a call to a builtin
             // that has none.
             if matches!(self.types.kind(decl.ty), TyKind::Error) {
-                untyped.push(id);
+                ctx.untyped.push(id);
                 continue;
             }
             let layout = self.layout_of_ty(decl.ty)?;
@@ -482,24 +693,22 @@ impl<'a> Lowerer<'a> {
             // the bug it closes; the short version is that an `alloca` here is a
             // private copy nothing ever returns.
             if id == return_id && sig.ret.is_sret() {
-                entry_insts
-                    .push(ExtInst::ReturnSlot { local: id, layout: layout.clone() });
+                ctx.entry.push(ExtInst::ReturnSlot { local: id, layout: layout.clone() });
             } else {
-                entry_insts
+                ctx.entry
                     .push(ExtInst::Above(Inst::Alloca { local: id, layout: layout.clone() }));
             }
-            locals.push((id, layout));
+            ctx.layouts.insert(id.0, layout);
         }
 
-        let mut values = ValueCounter::default();
         let mut blocks: Vec<ExtBlock> = Vec::new();
         for (id, block) in body.blocks() {
-            let mut insts = if id.index() == 0 { std::mem::take(&mut entry_insts) } else { Vec::new() };
+            let mut insts: Vec<ExtInst> = Vec::new();
             for statement in &block.statements {
-                self.lower_statement(&statement.kind, &locals, &untyped, &mut values, &mut insts)?;
+                self.lower_statement(body, &mut ctx, &statement.kind, &mut insts)?;
             }
             let terminator =
-                self.lower_terminator(&block.terminator.kind, &locals, &mut values, &mut insts)?;
+                self.lower_terminator(body, &mut ctx, &block.terminator.kind, &mut insts)?;
             blocks.push(ExtBlock {
                 id: BlockId(id.index() as u32),
                 label: format!("bb{}", id.index()),
@@ -507,24 +716,31 @@ impl<'a> Lowerer<'a> {
                 terminator,
             });
         }
+        // Every `alloca` in front of the entry block's own instructions, in one
+        // place, however late in the walk the slot was invented.
+        let entry = ctx.entry;
+        if let Some(first) = blocks.first_mut() {
+            let body_insts = std::mem::replace(&mut first.insts, entry);
+            first.insts.extend(body_insts);
+        }
         Ok((sig, ExtBody { blocks }))
     }
 
     fn lower_statement(
         &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
         kind: &StatementKind,
-        locals: &[(LocalId, Layout)],
-        untyped: &[LocalId],
-        _values: &mut ValueCounter,
         insts: &mut Vec<ExtInst>,
     ) -> Result<(), Unlowered> {
         match kind {
             // Not modelled; see `lower_body`.
             StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => Ok(()),
             // Decision 26's drop flags and two-phase activations are statements
-            // a code generator may ignore only because stage 1 has no drop that
-            // is conditional and no two-phase borrow. Refused rather than
-            // ignored, because ignoring a `SetDropFlag` is a double free.
+            // a code generator may ignore only because nothing reachable here
+            // has a drop that is conditional or a two-phase borrow. Refused
+            // rather than ignored, because ignoring a `SetDropFlag` is a double
+            // free.
             StatementKind::SetDropFlag { .. } => {
                 Err(Unlowered::new("a conditionally moved value, which needs a drop flag"))
             }
@@ -535,27 +751,382 @@ impl<'a> Lowerer<'a> {
                     return Err(Unlowered::new("an assignment through a field or an index"));
                 }
                 let local = LocalId(place.local.index() as u32);
-                if untyped.contains(&local) {
+                if ctx.untyped.contains(&local) {
                     // The skipped slot of `lower_body`, now written to. See the
                     // comment there: the skip is only sound while nothing
                     // touches the local, and this is where that stops being
                     // true.
+                    return Err(Unlowered::new(UNTYPED));
+                }
+                let layout = ctx.layout(local)?.clone();
+                let ty = body.local_decl(place.local).ty;
+                self.lower_rvalue(body, ctx, rvalue, local, &layout, ty, insts)
+            }
+        }
+    }
+
+    /// One `Assign`'s right-hand side, ending in a store into `dest`.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_rvalue(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        rvalue: &Rvalue,
+        dest: LocalId,
+        layout: &Layout,
+        ty: Ty,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        match rvalue {
+            Rvalue::Use(mir::Operand::Const(Constant::Literal(Literal::Null))) => {
+                self.store_null(dest, layout, insts)
+            }
+            Rvalue::Use(mir::Operand::Const(Constant::Unit)) => Ok(()),
+            // A string literal is Decision 15's call, written into the
+            // destination's own slot rather than into an invented one: the
+            // binding *is* the `String`.
+            Rvalue::Use(mir::Operand::Const(Constant::Literal(Literal::Str(text)))) => {
+                self.build_string(text, dest, insts)
+            }
+            Rvalue::Use(operand) => {
+                let value = self.lower_operand(body, ctx, operand, Some(layout), insts)?;
+                insts.push(ExtInst::Above(Inst::Store { local: dest, value }));
+                Ok(())
+            }
+            Rvalue::Unary { op, operand } => {
+                let operand_ty = self.operand_ty(body, operand).unwrap_or(ty);
+                let scalar = self.scalar_of(operand_ty)?;
+                let operand_layout = layout_of(self.target, &self.cg_ty(operand_ty)?);
+                let value = self.typed_operand(body, ctx, operand, &operand_layout, insts)?;
+                let result = ctx.value();
+                match op {
+                    UnaryOp::Neg => {
+                        if !matches!(scalar, Scalar::Int(_) | Scalar::Float(_)) {
+                            return Err(Unlowered::new("a negation of something not numeric"));
+                        }
+                        insts.push(ExtInst::Neg { dest: result, operand: value });
+                    }
+                    // **`not x` is `x == 0` and needs no instruction of its
+                    // own.** §3.1 gives `Bool` two forms, `i1` in a register
+                    // and `i8` in memory, and a bitwise complement is wrong on
+                    // the second: `not` of a stored `false` would be `0xff`,
+                    // which is a bit pattern no `Bool` may hold, which every
+                    // later `trunc` reads as `true`, and which nothing reports.
+                    // A comparison against zero is right at both widths and is
+                    // total.
+                    UnaryOp::Not => {
+                        if !matches!(scalar, Scalar::Bool) {
+                            return Err(Unlowered::new("a `not` of something that is not `Bool`"));
+                        }
+                        insts.push(ExtInst::Above(Inst::Cmp {
+                            dest: result,
+                            op: CmpOp::Eq,
+                            signed: false,
+                            lhs: value,
+                            rhs: Operand::ConstInt(0),
+                        }));
+                    }
+                }
+                insts.push(ExtInst::Above(Inst::Store {
+                    local: dest,
+                    value: Operand::Value(result),
+                }));
+                Ok(())
+            }
+            Rvalue::Binary { op, lhs, rhs } => {
+                self.lower_binary(body, ctx, *op, lhs, rhs, dest, ty, insts)
+            }
+            other => Err(Unlowered::new(describe_rvalue(other))),
+        }
+    }
+
+    /// §4.6's binary operators, on scalars.
+    ///
+    /// # Which type the operands have, and where it comes from
+    ///
+    /// MIR's `Operand` carries no type: `copy _1 > 0` is a place and a
+    /// constant, and the constant's width and signedness are the *other*
+    /// operand's. So the type is read off whichever side is a place, and only
+    /// when neither is does it fall back to the destination's — which is right
+    /// for arithmetic, where `_1 = 1 + 2` has `_1`'s type, and **wrong for a
+    /// comparison**, where the destination is `Bool` and says nothing about
+    /// what was compared. `1 > 0` is therefore refused rather than compared at
+    /// a width nothing chose. It is a degenerate expression and the refusal is
+    /// one line; comparing two constants at a guessed width is a wrong answer
+    /// for `1u64 > 0` the day the guess is `i64`.
+    ///
+    /// # Overflow, and what §10 does not say
+    ///
+    /// The core spec says *"integer overflow panics in debug builds and wraps
+    /// in release, as Rust does"*. `codegen-and-linking.md` does not mention
+    /// overflow anywhere — not in §2.6's operation table, not in §10's stage 3,
+    /// which is where integers arrive.
+    ///
+    /// **What is emitted is the release half: `add`, `sub`, `mul` with neither
+    /// `nsw` nor `nuw`.** LLVM defines those as two's-complement wrapping, so
+    /// the emitted program's answer is the one the spec names for a release
+    /// build, exactly. What is *not* emitted is the debug half — there is no
+    /// `llvm.sadd.with.overflow` and no panic on the overflowing edge — and
+    /// `sciencec` has no notion of a debug build to key one off, since
+    /// `BuildRequest` carries an optimisation level and not a profile.
+    ///
+    /// **The flags are the part that would have been silent.** `nsw` is what a
+    /// C or Rust front end emits for signed arithmetic it has already checked,
+    /// and it makes signed overflow *undefined* rather than wrapping — so a
+    /// backend that added it "for the optimiser" would turn a spec-defined
+    /// wrap into a wrong answer that only appears at `-O2`. They are not set
+    /// and there is nowhere in `science_codegen::backend::IntOp` to put them,
+    /// which is the same structural refusal `FloatOp` uses for fast-math.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_binary(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        op: BinaryOp,
+        lhs: &mir::Operand,
+        rhs: &mir::Operand,
+        dest: LocalId,
+        dest_ty: Ty,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let comparison = matches!(
+            op,
+            BinaryOp::Eq
+                | BinaryOp::Ne
+                | BinaryOp::Lt
+                | BinaryOp::Le
+                | BinaryOp::Gt
+                | BinaryOp::Ge
+        );
+        let operand_ty = self
+            .operand_ty(body, lhs)
+            .or_else(|| self.operand_ty(body, rhs))
+            .or(if comparison { None } else { Some(dest_ty) })
+            .ok_or_else(|| {
+                Unlowered::new(
+                    "a comparison of two constants, whose width and signedness no operand and \
+                     no destination names",
+                )
+            })?;
+        let scalar = self.scalar_of(operand_ty)?;
+        let operand_layout = layout_of(self.target, &self.cg_ty(operand_ty)?);
+        let signed = match scalar {
+            Scalar::Int(int) => int.is_signed(),
+            // `Bool`, `Char` and a pointer compare unsigned, and none of the
+            // three has arithmetic.
+            _ => false,
+        };
+        let float = matches!(scalar, Scalar::Float(_));
+        let left = self.typed_operand(body, ctx, lhs, &operand_layout, insts)?;
+        let right = self.typed_operand(body, ctx, rhs, &operand_layout, insts)?;
+        let result = ctx.value();
+
+        if comparison {
+            let cmp = match op {
+                BinaryOp::Eq => CmpOp::Eq,
+                BinaryOp::Ne => CmpOp::Ne,
+                BinaryOp::Lt => CmpOp::Lt,
+                BinaryOp::Le => CmpOp::Le,
+                BinaryOp::Gt => CmpOp::Gt,
+                BinaryOp::Ge => CmpOp::Ge,
+                _ => unreachable!("the `comparison` guard is this same list"),
+            };
+            insts.push(ExtInst::Above(Inst::Cmp {
+                dest: result,
+                op: cmp,
+                signed,
+                lhs: left,
+                rhs: right,
+            }));
+        } else if float {
+            let float_op = match op {
+                BinaryOp::Add => FloatOp::Add,
+                BinaryOp::Sub => FloatOp::Sub,
+                BinaryOp::Mul => FloatOp::Mul,
+                BinaryOp::Div => FloatOp::Div,
+                // IEEE 754 remainder, which `frem` is and which is total:
+                // there is no division by zero to guard, because the answer is
+                // a NaN.
+                BinaryOp::Rem => FloatOp::Rem,
+                other => return Err(Unlowered::new(describe_binary(other))),
+            };
+            insts.push(ExtInst::Above(Inst::FloatBinary {
+                dest: result,
+                op: float_op,
+                lhs: left,
+                rhs: right,
+            }));
+        } else {
+            let int_op = match op {
+                BinaryOp::Add => IntOp::Add,
+                BinaryOp::Sub => IntOp::Sub,
+                BinaryOp::Mul => IntOp::Mul,
+                BinaryOp::BitAnd => IntOp::And,
+                BinaryOp::BitOr => IntOp::Or,
+                BinaryOp::BitXor => IntOp::Xor,
+                // **Refused, and the reason is that the guard does not
+                // exist.** `science_codegen::backend::IntOp` says of `SDiv`:
+                // *"division by zero is a panic the caller has already
+                // guarded, not a trap the backend inserts."* No caller guards
+                // it. Nothing in MIR, THIR or the checker emits a test against
+                // zero before a `/`, so lowering `a / b` to a bare `sdiv`
+                // hands LLVM an instruction whose behaviour at `b == 0` is
+                // *undefined* — not a trap, not a panic, undefined, which at
+                // `-O2` licenses deleting the branch that was going to check.
+                // `Int.min / -1` is the same hazard with a second operand.
+                //
+                // Emitting the guard here is possible and is not a lowering:
+                // it is two extra basic blocks per division, which breaks
+                // Decision 5's *"every MIR basic block becomes exactly one
+                // LLVM basic block"* and the MIR-dump-to-IR-dump diff Gate I
+                // and Gate J rest on. That is a decision for the note to take
+                // and §2.6's table does not take it. So this refuses and says
+                // which of the two halves is missing.
+                BinaryOp::Div | BinaryOp::Rem => {
                     return Err(Unlowered::new(
-                        "an assignment to the result of `print` or `write`, which the front end                          leaves untyped — `science-resolve`'s `builtins.rs` withdrew their                          signatures and a call to one has no return type to lay out",
+                        "integer `/` or `%`, whose divide-by-zero check nothing above this \
+                         crate emits — `IntOp`'s own note calls it \"a panic the caller has \
+                         already guarded\" and no caller does, and a bare `sdiv` is undefined \
+                         at zero rather than a trap",
                     ));
                 }
-                let layout = locals
-                    .iter()
-                    .find(|(id, _)| *id == local)
-                    .map(|(_, layout)| layout.clone())
-                    .ok_or_else(|| Unlowered::new("an assignment to an unknown local"))?;
-                match rvalue {
-                    Rvalue::Use(mir::Operand::Const(Constant::Literal(Literal::Null))) => {
-                        self.store_null(local, &layout, insts)
-                    }
-                    Rvalue::Use(mir::Operand::Const(Constant::Unit)) => Ok(()),
-                    other => Err(Unlowered::new(describe_rvalue(other))),
+                // The same shape: a shift by at least the operand's width is
+                // poison in LLVM, and the mask or the panic that would stop it
+                // is specified nowhere.
+                BinaryOp::Shl | BinaryOp::Shr => {
+                    return Err(Unlowered::new(
+                        "a shift, whose amount nothing above this crate bounds — a shift by at \
+                         least the operand's width is poison in LLVM and neither the mask nor \
+                         the panic that would stop it is specified",
+                    ));
                 }
+                other => return Err(Unlowered::new(describe_binary(other))),
+            };
+            insts.push(ExtInst::Above(Inst::IntBinary {
+                dest: result,
+                op: int_op,
+                lhs: left,
+                rhs: right,
+            }));
+        }
+        insts.push(ExtInst::Above(Inst::Store { local: dest, value: Operand::Value(result) }));
+        Ok(())
+    }
+
+    /// The Science type of an operand that reads a place, if it reads one.
+    fn operand_ty(&self, body: &MirBody, operand: &mir::Operand) -> Option<Ty> {
+        let place = operand.place()?;
+        if !place.projection.is_empty() {
+            return None;
+        }
+        Some(body.local_decl(place.local).ty)
+    }
+
+    /// A type's scalar, for the two questions the instruction set asks about
+    /// one: signed or not, integer or float.
+    fn scalar_of(&self, ty: Ty) -> Result<Scalar, Unlowered> {
+        let cg = self.cg_ty(ty)?;
+        match layout_of(self.target, &cg).repr {
+            Repr::Scalar(scalar) => Ok(scalar),
+            _ => Err(Unlowered::new("an operator on a value that is not a scalar")),
+        }
+    }
+
+    /// One MIR operand, **with its width fixed at `layout`'s type**.
+    ///
+    /// **Not an optimisation, and the thing it replaces was a wrong answer.**
+    /// `science_codegen::backend::Operand::ConstInt` carries an `i128` and no
+    /// type, so a constant reaching `Inst::IntBinary` takes whatever width the
+    /// emitter can infer from the *other* operand — and when the other operand
+    /// is also a constant there is nothing to infer from and the default is
+    /// `i64`. `let b be 0i8 - 128i8` is that case: `sub i64 0, 128` into a
+    /// one-byte slot, which opaque pointers make legal IR, which verifies, and
+    /// which answers `false` to `b is -128i8`. `1i8 + 2i8` and `-128i8` are the
+    /// same shape.
+    ///
+    /// So every constant this crate puts into an arithmetic instruction is
+    /// materialised at the layout the type checker gave the expression, and
+    /// `crate::emit`'s `width_hint` is never load-bearing for anything lowered
+    /// here. A place operand is already typed by its `alloca` and passes
+    /// through unchanged.
+    fn typed_operand(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        operand: &mir::Operand,
+        layout: &Layout,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<Operand, Unlowered> {
+        let lowered = self.lower_operand(body, ctx, operand, Some(layout), insts)?;
+        match lowered {
+            Operand::Value(_) => Ok(lowered),
+            constant => {
+                let dest = ctx.value();
+                insts.push(ExtInst::Const {
+                    dest,
+                    layout: layout.clone(),
+                    value: constant,
+                });
+                Ok(Operand::Value(dest))
+            }
+        }
+    }
+
+    /// One MIR operand as something the instruction set can read.
+    ///
+    /// A place becomes an `Inst::Load` — **a whole-local load, because
+    /// `science_codegen::backend::Inst` has no projection** — and a constant
+    /// becomes a constant. `expected` is the destination's layout and is used
+    /// only to refuse a `null` that is not going into a niche at offset 0.
+    fn lower_operand(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        operand: &mir::Operand,
+        expected: Option<&Layout>,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<Operand, Unlowered> {
+        let _ = body;
+        match operand {
+            mir::Operand::Const(Constant::Literal(literal)) => match literal {
+                // The literal's *value*; its width is the other operand's or
+                // the slot's, and `crate::emit`'s `width_hint` is where that is
+                // applied. `u128 as i128` is a reinterpretation and not a
+                // truncation for every literal the lexer admits, because the
+                // widest integer type is 64 bits.
+                Literal::Int { value, .. } => Ok(Operand::ConstInt(*value as i128)),
+                Literal::Float { value, .. } => Ok(Operand::ConstFloat(*value)),
+                Literal::Bool(value) => Ok(Operand::ConstInt(i128::from(*value))),
+                Literal::Char(value) => Ok(Operand::ConstInt(*value as i128)),
+                Literal::Null => match expected.map(|layout| &layout.repr) {
+                    Some(Repr::Niched { niche, .. }) if niche.offset == 0 => Ok(Operand::Null),
+                    _ => Err(Unlowered::new(
+                        "a `null` read as a value of a type whose absent case is not a null \
+                         pointer at offset 0",
+                    )),
+                },
+                Literal::Str(_) => Err(Unlowered::new(
+                    "a string literal read as a value rather than bound or printed: Decision 15 \
+                     makes it a `science_string_from_bytes` call, which needs a slot to own the \
+                     result and a `science_string_free` to pair with",
+                )),
+            },
+            mir::Operand::Const(Constant::Unit) => Err(Unlowered::new("a unit value read")),
+            mir::Operand::Const(Constant::Item(def)) => {
+                Err(Unlowered::new(format!("`{}` named as a value", self.defs.get(*def).name)))
+            }
+            mir::Operand::Copy(place) | mir::Operand::Move(place) => {
+                if !place.projection.is_empty() {
+                    return Err(Unlowered::new("a read through a field or an index"));
+                }
+                let local = LocalId(place.local.index() as u32);
+                if ctx.untyped.contains(&local) {
+                    return Err(Unlowered::new(UNTYPED));
+                }
+                ctx.layout(local)?;
+                let dest = ctx.value();
+                insts.push(ExtInst::Above(Inst::Load { dest, local }));
+                Ok(Operand::Value(dest))
             }
         }
     }
@@ -590,80 +1161,19 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn lower_terminator(
-        &mut self,
-        kind: &TerminatorKind,
-        locals: &[(LocalId, Layout)],
-        values: &mut ValueCounter,
-        insts: &mut Vec<ExtInst>,
-    ) -> Result<Terminator, Unlowered> {
-        match kind {
-            TerminatorKind::Return => Ok(Terminator::Return(None)),
-            TerminatorKind::Goto { target } => Ok(Terminator::Goto(BlockId(target.index() as u32))),
-            TerminatorKind::Unreachable => Ok(Terminator::Unreachable),
-            TerminatorKind::Call { callee, args, destination, target } => {
-                self.lower_call(callee, args, destination, *target, locals, values, insts)
-            }
-            TerminatorKind::If { .. } => Err(Unlowered::new("an `if`")),
-            TerminatorKind::Switch { .. } => Err(Unlowered::new("a `match`")),
-            TerminatorKind::Drop { .. } => Err(Unlowered::new("a drop of a named value")),
-        }
-    }
-
-    /// Lower a call.
+    /// Decision 15's string literal: the bytes as a global, and a call that
+    /// builds a `String` in `slot`.
     ///
-    /// Stage 1 has one: `print` of a string literal. Decision 15 makes the
-    /// literal itself a call — *"a string literal lowers to
-    /// `call science_string_from_bytes(@.str.N, len)` … every evaluation of the
-    /// literal allocates"* — so the one MIR terminator becomes three LLVM calls
-    /// and the middle one is the user's.
-    ///
-    /// The third is the drop, and it is not optional. The temporary `String` is
-    /// owned by the call site and nothing else frees it, so omitting
-    /// `science_string_free` leaks twelve bytes per evaluation. §2.6's cost note
-    /// for Decision 15 is the other half of the same fact: *"a literal in a loop
-    /// allocates on every iteration"*, and it also frees on every iteration.
-    #[allow(clippy::too_many_arguments)]
-    fn lower_call(
+    /// The caller owns the result and has to free it. *Where* that free goes
+    /// differs: a `print`'s temporary is freed at the call site, and a `let`'s
+    /// binding is freed where MIR drops it — which this crate does not lower,
+    /// so a bound string literal leaks until `TerminatorKind::Drop` does.
+    fn build_string(
         &mut self,
-        callee: &mir::Callee,
-        args: &[mir::Operand],
-        destination: &mir::Place,
-        target: Option<mir::BlockId>,
-        locals: &[(LocalId, Layout)],
-        values: &mut ValueCounter,
+        text: &str,
+        slot: LocalId,
         insts: &mut Vec<ExtInst>,
-    ) -> Result<Terminator, Unlowered> {
-        let def = match callee {
-            mir::Callee::Def(def) => *def,
-            mir::Callee::Indirect(_) => return Err(Unlowered::new("a call through a closure")),
-            mir::Callee::Runtime(symbol) => {
-                return Err(Unlowered::new(format!("a whole-array call to `{symbol}`")));
-            }
-            mir::Callee::Unresolved(_) => {
-                return Err(Unlowered::new("a method call the front end could not resolve"));
-            }
-        };
-        let name = self.defs.get(def).name.clone();
-        if !self.defs.get(def).is_builtin() || name != "print" {
-            return Err(Unlowered::new(format!("a call to `{name}`")));
-        }
-        let [mir::Operand::Const(Constant::Literal(Literal::Str(text)))] = args else {
-            return Err(Unlowered::new("a `print` of anything but a string literal"));
-        };
-        let _ = destination;
-
-        // A slot for the temporary `String`. It is not a MIR local — MIR's
-        // `print("…")` has the literal as a constant operand, with no local to
-        // hold the `ScienceString` the runtime builds — so codegen invents one,
-        // and it goes in the entry block with the rest (Decision 8). Stage 1 has
-        // one basic block, so "the entry block" and "here" are the same place;
-        // the day they are not, this has to move.
-        let string_layout = layout_of(self.target, &RtAggregate::String.cg_ty());
-        let slot = LocalId(locals.len() as u32 + values.temporaries);
-        values.temporaries += 1;
-        insts.push(ExtInst::Above(Inst::Alloca { local: slot, layout: string_layout.clone() }));
-
+    ) -> Result<(), Unlowered> {
         let literal = self.intern_literal(text);
         let from_bytes = self.declare("science_string_from_bytes")?;
         insts.push(ExtInst::Above(Inst::Call {
@@ -676,10 +1186,153 @@ impl<'a> Lowerer<'a> {
             ret: from_bytes.ret.clone(),
             sret_slot: Some(slot),
         }));
+        Ok(())
+    }
+
+    fn lower_terminator(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        kind: &TerminatorKind,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<Terminator, Unlowered> {
+        match kind {
+            TerminatorKind::Return => Ok(Terminator::Return(None)),
+            TerminatorKind::Goto { target } => Ok(Terminator::Goto(BlockId(target.index() as u32))),
+            TerminatorKind::Unreachable => Ok(Terminator::Unreachable),
+            TerminatorKind::Call { callee, args, destination, target } => {
+                self.lower_call(body, ctx, callee, args, destination, *target, insts)
+            }
+            // Decision 5 holds: one MIR block, one LLVM block, and an `If`
+            // becomes the `br` that ends it. The condition is a `Bool`, so it
+            // arrives as §3.1's `i8` memory form and `crate::emit` narrows it.
+            TerminatorKind::If { cond, then_block, else_block } => {
+                let value = self.lower_operand(body, ctx, cond, None, insts)?;
+                Ok(Terminator::Branch {
+                    cond: value,
+                    then_block: BlockId(then_block.index() as u32),
+                    else_block: BlockId(else_block.index() as u32),
+                })
+            }
+            TerminatorKind::Switch { .. } => Err(Unlowered::new(
+                "a `match`, which needs §3.3's tagged layout and a `Ty -> CgTy` lowering for a \
+                 `choice`",
+            )),
+            TerminatorKind::Drop { .. } => Err(Unlowered::new(
+                "a drop of a named value, which needs Decision 12's drop glue",
+            )),
+        }
+    }
+
+    /// Lower a call.
+    ///
+    /// Three shapes reach here and the third is §10's stage 2:
+    ///
+    /// 1. **`print` of a string literal**, which Decision 15 makes three calls
+    ///    — build, print, free — where MIR has one terminator.
+    /// 2. **`print` of a `String` the program is holding**, which is one call
+    ///    and a free.
+    /// 3. **A call to an `extern "C"` declaration**, which Decision 40 makes
+    ///    *"a direct `call` to the declared symbol — no thunk, no wrapper, no
+    ///    trampoline"*.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_call(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        callee: &mir::Callee,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        target: Option<mir::BlockId>,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<Terminator, Unlowered> {
+        let def = match callee {
+            mir::Callee::Def(def) => *def,
+            mir::Callee::Indirect(_) => return Err(Unlowered::new("a call through a closure")),
+            mir::Callee::Runtime(symbol) => {
+                return Err(Unlowered::new(format!("a whole-array call to `{symbol}`")));
+            }
+            mir::Callee::Unresolved(unresolved) => {
+                return Err(Unlowered::new(describe_unresolved(*unresolved)));
+            }
+        };
+        if self.defs.get(def).kind == DefKind::ExternFn {
+            self.lower_foreign_call(body, ctx, def, args, destination, insts)?;
+        } else {
+            let name = self.defs.get(def).name.clone();
+            if !self.defs.get(def).is_builtin() || name != "print" {
+                return Err(Unlowered::new(format!("a call to `{name}`")));
+            }
+            self.lower_print(ctx, args, insts)?;
+        }
+        match target {
+            Some(block) => Ok(Terminator::Goto(BlockId(block.index() as u32))),
+            // A call with no successor is a panic (§2.2), and neither `print`
+            // nor anything else this crate emits is one.
+            None => Ok(Terminator::Unreachable),
+        }
+    }
+
+    /// `print`, of a literal or of a `String` the program holds.
+    ///
+    /// The free is not optional in either case. For a literal the temporary is
+    /// owned by the call site and nothing else frees it, so omitting
+    /// `science_string_free` leaks twenty-four bytes per evaluation; §2.6's
+    /// cost note for Decision 15 is the other half of the same fact — *"a
+    /// literal in a loop allocates on every iteration"* — and it also frees on
+    /// every iteration.
+    ///
+    /// For a **moved** local the free is right for a different reason, and it
+    /// is worth stating because it looks like a double free and is not.
+    /// `print` has no declared signature (crate §3 item 7), so the checker
+    /// cannot know it borrows; MIR therefore records `move` of the local into
+    /// the call, drop elaboration treats the local as moved-out, and **no
+    /// `Drop` terminator is emitted for it**. The call is the value's last
+    /// owner, so the call frees it. A `copy` would mean something else still
+    /// owns it, and is refused rather than guessed, because a guess here is a
+    /// double free.
+    fn lower_print(
+        &mut self,
+        ctx: &mut BodyCtx,
+        args: &[mir::Operand],
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let string_layout = layout_of(self.target, &RtAggregate::String.cg_ty());
+        let slot = match args {
+            [mir::Operand::Const(Constant::Literal(Literal::Str(text)))] => {
+                // A slot for the temporary `String`. It is not a MIR local —
+                // MIR's `print("…")` has the literal as a constant operand,
+                // with no local to hold the `ScienceString` the runtime builds
+                // — so codegen invents one, and it goes in the entry block with
+                // the rest (Decision 8).
+                let slot = self.temp(ctx, string_layout.clone());
+                self.build_string(text, slot, insts)?;
+                slot
+            }
+            [mir::Operand::Move(place)] if place.projection.is_empty() => {
+                let local = LocalId(place.local.index() as u32);
+                let layout = ctx.layout(local)?.clone();
+                if layout != string_layout {
+                    return Err(Unlowered::new(
+                        "a `print` of a value that is not a `String`: `print` takes \
+                         `borrowed any Display`, this backend emits no vtables, and there is no \
+                         `display` method on `Display` to call through even if it did",
+                    ));
+                }
+                local
+            }
+            [mir::Operand::Copy(_)] => {
+                return Err(Unlowered::new(
+                    "a `print` of a copied `String`: MIR's move analysis says something else \
+                     still owns it, and this call site frees what it prints",
+                ));
+            }
+            _ => return Err(Unlowered::new("a `print` of anything but a `String`")),
+        };
 
         // The address of the slot, which is the operand the interface above the
         // line cannot spell. `crate::emit`'s §2 is the account.
-        let address = ValueId(values.next());
+        let address = ctx.value();
         insts.push(ExtInst::LocalAddr { dest: address, local: slot });
 
         let print = self.declare("science_print")?;
@@ -699,13 +1352,160 @@ impl<'a> Lowerer<'a> {
             ret: free.ret.clone(),
             sret_slot: None,
         }));
+        Ok(())
+    }
 
-        match target {
-            Some(block) => Ok(Terminator::Goto(BlockId(block.index() as u32))),
-            // A call with no successor is a panic (§2.2), and `print` is not
-            // one.
-            None => Ok(Terminator::Unreachable),
+    /// §10's stage 2: a call into a C library.
+    ///
+    /// Decision 40 makes this *"a direct `call` to the declared symbol"*. What
+    /// this adds beyond the call is the declaration — classified by §4.2's
+    /// [`classify_extern_argument`] and [`classify_extern_return`], which
+    /// **refuse** a by-value aggregate rather than guess a classification — and
+    /// the record that the block's `library` clause was reached, which is what
+    /// puts `-lm` on the link line and nothing else.
+    fn lower_foreign_call(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        def: DefId,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let sig = self.declare_foreign(def)?;
+        if args.len() != sig.params.len() {
+            return Err(Unlowered::new(format!(
+                "a call to `{}` with {} argument(s) where it declares {}",
+                sig.symbol,
+                args.len(),
+                sig.params.len()
+            )));
         }
+        let mut lowered: Vec<Operand> = Vec::with_capacity(args.len());
+        for (arg, param) in args.iter().zip(&sig.params) {
+            if matches!(param.class, ArgClass::Ignore) {
+                continue;
+            }
+            lowered.push(self.lower_operand(body, ctx, arg, Some(&param.layout), insts)?);
+        }
+
+        if !destination.projection.is_empty() {
+            return Err(Unlowered::new("a foreign call whose result goes through a field"));
+        }
+        let dest_local = LocalId(destination.local.index() as u32);
+        // A `()`-returning foreign function writes nowhere, and its MIR
+        // destination is a unit temporary with no slot of its own.
+        let has_slot = ctx.layouts.contains_key(&dest_local.0);
+        if sig.ret.is_sret() {
+            if !has_slot {
+                return Err(Unlowered::new(
+                    "a foreign call returning an aggregate into a destination with no slot",
+                ));
+            }
+            insts.push(ExtInst::Above(Inst::Call {
+                dest: None,
+                callee: Callee::Foreign(sig.symbol.clone()),
+                args: lowered,
+                ret: sig.ret.clone(),
+                sret_slot: Some(dest_local),
+            }));
+            return Ok(());
+        }
+        let value = ctx.value();
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: Some(value),
+            callee: Callee::Foreign(sig.symbol.clone()),
+            args: lowered,
+            ret: sig.ret.clone(),
+            sret_slot: None,
+        }));
+        if has_slot && !matches!(sig.ret, science_codegen::abi::ReturnClass::Void) {
+            insts.push(ExtInst::Above(Inst::Store {
+                local: dest_local,
+                value: Operand::Value(value),
+            }));
+        }
+        Ok(())
+    }
+
+    /// The `declare` for one `extern "C"` function, interned.
+    ///
+    /// **The signature comes from `Declarations` and not from the HIR**,
+    /// although `hir::ExternFn` carries a parameter list. Those parameters are
+    /// syntax — `type BlasInt is I32` is an alias this crate would have to
+    /// resolve — and resolving them here is a second, worse copy of the type
+    /// checker. `Declarations::signature` is what the checker built and what
+    /// the *call site* was checked against, so a declaration that disagrees
+    /// with its calls is impossible by construction rather than by testing.
+    fn declare_foreign(&mut self, def: DefId) -> Result<AbiSignature, Unlowered> {
+        let name = self.defs.get(def).name.clone();
+        let Some(foreign) = self.foreign.get(&def) else {
+            return Err(Unlowered::new(format!(
+                "a call to `{name}`, which is a foreign function this build was not given the \
+                 `extern` block of"
+            )));
+        };
+        let symbol = foreign.symbol.clone();
+        let library = foreign.library.clone();
+        let span = foreign.span;
+        if foreign.variadic {
+            return Err(Unlowered::new(format!(
+                "a call to `{name}`, which is variadic — §4.5 refuses a Science call to a `...` \
+                 function because the C default-argument-promotion rules are not modelled"
+            )));
+        }
+        if let Some(existing) = self.declarations.iter().find(|s| s.symbol == symbol) {
+            return Ok(existing.clone());
+        }
+        let Some(decls) = self.decls else {
+            return Err(Unlowered::new(format!(
+                "a call to `{name}`: this build was given no declaration table to read its \
+                 signature from"
+            )));
+        };
+        let Some(signature) = decls.signature(def) else {
+            return Err(Unlowered::new(format!("a call to `{name}`, which has no signature")));
+        };
+        let abi = self.target.c_abi();
+        let ret_ty = self.cg_ty(signature.ret)?;
+        let ret_layout = layout_of(self.target, &ret_ty);
+        let ret = classify_extern_return(&ret_ty, &ret_layout, abi)
+            .map_err(|refusal| Unlowered::new(describe_refusal(&refusal, &name)))?;
+        let params: Vec<_> = signature.params.clone();
+        let mut abi_params = Vec::with_capacity(params.len());
+        for param in &params {
+            let ty = self.cg_ty(param.ty)?;
+            let layout = layout_of(self.target, &ty);
+            let class = classify_extern_argument(&ty, &layout)
+                .map_err(|refusal| Unlowered::new(describe_refusal(&refusal, &name)))?;
+            abi_params.push(AbiParam {
+                name: self.defs.get(param.def).name.clone(),
+                class,
+                layout,
+                attrs: ParamAttrs::default(),
+            });
+        }
+        let sig = AbiSignature {
+            symbol: symbol.clone(),
+            ret,
+            ret_layout,
+            params: abi_params,
+            foreign: true,
+            // Decision 6, and here it is a claim about the C library rather
+            // than about Science: a C function that unwinds through a
+            // `nounwind` frame is undefined. `panic.rs` already makes the whole
+            // binary landing-pad-free, so the attribute records what is true of
+            // every frame in the image rather than adding an assumption.
+            nounwind: true,
+        };
+        self.declarations.push(sig.clone());
+        if let Some(library) = &library {
+            if !self.libraries_used.contains(library) {
+                self.libraries_used.push(library.clone());
+            }
+        }
+        self.declared_foreign.push(ForeignSymbol { symbol, name, span, library });
+        Ok(sig)
     }
 
     /// C's `main`, which `science-rt` does not provide: `script-mode.md` §2.3's
@@ -844,18 +1644,94 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-/// Fresh `ValueId`s and the count of invented locals.
-#[derive(Default)]
-struct ValueCounter {
-    next: u32,
-    temporaries: u32,
+/// Everything one body needs that the MIR does not carry.
+///
+/// **`entry` is separate from the block being lowered, and that is the stage-3
+/// change.** Stage 1 had one basic block, so "the entry block" and "here" were
+/// the same place and a temporary's `alloca` could be pushed where it was
+/// needed. Stage 3 has loops, and an `alloca` inside one runs on every
+/// iteration: the stack grows without bound, which is a program that works for
+/// ten iterations and dies at a million, and which nothing in the IR looks
+/// wrong. Decision 8 already says every local is *"an `alloca` in the
+/// function's entry block"*; this field is what makes the sentence true for the
+/// slots codegen invents as well as for the ones MIR declares.
+struct BodyCtx {
+    /// Every slot with a layout: MIR's locals by index, then the invented ones.
+    layouts: BTreeMap<u32, Layout>,
+    /// The locals `lower_body` skipped because their type is `Ty::ERROR`.
+    untyped: Vec<LocalId>,
+    /// The entry block's `alloca`s, collected wherever they are invented.
+    entry: Vec<ExtInst>,
+    next_value: u32,
+    next_temp: u32,
 }
 
-impl ValueCounter {
-    fn next(&mut self) -> u32 {
-        let id = self.next;
-        self.next += 1;
+impl BodyCtx {
+    fn value(&mut self) -> ValueId {
+        let id = ValueId(self.next_value);
+        self.next_value += 1;
         id
+    }
+
+    fn layout(&self, local: LocalId) -> Result<&Layout, Unlowered> {
+        self.layouts.get(&local.0).ok_or_else(|| {
+            Unlowered::new(format!("a use of local _{}, which has no slot", local.0))
+        })
+    }
+}
+
+/// An `extern` signature this crate cannot classify, as a refusal.
+///
+/// **`SC0429` and `SC0431` are `ffi-c-boundary.md`'s codes and this is not
+/// them.** `AbiRefusal::to_diagnostic` renders those two properly and needs a
+/// span to do it; what reaches here is a call site inside a body, and the span
+/// that matters is the *declaration's*, which this crate has and `Unlowered`
+/// has nowhere to put. So the refusal is `SC0400` carrying the sentence, and
+/// the day `Unlowered` carries a span the two collapse into one.
+fn describe_refusal(refusal: &science_codegen::abi::AbiRefusal, function: &str) -> String {
+    match refusal {
+        science_codegen::abi::AbiRefusal::AggregateByValue { position } => format!(
+            "a call to `{function}`, whose {position} is a by-value aggregate: F0 implements no              argument classifier, and System V, AAPCS64 and Windows x64 classify aggregates by              three different rules, so guessing links cleanly and corrupts the stack at run time"
+        ),
+        science_codegen::abi::AbiRefusal::HalfPrecision => format!(
+            "a call to `{function}`, which passes `F16` or `BF16` by value across the              `extern \"C\"` boundary"
+        ),
+    }
+}
+
+/// What a [`mir::Unresolved`] callee is, named the way a user would recognise
+/// it.
+///
+/// **The `for` loop row is the boundary this crate reports and does not own.**
+/// `science-mir`'s own note on `Unresolved::IterateNext` says `thir::ExprKind::For`
+/// *"has no field for a callee"*, so every range- and collection-driven `for`
+/// in the language arrives here with a hole where its `next` should be. That is
+/// §10's stage 3 program — `for i in 0..10:` — and it cannot be lowered by
+/// anything this crate does.
+fn describe_unresolved(unresolved: mir::Unresolved) -> &'static str {
+    match unresolved {
+        mir::Unresolved::Method => {
+            "a method call the front end could not resolve: Decision 11's method lookup does not              put what it found in the tree"
+        }
+        mir::Unresolved::IterateNext => {
+            "a `for` loop: its `next` call reaches MIR unresolved, because              `science_types::thir::ExprKind::For` has no field for the callee the checker's              `iterate_item` found. Every `for` in the language stops here, including              `for i in 0..10:`"
+        }
+        mir::Unresolved::Operator => {
+            "an operator or an index on a user type, which is Decision 11's method lookup again"
+        }
+    }
+}
+
+/// How a binary operator is named in a refusal.
+fn describe_binary(op: BinaryOp) -> String {
+    match op {
+        BinaryOp::Pow => "`**`, which needs `llvm.pow` and Decision 37's intrinsic whitelist"
+            .to_string(),
+        BinaryOp::MatMul => "`@`, the matrix product, which is a whole-array operation and                              Decision 5 makes one a runtime call that does not exist"
+            .to_string(),
+        BinaryOp::And | BinaryOp::Or => "`and` or `or` as a value: MIR turns both into blocks                                          and edges, so one reaching here is a MIR that did not"
+            .to_string(),
+        other => format!("`{}` on this type", other.as_str()),
     }
 }
 
