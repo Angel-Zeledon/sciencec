@@ -52,7 +52,7 @@
     This page describes <strong>syntax revision 3</strong>, the language as
     designed, and it separates that everywhere from what <code>sciencec</code>
     does today. Every Science listing below was extracted from this file,
-    written to disk and run through <code>sciencec check</code> &mdash; <strong>thirty-two of
+    written to disk and run through <code>sciencec check</code> &mdash; <strong>forty-seven of
     them, clean</strong>. Two more are marked
     where they stand and are excluded: one <strong>fragment</strong>, whose
     <code>use</code> line names a module that would have to exist beside it,
@@ -359,14 +359,80 @@ print(f"and {low} passes through")
     nothing else about the interactive tier is.
   </p>
 
+  <h3>What a top level may hold, and how it was built</h3>
+
   <p class="note">
-    <strong>Statements run only in the entry file.</strong> Importing a module
-    never runs anything: there is no module-initialisation phase, and a
-    top-level statement in a file that something else <code>use</code>s is
-    <code>SC0213</code>. The same file is a perfectly good script when it is
-    the file you named, and a broken module the moment another file imports it,
-    and the diagnostic shows both halves &mdash; the statement that would never
-    run, and the <code>use</code> line that made it a module.
+    The production is one line long and it gained one alternative:
+    <code>top_level := item | stmt</code>. An <em>item</em> is any of
+    <code>use</code>, <code>type</code>, <code>choice</code>,
+    <code>interface</code>, <code>def</code>, <code>const</code>, a
+    <code>Type has:</code> block and a <code>Type implements I</code> line. A
+    <em>statement</em> is the same <code>Stmt</code> the parser already
+    produced for function bodies. <strong>No new statement kind, no new
+    expression form, no new keyword and no new reserved word</strong> was added
+    to buy this.
+  </p>
+
+  <p class="note">
+    <strong>It ships as a desugaring, and that is worth knowing because it
+    leaks in exactly one place.</strong> <code>parse_module</code> gathers the
+    top-level statements and appends one generated
+    <code>def main() -&gt; Error?</code> whose body they are. No phase after the
+    parser learns the word "script": the resolver, the type checker, MIR,
+    region inference and codegen all see an ordinary function. The leak is that
+    a generated node has no source text, so <strong><code>sciencec tools --json
+    --all-functions</code> on a script lists a <code>main</code> nobody
+    wrote</strong>. It is pinned by a test rather than filtered, because
+    filtering it out means teaching the driver about scripts, which is the one
+    thing the desugaring buys out.
+  </p>
+
+  <p class="note">
+    <strong>One line of the grammar needs two tokens to disambiguate.</strong>
+    Both an implementation header and a statement may begin with an identifier.
+    The rule is exact rather than heuristic: <em>a top-level logical line
+    beginning with an identifier is an implementation header if and only if the
+    reserved word <code>implements</code> or <code>has</code> occurs in it at
+    bracket depth zero before its <code>:</code> or its end.</em> Neither word
+    can occur in an expression, a path, a type or an assignment target, so this
+    is one linear scan of one line with no backtracking and no speculative
+    parse.
+  </p>
+
+<pre data-science>type Reading:
+    channel: Int
+
+Reading has:                          # an item: `has` at depth zero
+    def first() -&gt; Reading:
+        Reading(channel: 1)
+
+let r be Reading.first()              # a statement
+let mutable n be r.channel
+n be n + 40                           # a statement: assignment, no `has`
+
+print(f"{r.channel} {n}")
+# 1 41</pre>
+
+  <p class="note">
+    <strong>The empty file is a program.</strong> A file with nothing in it,
+    and a file holding only comments, both <code>check</code> clean and mean
+    "do nothing, exit 0". There is no <em>empty program</em> diagnostic. The
+    implementation consequence is smaller than it sounds and is stated here
+    because it caught the back end: <strong>an empty script body produces no
+    MIR body at all</strong>, so "falling off the end" is not a path any
+    execution test can drive from Science source.
+  </p>
+
+  <h3>Statements run only in the entry file</h3>
+
+  <p class="note">
+    Importing a module never runs anything: there is no module-initialisation
+    phase, and a top-level statement in a file that something else
+    <code>use</code>s is <code>SC0213</code>. The same file is a perfectly good
+    script when it is the file you named, and a broken module the moment
+    another file imports it, and the diagnostic shows both halves &mdash; the
+    statement that would never run, and the <code>use</code> line that made it
+    a module.
   </p>
 
 <pre class="err"><code><span class="e-code">error[SC0213]</span>: top-level statements in a module that is not the entry point
@@ -384,30 +450,128 @@ print(f"and {low} passes through")
   = note: move these statements into a function, or into the entry file</code></pre>
 
   <p class="note">
-    <strong>There is no hoisting and no reordering.</strong> The statements run
-    in source order. What is <em>not</em> ordered is declaration: a statement
-    may call a function declared below it, because that has been true of every
-    item in the language since before script mode existed. The one thing that
-    does not cross the line is the other way round &mdash; a named item does
-    not close over the top level, so a <code>def</code> cannot see a top-level
-    <code>let</code>. A closure can. That asymmetry is enforced by
-    construction: items are resolved in a scope the script bindings are not in,
-    so the diagnostic reserved for it has never had anything to report.
+    <strong>How the compiler tells a script body from a written
+    <code>main</code>, given that no phase below the parser knows about
+    scripts.</strong> It tests the one property the desugaring leaves behind:
+    the generated <code>main</code>'s name span is <em>zero width</em>, where a
+    written one covers four bytes. A test pins that against a real parse, so if
+    the parser ever gives the generated name a span, the test breaks rather
+    than <code>SC0213</code> quietly ceasing to fire.
   </p>
 
   <p class="note">
-    A top-level <code>let</code> binds a <strong>local of the script
-    body</strong>, not a global and not a static. It drops at the end of the
-    script, in reverse declaration order, before the process exits &mdash; and
-    a <code>panic</code> does not run drops.
+    <strong>Why the rule is strict rather than a warning.</strong> The
+    alternatives were: run them once at first import, which is what Python, Ruby
+    and Julia do and which makes <code>use</code> an effect &mdash; a line that
+    can read a file, allocate or panic, invisibly, at its use site; do not run
+    them and say nothing, which is the one thing a project whose UI tests
+    compare diagnostics byte for byte should not choose; or warn, which
+    <code>data-io.md</code> already dismissed by observing that
+    <code>SettingWithCopyWarning</code> is a warning nobody reads. Either it
+    matters or it does not. Relaxing this later &mdash; allow, do not run, warn
+    &mdash; is source-compatible; tightening it later would not be.
   </p>
+
+  <p class="note">
+    A directory module needs no special case. <code>mod.science</code> is never
+    an entry by rule two, which names <code>main.science</code> specifically,
+    and it is reached by <code>use</code> whenever its directory is, so
+    top-level statements in a <code>mod.science</code> are always
+    <code>SC0213</code>.
+  </p>
+
+  <h3>Ordering, and the one direction that does not cross</h3>
+
+  <p class="note">
+    <strong>There is no hoisting and no reordering.</strong> The statements run
+    in source order. What is <em>not</em> ordered is declaration: a statement
+    may call a function declared below it, because the resolver collects every
+    definition in every module before it looks at a single body. By the time
+    anything is resolved, everything is known, with no fixed point. The
+    practical consequence for this audience is that <strong>a script's helper
+    functions can go at the bottom</strong>, which is not true of MATLAB and
+    not true of C.
+  </p>
+
+  <p class="note">
+    The one thing that does not cross the line is the other way round: a named
+    item does not close over the top level, so a <code>def</code> cannot see a
+    top-level <code>let</code>. That asymmetry is enforced by construction
+    &mdash; items are resolved in a scope the script bindings are not in
+    &mdash; so the diagnostic reserved for it, <code>SC0212</code>, has never
+    had anything to report and is not implemented. What you get is the ordinary
+    not-found error:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0200]</span>: cannot find `threshold` in this scope
+ <span class="e-hi">--&gt;</span> analysis.science:4:13
+  |
+4 |     value &gt; threshold
+  |             <span class="e-hi">^^^^^^^^^</span> not found</code></pre>
+
+  <p class="note">
+    <strong>Three reasons the ban is there, and only the third is
+    unobvious.</strong> It would make item bodies depend on execution order, so
+    a function called before line 1 has run would read an uninitialised binding
+    &mdash; C++'s static initialisation order fiasco, and Python's call-time
+    <code>NameError</code>. It would put a hole in local inference, because one
+    function's body would depend on another function's inferred local across a
+    boundary drawn to keep that closed. And it inverts the region engine's
+    analysis order into a genuine cycle: functions are analysed in reverse
+    topological order of the call graph, callees before callers, so
+    <code>keep</code> is analysed before the script body &mdash; but the
+    binding's region is a fact <em>about</em> the script body's MIR. That is a
+    dependency cycle across the call graph, which the strongly-connected-component
+    fixed point does not cover, because it is not a call cycle.
+  </p>
+
+  <p class="note">
+    <strong>A closure sees the top level; a named item does not.</strong> The
+    closure is <em>inside</em> the script body, so its capture is an ordinary
+    capture of an ordinary local and needs no rule of its own. That line is
+    also what makes the F1 notebook tier tractable: because no item body can
+    read a script binding, invalidating a cell invalidates statements
+    downstream of it and never a function body &mdash; the dependency edges
+    from cells go forward into cells and never sideways into items.
+  </p>
+
+  <p class="note">
+    <strong>A top-level <code>let</code> binds a local of the script
+    body</strong>, not a global and not a static. Its scope is the rest of the
+    top level. It drops at the end of the script, in reverse declaration order,
+    before the process exits &mdash; and a <code>panic</code> does not run
+    drops, because panic is abort, so a panicking script leaves its temporary
+    directory behind. Choosing a static instead would have bought exactly one
+    thing, item bodies reading it, which the paragraph above already forbids
+    for independent reasons; and it would have cost a <code>'static</code>
+    region, an at-exit registry with an order, and an initialisation-order
+    analysis. All of the cost, none of the benefit.
+  </p>
+
+  <p class="note">
+    <code>public</code> is an item modifier and a statement declares no name to
+    export, so it is refused where a reader will first try it:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0107]</span>: `public` has no meaning on a statement
+ <span class="e-hi">--&gt;</span> analysis.science:1:1
+  |
+1 | public let n be 1
+  | <span class="e-hi">^^^^^^</span> a statement declares no name to export
+  |
+  = <span class="e-help">help</span>: the statement runs either way: delete `public `</code></pre>
 
   <h3>The exit-code contract</h3>
 
   <p class="note">
     The script body's signature is <code>def main() -&gt; Error?</code>, and
     that signature <em>is</em> the contract. There is no second mechanism, no
-    <code>sys.exit</code>, and no status to return by hand.
+    <code>sys.exit</code>, and no status to return by hand. The signature is
+    <code>Error?</code> rather than <code>()</code> because
+    <code>if err?: return err</code> is <em>the</em> idiom for every fallible
+    call, and a top level on which that idiom does not typecheck is a top level
+    on which the language's own error model cannot be used. A script is mostly
+    IO and IO is mostly fallible.
   </p>
 
   <div class="scroller">
@@ -423,26 +587,60 @@ print(f"and {low} passes through")
     </table>
   </div>
 
+<pre data-science>print("done")
+return null
+# done</pre>
+
+<pre class="shell">$ sciencec build exit.science &amp;&amp; ./exit.exe; echo "exit=$?"
+done
+exit=0</pre>
+
   <p class="note">
-    <strong>Two exactness notes, and both are corrections the implementation
-    forced.</strong> First: of the three spellings that give 0,
+    <strong>Three exactness notes, and all three are corrections the
+    implementation forced.</strong> First: of the three spellings that give 0,
     <strong><code>return null</code> is the only one that compiles</strong>. A
-    bare <code>return</code> yields <code>()</code>, nothing turns <code>()</code>
-    into <code>null</code>, and the result is <code>SC0525</code>, <em>expected
-    <code>any Error?</code>, found <code>()</code></em>. The sugar is decided
-    and unwritten. <span class="cite wip">changing</span>
+    bare <code>return</code> yields <code>()</code>, nothing turns
+    <code>()</code> into <code>null</code>, and the result is the type error
+    below. The sugar is decided and unwritten; implementing it is a coercion
+    from <code>()</code> to <code>Error?</code> at a <code>return</code>.
+    <span class="cite wip">changing</span>
   </p>
+
+<pre class="err"><code><span class="e-code">error[SC0525]</span>: expected `any Error?`, found `()`
+ <span class="e-hi">--&gt;</span> exit.science:2:1
+  |
+2 | return
+  | <span class="e-hi">^^^^^^</span> this is `()`</code></pre>
 
   <p class="note">
     Second: <strong>the failing row cannot be reached from any program this
-    compiler can build.</strong> Returning a non-null error means boxing a
-    concrete error into <code>any Error</code>, which allocates and fills a
-    vtable, and this backend emits no vtables &mdash; so the exit-1 path is
-    emitted into every binary, tested by a harness that writes its own
-    <code>main</code> to drive it, and unreachable from Science source. The
-    contract above is what the emitted code does; the third and fourth rows are
-    not yet something you can write.
-    <span class="cite wip">changing</span>
+    compiler can build.</strong> <code>Error</code> is an interface declared in
+    the prelude, so <code>Error?</code> expands to <code>(any Error)?</code>
+    and returning a non-null error means boxing a concrete error into an
+    interface object &mdash; which allocates and fills a vtable, and this back
+    end emits no vtables. The exit-1 path is emitted into every binary and
+    tested by a harness that writes its own <code>main</code> to drive it, and
+    it is unreachable from Science source. <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
+    Third: <strong>the script body's tail is always a generated
+    <code>null</code>, never its last statement.</strong> Promoting a trailing
+    expression to the tail, which is what block parsing does everywhere else,
+    would make the value of <code>print("hello")</code> the script's return
+    value &mdash; and <code>()</code> is not an <code>Error?</code>. "Falling
+    off the end is an implicit <code>return null</code>" is spelled as that
+    node rather than inferred.
+  </p>
+
+  <p class="note">
+    Two things are deliberately absent and both would be one-line additions
+    that cost a permanent name. There is no <code>exit(code)</code>: the free
+    function list is closed, and an exit code other than 0 or 1 has no caller
+    yet. There is no <code>argv</code>: the process environment belongs to a
+    library, not to the grammar. A leading <code>#!</code> line is a
+    <code>#</code> comment and already lexes correctly; making it
+    <em>executable</em> is a filesystem question and not a language one.
   </p>
 
   <h3>One <code>main</code>, or none</h3>
@@ -464,20 +662,92 @@ print(f"and {low} passes through")
     a compiler cannot choose between them. Everywhere a mechanical fix exists
     this compiler prints the exact replacement text; where two exist it prints
     neither, because a tool that applies the wrong one of two is worse than a
-    tool that applies none.
+    tool that applies none. When it fires, <strong>the script body is not
+    generated at all</strong>, so one mistake stays one diagnostic instead of
+    cascading into every statement.
   </p>
 
   <p class="note">
-    <strong>What names the entry.</strong> Rule one: the file named on the
-    command line. Rule two was to be <code>main.science</code> at the crate
-    root when no file is named, and <strong>it is not built</strong>; there is
-    no <code>sciencec run</code> either. <code>sciencec check a.science
-    b.science</code> is <em>two crates</em>, one per name, and not one crate of
-    two files &mdash; because each file named is an entry, and folding the
-    command line into a single crate would make every file after the first a
-    non-entry and report <code>SC0213</code> on all of them. That is the
-    opposite of what script mode is for.
+    The three alternatives were priced and all three lose. <em>Statements run,
+    then <code>main</code> runs</em> is Python's <code>if __name__ ==
+    "__main__":</code> wart with the condition made implicit instead of
+    explicit, which is strictly worse, because at least Python's is visible in
+    the source. <em><code>main</code> wins and the statements are module
+    initialisation</em> reintroduces the initialisation phase that the module
+    rule above exists to delete. <em>The statements win and <code>main</code>
+    is dead</em> is silently dead code. A file with a <code>main</code> and no
+    top-level statements is of course fine, and is what a library's entry file
+    looks like.
   </p>
+
+  <h3>What names the entry, and what a crate is</h3>
+
+  <p class="note">
+    <strong>Rule one: the file named on the command line.</strong> Rule two was
+    to be <code>main.science</code> at the crate root when no file is named,
+    and <strong>it is not built</strong> &mdash; it needs a crate root with no
+    file to derive one from, which is the package manager's question. There is
+    no <code>sciencec run</code> either; the commands are <code>check</code>,
+    <code>build</code>, <code>fmt</code>, <code>tools</code>,
+    <code>ast</code>, <code>resolve</code> and <code>tokens</code>.
+  </p>
+
+  <p class="note">
+    <strong>A crate is one entry file plus the transitive closure of the
+    modules its <code>use</code> declarations name, rooted at the entry file's
+    directory.</strong> That definition is the implementation's; the design
+    note that both rules lean on never defines the term. So
+    <code>sciencec check a.science b.science</code> is <em>two crates</em>, one
+    per name, and not one crate of two files &mdash; because each file named is
+    an entry, and folding the command line into a single crate would make every
+    file after the first a non-entry and report <code>SC0213</code> on all of
+    them. That is the opposite of what script mode is for.
+  </p>
+
+<pre class="shell">$ sciencec check plots.science
+error[SC0213]: top-level statements in a module that is not the entry point
+1 error
+
+$ sciencec check clean.science
+$ echo "exit=$?"
+exit=0</pre>
+
+  <p class="note">
+    One consequence is worth stating because it has bitten a measurement: the
+    same declaration in two files numbered in two orders used to produce two
+    different const-expression normal forms, because the atom order was derived
+    from a declaration id and ids are handed out in command-line order. That is
+    fixed &mdash; the order comes from a canonical path now &mdash; and it is
+    recorded in <a href="#types">Types</a> as the shape of the bug that
+    <code>a.science b.science</code> can still cause elsewhere.
+  </p>
+
+  <div class="callout">
+    <h3>If you are arriving from Python: the file is the program, and that is where the resemblance stops</h3>
+    <p>
+      A <code>.science</code> file with statements in it runs those statements,
+      top to bottom, exactly as a <code>.py</code> file does. Four things then
+      differ, and three of them will catch you in the first hour.
+    </p>
+    <p style="margin-top:0.6rem">
+      <strong>Importing runs nothing.</strong> Python executes a module's body
+      on first import and caches it; Science does not, and a statement in an
+      imported file is a compile error. There is no
+      <code>if __name__ == "__main__":</code>, because there is nothing to
+      guard against.
+      <strong>A function cannot read a script variable.</strong> Python
+      resolves a global at call time, so a <code>def</code> above a
+      <code>threshold = 0.5</code> works as long as nobody calls it too early;
+      here it does not resolve at all.
+      <strong>The exit code is a return value.</strong> There is no
+      <code>sys.exit</code>; the script body returns <code>Error?</code> and the
+      runtime maps it to 0 or 1.
+      And <strong>the last expression of the file is not the program's
+      value</strong> &mdash; the script body's tail is a generated
+      <code>null</code>, so a bare expression at the end of a file is a
+      statement whose value is discarded, not a result.
+    </p>
+  </div>
 </section>
 
 <!-- ==================================================================== -->
@@ -497,6 +767,53 @@ count be 3                         # assignment: `be` without `let`
 print(f"{title}: {count} runs at {width} columns")
 # Regions: 3 runs at 768 columns</pre>
 
+  <h3>Every form of <code>let</code>, and the one that surprises people</h3>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Form</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">let n be e</td><td class="what">Immutable, type inferred from <code>e</code></td></tr>
+        <tr><td class="mono">let n: T be e</td><td class="what">Immutable, <code>e</code> checked against <code>T</code></td></tr>
+        <tr><td class="mono">let mutable n be e</td><td class="what">Assignable afterwards with <code>n be …</code></td></tr>
+        <tr><td class="mono">let a, b be e</td><td class="what">Destructures a pair &mdash; the fallible-call form, <code>let value, err be f()</code></td></tr>
+        <tr><td class="mono">let mutable a, b be e</td><td class="what"><code>mutable</code> distributes over <strong>every</strong> name</td></tr>
+        <tr><td class="mono">const N be e</td><td class="what">A compile-time constant, substituted where it is used</td></tr>
+        <tr><td class="mono">n be e</td><td class="what">Assignment. Not a <code>let</code>, and not an expression</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <strong><code>mutable</code> distributing over every name in a
+    destructuring <code>let</code> is a decision, not an accident.</strong> The
+    list receives one tuple, and a form in which half the names were mutable
+    would need a second <code>mutable</code> in a position nothing else in the
+    language puts one. So <code>let mutable frame, err be read_csv(…)</code>
+    makes both <code>frame</code> and <code>err</code> assignable, which is
+    almost always more than the caller wanted and is the cheaper of the two
+    wrongs.
+  </p>
+
+  <p class="note">
+    <strong>Shadowing is allowed, and the right-hand side sees the old
+    binding.</strong> A second <code>let</code> with the same name in the same
+    scope introduces a new binding rather than assigning to the old one, and
+    the initialiser is evaluated before the new name is in scope, so
+    <code>let n be n + 10</code> reads the previous <code>n</code>. This is the
+    Rust rule and not the Python one; in Python there is no second binding to
+    make, only a rebinding.
+  </p>
+
+<pre data-science>let n be 1
+let n be 2                         # a second binding, not an assignment
+print(f"{n}")
+# 2
+
+let n be n + 10                    # the `n` on the right is the one above
+print(f"{n}")
+# 12</pre>
+
   <p class="note">
     <strong>Immutable is the default, and this is the first real cost of the
     language.</strong> In NumPy every name is rebindable and every array is
@@ -510,6 +827,24 @@ print(f"{title}: {count} runs at {width} columns")
   </p>
 
   <p class="note">
+    <strong>None of that is enforced today, and the gap is total.</strong>
+    Assigning to a binding that was never declared <code>mutable</code> is
+    accepted by every phase, builds, and runs. Writing through a shared borrow
+    is accepted too. There is no diagnostic to quote here because none is
+    emitted; the code below is a whole program that <code>check</code>s clean,
+    builds, and prints <code>3</code>. Read every <code>mutable</code> on this
+    page as documentation of the rule and not as a description of what the
+    compiler currently refuses. <span class="cite wip">changing</span>
+  </p>
+
+<pre data-science>let count be 0                     # no `mutable`
+count be 3                         # and this is accepted anyway
+print(f"{count}")
+# 3</pre>
+
+  <h3>Assignment, and the two spellings that do not exist</h3>
+
+  <p class="note">
     <strong>Assignment is a statement, not an expression.</strong> It has no
     rung on the precedence ladder and produces no value, so <code>if (x be
     1):</code> is not something the grammar can express. There is also no
@@ -518,15 +853,46 @@ print(f"{title}: {count} runs at {width} columns")
     inside a loop stays visible on the line where it happens.
   </p>
 
+<pre class="err"><code><span class="e-code">error[SC0105]</span>: expected an expression, found `=`
+ <span class="e-hi">--&gt;</span> loop.science:2:8
+  |
+2 | count += 1
+  |        <span class="e-hi">^</span> expected an expression, found `=`
+
+<span class="e-code">error[SC0100]</span>: expected end of line, found a number literal
+ <span class="e-hi">--&gt;</span> loop.science:2:10
+  |
+2 | count += 1
+  |          <span class="e-hi">^</span> expected end of line, found a number literal</code></pre>
+
+  <p class="note">
+    Two errors rather than one, because <code>+=</code> lexes as
+    <code>+</code> then <code>=</code> and there is no <code>=</code> token in
+    the language at all &mdash; the parser recovers past the <code>+</code> and
+    then meets the literal. This is the one place on the page where the
+    one-mistake-one-message rule is not met, and it is not met because the
+    lexer has no compound-assignment token to recognise the habit with.
+  </p>
+
+  <p class="note">
+    Assignment to a name that was never bound is an ordinary resolution error,
+    which is worth knowing because it is the failure mode of a typo in a long
+    script: <code>other be 2</code> with no <code>let other</code> above it is
+    <code>SC0200</code>, <em>cannot find <code>other</code> in this
+    scope</em> &mdash; not a new binding, the way it would be in Python.
+  </p>
+
   <p class="note">
     <strong>That said: <code>count be count + 1</code> checks and does not
     build.</strong> An assignment whose right-hand side reads a local arrives
-    at the back end untyped and is refused with <code>SC0400</code>, where
-    <code>let next be count + 1</code> is emitted without complaint. It is a
-    gap in the lowering rather than a rule, and it is stated here because it is
-    the shape of the most ordinary line in a loop.
+    at the back end untyped and is refused, where <code>let next be count +
+    1</code> is emitted without complaint. It is a gap in the lowering rather
+    than a rule, and it is stated here because it is the shape of the most
+    ordinary line in a loop.
     <span class="cite wip">changing</span>
   </p>
+
+<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build a value the front end left untyped: its `Ty` is `TyKind::Error` and no diagnostic was reported for it. The three this compiler has met are a call to `print` or `write`, whose signatures `science-resolve`'s `builtins.rs` withdrew; a `for` loop's range and iterator temporaries; and a discriminant temporary, which is handled rather than refused</code></pre>
 
   <h3>Literals</h3>
 
@@ -559,6 +925,27 @@ print(f"{greeting} {letter} {flag} {missing?}")
     <a href="#errors">Errors</a> is where it is argued.
   </p>
 
+  <p class="note">
+    <strong>Every numeric literal takes <code>_</code> anywhere between
+    digits, in every base</strong>, and the same character is the grouping
+    separator the format mini-language adds to Python's, so a number a program
+    prints pastes back into one. A literal with no suffix defaults to
+    <code>Int</code> if it has no point and <code>Float</code> if it has one
+    &mdash; but only if nothing constrains it: an unsuffixed literal is
+    <em>inferred</em> first and defaulted only as a last step, because a
+    language that silently makes <code>1</code> an <code>I32</code> will be
+    wrong on somebody's index arithmetic. The suffix forms are the type name in
+    lower case: <code>42i32</code>, <code>255u8</code>, <code>2.5f32</code>.
+  </p>
+
+  <p class="note">
+    <strong>There are no negative numeric literals.</strong>
+    <code>-1</code> lexes as the operator <code>-</code> applied to
+    <code>1</code>. In expression position nothing turns on it; in type
+    position it is the reason a const argument needed a signed integer node
+    before unit exponents could be written at all.
+  </p>
+
 <pre data-science>const WIDTH be 768                  # a compile-time constant
 type Embedding is Array of F32      # a type alias
 
@@ -572,20 +959,73 @@ print(escaped)</pre>
 
   <p class="note">
     <strong>This block checks and does not build,</strong> and the two reasons
-    are worth knowing: a <code>const</code> read as a value has no lowering,
-    and neither has an <code>Array</code>. It is here because the forms are the
-    language's and the reader needs them; the output is absent because
-    inventing it would be the one thing this page must not do.
+    are worth knowing: a <code>const</code> read as a value has no lowering
+    &mdash; it reaches the back end untyped and is refused with the
+    <code>SC0400</code> above &mdash; and neither has an <code>Array</code>. It
+    is here because the forms are the language's and the reader needs them; the
+    output is absent because inventing it would be the one thing this page must
+    not do.
   </p>
 
   <p class="note">
-    <code>const</code> is the one inherited abbreviation in the language, and
-    the register of shortened keywords names it. It is a compile-time constant
-    rather than a read-only binding: it is substituted where it is used, and it
-    may stand as a const-generic argument. The escape list in full is
-    <code>\n \t \r \\ \" \' \0 \u{…}</code> and nothing else; there are no
-    block comments and no triple-quoted strings.
+    <code>const</code> is the one <em>inherited</em> abbreviation in the
+    language, and the register of shortened keywords names it beside
+    <code>def</code>. It is a compile-time constant rather than a read-only
+    binding: it is substituted where it is used, and it may stand as a
+    const-generic argument, which a <code>let</code> may not. A
+    <code>const</code> is also the only thing an item body may read from
+    something written at module level, which is why the diagnostic for a
+    function reaching for a script binding suggests turning it into one.
   </p>
+
+  <h3>Escapes, and what is in the list</h3>
+
+  <p class="note">
+    The escape list is <code>\n \t \r \\ \" \' \0 \u{…}</code> and
+    <strong>nothing else</strong>. There are no block comments, no
+    triple-quoted strings, no <code>\x41</code>, no octal escape and no
+    <code>\e</code>. <code>\u{…}</code> takes one to six hexadecimal digits and
+    encodes the scalar as UTF-8, so <code>\u{1F600}</code> is four bytes.
+    <code>\0</code> is a NUL byte in the middle of a string and does not
+    terminate it &mdash; a Science <code>String</code> carries a length.
+  </p>
+
+<pre data-science>let escaped be "a\tb\nc \u{1F600}"
+let more be "\r|\\|\"|\'|\0|"
+let raw be r"C:\runs\2026\peaks.csv"
+
+print(escaped)
+print(more)
+print(raw)</pre>
+
+  <p class="note">
+    Piped through <code>cat -A</code>, so that the bytes that do not print are
+    visible: <code>^I</code> is the tab, <code>^M</code> the carriage return,
+    <code>^@</code> the NUL, <code>$</code> the end of each line, and the four
+    <code>M-</code> bytes the UTF-8 encoding of one emoji.
+  </p>
+
+<pre class="shell">$ sciencec build escapes.science &amp;&amp; ./escapes.exe | cat -A
+a^Ib$
+c M-pM-^_M-^XM-^@$
+^M|\|"|'|^@|$
+C:\runs\2026\peaks.csv$</pre>
+
+  <p class="note">
+    Anything else after a backslash is refused at the character, by the lexer,
+    with the whole list in the note &mdash; which is the cheapest possible way
+    to teach a closed set:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0006]</span>: unknown escape sequence `\q`
+ <span class="e-hi">--&gt;</span> text.science:1:9
+  |
+1 | print("a\qb")
+  |         <span class="e-hi">^^</span> unknown escape
+  |
+  = note: the escapes are `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0` and `\u{...}`</code></pre>
+
+  <h3>Numbers</h3>
 
   <p class="note">
     <strong>Numeric types are written out and never converted
@@ -616,25 +1056,115 @@ print(escaped)</pre>
 
   <p class="note">
     <strong>One of those four is emitted, and the others are not.</strong>
-    Saturating float-to-integer casts work: <code>1.0e30 as I32</code> gives
-    <code>2147483647</code>. Integer <code>/</code> and <code>%</code> are
-    refused by the back end entirely &mdash; the divide-by-zero check that
-    would precede them is nobody's yet, and a bare machine division is
-    undefined at zero rather than a trap &mdash; and so are shifts, whose
-    amount nothing bounds. <strong>Overflow does not panic</strong>:
-    <code>2147483647i32 + 1i32</code> wraps to <code>-2147483648</code>, and
-    there is no build in which it does otherwise, because there are no build
-    profiles yet for "debug" to name.
+    Saturating float-to-integer casts work in both directions and on
+    <code>NaN</code>. Integer <code>/</code> and <code>%</code> are refused by
+    the back end entirely, and so are shifts. <strong>Overflow does not
+    panic</strong>: it wraps, and there is no build in which it does otherwise,
+    because there are no build profiles yet for "debug" to name.
     <span class="cite wip">changing</span>
   </p>
+
+<pre data-science>print(f"{1.0e30 as I32}")
+print(f"{-1.0e30 as I32}")
+print(f"{(0.0 / 0.0) as I32}")
+# 2147483647
+# -2147483648
+# 0
+
+let big be 2147483647i32
+print(f"{big + 1i32}")
+# -2147483648
+
+let u be 255u8
+print(f"{u + 1u8}")
+# 0</pre>
+
+  <p class="note">
+    Note that <code>0.0 / 0.0</code> is a <em>float</em> division and is
+    emitted; it is integer <code>/</code> that is not. The two refusals name
+    their reasons, and both reasons are the same shape &mdash; a check nothing
+    above the back end emits:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build integer `/` or `%`, whose divide-by-zero check nothing above this crate emits — `IntOp`'s own note calls it "a panic the caller has already guarded" and no caller does, and a bare `sdiv` is undefined at zero rather than a trap
+
+<span class="e-code">error[SC0400]</span>: this `sciencec` cannot build a shift, whose amount nothing above this crate bounds — a shift by at least the operand's width is poison in LLVM and neither the mask nor the panic that would stop it is specified</code></pre>
+
+  <h3><code>null</code>, <code>()</code>, and names you may not bind</h3>
 
   <p class="note">
     <code>null</code> is a literal like <code>true</code> and
     <code>false</code>: its spelling is fixed, so a program may not bind the
     name. It inhabits a nullable type <code>T?</code> and nothing else.
     <code>()</code> above is the empty tuple, which is a <em>value</em> and not
-    an absence &mdash; a function with no return type returns it.
+    an absence &mdash; a function with no return type returns it, and a body
+    whose last expression is not <code>()</code> in such a function is a type
+    error rather than a discarded value.
   </p>
+
+  <p class="note">
+    <strong>Some names a scientist will reach for are reserved for a phase that
+    does not exist yet, and the error arrives in binding position.</strong>
+    <code>shape</code>, <code>model</code>, <code>tensor</code>,
+    <code>union</code>, <code>mod</code>, <code>yield</code>,
+    <code>kernel</code>, <code>import</code>, <code>assert</code>,
+    <code>with</code>, <code>move</code>, <code>on</code>, <code>static</code>,
+    <code>pure</code>, <code>parallel</code>, <code>macro</code>,
+    <code>extern</code> and <code>unsafe</code> are the list, and
+    <a href="#reference">Reference tables</a> keeps it current. Deliberately
+    <em>not</em> reserved, for the same audience reason: <code>grad</code>,
+    <code>dim</code>, <code>dims</code>, <code>axis</code>,
+    <code>device</code>, <code>dtype</code>, <code>unit</code>,
+    <code>alias</code> &mdash; and <code>function</code>, which left the
+    keyword list when <code>def</code> arrived and is an ordinary identifier
+    now.
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0102]</span>: expected an identifier, found `model`, which is reserved for a later phase
+ <span class="e-hi">--&gt;</span> train.science:1:5
+  |
+1 | let model be 1
+  |     <span class="e-hi">^^^^^</span> expected an identifier, found `model`, which is reserved for a later phase</code></pre>
+
+  <p class="note">
+    <strong>A design note argues that most of that list should be freed and
+    the compiler has not acted on it yet.</strong> Its central proposal is the
+    <em>dot rule</em>: after a <code>.</code> there is nothing a name could be
+    confused with, because a member name is the only construct the grammar
+    admits in that position, so any word should be accepted there. It is not
+    implemented, and the consequence is that <code>x.shape</code> &mdash; the
+    single most common attribute access in numerical Python &mdash; produces
+    the error above <em>twice</em>, once for the member name and once for the
+    line that could not continue. The note also records that the reservation
+    protects a construct F1 turns out not to want. Where the note and the
+    compiler disagree, this page documents the compiler.
+    <span class="cite wip">changing</span>
+  </p>
+
+  <div class="callout">
+    <h3>If you are arriving from Rust or Go: <code>be</code> is one word doing two jobs, and there is no third</h3>
+    <p>
+      Rust spells the two jobs <code>let x = …</code> and <code>x = …</code>;
+      Go spells them <code>x := …</code> and <code>x = …</code>. Science
+      spells them <code>let x be …</code> and <code>x be …</code>, and the
+      difference between a declaration and an assignment is the presence of the
+      keyword rather than the shape of a symbol. The consequence a Rust reader
+      notices first is that <strong>there is no <code>=</code> token in the
+      language at all</strong>, so <code>==</code> is not a thing either: the
+      equality operator is <code>is</code>, and <code>is not</code> is its
+      negation.
+    </p>
+    <p style="margin-top:0.6rem">
+      Coming from Go, two more: <strong>there is no zero value</strong>, so a
+      binding with no initialiser is not a form the grammar has; and
+      <strong>an unused binding is not an error</strong>, because the leading
+      underscore has been given to the deliberately-ignored-error convention
+      instead. Coming from Rust, the shadowing rule is the same one you already
+      have, and <code>const</code> is genuinely a constant rather than Rust's
+      <code>static</code> &mdash; it is substituted at each use and has no
+      address.
+    </p>
+  </div>
 </section>
 
 <!-- ==================================================================== -->
@@ -682,41 +1212,172 @@ print("{channel} is four words of text, not a hole")
   </p>
 
   <p class="note">
+    <strong>The rest of the default rendering is decided too, and for the same
+    reason.</strong> <code>NaN</code>, <code>inf</code> and <code>-inf</code>
+    are spelled exactly that way, honouring width and alignment and ignoring
+    precision &mdash; not <code>nan</code>, and not <code>NaN%</code>.
+    <code>-0.0</code> prints as <code>-0.0</code>, because it is a different
+    float and hiding that has cost people days. <code>Bool</code> prints
+    <code>true</code> and <code>false</code>, matching the literals. Default
+    alignment is left for strings and right for numbers, which is Python's rule
+    and the one that makes a column of numbers a column.
+  </p>
+
+  <p class="note">
     <strong>Why the <code>f</code> is required.</strong> The alternative is
     Python's, where every string is a candidate and a brace must be doubled
     everywhere. This audience writes JSON, LaTeX and regular expressions, all
     three of which are made of braces, so the cost of interpolating by default
-    lands on exactly the strings these users have most of. With the prefix,
-    <code>"{}"</code> is two characters of text and needs nothing. The lexer
-    pays for it by lexing the interior properly rather than scanning for a
-    closing quote, and one consequence falls out for free: <strong>nested
-    string literals, including a nested <code>f"…"</code>, are admitted to any
-    depth.</strong>
+    lands on exactly the strings these users have most of. Under that design
+    <code>"\\frac{a}{b}"</code>, in a file that happens to bind <code>a</code>
+    and <code>b</code>, would silently interpolate &mdash; a wrong answer
+    produced quietly, which is the failure this project exists to remove.
+    Swift's <code>\(x)</code> was the clever third option, because
+    <code>\</code> already had to be escaped and so steals nothing where a
+    brace steals a great deal; it loses on recognition, since <code>f"…"</code>
+    is what a pandas user already types.
   </p>
 
   <p class="note">
-    <strong>What may go in a hole: an expression, with three
-    restrictions.</strong> It is an expression and not a statement, so no
-    <code>let</code>, no <code>return</code>, no <code>break</code>
-    (<code>SC0175</code>). It may not span a line. It may not contain a
-    <code>#</code> comment, which would swallow the closing brace and the
-    quote. The alternative considered was admitting bare names only, and it was
-    rejected on a teaching argument: a rule that admits <code>{mu}</code> and
-    refuses <code>{frame.length()}</code> teaches a boundary a user meets
-    within minutes and cannot predict, and half a feature here is worse than
-    none.
+    With the prefix, <code>"{}"</code> is two characters of text and needs
+    nothing. The lexer pays for it by lexing the interior properly rather than
+    scanning for a closing quote, and one consequence falls out for free:
+    <strong>nested string literals, including a nested <code>f"…"</code>, are
+    admitted to any depth.</strong>
+  </p>
+
+<pre data-science>let name be "A12"
+let channels be 768
+
+print(f"{f"{name}"} has {channels}")
+print(f"{f"{f"{name}"}"}")
+# A12 has 768
+# A12</pre>
+
+  <p class="note">
+    <strong>What that costs the lexer, stated because it is the largest single
+    piece of work in the design.</strong> <code>f"{m["a"]}"</code> contains a
+    <code>"</code> that does not end the literal, and <code>f"{f"{x}"}"</code>
+    contains braces that are not the match, so the lexer is a machine with a
+    mode stack rather than a scanner: <code>f"</code> pushes a string frame,
+    <code>{</code> pushes an expression frame, a <code>}</code> at brace depth
+    zero pops it, and a <code>"</code> inside an expression frame pushes
+    another string frame. <strong>The indentation machine is suspended inside
+    an interpolation</strong>, exactly as it already is inside unclosed
+    brackets &mdash; that rule now has a second trigger. Rust avoids all of
+    this by making <code>format!</code> a macro over a literal, which Science
+    cannot do because it reserves macros without implementing them. Swift,
+    Kotlin, JavaScript and now Python all pay exactly this cost. It is paid
+    once.
+  </p>
+
+  <h3>What may go in a hole, and the four ways it is refused</h3>
+
+  <p class="note">
+    <strong>An expression, with three restrictions.</strong> It is an
+    expression and not a statement, so no <code>let</code>, no
+    <code>return</code>, no <code>break</code>. It may not span a line. It may
+    not contain a <code>#</code> comment, which would swallow the closing brace
+    and the quote. The alternative considered was admitting bare names only,
+    and it was rejected on a teaching argument: a rule that admits
+    <code>{mu}</code> and refuses <code>{frame.length()}</code> teaches a
+    boundary a user meets within minutes and cannot predict, and half a feature
+    here is worse than none. That is also the boundary Python shipped in 3.6
+    and spent until PEP 701 in 3.12 climbing out of.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>What you wrote</th><th>Code</th><th>What it says</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">f"{n</td><td class="mono">SC0170</td><td class="what">The <code>{</code> is the primary span; a secondary marks where the literal ended</td></tr>
+        <tr><td class="mono">f"a } b"</td><td class="mono">SC0171</td><td class="what">A <code>}</code> with nothing it closes. Fix: <code>}}</code></td></tr>
+        <tr><td class="mono">f"{}"</td><td class="mono">SC0174</td><td class="what">Empty. There are no positional fields to refer to</td></tr>
+        <tr><td class="mono">f"{n # c}"</td><td class="mono">SC0175</td><td class="what">A statement, a <code>let</code>, a line break or a comment</td></tr>
+        <tr><td class="mono">rf"…"</td><td class="mono">SC0177</td><td class="what">The prefixes do not combine</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+<pre class="err"><code><span class="e-code">error[SC0170]</span>: this interpolation has no closing `}`
+ <span class="e-hi">--&gt;</span> report.science:2:9
+  |
+2 | print(f"{n")
+  |         <span class="e-hi">^</span> this `{` opens an interpolation
+  |           - the literal ends here
+  |
+  = note: inside an `f"…"` a literal brace is written `{{`</code></pre>
+
+<pre class="err"><code><span class="e-code">error[SC0174]</span>: an interpolation with nothing in it
+ <span class="e-hi">--&gt;</span> report.science:2:9
+  |
+2 | print(f"{}")
+  |         <span class="e-hi">^^</span> name the value
+  |
+  = note: there are no positional fields: `print` takes one value, so `{}` has no argument list to refer to</code></pre>
+
+<pre class="err"><code><span class="e-code">error[SC0175]</span>: a `#` comment inside an interpolation
+ <span class="e-hi">--&gt;</span> report.science:2:12
+  |
+2 | print(f"{n # c}")
+  |            <span class="e-hi">^</span> this would comment out the rest of the literal
+  |
+  = note: an interpolation holds one expression: no `let`, no statement, no comment and no line break</code></pre>
+
+  <p class="note">
+    <strong>One of the five does not hold the one-mistake-one-message
+    line.</strong> A <code>let</code> inside a hole is reported as
+    <code>SC0105</code>, <em>expected an expression, found <code>let</code></em>,
+    and then cascades into three more as the parser walks out of the literal
+    and off the end of the call. <code>SC0175</code>'s note names
+    <code>let</code> and statements among the things it covers; the code that
+    actually fires for them is the generic one. A missing <code>}</code>
+    likewise leaves the mode stack deep and produces a second error from the
+    call. Error recovery inside an interpolation is the weakest joint in this
+    part of the lexer, and the design says so in advance.
+    <span class="cite wip">changing</span>
   </p>
 
   <p class="note">
     An interpolation <strong>does not consume</strong> its operands:
-    <code>f"{doc}"</code> leaves <code>doc</code> usable. The type of an
-    <code>f"…"</code> is <code>String</code>. A plain string literal that
-    contains what would be a valid interpolation &mdash; every name inside it
-    resolving in the enclosing scope &mdash; is specified as
-    <code>SC0172</code>, a <em>warning</em> carrying two applicable fixes:
-    insert the <code>f</code>, or double the braces. It is not implemented, and
-    the lexer's own note says why it cannot be: deciding whether every name
-    inside a string resolves is a question about scope, and the lexer has none.
+    <code>f"{doc}"</code> leaves <code>doc</code> usable. That is the guarantee;
+    the mechanism is two rules rather than one, and the design's own amendment
+    corrects itself on the point. <strong>Six of the seven runtime entry points
+    that render a hole take their argument in a register</strong> &mdash; an
+    <code>Int</code>, a <code>U64</code>, an <code>F64</code>, an
+    <code>F32</code>, a <code>Bool</code>, a <code>Char</code> &mdash; so what
+    happens there is a <em>read of a <code>Copy</code> type</em>, not a loan.
+    Only a <code>String</code> is passed through a pointer, and that one case
+    is a borrow in the mechanical sense.
+  </p>
+
+  <p class="note">
+    <strong>What an <code>f"…"</code> costs.</strong> Its type is
+    <code>String</code> and it lowers to a builder over the literal fragments.
+    The design specified one allocation, with the capacity precomputed from the
+    fragments plus a per-type estimate for each hole &mdash; and the
+    <strong>capacity has nowhere to go</strong>: the runtime has fifty-four
+    entry points and not one of them takes a capacity. So the accumulator
+    starts at the growth floor and the common case is <em>one allocation per
+    growth</em>. The permitted elision, where an f-string handed straight to
+    <code>print</code> renders into the sink instead of building a
+    <code>String</code>, is opt-in by its own wording and this implementation
+    has not opted in. Both facts are worth stating as a class: a note may
+    specify a cost its own interface makes unreachable, and only an
+    implementation finds that out. <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
+    A plain string literal that contains what would be a valid interpolation
+    &mdash; every name inside it resolving in the enclosing scope &mdash; is
+    specified as <code>SC0172</code>, a <em>warning</em> carrying two
+    applicable fixes: insert the <code>f</code>, or double the braces. It is
+    not implemented, and the lexer's own note says why it cannot be: deciding
+    whether every name inside a string resolves is a question about scope, and
+    the lexer has none. The suppression is <code>r"…"</code>, which the lint
+    never inspects &mdash; and the known false positive is LaTeX, where
+    <code>"\\frac{a}{b}"</code> beside bindings named <code>a</code> and
+    <code>b</code> will fire.
     <span class="cite wip">changing</span>
   </p>
 
@@ -736,41 +1397,129 @@ print("{channel} is four words of text, not a hole")
   <p class="note">
     <code>r"…"</code> has no way to contain a <code>"</code>, and that is the
     stated price of not adopting Rust's <code>r#"…"#</code>. The extension is
-    known and it is source-compatible to add.
+    known and it is source-compatible to add. A string that needs escape
+    processing <em>and</em> contains a quote is an ordinary <code>"…"</code>
+    with <code>\\</code>. <strong><code>f</code> and <code>r</code> do not
+    become reserved words</strong>: calls are always parenthesised and there is
+    no juxtaposition operator, so <code>f"x"</code> can only be a prefixed
+    literal and never <code>f</code> applied to <code>"x"</code>. <code>let f
+    be 1</code> and <code>let r be radius</code> both remain legal.
+  </p>
+
+  <p class="note">
+    <strong>There is no multi-line string literal</strong> and the omission is
+    deliberate rather than pending: <code>r"…"</code> covers LaTeX and regular
+    expressions, and a triple-quoted form would have to decide its interaction
+    with both prefixes and with indentation stripping before it could be added.
+    A SQL query or an embedded shader will want one, and that is when the
+    decision gets made.
   </p>
 
   <h3>The format mini-language, and the part of it that exists</h3>
 
   <p class="note">
     The specified spec is Python's mini-language with four things removed and
-    one added: <code>[[fill] align] [sign] ['#'] ['0'] [width] [grouping]
-    ['.' precision] [code]</code>, with <code>_</code> joining <code>,</code> as
-    a grouping character so that a number a program prints pastes back into
-    one. <code>.3g</code> is three <em>significant figures</em> whatever the
-    magnitude, which is what reporting three sig figs means and what
-    <code>.3f</code> does not do. A conversion flag precedes the colon:
-    <code>!s</code> is <code>Display</code> and is the default, <code>!i</code>
-    is <code>Inspect</code>.
+    one added. A conversion flag precedes the colon and selects the
+    <em>interface</em>; everything after the colon selects the rendering.
+  </p>
+
+<pre class="foreign">conversion := '!' ('i' | 's')
+
+spec       := [[fill] align] [sign] ['#'] ['0'] [width] [grouping]
+              ['.' precision] [code]
+align      := '&lt;' | '&gt;' | '^'
+sign       := '+' | '-' | ' '
+grouping   := ',' | '_'
+width      := integer | '{' expression '}'
+precision  := integer | '{' expression '}'
+code       := 'f' | 'e' | 'E' | 'g' | 'G' | '%' | 'd' | 'x' | 'X' | 'o' | 'b' | 's'</pre>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Code</th><th>Applies to</th><th>Example</th><th>Output</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">f</td><td class="what">floats, <code>DisplayNumber</code></td><td class="mono">f"{t:.3f}"</td><td class="mono">0.333</td></tr>
+        <tr><td class="mono">e E</td><td class="what">floats, <code>DisplayNumber</code></td><td class="mono">f"{p:.2e}"</td><td class="mono">4.51e-07</td></tr>
+        <tr><td class="mono">g G</td><td class="what">floats, <code>DisplayNumber</code></td><td class="mono">f"{x:.3g}"</td><td class="mono">0.000451</td></tr>
+        <tr><td class="mono">%</td><td class="what">floats, <code>DisplayNumber</code></td><td class="mono">f"{r:+.2%}"</td><td class="mono">+12.34%</td></tr>
+        <tr><td class="mono">d</td><td class="what">integers</td><td class="mono">f"{n:d}"</td><td class="mono">1234567</td></tr>
+        <tr><td class="mono">x X</td><td class="what">integers</td><td class="mono">f"{mask:#x}"</td><td class="mono">0xff</td></tr>
+        <tr><td class="mono">o</td><td class="what">integers</td><td class="mono">f"{mode:o}"</td><td class="mono">755</td></tr>
+        <tr><td class="mono">b</td><td class="what">integers</td><td class="mono">f"{flags:#b}"</td><td class="mono">0b1010</td></tr>
+        <tr><td class="mono">s</td><td class="what">anything <code>Display</code></td><td class="mono">f"{name:&lt;12}"</td><td class="what"><code>A12</code> then nine spaces</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <strong><code>g</code> is the code a scientist should reach for
+    most.</strong> <code>.3g</code> is three <em>significant figures</em>
+    whatever the magnitude, which is what reporting three sig figs means and
+    what <code>.3f</code> does not do. The one addition over Python's set is
+    <code>_</code> as a grouping character beside <code>,</code>, so that a
+    number a program prints pastes back into one. <code>#</code> is the
+    alternate form: the <code>0x</code>, <code>0o</code> and <code>0b</code>
+    prefixes, and a retained decimal point at precision zero. A <code>0</code>
+    before the width means zero-fill <em>and</em> sets alignment to right, so
+    <code>f"{i:04d}"</code> is <code>0007</code>.
   </p>
 
   <p class="note">
     <strong>The spec is checked against the static type at compile
     time</strong>, which is the decision that makes the rest of it work:
     <code>{n:.3f}</code> on an integer is a compile error and not a surprise at
-    run time. It costs one thing and the design names it &mdash; <strong>a
-    format spec is no longer a value.</strong> There is no
-    <code>format(fmt, x)</code> taking a <code>String</code>, and a program
-    that must choose between <code>f</code> and <code>e</code> at run time
-    writes the <code>if</code>. Width and precision may themselves be
-    <code>Int</code> interpolations; the code may not.
+    run time, eight hours into a training run, on the logging line. The
+    legality table is short &mdash; float codes want a float or a
+    <code>DisplayNumber</code>; integer codes want an integer; a precision
+    wants a float code or a <code>String</code>, where it means truncation;
+    <code>#</code> wants <code>x X o b f e g</code>; grouping wants a numeric
+    code &mdash; and everything else is <code>SC0274</code>.
+  </p>
+
+  <p class="note">
+    It costs four things and the design names them. <strong>A format spec is no
+    longer a value</strong>: there is no <code>format(fmt, x)</code> taking a
+    <code>String</code>, and a program that must choose between <code>f</code>
+    and <code>e</code> at run time writes the <code>if</code>. A typo in a spec
+    becomes a hard error in an interactive tier, where a bad spec will stop a
+    cell rather than print something wrong. The type checker acquires a small
+    parser that must produce spans into the middle of a string literal. And
+    <code>DisplayNumber</code> has to exist, because without it
+    <code>f"{q:.2f}"</code> on a <code>Quantity</code> would be an error.
+  </p>
+
+  <p class="note">
+    <strong>The one dynamic hole: width and precision may themselves be
+    <code>Int</code> interpolations. The code stays static.</strong>
+    <code>f"{row.value:&gt;10.{digits}f}"</code> preserves the whole of the
+    check, because the part that can be <em>wrong</em> &mdash; which rendering
+    &mdash; is still a literal, and the part that became dynamic is a number,
+    which cannot be the wrong kind of thing.
+  </p>
+
+  <p class="note">
+    <strong>Four things were removed from Python's mini-language.</strong>
+    <code>n</code>, the locale-aware code, is rejected outright: locale-dependent
+    output means the same program prints <code>3.14</code> on one machine and
+    <code>3,14</code> on another, which breaks every downstream parser and
+    every reproducibility claim the language makes. Positional and implicit
+    fields go because <code>print</code> is unary and there is no argument list
+    to be positional in. <code>!r</code> and <code>!a</code> go because
+    <code>!i</code> covers the first and the second is a Python-2 artefact. And
+    attribute and index access <em>in the spec</em> go because the expression
+    side already has them. The consequence nobody gets back is localisation: a
+    program that must print <code>3,14</code> for a Spanish-language report has
+    no facility, and the right shape for one is an explicit
+    <code>Locale</code> value passed to a formatting call.
   </p>
 
   <p class="note">
     <strong>None of the mini-language is built.</strong>
     <code>f"{value}"</code> is the whole of what this compiler reads, and any
-    spec at all is <code>SC0173</code> &mdash; which is the good failure: it
-    names the feature as unbuilt rather than accepting the spec and ignoring
-    it. <span class="cite wip">changing</span>
+    spec at all &mdash; including the <code>!i</code> conversion &mdash; is
+    <code>SC0173</code>, which is the good failure: it names the feature as
+    unbuilt rather than accepting the spec and ignoring it.
+    <span class="cite wip">changing</span>
   </p>
 
 <pre class="err"><code><span class="e-code">error[SC0173]</span>: a format specification, which this compiler does not implement
@@ -796,22 +1545,65 @@ print("{channel} is four words of text, not a hole")
   </p>
 
   <p class="note">
+    <strong>Both take a <code>Formatter</code>, and that is what lets a user
+    type honour a spec at all.</strong> The receiver is <code>self</code>, the
+    shared borrow, and that is where the
+    <em>does-not-consume</em> guarantee comes from. Neither
+    <code>Formatter</code> nor <code>FormatSpec</code> is in the prelude, so
+    the block below is the specification and not a listing &mdash; writing it
+    in a file gives <code>SC0200</code>, <em>cannot find
+    <code>Formatter</code> in this scope</em>. What a program can write today
+    is an <code>implements Display:</code> block with whatever method shape it
+    likes, because nothing checks a block against its interface.
+    <span class="cite wip">changing</span>
+  </p>
+
+<pre class="foreign">interface Display:
+    def display(self, into: mutable borrowed Formatter)
+
+interface Inspect:
+    def inspect(self, into: mutable borrowed Formatter)
+
+Formatter has:
+    def text(mutable self, value: borrowed String)    # pads, per the spec
+    def raw(mutable self, value: borrowed String)     # does not pad
+    def number(mutable self, value: F64)
+    def integer(mutable self, value: I64)
+    def spec(self) -&gt; FormatSpec</pre>
+
+  <p class="note">
+    <code>FormatSpec</code> is a plain record of nullable fields &mdash;
+    <code>fill</code>, <code>align</code>, <code>sign</code>,
+    <code>width</code>, <code>precision</code>, <code>code</code>,
+    <code>alternate</code>, <code>grouping</code> &mdash; for an implementation
+    that needs to branch on it. <code>DisplayNumber</code> is a marker with no
+    methods that grants a type the numeric codes; it says they are
+    <em>meaningful</em> for the type and cannot prove the implementation
+    honours them. The check is type-level and that is where it stops.
+  </p>
+
+  <p class="note">
     <strong>Why <code>!i</code> and not Rust's <code>{x:?}</code>.</strong>
     This is the one place Science must not copy Rust, and the reason is one
     character wide: <code>?</code> is already the presence test, so
     <code>f"{err?}"</code> prints <code>true</code> &mdash; the error is
     present &mdash; and <code>f"{err:?}"</code> would print the error itself.
     One colon apart, one a <code>Bool</code> and the other the value. That is
-    not a collision a language should ship.
+    not a collision a language should ship. <code>!i</code> also leaves
+    <code>{x!i:&gt;20}</code> well-formed, which <code>{x:?&gt;20}</code> never
+    was in Rust either.
   </p>
 
   <p class="note">
     Three things deliberately do <strong>not</strong> implement
     <code>Display</code>, and meeting them is how a reader learns the rule.
-    A <code>T?</code> does not, until it is narrowed. Arrays and maps do not;
-    they implement <code>Inspect</code>, because there is no one right way to
-    show a million rows to a person and there is exactly one right way to show
-    them to a debugger. Closures and function values implement neither.
+    A <code>T?</code> does not, until it is narrowed &mdash; printing a
+    possibly-null value must be a decision, because a silent <code>null</code>
+    or an empty cell in a published table is the failure this prevents. Arrays
+    and maps do not; they implement <code>Inspect</code>, because there is no
+    one right way to show a million rows to a person and there is exactly one
+    right way to show them to a debugger. Closures and function values
+    implement neither.
   </p>
 
 <pre class="err"><code><span class="e-code">error[SC0275]</span>: `Doc` cannot be interpolated: it does not implement `Display`
@@ -822,26 +1614,50 @@ print("{channel} is four words of text, not a hole")
   |
   = note: an interpolation renders its value through `Display`. A nullable does not implement it until it is narrowed, and a value that implements nothing needs an `implements Display:` block before it can be printed</code></pre>
 
+  <p class="note">
+    <strong><code>Inspect</code> without derivation is a dead letter</strong>
+    and the design says so: <code>{x!i}</code> will work on library types and
+    fail on the user's own, which is the worst possible distribution, because
+    it is the user's own types they are debugging. It is a second customer for
+    whatever eventually resolves the macro boundary. The other thing worth
+    knowing is that <strong>every <code>Inspect</code> rendering is part of the
+    spec</strong>: the UI tests compare rendered diagnostics byte for byte, and
+    diagnostics print values, so changing how a <code>Map</code> inspects is a
+    spec change.
+  </p>
+
   <h3><code>print</code> is unary, and there are four output functions</h3>
 
   <div class="scroller">
     <table>
-      <thead><tr><th>Function</th><th>Stream</th><th>Newline</th></tr></thead>
+      <thead><tr><th>Function</th><th>Stream</th><th>Newline</th><th>Buffering</th></tr></thead>
       <tbody>
-        <tr><td class="mono">print</td><td class="what">stdout</td><td class="what">yes</td></tr>
-        <tr><td class="mono">write</td><td class="what">stdout</td><td class="what">no</td></tr>
-        <tr><td class="mono">print_error</td><td class="what">stderr</td><td class="what">yes</td></tr>
-        <tr><td class="mono">write_error</td><td class="what">stderr</td><td class="what">no</td></tr>
-        <tr><td class="mono">panic</td><td class="what">stderr</td><td class="what">yes, then abort</td></tr>
+        <tr><td class="mono">print</td><td class="what">stdout</td><td class="what">yes</td><td class="what">line-buffered on a terminal, 64&nbsp;KiB otherwise</td></tr>
+        <tr><td class="mono">write</td><td class="what">stdout</td><td class="what">no</td><td class="what">the same, which is why <code>flush</code> exists</td></tr>
+        <tr><td class="mono">print_error</td><td class="what">stderr</td><td class="what">yes</td><td class="what">unbuffered</td></tr>
+        <tr><td class="mono">write_error</td><td class="what">stderr</td><td class="what">no</td><td class="what">unbuffered</td></tr>
+        <tr><td class="mono">panic</td><td class="what">stderr</td><td class="what">yes, then abort</td><td class="what">unbuffered</td></tr>
       </tbody>
     </table>
   </div>
 
   <p class="note">
+    stdout's policy is C's, and every tool in a pipeline assumes it. stderr is
+    unbuffered because a message that precedes a crash must survive the crash.
+    <strong>Ordering between the two streams is not guaranteed</strong> when
+    one is redirected and the other is not. The rule of thumb is results to
+    stdout, progress and warnings to stderr &mdash; a program whose stdout is a
+    CSV must be able to show progress without corrupting it, and that is the
+    only reason <code>print_error</code> exists at all.
+  </p>
+
+  <p class="note">
     <strong><code>print</code> takes one value. Not two, not none.</strong>
     A blank line is <code>print("")</code>. Three reasons in increasing weight: a variadic
     <code>print</code> is a second spelling of <code>f"{a} {b}"</code>; the
-    separator it would insert is a hidden rule somebody has to look up; and
+    separator it would insert is a hidden rule somebody has to look up &mdash;
+    <code>print("rows:", n)</code> gives one space and
+    <code>print("rows: ", n)</code> gives two; and
     &mdash; decisively &mdash; <strong>Science has no variadic functions and
     should not acquire them for one call</strong>. Formatting belongs in the
     string, where it is visible.
@@ -869,6 +1685,16 @@ print("{channel} is four words of text, not a hole")
   </p>
 
   <p class="note">
+    <strong>Of the three that resolve, one builds.</strong> <code>print</code>
+    is emitted. <code>write</code> and <code>panic</code> resolve, check, and
+    are refused by the back end with <code>SC0400</code>, <em>a call to
+    <code>write</code>, which this crate was given no MIR body for</em>. So
+    every listing on this page that produces output produces it through
+    <code>print</code>, and there is no program yet that can demonstrate a
+    panic message. <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
     <strong><code>print</code>'s <em>argument type</em> is declared
     nowhere.</strong> The design gives it <code>borrowed any Display</code>;
     writing that signature was measured and withdrawn, because it turns every
@@ -883,20 +1709,49 @@ print("{channel} is four words of text, not a hole")
   </p>
 
   <div class="callout">
-    <h3>One live miscompile, stated where a reader will meet it</h3>
+    <h3>The miscompile this section used to carry is fixed, and what replaced it is worse</h3>
     <p>
-      <code>print(s)</code> on a <code>String</code> binding is lowered as a
-      <em>move</em> into the call, and the call frees what it printed. Because
-      use-after-move is not checked (<a href="#state">move checking</a> is the
-      row), a program that prints the same binding twice compiles, links, runs,
-      and prints an empty line the second time. <code>print(f"{s}")</code> does
-      not have the problem, because an interpolation borrows.
+      Until recently <code>print(s)</code> on a <code>String</code> binding
+      lowered as a <em>move</em> into the call and the call freed what it
+      printed, so a program that printed the same binding twice compiled,
+      linked, ran, and printed an empty line the second time. Both halves of
+      that have been repaired: <code>print</code> borrows, and
+      <strong>use after move is reported</strong>. Printing a binding twice now
+      prints it twice, and moving a value twice is a diagnostic:
     </p>
+<pre class="err" style="margin-top:0.6rem"><code><span class="e-code">error[SC0301]</span>: use of a moved value
+ <span class="e-hi">--&gt;</span> twice.science:6:10
+  |
+5 | let a be consume(s)
+  |          ---------- `s` is moved here
+6 | let b be consume(s)
+  |          <span class="e-hi">^^^^^^^^^^</span> ...and moved again here, after the move
+  |
+  = note: every value has one owner, and assigning, passing or returning it transfers that owner (§6.1 rules 1 and 2), so the name is empty afterwards (rule 3)
+  = note: borrow at the earlier use instead of moving, or give the second use a value of its own; a type that is not `Copy` is never copied implicitly</code></pre>
     <p style="margin-top:0.6rem">
-      It is named here rather than in a changelog because it is the exact shape
-      of the failure this project is most afraid of: not a crash, not a link
-      error, but a program that runs and answers wrongly. Interpolate, or bind
-      a second value, until the move check lands.
+      <strong>What has taken its place is narrower and louder.</strong>
+      Interpolating a <code>T?</code> that flow narrowing has proved non-null
+      passes <code>check</code> and then emits an LLVM module that
+      <em>fails the backend's own verifier</em>. The narrowing is a fact about
+      the type checker's view of the place; the layout is not narrowed with it,
+      so the value still occupies its two-word nullable slot and is handed
+      whole to a runtime entry point that wants one <code>i64</code>.
+    </p>
+<pre class="err" style="margin-top:0.6rem"><code><span class="e-code">error[SC0402]</span>: the linker failed
+  = note: the command was: (the backend, before the linker)
+  = note: what follows is the linker's own output, verbatim:
+  = note: the module failed verification in `&lt;module&gt;`: Call parameter type does not match function signature!
+ %v11 = load [2 x i64], ptr %1, align 8
+ i64  call void @science_string_push_i64(ptr %v10, [2 x i64] %v11)</code></pre>
+    <p style="margin-top:0.6rem">
+      It is named here rather than in a changelog because it is the shape a
+      reader will meet: <code>if n?:</code> then <code>f"{n}"</code> is the
+      idiom the whole error model is built around, and it is the first thing
+      anybody writes. This failure is at least loud &mdash; the build stops and
+      dumps the module &mdash; where the one it replaced answered wrongly and
+      said nothing. Bind the narrowed value to a fresh name first, or
+      <code>return</code> it, until the layout follows the narrowing.
       <span class="cite wip">changing</span>
     </p>
   </div>
@@ -910,10 +1765,14 @@ print("{channel} is four words of text, not a hole")
     taste: <code>&chi;2</code> and not <code>&chi;&sup2;</code>, because a
     superscript two is a <em>number</em> rather than a letter, and neither are
     <code>&nabla;</code>, <code>&part;</code> or <code>&#8463;</code>, which
-    are symbols. Identifiers are normalised to NFC when they are lexed, and a
-    single identifier that mixes scripts is <code>SC0015</code>, a warning
-    &mdash; on mixing <em>within</em> one name, so <code>&sigma;</code> alone
-    and <code>&sigma;_max</code> are both fine.
+    are symbols. Identifiers are normalised to NFC when they are lexed &mdash;
+    one call in the lexer, and without it <code>&eacute;</code> as one scalar
+    and <code>&eacute;</code> as <code>e</code> plus a combining accent are two
+    different identifiers rendering identically. A single identifier that mixes
+    scripts is <code>SC0015</code>, a warning &mdash; on mixing
+    <em>within</em> one name, because <code>&Alpha;</code>, <code>&#1040;</code>
+    and <code>A</code> are three different characters that look the same, so
+    <code>&sigma;</code> alone and <code>&sigma;_max</code> are both fine.
   </p>
 
   <p class="note">
@@ -925,10 +1784,97 @@ print("{channel} is four words of text, not a hole")
     <code>&le;</code> to <code>&lt;=</code> <em>is</em> mechanically
     canonicalisable by a formatter, so the "permanent drift" argument that
     killed the word forms of the comparisons does not transfer here, and
-    pretending it does would be dishonest. What is left is an input problem
-    &mdash; a symbol nobody can type is a symbol nobody writes &mdash; and the
+    pretending it does would be dishonest. What is left is three things: an
+    input problem, since no standard keyboard produces <code>&le;</code>;
+    homoglyphs, which are worse &mdash; U+2212 MINUS SIGN is not <code>-</code>,
+    U+2215 DIVISION SLASH is not <code>/</code>, and every one of those arrives
+    by paste from a PDF; and the observation that <code>&sum;</code> is not an
+    operator at all but a binder with a bound variable, an index range and a
+    body, so what you would actually get is <code>&sum;(xs)</code>, a function
+    call wearing a costume, where <code>xs.sum()</code> already exists. The
     recommendation if it is ever revisited is editor-side rendering: the file
     contains <code>&lt;=</code> and the editor displays <code>&le;</code>.
+  </p>
+
+  <h3>Doc comments are <code>##</code>, and there is no docstring</h3>
+
+  <p class="note">
+    A documentation comment is a run of <code>##</code> lines immediately
+    preceding a declaration &mdash; a module, a function, a
+    <code>type</code>, a <code>choice</code>, an <code>interface</code>, a
+    <code>const</code>, a type alias, a field, a variant, an interface member
+    or an <code>implements</code> block. The first line, up to the first blank
+    <code>##</code>, is the summary; the content is Markdown; there are no
+    <code>@param</code> tags, because the parameter names and types are in the
+    signature and a tag that restates them is a second copy that goes stale.
+  </p>
+
+<pre data-science>## Spectral preprocessing.
+##
+## Everything here assumes the dark current has been subtracted.
+
+## A single detector reading.
+type Row:
+    ## Instrument identifier, as written in the run log.
+    station: String
+    ## Channel count. Always 768; this is checked on load.
+    channels: Int
+
+## What went wrong while reading a run.
+choice LoadError:
+    ## The file had a channel count other than 768.
+    WrongChannelCount(Int)
+    ## The file was unreadable or absent.
+    Unreadable(String)</pre>
+
+  <p class="note">
+    <strong>Why not <code>"""…"""</code>.</strong> Most things that need
+    documentation have no body &mdash; a field, a variant, a
+    <code>const</code>, an alias, a module &mdash; so a docstring form covers
+    functions and then needs a second form for everything else. It would
+    require adding a triple-quoted literal, with its own indentation rule to
+    argue about forever. And a docstring in the body is a value in Python and
+    would be a lie here: an expression statement with no effect that the
+    compiler silently treats as metadata. <code>##</code> also composes
+    correctly with <code>#</code> &mdash; a <code># TODO</code> beside a doc
+    comment stays an ordinary comment, a distinction a docstring form cannot
+    make at all. There is one sigil and no module-level second one, because
+    modules are files and position is unambiguous.
+  </p>
+
+  <p class="note">
+    <strong>What they cost: nothing at run time.</strong> The lexer keeps
+    <code>##</code> runs as trivia attached to the following token, the parser
+    attaches them to the node, and they survive into HIR &mdash; and
+    <em>that much must happen in F0</em>, because once the lexer discards them
+    every tool downstream is built assuming they are gone.
+    <code>sciencec</code> emits them into a metadata section of the object
+    file: a string table plus an index from fully-qualified name to offset,
+    static data, not reachable from any code path, strippable.
+  </p>
+
+  <p class="note">
+    A <code>##</code> run attached to nothing &mdash; at the end of a file, or
+    separated from the next declaration by a blank line &mdash; is specified as
+    <code>SC0176</code>, a warning with the fix <em>make it <code>#</code></em>.
+    <strong>It is not implemented</strong>: a stray <code>##</code> run checks
+    clean and silently documents nothing, which is precisely the silent failure
+    mode the diagnostic exists to prevent.
+    <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
+    <strong>Doc tests are specified and are F1.</strong> A fenced
+    <code>science</code> block inside a <code>##</code> run is compiled and
+    run; <code>science,no_run</code> is compiled only;
+    <code>science,fails</code> must fail and the tool checks the diagnostic
+    code; and a neighbouring <code>output</code> fence is compared to stdout
+    byte for byte, which makes a doc comment a test of the formatting too. The
+    reason it matters more here than elsewhere: Science has no training corpus,
+    so the material a model will learn this language from is its
+    documentation &mdash; and doc tests are what make it impossible for that
+    documentation to contain an example that does not compile. The same
+    argument is why this page extracts and checks its own listings.
   </p>
 </section>
 
@@ -971,17 +1917,164 @@ let r be Reading(counts: 4_900, channel: 1)   # named, and in any order
 print(f"{label(Json)} {r.channel} {width_of(Range(3, 11))}")
 # json 1 8</pre>
 
+  <h3>Every declaration form</h3>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Form</th><th>What it declares</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">type N:</td><td class="what">A record. Indented <code>name: Type</code> lines are its fields</td></tr>
+        <tr><td class="mono">type N of (T, U):</td><td class="what">A generic record</td></tr>
+        <tr><td class="mono">type N of (T, const K: Int):</td><td class="what">A record generic over a type and a compile-time integer</td></tr>
+        <tr><td class="mono">type N is T</td><td class="what">An alias. Not a new type &mdash; it unifies with <code>T</code></td></tr>
+        <tr><td class="mono">choice N:</td><td class="what">A closed sum. Variants are indented lines</td></tr>
+        <tr><td class="mono">&nbsp;&nbsp;&nbsp;&nbsp;Plain</td><td class="what">A variant with no payload</td></tr>
+        <tr><td class="mono">&nbsp;&nbsp;&nbsp;&nbsp;Exact(Int)</td><td class="what">A variant with a positional payload, matched by position</td></tr>
+        <tr><td class="mono">N has:</td><td class="what">Inherent methods and associated functions &mdash; see <a href="#interfaces">Interfaces</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <p class="note">
-    <strong>A <code>choice</code> is a closed set of alternatives, and closing
-    it is the point.</strong> A <code>match</code> over a <code>Format</code>
-    must handle every variant, so adding <code>Latex</code> to the declaration
-    breaks every place in the program that decided what to do with a format
-    &mdash; loudly, at compile time, with the missing patterns listed. That is
-    the opposite of a string constant or an integer flag, where adding a fourth
-    value breaks nothing and is discovered by a wrong answer. It is also what
-    lets a <a href="#tools">tool schema</a> turn a <code>choice</code> into a
-    JSON <code>enum</code> with nothing written by hand.
+    <strong>A record is constructed with named fields, always, and in any
+    order.</strong> <code>Reading(counts: 4_900, channel: 1)</code> above puts
+    them backwards and means the same thing. There is no positional record
+    constructor, so there is no question about what the second argument is, and
+    reordering a declaration's fields cannot silently change a call site. The
+    same syntax is <em>not</em> a way to call a function &mdash; named
+    arguments build a record and nothing else:
   </p>
+
+<pre class="err"><code><span class="e-code">error[SC0206]</span>: named arguments build a record, but `f` is a function
+ <span class="e-hi">--&gt;</span> call.science:4:10
+  |
+1 | def f(x: Int, y: Int) -&gt; Int:
+  |     - defined here
+...
+4 | let a be f(x: 1, y: 2)
+  |          <span class="e-hi">^</span> not a record type</code></pre>
+
+  <p class="note">
+    A <code>choice</code> variant's payload is positional and is matched by
+    position, which is the one place in the language where the order of a
+    declaration's parts is load-bearing. A variant is constructed by naming it
+    &mdash; bare when it has no payload, <code>Range(3, 11)</code> when it has
+    &mdash; and it may be written qualified, <code>Format.Json</code>, or bare,
+    <code>Json</code>, where the type is known.
+  </p>
+
+  <h3>A <code>choice</code> is closed, and closing it is the point</h3>
+
+  <p class="note">
+    A <code>match</code> over a <code>Format</code> must handle every variant,
+    so adding <code>Latex</code> to the declaration breaks every place in the
+    program that decided what to do with a format &mdash; loudly, at compile
+    time, with the missing patterns listed. That is the opposite of a string
+    constant or an integer flag, where adding a fourth value breaks nothing and
+    is discovered by a wrong answer. It is also what lets a
+    <a href="#tools">tool schema</a> turn a <code>choice</code> into a JSON
+    <code>enum</code> with nothing written by hand.
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0250]</span>: `Format` has values no arm of this `match` covers: `Markdown`, `Json`
+ <span class="e-hi">--&gt;</span> label.science:7:11
+  |
+7 |     match f:
+  |           <span class="e-hi">^</span> this is `Format`
+  |
+  = note: a `match` answers for every value or the program has no answer for the rest (§4.5); write an arm for `Markdown` — or a `_` arm, which covers everything the arms above leave</code></pre>
+
+  <p class="note">
+    The algorithm is Maranget's, which is what rustc uses, so the message
+    reports a concrete <em>witness</em> &mdash; the shape of a value no arm
+    covers &mdash; rather than the word "non-exhaustive". A nullable
+    participates as an ordinary constructor: matching <code>null</code> plus
+    the non-null case over a <code>Doc?</code> is exhaustive. A repeated
+    variant name in the declaration is caught first, by the resolver:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0201]</span>: the variant `Plain` is defined more than once
+ <span class="e-hi">--&gt;</span> format.science:3:5
+  |
+2 |     Plain
+  |     ----- first defined here
+3 |     Plain
+  |     <span class="e-hi">^^^^^</span> defined again here</code></pre>
+
+  <div class="callout">
+    <h3>A <code>choice</code> you mean as an error type: two rules decide whether it is guarded, and only one of them is about the type</h3>
+    <p>
+      <code>SC0140</code> &mdash; the diagnostic that makes an untested error
+      binding a compile error, and the whole reason this language can use a
+      returned <code>E?</code> where Go uses a returned <code>error</code>
+      &mdash; was specified as marking <em>every binding whose type is an
+      <code>E?</code> where <code>E</code> implements <code>Error</code></em>.
+      Read literally, that leaves the guard off exactly the program a beginner
+      writes: a bare <code>choice</code> with no <code>implements</code> line,
+      returned as the second half of a pair. It is not hypothetical &mdash;
+      <code>examples/00_kitchen_sink.science</code> declares three
+      <code>choice</code> types meant as errors and writes
+      <code>implements Error</code> for one of them.
+    </p>
+    <p style="margin-top:0.6rem">
+      So the implementation carries <strong>a type test and a position
+      test</strong>, and either one is enough. The type test is the specified
+      one, discharged against written implementations: <code>any Error</code>,
+      and any type the crate declares <code>implements Error:</code>. The
+      position test is the second slot of a fallible pair &mdash; a binding
+      that came from a <code>-&gt; (T, E?)</code> return &mdash; and it fires
+      whatever <code>E</code> is. Both programs below are reported.
+    </p>
+<pre data-science style="margin-top:0.6rem">choice LoadError:
+    NotFound(String)
+
+# No `implements Error` line, and the position test catches it anyway.
+def load(path: borrowed String) -&gt; (Int, LoadError?):
+    (0, LoadError.NotFound("x"))
+
+def read() -&gt; Int:
+    let value, err be load("a.toml")
+    if err?:
+        return 0
+    value</pre>
+<pre class="err" style="margin-top:0.6rem"><code><span class="e-code">error[SC0140]</span>: `err` is never checked for an error
+ <span class="e-hi">--&gt;</span> load.science:8:16
+  |
+8 |     let value, err be load("a.toml")
+  |                <span class="e-hi">^^^</span> bound here and never tested
+  |
+  = note: test it with `if err?:`, pass it on, or return it &mdash; or rename it to `_err` to say the failure is deliberately ignored</code></pre>
+    <p style="margin-top:0.6rem">
+      <strong>What neither test can see, it does not report</strong>, and the
+      gap is one shape wide: an error type reached through a <em>type
+      parameter's bound</em> &mdash; <code>where E: Error</code>, with the pair
+      arriving as a parameter rather than from a call &mdash; is not a
+      candidate for either test, because the implementation table answers from
+      written implementations only. That is the safe direction for a diagnostic
+      whose false positives would make it hated, and it is the same direction
+      its four exclusions are written in: a binding that is
+      <em>returned</em> passes the obligation to the caller, one
+      <em>passed</em> to a function taking <code>E?</code> does the same, one
+      whose value is statically <code>null</code> has nothing to test, and one
+      in a function that cannot return is unreachable. Those four came from
+      reading the corpus rather than from running the analysis over it, and the
+      design records them as a guess.
+    </p>
+    <p style="margin-top:0.6rem">
+      A binding named with a leading underscore is excluded too, which is how
+      you say <em>deliberately ignored</em>: <code>let text, _err be
+      read_file(path)</code> needs no grammar and is greppable, because "show
+      me every ignored error" is a question reviewers actually ask. The cost is
+      that <code>_</code> as a prefix acquires a meaning it did not have.
+      <strong>Write the <code>implements Error</code> block when you declare
+      the <code>choice</code> regardless</strong> &mdash; it is one method,
+      <code>message</code>, with <code>cause</code> defaulted &mdash; because
+      the type test is the one that follows the value out of the pair and into
+      the rest of the program.
+    </p>
+  </div>
+
+  <h3>Recursion, <code>Box</code>, and the check that is missing</h3>
 
   <p class="note">
     <code>Box of T</code> is a heap indirection, and it is why a
@@ -990,6 +2083,28 @@ print(f"{label(Json)} {r.channel} {width_of(Range(3, 11))}")
     inserting one, because where the indirection sits is a performance decision
     in a language whose users care about memory layout.
   </p>
+
+<pre data-science>choice Tree:
+    Leaf(Int)
+    Node(Box of Tree, Box of Tree)</pre>
+
+  <p class="note">
+    <strong>Nothing enforces it.</strong> A <code>choice</code> whose variant
+    holds itself directly, and a <code>type</code> whose field is its own
+    declaring type, both <code>check</code> clean today &mdash; there is no
+    occurs check over the declaration graph and no infinite-size diagnostic. It
+    is a layout error the back end would have to meet, and it does not, because
+    nothing that reaches the back end has ever had one. Write the
+    <code>Box</code>; the compiler is not going to remind you.
+    <span class="cite wip">changing</span>
+  </p>
+
+<pre data-science>choice Tree:                    # no `Box`, and this checks clean
+    Leaf(Int)
+    Node(Tree, Tree)
+
+type Node:                      # so does this
+    next: Node</pre>
 
   <h3>Generic arguments, and where the parentheses go</h3>
 
@@ -1016,8 +2131,15 @@ def build() -&gt; Array of Doc:
     <code>Map</code>'s second argument or the function's second parameter, and
     no amount of lookahead decides which, because both readings are
     well-formed. So several arguments take parentheses, and nesting follows the
-    same rule for the same reason.
+    same rule for the same reason. What you get is the parser running out of
+    parameter list:
   </p>
+
+<pre class="err"><code><span class="e-code">error[SC0100]</span>: expected `:`, found `)`
+ <span class="e-hi">--&gt;</span> index.science:1:34
+  |
+1 | def two(index: Map of String, Int) -&gt; Int:
+  |                                  <span class="e-hi">^</span> expected `:`, found `)`</code></pre>
 
   <p class="note">
     <code>Array of Doc.new()</code> is ambiguous in the same family: does
@@ -1037,6 +2159,17 @@ def build() -&gt; Array of Doc:
   |
   = note: Science reads it as `(Array of Doc).new()`, the whole generic type
   = <span class="e-help">help</span>: write the parentheses to say so: `(Array of Doc)`</code></pre>
+
+  <p class="note">
+    <strong>Generic <em>arity</em> is not checked.</strong>
+    <code>Pair of Int</code> where <code>Pair</code> takes two parameters, and
+    <code>Doc of Int</code> where <code>Doc</code> takes none, both pass
+    <code>check</code> in silence. The resolver admits a const parameter in a
+    type position because there is no way to tell the two apart without the
+    declared arity of the thing being applied, and the arity check that would
+    close the gap has not been written.
+    <span class="cite wip">changing</span>
+  </p>
 
   <h3>Const generics, and the arithmetic they admit</h3>
 
@@ -1059,11 +2192,21 @@ type Padded of (T, const N: Int):
   </p>
 
   <p class="note">
-    The arithmetic is <strong>linear by grammar, not by a check run
-    afterwards</strong>. <code>+</code> and binary <code>-</code> take two
-    const expressions; <code>*</code> requires an integer <em>literal</em> on
-    one side. So <code>N * M</code> for two parameters is not a program the
-    parser can build a node for, and it is reported there:
+    The grammar is five operators and no more: <code>+</code>, binary
+    <code>-</code>, unary <code>-</code>, <code>*</code> and <code>/</code>,
+    with <code>*</code> and <code>/</code> each requiring an integer
+    <em>literal</em> on one side. That is the complete list, forever, and every
+    addition to it is an addition to the normaliser, the equality procedure,
+    the diagnostic renderer and the monomorphisation key. There is no
+    <code>%</code>, no <code>**</code>, no <code>max</code>, no
+    <code>min</code>, no comparison, no conditional, no function call, no
+    <code>const fn</code>, no recursion and no escape hatch.
+  </p>
+
+  <p class="note">
+    So the arithmetic is <strong>linear by grammar, not by a check run
+    afterwards</strong>: <code>N * M</code> for two parameters is not a program
+    the parser can build a node for, and it is reported there.
   </p>
 
 <pre class="err"><code><span class="e-code">error[SC0157]</span>: a const expression multiplies only by a literal
@@ -1092,6 +2235,59 @@ type Padded of (T, const N: Int):
   = note: `const-expression-arithmetic.md` &sect;4 specifies the quotient atom; F0 is the quotient-free fragment, and multiplying by a literal is what F0 offers instead</code></pre>
 
   <p class="note">
+    <strong>A const parameter's annotation is a <em>kind</em>, not a
+    type.</strong> Exactly two are admissible: <code>Int</code>, which is F0's,
+    and <code>Shape</code>, a type-level list of <code>Int</code> expressions
+    whose length is always statically known, which arrives with tensors.
+    <code>Bool</code> is refused because a boolean that changes the rank of a
+    return type is a type error waiting to be specified, and <code>F64</code>
+    because float equality is not equality &mdash; a normal form over floats is
+    a normal form over a non-field with a non-value in it. The parser accepts
+    anything in that position and lets the checker say so with a better
+    message, which is the house pattern:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0220]</span>: a const generic parameter's kind must be `Int` or `Shape`
+ <span class="e-hi">--&gt;</span> flags.science:1:30
+  |
+1 | type Flagged of (T, const F: Bool):
+  |                              <span class="e-hi">^^^^</span> `Bool` is not a const-parameter kind
+  |
+  = note: `const N: K` annotates `N` with a kind, not with a type: `Int` is an integer known at compile time, and `Shape` is a type-level list of them</code></pre>
+
+  <h3>The normal form is a thing you can see</h3>
+
+  <p class="note">
+    A const expression is normalised to <code>k + &Sigma; c&#7522;&middot;a&#7522;</code>:
+    a constant, then coefficient-and-atom terms with the atoms in a total order
+    stable across compilations. Equality is structural equality of that form,
+    so <code>A + B</code> and <code>B + A</code> are the <em>same type</em> and
+    a function may be declared with one and return the other. It is one linear
+    merge over a sorted term list, with no fixed point and no possibility of
+    non-termination, because no production in the grammar grows an expression.
+  </p>
+
+<pre data-science>type Buf of (const N: Int):
+    x: Int
+
+def same of (const A: Int, const B: Int)(p: Buf of (A + B)) -&gt; Buf of (B + A):
+    p</pre>
+
+  <p class="note">
+    And when two forms are genuinely different, <strong>the diagnostic prints
+    the normal form rather than the source</strong>, which is the part worth
+    seeing: <code>A + A</code> comes back as <code>2*A</code>, so a reader who
+    wrote <code>k + 1</code> on one side and <code>1 + k</code> on the other
+    can tell at a glance that the ordering is not the problem.
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0525]</span>: expected `Buf of 2*A`, found `Buf of A + B`
+ <span class="e-hi">--&gt;</span> buf.science:5:5
+  |
+5 |     p
+  |     <span class="e-hi">^</span> this is `Buf of A + B`</code></pre>
+
+  <p class="note">
     <strong>Why refuse the general case at all?</strong> Because type equality
     on <code>Grid of (T, ROWS, COLS)</code> <em>is</em> const equality, and
     four separate things have to agree about it &mdash; type equality, shape
@@ -1100,22 +2296,39 @@ type Padded of (T, const N: Int):
     two extents the same?" is four answers, and the fourth one is a linker
     emitting two symbols for one function. A linear form normalises to a
     canonical <code>k + &Sigma; c&#7522;&middot;a&#7522;</code>; structural
-    equality on that form is sound <em>and</em> complete; and the normaliser
-    never receives a non-linear input because the grammar admits none.
+    equality on that form is sound <em>and</em> complete, because the forms are
+    the free &#8484;-module on the parameters and evaluating at the basis
+    vectors recovers the coefficients; and the normaliser never receives a
+    non-linear input because the grammar admits none.
   </p>
 
   <p class="note">
     <strong>The cost is real and the design admits it.</strong> Rust's
     <code>generic_const_exprs</code> has been unstable since 2020, and it did
     not stall on normalising <code>N + 1</code> against <code>1 + N</code>
-    &mdash; that part was understood early. It stalled on proving a const
-    expression well-formed <em>before</em> the parameter is known, which needs
-    a predicate language and an entailment checker. Science refuses that
-    feature and pays for the refusal in post-monomorphisation errors: a library
-    can ship a signature that breaks for your shape, and you meet the error
-    inside code you did not write. The mitigation is that the diagnostic must
-    name the instantiation, the parameter, the value and the call that produced
-    it. If that chain is not rendered well, the decision is indefensible.
+    &mdash; that part was understood early. It stalled on three things: its
+    expression language is <code>const fn</code>, so equality of two const
+    expressions is equality of two programs and no normal form can exist; it
+    must prove a const expression well-formed <em>before</em> the parameter is
+    known, which needs a predicate language and an entailment checker; and it
+    may not report at instantiation, because separate compilation and
+    <code>dyn</code> rest on the generic having been checked in the abstract.
+    Science's answer to the first is the closed grammar above; to the second,
+    refusal; and to the third, that it monomorphises everything anyway.
+  </p>
+
+  <p class="note">
+    So Science pays for the refusal in <strong>post-monomorphisation
+    errors</strong>: a library can ship a signature that breaks for your shape,
+    and you meet the error inside code you did not write. The obligations are
+    two rather than an open-ended set &mdash; a negative extent, and the
+    solvability of const-argument inference &mdash; and the mitigation is that
+    the diagnostic must name the instantiation, the parameter, the value and
+    the call that produced it. If that chain is not rendered well, the decision
+    is indefensible. The retreat is safe in one direction: const predicates in
+    a <code>where</code> clause can be added later and every program that
+    compiles today keeps compiling, because a predicate only rejects
+    instantiations that would have failed anyway.
   </p>
 
   <p class="note">
@@ -1125,7 +2338,70 @@ type Padded of (T, const N: Int):
     original claim &mdash; that the order is stable across runs without a hash
     &mdash; is false, and it is falsified by its own second clause:
     <code>sciencec check a.science b.science</code> and the same two files in
-    the other order number their declarations differently.
+    the other order number their declarations differently. Within one
+    compilation that changed no answer, because equality sorts both sides with
+    the same function; what it changed was the <em>serialised</em> key, so the
+    same program could produce different symbol names depending on how it was
+    invoked &mdash; a cache miss rather than an error, which is the worst way
+    to find out. The order comes from a canonical path and an index now, and
+    the cost of the fix is that renaming a const parameter can reorder a normal
+    form where renumbering a file no longer can.
+  </p>
+
+  <h3><code>T?</code>, and the three things it is not</h3>
+
+  <p class="note">
+    <code>T?</code> is a distinct type, not a union and not a subtype of
+    <code>T</code>. <code>T</code> coerces into <code>T?</code> implicitly;
+    <code>T?</code> never coerces to <code>T</code>. There is no
+    <code>Option</code>, so there is nothing to construct &mdash; the present
+    case is the value itself and the absent case is the literal
+    <code>null</code> &mdash; and equally there is no <code>map</code>, no
+    <code>unwrap_or</code> and no <code>is_some</code>, because there is no
+    type left for those methods to hang off. The whole interface is the
+    presence test <code>?</code> and the narrowing it performs.
+  </p>
+
+  <p class="note">
+    <strong><code>T??</code> is an error rather than a flattening.</strong> The
+    parser builds two nullable nodes and the type checker collapses them,
+    because a presence test on a presence test is never what anyone meant. The
+    diagnostic is one of the better ones in the compiler and it explains the
+    model in its note:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0520]</span>: a type is nullable once
+ <span class="e-hi">--&gt;</span> opt.science:1:14
+  |
+1 | def f(x: Int??) -&gt; Int:
+  |          ---- already nullable here
+  |              <span class="e-hi">^</span> this `?` adds nothing the first one did not
+  |
+  = note: `T?` is a distinct type holding a `T` or `null`, not a union, so there is no second absence for a second `?` to describe
+  = <span class="e-help">help</span>: the type is `T?`: delete `?`</code></pre>
+
+  <p class="note">
+    <strong>What it costs in memory.</strong> A pointer-like <code>T</code>
+    uses the null niche, so <code>(borrowed T)?</code> is one word. A
+    <code>T</code> with no niche gets a discriminant byte, which is why an
+    <code>Int?</code> occupies two words. An <code>(any I)?</code> is a
+    nullable fat pointer with the niche in the <em>data</em> pointer, so it is
+    two words and not three; the vtable pointer of a null interface object is
+    undefined and never read. The two-word <code>Int?</code> is also the direct
+    cause of the interpolation failure recorded in
+    <a href="#strings">Strings and formatting</a>: narrowing is a fact about
+    the checker's view of a place and the layout is not narrowed with it.
+  </p>
+
+  <p class="note">
+    Narrowing itself belongs to <a href="#errors">Errors</a>, where the idiom
+    lives, but one rule belongs here because it is a property of the type:
+    <strong>narrowing is a fact about a <em>place</em></strong> &mdash; a local,
+    or a field projection from a narrowed place &mdash; and it is invalidated
+    by any write to that place or to a prefix of it. <code>config.port?</code>
+    narrows <code>config.port</code> and not <code>config</code>; writing to
+    <code>config</code> invalidates it and writing to <code>config.other</code>
+    does not.
   </p>
 
   <h3>Closures have a type, and it has no keyword</h3>
@@ -1153,7 +2429,18 @@ def twice(f: (Int) -&gt; Int, x: Int) -&gt; Int where Int: Eq:
     mechanical carry-over <code>def(A) -&gt; B</code> was left naming nothing
     &mdash; a declaration that lost its name. The bare arrow sidesteps the
     problem by having no word to be the wrong part of speech, and it puts no
-    new word on the reserved list.
+    new word on the reserved list. <code>fn(A) -&gt; B</code> lost the audience
+    test one to seven, and the one is PHP.
+  </p>
+
+  <p class="note">
+    It parses on one token of lookahead and no backtracking:
+    <code>parse_paren_type</code> reads <code>()</code>, <code>(T)</code> or
+    <code>(A, B)</code> to completion, and then one peek decides &mdash;
+    <code>-&gt;</code> means that was a parameter list, anything else means it
+    was a tuple. That is why a fallible return type <code>-&gt; (Config,
+    Error?)</code> stays a tuple: what follows it is <code>:</code> or
+    <code>where</code>, never an arrow.
   </p>
 
   <p class="note">
@@ -1164,10 +2451,26 @@ def twice(f: (Int) -&gt; Int, x: Int) -&gt; Int where Int: Eq:
     <code>-&gt;</code></strong>, so <code>(A) -&gt; B?</code> is a closure
     returning a nullable and a nullable closure is <code>((A) -&gt; B)?</code>.
     And <strong>as a generic argument it needs its own parentheses</strong>
-    &mdash; <code>Array of ((Int) -&gt; Bool)</code>, never <code>Array of
-    (Int) -&gt; Bool</code> &mdash; for exactly the reason <code>Map of
-    (String, Int)</code> does.
+    &mdash; <code>Array of ((Int) -&gt; Bool)</code> &mdash; for exactly the
+    reason <code>Map of (String, Int)</code> does.
   </p>
+
+  <p class="note">
+    <strong>That last one does not fail; it means something else.</strong>
+    <code>Array of (Int) -&gt; Bool</code> parses cleanly, because the peek
+    after <code>(Int)</code> finds an arrow and builds a closure type out of
+    everything to its left. The field's type is
+    <code>(Array of Int) -&gt; Bool</code>: a closure that takes an array of
+    integers. No diagnostic, no warning, and a type error somewhere downstream
+    that names a type nobody wrote. It is the one silent misreading in the type
+    grammar, and the only defence is the parentheses.
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0525]</span>: expected `Int`, found `(Array of Int) -&gt; Bool`
+ <span class="e-hi">--&gt;</span> pipeline.science:5:5
+  |
+5 |     p.stages
+  |     <span class="e-hi">^^^^^^^^</span> this is `(Array of Int) -&gt; Bool</code></pre>
 
   <p class="note">
     <strong>The one thing that cannot be spelled.</strong> <code>(T)</code>
@@ -1180,6 +2483,35 @@ def twice(f: (Int) -&gt; Int, x: Int) -&gt; Int where Int: Eq:
     argument. If that stops being true, the answer is a named record and not a
     third paren.
   </p>
+
+  <div class="callout">
+    <h3>If you are arriving from Rust: the shapes are the same and three habits are not</h3>
+    <p>
+      <code>type</code> is <code>struct</code>, <code>choice</code> is
+      <code>enum</code>, <code>of</code> is the angle brackets, and
+      <code>Box of T</code> is <code>Box&lt;T&gt;</code> doing the same job for
+      the same reason. What differs:
+      <strong>there is no tuple struct and no positional constructor</strong>
+      &mdash; a record's fields are always named at construction, and a
+      <code>choice</code> variant's payload is the only positional thing in the
+      language;
+      <strong><code>T?</code> is not <code>Option&lt;T&gt;</code></strong>,
+      because it has no methods, no constructor and no
+      <code>Some</code>/<code>None</code> to match against &mdash; you test it
+      with <code>?</code> and use the narrowed place;
+      and <strong>an alias is written <code>type N is T</code></strong>, with
+      <code>is</code> rather than <code>=</code>, because the language has no
+      <code>=</code> token at all.
+    </p>
+    <p style="margin-top:0.6rem">
+      Coming from Python: a <code>choice</code> is not an <code>Enum</code>
+      class &mdash; its variants carry typed payloads and a <code>match</code>
+      over it must be exhaustive, which is the whole reason to prefer it to a
+      string constant. And a <code>type</code> is not a dataclass with
+      defaults: there are no default field values, so every field is written at
+      every construction.
+    </p>
+  </div>
 </section>
 
 <!-- ==================================================================== -->
@@ -1188,8 +2520,8 @@ def twice(f: (Int) -&gt; Int, x: Int) -&gt; Int where Int: Eq:
   <p class="lede">
     <code>[1, 2, 3]</code> is a literal and <code>a[i]</code> is an index, with
     the bracket's role decided by parser position and nothing else. Indices are
-    zero-based. <code>m[i, j]</code> is a single index of arity two, and not
-    <code>m[i][j]</code>.
+    zero-based. <code>m[i, j]</code> is specified as a single index of arity
+    two, and not <code>m[i][j]</code> &mdash; and it does not parse yet.
   </p>
 
 <pre data-science>let primes be [2, 3, 5, 7, 11]
@@ -1209,13 +2541,120 @@ print(f"{primes.length()}")</pre>
     an output. <span class="cite wip">changing</span>
   </p>
 
+  <div class="callout">
+    <h3>An array literal is checked element by element, and the empty one needs an expected type</h3>
+    <p>
+      The literal is checked <em>into</em> the type it is written against, so a
+      mismatch is reported at the element rather than at the binding &mdash;
+      one diagnostic per offending element, each pointing at the literal that
+      is wrong and naming the type the annotation asked for. That is the
+      bidirectional half of checking doing what it is for: the expected type is
+      pushed into the literal, so the message can name an annotation a human
+      typed.
+    </p>
+<pre class="err" style="margin-top:0.6rem"><code><span class="e-code">error[SC0525]</span>: expected `String`, found `an integer literal`
+ <span class="e-hi">--&gt;</span> counts.science:1:33
+  |
+1 | let counts: Array of String be [1, 2, 3]
+  |                                 <span class="e-hi">^</span> this is `an integer literal`
+
+<span class="e-code">error[SC0525]</span>: expected `String`, found `an integer literal`
+ <span class="e-hi">--&gt;</span> counts.science:1:36
+  |
+1 | let counts: Array of String be [1, 2, 3]
+  |                                    <span class="e-hi">^</span> this is `an integer literal`</code></pre>
+    <p style="margin-top:0.6rem">
+      With no annotation, the elements unify and the binding gets the answer
+      &mdash; <code>[1, 2, 3]</code> is an <code>Array of I64</code>, because
+      an unsuffixed integer literal defaults to <code>Int</code> when nothing
+      constrains it. <strong>This is recent, and it matters more than the
+      missing check it replaced.</strong> An unchecked literal used to leave
+      its binding at the <em>error type</em>, which unifies with everything, so
+      the absence of one check silently disabled every check downstream of the
+      binding. A single unannotated array turned the rest of a function into
+      unverified text.
+    </p>
+    <p style="margin-top:0.6rem">
+      The two rules that go with it are enforced now as well, and both are
+      worth meeting once. Elements must unify, <strong>and there is no implicit
+      numeric conversion</strong>, so a literal mixing an integer and a float
+      is refused with both spans:
+    </p>
+<pre class="err" style="margin-top:0.6rem"><code><span class="e-code">error[SC0281]</span>: the elements of this array literal do not have one type
+ <span class="e-hi">--&gt;</span> mixed.science:1:15
+  |
+1 | let xs be [1, 2.0]
+  |            - this is an integer literal
+  |               <span class="e-hi">^^^</span> this is a floating-point literal
+  |
+  = note: an array literal is an `Array of T` where `T` is the unification of its elements (&sect;3.1), and there is no implicit numeric conversion (&sect;5.1): write the suffix, the `as`, or the literal you meant</code></pre>
+    <p style="margin-top:0.6rem">
+      And <code>[]</code> takes its element type from the expected type at its
+      position &mdash; an annotation, or a parameter type &mdash; and has none
+      of its own. That is a bounded amount of bidirectional checking, an
+      expected type pushed into one expression form, and it is worth naming as
+      a cost because inference elsewhere is unification. The alternative was
+      requiring <code>(Array of F64).new()</code> everywhere, which is
+      pedantry; so the empty literal exists and says so when it is homeless:
+    </p>
+<pre class="err" style="margin-top:0.6rem"><code><span class="e-code">error[SC0282]</span>: this empty array literal has no element type
+ <span class="e-hi">--&gt;</span> empty.science:1:11
+  |
+1 | let xs be []
+  |           <span class="e-hi">^^</span> nothing here says what `[]` holds
+  |
+  = note: an empty literal takes its element type from the expected type at its position (&sect;3.3), and there is none here: annotate the binding &mdash; `let xs: Array of F64 be []`</code></pre>
+<pre data-science style="margin-top:0.6rem">let xs: Array of F64 be []          # the annotation supplies the element type
+let ys be [1, 2, 3]                 # Array of I64, by defaulting
+let zs: Array of F32 be [1.0f32, 2.0f32]
+
+print(f"{ys[0]}")</pre>
+  </div>
+
+  <h3>The bracket, and the rule that decides which one it is</h3>
+
   <p class="note">
     <strong><code>[</code> in prefix position opens a literal;
-    <code>[</code> in postfix position is an index.</strong> Whitespace is not
-    load-bearing, so <code>a [1]</code> is an index exactly as <code>a[1]</code>
-    is. A postfix bracket binds as tightly as a call and a field access and
-    associates left, so <code>a[i].field[j]</code> groups as
-    <code>((a[i]).field)[j]</code>.
+    <code>[</code> in postfix position is an index.</strong> In a Pratt parser
+    this is not so much a rule as a consequence &mdash; it is the null
+    denotation against the left denotation, exactly as <code>(</code> already
+    means grouping in one position and a call in the other. No lookahead, no
+    backtracking, no type information.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Expression</th><th><code>[</code> follows</th><th>Position</th><th>Reading</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">a[1]</td><td class="what"><code>a</code>, a complete primary</td><td class="what">postfix</td><td class="what">index</td></tr>
+        <tr><td class="mono">f([1, 2])</td><td class="mono">(</td><td class="what">prefix</td><td class="what">literal</td></tr>
+        <tr><td class="mono">[[1, 0], [0, 1]]</td><td class="what">nothing, then <code>,</code></td><td class="what">prefix</td><td class="what">literal both times</td></tr>
+        <tr><td class="mono">[1, 2][0]</td><td class="mono">]</td><td class="what">postfix</td><td class="what">literal, then index</td></tr>
+        <tr><td class="mono">a[1..5][0]</td><td class="mono">]</td><td class="what">postfix</td><td class="what">slice, then index</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <strong>Whitespace is not load-bearing</strong>, so <code>a [1]</code> is
+    an index exactly as <code>a[1]</code> is &mdash; forced by consistency with
+    the decision not to make the space in <code>Array of Doc .new()</code>
+    significant. A postfix bracket binds as tightly as a call and a field
+    access and associates left, so <code>a[i].field[j]</code> groups as
+    <code>((a[i]).field)[j]</code>. A <code>[</code> at the start of a line
+    cannot attach to the previous line's expression, because outside brackets
+    only a leading <code>.</code> or <code>where</code> continues a line; and
+    inside brackets newlines are ignored, so the only reading available is the
+    sensible one. JavaScript's equivalent hazard comes from automatic semicolon
+    insertion, which Science does not have.
+  </p>
+
+  <p class="note">
+    The earlier design spelled generic arguments <code>Array[Doc]</code>, which
+    would have made <code>Name[</code> a choice between instantiation and index
+    &mdash; a resolution question inside the parser, which is where languages
+    with this problem end up needing a turbofish. <code>of</code> took that job
+    and the bracket was freed for this one.
   </p>
 
   <p class="note">
@@ -1225,25 +2664,51 @@ print(f"{primes.length()}")</pre>
     index operation of arity two, which is what a tensor or a matrix wants, and
     the comma inside the brackets is grammar rather than a tuple constructor:
     <code>a[t]</code> where <code>t</code> is a pair does not index a rank-2
-    thing.
+    thing. Aliasing the two was considered and refused &mdash; on a tensor,
+    <code>m[i][j]</code> would have to synthesise a row view for every element
+    access in an inner loop, and the reader could not see which they wrote.
   </p>
+
+  <p class="note">
+    <strong>The arity-two form is not in the grammar today.</strong> An index
+    bracket holds exactly one index position, and a comma inside one is a parse
+    error. The design asks that the parser and AST carry index arity from the
+    first commit so that F1 adds a type rule rather than a syntax revision;
+    that has not happened, so the revision is still owed.
+    <span class="cite wip">changing</span>
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0100]</span>: expected `]`, found `,`
+ <span class="e-hi">--&gt;</span> matrix.science:2:9
+  |
+2 |     xs[1, 2]
+  |         <span class="e-hi">^</span> expected `]`, found `,`</code></pre>
 
   <p class="note">
     <strong>A literal is always an <code>Array</code>.</strong> Its type is
     <code>Array of T</code> for the unification of its element types, and it is
-    never inference-directed into some other collection. A matrix is a nested
-    literal handed to <code>Tensor.from</code>, which checks the shape from the
-    literal's syntactic shape &mdash; so there is no matrix literal form and no
-    second bracket grammar to learn.
+    never inference-directed into some other collection &mdash; a literal whose
+    type depends on where you put it is a literal you cannot read locally.
+    Other collections go through <code>From</code> over a chain:
+    <code>Set.from(["a", "b"].iterate_consuming())</code>. That is more to type
+    than a brace literal, and the cost is accepted: one literal form, one type,
+    no set-versus-dict brace war. A matrix is a nested literal handed to
+    <code>Tensor.from</code>, which checks the shape from the literal's
+    syntactic shape &mdash; so there is no matrix literal form and no second
+    bracket grammar to learn.
   </p>
 
   <p class="note">
-    <strong>Two rules in that paragraph are unenforced today.</strong>
-    <code>[1, 2.0]</code> should be <code>SC0281</code>, a refusal to unify an
-    integer with a float, and it is accepted. <code>[]</code> with no expected
-    type should be <code>SC0282</code>, and it is accepted with its element
-    type left open. Both are checks the type checker owes and does not have.
-    <span class="cite wip">changing</span>
+    <strong>A trailing comma needs no new rule</strong>, because one is already
+    allowed in every bracketed and parenthesised list and an array literal is a
+    bracketed list.
+  </p>
+
+  <p class="note">
+    Both of the rules in that paragraph are enforced: <code>[1, 2.0]</code> is
+    <code>SC0281</code> and <code>[]</code> with no expected type is
+    <code>SC0282</code>. The callout above has both diagnostics and the reason
+    the first of them was worth more than it looks.
   </p>
 
   <h3>Bounds, and the two ways of asking</h3>
@@ -1252,14 +2717,35 @@ print(f"{primes.length()}")</pre>
     Every <code>a[i]</code> raises an obligation &mdash;
     <code>0 &le; i</code> and <code>i &lt; extent(a)</code> &mdash; which the
     compiler tries to discharge from a <strong>closed list of four rules,
-    deliberately not a solver</strong>: a constant index against a known
-    extent; an index that is the loop variable of <code>for i in
-    0..a.length():</code> over an array nothing resizes; an index narrowed by
-    an enclosing <code>if i &lt; a.length():</code>; and, in F1, shape equality.
-    Discharged means the compiled code contains <em>no check</em> and the
-    expression cannot fail. Undischarged means a runtime check that panics
-    &mdash; and a diagnostic, <code>SC0286</code>, saying so, a warning by
-    default and an error under a verified profile.
+    deliberately not a solver</strong>. Discharged means the compiled code
+    contains <em>no check</em> and the expression cannot fail. Undischarged
+    means a runtime check that panics &mdash; and a diagnostic,
+    <code>SC0286</code>, saying so, a warning by default and an error under a
+    verified profile.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Rule</th><th>Discharges</th><th>Phase</th></tr></thead>
+      <tbody>
+        <tr><td class="what">Constant</td><td class="mono">a[3]</td><td class="what">F1 &mdash; needs a statically known extent</td></tr>
+        <tr><td class="what">Loop range</td><td class="mono">a[i] in for i in 0..a.length():</td><td class="what">F0, over an array nothing resizes</td></tr>
+        <tr><td class="what">Narrowed</td><td class="mono">a[i] after if i &lt; a.length():</td><td class="what">F0</td></tr>
+        <tr><td class="what">Shape equality</td><td class="mono">left[i] over right's axis</td><td class="what">F1 &mdash; needs the shape unifier</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    Everything else is undischarged, and the named non-examples are
+    <code>a[compute(x)]</code>, <strong><code>a[i - 1]</code></strong>, and
+    <code>a[i]</code> where <code>i</code> came off a CSV. Rust and C++ make
+    the same choice <em>silently</em>: you cannot tell by reading
+    <code>a[i]</code> whether it compiled to a load or to a load with a branch,
+    and you certainly cannot tell whether it can abort a six-hour run at hour
+    five. The whole difference here is the diagnostic, and its message quality
+    is the feature rather than a polish item &mdash; a message that only said
+    "bounds check inserted" would be turned off within a week.
   </p>
 
   <p class="note">
@@ -1267,8 +2753,28 @@ print(f"{primes.length()}")</pre>
     the honest half of the decision: making <code>a[i]</code> return a nullable
     would put a test on the hot path of every inner loop in the language, and
     the code that wants the test already has one. <code>get</code> is that
-    spelling &mdash; <code>def get(self, at: Int) -&gt; (borrowed T)?</code>
-    &mdash; and it is what the genuinely dynamic case uses.
+    spelling &mdash; <code>def get(self, at: Int) -&gt; (borrowed T)?</code>,
+    with the parentheses required because <code>borrowed T?</code> would read
+    as <code>borrowed (T?)</code> &mdash; and it is what the genuinely dynamic
+    case uses.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Where the index came from</th><th>Write</th></tr></thead>
+      <tbody>
+        <tr><td class="what">A loop over the thing, or a shape</td><td class="mono">a[i]</td></tr>
+        <tr><td class="what">A file, a user, an argument, arithmetic</td><td class="mono">if i &lt; a.length():</td></tr>
+        <tr><td class="what">Absence is a normal outcome to handle</td><td class="mono">a.get(i)</td></tr>
+        <tr><td class="what">You are walking all of it</td><td class="mono">for x in a:</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    The last row is the one to push hardest: an index that could have been a
+    chain is a code smell, and an index that is not written cannot be off by
+    one.
   </p>
 
   <p class="note">
@@ -1278,20 +2784,64 @@ print(f"{primes.length()}")</pre>
     silence. <span class="cite wip">changing</span>
   </p>
 
+  <p class="note">
+    Two bracket shapes <em>are</em> caught, both on the syntax tree before
+    types, because neither fix needs one:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0151]</span>: this index bracket has no index in it
+ <span class="e-hi">--&gt;</span> rows.science:2:12
+  |
+2 | let y be xs[]
+  |            <span class="e-hi">^^</span> `[]` indexes nothing
+  |
+  = note: an index bracket holds one index position: `a[0]`, `a[i]`, or a range, `a[1..5]`</code></pre>
+
+<pre class="err"><code><span class="e-code">error[SC0154]</span>: this range starts at 5 and ends at 1, so it holds nothing
+ <span class="e-hi">--&gt;</span> rows.science:2:13
+  |
+2 | let y be xs[5..1]
+  |             <span class="e-hi">^^^^</span> the start is past the end
+  |
+  = note: no fix is offered because which of the two bounds is wrong is not something the compiler can know</code></pre>
+
   <h3>Zero-based, and why that is not an aesthetic choice</h3>
 
   <p class="note">
     Science is zero-based, ranges are half-open, and <code>a[-1]</code> is an
-    error rather than the last element. The argument is not elegance and it is
-    not familiarity: it is <strong>the zero-copy membrane</strong>. A NumPy
+    error rather than the last element. The one-based column &mdash; Fortran,
+    MATLAB, R, Julia, Mathematica, Lua &mdash; is not a list of bad languages;
+    it is close to a list of the languages a computational physicist learned
+    in, and Julia in particular is the closest thing Science has to a direct
+    competitor.
+  </p>
+
+  <p class="note">
+    The argument is not elegance and it is not familiarity: it is
+    <strong>the zero-copy membrane</strong>. A NumPy
     array and a Science tensor over the same buffer are looking at the same
-    bytes, and if the two languages disagreed about which element is
-    <code>[0]</code> the disagreement would be silent, undetectable by the
-    compiler, undetectable in review, and numerically plausible. The cost lands
-    on the computational-physics audience, who index from one in every paper
-    they have ever read, and there is no cheap mitigation; offset-configurable
-    arrays were considered and refused, because two conventions in one program
-    is the failure the decision exists to prevent.
+    bytes, and there is no marshalling step where an index could be adjusted
+    &mdash; that absence <em>is</em> the feature. If the two languages
+    disagreed about which element is <code>[0]</code> the disagreement would be
+    silent, since both indices are in range; undetectable by the compiler,
+    since the wrong index was computed in Python; undetectable in review, since
+    both sides read correctly and only the composition is wrong; and
+    numerically plausible &mdash; a spectrum shifted by one channel, a batch off
+    by one row, a time series lagged by one sample.
+  </p>
+
+  <p class="note">
+    There is a second, internal argument: every one-based language pairs
+    one-based indexing with <em>inclusive</em> ranges, and Science's counting
+    loop is <code>0..n</code>, half-open, which was decided when ranges were.
+    The cost lands on the computational-physics audience, who index from one in
+    every paper they have ever read, and there is no cheap mitigation;
+    offset-configurable arrays were considered and refused, because two
+    conventions in one program is the failure the decision exists to prevent,
+    and because they would make the index obligation above unprovable in
+    general. It is also irreversible: no formatter rewrite turns one-based
+    source into zero-based source, because the compiler cannot tell an
+    intentional <code>a[1]</code> from a transcribed one.
   </p>
 
 <pre class="err"><code><span class="e-code">error[SC0152]</span>: a negative index does not count from the end in Science
@@ -1306,34 +2856,110 @@ print(f"{primes.length()}")</pre>
   <h3>Slices borrow</h3>
 
   <p class="note">
-    <code>samples[1..5]</code> has type <code>Slice of T</code>, which is a
-    pointer and a length, and it <strong>does not copy</strong>. The mutable
-    form is <code>MutableSlice of T</code> and is produced through
-    <code>IndexMutably</code>. The rank rule is NumPy's on purpose: an index
-    position that is an integer <em>drops</em> its axis, and one that is a range
-    or a bare <code>..</code> <em>keeps</em> it. In F0 a slice is contiguous and
-    one-dimensional over <code>Array</code>; strided and multidimensional views
-    are F1, on <code>Tensor</code>.
+    <code>samples[1..5]</code> has type <code>Slice of T</code>, which is
+    <code>{ borrowed T, Int }</code> &mdash; a pointer and a length &mdash; and
+    it <strong>does not copy</strong>. Copying is not a close call: a column of
+    a ten-gigabyte frame is pitched as the actual contiguous buffer, and a
+    copying slice would mean taking half of it costs five gigabytes and a
+    memcpy. The mutable form is <code>MutableSlice of T</code> and is produced
+    through <code>IndexMutably</code>. The rank rule is NumPy's on purpose: an
+    index position that is an integer <em>drops</em> its axis, and one that is
+    a range or a bare <code>..</code> <em>keeps</em> it. In F0 a slice is
+    contiguous and one-dimensional over <code>Array</code>; strided and
+    multidimensional views are F1, on <code>Tensor</code>, because a column of
+    a row-major matrix is not contiguous and <code>{ ptr, len }</code> cannot
+    represent it.
   </p>
 
   <p class="note">
     Ownership needs no new rule for any of this. A slice is a borrow, so an
-    array that has been sliced cannot be pushed to while the slice is live, and
-    "mutate while iterating" and "write through a view of the thing you are
-    reading" are the same compile error. That is the NumPy aliasing bug
-    &mdash; the one where a view of the array you are writing to produces a
-    wrong answer with no error &mdash; removed by machinery that exists for
-    unrelated reasons.
+    array that has been sliced cannot be pushed to while the slice is live
+    &mdash; <code>push</code> takes <code>mutable self</code> and the borrow
+    rule forbids it &mdash; and "mutate while iterating" and "write through a
+    view of the thing you are reading" are the same compile error. That is the
+    NumPy aliasing bug, the one where a view of the array you are writing to
+    produces a wrong answer with no error, removed by machinery that exists for
+    unrelated reasons. It also costs something every NumPy user will hit once:
+    <code>let s be a[1..5]</code> pins <code>a</code> for as long as
+    <code>s</code> lives.
+  </p>
+
+  <div class="callout">
+    <h3><code>xs[1..3]</code> is refused, because the type it would produce does not exist</h3>
+    <p>
+      A range in an index bracket parses, and then there is nothing for it to
+      evaluate to: <code>Slice of T</code> is specified and the compiler
+      declares no such type. The refusal is explicit, and it is worth reading
+      for what it does <em>not</em> do &mdash; it does not silently hand back
+      something of the wrong shape.
+    </p>
+<pre class="err" style="margin-top:0.6rem"><code><span class="e-code">error[SC0538]</span>: a range index would produce a slice, and there is no `Slice` type
+ <span class="e-hi">--&gt;</span> window.science:2:5
+  |
+2 |     xs[1..3]
+  |     <span class="e-hi">^^^^^^^^</span> slicing a `Array of Int` is not implemented
+  |
+  = note: `a[1..5]` is specified as a `Slice of T` &mdash; a borrow and a length, which does not copy (&sect;2.3) &mdash; and this compiler declares no such type. Index one element at a time, or iterate: `xs.iterate().skip(1).take(2)`</code></pre>
+    <p style="margin-top:0.6rem">
+      <strong>The alternative it replaced is the reason this is a callout
+      rather than a line.</strong> Before the refusal, the expression
+      type-checked and its type was <em>one element</em>: a range expression
+      carries no type of its own, the index interface's <code>Idx</code> is
+      <code>Int</code>, and the two agreed by cancelling, so
+      <code>xs[1..3]</code> on an <code>Array of Int</code> produced a
+      <code>borrowed Int</code>. Nothing was reported. A program whose author
+      wrote a window and got an element compiled, and the mistake was invisible
+      on the happy path, because a window of the right length and an element
+      are both plausible inputs to whatever came next.
+    </p>
+    <p style="margin-top:0.6rem">
+      Two things are worth carrying out of that. A missing type is not the same
+      as a missing check &mdash; when a type does not exist, the expression that
+      would have had it must be <em>refused</em>, or the checker will find some
+      other type for it by cancellation and say nothing. And the substitute the
+      note offers is the right one for a chain regardless:
+      <code>.iterate().skip(a).take(b - a)</code> costs nothing, composes, and
+      is what the design's own refusal of a slice type for the chain API
+      already recommended. What it cannot do is produce an addressable buffer,
+      which is why <code>Slice of T</code> is still owed.
+      <span class="cite wip">changing</span>
+    </p>
+  </div>
+
+  <p class="note">
+    <strong>Closed ranges parse and are then refused by the type checker;
+    open-ended ones do not parse at all.</strong>
+    <code>xs[1..3]</code> reaches <code>SC0538</code> above. <code>xs[..2]</code>,
+    <code>xs[2..]</code> and <code>xs[..]</code> are specified &mdash; the rule
+    is that inside an index bracket a <code>..</code> may omit either end,
+    decided on one token of lookahead (after <code>..</code>, a <code>]</code>
+    or <code>,</code> means no end; before it, a <code>[</code> or
+    <code>,</code> means no start), and outside one both ends are required
+    &mdash; and the parser reports <code>SC0105</code>.
+    <span class="cite wip">changing</span>
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0105]</span>: expected an expression, found `..`
+ <span class="e-hi">--&gt;</span> rows.science:2:13
+  |
+2 | let y be xs[..2]
+  |             <span class="e-hi">^^</span> expected an expression, found `..`</code></pre>
+
+  <p class="note">
+    The reason open ends are confined to index brackets is that outside one, a
+    <code>..</code> with no right operand would have to be told from a
+    <code>..</code> that ends a line &mdash; which makes a line break
+    load-bearing inside an expression. Inside a bracket the question cannot
+    arise, because newlines and indentation are ignored entirely inside
+    unclosed brackets. Storing a half-open range in a variable is the case that
+    would be lost, and nobody has asked for it.
   </p>
 
   <p class="note">
-    <strong>Closed ranges parse; open-ended ones do not.</strong>
-    <code>xs[1..3]</code> is accepted today. <code>xs[..2]</code>,
-    <code>xs[2..]</code> and <code>xs[..]</code> are specified &mdash; the rule
-    is that inside an index bracket a <code>..</code> may omit either end, and
-    outside one both ends are required &mdash; and the parser reports
-    <code>SC0105</code>, <em>expected an expression, found <code>..</code></em>.
-    <span class="cite wip">changing</span>
+    <code>..</code> is looser than every operator, which is why
+    <code>a[0..n - 1]</code> reads as <code>0..(n - 1)</code> and not as a
+    subtraction from a range. The precedence table does not place it; the
+    parser does, and this is the sentence that records it.
   </p>
 
   <h3>Indexing is an interface, so your type can be indexed</h3>
@@ -1360,15 +2986,44 @@ def first_value(row: borrowed Row) -&gt; F64:
     requires the first; <code>a[i] be v</code> requires the second. Both are
     declared in the prelude with their associated <code>Output</code>, which is
     a correction: a design note recorded, accurately at the time, that
-    <code>Doc implements Index of Int:</code> could not be written at all. It
-    can now, and the listing above is the evidence.
+    <code>Doc implements Index of Int:</code> could not be written at all,
+    because the prelude's <code>Index</code> was a bare name with no parameter,
+    no associated type and no method. It can now, and the listing above is the
+    evidence.
   </p>
+
+  <p class="note">
+    A type with neither implementation is refused by name, and the note says
+    where the fix goes rather than talking about mutability in the abstract:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0535]</span>: `Doc` does not implement `IndexMutably`
+ <span class="e-hi">--&gt;</span> doc.science:5:5
+  |
+5 |     d[0] be 1
+  |     <span class="e-hi">^^^^</span> `[]` needs `IndexMutably` and `Doc` has no implementation of it
+  |
+  = note: every operator is an interface method (&sect;5.4): the block
+         `Doc implements IndexMutably:` is what gives `Doc` this operator</code></pre>
 
   <p class="note">
     <code>IndexMutably</code> is declared and is <em>not yet writable</em>, for
     a narrow reason: its body has to produce a <code>mutable borrowed
     Self.Output</code>, and indexing yields a shared borrow, so there is no
-    expression in the language today that satisfies the signature.
+    expression in the language today that satisfies the signature. So the
+    diagnostic above names a repair that cannot currently be carried out.
+    <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
+    <strong><code>String</code> implements neither, deliberately.</strong> A
+    <code>String</code> is UTF-8, so there is no single right meaning for
+    <code>[0]</code> &mdash; byte 0, character 0 and grapheme 0 are three
+    different things &mdash; and the specified diagnostic, <code>SC0258</code>,
+    names all three alternatives (<code>line.bytes()[0]</code>,
+    <code>line.characters().first()</code>, <code>line.slice(0..n)</code>)
+    rather than refusing. It does not fire: <code>line[0]</code> on a
+    <code>String</code> passes <code>check</code> today.
     <span class="cite wip">changing</span>
   </p>
 
@@ -1386,8 +3041,10 @@ def first_value(row: borrowed Row) -&gt; F64:
   <p class="note">
     <strong>The decision concedes the other side first.</strong> For the short
     case the comprehension is shorter &mdash; twelve tokens against nine
-    &mdash; and anyone who says the chain is obviously better for it is selling
-    something. What decides it is the rule one revision old: two spellings of
+    &mdash; it is a single expression with no intermediate names, and it maps
+    onto the set-builder notation this audience writes in papers. Anyone who
+    says the chain is obviously better for it is selling something.
+    What decides it is the rule one revision old: two spellings of
     one operation are <em>permanently un-normalisable</em>, because a formatter
     cannot canonicalise between them without running after type checking, and a
     formatter that must run after type checking is not a formatter. That
@@ -1397,13 +3054,46 @@ def first_value(row: borrowed Row) -&gt; F64:
 
   <p class="note">
     Three supporting reasons, in descending weight: a comprehension is eager
-    and the chain is lazy, so the comprehension allocates the intermediate the
-    chain never builds; it does not scale past the short case, where nested
-    <code>for</code> clauses read in an order nobody defends; and it reads
-    backwards, with the operation before the source. If it ever comes back, it
-    must come back as pure sugar that desugars to the chain and introduces no
-    semantics of its own.
+    and the chain is lazy, so the beloved form would be the one that always
+    allocates the intermediate; it does not scale past the short case, where
+    nested <code>for</code> clauses read in an order nobody defends; and it
+    reads backwards, with the operation before the source, which is why
+    comprehensions do not compose with each other and chains compose trivially.
+    <code>SC0153</code> is detected on the syntax tree, before types, because a
+    comprehension does not type-check as anything and catching it later would
+    produce a cascade. If it ever comes back, it must come back as pure sugar
+    that desugars to the chain and introduces no semantics of its own.
   </p>
+
+  <div class="callout">
+    <h3>If you are arriving from NumPy: the bracket is narrower than yours, and one habit is a compile error</h3>
+    <p>
+      <code>a[i]</code> is the same. Past that:
+      <strong><code>a[-1]</code> is an error</strong>, not the last element
+      &mdash; <code>.last()</code> is, and the reason is that Python's rule
+      makes <code>a[i - 1]</code> read the last element at an <code>i</code> of
+      zero instead of failing.
+      <strong>Slices borrow rather than view-or-copy</strong>, and the
+      difference is that a borrow is checked: the aliasing bug where you write
+      through a view of the array you are reading becomes a compile error
+      instead of a wrong answer.
+      <strong>There is no <code>a[mask]</code>, no <code>a[list]</code> and no
+      <code>np.newaxis</code></strong> &mdash; filtering is
+      <code>.iterate().keep(…)</code>, and inserting an axis is a named
+      operation on a tensor.
+      And <strong>a comprehension is refused with the chain spelled out</strong>,
+      because a chain is lazy and a comprehension allocates.
+    </p>
+    <p style="margin-top:0.6rem">
+      The one that will surprise you most is not in the brackets at all:
+      <code>[[1.0, 0.0], [0.0, 1.0]]</code> is an
+      <code>Array of (Array of F64)</code> &mdash; <strong>one allocation per
+      row</strong> &mdash; and not a matrix. A matrix is that literal handed to
+      <code>Tensor.from</code>, which reads its shape off the syntax. Until the
+      back end special-cases that call, the ergonomic path to a matrix is also
+      the slow one, and everyone will find out on a 4096&times;4096.
+    </p>
+  </div>
 </section>
 
 <!-- ==================================================================== -->
@@ -1444,6 +3134,22 @@ def longer_of of T(left: borrowed T, right: borrowed T) -&gt; String
 def paired of (A, B)(first: A, second: B) -&gt; (A, B):
     (first, second)</pre>
 
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Form</th><th>What it is</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">def f(x: T) -&gt; U:</td><td class="what">A free function</td></tr>
+        <tr><td class="mono">def f(x: T):</td><td class="what">A free function returning <code>()</code></td></tr>
+        <tr><td class="mono">def f of T(…)</td><td class="what">One generic parameter, no parentheses needed</td></tr>
+        <tr><td class="mono">def f of (A, B)(…)</td><td class="what">Two or more, parenthesised &mdash; the same rule as a type's</td></tr>
+        <tr><td class="mono">def f of T: Bound(…)</td><td class="what">The bound inline, on the parameter</td></tr>
+        <tr><td class="mono">def f of T(…) where T: A + B:</td><td class="what">The bounds in a clause, joined with <code>+</code></td></tr>
+        <tr><td class="mono">def f(self, …)</td><td class="what">A method &mdash; inside a <code>has:</code>, <code>interface</code> or <code>implements</code> block</td></tr>
+        <tr><td class="mono">def f(…) -&gt; T:</td><td class="what">With no <code>self</code>, an associated function, called <code>Type.f(…)</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <p class="note">
     <strong>Generic functions check and do not build.</strong> Nothing
     monomorphises them: the walk that would turn <code>duplicate of T</code>
@@ -1456,23 +3162,228 @@ def paired of (A, B)(first: A, second: B) -&gt; (A, B):
   <p class="note">
     <strong>The last expression of a body is its value.</strong>
     <code>return</code> exists for leaving early and is not written at the end
-    of a function. A function with no return type returns <code>()</code>. This
-    is the ML and Rust convention rather than Python's, and it is one place the
-    language expects a Python reader to look twice: there is no implicit
-    <code>None</code>, and a body whose last line is a statement rather than an
-    expression returns <code>()</code>, because that is what it produced.
+    of a function. This is the ML and Rust convention rather than Python's, and
+    it is one place the language expects a Python reader to look twice: there
+    is no implicit <code>None</code>. A function with no return type returns
+    <code>()</code> &mdash; and the rule is stricter than "the value is
+    discarded": the last expression must <em>be</em> <code>()</code>, so a
+    trailing <code>x</code> of type <code>Int</code> in a function declared
+    without a return type is a type error, not a thrown-away value.
   </p>
+
+<pre class="err"><code><span class="e-code">error[SC0525]</span>: expected `()`, found `Int`
+ <span class="e-hi">--&gt;</span> unit.science:2:5
+  |
+2 |     x
+  |     <span class="e-hi">^</span> this is `Int`</code></pre>
+
+  <h3>How a body is checked</h3>
 
   <p class="note">
     <strong>Signatures are fully annotated; bodies are fully inferred.</strong>
-    Inference is local and by unification, and interface bounds are checked
-    after it. Global Hindley&ndash;Milner was rejected on two grounds: it does
-    not hold up in the presence of interfaces and regions, and its errors point
-    far from the fault &mdash; which, for a language whose diagnostics are the
-    only teaching channel it has, is disqualifying. The practical consequence
-    is that you write types at a boundary and nowhere inside one. It is also
-    why <code>tools --json</code> can derive a schema before anything is run:
-    the parameter types are already written down.
+    Checking is <em>bidirectional</em> and there is no unifier across function
+    boundaries: every call site knows its callee's types before it looks at the
+    arguments, and every body has a known expected return type, which gives a
+    checking mode where the type is known and a synthesis mode where it is not.
+    There is no Hindley&ndash;Milner, no generalisation, no let-polymorphism
+    and no principal types. Global inference was rejected on two grounds: it
+    does not hold up in the presence of interfaces and regions, and its errors
+    point far from the fault &mdash; which, for a language whose diagnostics
+    are the only teaching channel it has, is disqualifying.
+  </p>
+
+  <p class="note">
+    Three things follow, in the order the design ranks them. Every diagnostic
+    can point at an annotation a human typed. Bodies check in parallel and in
+    any order, which is what makes the incremental boundary a function rather
+    than a component &mdash; the memoised unit is one body, keyed on its hash
+    plus the signatures it references, so editing a body invalidates that body
+    and editing a <em>signature</em> invalidates every body that calls it. And
+    it is expressible in Science, which matters because the compiler intends to
+    compile itself: a bidirectional checker is a recursive walk with an
+    environment, where a unification-based one wants a mutable union-find with
+    interior mutability, which the language has no spelling for.
+  </p>
+
+  <p class="note">
+    <strong>Local inference variables still exist</strong>, because
+    <code>let xs be (Array of Int).new()</code> has to get its element type
+    from a later <code>push</code>. So there is a small unification engine
+    inside one body; it is bounded by the body and discarded when the body is
+    done. Numeric literals go through it: an unsuffixed literal is
+    <em>inferred</em> and only defaulted to <code>I64</code> or
+    <code>F64</code> when nothing constrains it, because a language that
+    silently makes <code>1</code> an <code>I32</code> will be wrong on
+    somebody's index arithmetic.
+  </p>
+
+  <p class="note">
+    <strong>The auto-borrow is not in the type relation, and the measurement
+    that forced the distinction is worth quoting.</strong> A parameter declared
+    <code>borrowed T</code> is called with a <code>T</code>: the caller does
+    not write the borrow and the checker inserts it. That is an
+    <em>elaboration</em>, not a coercion &mdash; the value is unchanged and
+    what the checker writes down is a <code>Borrow</code> node the author did
+    not &mdash; so it lives in the body checker rather than in assignability,
+    whose own table knows nothing about regions. The first run of the finished
+    checker over the corpus produced <strong>147 diagnostics, roughly 60% of
+    which were a borrow the language had told the author not to write</strong>.
+    Its cost is two places where the checker's tree no longer matches the token
+    stream one to one, which MIR pays rather than the reader.
+  </p>
+
+  <p class="note">
+    The practical consequence of all this is that you write types at a boundary
+    and nowhere inside one. It is also why <code>tools --json</code> can derive
+    a schema before anything is run: the parameter types are already written
+    down.
+  </p>
+
+  <h3>What a call may not do</h3>
+
+  <p class="note">
+    <strong>There are no default arguments, no named arguments and no
+    variadics.</strong> Each absence is load-bearing somewhere else on this
+    page: no variadics is the decisive reason <code>print</code> is unary; no
+    defaults is why <code>BufferedReader.new(source, capacity)</code> takes its
+    capacity explicitly; and named arguments exist in the grammar but belong to
+    <em>record construction</em>, so using them on a function says so.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>What you wrote</th><th>What you get</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">f(1, 2) on a one-parameter f</td><td class="mono">SC0527</td></tr>
+        <tr><td class="mono">f(x: 1, y: 2)</td><td class="mono">SC0206 &mdash; named arguments build a record</td></tr>
+        <tr><td class="mono">def f(y: Int be 2)</td><td class="mono">SC0100 &mdash; the grammar has no such form</td></tr>
+        <tr><td class="mono">def f(x: Int, x: Int)</td><td class="mono">SC0201</td></tr>
+        <tr><td class="mono">two def f in one module</td><td class="mono">SC0201 &mdash; there is no overloading</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+<pre class="err"><code><span class="e-code">error[SC0527]</span>: this call takes 1 argument and was given 2
+ <span class="e-hi">--&gt;</span> call.science:4:10
+  |
+4 | let y be f(1, 2)
+  |          <span class="e-hi">^^^^^^^</span> 2 given</code></pre>
+
+<pre class="err"><code><span class="e-code">error[SC0201]</span>: the name `f` is defined more than once
+ <span class="e-hi">--&gt;</span> call.science:4:5
+  |
+1 | def f(x: Int) -&gt; Int:
+  |     - first defined here
+...
+4 | def f(x: Int) -&gt; Int:
+  |     <span class="e-hi">^</span> defined again here</code></pre>
+
+  <p class="note">
+    <strong>No overloading is the reason method resolution can pick a callee
+    before inference runs.</strong> A method's argument <em>labels</em> are
+    part of its name &mdash; <code>sorted()</code> and
+    <code>sorted(by: key)</code> are two names, not one name with two
+    signatures &mdash; and the rule for when to use a label is that the verb
+    either already names its argument (<code>take(5)</code>,
+    <code>map(f)</code>, <code>keep(p)</code>) or it is selecting between
+    variants of one verb, in which case it takes one.
+  </p>
+
+  <h3>Closures: two forms, and nothing else</h3>
+
+  <p class="note">
+    <code>each</code> names the subject and declares no binder;
+    <code>x giving …</code> declares one. They differ in a real property, which
+    is why there are two: <strong><code>each</code> cannot nest</strong>, and
+    the compiler can tell them apart for exactly that reason. The canonical
+    form &mdash; what a formatter would produce &mdash; is <code>each</code>
+    when the parameter occurs once and the closure is not nested inside another
+    closure's argument, and <code>giving</code> otherwise.
+  </p>
+
+<pre data-science>def shortlist(xs: Array of Int) -&gt; Int:
+    xs.keep(each &gt; 5)                       # implicit subject, mentioned once
+    xs.keep(x giving x &gt; 5 and x &lt; 50)      # named, because it is mentioned twice
+    0</pre>
+
+<pre class="err"><code><span class="e-code">error[SC0115]</span>: a nested `each` would name a different subject than the `each` around it
+ <span class="e-hi">--&gt;</span> nest.science:2:21
+  |
+2 |     xs.map(each.map(each + 1))
+  |                     <span class="e-hi">^^^^</span> this `each` is inside another `each`
+  |
+  = note: name the parameter instead, with the `giving` form: `outer.map(item giving item.inner.map(each.x))`</code></pre>
+
+  <p class="note">
+    <strong>There is no <code>lambda</code>, and the refusal has four
+    independent reasons.</strong> It is not a mechanism &mdash;
+    <code>lambda x: x &gt; 5</code> and <code>x giving x &gt; 5</code> differ
+    in no property at all, produce the same node and the same dump. It would be
+    a third spelling, and the longest one. The formatter argument is sufficient
+    on its own: with no syntactic property to distinguish them, either
+    <code>lambda</code> is canonical somewhere, by an arbitrary rule that will
+    drift, or it is canonical nowhere and <code>sciencec fmt</code> deletes
+    every occurrence on its first run. And decisively, <strong>&lambda; is a
+    primary named quantity in five fields</strong> &mdash; wavelength, decay
+    constant, eigenvalue, Poisson rate, ridge strength &mdash; always in
+    binding or parameter position, where no positional rule can rescue it.
+    <code>let lambda be 532&lt;nm&gt;</code> must stay a legal line.
+  </p>
+
+  <p class="note">
+    <strong>The migration diagnostic for it is specified and does not
+    fire.</strong> <code>SC0135</code> is meant to recognise the
+    <em>shape</em> &mdash; an identifier spelled <code>lambda</code> followed
+    by <code>:</code>, or by a name and <code>:</code>, or by a name and
+    <code>-&gt;</code> &mdash; and offer the <code>giving</code> rewrite as an
+    applicable fix, while leaving <code>lambda</code> a free identifier
+    everywhere else. What a reader gets today is a bare parse error, twice:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0100]</span>: expected `)`, found `x`
+ <span class="e-hi">--&gt;</span> filter.science:2:20
+  |
+2 |     xs.keep(lambda x: x &gt; 5)
+  |                    <span class="e-hi">^</span> expected `)`, found `x`
+
+<span class="e-code">error[SC0100]</span>: expected end of line, found `x`
+ <span class="e-hi">--&gt;</span> filter.science:2:20
+  |
+2 |     xs.keep(lambda x: x &gt; 5)
+  |                    <span class="e-hi">^</span> expected end of line, found `x`</code></pre>
+
+  <p class="note">
+    <strong>A closure takes one parameter or none. There is no two-parameter
+    form.</strong> The AST node carries an <code>Option</code> of one binder,
+    and the proposed extension &mdash; <code>(acc, x) giving acc + x</code>
+    &mdash; is not decided, because it belongs to whoever ships
+    <code>fold</code>. <code>(a, b) giving …</code> does not parse.
+    <span class="cite wip">changing</span>
+  </p>
+
+  <p class="note">
+    That absence is protecting against something specific, and it is worth
+    knowing even though the form does not exist. The parser tests for a named
+    argument by looking for an identifier then a colon, and it splits arguments
+    on the top-level comma <em>first</em>. So a two-parameter closure written
+    with a comma would have its second half, <code>b: a + b</code>, satisfy the
+    named-argument test exactly, and the call would parse &mdash; silently
+    &mdash; as two arguments. <code>SC0137</code> is allocated for it.
+  </p>
+
+  <p class="note">
+    <strong>What is not written down anywhere is how a closure
+    captures.</strong> The design says the two forms "capture the same way" and
+    never says what that way is &mdash; there is no by-borrow-versus-by-move
+    rule, no <code>move</code> analogue, no closure-value type, no statement
+    about storing one in a field, and no Fn-style hierarchy, neither adopted
+    nor rejected. Every attested use is an immediate argument to a chain
+    method. One consequence is fixed in advance for a reason unrelated to
+    ergonomics: <strong>a closure must be typed by its captures rather than
+    erased</strong>, from F0, because a future <code>.parallel()</code> has to
+    reject a closure that captures something <code>mutable borrowed</code>, and
+    nothing in F0 reads that information &mdash; which makes it the requirement
+    most likely to be quietly missed.
   </p>
 
   <div class="callout">
@@ -1512,6 +3423,16 @@ def paired of (A, B)(first: A, second: B) -&gt; (A, B):
       function(…)</code> &mdash; and writing it where a declaration belongs is
       a migration diagnostic rather than a stray-name error.
     </p>
+    <p style="margin-top:0.6rem">
+      One collision the audit missed, because it audited physics and chemistry
+      and not compilers: <strong><code>def</code> is ordinary compiler
+      vocabulary</strong>, and this language intends to compile itself. The
+      central table of every compiler maps a definition id to a definition and
+      the field is called <code>def</code>. It was called that here too, in
+      <code>examples/21_compiler_shapes.science</code>, and the rename broke it
+      on the first run. The field is <code>definition</code> now, and that is
+      the standing recommendation.
+    </p>
   </div>
 
 <pre class="err"><code><span class="e-code">error[SC0156]</span>: the declaration is written `def`
@@ -1532,6 +3453,18 @@ def paired of (A, B)(first: A, second: B) -&gt; (A, B):
     sometimes does not converge at all. The same reasoning is why one mistake
     must cost one message: a human fixes the first of three cascaded errors,
     and a model attempts three fixes, two of which are wrong.
+  </p>
+
+  <p class="note">
+    <code>SC0156</code> meets that bar in a way the <code>lambda</code> and
+    <code>+=</code> cases above do not, and the mechanism is recovery rather
+    than recognition: the parser consumes the stale keyword and continues
+    <em>as though</em> <code>def</code> had been written, so the parameters,
+    the arrow and the block are all checked normally and the file produces one
+    error instead of three. The recognition costs one token of lookahead and
+    buys back the identifier <code>function</code>, which a C binding somewhere
+    needs as a struct field name. That is the trade the dot rule proposes to
+    make everywhere: a position test instead of a reservation.
   </p>
 </section>
 
@@ -1571,16 +3504,95 @@ Position implements Copy            # a marker: one line, no block</pre>
     which is the reverse of Rust's <code>impl Summarize for Doc</code>. A
     marker interface &mdash; one with no methods &mdash; is implemented on one
     line, because F0 has no empty block and inventing one for this case would
-    be a grammar rule bought for a formatting preference.
+    be a grammar rule bought for a formatting preference. Interfaces are named
+    as verbs for what an implementor does &mdash; <code>Iterate</code>,
+    <code>Display</code>, <code>Inspect</code>, <code>Summarize</code> &mdash;
+    and the method is the same word in lower case, which keeps
+    <code>write</code> the free function and <code>Write.write</code> the
+    method in different namespaces.
   </p>
 
   <p class="note">
-    <strong>The orphan rule applies:</strong> an implementation is legal only
-    if the interface or the type belongs to the module declaring it. Without
-    it, two libraries can each implement one interface for one type, both
-    compile, and the program that uses both has two answers to one question
-    with no way to say which it wanted.
+    <strong>The orphan rule applies, and it is one of the few rules in this
+    section the compiler enforces.</strong> An implementation is legal only if
+    the interface or the type belongs to the module declaring it. Without it,
+    two libraries can each implement one interface for one type, both compile,
+    and the program that uses both has two answers to one question with no way
+    to say which it wanted &mdash; decided by the linker. This is a
+    package-level rule and the package manager does not know about it yet.
   </p>
+
+<pre class="err"><code><span class="e-code">error[SC0207]</span>: this implementation is an orphan: neither the interface nor the type belongs to this module
+ <span class="e-hi">--&gt;</span> shim.science:1:1
+  |
+1 | String implements Display:
+  | <span class="e-hi">^^^^^^^^^^^^^^^^^^^^^^^^^^</span> declared here (continues to line 3)
+  |
+  = note: the interface `Display` belongs to `core`
+  = note: the type `String` belongs to `core`
+  = note: wrap the type in a record of your own and implement the interface for that
+  = note: the prelude is a module no file can name, so there is nowhere to move this implementation to</code></pre>
+
+  <p class="note">
+    The last note is the one that makes the rule bite rather than merely
+    inconvenience: for a prelude type and a prelude interface there is no
+    module you could move the implementation <em>to</em>, so the remedy is a
+    wrapper record and not a relocation. Either half being local is enough
+    &mdash; your type with a prelude interface, or a prelude type with your
+    interface, both compile.
+  </p>
+
+  <div class="callout">
+    <h3>An <code>implements</code> block is not checked against its interface</h3>
+    <p>
+      The block's method set is open, and nothing compares it to the
+      declaration. Each of the four programs below <code>check</code>s clean:
+      an implementation missing the interface's only required method; one that
+      adds a method the interface never declared; one whose method has the
+      wrong signature; and two implementations of the same interface for the
+      same type in the same file.
+    </p>
+<pre data-science style="margin-top:0.6rem">type Doc:
+    title: String
+
+interface Summarize:
+    def summarize(self) -&gt; String
+
+Doc implements Summarize:
+    def summarize(self) -&gt; Int:     # the interface says String
+        0
+
+    def extra(self) -&gt; String:      # the interface never declared this
+        self.title
+
+Doc implements Summarize:           # and again, for the same type
+    def summarize(self) -&gt; String:
+        self.title</pre>
+    <p style="margin-top:0.6rem">
+      <strong>What <em>is</em> checked is the declaration, not its
+      contents.</strong> A bound is satisfied by the presence of an
+      <code>implements</code> line &mdash; including a bare marker line with no
+      block at all &mdash; and its absence is reported well:
+    </p>
+<pre class="err" style="margin-top:0.6rem"><code><span class="e-code">error[SC0534]</span>: `Doc` does not implement `Summarize`
+  <span class="e-hi">--&gt;</span> show.science:11:5
+   |
+ 7 | def show of T(x: borrowed T) -&gt; String where T: Summarize:
+   |                                                 --------- `T` was declared `Summarize`
+...
+11 |     show(d)
+   |     <span class="e-hi">^^^^^^^</span> `T` is `Doc` here
+   |
+   = note: an implementation is a block the program writes: `Doc implements Summarize:`</code></pre>
+    <p style="margin-top:0.6rem">
+      So the generic half of the system is sound in the direction that
+      matters &mdash; you cannot call a bounded function with a type that never
+      claimed the interface &mdash; and completely unsound in the other: the
+      claim is taken at its word. Treat an <code>implements</code> block as
+      documentation the compiler has not read.
+      <span class="cite wip">changing</span>
+    </p>
+  </div>
 
   <h3>Receivers, and what each one costs</h3>
 
@@ -1604,15 +3616,37 @@ Doc has:
 let doc be Doc.new("inferred, never written")
 print(doc.summarize())</pre>
 
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Receiver</th><th>What it does</th><th>What it excludes</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">self</td><td class="what">Reads the value through a shared borrow</td><td class="what">Nothing &mdash; any number of readers may overlap</td></tr>
+        <tr><td class="mono">mutable self</td><td class="what">Writes it, through an exclusive borrow</td><td class="what">Every other borrow, for as long as it is live</td></tr>
+        <tr><td class="mono">self: Self</td><td class="what">Takes ownership</td><td class="what">Every later use of the value by the caller</td></tr>
+        <tr><td class="what">no receiver</td><td class="what">An associated function, called <code>Type.f(…)</code></td><td class="what">&mdash;</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <p class="note">
     The three receiver forms are the three things a method can do to the value
-    it is called on, and they are not interchangeable. <code>self</code> reads
-    it, and any number of readers may overlap. <code>mutable self</code> writes
-    it and excludes every other borrow for as long as it is live.
-    <code>self: Self</code> takes ownership, and the caller cannot use the
-    value afterwards &mdash; which is what makes a builder's final
-    <code>build()</code> or a handle's <code>close()</code> impossible to call
-    twice.
+    it is called on, and they are not interchangeable. <code>self: Self</code>
+    is what makes a builder's final <code>build()</code> or a handle's
+    <code>close()</code> impossible to call twice. Note that
+    <strong><code>self</code> is <em>already</em> the shared borrow</strong>
+    &mdash; there is no <code>borrowed self</code>, and writing one is a parse
+    error, because the bare receiver is the borrowing one and a second spelling
+    would mean nothing new. That fact is also where the interpolation guarantee
+    comes from: <code>Display</code>'s method takes <code>self</code>, so
+    rendering a value cannot consume it.
+  </p>
+
+  <p class="note">
+    <strong>None of the three is enforced yet.</strong> Calling a
+    <code>mutable self</code> method through a shared borrow
+    <code>check</code>s clean, for the same reason assigning to an immutable
+    binding does: the mutability half of the borrow rules is not wired in.
+    <span class="cite wip">changing</span>
   </p>
 
   <p class="note">
@@ -1620,7 +3654,9 @@ print(doc.summarize())</pre>
     called through the type: <code>Doc.new(…)</code>. It is how Science spells
     a constructor, and there is no special constructor syntax because a
     constructor is a function that returns the type, which the language can
-    already say.
+    already say. Variant construction uses the same dotted spelling, so
+    <code>IoError.NotFound(path)</code> and <code>Doc.new(title)</code> read
+    alike deliberately.
   </p>
 
   <p class="note">
@@ -1629,6 +3665,38 @@ print(doc.summarize())</pre>
     <em>which</em> function was found, so the receiver arrives at the back end
     as an unresolved <code>Self</code>. Every listing in this section therefore
     stops at <code>check</code>. <span class="cite wip">changing</span>
+  </p>
+
+  <h3>Method lookup</h3>
+
+  <p class="note">
+    Lookup is the inherent methods on the type, then the interface methods from
+    interfaces the type implements that are in scope. <strong>Ambiguity is an
+    error, never a priority ordering</strong> &mdash; a language that resolves
+    a collision by preferring one source teaches a rule nobody can see at the
+    call site. Both failures name what was searched:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0532]</span>: `borrowed Doc` has no method `no_such_method`
+ <span class="e-hi">--&gt;</span> doc.science:5:7
+  |
+5 |     d.no_such_method()
+  |       <span class="e-hi">^^^^^^^^^^^^^^</span> no such method
+  |
+  = note: method lookup finds the inherent methods of the type and the methods of the interfaces it implements, and neither has this name</code></pre>
+
+<pre class="err"><code><span class="e-code">error[SC0528]</span>: `borrowed Doc` has no field `no_such_field`
+ <span class="e-hi">--&gt;</span> doc.science:5:7
+  |
+5 |     d.no_such_field
+  |       <span class="e-hi">^^^^^^^^^^^^^</span> no such field</code></pre>
+
+  <p class="note">
+    Both messages print the receiver as <code>borrowed Doc</code> rather than
+    <code>Doc</code>, which is accurate and is the auto-borrow becoming visible:
+    the parameter was declared <code>borrowed Doc</code> and the lookup happens
+    on that type. It is a small thing and it is the kind of small thing that
+    makes a reader think the borrow is the problem when it is not.
   </p>
 
   <h3>Associated types</h3>
@@ -1657,6 +3725,11 @@ Countdown implements Iterate:
     to the interface: a <code>Countdown</code> yields <code>Int</code>s and
     there is no second way to iterate a <code>Countdown</code>, which is
     exactly the difference between an associated type and a generic parameter.
+    It is declared <code>type Item</code> in the interface and
+    <code>type Item is Int</code> in the implementation, projected as
+    <code>Self.Item</code> with a dot, and constrained in a <code>where</code>
+    clause with <code>is</code>:
+    <code>where Self.Item is borrowed T, T: Clone</code>.
   </p>
 
   <p class="note">
@@ -1667,6 +3740,17 @@ Countdown implements Iterate:
     less: there is no <code>map</code>, no <code>unwrap_or</code> and no
     <code>is_some</code>, because there is no type left for those methods to
     hang off.
+  </p>
+
+  <p class="note">
+    <code>Iterate</code> is also the shape of the whole chain API:
+    <strong>one required method, <code>next</code>, and thirty-eight
+    <em>provided</em> ones</strong> beside it. Users implement a source and
+    never a combinator, which is what lets a future parallel form hand the
+    identical vocabulary to a different trait without touching user code. The
+    one other member, <code>estimated_length</code>, is defaulted so that
+    implementing a source stays a one-method job, and it exists now rather than
+    later because <code>collect()</code> preallocates from it.
   </p>
 
   <h3>Operators are interfaces</h3>
@@ -1714,6 +3798,20 @@ print(f"{sum.x is 4.0}")</pre>
   </p>
 
   <p class="note">
+    <strong>Operators on primitives do not go through an implementation
+    either, and the mechanism is not what it looks like.</strong> A design
+    amendment said the operator interfaces are implemented for
+    <em>borrowed</em> operands of the primitives; asking the compiler, they are
+    not. What happens is that a borrow of a <code>Copy</code> type coerces to a
+    value at each operand, so the checker sees <code>F32 + F32</code> and never
+    asks about a borrowed implementation. That is better than the amendment,
+    because it is one rule rather than a table of ten operators over a dozen
+    numeric types &mdash; and it is also narrower, because it does not reach a
+    non-<code>Copy</code> type: <code>borrowed String + borrowed String</code>
+    does not work, where the amendment as written implies it would.
+  </p>
+
+  <p class="note">
     <code>Copy</code> and <code>Clone</code> are the two that will catch you.
     <code>Copy</code> means assignment duplicates instead of moving, and it is
     for small values whose duplication is a register move. <code>Clone</code>
@@ -1724,6 +3822,45 @@ print(f"{sum.x is 4.0}")</pre>
     the allocation. A type that is neither &mdash; which is most types &mdash;
     <em>moves</em> when you assign it, and that is the subject of the next
     section.
+  </p>
+
+  <h3>Interface objects, and what dispatch costs</h3>
+
+  <p class="note">
+    <code>any I</code> is the interface object: one function in the binary
+    rather than one per type. There are four spellings and they cost different
+    things. <code>borrowed any I</code> is a pointer paired with a vtable known
+    at the site and <strong>emits no code at all</strong> &mdash; it is
+    unsizing, and it is implicit. <code>any I</code> and
+    <code>Box of any I</code> own the value, which means it moves to the heap,
+    <strong>which allocates</strong>, and those two are written out rather than
+    inserted. And <code>(any I)?</code> is a nullable fat pointer whose niche
+    lives in the data pointer, so it is two words and not three.
+  </p>
+
+  <p class="note">
+    <strong>That is the line the implicit-conversion set is drawn on, and it is
+    worth stating because counting the variants gives a different answer than
+    the design does.</strong> The rule is <em>no implicit change of a
+    value</em>, not <em>no implicit conversions</em> &mdash; boxing preserves
+    the value where the <code>From</code> widening that was deleted did not.
+    By that measure there are two implicit conversions that change a value, and
+    the implementation carries <strong>seven</strong> coercion variants:
+    <code>T</code> into <code>T?</code>; a concrete error into
+    <code>any Error</code> at a <code>return</code> and at an argument;
+    <code>borrowed C</code> into <code>borrowed any I</code> for any interface;
+    and <code>borrowed T</code> into <code>T</code> when <code>T: Copy</code>,
+    in three shapes. A reader counting variants and concluding the note is
+    stale is reading the right number and the wrong question.
+  </p>
+
+  <p class="note">
+    One rule keeps interface objects usable at all: <strong>a method whose
+    signature mentions <code>Self</code> by value is automatically excluded
+    from the vtable</strong>, with no user-written bound to say so, and calling
+    it on an <code>any I</code> value is <code>SC0271</code>. That is what lets
+    <code>any Iterate</code> exist despite the combinators all consuming
+    <code>self</code>.
   </p>
 
   <h3>The <code>Copy</code> rule that lets a borrow be read as a value</h3>
@@ -1757,11 +3894,42 @@ print(f"{sum.x is 4.0}")</pre>
   <p class="note">
     The design is candid that this is a weaker rule than the other implicit
     conversions in the language: unsizing a borrow into an interface object
-    emits no code at all, and this one emits a copy. It earns the weaker
-    defence by the dead end, not by convenience &mdash; and the back end
-    refuses it today, so the loop it exists to permit type-checks and does not
-    yet build. <span class="cite wip">changing</span>
+    emits no code at all, and this one emits a copy, so "the same value" is
+    doing work that "no work happens" did before. It earns the weaker defence
+    by the dead end, not by convenience &mdash; and the back end refuses it
+    today, so the loop it exists to permit type-checks and does not yet build.
+    <span class="cite wip">changing</span>
   </p>
+
+  <div class="callout">
+    <h3>If you are arriving from Rust or Go: the coherence story is Rust's, and the checking is not there yet</h3>
+    <p>
+      An <code>interface</code> is a Rust trait, not a Go interface: it is
+      implemented <em>explicitly</em>, by a block that names both sides, and
+      there is no structural conformance &mdash; a type with the right methods
+      does not satisfy an interface it never claimed. Dispatch is static by
+      default and <code>any I</code> is <code>dyn Trait</code>, right down to
+      the fat pointer. The orphan rule is Rust's, for Rust's reason.
+    </p>
+    <p style="margin-top:0.6rem">
+      What differs in the surface: the block reads
+      <strong><code>Doc implements Summarize:</code></strong> rather than
+      <code>impl Summarize for Doc</code>; there is no <code>&amp;self</code>
+      because <code>self</code> already <em>is</em> the shared borrow and
+      ownership is spelled <code>self: Self</code>; an associated type is
+      projected with a dot, <code>Self.Item</code>, not
+      <code>Self::Item</code>; and there is no <code>#[derive]</code>, so
+      <code>Copy</code>, <code>Clone</code> and <code>Display</code> are each a
+      line you write.
+    </p>
+    <p style="margin-top:0.6rem">
+      What differs in what happens: <strong>Rust would reject three of the four
+      programs in the callout at the top of this section and Science accepts
+      all four.</strong> Do not carry over the habit of trusting the compiler
+      to tell you your implementation is incomplete. It will tell you that a
+      <em>bound</em> is unsatisfied, and nothing more.
+    </p>
+  </div>
 </section>
 
 <!-- ==================================================================== -->
