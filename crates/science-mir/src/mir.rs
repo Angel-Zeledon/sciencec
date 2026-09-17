@@ -454,9 +454,29 @@ pub enum Rvalue {
     /// MIR pass that re-derived it would be consuming it before.
     /// `lib.rs`'s §5 is that argument in full.
     Narrow { operand: Operand, ty: Ty },
-    /// A closure value. **Its body is not lowered**; [`crate::lower`]'s §8 is
-    /// the refusal and its cost.
-    Closure { param: DefId, thir_body: science_types::thir::ExprId, ty: Ty },
+    /// A closure value: its captures, and a pointer back to the body that was
+    /// not lowered.
+    ///
+    /// **An aggregate, exactly as [`Rvalue::Record`] and [`Rvalue::Tuple`] are**
+    /// — `codegen-and-linking.md`'s own table says a closure value is *"a struct
+    /// of `{ fn ptr, captures }`"*, and this is that struct with the function
+    /// pointer left as `thir_body`. `captures[i]` is a reference into the
+    /// enclosing frame, taken by an ordinary [`Rvalue::Ref`] in the statement
+    /// before this one, so **a capture is a borrow every consumer of this IR
+    /// already knows how to read**: it is in [`Body::borrows`], it has a
+    /// [`BorrowId`], and nothing had to learn a new kind of loan.
+    /// [`crate::lower`]'s §8 is the discipline and its price;
+    /// [`crate::capture`] is the walk that finds the set.
+    ///
+    /// `thir_body` is the one place in this crate where an id from another IR
+    /// survives, and it survives because the closure's body has no [`DefId`] to
+    /// be a [`Body`] of. §8's *"what is left"* says whose that is.
+    Closure {
+        param: DefId,
+        thir_body: science_types::thir::ExprId,
+        captures: Vec<Operand>,
+        ty: Ty,
+    },
     /// A value this phase could not build, because THIR had
     /// [`science_types::thir::ExprKind::Error`] there.
     ///
@@ -888,7 +908,7 @@ fn collect_index_temps(rvalue: &Rvalue, out: &mut Vec<Local>) {
                 from_operand(operand);
             }
         }
-        Rvalue::Tuple(operands) => {
+        Rvalue::Tuple(operands) | Rvalue::Closure { captures: operands, .. } => {
             for operand in operands {
                 from_operand(operand);
             }
@@ -897,7 +917,7 @@ fn collect_index_temps(rvalue: &Rvalue, out: &mut Vec<Local>) {
             from_operand(start);
             from_operand(end);
         }
-        Rvalue::Closure { .. } | Rvalue::Error => {}
+        Rvalue::Error => {}
     }
 }
 

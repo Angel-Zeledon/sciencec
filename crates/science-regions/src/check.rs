@@ -389,6 +389,14 @@ fn last_use<'a>(
 // --- Decision 3's intersection, and Decision 6 ------------------------------
 
 /// §6. `SC0335`.
+///
+/// **A record construction and nothing else, although a closure is an aggregate
+/// of borrows too.** [`crate`]'s §5 argues the diagnostic is unreachable in a
+/// solver with no upper bounds, so extending it to
+/// [`science_mir::mir::Rvalue::Closure`] would be a second unreachable arm; and
+/// its message quotes the record's *name*, which a closure does not have. If a
+/// later upper bound makes §5's argument false, both arms have to be written,
+/// and this is where the second one goes.
 fn no_common_region(defs: &DefTable, body: &Body, analysis: &BodyAnalysis) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for (_, basic) in body.blocks() {

@@ -30,6 +30,7 @@
 //! | Decision 26 | the move analysis that decides which local is conditionally moved | [`moves`] |
 //! | Decision 26 | drop elaboration, and the flags | [`drops`] |
 //! | Decision 8 | the call graph and its strongly connected components | [`callgraph`] |
+//! | — | what a closure captures, and how | [`capture`] |
 //! | — | a textual dump, for tests | [`dump`] |
 //!
 //! # 2. What is deliberately not in here
@@ -138,6 +139,20 @@
 //!   and there the loan really is of `r`'s own storage: the checker typed it
 //!   `borrowed (borrowed Row)`, and refusing it when it escapes is correct,
 //!   not a false positive.
+//! - **A closure's captures are borrows in that same table.** [`lower`]'s §8:
+//!   every place a closure's body names from outside itself is borrowed where
+//!   the closure value is created — shared unless the body writes through it —
+//!   into a temporary the [`mir::Rvalue::Closure`] aggregate then holds. So
+//!   rule 4 and rule 5 cover a closure with **no rule of their own**, and the
+//!   obligation on you is only the one you already have.
+//!
+//!   **What you owe in exchange** is that the capture's loan must be live for
+//!   as long as the closure value is. There is nothing in the closure's *type*
+//!   to hang that on — `collections-and-chains.md` §1.2 made a closure type a
+//!   bare arrow, `(A) -> B` — so the relation is readable only off the rvalue's
+//!   capture list. `science-regions`'s `regions`'s §5 is one way to do it and
+//!   costs one new position step; a consumer that ignores the list gets loans
+//!   whose regions are one point wide, which is a *missing* diagnostic.
 //! - **Aliasing** is [`mir::Place::may_overlap`], which is *may*;
 //!   [`PartialEq`] on a [`mir::Place`] is *definitely*. That documentation
 //!   argues that one predicate cannot be conservative in both directions, and
@@ -183,7 +198,14 @@
 //!
 //! **What is missing, and will bite.**
 //!
-//! - **A closure's captures are not borrows you can see.** [`lower`]'s §8.
+//! - **A closure's *body* is not lowered.** Its captures are ([`lower`]'s §8),
+//!   so nothing crosses the boundary unseen, but a mistake between two of the
+//!   closure's own locals is reported by nothing. §8.5 says what that is
+//!   blocked on and it is a [`science_resolve::hir::DefId`] this crate cannot
+//!   mint.
+//! - **A move out of a capture is invisible.** [`lower`]'s §8.2. The strongest
+//!   thing a borrow discipline can say about it is an exclusive borrow, and
+//!   that is what it says.
 //! - **An unresolved callee's arguments are all copies.** [`lower`]'s §5. A
 //!   move through a method call is invisible, so a use-after-move through one
 //!   is not there to be found.
@@ -245,9 +267,37 @@
 //!    exist.** [`lower`]'s §7 decides; the decision is visible in the IR as
 //!    [`mir::Unresolved::IterateNext`] rather than hidden as an assumption.
 //! 5. **Neither note mentions closures at all**, and a closure is where a
-//!    borrow escapes a body. [`lower`]'s §8 refuses it by name. This is the
-//!    largest hole in the crate and it is a language question, not a lowering
-//!    one.
+//!    borrow escapes a body. This entry used to say *"[`lower`]'s §8 refuses it
+//!    by name; this is the largest hole in the crate"*, and the word doing the
+//!    damage was **therefore**: *the body is not lowered, and its captures are
+//!    therefore not borrows MIR can see*. The two are separable. [`lower`]'s §8
+//!    is now the capture discipline — every capture is a borrow, shared unless
+//!    the body writes through the place — and the body is still not lowered.
+//!
+//!    **What that settles and what it does not.** It settles
+//!    `region-inference.md`'s AMENDMENT 3, which said *"whoever writes the
+//!    capture discipline has to decide whether a capture becomes a borrow MIR
+//!    can see"*: it does, so rule 4 covers closures for rule 4's own reason and
+//!    `type-checking-and-mir.md` Decision 8's argument extends to them instead
+//!    of resting on `science-types` walking the body inline. It does **not**
+//!    settle the language question, and that is the point of the discipline
+//!    chosen: a uniform borrow capture refuses every program that could tell a
+//!    borrow capture from a by-value one, so `collections-and-chains.md` can
+//!    still decide either way without changing this IR. §8.1 is that argument
+//!    and §8.5 is the seam that is left.
+//!
+//!    **What the note is still silent about** is worth recording separately.
+//!    `collections-and-chains.md` §7.6 item 6 asks that *"the compiler must
+//!    record each closure's capture set in its type from F0"* — and §1.2 of the
+//!    same note makes a closure type `(A) -> B`, which cannot hold one. Those
+//!    two sentences are in the same document and contradict each other. The
+//!    capture set is recorded here, in the MIR aggregate, which satisfies item
+//!    6's *purpose* (F2 must be able to reject a closure capturing anything
+//!    `mutable borrowed`, and [`mir::BorrowKind::Exclusive`] on a capture is
+//!    exactly that fact) and not its *letter*. Item 6's last sentence — *"this
+//!    is the requirement most likely to be missed, because nothing in F0 reads
+//!    that information"* — is now false twice over: something reads it, and the
+//!    place it was asked to be put is a place it cannot go.
 //! 6. **`examples/21_compiler_shapes.science` lowers, and what it is missing is
 //!    a standard library and not a MIR.** Eighteen bodies, 89 blocks, 353
 //!    points, twelve borrows of which seven are two-phase, ten drops and
@@ -297,6 +347,7 @@
 //!    goes quiet.
 
 pub mod callgraph;
+pub mod capture;
 pub mod drops;
 pub mod dump;
 pub mod lower;
@@ -304,6 +355,7 @@ pub mod mir;
 pub mod moves;
 
 pub use callgraph::CallGraph;
+pub use capture::{Capture, Use};
 pub use lower::{lower_body, lower_crate, Context};
 pub use mir::{
     BasicBlock, BlockId, Body, BorrowData, BorrowId, BorrowKind, Callee, Local, LocalKind, Operand,

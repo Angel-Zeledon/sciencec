@@ -155,22 +155,125 @@
 //! written as one function, `Builder::lower_for`, so that the change is one
 //! place.
 //!
-//! # 8. Closures, refused by name
+//! # 8. Closures: the captures are lowered, the body is not
 //!
-//! **Decision. A closure's body is not lowered, and its captures are therefore
-//! not borrows MIR can see.** [`Rvalue::Closure`] keeps the THIR
-//! [`science_types::thir::ExprId`] of the body — the one place in this crate
-//! where an id from another IR survives — and nothing walks it.
+//! This section used to read *"a closure's body is not lowered, and its
+//! captures are therefore not borrows MIR can see"*, and `lib.rs` §7 called it
+//! the largest hole in the crate. The *therefore* was the mistake. The two
+//! halves are separable, and the half that matters to everything downstream is
+//! the first one.
 //!
-//! The reason is that a capture discipline is a *language* decision:
-//! `collections-and-chains.md` §1.2 owns closures, and what `each.title`
-//! captures — the subject by borrow, by move, by field — is that note's to
-//! decide. Inventing one here would put the answer in the IR, where the note
-//! that owns it could not change it without changing MIR.
+//! > **Decision. Every capture is a *borrow* of the captured place, taken at
+//! > the point the closure value is created and held for as long as the closure
+//! > value is live. Shared, unless the closure's body writes through the place,
+//! > in which case exclusive. There is no by-value capture and no copy capture,
+//! > not even for a `Copy` type.**
 //!
-//! **The cost is real and is the largest hole in this crate.** A program that
-//! borrows through a closure is not checked by whatever runs on this. `lib.rs`
-//! §7 lists it first among the findings for that reason.
+//! ## 8.1 Why a borrow, and why uniformly
+//!
+//! A capture discipline is a *language* decision and
+//! `collections-and-chains.md` owns it, so the thing this level must not do is
+//! answer it by accident. What that note has already decided is one-sided and
+//! it all points the same way: §2.3 says in as many words that *"a chain value
+//! therefore **is** a borrow of its source"*, §4.4 gives the whole ownership
+//! table for a chain without a by-value row anywhere in it, §2.4 says a chain
+//! cannot leave the function in F0, and §7.6 item 6 asks for the capture set to
+//! be *recorded* from F0 while saying the checks on it are F2's. What it has
+//! **not** decided is whether a closure that names an owned local takes it or
+//! borrows it.
+//!
+//! **A uniform borrow capture is the discipline that leaves that undecided.**
+//! The two answers differ observably — under a by-value capture
+//! `let mutable n be 0`, a closure reading `n`, then `n be 1`, then calling it
+//! yields `0`; under a borrow capture it yields `1` — and under a uniform
+//! borrow capture **that program does not compile**, because the write to `n`
+//! conflicts with a live shared borrow (rule 4). So no F0 program can observe
+//! which answer the language will pick, and the note can still pick either
+//! without this file changing. A `Copy` exception would look free and would
+//! quietly settle it for every integer, which is why there is not one.
+//!
+//! *Why not infer by-value from use, as Rust does.* Rust's inference is not
+//! expensive because the lattice is hard; it is expensive because the answer is
+//! **observable in the type** — `Fn`, `FnMut` and `FnOnce` are three traits and
+//! choosing between them feeds back into type checking. §1.2 of that note has
+//! already closed that door by making a closure type a bare arrow, `(A) -> B`,
+//! with no capture set in it. With no trait to select, the only thing an
+//! inference could buy here is permissiveness, and permissiveness is the one
+//! thing a phase with no tests for its own new construct should not buy first.
+//!
+//! ## 8.2 Which borrow, and the doubt that is left
+//!
+//! [`crate::capture`]'s §5 classifies each capture as a read, a write or a
+//! consume, syntactically. A write is a [`BorrowKind::Exclusive`] borrow. A
+//! read is [`BorrowKind::Shared`]. **A consume is exclusive when the value
+//! produced is not trivially copyable and shared when it is** — the same
+//! `is_copy` §5 uses, pointed the same way: a consume is a move this discipline
+//! has no spelling for, and the strongest borrow is the closest thing to it
+//! that can be said.
+//!
+//! *Asked of the value produced, not of the capture's root.*
+//! `each giving captured.port` produces an `Int`, which copies, so the capture
+//! is shared although `Config` itself does not copy.
+//! [`crate::capture::Capture::consumed`] is the list of nodes the question is
+//! asked of, and asking it of the root instead would take an exclusive borrow
+//! of every record a closure reads one integer field out of.
+//!
+//! **What that leaves is one hole and it is worth stating exactly.** A closure
+//! body that genuinely *moves* a capture out is modelled as an exclusive borrow
+//! of it, so the move is invisible to [`crate::moves`] and a use after the
+//! closure's last use is a `SC0301` nobody reports. It is not *any* later use:
+//! the capture borrow is live for the closure's whole life, so every use while
+//! the closure can still be called is refused by rule 4. The unreported window
+//! is exactly the one after the closure is dead — which in F0 is inside the
+//! same frame, because §2.4 of that note keeps a chain from leaving one.
+//!
+//! ## 8.3 A capture names the referent, not the reference
+//!
+//! The place a capture borrows is [`Builder::auto_deref`] of the captured
+//! local, which is §9's rule applied one construct further. A closure inside a
+//! method whose `self` is already a reference captures `(*_1)` and never `_1`,
+//! so the loan points at the caller's storage rather than at this frame's, and
+//! rule 5 does not refuse every closure written inside a method.
+//!
+//! ## 8.4 A capture is never two-phase, and the reason is §6's own
+//!
+//! §6 makes an exclusive borrow two-phase *in argument position*, and a closure
+//! is very often in argument position — `sort(by: line giving ...)` is the
+//! corpus's own case. The capture borrows inside it are taken with
+//! `in_argument: false` regardless, and the reason is the sentence §6 already
+//! uses to refuse two-phasing a named borrow: **a two-phase borrow is one that
+//! is used exactly once, at the call that consumes it.** A capture is used
+//! however many times the closure is called, at points this body does not
+//! contain. Reserving it and never activating it would make it an exclusive
+//! borrow that rule 4 treats as a reservation forever.
+//!
+//! ## 8.5 What is left, and whose it is
+//!
+//! **The closure's body is still not lowered.** [`Rvalue::Closure`] keeps the
+//! THIR [`science_types::thir::ExprId`], and the right end state is a separate
+//! [`Body`] with the captures as parameters — which is what
+//! `codegen-and-linking.md`'s *"a struct of `{ fn ptr, captures }`"* will want,
+//! and what makes a region unable to cross the boundary except through a
+//! summary, like any other call.
+//!
+//! **It is blocked on one thing and it is not in this crate.** A [`Body`] is
+//! keyed by a [`DefId`]; [`crate::callgraph`] partitions by [`DefId`]; Decision
+//! 8's cache boundary is a [`DefId`]. `science-resolve`'s `resolve_closure`
+//! allocates a definition for a closure's *parameter* and none for the closure,
+//! so there is no key to file one under, and minting one is that crate's to do.
+//! Until it does, the seam is exactly this: **everything that crosses between
+//! the closure's body and the enclosing body is a capture, every capture is a
+//! borrow in [`Body::borrows`], and the borrow is live for the whole life of
+//! the closure value.** A consumer that honours rule 4 and rule 5 over that
+//! table is sound about closures without reading a closure body — it is
+//! *imprecise*, because it refuses at the closure's creation what a real call
+//! would only conflict with at the call, and imprecise in the direction that
+//! refuses.
+//!
+//! **What is genuinely not checked** is the closure body's own interior: a
+//! mistake between two of the closure's own locals is reported by nothing,
+//! because those locals exist in no MIR. Nothing outside the closure can name
+//! them, so the hole does not widen past the body.
 //!
 //! # 9. The receiver of a method call is reborrowed, not borrowed
 //!
@@ -796,9 +899,11 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 self.assign(block, dest, Rvalue::Narrow { operand: value, ty }, span);
                 block
             }
-            // §8. The body is not lowered.
+            // §8. The captures are lowered; the body is not.
             ExprKind::Closure { param, body } => {
-                let rvalue = Rvalue::Closure { param: *param, thir_body: *body, ty };
+                let (param, body) = (*param, *body);
+                let (captures, block) = self.lower_captures(param, body, block);
+                let rvalue = Rvalue::Closure { param, thir_body: body, captures, ty };
                 self.assign(block, dest, rvalue, span);
                 block
             }
@@ -1364,6 +1469,61 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             // says why that is better than skipping them.
             None => self.new_block(),
         }
+    }
+
+    /// §8's discipline, applied: one borrow per capture, in first-mention
+    /// order, each into a temporary the closure aggregate then holds.
+    ///
+    /// A temporary and an ordinary [`Rvalue::Ref`] rather than a new statement
+    /// kind, because that is what §3's three-address form already does for
+    /// every other aggregate: `Doc(source: borrowed doc)` is a `Ref` into a
+    /// temporary and a [`Rvalue::Record`] holding it. A capture that needed its
+    /// own borrow-taking rvalue would be a second spelling of a loan, and
+    /// [`index_borrows`], [`crate::drops`] and every consumer of
+    /// [`Body::borrows`] would each need to learn it.
+    ///
+    /// **A capture whose binding this body has no local for is skipped.** That
+    /// is a name the closure resolved to something that is not storage in this
+    /// frame — which the resolver would have made an
+    /// [`ExprKind::Item`] rather than an [`ExprKind::Local`], so it does not
+    /// happen — and skipping is `ty`'s §5 discipline rather than an assertion:
+    /// a hole is a missing capture, not a panic.
+    fn lower_captures(
+        &mut self,
+        param: DefId,
+        body: ExprId,
+        mut block: BlockId,
+    ) -> (Vec<Operand>, BlockId) {
+        let found = crate::capture::captures_of(self.context.decls, self.thir, param, body);
+        let mut captures = Vec::with_capacity(found.len());
+        for capture in found {
+            let Some(local) = self.bindings.get(&capture.def).copied() else { continue };
+            // §8.3: the referent, not the reference.
+            let place = self.auto_deref(Place::local(local));
+            let ty = self.place_ty(&place);
+            // §8.2. A consume is a move this discipline cannot spell, so it
+            // takes the strongest borrow instead — unless every consumed node
+            // copies, in which case there was no move to be strong about. The
+            // question is asked of the *node* consumed and not of the capture's
+            // root: `each giving c.port` produces an `Int`, whatever `c` is.
+            let consumed = capture.consumed.clone();
+            let consumed_moves = consumed.iter().any(|node| {
+                let node_ty = self.thir.ty(*node);
+                !self.is_copy(node_ty)
+            });
+            let mutable = match capture.use_kind {
+                crate::capture::Use::Read => false,
+                crate::capture::Use::Consume => consumed_moves,
+                crate::capture::Use::Write => true,
+            };
+            let borrowed = self.context.types.borrowed(mutable, ty);
+            let temp = self.temp(borrowed, capture.span, block);
+            // §8.4: `in_argument` is false however the closure got here.
+            block =
+                self.borrow_place(Place::local(temp), mutable, place, block, capture.span, false);
+            captures.push(Operand::Move(Place::local(temp)));
+        }
+        (captures, block)
     }
 
     /// The two-phase borrow whose reference lives in this local, if any.

@@ -77,8 +77,12 @@
 //!    It should give the same answer. Nobody has checked, because there is no
 //!    declaration to check against.
 //! 3. **The file exercises no closure and no interior mutability**, so §9's
-//!    three unsupported shapes are not tested by it, and neither is the largest
-//!    hole in [`generate`]. §6 is that account.
+//!    three unsupported shapes are not tested by it. Closures are no longer a
+//!    hole — §6 — but the corpus cannot say so: every closure in `examples/`
+//!    names only its own subject and captures nothing (`science-mir`'s
+//!    `capture`'s §4), so `tests/closure_captures.rs` carries that burden on
+//!    fixtures written for it, exactly as `tests/drops.rs` carries Decision
+//!    26's.
 //!
 //! # 4. Is elision total? Yes — and §5.2 asks the wrong question
 //!
@@ -190,22 +194,53 @@
 //! **So the argument survives, and the amendment is owed to §3 step 4 of
 //! `region-inference.md` rather than to `type-checking-and-mir.md`.**
 //!
-//! **The hole that is left is closures**, and it is exactly `science-mir`'s
-//! `lower` §8. A closure that captures a place exclusively produces **no
-//! borrow in MIR**, so no region, so rule 4 cannot forbid anything about it.
-//! Narrowing is nevertheless safe today, and by an accident worth writing down:
-//! `science-types`'s checker walks a closure's body inline with the enclosing
-//! facts, so a write inside one invalidates at the point the closure is
-//! *written*, which always precedes the point it is called. That is a
-//! stricter-than-necessary rule that happens to cover the gap. **It is not rule
-//! 4 doing it**, and when closures acquire a capture discipline —
-//! `collections-and-chains.md` §1.2 owns it — whichever note writes it must
-//! decide whether captures become borrows MIR can see, because Decision 8's
-//! argument is currently resting on something else.
+//! **The hole that was left is closed, and it is rule 4 doing it now.** This
+//! section used to say that a closure capturing a place exclusively produced no
+//! borrow in MIR, that narrowing was safe only because `science-types` walks a
+//! closure's body inline with the enclosing facts, and that *"whichever note
+//! writes the capture discipline must decide whether captures become borrows
+//! MIR can see"*.
+//!
+//! **They do.** `science-mir`'s `lower` §8: every place a closure's body names
+//! from outside itself is borrowed where the closure value is created, shared
+//! unless the body writes through it. That borrow is in
+//! [`science_mir::mir::Body::borrows`] like any other, it gets a region like
+//! any other, and [`access`]'s §1 refuses every conflicting access inside it.
+//! `tests/narrowing.rs`'s
+//! `an_exclusive_capture_invalidates_a_narrowing_by_rule_4` is the program, and
+//! `tests/closure_captures.rs` is the rest.
+//!
+//! **So Decision 8's argument extends to closures for Decision 8's own
+//! reason.** It is no longer resting on a stricter-than-necessary rule in a
+//! different crate that happened to cover the gap. The inline walk in
+//! `science-types` still runs and is still stricter; it is now a second line
+//! rather than the only one.
+//!
+//! **What the engine needed in exchange**, and it is the one piece that was not
+//! free: a capture's loan must be live for as long as the closure value is, and
+//! there is nothing in a closure's *type* to hang that on, because
+//! `collections-and-chains.md` §1.2 made a closure type a bare arrow with no
+//! capture set in it. [`regions`]'s §5 recovers the positions from the
+//! **rvalue** instead, at [`regions::Step::Capture`], and the rest of the
+//! engine — the seeding in [`solve`], the propagation, the conflict check —
+//! did not change by a line. §8 item 11 records what that says about
+//! `region-inference.md` AMENDMENT 2.
+//!
+//! **What is left is smaller and it is a lowering seam, not a soundness one.**
+//! The closure's *body* is still not lowered (`science-mir`'s `lower` §8.5: it
+//! has no [`DefId`] to be a body of), so a mistake between two of the closure's
+//! own locals is reported by nothing — and nothing outside the closure can name
+//! those locals. And a closure that *moves* a capture out is modelled as an
+//! exclusive borrow, so the move is invisible; the window that is unreported is
+//! after the closure's last use, because rule 4 refuses every use before it.
 //!
 //! # 7. What this crate cannot do
 //!
-//! - **Closures.** §6. The largest hole, inherited whole.
+//! - **A closure's body.** §6. Its *captures* are checked — that is no longer
+//!   the hole — and its interior is not lowered, so nothing checks a mistake
+//!   between two of its own locals. `science-mir`'s `lower` §8.5 is the seam.
+//! - **A move out of a capture.** §6's last paragraph, and `science-mir`'s
+//!   `lower` §8.2.
 //! - **A borrow inside a container.** [`regions`]'s §2 item 1. Under-
 //!   approximating, so it loses errors rather than inventing them.
 //! - **Cross-crate summaries.** [`summary`]'s §2. Decision 7's serialisation
@@ -297,6 +332,28 @@
 //!     entry in this list that a note was not the authority on**: the finding
 //!     was made by running the engine, and the fix was made in the crate the
 //!     finding was about.
+//!
+//! 11. **AMENDMENT 2 names three lower bounds and there was room for a
+//!     fourth.** *"A local's region, bounded below by where the local is live;
+//!     a parameter's, by every point; and a loan's, by nothing."* A closure's
+//!     capture is a reference held by a value whose type does not mention it,
+//!     so the obvious way to make its loan live for the closure's life is a
+//!     fourth bound: *a capture loan's region, bounded below by where the
+//!     closure local is live.* **That would have been the wrong answer**, and
+//!     saying why is worth more than the amendment. A fourth lower bound is a
+//!     special case in [`solve`] that every later reader has to keep in mind;
+//!     giving the closure local a *position* per capture instead
+//!     ([`regions`]'s §5) makes it the **first** of the three bounds, already
+//!     implemented, and [`solve`] does not learn that closures exist. The note
+//!     is right that there are three, and a phase that wants a fourth should
+//!     check whether what it actually wants is a position.
+//! 12. **`collections-and-chains.md` §1.2 and §7.6 item 6 contradict each
+//!     other, and this engine is where it shows.** Item 6 requires the compiler
+//!     to *"record each closure's capture set in its type from F0"*; §1.2 makes
+//!     a closure type `(A) -> B`, which has nowhere to record one. [`regions`]'s
+//!     §1 walk therefore finds nothing in a closure type however hard it looks,
+//!     which is why §5 exists. `science-mir`'s §7 item 5 states the same
+//!     finding from the other side.
 //!
 //! # 9. Can this engine be written in Science?
 //!

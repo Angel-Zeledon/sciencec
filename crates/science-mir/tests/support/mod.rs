@@ -69,6 +69,45 @@ pub fn lower(source: &str) -> Lowered {
     Lowered { krate, types, decls, thir, bodies, diagnostics, resolution }
 }
 
+/// Lowers a program only if it lexes, parses and resolves cleanly.
+///
+/// The corpus is not guaranteed to *check*, only to reach this crate, and a
+/// file that does not resolve is one this crate never sees. Two corpus-wide
+/// tests need the same filter — `no_invented_loops.rs` and `captures.rs` —
+/// so it lives here rather than in whichever of them was written first.
+pub fn lower_if_clean(source: &str) -> Option<Lowered> {
+    let file = FileId(0);
+    let (tokens, lexed) = science_lexer::lex(file, source);
+    if lexed.has_errors() {
+        return None;
+    }
+    let (ast, parsed) = science_parser::parse_module(&tokens, file);
+    if parsed.has_errors() {
+        return None;
+    }
+    let (_, resolution) = science_resolve::resolve_module(file, "example.science", &ast);
+    if resolution.has_errors() {
+        return None;
+    }
+    Some(lower(source))
+}
+
+/// Every `.science` file in `examples/`, as `(name, source)`.
+pub fn corpus() -> Vec<(String, String)> {
+    let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(&examples).expect("examples/") {
+        let path = entry.expect("a directory entry").path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("science") {
+            continue;
+        }
+        let name = path.file_name().expect("a file name").to_string_lossy().into_owned();
+        out.push((name, std::fs::read_to_string(&path).expect("a readable example")));
+    }
+    out.sort();
+    out
+}
+
 fn codes(diagnostics: &Diagnostics) -> Vec<(u16, String)> {
     diagnostics.iter().map(|d| (d.code.0, d.message.clone())).collect()
 }

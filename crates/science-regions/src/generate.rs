@@ -127,6 +127,32 @@
 //! the literal's temporary. The real `Map.get` borrows only the map, and there
 //! is no way to know that without the declaration. `tests/corpus.rs` holds the
 //! census.
+//!
+//! # 8. A closure's captures, which used to be the hole
+//!
+//! `science-mir`'s `lower` §8 now makes every capture a borrow, so a closure
+//! value reaches this walk as an aggregate of references and the rule of §1
+//! applies to it unchanged: *a reference may not be stored anywhere that
+//! outlives what it points at*. The destination position is
+//! [`regions::Step::Capture`] and [`crate::regions`]'s §5 says why that step
+//! comes from the rvalue rather than from the type.
+//!
+//! **The consequence for `type-checking-and-mir.md` Decision 8 is the point of
+//! the exercise.** [`crate`]'s §6 said narrowing was safe across a closure only
+//! because `science-types` walks a closure's body inline, *"a different
+//! mechanism from the one Decision 8 names"*. It is now rule 4 doing it: a
+//! closure that captures a place exclusively takes an exclusive borrow of it,
+//! that borrow has a region, and [`crate::access`]'s §1 refuses every read and
+//! write of an overlapping place inside it. Decision 8's argument extends to
+//! closures for the reason Decision 8 gives, and not by accident.
+//!
+//! **What it does not extend to** is a call *through* a closure: this walk sees
+//! a [`Callee::Indirect`], and §5's rule already assumes such a callee may hand
+//! back a reference into anything it can see — which now includes the closure's
+//! own captures, because the closure value has regions to be reached. That went
+//! from vacuous to load-bearing without a line changing in
+//! [`opaque_callee`].
+//!
 
 use science_diagnostics::Span;
 use science_mir::mir::{
@@ -249,10 +275,22 @@ fn assignment(
         | Rvalue::Range { .. }
         | Rvalue::IsPresent(_)
         | Rvalue::Discriminant(_) => {}
-        // The two holes, and they are not the same hole. A closure's captures
-        // are invisible (`lower`'s §8); an `Error` rvalue is a mistake already
-        // reported, and `ty`'s §5 discipline says a hole must not cascade.
-        Rvalue::Closure { .. } | Rvalue::Error => {}
+        // §8. A closure value is an aggregate of references, so it is the
+        // `Tuple` arm with one difference: the destination position is a
+        // `Step::Capture` the *rvalue* supplied rather than a step a type walk
+        // found. One constraint per capture and none between them, which is
+        // Decision 3 applied to the one aggregate whose type does not describe
+        // its own contents.
+        Rvalue::Closure { captures, .. } => {
+            for (at, operand) in captures.iter().enumerate() {
+                let at = at as u32;
+                let prefix = [Step::Capture(at)];
+                from_operand(out, table, dest, &prefix, operand, point, Cause::Captured(at), span);
+            }
+        }
+        // An `Error` rvalue is a mistake already reported, and `ty`'s §5
+        // discipline says a hole must not cascade.
+        Rvalue::Error => {}
     }
 }
 
@@ -337,8 +375,9 @@ fn opaque_callee(
     declared: Option<&[usize]>,
 ) {
     // Everything the call can see: the arguments, and — for an indirect call —
-    // the closure value itself, whose captures `lower`'s §8 did not lower and
-    // which may therefore hold anything.
+    // the closure value itself, whose captures are references it may hand back
+    // (§8). Before `lower`'s §8 lowered them this line was true and vacuous;
+    // the closure local had no regions to reach.
     let mut visible: Vec<Place> = args.iter().filter_map(|it| it.place().cloned()).collect();
     if let Callee::Indirect(operand) = callee {
         if let Some(place) = operand.place() {

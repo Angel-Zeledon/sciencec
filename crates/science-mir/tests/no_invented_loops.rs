@@ -19,7 +19,7 @@
 mod support;
 
 use science_mir::mir::{reverse_postorder, Body, BlockId};
-use support::lower;
+use support::{lower, lower_if_clean};
 
 /// The distinct **loop headers** of a body: the targets of its back edges.
 ///
@@ -120,21 +120,3 @@ fn no_example_acquires_a_loop_it_did_not_write() {
     assert!(checked >= 15, "only {checked} examples were lowered; the corpus has twenty-odd");
 }
 
-/// The corpus is not guaranteed to *check*, only to lex, parse and resolve, and
-/// a file that does not resolve is one this crate never sees.
-fn lower_if_clean(source: &str) -> Option<support::Lowered> {
-    let file = science_diagnostics::FileId(0);
-    let (tokens, lexed) = science_lexer::lex(file, source);
-    if lexed.has_errors() {
-        return None;
-    }
-    let (ast, parsed) = science_parser::parse_module(&tokens, file);
-    if parsed.has_errors() {
-        return None;
-    }
-    let (_, resolution) = science_resolve::resolve_module(file, "example.science", &ast);
-    if resolution.has_errors() {
-        return None;
-    }
-    Some(lower(source))
-}

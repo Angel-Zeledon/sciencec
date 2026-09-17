@@ -28,7 +28,7 @@
 //! That crate's §5: *"the cause — `AssignedFrom`, `PassedTo`, `ReturnedFrom`,
 //! `StoredInField` — is readable off the statement kind and is not pre-computed
 //! here, because a cause is a fact about a constraint and there are no
-//! constraints in this crate"*. [`Cause`] is those four and three more that
+//! constraints in this crate"*. [`Cause`] is those four and four more that
 //! the note did not anticipate, each named at its variant.
 //!
 //! # 3. The point on a constraint is not decoration
@@ -75,6 +75,13 @@ pub enum Cause {
     ReborrowedFrom,
     /// A coercion — `science_types::assign::Coercion` — carried through.
     Coerced,
+    /// A reference captured by a closure, related to the closure value that
+    /// holds it. `science-mir`'s `lower` §8: a capture is a borrow, and this is
+    /// the constraint that makes it live for as long as the closure is.
+    ///
+    /// The eighth cause, and the third that §3 step 2's list of four did not
+    /// anticipate.
+    Captured(u32),
 }
 
 impl Cause {
@@ -96,6 +103,7 @@ impl Cause {
             Cause::Returned => "returned here".to_string(),
             Cause::ReborrowedFrom => "borrowed through a reference here".to_string(),
             Cause::Coerced => "coerced here".to_string(),
+            Cause::Captured(at) => format!("captured by the closure here (capture {at})"),
         }
     }
 }

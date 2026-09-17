@@ -78,13 +78,66 @@
 //! throughout"* — and [`RegionVar`] is a `u32` into one body's [`RegionTable`].
 //! There is no back-pointer from a variable to the place that made it: the
 //! table holds a [`RegionKind`] per variable and the lookup goes that way.
+//!
+//! # 5. A closure's captures come from the rvalue, not from the type
+//!
+//! §1's whole method is *walk the type*, and it is the right method for every
+//! value in the language except one. `science-mir`'s `lower` §8 makes each of a
+//! closure's captures a borrow, and the closure value holds those references —
+//! but [`TyKind::Closure`] is `(A) -> B` and says nothing about them, because
+//! `collections-and-chains.md` §1.2 decided a closure type is a bare arrow with
+//! no capture set in it.
+//!
+//! **Decision. A local a closure value is assigned into gets one position per
+//! capture, at [`Step::Capture`], found by scanning the body's statements for
+//! [`science_mir::mir::Rvalue::Closure`] and walking each capture operand's
+//! own type beneath it.**
+//!
+//! *Why this and not a change to the type.* A capture set in the type is what
+//! Rust has, and it is what forces `Fn`/`FnMut`/`FnOnce` to be three traits
+//! whose selection feeds back into inference. §1.2 refused it. The information
+//! still has to exist — `collections-and-chains.md` §7.6 item 6 asks for it in
+//! as many words, *"the compiler must therefore record each closure's capture
+//! set … from F0"* — so the only question is where, and the MIR aggregate is
+//! where it already is.
+//!
+//! *Why it needs no change to [`crate::solve`].* A capture position is an
+//! ordinary [`RegionKind::Local`], so it is seeded from the closure local's
+//! liveness by the rule that seeds every other local position. That is what
+//! makes a capture loan live for exactly as long as the closure value is —
+//! `'loan ⊇ 'capture-temp ⊇ 'closure-local`, three ordinary constraints — and
+//! it is why this is a position and not a fourth lower bound bolted onto the
+//! solver. `region-inference.md`'s AMENDMENT 2 names three lower bounds and
+//! would have needed a fourth had the closure's regions been modelled any other
+//! way.
+//!
+//! **Three costs.** A local assigned *two different* closures keeps the first
+//! path found at each index, so two captures at index 0 with different
+//! mutability share one variable and the shared one is whichever came first in
+//! block order — an over-relation, which makes regions bigger and loses no
+//! conflict. A capture whose operand is not a place — which cannot happen
+//! today, since `lower` always builds a temporary — contributes nothing.
+//!
+//! And the third is a genuine hole, stated rather than papered over: **a
+//! closure that crosses a function boundary loses its capture relation at the
+//! caller.** A [`Step::Capture`] position reaches [`crate::summary`] like any
+//! other, but a caller's local receives the closure from a *call* and not from
+//! a [`science_mir::mir::Rvalue::Closure`], so this scan gives it no capture
+//! positions to relate the summary to, and the constraint is dropped. That is
+//! the **unsound** direction — a lost constraint is a lost conflict — and the
+//! only reason it is not reachable today is `collections-and-chains.md` §2.4:
+//! *"a function returns a collection, not a chain"*, so a closure type does not
+//! cross a boundary in F0. When F1 adds the opaque `some Iterate of Item = T`
+//! return that §2.4 asks for, this is the line that has to change, and the
+//! change is to give the positions to the *type* — which needs §1.2 to have
+//! grown somewhere to put them.
 
 use science_resolve::hir::{DefId, DefKind, DefTable};
 use science_types::alias::Aliases;
 use science_types::items::Declarations;
 use science_types::ty::{Ty, TyKind, Types};
 
-use science_mir::mir::{Body, BorrowId, Local, Place, Projection};
+use science_mir::mir::{Body, BorrowId, Local, Place, Projection, Rvalue, StatementKind};
 
 /// How deep into a type's fields the walk of §1 goes. §2 item 4.
 pub const MAX_DEPTH: usize = 6;
@@ -109,6 +162,18 @@ pub enum Step {
     Tuple(u32),
     /// A choice variant's positional payload.
     Variant { variant: DefId, index: u32 },
+    /// One capture of a closure value, by its index in
+    /// [`science_mir::mir::Rvalue::Closure`]'s list.
+    ///
+    /// **The one step that does not come from a type.** Every other variant is
+    /// found by §1's walk of a declaration; this one is read off the *rvalue*,
+    /// because `science-types`'s closure type is a bare arrow — `(A) -> B`,
+    /// `collections-and-chains.md` §1.2 — with no capture set in it, so
+    /// [`TyKind::Closure`] yields no positions however hard the walk looks.
+    ///
+    /// §5 below is why the type not carrying them is a decision rather than a
+    /// gap, and why this is the right place to recover them.
+    Capture(u32),
 }
 
 /// Where in a type a `borrowed` sits: the path of fields to reach it.
@@ -338,6 +403,43 @@ impl RegionTable {
             locals.push(slots);
         }
 
+        // §5. The positions no type walk can find, read off the rvalue that
+        // holds them. Before the loans, because a `RegionVar` is an index into
+        // `kinds` and the loans' indices must stay contiguous at the end.
+        for (_, basic) in body.blocks() {
+            for statement in &basic.statements {
+                let StatementKind::Assign { place, rvalue: Rvalue::Closure { captures, .. } } =
+                    &statement.kind
+                else {
+                    continue;
+                };
+                // A closure value is built into a whole local; there is no
+                // spelling for assigning one into a field.
+                if !place.is_local() {
+                    continue;
+                }
+                for (at, operand) in captures.iter().enumerate() {
+                    let Some(from) = operand.place() else { continue };
+                    let found = context.positions(from.ty(body));
+                    truncated |= found.truncated;
+                    for position in found.positions {
+                        let mut path = vec![Step::Capture(at as u32)];
+                        path.extend(position.path);
+                        let slots = &mut locals[place.local.index()];
+                        if slots.iter().any(|(existing, _)| existing.path == path) {
+                            continue;
+                        }
+                        let position = Position { path, mutable: position.mutable };
+                        let var = RegionVar::from_index(kinds.len());
+                        let kind =
+                            RegionKind::Local { local: place.local, position: position.clone() };
+                        kinds.push(kind);
+                        slots.push((position, var));
+                    }
+                }
+            }
+        }
+
         let mut loans = Vec::with_capacity(body.borrows().len());
         for data in body.borrows() {
             let var = RegionVar::from_index(kinds.len());
@@ -489,6 +591,13 @@ pub fn describe_path(defs: &DefTable, path: &Path) -> String {
                 out.push_str(&defs.get(*variant).name);
                 out.push('.');
                 out.push_str(&index.to_string());
+            }
+            // A capture has no name in the source — the author wrote no field
+            // and no argument — so the narrative §7.2 asks for has to describe
+            // it rather than quote it.
+            Step::Capture(at) => {
+                out.pop();
+                out.push_str(&format!("capture {at}"));
             }
         }
     }

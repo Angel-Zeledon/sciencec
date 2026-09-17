@@ -117,24 +117,24 @@ def go():
     assert_eq!(checked.reported(), Vec::<u16>::new(), "{:?}", codes(&checked.regions));
 }
 
-/// **The hole that is left, asserted as a hole.**
+/// **The hole that was left, closed — and the guard that noticed.**
 ///
-/// `science-mir`'s `lower` §8 does not lower a closure's body, so a closure
-/// that captures a place produces no [`science_mir::mir::BorrowData`] and rule
-/// 4 has nothing to say about it. Narrowing is nevertheless safe today because
-/// `science-types`'s checker walks the closure body inline with the enclosing
-/// facts — which is a *different* mechanism from the one Decision 8 names.
+/// This test used to assert the opposite: that a closure capture produced *no*
+/// [`science_mir::mir::BorrowData`], with the note *"the day captures become
+/// borrows the assertion fails and somebody reads §6"*. The day came;
+/// `science-mir`'s `lower` §8 is the discipline and [`crate`]'s §6 is rewritten
+/// around it.
 ///
-/// This test asserts the MIR-level fact, so that the day captures become
-/// borrows the assertion fails and somebody reads §6.
+/// What it asserts now is the fact §6 turns on: a closure that names a place
+/// from outside itself takes a real borrow of it, at the point the closure is
+/// built.
 #[test]
-fn a_closure_capture_is_not_a_borrow_this_engine_can_see() {
-    let source = "\
-type Doc:
+fn a_closure_capture_is_a_borrow_this_engine_can_see() {
+    let source = "type Doc:
     title: Int
 
-def sink(v: Int) -> Int:
-    v
+def sink(f: (Int) -> Int) -> Int:
+    1
 
 def go():
     let doc be Doc(title: 0)
@@ -157,10 +157,43 @@ def go():
         })
         .count();
     assert_eq!(closures, 1, "the fixture no longer builds a closure");
-    assert_eq!(
-        body.borrows().len(),
-        0,
-        "a closure capture became a borrow; `region-inference.md`'s §6 finding needs revisiting"
+    assert_eq!(body.borrows().len(), 1, "the capture of `doc` is a borrow");
+    assert_eq!(body.borrows()[0].kind, science_mir::BorrowKind::Shared);
+    assert_eq!(checked.reported(), Vec::<u16>::new(), "{:?}", codes(&checked.regions));
+}
+
+/// **Decision 8, extended to closures for Decision 8's own reason.**
+///
+/// The narrowing on `config.port` is established, and a closure then takes an
+/// exclusive borrow of `config` while the fact is still being read. Before §8
+/// there was no borrow here at all and [`crate`]'s §6 had to say the safety was
+/// coming from somewhere else — `science-types` walking the closure body inline.
+/// It is rule 4 now, over an access and a loan, exactly as
+/// `region-inference.md`'s AMENDMENT 3 writes it.
+#[test]
+fn an_exclusive_capture_invalidates_a_narrowing_by_rule_4() {
+    let source = format!(
+        "{CONFIG}
+def write_it(c: mutable borrowed Config) -> Bool:
+    c.port be 1
+    true
+
+def sink(f: (Bool) -> Bool) -> Bool:
+    true
+
+def go():
+    let mutable config be Config(port: null)
+    if config.port?:
+        let f be item giving write_it(mutable borrowed config)
+        print(config.port)
+        let b be sink(f)
+"
     );
-    assert_eq!(checked.reported(), Vec::<u16>::new());
+    let checked = check(&source);
+    assert_eq!(
+        checked.reported(),
+        vec![330],
+        "an exclusive capture did not conflict with the narrowed read: {:?}",
+        codes(&checked.regions)
+    );
 }

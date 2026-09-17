@@ -268,15 +268,17 @@ pub fn moved_locals(rvalue: &Rvalue) -> Vec<Local> {
                 take(operand);
             }
         }
-        Rvalue::Tuple(operands) => {
+        // A closure's captures are operands like any other aggregate's:
+        // `lower`'s §8 makes each one a reference taken in the statement
+        // before, so the move seen here is the move of that reference into the
+        // closure value. The *capture* is a borrow and moves nothing, which is
+        // the discipline's whole point.
+        Rvalue::Tuple(operands) | Rvalue::Closure { captures: operands, .. } => {
             for operand in operands {
                 take(operand);
             }
         }
-        Rvalue::Ref { .. }
-        | Rvalue::Discriminant(_)
-        | Rvalue::Closure { .. }
-        | Rvalue::Error => {}
+        Rvalue::Ref { .. } | Rvalue::Discriminant(_) | Rvalue::Error => {}
     }
     out
 }

@@ -211,7 +211,10 @@ fn rvalue(defs: &DefTable, rvalue: &Rvalue) -> String {
             format!("{} as {coercion:?}", operand(defs, value))
         }
         Rvalue::Narrow { operand: value, .. } => format!("narrow {}", operand(defs, value)),
-        Rvalue::Closure { .. } => "closure".to_string(),
+        Rvalue::Closure { captures, .. } => {
+            let captures: Vec<String> = captures.iter().map(|it| operand(defs, it)).collect();
+            format!("closure[{}]", captures.join(", "))
+        }
         Rvalue::Error => "{error}".to_string(),
     }
 }

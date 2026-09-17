@@ -224,12 +224,13 @@ fn the_declared_map_get_closed_the_two_false_positives() {
 /// It is quiet for two reasons and only one of them is the language's.
 /// [`science_regions`]'s §4 is the real one — the answer is a set, so *"from
 /// `x` or `y`"* is not an ambiguity. [`science_regions::check`]'s §6 is the
-/// other: **two** bodies in this corpus would reach it, down from four when
-/// `Array.get` had no declaration. `largest` and `next_line` now have a
-/// signature the analysis can determine; the two that remain are blocked by a
-/// lowering hole rather than by a missing declaration, and
-/// [`every_undetermined_signature_is_blocked_by_a_missing_declaration`] names
-/// it.
+/// other: **one** body in this corpus would reach it, down from four when
+/// `Array.get` had no declaration and from two when `19_stdlib.science`'s
+/// `find` still did. Each step down came from a declaration landing, which is
+/// the direction §4's *"what would falsify this"* predicts; the one that
+/// remains is blocked by a lowering hole rather than by a missing declaration,
+/// and [`every_undetermined_signature_is_blocked_by_a_missing_declaration`]
+/// names it.
 #[test]
 fn sc0340_fires_nowhere_in_the_corpus() {
     for (name, codes) in census() {
@@ -261,10 +262,7 @@ fn every_undetermined_signature_is_blocked_by_a_missing_declaration() {
     undetermined.sort();
     assert_eq!(
         undetermined,
-        vec![
-            "07_generics.science:first_inner",
-            "19_stdlib.science:find",
-        ],
+        vec!["07_generics.science:first_inner"],
         "the set of hole-blocked signatures moved"
     );
 }

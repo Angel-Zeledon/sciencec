@@ -287,7 +287,11 @@ fn from_rvalue(rvalue: &Rvalue, span: Span, out: &mut Vec<Access>) {
                 from_operand(operand, span, out);
             }
         }
-        Rvalue::Tuple(operands) => {
+        // A closure's captures are operands here now: `science-mir`'s `lower`
+        // §8 makes each one a reference taken in the statement before, so the
+        // access this records is the move of that reference into the closure
+        // value, and the *borrow* was recorded at the `Ref` that took it.
+        Rvalue::Tuple(operands) | Rvalue::Closure { captures: operands, .. } => {
             for operand in operands {
                 from_operand(operand, span, out);
             }
@@ -296,9 +300,6 @@ fn from_rvalue(rvalue: &Rvalue, span: Span, out: &mut Vec<Access>) {
             from_operand(start, span, out);
             from_operand(end, span, out);
         }
-        // A closure's captures are not operands here: `science-mir`'s `lower`
-        // §8 refuses the body, so there is nothing to walk. [`crate`]'s §6 is
-        // what that costs and it is the largest hole in this crate too.
-        Rvalue::Closure { .. } | Rvalue::Error => {}
+        Rvalue::Error => {}
     }
 }
