@@ -197,7 +197,7 @@ runtime concept in it.
 ### 2.2 Both a script body and a `main`
 
 **Decision.** A file with top-level statements *and* an explicit
-`function main` is an error, `SC0117`.
+`def main` is an error, `SC0117`.
 
 ```science
 let x be compute()
@@ -734,7 +734,7 @@ precedent §9 of the core spec set for itself when it moved exhaustiveness error
 
 | Code | Range | Detected by | Meaning | Applicable fix |
 |---|---|---|---|---|
-| `SC0117` | syntax | parser | a file has both a script body and a `function main` | no — two readings, both named in the note |
+| `SC0117` | syntax | parser | a file has both a script body and a `def main` | no — two readings, both named in the note |
 | `SC0107` | syntax | parser | `public` on a top-level statement | yes — remove `public`. **Existing code, reused** |
 | `SC0101` | syntax | parser | expected a declaration | **existing code, message must change**; see §8.1 |
 | `SC0212` | resolution | resolver | an item body names a script binding (§3.3) | yes, when the initialiser is a constant expression: rewrite `let` as `const` |
@@ -845,7 +845,7 @@ is the same grammar plus one production, given a different file name.
    manager.
 4. **MATLAB is the evidence.** It is the one mainstream language in the
    audience's world that took this route, and its script-vs-function rule — a
-   file is a function file if its first non-comment token is `def`, and a
+   file is a function file if its first non-comment token is `function`, and a
    script may only have local functions *at the end* — is a reliable source of
    confusion for exactly these users. The ordering wart in that last clause is
    §3.3's question, answered badly, by the language that already ran the
