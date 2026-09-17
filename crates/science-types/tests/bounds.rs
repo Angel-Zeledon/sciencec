@@ -10,13 +10,25 @@
 //! anything, because nothing else constrains one.
 //!
 //! **Two halves, and the second is the one that could go wrong quietly.** The
-//! refusals are easy to get right and easy to test. The admissions are not:
-//! `builtins.rs` declares seventeen interfaces and **no implementation of any**,
-//! so a checker that treated `Methods::implements`'s `false` as evidence would
+//! refusals are easy to get right and easy to test. The admissions are not: a
+//! checker that treated `Methods::implements`'s `false` as evidence would
 //! report `T: Ord` at an `I64` and every numeric program in the language with
-//! it. `Methods::answers_for` is the line, `methods`'s §7 is the argument, and
-//! the tests below say both sides of it out loud — including the cost, which is
-//! that `T: Clone` is not checked at all.
+//! it. `Methods::answers_for` is the line and `methods`'s §7 is the argument.
+//!
+//! **That line moved when `builtins.rs` grew implementations.** It used to be
+//! *"is the interface builtin"*, which made every bound at `Ord`, `Clone`,
+//! `Eq` and `Add` unanswerable. It is now *"is the interface builtin **and**
+//! is the type something whose implementations the prelude enumerates"*, and
+//! the prelude enumerates them for the unapplied types — `I64`, `Bool`,
+//! `Char`, `String`, `IoError`. So `T: Ord` at a `Bool` is `SC0534` and `T:
+//! Ord` at an `I64` is clean, and the tests below say both.
+//!
+//! **What stays unanswerable, and why it is not an oversight**: a *user* type
+//! at a prelude interface, because nothing in the language derives `Clone` for
+//! a record and the absence of a declaration means nothing; and an *applied*
+//! prelude type — `Array of T` — because `Array of T: Clone` holds exactly
+//! when `T: Clone` and `methods`' §4 does not look through a conditional
+//! implementation.
 //!
 //! The corpus is the other witness: all five bounded generics in `examples/`
 //! are declared `borrowed T`, four of their five bounds are at prelude
@@ -259,10 +271,10 @@ def a(xs: borrowed Array of I64) -> I64:
 // --- the unanswerable half, and its cost ---------------------------------
 
 #[test]
-fn a_bound_at_a_prelude_interface_is_not_answerable_and_stays_silent() {
-    // `builtins.rs` declares `Clone` and no implementation of it, so a `false`
-    // from the index is silence and not a no. This is the same restraint
-    // `SC0532` is under, one level out.
+fn a_bound_at_a_prelude_interface_is_answered_for_a_prelude_type() {
+    // `builtins.rs` declares `I64 implements Clone:`, so the bound is
+    // satisfied and the call is clean — for a *reason* now, rather than
+    // because nothing could be said.
     program(
         "\
 def duplicate of T: Clone(value: borrowed T) -> I64:
@@ -276,15 +288,55 @@ def a(n: I64) -> I64:
 }
 
 #[test]
+fn a_prelude_type_that_does_not_implement_a_prelude_interface_is_sc0534() {
+    // The half that was retired. `Bool` implements `Eq`, `Copy`, `Clone` and
+    // `Display` and **not** `Ord` — ordering two booleans is not an operation
+    // the prelude offers — and until the prelude declared anything this was
+    // silence. `methods`' §7.
+    let checked = check(&format!(
+        "{FIXTURE}
+def biggest of T: Ord(a: borrowed T, b: borrowed T) -> I64:
+    1
+
+def a() -> I64:
+    biggest(true, false)
+"
+    ));
+    assert_eq!(checked.codes(), vec![534]);
+}
+
+#[test]
+fn an_applied_prelude_type_is_still_not_answerable() {
+    // `Array of Int: Ord` holds when `Int: Ord` does, and a conditional
+    // implementation is not something the index can hold — `methods`' §4 says
+    // a blanket implementation *"is not looked through"*. Declaring
+    // `Array implements Ord:` unconditionally would admit `Array of Doc` for a
+    // `Doc` that is not orderable; declaring nothing and reporting would be a
+    // false positive here. So the answer is *"cannot say"*, and it is silent.
+    program(
+        "\
+def biggest of T: Ord(a: borrowed T, b: borrowed T) -> I64:
+    1
+
+def a(xs: borrowed Array of I64) -> I64:
+    biggest(xs, xs)
+",
+    )
+    .assert_clean();
+}
+
+#[test]
 fn the_cost_of_that_restraint_is_stated_as_a_test() {
-    // **A bound at a prelude interface is unchecked even when it is plainly
-    // unsatisfied.** `Plain` implements nothing at all and `duplicate(p)` is
-    // admitted, because the compiler cannot tell that from `I64`, which
-    // implements `Clone` in every program anyone would write and in no
-    // declaration this compiler can see.
+    // **A bound at a prelude interface is unchecked on a *user* type even when
+    // it is plainly unsatisfied.** `Plain` implements nothing at all and
+    // `duplicate(p)` is admitted, because *"the program contains no
+    // `Plain implements Clone:`"* is not evidence: no note has said whether a
+    // record is `Clone` by construction, by derivation or by declaration, and
+    // reporting here would answer that question by accident.
     //
-    // This test fails the day the prelude declares its own implementations,
-    // and that is what it is for: the entry goes with the fix.
+    // This is what is left of the restraint after the prelude's own
+    // implementations landed. It closes when the language says where a user
+    // type's `Clone` comes from.
     program(
         "\
 def duplicate of T: Clone(value: borrowed T) -> I64:

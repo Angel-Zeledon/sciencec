@@ -13,13 +13,22 @@
 //! below to a hole that is not this crate's, and each a test that fails the day
 //! its hole closes.
 //!
-//! **One of them has since closed, and the day it did this test failed, which
+//! **All three have since closed, and the day each did this test failed, which
 //! is the whole point of holding the census as an exact map.** `science-types`
 //! now auto-borrows a `borrowed T` parameter, so `00_kitchen_sink.science`'s
 //! `SC0334` is gone and [`the_kitchen_sink_no_longer_moves_a_value_that_is_still_borrowed`]
-//! is the record of it. **The census is now two diagnostics in one file, and
-//! both of them are false positives** — which is a worse ratio than it started
-//! with and is the honest one.
+//! is the record of it. The prelude now declares `Map.get`, so
+//! `09_absence_and_failure.science`'s two `SC0333`s are gone and
+//! [`the_declared_map_get_closed_the_two_false_positives`] is the record of
+//! that. **The census is empty.**
+//!
+//! **An empty census is a weaker test than a non-empty one**, and this file
+//! says so where it can be read. Three things keep it from being vacuous:
+//! [`the_corpus_is_actually_analysed`] counts bodies, borrows and points;
+//! [`sc0340_fires_nowhere_in_the_corpus`] and
+//! [`every_undetermined_signature_is_blocked_by_a_missing_declaration`] hold
+//! the two remaining suppressions to an exact list; and
+//! `crates/sciencec/tests/cli.rs` runs the real binary over the same files.
 //!
 //! **This crate is also now wired into the driver**, so the census is measured
 //! twice: here, over a pipeline this harness builds by hand, and in
@@ -84,19 +93,18 @@ fn census() -> BTreeMap<String, Vec<u16>> {
     out
 }
 
-/// **The measurement.** Two diagnostics, in one file, out of twenty programs
-/// every phase above this one calls clean.
+/// **The measurement.** Nothing, out of twenty programs every phase above this
+/// one calls clean.
 ///
 /// Held as an exact map rather than a count, because a change that swapped one
 /// finding for another would leave a count alone — and because that is exactly
-/// what happened: it was three in two files until `00_kitchen_sink.science`'s
-/// `SC0334` closed, and a count of findings would have hidden which one went.
+/// what happened twice: three in two files until `00_kitchen_sink.science`'s
+/// `SC0334` closed, two in one file until `Map.get` got a declaration, and a
+/// count of findings would have hidden which one went each time.
 #[test]
-fn the_corpus_census_is_two_diagnostics_in_one_file() {
+fn the_corpus_census_is_empty() {
     let found = census();
-    let expected: BTreeMap<String, Vec<u16>> =
-        [("09_absence_and_failure.science".to_string(), vec![333, 333])].into_iter().collect();
-    assert_eq!(found, expected, "the census moved");
+    assert_eq!(found, BTreeMap::new(), "the census moved");
 }
 
 /// **Finding one, closed.** It was the only real one, and this test is what it
@@ -176,26 +184,37 @@ fn the_kitchen_sink_no_longer_moves_a_value_that_is_still_borrowed() {
 /// is the string literal `"host"`, whose temporary dies at the end of the
 /// statement, and the result outlives it: `SC0333`.
 ///
-/// The real `Map.get` returns a borrow of the map and not of the key. **There
-/// is no way to know that without the declaration**, and the rule errs toward
-/// rejecting on purpose — §7 states which way, and this is what it costs: two
-/// diagnostics in twenty files, both of them the same shape.
+/// The real `Map.get` returns a borrow of the map and not of the key, and
+/// **`science-resolve`'s `builtins.rs` now says so**:
+///
+/// ```text
+/// Map of (K, V) has:
+///     def get(self, key: borrowed K) -> (borrowed V)?
+/// ```
+///
+/// `science-types`' `Declarations::borrow_sources` reads that signature and
+/// answers *"parameter 0"* — the referent mentions `V`, `Self` mentions `V`,
+/// `borrowed K` does not — and [`summary`]'s §4 is what this crate does with
+/// the answer. The general rule is unchanged and still errs toward rejecting
+/// (§7); what changed is that `Map.get` is no longer a callee nothing is known
+/// about.
+///
+/// [`summary`]: science_regions::summary
 #[test]
-fn the_conservative_unresolved_callee_rule_costs_two_false_positives() {
+fn the_declared_map_get_closed_the_two_false_positives() {
     let (_, source) = corpus()
         .into_iter()
         .find(|(name, _)| name == "09_absence_and_failure.science")
         .expect("the absence example");
     let checked = check(&source);
-    assert_eq!(checked.reported(), vec![333, 333]);
+    assert_eq!(checked.reported(), Vec::<u16>::new());
 
-    // And the cause, asserted directly: the summary names both parameters.
+    // And the cause, asserted directly: the summary names the map alone.
     let (_, from) = &checked.analysis_of("lookup").summary.returns[0];
     assert_eq!(
         from.iter().map(|it| it.param).collect::<Vec<_>>(),
-        vec![0, 1],
-        "`lookup` no longer borrows from its key, so `Map.get` has a declaration and this \
-         false positive has closed"
+        vec![0],
+        "`lookup` borrows from its key again, so the declaration stopped being read"
     );
 }
 
@@ -205,10 +224,12 @@ fn the_conservative_unresolved_callee_rule_costs_two_false_positives() {
 /// It is quiet for two reasons and only one of them is the language's.
 /// [`science_regions`]'s §4 is the real one — the answer is a set, so *"from
 /// `x` or `y`"* is not an ambiguity. [`science_regions::check`]'s §6 is the
-/// other: four bodies in this corpus would reach it, and in every one the
-/// return is unconstrained because `Array.get` and `Iterate.next` have no
-/// declaration. **Both halves have to be said**, because the second one is a
-/// suppression that must be removed when the containers land.
+/// other: **two** bodies in this corpus would reach it, down from four when
+/// `Array.get` had no declaration. `largest` and `next_line` now have a
+/// signature the analysis can determine; the two that remain are blocked by a
+/// lowering hole rather than by a missing declaration, and
+/// [`every_undetermined_signature_is_blocked_by_a_missing_declaration`] names
+/// it.
 #[test]
 fn sc0340_fires_nowhere_in_the_corpus() {
     for (name, codes) in census() {
@@ -242,8 +263,6 @@ fn every_undetermined_signature_is_blocked_by_a_missing_declaration() {
         undetermined,
         vec![
             "07_generics.science:first_inner",
-            "07_generics.science:largest",
-            "10_loops.science:next_line",
             "19_stdlib.science:find",
         ],
         "the set of hole-blocked signatures moved"

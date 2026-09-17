@@ -54,6 +54,33 @@
 //! it: the shape needs a container generic over a borrowed element, and §2
 //! item 1 of [`crate::regions`] cannot see inside a container. **The two holes
 //! cover each other and that is not the same as neither existing.**
+//!
+//! # 4. A declaration with no body is neither of the two cases above
+//!
+//! Decision 5 says a signature's regions are *"an analysis result, not a
+//! declaration"*, and that is right for a function with a body: the body is
+//! better evidence than any annotation could be. The prelude has no bodies.
+//! So `Map.get` fell to [`Summary::opaque`] — *"a reference into every argument
+//! it was given"* — and [`crate::generate`]'s §7 measured what that costs: two
+//! false positives in `examples/`, both of them a map lookup that appeared to
+//! borrow its key.
+//!
+//! > **Decision. A callee that `science-types` declares and no body defines
+//! > carries the parameter set its *declaration* implies.**
+//!
+//! `Declarations::borrow_sources` computes that set and states its own cost.
+//! It is deliberately not computed here: *which parameters a return type can
+//! point into* is a question about types, and the crate that owns types should
+//! answer it. What this crate keeps is what to do with the answer —
+//! [`crate::generate`]'s `call` narrows §5's source list to it and changes
+//! nothing else, so the escape half stays maximal and the direction §7 argues
+//! for is unchanged.
+//!
+//! **It is not a [`Summary`].** There is no `returns` map and no [`Position`]:
+//! a declaration says which *arguments* the result may point into and nothing
+//! about the paths beneath them, so the constraint is still §5's reachability
+//! over those arguments rather than §1's position-to-position relation.
+//! Promoting it to a summary would mean inventing paths no body produced.
 
 use std::collections::BTreeMap;
 
@@ -148,6 +175,9 @@ impl Summary {
 #[derive(Debug, Clone, Default)]
 pub struct Summaries {
     known: BTreeMap<DefId, Summary>,
+    /// For a callee that is **declared and has no body**, the parameters its
+    /// returned references may point into. Section 4.
+    declared: BTreeMap<DefId, Vec<usize>>,
 }
 
 impl Summaries {
@@ -157,6 +187,17 @@ impl Summaries {
 
     pub fn insert(&mut self, summary: Summary) {
         self.known.insert(summary.def, summary);
+    }
+
+    /// Records what a declaration says about its own return. Section 4.
+    pub fn declare(&mut self, def: DefId, sources: Vec<usize>) {
+        self.declared.insert(def, sources);
+    }
+
+    /// The parameters a declared callee's return may borrow from, or `None`
+    /// when nothing declared it. Section 4.
+    pub fn declared_sources(&self, def: DefId) -> Option<&[usize]> {
+        self.declared.get(&def).map(|sources| sources.as_slice())
     }
 
     /// What a call site should assume about a callee.

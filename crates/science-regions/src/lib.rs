@@ -445,6 +445,17 @@ pub fn analyse_crate(
     let by_def: BTreeMap<DefId, &Body> = bodies.iter().map(|body| (body.def(), body)).collect();
     let mut analysis = Analysis::default();
 
+    // `summary`'s §4, before any body: a callee that is declared and has no
+    // body — every prelude method, and every `def` a later phase will supply —
+    // is not a callee nothing is known about. This has to run first because the
+    // components are handed over leaves first and a *declaration* is below
+    // every leaf.
+    for def in context.decls.without_bodies() {
+        if let Some(sources) = context.decls.borrow_sources(context.types, def) {
+            analysis.summaries.declare(def, sources);
+        }
+    }
+
     for component in graph.components() {
         let recursive = component.len() > 1
             || component.first().is_some_and(|def| graph.is_directly_recursive(*def));

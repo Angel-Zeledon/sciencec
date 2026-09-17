@@ -94,12 +94,10 @@ def shout(doc: Doc) -> Bool:
 }
 
 #[test]
-fn a_method_on_a_prelude_type_is_still_unresolved_and_still_silent() {
-    // The hole that survives, asserted so that it is a decision and not a
-    // surprise: `builtins.rs` registers no methods, so a receiver of prelude
-    // type reaches no candidate — and `methods`'s §1 makes that a silence
-    // rather than `SC0532`, because the alternative is a false positive on
-    // every correct program that calls one.
+fn a_declared_method_on_a_prelude_type_resolves_and_has_a_type() {
+    // The half of the conservatism that is retired. `builtins.rs` declares
+    // `String.length`, so the receiver reaches a candidate, the call carries
+    // the method's definition, and the result is `Int` rather than a hole.
     let checked = program(
         "
 def length_of(doc: Doc) -> Bool:
@@ -109,6 +107,31 @@ def length_of(doc: Doc) -> Bool:
     );
     checked.assert_clean();
     let body = checked.body("length_of");
+    let (_, call) = body
+        .exprs()
+        .find(|(_, expr)| matches!(expr.kind, ExprKind::MethodCall { .. }))
+        .expect("the body has a method call");
+    assert!(matches!(call.kind, ExprKind::MethodCall { method: Some(_), .. }));
+    assert_eq!(checked.render(call.ty), "Int");
+}
+
+#[test]
+fn an_undeclared_method_on_a_prelude_type_is_unresolved_and_still_silent() {
+    // The half that survives, asserted so that it stays a decision. The
+    // prelude's transcription of `stdlib-core.md` §9 is partial — `String` has
+    // thirteen of its nineteen methods — so `methods`' §8 keeps a builtin
+    // head's method set **open**: an unknown name there is silence, never
+    // `SC0532`, because the alternative is a false positive on
+    // `text.slice(0..4)`, which the note says exists.
+    let checked = program(
+        "
+def sliced(doc: Doc) -> Bool:
+    let _part be doc.title.slice(0)
+    true
+",
+    );
+    checked.assert_clean();
+    let body = checked.body("sliced");
     let (_, call) = body
         .exprs()
         .find(|(_, expr)| matches!(expr.kind, ExprKind::MethodCall { .. }))
@@ -448,13 +471,14 @@ def sometimes(doc: Doc?) -> Bool:
 
 #[test]
 fn an_erroneous_type_agrees_with_whatever_it_meets() {
-    // `ty`'s §5, reached through the checker: a method call on a prelude type
-    // still has no type, and the `Ty::ERROR` it gets makes every use of the
-    // result silent rather than producing one message per use.
+    // `ty`'s §5, reached through the checker. The receiver is a method the
+    // prelude has **not** declared — `length` now resolves and would give a
+    // real `Int` — so the call has no type, and the `Ty::ERROR` it gets makes
+    // every use of the result silent rather than producing one message per use.
     let checked = program(
         "
 def cascade(doc: Doc) -> String:
-    let unknown be doc.title.length()
+    let unknown be doc.title.slice(0)
     let _first be unknown
     let _second: I32 be unknown
     doc.title

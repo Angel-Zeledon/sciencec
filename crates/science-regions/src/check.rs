@@ -98,10 +98,26 @@
 //!    have no declaration, so the binding is typed
 //!    [`science_types::ty::Ty::ERROR`] and the reference is gone. *"Your
 //!    signature is undetermined"* is then a message about `stdlib-core.md`.
-//! 2. **Rule 5 is not checked against a local the checker could not type.**
-//!    [`crate::regions`]'s §3. `borrowed found.inner` where `found` is at
-//!    `Ty::ERROR` borrows a temporary holding a `Rvalue::Error`, and a message
-//!    about the scope of that temporary is a message about the hole above.
+//! 2. **Rule 5 is not checked against a local an earlier phase could not
+//!    build.** [`crate::regions`]'s §3. `borrowed found.inner` borrows a
+//!    temporary holding an [`Rvalue::Error`], and a message about the scope of
+//!    that temporary is a message about the hole above.
+//!
+//!    **This used to test the temporary's *type* and now tests its
+//!    *assignment*, and the difference is a real finding.** While `Array.get`
+//!    had no declaration, `found` was `Ty::ERROR` and the two tests agreed. It
+//!    has one now, `examples/07_generics.science`'s `first_inner` types
+//!    cleanly, and the lowering still cannot build a place for
+//!    `found.inner`: `science-mir`'s `as_place` sees through the `Narrow`
+//!    node, so `place_ty` hands `auto_deref` the local's *declared* type
+//!    `(borrowed Wrapper of T)?`, and `auto_deref` strips a `Borrowed` and not
+//!    a `Nullable`. The result is `_5 = {error}` and a borrow of it.
+//!
+//!    **The fix is one arm in `science-mir`'s `auto_deref`** — strip a
+//!    `Nullable` the way it strips a `Borrowed`, because a narrowed read is
+//!    *"the same storage seen at a smaller type"*, which `as_place`'s own
+//!    comment already says. Until then this suppression is what keeps a false
+//!    positive off a correct program, and `tests/corpus.rs` counts it.
 //!
 //! **Both are removable and both should be removed** when Decision 11's method
 //! lookup reaches the container types. `tests/corpus.rs` holds the census, so
@@ -142,6 +158,15 @@ pub fn check_body(
 ) {
     let mut outlives = false;
     for data in body.borrows() {
+        // §6 item 2: nothing is reported about a borrow of a local the
+        // lowering could not build. It is one guard here rather than one in
+        // each of the three rules below, because a borrow of an
+        // [`Rvalue::Error`] conflicts with the drop, outlives the storage
+        // *and* conflicts with every later read — three messages about one
+        // hole, none of them about the program.
+        if assigned_from_a_hole(body, data.place.local) {
+            continue;
+        }
         // §2's order: an explicit conflict first, then rule 5, then the
         // elaborated drop. A borrow that outlives its referent conflicts with
         // the drop *and* the storage-dead *and* every later read, and the drop
@@ -180,7 +205,9 @@ fn rule_five(
     data: &BorrowData,
 ) -> Option<Diagnostic> {
     let root = storage_root(&analysis.table, &data.place)?;
-    // §6 item 2.
+    // §6 item 2's older half: a type the checker could not build. The newer
+    // half — a statement the lowering could not build — is `check_body`'s,
+    // because it has to take all three rules away at once.
     if analysis.table.errored(root) || analysis.table.errored(data.place.local) {
         return None;
     }
@@ -408,6 +435,22 @@ fn no_common_region(defs: &DefTable, body: &Body, analysis: &BodyAnalysis) -> Ve
         }
     }
     out
+}
+
+/// Whether a local's defining assignment is a hole the lowering left. §6 item 2.
+///
+/// A scan of the body rather than a side table: a body has a few dozen
+/// statements, this runs once per borrow that reaches rule 5, and a second
+/// index would be a second thing to keep in step with the first.
+fn assigned_from_a_hole(body: &Body, local: science_mir::mir::Local) -> bool {
+    body.blocks().any(|(_, block)| {
+        block.statements.iter().any(|statement| match &statement.kind {
+            StatementKind::Assign { place, rvalue } => {
+                place.is_local() && place.local == local && matches!(rvalue, Rvalue::Error)
+            }
+            _ => false,
+        })
+    })
 }
 
 /// §5. `SC0340`.

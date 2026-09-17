@@ -276,8 +276,12 @@ fn call(
         Some(summary) if !summary.opaque => {
             known_callee(out, table, summary, args, destination, point, span)
         }
-        // §5.
-        _ => opaque_callee(out, body, table, callee, def, args, destination, point, span),
+        // §5, narrowed by `summary`'s §4 wherever a declaration says which
+        // arguments the result may point into.
+        _ => {
+            let declared = def.and_then(|def| summaries.declared_sources(def));
+            opaque_callee(out, body, table, callee, def, args, destination, point, span, declared)
+        }
     }
 }
 
@@ -330,6 +334,7 @@ fn opaque_callee(
     destination: &Place,
     point: Point,
     span: Span,
+    declared: Option<&[usize]>,
 ) {
     // Everything the call can see: the arguments, and — for an indirect call —
     // the closure value itself, whose captures `lower`'s §8 did not lower and
@@ -344,9 +349,23 @@ fn opaque_callee(
     let sources: Vec<RegionVar> =
         visible.iter().flat_map(|place| reachable(table, place)).collect();
 
-    // The result may point into any of them.
+    // The result may point into any of them — unless the callee was declared,
+    // in which case `summary`'s §4 says which of them. The **escape** half
+    // below is not narrowed: a declaration says what its return borrows and
+    // says nothing about what it writes through a `mutable borrowed`
+    // parameter, so §5's assumption stands there and §7's direction is
+    // unchanged.
+    let returned: Vec<RegionVar> = match declared {
+        Some(indices) => indices
+            .iter()
+            .filter_map(|at| args.get(*at))
+            .filter_map(|operand| operand.place())
+            .flat_map(|place| reachable(table, place))
+            .collect(),
+        None => sources.clone(),
+    };
     for (_, var) in destinations(table, destination) {
-        for source in &sources {
+        for source in &returned {
             out.push(*source, var, point, Cause::ReturnedFrom(def), span);
         }
     }
@@ -487,12 +506,36 @@ pub fn through_references(table: &RegionTable, place: &Place) -> Vec<RegionVar> 
     out
 }
 
-/// The region of a place that *is* a reference, when the place is a whole
-/// local. §6.
+/// The region of a place whose **local** is a reference at its root. §6.
+///
+/// **The whole-local restriction is gone, and that is the second half of the
+/// same workaround.** `self` alone and `self.field` are both reached through
+/// the reference the local holds; Science has no dereference operator
+/// (`AGENTS.md` §1) so neither one writes it, and `science-mir` inserts a
+/// [`Projection::Deref`] for some of these and not others. The case that
+/// exposed it is `examples/07_generics.science`'s `first_inner`:
+///
+/// ```text
+/// let found be items.get(0)          # `(borrowed Wrapper of T)?`
+/// if found?:
+///     return borrowed found.inner
+/// ```
+///
+/// `found` holds a reference into the caller's array — `regions`' walk gives it
+/// a position at the empty path, because `T?` is not a step — so
+/// `borrowed found.inner` points into the caller's frame and not into `found`'s
+/// four bytes of storage. Reading it as a borrow of the local is `SC0333` on a
+/// correct program, and it is a false positive the *declaration* uncovered:
+/// while `Array.get` resolved to nothing, `found` was `Ty::ERROR` and
+/// [`crate::check`]'s §6 second suppression kept it quiet.
+///
+/// **What it costs** is that rule 5 is not checked against any place under a
+/// root-level reference, which is right — that storage belongs to the caller —
+/// and that the loan is constrained by the *whole* local's region rather than
+/// by the region at the field's own path. The second is a loss of precision in
+/// §7's direction, because a larger set of constraints only keeps loans alive
+/// longer.
 fn own_reference(table: &RegionTable, place: &Place) -> Option<RegionVar> {
-    if !place.is_local() {
-        return None;
-    }
     table
         .local(place.local)
         .iter()

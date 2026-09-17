@@ -181,32 +181,69 @@
 //! about one interface each and accepted the answer, but a bound names whatever
 //! interface the author wrote.
 //!
-//! **Decision. [`Methods::answers_for`] is that question, and the line it draws
-//! is the same one [`Methods::receiver`] draws: builtin or not.**
+//! **Decision. [`Methods::answers_for`] is that question, and it is asked
+//! about a *pair* — a type and an interface — rather than about the interface
+//! alone.**
 //!
-//! `builtins.rs` declares seventeen interfaces — `Add`, `Ord`, `Clone`, `Eq`,
-//! `Copy`, `Iterate`, `From`, `Display`, `Error` and the rest — and **not one
-//! implementation of any of them**. There is no `I64 implements Ord:` anywhere,
-//! because the prelude has no bodies to put one in. So `implements(I64, Ord)`
-//! is `false` and the program `def largest of T: Ord(..)` called at `I64` is
-//! correct; enforcing the bound on that `false` would report on every numeric
-//! program in the language. That is exactly [`Methods::receiver`]'s *"a prelude
-//! type reaches here and `builtins.rs` registers no methods at all"*, read
-//! across from methods to implementations.
+//! It used to be asked about the interface alone, and the answer was *"builtin
+//! or not"*, because `builtins.rs` declared seventeen interfaces and **not one
+//! implementation of any of them**. `implements(I64, Ord)` was `false`,
+//! `def largest of T: Ord(..)` called at `I64` was correct, and enforcing the
+//! bound on that `false` would have reported on every numeric program in the
+//! language.
 //!
-//! A **user** interface is the other case and it is answerable in full: the
-//! prelude is built before any file is read, so it cannot name `Summarize`, so
-//! every `T implements Summarize:` in the program is in this index. `false`
-//! there is a fact, and `SC0534` is reported on it.
+//! `builtins.rs` now declares the implementations, and the question splits
+//! three ways:
 //!
-//! **What it costs is every bound at a prelude interface, which is most of
-//! them.** `T: Ord`, `T: Clone`, `T: Eq`, `T: Add` are unchecked and will stay
-//! unchecked until the prelude declares its own implementations — which is the
-//! same prelude change `check`'s §6 already needs for operators and for
-//! `Iterate`, and which is not this crate's to make. The bound that *is*
-//! checked is the one Decision 11 was written for, an interface the program
-//! declared, and it is the one a program can get wrong without the prelude's
-//! help.
+//! - **A user interface: answerable in full.** The prelude is built before any
+//!   file is read, so it cannot name `Summarize`, so every
+//!   `T implements Summarize:` is in this index. Unchanged.
+//! - **A builtin interface at an unapplied prelude type: answerable.** The
+//!   prelude enumerates what `I64`, `Bool`, `Char`, `String` and the error
+//!   types implement, and that enumeration is closed — adding to it is an edit
+//!   to one `const` in `builtins.rs`. So `T: Ord` at a `Bool` is `SC0534`, and
+//!   it is a diagnostic that could not be produced at all before.
+//! - **Anything else: still silence.** Two shapes, and each has its own reason.
+//!
+//! **A *user* type at a builtin interface** — `Doc: Clone` — is unanswerable
+//! because no note has said where a record's `Clone` comes from. If it is
+//! derived, every record has it and reporting is a false positive; if it is
+//! declared, the absence is a fact. The language has not chosen, and a bound
+//! check is not the place to choose for it.
+//!
+//! **An *applied* prelude type at a builtin interface** — `Array of T: Clone`
+//! — is unanswerable because the implementation is *conditional*: it holds
+//! exactly when `T: Clone`. §4 already says a blanket implementation is not
+//! looked through. Declaring `Array implements Clone:` unconditionally would
+//! admit `Array of Doc` for a `Doc` that is not clonable, which is the wrong
+//! direction; declaring nothing and reporting is a false positive. So the
+//! honest answer is that this index cannot say.
+//!
+//! **What it still costs** is `T: Clone` on a user type, which is the most
+//! common bound in the corpus. `tests/bounds.rs` holds both the retirement and
+//! the remainder as tests, so the day a note decides where a record's `Clone`
+//! comes from, the entry goes with the fix.
+//!
+//! # 8. A prelude type's method set is open, and a user type's is closed
+//!
+//! §1's *"`None` is 'this index cannot say'"* used to cover every prelude
+//! receiver, because the prelude had no methods. It has some now, and *some* is
+//! the whole difficulty: `builtins.rs` transcribes thirteen of
+//! `stdlib-core.md` §6.9's nineteen `String` methods and five of what
+//! `collections-and-chains.md` gives `Array`, so the index can answer
+//! `"a".length()` and cannot answer `"a".slice(0..4)` — and the second is a
+//! correct program.
+//!
+//! **Decision. [`Methods::receiver`] answers for a builtin head that has
+//! declared methods, and [`Methods::surface_is_closed`] says that its answer of
+//! *"no such method"* is not a diagnostic.** The two together are the
+//! narrowing: a declared call resolves with real parameter types, a real return
+//! type and a real [`SelfKind`], and only the *unknown name* is still silent.
+//!
+//! The line is `Def::is_builtin` rather than a flag, because it is true of
+//! every builtin head today and will stay true until §9 is transcribed whole.
+//! What it costs is `SC0532` on a prelude receiver, which is the same silence
+//! that used to cover the entire call.
 
 use std::collections::HashMap;
 
@@ -345,13 +382,15 @@ impl Methods {
     /// whole argument `items`'s §1 makes for the declaration table existing.
     pub(crate) fn of(krate: &hir::Crate, types: &Types, decls: &Declarations) -> Methods {
         let mut methods = Methods::default();
-        for module in &krate.modules {
-            for item in &module.items {
-                match &item.kind {
-                    hir::ItemKind::Impl(block) => methods.impl_block(block, krate, types, decls),
-                    hir::ItemKind::Interface(interface) => methods.interface(interface, krate),
-                    _ => {}
-                }
+        // The prelude's declarations first, and through the same two arms: a
+        // `String has:` written by `builtins.rs` is an implementation block
+        // like any other, and an index that treated it as a special case would
+        // be the string lookup the HIR exists to abolish, one level up.
+        for item in krate.prelude.iter().chain(krate.modules.iter().flat_map(|m| &m.items)) {
+            match &item.kind {
+                hir::ItemKind::Impl(block) => methods.impl_block(block, krate, types, decls),
+                hir::ItemKind::Interface(interface) => methods.interface(interface, krate),
+                _ => {}
             }
         }
         methods
@@ -373,12 +412,37 @@ impl Methods {
     /// `None` stay silent.
     pub fn receiver(&self, defs: &DefTable, types: &Types, ty: Ty) -> Option<DefId> {
         let def = receiver_head(types, ty)?;
-        // §5: the prelude registers no methods, so a builtin head is a question
-        // this index cannot answer rather than one it answers with no.
-        if defs.get(def).is_builtin() {
+        // §8: a builtin head is answerable exactly when the prelude declared
+        // something on it. `Never`, `ffi.Span` and the C scalars still reach
+        // here with nothing behind them, and for those the old answer stands.
+        if defs.get(def).is_builtin() && !self.index.contains_key(&def) {
             return None;
         }
         Some(def)
+    }
+
+    /// Whether *"this type has no method of that name"* is a fact about the
+    /// program or a fact about the prelude. §8.
+    ///
+    /// **Decision. A builtin head's method set is open and a user type's is
+    /// closed.** A `Doc has:` block is every inherent method `Doc` will ever
+    /// have, so `Found::None` on a `Doc` is `SC0532` and always was. The
+    /// prelude's blocks are a *transcription* of `stdlib-core.md` §9 and they
+    /// are not finished — `String` has thirteen of its nineteen methods and
+    /// `Array` has six of what `collections-and-chains.md` gives it — so
+    /// `Found::None` on a `String` means *"not written down yet"* and reporting
+    /// it would put a diagnostic on `text.slice(0..4)`, which is a correct
+    /// program.
+    ///
+    /// **What it costs is `SC0532` on every prelude receiver**, which is the
+    /// same silence [`Methods::receiver`] used to produce for every method call
+    /// on a `String`. The narrowing is real but partial: the calls that *do*
+    /// resolve now carry real parameter types and a real return type, and only
+    /// the misspelt name is still unanswered. It closes when §9 is fully
+    /// transcribed, and the test that will notice is that nothing in the corpus
+    /// reaches this predicate any more.
+    pub fn surface_is_closed(&self, defs: &DefTable, head: DefId) -> bool {
+        !defs.get(head).is_builtin()
     }
 
     /// Decision 11's lookup, over the key [`Methods::receiver`] computed.
@@ -450,8 +514,21 @@ impl Methods {
     /// is *"is this index's `false` evidence"*, which is a fact about the
     /// index, and a caller that has one in hand should ask it rather than
     /// reconstruct the rule.
-    pub fn answers_for(&self, defs: &DefTable, interface: DefId) -> bool {
-        !defs.get(interface).is_builtin()
+    pub fn answers_for(&self, defs: &DefTable, types: &Types, ty: Ty, interface: DefId) -> bool {
+        // A user interface: every implementation of it is in this index,
+        // because the prelude is built before any file is read and cannot name
+        // a name a file declares. Unchanged.
+        if !defs.get(interface).is_builtin() {
+            return true;
+        }
+        let Some(head) = head(types, ty) else { return false };
+        // An interface object at that interface is its own witness.
+        if head == interface {
+            return true;
+        }
+        // A builtin interface: answerable only where the prelude enumerates
+        // the implementations, which is the *unapplied* prelude types.
+        defs.get(head).is_builtin() && !is_applied(types, ty)
     }
 
     fn impl_block(
@@ -546,6 +623,18 @@ fn head(types: &Types, ty: Ty) -> Option<DefId> {
     }
 }
 
+/// Whether a type is a prelude type constructor at arguments — `Array of Int`
+/// rather than `I64`. §7.
+///
+/// A borrow is transparent, for [`head`]'s reason.
+fn is_applied(types: &Types, ty: Ty) -> bool {
+    match types.kind(ty) {
+        TyKind::Borrowed { inner, .. } => is_applied(types, *inner),
+        TyKind::Named { args, .. } | TyKind::Object { args, .. } => !args.is_empty(),
+        _ => true,
+    }
+}
+
 /// [`head`], plus the one case that is a head for a *lookup* and not for the
 /// implements question: inside an interface's own default body, `Self` is
 /// itself and the methods in scope are that interface's.
@@ -576,12 +665,10 @@ fn one_interface(found: &[Candidate]) -> bool {
 /// block, the crate's item list is short, and a second index would be a second
 /// thing to keep in step with the first.
 fn interface_methods(krate: &hir::Crate, interface: DefId) -> &[hir::Fn] {
-    for module in &krate.modules {
-        for item in &module.items {
-            if let hir::ItemKind::Interface(declared) = &item.kind {
-                if declared.def == interface {
-                    return &declared.methods;
-                }
+    for item in krate.prelude.iter().chain(krate.modules.iter().flat_map(|m| &m.items)) {
+        if let hir::ItemKind::Interface(declared) = &item.kind {
+            if declared.def == interface {
+                return &declared.methods;
             }
         }
     }

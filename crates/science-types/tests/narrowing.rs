@@ -397,11 +397,12 @@ def touch(a: Doc?) -> String?:
 }
 
 #[test]
-fn a_method_this_crate_cannot_resolve_still_gives_up_the_narrowing() {
-    // What survives of the conservatism, asserted so that it stays a decision:
-    // the prelude registers no methods, so `length` on a `String` resolves to
-    // nothing, there is no `SelfKind` to read, and the safe answer is the old
-    // one. `methods`'s §5 names what closing this needs.
+fn a_declared_shared_receiver_keeps_the_narrowing() {
+    // What the declaration buys `narrow`'s §4, which had no `SelfKind` to read
+    // and had to assume the worst. `String.length` takes `self`, so the call
+    // is not a write, `a` is still known to be present at the `a?`, and the
+    // presence test is `SC0530` — *"this value is never absent"* — which is the
+    // diagnostic that could not fire before.
     let checked = check(
         "\
 type Doc:
@@ -410,6 +411,27 @@ type Doc:
 def touch(a: String?) -> Bool:
     if a?:
         let _seen be a.length()
+        return a?
+    false
+",
+    );
+    assert_eq!(checked.codes(), vec![530]);
+}
+
+#[test]
+fn a_method_this_crate_cannot_resolve_still_gives_up_the_narrowing() {
+    // What survives of the conservatism, asserted so that it stays a decision.
+    // `slice` is one of the six `String` methods `builtins.rs` does not
+    // transcribe, so it resolves to nothing, there is no `SelfKind` to read,
+    // and the safe answer is the old one: the narrowing goes.
+    let checked = check(
+        "\
+type Doc:
+    title: String
+
+def touch(a: String?) -> Bool:
+    if a?:
+        let _seen be a.slice(0)
         return a?
     false
 ",

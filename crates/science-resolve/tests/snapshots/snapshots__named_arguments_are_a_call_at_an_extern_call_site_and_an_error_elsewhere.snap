@@ -2,35 +2,35 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![foreign, caller, ordinary, bad_caller]))"
 ---
-Module `main` #73 @0..120
+Module `main` #332 @0..120
   Extern "C" unsafe @0..51
     Library "openblas" @44..51
     items
-      ExternFn `cblas_dgemm` #74 @0..23
+      ExternFn `cblas_dgemm` #333 @0..23
         params
-          Param `m` #78 @0..5
+          Param `m` #337 @0..5
             type: Path -> `I32` #4 @0..3
-          Param `n` #79 @6..11
+          Param `n` #338 @6..11
             type: Path -> `I32` #4 @6..9
-  Fn `call` #75 @52..87
+  Fn `call` #334 @52..87
     body: Block @52..87
       tail: Unsafe @52..85
         body: Block @52..78
           tail: Call @52..71
-            callee: Path -> `cblas_dgemm` #74 @56..67
+            callee: Path -> `cblas_dgemm` #333 @56..67
             args
               Arg `n` (a label, not a name) @52..69
                 Int 2 @52..53
               Arg `m` (a label, not a name) @54..71
                 Int 1 @54..55
-  Fn `plain` #76 @88..101
+  Fn `plain` #335 @88..101
     params
-      Param `m` #80 @94..99
+      Param `m` #339 @94..99
         type: Path -> `I32` #4 @94..97
     body: Block @100..101
-  Fn `misuse` #77 @102..120
+  Fn `misuse` #336 @102..120
     body: Block @102..120
-      tail: StructLit -> `plain` #76 @102..111
+      tail: StructLit -> `plain` #335 @102..111
         fields
           FieldInit `m` -> <error> @102..111
             value: Int 1 @102..103

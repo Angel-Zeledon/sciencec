@@ -152,6 +152,10 @@ struct Resolver {
     variant_arity: HashMap<DefId, usize>,
     /// How many fields each record has, which decides what `Doc()` means.
     record_fields: HashMap<DefId, Vec<DefId>>,
+    /// The prelude's own declarations, built once and handed to the crate
+    /// unchanged. `builtins` resolved them as it built them — every name they
+    /// mention is a prelude name — so nothing in this file walks them.
+    prelude_items: Vec<hir::Item>,
     ribs: Scopes,
     current_module: DefId,
     /// The implementation or interface whose `Self` is in scope, if any. It
@@ -188,6 +192,7 @@ impl Resolver {
             diags: Diagnostics::new(),
             root,
             prelude: prelude.module,
+            prelude_items: prelude.items,
             scopes,
             variant_arity: prelude.variant_arity.into_iter().collect(),
             record_fields: HashMap::new(),
@@ -225,7 +230,10 @@ impl Resolver {
             .collect();
 
         debug_assert_eq!(self.ribs.depth(), 0, "the walk left a rib open");
-        (Crate { defs: self.defs, root: self.root, modules }, self.diags)
+        (
+            Crate { defs: self.defs, root: self.root, modules, prelude: self.prelude_items },
+            self.diags,
+        )
     }
 
     // --- diagnostics -----------------------------------------------------

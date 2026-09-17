@@ -178,6 +178,11 @@ pub struct Prelude {
 const WANTED: &[&str] = &[
     "Bool", "String", "Char", "Never", "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64",
     "F16", "BF16", "F32", "F64", "Int", "Float", "panic",
+    // `Iterate`, which `crate::check`'s `for` reads an element type through.
+    // It is the first *interface* on this list, and it is here for the same
+    // reason the rest are: the question *"is this the prelude's `Iterate` and
+    // not a user interface of the same name"* has no other way to be asked.
+    "Iterate",
 ];
 
 impl Prelude {
@@ -316,10 +321,13 @@ impl Declarations {
         diagnostics: &mut Diagnostics,
     ) -> Declarations {
         let mut decls = Declarations { prelude: Prelude::of(&krate.defs), ..Declarations::default() };
-        for module in &krate.modules {
-            for item in &module.items {
-                decls.item(&item.kind, krate, types, order, diagnostics);
-            }
+        // `krate.prelude` first: the prelude's own declarations are lowered by
+        // this walk and by no other, which is what makes a signature written in
+        // `builtins.rs` reach a call site as an ordinary [`Signature`]. They
+        // report nothing — every name in them was resolved as it was built —
+        // so the *"exactly once"* argument of §1 is unaffected.
+        for item in krate.prelude.iter().chain(krate.modules.iter().flat_map(|m| &m.items)) {
+            decls.item(&item.kind, krate, types, order, diagnostics);
         }
         // Second, and only second: the index reads the self types the loop
         // above lowered, so it cannot be filled in during it.
@@ -405,6 +413,102 @@ impl Declarations {
             }
         }
         substitution
+    }
+
+    /// Which parameters a **declared but body-less** callee's returned
+    /// references may point into, as indices into the call's argument list —
+    /// `0` is the receiver of a method and the first declared parameter of a
+    /// free function, which is `science-regions`' `ParamRegion::param`.
+    ///
+    /// # The decision, and why it lives here
+    ///
+    /// `region-inference.md` Decision 5 abolishes elision rules: a signature's
+    /// regions are *"an analysis result, not a declaration"*. That decision is
+    /// about a function **with a body**, and it is the right one — the body is
+    /// better evidence than any annotation. A prelude declaration has no body
+    /// and never will, so there is no analysis to read and the choice is
+    /// between this and `generate`'s §5 assumption that an opaque callee
+    /// *"returns a reference into every argument it was given"*.
+    ///
+    /// > **Decision. A reference in a declared return is constrained by every
+    /// > parameter whose type mentions a definition that the reference's
+    /// > referent mentions.**
+    ///
+    /// For `Map.get(self, key: borrowed K) -> (borrowed V)?` the referent
+    /// mentions `V`; `Self` is `Map of (K, V)` and mentions it, `borrowed K`
+    /// does not. So the result borrows the map and not the key, which is what
+    /// `generate`'s §7 says the real `Map.get` does and what its two measured
+    /// false positives were the absence of.
+    ///
+    /// **Why this is not elision returning by the back door.** An elision rule
+    /// picks *one* source and makes the signature mean it; this picks a **set**,
+    /// exactly as `summary`'s §1 does, and a caller intersects them. It cannot
+    /// be written differently by the author, because there is no syntax to
+    /// write it in — which is Decision 5's actual content.
+    ///
+    /// **What it costs.** The rule is a mention test over definitions, so it is
+    /// coarse in one direction: `def swap(a: borrowed T, b: borrowed T) ->
+    /// borrowed T` gets `{a, b}` although a real body would pick one, and a
+    /// declaration whose referent shares a definition with a parameter that
+    /// cannot actually reach it — `f(seen: borrowed Array of T) -> borrowed T`
+    /// where the result comes from somewhere else — is over-constrained. Both
+    /// errors are in `generate`'s §7's direction: *"a program this rule refuses
+    /// may be fine; a program it accepts is not made unsafe by the rule."*
+    ///
+    /// **`None` means this is not that question**: the function has a body, or
+    /// no signature at all, and `science-regions` should do what it already
+    /// does. An empty `Some` is a real answer — *"the return holds no
+    /// reference, so it borrows nothing"* — and it is what `read_file` gets.
+    pub fn borrow_sources(&self, types: &Types, def: DefId) -> Option<Vec<usize>> {
+        let sig = self.signature(def)?;
+        if sig.has_body {
+            return None;
+        }
+        let mut referents = Vec::new();
+        collect_referents(types, sig.ret, false, &mut referents);
+        if referents.is_empty() {
+            return Some(Vec::new());
+        }
+
+        // Parameter 0 is the receiver, whose type is the block's `Self` and is
+        // not in `params`. A method whose block has no lowered self type keeps
+        // the slot at `Ty::ERROR` rather than losing it: the index into the
+        // argument list is what `science-regions` reads, and dropping the
+        // receiver would shift every parameter after it by one.
+        let receiver = sig
+            .self_param
+            .map(|_| sig.owner.and_then(|owner| self.self_ty(owner)).unwrap_or(Ty::ERROR));
+        let params: Vec<Ty> =
+            receiver.into_iter().chain(sig.params.iter().map(|param| param.ty)).collect();
+
+        let mut sources = Vec::new();
+        for (at, ty) in params.iter().enumerate() {
+            let mut mentioned = Vec::new();
+            collect_definitions(types, *ty, &mut mentioned);
+            if mentioned.iter().any(|def| referents.contains(def)) {
+                sources.push(at);
+            }
+        }
+        // A referent nothing mentions: fall back to `generate`'s §5, because a
+        // reference constrained by nothing is the one answer that is not in the
+        // safe direction.
+        if sources.is_empty() {
+            sources.extend(0..params.len());
+        }
+        Some(sources)
+    }
+
+    /// Every function this table declares and no body defines, sorted.
+    ///
+    /// The complement of [`Declarations::bodies`], and it exists for one
+    /// caller: `science-regions` asks [`Declarations::borrow_sources`] about
+    /// each of these once, before any body is analysed, so that a call to one
+    /// is not treated as a call to a function nothing is known about.
+    pub fn without_bodies(&self) -> Vec<DefId> {
+        let mut ids: Vec<DefId> =
+            self.fns.values().filter(|sig| !sig.has_body).map(|sig| sig.def).collect();
+        ids.sort();
+        ids
     }
 
     /// Every function with a body, in declaration order.
@@ -681,4 +785,71 @@ pub fn named(defs: &DefTable, res: Res) -> Option<Named> {
         DefKind::Const => Named::Const(def),
         _ => Named::Other,
     })
+}
+
+/// The definitions mentioned *underneath* a reference in a type.
+///
+/// `under` is whether the walk is already inside one, so that `borrowed V`
+/// contributes `V` and `Array of (borrowed T)` contributes `T`, while a
+/// `Map of (K, V)` on its own contributes nothing.
+fn collect_referents(types: &Types, ty: Ty, under: bool, out: &mut Vec<DefId>) {
+    match types.kind(ty) {
+        TyKind::Borrowed { inner, .. } => collect_referents(types, *inner, true, out),
+        TyKind::Nullable(inner) => collect_referents(types, *inner, under, out),
+        TyKind::Tuple(elements) => {
+            for element in elements.clone() {
+                collect_referents(types, element, under, out);
+            }
+        }
+        TyKind::Closure { params, ret } => {
+            let (params, ret) = (params.clone(), *ret);
+            for param in params {
+                collect_referents(types, param, under, out);
+            }
+            collect_referents(types, ret, under, out);
+        }
+        _ if under => collect_definitions(types, ty, out),
+        TyKind::Named { args, .. } | TyKind::Object { args, .. } => {
+            for arg in args.clone() {
+                if let Some(ty) = arg.as_type() {
+                    collect_referents(types, ty, under, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Every definition a type names, at any depth.
+fn collect_definitions(types: &Types, ty: Ty, out: &mut Vec<DefId>) {
+    match types.kind(ty) {
+        TyKind::Named { def, args } | TyKind::Object { interface: def, args } => {
+            let (def, args) = (*def, args.clone());
+            out.push(def);
+            for arg in args {
+                if let Some(ty) = arg.as_type() {
+                    collect_definitions(types, ty, out);
+                }
+            }
+        }
+        TyKind::Param { def } => out.push(*def),
+        TyKind::SelfType { owner } => out.push(*owner),
+        TyKind::SelfAssoc { assoc } => out.push(*assoc),
+        TyKind::Borrowed { inner, .. } | TyKind::Nullable(inner) => {
+            collect_definitions(types, *inner, out)
+        }
+        TyKind::Tuple(elements) => {
+            for element in elements.clone() {
+                collect_definitions(types, element, out);
+            }
+        }
+        TyKind::Closure { params, ret } => {
+            let (params, ret) = (params.clone(), *ret);
+            for param in params {
+                collect_definitions(types, param, out);
+            }
+            collect_definitions(types, ret, out);
+        }
+        TyKind::Error | TyKind::Unit => {}
+    }
 }

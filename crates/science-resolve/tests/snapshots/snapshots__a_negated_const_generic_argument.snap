@@ -2,23 +2,23 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![quantity, velocity]))"
 ---
-Module `main` #73 @22..65
-  Record `Quantity` #74 @22..38
+Module `main` #332 @22..65
+  Record `Quantity` #333 @22..38
     generics
-      TypeParam `T` #77 @0..1
-      ConstParam `LENGTH` #78 @2..12
+      TypeParam `T` #336 @0..1
+      ConstParam `LENGTH` #337 @2..12
         kind: Int @2..5
-      ConstParam `TIME` #79 @13..21
+      ConstParam `TIME` #338 @13..21
         kind: Int @13..16
     fields
-      Field `value` #75 @22..29
-        type: Path -> `T` #77 @22..23
-  Alias `Velocity` #76 @48..65
+      Field `value` #334 @22..29
+        type: Path -> `T` #336 @22..23
+  Alias `Velocity` #335 @48..65
     generics
-      TypeParam `T` #80 @39..40
-    type: Path -> `Quantity` #74 @48..56
+      TypeParam `T` #339 @39..40
+    type: Path -> `Quantity` #333 @48..56
       generics
-        Path -> `T` #80 @41..42
+        Path -> `T` #339 @41..42
         Const Int 1 @43..44
         Const Neg @45..47
           Int 1 @46..47

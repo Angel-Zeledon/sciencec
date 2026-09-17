@@ -70,7 +70,8 @@ pub struct BodyAnalysis {
     /// Per [`BorrowId`], the reservation window of §3, or `None` for a borrow
     /// that is not two-phase.
     pub windows: Vec<Option<Bits>>,
-    /// Whether the body calls anything this compilation cannot name.
+    /// Whether the body contains a hole an earlier phase left: a call with no
+    /// callee, or a statement the lowering could not build.
     /// [`crate::check`]'s §6.
     pub calls_a_hole: bool,
 }
@@ -91,11 +92,29 @@ impl BodyAnalysis {
         let solution = Solution::of(body, &index, &table, &liveness, &constraints);
         let summary = summarise(body, &table, &constraints);
         let windows = windows_of(body, &index);
+        // Two shapes, one meaning: something above this phase gave up here.
+        //
+        // The second — an [`Rvalue::Error`] — is what `check`'s §6 item 2 was
+        // always describing (*"borrows a temporary holding a `Rvalue::Error`"*)
+        // and was not testing: it asked whether the temporary's **type** was
+        // `Ty::ERROR`, which is a different hole and happened to be the only
+        // one visible while the containers had no declaration. With `Array.get`
+        // declared, `let found be items.get(0)` types cleanly and
+        // `borrowed found.inner` still does not lower, because
+        // `science-mir`'s `auto_deref` strips a `borrowed` and not a
+        // `(borrowed T)?` — see `check`'s §6.
         let calls_a_hole = body.blocks().any(|(_, block)| {
             matches!(
                 block.terminator.kind,
                 science_mir::mir::TerminatorKind::Call { callee: Callee::Unresolved(_), .. }
             )
+        }) || body.blocks().any(|(_, block)| {
+            block.statements.iter().any(|statement| {
+                matches!(
+                    statement.kind,
+                    science_mir::mir::StatementKind::Assign { rvalue: science_mir::mir::Rvalue::Error, .. }
+                )
+            })
         });
         BodyAnalysis {
             def: body.def(),

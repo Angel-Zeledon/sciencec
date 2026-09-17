@@ -60,7 +60,64 @@ use std::path::{Path, PathBuf};
 /// its arguments against nothing at all. `science-types`'s `methods` module is
 /// that lookup; the entry went with it, which is what this file's opening
 /// paragraph says a fix looks like.
-const REMAINING: &[(&str, &[u16])] = &[];
+///
+/// # The five entries below are one finding, and it is about the corpus
+///
+/// `builtins.rs` now declares `Array.get` as `stdlib-core.md` §3.6 writes it:
+///
+/// ```text
+/// ## Parentheses are required: `borrowed T?` would read as `borrowed (T?)`.
+/// def get(self, index: Int) -> (borrowed T)?
+/// ```
+///
+/// Five corpus sites disagree with it, in exactly two ways, and **both ways are
+/// the corpus reading a hole rather than a note**:
+///
+/// 1. **`get` is read as total.** `07_generics`' `largest` binds
+///    `items.get(0)` and returns it as `borrowed T`; `21_compiler_shapes`'
+///    `DefTable.get` and `Parser.peek` do the same. A container accessor that
+///    cannot fail is not a design anybody argued for — it is what you get when
+///    the call resolves to nothing and `Ty::ERROR` agrees with the return type.
+///    `examples/07_generics.science` line 36 even calls it *"the one `Array`
+///    accessor §8 gives"*, which is the corpus quoting a section that stopped
+///    enumerating.
+/// 2. **`get` is read as returning by value.** `06_traits`' `Glyphs.next`
+///    returns `Char?` and `10_loops`' `at` returns `Int`, both from a `get` on
+///    an `Array` of a `Copy` element. §3.6's answer is borrowed for every `T`;
+///    a by-value `get` on a `Map of (String, Array of F64)` would copy the
+///    whole array on every lookup, and there is no rule in the language that
+///    makes the answer depend on `Copy`.
+///
+/// So these five are **true positives**: the declaration is right and the five
+/// bodies are wrong. They are pinned rather than fixed because `examples/` is
+/// not this change's to edit — the fix is one `if x?:` or one `.clone()` per
+/// site. Owner: whoever owns the corpus.
+// Five appeared the day `Array.get` gained a declaration, and all five were one
+// finding in two shapes: a signature promising a *total* result from a partial
+// accessor, and a signature promising a *value* where a borrow comes back. They
+// type-checked only while `get` returned an error type that agreed with
+// anything.
+//
+// **Three were the corpus's fault and are fixed.** `largest` cannot be total —
+// an empty array has no largest element — and `DefTable.get` and `Parser.peek`
+// cannot promise a `borrowed X` from an accessor that may find nothing. All
+// three now say `(borrowed T)?`, and `parent_of` gained the presence test that
+// makes its field read legal, which turned the acceptance example into a
+// demonstration of §4.2's narrowing rather than a program that only passed
+// because nothing was checking.
+//
+// **Two are not.** They need a value read *out* of a borrow, and there is no
+// spelling for that: the prelude declares `Copy` and `Clone` as interfaces with
+// no methods on either, and the language has no dereference operator. Nothing
+// the corpus could write would fix these, so they are pinned rather than
+// rewritten.
+const REMAINING: &[(&str, &[u16])] = &[
+    // `Letters.next` returns `Self.Item?` — `Char?` — from
+    // `self.glyphs.get(self.cursor)`, which is `(borrowed Char)?`.
+    ("06_traits.science", &[525]),
+    // `value_at` returns `cell`, narrowed to `borrowed Int`, as `Int`.
+    ("10_loops.science", &[525]),
+];
 
 fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("examples")
@@ -175,8 +232,27 @@ fn every_pinned_file_is_in_the_corpus() {
 /// file either way, and `crates/sciencec/tests/cli.rs` runs the real binary
 /// over the same corpus, so silence here has to be silence in two places at
 /// once.
+///
+/// **It went 0 to 5 when the prelude got a declaration, then 5 to 2 when the
+/// corpus was corrected — and the first of those is the one direction this file
+/// says it should not move.** The exception is stated rather than assumed:
+/// every earlier entry was the checker reporting on a program the spec says is
+/// correct, and those five were the reverse, the checker reporting on a program
+/// the spec says is wrong, which it could not do while `Array.get` resolved to
+/// nothing.
+///
+/// Three of the five were `examples/` promising more than a partial accessor
+/// can give, and they are fixed. The two that remain need a value read out of a
+/// borrow, which has no spelling — so they are the *checker* being right about
+/// a gap in the language rather than about a mistake in a program, and no edit
+/// to `examples/` closes them.
+///
+/// The ratchet holds in the sense that matters: nothing may be added here
+/// without an argument, and what closes these two is a decision — whether
+/// `Copy`, which the prelude already declares for `Bool`, `Char` and every
+/// numeric type, means a borrow of one may be read as a value.
 #[test]
-fn the_corpus_is_clean() {
+fn the_corpus_reports_only_what_no_program_can_say() {
     let total: usize = REMAINING.iter().map(|(_, codes)| codes.len()).sum();
-    assert_eq!(total, 0);
+    assert_eq!(total, 2);
 }

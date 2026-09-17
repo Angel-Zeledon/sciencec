@@ -118,7 +118,15 @@ impl Checked {
         self.krate
             .defs
             .iter()
-            .find(|def| def.name == name && def.kind == kind)
+            // **The fixture's own definition wins over the prelude's.** The
+            // prelude declares a `type Item` on `Iterate` and it is allocated
+            // first, so a bare search for `Item` would find it rather than the
+            // one the fixture wrote. A prelude name with no fixture twin —
+            // `F32`, `String` — still resolves, through the second pass.
+            .find(|def| def.name == name && def.kind == kind && !def.is_builtin())
+            .or_else(|| {
+                self.krate.defs.iter().find(|def| def.name == name && def.kind == kind)
+            })
             .unwrap_or_else(|| panic!("the fixture declares no {kind:?} named `{name}`"))
             .id
     }

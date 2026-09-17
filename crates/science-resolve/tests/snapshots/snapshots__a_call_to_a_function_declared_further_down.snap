@@ -2,19 +2,19 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![first, helper]))"
 ---
-Module `main` #73 @0..40
-  Fn `first` #74 @0..19
+Module `main` #332 @0..40
+  Fn `first` #333 @0..19
     body: Block @0..19
       tail: Call @0..11
-        callee: Path -> `helper` #75 @0..6
+        callee: Path -> `helper` #334 @0..6
         args
           Int 1 @7..8
-  Fn `helper` #75 @20..40
+  Fn `helper` #334 @20..40
     params
-      Param `n` #76 @27..32
+      Param `n` #335 @27..32
         type: Path -> `Int` #17 @27..30
     ret: Path -> `Int` #17 @33..36
     body: Block @37..40
-      tail: Path -> `n` #76 @37..38
+      tail: Path -> `n` #335 @37..38
 --- diagnostics ---
 (none)

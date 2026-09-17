@@ -362,6 +362,19 @@ pub struct Crate {
     pub root: DefId,
     /// One entry per source file, in the order they were handed in.
     pub modules: Vec<Module>,
+    /// The prelude's own declarations — `crate::builtins`' interfaces,
+    /// implementation blocks and free-function signatures, every one of them
+    /// body-less.
+    ///
+    /// **A field of its own rather than a module in [`Crate::modules`].** A
+    /// file is a module (§4.4) and the prelude is not a file, so a walk over
+    /// `modules` means *"the program"* everywhere it appears — the dump, the
+    /// driver's *"the first module is the one the user named"*, the body
+    /// checker's loop — and putting a non-file in that list would make every
+    /// one of them learn to skip it. The two phases that want these items —
+    /// the declaration table and the method index — name this field, which is
+    /// also the record of exactly who depends on the prelude having a shape.
+    pub prelude: Vec<Item>,
 }
 
 /// A file (§4.4: a file is a module).

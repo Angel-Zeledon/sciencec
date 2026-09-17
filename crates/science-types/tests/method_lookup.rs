@@ -721,3 +721,89 @@ def read() -> String:
     );
     checked.assert_clean();
 }
+
+// --- the prelude's own declarations ---------------------------------------
+
+/// `builtins.rs`' blocks reach this index through the same two arms a user's
+/// `Doc has:` reaches it through, so a prelude method call resolves, its
+/// arguments are checked, and it has a return type.
+#[test]
+fn a_prelude_method_resolves_with_its_declared_types() {
+    let checked = check(
+        "\
+def lookup(settings: borrowed Map of (String, String), key: borrowed String) -> (borrowed String)?:
+    settings.get(key)
+",
+    );
+    checked.assert_clean();
+    let body = checked.body("lookup");
+    let (_, call) = body
+        .exprs()
+        .find(|(_, expr)| matches!(expr.kind, ExprKind::MethodCall { .. }))
+        .expect("the body has a method call");
+    assert!(matches!(call.kind, ExprKind::MethodCall { method: Some(_), .. }));
+    assert_eq!(checked.render(call.ty), "(borrowed String)?");
+}
+
+/// The three ways a declared prelude method is now *checked* rather than
+/// ignored: the argument type, the argument count, and the receiver's own
+/// generic arguments reaching the parameter.
+#[test]
+fn a_prelude_method_call_is_checked_against_its_declaration() {
+    let checked = check(
+        "\
+def wrong(settings: borrowed Map of (String, I64)) -> Bool:
+    settings.contains(1)
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+}
+
+/// `Declarations::borrow_sources` — the decision `science-regions`' `summary`
+/// §4 consumes, asserted where it is made.
+///
+/// `Map.get(self, key: borrowed K) -> (borrowed V)?` borrows the map and not
+/// the key, and that answer is what closed the two `SC0333`s in
+/// `examples/09_absence_and_failure.science`. The three cases below are the
+/// whole of the rule: a referent reachable from the receiver only, a return
+/// with no reference in it at all, and a body-less declaration in the program
+/// rather than in the prelude.
+#[test]
+fn a_declarations_borrow_sources_names_the_parameters_the_return_can_reach() {
+    let checked = check(
+        "\
+def read(path: borrowed String) -> (borrowed String)?:
+    null
+",
+    );
+    checked.assert_clean();
+
+    // The prelude's `Map.get`, found the way a reader would: a builtin `get`
+    // whose block's `Self` is a `Map`.
+    let get = checked
+        .krate
+        .defs
+        .iter()
+        .filter(|def| def.kind == DefKind::Fn && def.name == "get" && def.is_builtin())
+        .find(|def| {
+            def.parent
+                .and_then(|block| checked.decls.self_ty(block))
+                .is_some_and(|ty| checked.render(ty).starts_with("Map of"))
+        })
+        .expect("the prelude declares `Map.get`")
+        .id;
+
+    // Parameter 0 is the receiver; parameter 1 is the key, and `borrowed K`
+    // mentions nothing the referent `V` mentions.
+    assert_eq!(checked.decls.borrow_sources(&checked.types, get), Some(vec![0]));
+
+    // A return with no reference in it borrows nothing at all, which is
+    // strictly better than the opaque assumption and is what `read_file` gets.
+    let read_file = checked.def("read_file", DefKind::Fn);
+    assert_eq!(checked.decls.borrow_sources(&checked.types, read_file), Some(Vec::new()));
+
+    // A function with a body is not this question: `science-regions` analyses
+    // it and the analysis is better evidence than the signature.
+    let read = checked.def("read", DefKind::Fn);
+    assert_eq!(checked.decls.borrow_sources(&checked.types, read), None);
+}

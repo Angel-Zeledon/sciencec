@@ -168,12 +168,13 @@
 //! - **Method calls on a receiver this crate holds no implementations for.**
 //!   The lookup exists — [`crate::methods`], and `BodyChecker::method_call` is
 //!   the call site — so `doc.describe()` resolves, its arguments are checked
-//!   against real parameters, and the call has the method's return type. What
-//!   is left is the receivers the index cannot speak for: a **prelude type**,
-//!   because `builtins.rs` registers no methods at all, and a **type
-//!   parameter**, because a method reached through a bound is generic in a way
-//!   monomorphisation has to resolve (`methods`'s §5). Both leave `method:
-//!   None` and [`Ty::ERROR`], and neither reports.
+//!   against real parameters, and the call has the method's return type. So
+//!   does `text.length()`: `builtins.rs` declares a prelude surface now, and
+//!   `methods`' §8 is what changed. What is left is a **name the prelude has
+//!   not transcribed** — `text.slice(0..4)` — and a **type parameter**, because
+//!   a method reached through a bound is generic in a way monomorphisation has
+//!   to resolve (`methods`'s §5). Both leave `method: None` and [`Ty::ERROR`],
+//!   and neither reports.
 //!
 //!   **One case that used to be here is not any more**, and it is the one
 //!   whose price this list understated: several implementations of one
@@ -184,12 +185,14 @@
 //!   1.
 //! - **Indexing and operators on user types.** `a[i]` is the `Index` interface
 //!   and `a + b` on a record is `Add`. **The lookup does not close these**, and
-//!   the blocker is not the lookup: the prelude declares `Add`, `Index` and the
-//!   rest as *names with no methods on them*, so there is no signature for an
-//!   operator to resolve to and no rule anywhere saying which method name each
-//!   operator dispatches to. That is a prelude change and a decision the note
-//!   has not taken. Operators on the prelude's numeric primitives *are*
-//!   checked, structurally, because those do not go through an implementation.
+//!   the blocker is not the lookup. It is now exactly one thing wide: the
+//!   prelude declares `Add`, `Index` and the rest as names, and declares which
+//!   types implement them, but **no note says which method name each operator
+//!   dispatches to** — and writing one here would invent `Ordering` and
+//!   `Formatter` as a side effect. `builtins.rs`' `INTERFACE_DECLS` states that
+//!   refusal where the decision would have been taken. Operators on the
+//!   prelude's numeric primitives *are* checked, structurally, because those do
+//!   not go through an implementation.
 //! - **A generic call's type arguments.** Explicit ones are used. An omitted
 //!   one is solved only where a parameter's type is the generic parameter
 //!   itself or a borrow of it — `BodyChecker::root_param`, which is the
@@ -199,12 +202,20 @@
 //!   [`Ty::ERROR`] so that the arguments are still checked against something
 //!   that agrees. The general answer needs the nested representation `infer`'s
 //!   §2 describes and does not build.
-//! - **`Iterate`, and therefore `for`.** A `for` binds its pattern at
-//!   [`Ty::ERROR`]. The lookup does not close this one either, and for the
-//!   same reason as the operators: the prelude's `Iterate` declares no `next`
-//!   and has no `Item`, so there is nothing for a loop to read an element type
-//!   out of. Decision 15's `TryIterate` does not exist at all, which is why
-//!   `SC0521` is still unclaimed by this crate.
+//! - **`Iterate`, and therefore `for`, is narrowed rather than closed.** The
+//!   prelude declares `interface Iterate:` with `type Item` and
+//!   `def next(mutable self) -> Self.Item?`, and `Chars implements Iterate:`
+//!   answers `Item` with `Char`, so `for c in text.chars()` binds `c` at
+//!   `Char`. `BodyChecker::iterate_item` is the reading.
+//!
+//!   **What does not close is `for x in xs` over an `Array` or a `Map`**, and
+//!   that is a language decision rather than a transcription: whether
+//!   `Array of T`'s `Item` is `T` or `borrowed T` decides whether every `for`
+//!   loop in the language copies its element, and no note states it —
+//!   `collections-and-chains.md` §5.4 asks every collection for three
+//!   `iterate*` methods without saying which one `for` desugars to. Those
+//!   loops still bind at [`Ty::ERROR`]. Decision 15's `TryIterate` does not
+//!   exist at all, which is why `SC0521` is still unclaimed by this crate.
 //! - **A `loop`'s value.** `break e` is checked and its type discarded; a
 //!   `loop` is [`Ty::UNIT`].
 //! - **Arity and kind of generic arguments**, which `lowering`'s §1 deferred to
@@ -1660,7 +1671,7 @@ impl<'a> BodyChecker<'a> {
             if solved == param || self.types.references_error(solved) {
                 continue;
             }
-            if !self.decls.methods().answers_for(self.defs, bound.interface) {
+            if !self.decls.methods().answers_for(self.defs, self.types, solved, bound.interface) {
                 continue;
             }
             if self.decls.methods().implements(self.types, solved, bound.interface) {
@@ -2181,6 +2192,12 @@ impl<'a> BodyChecker<'a> {
                 self.select(receiver, name, &candidates, args, self_ty)
             }
             Found::None => {
+                // `methods`' §8: a prelude type's method set is a partial
+                // transcription, so *"no such method"* on one is a statement
+                // about `builtins.rs` and not about the program.
+                if !self.decls.methods().surface_is_closed(self.defs, key) {
+                    return Callee::Missing(None);
+                }
                 if !self.types.references_error(receiver) {
                     let rendered = self.types.render(self.defs, receiver);
                     self.diagnostics.push(no_such_method(name.span, &name.name, &rendered));
@@ -2870,9 +2887,13 @@ impl<'a> BodyChecker<'a> {
             self.facts.invalidate_root(root);
         }
         let entry = self.facts.clone();
-        // §6: the prelude's `Iterate` declares no `next` and no `Item`, so
-        // there is nothing for a loop to read an element type out of.
-        let pattern = self.pattern(pattern, Ty::ERROR);
+        // §6, narrowed: the prelude now declares `Iterate` with `Item` and
+        // `next`, so a loop over something that implements it binds at a real
+        // type. Over anything else — an `Array`, a `Map`, a user type with no
+        // `implements Iterate:` — there is still nothing to read and the
+        // binding is [`Ty::ERROR`].
+        let element = self.iterate_item(iter, span).unwrap_or(Ty::ERROR);
+        let pattern = self.pattern(pattern, element);
         self.breaks.push(false);
         let block = self.body.reserve_block(body.span);
         let filled = self.block(body, None);
@@ -2883,6 +2904,45 @@ impl<'a> BodyChecker<'a> {
         self.diverged = false;
         let id = self.body.push_expr(ExprKind::For { pattern, iter, body: block }, Ty::UNIT, span);
         Typed { id, ty: InferTy::Known(Ty::UNIT) }
+    }
+
+    /// The element type a `for` binds, read off the subject's implementation
+    /// of the prelude's `Iterate`.
+    ///
+    /// **Decision. The element type is `Iterate.next`'s return with its `?`
+    /// removed, and nothing else is consulted.** `next` is declared
+    /// `def next(mutable self) -> Self.Item?`, so the loop's binding is the
+    /// associated type the implementation answered `Item` with, after the same
+    /// `block_substitution` an ordinary method call runs. Reading `Item`
+    /// directly out of the block would give the same answer today and a
+    /// different one the moment an implementation's `next` narrows its return;
+    /// the method's signature is the thing a caller is held to.
+    ///
+    /// **`None` is every case this cannot answer**, and there are three that
+    /// matter: the subject's head has no `Iterate` implementation in the index
+    /// (`Array` and `Map` are the ones the corpus writes — see the report),
+    /// the subject is a type parameter or a tuple, and the candidate named
+    /// `next` came from somewhere other than `Iterate`. Each leaves the binding
+    /// at [`Ty::ERROR`], which is where every `for` in the language used to be.
+    fn iterate_item(&mut self, iter: ExprId, span: Span) -> Option<Ty> {
+        let iterate = self.decls.prelude().get("Iterate")?;
+        let ty = self.body.ty(iter);
+        let revealed = self.revealed(ty, span);
+        let self_ty = self.receiver_self_ty(revealed, span);
+        let key = self.decls.methods().receiver(self.defs, self.types, revealed)?;
+        let Found::One(candidate) = self.decls.methods().lookup(key, "next", Form::Value) else {
+            return None;
+        };
+        if candidate.interface() != Some(iterate) {
+            return None;
+        }
+        let ret = self.decls.signature(candidate.method)?.ret;
+        let substitution = self.block_substitution(&candidate, self_ty);
+        let ret = self.apply(&substitution, ret, span);
+        match *self.types.kind(ret) {
+            TyKind::Nullable(inner) => Some(inner),
+            _ => None,
+        }
     }
 
     fn block(&mut self, block: &hir::Block, expected: Option<(Ty, Site)>) -> Block {
