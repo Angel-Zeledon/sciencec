@@ -483,6 +483,37 @@ pub mod codes {
     /// apart, and its §7 says what that costs.
     pub const UNSATISFIED_BOUND: Code = Code(534);
 
+    // --- the operators, `SC0535` -----------------------------------------
+
+    /// An operator whose operand's type does not implement the interface the
+    /// operator dispatches to.
+    ///
+    /// **`check`'s §6 used to list `a + b` and `a[i]` as unchecked and price
+    /// the hole; this is the code that closes it.** §5.4 makes every arithmetic
+    /// operator, `is`, and `[` an interface method, so `a + b` on a type that
+    /// implements nothing is not an unknown operation — it is a program that
+    /// names an implementation that does not exist, which is the same sentence
+    /// [`UNSATISFIED_BOUND`] says one construct along.
+    ///
+    /// **Not [`MISMATCHED_TYPES`]**, for [`UNSATISFIED_BOUND`]'s reason: there
+    /// is no expected type at an operator. The two operands of `a + b` are not
+    /// a value and a slot, and `expected Add, found Row` would be printing an
+    /// interface where a type goes. The message names the operator, the type,
+    /// and the implementation block the author would have to write.
+    ///
+    /// **Not [`NO_SUCH_METHOD`]** either, although the lookup that fails is the
+    /// same one. `SC0532` is a name the author typed and the type does not
+    /// have; here the author typed `+`, and telling them that `Row` has no
+    /// method `add` would be explaining the desugaring rather than the mistake.
+    ///
+    /// **Reported only where the question is answerable**, which is the
+    /// restraint [`NO_SUCH_METHOD`] and [`UNSATISFIED_BOUND`] are under and for
+    /// the same reason: a prelude head whose implementations
+    /// [`crate::methods::Methods::receiver`] cannot speak for is silence, not a
+    /// no, so `"a" + "b"` is still unreported although `String implements Add`
+    /// carries no method the prelude has transcribed.
+    pub const NO_OPERATOR_IMPLEMENTATION: Code = Code(535);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -506,6 +537,7 @@ pub mod codes {
         NO_SUCH_METHOD,
         NO_MATCHING_IMPLEMENTATION,
         UNSATISFIED_BOUND,
+        NO_OPERATOR_IMPLEMENTATION,
     ];
 
     #[cfg(test)]

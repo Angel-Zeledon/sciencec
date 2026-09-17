@@ -197,6 +197,42 @@ impl Substitution {
         subst
     }
 
+    /// Every associated-type replacement rewritten through `inner`.
+    ///
+    /// **§1 makes [`Substitution::apply`] one pass, and this is the one place
+    /// that is not enough.** A block's associated type is written in the
+    /// block's *own* generic parameters — `Array of T implements Iterate: type
+    /// Item is borrowed T` — and the arguments that solve those parameters come
+    /// from the receiver, one level further out. Both land in one substitution,
+    /// and a single pass that replaces `Self.Item` with `borrowed T` is finished
+    /// with that node: it does not walk into the replacement, so the `T` in it
+    /// survives and `for x in xs` over an `Array of Int` binds at `borrowed T`.
+    ///
+    /// **Composing rather than re-folding is deliberate.** Folding a
+    /// replacement through the same substitution that produced it is how a
+    /// substitution acquires a cycle — `T := Array of T` is what a recursive
+    /// generic call's arguments make, and `of_generics` builds exactly that.
+    /// This composes two substitutions that are at different levels and cannot
+    /// name each other's parameters, which is the case that is safe.
+    ///
+    /// Fails only on §4's arithmetic range, through the const half of `inner`.
+    pub fn with_assocs_through(
+        mut self,
+        types: &mut Types,
+        inner: &Substitution,
+    ) -> Result<Substitution, ConstEvalError> {
+        if inner.is_empty() || self.assoc.is_empty() {
+            return Ok(self);
+        }
+        let entries: Vec<(DefId, Ty)> =
+            self.assoc.iter().map(|(assoc, ty)| (*assoc, *ty)).collect();
+        for (assoc, ty) in entries {
+            let rewritten = inner.apply(types, ty)?;
+            self.assoc.insert(assoc, rewritten);
+        }
+        Ok(self)
+    }
+
     /// Whether this substitution replaces anything.
     ///
     /// A caller that asks this before walking skips the walk at every use of a

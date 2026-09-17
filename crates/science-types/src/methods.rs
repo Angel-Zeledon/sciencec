@@ -480,10 +480,34 @@ impl Methods {
     /// predicate says no to. That is the cost of discharging the obligation at
     /// all, and it is the direction that refuses rather than admits.
     pub fn implements(&self, types: &Types, ty: Ty, interface: DefId) -> bool {
+        // A type parameter, `Self`, an unresolved associated type: nothing here
+        // can decide, and refusing would report on a correct program.
+        head(types, ty).is_none() || self.declares(types, ty, interface)
+    }
+
+    /// Whether the crate declares `T implements I:` **and this index can see
+    /// `T`'s head**. [`Methods::implements`]'s strict sibling.
+    ///
+    /// **Decision. The unanswerable question is answered *no* here, and that is
+    /// the reverse of [`Methods::implements`].** The difference is not a change
+    /// of mind about §4's discipline; it is what the two answers are used for.
+    /// [`Methods::implements`] *gates a conversion* — `assign`'s §3 and §4 —
+    /// and admitting one on an unanswerable question at worst types a program
+    /// the author still has to make sense of. `assign`'s §7 asks a question
+    /// whose yes **emits a copy**, and admitting *that* on an unanswerable
+    /// question puts a silent duplication of a value into a language whose
+    /// whole ownership model says a value has one owner. So the coercion that
+    /// costs something asks the predicate that refuses, and the two are
+    /// separate functions rather than a flag, because a caller picking the
+    /// wrong one should have to have typed a different name.
+    ///
+    /// **What it costs** is `borrowed T` into `T` inside a generic body whose
+    /// `T: Copy` bound says it is fine. The bound is in `hir::GenericParam` and
+    /// §4 does not look through one, so closing that is the same work as
+    /// closing a method call on a type parameter (§5), and it closes with it.
+    pub fn declares(&self, types: &Types, ty: Ty, interface: DefId) -> bool {
         let Some(head) = head(types, ty) else {
-            // A type parameter, `Self`, an unresolved associated type: nothing
-            // here can decide, and refusing would report on a correct program.
-            return true;
+            return false;
         };
         // An interface object at that interface already is one.
         if head == interface {

@@ -183,6 +183,13 @@ const WANTED: &[&str] = &[
     // reason the rest are: the question *"is this the prelude's `Iterate` and
     // not a user interface of the same name"* has no other way to be asked.
     "Iterate",
+    // The operator interfaces of §5.4, which `crate::check`'s §6 dispatches
+    // `+ - * / % ** @ is` and `[` through. Each is here for `Iterate`'s reason
+    // and no other: a user may declare an `interface Add:` of their own, and
+    // the only way to ask whether the one a block implements is the prelude's
+    // is to hold the prelude's id. The *names of the methods* are not here —
+    // they are `check`'s `OPERATORS`, beside the operators they belong to.
+    "Add", "Sub", "Mul", "Div", "Rem", "Pow", "MatMul", "Neg", "Eq", "Index",
 ];
 
 impl Prelude {

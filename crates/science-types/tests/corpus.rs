@@ -61,7 +61,7 @@ use std::path::{Path, PathBuf};
 /// that lookup; the entry went with it, which is what this file's opening
 /// paragraph says a fix looks like.
 ///
-/// # The five entries below are one finding, and it is about the corpus
+/// # The entry below is one finding, and it is about the corpus
 ///
 /// `builtins.rs` now declares `Array.get` as `stdlib-core.md` §3.6 writes it:
 ///
@@ -88,35 +88,52 @@ use std::path::{Path, PathBuf};
 ///    whole array on every lookup, and there is no rule in the language that
 ///    makes the answer depend on `Copy`.
 ///
-/// So these five are **true positives**: the declaration is right and the five
-/// bodies are wrong. They are pinned rather than fixed because `examples/` is
-/// not this change's to edit — the fix is one `if x?:` or one `.clone()` per
-/// site. Owner: whoever owns the corpus.
+/// So those five were **true positives**: the declaration is right and the five
+/// bodies were wrong. Three were corrected in `examples/`; the other two were
+/// the language's gap rather than the corpus's, and `assign`'s §7 closed them.
+/// The comment below the doc block says what replaced them and why it is the
+/// same finding one more time.
 // Five appeared the day `Array.get` gained a declaration, and all five were one
 // finding in two shapes: a signature promising a *total* result from a partial
 // accessor, and a signature promising a *value* where a borrow comes back. They
 // type-checked only while `get` returned an error type that agreed with
 // anything.
 //
-// **Three were the corpus's fault and are fixed.** `largest` cannot be total —
+// **Three were the corpus's fault and were fixed.** `largest` cannot be total —
 // an empty array has no largest element — and `DefTable.get` and `Parser.peek`
 // cannot promise a `borrowed X` from an accessor that may find nothing. All
 // three now say `(borrowed T)?`, and `parent_of` gained the presence test that
-// makes its field read legal, which turned the acceptance example into a
-// demonstration of §4.2's narrowing rather than a program that only passed
-// because nothing was checking.
+// makes its field read legal.
 //
-// **Two are not.** They need a value read *out* of a borrow, and there is no
-// spelling for that: the prelude declares `Copy` and `Clone` as interfaces with
-// no methods on either, and the language has no dereference operator. Nothing
-// the corpus could write would fix these, so they are pinned rather than
-// rewritten.
+// **The other two needed a value read *out* of a borrow, and both are closed.**
+// What closed them is `assign`'s §7: **a borrowed `Copy` type is assignable to
+// the value**, which the prelude already declares for `Bool`, `Char` and every
+// numeric type. `06`'s `Letters.next` returns `(borrowed Char)?` where `Char?`
+// is written, which is `Coercion::CopyWhenPresent`; `10`'s `value_at` returns a
+// `borrowed Int` narrowed out of a `(borrowed Int)?` where `Int` is written,
+// which is `Coercion::Copy`. Neither is an edit to `examples/` and neither
+// could have been: the decision was the missing thing, not the program.
+//
+// **One entry arrived in their place, and it is the same class as the three
+// that were fixed.** `Array of T implements Iterate: type Item is borrowed T`
+// — `collections-and-chains.md` §4 — means a `for` binding now has a type,
+// where before it was `Ty::ERROR` and agreed with whatever it met. The line
+// that shows is `07_generics`' `if item > best`, and the file itself explains
+// why it is wrong four lines above: `best` is bound from `items.get(0)` and is
+// therefore `(borrowed T)?`, *"so an empty array has no first element and
+// `largest` has no answer to give"*. The comparison against `item`, a
+// `borrowed T`, was never checked because `item` had no type; Decision 6 makes
+// `T?` never coerce to `T`, so comparing the two is comparing a value with a
+// value that may be absent.
+//
+// It is a **true positive** and the fix is one presence test — `if best? and
+// item > best` — which is the same one-line fix `parent_of` took. It is pinned
+// rather than made, because `examples/` is not this change's to edit. Owner:
+// whoever owns the corpus, and it is the last of the five's family.
 const REMAINING: &[(&str, &[u16])] = &[
-    // `Letters.next` returns `Self.Item?` — `Char?` — from
-    // `self.glyphs.get(self.cursor)`, which is `(borrowed Char)?`.
-    ("06_traits.science", &[525]),
-    // `value_at` returns `cell`, narrowed to `borrowed Int`, as `Int`.
-    ("10_loops.science", &[525]),
+    // `largest` compares `item`, a `borrowed T` bound by a `for`, against
+    // `best`, a `(borrowed T)?` bound from `items.get(0)`.
+    ("07_generics.science", &[525]),
 ];
 
 fn examples_dir() -> PathBuf {
@@ -248,11 +265,27 @@ fn every_pinned_file_is_in_the_corpus() {
 /// to `examples/` closes them.
 ///
 /// The ratchet holds in the sense that matters: nothing may be added here
-/// without an argument, and what closes these two is a decision — whether
-/// `Copy`, which the prelude already declares for `Bool`, `Char` and every
-/// numeric type, means a borrow of one may be read as a value.
+/// without an argument. The two that stood here are gone, and the decision that
+/// closed them is the one this comment named as what they were waiting for —
+/// **`Copy`, which the prelude already declares for `Bool`, `Char` and every
+/// numeric type, means a borrow of one may be read as a value.** That is
+/// `assign`'s §7.
+///
+/// **It is 1, and the one is not the same kind of entry as the two it
+/// replaced.** Those were the checker being right about a gap in the language,
+/// which no edit to `examples/` could close. This one is the checker being
+/// right about a program, which one edit to `examples/` closes — the third
+/// instance of the finding the doc block above records, arriving for the third
+/// time from the same cause: a declaration landed, so a line that had been
+/// compared against `Ty::ERROR` was compared against a type for the first time.
+///
+/// `Array of T implements Iterate` is that declaration. Before it, every `for`
+/// over an `Array` bound its element at [`Ty::ERROR`] and every use of that
+/// element in every loop body in the corpus was unchecked — which is a larger
+/// unchecked surface than one diagnostic, and the trade is stated here rather
+/// than left to be noticed.
 #[test]
 fn the_corpus_reports_only_what_no_program_can_say() {
     let total: usize = REMAINING.iter().map(|(_, codes)| codes.len()).sum();
-    assert_eq!(total, 2);
+    assert_eq!(total, 1);
 }

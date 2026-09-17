@@ -820,7 +820,12 @@ def wrong(doc: Doc, title: String) -> Bool:
     doc is title
 ",
     );
-    assert_eq!(checked.codes(), vec![525]);
+    // Two findings, and they are separate mistakes. `SC0535` is §5.4's rule
+    // that `is` dispatches to `Eq` and `Doc` implements nothing —
+    // `tests/operators.rs`' `is_requires_eq` is where that decision is argued
+    // — and `SC0525` is this test's own subject, which survives it: the two
+    // operands are still not the same type once the borrows are off.
+    assert_eq!(checked.codes(), vec![535, 525]);
 }
 
 // --- what the checker refuses to guess about ------------------------------

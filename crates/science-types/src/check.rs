@@ -1070,15 +1070,7 @@ impl<'a> BodyChecker<'a> {
                 self.method_call(receiver, method, generics, args, span)
             }
             hir::ExprKind::Field { base, name } => self.field(base, name, span),
-            hir::ExprKind::Index { base, index } => {
-                let base = self.synth(base).id;
-                let index = self.synth(index).id;
-                // §6: `a[i]` is the `Index` interface, and the prelude declares
-            // that interface with no methods on it — so there is nothing for
-            // the lookup to find and nothing to check the index against.
-                let id = self.body.push_expr(ExprKind::Index { base, index }, Ty::ERROR, span);
-                Typed { id, ty: InferTy::Known(Ty::ERROR) }
-            }
+            hir::ExprKind::Index { base, index } => self.index_expr(base, index, span),
             hir::ExprKind::StructLit { res, fields } => self.record_lit(*res, fields, span),
             hir::ExprKind::Tuple(elements) => {
                 let mut ids = Vec::with_capacity(elements.len());
@@ -2001,7 +1993,7 @@ impl<'a> BodyChecker<'a> {
             self.diagnostics.push(wrong_argument_count(span, params.len(), args.len()));
         }
 
-        let block = self.block_substitution(candidate, self_ty);
+        let block = self.block_substitution(candidate, self_ty, span);
         let order = self.argument_order(&params, args);
         let generic = self.instantiate_call(&declared, generics, &params, args, &order, span);
         self.check_bounds(candidate.method, &generic, span);
@@ -2045,7 +2037,12 @@ impl<'a> BodyChecker<'a> {
     /// arguments positionally and takes the ones that are a bare parameter;
     /// anything deeper is left unsolved, which leaves a `TyKind::Param`
     /// standing in the signature and compares against it.
-    fn block_substitution(&mut self, candidate: &Candidate, self_ty: Ty) -> Substitution {
+    fn block_substitution(
+        &mut self,
+        candidate: &Candidate,
+        self_ty: Ty,
+        span: Span,
+    ) -> Substitution {
         let mut substitution = self.decls.body_substitution(self.defs, candidate.block);
         substitution = substitution.with_self(candidate.owner, self_ty);
         let declared = match self.decls.block_generics(candidate.block) {
@@ -2058,12 +2055,18 @@ impl<'a> BodyChecker<'a> {
         else {
             return substitution;
         };
+        // The receiver's arguments are collected twice: once into the
+        // substitution being built, and once on their own. The second copy is
+        // what `subst`'s `with_assocs_through` needs, and the reason it needs
+        // one is below.
+        let mut solved = Substitution::new();
         for (pattern, actual) in pattern.iter().zip(&actual) {
             match (pattern, actual) {
                 (GenericArg::Type(pattern), GenericArg::Type(actual)) => {
                     let TyKind::Param { def } = *self.types.kind(*pattern) else { continue };
                     if declared.iter().any(|param| param.def == def) {
                         substitution = substitution.with_type(def, *actual);
+                        solved = solved.with_type(def, *actual);
                     }
                 }
                 (GenericArg::Const(pattern), GenericArg::Const(actual)) => {
@@ -2075,12 +2078,28 @@ impl<'a> BodyChecker<'a> {
                     let Some(def) = bare_const_param(pattern) else { continue };
                     if declared.iter().any(|param| param.def == def) {
                         substitution = substitution.with_const(def, actual.clone());
+                        solved = solved.with_const(def, actual.clone());
                     }
                 }
                 _ => {}
             }
         }
-        substitution
+        // **A block's associated type is written in the block's own
+        // parameters**, and `subst`'s §1 makes `apply` one pass — so replacing
+        // `Self.Item` with `borrowed T` finishes at that node and the `T` in it
+        // survives. `Array of T implements Iterate: type Item is borrowed T` is
+        // the first declaration in the language where that matters, and without
+        // this line `for x in xs` over an `Array of Int` binds `x` at
+        // `borrowed T`. Composing the two is safe here for the reason
+        // `with_assocs_through` states: the two substitutions are at different
+        // levels and cannot name each other's parameters.
+        match substitution.with_assocs_through(self.types, &solved) {
+            Ok(composed) => composed,
+            Err(error) => {
+                self.diagnostics.push(diagnostics::overflowed(error, span));
+                Substitution::new()
+            }
+        }
     }
 
     /// The type `Self` means at a call: the receiver's, with a borrow taken off.
@@ -2286,7 +2305,7 @@ impl<'a> BodyChecker<'a> {
         self_ty: Ty,
     ) -> Callee {
         let supplied: Vec<Typed> = args.iter().map(|arg| self.synth(&arg.value)).collect();
-        let Some(instances) = self.instances(candidates, self_ty) else {
+        let Some(instances) = self.instances(candidates, self_ty, name.span) else {
             return Callee::Missing(Some(supplied));
         };
         let unanswerable = supplied.iter().any(|typed| match self.infer.resolve(typed.ty) {
@@ -2338,13 +2357,18 @@ impl<'a> BodyChecker<'a> {
     /// `SC0525` (`expected T, found Io`) before any of this existed; with two,
     /// the same hole comes out as `SC0533`. The fix is the interface's
     /// arguments in `items`'s table, and it is a declaration-pass change.
-    fn instances(&mut self, candidates: &[Candidate], self_ty: Ty) -> Option<Vec<Instance>> {
+    fn instances(
+        &mut self,
+        candidates: &[Candidate],
+        self_ty: Ty,
+        span: Span,
+    ) -> Option<Vec<Instance>> {
         let mut instances = Vec::with_capacity(candidates.len());
         for candidate in candidates {
             let sig = self.decls.signature(candidate.method)?;
             let declared: Vec<(DefId, Ty)> =
                 sig.params.iter().map(|param| (param.def, param.ty)).collect();
-            let block = self.block_substitution(candidate, self_ty);
+            let block = self.block_substitution(candidate, self_ty, span);
             let params = declared
                 .into_iter()
                 .map(|(def, ty)| (def, self.substituted(&block, ty)))
@@ -2559,6 +2583,11 @@ impl<'a> BodyChecker<'a> {
 
     fn unary(&mut self, op: UnaryOp, operand: &hir::Expr, span: Span) -> Typed {
         match op {
+            // `not` is not an operator interface and §4.5 of
+            // `stdlib-shape-and-packages.md` says it never will be: *"`and` and
+            // `or` are **not** overloadable at all — they are short-circuiting
+            // control flow"*, and `Not` is the one whose method name that same
+            // decision has to rename. It stays a `Bool` in and a `Bool` out.
             UnaryOp::Not => {
                 let bool_ty = self.bool_ty();
                 let operand = match bool_ty {
@@ -2571,6 +2600,10 @@ impl<'a> BodyChecker<'a> {
             }
             UnaryOp::Neg => {
                 let typed = self.synth(operand);
+                if let Some(dispatched) = self.operator("-", "Neg", "neg", typed, None, span) {
+                    return dispatched;
+                }
+                let typed = self.read_value(typed, operand.span);
                 let ty = typed.ty;
                 self.push_typed(ExprKind::Unary { op, operand: typed.id }, ty, span)
             }
@@ -2606,6 +2639,13 @@ impl<'a> BodyChecker<'a> {
             | BinaryOp::Ge => {
                 let left = self.synth(lhs);
                 let right = self.synth(rhs);
+                // §6, half-closed: `is` and `is not` are `Eq` and the
+                // implementation is now required; `< > <= >=` are `Ord` and are
+                // not, because `Ord`'s method has no name this file may write.
+                // `implements_operand` says what that leaves.
+                if matches!(op, BinaryOp::Eq | BinaryOp::Ne) {
+                    self.implements_operand(op.as_str(), "Eq", left, span);
+                }
                 self.compare(left, right, span);
                 let ty = self.bool_ty().unwrap_or(Ty::ERROR);
                 let id = self
@@ -2613,12 +2653,34 @@ impl<'a> BodyChecker<'a> {
                     .push_expr(ExprKind::Binary { op, lhs: left.id, rhs: right.id }, ty, span);
                 Typed { id, ty: InferTy::Known(ty) }
             }
-            // §6: an operator on a user type is the matching interface, which
-            // is Decision 11's. On the prelude's numerics it is not, so those
-            // are answered structurally and the rest is `Ty::ERROR`.
+            // §6, closed: an operator on a user type is the matching
+            // interface's method, which is Decision 11's lookup. On the
+            // prelude's numerics it is not — nothing declares `I64.add` — so
+            // those fall through to the structural answer below.
             _ => {
                 let left = self.synth(lhs);
                 let right = self.synth(rhs);
+                if let Some((interface, method)) = binary_operator(op) {
+                    let dispatched = self.operator(
+                        op.as_str(),
+                        interface,
+                        method,
+                        left,
+                        Some((right, rhs.span)),
+                        span,
+                    );
+                    if let Some(dispatched) = dispatched {
+                        return dispatched;
+                    }
+                }
+                // `assign`'s §7 at an operand. `total + n` where `n` came out
+                // of a `for` over an `Array of Int` is a `borrowed Int` meeting
+                // an `Int`, which is `collections-and-chains.md` §4.3's
+                // AMENDMENT 7 — *"`borrowed F32 + borrowed F32` is `F32`"* —
+                // read as one coercion instead of as an implementation per
+                // primitive per operator.
+                let left = self.read_value(left, lhs.span);
+                let right = self.read_value(right, rhs.span);
                 let ty = match self.infer.unify(self.types, left.ty, right.ty) {
                     Ok(unified) => unified,
                     Err(_) => {
@@ -2636,6 +2698,304 @@ impl<'a> BodyChecker<'a> {
                 self.push_typed(ExprKind::Binary { op, lhs: left.id, rhs: right.id }, ty, span)
             }
         }
+    }
+
+    /// `assign`'s §7 at an operand: a shared borrow of a `Copy` type reads as
+    /// the value.
+    ///
+    /// **This is the one place a coercion is applied without a slot to apply it
+    /// to.** Everywhere else in this file [`assignable`] is asked at
+    /// [`BodyChecker::demand`], against a type something else wrote down. An
+    /// operand of `+` has no such type: `total + n` compares two synthesised
+    /// types against each other, and if neither side is peeled the relation is
+    /// never consulted at all. So the peeling is asked for by shape — the
+    /// operand is a borrow — and then *answered* by the relation, which is what
+    /// keeps the `Copy` question in `assign` where §7 argues it.
+    ///
+    /// Returns the operand unchanged wherever the relation says no, so a
+    /// `borrowed String` stays a `borrowed String` and the mismatch below is
+    /// reported about the types the author can see.
+    fn read_value(&mut self, typed: Typed, span: Span) -> Typed {
+        let InferTy::Known(ty) = self.infer.resolve(typed.ty) else { return typed };
+        let source = self.revealed(ty, span);
+        let TyKind::Borrowed { inner, .. } = *self.types.kind(source) else { return typed };
+        let target = self.revealed(inner, span);
+        let verdict = assignable(
+            self.types,
+            self.decls.methods(),
+            self.coercions,
+            Site::Elsewhere,
+            source,
+            target,
+        );
+        if verdict != Some(Coercion::Copy) {
+            return typed;
+        }
+        let id = self.body.push_expr(
+            ExprKind::Coerce { operand: typed.id, coercion: Coercion::Copy },
+            target,
+            span,
+        );
+        Typed { id, ty: InferTy::Known(target) }
+    }
+
+    /// §6's operator dispatch: `a + b` is `a.add(b)` and `-a` is `a.neg()`.
+    ///
+    /// > `type-checking-and-mir.md` §9.3, on what a `python:` region buys:
+    /// > *"the always-available explicit form (`a.item(k)`, `a.add(b)`)"*.
+    ///
+    /// **Decision. The operator fixes the method's *name* and nothing else; the
+    /// operand's type and the result's are read off the implementation the
+    /// receiver actually has.** The name is
+    /// `stdlib-shape-and-packages.md` §4.5's Decision 4c — *"an operator
+    /// trait's method takes the trait's lowercase name only when that name is
+    /// free"* — and for the eight this file dispatches it is free, so `Add` is
+    /// `add`, `MatMul` is `matmul` and `Index` is `index`. Nothing else about
+    /// the signature is written down here, and the reason is that three
+    /// separate documents disagree about what it would be:
+    ///
+    /// - `examples/06_traits.science` writes
+    ///   `Vector2 implements Mul: def mul(self, scale: F64) -> Vector2` — an
+    ///   operand that is **not** `Self`, which is the whole of scalar
+    ///   multiplication.
+    /// - `uncertainty.md` §11 writes `def pow(self, exponent: borrowed Self)` —
+    ///   an operand taken by **borrow**.
+    /// - `scientific-libraries.md` §12.4 writes a `Quantity implements Mul`
+    ///   whose receiver, operand and result are three different instantiations
+    ///   of one type, and says F0 cannot express it.
+    ///
+    /// So a prelude declaration of `def add(self, other: Self) -> Self` would
+    /// be a constraint invented here and contradicted by the corpus on the
+    /// first line that uses it. `builtins.rs`' `INTERFACE_DECLS` states the
+    /// rule this follows — *an interface is declared with its methods only
+    /// where a note gives the method's name **and its types***  — and a note
+    /// gives the name and not the types, so the name lives here, beside the
+    /// operator, and the types stay unwritten.
+    ///
+    /// **What it costs.** The interfaces are still declared with no methods, so
+    /// nothing holds two implementations of `Add` in one crate to the same
+    /// shape, and an `implements Add:` block that writes no `add` is
+    /// [`codes::NO_OPERATOR_IMPLEMENTATION`] rather than an inherited default.
+    /// Both close the day a note writes the signature down.
+    ///
+    /// **And the method's *own* generics are not solved here**, where
+    /// [`BodyChecker::call_method`] solves them at a written call. An operator
+    /// has no place to write a type argument and only one argument to infer
+    /// from, so `def mul of U(self, other: U)` under an `implements Mul:` would
+    /// leave `U` standing and compare the operand against a
+    /// [`TyKind::Param`] — which `assign`'s rule 1 admits, so the operand is
+    /// unchecked rather than wrongly refused. `scientific-libraries.md` §12.4's
+    /// `Quantity implements Mul` is the program that wants it and the same
+    /// section says F0 cannot express that signature at all, so nothing
+    /// reachable today depends on it. The bound on such a parameter is not
+    /// checked either, for the same reason: §8's `check_bounds` runs on a
+    /// solved substitution and there is none.
+    ///
+    /// **`None` is *fall through to the structural answer***, and it is three
+    /// cases: the operand's type is already erroneous, its head is one
+    /// [`Methods::receiver`] cannot speak for (`methods`' §8 — every prelude
+    /// numeric, which is what keeps `1 + 2` structural), or the prelude has no
+    /// such interface, which is every test in this crate with no prelude.
+    /// `Some` is *handled*, whether that meant a resolved call or a reported
+    /// one.
+    fn operator(
+        &mut self,
+        symbol: &str,
+        interface: &'static str,
+        method: &'static str,
+        receiver: Typed,
+        operand: Option<(Typed, Span)>,
+        span: Span,
+    ) -> Option<Typed> {
+        let interface_def = self.decls.prelude().get(interface)?;
+        let written = self.known_or_error(receiver.ty);
+        let revealed = self.revealed(written, span);
+        // `ty`'s §5: an erroneous operand agrees with whatever it meets, and a
+        // second message about it would be a cascade.
+        if self.types.references_error(revealed) {
+            return None;
+        }
+        let head = self.decls.methods().receiver(self.defs, self.types, revealed)?;
+        let self_ty = self.receiver_self_ty(revealed, span);
+        let candidate = match self.decls.methods().lookup(head, method, Form::Value) {
+            Found::One(candidate) if candidate.interface() == Some(interface_def) => candidate,
+            // Everything else is *this type does not implement this
+            // interface*: no such method, a method of that name from somewhere
+            // that is not the operator's interface, or several. Reported where
+            // the index can speak for the head and silent where it cannot,
+            // which is `methods`' §8 and the restraint `SC0532` is under.
+            _ => {
+                if self.decls.methods().surface_is_closed(self.defs, head) {
+                    // The *peeled* receiver, because `methods`' §1 makes a
+                    // borrow transparent to the lookup and a message that said
+                    // `borrowed Grid does not implement Index` would be
+                    // describing a borrow the author did not write.
+                    let rendered = self.types.render(self.defs, self_ty);
+                    self.diagnostics.push(no_operator_implementation(
+                        span, symbol, &rendered, interface,
+                    ));
+                    return Some(self.error_expr(span));
+                }
+                return None;
+            }
+        };
+        // Decision 8 and `narrow`'s §4, as at any other call.
+        if candidate.writes_receiver() {
+            if let Some(place) = self.body.place_of(receiver.id) {
+                self.facts.invalidate(&place);
+            }
+        }
+        let Some(sig) = self.decls.signature(candidate.method) else {
+            return Some(self.error_expr(span));
+        };
+        let params: Vec<Ty> = sig.params.iter().map(|param| param.ty).collect();
+        let ret = sig.ret;
+        let block = self.block_substitution(&candidate, self_ty, span);
+        // The operator supplies exactly as many operands as it has: one for a
+        // binary, none for a unary. A method under an operator interface that
+        // takes a different number is `SC0527` — the same code a written call
+        // gets, because it is the same mistake with the parentheses left off.
+        let supplied = usize::from(operand.is_some());
+        if params.len() != supplied {
+            self.diagnostics.push(wrong_argument_count(span, params.len(), supplied));
+        }
+        let mut args = Vec::new();
+        if let Some((value, operand_span)) = operand {
+            args.push(match params.first().copied() {
+                Some(param) => {
+                    let ty = self.apply(&block, param, operand_span);
+                    let ty = self.instantiate(ty, operand_span);
+                    // `Site::Argument`, because it is one: §6.3's auto-borrow
+                    // is what lets `a + b` reach a `def pow(self, exponent:
+                    // borrowed Self)`.
+                    self.demand(value, ty, Site::Argument, operand_span)
+                }
+                None => value.id,
+            });
+        }
+        let ret = self.apply(&block, ret, span);
+        let ret = self.instantiate(ret, span);
+        let id = self.body.push_expr(
+            ExprKind::MethodCall { receiver: receiver.id, method: Some(candidate.method), args },
+            ret,
+            span,
+        );
+        Some(Typed { id, ty: InferTy::Known(ret) })
+    }
+
+    /// The implementation check with no call made: `is` and `is not`.
+    ///
+    /// **Decision. `a is b` requires `Eq` and stays an [`ExprKind::Binary`].**
+    /// The requirement is real — `examples/06_traits.science` writes
+    /// `Vector2 implements Eq: def eq(self, other: Vector2) -> Bool`, so the
+    /// name and the signature are both in the corpus and neither is invented —
+    /// and closing it is what `BodyChecker::compare` said it was waiting for:
+    /// *"what is missing is a code and the decision behind it"*.
+    ///
+    /// **The node stays a `Binary` because `is not` has no method.** §5.4 makes
+    /// `is` and `is not` one operator dispatching to `Eq`, and `Eq` declares
+    /// one direction of it; turning `a is not b` into a call would mean
+    /// emitting `not (a.eq(b))`, which is a *desugaring* — two THIR nodes where
+    /// the author wrote one — and desugaring belongs to the lowering that has
+    /// a `Rvalue::Not` to put it in. So this arm reports and types, and
+    /// `science-mir` still receives the operator it received before.
+    ///
+    /// That is the one asymmetry in §6's dispatch and it is deliberate: `+`
+    /// becomes `a.add(b)` because `add` *is* the operation, and `is not` does
+    /// not because `eq` is only half of it.
+    fn implements_operand(
+        &mut self,
+        symbol: &str,
+        interface: &'static str,
+        operand: Typed,
+        span: Span,
+    ) {
+        let Some(interface_def) = self.decls.prelude().get(interface) else { return };
+        let written = self.known_or_error(operand.ty);
+        let revealed = self.revealed(written, span);
+        if self.types.references_error(revealed) {
+            return;
+        }
+        let Some(head) = self.decls.methods().receiver(self.defs, self.types, revealed) else {
+            return;
+        };
+        if !self.decls.methods().surface_is_closed(self.defs, head) {
+            return;
+        }
+        if self.decls.methods().declares(self.types, revealed, interface_def) {
+            return;
+        }
+        let self_ty = self.receiver_self_ty(revealed, span);
+        let rendered = self.types.render(self.defs, self_ty);
+        self.diagnostics.push(no_operator_implementation(span, symbol, &rendered, interface));
+    }
+
+    /// `a[i]` — §6's last hole, and the one that keeps its node.
+    ///
+    /// **Decision. Indexing dispatches to `Index.index` for its *type*, and the
+    /// THIR node stays an [`ExprKind::Index`].** `indexing-and-array-literals.md`
+    /// §1.1's Decision 2 declares
+    /// `interface Index of Idx: type Output; def index(self, at: Idx) ->
+    /// borrowed Self.Output`, and the same section makes `a[i] be v` write
+    /// through the index — so `a[i]` is a **place**, and a `MethodCall` is not
+    /// one. `science-mir` already lowers this node to a `Projection::Index`;
+    /// replacing it with a call would delete the only place projection the IR
+    /// has, in another crate, to fix a type.
+    ///
+    /// **So this closes the type and not the lowering**, and that is the honest
+    /// extent of it: `element_ty` in `science-mir` still reads the first
+    /// generic argument of the base and is right only for an `Array`. What
+    /// changes here is that `a[i]` on a user type has the type its `index`
+    /// declares instead of [`Ty::ERROR`], that the index operand is checked
+    /// against `Idx`, and that a user type implementing no `Index` is reported.
+    ///
+    /// **`Index of Idx` is declared with no parameter in the prelude**, which
+    /// `builtins.rs`' `INTERFACES` list has said since before this note was
+    /// written. Nothing here depends on the parameter: the operand's type comes
+    /// off the implementation's own `index`, exactly as `+`'s does.
+    fn index_expr(&mut self, base: &hir::Expr, index: &hir::Expr, span: Span) -> Typed {
+        let base = self.synth(base);
+        let index = self.synth(index);
+        let mut ty = Ty::ERROR;
+        let mut index_id = index.id;
+        let written = self.known_or_error(base.ty);
+        let revealed = self.revealed(written, span);
+        let interface = self.decls.prelude().get("Index");
+        let head = if self.types.references_error(revealed) {
+            None
+        } else {
+            self.decls.methods().receiver(self.defs, self.types, revealed)
+        };
+        if let (Some(interface), Some(head)) = (interface, head) {
+            let self_ty = self.receiver_self_ty(revealed, span);
+            match self.decls.methods().lookup(head, "index", Form::Value) {
+                Found::One(candidate) if candidate.interface() == Some(interface) => {
+                    if let Some(sig) = self.decls.signature(candidate.method) {
+                        let param = sig.params.first().map(|param| param.ty);
+                        let ret = sig.ret;
+                        let block = self.block_substitution(&candidate, self_ty, span);
+                        if let Some(param) = param {
+                            let want = self.apply(&block, param, span);
+                            let want = self.instantiate(want, span);
+                            index_id = self.demand(index, want, Site::Argument, span);
+                        }
+                        let ret = self.apply(&block, ret, span);
+                        ty = self.instantiate(ret, span);
+                    }
+                }
+                _ => {
+                    if self.decls.methods().surface_is_closed(self.defs, head) {
+                        let rendered = self.types.render(self.defs, self_ty);
+                        self.diagnostics.push(no_operator_implementation(
+                            span, "[]", &rendered, "Index",
+                        ));
+                    }
+                }
+            }
+        }
+        let id =
+            self.body.push_expr(ExprKind::Index { base: base.id, index: index_id }, ty, span);
+        Typed { id, ty: InferTy::Known(ty) }
     }
 
     /// Whether the two sides of a comparison are the same thing.
@@ -2937,7 +3297,7 @@ impl<'a> BodyChecker<'a> {
             return None;
         }
         let ret = self.decls.signature(candidate.method)?.ret;
-        let substitution = self.block_substitution(&candidate, self_ty);
+        let substitution = self.block_substitution(&candidate, self_ty, span);
         let ret = self.apply(&substitution, ret, span);
         match *self.types.kind(ret) {
             TyKind::Nullable(inner) => Some(inner),
@@ -3300,6 +3660,58 @@ fn suffix_name(suffix: NumSuffix) -> &'static str {
 /// that *"error messages can name a declared type"*: the expectation came from
 /// an annotation a human wrote, and putting it first is what makes the message
 /// about that annotation rather than about the compiler's state.
+/// Which interface each binary operator dispatches to, and what the interface
+/// calls its method.
+///
+/// **The names are `stdlib-shape-and-packages.md` §4.5's Decision 4c**: *"an
+/// operator trait's method takes the trait's lowercase name only when that name
+/// is free"*. All eight below are free. The ones that are not — `Not`, `BitAnd`,
+/// `BitOr` — are renamed by that same decision and are absent here for a
+/// different reason: §5.4 declares no bitwise interfaces at all, which that note
+/// records as a hole in the core spec rather than filling.
+///
+/// `Ord` is the deliberate omission and [`BodyChecker::compare`] says why:
+/// `< > <= >=` would dispatch to a method whose only sane name is `compare` and
+/// whose return type is an `Ordering` that no note specifies. `Eq` is not on
+/// this table either, but for the opposite reason — it *is* dispatched, by
+/// [`BodyChecker::implements_operand`], which checks the implementation and
+/// leaves the node alone.
+fn binary_operator(op: BinaryOp) -> Option<(&'static str, &'static str)> {
+    match op {
+        BinaryOp::Add => Some(("Add", "add")),
+        BinaryOp::Sub => Some(("Sub", "sub")),
+        BinaryOp::Mul => Some(("Mul", "mul")),
+        BinaryOp::Div => Some(("Div", "div")),
+        BinaryOp::Rem => Some(("Rem", "rem")),
+        BinaryOp::Pow => Some(("Pow", "pow")),
+        BinaryOp::MatMul => Some(("MatMul", "matmul")),
+        _ => None,
+    }
+}
+
+/// `SC0535` — an operator whose operand implements nothing it could dispatch
+/// to.
+///
+/// **The message names the block the author would have to write**, which is
+/// [`unsatisfied_bound`]'s shape one construct along and for its reason: the
+/// thing that is missing is a declaration, and a diagnostic that says only
+/// *"cannot add these"* has refused to say what would fix it.
+fn no_operator_implementation(
+    span: Span,
+    symbol: &str,
+    ty: &str,
+    interface: &str,
+) -> Diagnostic {
+    Diagnostic::error(
+        codes::NO_OPERATOR_IMPLEMENTATION,
+        format!("`{ty}` does not implement `{interface}`"),
+    )
+    .with_label(Label::primary(span, format!("`{symbol}` needs `{interface}` and `{ty}` has no implementation of it")))
+    .with_note(format!(
+        "every operator is an interface method (§5.4): the block \n         `{ty} implements {interface}:` is what gives `{ty}` this operator"
+    ))
+}
+
 fn mismatched_types(span: Span, expected: &str, found: &str) -> Diagnostic {
     Diagnostic::error(codes::MISMATCHED_TYPES, format!("expected `{expected}`, found `{found}`"))
         .with_label(Label::primary(span, format!("this is `{found}`")))
