@@ -1,7 +1,16 @@
 # Region inference
 
-**Status.** Design. Nothing below is built. `crates/` ends at the resolver:
-there is no type checker, no MIR, and no borrow checker.
+**Status.** **Built and running.** All three of the things this line used to say
+did not exist now do: `science-types` checks types, `science-mir` lowers THIR to
+a CFG, and `science-regions` solves. The amendments below record what building
+it proved, disproved, and found the note had not asked.
+
+The headline: **`examples/21_compiler_shapes.science` §4 passes with no
+diagnostic.** Its `Node of T` gets two region variables and no constraint
+anywhere relates them, which is Decision 3's central bet won on the program it
+was written for. Read §5.2's amendment before anything else — the question that
+section asks turned out to be the wrong one, and answering the right one is what
+made elision total.
 
 **Why this note exists.** §6.1 of the core spec ends with one sentence —
 *"There is no lifetime syntax. The programmer never writes a region."* — and
@@ -120,6 +129,17 @@ Per function, over its MIR:
 
 1. **Liveness.** A standard backward dataflow over the CFG giving, per point,
    the set of live variables. Regions of live variables are live.
+
+   > **AMENDMENT 2: that is one of three lower bounds, and a solver seeded only
+   > from it computes empty regions for every loan.** A loan has no variable to
+   > be live — it is created by a `Borrow` rvalue and may be stored, returned or
+   > dropped without ever being bound. The three are: a local's region, bounded
+   > below by where the local is live; a parameter's, bounded below by every
+   > point in the body, because a caller's borrow outlives the whole call; and a
+   > loan's, bounded below by **nothing**, growing only from the constraints
+   > that use it. Seeding a loan from liveness gives an empty or wrong region,
+   > and an empty region means a *missing* diagnostic, which is the direction
+   > that does not announce itself.
 2. **Constraint generation.** A forward walk emitting `'a: 'b @ p` for every
    assignment, call, return and coercion. Each constraint carries the span and
    a cause — `AssignedFrom`, `PassedTo`, `ReturnedFrom`, `StoredInField`.
@@ -130,6 +150,42 @@ Per function, over its MIR:
    overlapping place is live at any point in its region; for every shared
    borrow, no exclusive one is. Rule 5 — no borrow outlives its referent — falls
    out as a constraint against the referent's storage-dead point.
+
+   > **AMENDMENT 3: quantifying over *borrows* is not enough, and
+   > `type-checking-and-mir.md` Decision 8 is silently false if it is taken
+   > literally.** That decision rests flow narrowing's soundness on rule 4, and
+   > records it as a phase-ordering argument rather than a proof. Here is the
+   > program it does not cover:
+   >
+   > ```science
+   > let r be mutable borrowed config
+   > if config.port?:            # narrowing established after the borrow
+   >     write_through(r)        # writes config.port, creates no borrow
+   >     print(config.port)      # reads a fact that is now false
+   > ```
+   >
+   > Invalidation at the point an exclusive borrow is *created* cannot help: the
+   > creation is in the past. And there is **exactly one borrow** in that
+   > program, so a faithful implementation of step 4 as written finds no second
+   > borrow to conflict with, accepts it, and Decision 8 is false with nothing
+   > reported.
+   >
+   > The check must range over **accesses** — reads, writes, moves, drops,
+   > storage-dead — of which taking a borrow is one kind. Implemented that way;
+   > the program above is refused.
+   >
+   > **A second gap in the same step:** neither note says what a two-phase
+   > *reservation* may coexist with. It has to tolerate a pre-existing shared
+   > borrow that ends before the activation, which makes rule 4 a **three**-state
+   > question — shared, reserved, exclusive — and not the two it is written as.
+   >
+   > **And §15's named risk is not the nearest one. Closures are.** A capture
+   > produces no borrow in MIR at all (`science-mir`'s §8 refuses closures by
+   > name), so rule 4 has nothing to say about one. Narrowing is safe today only
+   > because `science-types` walks a closure body inline with the enclosing facts
+   > and invalidates where the closure is *written* — a different mechanism from
+   > the one Decision 8 names. Whoever writes the capture discipline has to
+   > decide whether a capture becomes a borrow MIR can see.
 
 **Complexity.** Steps 1 and 3 are `O(points × regions)` in the worst case with a
 bitset representation, and linear in practice because the constraint graph is
@@ -224,6 +280,16 @@ it.
    dead at birth. That is a legal outcome of the solver and a terrible error
    message, so §7.3 makes it a named diagnostic rather than a generic
    conflict.
+
+   > **AMENDMENT 4: it cannot be empty, and `SC0335` cannot fire.** In a solver
+   > with no upper bounds, regions only ever grow, from a lower bound that
+   > already contains every point the value is live — so the intersection
+   > always contains at least the construction point. The situation this cost
+   > describes is real, but it surfaces as `SC0333` against whichever source
+   > dies first, which is a **better** message than the one §7.3 designed:
+   > it names a borrow and the point it stops living, rather than announcing
+   > that an intersection came out empty. `SC0335` is implemented as a tripwire
+   > and has never fired.
 3. **It pushes work to the use site**, which is precisely what makes §6
    hard.
 
@@ -299,6 +365,45 @@ almost always goes on to mutate.
 **The risk this creates is stated in §14 and it is the note's biggest:** if
 `SC0340` fires often in real code, the no-syntax decision is wrong and the
 language needs a way to say what it means.
+
+> **AMENDMENT 1: there is a fourth answer, it is the one that was implemented,
+> and it makes elision total.**
+>
+> The three above share an assumption that is never stated: that the answer has
+> to be **one name**. It has to be one name in Rust because the answer is
+> written as `'a`, and a lifetime parameter is a name. Nothing here is written.
+>
+> The answer the solver produces is the **set** of parameter regions the
+> constraint graph says must outlive the result, and a caller intersects them.
+> Sound, total, less precise than a hand-written `'a` — and never ambiguous,
+> because a set of two is an answer where a choice between two names is not.
+>
+> **Removing the syntax removed the problem the syntax was introduced to
+> solve.** §5's opening says elision here "is not a convenience, it is the whole
+> mechanism, and it has to be total". It is total. The reason is not that the
+> rules were made cleverer; it is that the question §5.2 asks — *which one?* —
+> was the wrong question, and it was inherited from a language that had to ask
+> it.
+>
+> **Decision 6 survives with almost nothing to do.** `SC0340` is still the right
+> diagnostic for an empty result set, and there are four routes to one. Three
+> turn out to be something else: a local is `SC0333`, a call with no reference
+> argument is caught by the unresolved-callee conservatism, and a container or
+> `for` binding is a hole where the reference is *gone* rather than
+> unconstrained. **The only program that reaches `SC0340` is one that cannot
+> return** — two mutually recursive functions whose sole path to a result is
+> each other.
+>
+> **So §14's biggest risk did not materialise.** It says that if `SC0340` fires
+> often in real code, the no-syntax decision is wrong. It does not fire on any
+> ordinary code that could be constructed for it. That is the strongest evidence
+> the central claim has, and it is worth being precise about what it is evidence
+> *of*: that elision is total, not that the engine is complete — §10's holes are
+> real and listed in the amendments below.
+>
+> **The cost, which is the precision.** A caller intersecting a set knows less
+> than a caller reading one `'a`. Nobody has yet found a program where that
+> matters, and nobody has looked hard.
 
 ---
 
@@ -442,9 +547,31 @@ Six structures, from `self-hosting.md` §4.6 and
 | Flat `DefTable`, `DefId(u32)` indices | **Yes** | An index borrows nothing. The graph has no region at all. |
 | `Rib` scope stack | **Yes** | Owns its names; borrows nothing. |
 | `Parser` holding a token slice | **Yes** | §4.1: one borrowed field, one region. |
-| `Node of T` — two borrowed fields | **Yes**, under Decision 3 | Both constructions in the real dumper pass borrows of the same table and value; the intersection is non-empty. |
+| `Node of T` — two borrowed fields | **Yes**, under Decision 3 | ~~Both constructions in the real dumper pass borrows of the same table and value; the intersection is non-empty.~~ **The verdict is right and the reason is wrong — see below.** |
 | Diagnostics accumulator | **Yes** | Exclusive borrow of the sink, shared of the tree; different objects, no aliasing. |
 | Bump arena handing out borrows | **No** | §9. |
+
+> **AMENDMENT 5: the `Node of T` row's reason is wrong, and the verdict was
+> reached a better way.** The row says it works *"because both constructions
+> pass borrows of the same table and value; the intersection is non-empty"*.
+> Under Decision 3 **the two regions are never compared**, so that reason would
+> be satisfied just as well by borrows of unrelated sources — it is not what is
+> doing the work. And the file has exactly one construction site, so its
+> evidence for a claim about "both constructions" is nil.
+>
+> What actually happens: two borrowed fields get two region variables, the one
+> construction ties each to its own parameter, and **no constraint anywhere
+> relates them**. Nobody is asked whether they are the same, which is the whole
+> of Decision 3. A test asserts the absence rather than the outcome, because the
+> outcome would also hold under a rule that compared them and got lucky.
+>
+> One more caveat on the result, and it is the real one. `DefTable.get`'s answer
+> is delivered by a **conservatism about a hole**, not by an analysis: its body
+> calls an `Array` method with no declaration, and the only reason its return is
+> tied to `self` is the rule that an opaque callee may return a reference into
+> anything reachable from its arguments. When `Array` gets a declaration that
+> path is replaced by a real signature. It should give the same answer; nobody
+> has checked, because there is nothing yet to check against.
 
 **Five of six, and the sixth is not used by the existing compiler.** That is a
 genuinely encouraging result and it must be read with the caveat
@@ -519,6 +646,36 @@ cannot add afterwards.
 6. **Stable point identity across the query boundary.** Decision 8 memoises per
    SCC; if MIR point numbering changes when an unrelated function is edited, the
    cache never hits.
+
+> **AMENDMENT 6: all six were delivered, and two of them ask for less than they
+> need.**
+>
+> **Item 3 is not sufficient for rule 5.** A borrow taken *through* a reference
+> — `self.table.get(..)` where `self` is already a reference — has no
+> storage-dead point of its own to check against, and checking the reference's
+> would refuse `DefTable.get`, which is correct code in the acceptance case.
+> The rule needs a second clause: *whose place is rooted in a local of this
+> body*. A borrow rooted in a parameter is the caller's problem and outlives the
+> call by construction.
+>
+> **Item 5 asks for less than §12 delivers, and §12 is right.** "Drop points
+> made explicit" implemented literally ships a MIR that double-frees, because a
+> conditionally-moved local needs a *flag*, not just a point. It should say
+> *and elaborated*, which is what `science-mir` built and what
+> `type-checking-and-mir.md` Decision 26 specifies.
+>
+> **Item 4 was met rather than declined.** The clause "or an explicit statement
+> of their absence" was the cheap way out and was not taken: `science-mir`
+> identifies the reservation set syntactically — the auto-borrow only ever
+> inserts an exclusive borrow in argument position — and exposes activation as
+> an explicit statement rather than a derivation, on the ground that exposing
+> the reservation point while hiding the activation meets only the letter of
+> this item. `v.push(v.len())`, this item's own example, compiles.
+>
+> **What §10 did not ask for and should have: an `unsafe` marker.** Decision 10
+> makes `unsafe` the escape hatch, and MIR carries no marker for it — so an
+> arena is refused and writing `unsafe` around it changes nothing. Decision 10
+> is the one decision in this note that is untouched rather than partial.
 
 ---
 
