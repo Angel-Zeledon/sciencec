@@ -402,6 +402,80 @@ fn a_struct_literal_resolves_its_field_names_and_reports_the_unknown_ones() {
     }
 }
 
+/// `SC0205` names the record the way the reader wrote it.
+///
+/// `path_of` would say `main.Doc` here and
+/// `tests.ui.resolve.unknown_field.Doc` for the same program filed one
+/// directory deeper — a message about a name that appears nowhere in the
+/// source, and an expectation that moves when the file does.
+#[test]
+fn an_unknown_field_names_the_record_as_written_and_not_by_its_path() {
+    let sp = &Sp::new();
+    let doc = record_item(sp, "Doc", vec![], vec![field(sp, "title", ty(sp, "String"))]);
+    let lit = struct_lit(sp, &["Doc"], vec![("subtitle", string(sp, "b"))]);
+    let f = func(sp, "f").body(block(sp, vec![], Some(lit))).item();
+
+    let diagnostics = diagnose(&module(vec![doc, f]));
+    let d = diagnostics.iter().next().expect("an unknown field is reported");
+    assert_eq!(d.message, "`Doc` has no field `subtitle`");
+}
+
+/// "As written" is not "the last segment": a reader who qualified the record
+/// is told about the record they qualified.
+#[test]
+fn an_unknown_field_on_a_qualified_record_keeps_the_qualification() {
+    let sp = &Sp::new();
+    let types =
+        module(vec![record_item(sp, "Doc", vec![], vec![field(sp, "title", ty(sp, "String"))])]);
+    let lit = struct_lit(sp, &["types", "Doc"], vec![("subtitle", string(sp, "b"))]);
+    let f = func(sp, "f").body(block(sp, vec![], Some(lit))).item();
+
+    let sources = [
+        science_resolve::SourceModule {
+            file: science_diagnostics::FileId(0),
+            path: "main.science".into(),
+            ast: module(vec![f]),
+        },
+        science_resolve::SourceModule {
+            file: science_diagnostics::FileId(1),
+            path: "types.science".into(),
+            ast: types,
+        },
+    ];
+    let (_, diagnostics) = science_resolve::resolve_crate(&sources);
+    assert_eq!(codes(&diagnostics), ["SC0205"]);
+    let d = diagnostics.iter().next().expect("an unknown field is reported");
+    assert_eq!(d.message, "`types.Doc` has no field `subtitle`");
+}
+
+/// The same rule for the two other messages that name a path's prefix:
+/// `SC0204` when the prefix cannot be reached through, and `SC0200` when it is
+/// a choice type without the variant asked for.
+#[test]
+fn a_path_prefix_is_named_as_written_in_sc0204_and_in_the_variant_sc0200() {
+    let sp = &Sp::new();
+    let doc = record_item(sp, "Doc", vec![], vec![]);
+    let signal = choice_item(sp, "Signal", vec![], vec![variant(sp, "Ready", vec![])]);
+    let f = func(sp, "f")
+        .params(vec![param(sp, "d", ty_path(sp, &["Doc", "Title"]))])
+        .body(block(sp, vec![], None))
+        .item();
+    let g = func(sp, "g")
+        .params(vec![param(sp, "s", ty_path(sp, &["Signal", "Pending"]))])
+        .body(block(sp, vec![], None))
+        .item();
+
+    let diagnostics = diagnose(&module(vec![doc, signal, f, g]));
+    let messages: Vec<&str> = diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(
+        messages,
+        [
+            "`Doc` is a record type, so `Title` cannot be reached through it",
+            "`Signal` has no variant `Pending`",
+        ]
+    );
+}
+
 // --- modules and `use` ---------------------------------------------------
 
 #[test]
@@ -529,6 +603,52 @@ fn an_impl_owning_neither_the_trait_nor_the_type_is_an_orphan() {
     assert_eq!(codes(&diagnostics), ["SC0207"]);
     let d = diagnostics.iter().next().unwrap();
     assert!(d.message.contains("orphan") || d.message.contains("neither"), "{}", d.message);
+    // `shapes` and `types` are modules a file can name, so moving the
+    // implementation is a remedy the reader can follow.
+    assert!(
+        d.notes.iter().any(|n| n.contains("move the implementation")),
+        "{:?}",
+        d.notes
+    );
+    assert!(
+        d.notes.iter().any(|n| n == "the interface `Summarize` belongs to `shapes`"),
+        "the module is named once, by `belongs to`: {:?}",
+        d.notes
+    );
+}
+
+/// `SC0207` on a prelude owner offers only the remedy that can be followed.
+///
+/// `String implements Clone` is an orphan *because* the prelude is not a child
+/// of the crate root, so "move the implementation into one of those modules"
+/// is the one thing the compiler has made impossible and must not be what a
+/// reader is told first.
+#[test]
+fn an_orphan_whose_owners_are_the_prelude_does_not_offer_a_move() {
+    let sp = &Sp::new();
+    let block = impl_item(
+        sp,
+        vec![],
+        Some(bound_path(sp, &["Clone"])),
+        ty_path(sp, &["String"]),
+        vec![],
+    );
+
+    let diagnostics = diagnose(&module(vec![block]));
+    assert_eq!(codes(&diagnostics), ["SC0207"]);
+    let d = diagnostics.iter().next().unwrap();
+    assert_eq!(
+        d.notes,
+        vec![
+            "the interface `Clone` belongs to `core`".to_string(),
+            "the type `String` belongs to `core`".to_string(),
+            "wrap the type in a record of your own and implement the interface for that"
+                .to_string(),
+            "the prelude is a module no file can name, so there is nowhere to move this \
+             implementation to"
+                .to_string(),
+        ]
+    );
 }
 
 #[test]

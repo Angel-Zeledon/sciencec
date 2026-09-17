@@ -1,4 +1,4 @@
-error[SC0200]: `tests.ui.resolve.unresolved_variant.Signal` has no variant `Pending`
+error[SC0200]: `Signal` has no variant `Pending`
   --> tests/ui/resolve/unresolved_variant.science:17:16
    |
 17 |         Signal.Pending: 1

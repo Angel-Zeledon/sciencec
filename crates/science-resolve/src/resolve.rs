@@ -1135,10 +1135,24 @@ impl Resolver {
              belongs to this module",
         )
         .with_label(Label::primary(span, "declared here"));
+        // Whether a reader could follow "move the implementation into one of
+        // those modules". They could not when every module named is the
+        // prelude's, because the prelude is deliberately not a child of the
+        // crate root and so no file can name it — which is the very reason
+        // this implementation is an orphan. `None` until a note names a
+        // module, so an implementation with no owner to name keeps the
+        // general remedy.
+        let mut every_owner_is_the_prelude: Option<bool> = None;
         for (id, what) in [(interface_owner, "interface"), (type_owner, "type")] {
             let Some(id) = id else { continue };
             let Some(module) = self.defs.module_of(id) else { continue };
-            let name = self.defs.path_of(id);
+            // The bare name, not `path_of`: the note says `belongs to` and
+            // then names the module, so spelling the module into the name as
+            // well says `core` twice in one sentence.
+            let name = self.defs.get(id).name.clone();
+            let in_prelude = self.is_in_prelude(module);
+            every_owner_is_the_prelude =
+                Some(every_owner_is_the_prelude.unwrap_or(true) && in_prelude);
             let module = self.defs.path_of(module);
             let module = if module.is_empty() {
                 "the crate root".to_string()
@@ -1148,11 +1162,44 @@ impl Resolver {
             diagnostic =
                 diagnostic.with_note(format!("the {what} `{name}` belongs to {module}"));
         }
-        diagnostic = diagnostic.with_note(
-            "move the implementation into one of those modules, or wrap the type in one \
-             of your own",
-        );
+        // The followable remedy first. Wrapping always works, because the
+        // wrapper is declared here; moving works only when there is a module
+        // to move into, and the prelude is not one.
+        diagnostic = if every_owner_is_the_prelude == Some(true) {
+            diagnostic
+                .with_note(
+                    "wrap the type in a record of your own and implement the interface \
+                     for that",
+                )
+                .with_note(
+                    "the prelude is a module no file can name, so there is nowhere to move \
+                     this implementation to",
+                )
+        } else {
+            diagnostic.with_note(
+                "move the implementation into one of those modules, or wrap the type in one \
+                 of your own",
+            )
+        };
         self.diags.push(diagnostic);
+    }
+
+    /// Whether `module` is the prelude or one of the prelude's own modules.
+    ///
+    /// [`builtins`](crate::builtins) hangs the prelude off no parent, so a
+    /// walk up from `ffi` reaches it and a walk up from any user module
+    /// reaches the crate root instead. This is asked only to decide what
+    /// `SC0207` offers as a remedy; the orphan rule itself compares modules
+    /// for equality and does not care which one is the prelude.
+    fn is_in_prelude(&self, module: DefId) -> bool {
+        let mut cursor = Some(module);
+        while let Some(current) = cursor {
+            if current == self.prelude {
+                return true;
+            }
+            cursor = self.defs.get(current).parent;
+        }
+        false
     }
 
     // --- types -----------------------------------------------------------
@@ -1403,8 +1450,14 @@ impl Resolver {
             return (Res::Error, generics);
         };
         let mut res = self.resolve_name(&first.name);
+        // The prefix as the reader wrote it, grown one segment at a time, so
+        // that a diagnostic about a segment can quote the text in front of it
+        // rather than the definition's absolute path.
+        let mut written = first.name.name.clone();
         for segment in rest {
-            res = self.resolve_in(res, &segment.name);
+            res = self.resolve_in(res, &written, &segment.name);
+            written.push('.');
+            written.push_str(&segment.name.name);
         }
         (res, generics)
     }
@@ -1468,16 +1521,45 @@ impl Resolver {
         )
         .with_label(Label::primary(ident.span, "ambiguous"));
         for candidate in candidates {
-            let qualified = self.defs.path_of(*candidate);
+            let qualified = self.qualified_variant(*candidate);
             diagnostic = diagnostic.with_note(format!("it could be `{qualified}`"));
         }
         diagnostic = diagnostic.with_note("write the choice type's name to say which (§4.5)");
         self.diags.push(diagnostic);
     }
 
+    /// A variant written the way §4.5 says to disambiguate it: `Signal.Ready`.
+    ///
+    /// The note and the help have to give the same answer, and the help says
+    /// to write the choice type's name — so the note shows the qualification
+    /// the reader is being asked to type, not the definition's absolute path.
+    /// The cost is that this is only typeable because a candidate reached
+    /// through [`variants_named`](Self::variants_named) is a variant of a
+    /// choice type in the current module or the prelude, which is exactly
+    /// where a bare choice name resolves; a candidate found some other way
+    /// would need its own qualification.
+    fn qualified_variant(&self, variant: DefId) -> String {
+        let def = self.defs.get(variant);
+        match def.parent {
+            Some(choice) => format!("{}.{}", self.defs.get(choice).name, def.name),
+            None => def.name.clone(),
+        }
+    }
+
     /// A later segment of a path: `parser` in `text.parser`, `Some` in
     /// `Option.Some`.
-    fn resolve_in(&mut self, base: Res, ident: &ast::Ident) -> Res {
+    ///
+    /// `written` is the prefix the reader typed in front of `ident`. A
+    /// diagnostic about a *type* quotes it rather than
+    /// [`DefTable::path_of`](hir::DefTable::path_of), because `Doc.Title` is
+    /// about a `Doc` that the reader wrote three words from the caret and the
+    /// absolute path names a thing that appears nowhere in the file. A
+    /// diagnostic about a *module* still prints the path: a module's identity
+    /// is where it sits, and `use text.parser` makes the written prefix an
+    /// abbreviation the error would be poorer for repeating. The cost is that
+    /// one function now prints names two ways, which is why this comment says
+    /// which is which.
+    fn resolve_in(&mut self, base: Res, written: &str, ident: &ast::Ident) -> Res {
         // A failed prefix has already been reported; saying so again for every
         // remaining segment helps nobody.
         let Res::Def(id) = base else { return Res::Error };
@@ -1507,10 +1589,9 @@ impl Resolver {
                 match variant {
                     Some(def) => Res::Def(def),
                     None => {
-                        let name = self.defs.path_of(id);
                         self.error(
                             codes::UNRESOLVED_NAME,
-                            format!("`{name}` has no variant `{}`", ident.name),
+                            format!("`{written}` has no variant `{}`", ident.name),
                             ident.span,
                             "no such variant",
                         );
@@ -1522,8 +1603,7 @@ impl Resolver {
                 self.error_with_def(
                     codes::NOT_A_MODULE,
                     format!(
-                        "`{}` is {}, so `{}` cannot be reached through it",
-                        self.defs.path_of(id),
+                        "`{written}` is {}, so `{}` cannot be reached through it",
                         kind.describe(),
                         ident.name
                     ),
@@ -1891,7 +1971,7 @@ impl Resolver {
         let fields = fields
             .iter()
             .map(|init| hir::FieldInit {
-                field: self.resolve_field(record_def, &init.name),
+                field: self.resolve_field(record_def, path, &init.name),
                 name: init.name.clone(),
                 value: self.resolve_expr(&init.value),
                 span: init.span,
@@ -1924,7 +2004,19 @@ impl Resolver {
     /// mandatory, but a missing field is a shape error about a value, and the
     /// type checker is already walking the same node to check the types of the
     /// ones that are present.
-    fn resolve_field(&mut self, record_def: Option<DefId>, name: &ast::Ident) -> Res {
+    ///
+    /// The record is named by `path`, the way the reader wrote it, and not by
+    /// [`DefTable::path_of`](hir::DefTable::path_of). `SC0206` two functions
+    /// up already prints `path.dotted()` for the same record, and a reader who
+    /// wrote `Doc` should not be told about `tests.ui.resolve.unknown_field.Doc`.
+    /// The cost is that `path` has to be carried to a function that otherwise
+    /// only needs the `DefId`.
+    fn resolve_field(
+        &mut self,
+        record_def: Option<DefId>,
+        path: &ast::Path,
+        name: &ast::Ident,
+    ) -> Res {
         let Some(record_def) = record_def else { return Res::Error };
         let field = self
             .defs
@@ -1934,10 +2026,9 @@ impl Resolver {
         match field {
             Some(def) => Res::Def(def),
             None => {
-                let owner = self.defs.path_of(record_def);
                 self.error(
                     codes::UNKNOWN_FIELD,
-                    format!("`{owner}` has no field `{}`", name.name),
+                    format!("`{}` has no field `{}`", path.dotted(), name.name),
                     name.span,
                     "no such field",
                 );
@@ -2030,7 +2121,7 @@ impl Resolver {
                     fields: fields
                         .iter()
                         .map(|field| hir::FieldPattern {
-                            field: self.resolve_field(record_def, &field.name),
+                            field: self.resolve_field(record_def, path, &field.name),
                             name: field.name.clone(),
                             pattern: self.resolve_pattern(&field.pattern),
                             span: field.span,

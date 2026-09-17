@@ -4,6 +4,7 @@ error[SC0207]: this implementation is an orphan: neither the interface nor the t
 7 | String implements Clone
   | ^^^^^^^^^^^^^^^^^^^^^^^ declared here
   |
-  = note: the interface `core.Clone` belongs to `core`
-  = note: the type `core.String` belongs to `core`
-  = note: move the implementation into one of those modules, or wrap the type in one of your own
+  = note: the interface `Clone` belongs to `core`
+  = note: the type `String` belongs to `core`
+  = note: wrap the type in a record of your own and implement the interface for that
+  = note: the prelude is a module no file can name, so there is nowhere to move this implementation to

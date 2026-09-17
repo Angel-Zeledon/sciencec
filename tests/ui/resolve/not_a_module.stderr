@@ -1,4 +1,4 @@
-error[SC0204]: `tests.ui.resolve.not_a_module.Doc` is a record type, so `Title` cannot be reached through it
+error[SC0204]: `Doc` is a record type, so `Title` cannot be reached through it
   --> tests/ui/resolve/not_a_module.science:11:21
    |
  8 | type Doc:

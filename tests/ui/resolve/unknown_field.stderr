@@ -1,4 +1,4 @@
-error[SC0205]: `tests.ui.resolve.unknown_field.Doc` has no field `author`
+error[SC0205]: `Doc` has no field `author`
   --> tests/ui/resolve/unknown_field.science:10:30
    |
 10 |     let d be Doc(title: "a", author: "b")

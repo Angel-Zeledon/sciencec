@@ -15,6 +15,6 @@ Module `types` #75 @27..45
     for: Path -> `Doc` #78 @27..30
 --- diagnostics ---
 SC0207 @63..83 this implementation is an orphan: neither the interface nor the type belongs to this module
-  note the interface `shapes.Summarize` belongs to `shapes`
-  note the type `types.Doc` belongs to `types`
+  note the interface `Summarize` belongs to `shapes`
+  note the type `Doc` belongs to `types`
   note move the implementation into one of those modules, or wrap the type in one of your own
