@@ -55,15 +55,27 @@
   /* The page. A slate-navy ramp: --paper is the ground, --surface is a card,
    * --sunk is an inline code chip, --rule is a hairline.
    *
-   * **The ground was darkened here**, from #243048, because the page read as
-   * a light slate rather than as a dark document. Every pairing below was
-   * re-measured against the new ground rather than assumed to survive it.
-   * On --paper: --ink 13.20:1, --muted 8.41:1, --faint 7.01:1, --accent
-   * 7.51:1, --old 7.63:1 — every one *higher* than before, because the text
-   * did not move and the ground went down.
+   * **The ground left blue here**, and that is a hue change and not a tone
+   * change: #243048 to #1e2839 was the same navy taken down, and this is
+   * #272231, a violet charcoal. Every pairing was re-measured against it.
+   * On --paper: --ink 13.59:1, --muted 8.63:1, --faint 6.98:1, --accent
+   * 7.54:1, --old 7.96:1.
    *
-   * The number that went the other way is the one that decides whether the
-   * page works: **--code-bg sits 1.29:1 below --paper, where it sat 1.45:1.**
+   * **Violet rather than a neutral charcoal, and the reason is the listing.**
+   * The syntax palette is fixed — it is measured against --code-bg, which
+   * cannot move — and its three loudest hues are a pink, a purple and a cyan.
+   * A neutral grey page leaves those reading as an accident; a violet ground
+   * makes them read as the same decision. The cost is that the page now has
+   * a hue of its own to lose, where grey had none.
+   *
+   * **--accent moved with it, from a blue to a lilac**, because an accent in
+   * the hue the page just left is the one colour guaranteed to look like a
+   * leftover.
+   *
+   * The number that decides whether the page works at all: **--code-bg sits
+   * 1.24:1 below --paper.** A hue change does not have to move it — luminance
+   * is what separates two surfaces — so the violet was chosen at the tone the
+   * navy already held, rather than picked first and measured afterwards.
    * Darkening the page walks it toward the listing, and near black the
    * luminance differences compress, so there is no ground below about
    * #1a2233 that keeps a listing visible as a separate surface at all. This
@@ -78,14 +90,14 @@
    * The tightest foreground that carries navigation is --faint on --paper at
    * 7.01:1 — the sidebar's group headings, checked rather than assumed
    * because it is the pairing that failed the last time this palette moved. */
-  --paper:#1e2839; --surface:#28344a; --sunk:#2f3d57; --ink:#eef2fa;
-  --muted:#b8c4d8; --faint:#a6b3cb; --rule:#3c4c6b;
-  --accent:#94bbf2; --accent-soft:#27385c; --old:#e7ad96; --old-soft:#432e26;
+  --paper:#272231; --surface:#332d40; --sunk:#3d3650; --ink:#f2eff8;
+  --muted:#c6bed6; --faint:#b3aac6; --rule:#4b4361;
+  --accent:#c9a6f5; --accent-soft:#372e4d; --old:#e7ad96; --old-soft:#43302a;
   /* Reserved, and read by nothing today. These three have never been read by
    * a rule in this file; they are re-toned with the rest rather than left as
    * the old teal, so that a future rule reaching for one gets a colour that
    * belongs to this palette. */
-  --deep:#0d1420; --deep-ink:#dfe7f6; --deep-rule:#1e2839;
+  --deep:#1a1622; --deep-ink:#ece7f4; --deep-rule:#272231;
   /* Syntax — "Science Neon". Declared once and never redefined, because
    * every code surface on this site is dark whatever the page does. That is
    * the decision that makes the palette possible: a neon hue survives on
@@ -98,7 +110,7 @@
    * listing's colours are fixed, and re-toning the page could not reach
    * them. Every value below is measured against --code-bg and clears 4.5:1
    * there; the tightest is --c-com at 4.84. */
-  --code-bg:#0b0f1a; --code-ink:#cdd8f0; --code-frame:#2b3a63;
+  --code-bg:#0b0f1a; --code-ink:#cdd8f0; --code-frame:#3a3350;
   --c-key:#e85aa8; --c-ctl:#e85aa8; --c-type:#4de8ff; --c-fn:#3dfca0;
   --c-str:#f6ff6b; --c-num:#c77dff; --c-par:#ffa23c; --c-op:#e85aa8;
   --c-com:#7080a4; --c-res:#ff6e6e; --c-pun:#8fa0c4;
@@ -513,3 +525,93 @@ footer .links a { font-family: var(--mono); font-size: 0.78rem; color: var(--acc
 }
 td.mono { font-family: var(--mono); font-size: 0.82rem; }
 td.what { font-family: var(--serif); color: var(--muted); }
+
+/* ===================================================================== *
+ * Motion
+ *
+ * **Everything on this page is readable with JavaScript off and motion
+ * disabled, and that is the constraint every rule below is written under.**
+ * Nothing here is parked at `opacity: 0` waiting for an observer to reveal
+ * it: a section that animates in does so *from a visible resting state*, by
+ * moving a few pixels, so a reader who never sees the animation never
+ * notices it was there. The failure this avoids is the common one — a
+ * scroll-reveal that leaves the whole page blank when the observer never
+ * fires, which is what a printed page, a reader-mode extension and a
+ * thumbnail capture all look like.
+ *
+ * `prefers-reduced-motion` turns all of it off at the bottom of the file
+ * rather than per rule, so there is one place to check and one place to
+ * fail.
+ * ===================================================================== */
+
+/* A link, a button, a card: one duration and one curve for the whole site,
+ * so that two things moving at once do not look like two decisions. 140ms is
+ * below the ~200ms at which a transition starts reading as an animation
+ * rather than as responsiveness. */
+a, .btn, .doc, .bet, .copy, nav a, .card {
+  transition: color 140ms ease, background-color 140ms ease,
+              border-color 140ms ease, transform 140ms ease,
+              box-shadow 140ms ease;
+}
+
+/* A card lifts by one pixel. Not three: a card that jumps announces itself,
+ * and these sit in a grid where several are visible at once. */
+.doc:hover, .bet:hover, .card:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+}
+
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+
+/* The masthead's rule draws itself once, left to right. It is the only
+ * purely decorative motion on the site and it is one second long and does
+ * not repeat — a loop would make the page feel like it was still loading. */
+@keyframes rule-draw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+header .rule, .masthead-rule {
+  transform-origin: left center;
+  animation: rule-draw 900ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/* A section arriving. It starts **visible** and 6px low, and settles. With
+ * the animation suppressed it is simply where it belongs. */
+@keyframes settle { from { transform: translateY(6px); } to { transform: none; } }
+section > h2, section > .lede {
+  animation: settle 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/* The anchor a reader just jumped to. A target that only changes colour is
+ * easy to miss when the jump lands mid-screen; this fades a tint out over a
+ * second, which says "here" without leaving a permanent mark. */
+@keyframes target-fade {
+  from { background-color: var(--accent-soft); }
+  to   { background-color: transparent; }
+}
+section:target > h2 { animation: target-fade 1200ms ease-out both; }
+
+/* The sidebar's current entry. The bar grows from the top rather than
+ * appearing, so moving between entries reads as one thing travelling. */
+nav a { position: relative; }
+nav a::before {
+  content: ""; position: absolute; left: -0.75rem; top: 0; bottom: 0;
+  width: 2px; background: var(--accent);
+  transform: scaleY(0); transform-origin: top center;
+  transition: transform 140ms ease;
+}
+nav a:hover::before, nav a[aria-current="true"]::before { transform: scaleY(1); }
+
+/* A code block's copy button already appears on hover; this gives it the
+ * same curve as everything else rather than its own. */
+pre:hover .copy { transform: translateY(0); }
+
+@media (prefers-reduced-motion: reduce) {
+  /* One switch for the whole file. `animation-duration: 1ms` rather than
+   * `none` because `both` fill modes are load-bearing above — an animation
+   * removed outright would drop the end state with it. */
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
