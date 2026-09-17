@@ -100,6 +100,15 @@
 //! corpus. [`mir::Callee::Runtime`] is where an array operation lands when
 //! there is one.
 //!
+//! **And the variant is no longer unreached.** `f"…"` lowers to §1.7's builder,
+//! which is one [`mir::Callee::Runtime`] per fragment ([`lower`]'s §10), so the
+//! first thing to land there was an interpolation rather than an array
+//! operation. That is a fact about this section and not a change to it: an
+//! f-string of `n` fragments is `n + 1` straight-line calls, its fragment list
+//! is known from the source text, and a builder written as an inlined loop over
+//! it would have broken the claim above for no reason. `tests/fstring.rs` is
+//! the sequence; `tests/no_invented_loops.rs` is still the invariant.
+//!
 //! # 5. The seam, for region inference
 //!
 //! `science-types`'s `lib.rs` §5 and `thir`'s §5 each stated the seam the next
@@ -374,6 +383,71 @@
 //!    loan points at rather than what a place looks like. That is the second
 //!    time item 3's shape has occurred: a lowering gap that does not fail, it
 //!    goes quiet.
+//! 8. **A hole in this crate was also a *suppression* in the next one, and
+//!    nothing said so.** While `ExprKind::FString` assigned
+//!    [`mir::Rvalue::Error`], `science-regions`'s `analysis`'s `calls_a_hole`
+//!    read that rvalue as *"something above gave up here"* and silenced **every
+//!    region finding in the whole body**. So a program with one `f"…"` in it
+//!    was not borrow-checked at all, and the only visible symptom was that
+//!    `sciencec check` printed nothing — which is what it prints when a program
+//!    is correct.
+//!
+//!    That is §3's discipline meeting a consumer that reads a hole as a reason
+//!    to stop. The discipline is still right — a hole cannot manufacture a
+//!    cascade — but the entry that states it should say the other half: **a
+//!    hole here costs the next phase's diagnostics for the body it is in**, so
+//!    the scope of an [`mir::Rvalue::Error`] is a decision and not a detail.
+//!    [`lower`]'s §10 emits a [`mir::Unresolved::Display`] rather than an
+//!    `Rvalue::Error` for a hole it genuinely cannot render, which keeps the
+//!    suppression (it is a hole) and keeps the borrows (they are right), and
+//!    the difference between the two spellings is the whole reason to prefer
+//!    the second.
+//! 9. **`strings-formatting-and-docs.md` §1.7 prescribes a performance
+//!    property its own ABI cannot express.** *"It lowers to a builder over the
+//!    fragments, with the capacity pre-computed from the literal fragments plus
+//!    a per-type estimate for each hole, so the common case is one
+//!    allocation."* `science-codegen`'s `RUNTIME` is fifty-four entry points
+//!    and **none of them takes a capacity**: there is no
+//!    `science_string_with_capacity` and no `science_string_reserve`, so
+//!    `science_string_new` is the only way to start a `String` and it starts it
+//!    empty. The common case is therefore one allocation *per growth*. The
+//!    estimate §1.7 asks for is computable here — the literal fragments are in
+//!    the node and the holes have types — and there is nowhere to send it.
+//! 10. **`science-rt` documents a caller that does not exist.**
+//!     `science_string_push_i64`'s own note reads *"every signed width renders
+//!     through this one: `I8`…`I64` are sign-extended by codegen before the
+//!     call"*. Nothing sign-extends anything: [`mir::Rvalue::Cast`] has no
+//!     lowering in `science-codegen-llvm`, so there is no phase between this
+//!     one and the call that could. Choosing the entry point is what surfaced
+//!     it, because the choice has only two answers and both are visible —
+//!     `push_i64` with an `i32` in an `i64` parameter, or a refusal.
+//!     [`lower`]'s `Builder::push_of` refuses, and `push_u64` has the same
+//!     three narrow widths behind it with no note at all.
+//!
+//!     **This one is loud rather than quiet**, which is worth recording
+//!     because items 3, 4 and 7 were all the other shape: `LLVMVerifyModule`
+//!     rejects `call void @science_string_push_i64(ptr, i32)` against its own
+//!     `declare`, so the wrong answer here fails the build. The *pointer*
+//!     version of the same mistake does not — see `science-codegen-llvm`'s §3
+//!     finding 18, which is this crate's §4 dereference not firing on a
+//!     `borrowed String` hole, and which verifies, links, and aborts inside the
+//!     runtime.
+//! 11. **§1.6 says an interpolation *borrows* its operands, and half of them
+//!     cannot be borrowed.** Six of the seven `science_string_push_*` entry
+//!     points take their argument **in a register**; only
+//!     `science_string_push_str` takes a pointer. A loan handed to a parameter
+//!     declared `i64` is not a conservative version of the right answer, it is
+//!     a different one, so the rule the implementation needs is two rules and
+//!     the note gives one word.
+//!
+//!     What §1.6 is actually deciding is *"does not **consume**"* — its own
+//!     reason says so: *"a debugging `print` that moves the value you were
+//!     about to use is a diagnostic in the `SC0300` range caused by a line the
+//!     user added to understand a different problem"*. For a trivially copyable
+//!     type a read satisfies that with no loan at all, and for a `String` the
+//!     only other spelling is a move, so the borrow is forced. §1.6 should say
+//!     *"an interpolation does not consume its operands"*; the borrow is how
+//!     that is achieved for the types that have no other way of achieving it.
 
 pub mod callgraph;
 pub mod capture;

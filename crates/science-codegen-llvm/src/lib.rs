@@ -37,16 +37,31 @@
 //! source: `loop:`, `break`, `if`/`else`, and §4.6's operators on scalars at
 //! their own width and signedness.
 //!
-//! **What is not true.** §10's stage 2 and stage 3 each write their program
-//! with `print(f"{x}")`, and **there is no string interpolation in this
-//! language** — `f"…"` is in no phase of the front end and in no corpus file,
-//! and there is no integer-to-string entry point in the runtime either, so
-//! there is no way for any program to print a number. §10's stage 3 program is
-//! a `for` loop, and **a `for` loop does not reach this backend**: its `next`
-//! is `science_mir::mir::Unresolved::IterateNext`, which
-//! `science_types::thir::ExprKind::For` has no field to carry. Both are holes
+//! **A program can print a number now, and this paragraph used to say it could
+//! not.** §10's stage 2 and stage 3 each write their program with
+//! `print(f"{x}")`; `f"…"` lexes, parses, resolves, checks, and — since
+//! `science-mir`'s `lower`'s `Builder::lower_fstring` — lowers to §1.7's
+//! builder: `science_string_new` into the destination, then one
+//! `science_string_push_bytes` per text run and one `science_string_push_*` per
+//! hole, each through a `mutable borrowed String`. This crate's part of it was
+//! three arms — a `mir::Callee::Runtime`, an `Rvalue::Ref`, and
+//! `StatementKind::Activate` as the `Nop` `science-mir`'s §6 always said it
+//! was. `let n be 42` … `print(f"n es {n}")` builds, links, runs and prints
+//! `n es 42`; `tests/interpolation.rs` is that and seven more, each built,
+//! linked, run, and asked what it printed and what status it exited with.
+//!
+//! **What is still not true.** §10's stage 3 program is a `for` loop, and **a
+//! `for` loop does not reach this backend**: its `next` is
+//! `science_mir::mir::Unresolved::IterateNext`, which
+//! `science_types::thir::ExprKind::For` has no field to carry. That is a hole
 //! above this crate; [`lower`]'s own documentation is the account and
-//! `tests/stage_two_and_three.rs` is what was built instead.
+//! `tests/stage_two_and_three.rs` is what was built instead. And **an `f"…"`
+//! hole renders only the seven types `science-rt` has an entry point for** —
+//! `Int`/`I64`, `U64`, `F64`, `F32`, `Bool`, `Char`, `String`. An `I32` hole is
+//! `science_mir::mir::Unresolved::Display` and an `SC0400` naming the type, not
+//! a call to `science_string_push_i64`: that entry point's own note says
+//! *"`I8`…`I64` are sign-extended by codegen before the call"* and **no phase
+//! does that**, because `Rvalue::Cast` is in the paragraph below.
 //!
 //! **A `choice`, a second function and a record are emitted too.** A `match`
 //! over a `choice` is §3.3's tagged layout and §2.2's `switch`, with the
@@ -141,7 +156,7 @@
 //!
 //! # 3. What was found by running it
 //!
-//! Seventeen things that reading could not have established, each recorded
+//! Nineteen things that reading could not have established, each recorded
 //! where it bites. The first four were found by writing the crate; the rest
 //! were found by *running* it, which is the difference §10's staging exists to
 //! force.
@@ -268,14 +283,66 @@
 //!     was necessary and was not sufficient, because a `Drop` of a `Colour`
 //!     stood behind it. Two of the four things that pass listed as separate
 //!     items were one program.
+//! 18. **A runtime call's arguments are checked by `LLVMVerifyModule` and by
+//!     nothing else, and the verifier cannot see the mistake that matters
+//!     here.** [`lower::Lowerer::lower_runtime_call`] matches each MIR operand
+//!     to a `RUNTIME` parameter and then reads a place operand with
+//!     [`lower::Lowerer::lower_operand`], which emits a **whole-local load at
+//!     the local's own layout** and ignores the `expected` layout it was
+//!     handed. So the agreement between a MIR operand and a C parameter rests
+//!     on the verifier.
+//!
+//!     For an integer that is enough, and it was measured: making `science-mir`
+//!     render an `I32` through `science_string_push_i64` produces
+//!     `call void @science_string_push_i64(ptr %v6, i32 %v7)` against a
+//!     `declare` that says `i64`, and the verifier rejects the module with
+//!     *"Call parameter type does not match function signature"*. **For a
+//!     pointer it is not**, because opaque pointers make every pointer the same
+//!     type. An `f"…"` hole whose type is `borrowed String` is a pointer and
+//!     `science_string_push_str`'s second parameter is a pointer; with
+//!     `science-mir`'s §4 dereference removed from the hole's borrow, the
+//!     argument becomes the address of *this frame's parameter slot* — a
+//!     pointer to a pointer — where a `{ ptr, len, cap }` was wanted. It
+//!     compiles, links, verifies, and aborts at run time with
+//!     `panic: science-rt: out of memory`, from the byte pattern of a pointer
+//!     read as a length.
+//!
+//!     That is the same shape as finding 12 — a wrongness the IR cannot
+//!     express and the verifier therefore cannot see — and the second instance
+//!     of it: there, a width the opaque pointer erased; here, an indirection it
+//!     erased. The IR reads `call void @science_string_push_str(ptr %a, ptr %b)`
+//!     either way. `tests/interpolation.rs` is the execution test
+//!     that separates them, and `science-mir`'s `tests/fstring.rs` asserts the
+//!     dereference is there, because by the time the operand reaches this crate
+//!     there is nothing left to assert it against.
+//! 19. **`Rvalue::Ref` had no arm although every ingredient of one did.**
+//!     [`lower::Lowerer::place_address`] has had §2.3's `deref` row — *"it
+//!     loads a pointer and that pointer becomes the new base"* — since records
+//!     landed, so this crate could *read through* a reference and could not
+//!     *take* one. The arm is a `LocalAddr` and a `Store`, and the refusal it
+//!     replaced said *"a borrow"*, which names the construct correctly and
+//!     tells a reader nothing about how close the crate was to lowering it.
+//!
+//!     The reason it went unnoticed is worth the line: nothing that reached
+//!     this backend took a borrow. `print` is undeclared so its argument is
+//!     moved, a receiver borrow needs a method call and a method call is
+//!     refused at the signature, and the corpus never got this far. `f"…"` is
+//!     the first construct in the language whose *lowering* takes one —
+//!     the accumulator, once per fragment — so it arrived needing the arm and
+//!     needing `StatementKind::Activate`, which was also a refusal and which
+//!     `science-mir`'s §6 had always described as *"one statement per two-phase
+//!     borrow, which codegen treats as a `Nop`"*.
 //!
 //! **And nine was itself found this way**, which is the point of the list: the
-//! numbering has grown six times and each entry is something the notes did not
-//! say. Eleven, twelve and thirteen were all found by *running* a program —
-//! none of them changes the IR in a way that looks wrong, and two of them pass
-//! the verifier. Fifteen and seventeen are the same shape one level up: a
-//! predicate that is right about the model it was written for and wrong about
-//! the caller that arrived later.
+//! numbering has grown seven times and each entry is something the notes did
+//! not say. Eleven, twelve, thirteen and eighteen were all found by *running* a
+//! program — none of them changes the IR in a way that looks wrong, and twelve
+//! and eighteen both pass the verifier, which is the pair that says opaque
+//! pointers cost this crate two kinds of check it cannot get back. Fifteen and seventeen are the same shape one
+//! level up: a predicate that is right about the model it was written for and
+//! wrong about the caller that arrived later. Nineteen is the other recurring
+//! shape: a refusal that names a construct correctly and hides how little was
+//! missing.
 
 #![warn(missing_docs)]
 

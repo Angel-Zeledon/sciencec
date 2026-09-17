@@ -532,10 +532,23 @@ pub enum Callee {
     /// lowers to a call to a runtime or library entry point, never to an
     /// inlined MIR loop"*.
     ///
-    /// **Nothing in F0's THIR produces one**, and the variant is here so that
-    /// the array IR §3.4 keeps possible has somewhere to land that is not a
-    /// loop. `lib.rs`'s §4 states the invariant that keeps the hole open,
-    /// and `tests/no_invented_loops.rs` checks it.
+    /// **This used to read *"nothing in F0's THIR produces one"*, and the
+    /// first thing that did was not an array operation.** `f"…"` is: §1.7 of
+    /// `strings-formatting-and-docs.md` makes an interpolation a builder over
+    /// its fragments, and the builder is `science_string_new` plus one
+    /// `science_string_push_*` per fragment, none of which has a Science name
+    /// to be a [`Callee::Def`] of. [`crate::lower`]'s §10 is the account.
+    ///
+    /// The variant was put here for Decision 5 — *"in F0, a whole-array
+    /// operation lowers to a call to a runtime or library entry point, never to
+    /// an inlined MIR loop"* — and that is still what keeps it open: an array
+    /// operation lands here when there is one. What the f-string shows is that
+    /// the shape generalises, and that a consumer of this IR cannot treat a
+    /// [`Callee::Runtime`] as unreachable.
+    ///
+    /// `lib.rs`'s §4 states the invariant the variant exists to protect and
+    /// `tests/no_invented_loops.rs` checks it. An f-string does not touch it:
+    /// `n` fragments are `n + 1` straight-line calls and no back edge.
     Runtime(&'static str),
     /// A callee this phase cannot name. [`Unresolved`] says which hole.
     Unresolved(Unresolved),
@@ -543,8 +556,17 @@ pub enum Callee {
 
 /// Which hole a [`Callee::Unresolved`] stands in.
 ///
-/// Every one of these is a hole *above* this crate, carried rather than
-/// papered over, and each disappears when the phase that owns it lands.
+/// Every one of these is a hole carried rather than papered over, and each
+/// disappears when the phase that owns it lands.
+///
+/// **Three of the four are holes *above* this crate and the fourth is below
+/// it**, which is a distinction this enum did not used to have to make.
+/// [`Unresolved::Display`] is a type with no renderer: everything this crate
+/// needs is present — the type is known, the shape of the call is known — and
+/// what is missing is an entry point in `science-rt`. The variant is here
+/// anyway, because the thing a consumer has to do with it is the thing it does
+/// with the other three: leave the call alone, do not invent a callee for it,
+/// and refuse it by name if it needs to execute.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unresolved {
     /// `doc.title()` where `MethodCall::method` is `None`. Decision 11's
@@ -570,6 +592,28 @@ pub enum Unresolved {
     IterateNext,
     /// An operator or an index on a user type, which is Decision 11 again.
     Operator,
+    /// An `f"…"` hole whose type `science-rt` has no
+    /// `science_string_push_*` for.
+    ///
+    /// **The hole is below this crate, not above it**, and that is the whole
+    /// of what the variant records. `strings-formatting-and-docs.md` §3.1
+    /// respecifies `Display` as `def display(self, into: mutable borrowed
+    /// Formatter)`; `science-resolve`'s `builtins` declares the interface with
+    /// **no methods**, because naming that one would invent a `Formatter` no
+    /// note specifies. So `science-types`'s `check` asks only the *relation* —
+    /// *"does this type implement `Display`"* — which every prelude type and
+    /// every user type with an `implements Display:` block answers yes to, and
+    /// records in its own words that *"the interpolation of a user type is
+    /// therefore accepted here and refused by codegen, which is a worse place
+    /// to find out"*. This is that refusal, carried in the IR so that the
+    /// refusal can name the type.
+    ///
+    /// [`crate::lower`]'s `Builder::push_of` is the list it is the complement
+    /// of: `Int`/`I64`, `U64`, `F64`, `F32`, `Bool`, `Char` and `String`. It
+    /// closes for a prelude width when `RUNTIME` grows an entry point or when
+    /// something below this crate lowers a widening cast; it closes for a user
+    /// type when `Formatter` exists.
+    Display,
 }
 
 #[derive(Debug, Clone, PartialEq)]

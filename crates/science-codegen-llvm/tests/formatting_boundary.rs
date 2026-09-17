@@ -1,28 +1,34 @@
 //! The seven entry points that make a number printable, **run** through the
 //! signatures this crate declares for them.
 //!
-//! # Why this file is hand-built, and what that costs
+//! # Why this file is still hand-built, now that source can reach the same
+//! calls
 //!
-//! `science-rt`'s `format.rs` is what deletes the sentence this crate's §0 has
-//! carried since stage 2: *"there is no integer-to-string entry point in the
-//! runtime … so there is no way for any program to print a number."* There is
-//! now. What there is **not**, yet, is a MIR lowering for `f"{n}"`: the
-//! interpolation lexes, parses, resolves and type-checks, and reaches
-//! `science-mir` as `Rvalue::Error`, so no Science program emits one of these
-//! calls and no execution test can be written from source.
+//! This note used to end *"that half arrives with `science-mir`'s
+//! `ExprKind::FString` arm, and the test to write then is a source-level one
+//! that replaces this file's first test"*. It arrived; the source-level test is
+//! `tests/interpolation.rs`; and what it replaced is the **first test's
+//! purpose** rather than this file. `lower_runtime_call` does now pick the
+//! arguments for a real program, and `tests/interpolation.rs` asserts that by
+//! running one.
 //!
-//! So this file does what `tests/exit_code.rs` does for §2.3's failing row and
-//! for the same reason: it writes the one function no source can produce, pairs
-//! it with the real [`Lowerer::lower_c_main`], and runs the result through the
-//! same emitter, the same verifier, the same Decision 33 pipeline and the same
-//! linker that `build` uses.
+//! What no source-level program can do is **choose the values**. This file
+//! passes `2^53 + 1`, `u64::MAX`, `2.5`, `0.5f32`, `true` and `'!'` through the
+//! seven entry points in one call sequence, and every one of them is chosen so
+//! that a width error or a wrong register file *changes the output*. An
+//! ordinary program prints `42` the same way whether its argument went through
+//! `i64` or `f64`. So the two files are the shape and the extremes, and this
+//! one keeps the extremes.
 //!
-//! **The cost is stated rather than hidden**: this asserts that the *signatures*
-//! are right and that the runtime formats correctly through them. It does not
-//! assert that `lower_runtime_call` picks the right argument for the right
-//! parameter, because nothing produces the MIR it reads. That half arrives with
-//! `science-mir`'s `ExprKind::FString` arm, and the test to write then is a
-//! source-level one that replaces this file's first test.
+//! It does that the way `tests/exit_code.rs` does §2.3's failing row: it writes
+//! a function by hand, pairs it with the real [`Lowerer::lower_c_main`], and
+//! runs the result through the same emitter, the same verifier, the same
+//! Decision 33 pipeline and the same linker that `build` uses.
+//!
+//! **The cost is stated rather than hidden**: what is hand-built here is the
+//! *sequence*, so a mistake in `science-mir`'s choice of entry point is
+//! invisible to this file by construction. `science-mir`'s `tests/fstring.rs`
+//! is where the choice is asserted.
 //!
 //! # What would be silently wrong without it
 //!
@@ -121,12 +127,16 @@ fn adding_seven_entry_points_left_the_sret_set_at_nine() {
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the
 /// seven appends to it, and the result is printed.
 ///
-/// This is the sequence `science-mir`'s `ExprKind::FString` arm will emit:
-/// `science_string_from_bytes` for the first literal chunk, a
-/// `science_string_push_*` per piece, `science_print`, `science_string_free`.
-/// Written by hand because nothing produces it yet; written through
-/// [`runtime_signature`] and [`emit_and_link`] so that what it exercises is the
-/// compiler and not a copy of it.
+/// This is the sequence `science-mir`'s `ExprKind::FString` arm emits, with one
+/// deliberate difference: it opens with `science_string_from_bytes` on the
+/// first literal chunk where the lowering opens with `science_string_new` and
+/// pushes that chunk. Both build the same `String` and the second is the one a
+/// program produces; this keeps the first because it is the *other* way to
+/// start an accumulator and nothing else runs it.
+///
+/// Written by hand because no source can choose these values, and written
+/// through [`runtime_signature`] and [`emit_and_link`] so that what it
+/// exercises is the compiler and not a copy of it.
 ///
 /// **Every value is chosen so that a width error changes it.**
 ///

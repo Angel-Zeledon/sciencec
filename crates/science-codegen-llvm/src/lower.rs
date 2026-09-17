@@ -1391,7 +1391,20 @@ impl<'a> Lowerer<'a> {
             StatementKind::SetDropFlag { .. } => {
                 Err(Unlowered::new("a conditionally moved value, which needs a drop flag"))
             }
-            StatementKind::Activate(_) => Err(Unlowered::new("a two-phase borrow")),
+            // **A `Nop`, which is what `science-mir`'s §6 says it is**:
+            // *"the cost is one statement per two-phase borrow, which codegen
+            // treats as a `Nop`"*. The activation point exists so that region
+            // inference can say what may happen between a reservation and the
+            // call that consumes it; by the time a body reaches this crate that
+            // question has been answered and there is no instruction to emit
+            // for the answer.
+            //
+            // This was a refusal until `f"…"` produced one. The refusal was
+            // right while nothing did — an unrun shape is an unrun shape — and
+            // it is not the same case as `SetDropFlag` above, which is refused
+            // because *ignoring* it is a double free. Ignoring an activation
+            // changes no machine state at all.
+            StatementKind::Activate(_) => Ok(()),
             StatementKind::Nop => Ok(()),
             // **Before the untyped check, not after it.** A discriminant read
             // writes a local `lower_body` skipped — `science-mir` gives the
@@ -1813,6 +1826,41 @@ impl<'a> Lowerer<'a> {
             }
             Rvalue::Variant { variant, payload } => {
                 self.lower_variant(ctx, *variant, payload, dest, layout, insts)
+            }
+            // **A borrow is an address, stored.** §2.3's projection table is
+            // already a chain of addresses and `Projection::Deref` is already
+            // the row that loads one back, so the only thing missing was the
+            // statement that *takes* one — which is `LocalAddr` plus the
+            // `FieldAddr`s the place asks for, and then one store.
+            //
+            // **The destination's slot must be a pointer, and it is checked
+            // rather than assumed.** `science-mir` gives the temporary the type
+            // `borrowed T`, which `cg_ty` makes a `CgTy::Ptr`; a destination
+            // whose layout is anything else means the reference and its slot
+            // disagree about width, and storing an eight-byte address into a
+            // narrower slot is §3's finding 12 — *"a store whose value is wider
+            // than its slot is legal IR"* — with a different value in it. It
+            // verifies. It is refused here instead.
+            //
+            // **Nothing about the loan's *kind* reaches the IR.** Shared,
+            // exclusive and two-phase are one machine instruction, and the
+            // difference between them is a question `science-regions` answered
+            // before this crate ran. `noalias` on a `mutable borrowed`
+            // parameter is the optimisation that would read the kind, and
+            // Decision 22 does not ask for it.
+            Rvalue::Ref { place, .. } => {
+                if !matches!(layout.repr, Repr::Scalar(Scalar::Pointer(_))) {
+                    return Err(Unlowered::new(
+                        "a borrow stored into a slot that is not a pointer: the reference's own \
+                         type and the slot laid out for it disagree",
+                    ));
+                }
+                let (address, _) = self.place_address(ctx, place, insts)?;
+                insts.push(ExtInst::Above(Inst::Store {
+                    local: dest,
+                    value: Operand::Value(address),
+                }));
+                Ok(())
             }
             other => Err(Unlowered::new(describe_rvalue(other))),
         }
@@ -2395,6 +2443,22 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// A type as a user would name it, with one enclosing borrow stripped.
+    ///
+    /// Used by the refusals that name the type of something the lowering
+    /// *borrowed* on the user's behalf. `f"{doc}"` borrows `doc` because
+    /// §1.6 says an interpolation does; a message that then said
+    /// *"a hole of type `borrowed Doc`"* would be naming a construct the
+    /// author did not write, which is [`Lowerer::operand_ty`]'s own rule about
+    /// `Debug` output one level up.
+    fn render_referent(&self, ty: Ty) -> String {
+        let named = match self.types.kind(ty) {
+            TyKind::Borrowed { inner, .. } => *inner,
+            _ => ty,
+        };
+        self.types.render(self.defs, named)
+    }
+
     /// A type's scalar, for the two questions the instruction set asks about
     /// one: signed or not, integer or float.
     fn scalar_of(&self, ty: Ty) -> Result<Scalar, Unlowered> {
@@ -2623,7 +2687,7 @@ impl<'a> Lowerer<'a> {
             TerminatorKind::Goto { target } => Ok(Terminator::Goto(BlockId(target.index() as u32))),
             TerminatorKind::Unreachable => Ok(Terminator::Unreachable),
             TerminatorKind::Call { callee, args, destination, target } => {
-                self.lower_call(ctx, callee, args, destination, *target, insts)
+                self.lower_call(body, ctx, callee, args, destination, *target, insts)
             }
             // Decision 5 holds: one MIR block, one LLVM block, and an `If`
             // becomes the `br` that ends it. The condition is a `Bool`, so it
@@ -2746,6 +2810,7 @@ impl<'a> Lowerer<'a> {
     #[allow(clippy::too_many_arguments)]
     fn lower_call(
         &mut self,
+        body: &MirBody,
         ctx: &mut BodyCtx,
         callee: &mir::Callee,
         args: &[mir::Operand],
@@ -2768,6 +2833,29 @@ impl<'a> Lowerer<'a> {
                     Some(block) => Terminator::Goto(BlockId(block.index() as u32)),
                     None => Terminator::Unreachable,
                 });
+            }
+            // **The one `Unresolved` whose message can name a type**, because
+            // the argument is in front of it. `science-mir`'s
+            // `Unresolved::Display` is a hole *below* that crate rather than
+            // above it — the shape of the call is known and what is missing is
+            // a `science_string_push_*` for this one type — so the refusal that
+            // helps is the one that says which type, and it is read off the
+            // hole operand the lowering already borrowed.
+            mir::Callee::Unresolved(mir::Unresolved::Display) => {
+                let named = args
+                    .get(1)
+                    .and_then(|operand| self.operand_ty(body, operand))
+                    .map(|ty| self.render_referent(ty));
+                return Err(Unlowered::new(match named {
+                    Some(name) => format!(
+                        "an `f\"…\"` hole of type `{name}`, which `science-rt` has no \
+                         `science_string_push_*` entry point for: the seven that exist render \
+                         `Int`/`I64`, `U64`, `F64`, `F32`, `Bool`, `Char` and `String`, and \
+                         §3.1's `Formatter` — which is what a user type would render through — \
+                         is specified by no note and declared by no prelude"
+                    ),
+                    None => describe_unresolved(mir::Unresolved::Display).to_string(),
+                }));
             }
             mir::Callee::Unresolved(unresolved) => {
                 return Err(Unlowered::new(describe_unresolved(*unresolved)));
@@ -3482,6 +3570,11 @@ fn describe_unresolved(unresolved: mir::Unresolved) -> &'static str {
         }
         mir::Unresolved::Operator => {
             "an operator or an index on a user type, which is Decision 11's method lookup again"
+        }
+        // The typed spelling is at the call site, which has the argument this
+        // one does not. This is what is left when the operand names no place.
+        mir::Unresolved::Display => {
+            "an `f\"…\"` hole whose type `science-rt` has no `science_string_push_*` entry point for"
         }
     }
 }

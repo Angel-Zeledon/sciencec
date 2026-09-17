@@ -391,6 +391,47 @@
 //! checker gave it the type `borrowed (borrowed Row)` and that is what it is.
 //! The deref is inserted where a *type* demanded it, never where a written
 //! borrow said otherwise.
+//!
+//! # 10. `f"…"`: the first construct in F0 that is a runtime call
+//!
+//! This section used to be a thirty-line comment on the arm, and what it said
+//! was *"what it would emit, and why it does not"*. It emits it now. The
+//! specification half of that comment was right and is kept, at
+//! [`Builder::lower_fstring`], which is where the decision, the borrows and the
+//! cost are stated; this is the part that belongs to the file rather than to
+//! the function.
+//!
+//! > **Decision. An interpolation lowers to §1.7's builder — one
+//! > [`Callee::Runtime`] call per fragment against a `String` the caller
+//! > allocated — and the entry point for a hole is chosen from the hole's type
+//! > here.**
+//!
+//! **What it settles that no other construct did.** [`Callee::Runtime`] existed
+//! for Decision 5's array operations and nothing produced one, so its own
+//! documentation said *"nothing in F0's THIR produces one"* and
+//! `science-codegen-llvm` refused the variant outright. Both sentences are now
+//! false, and the pair of them is why the two edits had to be one change: a MIR
+//! that emitted the sequence against a backend that refused the variant would
+//! have been built, analysed, and declined one crate later with a worse message
+//! than the comment it replaced.
+//!
+//! **What it does *not* change is §4's invariant**, and that is worth saying
+//! because §4 is a claim about this variant. `lib.rs` §4 reads
+//! *"every loop in a body's CFG comes from a `loop` or a `for` the author
+//! wrote; this crate synthesises no loop"*, and an f-string of `n` fragments is
+//! `n + 1` straight-line calls and no back edge. A builder written as an
+//! inlined loop over the fragments would have broken it, and there was never a
+//! reason to write one: the fragment list is known at compile time and its
+//! length is a property of the source text.
+//!
+//! **The one thing this level decides that reads like a backend decision**, and
+//! the reason it is here: *which* `science_string_push_*` a hole gets is a
+//! question about the hole's **type**, and this is the last phase that has one.
+//! `science-codegen-llvm` sees a `Callee::Runtime` and a layout; by then an
+//! `I32` and an `I64` are two integer widths and not two answers to *"does the
+//! runtime render this"*. So a type the runtime cannot render is refused here,
+//! as [`Unresolved::Display`], rather than lowered to the nearest width and
+//! found by whoever ran the program.
 
 use std::collections::HashMap;
 
@@ -407,6 +448,42 @@ use crate::mir::{
     Local, LocalDecl, LocalKind, Operand, Place, Point, Projection, Rvalue, Statement,
     StatementKind, Terminator, TerminatorKind, Unresolved, ENTRY_BLOCK, RETURN_PLACE,
 };
+
+/// The `science-rt` entry points §1.7's builder is made of, by symbol.
+///
+/// **Named here rather than spelled at the call sites**, because a
+/// [`Callee::Runtime`] is a `&'static str` and a typo in one is a symbol
+/// `science-codegen`'s `RUNTIME` does not have — which is a refusal from a
+/// crate that cannot say which of five call sites wrote it.
+/// `tests/fstring.rs` checks the eight against that table, which is the only
+/// place the two lists can be compared.
+const STRING_NEW: &str = "science_string_new";
+const PUSH_BYTES: &str = "science_string_push_bytes";
+const PUSH_I64: &str = "science_string_push_i64";
+const PUSH_U64: &str = "science_string_push_u64";
+const PUSH_F64: &str = "science_string_push_f64";
+const PUSH_F32: &str = "science_string_push_f32";
+const PUSH_BOOL: &str = "science_string_push_bool";
+const PUSH_CHAR: &str = "science_string_push_char";
+const PUSH_STR: &str = "science_string_push_str";
+
+/// How one interpolation hole reaches its entry point.
+///
+/// Three answers rather than `Option<&'static str>` plus a flag, because the
+/// two questions — *which symbol* and *by value or by pointer* — have one
+/// answer each per type and asking them separately is two tables to keep in
+/// step. [`Builder::push_of`] is the only thing that builds one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Push {
+    /// The runtime takes the value in a register: the six scalars.
+    Value(&'static str),
+    /// The runtime takes a pointer to the value: `science_string_push_str`.
+    Pointer(&'static str),
+    /// There is no entry point for this type. §1.6's borrow is still taken and
+    /// the callee is [`Unresolved::Display`]; `Builder::lower_fstring`'s
+    /// *"a hole whose type has no entry point"* is why.
+    Missing,
+}
 
 /// Everything the lowering reads that is not the body itself.
 ///
@@ -1000,39 +1077,8 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             ExprKind::MethodCall { receiver, method, args } => {
                 self.lower_method_call(dest, *receiver, *method, args, block, span)
             }
-            // `f"…"`, which this crate cannot lower and says so here rather
-            // than in a comment somewhere else.
-            //
-            // **What it would emit.** §1.7 of
-            // `docs/superpowers/design/strings-formatting-and-docs.md` makes an
-            // f-string *"a builder over the fragments"*, and the builder is a
-            // sequence of [`Callee::Runtime`] calls against a `String`
-            // temporary: `science_string_new` for the accumulator, then one
-            // `science_string_push_bytes` per text run and one
-            // `science_string_push_i64` / `_u64` / `_f64` / `_f32` / `_bool` /
-            // `_char` / `science_string_push_str` per hole, chosen by the
-            // hole's type. Every one of those symbols exists in `science-rt`.
-            //
-            // **Why it is not emitted.** The accumulator has to be passed as
-            // `mutable borrowed String`, so the sequence is a `Ref` per call
-            // and a temporary per fragment, and `science-codegen-llvm`'s
-            // `lower_call` refuses a [`Callee::Runtime`] outright today — so
-            // the MIR would be built, analysed, and then declined one crate
-            // later with a worse message than this one. The two edits are a
-            // pair and they belong to the same change.
-            //
-            // **Why the holes are not walked.** Lowering them would make each
-            // one an operand of a call that is not emitted, and MIR would
-            // record a *move* of a `String` hole into nothing — while §1.6 says
-            // an interpolation **borrows**. A wrong move in the IR is worse
-            // than no IR: `science-regions` would report an ownership error
-            // about a line that is correct. [`crate::capture`] does walk them,
-            // with `Ctx::Read`, because a closure's capture set is a question
-            // about names and not about ownership.
-            ExprKind::FString(_) => {
-                self.assign(block, dest, Rvalue::Error, span);
-                block
-            }
+            // `f"…"` — §10's builder, emitted.
+            ExprKind::FString(parts) => self.lower_fstring(dest, parts, block, span),
             ExprKind::Error => {
                 self.assign(block, dest, Rvalue::Error, span);
                 block
@@ -1597,6 +1643,269 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             // are lowered into a block nothing jumps to. `StmtKind::Return`
             // says why that is better than skipping them.
             None => self.new_block(),
+        }
+    }
+
+    /// `f"…"` — §1.7's *"builder over the fragments"*, as a sequence of
+    /// [`Callee::Runtime`] calls.
+    ///
+    /// **Decision. The accumulator is the destination itself; every fragment is
+    /// one call that appends to it through a fresh `mutable borrowed String`;
+    /// and the entry point is chosen from the hole's *type* here, with no entry
+    /// point for a type meaning a hole in the IR rather than the nearest
+    /// width.**
+    ///
+    /// The sequence for `f"n es {n} y x es {x}"` is `science_string_new` into
+    /// the destination, then `science_string_push_bytes`,
+    /// `science_string_push_i64`, `science_string_push_bytes`,
+    /// `science_string_push_f64` — which is what `science-codegen-llvm`'s
+    /// `tests/formatting_boundary.rs` built by hand and ran before anything
+    /// produced it.
+    ///
+    /// # The borrows, and which is which
+    ///
+    /// 1. **The accumulator is borrowed once per call, exclusively, and the
+    ///    borrow is §6's two-phase kind** — it is taken in argument position
+    ///    and used exactly once, at the call that consumes it, which is §6's
+    ///    own criterion and not an exception made for this construct. A single
+    ///    borrow held across the whole sequence would be an exclusive loan live
+    ///    over the evaluation of every hole, and a hole is an arbitrary
+    ///    expression (§1.4), so `f"{v.pop()}{v.len()}"` would be refused by
+    ///    rule 4 for a conflict this lowering invented.
+    /// 2. **A hole the runtime renders from a register is *read*, never
+    ///    moved.** All six — `Int`/`I64`, `U64`, `F64`, `F32`, `Bool`, `Char` —
+    ///    are trivially copyable, so [`Builder::read`] gives [`Operand::Copy`]
+    ///    and §1.6's *"an interpolation borrows its operands"* holds without a
+    ///    loan being taken for it.
+    /// 3. **A hole the runtime renders through a pointer is borrowed,
+    ///    shared.** `science_string_push_str` takes `*const ScienceString`, and
+    ///    a `String` is not copyable, so the only two spellings available are a
+    ///    move and a shared borrow — and §1.6 says which: *"`f"{doc}"` does not
+    ///    move `doc`"*. A move here is the footgun that note calls *"of the
+    ///    first order"*: a debugging `print` that consumes the value the next
+    ///    line reads, reported as an `SC0300`-range error against a correct
+    ///    program.
+    ///
+    /// Both hole borrows are taken **after** the accumulator's, because the
+    /// accumulator is the first argument and this file evaluates arguments in
+    /// order everywhere else. That is the shape §6 reserves two phases for, and
+    /// it is why the reservation and the activation are not the same point.
+    ///
+    /// # What drops the accumulator
+    ///
+    /// **Nothing here, and that is the point.** The destination is a place the
+    /// caller allocated (§1), so it is registered in the caller's scope and
+    /// [`Builder::emit_scope_exit`] emits its drop — which [`crate::drops`]
+    /// then elaborates. For `print(f"…")` the destination is the temporary
+    /// [`Builder::operand`] made, the `print` call moves it, and elaboration
+    /// deletes the drop; the call site frees it, which is
+    /// `science-codegen-llvm`'s `lower_print` rule and not a new one. For
+    /// `let s be f"…"` the drop stands and becomes a `science_string_free`.
+    /// A drop emitted from here would be a second one.
+    ///
+    /// # A hole whose type has no entry point
+    ///
+    /// The call is emitted with [`Unresolved::Display`] and its arguments are
+    /// the ones a resolved push would have had. That is `lib.rs` §3's hole
+    /// discipline and it is deliberately not [`Rvalue::Error`]: the borrows
+    /// above are right whatever the renderer turns out to be, so region
+    /// inference gets the loans of a correct program and codegen gets a refusal
+    /// that can name the type. §5's *"every argument of a `Callee::Unresolved`
+    /// call is `Copy`"* is **not** applied, because the reason for it does not
+    /// hold: the argument passing of a push is known — it is in `RUNTIME` — and
+    /// what is missing is a renderer for one type, not a signature.
+    ///
+    /// # The cost
+    ///
+    /// One local per fragment for the accumulator reference, one more per
+    /// borrowed hole, and one [`BorrowId`] each: `f"a{b}c{d}"` is five calls,
+    /// seven temporaries and six loans. §1.7's *"with the capacity pre-computed
+    /// from the literal fragments plus a per-type estimate for each hole, so
+    /// the common case is one allocation"* is **not** done — there is no
+    /// `science_string_with_capacity` in `RUNTIME` — so the common case is one
+    /// allocation per growth. §1.7's permitted elision, rendering straight into
+    /// the sink for an `f"…"` written as `print`'s argument, is also not done:
+    /// it is *"opt-in to the implementation"* and this implementation has not
+    /// opted in.
+    fn lower_fstring(
+        &mut self,
+        dest: Place,
+        parts: &[thir::FStringPart],
+        block: BlockId,
+        span: Span,
+    ) -> BlockId {
+        let mut block =
+            self.emit_call(dest.clone(), Callee::Runtime(STRING_NEW), Vec::new(), block, span);
+        if parts.is_empty() {
+            return block;
+        }
+        // **One discard slot for the whole sequence, not one per call.** Every
+        // push returns nothing and [`TerminatorKind::Call`] has a destination
+        // whether or not there is a value for it, so the slot is storage the
+        // author did not write and the fewest of them is the right number. It
+        // is `()` rather than [`Ty::ERROR`] because the return type of these
+        // calls is genuinely unit; only a discriminant read has no Science type
+        // at all. Re-assigning it once per fragment costs nothing:
+        // [`crate::moves`] asks for a drop flag only where the type needs
+        // dropping, and `()` does not.
+        let discard = Place::local(self.temp(Ty::UNIT, span, block));
+        for part in parts {
+            match part {
+                // The lexer emits one token per text run, so an empty one
+                // cannot be written; the guard is here because
+                // `science_string_push_bytes` returns early on a zero length
+                // and a call known to do nothing is a call not worth emitting.
+                thir::FStringPart::Text(text) if text.is_empty() => {}
+                thir::FStringPart::Text(text) => {
+                    let text = text.clone();
+                    let (accumulator, next) = self.accumulator_ref(&dest, block, span);
+                    block = next;
+                    // The literal crosses two C parameters — `(ptr, len)` — and
+                    // MIR has no operand that names a global, so it stays a
+                    // `Literal::Str` here and `science-codegen-llvm`'s
+                    // `lower_runtime_call` interns it and expands it. That
+                    // convention is stated there, at the arm that applies it.
+                    let bytes = Operand::Const(Constant::Literal(Literal::Str(text)));
+                    block = self.emit_call(
+                        discard.clone(),
+                        Callee::Runtime(PUSH_BYTES),
+                        vec![accumulator, bytes],
+                        block,
+                        span,
+                    );
+                }
+                thir::FStringPart::Hole(hole) => {
+                    let hole = *hole;
+                    let hole_ty = self.thir.ty(hole);
+                    let push = self.push_of(hole_ty);
+                    let (accumulator, next) = self.accumulator_ref(&dest, block, span);
+                    block = next;
+                    let (value, next) = match push {
+                        Push::Value(_) => self.value_hole(hole, block),
+                        Push::Pointer(_) | Push::Missing => self.borrow_hole(hole, block, span),
+                    };
+                    block = next;
+                    let callee = match push {
+                        Push::Value(symbol) | Push::Pointer(symbol) => Callee::Runtime(symbol),
+                        Push::Missing => Callee::Unresolved(Unresolved::Display),
+                    };
+                    block = self.emit_call(
+                        discard.clone(),
+                        callee,
+                        vec![accumulator, value],
+                        block,
+                        span,
+                    );
+                }
+            }
+        }
+        block
+    }
+
+    /// The accumulator, as one call's first argument: `mutable borrowed String`
+    /// into a fresh temporary.
+    ///
+    /// The reference's type is read off the *place* and not off the f-string's
+    /// THIR node, which is §9's rule and has §9's reason: a destination that is
+    /// a field of a record is a `String` at that field's declared type, and a
+    /// reference built from the node's type would be a second `Ty` for one
+    /// place.
+    fn accumulator_ref(&mut self, dest: &Place, block: BlockId, span: Span) -> (Operand, BlockId) {
+        let ty = self.place_ty(dest);
+        let borrowed = self.context.types.borrowed(true, ty);
+        let temp = self.temp(borrowed, span, block);
+        let block = self.borrow_place(Place::local(temp), true, dest.clone(), block, span, true);
+        (Operand::Move(Place::local(temp)), block)
+    }
+
+    /// A hole the runtime renders from a register, read rather than consumed.
+    ///
+    /// [`Builder::auto_deref`] is §4's rule and it is what makes `f"{n}"` work
+    /// where `n` is a `borrowed Int` parameter: the place is dereferenced to
+    /// the `Int` and the `Int` is what the entry point is given. Without it the
+    /// operand would be a reference at a parameter declared `i64`, which is
+    /// `tests/formatting_boundary.rs`'s whole subject one argument over.
+    fn value_hole(&mut self, hole: ExprId, block: BlockId) -> (Operand, BlockId) {
+        match self.as_place(hole, block) {
+            Some((place, block)) => {
+                let place = self.auto_deref(place);
+                let ty = self.place_ty(&place);
+                let operand = self.read(place, ty);
+                (operand, block)
+            }
+            // A hole with no place — `f"{a + b}"`. The value goes into a
+            // temporary that dies with the statement, exactly as
+            // [`Builder::operand`] already arranges, and reading a temporary
+            // nothing else names is a read whichever of §5's two operands it is
+            // spelled with.
+            None => self.operand(hole, block),
+        }
+    }
+
+    /// A hole the runtime renders through a pointer, borrowed shared. §1.6.
+    ///
+    /// Reborrowed through, for §9's reason: a hole that is already a
+    /// `borrowed String` gives `borrowed (*_1)` and not `borrowed _1`, so the
+    /// pointer handed to `science_string_push_str` is the one the caller's
+    /// `String` lives at rather than the address of this frame's parameter
+    /// slot. That is not a spelling difference — it is the difference between a
+    /// `ScienceString` and a pointer to one, read as a `ScienceString`.
+    fn borrow_hole(&mut self, hole: ExprId, block: BlockId, span: Span) -> (Operand, BlockId) {
+        let (place, block) = self.borrow_source(hole, block, span);
+        let place = self.auto_deref(place);
+        let ty = self.place_ty(&place);
+        let borrowed = self.context.types.borrowed(false, ty);
+        let temp = self.temp(borrowed, span, block);
+        let block = self.borrow_place(Place::local(temp), false, place, block, span, true);
+        (Operand::Move(Place::local(temp)), block)
+    }
+
+    /// Which `science_string_push_*` renders a hole of this type, and how it
+    /// takes it.
+    ///
+    /// **The list is `science-rt`'s and it is closed.** §1.7 names the builder,
+    /// `science-codegen`'s `RUNTIME` names the seven entry points that exist,
+    /// and there is no eighth to be had by widening. `science-rt`'s
+    /// `science_string_push_i64` says *"`I8`…`I64` are sign-extended by codegen
+    /// before the call"* — **no phase does that**; there is no `Rvalue::Cast`
+    /// lowering below this one. So `I8`, `I16`, `I32` and the three narrow
+    /// unsigned widths answer [`Push::Missing`] rather than `push_i64`. An
+    /// `i32` in an `i64` parameter is a register the callee reads bytes of that
+    /// nothing wrote, and it is the failure `tests/formatting_boundary.rs`
+    /// exists to catch, so it is refused where the choice is made rather than
+    /// guessed here and found there.
+    ///
+    /// **A borrow is looked through.** A `borrowed Int` hole renders as an
+    /// `Int`; [`Builder::value_hole`] and [`Builder::borrow_hole`] each insert
+    /// §4's dereference to match. Anything else — `Float`, `F16`, a record, an
+    /// `any Display` — is [`Push::Missing`], which is honest: the type checker
+    /// accepts a hole whose type merely *implements* `Display`, and
+    /// `science-types`'s `check` already records that *"the interpolation of a
+    /// user type is therefore accepted here and refused by codegen"*.
+    fn push_of(&mut self, ty: Ty) -> Push {
+        let ty = self.revealed(ty);
+        if let TyKind::Borrowed { inner, .. } = *self.context.types.kind(ty) {
+            return self.push_of(inner);
+        }
+        let prelude = self.context.decls.prelude();
+        let types = &*self.context.types;
+        let is = |name: &str| prelude.is(types, ty, name);
+        if is("Int") || is("I64") {
+            Push::Value(PUSH_I64)
+        } else if is("U64") {
+            Push::Value(PUSH_U64)
+        } else if is("F64") {
+            Push::Value(PUSH_F64)
+        } else if is("F32") {
+            Push::Value(PUSH_F32)
+        } else if is("Bool") {
+            Push::Value(PUSH_BOOL)
+        } else if is("Char") {
+            Push::Value(PUSH_CHAR)
+        } else if is("String") {
+            Push::Pointer(PUSH_STR)
+        } else {
+            Push::Missing
         }
     }
 
