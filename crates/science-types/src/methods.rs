@@ -170,6 +170,43 @@
 //! **The cost is Decision 1's, and it is stated where it is paid**:
 //! `BodyChecker::select` writes out which half of that decision this makes
 //! false and which half survives.
+//!
+//! # 7. A bound is a question about an interface, and half of them are
+//! unanswerable
+//!
+//! [`Methods::implements`] answers *"does the crate contain `T implements
+//! I:`"*, and §4 already says what that cannot see. What §4 did not say is
+//! **when a `false` from it is evidence and when it is silence**, and a caller
+//! that enforces a generic bound needs the difference: `assign`'s two rules ask
+//! about one interface each and accepted the answer, but a bound names whatever
+//! interface the author wrote.
+//!
+//! **Decision. [`Methods::answers_for`] is that question, and the line it draws
+//! is the same one [`Methods::receiver`] draws: builtin or not.**
+//!
+//! `builtins.rs` declares seventeen interfaces — `Add`, `Ord`, `Clone`, `Eq`,
+//! `Copy`, `Iterate`, `From`, `Display`, `Error` and the rest — and **not one
+//! implementation of any of them**. There is no `I64 implements Ord:` anywhere,
+//! because the prelude has no bodies to put one in. So `implements(I64, Ord)`
+//! is `false` and the program `def largest of T: Ord(..)` called at `I64` is
+//! correct; enforcing the bound on that `false` would report on every numeric
+//! program in the language. That is exactly [`Methods::receiver`]'s *"a prelude
+//! type reaches here and `builtins.rs` registers no methods at all"*, read
+//! across from methods to implementations.
+//!
+//! A **user** interface is the other case and it is answerable in full: the
+//! prelude is built before any file is read, so it cannot name `Summarize`, so
+//! every `T implements Summarize:` in the program is in this index. `false`
+//! there is a fact, and `SC0534` is reported on it.
+//!
+//! **What it costs is every bound at a prelude interface, which is most of
+//! them.** `T: Ord`, `T: Clone`, `T: Eq`, `T: Add` are unchecked and will stay
+//! unchecked until the prelude declares its own implementations — which is the
+//! same prelude change `check`'s §6 already needs for operators and for
+//! `Iterate`, and which is not this crate's to make. The bound that *is*
+//! checked is the one Decision 11 was written for, an interface the program
+//! declared, and it is the one a program can get wrong without the prelude's
+//! help.
 
 use std::collections::HashMap;
 
@@ -391,6 +428,30 @@ impl Methods {
         self.implemented
             .iter()
             .any(|(implementor, iface)| *implementor == head && *iface == interface)
+    }
+
+    /// Whether this index can speak for implementations of an interface at
+    /// all — §7.
+    ///
+    /// **A builtin interface is one it cannot.** `builtins.rs` declares
+    /// seventeen of them and zero implementations of any, so *"the crate does
+    /// not contain `Doc implements Clone:`"* is silence rather than a no: the
+    /// prelude is where `I64 implements Ord:` would live and the prelude
+    /// declares nothing. This is [`Methods::receiver`]'s builtin refusal one
+    /// level up, made for the same reason and quoting the same sentence —
+    /// *"the prelude registers no methods at all"*.
+    ///
+    /// **A user interface is one it can.** The prelude is built before any file
+    /// is read and cannot mention a name a file declares, so every
+    /// implementation of a user interface is written in the crate, and this
+    /// index has all of them.
+    ///
+    /// The argument takes `&self` although it reads no field: what it answers
+    /// is *"is this index's `false` evidence"*, which is a fact about the
+    /// index, and a caller that has one in hand should ask it rather than
+    /// reconstruct the rule.
+    pub fn answers_for(&self, defs: &DefTable, interface: DefId) -> bool {
+        !defs.get(interface).is_builtin()
     }
 
     fn impl_block(

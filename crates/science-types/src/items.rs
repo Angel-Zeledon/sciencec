@@ -76,6 +76,35 @@ pub struct Param {
     pub span: Span,
 }
 
+/// One obligation a call site owes: a generic parameter of the callee, an
+/// interface it was declared to satisfy, and the span of the bound as written.
+///
+/// **The two spellings are one list.** `def describe of T: Summarize(..)` and
+/// `def describe of T(..) where T: Summarize` say the same thing —
+/// `examples/07_generics.science` writes both and comments that the second
+/// *"keeps a long signature readable"* — so a caller that read only
+/// [`Signature::generics`] would enforce the first and not the second, which is
+/// a rule that depends on where the author put it.
+///
+/// **What it costs is the two bound shapes that are not an interface.** A
+/// closure bound — `where F: (A) -> B` — names no definition
+/// ([`hir::Bound::interface_res`] is `None` for it) and is not here; whether a
+/// given `F` has that shape is a structural question and nothing asks it yet.
+/// And a `where` predicate whose subject is not a bare parameter — `where
+/// Array of T: Ord`, `where Self.Item: Ord` — is not here either: its subject
+/// is a type this list is not keyed on, and admitting it would mean carrying a
+/// [`Ty`] per predicate and solving it at each call.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamBound {
+    /// The generic parameter the bound is on.
+    pub param: DefId,
+    /// The interface it must implement.
+    pub interface: DefId,
+    /// The bound as written, which is what a diagnostic points its secondary
+    /// label at — the declaration is what the call site is being held to.
+    pub span: Span,
+}
+
 /// A function's signature, lowered.
 #[derive(Debug, Clone)]
 pub struct Signature {
@@ -83,6 +112,10 @@ pub struct Signature {
     /// The generic parameters as declared, for the arity and kind check §3
     /// still defers and for [`Substitution::of_generics`](crate::Substitution::of_generics).
     pub generics: Vec<hir::GenericParam>,
+    /// What each of those parameters must implement, from the parameter list
+    /// and the `where` clause together. [`ParamBound`] says what is and is not
+    /// in it; [`crate::check`]'s §8 is what enforces it.
+    pub bounds: Vec<ParamBound>,
     /// `Some` for a method. The receiver's type is `Self`, borrowed or not
     /// according to the kind.
     pub self_param: Option<(DefId, SelfKind)>,
@@ -507,6 +540,7 @@ impl Declarations {
                             Signature {
                                 def: function.def,
                                 generics: Vec::new(),
+                                bounds: Vec::new(),
                                 self_param: None,
                                 params,
                                 ret,
@@ -548,6 +582,7 @@ impl Declarations {
         Signature {
             def: function.def,
             generics: function.generics.clone(),
+            bounds: param_bounds(&function.generics, &function.where_clause),
             self_param: function.self_param.as_ref().map(|s| (s.def, s.kind)),
             params,
             ret,
@@ -556,6 +591,48 @@ impl Declarations {
             span: function.span,
         }
     }
+}
+
+/// Every interface bound on a function's own type parameters, in one list.
+///
+/// Reads both places the surface syntax puts one — the parameter list and the
+/// `where` clause — and keeps only what a call site can be held to: a bound
+/// that names an interface, on a parameter this function declares.
+/// [`ParamBound`] states what that leaves out and why.
+///
+/// **A `where` predicate is matched structurally rather than lowered.** Its
+/// subject is a [`hir::TypeKind::Path`] and the only shape this list is keyed
+/// on is a bare parameter, so a `Res` comparison answers it. Lowering it would
+/// mean interning a type nothing else needs and running `TypeLowerer`'s
+/// diagnostics over an annotation that is already reported where it is used.
+fn param_bounds(
+    generics: &[hir::GenericParam],
+    where_clause: &[hir::WherePredicate],
+) -> Vec<ParamBound> {
+    let mut out = Vec::new();
+    let mut push = |param: DefId, bounds: &[hir::Bound]| {
+        for bound in bounds {
+            if let Some(Res::Def(interface)) = bound.interface_res() {
+                out.push(ParamBound { param, interface, span: bound.span });
+            }
+        }
+    };
+    for param in generics {
+        if let hir::GenericParamKind::Type { bounds } = &param.kind {
+            push(param.def, bounds);
+        }
+    }
+    for predicate in where_clause {
+        let hir::TypeKind::Path { res: Res::Def(def), generics: args } = &predicate.ty.kind
+        else {
+            continue;
+        };
+        if !args.is_empty() || !generics.iter().any(|param| param.def == *def) {
+            continue;
+        }
+        push(*def, &predicate.bounds);
+    }
+    out
 }
 
 /// One annotation, lowered. The first of `lib.rs` §5's three calls.

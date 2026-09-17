@@ -456,6 +456,33 @@ pub mod codes {
     /// against, which is the choice this call could not make.
     pub const NO_MATCHING_IMPLEMENTATION: Code = Code(533);
 
+    /// A generic argument that does not satisfy the bound the callee declared.
+    ///
+    /// **Decision 11's fourth, and the one the decision assumes rather than
+    /// numbers.** `def describe of T: Summarize(..)` is a promise the body is
+    /// checked against — `value.preview()` resolves because `T` implements
+    /// `Summarize` — and until this code existed nothing held a *call* to that
+    /// promise. `describe(n)` at an `I64` checked clean, which made `T` unify
+    /// with anything and made the bound decoration.
+    ///
+    /// **Not [`MISMATCHED_TYPES`]**, and the argument is
+    /// [`NO_MATCHING_IMPLEMENTATION`]'s one step further: `SC0525`'s shape is
+    /// one *expected type* taken from one annotation, and there is no expected
+    /// type here. An interface is not a type a value can have (Decision 13
+    /// makes `any Summarize` the type, and the argument is not one), so the
+    /// message names the interface, the type that does not implement it, and
+    /// the bound that required it. Reporting it as `SC0525` would mean printing
+    /// `expected Summarize` at a slot no `Summarize` fits.
+    ///
+    /// **Reported only where the question is answerable**, which is the
+    /// restraint [`NO_SUCH_METHOD`] is under and for the same reason one level
+    /// out: `builtins.rs` declares seventeen interfaces and no implementation
+    /// of any, so a bound at a prelude interface — `T: Ord`, `T: Clone` — is a
+    /// question this compiler cannot ask rather than one it answers with no.
+    /// [`crate::methods::Methods::answers_for`] is where the two are told
+    /// apart, and its §7 says what that costs.
+    pub const UNSATISFIED_BOUND: Code = Code(534);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -478,6 +505,7 @@ pub mod codes {
         AMBIGUOUS_METHOD,
         NO_SUCH_METHOD,
         NO_MATCHING_IMPLEMENTATION,
+        UNSATISFIED_BOUND,
     ];
 
     #[cfg(test)]

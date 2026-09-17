@@ -105,9 +105,58 @@
 //! language that silently makes `1` an `I32` will be wrong on somebody's index
 //! arithmetic"* read backwards.
 //!
-//! A literal at a type this phase cannot classify — a type parameter, `Self`,
-//! anything in a table with no prelude — is admitted, because refusing on an
-//! unanswerable question is how a checker acquires a false positive.
+//! **Decision 2 says a literal is *inferred*, and inferred *among the numeric
+//! types*.** It is not a wildcard, and the difference is the whole of this
+//! section: *"numeric literals are inferred, not defaulted, within a body, and
+//! default to `I64` and `F64` when unconstrained"* is a rule about which
+//! number `1` is, and nothing in it licenses `1` being a `Doc`. The variable a
+//! literal makes is therefore constrained where it meets a type, and not only
+//! defaulted when the body ends; [`BodyChecker::numeric_shape`] is the
+//! constraint.
+//!
+//! **The refusal used to be a four-name list and that was the hole.** The
+//! predicate was `Bool`, `String`, `Char`, `Never` and nothing else, so
+//! `by_value(42)` at a `value: Doc` parameter checked clean and bound the
+//! literal's variable to a record. The four names are still the *prelude* half
+//! of the answer — `ffi.CInt` is numeric although §5.1 does not list it, so a
+//! builtin name this phase cannot place stays unanswerable — but the question
+//! is now asked of the type's **shape** first, and the shapes have answers the
+//! name list cannot reach:
+//!
+//! - **A tuple, a closure, unit, a borrow, an interface object.** A number is
+//!   none of them, and no rule in [`crate::assign`] turns a literal into one.
+//! - **A name applied to generic arguments** — `Array of I64`, `ffi.Span of
+//!   F64`. Every numeric type in the language is a nullary name: §5.1's
+//!   primitives are, and `ffi-c-boundary.md` §1.3's C scalars are. A name with
+//!   an `of` after it is a container.
+//! - **A record or a choice.** This phase holds the declaration and it says
+//!   `Doc` has a `title` field, not a value. If `From of Int` ever makes
+//!   `Doc(42)` implicit it arrives as a *coercion*, in [`crate::assign`], where
+//!   the site is known and §6.2 can count it — not as a literal quietly
+//!   unifying with a record.
+//!
+//! **And a literal reaches a `borrowed T` parameter through §6.3, not by
+//! becoming one.** `by_ref(42)` at a `value: borrowed I64` used to bind the
+//! literal's variable to `borrowed I64` itself: a literal whose type is a
+//! reference, and no [`ExprKind::Borrow`] for MIR to find. The auto-borrow is
+//! in `BodyChecker::demand` for the same reason `BodyChecker::coerce` runs it
+//! for a value whose type is known — the literal takes the *referent's* type
+//! and the borrow the author was told to leave out becomes a node.
+//!
+//! **What is still admitted is what this phase cannot classify** — a type
+//! parameter, `Self`, `Self.Item`, an already-erroneous type, anything in a
+//! table with no prelude, and a builtin name that is on neither §5.1's numeric
+//! lists nor the four — because refusing on an unanswerable question is how a
+//! checker acquires a false positive. `BodyChecker::is_opaque` is the first
+//! four, in one place, because `null` asks the same question.
+//!
+//! **`null` is the same rule in the other direction.** Decision 6 makes `T?` a
+//! distinct type *"precisely so that `null` inhabits it and nothing else"*, so
+//! `null` has a claim on every nullable type and on no other — and, unlike a
+//! number, no default: an unconstrained one is `SC0526` and not a guess. It was
+//! refused only at a [`TyKind::Named`], which left it agreeing with a tuple, a
+//! closure, unit and an interface object; it is now refused at every shape this
+//! phase can classify, which is the same line the numeric half draws.
 //!
 //! # 6. The holes, each priced
 //!
@@ -143,11 +192,13 @@
 //!   checked, structurally, because those do not go through an implementation.
 //! - **A generic call's type arguments.** Explicit ones are used. An omitted
 //!   one is solved only where a parameter's type is the generic parameter
-//!   itself, which is the root-level match `infer`'s §2 admits; anything deeper
-//!   — `xs: Array of T` against an `Array of Int` — leaves `T` unsolved, and an
-//!   unsolved parameter becomes [`Ty::ERROR`] so that the arguments are still
-//!   checked against something that agrees. The general answer needs the nested
-//!   representation `infer`'s §2 describes and does not build.
+//!   itself or a borrow of it — `BodyChecker::root_param`, which is the
+//!   root-level match `infer`'s §2 admits plus the one indirection §6.3 makes
+//!   invisible at the call. Anything deeper — `xs: Array of T` against an
+//!   `Array of Int` — leaves `T` unsolved, and an unsolved parameter becomes
+//!   [`Ty::ERROR`] so that the arguments are still checked against something
+//!   that agrees. The general answer needs the nested representation `infer`'s
+//!   §2 describes and does not build.
 //! - **`Iterate`, and therefore `for`.** A `for` binds its pattern at
 //!   [`Ty::ERROR`]. The lookup does not close this one either, and for the
 //!   same reason as the operators: the prelude's `Iterate` declares no `next`
@@ -196,6 +247,64 @@
 //! `assign`'s §5 still refuses, and which that file still writes out as
 //! `Box.new(Doc(..))`. `BodyChecker::auto_borrow` asks the relation rather than
 //! deciding for itself, so this file knows nothing about interfaces.
+//!
+//! # 8. A bound is checked where the argument is
+//!
+//! **Decision. At a call to a generic callee, every interface bound on a
+//! generic parameter that call solved is checked, and an unsatisfied one is
+//! `SC0534`.** `BodyChecker::check_bounds` is the check, it runs at both call
+//! forms — `BodyChecker::call_signature` and `BodyChecker::call_method` — and
+//! it runs immediately after `BodyChecker::instantiate_call`, which is the one
+//! place a callee's generics are solved.
+//!
+//! The bound was declared, parsed, resolved, carried into
+//! [`Signature::bounds`](crate::items::Signature::bounds) — and then nothing
+//! read it. `describe(n)` at an `I64` checked clean against `def describe of T:
+//! Summarize(..)`, which is not a missing feature but a missing *diagnostic*:
+//! the body of `describe` was checked on the strength of the bound, so the
+//! promise was being spent and never collected. It is also what made `T` agree
+//! with anything, since nothing else constrains a solved parameter at all.
+//!
+//! **It is asked of [`Methods::implements`], which `assign`'s §3 and §4 already
+//! ask**, and it is asked under one restraint those two do not need:
+//! `methods`'s §7. They name one interface each and the answer for it is
+//! whatever the crate wrote; a bound names whatever interface the *author*
+//! wrote, and seventeen of them come from a prelude that declares no
+//! implementations of any. So a bound at a **builtin** interface — `T: Ord`,
+//! `T: Clone`, `T: Eq` — is unanswerable and admitted, exactly as a method on a
+//! `String` receiver is, and a bound at a **user** interface is answered in
+//! full. That is `assign`'s §3 discipline — *"refusing on an unanswerable
+//! question is how a checker acquires a false positive"* — applied to the half
+//! of the question this phase can see.
+//!
+//! **Three things it deliberately does not reach**, each stated rather than
+//! hidden:
+//!
+//! - **A parameter this call did not solve.** §6 leaves an unsolved one
+//!   [`Ty::ERROR`], and `ty`'s §5 makes that agree with whatever it meets, so
+//!   the bound is skipped rather than reported against a hole. `largest(items)`
+//!   inside `rank of T: Ord` is the corpus case: the parameter is `items:
+//!   borrowed Array of T`, which is deeper than a root-level match, so `T` is
+//!   unsolved and nothing is claimed about it.
+//! - **A record literal and a variant's payload.** Both instantiate a *type's*
+//!   generics — `BodyChecker::instantiate_record` and
+//!   `BodyChecker::instantiate_payload` — and neither is checked here, because
+//!   [`Record`](crate::items::Record) and [`Variant`](crate::items::Variant)
+//!   carry the generic parameters and not the `where` clause beside them, and a
+//!   check that saw one spelling of a bound and not the other would enforce a
+//!   rule that depends on where the author put it. That is the same argument
+//!   [`ParamBound`](crate::items::ParamBound) makes for reading both, one
+//!   declaration kind over.
+//! - **An implementation block's own generic parameters.** `Wrapper of T has:`
+//!   declares them and `BodyChecker::block_substitution` solves them from the
+//!   receiver, and a bound on one is in `hir::Impl`'s generics rather than in
+//!   any [`Signature`](crate::items::Signature). It is the record literal's
+//!   case again with a different declaration kind, and it closes the same way.
+//! - **A const generic parameter's kind.** §5.3's `const N: Int` carries a
+//!   *kind* rather than a bound, and nothing checks it at a call: §6's
+//!   penultimate bullet already prices the generic-argument arity and kind
+//!   check, and the kind of a const argument is that check rather than this
+//!   one.
 
 use std::collections::HashMap;
 
@@ -306,6 +415,23 @@ pub fn check_fn(
         breaks: Vec::new(),
     };
     checker.run(function, signature)
+}
+
+/// What [`BodyChecker::numeric_shape`] can say about a type a number is meeting.
+///
+/// The third variant is the one §5 is about: a checker with two answers refuses
+/// wherever it cannot admit, or admits wherever it cannot refuse, and this
+/// phase needs to do neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    /// One of §5.1's integer primitives.
+    Integer,
+    /// One of §5.1's floating primitives.
+    Float,
+    /// A type no number has, and this phase is sure.
+    NotANumber,
+    /// This phase cannot classify it. §5 admits.
+    Unanswerable,
 }
 
 /// Where an unsuffixed literal's type comes from when nothing constrains it.
@@ -704,6 +830,27 @@ impl<'a> BodyChecker<'a> {
             InferTy::Known(found) => self.coerce(typed.id, found, expected, site, span),
             InferTy::Var(var) => {
                 let target = self.revealed(expected, span);
+                // §6.3's auto-borrow, reached one mode over. `coerce` runs it
+                // for a value whose type is known; a literal has no type yet,
+                // so the peeling is here instead — the literal takes the
+                // *referent's* type and the borrow the author was told to leave
+                // out becomes a node. Without it `by_ref(42)` bound the
+                // literal's variable to `borrowed I64` itself: a literal whose
+                // type is a reference, and nothing for MIR to take a borrow at.
+                //
+                // `Site::Elsewhere` inside, because one call site takes one
+                // borrow: §6.3 says the caller writes `compare(a, b)`, not that
+                // a `borrowed borrowed T` is reachable.
+                if site == Site::Argument {
+                    if let TyKind::Borrowed { mutable, inner } = *self.types.kind(target) {
+                        let operand = self.demand(typed, inner, Site::Elsewhere, span);
+                        return self.body.push_expr(
+                            ExprKind::Borrow { mutable, operand },
+                            expected,
+                            span,
+                        );
+                    }
+                }
                 // A variable stands for a *value*, so Decision 6's widening
                 // applies to it as it does to anything else: a literal reaching
                 // a `T?` slot takes `T` and widens, rather than becoming a `T?`
@@ -715,10 +862,12 @@ impl<'a> BodyChecker<'a> {
                 // precisely so that `null` inhabits it and nothing else.
                 let nullable = matches!(*self.types.kind(target), TyKind::Nullable(_));
                 if self.literal_kind(var) == Some(Numeric::Null) {
+                    // §5: `null` inhabits a nullable and nothing else, so it is
+                    // refused at every shape this phase can classify and
+                    // admitted at the four it cannot.
                     let admits = nullable
-                        || self.types.references_error(target)
                         || !self.decls.prelude().is_available()
-                        || !is_prelude_named(self.types, target);
+                        || is_opaque(self.types, target);
                     if !admits {
                         let rendered = self.types.render(self.defs, expected);
                         self.diagnostics.push(mismatched_types(span, &rendered, "`null`"));
@@ -769,31 +918,115 @@ impl<'a> BodyChecker<'a> {
             // given and reports at the unification instead.
             return true;
         };
-        if self.types.references_error(target) || !self.decls.prelude().is_available() {
+        // §5's admission, asked *before* revealing. A type this phase cannot
+        // classify takes any literal, `null` included — which is why this
+        // returns rather than falling into the match below, where `null`'s arm
+        // is an unconditional refusal that `demand` has already earned by
+        // peeling the nullable off. And asking first keeps an already-reported
+        // type out of `reveal`, whose overflow the caller has reported once
+        // already.
+        if is_opaque(self.types, target) || !self.decls.prelude().is_available() {
             return true;
         }
         // Revealed, because `type Celsius is F64` is a floating type and the
         // name is not. The seam's middle call, at the one comparison §5 makes.
         let target = self.revealed(target, span);
-        let prelude = self.decls.prelude();
         match kind {
-            // **The refusal is the narrow side, not the admission.** A literal
-            // is refused only at a type the prelude names and this phase can
-            // therefore classify; at anything else — a record, a type
-            // parameter, an `extern` alias whose right-hand side is not in the
-            // alias table — it is admitted. Deciding the question means asking
-            // whether the type implements `From of Int`, which the index could
-            // now answer and which §5.1 has still not made the rule, and §5
-            // says a refusal on an unanswerable question is how a checker
-            // acquires a false positive.
-            Numeric::Integer => !prelude.is_definitely_not_numeric(self.types, target),
-            Numeric::Float => {
-                !prelude.is_definitely_not_numeric(self.types, target)
-                    && !prelude.is_integer(self.types, target)
-            }
+            // An integer is exact in every numeric type — `let x: F64 be 1` is
+            // what a scientific program writes — so both numeric answers admit
+            // it and only a shape this phase can place refuses.
+            Numeric::Integer => self.numeric_shape(target) != Shape::NotANumber,
+            // A float is not: `let n: I32 be 1.5` is a value the target cannot
+            // hold, which is Decision 2 read backwards.
+            Numeric::Float => matches!(
+                self.numeric_shape(target),
+                Shape::Float | Shape::Unanswerable
+            ),
             // `null` only fits a nullable, and `demand` has already peeled one
             // off, so reaching here at all means the slot was not one.
             Numeric::Null => false,
+        }
+    }
+
+    /// §5. What this phase can say about a type a *number* is being put in.
+    ///
+    /// **Three answers, and the third is what keeps the check honest.** The
+    /// predicate this replaces had two and named four types — `Bool`, `String`,
+    /// `Char`, `Never` — so every other type in the language was an admission
+    /// by default, which is how `by_value(42)` reached a `Doc`. The four are
+    /// still here and still right about what they name; what has changed is
+    /// that a type they do not name is now classified by its **shape** before
+    /// it falls through to [`Shape::Unanswerable`].
+    ///
+    /// **What it refuses, and the reason each refusal is safe:**
+    ///
+    /// - A **tuple, closure, unit, borrow or interface object** is a shape no
+    ///   number has and no rule in [`crate::assign`] produces from a literal.
+    ///   (A borrow is refused *here*; §6.3's auto-borrow in
+    ///   [`BodyChecker::demand`] runs before this is asked, so the one place a
+    ///   literal legitimately meets a `borrowed T` never reaches this arm.)
+    /// - A **name applied to generic arguments**. Every numeric type in the
+    ///   language is a nullary name: §5.1's primitives are, and
+    ///   `ffi-c-boundary.md` §1.3's C scalars are. `Array of I64` is a
+    ///   container.
+    /// - A **record or a choice**, because this phase holds the declaration.
+    ///
+    /// **What it admits, and why refusing would be a false positive:** a type
+    /// parameter, a `Self`, a `Self.Item`, an already-erroneous type, anything
+    /// at all when there is no prelude to compare against — and a **builtin
+    /// name this phase cannot place**. That last one is the compromise
+    /// [`Prelude::is_definitely_not_numeric`] already documents and it survives
+    /// unchanged: `ffi.CInt` is a number although §5.1 does not list it, so a
+    /// builtin nullary name that is on none of the three lists gets no verdict.
+    ///
+    /// **A nullable is answered by its payload.** [`BodyChecker::demand`] peels
+    /// one off before asking — Decision 6's widening is the rule there — so a
+    /// nullable reaching here came from `BodyChecker::compare`, where the
+    /// question is which *number* is on the other side of an `is`.
+    fn numeric_shape(&mut self, target: Ty) -> Shape {
+        if !self.decls.prelude().is_available() || is_opaque(self.types, target) {
+            return Shape::Unanswerable;
+        }
+        match *self.types.kind(target) {
+            TyKind::Unit
+            | TyKind::Tuple(_)
+            | TyKind::Closure { .. }
+            | TyKind::Borrowed { .. }
+            | TyKind::Object { .. } => Shape::NotANumber,
+            TyKind::Nullable(inner) => self.numeric_shape(inner),
+            // `is_opaque` answered all three of these above; the arm is here
+            // so that a new `TyKind` cannot be admitted by a wildcard.
+            TyKind::Error | TyKind::Param { .. } | TyKind::SelfType { .. }
+            | TyKind::SelfAssoc { .. } => Shape::Unanswerable,
+            TyKind::Named { def, .. } => self.named_shape(def, target),
+        }
+    }
+
+    /// [`BodyChecker::numeric_shape`] for a name, which is where the prelude's
+    /// three lists and the definition table meet.
+    fn named_shape(&mut self, def: DefId, target: Ty) -> Shape {
+        let prelude = self.decls.prelude();
+        if prelude.is_integer(self.types, target) {
+            return Shape::Integer;
+        }
+        if prelude.is_float(self.types, target) {
+            return Shape::Float;
+        }
+        if prelude.is_definitely_not_numeric(self.types, target) {
+            return Shape::NotANumber;
+        }
+        // The three predicates above all require an empty argument list, so a
+        // name that survives them and has arguments is a container.
+        if matches!(self.types.kind(target), TyKind::Named { args, .. } if !args.is_empty()) {
+            return Shape::NotANumber;
+        }
+        match self.defs.get(def).kind {
+            // The declaration is in hand and it describes fields or variants.
+            hir::DefKind::Record | hir::DefKind::Choice => Shape::NotANumber,
+            // A builtin name on none of the three lists — `ffi.CInt`, `Array`,
+            // an `extern` type — and anything else. §5 admits rather than
+            // guesses.
+            _ => Shape::Unanswerable,
         }
     }
 
@@ -1274,6 +1507,7 @@ impl<'a> BodyChecker<'a> {
         // the position it is in.
         let order = self.argument_order(&params, args);
         let substitution = self.instantiate_call(&declared, generics, &params, args, &order, span);
+        self.check_bounds(def, &substitution, span);
 
         let mut ids: Vec<ExprId> = Vec::with_capacity(args.len());
         for (at, arg) in args.iter().enumerate() {
@@ -1343,7 +1577,7 @@ impl<'a> BodyChecker<'a> {
         for (at, arg) in args.iter().enumerate() {
             let Some(index) = order[at] else { continue };
             let Some((_, param_ty)) = params.get(index) else { continue };
-            let TyKind::Param { def } = *self.types.kind(*param_ty) else { continue };
+            let Some((def, borrowed)) = self.root_param(*param_ty) else { continue };
             if solved.contains_key(&def) || !declared.iter().any(|p| p.def == def) {
                 continue;
             }
@@ -1352,6 +1586,11 @@ impl<'a> BodyChecker<'a> {
             // is asked of a literal's default and of a name's declared type,
             // which is everything a root-level match can use.
             if let Some(ty) = self.probe(&arg.value) {
+                // `borrowed T` against a `borrowed Doc` and against a `Doc`
+                // both solve `T := Doc`: §6.3 is what makes the second spelling
+                // the ordinary one, so the borrow is stripped from whichever
+                // side wrote it.
+                let ty = if borrowed { self.peel_borrow(ty, arg.span) } else { ty };
                 solved.insert(def, ty);
             }
         }
@@ -1374,6 +1613,103 @@ impl<'a> BodyChecker<'a> {
         }
         let _ = span;
         substitution
+    }
+
+    /// §8. Every bound the callee declared, held against what this call solved.
+    ///
+    /// **Run at the one place a callee's generics are solved** — immediately
+    /// after [`BodyChecker::instantiate_call`], at both call forms — so that
+    /// the substitution being checked is the one the arguments are about to be
+    /// checked against, and not a second solve that could disagree with it.
+    ///
+    /// The solved type is read by *applying the substitution to the parameter
+    /// itself* rather than through an accessor on [`Substitution`]. That is the
+    /// same operation every parameter type in the signature is about to
+    /// undergo, so a bound cannot be held against a different answer than the
+    /// arguments are, and it needs nothing added to `subst`.
+    ///
+    /// **Three ways a bound is skipped, and each is a stated refusal:**
+    ///
+    /// - **The parameter is unsolved.** §6 leaves one [`Ty::ERROR`], which
+    ///   `ty`'s §5 makes agree with whatever it meets; reporting against it
+    ///   would blame a call for a hole the checker left.
+    /// - **The substitution did not move it**, which is a const parameter or
+    ///   one `instantiate_call` declined — the same case as above, reached by a
+    ///   different road, and neither is a claim about the argument.
+    /// - **The interface is one this compiler cannot answer for**, which is
+    ///   `methods`'s §7: `builtins.rs` declares seventeen interfaces and no
+    ///   implementation of any, so `T: Ord` at an `I64` is silence rather than
+    ///   a no. [`Methods::answers_for`] draws that line, and §8 says what it
+    ///   costs — most bounds in the corpus are at a prelude interface and are
+    ///   therefore not checked.
+    ///
+    /// **What it costs where it does fire** is `methods`'s §4 in full: no
+    /// blanket implementation, no supertrait, no bound on a type parameter is
+    /// looked through. The third would be the one to miss, and it is not: a
+    /// parameter passed on to another generic call has no head, and
+    /// [`Methods::implements`] admits a headless type for exactly that reason.
+    fn check_bounds(&mut self, callee: DefId, substitution: &Substitution, span: Span) {
+        let Some(sig) = self.decls.signature(callee) else { return };
+        if sig.bounds.is_empty() {
+            return;
+        }
+        let bounds = sig.bounds.clone();
+        for bound in bounds {
+            let param = self.types.param(bound.param);
+            let solved = self.apply(substitution, param, span);
+            if solved == param || self.types.references_error(solved) {
+                continue;
+            }
+            if !self.decls.methods().answers_for(self.defs, bound.interface) {
+                continue;
+            }
+            if self.decls.methods().implements(self.types, solved, bound.interface) {
+                continue;
+            }
+            let rendered = self.types.render(self.defs, solved);
+            let interface = self.defs.get(bound.interface).name.clone();
+            let parameter = self.defs.get(bound.param).name.clone();
+            self.diagnostics.push(unsatisfied_bound(
+                span,
+                &rendered,
+                &interface,
+                &parameter,
+                bound.span,
+            ));
+        }
+    }
+
+    /// The generic parameter a callee's parameter type *is*, and whether it is
+    /// behind a borrow. §6's root-level match, in one place.
+    ///
+    /// **`borrowed T` is a root-level match and `Array of T` is not**, and the
+    /// difference is §6.3 rather than a depth: a borrow is the spelling the
+    /// language *tells* the author to leave out at the call, so `value:
+    /// borrowed T` and `value: T` are one parameter written two ways and an
+    /// argument solves `T` in both. `Array of T` is a different type, and
+    /// solving through it needs the nested representation `infer`'s §2
+    /// describes and does not build.
+    ///
+    /// **What it changes beyond the solve** is what §8's bound check can see.
+    /// `def describe of T: Summarize(value: borrowed T)` is how the corpus
+    /// writes a bounded generic — every one of the five in `examples/` takes
+    /// its subject by borrow — so a match that stopped at [`TyKind::Param`]
+    /// left `T` unsolved at every call the bound was written for, and a bound
+    /// on an unsolved parameter is skipped. The check and this match land
+    /// together because neither is worth anything without the other.
+    ///
+    /// The mutability is not carried: `mutable borrowed T` solves `T` from the
+    /// same argument, and whether the borrow may be taken exclusively is the
+    /// question [`BodyChecker::auto_borrow`] asks at the argument itself.
+    fn root_param(&self, param_ty: Ty) -> Option<(DefId, bool)> {
+        match *self.types.kind(param_ty) {
+            TyKind::Param { def } => Some((def, false)),
+            TyKind::Borrowed { inner, .. } => match *self.types.kind(inner) {
+                TyKind::Param { def } => Some((def, true)),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// The type of an argument, without building a node for it.
@@ -1657,6 +1993,7 @@ impl<'a> BodyChecker<'a> {
         let block = self.block_substitution(candidate, self_ty);
         let order = self.argument_order(&params, args);
         let generic = self.instantiate_call(&declared, generics, &params, args, &order, span);
+        self.check_bounds(candidate.method, &generic, span);
 
         let mut ids: Vec<ExprId> = Vec::with_capacity(args.len());
         for (at, arg) in args.iter().enumerate() {
@@ -2844,6 +3181,30 @@ fn is_prelude_named(types: &Types, ty: Ty) -> bool {
     matches!(types.kind(ty), TyKind::Named { .. })
 }
 
+/// Whether this phase can say nothing at all about what inhabits a type.
+///
+/// **Four cases, and they are the whole of §5's admission.** A type parameter
+/// and a `Self` stand for a type a *substitution* supplies, which is a call
+/// site's fact and not this one's; a `Self.Item` stands for one an
+/// implementation block answers, which `subst`'s §2 deliberately leaves
+/// standing; and an erroneous type agrees with whatever it meets, which is
+/// `ty`'s §5 and the reason one bad annotation stays one diagnostic.
+///
+/// Every other [`TyKind`] is a shape whose inhabitants the declaration that
+/// wrote it fixes, so a judgement about one is a judgement this phase is
+/// entitled to make. Both literal rules ask this — a number and a `null` differ
+/// in what they accept and not in what they can see — and asking it in one
+/// place is what keeps the two lines the same.
+fn is_opaque(types: &Types, ty: Ty) -> bool {
+    matches!(
+        types.kind(ty),
+        TyKind::Error
+            | TyKind::Param { .. }
+            | TyKind::SelfType { .. }
+            | TyKind::SelfAssoc { .. }
+    ) || types.references_error(ty)
+}
+
 /// Two literal kinds in one inference class. An integer literal unified with a
 /// float one is a float: `1 + 2.0` is the case, and the integer is the one that
 /// can be represented exactly in the other's type.
@@ -2928,6 +3289,38 @@ fn bare_const_param(pattern: &crate::normal::NormalForm) -> Option<DefId> {
     match term.atom() {
         crate::normal::Atom::Param { def, .. } => Some(def),
     }
+}
+
+/// `SC0534` — a generic argument that does not satisfy the callee's bound. §8.
+///
+/// **The message names the type, the interface and the parameter, and the
+/// label names the fix.** An interface is not a type a value can have
+/// (Decision 13 makes `any Summarize` the type, and the argument is not one),
+/// so there is no *"expected"* to put first the way `SC0525` does; what the
+/// author has to change is either the argument or the implementation list of
+/// its type, and both are named.
+///
+/// **The secondary label is the bound as written**, which is `diagnostics`'
+/// §2's rule — *"the definition span is one lookup away"* — applied to a
+/// promise rather than to an atom: the call is being held to something written
+/// somewhere else, and a message that does not show where is asking the reader
+/// to go and find it.
+fn unsatisfied_bound(
+    span: Span,
+    ty: &str,
+    interface: &str,
+    parameter: &str,
+    bound: Span,
+) -> Diagnostic {
+    Diagnostic::error(
+        codes::UNSATISFIED_BOUND,
+        format!("`{ty}` does not implement `{interface}`"),
+    )
+    .with_label(Label::primary(span, format!("`{parameter}` is `{ty}` here")))
+    .with_label(Label::secondary(bound, format!("`{parameter}` was declared `{interface}`")))
+    .with_note(format!(
+        "an implementation is a block the program writes: `{ty} implements {interface}:`"
+    ))
 }
 
 /// `SC0532` — a method the receiver's type does not have.
