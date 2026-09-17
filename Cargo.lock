@@ -367,7 +367,26 @@ name = "science-codegen"
 version = "0.0.1"
 dependencies = [
  "science-diagnostics",
+ "science-lexer",
+ "science-mir",
+ "science-parser",
+ "science-resolve",
  "science-rt",
+ "science-types",
+]
+
+[[package]]
+name = "science-codegen-llvm"
+version = "0.0.1"
+dependencies = [
+ "science-codegen",
+ "science-diagnostics",
+ "science-lexer",
+ "science-mir",
+ "science-parser",
+ "science-resolve",
+ "science-rt",
+ "science-types",
 ]
 
 [[package]]

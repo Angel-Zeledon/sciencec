@@ -1,0 +1,23 @@
+[package]
+name = "science-codegen-llvm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The backend half of the Science code generator: LLVM-C through an extern block, an object file, and a linker driver."
+build = "build.rs"
+
+[features]
+default = []
+llvm = []
+
+[dependencies]
+science-codegen.workspace = true
+science-diagnostics.workspace = true
+science-mir.workspace = true
+science-resolve.workspace = true
+science-types.workspace = true
+science-lexer.workspace = true
+science-parser.workspace = true
+
+[dev-dependencies]
+science-rt.workspace = true

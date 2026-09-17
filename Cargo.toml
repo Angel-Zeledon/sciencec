@@ -13,6 +13,7 @@ members = [
     "crates/science-db",
     "crates/science-rt",
     "crates/science-codegen",
+    "crates/science-codegen-llvm",
     "crates/sciencec",
 ]
 
@@ -34,5 +35,6 @@ science-regions = { path = "crates/science-regions" }
 science-db = { path = "crates/science-db" }
 science-rt = { path = "crates/science-rt" }
 science-codegen = { path = "crates/science-codegen" }
+science-codegen-llvm = { path = "crates/science-codegen-llvm" }
 sciencec = { path = "crates/sciencec" }
 insta = "1"
