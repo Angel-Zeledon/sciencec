@@ -1,3 +1,49 @@
+# --- Rust build output ---------------------------------------------------
+# `target/` is the only large directory this repository produces. Everything
+# in it is reproducible from `Cargo.lock`, which *is* tracked, so a clone plus
+# `cargo build` gets the same bytes.
 target/
+**/*.rs.bk
 *.pdb
+
+# --- Snapshot testing ----------------------------------------------------
+# `insta` writes a `.snap.new` beside a snapshot that did not match, and a
+# `.snap.orig` when it rewrites one. Both are the *proposal*, not the record:
+# the record is the `.snap`, which is reviewed and committed. A `.snap.new`
+# in a commit is a snapshot somebody blessed without reading.
+*.snap.new
+*.snap.orig
+
+# --- Programs the compiler produces --------------------------------------
+# `sciencec build` leaves an object file beside the source and links an
+# executable. Both are output; the `.science` file is the source of truth.
+# Scoped to the corpus and the scratch tree rather than global, so a genuinely
+# committed binary elsewhere would still be visible.
+examples/*.exe
+examples/*.obj
+examples/*.o
+examples/*.pdb
+tests/**/*.exe
+tests/**/*.obj
+
+# --- A vendored LLVM checkout --------------------------------------------
+# `llvm-project/` is ~600 MB of clone and is not a dependency: this backend
+# binds LLVM's C API through an `extern` block against the installed
+# `LLVM-C.lib`, so nothing here is built from that tree. Ignored so that
+# cloning it for reference cannot end up in a commit.
+llvm-project/
+
+# --- Editors and operating systems ---------------------------------------
+# `/.vscode/` is anchored on purpose: `editors/vscode/` is this project's own
+# extension and is tracked. An unanchored `.vscode/` would silently ignore it.
+/.vscode/
+/.idea/
+*.swp
+*~
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Local environment ---------------------------------------------------
+.env
+.env.local
