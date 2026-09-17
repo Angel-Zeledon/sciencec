@@ -735,7 +735,7 @@ adopts it without amendment.** Its shape:
 Quantity implements DisplayNumber
 
 Quantity implements Display:
-    def display(borrowed self, into: mutable borrowed Formatter):
+    def display(self, into: mutable borrowed Formatter):
         into.number(self.value as F64)
         into.raw(" ")
         into.raw(Self.unit_symbol())

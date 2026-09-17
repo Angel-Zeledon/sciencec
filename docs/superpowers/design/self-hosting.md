@@ -335,10 +335,10 @@ DefTable has:
                            span: span, parent: parent))
         id
 
-    def get(borrowed self, id: DefId) -> borrowed Def:
+    def get(self, id: DefId) -> borrowed Def:
         self.defs[id.index]
 
-    def path_of(borrowed self, id: DefId) -> String:
+    def path_of(self, id: DefId) -> String:
         let mutable parts be (Array of String).new()
         let mutable cursor: DefId? be id
         loop:
@@ -361,7 +361,7 @@ DefTable has:
 Every line of that is F0. The `loop` / `break` / `cursor?` shape, with `cursor`
 narrowing from `DefId?` to `DefId` after the test, is the one `stdlib-core.md`
 §3.7 already uses for a graph traversal and cites as the argument that `loop` and
-`break` are enough. `alloc` takes `mutable self` and `get` takes `borrowed self`,
+`break` are enough. `alloc` takes `mutable self` and `get` takes `self`,
 and they are never live at once because the Rust code does not hold them at once
 either.
 
@@ -401,7 +401,7 @@ type Parser:
     diagnostics: Diagnostics
 
 Parser has:
-    def peek(borrowed self) -> borrowed TokenKind:
+    def peek(self) -> borrowed TokenKind:
         self.token_at(0).kind
 
     def into_diagnostics(self) -> Diagnostics:
@@ -486,7 +486,7 @@ that produced them, and `rust-interop.md` §3.7.1 names precisely that shape —
 
 The Science-shaped interner is the same index discipline as everything else:
 `Map of (String, SymbolId)` plus `Array of String`, handing out a `SymbolId`, with
-`resolve(borrowed self, id: SymbolId) -> borrowed String` for when the text is
+`resolve(self, id: SymbolId) -> borrowed String` for when the text is
 wanted. That is expressible, it is what `DefTable` already does for definitions,
 and it costs a lookup where the arena version costs a dereference.
 

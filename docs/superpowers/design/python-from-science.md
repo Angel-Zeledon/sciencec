@@ -122,7 +122,7 @@ The two interfaces, in revision-2 spelling:
 
 ```science
 interface ToPython:
-    def to_python(borrowed self) -> (PyObject, PyError?)
+    def to_python(self) -> (PyObject, PyError?)
 
 interface FromPython:
     def from_python(value: borrowed PyObject) -> (Self, PyError?)

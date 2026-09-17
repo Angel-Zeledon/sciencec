@@ -390,7 +390,7 @@ Array of T has:
     def push(mutable self, value: T)
 
     ## Parentheses are required: `borrowed T?` would read as `borrowed (T?)`.
-    def get(borrowed self, index: Int) -> (borrowed T)?
+    def get(self, index: Int) -> (borrowed T)?
 
 Map of (K, V) has:
     ## Returns the displaced value, or null. Insertion order is preserved
@@ -399,7 +399,7 @@ Map of (K, V) has:
     def insert(mutable self, key: K, value: V) -> V? where K: Eq + Hash
 
 Set of T has:
-    def union(borrowed self, other: borrowed Set of T) -> Set of T where T: Eq + Hash
+    def union(self, other: borrowed Set of T) -> Set of T where T: Eq + Hash
 
 ## Level 2: use collections (Deque)
 Deque of T has:
@@ -827,15 +827,15 @@ the operator gets the same safety for none of that.
 ```science
 String has:
     ## O(1). The underlying UTF-8, as bytes.
-    def bytes(borrowed self) -> borrowed Array of U8
+    def bytes(self) -> borrowed Array of U8
 
     ## A lazy source over Unicode scalar values.
-    def characters(borrowed self) -> Characters
+    def characters(self) -> Characters
 
     ## A byte range. Fails if either end is not a character boundary, which is
     ## the honest signature: it is the only one that cannot silently produce
     ## broken UTF-8.
-    def slice(borrowed self, bytes: Range of Int) -> (borrowed String, TextError?)
+    def slice(self, bytes: Range of Int) -> (borrowed String, TextError?)
 ```
 
 Sub-ranges *by character* are the chain: `.characters().skip(a).take(b - a)`,
@@ -948,23 +948,23 @@ with it.
 String has:
     def new() -> String
     def from_bytes(bytes: borrowed Array of U8) -> (String, TextError?)
-    def length(borrowed self) -> Int                              # bytes — §6.5
-    def is_empty(borrowed self) -> Bool
+    def length(self) -> Int                              # bytes — §6.5
+    def is_empty(self) -> Bool
     def push_str(mutable self, tail: borrowed String)
     def truncate(mutable self, bytes: Int)                        # total — §6.5
-    def starts_with(borrowed self, prefix: borrowed String) -> Bool
-    def ends_with(borrowed self, suffix: borrowed String) -> Bool
-    def contains(borrowed self, needle: borrowed String) -> Bool
-    def find(borrowed self, needle: borrowed String) -> Int?      # byte offset
-    def slice(borrowed self, bytes: Range of Int) -> (borrowed String, TextError?)
-    def trim(borrowed self) -> borrowed String                    # ASCII whitespace — below
-    def split(borrowed self, separator: borrowed String) -> Split
-    def replace(borrowed self, from: borrowed String, to: borrowed String) -> String
-    def bytes(borrowed self) -> borrowed Array of U8
-    def characters(borrowed self) -> Characters
-    def lines(borrowed self) -> Lines
-    def parse_int(borrowed self) -> (I64, TextError?)
-    def parse_float(borrowed self) -> (F64, TextError?)
+    def starts_with(self, prefix: borrowed String) -> Bool
+    def ends_with(self, suffix: borrowed String) -> Bool
+    def contains(self, needle: borrowed String) -> Bool
+    def find(self, needle: borrowed String) -> Int?      # byte offset
+    def slice(self, bytes: Range of Int) -> (borrowed String, TextError?)
+    def trim(self) -> borrowed String                    # ASCII whitespace — below
+    def split(self, separator: borrowed String) -> Split
+    def replace(self, from: borrowed String, to: borrowed String) -> String
+    def bytes(self) -> borrowed Array of U8
+    def characters(self) -> Characters
+    def lines(self) -> Lines
+    def parse_int(self) -> (I64, TextError?)
+    def parse_float(self) -> (F64, TextError?)
 ```
 
 Plus `String implements Clone, Eq, Ord, Add, Display, Inspect, Hash`.
@@ -984,13 +984,13 @@ them. The algorithm — Eisel–Lemire, Clinger, whatever comes next — is free
 
 ```science
 String has:
-    def split(borrowed self, separator: borrowed String) -> Split
+    def split(self, separator: borrowed String) -> Split
 
-    def slice(borrowed self, bytes: Range of Int) -> (borrowed String, TextError?)
+    def slice(self, bytes: Range of Int) -> (borrowed String, TextError?)
 
-    def characters(borrowed self) -> Characters
+    def characters(self) -> Characters
 
-    def parse_float(borrowed self) -> (F64, TextError?)
+    def parse_float(self) -> (F64, TextError?)
 
 ## Level 2: use text (graphemes). Not Level 1 because UAX #29 is revised with
 ## every Unicode release, and its tables are ~100 KiB in every binary (§1.5).
@@ -1221,7 +1221,7 @@ interface Error:
 ## Both belong to the core library, so the orphan rule (§5.4) permits this.
 ## Renders the cause chain, joined with ": ".
 (any Error) implements Display:
-    def display(borrowed self, into: mutable borrowed Formatter)
+    def display(self, into: mutable borrowed Formatter)
 
 choice IoError:
     NotFound(Path)

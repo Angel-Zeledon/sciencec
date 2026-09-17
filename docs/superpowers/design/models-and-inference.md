@@ -544,14 +544,14 @@ reserved list. That list was chosen well.)
 ```science
 Session of (D, I, O) has:
     # Allocates outputs. The common case.
-    def run(borrowed self, inputs: borrowed I) -> (O, RunError?)
+    def run(self, inputs: borrowed I) -> (O, RunError?)
 
     # Writes into caller-owned outputs. No allocation per call.
-    def run_into(borrowed self, inputs: borrowed I,
+    def run_into(self, inputs: borrowed I,
                       outputs: mutable borrowed O) -> ((), RunError?)
 
     # Erased. For scripts and the REPL.
-    def run_dynamic(borrowed self, inputs: Bundle) -> (Bundle, RunError?)
+    def run_dynamic(self, inputs: Bundle) -> (Bundle, RunError?)
 ```
 
 `run` borrows both the session and the inputs. Borrowing the session shared
@@ -722,8 +722,8 @@ A `Session` owns, and is the sole owner of:
 
 `Session` is **not `Copy` and not `Clone`**. There is no way to have two of them
 by accident. Passing one to a function moves it unless the parameter is declared
-`borrowed`, and since `run` takes `borrowed self` (§3.2), ordinary use never
-moves it.
+`borrowed`, and since `run` takes `self` — which is itself the shared borrow,
+not the by-value `self: Self` (§3.2) — ordinary use never moves it.
 
 `Session` implements `Drop`. Dropping it releases the handle, which releases the
 weights and the arena, **at a program point the compiler can name**. That is the
@@ -796,7 +796,7 @@ Tensor of (T, DIMS, D) has:
     def moved_to of D2(self, device: Device of D2) -> Tensor of (T, DIMS, D2)
 
     # Borrows self. Both tensors exist afterwards. Costs a copy, always.
-    def copied_to of D2(borrowed self, device: Device of D2) -> Tensor of (T, DIMS, D2)
+    def copied_to of D2(self, device: Device of D2) -> Tensor of (T, DIMS, D2)
 ```
 
 `moved_to` consumes, so after it the host tensor is gone and using it is
@@ -861,7 +861,7 @@ Consequences, all of them free because the region engine already exists:
   requires.
 - A second `run` on the same session while an output from the first is still live
   is allowed for `run` (shared borrow) and rejected for anything taking
-  `mutable borrowed self`, which is the correct rule for an arena the runtime may
+  `mutable self`, which is the correct rule for an arena the runtime may
   reuse.
 - To escape, the user writes `outputs.logits.to_host()` or `.to_owned()`, which
   copies into a Science-owned allocation and severs the borrow. Explicit,

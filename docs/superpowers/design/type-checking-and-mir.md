@@ -125,8 +125,9 @@ silently makes `1` an `I32` will be wrong on somebody's index arithmetic.
 >
 > **A comparison is not an assignment, and this is the same mistake one layer
 > down.** §5.4 makes `is` one operator dispatching to `Eq`, whose method takes
-> `borrowed self`. So `name is ""` has a `borrowed String` and a `String` in the
-> source text and two `String`s in the call. Demanding that the written types
+> `self` — the bare receiver *is* the shared borrow, which is the whole reason
+> the mismatch arises. So `name is ""` has a `borrowed String` and a `String`
+> in the source text and two `String`s in the call. Demanding that the written types
 > agree reports on the borrow §6.3 exists to remove. Comparisons are checked
 > through borrows for that reason.
 >

@@ -287,6 +287,28 @@ building rather than deferring.
   rather than merely on its spelling, the note now says so in place rather than
   quietly restating the claim — `collections-and-chains.md` §6.3 and
   `ffi-c-boundary.md` §6 are the two worth reading before relying on the model.
+- **Method receivers.** The compiler spells a receiver three ways and
+  `ast::SelfKind` has no fourth: `self` is a shared borrow, `mutable self` an
+  exclusive one, and the annotated `self: Self` is the only one that takes the
+  value away from the caller. **`borrowed self` and `mutable borrowed self` were
+  never syntax** — every such declaration is `SC0102`, *expected an identifier,
+  found `borrowed`*. Eighty-eight occurrences across thirteen notes have been
+  carried to `self` and `mutable self`, and this row is now closed. The trap is
+  that `borrowed T` **is** real in every other position, so the reflex that
+  turned `&T` into `borrowed T` kept going one word too far; `self` already
+  carries the borrow and needs no adjective. Where a note's *argument* rested on
+  the old spelling rather than merely used it, the note says so in place —
+  `uncertainty.md` §3.3 is the one worth reading, because a mechanical carry-over
+  there would have had the operators "taking `self` by value" cause a
+  use-after-move, which is the opposite of what `self` means.
+- **The `function` row is not quite as closed as it reads.** No note *declares*
+  with `function` any more, but `intrinsics-math-physics.md` §8.2 still reaches
+  for `function of T(T) -> T where T: Real` as a live spelling for a
+  **generic** closure type. That is not a stale keyword so much as a gap: the
+  `(A) -> B` decision above has no way to write a closure type that is itself
+  generic, so there is currently no correct spelling to migrate it to. It is an
+  open ask, not drift, and it belongs with the closure-type row of the table
+  above.
 - **`null` is not yet on the reserved list.** Core spec §4.2 gained the literal
   and §13 did not gain the word; §13's own prose says revision 2 "added
   `interface`" where `syntax-revision-2.md` §7 says it added `interface` **and**

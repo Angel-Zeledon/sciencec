@@ -100,11 +100,11 @@ type varies. It gains one.
 ```science
 interface Index of Idx:
     type Output
-    def index(borrowed self, at: Idx) -> borrowed Self.Output
+    def index(self, at: Idx) -> borrowed Self.Output
 
 interface IndexMutably of Idx:
     type Output
-    def index_mutably(mutable borrowed self, at: Idx) -> mutable borrowed Self.Output
+    def index_mutably(mutable self, at: Idx) -> mutable borrowed Self.Output
 ```
 
 `a[i] be v` requires `IndexMutably`; `a[i]` on the right of a `be` requires
@@ -211,8 +211,8 @@ week.
 
 ```science
 Array of T has:
-    def get(borrowed self, at: Int) -> (borrowed T)?
-    def get_mutably(mutable borrowed self, at: Int) -> (mutable borrowed T)?
+    def get(self, at: Int) -> (borrowed T)?
+    def get_mutably(mutable self, at: Int) -> (mutable borrowed T)?
 ```
 
 ```science
@@ -338,7 +338,7 @@ machinery is needed:
 - Rule 5: a slice may not outlive its source. Returning `local[1..5]` from a
   function is a borrow-escape error, caught by the existing analysis.
 - Resizing the source while a slice is live is an error, because `push` takes
-  `mutable borrowed self` and rule 4 forbids it. This is the case that would be a
+  `mutable self` and rule 4 forbids it. This is the case that would be a
   dangling pointer in C++ and a silent aliasing bug in NumPy, and it falls out for
   free.
 

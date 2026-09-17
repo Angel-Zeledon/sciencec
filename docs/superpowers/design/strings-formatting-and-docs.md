@@ -240,8 +240,9 @@ JavaScript and now Python all pay exactly this cost. It is paid once.
 **Decision.** An interpolation borrows its operands. `f"{doc}"` does not move
 `doc`.
 
-This falls out of `Display` taking `borrowed self` (§3.1) and §6.3's auto-borrow,
-but it must be stated, because in a language with ownership the alternative is a
+This falls out of `Display` taking `self` — the shared-borrow receiver, not
+the by-value `self: Self` (§3.1) — and §6.3's auto-borrow, but it must be
+stated, because in a language with ownership the alternative is a
 footgun of the first order: a debugging `print` that moves the value you were
 about to use is a diagnostic in the `SC0300` range caused by a line the user
 added to understand a different problem.
@@ -461,7 +462,7 @@ together:
 
 ```science
 interface Display:
-    def display(borrowed self, into: mutable borrowed Formatter)
+    def display(self, into: mutable borrowed Formatter)
 ```
 
 ```science
@@ -470,7 +471,7 @@ type Station:
     channels: Int
 
 Station implements Display:
-    def display(borrowed self, into: mutable borrowed Formatter):
+    def display(self, into: mutable borrowed Formatter):
         into.text(self.id)
 ```
 
@@ -492,7 +493,7 @@ Formatter has:
     def integer(mutable self, value: I64)
 
     ## The parsed spec, for an implementation that needs to branch on it.
-    def spec(borrowed self) -> FormatSpec
+    def spec(self) -> FormatSpec
 ```
 
 `FormatSpec` is a plain record of nullable fields — `fill: Char`, `align: Align?`,
@@ -511,7 +512,7 @@ for the programmer, and they are different interfaces.
 
 ```science
 interface Inspect:
-    def inspect(borrowed self, into: mutable borrowed Formatter)
+    def inspect(self, into: mutable borrowed Formatter)
 ```
 
 **Why the split, and not one interface.** The argument against a split is real:
@@ -575,7 +576,7 @@ library:
 
 ```science
 Quantity implements Display:
-    def display(borrowed self, into: mutable borrowed Formatter):
+    def display(self, into: mutable borrowed Formatter):
         into.number(self.value as F64)
         into.raw(" ")
         into.raw(Self.unit_symbol())
@@ -1126,9 +1127,10 @@ syntactic and takes the `SC0170` block.
 3. **The lexer: a mode stack** (§1.5), and suspension of the indentation machine
    inside an interpolation, as §4.2 already does inside brackets. This is the
    largest implementation item in the note.
-4. **§5.4: respecify `Display`** as `def display(borrowed self, into: mutable
-   borrowed Formatter)`, and **add `Inspect` and `DisplayNumber`** to the
-   interface list. `DisplayNumber` is a marker with no methods.
+4. **§5.4: respecify `Display`** as
+   `def display(self, into: mutable borrowed Formatter)`, and **add `Inspect`
+   and `DisplayNumber`** to the interface list. `DisplayNumber` is a marker with
+   no methods.
 5. **§8: add `Formatter` and `FormatSpec`** to the library types, and make the
    free-function list `print`, `write`, `print_error`, `write_error`, `flush`,
    `panic`, `read_file`, `write_file` (§4.3).

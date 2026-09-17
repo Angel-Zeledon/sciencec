@@ -590,7 +590,7 @@ and this is the honest part.
 
 **The problem.** Python holds a read-only view into a Science value inside a
 wrapper. Later, Python calls a method on that wrapper that takes
-`mutable borrowed self`. Inside Science, exclusive access is proved. Across the
+`mutable self`. Inside Science, exclusive access is proved. Across the
 membrane, it is false: there is a live shared view. The compiler cannot see it,
 because the view lives in a Python variable.
 

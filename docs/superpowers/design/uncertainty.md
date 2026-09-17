@@ -342,10 +342,23 @@ the Python representation, not to correlation tracking, and it dissolves with th
 data structure.
 
 **The operators borrow.** `Add`, `Sub`, `Mul`, `Div` and `Neg` on `Uncertain`
-take `borrowed self` and `borrowed other`, and return a new value. This is not a
-detail: `Uncertain` is not `Copy` once its gradient spills, so operators taking
-`self` by value would make this note's own headline example — `x - x` — a
-use-after-move. The same requirement propagates to `Quantity`'s operators (§5.3).
+take `self` and `borrowed other`, and return a new value. This is not a detail:
+`Uncertain` is not `Copy` once its gradient spills, so operators taking the
+receiver **by value** — which is spelled `self: Self` — would make this note's
+own headline example, `x - x`, a use-after-move. The same requirement propagates
+to `Quantity`'s operators (§5.3).
+
+> **This paragraph used to say `borrowed self`, and the fix is not cosmetic.**
+> `ast::SelfKind` has exactly three receivers and the bare one is already the
+> borrow: `self` borrows shared, `mutable self` borrows exclusively, and only
+> the annotated `self: Self` takes the value away from the caller.
+> `borrowed self` is not a spelling the parser has ever accepted — it is
+> `SC0102`, *expected an identifier, found `borrowed`*. Re-spelled
+> mechanically, the sentence would have claimed that operators "taking `self` by value" cause the
+> use-after-move, which is the opposite of what `self` means, and the paragraph
+> would have argued against itself while still reading perfectly. So the claim
+> is restated against the receiver that actually moves rather than quietly
+> carried over.
 
 ### 3.4 What is static, and what cannot be
 
@@ -732,7 +745,7 @@ That note's `Display for Quantity` reads:
 
 ```science
 Quantity implements Display:
-    def display(borrowed self, into: mutable borrowed Formatter):
+    def display(self, into: mutable borrowed Formatter):
         into.number(self.value as F64)
         into.raw(" ")
         into.raw(Self.unit_symbol())
@@ -747,7 +760,7 @@ to `T`'s own `DisplayNumber` rendering rather than casting.**
 
 ```science
 Quantity implements Display where T: DisplayNumber:
-    def display(borrowed self, into: mutable borrowed Formatter):
+    def display(self, into: mutable borrowed Formatter):
         self.value.display(into)
         into.raw(" ")
         into.raw(Self.unit_symbol())
@@ -812,16 +825,16 @@ plain floats. Rejected as the *only* answer, but adopted as part of the answer:
 ```science
 interface Real:
     def from_exact(value: F64) -> Self
-    def nominal(borrowed self) -> F64
+    def nominal(self) -> F64
 
-    def sqrt(borrowed self) -> Self
-    def exp(borrowed self) -> Self
-    def ln(borrowed self) -> Self
-    def pow(borrowed self, exponent: borrowed Self) -> Self
-    def sin(borrowed self) -> Self
-    def cos(borrowed self) -> Self
-    def atan2(borrowed self, other: borrowed Self) -> Self
-    def abs(borrowed self) -> Self
+    def sqrt(self) -> Self
+    def exp(self) -> Self
+    def ln(self) -> Self
+    def pow(self, exponent: borrowed Self) -> Self
+    def sin(self) -> Self
+    def cos(self) -> Self
+    def atan2(self, other: borrowed Self) -> Self
+    def abs(self) -> Self
 ```
 
 plus the operator interfaces `Add`, `Sub`, `Mul`, `Div`, `Neg` and `Ord`, which
@@ -1238,8 +1251,9 @@ and the cheapness expires.
 2. **§14.6 is answered**: `Uncertain of T`, value-level, with exact correlation.
    That item can be struck and replaced with a pointer.
 3. **§12.3 is unchanged, and §12's operators must borrow** (§5.3). `Quantity`'s
-   `Add`/`Sub`/`Mul`/`Div` take `borrowed self`, so that an uncertain quantity
-   whose gradient has spilled is not moved by arithmetic.
+   `Add`/`Sub`/`Mul`/`Div` take `self` — the shared borrow, not the by-value
+   `self: Self` — so that an uncertain quantity whose gradient has spilled is
+   not moved by arithmetic.
 4. **§13's wave 2 gains one word** (§8.3): constants ship with units *and
    uncertainties*, checked for conversion.
 5. **§5.1 and §5.2 get the `Float`-only list** (§6.3): `floor` `ceil` `round`

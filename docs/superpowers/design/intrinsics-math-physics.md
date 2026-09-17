@@ -1403,18 +1403,18 @@ Interpolator of T has:
         method: InterpolationMethod,
     ) -> (Interpolator of T, InterpolationError?) where T: Real
 
-    def evaluate(borrowed self, x: T) -> T
-    def evaluate_derivative(borrowed self, x: T, order: Int) -> T
+    def evaluate(self, x: T) -> T
+    def evaluate_derivative(self, x: T, order: Int) -> T
 
 ## `evaluate`, not `at`. See §2.4: the rename outlives the reservation that
 ## forced it.
 Polynomial of T has:
-    def evaluate(borrowed self, x: T) -> T where T: Real
+    def evaluate(self, x: T) -> T where T: Real
 
 ## Roots are complex even for a real polynomial, which the return type says and
 ## the name does not have to.
 Polynomial of T has:
-    def roots(borrowed self, tolerance: T)
+    def roots(self, tolerance: T)
         -> (Array of Complex of T, RootError?) where T: Real
 
 ## A least-squares fit in the Chebyshev basis, which is what anybody fitting a
@@ -1791,12 +1791,12 @@ def codata_vintage() -> Int
 ## rather than a field access, because §7.4 argues that leaving the system must
 ## be as visible as entering it.
 Quantity of (T, L, M, T2, I, K, N, J) has:
-    def magnitude(borrowed self) -> T
+    def magnitude(self) -> T
 
 ## Conversion into a named unit, which is checked for dimension and exact in its
 ## scale. `unit-literals.md` §7.4's `d.in(FOOT)`, adopted.
 Quantity of (T, L, M, T2, I, K, N, J) has:
-    def in(borrowed self, unit: UnitOf of (L, M, T2, I, K, N, J)) -> T
+    def in(self, unit: UnitOf of (L, M, T2, I, K, N, J)) -> T
 ```
 
 **In use.**
@@ -2982,16 +2982,16 @@ today that distance is one program.
 ```science
 interface Real:
     def from_exact(value: F64) -> Self
-    def nominal(borrowed self) -> F64
+    def nominal(self) -> F64
 
-    def sqrt(borrowed self) -> Self
-    def exp(borrowed self) -> Self
-    def ln(borrowed self) -> Self
-    def pow(borrowed self, exponent: borrowed Self) -> Self
-    def sin(borrowed self) -> Self
-    def cos(borrowed self) -> Self
-    def atan2(borrowed self, other: borrowed Self) -> Self
-    def abs(borrowed self) -> Self
+    def sqrt(self) -> Self
+    def exp(self) -> Self
+    def ln(self) -> Self
+    def pow(self, exponent: borrowed Self) -> Self
+    def sin(self) -> Self
+    def cos(self) -> Self
+    def atan2(self, other: borrowed Self) -> Self
+    def abs(self) -> Self
 ```
 
 — and observes in §6.5 that the edit to the catalogue *"was happening anyway"*,

@@ -411,11 +411,11 @@ answer is the one the language already uses for `Error`:
 
 ```science
 interface TableColumn:
-    def header_noun(borrowed self) -> String
-    def unit_symbol(borrowed self) -> String
-    def len(borrowed self) -> U64
-    def cell(borrowed self, index: U64) -> Cell
-    def note(borrowed self) -> String?
+    def header_noun(self) -> String
+    def unit_symbol(self) -> String
+    def len(self) -> U64
+    def cell(self, index: U64) -> Cell
+    def note(self) -> String?
 
 Column of Q implements TableColumn where Q: DisplayNumber:
     ...

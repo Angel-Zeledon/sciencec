@@ -48,7 +48,7 @@ interface Iterate:
 
     def next(mutable self) -> Self.Item?
 
-    def estimated_length(borrowed self) -> Bounds:
+    def estimated_length(self) -> Bounds:
         Bounds(minimum: 0, maximum: null)
 ```
 
@@ -349,7 +349,7 @@ Thirty-eight entries. Rust's `Iterator` has upward of seventy.
   a side-effect combinator *before* the effect system arrives is the wrong order.
 - **`inspect` / `peek` / `tap`.** The same argument, and it is the tempting one,
   because debugging a lazy chain is genuinely harder (§2.2). The answer is a
-  debugger and a `for each` loop, not an effectful link in a chain that F2 wants
+  debugger and a `for x in xs:` loop, not an effectful link in a chain that F2 wants
   to prove pure enough to parallelise.
 - **`filter_map`.** `map` then `keep_some`.
 - **`fold` beside `reduce`.** One name for one idea; §5.1 already says
@@ -613,7 +613,7 @@ Two alternatives were considered and rejected:
   it appear anywhere in the chain, including after an adapter has already fixed
   the item type.
 
-### 4.2 `for each` borrows
+### 4.2 `for x in xs:` borrows
 
 **AMENDMENT 11: `for x in xs:` desugars to `xs.iterate()`** — it borrows. To
 consume, the user writes it:
@@ -750,8 +750,8 @@ Each collection carries the same three source methods as **inherent** methods
 
 ```science
 Array of T has:
-    def iterate(borrowed self) -> ArrayIterate of T
-    def iterate_mutably(mutable borrowed self) -> ArrayIterateMutably of T
+    def iterate(self) -> ArrayIterate of T
+    def iterate_mutably(mutable self) -> ArrayIterateMutably of T
     def iterate_consuming(self) -> ArrayIterateConsuming of T
 ```
 
@@ -985,7 +985,7 @@ Seven things must be true in F0 for that to be addable rather than a redesign.
    because nothing in F0 reads that information.
 7. **No combinator has an observable effect.** This is why §1.5 refuses
    `for_each` and `inspect`. A chain whose links are pure can be reordered,
-   fused, split and re-run; one with a `println` in the middle cannot, and the
+   fused, split and re-run; one with a `print` in the middle cannot, and the
    user who wrote it will not understand why their output interleaves.
 
 ### 7.1 Reductions and reproducibility
