@@ -26,7 +26,7 @@
  * The page is a *lighter* blue than the code ground, not a darker one, so a
  * listing reads as **inset** — something set into the page rather than
  * painted on it, which is what every dark documentation theme does and what
- * a reader expects of a listing. `--code-bg` sits **1.45:1** below `--paper`.
+ * a reader expects of a listing. `--code-bg` sits **1.29:1** below `--paper`.
  * That number is the design target, not an accident: below about 1.3 the two
  * grounds read as one surface with a border drawn on it, and above about 1.6
  * the page starts reading as grey against a black box. The separation is
@@ -55,22 +55,37 @@
   /* The page. A slate-navy ramp: --paper is the ground, --surface is a card,
    * --sunk is an inline code chip, --rule is a hairline.
    *
-   * Every pairing the rules below can actually produce was measured against
-   * this ground, not estimated and not inherited. On --paper: --ink 11.76:1,
-   * --muted 7.49:1, --faint 6.24:1, --accent 6.69:1, --old 6.80:1. The
-   * tightest foreground anywhere on the page is --accent on --sunk at
-   * 4.76:1, and the tightest one that carries navigation is --faint on
-   * --paper at 6.24:1 — that is the sidebar's group headings, and it is
-   * checked rather than assumed because it is the pairing that failed the
-   * last time this palette moved. */
-  --paper:#243048; --surface:#2e3d59; --sunk:#35466a; --ink:#eef2fa;
-  --muted:#b8c4d8; --faint:#a6b3cb; --rule:#455878;
-  --accent:#94bbf2; --accent-soft:#2b3e63; --old:#e7ad96; --old-soft:#4a332a;
+   * **The ground was darkened here**, from #243048, because the page read as
+   * a light slate rather than as a dark document. Every pairing below was
+   * re-measured against the new ground rather than assumed to survive it.
+   * On --paper: --ink 13.20:1, --muted 8.41:1, --faint 7.01:1, --accent
+   * 7.51:1, --old 7.63:1 — every one *higher* than before, because the text
+   * did not move and the ground went down.
+   *
+   * The number that went the other way is the one that decides whether the
+   * page works: **--code-bg sits 1.29:1 below --paper, where it sat 1.45:1.**
+   * Darkening the page walks it toward the listing, and near black the
+   * luminance differences compress, so there is no ground below about
+   * #1a2233 that keeps a listing visible as a separate surface at all. This
+   * is the darkest ground on that ramp that still reads as two surfaces.
+   *
+   * --code-frame was lifted with it, from #1b2440, which had fallen to
+   * 1.03:1 against the new ground — an invisible border, and the border is
+   * half of what separates a block from the page once the fills are this
+   * close. It is 1.33:1 against the page and 1.72:1 against the listing now,
+   * so it reads from both sides.
+   *
+   * The tightest foreground that carries navigation is --faint on --paper at
+   * 7.01:1 — the sidebar's group headings, checked rather than assumed
+   * because it is the pairing that failed the last time this palette moved. */
+  --paper:#1e2839; --surface:#28344a; --sunk:#2f3d57; --ink:#eef2fa;
+  --muted:#b8c4d8; --faint:#a6b3cb; --rule:#3c4c6b;
+  --accent:#94bbf2; --accent-soft:#27385c; --old:#e7ad96; --old-soft:#432e26;
   /* Reserved, and read by nothing today. These three have never been read by
    * a rule in this file; they are re-toned with the rest rather than left as
    * the old teal, so that a future rule reaching for one gets a colour that
    * belongs to this palette. */
-  --deep:#111a2c; --deep-ink:#dfe7f6; --deep-rule:#243048;
+  --deep:#0d1420; --deep-ink:#dfe7f6; --deep-rule:#1e2839;
   /* Syntax — "Science Neon". Declared once and never redefined, because
    * every code surface on this site is dark whatever the page does. That is
    * the decision that makes the palette possible: a neon hue survives on
@@ -83,7 +98,7 @@
    * listing's colours are fixed, and re-toning the page could not reach
    * them. Every value below is measured against --code-bg and clears 4.5:1
    * there; the tightest is --c-com at 4.84. */
-  --code-bg:#0b0f1a; --code-ink:#cdd8f0; --code-frame:#1b2440;
+  --code-bg:#0b0f1a; --code-ink:#cdd8f0; --code-frame:#2b3a63;
   --c-key:#e85aa8; --c-ctl:#e85aa8; --c-type:#4de8ff; --c-fn:#3dfca0;
   --c-str:#f6ff6b; --c-num:#c77dff; --c-par:#ffa23c; --c-op:#e85aa8;
   --c-com:#7080a4; --c-res:#ff6e6e; --c-pun:#8fa0c4;
