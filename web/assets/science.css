@@ -116,6 +116,19 @@
    * not the first, which is the expected direction: the rail belongs to the
    * listing. */
   --rail-code:#3d4f7a; --rail-shell:#2f6b52; --rail-err:#a34848; --rail-legacy:#4a5568;
+  /* A fifth, for a listing in *another* language. `rationale.html` sets the
+   * same program side by side in Python, Rust, Go, Java and JavaScript, and
+   * those blocks were rendering with no rail at all — so they read as "not
+   * Science" by *absence*, which looks like a gap rather than a decision.
+   *
+   * It is a violet and not the grey, though grey is the obvious neutral: grey
+   * is already --rail-legacy, and that one means "syntax this language
+   * removed". A reader who has learned one grey rail as "do not write this"
+   * would meet a second grey rail on a correct Python program. The note above
+   * says nothing here is told apart by rail colour alone — true, and the
+   * cost of a collision is still a reader re-reading a caption to find out
+   * which kind of not-Science they are looking at. */
+  --rail-foreign:#6b5a8a;
   --sans:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
   --serif:"IBM Plex Serif",Georgia,"Times New Roman",serif;
   --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
@@ -307,6 +320,18 @@ pre.shell .p { color: #7080a4; } pre.shell .c { color: #3dfca0; }
 pre.err {
   background:
     linear-gradient(var(--rail-err), var(--rail-err)) left / 3px 100% no-repeat,
+    var(--code-bg);
+}
+/* A listing in another language. Same ground and same frame as a Science
+ * block, because the point of the comparison is that the two are read
+ * together — a foreign block on a different ground would be a different
+ * *kind* of thing on the page, when it is the same kind carrying a different
+ * language. Only the rail differs, and `rationale.html` names the language in
+ * the caption above each one, so the rail is the second signal and never the
+ * only one. */
+pre.foreign {
+  background:
+    linear-gradient(var(--rail-foreign), var(--rail-foreign)) left / 3px 100% no-repeat,
     var(--code-bg);
 }
 /* The copy button. Appears on hover and on keyboard focus, sits inside the
