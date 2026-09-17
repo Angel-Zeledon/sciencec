@@ -85,14 +85,29 @@
 //! declines to flag it because its type needs no drop at all. One direction
 //! costs a byte that is then not spent; the other costs the language's claim.
 //!
-//! **The exception, and it is deliberate.** Every argument of a
-//! [`Callee::Unresolved`] call is `Copy`, whatever its type. A call whose
+//! **The exception, and it is deliberate.** Every argument of a call **whose
+//! signature this crate cannot see** is `Copy`, whatever its type. A call whose
 //! signature is unknown has unknown argument passing, and marking the arguments
 //! moved would make Decision 11's absent method lookup *manufacture*
 //! use-after-move errors in ordinary code. That is `ty`'s §5 discipline —
 //! *"a hole costs nothing downstream and, in particular, cannot manufacture a
 //! cascade"* — applied to operands. The cost is stated at [`Unresolved`]: a
 //! genuine move through a method call is invisible until the lookup lands.
+//!
+//! **The exception is a condition and used to be spelled as one case of it.**
+//! It was implemented as *"the callee is a [`Callee::Unresolved`]"*, which is
+//! only the half of the condition where the *name* did not resolve. The other
+//! half is a name that resolved to a definition carrying no
+//! [`science_types::items::Signature`], and there is exactly one construct in
+//! F0 that produces it — `print`, whose declaration `science-resolve`'s
+//! `builtins.rs` writes out, measures and withdraws, leaving a `Callee::Def`
+//! with nothing behind it. Read as *"no signature means by value"*, `print(s)`
+//! moved a `String` the program still owned; drop elaboration then deleted the
+//! binding's drop and `science-codegen-llvm` freed the buffer at the call, so
+//! `print(s)` twice printed the string and then an empty line. That is not the
+//! lowering compensating for an undeclared parameter: it is this rule applied
+//! to the case it was written for. [`Builder::has_no_signature`] is the
+//! predicate and states what it costs.
 //!
 //! # 6. Two-phase borrows — §10 item 4, answered rather than deferred
 //!
@@ -1537,13 +1552,59 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 Callee::Indirect(operand)
             }
         };
+        // §5's exception, asked as the condition it states rather than as the
+        // one spelling of it that used to be checked.
+        let opaque = self.has_no_signature(&callee);
         let mut operands = Vec::with_capacity(args.len());
         for arg in args {
             let (operand, next) = self.argument(*arg, block);
-            operands.push(operand);
+            operands.push(if opaque { force_copy(operand) } else { operand });
             block = next;
         }
         self.emit_call(dest, callee, operands, block, span)
+    }
+
+    /// Whether this crate knows how the callee takes its arguments. §5.
+    ///
+    /// **The decision.** A [`Callee::Def`] whose [`science_types::items::
+    /// Signature`] is missing is as opaque as a [`Callee::Unresolved`], and its
+    /// arguments are read rather than consumed for the same reason.
+    ///
+    /// **The reason.** §5's exception is written about a *condition* — *"a call
+    /// whose signature is unknown has unknown argument passing"* — and was
+    /// implemented by matching one spelling of it. `print` is the other
+    /// spelling: `science-resolve`'s `builtins.rs` resolves the name, so the
+    /// callee is a `Def`, and declines to declare the parameter, so there is no
+    /// signature behind it. Reading a missing signature as *"takes everything
+    /// by value"* is this phase deciding what a declaration it cannot see says,
+    /// and it decided wrong: `strings-formatting-and-docs.md` §4.1 gives
+    /// `def print(value: borrowed any Display)`, so `print(s)` moved a `String`
+    /// the program still owned, drop elaboration deleted the binding's drop,
+    /// and `science-codegen-llvm`'s `lower_print` — which frees what it is
+    /// handed the last reference to — freed it at the first call.
+    ///
+    /// **The cost.** A signature-less callee that really does consume gets a
+    /// double release: nothing drops it here, the callee drops it there. That
+    /// cost is not new and is not payable today — the only signature-less
+    /// `Def`s in the language are `print` and `write`, and §4.1 declares both
+    /// `borrowed` — and the direction is the one §5 already chose for
+    /// [`Callee::Unresolved`]: a leak a profiler finds rather than a
+    /// use-after-free a user finds.
+    fn has_no_signature(&self, callee: &Callee) -> bool {
+        match callee {
+            Callee::Def(def) => self.context.decls.signature(*def).is_none(),
+            // A closure's type *is* its signature — `collections-and-chains.md`
+            // §1.2 makes it `(A) -> B` — so `borrowed T` in it is a declared
+            // parameter like any other and there is nothing unknown to be
+            // conservative about.
+            Callee::Indirect(_) => false,
+            // Unreachable from here — a runtime call is built by §10's builder
+            // and never by a THIR `Call` — and answered rather than lumped in
+            // with the holes, because `science_codegen::runtime::RUNTIME` is a
+            // declared signature and §10 chooses each of its operands.
+            Callee::Runtime(_) => false,
+            Callee::Unresolved(_) => true,
+        }
     }
 
     fn lower_method_call(
@@ -1600,7 +1661,11 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             }
         }
 
-        let unresolved = method.is_none();
+        // The same condition as [`Builder::has_no_signature`]: a method that
+        // resolved to a definition with no declared signature is as opaque as
+        // one that did not resolve at all, and the receiver arm above already
+        // reads it that way — `self_kind` is `None` for both.
+        let unresolved = self.has_no_signature(&callee);
         for arg in args {
             let (operand, next) =
                 if unresolved { self.operand(*arg, block) } else { self.argument(*arg, block) };

@@ -332,14 +332,24 @@ fn the_edges_of_the_fragment_list() {
     assert_eq!(pushes(empty.body("main")), vec!["science_string_with_capacity"]);
 }
 
-/// **Nothing here drops the accumulator, and the two ways it is released are
-/// both somebody else's.**
+/// **Nothing here drops the accumulator, and the way it is released is
+/// somebody else's.**
 ///
 /// Bound, it is an ordinary local and `Builder::emit_scope_exit` drops it.
-/// Passed to `print`, it is moved and drop elaboration deletes the drop — the
-/// call site frees it, which is `science-codegen-llvm`'s `lower_print` rule and
-/// not a new one. A drop emitted from the f-string lowering would be a second
-/// one in the first case and a use-after-free in the second.
+/// Passed to `print`, it is a temporary — and `print`'s signature is one this
+/// crate cannot see, so `lower`'s §5 reads its argument rather than consuming
+/// it and the *same* `emit_scope_exit` drops the temporary at the end of the
+/// statement. A drop emitted from the f-string lowering itself would be a
+/// second one either way.
+///
+/// **This assertion used to be the other way round and the change is the bug
+/// it was covering.** It read *"passed to `print`, the accumulator is moved
+/// and nothing drops it"*, because §5 called a signature-less callee's
+/// argument a move and `science-codegen-llvm`'s `lower_print` then freed what
+/// it printed. With one release per value that is consistent; it stops being
+/// consistent the moment the value has a *name*, because `print(s)` freed a
+/// binding the frame still owned. One release, and the scope is the one that
+/// does it, is the rule that holds for both spellings.
 #[test]
 fn the_accumulator_is_dropped_by_the_scope_and_not_by_this_lowering() {
     let bound = lower("let s be f\"hola\"\nlet n be 1\n");
@@ -357,14 +367,24 @@ fn the_accumulator_is_dropped_by_the_scope_and_not_by_this_lowering() {
         .collect();
     assert_eq!(drops, vec![&s], "a bound f-string is dropped exactly once, as itself");
 
-    // Passed to `print`, the accumulator is moved and nothing drops it.
+    // Passed to `print`, the accumulator is read and the scope still drops it,
+    // exactly once, as itself.
     let printed = lower("print(f\"hola\")\n");
     let body = printed.body("main");
+    let drops: Vec<&Place> = body
+        .blocks()
+        .filter_map(|(_, block)| match &block.terminator.kind {
+            TerminatorKind::Drop { place, flag, .. } => {
+                assert_eq!(*flag, None, "an f-string should need no drop flag");
+                Some(place)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(drops.len(), 1, "the accumulator is released once, by its scope");
     assert!(
-        !body
-            .blocks()
-            .any(|(_, block)| matches!(block.terminator.kind, TerminatorKind::Drop { .. })),
-        "the accumulator was moved into `print`; a drop here is a use-after-free"
+        !moves(body, drops[0]),
+        "`print` reads its argument; a move here is the free at the call site coming back"
     );
 }
 

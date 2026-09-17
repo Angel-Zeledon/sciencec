@@ -3063,7 +3063,8 @@ impl<'a> Lowerer<'a> {
     /// 1. **`print` of a string literal**, which Decision 15 makes three calls
     ///    — build, print, free — where MIR has one terminator.
     /// 2. **`print` of a `String` the program is holding**, which is one call
-    ///    and a free.
+    ///    and — only when MIR says the call is the value's last owner — a free.
+    ///    [`Lowerer::lower_print`] is where that is decided and why.
     /// 3. **A call to an `extern "C"` declaration**, which Decision 40 makes
     ///    *"a direct `call` to the declared symbol — no thunk, no wrapper, no
     ///    trampoline"*.
@@ -3147,22 +3148,35 @@ impl<'a> Lowerer<'a> {
 
     /// `print`, of a literal or of a `String` the program holds.
     ///
-    /// The free is not optional in either case. For a literal the temporary is
-    /// owned by the call site and nothing else frees it, so omitting
-    /// `science_string_free` leaks twenty-four bytes per evaluation; §2.6's
-    /// cost note for Decision 15 is the other half of the same fact — *"a
-    /// literal in a loop allocates on every iteration"* — and it also frees on
-    /// every iteration.
+    /// **The decision. Who frees the buffer is read off the operand, and the
+    /// operand is the only thing that can say.** A `Const` is a `String` this
+    /// call site built, so this call site frees it. A `Move` says MIR gave up
+    /// ownership at the call, so nothing else will free it and this call site
+    /// must. A `Copy` says the frame still owns it, so there is a
+    /// `TerminatorKind::Drop` further down that frees it and freeing here would
+    /// be the first half of a double free.
     ///
-    /// For a **moved** local the free is right for a different reason, and it
-    /// is worth stating because it looks like a double free and is not.
-    /// `print` has no declared signature (crate §3 item 7), so the checker
-    /// cannot know it borrows; MIR therefore records `move` of the local into
-    /// the call, drop elaboration treats the local as moved-out, and **no
-    /// `Drop` terminator is emitted for it**. The call is the value's last
-    /// owner, so the call frees it. A `copy` would mean something else still
-    /// owns it, and is refused rather than guessed, because a guess here is a
-    /// double free.
+    /// **The reason it is three arms and not two.** It used to be two, and the
+    /// third — `Copy` — was an outright refusal saying *"MIR's move analysis
+    /// says something else still owns it, and this call site frees what it
+    /// prints"*. That sentence described the bug rather than avoiding it: the
+    /// free was unconditional, so the only safe operand was a `Move`, so MIR
+    /// had to be wrong about `print` for anything to lower at all.
+    /// `science-mir`'s `lower` §5 now reads `print`'s missing signature as
+    /// *"unknown argument passing"* and hands over a `copy`, which is what
+    /// `strings-formatting-and-docs.md` §4.1's
+    /// `def print(value: borrowed any Display)` means at this level. The
+    /// `Move` arm is **kept and is not dead**: an `f"…"` bound to nothing is a
+    /// temporary whose last use is the call, and if the front half ever
+    /// declares the parameter the same arm covers whatever MIR then emits for a
+    /// value that really is consumed.
+    ///
+    /// **What it costs.** The two arms disagree about one `science_string_free`
+    /// and nothing in the emitted IR records which one ran, so a future change
+    /// that makes MIR emit `move` where it now emits `copy` is a use-after-free
+    /// the verifier cannot see — finding 18's shape. `tests/interpolation.rs`
+    /// and `tests/printing.rs` are execution tests for exactly that reason:
+    /// they run the program and read what it wrote.
     fn lower_print(
         &mut self,
         ctx: &mut BodyCtx,
@@ -3170,7 +3184,9 @@ impl<'a> Lowerer<'a> {
         insts: &mut Vec<ExtInst>,
     ) -> Result<(), Unlowered> {
         let string_layout = layout_of(self.target, &RtAggregate::String.cg_ty());
-        let slot = match args {
+        // `frees` is the decision above, taken here where all three operand
+        // shapes are in view rather than at the call that emits it.
+        let (slot, frees) = match args {
             [mir::Operand::Const(Constant::Literal(Literal::Str(text)))] => {
                 // A slot for the temporary `String`. It is not a MIR local —
                 // MIR's `print("…")` has the literal as a constant operand,
@@ -3179,9 +3195,11 @@ impl<'a> Lowerer<'a> {
                 // the rest (Decision 8).
                 let slot = self.temp(ctx, string_layout.clone());
                 self.build_string(text, slot, insts)?;
-                slot
+                (slot, true)
             }
-            [mir::Operand::Move(place)] if place.projection.is_empty() => {
+            [mir::Operand::Move(place) | mir::Operand::Copy(place)]
+                if place.projection.is_empty() =>
+            {
                 let local = LocalId(place.local.index() as u32);
                 let layout = ctx.layout(local)?.clone();
                 if layout != string_layout {
@@ -3191,13 +3209,7 @@ impl<'a> Lowerer<'a> {
                          `display` method on `Display` to call through even if it did",
                     ));
                 }
-                local
-            }
-            [mir::Operand::Copy(_)] => {
-                return Err(Unlowered::new(
-                    "a `print` of a copied `String`: MIR's move analysis says something else \
-                     still owns it, and this call site frees what it prints",
-                ));
+                (local, matches!(args[0], mir::Operand::Move(_)))
             }
             _ => return Err(Unlowered::new("a `print` of anything but a `String`")),
         };
@@ -3216,14 +3228,16 @@ impl<'a> Lowerer<'a> {
             sret_slot: None,
         }));
 
-        let free = self.declare("science_string_free")?;
-        insts.push(ExtInst::Above(Inst::Call {
-            dest: None,
-            callee: Callee::Runtime("science_string_free"),
-            args: vec![Operand::Value(address)],
-            ret: free.ret.clone(),
-            sret_slot: None,
-        }));
+        if frees {
+            let free = self.declare("science_string_free")?;
+            insts.push(ExtInst::Above(Inst::Call {
+                dest: None,
+                callee: Callee::Runtime("science_string_free"),
+                args: vec![Operand::Value(address)],
+                ret: free.ret.clone(),
+                sret_slot: None,
+            }));
+        }
         Ok(())
     }
 
