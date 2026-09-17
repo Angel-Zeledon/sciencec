@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Syntax &middot; Science</title>
-<meta name="description" content="Every construct Science has and every word it reserves: the grammar, a checked example of each, the precedence table read off the parser, what parses but is not built, and what the language deliberately does not have.">
+<meta name="description" content="Every construct Science has and every word it reserves: the lexical rules, indentation and line continuation, comments and the formatter's pragmas, scope and shadowing, where clauses, every control form, a checked example of each, the precedence table read off the parser, what parses but is not built, and what the language deliberately does not have.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -42,8 +42,8 @@
 
 <div class="status">
   <span><span class="dot dot-on"></span>Words the lexer knows <b>68</b> &mdash; 40 live, 28 held</span>
-  <span><span class="dot dot-on"></span>Science listings <b>29</b> &mdash; 27 clean, 1 a deliberate error, 1 removed syntax</span>
-  <span><span class="dot dot-on"></span>Of those, built and run <b>7</b>, output matched</span>
+  <span><span class="dot dot-on"></span>Science listings <b>38</b> &mdash; 36 clean, 1 a deliberate error, 1 removed syntax</span>
+  <span><span class="dot dot-on"></span>Of those, built and run <b>10</b>, output matched</span>
   <span><span class="dot dot-wip"></span>Parses and unbuilt <b>6</b> constructs</span>
   <span>Compiler <b>sciencec</b> 0.0.1</span>
 </div>
@@ -51,27 +51,36 @@
 <div class="revision">
   <h2>How every listing here was verified, and what the verdict means</h2>
   <p>
-    <strong>Twenty-eight Science listings below were extracted from this file's
-    own source, written to scratch files and run through
-    <code>sciencec check</code>. Twenty-seven report nothing.</strong> The
-    twenty-eighth is the <code>IndexMutably</code> block in
+    <strong>Thirty-seven Science listings below were extracted from this
+    file's own source, written to scratch files and run through
+    <code>sciencec check</code>. Thirty-six report nothing.</strong> The
+    thirty-seventh is the <code>IndexMutably</code> block in
     <a href="#notyet">Parses, and is not built</a>, which is on this page in
     order to fail and whose diagnostic is printed beneath it. One further block
     shows <strong>removed syntax</strong>, carries a grey rail and a caption,
-    and is not valid Science. <strong>Seven listings were then compiled with
-    <code>sciencec build</code> and executed</strong>, and the trailing
-    <code>#</code> comment on those seven was compared against their real stdout
-    and matches it. One listing &mdash; <a href="#modules">modules</a> &mdash;
-    needs a sibling file beside it, which is written out under the block.
+    and is not valid Science, so it is not one of the thirty-seven. One listing
+    &mdash; <a href="#modules">modules</a> &mdash; needs a sibling file beside
+    it, which is written out under the block, and it checks clean with that file
+    in place.
   </p>
   <p style="margin-top:0.7rem">
-    <strong>A listing with no output comment uses a construct the LLVM backend
-    refuses today</strong>, and that is the majority of them: the backend
-    implements the first four lowering stages, so a method call, an
-    <code>Array</code>, a generic, a <code>loop</code>, integer <code>/</code>
-    and <code>%</code>, and a shift all check and none of them build. That
-    distinction is stated rather than blurred, because <code>check</code>
-    accepts a great deal more of this language than <code>build</code> emits.
+    <strong>Ten listings carry a trailing <code>#</code> comment holding their
+    real stdout</strong>, compiled with <code>sciencec build</code> and executed,
+    and every one of those ten matched. They were not all run in the same pass:
+    a listing keeps its output comment only for as long as somebody has seen the
+    program print it, and one is removed rather than guessed at the moment it
+    cannot be reproduced.
+  </p>
+  <p style="margin-top:0.7rem">
+    <strong>A listing with no output comment was checked and not run</strong>,
+    and that is the majority of them, usually because it uses a construct the
+    LLVM backend refuses: the backend implements the first four lowering stages,
+    so a method call, an <code>Array</code>, a generic, a <code>loop</code>,
+    integer <code>/</code> and <code>%</code>, and a shift all check and none of
+    them build. That distinction is stated rather than blurred, because
+    <code>check</code> accepts a great deal more of this language than
+    <code>build</code> emits. <code>check</code> needs no backend at all, which
+    is why it is the measurement this page rests on.
   </p>
   <p style="margin-top:0.7rem">
     Every diagnostic reproduced on this page is the compiler's own stderr, run
@@ -79,6 +88,17 @@
     unbuilt it is in <a href="#notyet">Parses, and is not built</a> with the
     error it produces &mdash; never in a section above as if it worked. Nothing
     on this page is syntax somebody wished for.
+  </p>
+  <p style="margin-top:0.7rem">
+    <strong>That list shrinks, and when it does the entry says so rather than
+    vanishing.</strong> Two of the six moved while this page was being extended.
+    The array literal, which used to parse and never be type checked, is checked
+    now: <code>SC0281</code> and <code>SC0282</code> exist, both of its listings
+    stopped checking clean, and what was item 3 is a note inside its replacement.
+    A range index, which used to check clean and quietly hand back one element,
+    is now <code>SC0538</code> and says what it means. A reference that deleted
+    those two paragraphs would leave a reader no way to judge how stale the other
+    four are.
   </p>
 </div>
 
@@ -88,6 +108,12 @@
     <h2>Start here</h2>
     <ul>
       <li><a href="#shape">The shape of a file</a></li>
+    </ul>
+    <h2>Lexical</h2>
+    <ul>
+      <li><a href="#lexical">Tokens, identifiers, whitespace</a></li>
+      <li><a href="#comments">Comments, documentation, pragmas</a></li>
+      <li><a href="#layout">Indentation, newlines, continuation</a></li>
     </ul>
     <h2>Declarations</h2>
     <ul>
@@ -100,6 +126,7 @@
     <h2>Bindings and types</h2>
     <ul>
       <li><a href="#bindings">Bindings</a></li>
+      <li><a href="#scope">Scope and shadowing</a></li>
       <li><a href="#types">The type vocabulary</a></li>
       <li><a href="#generics">Generics</a></li>
     </ul>
@@ -138,6 +165,10 @@
     <code>main</code> to write. Blocks are indentation, opened by a
     <code>:</code>. Comments are <code>#</code> to end of line;
     <code>##</code> is a doc comment and attaches to the declaration below it.
+    The lexical rules are in <a href="#lexical">Tokens, identifiers,
+    whitespace</a>, the three kinds of comment in
+    <a href="#comments">Comments</a>, and the block and continuation rules in
+    <a href="#layout">Indentation, newlines, continuation</a>.
   </p>
 
 <pre data-science>print("lift-off")
@@ -176,7 +207,593 @@ lift-off</code></pre>
     A function body's last expression is its value; there is no implicit
     <code>return</code> anywhere else. A file may have top-level statements
     <em>or</em> a <code>main</code>, and not both &mdash; two answers to "what
-    runs first" is <code>SC0117</code>.
+    runs first" is <code>SC0117</code>, and what a top-level statement binds is
+    in <a href="#scope">Scope and shadowing</a>.
+  </p>
+
+  <p class="note">
+    <strong>Seven, and <code>const</code> is not one of them.</strong>
+    <code>const NAME be v</code> is a <em>declaration</em>, so it lives at the
+    top level of a module and not in a body: writing one inside a
+    <code>def</code> is <code>SC0105</code>, "expected an expression, found
+    <code>const</code>". That is the rule that makes a constant visible to every
+    item in the file, which a statement could never be.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="lexical">
+  <h2>Tokens, identifiers, whitespace<a class="anchor" href="#lexical" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    A source file is UTF-8 text and nothing else &mdash; no byte-order-mark
+    rule, no encoding pragma, no include. The lexer turns it into a stream that
+    always ends in <code>Eof</code>, and it <strong>recovers from every error
+    rather than stopping</strong>, so a stray character costs one diagnostic and
+    the rest of the file is still read. Four of the token kinds are synthetic:
+    they stand for line structure, they have no characters of their own, and
+    they are what makes indentation a grammar rather than a convention.
+  </p>
+
+  <h3>Every token kind</h3>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Kind</th><th>Written</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">Newline</td><td class="what">the end of a logical line</td><td class="what">Not emitted inside an unclosed bracket, and not emitted for a line that produced no token of its own.</td></tr>
+        <tr><td class="mono">Indent</td><td class="what">a line indented past the level above it</td><td class="what">One, whatever the width of the step.</td></tr>
+        <tr><td class="mono">Dedent</td><td class="what">a line indented back</td><td class="what"><strong>One per level closed.</strong> A line that closes four blocks emits four.</td></tr>
+        <tr><td class="mono">Eof</td><td class="what">the end of the file</td><td class="what">Preceded by every outstanding <code>Dedent</code>, so a file that ends mid-block still hands the parser a balanced stream.</td></tr>
+        <tr><td class="mono">Int</td><td class="mono">42 &nbsp; 0xFF &nbsp; 0o755 &nbsp; 0b1010</td><td class="what">Carries value, base and suffix. The <code>_</code> separators and the base prefix are already gone.</td></tr>
+        <tr><td class="mono">Float</td><td class="mono">3.14 &nbsp; 6.02e23</td><td class="what">Carries value and suffix.</td></tr>
+        <tr><td class="mono">Str</td><td class="mono">"hola" &nbsp; r"C:\runs"</td><td class="what">Escapes already resolved. A raw literal carries <em>no</em> marker into the stream: nothing after the lexer needs to know how a <code>String</code> was spelled.</td></tr>
+        <tr><td class="mono">Char</td><td class="mono">'a'</td><td class="what">Exactly one Unicode scalar value.</td></tr>
+        <tr><td class="mono">FStrStart, FStrText, InterpStart, InterpEnd, FStrEnd</td><td class="mono">f"a{x}b"</td><td class="what">An <code>f"&hellip;"</code> is <strong>five kinds of token, not one</strong>, and a hole's interior is ordinary tokens in the same stream. See <a href="#literals">Literals</a>.</td></tr>
+        <tr><td class="mono">Ident</td><td class="mono">samples &nbsp; dia &nbsp; n2</td><td class="what">Anything word-shaped that is not one of the 68 words.</td></tr>
+        <tr><td class="mono">keyword</td><td class="what">68 distinct words</td><td class="what">40 live, 28 held. The list is in <a href="#words">Every reserved word</a>.</td></tr>
+        <tr><td class="mono">punctuation</td><td class="mono">( ) [ ] { } , : ; . .. ..= -&gt; =&gt; _ @ ?</td><td class="what">Longest match wins: <code>..=</code> before <code>..</code> before <code>.</code>, and <code>-&gt;</code> before <code>-</code>.</td></tr>
+        <tr><td class="mono">operator</td><td class="mono">+ - * ** / % &amp; | ^ &lt;&lt; &gt;&gt; = == != &lt; &gt; &lt;= &gt;=</td><td class="what">Rungs and associativity are in <a href="#operators">Operators and precedence</a>.</td></tr>
+        <tr><td class="mono">Unknown</td><td class="what">anything else</td><td class="what">Emitted rather than aborting, which is what lets the parser report more than one error per pass.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <strong>Four of those are lexed and the grammar consumes none of them.</strong>
+    <code>;</code> and <code>=&gt;</code> have token kinds and no production:
+    <code>let a be 1; let b be 2</code> is <code>SC0100</code>, "expected end of
+    line, found <code>;</code>". <code>{</code> and <code>}</code> are lexed and
+    reach only the parser's bracket-depth counters, which is error recovery and
+    not syntax. A fifth kind, <code>Hash</code>, is <em>never emitted at all</em>
+    &mdash; it exists against the day <code>#</code> stops meaning a comment. A
+    page that listed them among the syntax would be describing the token table
+    instead of the language, so they are named here and nowhere else.
+  </p>
+
+  <h3>What may be an identifier</h3>
+  <p>
+    An identifier starts with <code>_</code> or any character Unicode calls
+    alphabetic, and continues with <code>_</code> or any alphanumeric one.
+    <strong>That is the whole rule</strong>, and it is why a Greek letter is an
+    ordinary name rather than a concession &mdash; which matters for a language
+    whose programs are meant to be read beside the paper they came from. Case is
+    significant and carries no meaning of its own: <code>Doc</code> and
+    <code>doc</code> are two names, and nothing in the grammar requires a type to
+    be capitalised.
+  </p>
+
+<pre data-science>let snake_case be 1
+let CamelCase be 2
+let n2 be 3
+let _unused be 4
+let d&#237;a be 5
+let &#916;t be 0.5
+print(f"{snake_case} {CamelCase} {n2} {d&#237;a} {&#916;t}")
+# 1 2 3 5 0.5</pre>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Not an identifier</th><th>What happens</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">2n</td><td class="what">A digit starts a number, so this is the literal <code>2</code> carrying the suffix <code>n</code>: <code>SC0009</code>, and then <code>SC0102</code> for the name that never arrived.</td></tr>
+        <tr><td class="mono">kebab-case</td><td class="what">Three tokens. <code>-</code> is subtraction and begins no identifier.</td></tr>
+        <tr><td class="mono">total$</td><td class="what"><code>SC0001</code> &mdash; <code>$</code> is not a character Science recognises. There are no sigils of any kind.</td></tr>
+        <tr><td class="mono">_</td><td class="what">Its own token, the wildcard. <code>let _ be 1</code> is <code>SC0102</code>: <code>_</code> names nothing, so there is nothing to bind. <code>_x</code>, with anything after the underscore, is an ordinary name.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>What is whitespace</h3>
+  <p>
+    Between tokens a space, a tab and a carriage return separate and mean
+    nothing else, so a file indented with spaces and aligned with tabs
+    <em>inside</em> a line is one program however it is displayed, and a CRLF
+    file is the same program as an LF one. <strong>In the indentation the rule is
+    different and stricter</strong>: only spaces count, a tab there is
+    <code>SC0003</code>, and a lone carriage return before the break carries no
+    width. The reason is in the diagnostic &mdash; a tab's width depends on how
+    the file is displayed, so a block indented with one would mean different
+    things to two readers of the same file. The cost is that the same character
+    is legal in one column and an error three columns to its left.
+  </p>
+
+  <p class="note">
+    The language sets no line length. <code>sciencec fmt</code> targets
+    <strong>90 columns</strong> and indents by four spaces, and neither number is
+    a rule the compiler enforces.
+  </p>
+
+  <h3>Every lexical diagnostic</h3>
+  <p>
+    <code>SC0001</code>&ndash;<code>SC0099</code> is the lexer's band and it
+    spends twelve of them. <code>SC0170</code>&ndash;<code>SC0177</code> is the
+    interpolating literal's band, emitted here as well, because the shape of an
+    <code>f"&hellip;"</code> is only visible to the pass that reads the
+    characters: by the time the parser has a token stream, an unterminated hole
+    has already become a stream that stops.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Code</th><th>Fires on</th><th>Example</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">SC0001</td><td class="what">A character that is not part of the language.</td><td class="mono">1 $ 2</td></tr>
+        <tr><td class="mono">SC0003</td><td class="what">A tab in a line's indentation.</td><td class="what">a tab, then code</td></tr>
+        <tr><td class="mono">SC0004</td><td class="what">An indentation width matching no open level.</td><td class="what">4, then 2</td></tr>
+        <tr><td class="mono">SC0005</td><td class="what">An integer literal too large to hold.</td><td class="mono">999&hellip;999</td></tr>
+        <tr><td class="mono">SC0006</td><td class="what">An escape the lexer does not know.</td><td class="mono">"\q"</td></tr>
+        <tr><td class="mono">SC0007</td><td class="what">A string with no closing quote on its line.</td><td class="mono">"open</td></tr>
+        <tr><td class="mono">SC0008</td><td class="what">A character literal unterminated, empty, or holding more than one.</td><td class="mono">'ab'</td></tr>
+        <tr><td class="mono">SC0009</td><td class="what">A suffix that is not one of the ten, or an integer suffix on a float.</td><td class="mono">42foo &nbsp; 1.5i32</td></tr>
+        <tr><td class="mono">SC0010</td><td class="what">A digit outside the literal's base.</td><td class="mono">0b1012</td></tr>
+        <tr><td class="mono">SC0011</td><td class="what">A float literal that overflows <code>F64</code>.</td><td class="mono">1e400</td></tr>
+        <tr><td class="mono">SC0016</td><td class="what"><code>==</code>. Fixed to <code>is</code>.</td><td class="mono">a == b</td></tr>
+        <tr><td class="mono">SC0017</td><td class="what"><code>!=</code>. Fixed to <code>is not</code>.</td><td class="mono">a != b</td></tr>
+        <tr><td class="mono">SC0170</td><td class="what">An interpolation with no closing <code>}</code>.</td><td class="mono">f"{n"</td></tr>
+        <tr><td class="mono">SC0171</td><td class="what">A <code>}</code> inside an <code>f"&hellip;"</code> that closes nothing.</td><td class="mono">f"a } b"</td></tr>
+        <tr><td class="mono">SC0173</td><td class="what">A format specification, which is <a href="#notyet">specified and unbuilt</a>.</td><td class="mono">f"{pi:.2f}"</td></tr>
+        <tr><td class="mono">SC0174</td><td class="what">An interpolation with nothing in it.</td><td class="mono">f"{}"</td></tr>
+        <tr><td class="mono">SC0175</td><td class="what">A <code>#</code> inside an interpolation &mdash; it would comment out the rest of the literal.</td><td class="mono">f"{n # why}"</td></tr>
+        <tr><td class="mono">SC0177</td><td class="what">Literal prefixes combined.</td><td class="mono">rf"x"</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <code>SC0002</code> and <code>SC0012</code>&ndash;<code>SC0015</code> are
+    unallocated. <code>SC0172</code> &mdash; a plain <code>"&hellip;"</code> every
+    one of whose names resolves, which is a forgotten <code>f</code> &mdash; is
+    specified and not implemented, and cannot be: deciding it needs a scope, and
+    the lexer is the only pass that still has the literal.
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0016]</span>: equality is written `is`
+ --&gt; stale.science:1:12
+  |
+1 | let a be 1 == 2
+  |            <span class="e-hi">^^</span> `==` is not an operator in Science
+  |
+  = note: there is one spelling for each comparison: `is` and `is not` for identity, and `&gt;`, `&lt;`, `&gt;=`, `&lt;=` for order
+  = <span class="e-help">help: write the word instead: `is`</span>
+1 error</code></pre>
+
+  <p class="note">
+    <code>==</code> is a <em>lexical</em> error and not a parse error, and the
+    difference is the point: the lexer reports it and then emits the equality
+    token anyway, so a stale symbol costs one diagnostic carrying an applicable
+    fix, and the rest of the expression parses as though the fix had already been
+    taken. <code>!</code> on its own is <code>SC0001</code> &mdash; negation is
+    <code>not</code>, and <code>!</code> begins no operator at all.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="comments">
+  <h2>Comments, documentation, pragmas<a class="anchor" href="#comments" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    One character opens all three kinds and what follows it decides which:
+    <code>#</code> is an ordinary comment, <code>##</code> is documentation that
+    the compiler reads and ships, and <code>#&nbsp;fmt:&nbsp;off</code> is an
+    instruction to the formatter. All three run to the end of the line.
+    <strong>There are no block comments</strong>, and there is no nesting to get
+    wrong, because a comment ends where the line does and nothing reopens it.
+  </p>
+
+<pre data-science># An ordinary comment runs to the end of the line. There are no block
+# comments, so a paragraph is a run of these.
+
+#No space after the hash is required.
+# A comment may hold a "string", a 'c', an 0xFF, and words that would be
+# keywords anywhere else: def return let be mutable type choice giving.
+# It may hold anything Unicode can spell.
+
+def tally(n: Int) -&gt; Int:
+    # A comment as the first thing in a block.
+    let mutable total be n  # a trailing comment after a statement
+
+    # A comment-only line inside a block, after a blank one.
+
+    total be total + 1
+    total
+
+print(f"{tally(1)}")</pre>
+
+<pre data-science>## Counts the samples above a floor.
+##
+## The first line is the summary. The whole run is the description, summary
+## included, and `sciencec tools --json` emits it verbatim.
+tool count_above(samples: Array of F64, floor: U16) -&gt; Int:
+    samples.length()
+
+## A run attaches to the next token that has text of its own, so the newline
+## and the indent between this run and `def` pass straight over it.
+def unused() -&gt; Int:
+    0
+
+print(f"{unused()}")
+# 0</pre>
+
+  <h3><code>#</code> &mdash; the ordinary comment</h3>
+  <p>
+    Everything from the <code>#</code> to the line break, and nothing else. A
+    comment-only line and a blank line <strong>take no part in the indentation
+    calculation</strong>, which is what lets a comment sit at any column without
+    opening or closing a block &mdash; a comment written at column 0 in the
+    middle of a function does not end the function, and one indented past every
+    open level does not start one. That rule is the reason the language can
+    afford to be indentation-delimited and still let you write a note wherever
+    the note belongs.
+  </p>
+
+  <h3><code>##</code> &mdash; the documentation run</h3>
+  <p>
+    <strong>A doc comment is trivia, not a token.</strong> Making it a token
+    would put it in every <code>match</code> over token kinds in the parser, for
+    a thing the grammar never mentions; instead the lexer accumulates a
+    <em>run</em> of consecutive <code>##</code> lines and hands it to the next
+    token that has text of its own. <code>Newline</code>, <code>Indent</code> and
+    <code>Dedent</code> pass over it without consuming it, and that is precisely
+    what lets a run survive the line break and the indent that always sit between
+    it and the declaration it documents.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Rule</th><th>What it means</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">##</td><td class="what">Documentation. <strong>So is <code>###</code>, and every deeper run</strong> &mdash; <code>###</code> heads a Markdown section, and refusing it would make the marker fight the language written inside it. The cost is that a <code>####</code> rule drawn as decoration is a doc line, and joins the run below it.</td></tr>
+        <tr><td class="mono">## text</td><td class="what">The marker and <strong>one</strong> following space are stripped. Any further indentation is yours and is kept, because a doc comment holds code samples.</td></tr>
+        <tr><td class="what">a run</td><td class="what">Consecutive <code>##</code> lines are one thing with one span, from the first <code>#</code> to the last non-blank character. Trailing whitespace is dropped so a caret under the run is as wide as the run reads.</td></tr>
+        <tr><td class="what">where it may go</td><td class="what">Before any declaration, and before a <code>tool</code>'s parameters. Nowhere else &mdash; a run before a <code>def</code>'s parameter is <code>SC0194</code>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    On a <code>tool</code> the run is not documentation the compiler tolerates;
+    it is program data, and the compiler enforces it. The whole run &mdash; every
+    line, joined by line feeds, summary included &mdash; becomes the
+    <code>description</code> that a model reads in order to decide whether to
+    call the thing.
+  </p>
+
+<pre class="shell"><code><span class="p">$</span> sciencec tools --json count.science
+[{"name":"count_above","inputSchema":{"type":"object","properties":{"samples":
+{"type":"array","items":{"type":"number"}},"floor":{"type":"integer","minimum":0,
+"maximum":65535}},"required":["samples","floor"]},"description":"Counts the
+samples above a floor.\n\nThe first line is the summary. The whole run is the
+description, summary\nincluded, and `sciencec tools --json` emits it verbatim."}]</code></pre>
+
+  <p class="note">
+    That is one line in the real output, wrapped here to fit the column. Note
+    what is <em>not</em> in it: there is no <code>title</code> field. The first
+    line is the summary by rule &mdash; <code>SC0195</code> enforces that it is
+    not blank &mdash; and the split is never made in the JSON, because the caller
+    reads the description whole.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Code</th><th>Fires on</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">SC0190</td><td class="what">A <code>tool</code> with no <code>##</code> run above it. An undescribed tool does not fail: it is simply never chosen, and no test catches that.</td></tr>
+        <tr><td class="mono">SC0194</td><td class="what">A <code>##</code> run before the parameter of anything that is not a <code>tool</code>. Only a <code>tool</code> documents its parameters one by one, because only there does each become a described field of a schema.</td></tr>
+        <tr><td class="mono">SC0195</td><td class="what">A <code>tool</code>'s run that opens with a blank <code>##</code>. The caret covers the whole run, not the declaration under it, because a run of four lines that opens blank is wrong across all four.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+<pre class="err"><code><span class="e-code">error[SC0194]</span>: only a `tool` documents its parameters one by one
+ --&gt; docs.science:2:5
+  |
+2 |     ## a doc run on a parameter
+  |     <span class="e-hi">^^^^^^^^^^^^^^^^^^^^^^^^^^^</span> this `##` comment documents a parameter
+3 |     x: Int
+  |     - the parameter it is attached to
+  |
+  = note: move the text into the `##` comment above the declaration; a `tool` documents a parameter here because each one becomes a described field of the schema its caller reads
+1 error</code></pre>
+
+  <p class="note">
+    <strong>Two gaps, stated rather than implied.</strong>
+    <code>SC0176</code> &mdash; a <code>##</code> run attached to no declaration,
+    at the end of a file or separated from the next declaration by a blank line
+    &mdash; is specified as a warning and is defined in no crate: today such a
+    run is silently dropped, and a run separated from its declaration by a blank
+    line still attaches to it. And a <code>##</code> run on a <code>tool</code>'s
+    parameter is parsed and kept in the syntax tree, but the schema emitter works
+    over a later representation that has no field to carry it, so no
+    per-property <code>description</code> reaches the JSON.
+  </p>
+
+  <h3><code>#&nbsp;fmt:</code> &mdash; the formatter's three pragmas</h3>
+  <p>
+    <code>sciencec fmt</code> is idempotent and has one canonical layout, so the
+    only thing it can offer is an exception. There are three, and they are
+    ordinary comments to every other pass &mdash; the compiler does not know they
+    exist.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Written</th><th>Does</th></tr></thead>
+      <tbody>
+        <tr><td class="mono"># fmt: off</td><td class="what">Suppresses formatting from this line until the matching <code># fmt: on</code>. Both marker lines are inside the region and are reproduced.</td></tr>
+        <tr><td class="mono"># fmt: on</td><td class="what">Ends the region. On its own, with no <code>off</code> above it, it is an ordinary comment and is never warned about.</td></tr>
+        <tr><td class="mono"># fmt: skip</td><td class="what">Suppresses <strong>the next statement</strong> &mdash; the next <em>logical</em> line, however many physical lines that spans, along with anything written between the marker and it.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+<pre class="shell"><code><span class="p">$</span> cat held.science
+# fmt: off
+let table be 1
+let x     be 2
+# fmt: on
+let y     be 3
+<span class="p">$</span> sciencec fmt held.science
+# fmt: off
+let table be 1
+let x     be 2
+# fmt: on
+let y be 3</code></pre>
+
+  <p>
+    <strong>The spelling is exact and the compiler will not tell you when you
+    miss it.</strong> Exactly one <code>#</code>; then, after any amount of
+    whitespace, the literal text <code>fmt: off</code>, <code>fmt: on</code> or
+    <code>fmt: skip</code>, and nothing else on the line. So
+    <code>#fmt:&nbsp;off</code> works and <code>#&nbsp;fmt:off</code> does not;
+    <code>##&nbsp;fmt:&nbsp;off</code> is a doc run and never a directive;
+    <code>#&nbsp;FMT:&nbsp;OFF</code> is a comment; <code>#&nbsp;fmt:&nbsp;off
+    for now</code> is a comment. There is deliberately <em>no</em> diagnostic for
+    a near miss, which is the cost: a mistyped marker is silently inert.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Also inert</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">f(a)  # fmt: skip</td><td class="what">A marker must stand on a line of its own between statements. Trailing on a line of code it belongs to that line, and is an ordinary comment &mdash; which is the opposite of what the same spelling does in Black.</td></tr>
+        <tr><td class="mono">f(<br>&nbsp;&nbsp;# fmt: off<br>)</td><td class="what">A marker inside a bracketed list is an ordinary comment. Inside brackets there are no statements to stand between.</td></tr>
+        <tr><td class="mono">off &hellip; off &hellip; on</td><td class="what">Regions do not nest. A marker inside a region is text: the scan takes the <em>first</em> <code>on</code> it finds, so the inner <code>off</code> opens nothing.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    An <code>off</code> with no <code>on</code> is the one case that is reported.
+    The region runs to the end of the file and the formatter warns rather than
+    refusing, because ignoring the marker would reformat code that asked to be
+    left alone &mdash; the one thing the marker exists to prevent.
+  </p>
+
+<pre class="err"><code><span class="e-code">warning[SC0901]</span>: `# fmt: off` has no matching `# fmt: on`
+ --&gt; held.science:1:1
+  |
+1 | # fmt: off
+  | <span class="e-hi">^^^^^^^^^^</span> formatting is suppressed from here to the end of the file
+  |
+  = note: the forgiving reading was chosen deliberately: ignoring the marker would reformat code that asked to be left alone, which is the one thing the marker exists to prevent. Write `# fmt: on` where the exception ends.
+1 warning</code></pre>
+
+  <p class="note">
+    A suppressed region is reproduced as written, but the whole of it is shifted
+    by one common offset so that its first line lands on the column the rest of
+    the file uses. Byte-for-byte reproduction was rejected for a reason worth
+    knowing: a region left at a column the file no longer uses would change the
+    block structure, and a formatter that can change what a program means is
+    worse than one that reformats something you wanted held.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="layout">
+  <h2>Indentation, newlines, continuation<a class="anchor" href="#layout" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    <strong>Indentation is how every block in this language is delimited.</strong>
+    There is no <code>{</code>, no <code>end</code>, no <code>begin</code>. A
+    <code>:</code> at the end of a line opens a block; indenting past the level
+    above emits <code>Indent</code>; indenting back emits one
+    <code>Dedent</code> per level closed. Because the lexer does this, a block is
+    a grammatical object the parser matches on, and a misplaced line is a
+    diagnostic with a caret rather than a program that quietly means something
+    else.
+  </p>
+
+  <h3>The rules, in full</h3>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Rule</th><th>What follows from it</th></tr></thead>
+      <tbody>
+        <tr><td class="what">Spaces only.</td><td class="what">A tab in the indentation is <code>SC0003</code>. Recovery gives the line the level currently on top of the stack rather than guessing a width, so one tab costs one diagnostic and not a cascade.</td></tr>
+        <tr><td class="what">Any width opens a level.</td><td class="what">The language names no number. Four spaces is what <code>sciencec fmt</code> writes and not what the compiler requires.</td></tr>
+        <tr><td class="what">Dedenting must land on an open level.</td><td class="what">Otherwise <code>SC0004</code>, which lists the levels that <em>are</em> open. Recovery pushes the width as a new level so the stream stays balanced.</td></tr>
+        <tr><td class="what">One <code>Dedent</code> per level closed.</td><td class="what">A statement at level 6 followed by one at level 1 emits five. Closing many levels at once is the case that breaks a naive indentation stack, so the corpus goes eight deep on purpose.</td></tr>
+        <tr><td class="what">Blank and comment-only lines take no part.</td><td class="what">They are skipped before the width is measured, so neither opens or closes anything, whatever column it is written at.</td></tr>
+        <tr><td class="what">The file ends the last line and closes every block.</td><td class="what">A file with no trailing newline still gets its <code>Newline</code>, and <code>Eof</code> is preceded by every outstanding <code>Dedent</code>. The parser sees one shape and not two.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The synthetic tokens are visible. <code>sciencec tokens</code> prints the
+    stream, which is the shortest way to settle any argument about what a layout
+    means:
+  </p>
+
+<pre class="shell"><code><span class="p">$</span> cat sign.science
+def sign(n: Int) -&gt; Int:
+    if n &lt; 0:
+        -1
+    else:
+        1
+<span class="p">$</span> sciencec tokens sign.science
+   0..3     Function
+   4..8     Ident("sign")
+  ...
+  23..24    Colon
+  24..25    Newline
+  25..29    Indent
+  29..31    If
+  ...
+  37..38    Colon
+  38..39    Newline
+  39..47    Indent
+  47..48    Minus
+  48..49    Int { value: 1, base: Dec, suffix: None }
+  49..50    Newline
+  54..54    Dedent
+  54..58    Else
+  58..59    Colon
+  59..60    Newline
+  60..68    Indent
+  68..69    Int { value: 1, base: Dec, suffix: None }
+  69..70    Newline
+  70..70    Dedent
+  70..70    Dedent
+  70..70    Eof</code></pre>
+
+  <p class="note">
+    Note the <code>Dedent</code> before <code>Else</code>, and the two at the
+    end. <code>Indent</code> carries a span covering the whitespace it measured;
+    <code>Dedent</code> and the final <code>Newline</code> are zero-width, which
+    is why a diagnostic about a missing block points at a column rather than
+    underlining one.
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0004]</span>: this indentation matches no open level
+ --&gt; ragged.science:3:1
+  |
+3 |   let b be 2
+  | <span class="e-hi">^^</span> indented 2 columns
+  |
+  = note: the open levels are 0
+
+<span class="e-code">error[SC0100]</span>: unexpected indentation at the top level of a module
+ --&gt; ragged.science:3:3
+  |
+3 |   let b be 2
+  |   <span class="e-hi">^</span> unexpected indentation at the top level of a module
+2 errors</code></pre>
+
+  <h3>Line continuation &mdash; the two things that do it</h3>
+  <p>
+    Every line break ends a statement, <strong>except two</strong>, and both are
+    written at the start of the continuing line. A reference that omits this is
+    the reason a reader believes a five-line chain is five statements.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Continues</th><th>Rule</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">( [ {</td><td class="what">While any bracket is open the line structure is <strong>suppressed entirely</strong>: no <code>Newline</code>, no <code>Indent</code>, no <code>Dedent</code>, and the indentation inside is decorative. This is what makes one-argument-per-line formatting work.</td></tr>
+        <tr><td class="mono">.</td><td class="what">A line whose first character is <code>.</code> <em>and whose next character can start an identifier</em> continues the line above. That is how a method chain breaks.</td></tr>
+        <tr><td class="mono">where</td><td class="what">A line beginning with the word <code>where</code> continues the line above, so a long signature breaks before its bounds. No statement may begin with <code>where</code>, so recognising it here costs nothing.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    <code>..</code> is excluded from the <code>.</code> rule deliberately: a
+    range is not a chain link, and no line may begin with one. The rule is
+    written as "a <code>.</code> followed by an identifier start", which also
+    means a leading <code>.0</code> continues nothing &mdash; consistent with
+    there being <a href="#absent">no <code>t.0</code></a> to reach for. Blank and
+    comment-only lines take no part here either, so a comment in the middle of a
+    chain does not break it.
+  </p>
+
+<pre data-science>type Config:
+    host: String
+    port: U16
+    retries: U8
+
+def connect(
+    host: borrowed String,
+    port: U16,
+    retries: U8,
+) -&gt; Bool:
+    retries &gt; 0
+
+def hosts(configs: borrowed Array of Config) -&gt; Array of String:
+    configs
+        .iterate()
+        # a comment-only line takes no part, and the chain survives it
+        .map(each.host)
+        .collect()
+
+def described of T(
+    value: borrowed T,
+) -&gt; String
+        where T: Display:
+    f"{value}"
+
+let config be Config(
+    host: "localhost",
+    port: 8080u16,
+    retries: 3u8,
+)
+print(f"{connect(config.host, config.port, config.retries)}")</pre>
+
+  <p class="note">
+    <strong>Trailing commas are allowed in every parenthesised and bracketed
+    list</strong> &mdash; arguments, parameters, generic arguments, record
+    fields, tuples, array literals and pattern lists. They are not allowed in a
+    <code>where</code> clause, which has no brackets to hold it open: <code>where
+    T: A,:</code> is <code>SC0104</code> and then a small cascade, because the
+    parser goes looking for the type that the comma promised.
+  </p>
+
+  <p>
+    The two continuations are visible in the token stream as an <em>absence</em>.
+    A chain broken over four lines produces one <code>Newline</code>, at the end
+    of the last:
+  </p>
+
+<pre class="shell"><code><span class="p">$</span> sciencec tokens chain.science
+  ...
+  59..60    Newline
+  60..64    Indent
+  64..66    Ident("xs")
+  75..76    Dot
+  76..83    Ident("iterate")
+  83..84    LParen
+  84..85    RParen
+  94..95    Dot
+  95..102   Ident("collect")
+ 102..103   LParen
+ 103..104   RParen
+ 104..105   Newline
+ 105..105   Dedent
+ 105..105   Eof</code></pre>
+
+  <p class="note">
+    Between <code>Ident("xs")</code> at 64 and <code>Dot</code> at 75 there are
+    two line breaks and eight columns of indentation, and not one token stands
+    for them. That is the rule doing its job: an indented chain continuation is
+    <em>expression</em> indentation, not a body, and an indentation-delimited
+    language has to be able to tell them apart or it cannot have chains at all.
   </p>
 </section>
 
@@ -454,6 +1071,17 @@ public def main():
       </tbody>
     </table>
   </div>
+
+  <p class="note">
+    <strong><code>public</code> is refused where it would mean nothing.</strong>
+    On a <code>use</code>, on an <code>extern</code> block, on an implementation
+    and on a top-level statement it is <code>SC0107</code> with a deletion
+    offered &mdash; an import exports nothing, an implementation declares no name
+    to export, and a statement in a script has no name at all. There is one
+    visibility word and no <code>private</code>: everything is private until it
+    says otherwise, so the absent word is the default and the present one is the
+    exception.
+  </p>
 </section>
 
 <!-- ==================================================================== -->
@@ -589,6 +1217,145 @@ else:
       </tbody>
     </table>
   </div>
+</section>
+
+<!-- ==================================================================== -->
+<section id="scope">
+  <h2>Scope and shadowing<a class="anchor" href="#scope" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    A name is visible from where it is bound to the end of the block that binds
+    it, and nowhere else. <strong>Items are the exception</strong>: a
+    <code>def</code>, a <code>type</code>, a <code>choice</code>, an
+    <code>interface</code> and a <code>const</code> live in a table of their own
+    and are visible throughout the file regardless of order, which is what lets
+    two functions call each other without a forward declaration.
+  </p>
+
+  <h3>What introduces a scope</h3>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Scope</th><th>Holds</th></tr></thead>
+      <tbody>
+        <tr><td class="what">the module</td><td class="what">Every item in the file, and whatever a <code>use</code> brings in. Order-free, and consulted only after every block has missed.</td></tr>
+        <tr><td class="what">a declaration's generics</td><td class="what">The type parameters, in scope for the parameters, the return type, the <code>where</code> clause and the body &mdash; and out of scope the moment the declaration closes.</td></tr>
+        <tr><td class="what">a parameter list</td><td class="what">The parameters, including <code>self</code>.</td></tr>
+        <tr><td class="what"><strong>every block</strong></td><td class="what">Every function body, every <code>if</code> branch, every <code>else</code>, every <code>loop</code>, <code>for</code>, <code>match</code> arm and <code>unsafe</code> body &mdash; <em>and every inline block</em>. One rule, no exceptions for the short forms.</td></tr>
+        <tr><td class="what">a pattern</td><td class="what">A <code>for</code> loop's bindings and a <code>match</code> arm's bindings, for the body that follows.</td></tr>
+        <tr><td class="what">a closure</td><td class="what">Exactly one name: the <code>giving</code> parameter, or the invented <code>each</code>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    A <code>let</code> in a branch is visible to the rest of that branch and to
+    nothing after it. The condition of an <code>if</code> and the iterable of a
+    <code>for</code> are resolved <em>outside</em> the block they head, so a loop
+    cannot see its own bindings in the expression it walks.
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0200]</span>: cannot find `b` in this scope
+ --&gt; leaked.science:7:5
+  |
+7 |     b
+  |     <span class="e-hi">^</span> not found
+1 error</code></pre>
+
+  <h3>A name may be rebound, and it shadows</h3>
+  <p>
+    <strong>A second <code>let</code> on the same name in the same block is
+    legal, silent, and shadows the first.</strong> The new binding may have a
+    different type, and its initialiser is resolved before any of its names are
+    defined &mdash; so <code>let n be n + 1</code> reads the <em>old</em>
+    <code>n</code> and then hides it. There is no warning, because the feature
+    exists in order to be used: narrowing a value through a series of steps
+    without inventing <code>n2</code> and <code>n3</code> is the whole point.
+  </p>
+
+<pre data-science>def shadowed(n: Int) -&gt; Int:
+    let n be n + 1
+    let n be n * 10
+    n
+
+let answer be 4
+let answer be shadowed(answer)
+print(f"{answer}")
+# 50</pre>
+
+  <p class="note">
+    <strong>Shadowing is a property of blocks and of nothing else.</strong> A
+    repeated <em>parameter</em>, a repeated <em>generic parameter</em>, and a
+    name bound twice inside <em>one pattern</em> are each
+    <code>SC0201</code>, "the ... is defined more than once", and the first
+    declaration keeps the name. That includes an or-pattern: <code>A(x) |
+    B(x)</code> is documented in the resolver as binding one <code>x</code> and
+    in fact reports <code>SC0201</code>, so an alternative that binds a payload
+    has to be written as two arms today.
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0201]</span>: the binding `x` is defined more than once
+ --&gt; alts.science:6:18
+  |
+6 |         A(x) | B(x): x
+  |           - first defined here
+  |                  <span class="e-hi">^</span> defined again here
+1 error</code></pre>
+
+  <h3>What a top-level statement binds</h3>
+  <p>
+    A file whose top level holds statements is a <em>script</em>: the compiler
+    wraps those statements in the <code>main</code> it writes for you.
+    <strong>So a top-level <code>let</code> binds a local, not a module-level
+    name</strong>, and the consequence surprises people &mdash; it is invisible
+    inside a <code>def</code> in the same file, because a function body is a
+    different scope and the module table holds items only.
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0200]</span>: cannot find `top` in this scope
+ --&gt; script.science:3:5
+  |
+3 |     top
+  |     <span class="e-hi">^^^</span> not found
+1 error</code></pre>
+
+  <p class="note">
+    Written out: <code>let top be 7</code> at the top of a file, then <code>def
+    uses_top() -&gt; Int:</code> with <code>top</code> as its body, does not
+    check. Pass the value as a parameter, or make it a <code>const</code> &mdash;
+    a <code>const</code> is an item and is in scope everywhere in the file.
+  </p>
+
+  <p>
+    Two consequences of the same rule are their own diagnostics.
+    <strong><code>SC0117</code></strong>: a file may have top-level statements
+    <em>or</em> a hand-written <code>main</code> and not both, because two
+    answers to "what runs first" is not a question the compiler should pick for
+    you. <strong><code>SC0213</code></strong>: top-level statements in a module
+    that is not the entry point are an error, because Science does not run a
+    module's statements when it is imported, so they would never run at all.
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0117]</span>: this file has top-level statements and also declares `main`
+ --&gt; both.science:2:5
+  |
+1 | let a be 1
+  | ---------- the top-level statements start here, and are already a `main`
+2 | def main():
+  |     <span class="e-hi">^^^^</span> `main` is declared here
+  |
+  = note: a file whose top level holds statements is a script: the statements are the program, and the compiler writes the `main` that runs them
+  = note: move the statements into `main`, or delete `main` and let the statements be the script
+1 error</code></pre>
+
+  <p class="note">
+    A local shadows a <em>module</em> too. <code>text.parser</code> folds into a
+    module path only when no enclosing block holds a binding called
+    <code>text</code>; bind that name and the path becomes a field access on
+    your value, which is the reading you asked for. Reserved words cannot be
+    shadowed because they cannot be bound at all: <code>let model be 1</code> is
+    <code>SC0102</code>, "expected an identifier, found <code>model</code>, which
+    is reserved for a later phase". <code>each</code> is a keyword for that exact
+    reason &mdash; no user binding can collide with the one a closure invents.
+  </p>
 </section>
 
 <!-- ==================================================================== -->
@@ -766,6 +1533,123 @@ print(paired(1, "one").second)</pre>
     why the language makes you write the word. Both are in the listing above, on
     the same interface.
   </p>
+
+  <h3>The <code>where</code> clause</h3>
+  <p>
+    A bound may be written in two places and they mean the same thing. Inline
+    &mdash; <code>def f of T: Summarize(&hellip;)</code> &mdash; puts the
+    constraint where the parameter is introduced, which reads well when there is
+    one of each. A <code>where</code> clause puts every constraint after the
+    signature instead, which is the only form that stays readable when a
+    parameter carries three bounds or a declaration carries three parameters. The
+    cost of having both is that a reader has to look in two places; the reason
+    for paying it is that a signature is the thing most often read and least
+    often edited, and a line of bounds in the middle of it hides the parameters.
+  </p>
+
+<pre data-science>interface Summarize:
+    def summarize(self) -&gt; String
+
+interface Clone:
+    def clone(self) -&gt; Self
+
+def inline of T: Summarize(value: borrowed T) -&gt; String:
+    value.summarize()
+
+def clause of T(value: borrowed T) -&gt; String where T: Summarize:
+    value.summarize()
+
+def several of (A, B)(left: borrowed A, right: borrowed B) -&gt; String
+        where A: Summarize, B: Summarize + Clone:
+    right.clone().summarize()
+
+def both of T: Summarize(value: borrowed T) -&gt; String where T: Clone:
+    value.clone().summarize()</pre>
+
+  <p class="note">
+    <strong>Both forms on one declaration is legal and is not a diagnostic.</strong>
+    <code>both</code> above declares <code>T: Summarize</code> inline and
+    <code>T: Clone</code> in the clause, and the checker reads the two lists and
+    concatenates them, so <code>T</code> is <code>Summarize + Clone</code>. The
+    syntax tree keeps them apart deliberately &mdash; a diagnostic has to be able
+    to point at where the programmer wrote a bound, not at where the compiler
+    filed it.
+  </p>
+
+  <p><strong>Where a <code>where</code> may appear.</strong> Six declaration forms
+  carry generic parameters, and the clause goes on all six.</p>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Declaration</th><th>Written</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">def</td><td class="mono">def f of T(&hellip;) -&gt; R where T: I:</td></tr>
+        <tr><td class="mono">type</td><td class="mono">type Sorted of T where T: Ord:</td></tr>
+        <tr><td class="mono">choice</td><td class="mono">choice Tagged of T where T: Ord:</td></tr>
+        <tr><td class="mono">interface</td><td class="mono">interface Keyed of T where T: Ord:</td></tr>
+        <tr><td class="mono">implements</td><td class="mono">Sorted of T implements Keyed of T where T: Ord:</td></tr>
+        <tr><td class="mono">has</td><td class="mono">Sorted of T has where T: Ord:</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+<pre data-science>interface Ord:
+    def cmp(self, other: borrowed Self) -&gt; Int
+
+type Sorted of T where T: Ord:
+    items: Array of T
+
+choice Tagged of T where T: Ord:
+    Present(T)
+    Absent
+
+interface Keyed of T where T: Ord:
+    def key(self) -&gt; Int
+
+Sorted of T implements Keyed of T where T: Ord:
+    def key(self) -&gt; Int:
+        self.items.length()
+
+Sorted of T has where T: Ord:
+    def count(self) -&gt; Int:
+        self.items.length()</pre>
+
+  <p class="note">
+    It goes on the six forms above and nowhere else. A <code>where</code> after a
+    <strong>type alias</strong> (<code>type E is Array of F32 where &hellip;</code>),
+    after a <code>const</code>, or after a <code>use</code> is <code>SC0100</code>,
+    "expected end of line, found <code>where</code>" &mdash; those declarations
+    have no generic parameters for a predicate to constrain. It also parses on a
+    <code>tool</code>, because <code>tool</code> and <code>def</code> share the
+    same reader, but a generic <code>tool</code> is <code>SC0191</code> in the
+    next breath, so the clause has nothing it could bind.
+  </p>
+
+  <p><strong>What may be in one.</strong> A clause is one or more predicates, and a
+  predicate is a subject, a <code>:</code> and a list of bounds joined by
+  <code>+</code>.</p>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Form</th><th>Means</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">where T: I</td><td class="what">One predicate: a subject, a <code>:</code>, a bound.</td></tr>
+        <tr><td class="mono">where T: I + J + K</td><td class="what">Several bounds on one subject. The list ends at the first token that is not <code>+</code>, which is the only thing telling the bounds' <code>:</code> from the block's.</td></tr>
+        <tr><td class="mono">where A: I, B: J</td><td class="what">Several predicates, comma-separated. <strong>No trailing comma</strong> &mdash; there are no brackets here to hold the list open, so <code>where T: I,:</code> is <code>SC0104</code> and a short cascade after it.</td></tr>
+        <tr><td class="mono">where T: (Int) -&gt; Bool</td><td class="what">A bound may be a <em>closure type</em> as well as an interface. A bound that opens with <code>(</code> and has no <code>-&gt;</code> after it is <code>SC0119</code>: the parenthesis has no other reading, so the arrow is not optional there.</td></tr>
+        <tr><td class="mono">where &hellip;</td><td class="what">Written on its own line, it continues the line above &mdash; see <a href="#layout">continuation</a>. It is one of exactly two words-or-symbols that do.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <strong>The subject parses as any type and only one shape is honoured.</strong>
+    <code>where Array of T: Ord</code>, <code>where borrowed T: Ord</code> and
+    <code>where Int: Ord</code> all parse, and the checker keeps a predicate only
+    when its subject is a bare, argument-free name that resolves to a generic
+    parameter the declaration itself introduced. Everything else is
+    <em>silently discarded</em>, and that is one of the six holes this page
+    records: it is item 3 of <a href="#notyet">Parses, and is not built</a>,
+    with the program that demonstrates it.
+  </p>
 </section>
 
 <!-- ==================================================================== -->
@@ -859,6 +1743,117 @@ print("a tab\there, a quote \"there\"")
     type codes and the <code>!i</code> conversion are all designed and none of
     it exists; a <code>:</code> in a hole is <code>SC0173</code>, which says so.
     See <a href="#notyet">Parses, and is not built</a>.
+  </p>
+
+  <h3>What an unsuffixed number is</h3>
+  <p>
+    <strong>A numeric literal is inferred, not defaulted &mdash; and inferred
+    among the numeric types only.</strong> <code>42</code> does not arrive as an
+    <code>Int</code> and then get converted; it arrives as <em>an integer
+    literal</em>, joins whatever type the expression around it pins it to, and
+    falls back to <code>I64</code> &mdash; or <code>F64</code> for a float
+    &mdash; only if nothing constrains it at all. That is why <code>let n be
+    42</code> followed by <code>takes(n)</code> at an <code>I8</code> parameter
+    checks, and why <code>1 + 1u8</code> makes the <code>1</code> a
+    <code>U8</code> rather than a width error.
+  </p>
+
+  <p>
+    The inference is <em>among numbers</em> and not a wildcard, which is the
+    whole difference from a hole. Handing that same <code>n</code> to a
+    <code>String</code> parameter is <code>SC0525</code>, and the diagnostic
+    names the pending type by what it is:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0525]</span>: expected `String`, found `an integer literal`
+ --&gt; pending.science:5:13
+  |
+5 | print(wants(n))
+  |             <span class="e-hi">^</span> this is `an integer literal`
+1 error</code></pre>
+
+  <p class="note">
+    An integer literal is accepted at a floating position &mdash;
+    <code>let x: F64 be 1</code> &mdash; because that is what a scientific
+    program writes and <code>1</code> is exact there. A float literal is
+    <em>not</em> accepted at an integer one: <code>let n: I32 be 1.5</code> is a
+    value the target cannot hold, and admitting it is how a language becomes
+    wrong on somebody's index arithmetic.
+  </p>
+
+  <h3>The edges of a numeric literal</h3>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Written</th><th>Read as</th><th>Because</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">1.5</td><td class="what">a float</td><td class="what">A <code>.</code> makes a float <strong>only when a digit follows it</strong>.</td></tr>
+        <tr><td class="mono">1.round()</td><td class="what">an integer, then a method call</td><td class="what">Same rule, read the other way: no digit after the dot, so the literal ends at the <code>1</code>. This is what keeps method calls on integer literals possible.</td></tr>
+        <tr><td class="mono">1.</td><td class="what">an integer, then a dot</td><td class="what">And then <code>SC0102</code>, because a <code>.</code> wants a name after it.</td></tr>
+        <tr><td class="mono">6.02e23</td><td class="what">a float</td><td class="what">An exponent, in either case, with an optional sign.</td></tr>
+        <tr><td class="mono">1e</td><td class="what">an integer with the suffix <code>e</code></td><td class="what">An exponent needs digits. Without them the <code>e</code> is word-shaped, so it is read as a suffix &mdash; and then <code>SC0009</code>.</td></tr>
+        <tr><td class="mono">1f32</td><td class="what">a float</td><td class="what">A float suffix makes a float with neither dot nor exponent. The reverse does not hold: <code>1.5i32</code> is <code>SC0009</code>.</td></tr>
+        <tr><td class="mono">42foo</td><td class="what">one broken literal</td><td class="what">Everything word-shaped after the digits is consumed as the suffix, so this is <code>SC0009</code> and <strong>not</strong> an integer standing beside an identifier.</td></tr>
+        <tr><td class="mono">0x1.8</td><td class="what">not a hexadecimal float</td><td class="what">A prefixed literal is never a float. <code>0x1</code>, then a dot, then <code>8</code> &mdash; and <code>SC0102</code>.</td></tr>
+        <tr><td class="mono">1_0i64 &nbsp; 0b1111_0000</td><td class="what">10 and 240</td><td class="what"><code>_</code> separates digits in every base, anywhere among them, and combines with a suffix.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    The ten suffixes are <code>i8 i16 i32 i64 u8 u16 u32 u64 f32 f64</code>, and
+    they are the spelling of the <em>literal</em>: the type names are
+    <code>I8</code>&hellip;<code>U64</code>, <code>F32</code>,
+    <code>F64</code>. A literal's value is accumulated into a 128-bit
+    accumulator and <code>SC0005</code> fires on overflow, but the number the
+    diagnostic quotes is <code>U64</code>'s, because that is the widest integer
+    type the program actually has.
+  </p>
+
+  <h3>The array literal</h3>
+  <p>
+    <code>[a, b, c]</code> is an <code>Array of T</code> where <code>T</code> is
+    the unification of its elements. A <code>[</code> in <em>prefix</em> position
+    is what tells the literal from an index, which is a postfix <code>[</code>,
+    and a trailing comma is allowed like everywhere else. An empty literal takes
+    its element type from the position it sits in and has no other source for
+    one.
+  </p>
+
+<pre data-science>let counts be [1, 2, 3]
+let empty: Array of Int be []
+let widths: Array of U8 be [1u8, 2u8,]
+print(f"{counts.length()} {empty.length()} {widths.length()}")</pre>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Written</th><th>Means</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">[1, 2, 3]</td><td class="what">An <code>Array of I64</code> &mdash; the elements are unconstrained integer literals, so the fallback applies.</td></tr>
+        <tr><td class="mono">[1, "two"]</td><td class="what"><code>SC0281</code>, once per element that disagrees, with the element that set the type underlined as well. There is no implicit numeric conversion, so <code>[1, 3.5]</code> is the same error.</td></tr>
+        <tr><td class="mono">[]</td><td class="what"><code>SC0282</code> unless the position says what it holds. Annotate the binding.</td></tr>
+        <tr><td class="mono">[x for x in xs]</td><td class="what"><code>SC0153</code>. Science has no comprehensions; the chain does the same thing, lazily and in reading order.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+<pre class="err"><code><span class="e-code">error[SC0281]</span>: the elements of this array literal do not have one type
+ --&gt; mixed.science:1:18
+  |
+1 | let mixed be [1, "two", 3.5, true]
+  |               - this is an integer literal
+  |                  <span class="e-hi">^^^^^</span> this is `String`
+  |
+  = note: an array literal is an `Array of T` where `T` is the unification of its elements (§3.1), and there is no implicit numeric conversion (§5.1): write the suffix, the `as`, or the literal you meant
+1 error</code></pre>
+
+  <p class="note">
+    Indexing is the other half of the bracket and has four diagnostics of its
+    own: <code>SC0151</code> for <code>a[]</code>, <code>SC0152</code> for
+    <code>a[-1]</code> &mdash; a negative index does not count from the end, and
+    the note says why Python's reading is the trap it is &mdash;
+    <code>SC0154</code> for a range that starts past where it ends, and
+    <code>SC0538</code> for a range index at all, since there is no
+    <a href="#notyet"><code>Slice</code></a> for it to produce.
   </p>
 </section>
 
@@ -1158,6 +2153,87 @@ print(count_spaces("one two three"))</pre>
     named arguments and bounds. Both ends are required &mdash; see
     <a href="#notyet">below</a> for what that costs.
   </p>
+
+  <h3><code>else if</code>, and the two block shapes</h3>
+  <p>
+    Every block in the language is one of two shapes and they mix freely: a
+    <code>:</code> then a newline and an indented body, or a <code>:</code> then
+    a <em>single</em> statement on the same line. <code>else if</code> is not a
+    third thing and not a keyword &mdash; it is an <code>else</code> whose body
+    is an <code>if</code>, which is why it takes no <code>:</code> of its own and
+    why there is no <code>elif</code> to remember.
+  </p>
+
+<pre data-science>def bucket(n: Int) -&gt; String:
+    if n &lt; 10:
+        "small"
+    else if n &lt; 100:
+        "medium"
+    else:
+        "large"
+
+def bucket_inline(n: Int) -&gt; String:
+    if n &lt; 10: "small" else: if n &lt; 100: "medium" else: "large"
+
+def mixed(n: Int) -&gt; Int:
+    if n &lt; 0:
+        let magnitude be 0 - n
+        magnitude
+    else if n is 0:
+        0
+    else:
+        n
+
+def short(n: Int) -&gt; Int:
+    if n &gt; 0:
+        1
+    else: 0
+
+print(f"{bucket(42)} {bucket_inline(4)} {mixed(-3)} {short(9)}")</pre>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Shape</th><th>Holds</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">: &#8629; indented</td><td class="what">One or more statements. The last expression is the block's value.</td></tr>
+        <tr><td class="mono">: one statement</td><td class="what">An expression, an assignment, or <code>return</code> / <code>break</code> / <code>continue</code>. <strong>Not a <code>let</code></strong>, which would bind a name nothing could then use &mdash; <code>SC0109</code>.</td></tr>
+        <tr><td class="mono">else if</td><td class="what">An <code>else</code> whose body is an <code>if</code>. No <code>:</code> after <code>else</code>, and the chain nests rather than flattening.</td></tr>
+        <tr><td class="mono">else:</td><td class="what">A block like any other. A dangling <code>else</code> binds to the innermost <code>if</code>, by rule rather than by accident of the descent.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    A <code>:</code> with neither an indented block nor something that can start
+    a statement after it is <code>SC0103</code>, "expected an indented block or a
+    single expression after <code>:</code>". <strong><code>match</code> is the
+    one construct with no inline form</strong>: its arms are always
+    <code>:</code>, newline, indented &mdash; <code>match c: A: 1</code> on one
+    line is <code>SC0100</code>. Individual <em>arms</em> take either shape.
+  </p>
+
+  <h3>What the loop words do and do not take</h3>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Written</th><th>Rule</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">for p in xs:</td><td class="what">The subject is a <strong>pattern</strong>, not just a name, so <code>for (a, b) in pairs:</code>, <code>for _ in 0..n:</code> and <code>for mutable x in xs:</code> all parse. <strong>The parentheses on a tuple are required</strong> &mdash; <code>for a, b in xs</code> is <code>SC0100</code>, "expected <code>in</code>, found <code>,</code>".</td></tr>
+        <tr><td class="mono">for each x in xs:</td><td class="what"><code>SC0138</code>. <code>each</code> names the subject of a <em>call</em>, as in <code>docs.map(each.title)</code>, and nothing else.</td></tr>
+        <tr><td class="mono">while c:</td><td class="what"><code>SC0142</code>, with the whole head underlined and <code>loop</code> offered as the fix &mdash; the diagnostic is reproduced under <a href="#absent">No <code>while</code></a>. The condition is parsed and then discarded and the body is kept, so the rest of the function still checks against something.</td></tr>
+        <tr><td class="mono">break</td><td class="what">Ends the innermost loop. <strong>No label.</strong> A value after it parses, and there is no loop-as-expression for that value to become, so it is read as a separate statement rather than as the loop's result.</td></tr>
+        <tr><td class="mono">continue</td><td class="what">Next iteration of the innermost loop. No value, no label.</td></tr>
+        <tr><td class="mono">return</td><td class="what">With a value or without. It is the only way out of a <code>loop</code> that also leaves the function, and it works from inside any depth of block.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    All three are <strong>statements</strong> and not expressions, so
+    <code>let x be break</code> does not parse. The one place they behave like
+    expressions is an inline block, where each is allowed as the single statement
+    &mdash; a concession made because each has type <code>Never</code> in every
+    respect except which list the syntax tree files it under.
+  </p>
 </section>
 
 <!-- ==================================================================== -->
@@ -1312,6 +2388,58 @@ print(name_of(Plain))
 print(name_of(Json))
 # plain
 # json</pre>
+
+  <h3>Two more pattern forms, and every form there is not</h3>
+  <p>
+    <code>null</code> is a literal, so it is a literal <em>pattern</em> like any
+    other, and a binding may be <code>mutable</code> &mdash; which is the only
+    way to change a value a <code>match</code> just bound without copying it into
+    a fresh <code>let</code> first.
+  </p>
+
+<pre data-science>def present(x: Int?) -&gt; Int:
+    match x:
+        null: 0
+        _: 1
+
+def bump(n: Int) -&gt; Int:
+    match n:
+        0: 0
+        mutable other:
+            other be other + 1
+            other
+
+print(f"{present(null)} {present(3)} {bump(7)}")</pre>
+
+  <p class="note">
+    Matching <code>null</code> does not narrow the other arm: in
+    <code>match x:</code> with a <code>null</code> arm and a binding arm, the
+    binding still has type <code>Int?</code> and using it as an <code>Int</code>
+    is <code>SC0525</code>. Narrowing is what <code>if x?:</code> is for, and
+    <code>match</code> over a nullable is for the shape rather than for the
+    unwrap.
+  </p>
+
+  <p>
+    A pattern is a closed grammar and everything below is refused. Each is a
+    feature some other language has, and the entry says what to write instead.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Not a pattern</th><th>What happens</th><th>Write</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">1..5:</td><td class="what"><code>SC0100</code>, "expected <code>:</code>, found <code>..</code>". There is no range pattern.</td><td class="what">An <code>if</code> in the arm body, or alternatives.</td></tr>
+        <tr><td class="mono">x if x &gt; 0:</td><td class="what"><code>SC0100</code>, "expected <code>:</code>, found <code>if</code>". <strong>There are no guards</strong>, and that is the decision, not an omission: a guard is the feature that turns exhaustiveness checking into a guess.</td><td class="what">An <code>if</code> in the arm body, one line down.</td></tr>
+        <tr><td class="mono">whole @ A(v):</td><td class="what"><code>SC0100</code>, "expected <code>:</code>, found <code>@</code>". <code>@</code> is matrix multiply and binds nothing.</td><td class="what">A second arm, or bind the whole value and destructure inside.</td></tr>
+        <tr><td class="mono">-1:</td><td class="what"><code>SC0106</code>, "expected a pattern, found <code>-</code>". A negative literal is a unary operator applied to a literal, and a pattern holds no operators.</td><td class="what">A binding arm, and compare in the body.</td></tr>
+        <tr><td class="mono">[a, b]:</td><td class="what"><code>SC0106</code>, "expected a pattern, found <code>[</code>". There are no array or slice patterns, for the same reason there is <a href="#notyet">no <code>Slice</code></a>.</td><td class="what">Index, or iterate.</td></tr>
+        <tr><td class="mono">Doc(title):</td><td class="what"><code>SC0206</code> &mdash; "<code>Doc</code> is a record type, so its pattern names its fields". <strong>There is no field shorthand</strong>: a record pattern mirrors construction exactly, and construction names every field.</td><td class="mono">Doc(title: title)</td></tr>
+        <tr><td class="mono">A(x) | B(x):</td><td class="what"><code>SC0201</code>. An alternative that <em>binds</em> is one binding too many for the shared scope, so alternatives work for unit variants and literals and not for payloads. See <a href="#scope">Scope and shadowing</a>.</td><td class="what">Two arms.</td></tr>
+        <tr><td class="mono">(a, ..):</td><td class="what"><code>SC0106</code>. No rest pattern, in a tuple or a record.</td><td class="mono">(a, _)</td></tr>
+      </tbody>
+    </table>
+  </div>
 </section>
 
 <!-- ==================================================================== -->
@@ -1426,18 +2554,35 @@ else:
   = note: test it with `if err?:`, pass it on, or return it — or rename it to `_err` to say the failure is deliberately ignored
 1 error</code></pre>
 
+  <p>
+    Four things excuse an untested error and nothing else does: naming it
+    <code>_err</code>, returning it, passing it on, and a body that cannot
+    return at all. The check is on the <em>binding</em>, not on the call, which
+    is why it survives the value being used &mdash; <code>print(value)</code>
+    does not count as having looked at <code>err</code>.
+  </p>
+
   <div class="callout">
-    <h3>The hole in that check, measured</h3>
+    <h3>The hole in that check, and why this entry is the softest on the page</h3>
     <p>
-      <code>SC0140</code> fires when the error slot's type <strong>implements
-      <code>Error</code></strong>, and only then. A concrete <code>choice</code>
-      that does not &mdash; which is legal, and which the corpus contains &mdash;
-      is not recognised as a failure at all: the same program with
-      <code>ConfigError?</code> in the slot and no <code>implements Error</code>
-      on the type binds <code>err</code>, never tests it, and checks clean. If
-      you take the concrete error form for the exhaustive <code>match</code> it
-      buys, implement <code>Error</code> on it anyway, or you have opted out of
-      the language's one safety net for ignored failures without being told.
+      The condition the design states is "<code>E?</code> where <code>E</code>
+      implements <code>Error</code>", and read literally that is silent on the
+      program the language itself recommends: a function naming a concrete
+      <code>choice</code> as its error so the caller can <code>match</code> on it
+      exhaustively, with no <code>implements Error</code> block. The corpus
+      writes exactly that. So the one construct that recovers what a
+      <code>Result</code> guaranteed had a shape it did not cover, and the shape
+      was the recommended one.
+    </p>
+    <p style="margin-top:0.7rem">
+      <strong>That coverage is being changed as this page is written</strong>, so
+      it is the one claim here not worth pinning to a number: the rule is moving
+      from the error <em>type</em> to the error <em>position</em> &mdash; the
+      last binding of a several-binding <code>let</code>, of nullable type, whose
+      initialiser is a call. Check it against your own compiler before relying on
+      it either way. The advice that survives the change is unchanged: if you
+      take the concrete error form for the <code>match</code> it buys, test the
+      error by hand and do not wait to be told.
     </p>
   </div>
 
@@ -1688,13 +2833,19 @@ grid[0] be 9</pre>
     interface is implementable and the container it is wanted for is not.
   </p>
 
-  <h3>2. Open-ended slices do not parse</h3>
+  <h3>2. Slicing does not exist, in two different ways</h3>
   <p>
     <code>a[1..5]</code>, <code>a[2..]</code>, <code>a[..5]</code> and
-    <code>a[..]</code> are all specified as index-bracket forms. Only the
-    closed one gets through: <code>parse_range</code> requires both ends,
-    because an open end would have to be told from a <code>..</code> that ends a
-    line.
+    <code>a[..]</code> are all specified as index-bracket forms, and a range
+    index is specified to produce a <code>Slice of T</code> &mdash; a borrow and
+    a length, which does not copy. <strong>None of the four works, and the two
+    halves fail at different stages.</strong>
+  </p>
+
+  <p>
+    The <strong>open-ended forms do not parse</strong>: <code>parse_range</code>
+    requires both ends, because an open end would have to be told from a
+    <code>..</code> that ends a line.
   </p>
 
 <pre class="err"><code><span class="e-code">error[SC0105]</span>: expected an expression, found `]`
@@ -1704,42 +2855,80 @@ grid[0] be 9</pre>
   |                   <span class="e-hi">^</span> expected an expression, found `]`
 1 error</code></pre>
 
-  <p class="note">
-    <strong>The closed form is worse than the open one, because it is
-    silent.</strong> <code>xs[1..3]</code> checks, and its type is
-    <code>borrowed Int</code> &mdash; one element, not a slice. There is no
-    <code>Slice</code> in the prelude at all (<code>Slice of Int</code> in a
-    signature is <code>SC0200</code>, "cannot find <code>Slice</code>"), and the
-    range expression carries no type, so the untyped index and the
-    <code>Int</code> the <code>Index</code> implementation wants agree by
-    cancelling rather than by matching. Do not slice.
-  </p>
-
-  <h3>3. The array literal parses and is not type-checked</h3>
   <p>
-    <code>[1, 2, 3]</code> is the literal form, and <code>[</code> in prefix
-    position is what tells it from an index. It reaches the type checker and
-    stops. <strong>Both of the listings below check clean.</strong>
+    The <strong>closed form parses and is refused by the type checker</strong>,
+    which is the better of the two failures and was not always the case: this
+    used to check clean and hand back <code>borrowed Int</code> &mdash; one
+    element rather than a slice &mdash; because the untyped range and the
+    <code>Int</code> the <code>Index</code> implementation wanted agreed by
+    cancelling instead of by matching. It now says what it means.
   </p>
 
-<pre data-science>let counts: Array of String be [1, 2, 3]
-print(counts.length())</pre>
-
-<pre data-science>let counts be [1, 2, 3]
-let flag: Bool be counts
-print(flag)</pre>
+<pre class="err"><code><span class="e-code">error[SC0538]</span>: a range index would produce a slice, and there is no `Slice` type
+ --&gt; slice.science:2:5
+  |
+2 |     xs[1..3]
+  |     <span class="e-hi">^^^^^^^^</span> slicing a `borrowed Array of Int` is not implemented
+  |
+  = note: `a[1..5]` is specified as a `Slice of T` — a borrow and a length, which does not copy (§2.3) — and this compiler declares no such type. Index one element at a time, or iterate: `xs.iterate().skip(1).take(2)`
+1 error</code></pre>
 
   <p class="note">
-    The first says the elements need not have the annotated element type, or any
-    consistent type &mdash; <code>SC0281</code>, which the design allocates for
-    exactly this, is defined in no crate. The second says an unannotated
-    literal leaves its binding at the <em>error</em> type, with no diagnostic:
-    <code>flag</code> is then compatible with anything, and every check
-    downstream of it is vacuous. Build an <code>Array</code> with
-    <code>(Array of T).new()</code> and <code>.push()</code> until this is
-    closed; that is what the corpus does.
+    There is no <code>Slice</code> in the prelude to name either:
+    <code>Slice of Int</code> in a signature is <code>SC0200</code>, "cannot find
+    <code>Slice</code>". Index one element at a time, or iterate.
+  </p>
+  <h3>3. A <code>where</code> predicate on anything but a bare parameter is discarded</h3>
+  <p>
+    A clause's subject is read by the full type grammar, so
+    <code>where Array of T: Ord</code>, <code>where borrowed T: Ord</code> and
+    <code>where Int: Ord</code> all parse. The checker then keeps a predicate
+    <strong>only</strong> when its subject is a bare, argument-free name
+    resolving to a generic parameter the declaration itself introduced, and drops
+    every other predicate &mdash; no diagnostic, no note, no warning. The listing
+    below checks clean, and <code>D</code> implements <code>Ord</code> nowhere.
   </p>
 
+<pre data-science>interface Ord:
+    def cmp(self, other: borrowed Self) -&gt; Int
+
+type D:
+    v: Int
+
+def held of T(x: borrowed T) -&gt; Int where Array of T: Ord, borrowed T: Ord, Int: Ord:
+    0
+
+def calls(d: borrowed D) -&gt; Int:
+    held(d)
+
+print(f"{calls(borrowed D(v: 1))}")</pre>
+
+  <p class="note">
+    The bare form is checked properly, and the difference is the measurement:
+    change that clause to <code>where T: Ord</code> and the same call is
+    <code>SC0534</code>, "<code>D</code> does not implement <code>Ord</code>",
+    with the declaration site pointed at as well. So the failure is not that
+    bounds go unchecked &mdash; it is that a bound the checker does not recognise
+    looks exactly like one it satisfied. Write the subject as a bare parameter
+    name, and put anything else in the body, where it will be checked.
+  </p>
+
+  <div class="callout">
+    <h3>What used to be here, and is not any more</h3>
+    <p>
+      This slot held <strong>the array literal, which parsed and was not type
+      checked at all</strong>: <code>let counts: Array of String be [1, 2,
+      3]</code> checked clean, and <code>let counts be [1, 2, 3]</code> left its
+      binding at the error type with no diagnostic, so every check downstream of
+      it was vacuous. <code>SC0281</code> &mdash; the code the design allocated
+      for exactly this &mdash; was defined in no crate. It is defined now, and a
+      second code, <code>SC0282</code>, covers the empty literal that has nothing
+      to take an element type from. Both forms are in
+      <a href="#literals">Literals</a> as working syntax. This paragraph is here
+      rather than deleted because a reference that quietly drops a hole teaches
+      the reader nothing about how far to trust the rest of the list.
+    </p>
+  </div>
   <h3>4. The format mini-language is specified and unbuilt</h3>
   <p>
     Fill, alignment, sign, width, grouping, precision, the type codes and the
@@ -1794,6 +2983,7 @@ if maybe?:
     everywhere <code>check</code> can see it; it is the lowering that has not
     caught up.
   </p>
+
 </section>
 
 <!-- ==================================================================== -->
