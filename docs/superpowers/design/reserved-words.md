@@ -395,6 +395,19 @@ already reserved the word.
 construct, not a library function. Until then, tests spell their checks
 differently, which is a small cost with a clear end date.
 
+**Status.** `assert(cond)` / `assert(cond, message)` is implemented as a
+statement — `crates/science-lexer/src/token.rs`'s `TokenKind::Assert` — and
+its condition is checked against `Bool` the way an `if`'s is; on failure it
+calls the same runtime path `panic` does and aborts. That is only the first
+half of this section's argument: the condition is not discharged statically,
+and nothing here records it as an assumption for `science-regions` or a
+future shape checker to read. `assert` today is exactly the "testing utility"
+this section distinguishes itself from, reached through a keyword instead of
+a function call because a call cannot make control flow conditional on its
+own argument (`TokenKind::Assert`'s own decision, in that file). The
+verification-feature half — static discharge, and an assumption recorded for
+region or shape inference — is still open.
+
 ---
 
 ## 5. What this note asks for
@@ -406,7 +419,8 @@ differently, which is a small cost with a clear end date.
    `import` — eight words out of `ReservedWord` and §13's second list, three of
    them into §13's third list.
 3. **Make `any` contextual** in type position, or rename the reductions.
-4. **Keep and specify `assert`** as a construct.
+4. **Keep and specify `assert`** as a construct. Done for the runtime-check
+   half (§4.2's "Status"); the static-discharge half is still open.
 5. **Resolve the contradiction** between §13 and `ffi-c-boundary.md` on whether
    contextual keywords are acceptable. This note takes the FFI note's side: they
    are, the project already depends on them, and §13's sentence should be

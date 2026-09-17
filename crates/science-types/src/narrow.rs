@@ -346,6 +346,12 @@ fn walk_block(block: &hir::Block, out: &mut Vec<DefId>) {
                     walk_expr(value, out);
                 }
             }
+            hir::StmtKind::Assert { cond, message } => {
+                walk_expr(cond, out);
+                if let Some(message) = message {
+                    walk_expr(message, out);
+                }
+            }
             hir::StmtKind::Continue | hir::StmtKind::Error => {}
         }
     }

@@ -224,3 +224,39 @@ fn return_and_break_carry_an_array_literal() {
 "
     ));
 }
+
+/// `assert(cond)` and `assert(cond, message)` — spelled and parsed like a
+/// call, but `TokenKind::Assert`'s own statement, not a call to a name.
+#[test]
+fn assert_statement() {
+    insta::assert_snapshot!(parse_body(
+        r#"def f(count: Int):
+    assert(count >= 0)
+    assert(count < 100, "count out of range")
+"#
+    ));
+}
+
+/// An `assert` with no message reads naturally in an inline body, the same
+/// way `return`/`break`/`continue` do — it binds no name, so `let`'s
+/// objection to an inline body does not apply to it.
+#[test]
+fn assert_in_an_inline_body() {
+    insta::assert_snapshot!(parse_body(
+        "def f(n: Int):
+    if n > 0: assert(n > 0)
+"
+    ));
+}
+
+/// `assert` is a statement, not a call, but it is still spelled with
+/// parentheses — leaving them off is the generic "expected `(`", the same
+/// diagnostic any other required token misses with.
+#[test]
+fn assert_without_parentheses_is_rejected() {
+    insta::assert_snapshot!(parse_source_allowing_errors(
+        "def f(ready: Bool):
+    assert ready
+"
+    ));
+}

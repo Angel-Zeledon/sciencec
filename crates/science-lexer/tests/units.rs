@@ -621,7 +621,6 @@ fn words_reserved_for_later_phases_are_not_identifiers() {
         ("on", On),
         ("with", With),
         ("yield", Yield),
-        ("assert", Assert),
         ("move", Move),
         ("static", Static),
         ("macro", Macro),
@@ -706,6 +705,25 @@ fn tool_moved_from_a_reservation_to_a_keyword() {
 #[test]
 fn mod_moved_from_a_keyword_to_a_reservation() {
     assert_eq!(bare("mod"), vec![Reserved(ReservedWord::Mod)]);
+}
+
+#[test]
+fn assert_moved_from_a_reservation_to_a_keyword() {
+    // `assert` is parsed as a statement, not resolved as a call — see
+    // `TokenKind::Assert`'s decision — but it still lexes exactly like a call
+    // would: the keyword, then a parenthesised argument list.
+    assert_eq!(
+        bare("assert(ready)"),
+        vec![Assert, LParen, id("ready"), RParen]
+    );
+    assert_eq!(
+        bare("assert(ready, \"not ready\")"),
+        vec![Assert, LParen, id("ready"), Comma, Str("not ready".to_string()), RParen]
+    );
+    // A keyword everywhere, like `tool`: a variable named `assert` is not an
+    // identifier in some positions and a keyword in others.
+    assert_eq!(bare("let assert be 1"), vec![Let, Assert, Be, int(1, Dec, None)]);
+    assert!(codes("let assert be 1").is_empty());
 }
 
 #[test]

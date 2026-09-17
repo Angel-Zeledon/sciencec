@@ -868,7 +868,11 @@ impl<'t> Parser<'t> {
         let from = usize::from(self.at(&TokenKind::Public));
         match self.peek_ahead(from) {
             // Nothing in the language declares with one of these.
-            TokenKind::Let | TokenKind::Return | TokenKind::Break | TokenKind::Continue => true,
+            TokenKind::Let
+            | TokenKind::Return
+            | TokenKind::Break
+            | TokenKind::Continue
+            | TokenKind::Assert => true,
             // §8.2's case, and the only one that needs the scan.
             TokenKind::Ident(_) => {
                 !self.at_word_declaration(from, "function")
@@ -3556,6 +3560,21 @@ impl<'t> Parser<'t> {
                 self.advance();
                 Some(Stmt { kind: StmtKind::Continue, span: start })
             }
+            // `assert(cond)` / `assert(cond, message)`. Spelled like a call
+            // and parsed like one, but it is a statement (`TokenKind::Assert`'s
+            // decision): nothing here reaches name resolution, so an
+            // `assert` with the wrong arity is a parse error and not a call
+            // that failed to resolve.
+            TokenKind::Assert => {
+                self.advance();
+                self.expect(&TokenKind::LParen, "`(` after `assert`")?;
+                let cond = self.parse_expr();
+                let message =
+                    if self.eat(&TokenKind::Comma).is_some() { Some(self.parse_expr()) } else { None };
+                self.expect(&TokenKind::RParen, "`)` to close `assert`")?;
+                let span = start.merge(self.last_text_span());
+                Some(Stmt { kind: StmtKind::Assert { cond, message }, span })
+            }
             // A `tool` inside a body is `SC0197`. Nothing is consumed: the
             // caller synchronises on `None`, which drops the declaration and
             // the block under it together.
@@ -3604,7 +3623,11 @@ impl<'t> Parser<'t> {
     fn at_stmt_start(&self) -> bool {
         matches!(
             self.peek(),
-            TokenKind::Let | TokenKind::Return | TokenKind::Break | TokenKind::Continue
+            TokenKind::Let
+                | TokenKind::Return
+                | TokenKind::Break
+                | TokenKind::Continue
+                | TokenKind::Assert
         ) || self.at_expr_start()
     }
 
@@ -5588,6 +5611,7 @@ fn fixed_text(kind: &TokenKind) -> &'static str {
         Return => "return",
         Break => "break",
         Continue => "continue",
+        Assert => "assert",
         Type => "type",
         Choice => "choice",
         Interface => "interface",
@@ -5683,7 +5707,6 @@ fn reserved_text(word: ReservedWord) -> &'static str {
         On => "on",
         With => "with",
         Yield => "yield",
-        Assert => "assert",
         Move => "move",
         Static => "static",
         Macro => "macro",

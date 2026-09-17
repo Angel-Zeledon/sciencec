@@ -688,6 +688,10 @@ impl Dump for Stmt {
                 w.node("Break", self.span, |w| w.child_opt("value", value.as_ref()))
             }
             StmtKind::Continue => w.leaf("Continue", self.span),
+            StmtKind::Assert { cond, message } => w.node("Assert", self.span, |w| {
+                w.child("cond", cond);
+                w.child_opt("message", message.as_ref());
+            }),
             StmtKind::Error => w.leaf("Error", self.span),
         }
     }

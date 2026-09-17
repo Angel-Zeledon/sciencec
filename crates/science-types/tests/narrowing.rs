@@ -500,3 +500,61 @@ def port_number(start: Config, replacement: Port?) -> I64:
     );
     checked.assert_clean();
 }
+
+// --- `assert` narrows too -------------------------------------------------
+//
+// `BodyChecker::assert_stmt`'s own doc comment states the rule: code after an
+// `assert` only runs where its condition held, so it stands to leave the same
+// facts `if cond?: ...` would leave for everything past the `if`. These three
+// tests are that rule's acceptance case, its negative control, and the
+// soundness half — the message argument is evaluated on the *other* branch
+// and must not see the narrowing that branch never earns.
+
+#[test]
+fn assert_narrows_the_rest_of_the_function() {
+    let checked = check(
+        "\
+def needs_string(s: String) -> Int:
+    s.length()
+
+def describe(found: String?) -> Int:
+    assert(found?)
+    needs_string(found)
+",
+    );
+    checked.assert_clean();
+}
+
+#[test]
+fn without_the_assert_the_same_call_is_rejected() {
+    // The negative control: without `assert(found?)`, `found` is still
+    // `String?` and `needs_string` wants a `String`.
+    let checked = check(
+        "\
+def needs_string(s: String) -> Int:
+    s.length()
+
+def describe(found: String?) -> Int:
+    needs_string(found)
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+}
+
+#[test]
+fn the_message_argument_does_not_see_the_conditions_true_narrowing() {
+    // `message` runs exactly where `cond` is `false` — here, where `found` is
+    // `null` — so it is checked against `String` with `found` still
+    // `String?`, and `SC0525` fires. If this were checked against
+    // `when_true`'s facts instead, `found` would be narrowed to `String` and
+    // the call would type-check on a path where `found` is never anything but
+    // `null` — the wrong answer, reached only by using the wrong branch.
+    let checked = check(
+        "\
+def broken(found: String?) -> Int:
+    assert(found?, found)
+    0
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+}

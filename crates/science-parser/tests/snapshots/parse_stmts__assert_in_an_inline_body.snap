@@ -1,0 +1,16 @@
+---
+source: crates/science-parser/tests/parse_stmts.rs
+expression: "parse_body(\"def f(n: Int):\n    if n > 0: assert(n > 0)\n\")"
+---
+Block @19..42
+  tail: If @19..42
+    cond: Binary `>` @22..27
+      lhs: Path `n` @22..23
+      rhs: Int 0 @26..27
+    then: Block @29..42
+      Assert @29..42
+        cond: Binary `>` @36..41
+          lhs: Path `n` @36..37
+          rhs: Int 0 @40..41
+--- diagnostics ---
+(none)

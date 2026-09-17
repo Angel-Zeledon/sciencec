@@ -163,6 +163,28 @@ pub enum TokenKind {
     Return,
     Break,
     Continue,
+
+    /// `assert(cond)` / `assert(cond, message)` — a condition checked at
+    /// runtime, parsed as a statement (`science-parser`'s `parse_stmt`) in
+    /// `Return`'s shape and not a call's.
+    ///
+    /// **The decision.** The word leaves [`ReservedWord`] and becomes a
+    /// keyword of its own, one that a statement dispatches on rather than
+    /// one that reaches a call through ordinary name resolution.
+    ///
+    /// **The reason.** `panic` is a prelude *function*, resolved and typed
+    /// like any other call; `assert` cannot be, because it does not always
+    /// diverge — the condition decides — and nothing about a call's shape
+    /// can make control flow conditional on its own argument. The runtime
+    /// path an assertion failure needs, `science_panic`/`science_panic_bytes`,
+    /// already exists for `panic`, so there was nothing left to reserve for.
+    ///
+    /// **The cost.** A second parenthesised construct that is not a call:
+    /// every exhaustive match over a statement grows an arm, from the parser
+    /// through MIR, and `science-fmt`'s call-shaped spacing has to fit it by
+    /// coincidence rather than by a rule written for it.
+    Assert,
+
     Type,
     Choice,
     Interface,
@@ -306,7 +328,6 @@ pub enum ReservedWord {
     On,
     With,
     Yield,
-    Assert,
     Move,
     Static,
     Macro,
@@ -335,6 +356,7 @@ impl TokenKind {
             "return" => Return,
             "break" => Break,
             "continue" => Continue,
+            "assert" => Assert,
             "type" => Type,
             "choice" => Choice,
             "interface" => Interface,
@@ -387,7 +409,6 @@ impl TokenKind {
             "on" => Reserved(On),
             "with" => Reserved(With),
             "yield" => Reserved(Yield),
-            "assert" => Reserved(Assert),
             "move" => Reserved(Move),
             "static" => Reserved(Static),
             "macro" => Reserved(Macro),

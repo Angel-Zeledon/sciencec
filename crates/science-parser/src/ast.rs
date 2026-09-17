@@ -856,6 +856,10 @@ pub enum StmtKind {
     Return(Option<Expr>),
     Break(Option<Expr>),
     Continue,
+    /// `assert(cond)` / `assert(cond, message)`. `message` is the text
+    /// shown on failure, evaluated only when `cond` is `false`; when absent,
+    /// later phases supply a default (`check.rs`'s `stmt`).
+    Assert { cond: Expr, message: Option<Expr> },
     /// A statement that failed to parse.
     Error,
 }

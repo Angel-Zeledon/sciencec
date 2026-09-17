@@ -1940,6 +1940,10 @@ impl Resolver {
                 hir::StmtKind::Break(value.as_ref().map(|e| self.resolve_expr(e)))
             }
             ast::StmtKind::Continue => hir::StmtKind::Continue,
+            ast::StmtKind::Assert { cond, message } => hir::StmtKind::Assert {
+                cond: self.resolve_expr(cond),
+                message: message.as_ref().map(|m| self.resolve_expr(m)),
+            },
             ast::StmtKind::Error => hir::StmtKind::Error,
         };
         hir::Stmt { kind, span: stmt.span }

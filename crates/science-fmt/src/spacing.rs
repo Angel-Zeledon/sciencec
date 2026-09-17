@@ -86,8 +86,16 @@ pub fn glued(prev: &K, next: &K, prev_unary: bool) -> bool {
         // `f(`, `)(`, `Self(` — a call or a parameter list. `be (`, `of (`,
         // `-> (` are grouping, and keep their space. A bracket immediately
         // inside another bracket is glued whatever it is: `((a))`, not `( (a))`.
+        //
+        // `assert(` is glued for the same reason a call is, though `assert`
+        // does not end an expression and does not belong in
+        // [`ends_expression`]: it is spelled like a call
+        // (`TokenKind::Assert`'s decision) without being one, so this is the
+        // one place that shape is asked about on its own rather than folded
+        // into "can this precede a call's parenthesis".
         K::LParen => {
-            return ends_expression(prev) || matches!(prev, K::LParen | K::LBracket | K::LBrace)
+            return ends_expression(prev)
+                || matches!(prev, K::LParen | K::LBracket | K::LBrace | K::Assert)
         }
         // `xs[i]` — indexing, for the same reason.
         K::LBracket => {
@@ -248,6 +256,13 @@ mod tests {
         assert!(!glued(&K::Be, &K::LParen, false));
         assert!(!glued(&K::Of, &K::LParen, false));
         assert!(!glued(&K::Arrow, &K::LParen, false));
+    }
+
+    /// `assert` is spelled like a call and formatted like one, though it is a
+    /// statement and not in [`ends_expression`].
+    #[test]
+    fn asserts_paren_is_glued_the_way_a_calls_is() {
+        assert!(glued(&K::Assert, &K::LParen, false));
     }
 
     /// The bracket's two meanings, as spacing sees them.

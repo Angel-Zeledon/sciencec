@@ -587,6 +587,12 @@ impl DumpIn for Stmt {
                 }
             }),
             StmtKind::Continue => w.leaf("Continue", self.span),
+            StmtKind::Assert { cond, message } => w.node("Assert", self.span, |w| {
+                w.child("cond", &Node(defs, cond));
+                if let Some(message) = message {
+                    w.child("message", &Node(defs, message));
+                }
+            }),
             StmtKind::Error => w.leaf("Error", self.span),
         }
     }

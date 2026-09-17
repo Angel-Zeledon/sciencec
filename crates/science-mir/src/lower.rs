@@ -922,11 +922,78 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 self.terminate(block, TerminatorKind::Goto { target: head }, span);
                 return self.new_block();
             }
+            StmtKind::Assert { cond, message } => {
+                block = self.lower_assert(*cond, *message, block, span);
+            }
             // A statement the resolver could not lower. Nothing is emitted and
             // nothing is reported: `ty`'s §5 discipline, one level down.
             StmtKind::Error => {}
         }
         self.pop_scope(block, span)
+    }
+
+    /// `assert(cond)` / `assert(cond, message)`: one `If`, and a runtime call
+    /// on the branch where `cond` is `false`.
+    ///
+    /// **Not `emit_call`.** That helper decides whether a call diverges by
+    /// reading a [`Callee::Def`]'s declared signature, and there is no
+    /// `Named::Function` behind `assert` for one to be. The failing branch
+    /// always diverges — `science_panic`/`science_panic_bytes` are both
+    /// `-> Never` — so the terminator is built directly with `target: None`,
+    /// the same shape `emit_call` produces for a call it *does* recognise as
+    /// one.
+    ///
+    /// **`message` is evaluated in a scope of its own, opened and discarded
+    /// around it, and not the statement's ambient one.** The ambient scope's
+    /// `pop_scope` runs once, against the *surviving* block — the one where
+    /// `cond` held — so a temporary registered there for `message` would
+    /// collect a drop on a path where it was never built: `cond` true never
+    /// evaluates `message` at all, and freeing whatever garbage sits in that
+    /// local would be a use of memory the true branch never initialised.
+    /// Discarding the scope instead of popping it costs nothing on the
+    /// failing branch either, because `science-rt`'s panic path already runs
+    /// no destructors.
+    ///
+    /// **Which runtime entry point depends on the operand's shape, not on
+    /// its type.** A literal message lowers straight to `(ptr, len)` — the
+    /// pair `science_panic_bytes` takes — because `science-codegen-llvm`'s
+    /// `lower_runtime_call` only expands a `Literal::Str` constant into that
+    /// pair when the parameter list is shaped for it, and `science_panic`'s
+    /// one parameter is not. A `String` that is not a literal lowers to
+    /// `science_panic`, which takes the address of the value the same way
+    /// `panic`'s own message would.
+    fn lower_assert(
+        &mut self,
+        cond: ExprId,
+        message: ExprId,
+        block: BlockId,
+        span: Span,
+    ) -> BlockId {
+        let (cond, block) = self.operand(cond, block);
+        let ok = self.new_block();
+        let fail = self.new_block();
+        self.terminate(block, TerminatorKind::If { cond, then_block: ok, else_block: fail }, span);
+
+        self.push_scope();
+        let (message, fail) = self.operand(message, fail);
+        self.scopes.pop();
+
+        let discard = Place::local(self.push_local(Ty::UNIT, LocalKind::Temp, span));
+        let symbol = match &message {
+            Operand::Const(Constant::Literal(Literal::Str(_))) => "science_panic_bytes",
+            _ => "science_panic",
+        };
+        self.terminate(
+            fail,
+            TerminatorKind::Call {
+                callee: Callee::Runtime(symbol),
+                args: vec![message],
+                destination: discard,
+                target: None,
+            },
+            span,
+        );
+        ok
     }
 
     /// `let a, b be f()`. One initialiser, however many bindings.

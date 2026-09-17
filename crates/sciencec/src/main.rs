@@ -68,6 +68,7 @@ sciencec — the Science compiler
 Usage:
     sciencec check FILE...    run the front half; report what is wrong
     sciencec build FILE...    check, then produce an executable
+    sciencec test FILE...     build, then run the executable and report its exit
     sciencec fmt FILE         print the file, formatted, to stdout
     sciencec fmt --write F... format the files in place
     sciencec tokens FILE      dump the token stream
@@ -176,6 +177,15 @@ fn run(args: &[OsString]) -> Outcome {
                 return usage_error("build expects at least one file");
             }
             session.build(&files);
+        }
+        // `test` takes the same operands as `build`: each file is an entry,
+        // each entry is a crate, and there is no `test` item yet to select
+        // among (`Session::test`'s own note says what that costs).
+        Some("test") => {
+            if files.is_empty() {
+                return usage_error("test expects at least one file");
+            }
+            session.test(&files);
         }
         Some("fmt") => {
             if write {

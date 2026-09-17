@@ -418,6 +418,11 @@ pub enum StmtKind {
     Return(Option<ExprId>),
     Break(Option<ExprId>),
     Continue,
+    /// `assert(cond)` / `assert(cond, message)`. `message` is never
+    /// `None` here: `check`'s `stmt` supplies a literal default when the
+    /// author wrote none, so every later phase reads one expression and not
+    /// an `Option`.
+    Assert { cond: ExprId, message: ExprId },
     /// A statement the resolver could not lower.
     Error,
 }

@@ -104,8 +104,16 @@ Using one is an error, not a warning. The ones you are most likely to reach for:
 
 **In use as keywords:** `def return let be mutable type choice
 interface implements has of borrowed any for each in if else match
-loop break continue use where as self Self and or not true false is const public
+loop break continue assert use where as self Self and or not true false is const public
 giving null`
+
+`assert(cond)` and `assert(cond, message)` check a condition at runtime and
+abort the program when it does not hold — the message defaults to
+`"assertion failed"` when left out. It is a statement, spelled and parsed like
+a call, not a call to a name: `check(cond)` was the workaround while the word
+was reserved, and it is no longer needed. `sciencec test FILE` builds a
+program and runs it once, reporting whether it exited cleanly or an `assert`
+aborted it; there is no `test` item yet; the whole program is the test.
 
 `each` is a keyword but **not** a loop word: its only use is naming the subject
 of a call, `docs.map(each.title)`. Words a previous revision reserved and has
@@ -122,7 +130,7 @@ field may be called `function`.
 
 **Reserved for later phases:** `agent tool prompt spawn send receive durable
 checkpoint resume supervise async await tensor shape model mod extern unsafe
-pure parallel on with yield assert move static macro union kernel import`
+pure parallel on with yield move static macro union kernel import`
 
 The collisions that will actually bite you, with what to write instead:
 
@@ -135,7 +143,6 @@ The collisions that will actually bite you, with what to write instead:
 | `a.union(b)` | `union` | `a.merged(b)` |
 | reaction `yield` | `yield` | `produced`, `efficiency` |
 | a `kernel` parameter | `kernel` | `window`, `weights` |
-| `assert(cond)` | `assert` | `check(cond)` |
 | a `const` module | `const` | `constants` |
 | a field or local `def` | `def` | `definition` — compiler code hits this |
 

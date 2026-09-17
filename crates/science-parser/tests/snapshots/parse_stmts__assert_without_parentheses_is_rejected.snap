@@ -1,0 +1,12 @@
+---
+source: crates/science-parser/tests/parse_stmts.rs
+expression: "parse_source_allowing_errors(\"def f(ready: Bool):\n    assert ready\n\")"
+---
+Module @0..37
+  Fn `f` @0..36
+    params
+      Param `ready` @6..17
+        type: Path `Bool` @13..17
+    body: Block @24..24
+--- diagnostics ---
+SC0100 @31..36 expected `(` after `assert`, found `ready`

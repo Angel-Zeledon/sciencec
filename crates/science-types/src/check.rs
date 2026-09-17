@@ -380,6 +380,10 @@ use crate::thir::{
 };
 use crate::ty::{GenericArg, Ty, TyKind, Types};
 
+/// The message an `assert` with no message argument reports on failure.
+/// `BodyChecker::assert_stmt` is the one place that reads this.
+const DEFAULT_ASSERT_MESSAGE: &str = "assertion failed";
+
 /// Checks every body in the crate, and runs the THIR analyses over each.
 ///
 /// The order is `type-checking-and-mir.md` §12's, as far as this crate goes:
@@ -4596,8 +4600,67 @@ impl<'a> BodyChecker<'a> {
                 self.diverged = true;
                 StmtKind::Continue
             }
+            hir::StmtKind::Assert { cond, message } => self.assert_stmt(cond, message, stmt.span),
             hir::StmtKind::Error => StmtKind::Error,
         }
+    }
+
+    /// `assert(cond)` / `assert(cond, message)`.
+    ///
+    /// **`cond` is checked against `Bool` the way an `if`'s condition is**
+    /// (`if_expr`, above), and `message` — when the author wrote one — is
+    /// checked against `String`. Neither is a call: there is no
+    /// `Named::Function` behind `assert` for `call`'s machinery to find, so
+    /// both operands are typed directly here instead of through a declared
+    /// signature.
+    ///
+    /// **It does not diverge unconditionally.** Unlike `panic`, which always
+    /// leaves, `assert`'s condition decides whether it does, so
+    /// `self.diverged` is left alone — code after an `assert` stays
+    /// reachable as far as this phase, and `unchecked`'s `SC0140`, are
+    /// concerned.
+    ///
+    /// **The default message is a fixed literal, not `cond`'s source
+    /// text.** Rendering the condition back the way Rust's `assert!` does
+    /// would need the original source carried past the lexer, which nothing
+    /// downstream keeps today; `assert(cond, "...")` is how an author says
+    /// more until that changes.
+    ///
+    /// **`cond` narrows both the message and whatever follows, and not the
+    /// same way.** `message` is only evaluated where `cond` is `false`, so it
+    /// is checked under `narrow::condition`'s `when_false` — the facts that
+    /// actually hold there — and not under the ambient ones: without this,
+    /// `assert(x?, x.field)` would check `x.field` as though `x?`'s *true*
+    /// narrowing applied to the one branch where `x?` did not hold, which is
+    /// the same unsoundness `if_expr` avoids by checking each branch under
+    /// its own outcome. Code after the `assert` runs only where `cond` held,
+    /// so the statement leaves `when_true` standing for it — `if_expr`'s
+    /// treatment of a branch that diverges, applied to the branch that is not
+    /// spelled out at all here because there is no `else`.
+    fn assert_stmt(&mut self, cond: &hir::Expr, message: &Option<hir::Expr>, span: Span) -> StmtKind {
+        let cond = match self.bool_ty() {
+            Some(ty) => self.check(cond, ty, Site::Elsewhere),
+            None => self.synth(cond).id,
+        };
+        let outcome = narrow::condition(&self.body, cond);
+        let entry = self.facts.clone();
+
+        self.facts = entry.clone();
+        self.facts.absorb(&outcome.when_false);
+        let string_ty = self.decls.prelude().ty(self.types, "String");
+        let message = match (message, string_ty) {
+            (Some(message), Some(ty)) => self.check(message, ty, Site::Elsewhere),
+            (Some(message), None) => self.synth(message).id,
+            (None, Some(ty)) => {
+                let literal = Literal::Str(DEFAULT_ASSERT_MESSAGE.to_string());
+                self.body.push_expr(ExprKind::Literal(literal), ty, span)
+            }
+            (None, None) => self.body.push_expr(ExprKind::Error, Ty::ERROR, span),
+        };
+
+        self.facts = entry;
+        self.facts.absorb(&outcome.when_true);
+        StmtKind::Assert { cond, message }
     }
 
     fn let_stmt(&mut self, binding: &hir::Let) -> StmtKind {

@@ -242,6 +242,80 @@ impl Session {
         }
     }
 
+    /// `sciencec test FILE...`
+    ///
+    /// Builds each entry exactly as `build` does, then runs the executable it
+    /// produced once and reports whether it exited cleanly.
+    ///
+    /// **There is no `test` item yet.** `stdlib-standard.md` §7 proposes one —
+    /// a declaration of its own, skipped in a release build, with a `testing`
+    /// module whose `check`/`check_equal` record a failure and let the runner
+    /// continue past it — and neither exists. `assert` is the only
+    /// verification construct this compiler has, and its failure aborts the
+    /// whole process (`TokenKind::Assert`'s decision), so there is no
+    /// "continue to the next test" for this command to do: **the program is
+    /// the test**, and running it once, to completion or to its first
+    /// `assert`, is the whole of what this command can mean until a `test`
+    /// item exists to run more than one per file.
+    ///
+    /// **The verdict is the exit code and nothing else.** `0` is a pass;
+    /// anything else is named by [`exit_reason`] and counted as a failure —
+    /// including the abort `assert`'s failure path raises, whose status is
+    /// platform-defined (`science-rt`'s `panic.rs`: `SIGABRT`/134 on POSIX, `3`
+    /// on Windows) and is reported as that code rather than decoded, because
+    /// decoding a platform's abort convention is not this driver's job.
+    ///
+    /// A file that does not build is reported the same way `build` reports
+    /// one, and is never run — a program that is not there has no exit code to
+    /// judge.
+    pub fn test(&mut self, paths: &[PathBuf]) {
+        let mut entries: Vec<(PathBuf, FileId)> = Vec::with_capacity(paths.len());
+        for path in paths {
+            if let Some(file) = self.load(path) {
+                if !entries.iter().any(|(_, seen)| *seen == file) {
+                    entries.push((path.clone(), file));
+                }
+            }
+        }
+        for (path, file) in &entries {
+            let mut all = self.diagnostics(path, *file);
+            if has_error(&all) {
+                self.report(all);
+                continue;
+            }
+            if let Err(diagnostics) = self.emit_executable(path, *file) {
+                all.extend(diagnostics);
+                self.report(all);
+                continue;
+            }
+            self.report(all);
+            self.run_test(path);
+        }
+    }
+
+    /// Runs the executable [`Session::emit_executable`] already produced
+    /// beside `path`, and prints the one-line verdict `cargo test`'s own
+    /// format is borrowed from, since it is a format readers already know.
+    fn run_test(&mut self, path: &Path) {
+        let exe = executable_path(path);
+        let name = display_path(path);
+        match std::process::Command::new(&exe).status() {
+            Ok(status) if status.success() => print(&format!("test {name} ... ok\n")),
+            Ok(status) => {
+                print(&format!("test {name} ... FAILED ({})\n", exit_reason(&status)));
+                self.tally.error();
+            }
+            Err(error) => {
+                print(&format!(
+                    "test {name} ... FAILED: cannot run `{}`: {}\n",
+                    exe.display(),
+                    io_reason(&error)
+                ));
+                self.tally.error();
+            }
+        }
+    }
+
     /// `sciencec fmt FILE...`, and `sciencec fmt --write FILE...`
     ///
     /// A file is formatted only when it lexes and parses clean. Resolution is
@@ -615,6 +689,29 @@ fn io_reason(error: &std::io::Error) -> String {
         std::io::ErrorKind::PermissionDenied => "permission denied".to_string(),
         _ => error.to_string(),
     }
+}
+
+/// Why [`Session::run_test`]'s child process ended, for the one line it
+/// prints about a failure.
+///
+/// An exit code exists on every platform this compiler targets, so it is
+/// tried first. What has none is a process a POSIX signal killed outright —
+/// `process::abort()`, which `science-rt`'s panic path calls, is exactly
+/// that — and there `ExitStatus::code()` is `None` by construction; the
+/// signal number is what `ExitStatusExt` gives instead, and Windows has no
+/// such extension because it has no such signal.
+fn exit_reason(status: &std::process::ExitStatus) -> String {
+    if let Some(code) = status.code() {
+        return format!("exit code {code}");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return format!("signal {signal}");
+        }
+    }
+    "terminated".to_string()
 }
 
 /// Whether anything here stops the pipeline.

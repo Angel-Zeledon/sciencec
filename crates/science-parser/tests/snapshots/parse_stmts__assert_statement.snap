@@ -1,0 +1,16 @@
+---
+source: crates/science-parser/tests/parse_stmts.rs
+expression: "parse_body(r#\"def f(count: Int):\n    assert(count >= 0)\n    assert(count < 100, \"count out of range\")\n\"#)"
+---
+Block @23..87
+  Assert @23..41
+    cond: Binary `>=` @30..40
+      lhs: Path `count` @30..35
+      rhs: Int 0 @39..40
+  Assert @46..87
+    cond: Binary `<` @53..64
+      lhs: Path `count` @53..58
+      rhs: Int 100 @61..64
+    message: Str "count out of range" @66..86
+--- diagnostics ---
+(none)

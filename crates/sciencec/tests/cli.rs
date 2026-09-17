@@ -1285,3 +1285,84 @@ fn a_build_with_the_backend_produces_a_program_that_runs() {
     );
     assert_eq!(program.status.code(), Some(0));
 }
+
+// --- `test` -----------------------------------------------------------
+
+/// `sciencec test` without the backend is `SC0400`, the same message `build`
+/// gives and for the same reason: there is no executable to run.
+#[cfg(not(feature = "llvm"))]
+#[test]
+fn a_test_without_the_backend_is_sc0400() {
+    let file = scratch("test_hello.science", b"def main():\n    assert(1 is 1)\n");
+    let run = sciencec(&["test", &file]);
+    run.failed().stderr_contains("SC0400");
+}
+
+/// A program whose `assert` holds runs to completion, and `test` reports it
+/// with `cargo test`'s own "ok" line — the format `Session::run_test`
+/// deliberately borrows.
+#[cfg(feature = "llvm")]
+#[test]
+fn a_passing_assert_is_reported_ok() {
+    let file = scratch(
+        "test_pass.science",
+        b"def main():\n    assert(1 + 1 is 2)\n    print(\"reached the end\")\n",
+    );
+    let run = sciencec(&["test", &file]);
+    run.succeeded();
+    assert!(run.stdout.contains("reached the end"), "stdout:\n{}", run.stdout);
+    assert!(
+        run.stdout.contains("test ") && run.stdout.contains("... ok"),
+        "stdout:\n{}",
+        run.stdout
+    );
+}
+
+/// A failing `assert` aborts the program — `TokenKind::Assert`'s decision,
+/// the same runtime path `panic` uses — and `test` turns that into `FAILED`
+/// and a non-zero exit rather than `sciencec`'s own crash.
+///
+/// The exact number the process died with is platform-defined
+/// (`science-rt`'s `panic.rs`), so this checks the shape of the report and
+/// not one platform's signal or exit code.
+#[cfg(feature = "llvm")]
+#[test]
+fn a_failing_assert_is_reported_failed() {
+    // `1 + 1 is 3` rather than `1 is 2`: two bare integer literals compared
+    // directly is `SC0400` today — "a comparison of two constants, whose
+    // width and signedness no operand and no destination names" — a
+    // pre-existing gap this test has no business exercising. `1 + 1`
+    // materialises a typed temporary, which is what the comparison needs to
+    // pick a width from.
+    let file = scratch(
+        "test_fail.science",
+        b"def main():\n    assert(1 + 1 is 3, \"math is broken\")\n",
+    );
+    let run = sciencec(&["test", &file]);
+    run.failed();
+    assert!(
+        run.stdout.contains("test ") && run.stdout.contains("... FAILED"),
+        "stdout:\n{}",
+        run.stdout
+    );
+    assert!(
+        run.stderr.contains("math is broken"),
+        "the assertion's own message should reach the terminal:\n{}",
+        run.stderr
+    );
+}
+
+/// The default message, when `assert` is given no second argument.
+#[cfg(feature = "llvm")]
+#[test]
+fn a_failing_assert_with_no_message_reports_the_default() {
+    // See `a_failing_assert_is_reported_failed` for why not `1 is 2`.
+    let file = scratch("test_fail_default.science", b"def main():\n    assert(1 + 1 is 3)\n");
+    let run = sciencec(&["test", &file]);
+    run.failed();
+    assert!(
+        run.stderr.contains("assertion failed"),
+        "stderr:\n{}",
+        run.stderr
+    );
+}

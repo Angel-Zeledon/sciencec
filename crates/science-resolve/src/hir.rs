@@ -1024,6 +1024,11 @@ pub enum StmtKind {
     Return(Option<Expr>),
     Break(Option<Expr>),
     Continue,
+    /// `assert(cond)` / `assert(cond, message)` (`ast::StmtKind::Assert`).
+    /// `message` stays optional through this phase — resolution has nothing
+    /// to say about a default — and `science-types`'s `stmt` is where one is
+    /// supplied.
+    Assert { cond: Expr, message: Option<Expr> },
     Error,
 }
 

@@ -298,6 +298,10 @@ impl Walker<'_> {
                 StmtKind::Return(Some(value)) | StmtKind::Break(Some(value)) => {
                     self.bind_expr(*value)
                 }
+                StmtKind::Assert { cond, message } => {
+                    self.bind_expr(*cond);
+                    self.bind_expr(*message);
+                }
                 StmtKind::Return(None)
                 | StmtKind::Break(None)
                 | StmtKind::Continue
@@ -498,6 +502,10 @@ impl Walker<'_> {
                 }
                 StmtKind::Return(Some(value)) | StmtKind::Break(Some(value)) => {
                     self.expr(*value, Ctx::Consume(*value))
+                }
+                StmtKind::Assert { cond, message } => {
+                    self.expr(*cond, Ctx::Consume(*cond));
+                    self.expr(*message, Ctx::Consume(*message));
                 }
                 StmtKind::Return(None)
                 | StmtKind::Break(None)
