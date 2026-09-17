@@ -1,7 +1,8 @@
 # Science — Design: self-hosting
 
 Date: 2026-09-16
-Status: draft for review
+Status: **§1's measurements are superseded — see the amendment in §1.2.** The
+argument of §2 onward stands; the numbers it opens with do not.
 Depends on: `docs/superpowers/specs/2026-09-16-science-f0-core-design.md`
 (§6 ownership and regions, §7 compiler architecture, §10 testing, §11 definition
 of done, §12 out of scope, §13 reserved words), and the compiler as it exists in
@@ -102,8 +103,56 @@ There is no `fmt` either, which §6.3 will turn out to care about.
 So the honest statement of distance is not "we are N% of the way to
 self-hosting". It is:
 
-> **Science cannot produce an executable. Until it can, self-hosting is not a
-> plan, it is a preference.**
+> ~~**Science cannot produce an executable. Until it can, self-hosting is not a
+> plan, it is a preference.**~~
+
+> **AMENDMENT: it can, and the whole of §1.1 and §1.2 is superseded.**
+>
+> `sciencec build hello.science` produces a native executable that prints and
+> exits 0. A failing script exits 1 after writing to stderr. A program that
+> calls `cos` through an `extern "C"` block links against libm and runs. So the
+> sentence above has stopped being the statement of distance, and the honest one
+> has moved.
+>
+> **All four crates §1.2 says do not exist, exist**: the type checker, the
+> mid-level IR, region inference and code generation. `sciencec` has `build`,
+> and `fmt`, and eight subcommands rather than four. The compiler was 17,305
+> lines of source over eight crates; it is **60,733 over fourteen**, and the
+> four that were missing are 30,466 of them — half the compiler, and all of it
+> the half that would have to be ported.
+>
+> There is now an LLVM dependency, and §1.2's clause that there is none needs
+> reading twice rather than deleting: **no `Cargo.toml` names `inkwell`,
+> `llvm-sys` or `cranelift`, and that is now a commitment instead of an
+> observation.** The backend is `extern "C"` against LLVM-C, which is the shape
+> `codegen-and-linking.md` Decision 1 requires of *both* implementations for
+> exactly this note's reason — a self-hosted `science-codegen` cannot call a
+> Rust wrapper.
+>
+> **What is measured, not claimed:** Gate B is met. `examples/21_compiler_shapes.science`
+> — a flat index-keyed table with parent links, a type holding a borrowed array
+> in a field, a boxed recursive tree, a work-queue traversal over indices —
+> passes the borrow checker **with no region written anywhere**. §1's own
+> caveat, that this was "an analysis of shapes, not a compilation", no longer
+> applies: it is a compilation. That was the load-bearing claim of §3 and §4 and
+> it held.
+>
+> **What the new distance is**, and it is not a percentage. Checking is solid:
+> the corpus passes but for one file that imports modules this repository does
+> not contain. *Building* is early, and five named pieces stand between here and
+> a corpus that compiles — method calls, generics, arrays and indexing, drop
+> glue for anything owning more than a bare `String`, and the tuple-and-cast
+> pair. The first two are worth more than the other three together.
+>
+> **And the warning §1 could not have given**, because it predates any backend:
+> in this half, silence does not mean it works. Five silent miscompiles have
+> been found by *running* the output rather than reading it — a `main` that
+> never wrote its return value, a store eight bytes wide into a one-byte slot
+> that passes `LLVMVerifyModule`, a `needs_drop` blind to every runtime
+> aggregate, a lowering hole that suppressed the borrow checker over whole
+> bodies, and a pointer-to-pointer the verifier structurally cannot catch. Every
+> construct the backend admits is gated by a program that is built, linked, run
+> and checked for its output.
 
 ### 1.3 The one thing that is already bootstrap-ready, and it was not planned
 
