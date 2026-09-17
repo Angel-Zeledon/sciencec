@@ -23,28 +23,40 @@
  * palette's way: `--accent` is a desaturated periwinkle at 219°, where
  * `--c-type` is an electric cyan at 190°, and the two never share a ground.
  *
- * The page is a *lighter* blue than the code ground, not a darker one, so a
- * listing reads as **inset** — something set into the page rather than
- * painted on it, which is what every dark documentation theme does and what
- * a reader expects of a listing. `--code-bg` sits **1.29:1** below `--paper`.
- * That number is the design target, not an accident: below about 1.3 the two
- * grounds read as one surface with a border drawn on it, and above about 1.6
- * the page starts reading as grey against a black box. The separation is
- * carried by the two fills, so the boundary survives with `--code-frame`
- * removed.
+ * **The two grounds were swapped, and the listing is now the raised one.**
+ * The page is a near-black grey and `--code-bg` is the violet the page itself
+ * held an hour ago, so a listing reads as a panel **laid on** the page rather
+ * than inset into it — an editor pane on a desktop, which is the other
+ * convention and the one asked for here.
  *
- * `--code-bg` was not darkened to get there. It is already near-black, and
- * pushing it further would drain the blue that makes the neon palette sit
- * right — and the palette is the one thing here that does not move. The page
- * was lifted instead, which is why every foreground below was re-derived
- * against the new ground rather than carried over from the old one.
+ * `--code-bg` sits **1.19:1 above `--paper`**, and that is tighter than the
+ * 1.29:1 the inset arrangement had. It is tight for a reason worth stating
+ * rather than hiding: a violet light enough to carry the syntax palette is
+ * fairly high on the ramp, so a *grey* page has to go nearly to black before
+ * it separates at all, and past about #141416 there is nothing left to
+ * spend. **`--code-frame` therefore does more work here than it did before**,
+ * and it was lifted to #4d4468 — 2.05:1 against the page and 1.72:1 against
+ * the listing — because at this separation the boundary does not survive
+ * with the border removed, where under the old arrangement it did.
  *
- * **Three legible levels, not two and a collision.** `--code-bg` is 1.45:1
- * below the page; `--surface` (a card, a chip inside a callout) is 1.21:1
- * above it; `--sunk` (an inline `code` chip) is 1.40:1 above it, and 1.16:1
- * above `--surface`. Both raised levels are also clearly off the listing —
- * 1.76:1 and 2.04:1 against `--code-bg` — so an inline chip never reads as a
- * fragment of a code block.
+ * **The syntax palette had to move for the first time, by one colour.** Every
+ * one of its ten hues is measured against `--code-bg`, and lifting that
+ * ground from a near-black to a violet cost each of them about a fifth of
+ * its contrast. Nine survived; `--c-com`, already the tightest at 4.84:1,
+ * fell to 3.91:1 and is now `#9a93b0` — a grey-violet rather than the old
+ * grey-blue, which also stops a comment reading as a foreign hue on this
+ * ground. `--c-pun` was warmed with it for the same reason. The tightest
+ * pairing in the listing is now `--c-key` at 4.75:1.
+ *
+ * **Three legible levels.** `--surface` (a card, a chip inside a callout) is
+ * 1.51:1 above the page and `--sunk` (an inline `code` chip) is 1.99:1 above
+ * it. Both now sit *between* the page and the listing rather than on the far
+ * side of it, which is the one thing the swap costs: under the old
+ * arrangement an inline chip could not be mistaken for a fragment of a block
+ * because it was on the opposite side of the page's tone. Here it is told
+ * apart by hue — the chips are neutral grey and the listing is violet — and
+ * that is a weaker signal than a tonal one, so `--sunk` is kept deliberately
+ * grey rather than tinted toward the code ground.
  *
  * **Nothing outside a code block is decorated.** No gradient, no glow, no
  * animation. Dark is not a licence to be loud: the rails are flat 3px tabs,
@@ -52,30 +64,26 @@
  * inside a `pre`.
  */
 :root {
-  /* The page. A slate-navy ramp: --paper is the ground, --surface is a card,
-   * --sunk is an inline code chip, --rule is a hairline.
+  /* The page. A neutral grey ramp: --paper is the ground, --surface is a
+   * card, --sunk is an inline code chip, --rule is a hairline.
    *
-   * **The ground left blue here**, and that is a hue change and not a tone
-   * change: #243048 to #1e2839 was the same navy taken down, and this is
-   * #272231, a violet charcoal. Every pairing was re-measured against it.
-   * On --paper: --ink 13.59:1, --muted 8.63:1, --faint 6.98:1, --accent
-   * 7.54:1, --old 7.96:1.
+   * **The page and the listing traded places.** The ground was a slate navy,
+   * then a violet charcoal; it is a near-black grey now, and the violet it
+   * used to be is the *listing's* ground. So the violet did not leave the
+   * page so much as move behind the code, which is where the argument for
+   * choosing it applies most: the syntax palette's three loudest hues are a
+   * pink, a purple and a cyan, and they sit on a violet as one decision where
+   * on a neutral ground they sit as an accident.
    *
-   * **Violet rather than a neutral charcoal, and the reason is the listing.**
-   * The syntax palette is fixed — it is measured against --code-bg, which
-   * cannot move — and its three loudest hues are a pink, a purple and a cyan.
-   * A neutral grey page leaves those reading as an accident; a violet ground
-   * makes them read as the same decision. The cost is that the page now has
-   * a hue of its own to lose, where grey had none.
+   * On --paper: --ink 15.73:1, --muted 10.11:1, --faint 8.05:1, --accent
+   * 8.74:1, --old 9.21:1. Every one is higher than it was, because the ground
+   * went nearly to black and none of the foregrounds moved.
    *
-   * **--accent moved with it, from a blue to a lilac**, because an accent in
-   * the hue the page just left is the one colour guaranteed to look like a
-   * leftover.
-   *
-   * The number that decides whether the page works at all: **--code-bg sits
-   * 1.24:1 below --paper.** A hue change does not have to move it — luminance
-   * is what separates two surfaces — so the violet was chosen at the tone the
-   * navy already held, rather than picked first and measured afterwards.
+   * **--accent stays the lilac**, though the page is no longer violet, and
+   * that is deliberate rather than left over: with the listing violet, a blue
+   * or cyan accent would compete with --c-type across the boundary, and a
+   * grey accent is not an accent. It is the one colour that now belongs to
+   * neither surface, which is what makes it read as chrome.
    * Darkening the page walks it toward the listing, and near black the
    * luminance differences compress, so there is no ground below about
    * #1a2233 that keeps a listing visible as a separate surface at all. This
@@ -90,14 +98,14 @@
    * The tightest foreground that carries navigation is --faint on --paper at
    * 7.01:1 — the sidebar's group headings, checked rather than assumed
    * because it is the pairing that failed the last time this palette moved. */
-  --paper:#272231; --surface:#332d40; --sunk:#3d3650; --ink:#f2eff8;
-  --muted:#c6bed6; --faint:#b3aac6; --rule:#4b4361;
-  --accent:#c9a6f5; --accent-soft:#372e4d; --old:#e7ad96; --old-soft:#43302a;
+  --paper:#141416; --surface:#212125; --sunk:#2a2a2f; --ink:#f0f0f3;
+  --muted:#c2c2ca; --faint:#adadb8; --rule:#37373e;
+  --accent:#c9a6f5; --accent-soft:#2c2438; --old:#e7ad96; --old-soft:#3a2b24;
   /* Reserved, and read by nothing today. These three have never been read by
    * a rule in this file; they are re-toned with the rest rather than left as
    * the old teal, so that a future rule reaching for one gets a colour that
    * belongs to this palette. */
-  --deep:#1a1622; --deep-ink:#ece7f4; --deep-rule:#272231;
+  --deep:#0e0e10; --deep-ink:#f0f0f3; --deep-rule:#141416;
   /* Syntax — "Science Neon". Declared once and never redefined, because
    * every code surface on this site is dark whatever the page does. That is
    * the decision that makes the palette possible: a neon hue survives on
@@ -110,10 +118,10 @@
    * listing's colours are fixed, and re-toning the page could not reach
    * them. Every value below is measured against --code-bg and clears 4.5:1
    * there; the tightest is --c-com at 4.84. */
-  --code-bg:#0b0f1a; --code-ink:#cdd8f0; --code-frame:#3a3350;
+  --code-bg:#272231; --code-ink:#e4dff0; --code-frame:#4d4468;
   --c-key:#e85aa8; --c-ctl:#e85aa8; --c-type:#4de8ff; --c-fn:#3dfca0;
   --c-str:#f6ff6b; --c-num:#c77dff; --c-par:#ffa23c; --c-op:#e85aa8;
-  --c-com:#7080a4; --c-res:#ff6e6e; --c-pun:#8fa0c4;
+  --c-com:#9a93b0; --c-res:#ff6e6e; --c-pun:#a79fbd;
   /* The block rail, kept separate from the syntax palette above on purpose:
    * these four paint a flat 3px tab on the left of a `pre`, never a gradient,
    * so the block kinds stay tellable apart without competing with the tokens
