@@ -510,11 +510,17 @@ fn the_boundary_is_where_it_says_it_is() {
             "choice C:\n    A\n    B(String)\n\nlet c be A\nprint(\"x\")\n",
             "owns something",
         ),
-        // No `Ty -> CgTy` arm, which is where a `choice` was before this pass.
-        ("tuple", "let t be (1, 2)\nprint(\"x\")\n", "a tuple"),
-        // One `trunc`/`sext`/`zext` for integers and four unmade decisions for
-        // floats; `Rvalue::Cast` is refused whole rather than half-lowered.
-        ("cast", "let a be 1i32\nlet b be a as I64\nprint(\"x\")\n", "cast"),
+        // **Still refused, and no longer for the reason this list was written
+        // with.** `cg_ty` has the `TyKind::Tuple` arm now and
+        // `let t: (Int, Int) be (1, 2)` builds, runs and prints; what is left
+        // is that the *unannotated* literal types as `(<error>, <error>)`,
+        // because `science-types`' `ExprKind::Tuple` arm reads each element's
+        // type before inference has defaulted it. `tests/past_stage_three.rs`
+        // is the account and the programs.
+        ("tuple", "let t be (1, 2)\nprint(\"x\")\n", "`TyKind::Error`"),
+        // **A cast used to be here.** `Rvalue::Cast` has a lowering and
+        // `tests/casts.rs` runs every pair §5.1 defines; the pairs it does not
+        // define are refused there.
         // A method's receiver is a `Self` this crate cannot resolve to a
         // concrete type. **The refusal is at the signature and not at the call
         // site**, which is a finding: `science-mir` *does* resolve a method

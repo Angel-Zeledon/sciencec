@@ -41,6 +41,17 @@
 //! `BodyChecker::revealed` is called at every point that inspects a type's
 //! *structure* and never at a point that stores one.
 //!
+//! ## 1b. A borrowed expectation stops at a branch
+//!
+//! **Three of those four forms do not get a `borrowed T` pushed into them at an
+//! argument.** §6.3 puts the auto-borrow *"at call sites"*, and the call site of
+//! `show(if flag: "yes" else: "no")` is the argument, not the two arms. Pushing
+//! `borrowed String` inward made each arm borrow its own temporary, whose
+//! storage ends inside the arm, so `science-regions` reported `SC0333` on a
+//! correct program — right about the MIR and wrong about the program. The
+//! branch is synthesised instead and `BodyChecker::demand` takes one borrow
+//! above it; `branches` is the predicate and carries the cost.
+//!
 //! # 2. Sites, named where they are
 //!
 //! Decision 14 boxes at a `return` and at an argument. This file passes
@@ -165,6 +176,19 @@
 //! refused only at a [`TyKind::Named`], which left it agreeing with a tuple, a
 //! closure, unit and an interface object; it is now refused at every shape this
 //! phase can classify, which is the same line the numeric half draws.
+//!
+//! ## 5b. An interface object is the one refusal a default can answer
+//!
+//! **`show(42)` at a `borrowed any Display` is not a number meeting a
+//! non-number.** The classification above is right that a trait object is not a
+//! numeric type, and it used to end the argument there. But the question at
+//! that slot is *"is there a number that reaches it"*, and Decision 2 already
+//! says which one: the literal is an `I64`, `I64 implements Display`, and
+//! `assign`'s §4 unsizes `borrowed I64` into `borrowed any Display`. So the
+//! default is taken at the slot and the ordinary coercion runs.
+//! `BodyChecker::literal_unsizes` is the rule, and it refuses an exclusive
+//! borrow, an owned object and a default the interface is not implemented by —
+//! the three cases where there would be no coercion to compose with.
 //!
 //! # 6. The holes, each priced
 //!
@@ -841,6 +865,16 @@ impl<'a> BodyChecker<'a> {
 
     /// Checking mode: the type is known, so push it inward. §1.
     fn check(&mut self, expr: &hir::Expr, expected: Ty, site: Site) -> ExprId {
+        // §1b. §6.3's auto-borrow is taken **at the argument**, so a borrowed
+        // parameter stops the expectation at a branch rather than pushing it
+        // into the arms.
+        if site == Site::Argument && branches(expr) {
+            let target = self.revealed(expected, expr.span);
+            if matches!(self.types.kind(target), TyKind::Borrowed { .. }) {
+                let typed = self.synth(expr);
+                return self.demand(typed, expected, site, expr.span);
+            }
+        }
         match &expr.kind {
             hir::ExprKind::If(if_expr) => {
                 self.if_expr(if_expr, expr.span, Some((expected, site))).id
@@ -902,6 +936,13 @@ impl<'a> BodyChecker<'a> {
             InferTy::Known(found) => self.coerce(typed.id, found, expected, site, span),
             InferTy::Var(var) => {
                 let target = self.revealed(expected, span);
+                // Decision 2's default, run here rather than at
+                // [`Self::finish`]. §5b.
+                if site == Site::Argument {
+                    if let Some(defaulted) = self.literal_unsizes(var, target, span) {
+                        return self.coerce(typed.id, defaulted, expected, site, span);
+                    }
+                }
                 // §6.3's auto-borrow, reached one mode over. `coerce` runs it
                 // for a value whose type is known; a literal has no type yet,
                 // so the peeling is here instead — the literal takes the
@@ -1018,6 +1059,77 @@ impl<'a> BodyChecker<'a> {
             // off, so reaching here at all means the slot was not one.
             Numeric::Null => false,
         }
+    }
+
+    /// §5b. **A numeric literal at a `borrowed any I` parameter is defaulted
+    /// here, and then asked the ordinary question.**
+    ///
+    /// **The decision.** [`Self::literal_admits`] is asked whether a literal's
+    /// *variable* may be bound to the slot's type, and against an interface
+    /// object it says no — correctly, because
+    /// [`Self::numeric_shape`] classifies [`TyKind::Object`] as
+    /// [`Shape::NotANumber`] and a trait object is not a numeric type. But the
+    /// question at a `borrowed any Display` parameter is not *"is this slot a
+    /// number"*; it is *"is there a number that reaches this slot"*, and there
+    /// is: Decision 2 says an unconstrained integer literal is an `I64`,
+    /// `builtins.rs` says `I64 implements Display`, and [`assignable`]'s rule 6
+    /// unsizes `borrowed I64` into `borrowed any Display`. So the literal is
+    /// bound to its default *first* and handed to [`Self::coerce`], which
+    /// composes §6.3's auto-borrow with §4's unsizing exactly as it does for a
+    /// value whose type was written.
+    ///
+    /// **The reason it is not left to [`Self::finish`].** Decision 2's
+    /// defaulting runs over the variables that are still *unresolved* when the
+    /// body ends, and a literal that reaches an interface object never gets
+    /// that far: `demand` reports at the slot and returns. The default has to
+    /// run at the one place the expectation makes it necessary, which is here.
+    ///
+    /// **What it refuses, and each refusal is the honest half.**
+    ///
+    /// - **A `mutable borrowed any I` slot.** Rule 6 requires the same
+    ///   mutability on both sides and a literal has no place to borrow
+    ///   exclusively from; admitting it would invent an lvalue.
+    /// - **A bare `any I` slot**, and `(any I)?`. §5 of [`crate::assign`]
+    ///   refuses owned unsizing — *"an owned `any Summarize` is constructed
+    ///   where it is written"* — so there is no coercion to compose with, and
+    ///   defaulting first would only change *expected `any Display`, found an
+    ///   integer literal* into the same refusal with `I64` in it. The literal
+    ///   is the more useful noun.
+    /// - **A default that does not implement the interface.** The relation is
+    ///   asked of `I64` or `F64` before the variable is bound, so a
+    ///   `borrowed any Iterate` parameter given `1` still reports at the
+    ///   literal rather than at a coercion the reader has to work backwards
+    ///   from.
+    ///
+    /// **The cost.** Decision 2's default is now taken at a *slot* as well as
+    /// at the end of a body, so `show(1)` against `borrowed any Display` fixes
+    /// the literal at `I64` where a later `show(1 + x)` with `x: I32` would
+    /// have inferred `I32`. That is the same commitment `let n: I64 be 1`
+    /// makes and it is made for the same reason — the slot is the only
+    /// constraint there is — but it is a commitment, and a literal that meets
+    /// an object *and* a numeric type in one class will now find the class
+    /// already bound.
+    fn literal_unsizes(&mut self, var: InferVar, target: Ty, span: Span) -> Option<Ty> {
+        let kind = self.literal_kind(var)?;
+        let TyKind::Borrowed { mutable: false, inner } = *self.types.kind(target) else {
+            return None;
+        };
+        let object = self.revealed(inner, span);
+        let TyKind::Object { interface, .. } = *self.types.kind(object) else {
+            return None;
+        };
+        let default = match kind {
+            Numeric::Integer => self.decls.prelude().default_int(self.types)?,
+            Numeric::Float => self.decls.prelude().default_float(self.types)?,
+            // `demand` peeled `null` off above; the arm is here so that a new
+            // `Numeric` cannot be admitted by a wildcard.
+            Numeric::Null => return None,
+        };
+        if !self.decls.methods().implements(self.types, default, interface) {
+            return None;
+        }
+        self.infer.bind(self.types, var, default).ok()?;
+        Some(default)
     }
 
     /// §5. What this phase can say about a type a *number* is being put in.
@@ -1607,7 +1719,13 @@ impl<'a> BodyChecker<'a> {
 
     fn call(&mut self, callee: &hir::Expr, args: &[hir::Arg], span: Span) -> Typed {
         if let hir::ExprKind::Path { res, generics } = &callee.kind {
-            match named(self.defs, *res) {
+            let resolved = named(self.defs, *res);
+            if let Some(Named::Function(def)) = resolved {
+                // §4.1's arity, before anything reads a signature: `print` has
+                // none, so this is the only place the call is looked at at all.
+                self.output_is_unary(def, args, span);
+            }
+            match resolved {
                 // `panic` is a prelude name with no `hir::Fn` behind it, so
                 // there is no signature to read `-> Never` off. It is the one
                 // way a body diverges without a `return`, which is the half of
@@ -1654,6 +1772,70 @@ impl<'a> BodyChecker<'a> {
         let id =
             self.body.push_expr(ExprKind::Call { callee: callee.id, args: ids }, Ty::ERROR, span);
         Typed { id, ty: InferTy::Known(Ty::ERROR) }
+    }
+
+    /// §7's `SC0275`, second clause: **`print` takes one value.**
+    ///
+    /// **The decision. §4.1's arity is checked here although §4.1's parameter
+    /// type is not declared anywhere.** `strings-formatting-and-docs.md` §4.1
+    /// settles two separate things about `print` — that it is unary, and that
+    /// its argument is a `borrowed any Display` — and §7 renders the first as a
+    /// diagnostic with a mechanical fix:
+    ///
+    /// ```text
+    /// error[SC0275]: `print` takes one value
+    ///  --> run.science:9:5
+    ///    |
+    ///  9 |     print("rows:", n)
+    ///    |     ^^^^^^^^^^^^^^^^^
+    ///    |
+    /// help: interpolate instead
+    ///    |
+    ///  9 |     print(f"rows: {n}")
+    /// ```
+    ///
+    /// **The reason it is not the ordinary arity check.** It would be, if
+    /// `print` had a signature. It does not — `science-resolve`'s `builtins`
+    /// measures what declaring one costs, and the cost is every `print` in
+    /// every program becoming `Unlowered` — so `print("rows:", n)` fell through
+    /// to the closure arm below, was typed [`Ty::ERROR`], and **reported
+    /// nothing at all**, while §7's table said this code covered it. A
+    /// diagnostic that is specified and numbered and fires on nothing is worse
+    /// than one that was never written, because the note is evidence the
+    /// language made a decision the compiler did not keep.
+    ///
+    /// Splitting it this way is what lets the half that needs nothing from the
+    /// back half of the compiler land on its own. Arity is a fact about the
+    /// *call*: it is decided by §4.4 having no variadic parameter form, it
+    /// needs no parameter type, no `Display` relation, no vtable and no
+    /// runtime entry point. The `Display` obligation is a fact about the
+    /// *value* and needs all four.
+    ///
+    /// **Zero arguments too**, which §4.1 decides in its last paragraph:
+    /// *"There is no overloading and there are no default arguments in §4.4, so
+    /// a blank line is `print("")`"*. Same code, different note, because the
+    /// fix is a different edit.
+    ///
+    /// **What it costs, and it is the reason this is keyed on a `DefId`.** A
+    /// user may write `def print(a: Int, b: Int)` in a module of their own, and
+    /// that call must not be refused for the shape of a prelude declaration it
+    /// has nothing to do with. `Prelude::unary_output` answers about the
+    /// identity of the definition and not about its name, which is the same
+    /// discipline `items`' `WANTED` list is under for every other prelude name
+    /// this crate asks about.
+    ///
+    /// **What it does not cover.** The `Display` half of §7's row, for a
+    /// `print` argument — that is the declaration `builtins` withdrew, and the
+    /// f-string's [`Self::requires_display`] is the only place this code asks
+    /// the question today.
+    fn output_is_unary(&mut self, def: DefId, args: &[hir::Arg], span: Span) {
+        let Some(name) = self.decls.prelude().unary_output(def) else {
+            return;
+        };
+        if args.len() == 1 {
+            return;
+        }
+        self.diagnostics.push(print_takes_one_value(span, name, args.len()));
     }
 
     fn call_signature(
@@ -4325,6 +4507,58 @@ fn is_opaque(types: &Types, ty: Ty) -> bool {
     ) || types.references_error(ty)
 }
 
+/// §1b. An expression whose value is produced inside a scope of its own.
+///
+/// **The decision. A branch or a block at a `borrowed T` argument is
+/// synthesised, and §6.3's auto-borrow is taken above it.**
+///
+/// **The reason.** §6.3 puts the auto-borrow *"at call sites"*, and the call
+/// site of `print(if flag: "yes" else: "no")` is the argument, not the two
+/// arms. [`BodyChecker::check`] pushes an expectation inward through `if`,
+/// `match` and a block, and pushing `borrowed any Display` inward made each arm
+/// take its own borrow — of `"yes"`, a temporary whose storage ends at the
+/// close of the arm. `SC0333` was then right about the MIR and wrong about the
+/// program: the value the caller sees outlives the arm, and the borrow the
+/// checker wrote does not. Synthesising first gives the branch one value, in
+/// the argument's own scope, and one borrow above it.
+///
+/// **Why it is here and not in the region engine.** The temporary's scope is
+/// `science-mir`'s, and widening it would be a lowering change made to
+/// accommodate a borrow the type checker chose to put in the wrong place. The
+/// borrow is this phase's node — [`BodyChecker::auto_borrow`] writes it — so
+/// the place it is written is this phase's to get right.
+///
+/// **The cost, and it is a real one.** `borrow_of(if c: a else: b)`, where `a`
+/// and `b` are bindings and the parameter is `borrowed String`, used to borrow
+/// `a` or `b` in place; it now moves one of them into the branch's value and
+/// borrows that. The move is visible — a later use of `a` is a use after move —
+/// and nothing in `examples/` writes that shape, which is how the cost is
+/// priced rather than how it is dismissed. Taking the cheaper path would mean
+/// deciding per arm whether its tail denotes a place, and the checker does not
+/// know that when it descends.
+///
+/// **A closure and a tuple are not on this list.** A tuple at a borrowed slot
+/// never matched [`BodyChecker::check`]'s tuple arm in the first place — that
+/// arm requires a tuple *target* — and a closure body is not a place the
+/// argument's borrow could have been taken in.
+///
+/// **`if` is the only one of the four with a surface syntax in argument
+/// position today**, and it is the one `examples/13_inline_blocks.science`
+/// writes. `match`, a block and an `unsafe` block are on the list because they
+/// reach [`BodyChecker::check`] through the same three arms and would
+/// distribute the same way the day the grammar admits them inline; leaving them
+/// off would be a rule that holds for the form that is written and not for the
+/// form it is a case of.
+fn branches(expr: &hir::Expr) -> bool {
+    matches!(
+        expr.kind,
+        hir::ExprKind::If(_)
+            | hir::ExprKind::Match(_)
+            | hir::ExprKind::Block(_)
+            | hir::ExprKind::Unsafe(_)
+    )
+}
+
 /// Two literal kinds in one inference class. An integer literal unified with a
 /// float one is a float: `1 + 2.0` is the case, and the integer is the one that
 /// can be represented exactly in the other's type.
@@ -4422,6 +4656,31 @@ fn no_operator_implementation(
 /// those refusals has an answer the author can write — narrow the nullable,
 /// take the length, name the field. A message about a missing renderer would
 /// describe the compiler instead of the program.
+/// `SC0275` — a call to `print` or `write` that does not supply one value.
+///
+/// **The same code as [`not_displayable`], because §7's row is one row.** That
+/// row reads *"the argument does not implement the requested interface …
+/// covers `print` given more than one argument"*, and the constant it is behind
+/// is named for the clause it leads with. Giving the arity its own code would
+/// mean `strings-formatting-and-docs.md` §7's table was wrong about the
+/// compiler in a second way while being made right about the first.
+fn print_takes_one_value(span: Span, name: &str, supplied: usize) -> Diagnostic {
+    let note = if supplied == 0 {
+        // §4.1: *"a blank line is `print(\"\")`. Two characters, and no
+        // language feature."*
+        format!("a blank line is `{name}(\"\")`: there are no default arguments (§4.4)")
+    } else {
+        // §4.1's applicable fix, as prose. It is not an
+        // `ApplicableFix` because the rewrite has to interleave the arguments
+        // with the separators the author meant, and inventing that text is a
+        // guess about the spacing §4.1's second reason is precisely about.
+        format!("interpolate instead: `{name}(f\"… {{value}}\")`")
+    };
+    Diagnostic::error(codes::NOT_DISPLAYABLE, format!("`{name}` takes one value"))
+        .with_label(Label::primary(span, format!("{supplied} arguments were supplied")))
+        .with_note(note)
+}
+
 fn not_displayable(span: Span, ty: &str) -> Diagnostic {
     Diagnostic::error(
         codes::NOT_DISPLAYABLE,

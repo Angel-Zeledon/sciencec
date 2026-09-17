@@ -40,7 +40,8 @@
 //!
 //! **The set is closed at the primitives, and it is a list rather than a
 //! rule.** `I8`…`I64` all arrive here as [`science_string_push_i64`] after
-//! codegen sign-extends them, `U8`…`U64` as [`science_string_push_u64`], and
+//! `science-mir` sign-extends them with an `Rvalue::Cast`, `U8`…`U64` as
+//! [`science_string_push_u64`] after it zero-extends them, and
 //! `F16` and `BF16` arrive as nothing at all: there is no Rust primitive to
 //! render them through and no note that says what their shortest round-trip
 //! spelling is. A user type that implements `Display` has no entry point here
@@ -64,6 +65,14 @@
 //! reading the signatures rather than by deciding — which is the whole of what
 //! §2's "this list has been wrong twice" is for. The count of entry points
 //! goes from 47 to 54; the count of `sret` returns stays at 9.
+//!
+//! **§1.7's capacity later moved that count, which nothing here did.**
+//! [`crate::science_string_with_capacity`] is the fifty-fifth entry point and
+//! the tenth `sret` return: three words by value, MEMORY on both conventions,
+//! read off the signature the same way these seven were. This section is about
+//! a design that avoided joining the list; that one is about a design that had
+//! to. Both numbers came from the same derivation and neither from a
+//! judgement.
 //!
 //! The push shape is what makes that true, and it was not chosen for it: a
 //! `science_i64_to_string` returning `ScienceString` by value would have been
@@ -133,9 +142,23 @@ pub unsafe extern "C" fn science_string_push_bytes(
 /// Append a signed integer in base ten.
 ///
 /// Every signed width renders through this one: `I8`…`I64` are sign-extended
-/// by codegen before the call, and sign extension does not change the digits.
-/// §2.3 gives no grouping by default, so there is none — `1234567`, not
-/// `1,234,567`.
+/// before the call, and sign extension does not change the digits. §2.3 gives
+/// no grouping by default, so there is none — `1234567`, not `1,234,567`.
+///
+/// **The phase that extends is `science-mir`'s `Builder::push_of`**, which
+/// emits an `Rvalue::Cast` to `I64` in front of the call for the three narrow
+/// widths. This sentence used to say *"by codegen"* and was **false**: there
+/// was no `Rvalue::Cast` lowering anywhere, so nothing between the choice of
+/// entry point and the call could have done it, and the three narrow widths
+/// were refused rather than rendered. `science-mir`'s §7 item 10 is the record
+/// of that, and it is named here because a note that has been wrong once
+/// should say when it stopped being.
+///
+/// **The extension is signed and that is not a detail.** `-1i32`
+/// zero-extended is `4294967295`, which is a legal `i64` and the wrong number;
+/// nothing below this function could tell the two apart, because an LLVM
+/// integer carries no sign. `science-codegen-llvm`'s `tests/casts.rs` runs the
+/// values where the swap is visible.
 ///
 /// # Safety
 ///
@@ -149,7 +172,12 @@ pub unsafe extern "C" fn science_string_push_i64(value: *mut ScienceString, numb
 
 /// Append an unsigned integer in base ten.
 ///
-/// `U8`…`U64` are zero-extended by codegen before the call.
+/// `U8`…`U64` are zero-extended before the call, by the same phase and with
+/// the same history as [`science_string_push_i64`]'s sign extension — and
+/// **zero**-extended, because this is the entry point whose argument has no
+/// sign to preserve. Sending an `I32` through here would render `-1` as
+/// `4294967295`; `science-mir`'s `Builder::push_of` keeps the signed and the
+/// unsigned list separate for exactly that reason.
 ///
 /// # Safety
 ///

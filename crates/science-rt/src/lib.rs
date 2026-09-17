@@ -37,7 +37,8 @@
 //! [`science_string_new`], [`science_string_clone`], [`science_string_truncate`],
 //! [`science_array_new`], [`science_array_with_capacity`], [`science_map_new`],
 //! [`science_string_chars`], [`science_string_from_bytes`],
-//! [`science_read_file`]. Every one of those is three words or more, which both
+//! [`science_string_with_capacity`], [`science_read_file`]. Every one of those
+//! is three words or more, which both
 //! the System V x86-64 and the Windows x64 conventions classify as MEMORY:
 //! the caller passes a hidden pointer to the return slot and the callee writes
 //! through it. Codegen must emit those calls with an `sret` parameter rather
@@ -110,6 +111,27 @@
 //! both at once and neither was traded for the other: `format.rs`'s own
 //! documentation is the argument, and this paragraph is the record that the
 //! `sret` question and the allocation question had the same answer.
+//!
+//! **The fifty-fifth entry point is the first one that moved the set, and it
+//! moved it the way its signature said it would.** [`science_string_with_capacity`]
+//! is what §1.7's *"the capacity pre-computed … so the common case is one
+//! allocation"* needs and had nowhere to go: fifty-four entry points and not
+//! one took a capacity. It returns `ScienceString` by value — three words,
+//! MEMORY on every one of the three targets, exactly like
+//! [`science_string_new`] beside it — so the derived set goes from nine to
+//! **ten** and the count from 54 to 55.
+//!
+//! That is the only direction this section has ever moved in and it is worth
+//! saying which part was decided and which part was read. The *shape* was
+//! decided — a `with_capacity` returning a value rather than a
+//! `science_string_reserve(*mut, usize)` returning `()`, because the f-string
+//! builder's first instruction is the one that makes the accumulator and a
+//! reserve would be a second call before the first push. Membership of the
+//! `sret` set was **not** decided: nobody added a name to a list. The
+//! signature was written, `science-codegen`'s `runtime.rs` classified it, and
+//! `tests/runtime_abi.rs` now asserts ten. A reader who had to decide by hand
+//! whether the tenth symbol joined a list of nine would have had to be right;
+//! again, nobody had to.
 //!
 //! # 3. Pointer conventions
 //!

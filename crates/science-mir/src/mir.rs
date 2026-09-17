@@ -324,6 +324,27 @@ pub enum Constant {
     Literal(Literal),
     /// A function, a constant, or a unit variant named as a value.
     Item(DefId),
+    /// A count **this lowering computed**, in the width the callee declares.
+    ///
+    /// **Not a [`Literal::Int`], and the difference is what it is a fact
+    /// about.** A `Literal` is source text the author wrote and every consumer
+    /// treats it that way: the checker gave it a type, `dump` prints it back in
+    /// the base it was written in, and a diagnostic can quote it. §1.7's
+    /// capacity estimate is none of those — it is a number
+    /// [`crate::lower::Builder::capacity_estimate`] worked out from the
+    /// fragments, and spelling it as a decimal integer literal with no suffix
+    /// would be this crate claiming the program contains a `57` that it does
+    /// not.
+    ///
+    /// **Its width is the parameter's and never `Int`'s**, which is the other
+    /// half. The only thing that takes one is a `usize` capacity across the C
+    /// boundary — §9.3's finding 3, *"a length is a `usize` and an index is an
+    /// `Int`"* — so a consumer materialises it at the layout the signature
+    /// gives and there is no Science type to disagree with.
+    ///
+    /// The cost is one more variant for every exhaustive match on
+    /// [`Constant`], which today is three places.
+    Count(u64),
     Unit,
 }
 
@@ -426,8 +447,29 @@ pub enum Rvalue {
     /// is the reason they are blocks and edges by the time they reach this
     /// file. [`crate::lower`]'s §3.
     Binary { op: BinaryOp, lhs: Operand, rhs: Operand },
-    /// `e as T`.
-    Cast { operand: Operand, ty: Ty },
+    /// `e as T`, with **both** types on the statement.
+    ///
+    /// **`from` is here because `operand` does not carry a type and a cast is
+    /// the one rvalue whose meaning depends on the operand's.** Every other
+    /// rvalue can be lowered from the destination's type and the operand's
+    /// place: `Binary` reads the width off whichever side is a place, `Use`
+    /// reads it off the slot. A cast cannot. `1 as U8` is
+    /// [`Operand::Const`] on both sides of the arrow — no place, no local
+    /// declaration, nothing to ask — and a consumer that guessed the source
+    /// width would emit a `trunc` where a `zext` was wanted, which is a value
+    /// that is wrong rather than IR that is malformed. Worse, the signedness of
+    /// the *source* is what decides `sext` against `zext`, so `-1i32 as U64`
+    /// and `0xffffffffu32 as U64` — the same 32 bits — have different answers
+    /// and the destination type is the same for both.
+    ///
+    /// **It is `science_types::thir`'s type for the operand expression**, taken
+    /// at lowering time and not recomputed, which is the same rule
+    /// [`Projection`] follows: the type comes from the phase that decided it.
+    ///
+    /// The cost is one word per cast statement and one more field for every
+    /// consumer that destructures this variant rather than matching `..`;
+    /// today every one of them matches `..`.
+    Cast { operand: Operand, from: Ty, ty: Ty },
     /// `Doc(title: "a")`. §3 says why this is one rvalue and not `n` stores.
     Record { def: DefId, fields: Vec<(DefId, Operand)> },
     /// `Ok(1)` — a choice variant with its positional payload.

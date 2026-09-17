@@ -146,6 +146,12 @@ def a() -> I64:
 
 #[test]
 fn an_integer_literal_does_not_unify_with_an_interface_object() {
+    // **Read the reason, not the name.** Since §5b this is refused because
+    // `I64` does not implement `Summarize`, not because the slot is an object:
+    // an object whose interface the literal's *default* does implement is
+    // admitted, and `an_integer_literal_reaches_a_borrowed_display_object`
+    // below is that case. What this pins is that §5b did not turn an
+    // interface object into a shape every number fits.
     assert_eq!(
         codes(
             "\
@@ -320,6 +326,112 @@ def a() -> I64:
     assert_eq!(checked.render(body.ty(literal)), "I64");
     let borrow = checked.find("a", |kind| matches!(kind, ExprKind::Borrow { .. }));
     assert_eq!(checked.render(body.ty(borrow)), "borrowed I64");
+}
+
+// --- §5b: a literal at a `borrowed any I` parameter ----------------------
+
+/// **The case §5b was written for.** `§5`'s `numeric_shape` classifies an
+/// interface object as [`Shape::NotANumber`], correctly — a trait object is not
+/// a numeric type — and that answer used to end the argument, so
+/// `show(42)` at a `borrowed any Display` was
+/// *expected `any Display`, found an integer literal*.
+///
+/// The question at the slot is not *"is this a number"* but *"is there a number
+/// that reaches it"*, and there is: Decision 2 makes the literal an `I64`,
+/// `builtins.rs` says `I64 implements Display`, and `assign`'s §4 unsizes
+/// `borrowed I64` into `borrowed any Display`.
+#[test]
+fn an_integer_literal_reaches_a_borrowed_display_object() {
+    let checked = program(
+        "\
+def show(value: borrowed any Display) -> I64:
+    1
+
+def a() -> I64:
+    show(42)
+",
+    );
+    checked.assert_clean();
+
+    // Decision 2's default, taken at the slot: the literal is an `I64` and not
+    // an object, which is the invariant §5 is under — a literal's variable is
+    // never bound to a shape no number has.
+    let body = checked.body("a");
+    let literal = checked.find("a", |kind| matches!(kind, ExprKind::Literal(_)));
+    assert_eq!(checked.render(body.ty(literal)), "I64");
+
+    // And the two nodes above it are the ordinary pair: §6.3's borrow, then
+    // §4's unsizing. Nothing here is a third rule about literals.
+    let borrow = checked.find("a", |kind| matches!(kind, ExprKind::Borrow { .. }));
+    assert_eq!(checked.render(body.ty(borrow)), "borrowed I64");
+    let coerce = checked.find("a", |kind| matches!(kind, ExprKind::Coerce { .. }));
+    assert_eq!(checked.render(body.ty(coerce)), "borrowed any Display");
+}
+
+/// A float literal takes `F64`, which is Decision 2's other default.
+#[test]
+fn a_float_literal_reaches_a_borrowed_display_object() {
+    let checked = program(
+        "\
+def show(value: borrowed any Display) -> I64:
+    1
+
+def a() -> I64:
+    show(9.8)
+",
+    );
+    checked.assert_clean();
+    let literal = checked.find("a", |kind| matches!(kind, ExprKind::Literal(_)));
+    assert_eq!(checked.render(checked.body("a").ty(literal)), "F64");
+}
+
+/// **The refusal that must survive the admission.** The relation is asked of
+/// the *default* before the variable is bound, so an interface `I64` does not
+/// implement still reports at the literal — with the literal as the noun, which
+/// is the more useful message than one naming a type the author never wrote.
+#[test]
+fn a_literal_at_an_object_the_default_does_not_implement_is_still_refused() {
+    let checked = program(
+        "\
+interface Tally:
+    def tally(self) -> I64
+
+def show(value: borrowed any Tally) -> I64:
+    1
+
+def a() -> I64:
+    show(42)
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert!(
+        checked.messages()[0].contains("an integer literal"),
+        "the literal is the noun: {:?}",
+        checked.messages()
+    );
+}
+
+/// **An owned `any I` is still refused**, because `assign`'s §5 refuses owned
+/// unsizing — *"an owned `any Summarize` is constructed where it is written"* —
+/// so there is no coercion for the default to compose with. §5b peels one
+/// shared borrow and no more, and this is that boundary.
+#[test]
+fn a_literal_at_a_bare_display_object_is_still_refused() {
+    let checked = program(
+        "\
+def show(value: any Display) -> I64:
+    1
+
+def a() -> I64:
+    show(42)
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert!(
+        checked.messages()[0].contains("an integer literal"),
+        "{:?}",
+        checked.messages()
+    );
 }
 
 #[test]

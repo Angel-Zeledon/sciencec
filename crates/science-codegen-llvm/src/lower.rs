@@ -231,7 +231,7 @@ use science_types::Types;
 use science_types::items::Declarations;
 use science_types::ty::{Ty, TyKind};
 
-use crate::emit::{ExtBlock, ExtBody, ExtInst};
+use crate::emit::{ConvOp, ExtBlock, ExtBody, ExtInst};
 
 /// What the emitted `main` writes to standard error when the script body
 /// returns a non-null error.
@@ -689,6 +689,23 @@ impl<'a> Lowerer<'a> {
                     self.defs.get(*def).name
                 )))
             }
+            // A **builtin** generic: `Array of Int`, `Map of (K, V)`, `Box of
+            // T`. Not the arm above, because these are not records or choices
+            // and there is no field list to substitute into — they are §2.6's
+            // runtime aggregates, reached through a `ScienceTypeInfo` this
+            // backend does not emit.
+            //
+            // **It is named rather than left to the fallback**, which rendered
+            // it as `Named { def: DefId(20), args: [Type(Ty(17))] }` — an
+            // interned index a reader cannot look up, which is the exact
+            // complaint the `Tuple` arm below used to carry about the same
+            // fallback.
+            TyKind::Named { args, .. } if !args.is_empty() => Err(Unlowered::new(format!(
+                "a value of type `{}`, one of §2.6's runtime containers: its value is a \
+                 `science-rt` aggregate reached through a `ScienceTypeInfo` descriptor, and this \
+                 backend emits no descriptor",
+                self.types.render(self.defs, ty)
+            ))),
             TyKind::Named { def, args } if args.is_empty() => {
                 let name = self.defs.get(*def).name.as_str();
                 match name {
@@ -713,9 +730,36 @@ impl<'a> Lowerer<'a> {
             // it. The `{other:?}` fallback below renders `TyKind`'s `Debug` —
             // `Tuple([Ty(0), Ty(0)])` — which names an interned index a reader
             // cannot look up and a construct they did not write.
-            TyKind::Tuple(_) => Err(Unlowered::new(
-                "a tuple, which has no `Ty -> CgTy` arm: §3.2's C layout applies to one unchanged \
-                 and the arm is simply not written",
+            // §3.2's Decision 17 again, with positions where a record has
+            // names. **No layout rule was added for this**: a tuple is a
+            // `CgTy::Struct` whose fields are called `0`, `1`, … and
+            // `layout_of` lays it out by the same C rule it lays a record out
+            // by, which is what `science-codegen`'s §3.2 already said applies
+            // *"to one unchanged"*. The arm was simply not written.
+            TyKind::Tuple(elements) => self.tuple_ty(ty, elements.clone(), depth),
+            // **A type the front end left as a hole, met where a *type* was
+            // needed rather than a value.** [`UNTYPED`] is the sibling message
+            // for a whole local whose `Ty` is this, and the two are different
+            // situations: that one is `print`'s undeclared return, which is
+            // skipped because nothing reads it, and this one is an erroneous
+            // type *inside* a type that is otherwise fine — a tuple element, a
+            // record field — where there is nothing to skip.
+            //
+            // **It is reachable from a program that checks clean**, which is
+            // what makes the message worth writing out. `let t be (1, 2)` types
+            // as `(TyKind::Error, TyKind::Error)`: `science-types`'s `Tuple`
+            // arm calls `known_or_error` on each element as it synthesises the
+            // node, and an integer literal's type is still an inference
+            // variable at that moment. Nothing reports it, because §5's rule is
+            // that an erroneous type means a mistake already reported and here
+            // there was no mistake. `let t: (Int, Int) be (1, 2)` and
+            // `let t be (1i64, 2i64)` both build; the bare one is refused here,
+            // by the only phase that ever looks.
+            TyKind::Error => Err(Unlowered::new(
+                "a value whose type the front end left as `TyKind::Error` with no diagnostic \
+                 beside it — for a tuple this is `science-types`' `ExprKind::Tuple` arm reading \
+                 each element's type before inference has defaulted it, so `(1, 2)` is a tuple of \
+                 two holes and `(1i64, 2i64)` is not",
             )),
             TyKind::Param { .. } | TyKind::SelfType { .. } | TyKind::SelfAssoc { .. } => {
                 Err(Unlowered::new(
@@ -762,6 +806,34 @@ impl<'a> Lowerer<'a> {
             ));
         }
         Ok(CgTy::strukt(name, fields))
+    }
+
+    /// A tuple as [`CgTy::Struct`]: §3.2's C layout, with positions for names.
+    ///
+    /// **The name is the rendered type and that is load-bearing.**
+    /// `science_codegen::layout::LayoutCache` is keyed by a `CgTy::Struct`'s
+    /// name and answers `SC0404` when one name gets two layouts, so a tuple's
+    /// name has to be a function of its element types and of nothing else.
+    /// `Types::render` gives `(Int, F64)`, which is the spelling the author
+    /// wrote and is different for every different tuple — where a fixed name
+    /// like `"tuple"` would make `(Int, Int)` and `(Int, F64)` collide, and a
+    /// name derived from the `Ty` index would make two structurally identical
+    /// tuples two types to the cache.
+    ///
+    /// **The field names are `0`, `1`, … and they are never looked up.**
+    /// [`Lowerer::place_address`]'s `TupleField` arm indexes the layout's field
+    /// list by position, so the strings exist for Decision 31's layout record
+    /// and for a `--emit=layout` dump, and a reader who changes them breaks
+    /// nothing. The *order* is the source order and it is the thing that
+    /// matters: Decision 17's *"no field reordering, ever"* applies here for
+    /// the same reason it applies to a record, and there is no second order to
+    /// confuse it with because a tuple literal cannot name its elements.
+    fn tuple_ty(&self, ty: Ty, elements: Vec<Ty>, depth: u32) -> Result<CgTy, Unlowered> {
+        let mut fields = Vec::with_capacity(elements.len());
+        for (index, element) in elements.iter().enumerate() {
+            fields.push(CgField::new(index.to_string(), self.cg_ty_at(*element, depth + 1)?));
+        }
+        Ok(CgTy::strukt(self.types.render(self.defs, ty), fields))
     }
 
     /// A `choice` as [`CgTy::Choice`]: §3.3's variants, in declaration order.
@@ -1824,6 +1896,7 @@ impl<'a> Lowerer<'a> {
             Rvalue::Record { def, fields } => {
                 self.lower_record(ctx, *def, fields, dest, layout, insts)
             }
+            Rvalue::Tuple(elements) => self.lower_tuple(ctx, elements, dest, layout, insts),
             Rvalue::Variant { variant, payload } => {
                 self.lower_variant(ctx, *variant, payload, dest, layout, insts)
             }
@@ -1848,6 +1921,12 @@ impl<'a> Lowerer<'a> {
             // before this crate ran. `noalias` on a `mutable borrowed`
             // parameter is the optimisation that would read the kind, and
             // Decision 22 does not ask for it.
+            // §5.1's `as`. [`Lowerer::lower_cast`] is the whole of it and
+            // its note is where the core spec's four sentences about numeric
+            // conversion are read out.
+            Rvalue::Cast { operand, from, ty: target } => {
+                self.lower_cast(ctx, operand, *from, *target, dest, insts)
+            }
             Rvalue::Ref { place, .. } => {
                 if !matches!(layout.repr, Repr::Scalar(Scalar::Pointer(_))) {
                     return Err(Unlowered::new(
@@ -1864,6 +1943,120 @@ impl<'a> Lowerer<'a> {
             }
             other => Err(Unlowered::new(describe_rvalue(other))),
         }
+    }
+
+    /// §5.1's `as`, for every pair of scalars the language has.
+    ///
+    /// # What the notes say, and what they do not
+    ///
+    /// The core spec §5.1 is the authority and it decides three of the four
+    /// questions outright:
+    ///
+    /// - *"No implicit numeric conversion; `as` is always written, including
+    ///   where it loses precision."* So a narrowing cast is **legal**, and the
+    ///   language has already decided that the loss is the author's to accept.
+    /// - *"`as` from float to integer saturates, and NaN becomes zero."* That
+    ///   is [`ConvOp::FloatToIntSat`], and the reason it is a call to an
+    ///   intrinsic rather than one instruction is at
+    ///   [`crate::emit::LlvmBackend::saturating_float_to_int`].
+    /// - *"Integer overflow panics in debug builds and wraps in release, as
+    ///   Rust does."* That sentence is about **arithmetic** and not about `as`;
+    ///   `codegen-and-linking.md` has no cast section at all, and §4.6's
+    ///   operator table stops at the operators.
+    ///
+    /// # The decision, where nothing said
+    ///
+    /// **A narrowing integer cast truncates, silently, in two's complement.**
+    /// `300 as U8` is `44` and `-1i32 as U8` is `255`, with no check and no
+    /// diagnostic.
+    ///
+    /// **The reason** is that §5.1 names Rust twice in the same paragraph and
+    /// says of `as` that it is written *"including where it loses precision"* —
+    /// a sentence that only means anything if a lossy cast is a thing the
+    /// language performs rather than refuses. The alternatives were a panic
+    /// (which would make `as` fallible, and §5.1 gives it no error type and no
+    /// second return) and saturation (which is the float rule, and applying it
+    /// to integers would make `-1i32 as U8` be `0`, silently turning a bit
+    /// pattern the author was probably reinterpreting into a different number).
+    ///
+    /// **The cost, and it is the ordinary one.** A narrowing cast is the one
+    /// place in F0 where a value changes with nothing in the source to mark it
+    /// beyond the word `as` itself: `f"{total as U8}"` on a total of 300 prints
+    /// `44`, and no phase says anything. That is the price of the sentence
+    /// above, it is Rust's price, and the mitigation the language has is that
+    /// the conversion cannot happen without the author writing `as`.
+    ///
+    /// **The signedness of an extension is the *source's*.** `-1i32 as I64` is
+    /// `-1` and `4294967295u32 as I64` is `4294967295`, and those are the same
+    /// thirty-two bits. LLVM integers carry no sign, so this is the one fact
+    /// about a cast that cannot be recovered below this function, which is why
+    /// `science-mir`'s `Rvalue::Cast` carries the source type at all.
+    ///
+    /// # What is refused, and why each one
+    ///
+    /// | Cast | Answer |
+    /// |---|---|
+    /// | integer or `Char` to `Bool` | refused: §3.1 makes `Bool` a byte with **two** valid values, and a `trunc` from `i64` to `i8` produces 254 others — a `Bool` holding `2` is a value every later `trunc i8 to i1` reads as `true` and no phase reports |
+    /// | `Bool` or `Char` to a float | refused: Rust does not have it either, and inventing `true as F64 == 1.0` is a decision about what a `Bool` *is* that §5.1 does not take |
+    /// | a float to `Char` | refused: a `Char` is a Unicode scalar value, and *"saturating"* has no meaning on a set with a hole in it — `0xD800`…`0xDFFF` are not scalar values |
+    /// | an integer wider than `U8` to `Char` | refused: `U8 as Char` is total, and every other width can produce a surrogate or a value above `0x10FFFF`, which needs a validity check §5.1 does not specify and this crate must not invent |
+    /// | anything non-scalar | refused, naming both types |
+    ///
+    /// `U8 as Char` **is** accepted, as a zero extension, because it is the one
+    /// integer-to-`Char` conversion that cannot fail: every byte is a Unicode
+    /// scalar value.
+    fn lower_cast(
+        &mut self,
+        ctx: &mut BodyCtx,
+        operand: &mir::Operand,
+        from: Ty,
+        target: Ty,
+        dest: LocalId,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let from_layout = self.layout_of_ty(from)?;
+        let to_layout = self.layout_of_ty(target)?;
+        let describe = || {
+            format!(
+                "a cast from `{}` to `{}`",
+                self.types.render(self.defs, from),
+                self.types.render(self.defs, target)
+            )
+        };
+        let (Repr::Scalar(source), Repr::Scalar(destination)) =
+            (&from_layout.repr, &to_layout.repr)
+        else {
+            return Err(Unlowered::new(format!(
+                "{}, where §5.1's `as` is defined on scalars and one of these is an aggregate",
+                describe()
+            )));
+        };
+        let op = conversion(*source, *destination, self.target)
+            .ok_or_else(|| Unlowered::new(format!("{}, which §5.1 does not define", describe())))?;
+        // The operand is materialised at the **source's** layout, always, which
+        // is finding 12's repair one instruction earlier: a constant carries no
+        // width, and `ExtInst::Convert` refuses one for that reason rather than
+        // giving it a default and truncating from a width nobody chose.
+        let value = self.typed_operand(ctx, operand, &from_layout, insts)?;
+        let value = match op {
+            // The same bits under a different name: `I64 as U64`, `Int as I64`.
+            // LLVM integers are signless, so there is no instruction to emit
+            // and a `bitcast` between two `i64`s is not one either.
+            None => value,
+            Some(op) => {
+                let converted = ctx.value();
+                insts.push(ExtInst::Convert {
+                    dest: converted,
+                    op,
+                    value,
+                    from: from_layout.clone(),
+                    to: to_layout.clone(),
+                });
+                Operand::Value(converted)
+            }
+        };
+        insts.push(ExtInst::Above(Inst::Store { local: dest, value }));
+        Ok(())
     }
 
     /// §5.5's `?`, which is one comparison.
@@ -2135,6 +2328,67 @@ impl<'a> Lowerer<'a> {
                 ))
             })?;
             let place = &places[index];
+            let address = ctx.value();
+            insts.push(ExtInst::FieldAddr {
+                dest: address,
+                base: Operand::Value(base),
+                offset: place.offset,
+            });
+            let value = self.typed_operand(ctx, operand, &place.layout, insts)?;
+            insts.push(ExtInst::StoreAt {
+                address: Operand::Value(address),
+                layout: place.layout.clone(),
+                value,
+            });
+        }
+        Ok(())
+    }
+
+    /// A tuple literal: each element written at its own offset.
+    ///
+    /// **One position, one order, and that is the whole difference from
+    /// [`Lowerer::lower_record`].** A record literal has two orders — the
+    /// order the author spelled the named arguments in and the order the
+    /// declaration lays the fields out in — and that function's entire body is
+    /// keeping them apart. `(1, 2.5)` has one: MIR's element order *is* the
+    /// source order *is* the layout order, so this is a walk down the layout's
+    /// field list with MIR's operands beside it and there is no lookup to get
+    /// wrong.
+    ///
+    /// **The counts are checked rather than assumed**, for the reason
+    /// `lower_record` gives: an element the layout has and the literal does not
+    /// leaves those bytes holding whatever the stack held, and a tuple with one
+    /// of those in it is a wrong answer nothing reports.
+    fn lower_tuple(
+        &mut self,
+        ctx: &mut BodyCtx,
+        elements: &[mir::Operand],
+        dest: LocalId,
+        layout: &Layout,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let Repr::Aggregate { fields: places } = &layout.repr else {
+            // The one tuple that is not an aggregate is the empty one, which
+            // has no elements to write and which `Rvalue::Tuple` cannot even
+            // spell: `()` is `Constant::Unit`.
+            if elements.is_empty() {
+                return Ok(());
+            }
+            return Err(Unlowered::new(
+                "a tuple literal whose layout is not §3.2's aggregate one",
+            ));
+        };
+        if places.len() != elements.len() {
+            return Err(Unlowered::new(format!(
+                "a tuple literal with {} element(s) whose layout has {}",
+                elements.len(),
+                places.len()
+            )));
+        }
+        let places = places.clone();
+        let base = ctx.value();
+        insts.push(ExtInst::LocalAddr { dest: base, local: dest });
+        for (place, operand) in places.iter().zip(elements) {
             let address = ctx.value();
             insts.push(ExtInst::FieldAddr {
                 dest: address,
@@ -2546,6 +2800,12 @@ impl<'a> Lowerer<'a> {
                 )),
             },
             mir::Operand::Const(Constant::Unit) => Err(Unlowered::new("a unit value read")),
+            // §1.7's capacity, and the one constant in the IR the program does
+            // not contain. It reaches [`ExtInst::Const`] like any other and is
+            // given the *parameter's* layout there — a `usize` — which is why
+            // `Constant::Count` carries no type of its own: there is no Science
+            // type for it to disagree with.
+            mir::Operand::Const(Constant::Count(count)) => Ok(Operand::ConstInt(*count as i128)),
             mir::Operand::Const(Constant::Item(def)) => {
                 Err(Unlowered::new(format!("`{}` named as a value", self.defs.get(*def).name)))
             }
@@ -3589,6 +3849,81 @@ fn describe_binary(op: BinaryOp) -> String {
         BinaryOp::And | BinaryOp::Or => "`and` or `or` as a value: MIR turns both into blocks                                          and edges, so one reaching here is a MIR that did not"
             .to_string(),
         other => format!("`{}` on this type", other.as_str()),
+    }
+}
+
+/// Which [`ConvOp`] takes `source` to `destination`, if §5.1 defines one.
+///
+/// `None` is *"§5.1 does not define this cast"* and `Some(None)` is *"it is
+/// defined and it is no instruction"* — the same bits under another name, which
+/// `I64 as U64` and `Int as I64` both are. Two levels rather than a third enum
+/// variant, because the caller does exactly two different things with them and
+/// a `ConvOp::Nop` would be a ninth operation the emitter would have to know
+/// emits nothing.
+///
+/// **A pointer is not here at all**, in either position. Science has no cast
+/// between a reference and an integer and no `as` that produces one, so a
+/// [`Scalar::Pointer`] on either side is a disagreement between this function
+/// and the type checker rather than a conversion to define, and it falls
+/// through to the refusal with both type names in it.
+///
+/// [`Lowerer::lower_cast`]'s note is where each row is argued.
+fn conversion(source: Scalar, destination: Scalar, target: Triple) -> Option<Option<ConvOp>> {
+    // `Char` is a `u32` and `Bool` is a byte whose only valid values are 0 and
+    // 1, so both behave as unsigned integers on the *reading* side and neither
+    // may be written to by a conversion that could produce anything else.
+    let as_unsigned_source = |scalar: Scalar| -> Option<u64> {
+        match scalar {
+            Scalar::Char => Some(4),
+            Scalar::Bool => Some(1),
+            _ => None,
+        }
+    };
+    match (source, destination) {
+        (Scalar::Int(from), Scalar::Int(to)) => {
+            let (wide, narrow) = (from.width(target), to.width(target));
+            Some(match narrow.cmp(&wide) {
+                std::cmp::Ordering::Equal => None,
+                std::cmp::Ordering::Less => Some(ConvOp::Trunc),
+                std::cmp::Ordering::Greater if from.is_signed() => Some(ConvOp::SignExtend),
+                std::cmp::Ordering::Greater => Some(ConvOp::ZeroExtend),
+            })
+        }
+        (Scalar::Int(from), Scalar::Float(_)) => Some(Some(if from.is_signed() {
+            ConvOp::IntToFloat
+        } else {
+            ConvOp::UintToFloat
+        })),
+        (Scalar::Float(_), Scalar::Int(to)) => Some(Some(if to.is_signed() {
+            ConvOp::FloatToIntSat
+        } else {
+            ConvOp::FloatToUintSat
+        })),
+        (Scalar::Float(from), Scalar::Float(to)) => Some(match to.width().cmp(&from.width()) {
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Less => Some(ConvOp::FloatTrunc),
+            std::cmp::Ordering::Greater => Some(ConvOp::FloatExtend),
+        }),
+        // `Bool as Int`, `Char as Int`. Zero-extending, narrowing or neither,
+        // by width — and never sign-extending, because `sext i8 1` of a `true`
+        // byte is still 1 but `sext` is the wrong statement about a value whose
+        // type has no sign.
+        (from, Scalar::Int(to)) => {
+            let wide = as_unsigned_source(from)?;
+            let narrow = to.width(target);
+            Some(match narrow.cmp(&wide) {
+                std::cmp::Ordering::Equal => None,
+                std::cmp::Ordering::Less => Some(ConvOp::Trunc),
+                std::cmp::Ordering::Greater => Some(ConvOp::ZeroExtend),
+            })
+        }
+        // `U8 as Char`, and nothing else: every byte is a Unicode scalar value
+        // and no wider integer is.
+        (Scalar::Int(from), Scalar::Char) if !from.is_signed() && from.width(target) == 1 => {
+            Some(Some(ConvOp::ZeroExtend))
+        }
+        (Scalar::Char, Scalar::Char) | (Scalar::Bool, Scalar::Bool) => Some(None),
+        _ => None,
     }
 }
 

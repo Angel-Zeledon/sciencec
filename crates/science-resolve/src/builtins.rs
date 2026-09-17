@@ -114,9 +114,62 @@ const INTERFACES: &[&str] = &[
 /// — `print_error`, `write_error`, `flush`, `read_line`, `read_bytes`,
 /// `write_bytes`, `read_lines`, `write_lines` — are names in every program's
 /// scope forever (§1.3), and §12 of that note names *"thirteen free functions,
-/// and the trend is upward"* as its own second risk. Adding eight global names
-/// is a spec change under §2.2's rule and is not a side effect of giving the
-/// five that exist a signature.
+/// and the trend is upward"* as its own second risk.
+///
+/// # Three of the eight stopped being a spec change, and they still do not go in
+///
+/// This comment used to rest its whole case on *"adding eight global names is a
+/// spec change under §2.2's rule"*. **For three of them that is no longer
+/// true.** `strings-formatting-and-docs.md` §4.3 makes the change and §8 item 5
+/// asks §8 for it by name: the list *"becomes `print`, `write`, `print_error`,
+/// `write_error`, `flush`, `panic`, `read_file`, `write_file`"*, and
+/// `stdlib-core.md` §4.1 restates the whole of it as settled — *"`print_error`
+/// and `write_error` go to stderr, `flush` is a free function … none of that is
+/// reopened"*. So the decision this file would have been taking has been taken
+/// elsewhere, by the note that owns the surface, and the question left here is
+/// not *may they* but *can they mean anything yet*.
+///
+/// **Decision: they stay off, and the reason is `science-rt`, not the
+/// namespace.** A name on this list resolves; a name that resolves with no
+/// entry point behind it is checked in silence and refused at the end of the
+/// build — `science-codegen-llvm` answers *"a call to `write_error`, which this
+/// crate was given no MIR body for"*, after the link the user waited for.
+/// Today `print_error("…")` is `SC0201`, at the call, with the name in the
+/// message, and it is **true**: this compiler has no `print_error`. Trading a
+/// true early diagnostic for a promise redeemed late is not a trade the prelude
+/// can make on its own.
+///
+/// **Why the runtime cannot be assumed to have them.** `science-rt`'s `exit`
+/// module has `science_write_error_bytes`, and it is **codegen support**: its
+/// own note says it takes bytes rather than a `String` because the message is a
+/// constant in the binary, and *"there is no
+/// `science_write_error(text: *const ScienceString)` beside this one, because
+/// codegen has no call site for it"*. It is a writer for the emitted `main`,
+/// not a Science name wearing a different spelling. There is no `science_flush`
+/// at all — `science_exit` flushes on the way out and nothing else does — and
+/// §4.2's buffering policy (stdout line-buffered on a terminal, 64 KiB
+/// block-buffered otherwise, stderr unbuffered) is not implemented: Rust's
+/// `LineWriter` line-buffers unconditionally, which is a different policy that
+/// happens to agree in the terminal case.
+///
+/// # The handover, exactly
+///
+/// Three entry points in `science-rt`, each the stderr or flush twin of a
+/// symbol that already exists, each then added to `science-codegen`'s `RUNTIME`
+/// table and given an arm beside `lower_print`:
+///
+/// - `science_print_error(text: *const ScienceString)` — `science_write_error`
+///   then one `\n`, which is `science_print`'s relation to `science_write`.
+/// - `science_write_error(text: *const ScienceString)` — the `ScienceString`
+///   form of `science_write_error_bytes`, unbuffered per §4.2.
+/// - `science_flush()` — flushes standard output. §4.2 adds `flush`
+///   *"reluctantly"* for exactly one case, a `write` of a progress line with no
+///   newline, and that case is live today because `science_write` goes through
+///   the same `LineWriter`.
+///
+/// When those three exist, this list is a three-name edit and nothing else here
+/// moves — the names carry no signature, for the reason `print` and `write`
+/// carry none.
 const FUNCTIONS: &[&str] = &["print", "write", "panic", "read_file", "write_file"];
 
 /// `ffi`, the closed vocabulary of `ffi-c-boundary.md` §1.3.
@@ -866,29 +919,96 @@ const BLOCKS: &[Block] = &[
 /// `Path`.
 ///
 /// **`print` and `write` are deliberately left undeclared**, and this is the
-/// one place a declaration was written, measured and withdrawn.
+/// one place a declaration was written, measured, withdrawn, measured a second
+/// time and withdrawn again — for a different reason, which is the part worth
+/// reading.
+///
 /// `strings-formatting-and-docs.md` §4.1 gives
-/// `def print(value: borrowed any Display)`; declaring it reports on **seven**
-/// corpus programs that are correct, from three separate causes, none of which
-/// is the signature:
+/// `def print(value: borrowed any Display)`.
 ///
-/// 1. **An integer literal is not defaulted against an `any I` expectation.**
-///    `print(separated)` where `separated` is bound to a literal is
+/// # The first measurement, and what happened to it
+///
+/// Writing that signature used to report on **seven** correct corpus programs,
+/// from three causes, none of which was the signature:
+///
+/// 1. **An integer literal was not defaulted against an `any I` expectation.**
+///    `print(separated)` where `separated` is bound to a literal was
 ///    `expected any Display, found an integer literal` — Decision 2's default
-///    never runs, because the expectation is an interface object rather than a
-///    numeric type. Five of the seven.
-/// 2. **A borrow of a branch-local temporary dies at the branch.**
-///    `print(if flag: "yes" else: "no")` takes §6.3's auto-borrow of a literal
-///    whose storage ends inside the arm, and `SC0333` is then correct about
-///    the MIR and wrong about the program. Two of the seven.
-/// 3. **A corpus type that does not implement `Display` is printed.** One,
-///    and that one is a true positive that this pass declines to deliver on
-///    its own, because it would arrive mixed in with the six above.
+///    never ran, because the expectation is an interface object rather than a
+///    numeric type. Five programs, six sites.
+/// 2. **A borrow of a branch-local temporary died at the branch.**
+///    `print(if flag: "yes" else: "no")` took §6.3's auto-borrow inside each
+///    arm, of a temporary whose storage ends there, and `SC0333` was then
+///    correct about the MIR and wrong about the program. One program, two
+///    sites.
+/// 3. **A corpus type that does not implement `Display` is printed.** One.
 ///
-/// Causes 1 and 2 are the checker's and the lowering's, they are cheap to
-/// state and expensive to fix from here, and `print` is not what any of the
-/// five conservatisms turned on. So the hole stays, with a measurement
-/// attached instead of a guess.
+/// **Causes 1 and 2 are closed.** They were the checker's, not the
+/// signature's, and they are fixed where they live: `science-types`' `check`
+/// §5b defaults a literal that meets a `borrowed any I` slot and hands it to
+/// the ordinary coercion, and §1b stops a borrowed expectation at a branch so
+/// that §6.3's auto-borrow is taken at the argument. Both were wrong about
+/// programs that never mention `print` — `def show(v: borrowed any Display)` in
+/// a user's own file met each of them — so closing them was owed whatever
+/// happens here.
+///
+/// **Cause 3 is a true positive and it is still there.**
+/// `examples/04_enums.science` writes `print(number)` where `number` is a
+/// `Token`, and `Token` implements nothing. That is one honest diagnostic
+/// against a corpus file, and it is the corpus's to fix — by a
+/// `Token implements Display:` block or by interpolating.
+///
+/// # The second measurement, which is the one that decides
+///
+/// **Declaring the parameter breaks the back half of the compiler, and the
+/// back half already says so in as many words.** With the signature in place,
+/// `print(x)` stops being *move `x` into the call* and becomes a `Borrow`
+/// under a `Coerce { Unsize }` — a `borrowed any Display`.
+/// `science-codegen-llvm`'s `lower_print` matches exactly two operand shapes,
+/// a string constant and a moved `String` local, and its own refusal text for
+/// everything else is:
+///
+/// > *"a `print` of a value that is not a `String`: `print` takes
+/// > `borrowed any Display`, this backend emits no vtables, and there is no
+/// > `display` method on `Display` to call through even if it did"*
+///
+/// So every `print` in every program becomes `Unlowered`. The same function's
+/// doc comment names this declaration as its own precondition — *"`print` has
+/// no declared signature, so the checker cannot know it borrows; MIR therefore
+/// records `move` of the local into the call … the call is the value's last
+/// owner, so the call frees it"* — and `science-rt`'s `science_print` takes a
+/// `*const ScienceString` and nothing else. Measured: declaring it fails
+/// **two tests in `science-mir/tests/fstring.rs`, one in `tests/unsize.rs`,
+/// three in `science-regions` and two in `sciencec`**, and the fstring two are
+/// precisely the accounting above — one more borrow than the lowering expects,
+/// and an accumulator that is no longer moved and so is dropped after the call
+/// has freed it.
+///
+/// # The decision
+///
+/// **The parameter stays undeclared; the *arity* does not.** §4.1's decision
+/// has two halves, and only one of them needs the back half of the compiler to
+/// move. That `print` is **unary** is a fact about the call, it is what §7's
+/// `SC0275` reports, and `science-types`' `check` reports it now — see that
+/// crate's `print_takes_one_value`. That the argument must implement `Display`
+/// is a fact about the *value*, and nothing below the type checker can carry
+/// it: `Display` has no method (see §"The declared surface" above for why),
+/// that backend emits no vtables, and a `borrowed any Display` is a type no
+/// phase after this one can render.
+///
+/// **What it costs.** `print(doc)` on a type with no `Display` is still
+/// accepted here and refused at codegen, which is the worse place to find out
+/// — the same cost `check`'s `fstring` already prices for a user type with an
+/// `implements Display:` block. This decision does not create that cost; it
+/// declines to trade it for a compiler that cannot print at all.
+///
+/// **What closes it**, in order: `science-rt` gains a renderer behind
+/// `Display` — §3.1's `Formatter`, or an entry point per prelude type on the
+/// model of `science_string_push_*`; `science-codegen-llvm` gains a vtable and
+/// `lower_print` gains an arm for a `borrowed any Display`; then this list
+/// gains four lines, [`Ty`] gains an `Any(&'static str)` variant lowering to
+/// [`hir::TypeKind::Any`], and `examples/04_enums.science` owes one
+/// implementation block.
 const FUNCTION_SIGNATURES: &[Method] = &[
     // `-> Never` is the half of `SC0140`'s fourth exclusion that is a property
     // of the declaration, and `items`' `Signature::can_return` is already

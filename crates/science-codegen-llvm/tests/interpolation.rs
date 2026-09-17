@@ -217,11 +217,32 @@ fn a_borrowed_hole_renders_its_referent() {
 /// The cheaper reading of the same fact the tests above establish by running,
 /// and the one that says *where* it went wrong: a `getelementptr` in this
 /// sequence would mean a projection nobody asked for, and a second
-/// `science_string_new` would mean a fragment built its own accumulator.
+/// `science_string_with_capacity` would mean a fragment built its own
+/// accumulator.
+///
+/// **§1.7's capacity is asserted here as the constant in the IR**, which is the
+/// third of the three places that number is pinned: `science-mir`'s
+/// `tests/fstring.rs` asserts what the compiler computes, `science-rt`'s
+/// `tests/capacity.rs` measures what a capacity buys, and this asserts the
+/// number survives the trip through `RUNTIME`'s `usize` parameter into the
+/// emitted call.
 #[test]
 fn the_sequence_in_the_ir_is_one_accumulator_and_one_call_per_fragment() {
     let text = ir("sequence", "let n be 42\nprint(f\"a{n}b\")\n");
-    assert_eq!(text.matches("@science_string_new(").count() - 1, 1, "{text}");
+    assert_eq!(text.matches("@science_string_with_capacity(").count() - 1, 1, "{text}");
+    assert_eq!(
+        text.matches("@science_string_new(").count(),
+        0,
+        "the accumulator is built with a capacity now, not empty:\n{text}"
+    );
+    // `"a"` and `"b"` are one byte each and an `Int` hole estimates twenty.
+    // The call carries the hidden `sret` slot first, so the capacity is the
+    // last argument rather than the only one.
+    assert!(
+        text.contains("@science_string_with_capacity(ptr sret")
+            && text.contains("%l3, i64 22)"),
+        "§1.7's pre-computed capacity is not in the call:\n{text}"
+    );
     assert_eq!(text.matches("@science_string_push_bytes(").count() - 1, 2, "{text}");
     assert_eq!(text.matches("@science_string_push_i64(").count() - 1, 1, "{text}");
     let bytes = text.find("@science_string_push_bytes(ptr").expect("the first text run");
@@ -232,42 +253,64 @@ fn the_sequence_in_the_ir_is_one_accumulator_and_one_call_per_fragment() {
 /// **A hole whose type has no renderer is refused by name, with the type in
 /// the message.**
 ///
-/// Two of them, and they are two different holes with one spelling. An `I32`
-/// is a *width* the runtime has no entry point for — its own note says
-/// *"`I8`…`I64` are sign-extended by codegen before the call"* and no phase
-/// sign-extends anything — and a user record is §3.1's `Formatter`, which no
-/// note specifies and no prelude declares.
+/// **This used to be two, and one of them is gone.** An `I32` was a *width*
+/// the runtime had no entry point for — its own note says *"`I8`…`I64` are
+/// sign-extended by codegen before the call"* and no phase sign-extended
+/// anything — and it now reaches `science_string_push_i64` through a cast;
+/// [`a_narrow_integer_hole_renders_its_own_value`] is the program.
 ///
-/// **Both check clean**, which is the point of refusing here rather than
+/// What is left is the refusal no cast can close: a user record is §3.1's
+/// `Formatter`, which no note specifies and no prelude declares.
+///
+/// **It checks clean**, which is the point of refusing here rather than
 /// guessing: `science-types`'s own note says *"the interpolation of a user type
 /// is therefore accepted here and refused by codegen, which is a worse place to
 /// find out"*, and the least this crate can do about that is say which type.
 #[test]
 fn a_hole_with_no_renderer_is_refused_and_the_type_is_named() {
-    for (name, source, ty) in [
-        ("narrow", "let n be 7i32\nprint(f\"n={n}\")\n", "I32"),
-        (
-            "record",
-            "type Punto:\n\x20   x: Int\n\nPunto implements Display\n\n\
-             let p be Punto(x: 1)\nprint(f\"p={p}\")\n",
-            "Punto",
-        ),
-    ] {
-        let dir = scratch("interp", name);
-        let refused = lower(source)
-            .try_build(&executable(&dir, name), OptLevel::O0)
-            .err()
-            .unwrap_or_else(|| panic!("`{ty}` in a hole should not have built"));
-        let _ = std::fs::remove_dir_all(&dir);
-        let message = refused
-            .iter()
-            .map(|diagnostic| format!("{} {}", diagnostic.code, diagnostic.message))
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(message.contains("SC0400"), "the wrong code:\n{message}");
-        assert!(
-            message.contains(&format!("hole of type `{ty}`")),
-            "the refusal does not name `{ty}`:\n{message}"
-        );
-    }
+    let (name, ty) = ("record", "Punto");
+    let source = "type Punto:\n\x20   x: Int\n\nPunto implements Display\n\n\
+                  let p be Punto(x: 1)\nprint(f\"p={p}\")\n";
+    let dir = scratch("interp", name);
+    let refused = lower(source)
+        .try_build(&executable(&dir, name), OptLevel::O0)
+        .err()
+        .unwrap_or_else(|| panic!("`{ty}` in a hole should not have built"));
+    let _ = std::fs::remove_dir_all(&dir);
+    let message = refused
+        .iter()
+        .map(|diagnostic| format!("{} {}", diagnostic.code, diagnostic.message))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(message.contains("SC0400"), "the wrong code:\n{message}");
+    assert!(
+        message.contains(&format!("hole of type `{ty}`")),
+        "the refusal does not name `{ty}`:\n{message}"
+    );
+}
+
+/// **A narrow integer hole renders its own value, at values where widening it
+/// the wrong way is visible.**
+///
+/// This is `science-mir`'s §7 item 10 discharged and run.
+/// `science_string_push_i64`'s note has always said *"`I8`…`I64` are
+/// sign-extended by codegen before the call"*; until `Rvalue::Cast` had a
+/// lowering nothing did it, and the entry point was refused rather than fed an
+/// `i32` in an `i64` parameter.
+///
+/// **Every value here is chosen so that a wrong extension changes it.**
+/// `-1i8` zero-extended is `255`; `-1i16` is `65535`; `-1i32` is `4294967295`;
+/// and `255u8` sign-extended is `-1`. A test on `7i32` would pass with the two
+/// instructions swapped, which is exactly the bug this pair of entry points
+/// exists to make impossible.
+#[test]
+fn a_narrow_integer_hole_renders_its_own_value() {
+    let source = "let a be -1i8\nlet b be -1i16\nlet c be -1i32\n\
+                  let d be 255u8\nlet e be 65535u16\nlet f be 4294967295u32\n\
+                  print(f\"{a} {b} {c} {d} {e} {f}\")\n";
+    assert_eq!(
+        prints("narrow", source),
+        "-1 -1 -1 255 65535 4294967295\n",
+        "a narrow hole was widened with the wrong signedness, or not at all"
+    );
 }

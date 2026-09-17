@@ -643,14 +643,35 @@ pub mod codes {
     /// `SC0173`. A code whose condition cannot arise is a code whose message
     /// is written against a guess.
     ///
-    /// **What this code does *not* cover, although §7's row says it should.**
-    /// That row also names *"`print` given more than one argument"* and *"a
-    /// `T?` interpolated without narrowing"*. The first is `SC0527` today,
-    /// because `print` has no declared signature at all (see
-    /// `science-resolve`'s `builtins`), and the second falls out of this check
-    /// rather than needing its own arm: the prelude gives no `T?` a `Display`
-    /// implementation, so `f"{x}"` on a nullable is this code with the
-    /// nullable's rendering in it.
+    /// **§7's row has three clauses and this code now carries two of them.**
+    /// The row also names *"`print` given more than one argument"* and *"a
+    /// `T?` interpolated without narrowing"*.
+    ///
+    /// The nullable falls out of this check rather than needing its own arm:
+    /// the prelude gives no `T?` a `Display` implementation, so `f"{x}"` on a
+    /// nullable is this code with the nullable's rendering in it.
+    ///
+    /// **`print("rows:", n)` used to be `SC0527` and is now this code**, which
+    /// is the correction rather than a widening. It was never `SC0527` in
+    /// fact: `print` has no declared signature at all (see `science-resolve`'s
+    /// `builtins` for the measurement that keeps it that way), so the ordinary
+    /// arity check had nothing to compare against and the call **reported
+    /// nothing**, while §7's table said this code covered it.
+    /// [`crate::check`]'s `output_is_unary` is the arm, and the message is
+    /// §4.1's — *"`print` takes one value"*, with the interpolation as the fix.
+    /// Splitting §4.1's decision this way is deliberate: the arity needs no
+    /// parameter type, and the `Display` half needs a declaration the back half
+    /// of the compiler cannot yet lower.
+    ///
+    /// **What this code still does not cover** is the `Display` obligation at a
+    /// `print` argument, as opposed to at an interpolation. That is the
+    /// withdrawn declaration, and [`crate::check`]'s `requires_display` is the
+    /// only place the question is asked today.
+    ///
+    /// **The constant is named for the clause it leads with**, and the arity
+    /// message is built by `print_takes_one_value` rather than by
+    /// `not_displayable`. One code, because §7 is one row; two constructors,
+    /// because they are two sentences.
     pub const NOT_DISPLAYABLE: Code = Code(275);
 
     /// Every code this crate emits from its own bands, for the test that keeps

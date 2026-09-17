@@ -291,6 +291,49 @@ pub enum ExtInst {
         /// [`LlvmBackend::value_is_float`]'s reason: the value already knows.
         operand: Operand,
     },
+    /// §5.1's `as`: one scalar as another. [`ConvOp`] says which conversion.
+    ///
+    /// **The eighth hole, and it is the largest omission rather than a
+    /// disagreement.** `science_codegen::backend::Inst` has `IntBinary`,
+    /// `FloatBinary`, `Cmp` and `Call`, and **no conversion of any kind**, so
+    /// `e as T` — which §5.1 says is *"always written, including where it loses
+    /// precision"*, and is therefore the only way a Science program moves
+    /// between two numeric types at all — has no spelling above the line.
+    ///
+    /// **The operation is decided in [`crate::lower`] and read here.** That is
+    /// the same division `Inst::IntBinary` already has, and here it is not a
+    /// convenience: `sext` against `zext` is decided by the **source's**
+    /// signedness, and by the time a value reaches this module it is an
+    /// `i32` with no sign attached — LLVM integer types are signless. A backend
+    /// that guessed from the destination would render `-1i32 as U64` as
+    /// `18446744073709551615`, which is legal IR, verifies, and is the wrong
+    /// number. So the one bit that cannot be recovered is carried.
+    ///
+    /// **`from` is carried too, and only one arm needs it.**
+    /// [`ConvOp::FloatToIntSat`] and [`ConvOp::FloatToUintSat`] are LLVM
+    /// intrinsics whose names are overloaded on *both* widths —
+    /// `llvm.fptosi.sat.i32.f64` — so the source's width has to be spelled, and
+    /// asking LLVM for the value's type would be reading back something the
+    /// caller already knows. It is also checked against the operand, which is
+    /// the same width check `Inst::Store` does and for finding 12's reason.
+    ///
+    /// Like every other variant here it collapses: when `Inst` grows a
+    /// conversion form, this is `Above(..)` and goes.
+    Convert {
+        /// Where the result goes.
+        dest: ValueId,
+        /// Which conversion.
+        op: ConvOp,
+        /// What is converted. Must be an [`Operand::Value`]: a constant has no
+        /// width of its own, so [`crate::lower`] materialises it through
+        /// [`ExtInst::Const`] at `from` first, which is finding 12's repair
+        /// applied one instruction earlier.
+        value: Operand,
+        /// The source's layout, for the intrinsic's name and the width check.
+        from: Layout,
+        /// The destination's layout.
+        to: Layout,
+    },
     /// Bind a local to an [`ArgClass::IndirectByPointer`] parameter's pointer
     /// instead of giving it an `alloca`.
     ///
@@ -408,6 +451,52 @@ pub enum ExtInst {
         /// What to write.
         value: Operand,
     },
+}
+
+/// Which conversion an [`ExtInst::Convert`] is.
+///
+/// **Nine operations, and every one of them is a decision somebody had to
+/// take.** The list is the cross product of {integer, float} with itself, split
+/// by the *source's* signedness where that changes the answer and by direction
+/// where that changes the instruction. `crate::lower::Lowerer::conversion` is
+/// what maps a pair of Science types onto one of these, and its own note is
+/// where §5.1 is read out; this enum is only the instruction.
+///
+/// **A same-width, same-kind conversion is not here**, because it is not an
+/// instruction: `I64 as U64` is the same bits under a different name, and LLVM
+/// integers are signless, so the lowering emits the value unchanged rather than
+/// a no-op `bitcast`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConvOp {
+    /// Integer to a narrower integer: `trunc`. Two's-complement truncation,
+    /// which is Rust's `as` and what §5.1's *"including where it loses
+    /// precision"* buys.
+    Trunc,
+    /// Integer to a wider integer, source signed: `sext`.
+    SignExtend,
+    /// Integer to a wider integer, source unsigned: `zext`.
+    ZeroExtend,
+    /// Signed integer to float: `sitofp`. Rounds to nearest-even.
+    IntToFloat,
+    /// Unsigned integer to float: `uitofp`.
+    UintToFloat,
+    /// Float to signed integer, **saturating, NaN to zero**:
+    /// `llvm.fptosi.sat`.
+    ///
+    /// §5.1 decides this one in as many words — *"`as` from float to integer
+    /// saturates, and NaN becomes zero"* — and a bare `fptosi` does **not** do
+    /// it: LLVM says an out-of-range result is `poison`, which at `-O2` is a
+    /// licence to delete the code that would have checked. The saturating
+    /// intrinsic is the whole reason this is a `call` and not an instruction.
+    FloatToIntSat,
+    /// Float to unsigned integer, saturating, NaN to zero:
+    /// `llvm.fptoui.sat`. A negative float saturates to zero.
+    FloatToUintSat,
+    /// Float to a wider float: `fpext`. Exact.
+    FloatExtend,
+    /// Float to a narrower float: `fptrunc`. Rounds, and overflows to an
+    /// infinity rather than to poison.
+    FloatTrunc,
 }
 
 /// A basic block in the extended instruction set.
@@ -950,6 +1039,10 @@ impl LlvmBackend {
                 };
                 state.values.insert(dest.0, result);
             }
+            ExtInst::Convert { dest, op, value, from, to } => {
+                let result = self.convert(state, *dest, *op, value, from, to)?;
+                state.values.insert(dest.0, result);
+            }
             ExtInst::Above(Inst::IntBinary { dest, op, lhs, rhs }) => {
                 let hint = self.width_hint(state, lhs, rhs).or_else(|| Some(self.int_ty(64)));
                 let l = self.operand(state, lhs, hint)?;
@@ -1219,6 +1312,151 @@ impl LlvmBackend {
         } else {
             value
         }
+    }
+
+    /// [`ExtInst::Convert`], as one LLVM value.
+    ///
+    /// **The width is checked before anything is built**, which is the third
+    /// place this crate does that and it is here for finding 12's reason: a
+    /// `trunc` from an `i64` to an `i32` and a `trunc` from an `i16` to an
+    /// `i32` are the same `ExtInst` and only one of them is legal, and LLVM's
+    /// answer to the second is an assertion in a debug build and undefined in a
+    /// release one. The releases are what ship.
+    fn convert(
+        &self,
+        state: &BodyState,
+        dest: ValueId,
+        op: ConvOp,
+        value: &Operand,
+        from: &Layout,
+        to: &Layout,
+    ) -> Result<sys::LLVMValueRef, BackendError> {
+        if !matches!(value, Operand::Value(_)) {
+            return Err(BackendError::Other(
+                "`ExtInst::Convert` converts a value: a constant has no width of its own, so it \
+                 goes through `ExtInst::Const` at the source layout first"
+                    .to_string(),
+            ));
+        }
+        let source_ty = self.llvm_type(from);
+        let dest_ty = self.llvm_type(to);
+        let v = self.operand(state, value, Some(source_ty))?;
+        let actual = unsafe { sys::LLVMTypeOf(v) };
+        if actual != source_ty {
+            return Err(BackendError::Other(format!(
+                "a conversion from {} whose operand is {}: the two widths disagree and opaque \
+                 pointers make the mismatch legal IR in every case but this one",
+                self.describe_type(source_ty),
+                self.describe_type(actual)
+            )));
+        }
+        let b = self.builder.raw();
+        let name = cstr(&format!("v{}", dest.0));
+        let built = match op {
+            ConvOp::Trunc => unsafe { sys::LLVMBuildTrunc(b, v, dest_ty, name.as_ptr()) },
+            ConvOp::SignExtend => unsafe { sys::LLVMBuildSExt(b, v, dest_ty, name.as_ptr()) },
+            ConvOp::ZeroExtend => unsafe { sys::LLVMBuildZExt(b, v, dest_ty, name.as_ptr()) },
+            ConvOp::IntToFloat => unsafe { sys::LLVMBuildSIToFP(b, v, dest_ty, name.as_ptr()) },
+            ConvOp::UintToFloat => unsafe { sys::LLVMBuildUIToFP(b, v, dest_ty, name.as_ptr()) },
+            ConvOp::FloatExtend => unsafe { sys::LLVMBuildFPExt(b, v, dest_ty, name.as_ptr()) },
+            ConvOp::FloatTrunc => unsafe { sys::LLVMBuildFPTrunc(b, v, dest_ty, name.as_ptr()) },
+            ConvOp::FloatToIntSat | ConvOp::FloatToUintSat => {
+                let signed = matches!(op, ConvOp::FloatToIntSat);
+                self.saturating_float_to_int(v, from, to, signed, &name)?
+            }
+        };
+        Ok(built)
+    }
+
+    /// §5.1's *"`as` from float to integer saturates, and NaN becomes zero"*,
+    /// as a call to LLVM's own saturating intrinsic.
+    ///
+    /// # The decision
+    ///
+    /// `llvm.fptosi.sat.iN.fM` and `llvm.fptoui.sat.iN.fM`, declared into the
+    /// module on first use and called like any other function.
+    ///
+    /// # The reason
+    ///
+    /// **A bare `fptosi` is not this conversion and cannot be made into it
+    /// afterwards.** LLVM says the result of `fptosi` is `poison` when the
+    /// value does not fit, and `poison` is not "some integer" — it is a licence
+    /// for the optimiser to assume the case never happens, so a `select` that
+    /// clamped the answer afterwards is a `select` `-O2` may delete along with
+    /// the branch that fed it. The clamp has to happen to the *float*, before
+    /// the conversion, which is four comparisons, three `select`s and two
+    /// exactly-representable bounds per width — bounds that are not the obvious
+    /// numbers, because `2^63` is a representable `double` and is not a
+    /// representable `i64`, so the right constant for `I64` is
+    /// `9223372036854774784.0`. The intrinsic is that sequence, written by
+    /// people who own the definition of it, and it gives NaN-to-zero in the
+    /// same instruction.
+    ///
+    /// # The cost
+    ///
+    /// **Two, and the first is the one to watch.** The intrinsic is declared by
+    /// *name*: `LLVMAddFunction` with the overloaded spelling, which LLVM turns
+    /// back into an intrinsic id when it parses the name. A misspelling is not
+    /// a compile error here — it is an ordinary external function, which
+    /// verifies, and then fails at **link** time with an undefined symbol,
+    /// which is `SC0402` with `llvm.fptosi.sat.i64.f64` in it. The widths are
+    /// therefore built from the layouts rather than written out, and
+    /// `tests/casts.rs` runs one of each so that the name is exercised rather
+    /// than reasoned about.
+    ///
+    /// The second is that this is the only `call` in the language that is not a
+    /// runtime entry point or a user function, so `tests/symbols.rs`'s reverse
+    /// list — the LLVM names that must stay undeclared — does not cover it:
+    /// nothing in [`crate::sys`] is added for it and there is nothing there for
+    /// that test to see.
+    fn saturating_float_to_int(
+        &self,
+        value: sys::LLVMValueRef,
+        from: &Layout,
+        to: &Layout,
+        signed: bool,
+        name: &std::ffi::CStr,
+    ) -> Result<sys::LLVMValueRef, BackendError> {
+        let Repr::Scalar(Scalar::Float(float)) = from.repr else {
+            return Err(BackendError::Other(
+                "a float-to-integer conversion whose source is not a float".to_string(),
+            ));
+        };
+        let Repr::Scalar(Scalar::Int(int)) = to.repr else {
+            return Err(BackendError::Other(
+                "a float-to-integer conversion whose destination is not an integer".to_string(),
+            ));
+        };
+        let float_bits = match float {
+            FloatTy::F32 => 32u32,
+            FloatTy::F64 => 64,
+        };
+        let int_bits = (int.width(self.triple()) * 8) as u32;
+        let which = if signed { "fptosi" } else { "fptoui" };
+        let symbol = format!("llvm.{which}.sat.i{int_bits}.f{float_bits}");
+        let int_ty = self.int_ty(int_bits);
+        let float_ty = self.scalar_ty(Scalar::Float(float));
+        let mut params = [float_ty];
+        let fn_type = unsafe { sys::LLVMFunctionType(int_ty, params.as_mut_ptr(), 1, 0) };
+        let module = self.module_ref()?;
+        let c_name = cstr(&symbol);
+        let existing = unsafe { sys::LLVMGetNamedFunction(module.raw(), c_name.as_ptr()) };
+        let function = if existing.is_null() {
+            unsafe { sys::LLVMAddFunction(module.raw(), c_name.as_ptr(), fn_type) }
+        } else {
+            existing
+        };
+        let mut args = [value];
+        Ok(unsafe {
+            sys::LLVMBuildCall2(
+                self.builder.raw(),
+                fn_type,
+                function,
+                args.as_mut_ptr(),
+                1,
+                name.as_ptr(),
+            )
+        })
     }
 
     /// The type of a niched layout's niche scalar at offset 0, if it has one.

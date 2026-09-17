@@ -251,6 +251,14 @@
 //! the authority and a correction that lives only in code is a correction
 //! nobody reads.
 //!
+//! **Thirteen, and two of them are now closed rather than open.** Items 9 and
+//! 10 were both *"a note prescribes something the ABI below it cannot
+//! express"*, and both were closed by changing the ABI rather than by softening
+//! the note: `science_string_with_capacity` for §1.7's capacity, and an
+//! `Rvalue::Cast` lowering for `science_string_push_i64`'s sign extension. They
+//! are left in the list with their history because the list is a record of what
+//! reading could not establish, not a list of open bugs.
+//!
 //! 1. **`region-inference.md` §10 item 5 asks for less than §12 delivers, and
 //!    §12 is right.** Item 5 asks only that drop points be *explicit*; §12's
 //!    Decision 26 adds *elaborated*, and says that making the points explicit
@@ -402,36 +410,67 @@
 //!    suppression (it is a hole) and keeps the borrows (they are right), and
 //!    the difference between the two spellings is the whole reason to prefer
 //!    the second.
-//! 9. **`strings-formatting-and-docs.md` §1.7 prescribes a performance
-//!    property its own ABI cannot express.** *"It lowers to a builder over the
-//!    fragments, with the capacity pre-computed from the literal fragments plus
-//!    a per-type estimate for each hole, so the common case is one
-//!    allocation."* `science-codegen`'s `RUNTIME` is fifty-four entry points
-//!    and **none of them takes a capacity**: there is no
-//!    `science_string_with_capacity` and no `science_string_reserve`, so
-//!    `science_string_new` is the only way to start a `String` and it starts it
-//!    empty. The common case is therefore one allocation *per growth*. The
-//!    estimate §1.7 asks for is computable here — the literal fragments are in
-//!    the node and the holes have types — and there is nowhere to send it.
-//! 10. **`science-rt` documents a caller that does not exist.**
-//!     `science_string_push_i64`'s own note reads *"every signed width renders
+//! 9. **`strings-formatting-and-docs.md` §1.7 prescribed a performance
+//!    property its own ABI could not express**, and the ABI was the thing to
+//!    fix. *"It lowers to a builder over the fragments, with the capacity
+//!    pre-computed from the literal fragments plus a per-type estimate for each
+//!    hole, so the common case is one allocation."* `science-codegen`'s
+//!    `RUNTIME` was fifty-four entry points and **not one of them took a
+//!    capacity**: no `science_string_with_capacity`, no
+//!    `science_string_reserve`, so `science_string_new` was the only way to
+//!    start a `String` and it started it empty. The common case was one
+//!    allocation *per growth*. The estimate §1.7 asks for was computable here —
+//!    the literal fragments are in the node and the holes have types — and
+//!    there was nowhere to send it.
+//!
+//!    **The entry point exists now and the number is measured rather than
+//!    claimed.** `science_string_with_capacity` is `RUNTIME`'s fifty-fifth row
+//!    and [`lower`]'s `Builder::capacity_estimate` is the arithmetic;
+//!    `science-rt`'s `tests/capacity.rs` counts calls into the system
+//!    allocator and the acceptance case `f"n es {n} y x es {x}"` goes from
+//!    **three** growths to **one** allocation in total.
+//!
+//!    **What it cost, stated because it is the shape §9.2 warns about.** A
+//!    `ScienceString` returned by value is three words, therefore MEMORY,
+//!    therefore an `sret` return — so the derived set went from nine to ten.
+//!    Nobody decided that: the signature was written, `runtime.rs` classified
+//!    it, and three tests that assert the count changed together. `format.rs`'s
+//!    own note records the same question being answered the *other* way seven
+//!    entry points earlier, which is the pair worth reading together.
+//!
+//!    **And the estimate is an estimate.** Too small costs the growth it was
+//!    meant to avoid; too large is memory held for the life of the string,
+//!    because `String` has no `shrink_to_fit` and §8 lists none. That is why
+//!    each integer width gets its own longest spelling rather than `I64`'s, and
+//!    why the two numbers that cannot be bounded — an `F64` hole and a `String`
+//!    hole — are documented as guesses at the function that makes them.
+//! 10. **`science-rt` documented a caller that did not exist.**
+//!     `science_string_push_i64`'s own note read *"every signed width renders
 //!     through this one: `I8`…`I64` are sign-extended by codegen before the
-//!     call"*. Nothing sign-extends anything: [`mir::Rvalue::Cast`] has no
-//!     lowering in `science-codegen-llvm`, so there is no phase between this
+//!     call"*. Nothing sign-extended anything: [`mir::Rvalue::Cast`] had no
+//!     lowering in `science-codegen-llvm`, so there was no phase between this
 //!     one and the call that could. Choosing the entry point is what surfaced
 //!     it, because the choice has only two answers and both are visible —
 //!     `push_i64` with an `i32` in an `i64` parameter, or a refusal.
-//!     [`lower`]'s `Builder::push_of` refuses, and `push_u64` has the same
+//!     [`lower`]'s `Builder::push_of` refused, and `push_u64` had the same
 //!     three narrow widths behind it with no note at all.
 //!
-//!     **This one is loud rather than quiet**, which is worth recording
-//!     because items 3, 4 and 7 were all the other shape: `LLVMVerifyModule`
-//!     rejects `call void @science_string_push_i64(ptr, i32)` against its own
-//!     `declare`, so the wrong answer here fails the build. The *pointer*
-//!     version of the same mistake does not — see `science-codegen-llvm`'s §3
-//!     finding 18, which is this crate's §4 dereference not firing on a
-//!     `borrowed String` hole, and which verifies, links, and aborts inside the
-//!     runtime.
+//!     **The caller exists now and it is this crate.** `Rvalue::Cast` has a
+//!     lowering, so `push_of` emits one cast into a temporary in front of the
+//!     call — to `I64` for `I8`/`I16`/`I32`, to `U64` for `U8`/`U16`/`U32` —
+//!     and both entry points' notes have been corrected to name the phase.
+//!     The two lists stay separate because the extension's signedness is the
+//!     *source's*: `-1i32` through `push_u64` renders `4294967295`, which is a
+//!     legal `i64` and a different number.
+//!
+//!     **This one was loud rather than quiet**, which is worth keeping in the
+//!     record because items 3, 4 and 7 were all the other shape:
+//!     `LLVMVerifyModule` rejects `call void @science_string_push_i64(ptr,
+//!     i32)` against its own `declare`, so the wrong answer here failed the
+//!     build. The *pointer* version of the same mistake does not — see
+//!     `science-codegen-llvm`'s §3 finding 18, which is this crate's §4
+//!     dereference not firing on a `borrowed String` hole, and which verifies,
+//!     links, and aborts inside the runtime.
 //! 11. **§1.6 says an interpolation *borrows* its operands, and half of them
 //!     cannot be borrowed.** Six of the seven `science_string_push_*` entry
 //!     points take their argument **in a register**; only
@@ -448,6 +487,31 @@
 //!     only other spelling is a move, so the borrow is forced. §1.6 should say
 //!     *"an interpolation does not consume its operands"*; the borrow is how
 //!     that is achieved for the types that have no other way of achieving it.
+//! 12. **A cast is the one rvalue whose meaning is not recoverable from the
+//!     statement it is on, and [`mir::Rvalue::Cast`] used not to carry it.**
+//!     Every other rvalue can be read from the destination's type and the
+//!     operand's place: a `Binary` takes its width from whichever side is a
+//!     place, a `Use` from the slot it writes. `1 as U8` is a constant on both
+//!     sides of the arrow — no place, no local declaration, nothing to ask —
+//!     and `-1i32 as U64` and `0xffffffffu32 as U64` are the same thirty-two
+//!     bits with two different answers, decided by the **source's** signedness.
+//!     So the variant now carries `from`, taken from THIR at lowering time.
+//!
+//!     **The consumer that needed it could not have noticed it was missing.**
+//!     LLVM integers are signless, so a backend that guessed from the
+//!     destination emits `zext` where `sext` was wanted, which verifies, links,
+//!     runs and prints `18446744073709551615` where `-1` was meant. This is the
+//!     shape items 3, 4 and 7 have — a gap that does not fail, it goes quiet —
+//!     met one phase earlier and closed before it could go quiet.
+//! 13. **The capacity of §1.7's builder is not a `Literal`, and pretending it
+//!     was would have been this crate claiming the program contains a number it
+//!     does not.** [`mir::Constant::Count`] is the variant; a `Literal::Int`
+//!     carries a base and a suffix because it is source text, and `dump` prints
+//!     it back the way it was written. The estimate is arithmetic this lowering
+//!     did. It is also the only constant in the IR whose width is the C
+//!     parameter's rather than a Science type's — §9.3's *"a length is a
+//!     `usize` and an index is an `Int`"* — so there is no Science type for it
+//!     to disagree with, which is a second reason it is not a literal.
 
 pub mod callgraph;
 pub mod capture;

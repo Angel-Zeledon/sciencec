@@ -154,6 +154,10 @@ fn operand(defs: &DefTable, operand: &Operand) -> String {
         Operand::Move(target) => format!("move {}", place(defs, target)),
         Operand::Const(Constant::Unit) => "()".to_string(),
         Operand::Const(Constant::Item(def)) => defs.get(*def).name.to_string(),
+        // Suffixed, so a dump reader can tell §1.7's computed capacity from a
+        // `57` the author wrote. `Constant::Count`'s own note is the reason the
+        // two are different values and not one.
+        Operand::Const(Constant::Count(count)) => format!("{count}usize"),
         Operand::Const(Constant::Literal(literal)) => literal_text(literal),
     }
 }

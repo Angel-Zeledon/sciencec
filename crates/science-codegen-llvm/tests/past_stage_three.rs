@@ -740,8 +740,10 @@ fn what_is_refused_names_itself() {
             "choice C:\n    A\n    B(String)\n\nlet c be A\nprint(\"x\")\n",
             "owns something",
         ),
-        ("refuse-tuple", "let t be (1, 2)\nprint(\"x\")\n", "a tuple"),
-        ("refuse-cast", "let a be 1i32\nlet b be a as I64\nprint(\"x\")\n", "cast"),
+        // **A tuple and a cast used to be here** and are not: both build now,
+        // and `tests/casts.rs` and the tuple section above are the programs
+        // that run them. What is left of a cast's refusal is the pairs §5.1
+        // does not define, which is that file's `what_no_cast_may_do`.
         (
             "refuse-method",
             "type Doc:\n    n: Int\n\nDoc has:\n    def get(self) -> Int:\n        self.n\n\n\
@@ -775,4 +777,134 @@ fn what_is_refused_names_itself() {
 fn integer_division_is_still_refused_for_the_reason_that_is_not_effort() {
     let text = refusal("refuse-div", "let a be 6\nlet b be a / 2\nprint(\"x\")\n");
     assert!(text.contains("sdiv") || text.contains("divide-by-zero"), "{text}");
+}
+
+// --- a tuple --------------------------------------------------------------
+//
+// **The construct the last pass measured as the boundary**, and reaching it
+// turned up two facts about the phases above this one that no note records.
+// They are stated here rather than at each test, because both of them shape
+// how every fixture below is written:
+//
+// 1. **`t.0` does not parse.** There is no tuple-index expression in the
+//    grammar at all — `expected an identifier, found a number literal` — so
+//    `mir::Projection::TupleField` is reachable from a `match` pattern and from
+//    a `choice` payload and from nothing the author writes with a dot. Every
+//    fixture here therefore reads its tuple by destructuring it, which is the
+//    only spelling the language has.
+// 2. **An unannotated tuple literal's elements are `TyKind::Error`.**
+//    `let t be (1, 2)` checks clean and has type `(<error>, <error>)`, because
+//    `science-types`' `ExprKind::Tuple` arm resolves each element's type as it
+//    synthesises the node and an integer literal's is still an inference
+//    variable then. `let t: (Int, Int) be (1, 2)` and `let t be (1i64, 2i64)`
+//    are both fine. [`the_unannotated_tuple_literal_is_a_front_end_hole`] is
+//    that, as a refusal.
+
+/// **The program that could not be built, once it is given a type.**
+///
+/// The last pass measured the smallest unbuildable program as `let t be (1, 2)`
+/// and located it at `cg_ty`'s missing `TyKind::Tuple` arm. The arm was
+/// necessary and — unlike the `choice` before it, which needed the arm *and* a
+/// `Drop` of its scrutinee — it was nearly sufficient: a tuple of scalars owns
+/// nothing, so `drop_runs_something` already answered `false` and MIR's drop of
+/// the binding was already elaborated away. What stood behind it was not a
+/// codegen hole at all but the typing gap in the note above.
+#[test]
+fn a_tuple_is_built_and_its_elements_read_back() {
+    let source = "let t: (Int, Int) be (1, 2)\nmatch t:\n\x20   (a, b):\n\x20       print(f\"{a} {b}\")\n";
+    assert_eq!(bytes("tuple", source), "1 2\n");
+}
+
+/// **Mixed widths, which is where an offset computed by counting rather than by
+/// asking would go wrong.**
+///
+/// `(I8, F64, Bool, I32)` has padding in it on every target: a byte, seven
+/// bytes of padding, eight of `F64`, a byte of `Bool`, three more of padding
+/// and four of `I32`. A tuple laid out as though its elements were adjacent
+/// reads the `F64` out of the middle of nothing, and the values are chosen so
+/// that it cannot come back looking right — `-7` is not a byte `2.5` shares.
+///
+/// `science-codegen`'s `layout_of` computes those offsets and was not changed:
+/// this asserts that the tuple arm hands it the elements in the order the
+/// author wrote them, which is Decision 17's *"no field reordering, ever"*
+/// applied to a type whose fields have numbers instead of names.
+#[test]
+fn a_tuple_of_mixed_widths_is_laid_out_by_the_c_rule() {
+    let source = "let t: (I8, F64, Bool, I32) be (-7i8, 2.5, true, 1000i32)\n\
+                  match t:\n\x20   (a, b, c, d):\n\x20       print(f\"{a} {b} {c} {d}\")\n";
+    assert_eq!(bytes("tuple-mixed", source), "-7 2.5 true 1000\n");
+}
+
+/// **A tuple with a `String` in it is refused, and the refusal is the drop and
+/// not the layout.**
+///
+/// `drop_runs_something` walks a tuple element by element, so a tuple holding a
+/// `String` owns something and its `TerminatorKind::Drop` needs Decision 12's
+/// emitted glue — which this backend emits for nothing. The *layout* is fine;
+/// it is the destructor that is missing, and the message names the type rather
+/// than saying "a tuple", which is the difference between a refusal a reader
+/// can act on and one that sends them to the wrong file.
+#[test]
+fn a_tuple_that_owns_something_is_refused_for_the_drop_and_not_the_layout() {
+    let text = refusal("tuple-owning", "let s be \"hola\"\nlet t be (s, s)\nprint(\"x\")\n");
+    assert!(
+        text.contains("owns something") && text.contains("(String, String)"),
+        "a tuple holding a `String` should be refused for its drop, by name:\n{text}"
+    );
+}
+
+/// **A tuple nested in a record and a record nested in a tuple**, so the arm is
+/// reached from both directions of `cg_ty`'s recursion.
+///
+/// The nesting is what would break if the tuple arm produced a `CgTy` the
+/// layout engine treated differently from a record's: a `Struct` inside a
+/// `Struct` is one alignment computation and the answer has to be the same
+/// whichever of the two is outermost.
+#[test]
+fn a_tuple_nests_with_a_record_in_both_directions() {
+    let source = "type P:\n\x20   x: Int\n\x20   y: Int\n\n\
+                  let a: (P, Int) be (P(x: 1, y: 2), 3)\n\
+                  match a:\n\x20   (p, n):\n\x20       print(f\"{p.x} {p.y} {n}\")\n";
+    assert_eq!(bytes("tuple-nested", source), "1 2 3\n");
+}
+
+/// **Five elements, and the last one is the one an off-by-one drops.**
+///
+/// A tuple of five is enough that a lowering which walked the layout's field
+/// list and MIR's operand list out of step would produce a wrong number rather
+/// than a crash, and the digits are distinct so the printed string says which
+/// position moved.
+#[test]
+fn a_tuple_of_five_writes_every_element_at_its_own_offset() {
+    let source = "let t: (Int, Int, Int, Int, Int) be (1, 2, 3, 4, 5)\n\
+                  match t:\n\x20   (a, b, c, d, e):\n\x20       print(f\"{a}{b}{c}{d}{e}\")\n";
+    assert_eq!(bytes("tuple-five", source), "12345\n");
+}
+
+/// **`let t be (1, 2)` still does not build, and the reason is no longer this
+/// crate's.**
+///
+/// The program the last pass named as the boundary checks clean, has type
+/// `(<error>, <error>)`, and is refused here — by the only phase that ever asks
+/// what a tuple element's type is. The refusal names the front end rather than
+/// the tuple, because a message saying *"a tuple"* would send a reader to
+/// `cg_ty`, which has the arm.
+///
+/// **Both spellings that do work are asserted beside it**, so that this test
+/// fails if the front-end gap is ever closed, rather than quietly continuing to
+/// describe a fixed bug.
+#[test]
+fn the_unannotated_tuple_literal_is_a_front_end_hole() {
+    let text = refusal("tuple-untyped", "let t be (1, 2)\nprint(\"x\")\n");
+    assert!(
+        text.contains("`TyKind::Error`") && text.contains("ExprKind::Tuple"),
+        "the refusal should name the phase that left the hole:\n{text}"
+    );
+    // And the two spellings that give the elements a type both build and run.
+    let annotated =
+        "let t: (Int, Int) be (1, 2)\nmatch t:\n\x20   (a, b):\n\x20       print(f\"{a}{b}\")\n";
+    assert_eq!(bytes("tuple-annotated", annotated), "12\n");
+    let suffixed =
+        "let t be (1i64, 2i64)\nmatch t:\n\x20   (a, b):\n\x20       print(f\"{a}{b}\")\n";
+    assert_eq!(bytes("tuple-suffixed", suffixed), "12\n");
 }

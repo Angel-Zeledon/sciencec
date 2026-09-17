@@ -457,7 +457,7 @@ use crate::mir::{
 /// crate that cannot say which of five call sites wrote it.
 /// `tests/fstring.rs` checks the eight against that table, which is the only
 /// place the two lists can be compared.
-const STRING_NEW: &str = "science_string_new";
+const STRING_WITH_CAPACITY: &str = "science_string_with_capacity";
 const PUSH_BYTES: &str = "science_string_push_bytes";
 const PUSH_I64: &str = "science_string_push_i64";
 const PUSH_U64: &str = "science_string_push_u64";
@@ -476,7 +476,14 @@ const PUSH_STR: &str = "science_string_push_str";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Push {
     /// The runtime takes the value in a register: the six scalars.
-    Value(&'static str),
+    ///
+    /// `widen` is `Some(name)` when the hole's width is narrower than the
+    /// parameter's, and names the prelude type the hole is cast to first —
+    /// `I64` for `I8`/`I16`/`I32`, `U64` for `U8`/`U16`/`U32`. That is
+    /// `science_string_push_i64`'s own sentence, *"`I8`…`I64` are
+    /// sign-extended by codegen before the call"*, and
+    /// [`Builder::widen_hole`] is the phase that does it.
+    Value { symbol: &'static str, widen: Option<&'static str> },
     /// The runtime takes a pointer to the value: `science_string_push_str`.
     Pointer(&'static str),
     /// There is no entry point for this type. §1.6's borrow is still taken and
@@ -1016,8 +1023,12 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 block
             }
             ExprKind::Cast { operand } => {
+                // The operand's type is read **before** it is lowered, off
+                // THIR, which is the only phase that knows it: `Rvalue::Cast`'s
+                // own note is why it has to be carried rather than recovered.
+                let from = self.thir.ty(*operand);
                 let (value, block) = self.operand(*operand, block);
-                self.assign(block, dest, Rvalue::Cast { operand: value, ty }, span);
+                self.assign(block, dest, Rvalue::Cast { operand: value, from, ty }, span);
                 block
             }
             ExprKind::Present(operand) => {
@@ -1719,14 +1730,29 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     ///
     /// One local per fragment for the accumulator reference, one more per
     /// borrowed hole, and one [`BorrowId`] each: `f"a{b}c{d}"` is five calls,
-    /// seven temporaries and six loans. §1.7's *"with the capacity pre-computed
-    /// from the literal fragments plus a per-type estimate for each hole, so
-    /// the common case is one allocation"* is **not** done — there is no
-    /// `science_string_with_capacity` in `RUNTIME` — so the common case is one
-    /// allocation per growth. §1.7's permitted elision, rendering straight into
-    /// the sink for an `f"…"` written as `print`'s argument, is also not done:
-    /// it is *"opt-in to the implementation"* and this implementation has not
-    /// opted in.
+    /// seven temporaries and six loans. §1.7's permitted elision, rendering
+    /// straight into the sink for an `f"…"` written as `print`'s argument, is
+    /// not done: it is *"opt-in to the implementation"* and this implementation
+    /// has not opted in.
+    ///
+    /// # §1.7's capacity, and what it is worth
+    ///
+    /// The constructor is [`Builder::capacity_estimate`]'s number through
+    /// `science_string_with_capacity`, which is §1.7's *"the capacity
+    /// pre-computed from the literal fragments plus a per-type estimate for
+    /// each hole, so the common case is one allocation"*. This entry used to
+    /// say the opposite — *"is **not** done — there is no
+    /// `science_string_with_capacity` in `RUNTIME`"* — and §7 item 9 is the
+    /// finding that the ABI, not the lowering, was what the sentence was
+    /// blocked on.
+    ///
+    /// **It is measured and not asserted.** `science-rt`'s `tests/capacity.rs`
+    /// counts calls into the system allocator for exactly this call sequence:
+    /// the acceptance case `f"n es {n} y x es {x}"` costs **three** growths
+    /// starting from `science_string_new` and **one** allocation in total
+    /// starting from `science_string_with_capacity(57)`. `tests/fstring.rs`
+    /// asserts that 57 is the number this function computes, so the two halves
+    /// of §1.7 meet at a constant a test on each side names.
     fn lower_fstring(
         &mut self,
         dest: Place,
@@ -1734,8 +1760,14 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         block: BlockId,
         span: Span,
     ) -> BlockId {
-        let mut block =
-            self.emit_call(dest.clone(), Callee::Runtime(STRING_NEW), Vec::new(), block, span);
+        let capacity = self.capacity_estimate(parts);
+        let mut block = self.emit_call(
+            dest.clone(),
+            Callee::Runtime(STRING_WITH_CAPACITY),
+            vec![Operand::Const(Constant::Count(capacity))],
+            block,
+            span,
+        );
         if parts.is_empty() {
             return block;
         }
@@ -1781,12 +1813,24 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                     let (accumulator, next) = self.accumulator_ref(&dest, block, span);
                     block = next;
                     let (value, next) = match push {
-                        Push::Value(_) => self.value_hole(hole, block),
+                        Push::Value { .. } => self.value_hole(hole, block),
                         Push::Pointer(_) | Push::Missing => self.borrow_hole(hole, block, span),
                     };
                     block = next;
+                    // §10.1: the narrow widths reach their entry point through
+                    // a cast, which is the sentence `science_string_push_i64`
+                    // has always claimed and nothing used to do.
+                    let (value, next) = match push {
+                        Push::Value { widen: Some(wide), .. } => {
+                            self.widen_hole(value, hole_ty, wide, block, span)
+                        }
+                        _ => (value, block),
+                    };
+                    block = next;
                     let callee = match push {
-                        Push::Value(symbol) | Push::Pointer(symbol) => Callee::Runtime(symbol),
+                        Push::Value { symbol, .. } | Push::Pointer(symbol) => {
+                            Callee::Runtime(symbol)
+                        }
                         Push::Missing => Callee::Unresolved(Unresolved::Display),
                     };
                     block = self.emit_call(
@@ -1865,15 +1909,30 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     ///
     /// **The list is `science-rt`'s and it is closed.** §1.7 names the builder,
     /// `science-codegen`'s `RUNTIME` names the seven entry points that exist,
-    /// and there is no eighth to be had by widening. `science-rt`'s
-    /// `science_string_push_i64` says *"`I8`…`I64` are sign-extended by codegen
-    /// before the call"* — **no phase does that**; there is no `Rvalue::Cast`
-    /// lowering below this one. So `I8`, `I16`, `I32` and the three narrow
-    /// unsigned widths answer [`Push::Missing`] rather than `push_i64`. An
-    /// `i32` in an `i64` parameter is a register the callee reads bytes of that
-    /// nothing wrote, and it is the failure `tests/formatting_boundary.rs`
-    /// exists to catch, so it is refused where the choice is made rather than
-    /// guessed here and found there.
+    /// and there is no eighth to be had.
+    ///
+    /// **The six narrow integer widths reach one of them through a cast**, and
+    /// this entry used to say they could not. `science_string_push_i64`'s own
+    /// note reads *"`I8`…`I64` are sign-extended by codegen before the call"*
+    /// and `science_string_push_u64`'s reads the zero-extending version of the
+    /// same sentence; §7 item 10 was that **no phase did it**, because
+    /// `Rvalue::Cast` had no lowering in `science-codegen-llvm` and so there
+    /// was nothing between this decision and the call that could. It has one
+    /// now, so `I8`/`I16`/`I32` answer `push_i64` behind a cast to `I64` and
+    /// `U8`/`U16`/`U32` answer `push_u64` behind a cast to `U64`.
+    ///
+    /// **The extension's signedness is the source's and that is the whole
+    /// reason the two lists are separate.** `-1i32` widened as signed is `-1`
+    /// and widened as unsigned is `4294967295`; both are `i64` bit patterns a
+    /// verifier accepts and only one of them is the number the author wrote.
+    /// Sending an `I32` through `push_u64` would print the second.
+    ///
+    /// `F16` and `BF16` are **not** widened to `F32`, although the instruction
+    /// exists. §2.3 makes the default rendering *"the shortest decimal string
+    /// that round-trips"*, which is a property of the width —
+    /// `science_string_push_f32`'s own note says so about `F32` against `F64`
+    /// — so rendering an `F16` through a wider entry point answers a question
+    /// about a type the value does not have. They stay [`Push::Missing`].
     ///
     /// **A borrow is looked through.** A `borrowed Int` hole renders as an
     /// `Int`; [`Builder::value_hole`] and [`Builder::borrow_hole`] each insert
@@ -1890,23 +1949,151 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         let prelude = self.context.decls.prelude();
         let types = &*self.context.types;
         let is = |name: &str| prelude.is(types, ty, name);
+        let direct = |symbol| Push::Value { symbol, widen: None };
         if is("Int") || is("I64") {
-            Push::Value(PUSH_I64)
+            direct(PUSH_I64)
+        } else if is("I8") || is("I16") || is("I32") {
+            Push::Value { symbol: PUSH_I64, widen: Some("I64") }
         } else if is("U64") {
-            Push::Value(PUSH_U64)
+            direct(PUSH_U64)
+        } else if is("U8") || is("U16") || is("U32") {
+            Push::Value { symbol: PUSH_U64, widen: Some("U64") }
         } else if is("F64") {
-            Push::Value(PUSH_F64)
+            direct(PUSH_F64)
         } else if is("F32") {
-            Push::Value(PUSH_F32)
+            direct(PUSH_F32)
         } else if is("Bool") {
-            Push::Value(PUSH_BOOL)
+            direct(PUSH_BOOL)
         } else if is("Char") {
-            Push::Value(PUSH_CHAR)
+            direct(PUSH_CHAR)
         } else if is("String") {
             Push::Pointer(PUSH_STR)
         } else {
             Push::Missing
         }
+    }
+
+    /// A narrow integer hole, cast to the width its entry point declares.
+    ///
+    /// One [`Rvalue::Cast`] into one temporary, which is the same shape every
+    /// other implicit step in this file takes — a receiver borrow, a capture, a
+    /// coercion. The cast's `from` is the hole's own type with its borrows
+    /// stripped, because [`Builder::value_hole`] has already inserted §4's
+    /// dereference and the value in hand is the referent's.
+    ///
+    /// **A hole whose type this cannot name is left alone rather than cast to
+    /// a guess.** `prelude.ty` answers `None` for a hand-built definition table
+    /// with no prelude in it — every test in this crate that does not go
+    /// through the resolver — and a cast to `Ty::ERROR` would be a statement
+    /// `science-codegen-llvm` refuses with a message naming a type the program
+    /// does not contain. The un-widened operand is refused too, one call
+    /// later, with the type the program *does* contain in the message.
+    fn widen_hole(
+        &mut self,
+        value: Operand,
+        hole_ty: Ty,
+        wide: &str,
+        block: BlockId,
+        span: Span,
+    ) -> (Operand, BlockId) {
+        let from = self.stripped(hole_ty);
+        let decls = self.context.decls;
+        let Some(target) = decls.prelude().ty(self.context.types, wide) else {
+            return (value, block);
+        };
+        let temp = self.temp(target, span, block);
+        self.assign(
+            block,
+            Place::local(temp),
+            Rvalue::Cast { operand: value, from, ty: target },
+            span,
+        );
+        (Operand::Move(Place::local(temp)), block)
+    }
+
+    /// A type with its aliases revealed and every enclosing borrow removed.
+    ///
+    /// [`Builder::push_of`] recurses through borrows to choose an entry point
+    /// and throws the stripped type away; this is the same walk, kept.
+    fn stripped(&mut self, ty: Ty) -> Ty {
+        let ty = self.revealed(ty);
+        match *self.context.types.kind(ty) {
+            TyKind::Borrowed { inner, .. } => self.stripped(inner),
+            _ => ty,
+        }
+    }
+
+    /// §1.7's capacity: the literal fragments' bytes plus a per-type estimate
+    /// for each hole.
+    ///
+    /// **Every number below is an estimate and none is a bound**, which is the
+    /// word §1.7 uses and the property `science_string_with_capacity`'s own
+    /// note prices: too small costs the growth the estimate was meant to
+    /// avoid, and too large is memory held for the life of the string, because
+    /// `String` has no `shrink_to_fit` and §8 lists none. So each integer width
+    /// gets **its own longest decimal spelling** rather than `I64`'s — `I8` is
+    /// four bytes for `-128` and not twenty — and the two that cannot be
+    /// bounded at all are guesses said to be guesses:
+    ///
+    /// | Hole | Estimate | Why |
+    /// |---|---|---|
+    /// | `I8` … `U64` | 4, 6, 11, 20 signed; 3, 5, 10, 20 unsigned | the longest value the width can hold, sign included |
+    /// | `Bool` | 5 | `false` |
+    /// | `Char` | 4 | the longest UTF-8 encoding of a scalar value |
+    /// | `F32` | 16 | a **guess**. `{:?}` on an `f32` is shortest-round-trip, so `1e-30` is five bytes and `-1.1754944e-38` is fourteen; there is no short bound and the tail is rare |
+    /// | `F64` | 24 | the same guess one width up. `0.1 + 0.2` renders `0.30000000000000004`, nineteen bytes, which is the case §2.3 exists to keep visible |
+    /// | `String` | 16 | a **guess**, and the only hole whose true size is known at run time and not here |
+    /// | anything else | 0 | there is no renderer, so there will be no bytes |
+    ///
+    /// The `F64` and `String` numbers are the two worth revisiting with a
+    /// measurement; the rest are arithmetic.
+    fn capacity_estimate(&mut self, parts: &[thir::FStringPart]) -> u64 {
+        let mut total: u64 = 0;
+        for part in parts {
+            total += match part {
+                thir::FStringPart::Text(text) => text.len() as u64,
+                thir::FStringPart::Hole(hole) => {
+                    let ty = self.thir.ty(*hole);
+                    self.hole_estimate(ty)
+                }
+            };
+        }
+        total
+    }
+
+    /// One hole's contribution to [`Builder::capacity_estimate`].
+    ///
+    /// A table rather than a chain of comparisons, because the table is what
+    /// the note above is: fourteen rows, each a type and a number, and a reader
+    /// checking one against the other should not have to read control flow to
+    /// do it. A type not in it contributes nothing, which is right for both
+    /// kinds of absence — a hole with no renderer will produce no bytes, and a
+    /// build with no prelude has no types to match.
+    fn hole_estimate(&mut self, ty: Ty) -> u64 {
+        const ESTIMATES: &[(&str, u64)] = &[
+            ("Int", 20),
+            ("I64", 20),
+            ("U64", 20),
+            ("I32", 11),
+            ("U32", 10),
+            ("I16", 6),
+            ("U16", 5),
+            ("I8", 4),
+            ("U8", 3),
+            ("F64", 24),
+            ("F32", 16),
+            ("String", 16),
+            ("Bool", 5),
+            ("Char", 4),
+        ];
+        let ty = self.stripped(ty);
+        let prelude = self.context.decls.prelude();
+        let types = &*self.context.types;
+        ESTIMATES
+            .iter()
+            .find(|(name, _)| prelude.is(types, ty, name))
+            .map(|(_, bytes)| *bytes)
+            .unwrap_or(0)
     }
 
     /// §8's discipline, applied: one borrow per capture, in first-mention

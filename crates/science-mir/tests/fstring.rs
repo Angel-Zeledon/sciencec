@@ -98,7 +98,7 @@ fn moves(body: &Body, place: &Place) -> bool {
 /// **The sequence, in full.** §1.7's *"builder over the fragments"*, with the
 /// fragments in the order they were written.
 ///
-/// One `science_string_new` for the accumulator, one
+/// One `science_string_with_capacity` for the accumulator, one
 /// `science_string_push_bytes` per text run carrying the run itself, and one
 /// `science_string_push_i64` for the `Int` hole — which is the shape
 /// `science-codegen-llvm`'s `tests/formatting_boundary.rs` hand-built and ran
@@ -109,7 +109,7 @@ fn the_builder_is_one_call_per_fragment_in_source_order() {
     assert_eq!(
         calls(lowered.body("main")),
         vec![
-            "science_string_new".to_string(),
+            "science_string_with_capacity".to_string(),
             "science_string_push_bytes(\"n es \")".to_string(),
             "science_string_push_i64".to_string(),
             "science_string_push_bytes(\"!\")".to_string(),
@@ -223,22 +223,23 @@ fn the_accumulator_is_borrowed_once_per_call_and_every_borrow_activates() {
             "a borrow activated before it was reserved"
         );
     }
-    // And the accumulator is the destination of the `science_string_new` that
+    // And the accumulator is the destination of the `science_string_with_capacity` that
     // opened the sequence, rather than some other local that happens to be a
     // `String`.
     let built = body.blocks().any(|(_, block)| {
         matches!(
             &block.terminator.kind,
-            TerminatorKind::Call { callee: Callee::Runtime("science_string_new"), destination, .. }
+            TerminatorKind::Call { callee: Callee::Runtime("science_string_with_capacity"), destination, .. }
                 if *destination == place
         )
     });
-    assert!(built, "the borrowed place is not the one `science_string_new` wrote");
+    assert!(built, "the borrowed place is not the one `science_string_with_capacity` wrote");
 }
 
 /// **Each of the eight entry points is chosen by the hole's type.**
 ///
-/// The seven pushes plus the `science_string_new` that opens every sequence.
+/// The seven pushes plus the `science_string_with_capacity` that opens every
+/// sequence.
 /// `science-codegen-llvm`'s `tests/interpolation.rs` runs the same program and
 /// asserts what it printed; this asserts that the *choice* was made here, which
 /// is the half a rendering test cannot distinguish from a runtime that guesses.
@@ -250,7 +251,7 @@ fn the_entry_point_is_chosen_by_the_holes_type() {
     assert_eq!(
         pushes(lower(source).body("main")),
         vec![
-            "science_string_new",
+            "science_string_with_capacity",
             "science_string_push_i64",
             "science_string_push_u64",
             "science_string_push_f64",
@@ -277,7 +278,7 @@ fn a_borrowed_hole_renders_its_referent() {
     let lowered = lower(source);
     assert_eq!(
         pushes(lowered.body("f")),
-        vec!["science_string_new", "science_string_push_str", "science_string_push_i64"]
+        vec!["science_string_with_capacity", "science_string_push_str", "science_string_push_i64"]
     );
     // The `String` hole's loan names what the parameter points at, not the
     // parameter. `lib.rs` §5's sentence about a borrow naming the referent is
@@ -302,7 +303,7 @@ fn the_edges_of_the_fragment_list() {
     assert_eq!(
         calls(text_only.body("main")),
         vec![
-            "science_string_new".to_string(),
+            "science_string_with_capacity".to_string(),
             "science_string_push_bytes(\"solo\")".to_string(),
             "call".to_string()
         ]
@@ -311,24 +312,24 @@ fn the_edges_of_the_fragment_list() {
     let leading = lower("let a be 1\nprint(f\"{a} fin\")\n");
     assert_eq!(
         pushes(leading.body("main")),
-        vec!["science_string_new", "science_string_push_i64", "science_string_push_bytes"]
+        vec!["science_string_with_capacity", "science_string_push_i64", "science_string_push_bytes"]
     );
 
     let trailing = lower("let a be 1\nprint(f\"ini {a}\")\n");
     assert_eq!(
         pushes(trailing.body("main")),
-        vec!["science_string_new", "science_string_push_bytes", "science_string_push_i64"]
+        vec!["science_string_with_capacity", "science_string_push_bytes", "science_string_push_i64"]
     );
 
     let adjacent = lower("let a be 1\nlet b be 2\nprint(f\"{a}{b}\")\n");
     assert_eq!(
         pushes(adjacent.body("main")),
-        vec!["science_string_new", "science_string_push_i64", "science_string_push_i64"],
+        vec!["science_string_with_capacity", "science_string_push_i64", "science_string_push_i64"],
         "two adjacent holes have no text run between them"
     );
 
     let empty = lower("print(f\"\")\n");
-    assert_eq!(pushes(empty.body("main")), vec!["science_string_new"]);
+    assert_eq!(pushes(empty.body("main")), vec!["science_string_with_capacity"]);
 }
 
 /// **Nothing here drops the accumulator, and the two ways it is released are
@@ -370,15 +371,22 @@ fn the_accumulator_is_dropped_by_the_scope_and_not_by_this_lowering() {
 /// **A hole whose type has no entry point is a named hole, not a guess and not
 /// an `Rvalue::Error`.**
 ///
-/// `science-rt`'s `science_string_push_i64` says *"`I8`…`I64` are
-/// sign-extended by codegen before the call"* and nothing does that, so an
-/// `I32` gets [`Unresolved::Display`] rather than `push_i64`. The accumulator
-/// borrow is still taken, because it is right whatever the renderer turns out
-/// to be — which is what lets `science-codegen-llvm` name the type in its
-/// refusal instead of saying *"the front end gave up"*.
+/// A user record is §3.1's `Formatter`, which no note specifies and no prelude
+/// declares, so it gets [`Unresolved::Display`] rather than a push. The
+/// accumulator borrow is still taken, because it is right whatever the renderer
+/// turns out to be — which is what lets `science-codegen-llvm` name the type in
+/// its refusal instead of saying *"the front end gave up"*.
+///
+/// **This used to be `7i32`**, and it is not any more, which is the change §7
+/// item 10 records: an `I32` hole is a cast and a `push_i64` now. The refusal
+/// left is the one no cast can close, because what is missing is a *method* and
+/// not a width.
 #[test]
 fn a_hole_with_no_entry_point_keeps_its_borrows_and_names_the_hole() {
-    let lowered = lower("let n be 7i32\nprint(f\"n={n}\")\n");
+    let lowered = lower(
+        "type Punto:\n\x20   x: Int\n\nPunto implements Display\n\n\
+         let p be Punto(x: 1)\nprint(f\"p={p}\")\n",
+    );
     let body = lowered.body("main");
     assert_eq!(lowered.unresolved("main"), vec![Unresolved::Display]);
     assert_eq!(
@@ -404,10 +412,126 @@ fn a_computed_hole_goes_through_a_temporary() {
     let lowered = lower("let a be 1\nlet b be 2\nprint(f\"{a + b}\")\n");
     assert_eq!(
         pushes(lowered.body("main")),
-        vec!["science_string_new", "science_string_push_i64"]
+        vec!["science_string_with_capacity", "science_string_push_i64"]
     );
     assert!(
         lowered.statements("main").iter().any(|statement| statement == "assign binary"),
         "the sum should be computed into a place of its own"
     );
+}
+
+/// **§1.7's capacity, as the number it is.**
+///
+/// `science-rt`'s `tests/capacity.rs` measures what this number buys — three
+/// allocations become one for exactly this f-string — and names 57 as the
+/// capacity it was measured at. This is the other end of that constant: the
+/// compiler's own arithmetic, asserted here so that the two halves cannot drift
+/// apart silently. `"n es "` is five bytes and `" y x es "` is eight; an `Int`
+/// hole estimates twenty and an `F64` hole twenty-four.
+///
+/// The per-width estimates are asserted beside it, because the whole point of
+/// giving `I8` four bytes rather than `I64`'s twenty is that an estimate is not
+/// a bound and over-reserving is not recoverable — `String` has no
+/// `shrink_to_fit`.
+#[test]
+fn the_capacity_is_the_fragments_plus_a_per_type_estimate() {
+    let capacity = |source: &str| -> u64 {
+        let lowered = lower(source);
+        let body = lowered.body("main");
+        let found = body
+            .blocks()
+            .find_map(|(_, block)| match &block.terminator.kind {
+                TerminatorKind::Call {
+                    callee: Callee::Runtime("science_string_with_capacity"),
+                    args,
+                    ..
+                } => match args.first() {
+                    Some(Operand::Const(Constant::Count(count))) => Some(*count),
+                    other => panic!("the capacity is not a computed count: {other:?}"),
+                },
+                _ => None,
+            })
+            .expect("every f-string opens with `science_string_with_capacity`");
+        found
+    };
+
+    // The acceptance case: 5 + 8 text, 20 for the `Int`, 24 for the `F64`.
+    assert_eq!(
+        capacity("let n be 42\nlet x be 0.5\nlet s be f\"n es {n} y x es {x}\"\n"),
+        57,
+        "`science-rt`'s tests/capacity.rs measured one allocation at this number"
+    );
+    // No holes: the literal's own bytes, and nothing else.
+    assert_eq!(capacity("let s be f\"hola\"\n"), 4);
+    // No fragments at all: nothing is reserved, which is `science_string_new`
+    // exactly and allocates nothing.
+    assert_eq!(capacity("let s be f\"\"\n"), 0);
+    // Each width gets its own longest spelling rather than `I64`'s.
+    assert_eq!(capacity("let n be 7i8\nlet s be f\"{n}\"\n"), 4, "`-128`");
+    assert_eq!(capacity("let n be 7u8\nlet s be f\"{n}\"\n"), 3, "`255`");
+    assert_eq!(capacity("let n be 7i32\nlet s be f\"{n}\"\n"), 11, "`-2147483648`");
+    assert_eq!(capacity("let b be true\nlet s be f\"{b}\"\n"), 5, "`false`");
+    assert_eq!(capacity("let c be 'x'\nlet s be f\"{c}\"\n"), 4, "one UTF-8 scalar");
+    // A hole with no renderer contributes nothing: there will be no bytes.
+    assert_eq!(
+        capacity(
+            "type Punto:\n\x20   x: Int\n\nPunto implements Display\n\n\
+             let p be Punto(x: 1)\nlet s be f\"{p}\"\n"
+        ),
+        0
+    );
+}
+
+/// **The six narrow integer widths reach their entry point through a cast**,
+/// which is the sentence `science_string_push_i64` has always carried and which
+/// §7 item 10 recorded as false.
+///
+/// The cast is asserted as a *statement* and the entry point as the call, so a
+/// regression that widened by choosing `push_i64` and forgetting the cast — the
+/// exact failure the refusal used to prevent — fails here rather than in
+/// `LLVMVerifyModule`.
+///
+/// **The signed and unsigned lists are separate and that is the assertion that
+/// matters.** `-1i32` extended as signed is `-1` and extended as unsigned is
+/// `4294967295`; both are legal `i64`s, so nothing below this catches the
+/// swap. `science-codegen-llvm`'s `tests/casts.rs` runs the values.
+#[test]
+fn a_narrow_integer_hole_is_cast_before_it_is_pushed() {
+    for (suffix, entry) in [
+        ("i8", "science_string_push_i64"),
+        ("i16", "science_string_push_i64"),
+        ("i32", "science_string_push_i64"),
+        ("u8", "science_string_push_u64"),
+        ("u16", "science_string_push_u64"),
+        ("u32", "science_string_push_u64"),
+    ] {
+        let source = format!("let n be 7{suffix}\nlet s be f\"{{n}}\"\n");
+        let lowered: Lowered = lower(&source);
+        let body = lowered.body("main");
+        assert_eq!(
+            pushes(body),
+            vec!["science_string_with_capacity", entry],
+            "`{suffix}` chose the wrong entry point"
+        );
+        assert_eq!(
+            lowered.statements("main").iter().filter(|s| *s == "assign cast").count(),
+            1,
+            "`{suffix}` reached `{entry}` with no cast in front of it, which is a register \
+             the callee reads bytes of that nothing wrote"
+        );
+        assert!(
+            lowered.unresolved("main").is_empty(),
+            "`{suffix}` is still a hole with no renderer"
+        );
+    }
+
+    // And the widths that are already the parameter's are not cast.
+    for already in ["let n be 7\nlet s be f\"{n}\"\n", "let n be 7u64\nlet s be f\"{n}\"\n"] {
+        let lowered = lower(already);
+        assert_eq!(
+            lowered.statements("main").iter().filter(|s| *s == "assign cast").count(),
+            0,
+            "an `I64`/`U64` hole needs no cast"
+        );
+    }
 }

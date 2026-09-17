@@ -150,6 +150,47 @@ pub extern "C" fn science_string_new() -> ScienceString {
     ScienceString::empty()
 }
 
+/// `String::with_capacity(cap)` — an empty `String` with room for `cap` bytes.
+///
+/// **The decision.** One allocation of exactly `cap` bytes, up front, and no
+/// amortisation floor: the caller asked for a number and gets that number.
+/// `cap == 0` allocates nothing and is [`science_string_new`] exactly.
+///
+/// **The reason.** `strings-formatting-and-docs.md` §1.7 says an `f"…"`
+/// *"lowers to a builder over the fragments, with the capacity pre-computed
+/// from the literal fragments plus a per-type estimate for each hole, so the
+/// common case is one allocation"*. Before this existed the runtime had
+/// fifty-four entry points and **not one took a capacity** — no
+/// `with_capacity`, no `reserve` — so `science_string_new` was the only way to
+/// start a `String` and it started it empty. The estimate §1.7 asks for is
+/// computable in MIR, where the literal fragments and the holes' types both
+/// are, and there was nowhere to send it. This is where it goes.
+///
+/// It is the `String` half of [`crate::science_array_with_capacity`], which has
+/// existed since the array module and whose absence from §2's `sret` list is
+/// §9.2's finding 1. This one is in that list from the first line it exists on,
+/// because that list is derived from the signature and not written down: three
+/// words returned by value is MEMORY on every one of the three targets, so the
+/// derived set goes from nine to **ten** with no decision taken by anybody.
+///
+/// **The cost, and it is a real one.** The capacity is an *estimate*, so a
+/// string whose holes render longer than the estimate still grows — the
+/// guarantee this buys is "one allocation in the common case", never "one
+/// allocation". And an estimate that is too large is memory held for the life
+/// of the string: [`ScienceString`] has no `shrink_to_fit`, and §8 lists none,
+/// so over-reserving is not recoverable. That is the argument for the
+/// per-type estimates in `science-mir`'s `lower` being the smallest ones that
+/// cover the ordinary case rather than the widest ones that cover every case.
+#[no_mangle]
+pub extern "C" fn science_string_with_capacity(cap: usize) -> ScienceString {
+    if cap == 0 {
+        return ScienceString::empty();
+    }
+    // SAFETY: `cap` is non-zero and alignment 1 is a power of two.
+    let ptr = unsafe { crate::mem::science_alloc(cap, 1) };
+    ScienceString { ptr, len: 0, cap }
+}
+
 /// Build a `String` from raw UTF-8 bytes, copying them.
 ///
 /// **Codegen support.** This is how a string literal (§4.1) becomes a value:

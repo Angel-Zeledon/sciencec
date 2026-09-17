@@ -211,6 +211,19 @@ const WANTED: &[&str] = &[
     // refusal is untouched by this line, which asks only whether a type has an
     // `implements Display:` block.
     "Display",
+    // `print` and `write`, which `check`'s `call` refuses to give more than one
+    // argument. They are here for `panic`'s reason and not for `Display`'s: the
+    // question is *"is this call the prelude's `print`"*, and a user is free to
+    // write a `def print(a, b)` of their own in a module, which must not be
+    // refused for the shape of its own declaration.
+    //
+    // **They buy the arity and nothing else.** `builtins.rs` leaves both
+    // undeclared — its `FUNCTION_SIGNATURES` note is the measurement — so there
+    // is no `Signature` behind either id and no parameter type to check
+    // against. §4.1's decision that `print` is unary is a fact about the call
+    // rather than about the value, and it is the half of that decision the
+    // phases below this one do not have to move for.
+    "print", "write",
 ];
 
 impl Prelude {
@@ -310,6 +323,19 @@ impl Prelude {
     /// `panic`, which is how a body diverges without a `return`. §2.
     pub fn panic(&self) -> Option<DefId> {
         self.get("panic")
+    }
+
+    /// The name of §4.1's unary output function this definition is, if it is
+    /// one.
+    ///
+    /// Two entries and not three: `panic` takes `borrowed any Display` in the
+    /// same section and is *declared*, so a `panic("a", b)` is already
+    /// `SC0527` from the ordinary arity check and does not need this one.
+    /// Returning the name rather than a `bool` is what lets the message say
+    /// which function it is about without the caller reaching back into the
+    /// definition table for a string it already had.
+    pub fn unary_output(&self, def: DefId) -> Option<&'static str> {
+        ["print", "write"].into_iter().find(|name| self.get(name) == Some(def))
     }
 }
 

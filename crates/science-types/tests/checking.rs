@@ -9,7 +9,7 @@
 mod support;
 
 use science_types::assign::Coercion;
-use science_types::thir::{ExprKind, Place};
+use science_types::thir::{ExprId, ExprKind, Place};
 use support::{check, describe};
 
 const FIXTURE: &str = "\
@@ -627,6 +627,108 @@ def kept(owned: String) -> Bool:
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
+}
+
+/// **§1b: the borrow is taken at the argument, not inside the branch.**
+///
+/// The bug this pins was one line of `check` pushing the expectation inward:
+/// `borrowed String` crossed into each arm of the `if`, each arm auto-borrowed
+/// its own `"yes"`, and each of those temporaries dies at the close of its arm.
+/// `science-regions` then reported `SC0333` twice on a correct program — right
+/// about the MIR and wrong about the program — and the repair belongs here
+/// because the borrow is this phase's node.
+///
+/// The assertion is the shape rather than the absence of a region diagnostic:
+/// **one** borrow, and the thing under it is the `if`. Two borrows under the
+/// arms is the old tree, and it is what the region engine was right about.
+#[test]
+fn a_branch_at_a_borrowed_argument_takes_one_borrow_above_the_branch() {
+    let checked = program(
+        "
+def length(text: borrowed String) -> I64:
+    0
+
+def pick(flag: Bool) -> I64:
+    length(if flag: \"yes\" else: \"no\")
+",
+    );
+    checked.assert_clean();
+    let body = checked.body("pick");
+    let borrows: Vec<ExprId> = body
+        .exprs()
+        .filter(|(_, expr)| matches!(expr.kind, ExprKind::Borrow { .. }))
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(borrows.len(), 1, "one call site, one borrow");
+    let ExprKind::Borrow { operand, .. } = body.expr(borrows[0]).kind else { unreachable!() };
+    assert!(
+        matches!(body.expr(operand).kind, ExprKind::If { .. }),
+        "the borrow names the branch, not a tail inside one"
+    );
+    assert_eq!(checked.render(body.ty(operand)), "String");
+}
+
+/// **The control. §1b changes where the borrow goes and not whether the arms
+/// are checked**, so a branch whose value is the wrong type is refused exactly
+/// as it was — once, at the argument, with the branch's own type in it.
+#[test]
+fn a_branch_whose_value_does_not_fit_the_parameter_is_still_refused() {
+    let checked = program(
+        "
+def length(text: borrowed String) -> I64:
+    0
+
+def pick(flag: Bool) -> I64:
+    length(if flag: true else: false)
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+}
+
+/// **And the site rule still holds.** §6.3 says *"at call sites"*; a `let` is
+/// not one, and a branch in one is refused for
+/// [`auto_borrow_does_not_apply_away_from_a_call`]'s reason and not by a new
+/// rule about branches.
+#[test]
+fn a_branch_at_a_borrowed_binding_is_still_refused() {
+    let checked = program(
+        "
+def pick(flag: Bool) -> Bool:
+    let _view: borrowed String be if flag: \"yes\" else: \"no\"
+    true
+",
+    );
+    // Two, one per arm: away from a call the expectation still crosses into
+    // the branch, so each arm is measured against `borrowed String` on its
+    // own. §1b did not move that and was not meant to.
+    assert_eq!(checked.codes(), vec![525, 525]);
+}
+
+/// §1b composed with §4's unsizing, which is the shape `print(if …)` would have
+/// the day `print` is declared: one borrow of the branch, one coercion above
+/// it, and nothing inside the arms.
+#[test]
+fn a_branch_at_a_borrowed_object_parameter_borrows_then_unsizes() {
+    let checked = program(&format!(
+        "{DISPATCH}
+def pick(flag: Bool, left: Doc, right: Doc) -> String:
+    describe_any(if flag: left else: right)
+"
+    ));
+    checked.assert_clean();
+    let body = checked.body("pick");
+    let (coerce_id, coerce) = body
+        .exprs()
+        .find(|(_, expr)| matches!(expr.kind, ExprKind::Coerce { .. }))
+        .expect("the argument is unsized");
+    let _ = coerce_id;
+    let ExprKind::Coerce { operand, coercion } = coerce.kind else { unreachable!() };
+    assert_eq!(coercion, Coercion::Unsize);
+    assert_eq!(checked.render(coerce.ty), "borrowed any Summarize");
+    let ExprKind::Borrow { operand: branch, .. } = body.expr(operand).kind else {
+        panic!("the coercion sits on a borrow")
+    };
+    assert!(matches!(body.expr(branch).kind, ExprKind::If { .. }));
 }
 
 // --- §4's unsizing, composed with the auto-borrow above -------------------

@@ -100,17 +100,22 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
     assert_eq!(runtime_fn("science_string_push_bytes").expect("declared").params.len(), 3);
 }
 
-/// **None of the seven returns an aggregate, so the derived `sret` set has not
-/// moved.**
+/// **The derived `sret` count, from the other side of Decision 42's line.**
 ///
-/// `tests/runtime_abi.rs` in `science-codegen` names the nine; this asserts the
-/// *count* from the other side of Decision 42's line, because the count is what
-/// changes silently when a row is added carelessly. §9.2's finding was one
-/// entry point missing from that set; the same mistake in the other direction —
-/// a new row that lands in it by accident — is a call site that passes a return
-/// slot nobody wants.
+/// `tests/runtime_abi.rs` in `science-codegen` names the members; this asserts
+/// the *count* here, because the count is what changes silently when a row is
+/// added carelessly. §9.2's finding was one entry point missing from that set;
+/// the same mistake in the other direction — a new row that lands in it by
+/// accident — is a call site that passes a return slot nobody wants.
+///
+/// **It read nine and it reads ten**, and the two changes that produced those
+/// numbers are worth keeping side by side. Seven `format.rs` entry points were
+/// added and the count did **not** move, because all seven return `()`.
+/// `science_string_with_capacity` was added and it **did**, because it returns
+/// `ScienceString` — three words, MEMORY on every target. Neither was decided:
+/// both are what `runtime_signature` said about a signature somebody wrote.
 #[test]
-fn adding_seven_entry_points_left_the_sret_set_at_nine() {
+fn the_derived_sret_set_is_ten_and_moved_once() {
     let triple = Triple::host().expect("a supported host");
     let indirect = RUNTIME
         .iter()
@@ -118,10 +123,10 @@ fn adding_seven_entry_points_left_the_sret_set_at_nine() {
         .filter(|sig| sig.ret.is_sret())
         .count();
     assert_eq!(
-        indirect, 9,
-        "the `sret` set moved when seven void-returning entry points were added"
+        indirect, 10,
+        "the derived `sret` set is not the ten `science-rt` §2 and          `science-codegen`'s `runtime.rs` both now name"
     );
-    assert_eq!(RUNTIME.len(), 54, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 55, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

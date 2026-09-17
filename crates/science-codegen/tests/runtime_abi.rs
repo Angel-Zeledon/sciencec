@@ -1,4 +1,4 @@
-//! The 54 entry points, classified — and the two properties a hand-maintained
+//! The 55 entry points, classified — and the two properties a hand-maintained
 //! list cannot have.
 //!
 //! **What this file is for.** §9.2's finding was a list that fell out of step
@@ -124,10 +124,12 @@ fn a_diverging_entry_point_is_never_called_for_its_value() {
 }
 
 #[test]
-fn the_nine_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
+fn the_ten_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
     // The derived set, printed as the assertion rather than computed into one,
     // so that a reader comparing this file against `science-rt` §2 sees the
-    // difference immediately. §2 lists eight; this is nine.
+    // difference immediately. §2 listed eight; this was nine, and
+    // `science_string_with_capacity` made it ten — read off its signature, not
+    // added to a list.
     let mut derived: Vec<&str> =
         RUNTIME.iter().filter(|f| f.needs_sret(CAbi::SystemVAmd64)).map(|f| f.symbol).collect();
     derived.sort_unstable();
@@ -143,6 +145,7 @@ fn the_nine_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
             "science_string_from_bytes",
             "science_string_new",
             "science_string_truncate",
+            "science_string_with_capacity",
         ]
     );
 }
@@ -191,11 +194,16 @@ fn nothing_outside_the_table_is_callable() {
     // Everything else is inline. No entry point is added to `science-rt` to
     // make codegen simpler."
     //
-    // Forty-five until finding 5 was discharged; forty-seven now. The two that
-    // joined are the two `codegen-and-linking.md` §13 asks for by name, and
-    // they are not a convenience for codegen — without them §2.3's fourth row
-    // has nothing to lower to at all.
-    assert_eq!(RUNTIME.len(), 54);
+    // Forty-five until finding 5 was discharged; forty-seven after it, fifty-four
+    // once `format.rs` could render a number, and fifty-five now. The two that
+    // joined first are the two `codegen-and-linking.md` §13 asks for by name,
+    // and they are not a convenience for codegen — without them §2.3's fourth
+    // row has nothing to lower to at all. The fifty-fifth is
+    // `science_string_with_capacity`, and the same test applies to it:
+    // `strings-formatting-and-docs.md` §1.7 prescribes *"one allocation"* and
+    // fifty-four entry points had no way to express a capacity, so this is a
+    // note's requirement arriving rather than codegen being made simpler.
+    assert_eq!(RUNTIME.len(), 55);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

@@ -203,3 +203,78 @@ def main():
 ";
     check(source).assert_clean();
 }
+
+// --- §4.1 through SC0275: `print` is unary --------------------------------
+
+/// **§4.1's headline, and the silence this closes.**
+///
+/// > *"`print(a, b, c)` is muscle memory for every Python user and they will
+/// > type it. The mitigation is a diagnostic, not a special case."*
+///
+/// §7's row for `SC0275` says it *"covers `print` given more than one
+/// argument"*, and before this it covered nothing: `print` has no declared
+/// signature, so the call fell through to the closure arm, was typed
+/// `Ty::ERROR`, and reported **nothing**.
+#[test]
+fn print_given_two_arguments_is_sc0275() {
+    let source = "\
+def main():
+    let n be 4
+    print(\"rows:\", n)
+";
+    let checked = check(source);
+    assert_eq!(checked.codes(), vec![275]);
+    assert_eq!(checked.messages(), vec!["`print` takes one value".to_string()]);
+}
+
+/// `write` is the same decision in §4.1's same sentence, so it is the same
+/// diagnostic and the message names which one it is about.
+#[test]
+fn write_given_two_arguments_is_sc0275() {
+    let source = "\
+def main():
+    write(\"a\", \"b\")
+";
+    let checked = check(source);
+    assert_eq!(checked.codes(), vec![275]);
+    assert_eq!(checked.messages(), vec!["`write` takes one value".to_string()]);
+}
+
+/// §4.1's last paragraph: *"No zero-argument `print`. There is no overloading
+/// and there are no default arguments in §4.4, so a blank line is
+/// `print(\"\")`."*
+#[test]
+fn print_given_no_arguments_is_sc0275() {
+    let checked = check("def main():\n    print()\n");
+    assert_eq!(checked.codes(), vec![275]);
+}
+
+/// **The other half, and the one that makes the check worth having.** §4.1's
+/// own replacement for `print(\"rows:\", n)` is an interpolation, and it checks
+/// clean — as does the plain one-argument call the corpus is full of.
+#[test]
+fn the_interpolated_form_and_the_plain_one_still_check() {
+    check("def main():\n    let n be 4\n    print(f\"rows: {n}\")\n").assert_clean();
+    check("def main():\n    print(\"\")\n").assert_clean();
+    check("def main():\n    let n be 4\n    print(n)\n").assert_clean();
+    check("def main():\n    write(\"no newline\")\n").assert_clean();
+}
+
+/// **A user's own `print` is not the prelude's.** The check is keyed on the
+/// definition and not on the spelling, so a module that declares
+/// `def print(a: I64, b: I64)` is checked against its own signature.
+///
+/// Without this the prelude would be reaching into a namespace it does not
+/// own, which is the mistake `items`' `WANTED` list exists to prevent for every
+/// other name this crate asks about.
+#[test]
+fn a_users_own_print_is_checked_against_its_own_signature() {
+    let source = "\
+def print(a: I64, b: I64):
+    return
+
+def main():
+    print(1, 2)
+";
+    check(source).assert_clean();
+}

@@ -55,13 +55,28 @@
 //! `science_mir::mir::Unresolved::IterateNext`, which
 //! `science_types::thir::ExprKind::For` has no field to carry. That is a hole
 //! above this crate; [`lower`]'s own documentation is the account and
-//! `tests/stage_two_and_three.rs` is what was built instead. And **an `f"…"`
-//! hole renders only the seven types `science-rt` has an entry point for** —
-//! `Int`/`I64`, `U64`, `F64`, `F32`, `Bool`, `Char`, `String`. An `I32` hole is
-//! `science_mir::mir::Unresolved::Display` and an `SC0400` naming the type, not
-//! a call to `science_string_push_i64`: that entry point's own note says
-//! *"`I8`…`I64` are sign-extended by codegen before the call"* and **no phase
-//! does that**, because `Rvalue::Cast` is in the paragraph below.
+//! `tests/stage_two_and_three.rs` is what was built instead.
+//!
+//! **A cast and a tuple are emitted too, and both of them made a sentence
+//! elsewhere true.** §5.1's `as` is [`lower::Lowerer::lower_cast`] for every
+//! pair the language defines — widening by the **source's** signedness,
+//! narrowing by two's-complement truncation, `sitofp`/`uitofp` out to a float,
+//! and LLVM's saturating intrinsics back from one, which is the only way to get
+//! §5.1's *"`as` from float to integer saturates, and NaN becomes zero"* rather
+//! than `poison`. `tests/casts.rs` is fifteen programs at values where a wrong
+//! answer differs from a right one. With it, **an `f"…"` hole renders all
+//! thirteen numeric types and not seven**: `science_string_push_i64`'s note
+//! says *"`I8`…`I64` are sign-extended by codegen before the call"*, nothing
+//! did that, and `science-mir`'s builder now emits the cast that does. A tuple
+//! is Decision 17's offsets again with positions where a record has names, and
+//! `science-codegen` grew no layout rule for it either.
+//!
+//! **And §1.7's *"the common case is one allocation"* is true and counted.**
+//! The runtime had fifty-four entry points and not one took a capacity;
+//! `science_string_with_capacity` is the fifty-fifth, `science-mir` computes the
+//! estimate, and `science-rt`'s `tests/capacity.rs` measures the acceptance
+//! case going from three growths to one allocation. The derived `sret` set
+//! moved from nine to ten, which is the first time it has moved at all.
 //!
 //! **A `choice`, a second function and a record are emitted too.** A `match`
 //! over a `choice` is §3.3's tagged layout and §2.2's `switch`, with the
@@ -77,20 +92,28 @@
 //! of its representations. `tests/past_stage_three.rs` is twenty-eight programs
 //! that build, link, run and are asked what they printed.
 //!
-//! **The smallest program that still cannot be built is `let t be (1, 2)`** — a
-//! tuple, which `lower::Lowerer::cg_ty` has no arm for, exactly as a `choice`
-//! had none before this pass. Behind it, in the order they were measured: a
-//! **cast** (`Rvalue::Cast`, which for integers is one `trunc`/`sext`/`zext`
-//! and for a float is four more decisions nobody has made); a **method call**,
-//! whose receiver is a `Self` this crate cannot resolve and which is refused at
-//! the *signature* rather than at the call site; a **generic** function, which
+//! **The smallest program that still cannot be built is `let a be [1]`** — an
+//! array literal, which reaches MIR with `TyKind::Error` for its element type
+//! and which, given an annotation, is an `Array of Int`: one of §2.6's runtime
+//! containers, whose value is a `science-rt` aggregate reached through a
+//! `ScienceTypeInfo` descriptor this backend emits none of. An **index** is
+//! behind it and needs §2.4's bounds check as well.
+//!
+//! **`let t be (1, 2)` is still refused and it is no longer this crate's
+//! refusal**, which is worth the sentence because it was the last pass's
+//! answer to this question. `cg_ty` has the `TyKind::Tuple` arm;
+//! `let t: (Int, Int) be (1, 2)` builds, runs and prints. What is left is
+//! finding 20: the unannotated literal types as `(<error>, <error>)`, with no
+//! diagnostic, from a phase this crate must not edit.
+//!
+//! Behind those, in the order they were measured: a **method call**, whose
+//! receiver is a `Self` this crate cannot resolve and which is refused at the
+//! *signature* rather than at the call site; a **generic** function, which
 //! nothing monomorphises; **drop glue** for anything that owns something other
-//! than a bare `String`, which is Decision 12's emitted function; an **array**
-//! and an **index**, whose literal reaches MIR untyped and whose index needs
-//! §2.4's bounds check; and integer `/`, `%`, `<<` and `>>`, which are refused
-//! **deliberately** rather than for want of an instruction — see
-//! [`lower::Lowerer::lower_binary`]. Every refusal is `SC0400` and names the
-//! construct.
+//! than a bare `String`, which is Decision 12's emitted function; and integer
+//! `/`, `%`, `<<` and `>>`, which are refused **deliberately** rather than for
+//! want of an instruction — see [`lower::Lowerer::lower_binary`]. Every refusal
+//! is `SC0400` and names the construct.
 //!
 //! # 1. Why it is a separate crate, and how the workspace builds without LLVM
 //!
@@ -156,7 +179,7 @@
 //!
 //! # 3. What was found by running it
 //!
-//! Nineteen things that reading could not have established, each recorded
+//! Twenty-two things that reading could not have established, each recorded
 //! where it bites. The first four were found by writing the crate; the rest
 //! were found by *running* it, which is the difference §10's staging exists to
 //! force.
@@ -333,6 +356,53 @@
 //!     `science-mir`'s §6 had always described as *"one statement per two-phase
 //!     borrow, which codegen treats as a `Nop`"*.
 //!
+//! 20. **A tuple literal with no annotation types as `(<error>, <error>)`, and
+//!     nothing reports it.** `science-types`' `hir::ExprKind::Tuple` arm calls
+//!     `known_or_error` on each element's type **as it synthesises the node**,
+//!     and an integer literal's type is still an inference variable at that
+//!     moment — so `let t be (1, 2)` checks clean with two holes in its type,
+//!     while `let t: (Int, Int) be (1, 2)` and `let t be (1i64, 2i64)` are both
+//!     fine. It surfaced the moment [`lower::Lowerer::cg_ty`] grew the arm that
+//!     asks: the refusal that had said *"a tuple"* became *"a value of type
+//!     `Error`"*, which is `TyKind`'s `Debug` and names nothing.
+//!
+//!     **This is finding 7's shape a second time** — a `Ty` that is
+//!     `TyKind::Error` **with no diagnostic**, §5's *"the mistake has already
+//!     been reported"* firing on a mistake nobody made — and it is worse in one
+//!     way: `print`'s temporary is dead on arrival and can be skipped, and a
+//!     tuple element's type is load-bearing. It is not repaired here;
+//!     `science-types` is another crate and the fix is in its `Tuple` arm.
+//!     `cg_ty` names the phase in the refusal instead, and
+//!     `tests/past_stage_three.rs`'s
+//!     `the_unannotated_tuple_literal_is_a_front_end_hole` fails if it is ever
+//!     fixed, so this note cannot go on describing a closed bug.
+//! 21. **The type checker validates no cast at all.** `science-types`' `Cast`
+//!     arm is four lines: synthesise the operand, lower the target type, push
+//!     the node. It never compares them, so `"hola" as Int` **type-checks**,
+//!     and so do `1 as Bool` and `65.0 as Char`. That makes this backend the
+//!     only phase in the compiler that can refuse a cast, which is the whole
+//!     argument for [`lower::Lowerer::lower_cast`] refusing loudly with both
+//!     type names rather than reaching for the nearest instruction: `1 as Bool`
+//!     has an obvious `trunc` behind it, and a `Bool` byte holding `2` is a
+//!     value every later `trunc i8 to i1` reads as `true` and nothing reports.
+//! 22. **The derived `sret` set moved for the first time, and it moved because
+//!     a signature said so.** It has read nine since `science_string_from_bytes`
+//!     joined it, through two separate additions — `exit.rs`'s two and
+//!     `format.rs`'s seven — that each left it alone.
+//!     `science_string_with_capacity` is §1.7's capacity entry point, returns
+//!     `ScienceString` by value, is three words, and is MEMORY on all three
+//!     targets, so the set is ten.
+//!
+//!     **What is worth recording is that nobody chose it.** §9.2's finding was
+//!     a hand-maintained list falling out of step with the signatures; the
+//!     repair was to derive the list, and this is the first time the derivation
+//!     has produced a *different* answer from the one written down. Three
+//!     tests changed their number and none of them changed a membership
+//!     decision. The expectation before the signature was written was that it
+//!     would move — a three-word return by value is the one shape in this ABI
+//!     that always does — and the reason to write that down is that the
+//!     expectation was then checked rather than trusted.
+//!
 //! **And nine was itself found this way**, which is the point of the list: the
 //! numbering has grown seven times and each entry is something the notes did
 //! not say. Eleven, twelve, thirteen and eighteen were all found by *running* a
@@ -342,7 +412,17 @@
 //! level up: a predicate that is right about the model it was written for and
 //! wrong about the caller that arrived later. Nineteen is the other recurring
 //! shape: a refusal that names a construct correctly and hides how little was
-//! missing.
+//! missing — and twenty is that shape's consequence, because a refusal that
+//! hides how little was missing also hides what was standing behind it.
+//!
+//! **Twenty and twenty-one are one pair, and it is the pair to read first if
+//! you are changing a cast.** The front end types every cast as its target and
+//! asks nothing about the operand, and it leaves a tuple element's type as a
+//! hole and says nothing; between them, a program can arrive here having been
+//! checked and having had neither of the two questions a cast raises asked of
+//! it. That is why [`lower::Lowerer::lower_cast`] carries a table of what it
+//! refuses and why `science-mir`'s `Rvalue::Cast` carries the source type: the
+//! only defences a cast has in this compiler are in those two places.
 
 #![warn(missing_docs)]
 

@@ -1,7 +1,7 @@
 //! The runtime boundary: §2.6, and the place §9's findings become facts a test
 //! checks.
 //!
-//! **The decision.** The 54 `science_`-prefixed entry points are described here
+//! **The decision.** The 55 `science_`-prefixed entry points are described here
 //! as data — a signature per symbol — and never as prose. Everything a code
 //! generator needs to emit a call is read out of [`RUNTIME`]: the return
 //! convention, the descriptor's parameter position, and whether a length is a
@@ -17,9 +17,9 @@
 //! codegen side of that, and it does not keep a list at all. It keeps
 //! signatures and derives the list.
 //!
-//! **The cost.** Fifty-four signatures transcribed by hand, which is a
+//! **The cost.** Fifty-five signatures transcribed by hand, which is a
 //! transcription that can be wrong in exactly the way the thing it replaces was
-//! wrong. Two mitigations: `tests/runtime_abi.rs` asserts the count is 54, that
+//! wrong. Two mitigations: `tests/runtime_abi.rs` asserts the count is 55, that
 //! every symbol is `science_`-prefixed and unique, and that the derived `sret`
 //! set matches the eight the runtime's §2 now names; and the runtime crate is a
 //! dev-dependency, so a test can compare the *layouts* against the real Rust
@@ -67,7 +67,7 @@
 //! its scope to edit. [`RUNTIME`] carries the signature, the set is derived, and
 //! `tests/runtime_abi.rs` fails if anyone makes it eight again.
 //!
-//! # Decision 14: these 54 are the only runtime calls F0 emits
+//! # Decision 14: these 55 are the only runtime calls F0 emits
 //!
 //! > *Everything else is inline. No entry point is added to `science-rt` to make
 //! > codegen simpler; the runtime page's §9 already states the principle —
@@ -400,9 +400,10 @@ const D: RtParam = RtParam::Descriptor;
 const Z: RtParam = RtParam::Usize;
 const N: RtParam = RtParam::Int;
 
-/// The 54 entry points. §2.6: *"They are the whole list."*
+/// The 55 entry points. §2.6: *"They are the whole list."*
 ///
-/// **It was 47 and `format.rs` added seven.** The count is asserted in two
+/// **It was 47, `format.rs` added seven, and `science_string_with_capacity`
+/// added the fifty-fifth.** The count is asserted in two
 /// places and both had to be edited, which is the point of asserting it: a
 /// table that is *"the whole list"* grows only when somebody says so.
 ///
@@ -460,6 +461,12 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_panic_bytes", params: &[P, Z], ret: RtRet::Never },
     // --- string.rs ---
     RuntimeFn { symbol: "science_string_new", params: &[], ret: RtRet::Aggregate(RtAggregate::String) },
+    // §1.7's capacity, and the tenth `sret`. Three words returned by value, so
+    // the derived set grew by one without anybody adding a name to a list —
+    // which is the property this module exists for. `Z` and not `N`: a capacity
+    // is not a Science `Int`, which is §9.3's finding 3 and is the same answer
+    // `science_array_with_capacity` gives one line apart.
+    RuntimeFn { symbol: "science_string_with_capacity", params: &[Z], ret: RtRet::Aggregate(RtAggregate::String) },
     RuntimeFn { symbol: "science_string_from_bytes", params: &[P, Z], ret: RtRet::Aggregate(RtAggregate::String) },
     RuntimeFn { symbol: "science_string_free", params: &[P], ret: RtRet::Void },
     RuntimeFn { symbol: "science_string_clone", params: &[P], ret: RtRet::Aggregate(RtAggregate::String) },
@@ -669,8 +676,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn there_are_forty_seven_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 54, "§2.6: \"they are the whole list\"");
+    fn there_are_fifty_five_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 55, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");
@@ -682,7 +689,7 @@ mod tests {
     }
 
     #[test]
-    fn the_sret_set_is_derived_and_is_nine_not_the_eight_the_page_lists() {
+    fn the_sret_set_is_derived_and_is_ten_not_the_eight_the_page_listed() {
         // §9.2's finding 1, and its recurrence. The test derives the set from
         // the signatures rather than reading a list, which is the whole repair,
         // and the derived set is **nine**. `science-rt`'s §2 names eight.
@@ -693,8 +700,16 @@ mod tests {
         // the section that specifies the return convention.
         //
         // See the module documentation for why this one is worse.
+        //
+        // **The tenth is `science_string_with_capacity`**, and it is the first
+        // one this test has ever gained without a list being wrong: it was
+        // written into `RUNTIME` as a signature, classified by the same code
+        // path as the other nine, and the number here changed because the
+        // derivation changed its answer. That is the difference this module
+        // exists to make.
         let expected = [
             "science_string_new",
+            "science_string_with_capacity",
             "science_string_clone",
             "science_string_truncate",
             "science_string_from_bytes",

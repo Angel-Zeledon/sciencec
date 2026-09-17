@@ -1031,6 +1031,70 @@ unsafe extern "C" {
         name: *const c_char,
     ) -> LLVMValueRef;
 
+    /// `LLVMValueRef LLVMBuildSExt(LLVMBuilderRef, LLVMValueRef Val, LLVMTypeRef DestTy, const char *Name)`
+    ///
+    /// §5.1's `as` between integer widths, the signed-source half.
+    /// [`LLVMBuildZExt`] beside it is the unsigned-source half, and **the
+    /// choice is the source's signedness and never the destination's**:
+    /// `-1i32 as U64` is `sext` and `0xffffffffu32 as I64` is `zext`, and
+    /// swapping them gives `18446744073709551615` where `-1` was meant.
+    /// [`crate::emit::ConvOp`] is where that decision is recorded.
+    pub fn LLVMBuildSExt(
+        b: LLVMBuilderRef,
+        value: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const c_char,
+    ) -> LLVMValueRef;
+
+    /// `LLVMValueRef LLVMBuildSIToFP(LLVMBuilderRef, LLVMValueRef Val, LLVMTypeRef DestTy, const char *Name)`
+    ///
+    /// An integer to a float. **Total in both directions and inexact in one**:
+    /// every `i64` has an `f64`, and `2^53 + 1` does not have a *distinct* one,
+    /// so the conversion rounds to nearest-even and §5.1's *"including where it
+    /// loses precision"* is the sentence that permits it.
+    pub fn LLVMBuildSIToFP(
+        b: LLVMBuilderRef,
+        value: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const c_char,
+    ) -> LLVMValueRef;
+
+    /// `LLVMValueRef LLVMBuildUIToFP(LLVMBuilderRef, LLVMValueRef Val, LLVMTypeRef DestTy, const char *Name)`
+    ///
+    /// The unsigned half of [`LLVMBuildSIToFP`]. `u64::MAX` through the signed
+    /// instruction is `-1.0`; through this one it is `1.8446744073709552e19`.
+    pub fn LLVMBuildUIToFP(
+        b: LLVMBuilderRef,
+        value: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const c_char,
+    ) -> LLVMValueRef;
+
+    /// `LLVMValueRef LLVMBuildFPExt(LLVMBuilderRef, LLVMValueRef Val, LLVMTypeRef DestTy, const char *Name)`
+    ///
+    /// `F32` to `F64`. Exact for every finite value, and it preserves NaN and
+    /// both infinities.
+    pub fn LLVMBuildFPExt(
+        b: LLVMBuilderRef,
+        value: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const c_char,
+    ) -> LLVMValueRef;
+
+    /// `LLVMValueRef LLVMBuildFPTrunc(LLVMBuilderRef, LLVMValueRef Val, LLVMTypeRef DestTy, const char *Name)`
+    ///
+    /// `F64` to `F32`, rounding to nearest-even, with an out-of-range magnitude
+    /// becoming an infinity rather than being undefined. That is IEEE 754's
+    /// answer and it is `fptrunc`'s: unlike `fptosi`, this instruction is total,
+    /// which is why the float-to-float direction needs no saturating intrinsic
+    /// and the float-to-integer direction does.
+    pub fn LLVMBuildFPTrunc(
+        b: LLVMBuilderRef,
+        value: LLVMValueRef,
+        dest_ty: LLVMTypeRef,
+        name: *const c_char,
+    ) -> LLVMValueRef;
+
     // --- target, target machine, emission ---------------------------------
 
     /// `void LLVMInitializeX86TargetInfo(void)`
