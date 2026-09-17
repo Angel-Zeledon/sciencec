@@ -1,0 +1,14 @@
+# UI test: a body that does not determine what its result borrows (SC0340).
+#
+# Decision 6, and narrower than §5.2 describes: a return constrained by *two*
+# parameters is not ambiguous, because the answer is a set and a caller
+# intersects it. What is left is a return constrained by *none*.
+#
+# The only shape in F0 that reaches it is a function that cannot return. The
+# fixpoint starts at *no relation*, the body adds none, and the least solution
+# is that the result borrows from nothing — which is true, because no execution
+# ever produces one. §14 of `region-inference.md` feared this code would fire
+# in ordinary code; this is the whole of its reachable domain.
+
+def only(x: borrowed Int) -> borrowed Int:
+    only(x)

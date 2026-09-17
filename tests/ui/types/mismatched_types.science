@@ -1,0 +1,9 @@
+# UI test: a value that does not fit the slot it is in (SC0525).
+#
+# The central diagnostic of Decision 1 and the reason that decision was taken:
+# *"error messages can name a declared type"*. The expectation came from the
+# annotation a human wrote — `-> Int` — so the message names it first, and the
+# label names what was found instead.
+
+def width() -> Int:
+    "seventy"

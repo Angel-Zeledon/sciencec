@@ -1,0 +1,15 @@
+# UI test: two type aliases that expand into each other (SC0524).
+#
+# Every name here resolves, so the resolver has nothing to say: the mistake is
+# a property of the *expansion*. The check runs over the declarations rather
+# than over the uses so that one cycle is one diagnostic — this file has no use
+# of either alias and still reports, and a program with ten uses would report
+# once as well.
+#
+# Both members are labelled, because neither declaration is the mistake on its
+# own, and the note spells the chain out in expansion order — which the labels
+# cannot, since the renderer sorts them by position.
+
+type Name is Label
+
+type Label is Name

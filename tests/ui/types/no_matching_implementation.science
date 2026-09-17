@@ -1,0 +1,26 @@
+# UI test: an argument that fits no implementation of the interface (SC0533).
+#
+# `SC0531`'s second road from the other side: there, more than one
+# implementation took what was supplied; here, none did. It is a type error
+# rather than a lookup failure — the method exists, and nothing was passed that
+# any instantiation of it takes.
+#
+# **Not `SC0525`.** That code's whole shape is *one* expected type taken from
+# *one* annotation, which is what makes its message nameable. Here there are as
+# many expected types as there are implementations, so the message lists them,
+# and reporting it as a mismatch would mean choosing one implementation to
+# blame the argument against — the choice this call could not make.
+
+type Load:
+    detail: String
+
+Load implements From of I64:
+    def from(value: I64) -> Self:
+        Load(detail: "")
+
+Load implements From of F64:
+    def from(value: F64) -> Self:
+        Load(detail: "")
+
+def widen(text: String) -> Load:
+    Load.from(text)

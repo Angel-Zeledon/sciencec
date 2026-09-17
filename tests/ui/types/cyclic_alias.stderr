@@ -1,0 +1,11 @@
+error[SC0524]: this type alias expands into itself
+  --> tests/ui/types/cyclic_alias.science:13:6
+   |
+13 | type Name is Label
+   |      ^^^^ expanding this alias reaches it again
+14 |
+15 | type Label is Name
+   |      ----- and through this one
+   |
+   = note: `Name`, which expands into `Label`, which expands into `Name`
+   = note: an alias is another name for the type on its right, so a cycle names no type at all — a type that contains itself is a record or a choice, which has a field to hold it and a size the compiler can compute

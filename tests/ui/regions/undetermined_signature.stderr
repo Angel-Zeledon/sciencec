@@ -1,0 +1,8 @@
+error[SC0340]: `only`'s body does not determine what its result borrows from
+  --> tests/ui/regions/undetermined_signature.science:14:5
+   |
+14 |     only(x)
+   |     ^^^^^^^ the returned borrow at the value itself is not tied to any parameter
+   |
+   = note: a signature's regions are an analysis result and there is no syntax to state them (Decision 5), so a result that no parameter constrains has no meaning a caller could check
+   = note: return an owned value, or an index into something the caller already holds — which is the choice `examples/21_compiler_shapes.science` §2 makes for `Scopes.lookup` on design grounds

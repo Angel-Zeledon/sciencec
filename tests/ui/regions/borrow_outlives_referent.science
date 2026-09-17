@@ -1,0 +1,19 @@
+# UI test: a borrow that outlives what it points at (SC0333).
+#
+# Rule 5, checked against the referent's storage-dead points and nothing else
+# (§10 item 3). It is the error with nothing to offer but a change of
+# signature: there is no lifetime syntax to widen, so the note names the two
+# things that do work — return an owned value, or return an index.
+#
+# It is also where Decision 9 is worth the most, and this file is written to
+# make all three of its spans distinct: where the borrow is born (line 3),
+# where the referent is declared (line 2), and where the borrow is still needed
+# (line 4). Writing `borrowed value` as the tail of the body instead collapses
+# the third span onto the whole body — see `tests/ui/README.md`.
+#
+# The headline is wrong and is pinned wrong on purpose; the README says how.
+
+def escape() -> borrowed Int:
+    let value be 5
+    let r be borrowed value
+    r

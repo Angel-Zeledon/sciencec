@@ -1,0 +1,17 @@
+# UI test: a value moved while it is still borrowed (SC0334).
+#
+# Distinct from `SC0301` in the direction that matters for a message: the move
+# is legal, the borrow is legal, and what is wrong is the order. The narrative
+# has `SC0330`'s three spans and a different verb in the middle one.
+
+type Doc:
+    title: Int
+
+def take(d: Doc) -> Int:
+    d.title
+
+def main():
+    let doc be Doc(title: 0)
+    let shared be borrowed doc
+    print(take(doc))
+    print(shared.title)

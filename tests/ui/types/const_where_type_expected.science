@@ -1,0 +1,9 @@
+# UI test: a const expression in a type position (SC0523).
+#
+# `parse_type_atom` accepts a const expression wherever it parses a type,
+# because inside an `of (..)` list there is no ambiguity and outside one there
+# is nobody before this phase who can say so. `4` is a value, a parameter's
+# annotation is a type, and this is the first pass that knows the difference.
+
+def area(side: 4) -> Int:
+    0

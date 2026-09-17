@@ -1,0 +1,13 @@
+error[SC0531]: `length` on `Doc` could be 2 methods
+  --> tests/ui/types/ambiguous_method.science:29:9
+   |
+21 |     def length(self) -> I64:
+   |         ------ one is declared by `Doc has:`
+...
+25 |     def length(self) -> I64:
+   |         ------ one is declared by `Doc implements Wide:`
+...
+29 |     doc.length()
+   |         ^^^^^^ 2 implementations declare `length`
+   |
+   = note: method lookup is inherent methods and then interface methods, and an ambiguity is an error and never a priority ordering — a winner picked here would be picked silently, and the program would call a method its author did not mean

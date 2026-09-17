@@ -1,0 +1,29 @@
+# UI test: one method name declared twice for one type (SC0531).
+#
+# The load-bearing half of Decision 11: *"an ambiguity is an error, never a
+# priority ordering"*. Lookup names inherent methods *then* interface methods,
+# and the second half of that sentence decides what "then" means — it is the
+# order of the search and not a precedence. A checker that let the inherent one
+# win would resolve this silently and the author would find out at run time
+# that the wrong code ran.
+#
+# The message names both candidates and the block each came from, because that
+# is the whole value of refusing to pick. What it cannot offer is a spelling
+# for the answer: F0 has no qualified-call syntax, so there is no fix.
+
+interface Wide:
+    def length(self) -> I64
+
+type Doc:
+    title: String
+
+Doc has:
+    def length(self) -> I64:
+        1
+
+Doc implements Wide:
+    def length(self) -> I64:
+        2
+
+def measure(doc: Doc) -> I64:
+    doc.length()

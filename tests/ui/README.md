@@ -20,12 +20,14 @@ that can render it:
 | `tests/ui/*.science` | `SC0001`–`SC0099` | [`crates/science-lexer/tests/ui.rs`](../../crates/science-lexer/tests/ui.rs) — lexes only |
 | `tests/ui/parse/` | `SC0100`–`SC0199` | [`crates/sciencec/tests/ui.rs`](../../crates/sciencec/tests/ui.rs) — lexes and parses |
 | `tests/ui/resolve/` | `SC0200`–`SC0249` | the same suite, which then resolves |
+| `tests/ui/types/` | `SC0140`, `SC0520`–`SC0579` | the same suite, which then type-checks |
+| `tests/ui/regions/` | `SC0330`–`SC0340` | the same suite, which then lowers to MIR and region-checks |
 
 This is what the note that used to stand here predicted: *"when the parser can
 produce `SC0100`-range diagnostics the same six lines move to, or are
 duplicated in, whichever crate renders them"*. They are duplicated in
-`sciencec`, the one crate where the lexer, the parser and the resolver are all
-in scope.
+`sciencec`, the one crate where every phase from the lexer to region inference
+is in scope.
 
 The lexical cases could not simply be moved to the fuller pipeline. A program
 with a lexical error is a program the parser then reads a guess of:
@@ -35,16 +37,32 @@ walks the top level and **not** its subdirectories
 (`UiTestOptions::without_subdirectories`), and each shard below it is walked by
 the suite that owns it.
 
-The driver's own rule applies inside the shards: **resolution is skipped when
-lexing or parsing already found an error**, exactly as in `sciencec check`. A
-case in `parse/` therefore never reaches the resolver, and a case in `resolve/`
-has to lex and parse clean to be about anything at all.
+The driver's own rules apply inside the shards — one closure runs all four,
+and it is `Session::diagnostics`'s own sequence, skips included. **A phase is
+skipped when an earlier one found an error**, exactly as in `sciencec check`:
+
+* a case in `parse/` never reaches the resolver;
+* a case in `resolve/` has to lex and parse clean to be about anything at all;
+* a case in `types/` has to resolve clean, because the resolver's unresolved
+  names come back as `Ty::ERROR`, which agrees with everything, so an
+  unresolved file would type-check *silently and wrongly*;
+* a case in `regions/` has to **type-check clean**, and that skip is the
+  sharpest of the four. A call the checker rejected is still a call in MIR, and
+  `science-regions`' rule for a callee with no summary is that it may return a
+  reference into every argument it was given — so a type error does not merely
+  hide region errors, it *manufactures* them, at spans in code that was never
+  the mistake. `driver::type_and_region_check`'s §"the ordering rule" states it
+  and measures it.
+
+A second diagnostic from an earlier phase inside one of these expectations is
+therefore not a richer case; it is a case that is about something other than
+what its shard claims.
 
 ## Running them
 
 ```sh
 cargo test -p science-lexer --test ui    # tests/ui/*.science
-cargo test -p sciencec --test ui         # tests/ui/parse/, tests/ui/resolve/
+cargo test -p sciencec --test ui         # every shard below the top level
 ```
 
 [`science-testkit`](../../crates/science-testkit) deliberately does not do this
@@ -221,6 +239,68 @@ one. A reserved word in a name position is `SC0102` and a reserved word in an
 expression is `SC0105`; `check_reserved` fires only for a tree some other
 program built. See the entry below.
 
+## The type-checking cases, in `types/`
+
+Fifteen cases for fourteen codes, which is every code `science-types` can
+report from an expression plus the three its earlier layers report from a
+declaration. `SC0531` gets two, because its two reporters are two different
+sentences about two different mistakes — the shape `wrong_namespace` has in
+`resolve/`.
+
+| Case | Code | What it pins down |
+|---|---|---|
+| `unchecked_error` | `SC0140` | The code is **`syntax-revision-2.md`'s and not the checker's**: the condition is a property of the Go-style error model, and this is merely the first phase that can see it. §3.3 of that note says the diagnostic *"should ship with the feature, not after it"*, because `-> (T, Error?)` loses `Result`'s guarantee that a failure cannot be ignored. The note carries Decision 10's spelling for meaning it — rename to `_err` — which is the half a reader cannot guess from the code. |
+| `double_nullable` | `SC0520` | `T??`. The parser builds one `Nullable` node per `?` so that this phase can say why, and the case pins **which `?` the caret is under**: the second one alone, with the `String?` beneath it as a secondary label and a fix that deletes exactly the character the caret covers. |
+| `const_where_type_expected` | `SC0523` | `def area(side: 4)`. `parse_type_atom` accepts a const expression wherever it parses a type, because inside an `of (..)` list there is no ambiguity and outside one nobody before this phase can say so. **No fix**, for `try_word`'s reason: what to write instead of `4` is not a substitution. |
+| `cyclic_alias` | `SC0524` | `type Name is Label` and `type Label is Name`. Every name resolves, so the resolver has nothing to say — the mistake is a property of the *expansion*. The check runs over the declarations rather than over the uses, so this file, which uses neither alias, still reports, and a program with ten uses reports once. Both members are labelled and the note spells the chain out in **expansion** order, which the labels cannot, since the renderer sorts them by position. |
+| `mismatched_types` | `SC0525` | The central diagnostic of Decision 1, and the reason that decision was taken: *"error messages can name a declared type"*. The expectation came from `-> Int`, an annotation a human wrote, so the message names it first. |
+| `annotations_needed` | `SC0526` | `let missing be null`. Decision 2 defaults an unconstrained *numeric* literal, so `let n be 1` is not this; `null` has no numeric kind to default to and no annotation to read. The note is wrong about which shape reached it — see below. |
+| `wrong_argument_count` | `SC0527` | A call given one argument for two. |
+| `no_such_field` | `SC0528` | A field of a *value*. The resolver cannot report it — `ExprKind::Field` keeps a bare `Ident` precisely because the answer depends on the receiver's type — so this is the first phase that can, and `SC0205` is its sibling one phase up, over a record *literal*, where the type is written at the site. |
+| `binding_count` | `SC0529` | `let a, b be "pair"`. Handed to this phase by name: `hir::LetBinding` says *"the arity check belongs to `science-types`"*. |
+| `presence_test_on_non_nullable` | `SC0530` | `n?` on an `Int`. Always true, so it is never what anyone meant — `SC0520`'s argument one level down at the value. The annotation on `n` is load-bearing: without it the literal is still an inference variable when the test is checked, and a hole agrees with everything. |
+| `ambiguous_method` | `SC0531` | One name, an inherent method and an interface one. **The load-bearing half of Decision 11**: *"an ambiguity is an error, never a priority ordering"*. Lookup names inherent methods *then* interface methods, and the case is what decides what "then" means — the order of the search, not a precedence. The message names both candidates and the block each came from; what it cannot name is the answer, because F0 has no qualified-call syntax, so there is **no fix** and that absence is pinned. |
+| `ambiguous_instances` | `SC0531` | The code's other sentence: **one method at two instantiations of one interface**, where the *arguments* select and did not narrow to one. The argument is a bare `1` on purpose — a literal has no type until a signature expects one, and which signature that is is exactly what the call is deciding, so it refutes no candidate. That circularity is the second note, and it is the one thing this reporter can offer that its neighbour cannot: something the author can do. |
+| `no_such_method` | `SC0532` | `SC0528`'s sibling, under the same restraint: reported **only where the question is answerable**. `builtins.rs` registers no methods at all, so a call on a `String` is a question this compiler cannot ask rather than one it answers with no — which is why the receiver is a type the file declares. A record with no methods at all is still a type with an answer, and the case proves the answer is no rather than silence. |
+| `no_matching_implementation` | `SC0533` | `ambiguous_instances` from the other side: there, more than one implementation took what was supplied; here, none did. **Not `SC0525`** — that code's whole shape is one expected type from one annotation, and here there are as many expected types as there are implementations, so reporting it as a mismatch would mean choosing one implementation to blame the argument against, which is the choice this call could not make. |
+| `unsatisfied_bound` | `SC0534` | Decision 11's fourth case, the one the decision assumes rather than numbers. `def describe of T: Summarize(..)` is a promise the body is checked against, and until this code existed nothing held a *call* to it, so `T` unified with anything and the bound was decoration. **Not `SC0525`** either: an interface is not a type a value can have, so there is no *expected* to print. The secondary label is the bound as written, because a call held to something written elsewhere and not shown where is a message that asks the reader to go and find it. The argument is a parameter and not a literal, because a literal is an inference variable at the call and a hole satisfies everything. |
+
+`SC0260` and `SC0261` — the const-expression codes — have no case here yet, and
+neither do `SC0521` and `SC0522`, which §13 names and this compiler deliberately
+cannot report.
+
+## The region cases, in `regions/`
+
+Every code `science-regions` can report, minus the one it cannot. A case here
+is the first thing in this directory that has to **type-check clean**; the list
+of skips above says why, and a case that acquired a type error would stop
+reporting the thing it is about rather than report it twice.
+
+| Case | Code | What it pins down |
+|---|---|---|
+| `conflicting_borrows` | `SC0330` | Rule 4, reported against an **access** rather than against a second borrow, which is `science-regions`' `access` §1 amendment: `region-inference.md` §3 step 4 quantifies over borrows, and there is exactly one borrow in this program. `doc.title be 1` creates none and is still the violation. Decision 9's three spans, all distinct, and the third — *"the first borrow is still needed here"* — is the one §7.1 calls *"the load-bearing one and the one a solver without provenance cannot produce"*: swapping the last two lines makes the program compile, which is what the note about moving the last use means. Its primary caret is wrong; see below. |
+| `borrow_outlives_referent` | `SC0333` | Rule 5, checked against the referent's storage-dead points and nothing else (§10 item 3). Written in three statements rather than two so that all three of Decision 9's spans land on **different characters**: where the referent is declared, where the borrow is taken, and where it is still needed. The error with nothing to offer but a change of signature — there is no lifetime syntax to widen — so the note names the two things that do work. Its headline is wrong; see below. |
+| `returned_borrow_of_a_local` | `SC0333` | The same violation written the way people write it, with the borrow in tail position. **It is a separate case because the rendering degenerates**: the third span becomes the `return` MIR emits for the tail, whose span is the whole body, so the primary label *contains* both secondaries and a caret starting at `let value be 5` is captioned *"after the value is gone"*. The expectation pins output this file records as wrong, so that fixing it shows up in `git diff`. |
+| `moved_while_borrowed` | `SC0334` | Distinct from `SC0301` in the direction that matters for a message: the move is legal, the borrow is legal, and what is wrong is the order. Same three spans as `SC0330` and a different verb in the middle one — and, today, the same two notes, which is the bug below. |
+| `undetermined_signature` | `SC0340` | Decision 6, and **narrower than §5.2 describes**: a return constrained by *two* parameters is not an ambiguity, because the answer is a set and a caller intersects it. What is left is a return constrained by none, and the only shape in F0 that reaches it is a function that cannot return — the fixpoint starts at *no relation*, the body adds none, and the least solution is that the result borrows from nothing, which is true. §14 of `region-inference.md` feared this code would *"fire in ordinary code rather than on pathological signatures"*; two lines is the whole of its reachable domain. |
+
+**`SC0335` has no case and cannot have one.** Decision 3's second stated cost is
+that the intersection of a record's field regions *"can be empty, and an empty
+region means the value is dead at birth"*. In a solver with no upper bounds that
+is not a legal outcome: a region only ever grows, from a lower bound that
+already contains every point at which the value is live, so every field's region
+contains the point the record was constructed at, so the intersection contains
+that point and is never empty. `science-regions`' §5 is the argument,
+`tests/acceptance.rs` asserts the condition is not reached, and the check stays
+in the compiler because the argument is about the shape of the solver rather
+than about programs — a later upper bound would falsify it in silence. Faking a
+case for it would mean faking a solver.
+
+`SC0331`, `SC0332`, `SC0341` and `SC0380` are allocated to other notes and
+reported from nowhere; `SC0301` and `SC0302` are the core spec's and need a move
+analysis `science-mir` declines to share. None of them can have a case either,
+and for a reason that is not about this directory.
+
 ## Messages these cases found wrong
 
 Written down rather than quietly blessed, because a test that pins a confusing
@@ -353,6 +433,101 @@ error makes it permanent.
   all. The value form is left to `science-types`, which will report it as a
   missing *field* rather than a missing *variant*. Recorded here because the
   case next to it shows what the good message looks like.
+- **`SC0333` names one thing twice.** *"`value` is borrowed for longer than
+  `value` exists"*. `borrowed` and `referent` are both `name_of`, and when the
+  borrow is of a whole local they are the same name, so the sentence compares a
+  thing to itself. This is the **same defect as the placeholder bug fixed the
+  day before**, one step on: that fix stopped a *description* from wearing
+  backticks and admitted in as many words that *"two descriptions in one message
+  still read alike"*; two identical **names** read worse, because a reader
+  assumes two backticked names are two things and goes looking for the second.
+  Over `examples/` the same message read *"this expression is borrowed for
+  longer than this expression exists"* until the prelude change closed those two
+  findings.
+
+  The fix is one branch: when the two renderings are equal, write *"`value` is
+  borrowed for longer than it exists"*. When they differ — `doc.title` borrowed
+  out of `doc` — both names are worth printing and the sentence already works.
+- **`SC0333`'s third span swallows the other two when the borrow is in tail
+  position.** `returned_borrow_of_a_local.stderr` pins it:
+
+  ```text
+  14 |     let value be 5
+     |     ^^^^^^^^^^^^^^ ...and the borrow is still needed here, after the value is gone (continues to line 15)
+     |         ----- `value` is declared here
+  15 |     borrowed value
+     |     -------------- `value` is borrowed here
+  ```
+
+  `last_use` finds the read of the return place at the `Return` terminator,
+  whose span is the whole body, so Decision 9's *narrative over three spans*
+  degenerates into one span containing the other two — and the caption *"after
+  the value is gone"* is attached to a range that **begins before the value
+  exists**. `rule_four` already guards its third label with `last.span !=
+  access.span`; `rule_five` has no guard at all. Either the same guard widened
+  to *contains* — omit the third label when it covers the borrow, which
+  `check`'s §3 already says is the honest outcome when there is no last use —
+  or MIR should give the tail's `Return` the span of the tail expression rather
+  than of the block.
+- **`SC0334` explains itself with `SC0330`'s notes.** A move while borrowed
+  prints *"a shared borrow and an exclusive one cannot overlap (§6.1 rule 4)"*,
+  and there is no exclusive borrow anywhere in the program: `narrative` chooses
+  the note on `exclusive` alone and never looks at `moved`, although it has just
+  used `moved` to choose the code and the headline. The whole reason `SC0334`
+  exists rather than `SC0301` is that *"the move is legal and the borrow is
+  legal, and what is wrong is the order"* — which is what the note should say:
+  *"a value cannot be moved while a borrow of it is still live (§6.1 rule 4)"*.
+  The second note survives the move case unchanged and is fine.
+- **`SC0330`'s primary caret lands on the right-hand side of an assignment.**
+  `conflicting_borrows.stderr`:
+
+  ```text
+  18 |     doc.title be 1
+     |                  ^ ...and modified here, which needs it exclusively
+  ```
+
+  The caret is under `1`. What is modified is `doc.title`, which is on the
+  *left*; the reader is shown the value and told it is the place. Widening the
+  right-hand side widens the caret — `doc.title be 1 + 2` puts `^^^^^` under
+  `1 + 2` — which is what makes it a span bug rather than an off-by-one.
+
+  It is **not this crate's**: `access.rs` labels a `Write` with
+  `statement.span`, and `science-mir`'s `lower.rs` builds the assignment through
+  `expr_into`, which pushes the statement with the *value* expression's span and
+  drops the `StmtKind::Assign` statement's own span on the floor. The same
+  lowering is what `SC0334` and rule 5 read their middle span from.
+- **`SC0330`'s headline has a dangling *"here"*.** *"`doc` is borrowed here and
+  modified before the borrow ends"* — a message line is printed before any
+  snippet, so *"here"* points at nothing; the labels below say where twice. Its
+  own sibling shows the shape that works: `SC0334` says *"`doc` is moved while
+  it is still borrowed"*. *"`doc` is modified while it is still borrowed"*
+  would make the two headlines one sentence with one word changed, which is what
+  they are.
+- **`SC0340` says *"at the value itself"* about a value it is not about.** The
+  label reads *"the returned borrow at the value itself is not tied to any
+  parameter"*. `describe_path` returns that phrase for an empty path, where it
+  is meant to fill a slot that otherwise reads `at .inner`; with no path there
+  is nothing to locate and the `at …` clause should be dropped, leaving *"the
+  returned borrow is not tied to any parameter"*.
+- **`SC0526`'s note explains a shape that cannot reach it.** It ends *"so a
+  value whose type is a hole inside a known constructor needs the annotation
+  written"*, and `infer`'s §2 names the shape it has in mind: `let xs be []`.
+  That program reports **nothing at all**. `hir` has no array-literal node, so
+  the resolver lowers `[]` to `ExprKind::Error` — it says so, and prices it —
+  and an error type agrees with everything. The only shape that reaches
+  `SC0526` today is a bare `null`, which is not a hole inside a constructor and
+  is not what the note describes. Either the note should describe the case the
+  reader is actually in, or the case it describes should be made to report.
+- **`SC0525` and `SC0527` labels repeat their message.** *"expected `Int`,
+  found `String`"* under a caret saying *"this is `String`"*; *"this call
+  takes 2 arguments and was given 1"* under a caret saying *"1 given"*. This is
+  the defect already recorded above for `SC0100`–`SC0106`, now in the types
+  band: the message is the general statement and the label is what is wrong
+  *here*, and they should not be the same string. `SC0527` is the worse of the
+  two, because the label a reader wants exists and is not printed — *which*
+  parameter was left without an argument, and what type it wants — and the
+  caret covers the whole call including the callee's name, which is the one part
+  of it that is right.
 
 ## What is still missing
 
@@ -360,8 +535,14 @@ The lexical layer is complete: every code `science-lexer` can emit has a case
 above. §11 of the spec asks for UI coverage of things no phase can produce
 yet, and each one needs a case here as it lands:
 
-- every ownership violation, with the chain of borrows that explains it
-  (`SC0301` and the rest of `SC0300`–`SC0399`);
+- the ownership violations **no phase reports yet**. `regions/` covers every
+  code `science-regions` can produce — `SC0330`, `SC0333`, `SC0334` and
+  `SC0340` — and `SC0335` cannot be produced at all (above). What is left in
+  `SC0300`–`SC0399` is owned elsewhere and reported from nowhere: `SC0301` and
+  `SC0302`, use after move, which need `science_mir::moves`; `SC0331` and
+  `SC0332`, which are `collections-and-chains.md`'s; `SC0341`, which is F5's
+  suspension-point check and there is no F5; and `SC0380`, which is
+  `ffi-c-boundary.md`'s;
 - a non-exhaustive `match`, listing the patterns that are missing (a code in
   the `SC0250` range, which §9 moved it to from `SC0210`);
 - the rest of the syntax errors (`SC0100`–`SC0199`) and of the name
@@ -370,6 +551,10 @@ yet, and each one needs a case here as it lands:
   emit still has no case here. In the resolver that is `SC0221` and `SC0209`,
   which cannot be reached at all (above); in the parser it is `SC0100`–
   `SC0101`, `SC0103`–`SC0112`, `SC0115`–`SC0116` and `SC0119`.
-  The parser's `extern` block owns `SC0411`–`SC0434` and has none, `science-types` (`SC0260`, `SC0261`) has none, and `science-fmt`
-  (`SC0900`, `SC0901`) has none. `SC0190`–`SC0198` are covered in full;
-  `SC0199` is held unallocated and must stay that way.
+  The parser's `extern` block owns `SC0411`–`SC0434` and has none, and
+  `science-fmt` (`SC0900`, `SC0901`) has none. `SC0190`–`SC0198` are covered
+  in full; `SC0199` is held unallocated and must stay that way;
+- in `science-types`, `SC0260` and `SC0261` — the const-expression codes — and
+  nothing else: `types/` covers every code that crate reports from an
+  expression. `SC0521` and `SC0522` are §13's and are deliberately unreported,
+  so they cannot have a case either.

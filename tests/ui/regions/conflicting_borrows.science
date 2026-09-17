@@ -1,0 +1,19 @@
+# UI test: a shared borrow and an exclusive access that overlap (SC0330).
+#
+# Rule 4, reported against an *access* rather than against a second borrow:
+# writing a place something else holds shared is the violation, and
+# `region-inference.md` §3 step 4 as written quantifies over borrows only.
+# `science-regions`'s `access` §1 is the amendment, and this is its shape.
+#
+# The borrow ends at its last use, so the same program with the two last lines
+# swapped compiles. That is Decision 1's whole point and it is why the third
+# span — *"the first borrow is still needed here"* — is the load-bearing one.
+
+type Doc:
+    title: Int
+
+def main():
+    let mutable doc be Doc(title: 0)
+    let shared be borrowed doc
+    doc.title be 1
+    print(shared.title)

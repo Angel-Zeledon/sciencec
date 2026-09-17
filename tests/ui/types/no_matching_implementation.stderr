@@ -1,0 +1,13 @@
+error[SC0533]: no implementation of `From` for `Load` accepts `String`
+  --> tests/ui/types/no_matching_implementation.science:26:10
+   |
+18 |     def from(value: I64) -> Self:
+   |         ---- this one accepts `I64`
+...
+22 |     def from(value: F64) -> Self:
+   |         ---- this one accepts `F64`
+...
+26 |     Load.from(text)
+   |          ^^^^ `from` was given `String`
+   |
+   = note: these are one method at several instantiations of one interface, and the argument types choose between them — so an argument that fits none of them names no method

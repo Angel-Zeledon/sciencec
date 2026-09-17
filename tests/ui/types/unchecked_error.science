@@ -1,0 +1,17 @@
+# UI test: a fallible call's error, bound and never tested (SC0140).
+#
+# The code is `syntax-revision-2.md`'s, not the type checker's: the condition
+# is a property of the Go-style error model, and this is the first phase that
+# can see it. §3.3 of that note says the diagnostic *"should ship with the
+# feature, not after it"*, because `-> (T, Error?)` loses `Result`'s guarantee
+# that a failure cannot be ignored and this is what recovers most of it.
+#
+# `text` is used and `err` is not. Decision 10's spelling for meaning it —
+# renaming to `_err` — is what the note offers, and it is offered here.
+
+def load(path: String) -> (String, Error?):
+    ("", null)
+
+def main():
+    let text, err be load("notes.txt")
+    print(text)

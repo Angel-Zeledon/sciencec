@@ -1,0 +1,15 @@
+# UI test: the same rule-5 violation written the way people write it (SC0333).
+#
+# The neighbour of `borrow_outlives_referent`, and the reason it is a separate
+# case: with the borrow in tail position, Decision 9's third span is the
+# `return` MIR emits for the tail, whose span is the *whole body*. The primary
+# label therefore contains both secondary labels, and a caret that starts at
+# `let value be 5` is captioned *"after the value is gone"*.
+#
+# **This expectation pins output `tests/ui/README.md` records as wrong.** It is
+# here so that fixing it shows up in `git diff` rather than being discovered by
+# the next person to write this program.
+
+def escape() -> borrowed Int:
+    let value be 5
+    borrowed value

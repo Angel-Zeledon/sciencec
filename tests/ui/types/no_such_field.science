@@ -1,0 +1,13 @@
+# UI test: a field the receiver's type does not have (SC0528).
+#
+# The resolver cannot report it — `ExprKind::Field` keeps a bare `Ident`
+# precisely because the answer depends on the type of the receiver — so this is
+# the first phase that can. `SC0205` is its sibling one phase up: a field named
+# by a record *literal*, where the type is written at the site.
+
+type Doc:
+    title: String
+
+def main():
+    let doc be Doc(title: "a")
+    print(doc.name)

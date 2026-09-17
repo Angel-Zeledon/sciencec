@@ -1,0 +1,11 @@
+# UI test: a value whose type is a hole nothing filled (SC0526).
+#
+# Decision 2 defaults an unconstrained *numeric* literal to `I64` or `F64`, so
+# `let n be 1` is not this. `null` has no numeric kind to default to and no
+# annotation to read, and inference is local to one body, so there is nothing
+# left to wait for.
+#
+# Reported once per inference class, not once per expression.
+
+def main():
+    let missing be null

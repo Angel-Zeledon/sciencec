@@ -1,0 +1,13 @@
+# UI test: `T??` (SC0520).
+#
+# The parser builds one `Nullable` node per `?` deliberately, so that `T??` is
+# rejected by the phase that can say why. Decision 6 makes `T?` a distinct type
+# holding a `T` or `null` rather than a union, so there is no second absence for
+# a second `?` to describe.
+#
+# The case pins the span the label lands on: the *second* `?` alone, with the
+# `String?` underneath it as a secondary label, and a fix that deletes exactly
+# the character the caret is under.
+
+def first(name: String??) -> Int:
+    0

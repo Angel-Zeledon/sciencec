@@ -1,0 +1,5 @@
+error[SC0525]: expected `Int`, found `String`
+ --> tests/ui/types/mismatched_types.science:9:5
+  |
+9 |     "seventy"
+  |     ^^^^^^^^^ this is `String`

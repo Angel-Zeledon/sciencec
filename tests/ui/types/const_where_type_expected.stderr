@@ -1,0 +1,7 @@
+error[SC0523]: a const expression is not a type
+ --> tests/ui/types/const_where_type_expected.science:8:16
+  |
+8 | def area(side: 4) -> Int:
+  |                ^ this is a const expression, which denotes a value
+  |
+  = note: const expressions are generic arguments — the `4` of `Window of (Int, 4)` — so one belongs inside an `of (..)` list and nowhere else

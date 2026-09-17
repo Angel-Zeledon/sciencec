@@ -1,0 +1,25 @@
+# UI test: a generic argument that does not satisfy the callee's bound (SC0534).
+#
+# Decision 11's fourth case, and the one the decision assumes rather than
+# numbers. `def describe of T: Summarize(..)` is a promise the body is checked
+# against — `value.preview()` resolves because `T` implements `Summarize` — and
+# until this code existed nothing held a *call* to that promise, so `T` unified
+# with anything and the bound was decoration.
+#
+# **Not `SC0525`.** An interface is not a type a value can have, so there is no
+# expected type to name; the message names the interface, the type that does
+# not implement it, and the bound that required it. The secondary label is the
+# bound as written, because a call held to something written somewhere else and
+# not shown where is a message that asks the reader to go and find it.
+#
+# The argument is a parameter rather than a literal because a literal is an
+# inference variable at the call, and a hole satisfies everything.
+
+interface Summarize:
+    def preview(self) -> String
+
+def describe of T: Summarize(value: borrowed T) -> String:
+    value.preview()
+
+def main(n: Int):
+    print(describe(n))

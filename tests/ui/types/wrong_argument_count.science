@@ -1,0 +1,7 @@
+# UI test: a call with the wrong number of arguments (SC0527).
+
+def add(a: Int, b: Int) -> Int:
+    a + b
+
+def main():
+    print(add(1))

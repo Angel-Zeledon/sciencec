@@ -1,0 +1,5 @@
+error[SC0527]: this call takes 2 arguments and was given 1
+ --> tests/ui/types/wrong_argument_count.science:7:11
+  |
+7 |     print(add(1))
+  |           ^^^^^^ 1 given

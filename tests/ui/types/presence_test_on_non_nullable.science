@@ -1,0 +1,10 @@
+# UI test: `e?` where `e` is not nullable (SC0530).
+#
+# Always true, so it is never what anyone meant — the argument `SC0520` makes
+# about `T??`, one level down at the value. The annotation is written because
+# without it `1` is an inference variable at the time the test is checked, and
+# a hole agrees with everything.
+
+def main():
+    let n: Int be 1
+    print(n?)

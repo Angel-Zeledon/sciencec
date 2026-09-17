@@ -1,0 +1,9 @@
+error[SC0520]: a type is nullable once
+  --> tests/ui/types/double_nullable.science:12:24
+   |
+12 | def first(name: String??) -> Int:
+   |                 ------- already nullable here
+   |                        ^ this `?` adds nothing the first one did not
+   |
+   = note: `T?` is a distinct type holding a `T` or `null`, not a union, so there is no second absence for a second `?` to describe
+   = help: the type is `T?`: delete `?`

@@ -1,0 +1,5 @@
+error[SC0529]: this `let` binds 2 names and the value is not a tuple
+ --> tests/ui/types/binding_count.science:8:5
+  |
+8 |     let a, b be "pair"
+  |     ^^^^^^^^^^^^^^^^^^ the value is `String`

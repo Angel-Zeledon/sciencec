@@ -1,0 +1,14 @@
+error[SC0531]: `from` on `Load` could be 2 implementations of `From`
+  --> tests/ui/types/ambiguous_instances.science:26:10
+   |
+18 |     def from(value: I64) -> Self:
+   |         ---- one accepts `I64`
+...
+22 |     def from(value: F64) -> Self:
+   |         ---- one accepts `F64`
+...
+26 |     Load.from(1)
+   |          ^^^^ supplied an integer literal, which fits all of them
+   |
+   = note: these are one method at several instantiations of one interface, so the argument types are what choose between them — and here they did not narrow it to one
+   = note: a literal or `null` has no type until a signature expects one, and which signature that is is what this call is trying to decide — give the argument a type first, with a suffix or a binding that is annotated

@@ -1,0 +1,15 @@
+# UI test: a method the receiver's type does not have (SC0532).
+#
+# `SC0528`'s sibling, under the same restraint: reported only where the
+# question is answerable. `builtins.rs` registers no methods at all, so a call
+# on a `String` is a question this compiler cannot ask rather than one it
+# answers with no — which is why the receiver here is a type the file declares.
+# A record with no methods at all is still a type with an answer, and the
+# answer is no.
+
+type Doc:
+    title: String
+
+def main():
+    let doc be Doc(title: "a")
+    print(doc.name_of())

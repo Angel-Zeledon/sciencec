@@ -1,0 +1,7 @@
+error[SC0532]: `Doc` has no method `name_of`
+  --> tests/ui/types/no_such_method.science:15:15
+   |
+15 |     print(doc.name_of())
+   |               ^^^^^^^ no such method
+   |
+   = note: method lookup finds the inherent methods of the type and the methods of the interfaces it implements, and neither has this name

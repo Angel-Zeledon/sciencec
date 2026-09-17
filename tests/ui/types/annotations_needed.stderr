@@ -1,0 +1,7 @@
+error[SC0526]: the type of this value cannot be inferred
+  --> tests/ui/types/annotations_needed.science:11:20
+   |
+11 |     let missing be null
+   |                    ^^^^ no annotation and nothing to infer from
+   |
+   = note: inference is local to one body (§5.2) and works from the root of a type outward, so a value whose type is a hole inside a known constructor needs the annotation written

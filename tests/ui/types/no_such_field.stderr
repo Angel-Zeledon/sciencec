@@ -1,0 +1,5 @@
+error[SC0528]: `Doc` has no field `name`
+  --> tests/ui/types/no_such_field.science:13:15
+   |
+13 |     print(doc.name)
+   |               ^^^^ no such field

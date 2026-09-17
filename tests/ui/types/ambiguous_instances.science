@@ -1,0 +1,26 @@
+# UI test: one method at two instantiations of one interface, and an argument
+# that does not choose between them (SC0531).
+#
+# `SC0531`'s second road, and a different sentence from the first: these are
+# not two methods, they are one method twice, so the *arguments* are what
+# select — and here they did not narrow it to one.
+#
+# The argument is a bare `1` on purpose. A literal has no type until a
+# signature expects one, and which signature that is is exactly what this call
+# is trying to decide, so it refutes no candidate. That circularity is what the
+# second note is for, and it is the one thing this message can offer that the
+# first road's cannot: a fix the author can apply.
+
+type Load:
+    detail: String
+
+Load implements From of I64:
+    def from(value: I64) -> Self:
+        Load(detail: "")
+
+Load implements From of F64:
+    def from(value: F64) -> Self:
+        Load(detail: "")
+
+def widen() -> Load:
+    Load.from(1)

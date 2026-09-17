@@ -1,0 +1,12 @@
+error[SC0334]: `doc` is moved while it is still borrowed
+  --> tests/ui/regions/moved_while_borrowed.science:16:11
+   |
+15 |     let shared be borrowed doc
+   |                   ------------ `doc` is borrowed here, shared
+16 |     print(take(doc))
+   |           ^^^^^^^^^ ...and moved here
+17 |     print(shared.title)
+   |     ------------------- the first borrow is still needed here
+   |
+   = note: a shared borrow and an exclusive one cannot overlap (§6.1 rule 4)
+   = note: the borrow ends at its last use, so moving the last use above the conflicting line is enough; binding what is needed before it is the other fix

@@ -1,0 +1,12 @@
+error[SC0330]: `doc` is borrowed here and modified before the borrow ends
+  --> tests/ui/regions/conflicting_borrows.science:18:18
+   |
+17 |     let shared be borrowed doc
+   |                   ------------ `doc` is borrowed here, shared
+18 |     doc.title be 1
+   |                  ^ ...and modified here, which needs it exclusively
+19 |     print(shared.title)
+   |     ------------------- the first borrow is still needed here
+   |
+   = note: a shared borrow and an exclusive one cannot overlap (§6.1 rule 4)
+   = note: the borrow ends at its last use, so moving the last use above the conflicting line is enough; binding what is needed before it is the other fix

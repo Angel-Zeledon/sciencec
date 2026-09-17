@@ -1,0 +1,8 @@
+# UI test: `let a, b be e` where `e` is not a pair (SC0529).
+#
+# Handed to this phase by name: `hir::LetBinding` says *"whether the value
+# actually is a tuple of the right width is not checked here … the arity check
+# belongs to `science-types`"*.
+
+def main():
+    let a, b be "pair"
