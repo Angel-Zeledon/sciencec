@@ -12,6 +12,21 @@ fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
 }
 
+/// Every `.science` file under `dir`, except the ones that are not cases.
+///
+/// **`shared/` holds modules, not cases**, and the distinction had to become a
+/// rule the moment `use` learned to load files: a UI case that imports a module
+/// needs that module to exist next to it, and a module has no diagnostic of its
+/// own to pin. The guards below would otherwise demand a `.stderr` for a file
+/// whose whole purpose is to be silent until someone imports it.
+///
+/// The name carries the rule, rather than a list here that would drift: a
+/// directory called `shared` inside `tests/ui/` is fixtures. The cost is that a
+/// case can never be named `shared`, which is a price worth one word.
+///
+/// It is skipped for `examples/` too, harmlessly — that corpus has no such
+/// directory, and a rule with one exception is easier to remember than a rule
+/// with one exception that applies in one place.
 fn science_files(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -20,6 +35,9 @@ fn science_files(dir: &Path) -> Vec<PathBuf> {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
+            if path.file_name().and_then(|n| n.to_str()) == Some("shared") {
+                continue;
+            }
             found.extend(science_files(&path));
         } else if path.extension().and_then(|e| e.to_str()) == Some("science") {
             found.push(path);

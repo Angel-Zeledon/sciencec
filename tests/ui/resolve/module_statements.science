@@ -1,0 +1,14 @@
+# UI test: top-level statements in a module reached by `use` (SC0213).
+#
+# `script-mode.md` §4.1 says importing a module never runs anything, and §4.3
+# makes the statements an error rather than silence, because the alternative is
+# a `print` that does not print and an afternoon spent on why.
+#
+# The statement is in `shared/greeting.science` and the `use` is here, which is
+# the point of the rule: that file is a perfectly good script on its own, and
+# only this line gives the question "do those statements run?" two answers.
+
+use shared.greeting (greeting)
+
+def main():
+    print(greeting())

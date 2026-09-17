@@ -12,7 +12,7 @@
 //! `science-db` has a query declared for each of them and a body for none:
 //! `pending::hir`, `pending::thir`, `pending::mir`, `pending::call_graph` and
 //! `pending::region_result` are all still `unimplemented!()`. So
-//! [`Session::resolved`] calls `science_resolve::resolve_module` on the tree
+//! [`Session::resolved`] calls `science_resolve::resolve_crate` on the trees
 //! the `ast` query returned, and [`type_and_region_check`] calls the three
 //! crates below it directly.
 //!
@@ -22,6 +22,21 @@
 //! the queries rather than against the wiring: a phase nobody can run is worth
 //! nothing, and the day `pending::mir` has a body these two functions are the
 //! only places that change.
+//!
+//! # A file on the command line is a crate, not a module
+//!
+//! [`Session::crate_sources`] is where `use` becomes a file read. The file
+//! named is the entry (`script-mode.md` §4.2 rule 1), the directory it sits in
+//! is the crate root, and every module its `use` declarations reach — and
+//! every module *those* reach — is loaded, parsed through the same `ast`
+//! query, and handed to the resolver in one slice.
+//!
+//! **This is the third thing the shortcut now costs.** A crate's syntax trees
+//! are cloned out of the database once per entry that reaches them, because
+//! `SourceModule` owns its tree; `science_db::pending::hir` is where a crate's
+//! module list would be a query and none of that would happen twice. The
+//! header above says the day that query has a body, two functions change.
+//! There are three now.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -65,22 +80,57 @@ impl Session {
     /// discipline in the lexer, the parser and the resolver exists so that one
     /// broken file does not hide the next, and a driver that stopped at the
     /// first failure would throw that away.
+    ///
+    /// # What several files mean, now that a crate can be more than one
+    ///
+    /// **Decision. `sciencec check a.science b.science` is still two crates,
+    /// not one.** Each file named is an entry, and each entry brings in the
+    /// modules its `use` declarations reach. What changed is what one name on
+    /// the command line expands to; what did not change is what two names
+    /// mean.
+    ///
+    /// **Reason, and it is not conservatism.** `script-mode.md` §4.2 rule 1
+    /// makes *the file named on the command line* the entry, and one crate has
+    /// one entry — §4.3 is written in terms of *"the entry"*, singular, and
+    /// `SC0213` is the difference between a script and a module. Folding the
+    /// command line into one crate would make every file after the first a
+    /// non-entry, so `sciencec check *.science` over a directory of analysis
+    /// scripts would report `SC0213` on all but one of them. That is not a
+    /// stricter reading of the note; it is the opposite of what the note is
+    /// for.
+    ///
+    /// **Cost, and it is paid here.** A module reached from two entries named
+    /// on one command line is checked twice, and its diagnostics arrive twice.
+    /// They are deduplicated below rather than left to double, because a
+    /// reader counting errors should be counting the program's, not the
+    /// driver's traversals. Two *identical* diagnostics are one fact; a
+    /// diagnostic that differs between the two crates — `SC0213`, which fires
+    /// in the crate that imported the file and not in the crate that is it —
+    /// differs, and both are kept.
     pub fn check(&mut self, paths: &[PathBuf]) {
         // A path named twice is one file — `add_file` hands the same `FileId`
         // back — and checking it twice would double its diagnostics and its
         // contribution to the summary.
-        let mut files: Vec<FileId> = Vec::with_capacity(paths.len());
+        let mut entries: Vec<(PathBuf, FileId)> = Vec::with_capacity(paths.len());
         for path in paths {
             if let Some(file) = self.load(path) {
-                if !files.contains(&file) {
-                    files.push(file);
+                if !entries.iter().any(|(_, seen)| *seen == file) {
+                    entries.push((path.clone(), file));
                 }
             }
         }
 
-        let mut all = Vec::new();
-        for &file in &files {
-            all.extend(self.diagnostics(file));
+        let mut all: Vec<Diagnostic> = Vec::new();
+        for (path, file) in &entries {
+            for diagnostic in self.diagnostics(path, *file) {
+                // Quadratic in the number of diagnostics one command produces,
+                // which is the right trade at this size: the alternative is a
+                // hash of a `Diagnostic`, and nothing else in the compiler
+                // needs one.
+                if !all.contains(&diagnostic) {
+                    all.push(diagnostic);
+                }
+            }
         }
         self.tally.count(&all);
         // Rendered in one batch so the output is ordered by file and position
@@ -134,9 +184,15 @@ impl Session {
     /// deliberately *not* required: a formatter works on syntax, so syntax is
     /// what it may demand, and `examples/17_modules.science` — which imports
     /// modules that are not files in this repository — is a perfectly
-    /// well-formed program that no single-file `check` can resolve. A file
-    /// with a syntax error is a different matter: its token stream is a guess,
-    /// and reformatting a guess is how a formatter eats a program.
+    /// well-formed program that no `check` can resolve, then or now that `use`
+    /// loads files. A file with a syntax error is a different matter: its
+    /// token stream is a guess, and reformatting a guess is how a formatter
+    /// eats a program.
+    ///
+    /// `fmt` reads exactly the files it was named, and never a module one of
+    /// them imports. Formatting a file the user did not ask about — and, with
+    /// `--write`, rewriting it — is not something a `use` line should be able
+    /// to authorise.
     ///
     /// Without `--write` the formatted text goes to stdout, like every other
     /// dump. With it, a file is rewritten only when the text actually changed,
@@ -215,18 +271,28 @@ impl Session {
 
     /// `sciencec resolve FILE`, in `science-resolve`'s dump format.
     ///
-    /// Nothing is dumped when the file has lexical or syntax errors, for the
-    /// same reason `check` does not resolve one: the definitions of a file
-    /// that did not parse are a report about the recovery, not about the
-    /// program.
+    /// **`FILE` is the entry**, and what is dumped is the crate it roots —
+    /// every module its `use` declarations reach, in the order they were
+    /// loaded, entry first. That is the command's whole value now that a crate
+    /// can be more than one file: it is the only way to see the module tree
+    /// `use` actually built.
+    ///
+    /// Nothing is dumped when any file in the crate has lexical or syntax
+    /// errors, for the same reason `check` does not resolve one: the
+    /// definitions of a file that did not parse are a report about the
+    /// recovery, not about the program.
     pub fn dump_resolved(&mut self, path: &Path) {
         let Some(file) = self.load(path) else { return };
-        let syntax = science_db::file_diagnostics(&self.db, file).to_vec();
-        if syntax.iter().any(|d| d.severity == science_diagnostics::Severity::Error) {
+        let (sources, whole) = self.crate_sources(path, file);
+        let mut syntax = Vec::new();
+        for source in &sources {
+            syntax.extend(science_db::file_diagnostics(&self.db, source.file).to_vec());
+        }
+        if !whole || has_error(&syntax) {
             self.report(syntax);
             return;
         }
-        let (krate, diagnostics) = self.resolved(file);
+        let (krate, diagnostics) = self.resolved(&sources);
         print(&science_resolve::dump::dump_crate(&krate));
         let mut all = syntax;
         all.extend(diagnostics);
@@ -252,18 +318,26 @@ impl Session {
     /// apart.
     pub fn dump_tools(&mut self, path: &Path, every_function: bool) {
         let Some(file) = self.load(path) else { return };
-        let syntax = science_db::file_diagnostics(&self.db, file).to_vec();
-        if syntax.iter().any(|d| d.severity == science_diagnostics::Severity::Error) {
+        let (sources, whole) = self.crate_sources(path, file);
+        let mut syntax = Vec::new();
+        for source in &sources {
+            syntax.extend(science_db::file_diagnostics(&self.db, source.file).to_vec());
+        }
+        if !whole || has_error(&syntax) {
             self.report(syntax);
             return;
         }
-        let (krate, diagnostics) = self.resolved(file);
+        let (krate, diagnostics) = self.resolved(&sources);
         if diagnostics.iter().any(|d| d.severity == science_diagnostics::Severity::Error) {
             let mut all = syntax;
             all.extend(diagnostics);
             self.report(all);
             return;
         }
+        // `modules.first()` is the entry: `collect_crate` puts it there and
+        // says so. A `tool` in a module the entry imported is not this file's
+        // to offer — `mcp-servers.md` §14.3's array is the schema of what
+        // *this* program exposes — so the walk stays on the one module.
         if let Some(module) = krate.modules.first() {
             // The word a function was declared with lives in the syntax tree,
             // so the predicate is read from there and the schema from the
@@ -307,12 +381,20 @@ impl Session {
     /// finished building, and asking the question out here would mean building
     /// them twice to ask it. That function's §"the ordering rule" states it and
     /// says which way it errs.
-    fn diagnostics(&self, file: FileId) -> Vec<Diagnostic> {
-        let mut all = science_db::file_diagnostics(&self.db, file).to_vec();
-        if has_error(&all) {
+    fn diagnostics(&mut self, entry: &Path, file: FileId) -> Vec<Diagnostic> {
+        let (sources, whole) = self.crate_sources(entry, file);
+        let mut all: Vec<Diagnostic> = Vec::new();
+        for source in &sources {
+            all.extend(science_db::file_diagnostics(&self.db, source.file).to_vec());
+        }
+        // The first skip, widened from a file to a crate. A module that could
+        // not be read is not in `sources` at all, so resolving would report
+        // `SC0202` for a `use` whose real problem has already been named, and
+        // then one unresolved name per item that module was going to define.
+        if !whole || has_error(&all) {
             return all;
         }
-        let (krate, resolution) = self.resolved(file);
+        let (krate, resolution) = self.resolved(&sources);
         all.extend(resolution);
         if has_error(&all) {
             return all;
@@ -321,16 +403,73 @@ impl Session {
         all
     }
 
-    /// The resolved crate for one file.
+    /// The whole crate rooted at one entry file: the entry, plus every module
+    /// its `use` declarations reach.
     ///
-    /// A single file is a crate of one module, which is what §4.2 of
-    /// `script-mode.md` describes: the file named on the command line is the
-    /// entry. `resolve_module` is given the path the file was registered
-    /// under, because that path is what places it in the module tree.
-    fn resolved(&self, file: FileId) -> (Crate, Vec<Diagnostic>) {
-        let parsed = science_db::ast(&self.db, file);
-        let path = self.db.path(file);
-        let (krate, diagnostics) = science_resolve::resolve_module(file, path, parsed.value());
+    /// **The crate root is the directory the entry file sits in**, and every
+    /// module path is relative to it. `science_resolve::modules` argues that
+    /// choice and says what it leaves open for `package-manager.md`; what this
+    /// function adds is the I/O, which that crate does none of.
+    ///
+    /// Two path spellings meet here and they are not the same string. A file
+    /// is *registered* under [`display_path`] — repository-relative, so a
+    /// diagnostic reads the same on every machine — and it is *placed in the
+    /// module tree* under its path relative to the crate root, because that is
+    /// what `module_chain` reads. `examples/text/parser.science` and
+    /// `text/parser.science` are the two, in that order.
+    ///
+    /// The `bool` is false when a file that exists could not be read. A file
+    /// that is simply absent is not a failure here: it is `SC0202`, which the
+    /// resolver reports against the `use` that asked for it, with the paths it
+    /// looked in.
+    ///
+    /// **Cost.** Every module's syntax tree is cloned out of the database,
+    /// once per entry that reaches it, because `SourceModule` owns its tree
+    /// and the `ast` query hands back a borrow of the database this function
+    /// is still writing to. That is the same shortcut this module's header
+    /// names: `pending::hir` is where a crate's modules would be a query and
+    /// nothing would be cloned.
+    fn crate_sources(
+        &mut self,
+        entry: &Path,
+        file: FileId,
+    ) -> (Vec<science_resolve::SourceModule>, bool) {
+        let root = entry.parent().unwrap_or(Path::new("")).to_path_buf();
+        let name = entry
+            .file_name()
+            .map(|n| n.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|| self.db.path(file).to_string());
+        let entry_source = science_resolve::SourceModule {
+            file,
+            path: name,
+            ast: science_db::ast(&self.db, file).value().clone(),
+            entry: true,
+        };
+
+        let mut whole = true;
+        let sources = science_resolve::modules::collect_crate(entry_source, |candidate| {
+            let path = root.join(candidate);
+            // A missing file is the resolver's to report, against the `use`.
+            // Only a file that is there and unusable is reported here.
+            if !path.is_file() {
+                return None;
+            }
+            let Some(loaded) = self.load(&path) else {
+                whole = false;
+                return None;
+            };
+            Some((loaded, science_db::ast(&self.db, loaded).value().clone()))
+        });
+        (sources, whole)
+    }
+
+    /// The resolved crate.
+    ///
+    /// `resolve_crate` rather than `resolve_module`, always — a crate of one
+    /// file is the same call with a shorter slice, and the driver should not
+    /// have two ways of running one phase.
+    fn resolved(&self, sources: &[science_resolve::SourceModule]) -> (Crate, Vec<Diagnostic>) {
+        let (krate, diagnostics) = science_resolve::resolve_crate(sources);
         (krate, diagnostics.into_vec())
     }
 

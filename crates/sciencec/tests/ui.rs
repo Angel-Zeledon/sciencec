@@ -65,14 +65,12 @@ fn ui() {
             // reason the lexer's suite spells its own that way: a Windows path
             // in an expectation makes the same program produce different
             // output on two machines.
-            let name = format!(
-                "tests/ui/{shard}/{}",
-                path.file_name().expect("a case has a file name").to_string_lossy()
-            );
-            let file = db.add_file(name, source.to_string());
+            let stem =
+                path.file_name().expect("a case has a file name").to_string_lossy().into_owned();
+            let file = db.add_file(format!("tests/ui/{shard}/{stem}"), source.to_string());
 
             let mut diagnostics = Diagnostics::new();
-            for diagnostic in check(&db, file) {
+            for diagnostic in check(&mut db, shard, &dir, &stem, file) {
                 diagnostics.push(diagnostic);
             }
             science_diagnostics::render_all(&db.source_map(), &diagnostics)
@@ -90,16 +88,51 @@ fn ui() {
 /// The three skips are the driver's and are stated in the module header. The
 /// duplication is the price of the driver having no library half; what keeps
 /// the two honest about each other is `tests/cli.rs`, which runs the binary.
-fn check(db: &ScienceDatabase, file: science_diagnostics::FileId) -> Vec<Diagnostic> {
-    let mut all = science_db::file_diagnostics(db, file).to_vec();
+///
+/// # A case is an entry file, and may not be the only file
+///
+/// The case is the entry, its shard directory is the crate root, and `use`
+/// loads from there — the driver's rule, with the same
+/// `science_resolve::modules::collect_crate` doing the loading. A module a case
+/// imports therefore lives in a **subdirectory** of the shard, which is exactly
+/// where the walker does not look for cases (`without_subdirectories`), so it
+/// is a module and never a case in its own right.
+///
+/// That is not only a trick to keep the walker quiet. `script-mode.md` §4.3 is
+/// the rule that one file is a script alone and a module when imported, and a
+/// UI suite that could not hold both files could not show it.
+fn check(
+    db: &mut ScienceDatabase,
+    shard: &str,
+    root: &Path,
+    entry: &str,
+    file: science_diagnostics::FileId,
+) -> Vec<Diagnostic> {
+    let entry = science_resolve::SourceModule {
+        file,
+        path: entry.to_string(),
+        ast: science_db::ast(db, file).value().clone(),
+        entry: true,
+    };
+    let sources = science_resolve::modules::collect_crate(entry, |candidate| {
+        let text = std::fs::read_to_string(root.join(candidate)).ok()?;
+        // The same normalisation the harness applies to a case: a module
+        // checked out with CRLF must not shift every span by one byte a line.
+        let name = format!("tests/ui/{shard}/{candidate}");
+        let loaded = db.add_file(name, text.replace("\r\n", "\n"));
+        Some((loaded, science_db::ast(db, loaded).value().clone()))
+    });
+
+    let mut all = Vec::new();
+    for source in &sources {
+        all.extend(science_db::file_diagnostics(db, source.file).to_vec());
+    }
     if has_error(&all) {
         return all;
     }
 
-    let parsed = science_db::ast(db, file);
-    let path = db.path(file).to_string();
-    let (krate, resolution) = science_resolve::resolve_module(file, &path, parsed.value());
-    all.extend(resolution);
+    let (krate, resolution) = science_resolve::resolve_crate(&sources);
+    all.extend(resolution.into_vec());
     if has_error(&all) {
         return all;
     }

@@ -1,0 +1,13 @@
+error[SC0213]: top-level statements in a module that is not the entry point
+  --> tests/ui/resolve/shared/greeting.science:11:1
+   |
+11 | print("loaded")
+   | ^^^^^^^^^^^^^^^ this would never run
+   |
+  --> tests/ui/resolve/module_statements.science:11:1
+   |
+11 | use shared.greeting (greeting)
+   | ------------------------------ `shared.greeting` is imported here, so it is a module, not a script
+   |
+   = note: Science does not run a module's statements when it is imported
+   = note: move these statements into a function, or into the entry file

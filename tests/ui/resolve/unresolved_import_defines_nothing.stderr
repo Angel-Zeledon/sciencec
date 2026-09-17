@@ -1,0 +1,8 @@
+error[SC0202]: there is no module `ghost` in the crate root
+  --> tests/ui/resolve/unresolved_import_defines_nothing.science:11:5
+   |
+11 | use ghost.tools (Widget, make)
+   |     ^^^^^ no such module
+   |
+   = note: a module is a file (§4.4): `ghost` would be `ghost.science` or `ghost/mod.science`, relative to the crate root — the directory the entry file is in
+   = note: the crate root has one module, `unresolved_import_defines_nothing`

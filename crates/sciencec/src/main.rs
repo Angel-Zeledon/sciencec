@@ -17,6 +17,20 @@
 //! sciencec tools --json FILE  the JSON Schema of every `tool` in the file
 //! ```
 //!
+//! # A file argument is an entry, and names a crate
+//!
+//! `check` and `build` take the file to be the **entry** of a crate
+//! (`script-mode.md` §4.2 rule 1), whose root is the directory that file is
+//! in, and compile it together with every module its `use` declarations reach.
+//! Several files named on one command line are still several crates, one per
+//! name; `driver::Session::check` argues why, and the short version is that a
+//! crate has one entry and `sciencec check *.science` over a directory of
+//! scripts must not turn all but one of them into a module.
+//!
+//! `fmt`, `tokens`, `ast` and `tools` read the file they were given and no
+//! other. `resolve` is the exception, and deliberately: it dumps the crate,
+//! because the module tree `use` built is the thing worth looking at.
+//!
 //! # Where output goes
 //!
 //! Diagnostics and the `3 errors, 1 warning` summary go to **stderr**; dumps
@@ -71,6 +85,10 @@ Usage:
 Diagnostics go to stderr, dumps to stdout.
 Exits 0 when nothing was reported as an error, 1 otherwise; warnings alone
 do not fail.
+
+`check`, `build` and `resolve` treat FILE as the entry of a crate: the
+directory it is in is the crate root, and every module its `use` declarations
+name is compiled with it. Several files are several crates, one each.
 
 `fmt` writes to stdout unless `--write` is given, and refuses any file that
 does not already lex and parse — reformatting a file whose token stream is a

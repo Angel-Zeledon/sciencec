@@ -2,5 +2,10 @@
 #
 # The crate here is one file, so `text` is a module no walk can find, and the
 # report names the segment that failed rather than the whole path.
+#
+# The two notes are the rest of the answer, and they are what makes the message
+# worth reading in a crate this small: the first says which files were looked
+# for — they are the same two `modules::candidate_files` handed the loader —
+# and the second says what the crate root turned out to hold instead.
 
 use text.parser

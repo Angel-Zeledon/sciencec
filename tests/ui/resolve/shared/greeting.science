@@ -1,0 +1,11 @@
+# Not a UI case: a module, imported by `module_statements.science`.
+#
+# The walker does not descend into subdirectories, so this file is only ever
+# read as a module of the crate rooted at `tests/ui/resolve/`. Its top-level
+# `print` is what `SC0213` is about — legal in a file run as a script, an error
+# the moment another file imports it.
+
+public def greeting() -> String:
+    "hello"
+
+print("loaded")

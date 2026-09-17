@@ -573,6 +573,58 @@ const BLOCKS: &[Block] = &[
             },
         ],
     },
+    // --- `Array of T implements Iterate`, `collections-and-chains.md` §4 ---
+    //
+    // **`Item` is `borrowed T`, and that is the note's decision rather than
+    // this file's.** §4.2's AMENDMENT 11 makes `for x in xs:` desugar to
+    // `xs.iterate()`, §4.1 gives the three sources — `iterate()`,
+    // `iterate_mutably()`, `iterate_consuming()` — with `Item = borrowed Doc`,
+    // `mutable borrowed Doc` and `Doc` respectively, and §4.3 says
+    // `iterate()` yields `borrowed Item` *"uniformly — no conditional
+    // associated type, no specialisation"*. §5's `owned()` is then declared
+    // `where Self.Item is borrowed T, T: Clone`, which is a clause that means
+    // nothing unless `Item` is already a borrow.
+    //
+    // **The alternative is ruinous for this audience.** `Item is T` copies
+    // every element of every `for` loop in the language; for an `Array of
+    // (Array of F64)` that is a heap allocation per row per iteration, which is
+    // the normal case rather than the pathological one. The word "consuming"
+    // exists precisely so that the copying form has somewhere to be written.
+    //
+    // **What it costs** is that `for n in numbers:` binds `n` at `borrowed
+    // Int`, so every arithmetic operator in every loop body meets a borrow.
+    // `assign`'s §7 is what makes that legal — a borrow of a `Copy` type reads
+    // as a value — and the two decisions are load-bearing for each other:
+    // landing this one without that one makes `total be total + n` a type
+    // error in the most-written loop in the language.
+    //
+    // **This block declares `Item` and no `next`.** `Methods`' §2 contributes
+    // the interface's own `def next(mutable self) -> Self.Item?` to a block
+    // that did not write it, so the lookup finds one, and `check`'s
+    // `iterate_item` reads the element type out of that signature after this
+    // block's `Item` is substituted into it. A `next` written here would be a
+    // second declaration of the same method with a body neither of them has.
+    //
+    // **`Map` is *not* here, and its absence is a finding.**
+    // `collections-and-chains.md` §1.3 says what `Map.iterate()` yields and it
+    // is not a `V` and not a tuple: *"`type Entry of (K, V): key: K; value:
+    // V`"*, with §1.3's whole argument being that *"pairs are records, never
+    // tuples"* because `each.key` works with §4.6's implicit subject and
+    // `each.0` does not. `Entry` is not in §8's closed library, this table
+    // declares names and methods and cannot give a record its *fields*, and the
+    // two spellings that are expressible are both wrong: `Item is borrowed V`
+    // throws the key away, and `Item is (borrowed K, borrowed V)` is the tuple
+    // §1.3 refuses. `examples/10_loops.science` already walks a map through an
+    // `Array` of its keys and says in a comment that it does so because §8 does
+    // not give `Map` an `Iterate`. So the honest declaration is none, and what
+    // it waits for is `Entry of (K, V)` as a Level 1 record.
+    Block {
+        ty: "Array",
+        generics: &["T"],
+        interface: Some("Iterate"),
+        assoc: &[("Item", Ty::Ref(&Ty::Var("T")))],
+        methods: &[],
+    },
     // --- Chars ------------------------------------------------------------
     //
     // The one iterator §8 hands out by name. `Item is Char` is what

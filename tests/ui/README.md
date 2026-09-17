@@ -58,6 +58,23 @@ A second diagnostic from an earlier phase inside one of these expectations is
 therefore not a richer case; it is a case that is about something other than
 what its shard claims.
 
+## A case may have modules, and they live in a subdirectory
+
+`sciencec check FILE` compiles the crate rooted at `FILE`'s directory: the file
+named is the entry, and every module its `use` declarations reach is compiled
+with it. A shard directory is therefore a crate root, and a case that writes
+`use shared.greeting` gets `tests/ui/resolve/shared/greeting.science`.
+
+Putting the module in a **subdirectory** is not an accident of layout. The
+walker does not descend (`without_subdirectories`), so a file under
+`resolve/shared/` is never collected as a case in its own right — it has no
+`.stderr` and needs none. A module beside the cases would be both.
+
+`resolve/module_statements.science` is the case this exists for: `SC0213` is
+`script-mode.md` §4.3's rule that a file's top-level statements run when it is
+the entry and are an error once another file imports it, so a suite that could
+not hold two files could not state it.
+
 ## Running them
 
 ```sh
@@ -72,7 +89,8 @@ testable with no dependency on any compiler phase.
 The one detail worth getting right is the path registered in the `SourceMap`:
 it is what the renderer prints after `-->`, so it is registered as the case's
 path relative to the repository root, with forward slashes —
-`tests/ui/<name>.science`, or `tests/ui/parse/<name>.science` in a shard.
+`tests/ui/<name>.science`, or `tests/ui/parse/<name>.science` in a shard, or
+`tests/ui/resolve/shared/greeting.science` for a module a case imports.
 Register an absolute path instead and every expectation here fails on its
 location line, and would fail differently on Windows and on Linux.
 

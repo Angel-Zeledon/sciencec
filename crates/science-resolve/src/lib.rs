@@ -10,9 +10,20 @@
 //! - [`hir`] is the tree it produces.
 //! - [`resolve`] is the pass. [`resolve_module`] and [`resolve_crate`] are the
 //!   entry points.
-//! - [`scope`] is the rib stack, [`modules`] the file-path-to-module rule, and
-//!   [`builtins`] the prelude of §5.1 and §8.
+//! - [`scope`] is the rib stack, [`modules`] the file-path-to-module rule and
+//!   the `use`-driven walk that decides which files are in the crate at all,
+//!   and [`builtins`] the prelude of §5.1 and §8.
 //! - [`dump`] renders an HIR tree the way `science-parser` renders an AST.
+//!
+//! # A crate is more than one file
+//!
+//! `use text.parser` names a module, [`modules::collect_crate`] turns that
+//! into a file, and [`resolve_crate`] resolves the entry and everything it
+//! reached as one compilation. This crate does no I/O: the walk is handed a
+//! callback and the caller decides what a path means, which is what leaves
+//! room for `package-manager.md`'s manifest and
+//! `stdlib-shape-and-packages.md` §6.3's search path without either of them
+//! existing yet. [`modules`] carries the argument.
 //!
 //! ```no_run
 //! use science_diagnostics::FileId;
@@ -98,9 +109,24 @@ pub mod codes {
     /// it is answered.
     pub const EACH_WITHOUT_SUBJECT: Code = Code(212);
 
-    // `SC0213`-`SC0219` are claimed by `script-mode.md` and `effects.md`; the
-    // const-generic pair below takes the next free block the design index
-    // records, `SC0220`-`SC0229`.
+    /// Top-level statements in a module another file reached by `use`
+    /// (`script-mode.md` §4.3).
+    ///
+    /// **This code is `script-mode.md`'s, not this crate's**, and it sits here
+    /// because §8 of that note allocates by *"the phase that detects the
+    /// error"* and names the resolver. It is the one code in
+    /// `SC0213`-`SC0219` this crate emits; the rest of that block stays with
+    /// that note and with `effects.md`.
+    ///
+    /// It had no subject until `use` loaded files — the note's own gap list
+    /// says so in as many words. `resolve.rs`'s
+    /// `check_statements_outside_the_entry` is the check, and the argument for
+    /// how it recognises a script body without the resolver learning the word.
+    pub const STATEMENTS_OUTSIDE_THE_ENTRY: Code = Code(213);
+
+    // `SC0214`-`SC0219` remain claimed by `script-mode.md` (`SC0212`) and
+    // `effects.md`; the const-generic pair below takes the next free block the
+    // design index records, `SC0220`-`SC0229`.
 
     /// A const generic parameter annotated with something that is not one of
     /// the kinds `const-expression-arithmetic.md` §2.3 admits.
@@ -146,6 +172,7 @@ pub mod codes {
         RESERVED_WORD,
         WRONG_NAMESPACE,
         EACH_WITHOUT_SUBJECT,
+        STATEMENTS_OUTSIDE_THE_ENTRY,
         NOT_A_CONST_PARAM_KIND,
         REPEATED_VARIADIC_PARAM,
     ];

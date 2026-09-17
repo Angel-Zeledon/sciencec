@@ -198,13 +198,33 @@ fn every_example_is_clean_through_lexing_and_parsing() {
 ///
 /// The one that remains is **not** a prelude gap, and a longer list will not
 /// fix it: `17_modules.science` imports `text.parser` and
-/// `compiler.frontend.lexer`, which are not files in this repository, so
-/// resolving it on its own cannot succeed. It needs a multi-file crate —
-/// `resolve_crate`'s job, and a driver command that does not exist yet.
+/// `compiler.frontend.lexer`, which are not files in this repository.
+///
+/// **It was seven and it is four, and the four are not going to become zero
+/// here.** This entry used to say the file *"needs a multi-file crate —
+/// `resolve_crate`'s job, and a driver command that does not exist yet"*. The
+/// driver has it now: `use` loads files, `sciencec check FILE` compiles the
+/// crate rooted at `FILE`'s directory, and
+/// `a_module_a_use_names_is_compiled_with_it` below is a two-file crate that
+/// checks clean through every phase. What that cannot do is conjure
+/// `examples/text/parser.science`, and **writing one would be the wrong
+/// repair**: the file's header says it exists to show the two `use` forms the
+/// spec writes down, and inventing a `text.parser` to satisfy it would turn a
+/// syntax example into a fixture and hide the diagnostic this corpus is here
+/// to measure.
+///
+/// So what changed is not the verdict but the report. Three of the seven were
+/// a **cascade** — `Token`, `lex` and `text` reported missing a second time,
+/// at the uses of names the failed `use` never got to define — and a failed
+/// import now poisons what it promised, so the four that remain are the four
+/// `use` lines the file actually wrote. Each of them now says which two files
+/// were looked for and what the crate root holds instead, which is the
+/// difference between *"there is no module `text`"* and a message somebody can
+/// act on.
 ///
 /// The counts are exact on purpose: closing a gap breaks this test, which is
 /// the point — the list has to shrink deliberately rather than rot.
-const UNRESOLVED: &[(&str, usize)] = &[("17_modules.science", 7)];
+const UNRESOLVED: &[(&str, usize)] = &[("17_modules.science", 4)];
 
 /// One example's region diagnostics, and whether each is a fact about the
 /// program or a fact about a hole in the compiler.
@@ -275,20 +295,30 @@ const REGIONS: &[Finding] = &[];
 
 /// Files the *type* checker reports on, which is a third kind of gap.
 ///
-/// Both are one finding in two shapes and neither is a mistake in the
-/// checker: a value cannot be read out of a borrow. `Array.get` is
-/// `-> (borrowed T)?` per `stdlib-core.md` §3.6, so `items.get(i)` hands back
-/// a borrow — and the prelude declares `Copy` *and* `Clone` as interfaces with
-/// **no methods on either**, and the language has no dereference operator. So
-/// there is no spelling that turns a `borrowed Char` into a `Char`.
+/// **The two that used to be here are closed.** They read *"a value cannot be
+/// read out of a borrow"*: `Array.get` is `-> (borrowed T)?` per
+/// `stdlib-core.md` §3.6, the prelude declares `Copy` *and* `Clone* with no
+/// methods on either, and the language has no dereference operator, so nothing
+/// turned a `borrowed Char` into a `Char`. `science-types`' `assign`'s §7 is
+/// that spelling — **a borrow of a `Copy` type is assignable to the value** —
+/// and `06_traits` and `10_loops` went with it. Neither needed an edit to
+/// `examples/`; the decision was the missing thing.
 ///
-/// Three sibling sites were fixed rather than pinned, because they were the
-/// corpus's fault: `largest`, `DefTable.get` and `Parser.peek` each promised a
-/// total result from a partial accessor, and type-checked only while
-/// `Array.get` had no declaration and returned an error type that agreed with
-/// everything. These two are different — no rewrite of them is available.
-const NO_VALUE_OUT_OF_A_BORROW: &[(&str, usize)] =
-    &[("06_traits.science", 1), ("10_loops.science", 1)];
+/// **What is here instead is the fourth of the same family.**
+/// `builtins.rs` now declares `Array of T implements Iterate: type Item is
+/// borrowed T` (`collections-and-chains.md` §4), so a `for` binding has a type
+/// where it used to be `Ty::ERROR` and agree with everything. `07_generics`'
+/// `largest` then shows what it was hiding: `if item > best` compares a
+/// `borrowed T` with the `(borrowed T)?` that `items.get(0)` returned, and
+/// Decision 6 makes `T?` never coerce to `T`. It is the same shape as
+/// `largest`'s *own* signature bug one revision earlier, in the body this time
+/// rather than in the return type, and it closes the same way: one presence
+/// test. The fix is the corpus's and this entry is its handoff.
+///
+/// `science-types/tests/corpus.rs` pins the identical fact against the library
+/// rather than the binary, which is what makes silence here have to be silence
+/// in two places at once.
+const TYPE_CHECKER_FINDINGS: &[(&str, usize)] = &[("07_generics.science", 1)];
 
 #[test]
 fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
@@ -297,7 +327,7 @@ fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
         let file = path.file_name().unwrap().to_string_lossy().into_owned();
         let unresolved = UNRESOLVED.iter().find(|(n, _)| *n == file).map(|(_, count)| *count);
         let regions = REGIONS.iter().find(|it| it.file == file);
-        let borrows = NO_VALUE_OUT_OF_A_BORROW.iter().find(|(n, _)| *n == file);
+        let borrows = TYPE_CHECKER_FINDINGS.iter().find(|(n, _)| *n == file);
         assert!(
             unresolved.is_none() || regions.is_none(),
             "{file} cannot be in both lists: a file that does not resolve is never region-checked"
@@ -320,7 +350,7 @@ fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
                 for line in run.stderr.lines().filter(|l| l.starts_with("error[SC")) {
                     assert!(
                         line.starts_with("error[SC0525]"),
-                        "{name} is pinned for a borrow that cannot be read out,                          and reported something else: {line}"
+                        "{name} is pinned for a mismatch the corpus has to fix,                          and reported something else: {line}"
                     );
                 }
             }
@@ -486,13 +516,20 @@ fn a_type_error_stops_the_borrow_check_before_it_invents_anything() {
 }
 
 /// `17_modules.science` still behaves: it fails to resolve, so neither the type
-/// checker nor the borrow check ever sees it, and its count is unchanged by the
-/// phase added beneath them.
+/// checker nor the borrow check ever sees it.
+///
+/// **The count moved from seven to four and that is the finding, not a
+/// re-baselining.** `UNRESOLVED` says what closed: three of the seven were the
+/// unresolved *names* a failed `use` was supposed to have defined, and a failed
+/// `use` now poisons them. The four that remain are the file's four `use`
+/// lines, which name modules this repository does not contain.
 #[test]
 fn the_file_that_cannot_resolve_is_unaffected_by_the_phases_below_resolution() {
     let run = sciencec(&["check", "examples/17_modules.science"]);
     run.failed();
-    assert_eq!(run.stderr.matches("error[SC").count(), 7, "{}", run.stderr);
+    assert_eq!(run.stderr.matches("error[SC").count(), 4, "{}", run.stderr);
+    // Every one of them is the `use`, and none is a name the `use` promised.
+    assert_eq!(run.stderr.matches("error[SC0202]").count(), 4, "{}", run.stderr);
     assert!(!run.stderr.contains("error[SC03"), "{}", run.stderr);
 }
 
@@ -658,6 +695,158 @@ fn each_dump_command_fails_cleanly_on_a_missing_file() {
         run.failed().stderr_contains("cannot read");
         assert_eq!(run.stdout, "", "{command} should dump nothing");
     }
+}
+
+// --- crates of more than one file ---------------------------------------
+//
+// `use` loads files. The four tests below are the four claims that makes:
+// a module a `use` names is compiled with the entry, a whole-module import is
+// usable through its path, a file's statements are `SC0213` once another file
+// imports it, and a `use` that finds nothing reports once.
+
+/// The thing that did not exist: a crate of two files, checked as one.
+///
+/// It goes all the way through — resolution, types, MIR, regions — because the
+/// interesting failure is not that the second file is found but that it is
+/// found *as a module*, with its items in `text.parser` and its signatures
+/// visible to every phase below. A clean exit over `parser.lex(s)` is that,
+/// asserted end to end.
+#[test]
+fn a_module_a_use_names_is_compiled_with_it() {
+    let entry = scratch_crate(
+        "two_files",
+        &[
+            (
+                "text/parser.science",
+                "public def lex(source: borrowed String) -> Int:\n    source.length()\n",
+            ),
+            (
+                "main.science",
+                "use text.parser (lex)\n\ndef main():\n    print(lex(\"abc\"))\n",
+            ),
+        ],
+    );
+    sciencec(&["check", &entry]).succeeded().silent_stderr();
+}
+
+/// §4.4's other import form: `use text.parser`, then `text.parser.lex(s)`.
+///
+/// This is worth its own test because the path is not a path when the parser
+/// is done with it — `a.b(c)` is a method call until something knows whether
+/// `a` is a module — so the whole-module form of `use` binds a name that
+/// nothing could reach until the resolver folded it back.
+#[test]
+fn a_module_imported_whole_is_reached_through_its_path() {
+    let entry = scratch_crate(
+        "whole_module",
+        &[
+            (
+                "text/parser.science",
+                "public def lex(source: borrowed String) -> Int:\n    source.length()\n",
+            ),
+            (
+                "main.science",
+                "use text.parser\n\ndef main():\n    print(text.parser.lex(\"abc\"))\n",
+            ),
+        ],
+    );
+    sciencec(&["check", &entry]).succeeded().silent_stderr();
+}
+
+/// `script-mode.md` §4.3, from the binary: the same file, twice, with two
+/// answers.
+///
+/// Checking `clean.science` alone is a script and its `print` runs. Checking
+/// `plots.science`, which imports it, makes it a module — and a module's
+/// statements never run, so they are `SC0213`. The pair is the test, because
+/// either half alone would be consistent with the check never firing or with
+/// it firing on everything.
+#[test]
+fn statements_are_a_script_alone_and_an_error_once_imported() {
+    let files: &[(&str, &str)] = &[
+        ("clean.science", "public def frame_for(n: Int) -> Int:\n    n + 1\n\nprint(\"loaded\")\n"),
+        ("plots.science", "use clean (frame_for)\n\ndef main():\n    print(frame_for(1))\n"),
+    ];
+    let entry = scratch_crate("script_and_module", files);
+    let alone = entry.replace("plots.science", "clean.science");
+
+    sciencec(&["check", &alone]).succeeded().silent_stderr();
+    sciencec(&["check", &entry])
+        .failed()
+        .stderr_contains("error[SC0213]")
+        .stderr_contains("this would never run")
+        .stderr_contains("is imported here, so it is a module, not a script");
+}
+
+/// **The decision, pinned: several files on one command line are several
+/// crates.**
+///
+/// `driver::Session::check` argues it — one crate has one entry, and folding
+/// the command line into one crate would make every file after the first a
+/// non-entry and so report `SC0213` on a directory of ordinary scripts. This
+/// is that argument as a test: two files, each with top-level statements, each
+/// importing nothing, named together. If the meaning of the command ever
+/// changes, this is what says so.
+#[test]
+fn several_files_on_one_command_line_are_several_crates() {
+    let first = scratch_crate(
+        "two_scripts",
+        &[("one.science", "print(1)\n"), ("two.science", "print(2)\n")],
+    );
+    let second = first.replace("one.science", "two.science");
+    sciencec(&["check", &first, &second]).succeeded().silent_stderr();
+}
+
+/// A `use` that finds nothing reports the `use`, and nothing else.
+///
+/// The discipline is that a file which fails to load must not produce one
+/// diagnostic per name it was supposed to define — three uses of two names
+/// here, and one diagnostic. `UNRESOLVED`'s count for `17_modules.science` is
+/// the same property measured on the corpus; this is it isolated, so that a
+/// regression says which of the two it is.
+#[test]
+fn a_use_that_finds_no_module_does_not_report_the_names_it_promised() {
+    let entry = scratch_crate(
+        "missing_module",
+        &[(
+            "main.science",
+            "use ghost.tools (Widget, make)\n\n\
+             def build() -> Widget:\n    make(1)\n\n\
+             def main():\n    print(ghost.tools.make(2))\n",
+        )],
+    );
+    let run = sciencec(&["check", &entry]);
+    run.failed().stderr_contains("there is no module `ghost` in the crate root");
+    assert_eq!(
+        run.stderr.matches("error[SC").count(),
+        1,
+        "one failed import is one diagnostic\n{}",
+        run.stderr
+    );
+    // The message names what the crate has, not only what it lacks.
+    run.stderr_contains("`ghost.science` or `ghost/mod.science`")
+        .stderr_contains("the crate root has one module");
+}
+
+/// Writes a crate under the target directory and returns the **last** file's
+/// path, which every test above writes as its entry.
+///
+/// A directory of its own per crate, because the crate root is the entry's
+/// directory: two crates sharing one would see each other's modules.
+fn scratch_crate(name: &str, files: &[(&str, &str)]) -> String {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("crates").join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("the target directory is writable");
+    let mut last = dir.clone();
+    for (path, text) in files {
+        let file = dir.join(path);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).expect("the target directory is writable");
+        }
+        std::fs::write(&file, text.as_bytes()).expect("the scratch file is writable");
+        last = file;
+    }
+    last.to_string_lossy().replace('\\', "/")
 }
 
 /// Writes a file under the target directory and returns its path, relative to

@@ -82,26 +82,42 @@ pub struct SourceModule {
     /// It is what places the file in the module tree; see [`crate::modules`].
     pub path: String,
     pub ast: ast::Module,
+    /// Whether this file is the entry — `script-mode.md` §4.2's, the file the
+    /// compilation was started from.
+    ///
+    /// **It is a flag rather than a position in the slice** because exactly one
+    /// rule turns on it, `SC0213`, and a rule that reads *"the entry is
+    /// `sources[0]`"* is a rule a caller can break by sorting. A library build
+    /// — §4.2's third case — hands in a slice where nothing is the entry, and
+    /// that is a legal thing to say here rather than an unrepresentable one.
+    pub entry: bool,
 }
 
 /// Resolves a whole crate.
+///
+/// [`crate::modules::collect_crate`] is what builds the slice: the entry file
+/// plus everything its `use` declarations reach.
 pub fn resolve_crate(sources: &[SourceModule]) -> (Crate, Diagnostics) {
     let inputs: Vec<Input<'_>> = sources
         .iter()
-        .map(|s| Input { file: s.file, path: s.path.as_str(), ast: &s.ast })
+        .map(|s| Input { file: s.file, path: s.path.as_str(), ast: &s.ast, entry: s.entry })
         .collect();
     Resolver::new().run(&inputs)
 }
 
 /// Resolves a single file, which is the common case and every test's case.
+///
+/// The file is the entry, because §4.2 rule 1 says the file named on the
+/// command line is, and one file named alone is one file named.
 pub fn resolve_module(file: FileId, path: &str, ast: &ast::Module) -> (Crate, Diagnostics) {
-    Resolver::new().run(&[Input { file, path, ast }])
+    Resolver::new().run(&[Input { file, path, ast, entry: true }])
 }
 
 struct Input<'a> {
     file: FileId,
     path: &'a str,
     ast: &'a ast::Module,
+    entry: bool,
 }
 
 // --- module scopes -------------------------------------------------------
@@ -118,6 +134,25 @@ struct ModuleScope {
     names: HashMap<String, DefId>,
     variants: HashMap<String, Vec<DefId>>,
     children: HashMap<String, DefId>,
+    /// Names a failed `use` was supposed to put here, and the modules a failed
+    /// `use` path was supposed to find.
+    ///
+    /// **Decision. A `use` that fails poisons every name it promised, and a
+    /// later mention of a poisoned name resolves to [`Res::Error`] in
+    /// silence.** `use text.parser (Token, lex)` over a module that is not in
+    /// this crate is *one* mistake; without this it is one mistake plus a
+    /// `cannot find` for every use of `Token` and of `lex` in the file.
+    ///
+    /// **Reason.** It is the same rule the rest of this pass already follows —
+    /// an unresolved name becomes `Res::Error` and never produces a second
+    /// diagnostic — moved one step earlier, to the declaration instead of the
+    /// use. The reader is told what is missing at the line that asked for it.
+    ///
+    /// **Cost.** A name can be poisoned by a `use` and then also be genuinely
+    /// misspelled at a use site, and the misspelling is not reported. That is
+    /// the price every error node in this pass pays, and it is paid back the
+    /// moment the import is fixed.
+    poisoned: std::collections::HashSet<String>,
 }
 
 /// What step 2 recorded for one item, so step 4 does not re-derive it.
@@ -137,6 +172,34 @@ enum ItemDefs {
     /// parser could not read, which has no name to declare and nothing to
     /// resolve.
     Extern(Vec<Option<DefId>>),
+}
+
+/// The `def main()` the parser generated for a file's top-level statements, if
+/// it generated one.
+///
+/// **The marker is the zero-width name span**, and it is the parser's, not
+/// this function's invention: `parse_module`'s cost 1 is that *"generated
+/// nodes have no source text"*, and `script_body` builds the name at
+/// `Span::at(file, start)`. A `main` somebody typed spans four bytes. The
+/// other three conditions — `def` rather than `fn`, no parameters, not
+/// `public` — are not what decides it; they are there so that a future
+/// generated item cannot be mistaken for this one.
+///
+/// This is the only place in the compiler below the parser that knows a script
+/// body exists, and `check_statements_outside_the_entry` says what it bought.
+fn script_body(ast: &ast::Module) -> Option<&ast::FnDecl> {
+    ast.items.iter().find_map(|item| match &item.kind {
+        ast::ItemKind::Fn(decl)
+            if decl.name.name == "main"
+                && decl.name.span.start == decl.name.span.end
+                && decl.form == ast::FnForm::Def
+                && decl.params.is_empty()
+                && !decl.is_pub =>
+        {
+            Some(decl)
+        }
+        _ => None,
+    })
 }
 
 // --- the resolver --------------------------------------------------------
@@ -161,6 +224,10 @@ struct Resolver {
     /// The implementation or interface whose `Self` is in scope, if any. It
     /// is also the parent of the associated types `Self.Item` can reach.
     self_owner: Option<DefId>,
+    /// Every module a `use` in this compilation reached, and the first `use`
+    /// that reached it. It is `script-mode.md` §4.3's subject, word for word,
+    /// and the span is the secondary label `SC0213` renders.
+    reached_by_use: HashMap<DefId, Span>,
 }
 
 impl Resolver {
@@ -199,6 +266,7 @@ impl Resolver {
             ribs: Scopes::new(),
             current_module: root,
             self_owner: None,
+            reached_by_use: HashMap::new(),
         }
     }
 
@@ -219,6 +287,13 @@ impl Resolver {
         // 3. Imports, once every module knows what it offers.
         for (source, module) in sources.iter().zip(&module_defs) {
             self.resolve_uses(*module, source.ast);
+        }
+
+        // 3b. `script-mode.md` §4.3, which needs step 3 to have run and
+        // nothing from step 4: what it asks about is which modules a `use`
+        // reached, and that is settled the moment the last `use` is.
+        for (source, module) in sources.iter().zip(&module_defs) {
+            self.check_statements_outside_the_entry(source, *module);
         }
 
         // 4. Bodies.
@@ -458,7 +533,10 @@ impl Resolver {
     fn resolve_uses(&mut self, module: DefId, ast: &ast::Module) {
         for item in &ast.items {
             let ast::ItemKind::Use(decl) = &item.kind else { continue };
-            let Some(target) = self.resolve_module_path(&decl.path) else { continue };
+            let Some(target) = self.resolve_module_path(&decl.path, item.span) else {
+                self.poison_what_the_use_promised(module, decl);
+                continue;
+            };
 
             match &decl.imports {
                 // `use text.parser` binds the module under its last segment.
@@ -471,21 +549,126 @@ impl Resolver {
                     for name in names {
                         match self.lookup_in_module(target, &name.name) {
                             Some(def) => self.bind_import(module, name, def),
-                            None => self.error(
-                                codes::UNRESOLVED_IMPORT,
-                                format!(
-                                    "`{}` is not defined in `{}`",
-                                    name.name,
-                                    self.defs.path_of(target)
-                                ),
-                                name.span,
-                                "not found in that module",
-                            ),
+                            None => {
+                                self.error(
+                                    codes::UNRESOLVED_IMPORT,
+                                    format!(
+                                        "`{}` is not defined in `{}`",
+                                        name.name,
+                                        self.defs.path_of(target)
+                                    ),
+                                    name.span,
+                                    "not found in that module",
+                                );
+                                self.poison(module, &name.name);
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    /// Marks a name as promised-and-not-delivered in `module`.
+    ///
+    /// See [`ModuleScope::poisoned`] for why this exists at all.
+    fn poison(&mut self, module: DefId, name: &str) {
+        self.scopes.entry(module).or_default().poisoned.insert(name.to_string());
+    }
+
+    fn is_poisoned(&self, module: DefId, name: &str) -> bool {
+        self.scopes.get(&module).is_some_and(|s| s.poisoned.contains(name))
+    }
+
+    /// Everything a `use` whose path did not resolve was going to define.
+    ///
+    /// `use text.parser (Token, lex)` promised `Token` and `lex`; `use
+    /// text.parser` promised `parser`. The first segment is poisoned at the
+    /// crate root as well, because `use text.parser` is also a claim that the
+    /// crate root has a module `text`, and `text.parser.lex(source)` written
+    /// in a body two hundred lines down is the same missing module asked about
+    /// a second time.
+    fn poison_what_the_use_promised(&mut self, module: DefId, decl: &ast::UseDecl) {
+        match &decl.imports {
+            None => {
+                if let Some(last) = decl.path.segments.last() {
+                    self.poison(module, &last.name.name);
+                }
+            }
+            Some(names) => {
+                for name in names {
+                    self.poison(module, &name.name);
+                }
+            }
+        }
+        if let Some(first) = decl.path.segments.first() {
+            let root = self.root;
+            self.poison(root, &first.name.name);
+        }
+    }
+
+    /// `script-mode.md` §4.3: top-level statements in a module reached by
+    /// `use` in this compilation.
+    ///
+    /// **This is the code that note calls unimplementable.** Its own gap list
+    /// says `SC0213` *"needs a module reached by `use` in this compilation, but
+    /// the driver resolves every file as its own crate and `use` does not load
+    /// files"*. Both halves of that sentence stopped being true when
+    /// [`crate::modules::collect_crate`] was written, and this is the check
+    /// falling out of it.
+    ///
+    /// **How a script body is recognised, which is the one unlovely part.**
+    /// The parser desugars a file's top-level statements into a generated `def
+    /// main() -> Error?` before this pass sees anything, and that desugaring
+    /// exists precisely so that no phase below it learns the word "script". So
+    /// there is no flag to read. What there is instead is the property
+    /// `parse_module`'s own documentation states as cost 1 — *"generated nodes
+    /// have no source text"* — and the generated `main`'s **name** carries a
+    /// zero-width span where a written one covers four bytes. That is the
+    /// marker; it is documented at the place that creates it; and
+    /// `the_marker_the_parser_leaves_on_a_script_body` pins it against a real
+    /// parse, so a change there breaks this here rather than silently
+    /// disabling it.
+    ///
+    /// **Why not teach the resolver about scripts properly.** Because that is
+    /// exactly the knowledge the desugaring buys out, and buying it back costs
+    /// every phase below this one. One span comparison in one function, tested
+    /// against the parser, is the smaller bill — and buying it back is the
+    /// whole of what `SC0212` was declined for in the same note, which is why
+    /// `SC0212` is still not implemented and this is.
+    ///
+    /// The entry is exempt: §4.3's whole point is that `sciencec run
+    /// clean.science` runs `clean.science`'s statements, and only another
+    /// file's `use` of it makes the question have two answers.
+    fn check_statements_outside_the_entry(&mut self, source: &Input<'_>, module: DefId) {
+        if source.entry {
+            return;
+        }
+        let Some(imported_at) = self.reached_by_use.get(&module).copied() else {
+            // §4.3: "Statements in a module that is simply not compiled are
+            // not anybody's problem." A file handed to `resolve_crate` that
+            // no `use` names is the nearest thing this pass has to that.
+            return;
+        };
+        let Some(first) = script_body(source.ast).and_then(|decl| {
+            decl.body.as_ref().and_then(|block| block.stmts.first()).map(|stmt| stmt.span)
+        }) else {
+            return;
+        };
+        let name = self.defs.path_of(module);
+        self.diags.push(
+            Diagnostic::error(
+                codes::STATEMENTS_OUTSIDE_THE_ENTRY,
+                "top-level statements in a module that is not the entry point",
+            )
+            .with_label(Label::primary(first, "this would never run"))
+            .with_label(Label::secondary(
+                imported_at,
+                format!("`{name}` is imported here, so it is a module, not a script"),
+            ))
+            .with_note("Science does not run a module's statements when it is imported")
+            .with_note("move these statements into a function, or into the entry file"),
+        );
     }
 
     /// Walks a `use` path from the crate root.
@@ -494,28 +677,89 @@ impl Resolver {
     /// declaration to hang one off (§12), so `use text.parser` means the same
     /// thing written anywhere, which is also what makes `text.parser.Token`
     /// work in a type position from any module.
-    fn resolve_module_path(&mut self, path: &ast::Path) -> Option<DefId> {
+    fn resolve_module_path(&mut self, path: &ast::Path, used_at: Span) -> Option<DefId> {
         let mut current = self.root;
+        let mut chain: Vec<String> = Vec::new();
         for segment in &path.segments {
+            chain.push(segment.name.name.clone());
             match self.scopes.get(&current).and_then(|s| s.children.get(&segment.name.name)) {
-                Some(next) => current = *next,
+                Some(next) => {
+                    current = *next;
+                    // The first `use` to reach a module is the one §4.3's
+                    // secondary label points at: the line that turned a script
+                    // into a module.
+                    self.reached_by_use.entry(current).or_insert(used_at);
+                }
                 None => {
-                    let where_ = if current == self.root {
-                        "the crate root".to_string()
-                    } else {
-                        format!("`{}`", self.defs.path_of(current))
-                    };
-                    self.error(
-                        codes::UNRESOLVED_IMPORT,
-                        format!("there is no module `{}` in {where_}", segment.name.name),
-                        segment.name.span,
-                        "no such module",
-                    );
+                    self.no_such_module(current, &segment.name, &chain);
                     return None;
                 }
             }
         }
         Some(current)
+    }
+
+    /// `SC0202` for a `use` whose path leaves the crate.
+    ///
+    /// **The message says what the crate contains, not only what it lacks.**
+    /// *"there is no module `text` in the crate root"* is true of a crate of
+    /// one file and tells the reader nothing they did not type; the two notes
+    /// answer the two questions it raises — *which file were you looking for*,
+    /// and *what did you find instead*. The first is derivable because
+    /// [`crate::modules::candidate_files`] is the same function the loader
+    /// asked with, so the paths named here are the paths that were tried.
+    ///
+    /// **Cost.** The second note is a list, and a crate with two hundred
+    /// modules has a two-hundred-item list. It is capped, and the cap is
+    /// stated in the note rather than hidden, because a truncated list that
+    /// does not say it was truncated is how a reader concludes their module
+    /// does not exist.
+    fn no_such_module(&mut self, parent: DefId, segment: &ast::Ident, chain: &[String]) {
+        let where_ = if parent == self.root {
+            "the crate root".to_string()
+        } else {
+            format!("`{}`", self.defs.path_of(parent))
+        };
+        let candidates = crate::modules::candidate_files(chain);
+        let looked_for = candidates
+            .iter()
+            .map(|path| format!("`{path}`"))
+            .collect::<Vec<_>>()
+            .join(" or ");
+
+        let mut siblings: Vec<&str> = self
+            .scopes
+            .get(&parent)
+            .map(|scope| scope.children.keys().map(String::as_str).collect())
+            .unwrap_or_default();
+        siblings.sort_unstable();
+        const CAP: usize = 8;
+        let shown = siblings
+            .iter()
+            .take(CAP)
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let has = match siblings.len() {
+            0 => format!("{where_} has no modules in it"),
+            1 => format!("{where_} has one module, {shown}"),
+            n if n > CAP => format!("{where_} has {n} modules: {shown}, and {} more", n - CAP),
+            n => format!("{where_} has {n} modules: {shown}"),
+        };
+
+        self.diags.push(
+            Diagnostic::error(
+                codes::UNRESOLVED_IMPORT,
+                format!("there is no module `{}` in {where_}", segment.name),
+            )
+            .with_label(Label::primary(segment.span, "no such module"))
+            .with_note(format!(
+                "a module is a file (§4.4): `{}` would be {looked_for}, relative to the \
+                 crate root — the directory the entry file is in",
+                chain.join(".")
+            ))
+            .with_note(has),
+        );
     }
 
     fn bind_import(&mut self, module: DefId, name: &ast::Ident, def: DefId) {
@@ -1505,6 +1749,14 @@ impl Resolver {
         if self.check_reserved(ident) {
             return Res::Error;
         }
+        // A name a failed `use` promised is already reported, at the line that
+        // promised it. The crate root is checked as well as this module
+        // because `use text.parser` claims a module of the root.
+        if self.is_poisoned(self.current_module, &ident.name)
+            || self.is_poisoned(self.root, &ident.name)
+        {
+            return Res::Error;
+        }
         self.error(
             codes::UNRESOLVED_NAME,
             format!("cannot find `{}` in this scope", ident.name),
@@ -1575,6 +1827,7 @@ impl Resolver {
         match self.defs.get(id).kind {
             DefKind::Module => match self.lookup_in_module(id, &ident.name) {
                 Some(def) => Res::Def(def),
+                None if self.is_poisoned(id, &ident.name) => Res::Error,
                 None => {
                     let module = self.defs.path_of(id);
                     let module =
@@ -1704,18 +1957,37 @@ impl Resolver {
             }
             ast::ExprKind::SelfValue => hir::ExprKind::SelfValue(self.resolve_self_value(expr.span)),
             ast::ExprKind::Call { callee, args } => self.resolve_call(callee, args, expr.span),
+            // `text.parser.lex(source)` is a call, not a method: see
+            // [`Self::module_qualified`].
             ast::ExprKind::MethodCall { receiver, method, generics, args } => {
-                hir::ExprKind::MethodCall {
-                    receiver: Box::new(self.resolve_expr(receiver)),
-                    method: method.clone(),
-                    generics: generics.iter().map(|t| self.resolve_type(t)).collect(),
-                    args: self.resolve_args(args),
+                match self.module_qualified(receiver, Some((method, generics))) {
+                    Some(path) => {
+                        let callee =
+                            ast::Expr { kind: ast::ExprKind::Path(path), span: expr.span };
+                        self.resolve_call(&callee, args, expr.span)
+                    }
+                    None => hir::ExprKind::MethodCall {
+                        receiver: Box::new(self.resolve_expr(receiver)),
+                        method: method.clone(),
+                        generics: generics.iter().map(|t| self.resolve_type(t)).collect(),
+                        args: self.resolve_args(args),
+                    },
                 }
             }
-            ast::ExprKind::Field { base, name } => hir::ExprKind::Field {
-                base: Box::new(self.resolve_expr(base)),
-                name: name.clone(),
-            },
+            // `text.parser.WIDTH` is a path, not a field access.
+            ast::ExprKind::Field { base, name } => {
+                match self.module_qualified(base, Some((name, &[][..]))) {
+                    Some(path) => {
+                        let (res, generics) = self.resolve_path(&path);
+                        let res = self.reject_module_as_value(res, &path);
+                        hir::ExprKind::Path { res, generics }
+                    }
+                    None => hir::ExprKind::Field {
+                        base: Box::new(self.resolve_expr(base)),
+                        name: name.clone(),
+                    },
+                }
+            }
             ast::ExprKind::Index { base, index } => hir::ExprKind::Index {
                 base: Box::new(self.resolve_expr(base)),
                 index: Box::new(self.resolve_expr(index)),
@@ -1890,6 +2162,89 @@ impl Resolver {
                 span: arg.span,
             })
             .collect()
+    }
+
+    /// A dotted expression whose leftmost name is a module, folded back into
+    /// the path it was written as.
+    ///
+    /// **Why this is here at all.** §4.4 gives `use text.parser` as one of the
+    /// two import forms and says the module is *"referred to afterwards by its
+    /// path"* — `text.parser.lex(source)`. The parser cannot build that path:
+    /// `a.b` and `a.b(c)` are a field access and a method call until somebody
+    /// knows whether `a` is a module, and `parse_postfix` says so in as many
+    /// words (*"resolution tells them apart, because only it knows whether
+    /// `docs` is a module"*). This is that phase keeping that promise. Without
+    /// it the whole-module form of `use` binds a name nothing can use, which
+    /// is a thing to notice the moment `use` starts loading files.
+    ///
+    /// **A rib wins.** A local named `text` shadows the module `text`, so the
+    /// fold is declined and `text.parser` is an ordinary field access on an
+    /// ordinary value. That is the scoping rule this pass already follows for
+    /// a bare name, applied to the first segment of a dotted one, and it means
+    /// no program changes meaning because a module acquired a popular name.
+    ///
+    /// **Nothing is reported from here.** The lookup is a probe: when it says
+    /// no, the caller resolves the expression the way it always did, and the
+    /// diagnostic — if there is one — comes from there with the right wording.
+    ///
+    /// `tail` is the segment the caller peeled off, with any generic arguments
+    /// written on it; it is appended, so `text.parser.lex` arrives whole.
+    fn module_qualified(
+        &self,
+        base: &ast::Expr,
+        tail: Option<(&ast::Ident, &[ast::Type])>,
+    ) -> Option<ast::Path> {
+        let mut path = Self::flatten_dotted(base)?;
+        // A bare `text` is not a path with a qualifier on it; it is a module
+        // used as a value, and `reject_module_as_value` has the message.
+        self.module_named(&path.segments.first()?.name.name)?;
+        if let Some((name, generics)) = tail {
+            let span = name.span;
+            path.segments.push(ast::PathSegment {
+                name: name.clone(),
+                generics: generics.to_vec(),
+                span,
+            });
+            path.span = path.span.merge(span);
+        }
+        (path.segments.len() > 1).then_some(path)
+    }
+
+    /// `a.b.c` as a path, when every link in the chain is a plain name.
+    fn flatten_dotted(expr: &ast::Expr) -> Option<ast::Path> {
+        match &expr.kind {
+            ast::ExprKind::Path(path) => Some(path.clone()),
+            ast::ExprKind::Field { base, name } => {
+                let mut path = Self::flatten_dotted(base)?;
+                let span = name.span;
+                path.segments.push(ast::PathSegment {
+                    name: name.clone(),
+                    generics: Vec::new(),
+                    span,
+                });
+                path.span = path.span.merge(span);
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a bare name is a module here, asked without reporting anything.
+    ///
+    /// The order is [`Self::resolve_name`]'s, minus the parts that cannot
+    /// produce a module: ribs first — and a rib *hit* is a refusal, because a
+    /// local shadows a module — then this module, the prelude, and the crate
+    /// root's children.
+    fn module_named(&self, name: &str) -> Option<DefId> {
+        if self.ribs.lookup(name).is_some() {
+            return None;
+        }
+        for module in [self.current_module, self.prelude] {
+            if let Some(def) = self.scopes.get(&module).and_then(|s| s.names.get(name)) {
+                return (self.defs.get(*def).kind == DefKind::Module).then_some(*def);
+            }
+        }
+        self.scopes.get(&self.root).and_then(|s| s.children.get(name)).copied()
     }
 
     fn resolve_self_value(&mut self, span: Span) -> Res {

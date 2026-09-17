@@ -2,25 +2,25 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![doc, keep]))"
 ---
-Module `main` #332 @0..38
-  Record `Doc` #333 @0..3
-  Fn `keep` #334 @15..38
+Module `main` #335 @0..38
+  Record `Doc` #336 @0..3
+  Fn `keep` #337 @15..38
     generics
-      TypeParam `P` #335 @20..21
+      TypeParam `P` #338 @20..21
         bounds
           ClosureBound @4..14
             params
               Borrowed @4..9
-                Path -> `Doc` #333 @4..7
+                Path -> `Doc` #336 @4..7
             ret: Path -> `Bool` #14 @10..14
     params
-      Param `p` #336 @22..25
-        type: Path -> `P` #335 @22..23
+      Param `p` #339 @22..25
+        type: Path -> `P` #338 @22..23
     ret: Closure @26..34
       params
-        Path -> `Doc` #333 @26..29
+        Path -> `Doc` #336 @26..29
       ret: Path -> `Bool` #14 @30..34
     body: Block @35..38
-      tail: Path -> `p` #336 @35..36
+      tail: Path -> `p` #339 @35..36
 --- diagnostics ---
 (none)

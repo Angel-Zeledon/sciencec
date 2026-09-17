@@ -1,5 +1,8 @@
 error[SC0202]: there is no module `text` in the crate root
- --> tests/ui/resolve/unresolved_import.science:6:5
-  |
-6 | use text.parser
-  |     ^^^^ no such module
+  --> tests/ui/resolve/unresolved_import.science:11:5
+   |
+11 | use text.parser
+   |     ^^^^ no such module
+   |
+   = note: a module is a file (§4.4): `text` would be `text.science` or `text/mod.science`, relative to the crate root — the directory the entry file is in
+   = note: the crate root has one module, `unresolved_import`

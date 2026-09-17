@@ -845,6 +845,9 @@ pub fn report_crate(files: Vec<(&str, Module)>) -> String {
             file: FileId(index as u32),
             path: path.to_string(),
             ast,
+            // The first file is the entry, which is what `sciencec` does with
+            // the file named on the command line (`script-mode.md` §4.2).
+            entry: index == 0,
         })
         .collect();
     let (krate, diagnostics) = science_resolve::resolve_crate(&sources);

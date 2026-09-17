@@ -434,11 +434,13 @@ fn an_unknown_field_on_a_qualified_record_keeps_the_qualification() {
         science_resolve::SourceModule {
             file: science_diagnostics::FileId(0),
             path: "main.science".into(),
+            entry: true,
             ast: module(vec![f]),
         },
         science_resolve::SourceModule {
             file: science_diagnostics::FileId(1),
             path: "types.science".into(),
+            entry: false,
             ast: types,
         },
     ];
@@ -495,11 +497,13 @@ fn use_brings_a_name_into_the_importing_module() {
         science_resolve::SourceModule {
             file: science_diagnostics::FileId(0),
             path: "main.science".into(),
+            entry: true,
             ast: main,
         },
         science_resolve::SourceModule {
             file: science_diagnostics::FileId(1),
             path: "text/parser.science".into(),
+            entry: false,
             ast: parser,
         },
     ];
@@ -517,11 +521,13 @@ fn use_of_a_name_that_does_not_exist_is_reported() {
         science_resolve::SourceModule {
             file: science_diagnostics::FileId(0),
             path: "main.science".into(),
+            entry: true,
             ast: main,
         },
         science_resolve::SourceModule {
             file: science_diagnostics::FileId(1),
             path: "text/parser.science".into(),
+            entry: false,
             ast: parser,
         },
     ];
@@ -536,10 +542,244 @@ fn use_of_a_module_that_does_not_exist_is_reported() {
     let sources = [science_resolve::SourceModule {
         file: science_diagnostics::FileId(0),
         path: "main.science".into(),
+        entry: true,
         ast: main,
     }];
     let (_, diagnostics) = science_resolve::resolve_crate(&sources);
     assert_eq!(codes(&diagnostics), ["SC0202"]);
+}
+
+// --- crates of more than one file ----------------------------------------
+
+/// Parses a real file, the way the driver does.
+fn parse(source: &str) -> science_parser::ast::Module {
+    let file = science_diagnostics::FileId(0);
+    let (tokens, _) = science_lexer::lex(file, source);
+    let (module, diagnostics) = science_parser::parse_module(&tokens, file);
+    assert!(!diagnostics.has_errors(), "the fixture must parse: {:?}", codes(&diagnostics));
+    module
+}
+
+/// **The premise `SC0213` rests on**, asserted against the parser rather than
+/// assumed.
+///
+/// `resolve::script_body` recognises a desugared script by the one trace the
+/// desugaring leaves: `parse_module`'s cost 1 is that generated nodes have no
+/// source text, so the `main` it invents carries a zero-width name span where a
+/// written one covers four bytes. That is a property of another crate, so this
+/// test lives on the seam: if the parser ever gives the generated name a real
+/// span, `SC0213` silently stops firing, and this is what breaks instead.
+#[test]
+fn the_marker_the_parser_leaves_on_a_script_body() {
+    fn main_name_span(source: &str) -> science_diagnostics::Span {
+        let module = parse(source);
+        module
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                science_parser::ast::ItemKind::Fn(decl) if decl.name.name == "main" => {
+                    Some(decl.name.span)
+                }
+                _ => None,
+            })
+            .expect("a `main`")
+    }
+
+    let generated = main_name_span("print(1)\n");
+    assert_eq!(generated.start, generated.end, "a generated `main` has no source text");
+
+    let written = main_name_span("def main():\n    print(1)\n");
+    assert_eq!(written.end - written.start, 4, "a written `main` spans the word");
+}
+
+fn sources(files: &[(&str, &str)]) -> Vec<science_resolve::SourceModule> {
+    files
+        .iter()
+        .enumerate()
+        .map(|(index, (path, source))| science_resolve::SourceModule {
+            file: science_diagnostics::FileId(index as u32),
+            path: path.to_string(),
+            ast: parse(source),
+            entry: index == 0,
+        })
+        .collect()
+}
+
+/// `script-mode.md` §4.3, and the exemption that is the whole of its point.
+///
+/// The *same* file, twice: as the entry it is a script and its statements run;
+/// reached by a `use` it is a module and they never would, which is `SC0213`.
+#[test]
+fn statements_are_an_error_in_a_module_and_not_in_the_entry() {
+    let clean = "public def frame_for(n: Int) -> Int:\n    n + 1\n\nprint(1)\n";
+
+    let alone = sources(&[("clean.science", clean)]);
+    let (_, diagnostics) = science_resolve::resolve_crate(&alone);
+    assert!(diagnostics.is_empty(), "the entry's statements run: {:?}", codes(&diagnostics));
+
+    let imported =
+        sources(&[("plots.science", "use clean (frame_for)\n"), ("clean.science", clean)]);
+    let (_, diagnostics) = science_resolve::resolve_crate(&imported);
+    assert_eq!(codes(&diagnostics), ["SC0213"]);
+}
+
+/// §4.3's second sentence: *"Statements in a module that is simply not
+/// compiled are not anybody's problem."*
+///
+/// A file in the slice that no `use` names is the nearest thing this pass has
+/// to "not compiled", and it is not reported. The check is about being
+/// *reached*, not about being present.
+#[test]
+fn statements_in_a_module_nothing_imports_are_nobody_s_problem() {
+    let files =
+        sources(&[("main.science", "def main():\n    print(1)\n"), ("other.science", "print(2)\n")]);
+    let (_, diagnostics) = science_resolve::resolve_crate(&files);
+    assert!(diagnostics.is_empty(), "{:?}", codes(&diagnostics));
+}
+
+/// A `use` whose path leaves the crate reports once, not once per name.
+///
+/// Three mentions of two names the import never bound — a type, a call, and a
+/// qualified path through the module itself — and one diagnostic.
+#[test]
+fn a_failed_import_does_not_report_the_names_it_promised() {
+    let files = sources(&[(
+        "main.science",
+        "use ghost.tools (Widget, make)\n\
+         \n\
+         def build() -> Widget:\n    make(1)\n\
+         \n\
+         def again() -> Int:\n    ghost.tools.make(2)\n",
+    )]);
+    let (_, diagnostics) = science_resolve::resolve_crate(&files);
+    assert_eq!(codes(&diagnostics), ["SC0202"]);
+    let reported = diagnostics.iter().next().expect("one diagnostic");
+    assert_eq!(reported.message, "there is no module `ghost` in the crate root");
+    // The notes are the part worth having: which files, and what is there.
+    assert!(
+        reported.notes.iter().any(|note| note.contains("`ghost.science` or `ghost/mod.science`")),
+        "{:?}",
+        reported.notes
+    );
+    assert!(
+        reported.notes.iter().any(|note| note.contains("has one module, `main`")),
+        "{:?}",
+        reported.notes
+    );
+}
+
+/// `use text.parser`, then `text.parser.lex(source)` — §4.4's whole-module
+/// import form, which is inert unless the path works in an expression.
+#[test]
+fn a_module_imported_whole_is_reachable_through_its_path() {
+    let files = sources(&[
+        ("main.science", "use text.parser\n\ndef f() -> Int:\n    text.parser.lex(1)\n"),
+        ("text/parser.science", "public def lex(n: Int) -> Int:\n    n\n"),
+    ]);
+    let (_, diagnostics) = science_resolve::resolve_crate(&files);
+    assert!(diagnostics.is_empty(), "{:?}", codes(&diagnostics));
+}
+
+/// A local shadows a module, so `payload.parser` is a field and not a path.
+///
+/// The fold in `module_qualified` is declined when a rib has the name, which
+/// is the ordinary scoping rule applied to the first segment. Without it, a
+/// module could change the meaning of a variable somebody named after it.
+#[test]
+fn a_local_named_like_a_module_is_still_a_local() {
+    let files = sources(&[
+        (
+            "main.science",
+            "use text.parser\n\ntype Wrapper:\n    parser: Int\n\n\
+             def f(text: Wrapper) -> Int:\n    text.parser\n",
+        ),
+        ("text/parser.science", "public def lex(n: Int) -> Int:\n    n\n"),
+    ]);
+    let (_, diagnostics) = science_resolve::resolve_crate(&files);
+    assert!(diagnostics.is_empty(), "{:?}", codes(&diagnostics));
+}
+
+/// `collect_crate` asks for every prefix of every `use` path, once, and puts
+/// the entry first.
+///
+/// The `open` here is a fake directory, which is the point of the callback:
+/// the walk is testable without touching a disk, and the two candidate
+/// spellings — `text/parser.science` and `text/parser/mod.science` — are tried
+/// in that order.
+#[test]
+fn a_use_pulls_in_every_prefix_of_its_path_and_asks_once() {
+    let present: &[(&str, &str)] = &[
+        ("compiler/mod.science", "use text.parser\n"),
+        ("compiler/frontend/lexer.science", ""),
+        ("text/parser/mod.science", ""),
+    ];
+    let entry = science_resolve::SourceModule {
+        file: science_diagnostics::FileId(0),
+        path: "main.science".into(),
+        ast: parse("use compiler.frontend.lexer (Lexer)\nuse compiler\n"),
+        entry: true,
+    };
+
+    let mut asked: Vec<String> = Vec::new();
+    let mut next = 1u32;
+    let crate_ = science_resolve::modules::collect_crate(entry, |candidate| {
+        asked.push(candidate.to_string());
+        let (_, source) = present.iter().find(|(path, _)| *path == candidate)?;
+        let file = science_diagnostics::FileId(next);
+        next += 1;
+        Some((file, parse(source)))
+    });
+
+    assert_eq!(
+        asked,
+        [
+            // `compiler`: the file first, then the directory, which is where
+            // it is.
+            "compiler.science",
+            "compiler/mod.science",
+            // `compiler.frontend` is neither, and stays an implicit module.
+            "compiler/frontend.science",
+            "compiler/frontend/mod.science",
+            "compiler/frontend/lexer.science",
+            // `use compiler` on the second line asks nothing: the chain is
+            // already known. `text.parser` comes from inside `compiler`.
+            "text.science",
+            "text/mod.science",
+            "text/parser.science",
+            "text/parser/mod.science",
+        ]
+    );
+    let loaded: Vec<&str> = crate_.iter().map(|source| source.path.as_str()).collect();
+    assert_eq!(
+        loaded,
+        [
+            "main.science",
+            "compiler/mod.science",
+            "compiler/frontend/lexer.science",
+            "text/parser/mod.science"
+        ],
+        "the entry comes first, and every module is loaded once"
+    );
+    assert!(crate_[0].entry, "the entry is the entry");
+    assert!(crate_[1..].iter().all(|source| !source.entry), "nothing else is");
+}
+
+/// A cycle terminates: `a` uses `b`, `b` uses `a`.
+#[test]
+fn two_modules_that_import_each_other_are_loaded_once_each() {
+    let entry = science_resolve::SourceModule {
+        file: science_diagnostics::FileId(0),
+        path: "a.science".into(),
+        ast: parse("use b\n"),
+        entry: true,
+    };
+    let mut asked = 0;
+    let sources = science_resolve::modules::collect_crate(entry, |candidate| {
+        asked += 1;
+        (candidate == "b.science").then(|| (science_diagnostics::FileId(1), parse("use a\n")))
+    });
+    assert_eq!(asked, 1, "`a` is the entry and is never looked for");
+    assert_eq!(sources.len(), 2);
 }
 
 // --- the orphan rule (§5.4) ---------------------------------------------
@@ -565,16 +805,19 @@ fn orphan_sources(impl_in_type_module: bool) -> Vec<science_resolve::SourceModul
         science_resolve::SourceModule {
             file: science_diagnostics::FileId(0),
             path: "main.science".into(),
+            entry: true,
             ast: module(main_items),
         },
         science_resolve::SourceModule {
             file: science_diagnostics::FileId(1),
             path: "shapes.science".into(),
+            entry: false,
             ast: traits,
         },
         science_resolve::SourceModule {
             file: science_diagnostics::FileId(2),
             path: "types.science".into(),
+            entry: false,
             ast: module(types_items),
         },
     ]

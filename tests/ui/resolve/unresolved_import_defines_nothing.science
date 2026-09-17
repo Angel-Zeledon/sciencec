@@ -1,0 +1,17 @@
+# UI test: a `use` whose path does not resolve poisons the names it promised,
+# so the file reports one error and not four (SC0202, and no SC0200).
+#
+# `ghost` is not a module in this crate, so `Widget` and `make` are never
+# bound. Every mention of them below is the *same* mistake seen again, and a
+# compiler that named each one would bury the line that has to change.
+#
+# `ghost.make(2)` on the last line is the third shape of it: a qualified path
+# through the module that was not found.
+
+use ghost.tools (Widget, make)
+
+def build() -> Widget:
+    make(1)
+
+def again() -> Int:
+    ghost.tools.make(2)
