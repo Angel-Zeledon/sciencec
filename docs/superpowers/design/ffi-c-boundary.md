@@ -393,6 +393,51 @@ def covers(m: borrowed MatrixView, columns: Int) -> ((), BlasError?):
     ((), null)
 ```
 
+> **AMENDMENT: this example does not type-check, and what it exposes is a hole
+> in the design rather than a typo in the listing.**
+>
+> The type checker reports `expected MutableSpan of F64, found Span of F64` at
+> `c: c.data`. Both ends of the call are right: the `extern` declares `a` and
+> `b` as `ffi.Span` because they are read and `c` as `ffi.MutableSpan` because
+> it is written, and the wrapper declares `a` and `b` `borrowed` and `c`
+> `mutable borrowed`. The distinction is drawn correctly twice.
+>
+> **What fails is in between: `MatrixView` has one `data` field with one type,
+> and the example uses the record in both roles.** `data: ffi.Span of F64`
+> serves `a` and `b` and cannot serve `c`.
+>
+> No coercion may close this. `Span` into `MutableSpan` is the unsound
+> direction — it hands C a writable pointer to a shared borrow — so the checker
+> is right to refuse it and would be wrong to be talked out of it.
+>
+> Three ways out, and they are not equally good:
+>
+> 1. **Declare `data: ffi.MutableSpan of F64`** and weaken at the two reading
+>    call sites. Weakening is the sound direction. But it moves the failure
+>    rather than fixing it: a `MatrixView` over data you hold by shared borrow
+>    becomes unconstructible, which defeats `a: borrowed MatrixView`.
+> 2. **Two record types**, a reading one and a writing one. Zero new machinery,
+>    and it is what C does with `const`. It is also duplication of every field
+>    and every method, in the one place a scientific program will have many such
+>    views.
+> 3. **The span type follows the borrow of the record.** `a.data` off a
+>    `borrowed MatrixView` is an `ffi.Span`; `c.data` off a
+>    `mutable borrowed MatrixView` is an `ffi.MutableSpan`. One declaration, no
+>    duplication, and the projection is exactly what a reborrow is.
+>
+> **Three is the intended answer and this note does not have the authority to
+> ratify it**, because it is a statement about what a field projection off a
+> borrow *means*, which is `region-inference.md`'s. It is recorded here because
+> this is the **first concrete case in the corpus where region inference has to
+> do something that note has not specified**, and it arrived from the FFI
+> boundary rather than from a borrow-checking example, which is where anyone
+> would have looked for it.
+>
+> Until it is settled the listing below is aspirational at one line, and
+> `examples/20_extern.science` — which copies it — is one of the two remaining
+> diagnostics in the corpus. Said here rather than quietly patched, because
+> patching it to option 1 or 2 would hide the question.
+
 Two things in that call site deserve their reasons.
 
 **Named arguments at extern call sites are permitted, and in any order.**

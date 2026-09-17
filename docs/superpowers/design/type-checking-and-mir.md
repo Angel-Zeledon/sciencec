@@ -358,6 +358,31 @@ concrete `err` against an `Error?` signature, which is a coercion. The
 distinction the note wanted is real but it is not "no implicit conversions": it
 is **no implicit change of *value***. Boxing preserves the value; `From` did not.
 
+> **AMENDMENT 4: there is now a third relation, and the count above survives
+> only because of the sentence right before it.** `borrowed C` coerces to
+> `borrowed any I` for any interface `I`, not just `Error`.
+>
+> §5 of `assign.rs` refused exactly this, on the grounds that it would be a
+> second implicit coercion. The refusal put two operations under one name.
+> `C` into `Box of any I` **allocates** — the value moves to the heap, and that
+> is what "no implicit change of *value*" forbids, which is why Decision 14 is
+> boxing and is counted. `borrowed C` into `borrowed any I` allocates nothing:
+> it pairs a pointer that already exists with a vtable known at the site. The
+> value does not move and does not change; only the way it is pointed at does.
+>
+> So the thing this decision counts is **conversions that change a value**, and
+> by that measure there are still two. **State what is being counted**, because
+> a reader counting `Coercion` variants in the implementation now finds five and
+> concludes the note is stale. The owning forms — `C` into `any I` and `C` into
+> `Box of any I` — stay written out, and that is the visible half of the trade:
+> the two spellings no longer look alike in the source, which is the point,
+> because one of them allocates.
+>
+> **Cost:** the new relation carries the same undischarged obligation Decision
+> 14's does — *does `C` implement `I`* — and it is the wider of the two, because
+> Decision 14's target is one known interface and this one's is every interface
+> a program declares. Decision 11's lookup discharges both.
+
 ### 6.3 `Iterate` must model a `next()` that can fail
 
 `python-from-science.md` §2 needs this and says so: a sizeable fraction of
@@ -638,7 +663,9 @@ context), `SC0522` (generic function across the C boundary).
 - **An array-level IR.** §3.4 keeps it possible and F1 builds it.
 - **Higher-kinded types, associated constants, specialisation, negative
   reasoning.** None has a caller.
-- **Subtyping**, apart from the two implicit coercions of Decisions 6 and 14.
+- **Subtyping**, apart from the implicit coercions of Decisions 6 and 14 and
+  the unsizing of §6.2's amendment — which *is* a subtyping relation, narrow
+  and behind a borrow, and saying otherwise would be a word game.
 - **Global type inference.** §2, and it stays rejected.
 - **Effect checking.** `effects.md` owns it; this note only notes that §9.3's
   `python:` region is an effect boundary in everything but name, and the two
