@@ -483,32 +483,57 @@ fn no_fast_math_flag_reaches_any_of_these_programs() {
 /// starts working and is still listed here fails loudly rather than leaving
 /// the boundary undocumented. Each row is the smallest program that still
 /// cannot be built, and the fragment is what the refusal has to name.
+///
+/// **It has gone stale once already and that is the design working.** Four
+/// rows left this list when a `choice`, a second function and a record were
+/// emitted — a `match` over a two-variant payload-free `choice`, a program with
+/// a second function, a record literal, and a drop that has to run nothing —
+/// and each of them failed here first, loudly, with *"the boundary has moved
+/// and this list has not"*. `tests/past_stage_three.rs` is where they went.
 #[test]
 fn the_boundary_is_where_it_says_it_is() {
     let cases: &[(&str, &str, &str)] = &[
         // §10's own stage 3 program. The hole is above this crate:
         // `thir::ExprKind::For` has no field for a callee.
         ("for", "let mutable t be 0\nfor i in 0..3:\n    t be t + i\n", "`for` loop"),
-        // Stage 3 asks for a `match` over a payload-free `choice`. The
-        // `Ty -> CgTy` lowering has no arm for a `choice`.
-        (
-            "match",
-            "choice C:\n    A\n    B\n\nlet c be A\nmatch c:\n    A: print(\"a\")\n    \
-             B: print(\"b\")\n",
-            "type `C`",
-        ),
-        // A second function needs `Operand::Param`, which the interface above
-        // the line does not have.
-        ("second-fn", "def helper() -> Int:\n    return 1\n\nprint(\"hi\")\n", "helper"),
         // Refused rather than emitted: nothing above emits the zero check that
         // `IntOp`'s own note says the caller has already made.
         ("div", "let a be 6\nlet b be a / 2\nprint(\"x\")\n", "divide-by-zero"),
         ("shift", "let a be 6\nlet b be a << 2\nprint(\"x\")\n", "shift"),
-        // A record needs field projection, which the instruction set lacks.
-        ("record", "type P:\n    x: Int\n\nlet p be P(x: 1)\nprint(\"x\")\n", "type `P`"),
-        // A `String` that outlives its statement is dropped by MIR, and drop
-        // glue is Decision 12 and stage 4.
-        ("drop", "let s be \"hi\"\nprint(\"x\")\n", "drop glue"),
+        // A value that owns something Decision 12's glue would have to release.
+        // A drop is lowered now in two of its three cases — a `br` when the
+        // value owns nothing, `science_string_free` when it is a `String` — and
+        // this is the third: an owning type that is not a bare `String` needs
+        // the emitted glue function, and this backend emits none.
+        (
+            "drop",
+            "choice C:\n    A\n    B(String)\n\nlet c be A\nprint(\"x\")\n",
+            "owns something",
+        ),
+        // No `Ty -> CgTy` arm, which is where a `choice` was before this pass.
+        ("tuple", "let t be (1, 2)\nprint(\"x\")\n", "a tuple"),
+        // One `trunc`/`sext`/`zext` for integers and four unmade decisions for
+        // floats; `Rvalue::Cast` is refused whole rather than half-lowered.
+        ("cast", "let a be 1i32\nlet b be a as I64\nprint(\"x\")\n", "cast"),
+        // A method's receiver is a `Self` this crate cannot resolve to a
+        // concrete type. **The refusal is at the signature and not at the call
+        // site**, which is a finding: `science-mir` *does* resolve a method
+        // call to a `Callee::Def` when it can — `Unresolved::Method` is the
+        // case it cannot — so the body is reachable and is classified before
+        // anything looks at the call.
+        (
+            "method",
+            "type P:\n    x: Int\n\nP has:\n    def get(self) -> Int:\n        self.x\n\n\
+             let p be P(x: 1)\nlet v be p.get()\nprint(\"x\")\n",
+            "the method `get`",
+        ),
+        // Nothing monomorphises, so a generic function's parameter reaches here
+        // as a `TyKind::Param` with no layout.
+        (
+            "generic",
+            "def identity of T(value: T) -> T:\n    value\n\nlet v be identity(1)\nprint(\"x\")\n",
+            "monomorphis",
+        ),
     ];
     for (name, source, fragment) in cases {
         let dir = scratch("stage23", name);
@@ -540,7 +565,7 @@ fn the_boundary_is_where_it_says_it_is() {
 fn nothing_past_the_boundary_produces_an_executable() {
     for source in [
         "let mutable t be 0\nfor i in 0..3:\n    t be t + i\n",
-        "def helper() -> Int:\n    return 1\n\nprint(\"hi\")\n",
+        "let t be (1, 2)\nprint(\"x\")\n",
         "let a be 6\nlet b be a / 2\nprint(\"x\")\n",
     ] {
         let dir = scratch("stage23", "refused");

@@ -107,6 +107,35 @@ pub enum Operand {
     /// A null pointer. The `null` half of a niched `T?`, and the `drop_fn` of a
     /// type that needs none.
     Null,
+    /// One of the function's own parameters, by its index in
+    /// [`AbiSignature::params`].
+    ///
+    /// **The decision.** A body names an argument by the *source* index, not by
+    /// the position LLVM assigns it. The two differ whenever the return is
+    /// [`ReturnClass::Indirect`] — the hidden `sret` pointer shifts everything
+    /// by one — or whenever a parameter is [`crate::abi::ArgClass::Ignore`] and
+    /// takes no position at all.
+    ///
+    /// **The reason.** `science-codegen-llvm`'s `emit` §2 listed this as one of
+    /// the five things the interface could not say, and its `BodyState::params`
+    /// was populated and `#[allow(dead_code)]` for exactly one reason: there
+    /// was no operand to read it with. A backend without this cannot emit a
+    /// function that takes an argument, which is every function in the language
+    /// except a script's `main`. Making it an `Operand` rather than an `Inst`
+    /// is what keeps Decision 8 intact: the entry block stores the parameter
+    /// into the local's `alloca` with the ordinary `Inst::Store`, and every
+    /// read afterwards is the ordinary `Inst::Load`.
+    ///
+    /// **The cost.** A backend must map source index to ABI position itself,
+    /// and the mapping is the one described above rather than the identity.
+    /// The alternative — having the caller pass the ABI position — puts
+    /// knowledge of the `sret` shift above the line in every front end, which
+    /// is the duplication Decision 42 exists to prevent.
+    ///
+    /// An [`crate::abi::ArgClass::IndirectByPointer`] parameter reads back as
+    /// the **pointer**, not as the aggregate: Decision 22 passes it *"by
+    /// pointer to a caller-owned slot"* and the pointer is what the frame has.
+    Param(u32),
 }
 
 /// The arithmetic on integers a backend must emit.

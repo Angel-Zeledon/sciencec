@@ -1,4 +1,4 @@
-//! The 47 entry points, classified — and the two properties a hand-maintained
+//! The 54 entry points, classified — and the two properties a hand-maintained
 //! list cannot have.
 //!
 //! **What this file is for.** §9.2's finding was a list that fell out of step
@@ -195,7 +195,7 @@ fn nothing_outside_the_table_is_callable() {
     // joined are the two `codegen-and-linking.md` §13 asks for by name, and
     // they are not a convenience for codegen — without them §2.3's fourth row
     // has nothing to lower to at all.
-    assert_eq!(RUNTIME.len(), 47);
+    assert_eq!(RUNTIME.len(), 54);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

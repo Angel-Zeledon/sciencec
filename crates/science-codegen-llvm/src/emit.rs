@@ -44,13 +44,18 @@
 //! `LLVMStructCreateNamed` is declared and unused for that reason; the fix is a
 //! field on `Layout`, which is above the line.
 //!
-//! # 2. The five things the interface cannot say
+//! # 2. The things the interface cannot say
 //!
 //! `science_codegen::backend::Operand` has `Value`, `ConstInt`, `ConstFloat`,
-//! `GlobalAddr` and `Null`, and `Inst` has `Alloca`, `Load`, `Store`, two
-//! binaries, a `Cmp` and a `Call`. Stages 1 to 3 need five things that
-//! vocabulary cannot express, and each one is a variant of [`ExtInst`] rather
-//! than a peek. The first three are stage 1's:
+//! `GlobalAddr`, `Null` and now `Param`, and `Inst` has `Alloca`, `Load`,
+//! `Store`, two binaries, a `Cmp` and a `Call`. Stages 1 to 3 needed five
+//! things that vocabulary could not express, and a `choice`, a second function
+//! and a record need four more; each one is a variant of [`ExtInst`] rather
+//! than a peek. **One of the nine has since moved above the line**:
+//! `Operand::Param` is `science_codegen::backend`'s now, because a body naming
+//! its own argument is not an LLVM fact and the operand's note says so.
+//!
+//! The first three are stage 1's:
 //!
 //! 1. **The address of a local** ([`ExtInst::LocalAddr`]). `science_print` takes
 //!    `*const ScienceString`, and the string it prints lives in the `alloca`
@@ -79,11 +84,30 @@
 //!    that was producing a **wrong answer**, and the entry below is the version
 //!    that was wrong.
 //!
+//! A `choice`, a second function and a record add four more:
+//!
+//! 6. **A local bound to an indirect parameter** ([`ExtInst::ParamSlot`]).
+//!    [`ExtInst::ReturnSlot`] on the argument side: Decision 22 passes an
+//!    aggregate argument by pointer to a caller-owned slot, so the callee's
+//!    local for it *is* that slot and an `alloca` is a private copy the
+//!    caller never sees written.
+//! 7. **The discriminant of a tagged `choice`** ([`ExtInst::LoadTag`],
+//!    [`ExtInst::StoreTag`]). `Inst::Load` loads a local's whole type, and for
+//!    a tagged layout [`LlvmBackend::llvm_type`] makes that an array of
+//!    `align`-sized integers — a value no `switch` can branch on.
+//!    [`ExtInst::LoadNiche`] is the same shape for Decision 19's other
+//!    representation, and the two refuse each other's rather than guessing.
+//! 8. **A field's address** ([`ExtInst::FieldAddr`]), which is §2.3's `.field`
+//!    row and the last of the three `Inst` gaps the closing sentence named.
+//! 9. **A load and a store through a computed address** ([`ExtInst::LoadAt`],
+//!    [`ExtInst::StoreAt`]). `Inst::Load` and `Inst::Store` name a `LocalId`,
+//!    so neither can reach a field once its address has been computed.
+//!
 //! Every one is a local extension and every one is meant to be deleted: when
-//! `Inst` grows an `AddrOf`, `Operand` grows a `Param`, and either grows a field
-//! projection, [`ExtInst`] collapses to `Inst` and this section goes with it.
-//! Both entry points run the same emitter, so the trait's `define_function` and
-//! the extension's `define_function_ext` cannot drift.
+//! `Inst` grows an `AddrOf`, a field projection and a load and store through a
+//! pointer, [`ExtInst`] collapses to `Inst` and this section goes with it. Both
+//! entry points run the same emitter, so the trait's `define_function` and the
+//! extension's `define_function_ext` cannot drift.
 //!
 //! **The gap that was named and not repaired, and what it cost.**
 //! `Operand::ConstInt` carries an `i128` and no type, so a constant's width has
@@ -266,6 +290,123 @@ pub enum ExtInst {
         /// asked of LLVM rather than carried, for
         /// [`LlvmBackend::value_is_float`]'s reason: the value already knows.
         operand: Operand,
+    },
+    /// Bind a local to an [`ArgClass::IndirectByPointer`] parameter's pointer
+    /// instead of giving it an `alloca`.
+    ///
+    /// **The sixth hole, and it is [`ExtInst::ReturnSlot`] on the argument
+    /// side.** Decision 22 passes every aggregate argument *"by pointer to a
+    /// caller-owned slot"*, so the callee's local for that parameter **is** the
+    /// caller's slot, reached through the pointer. Decision 8's *"every MIR
+    /// local becomes an `alloca`"* would make a private copy of it, and the
+    /// copy is not merely wasteful: the callee's writes would land in the copy
+    /// and the pointer's `nocapture`-but-not-`readonly` contract says they land
+    /// in the caller's slot.
+    ///
+    /// [`Operand::Param`] cannot do this job. That operand reads the parameter
+    /// as a **value** — for an indirect parameter, the pointer — and storing a
+    /// pointer into an `alloca` of the aggregate's type is a width mismatch the
+    /// store check rejects. What is needed is a binding, and a binding is not an
+    /// operand.
+    ///
+    /// It collapses the way the others do: when `Inst` can bind a local to a
+    /// parameter, this variant goes with [`ExtInst::ReturnSlot`].
+    ParamSlot {
+        /// The local the pointer stands for.
+        local: LocalId,
+        /// The parameter's index in [`AbiSignature::params`] — the source
+        /// index, which [`Operand::Param`]'s note distinguishes from the ABI
+        /// position.
+        index: u32,
+        /// The pointee's layout, so the slot can be typed for a later `Load`.
+        layout: Layout,
+    },
+    /// Load §3.3's discriminant of a [`Repr::Tagged`] local, and nothing else.
+    ///
+    /// **[`ExtInst::LoadNiche`] for the other of Decision 18's two
+    /// representations.** `Inst::Load` loads a local's whole type, and for a
+    /// tagged `choice` [`LlvmBackend::llvm_type`] makes that an array of
+    /// `align`-sized integers — a value no `switch` can branch on. Decision 18
+    /// puts the discriminant *"at offset 0, always"* and fixes its integer type,
+    /// so the load is a typed load at the local's own address and needs no
+    /// `getelementptr`.
+    ///
+    /// **This refuses a `Repr::Niched` rather than reading the niche.** The two
+    /// are not interchangeable: a niched enum's "discriminant" is a *comparison*
+    /// against the niche values, not a field, and answering a discriminant read
+    /// with the raw pointer would make every `switch` over a niched nullable
+    /// branch on an address.
+    LoadTag {
+        /// Where the discriminant goes.
+        dest: ValueId,
+        /// The tagged local.
+        local: LocalId,
+    },
+    /// Store §3.3's discriminant into a [`Repr::Tagged`] local.
+    ///
+    /// The write half of [`ExtInst::LoadTag`], and the whole of constructing a
+    /// payload-free variant. The payload union is **left undefined**, which
+    /// Decision 18 permits — *"a variant with no payload contributes nothing to
+    /// the union"* — and which is why this is a narrow store rather than a store
+    /// of the whole type: a store of the whole type would need a value for bytes
+    /// the variant does not have.
+    StoreTag {
+        /// The tagged local.
+        local: LocalId,
+        /// The discriminant value, from declaration order starting at zero.
+        discriminant: u64,
+    },
+    /// The address of a byte offset within an aggregate: §2.3's `.field`.
+    ///
+    /// **The seventh hole, and it is the one §2's closing sentence named.**
+    /// That sentence says [`ExtInst`] collapses when `Inst` grows *"an `AddrOf`,
+    /// … a `Param`, and … a field projection"*; `Operand::Param` now exists
+    /// above the line and this is the third.
+    ///
+    /// **The offset is a byte offset and the index is not available.**
+    /// [`crate::sys::LLVMBuildInBoundsGEP2`]'s note is the account: `llvm_type`
+    /// materialises padding, so a Science field index is not an LLVM member
+    /// index, and `science-codegen`'s `FieldPlace::offset` is the number every
+    /// other part of this crate already treats as the authority.
+    FieldAddr {
+        /// Where the pointer goes.
+        dest: ValueId,
+        /// The base address. A pointer, so that projections chain:
+        /// [`ExtInst::LocalAddr`] gives the first and this gives every one
+        /// after it.
+        base: Operand,
+        /// The byte offset, from `science-codegen`'s layout.
+        offset: u64,
+    },
+    /// Load a value of a known layout from a computed address.
+    ///
+    /// `Inst::Load` names a `LocalId` and so can only read a whole local.
+    /// [`ExtInst::FieldAddr`] produces a `ValueId`, and this is what reads
+    /// through one. The alignment is set from the layout rather than left to
+    /// LLVM's idea of the type's, for `Inst::Alloca`'s reason: the descriptor
+    /// handed to `science-rt` carries `science-codegen`'s number.
+    LoadAt {
+        /// Where the value goes.
+        dest: ValueId,
+        /// The address, which must be a pointer.
+        address: Operand,
+        /// What is there.
+        layout: Layout,
+    },
+    /// Store a value of a known layout through a computed address.
+    ///
+    /// The write half of [`ExtInst::LoadAt`], and it carries the same width
+    /// check `Inst::Store` does and for the same reason: opaque pointers removed
+    /// the only thing relating a store's width to its destination's, so a store
+    /// eight bytes wide into a one-byte field verifies, links, and smashes the
+    /// next field.
+    StoreAt {
+        /// The address, which must be a pointer.
+        address: Operand,
+        /// What is there.
+        layout: Layout,
+        /// What to write.
+        value: Operand,
     },
 }
 
@@ -605,6 +746,17 @@ impl LlvmBackend {
                 }
             }
             Operand::Null => unsafe { sys::LLVMConstPointerNull(self.ptr_ty()) },
+            // The *source* index; `emit_body` already applied the `sret` shift
+            // and skipped every `ArgClass::Ignore` when it filled the table, so
+            // a lookup here is exact and a body cannot name a position that
+            // does not exist. `Operand::Param`'s own note is why the two
+            // numberings differ.
+            Operand::Param(index) => *state.params.get(&(*index as usize)).ok_or_else(|| {
+                BackendError::Other(format!(
+                    "the body reads parameter {index}, which its signature does not have — or \
+                     which is `ArgClass::Ignore` and therefore occupies no position"
+                ))
+            })?,
         })
     }
 
@@ -874,11 +1026,142 @@ impl LlvmBackend {
                 };
                 state.values.insert(dest.0, value);
             }
+            ExtInst::ParamSlot { local, index, layout } => {
+                let slot = *state.params.get(&(*index as usize)).ok_or_else(|| {
+                    BackendError::Other(format!(
+                        "local _{} is bound to parameter {index}, which the signature does not \
+                         have",
+                        local.0
+                    ))
+                })?;
+                if !self.value_is_pointer(slot) {
+                    return Err(BackendError::Other(format!(
+                        "local _{} is bound to parameter {index}, which is not a pointer; \
+                         Decision 22 passes an aggregate argument by pointer and this one arrived \
+                         by value",
+                        local.0
+                    )));
+                }
+                let ty = self.llvm_type(layout);
+                state.locals.insert(local.0, (slot, ty, layout.clone()));
+            }
+            ExtInst::LoadTag { dest, local } => {
+                let (slot, _, layout) = state.local_entry(*local)?;
+                let ty = self.tag_ty(&layout).ok_or_else(|| {
+                    BackendError::Other(format!(
+                        "local _{} is read for a discriminant and its representation is not \
+                         Decision 18's tagged one",
+                        local.0
+                    ))
+                })?;
+                let name = cstr(&format!("v{}", dest.0));
+                let value = unsafe { sys::LLVMBuildLoad2(b, ty, slot, name.as_ptr()) };
+                unsafe { sys::LLVMSetAlignment(value, layout.align as c_uint) };
+                state.values.insert(dest.0, value);
+            }
+            ExtInst::StoreTag { local, discriminant } => {
+                let (slot, _, layout) = state.local_entry(*local)?;
+                let ty = self.tag_ty(&layout).ok_or_else(|| {
+                    BackendError::Other(format!(
+                        "local _{} is written with a discriminant and its representation is not \
+                         Decision 18's tagged one",
+                        local.0
+                    ))
+                })?;
+                let value = unsafe { sys::LLVMConstInt(ty, *discriminant, 0) };
+                let store = unsafe { sys::LLVMBuildStore(b, value, slot) };
+                unsafe { sys::LLVMSetAlignment(store, layout.align as c_uint) };
+            }
+            ExtInst::FieldAddr { dest, base, offset } => {
+                let pointer = self.operand(state, base, Some(self.ptr_ty()))?;
+                if !self.value_is_pointer(pointer) {
+                    return Err(BackendError::Other(
+                        "a field address off a base that is not a pointer".to_string(),
+                    ));
+                }
+                let i8_ty = unsafe { sys::LLVMInt8TypeInContext(self.context.raw()) };
+                let mut indices =
+                    [unsafe { sys::LLVMConstInt(self.int_ty(64), *offset, 0) }];
+                let name = cstr(&format!("v{}", dest.0));
+                let value = unsafe {
+                    sys::LLVMBuildInBoundsGEP2(
+                        b,
+                        i8_ty,
+                        pointer,
+                        indices.as_mut_ptr(),
+                        1,
+                        name.as_ptr(),
+                    )
+                };
+                state.values.insert(dest.0, value);
+            }
+            ExtInst::LoadAt { dest, address, layout } => {
+                let pointer = self.operand(state, address, Some(self.ptr_ty()))?;
+                if !self.value_is_pointer(pointer) {
+                    return Err(BackendError::Other(
+                        "a load through an address that is not a pointer".to_string(),
+                    ));
+                }
+                let ty = self.llvm_type(layout);
+                let name = cstr(&format!("v{}", dest.0));
+                let value = unsafe { sys::LLVMBuildLoad2(b, ty, pointer, name.as_ptr()) };
+                unsafe { sys::LLVMSetAlignment(value, layout.align as c_uint) };
+                state.values.insert(dest.0, value);
+            }
+            ExtInst::StoreAt { address, layout, value } => {
+                let pointer = self.operand(state, address, Some(self.ptr_ty()))?;
+                if !self.value_is_pointer(pointer) {
+                    return Err(BackendError::Other(
+                        "a store through an address that is not a pointer".to_string(),
+                    ));
+                }
+                let ty = self.llvm_type(layout);
+                let v = self.operand(state, value, Some(ty))?;
+                let v = self.widen_bool(v, ty);
+                // The same check `Inst::Store` carries, for the same reason and
+                // with more to lose: a field's slot is *inside* another object,
+                // so an over-wide store here does not merely write the wrong
+                // value, it writes over the next field.
+                let value_ty = unsafe { sys::LLVMTypeOf(v) };
+                if value_ty != ty && Some(value_ty) != self.niche_ty(layout) {
+                    return Err(BackendError::Other(format!(
+                        "a field is {} and the value stored into it is {}; opaque pointers make \
+                         the mismatch legal IR, so it is caught here or not at all",
+                        self.describe_type(ty),
+                        self.describe_type(value_ty)
+                    )));
+                }
+                let store = unsafe { sys::LLVMBuildStore(b, v, pointer) };
+                unsafe { sys::LLVMSetAlignment(store, layout.align as c_uint) };
+            }
             ExtInst::Above(Inst::Call { dest, callee, args, ret, sret_slot }) => {
                 self.emit_call(state, dest, callee, args, ret, sret_slot)?;
             }
         }
         Ok(())
+    }
+
+    /// The LLVM integer type of a [`Repr::Tagged`] layout's discriminant.
+    ///
+    /// `None` for every other representation, which is what makes
+    /// [`ExtInst::LoadTag`] and [`ExtInst::StoreTag`] refuse a niched enum
+    /// rather than read its payload as a number.
+    fn tag_ty(&self, layout: &Layout) -> Option<sys::LLVMTypeRef> {
+        match &layout.repr {
+            Repr::Tagged { tag, .. } => Some(self.scalar_ty(Scalar::Int(*tag))),
+            _ => None,
+        }
+    }
+
+    /// Whether a value is a pointer.
+    ///
+    /// Asked of LLVM rather than inferred, for [`LlvmBackend::value_is_float`]'s
+    /// reason. It guards the three instructions that take an address as an
+    /// `Operand`: with opaque pointers a `getelementptr` on an integer is a
+    /// verifier failure and a `load` from one is too, but the message names the
+    /// instruction rather than the lowering that built it, so the check is here.
+    fn value_is_pointer(&self, value: sys::LLVMValueRef) -> bool {
+        self.type_kind_of(unsafe { sys::LLVMTypeOf(value) }) == sys::type_kind::POINTER
     }
 
     /// The type a constant operand should take, read off whichever operand is
@@ -980,13 +1263,14 @@ impl LlvmBackend {
             "float".to_string()
         } else if kind == sys::type_kind::DOUBLE {
             "double".to_string()
+        } else if kind == sys::type_kind::POINTER {
+            "ptr".to_string()
         } else {
-            // Every remaining kind this compiler can build is a pointer, a
-            // struct or an array, and `sys::type_kind` names none of them —
+            // A struct or an array, and `sys::type_kind` names neither —
             // `tests/abi_claims.rs` checks each named constant against what
             // LLVM does with it, so a constant added for a message would be a
             // claim nothing verifies.
-            "a pointer or an aggregate".to_string()
+            "an aggregate".to_string()
         }
     }
 
@@ -1304,16 +1588,21 @@ struct BodyState {
     values: BTreeMap<u32, sys::LLVMValueRef>,
     locals: BTreeMap<u32, (sys::LLVMValueRef, sys::LLVMTypeRef, Layout)>,
     blocks: BTreeMap<u32, sys::LLVMBasicBlockRef>,
-    /// The function's parameters, by source index.
+    /// The function's parameters, by **source** index.
     ///
-    /// **Populated and unreadable, and that is the interface's second gap.**
-    /// `science_codegen::backend::Operand` has no `Param` form, so a body has no
-    /// way to name its own arguments — the same shape of hole as
-    /// [`ExtInst::LocalAddr`], one level up. It does not block stage 1, whose
-    /// only function is `main()`, and it blocks every stage after it. Filled in
-    /// here so that the fix above the line is "add an operand" and not "add an
-    /// operand and then find where the values come from".
-    #[allow(dead_code)]
+    /// **This was populated and unreadable, and the note that said so is worth
+    /// keeping.** `science_codegen::backend::Operand` had no `Param` form, so a
+    /// body had no way to name its own arguments; the table was filled in
+    /// anyway *"so that the fix above the line is 'add an operand' and not 'add
+    /// an operand and then find where the values come from'"*. That is exactly
+    /// what happened: `Operand::Param` is above the line now and this table is
+    /// what it reads.
+    ///
+    /// The key is the source index and not the ABI position, and the shift is
+    /// applied where the table is filled: an `sret` return puts the hidden
+    /// pointer at position 0 and moves everything down one, and an
+    /// `ArgClass::Ignore` parameter takes no position at all. A body that named
+    /// positions would have to know both.
     params: BTreeMap<usize, sys::LLVMValueRef>,
     /// The hidden return slot of an `sret` function.
     ///

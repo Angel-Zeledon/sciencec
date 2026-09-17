@@ -119,12 +119,18 @@
 //!
 //! §1.6 of the note estimates *"roughly 190"* entry points for an F0 code
 //! generator and calls that the full surface. This file declares far fewer,
-//! which is that estimate restricted to §10's stages 0 to 2: there is no
-//! `DIBuilder` (§6 is line tables and stage 1 needs none), no metadata, no
-//! `LLVMBuildGEP2` (opaque pointers mean a global array's address *is* the
-//! global, and no aggregate projection is lowered yet), and no
+//! which is that estimate restricted to §10's stages 0 to 4: there is no
+//! `DIBuilder` (§6 is line tables and stage 1 needs none), no metadata, and no
 //! `LLVMInitializeAArch64*` (cross-compilation is `SC0406`, so the only target
 //! is the host, and the host is x86-64 for both x86 triples).
+//!
+//! **One entry has moved from the second list to the first and the reason is
+//! worth keeping.** This paragraph used to name `LLVMBuildGEP2` among the
+//! absentees, because *"opaque pointers mean a global array's address is the
+//! global, and no aggregate projection is lowered yet"*. The first half is
+//! still true and the second stopped being true the day a record had a field:
+//! [`LLVMBuildInBoundsGEP2`] is declared below and its note says why the call
+//! is a **byte** offset rather than §2.3's field index.
 //!
 //! **Declare only what you call** is the rule, and it is the rule because the
 //! list is a specification: a declaration nobody calls is a claim nobody checks,
@@ -368,6 +374,12 @@ pub mod type_kind {
     /// a type that is not an integer is an assertion failure in a debug LLVM and
     /// undefined in a release one, and this installation is a release one.
     pub const INTEGER: c_uint = 8;
+    /// `ptr`. LLVM 18 has one pointer type and no pointee, so this constant
+    /// answers the only question left about one: *is it a pointer at all.*
+    /// Asked by [`crate::emit`]'s `FieldAddr`, `LoadAt`, `StoreAt` and
+    /// `ParamSlot`, each of which takes an address as an `Operand` and would
+    /// otherwise hand `LLVMBuildInBoundsGEP2` an integer.
+    pub const POINTER: c_uint = 12;
 }
 
 /// `LLVMVerifierFailureAction`.
@@ -718,6 +730,33 @@ unsafe extern "C" {
         builder: LLVMBuilderRef,
         val: LLVMValueRef,
         ptr: LLVMValueRef,
+    ) -> LLVMValueRef;
+
+    /// `LLVMValueRef LLVMBuildInBoundsGEP2(LLVMBuilderRef, LLVMTypeRef Ty, LLVMValueRef Pointer, LLVMValueRef *Indices, unsigned NumIndices, const char *Name)`
+    ///
+    /// **Declared now, and §2's *"no `LLVMBuildGEP2`"* is the sentence this
+    /// deletes.** That note's reason was *"no aggregate projection is lowered
+    /// yet"*, which stopped being true the moment a record had a field.
+    ///
+    /// **It is called with `Ty = i8` and one index, which is a byte offset, and
+    /// that is a decision rather than a shortcut.** §2.3's table says
+    /// *"`getelementptr inbounds` with the struct's field index"*, and the
+    /// struct's field index is **not** available here: [`crate::emit`]'s
+    /// `llvm_type` materialises padding, so a Science record's field 1 may be
+    /// LLVM member 2 with an `[7 x i8]` between them. Two numberings for one
+    /// field is §4.1's failure mode in miniature. `science-codegen`'s
+    /// `FieldPlace::offset` is the authority everywhere else in this crate — it
+    /// is what the descriptor carries and what `LLVMSetAlignment` is told — so
+    /// it is the authority here too, and the GEP is the byte form that names it
+    /// directly. `inbounds` is kept: the offset is inside the object by
+    /// construction, and dropping it would cost alias analysis for nothing.
+    pub fn LLVMBuildInBoundsGEP2(
+        builder: LLVMBuilderRef,
+        ty: LLVMTypeRef,
+        pointer: LLVMValueRef,
+        indices: *mut LLVMValueRef,
+        num_indices: c_uint,
+        name: *const c_char,
     ) -> LLVMValueRef;
 
     /// `LLVMValueRef LLVMBuildCall2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef Fn, LLVMValueRef *Args, unsigned NumArgs, const char *Name)`

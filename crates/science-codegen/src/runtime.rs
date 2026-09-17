@@ -1,7 +1,7 @@
 //! The runtime boundary: §2.6, and the place §9's findings become facts a test
 //! checks.
 //!
-//! **The decision.** The 47 `science_`-prefixed entry points are described here
+//! **The decision.** The 54 `science_`-prefixed entry points are described here
 //! as data — a signature per symbol — and never as prose. Everything a code
 //! generator needs to emit a call is read out of [`RUNTIME`]: the return
 //! convention, the descriptor's parameter position, and whether a length is a
@@ -17,9 +17,9 @@
 //! codegen side of that, and it does not keep a list at all. It keeps
 //! signatures and derives the list.
 //!
-//! **The cost.** Forty-seven signatures transcribed by hand, which is a
+//! **The cost.** Fifty-four signatures transcribed by hand, which is a
 //! transcription that can be wrong in exactly the way the thing it replaces was
-//! wrong. Two mitigations: `tests/runtime_abi.rs` asserts the count is 47, that
+//! wrong. Two mitigations: `tests/runtime_abi.rs` asserts the count is 54, that
 //! every symbol is `science_`-prefixed and unique, and that the derived `sret`
 //! set matches the eight the runtime's §2 now names; and the runtime crate is a
 //! dev-dependency, so a test can compare the *layouts* against the real Rust
@@ -67,7 +67,7 @@
 //! its scope to edit. [`RUNTIME`] carries the signature, the set is derived, and
 //! `tests/runtime_abi.rs` fails if anyone makes it eight again.
 //!
-//! # Decision 14: these 47 are the only runtime calls F0 emits
+//! # Decision 14: these 54 are the only runtime calls F0 emits
 //!
 //! > *Everything else is inline. No entry point is added to `science-rt` to make
 //! > codegen simpler; the runtime page's §9 already states the principle —
@@ -273,6 +273,18 @@ pub enum RtRet {
 /// The variants that matter are [`RtParam::Descriptor`] — because §9.3's
 /// finding 4 is that its position is unstated and inconsistent — and the
 /// [`RtParam::Usize`]/[`RtParam::Int`] pair, which is finding 3.
+///
+/// **This enum was smaller than [`RtRet`] and the gap is what made a whole
+/// class of entry point unrepresentable.** `RtRet` has had `Bool` and `U64`
+/// since it was written; this had neither, and no `F64`, `F32` or `Char`
+/// either — so until `format.rs` arrived there was **no way to write down a
+/// runtime function that takes a number**, and the fact that there was no way
+/// was invisible because there was no such function. Every entry point in the
+/// original 47 takes a pointer, a length or an exit status, and a table whose
+/// vocabulary is exactly its contents cannot be read as a specification of what
+/// the boundary *could* carry. The asymmetry is worth naming because it is the
+/// shape of a gap nothing tests: a missing variant in a closed enum is a
+/// refusal that never fires, in a table that looks complete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtParam {
     /// `*const ScienceTypeInfo` or `*const ScienceMapInfo`: the element
@@ -298,6 +310,36 @@ pub enum RtParam {
     /// nothing in the language reaches this parameter. The exit status is the
     /// emitted `main`'s own value, not a Science one.
     I32,
+    /// `u64`. `science_string_push_u64` takes one, and §2.3's rendering rule is
+    /// why it is a separate entry point from the signed one rather than a cast
+    /// at the call site: *"`U8`…`U64` are zero-extended by codegen before the
+    /// call"*, and a `u64` above `i64::MAX` sign-extended instead would render
+    /// as a negative number.
+    U64,
+    /// `f64`.
+    F64,
+    /// `f32`.
+    ///
+    /// **Not a `f64` narrowed, and `format.rs` says why.** The rendering is the
+    /// shortest string that round-trips, *"a property of the width, so the
+    /// width has to reach the formatter"* — `0.1f32 as f64` is
+    /// `0.10000000149011612`, which round-trips as an `F64` and is the wrong
+    /// answer about an `F32`.
+    F32,
+    /// `bool`, as C's one-byte `_Bool`. §3.1's memory form of a `Bool`.
+    Bool,
+    /// `u32` holding a Unicode scalar value: `Char`, which is what
+    /// `science_chars_next` writes and what `science_string_push_char` reads.
+    ///
+    /// **Spelled `Char` rather than `U32`**, although the C parameter is a
+    /// `u32` and the two lower to the same `i32` with the same width, the same
+    /// class and the same register. §3.1 makes `Char` *"a Unicode scalar value
+    /// in a `u32`"* and [`crate::layout::CgTy::Char`] is that type, so the
+    /// informative name costs nothing and says which of the two facts is
+    /// load-bearing: not that the parameter is thirty-two bits, but that its
+    /// value set is the scalar values — which is why `format.rs` renders an
+    /// out-of-range one as `U+FFFD` instead of trusting it.
+    Char,
 }
 
 /// One runtime entry point.
@@ -358,7 +400,11 @@ const D: RtParam = RtParam::Descriptor;
 const Z: RtParam = RtParam::Usize;
 const N: RtParam = RtParam::Int;
 
-/// The 47 entry points. §2.6: *"They are the whole list."*
+/// The 54 entry points. §2.6: *"They are the whole list."*
+///
+/// **It was 47 and `format.rs` added seven.** The count is asserted in two
+/// places and both had to be edited, which is the point of asserting it: a
+/// table that is *"the whole list"* grows only when somebody says so.
 ///
 /// Ordered by module and then as `science-rt` declares them, which is neither
 /// alphabetical nor arbitrary: it is the order a reader comparing this table
@@ -421,6 +467,31 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_string_is_empty", params: &[P], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_string_as_ptr", params: &[P], ret: RtRet::Ptr },
     RuntimeFn { symbol: "science_string_push_str", params: &[P, P], ret: RtRet::Void },
+    // --- format.rs ---
+    //
+    // **The seven that make a number printable**, and until they existed no
+    // program this compiler produced could print one: `codegen-and-linking.md`
+    // §10 writes stage 2 and stage 3 as `print(f"{x}")`, and
+    // `science-codegen-llvm`'s §0 recorded that there was *"no integer-to-string
+    // entry point in the runtime"* to lower it to. They are declared here
+    // because §2.6 makes this table *"the whole list"* and
+    // `science-codegen-llvm`'s `tests/symbols.rs` checks the two directions
+    // against `science-rt`'s own `#[no_mangle]` definitions — so an entry point
+    // that exists and is not declared is a hard failure rather than dead code.
+    //
+    // **One per width and per signedness, rather than one taking a descriptor.**
+    // That is `format.rs`'s decision and the reason is in its own notes: the
+    // rendering of a float is the shortest string that round-trips *at its
+    // width*, and the rendering of an integer depends on whether the bits are
+    // signed, so both facts have to reach the formatter and neither survives a
+    // cast at the call site.
+    RuntimeFn { symbol: "science_string_push_bytes", params: &[P, P, Z], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_string_push_i64", params: &[P, N], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_string_push_u64", params: &[P, RtParam::U64], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_string_push_f64", params: &[P, RtParam::F64], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_string_push_f32", params: &[P, RtParam::F32], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_string_push_bool", params: &[P, RtParam::Bool], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_string_push_char", params: &[P, RtParam::Char], ret: RtRet::Void },
     RuntimeFn { symbol: "science_string_truncate", params: &[P, N], ret: RtRet::Aggregate(RtAggregate::String) },
     RuntimeFn { symbol: "science_string_starts_with", params: &[P, P], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_string_chars", params: &[P], ret: RtRet::Aggregate(RtAggregate::Chars) },
@@ -599,7 +670,7 @@ mod tests {
 
     #[test]
     fn there_are_forty_seven_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 47, "§2.6: \"they are the whole list\"");
+        assert_eq!(RUNTIME.len(), 54, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");

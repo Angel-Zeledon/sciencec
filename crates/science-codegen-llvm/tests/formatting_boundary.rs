@@ -1,0 +1,303 @@
+//! The seven entry points that make a number printable, **run** through the
+//! signatures this crate declares for them.
+//!
+//! # Why this file is hand-built, and what that costs
+//!
+//! `science-rt`'s `format.rs` is what deletes the sentence this crate's §0 has
+//! carried since stage 2: *"there is no integer-to-string entry point in the
+//! runtime … so there is no way for any program to print a number."* There is
+//! now. What there is **not**, yet, is a MIR lowering for `f"{n}"`: the
+//! interpolation lexes, parses, resolves and type-checks, and reaches
+//! `science-mir` as `Rvalue::Error`, so no Science program emits one of these
+//! calls and no execution test can be written from source.
+//!
+//! So this file does what `tests/exit_code.rs` does for §2.3's failing row and
+//! for the same reason: it writes the one function no source can produce, pairs
+//! it with the real [`Lowerer::lower_c_main`], and runs the result through the
+//! same emitter, the same verifier, the same Decision 33 pipeline and the same
+//! linker that `build` uses.
+//!
+//! **The cost is stated rather than hidden**: this asserts that the *signatures*
+//! are right and that the runtime formats correctly through them. It does not
+//! assert that `lower_runtime_call` picks the right argument for the right
+//! parameter, because nothing produces the MIR it reads. That half arrives with
+//! `science-mir`'s `ExprKind::FString` arm, and the test to write then is a
+//! source-level one that replaces this file's first test.
+//!
+//! # What would be silently wrong without it
+//!
+//! A `RUNTIME` row is seven words of transcription and every one of them is a
+//! register. `science_string_push_f64(ptr, f64)` declared with an `Int` second
+//! parameter passes the double's **bit pattern in an integer register**, which
+//! links, verifies, runs, and prints a number in the billions instead of `2.5`.
+//! `push_bool` declared as an `Int` reads seven bytes it does not own.
+//! `push_u64` declared as `Int` is right on every value below `i64::MAX` and
+//! wrong above it — which no small test would find. Each of those is a row in
+//! the table this file exercises by value, and the values are chosen to be the
+//! ones a width error changes.
+
+#![cfg(feature = "llvm")]
+
+mod harness;
+
+use harness::{executable, lower, require_runtime, run, scratch};
+use science_codegen::abi::AbiSignature;
+use science_codegen::backend::{BlockId, Callee, Inst, LocalId, Operand, Terminator};
+use science_codegen::layout::{CgTy, Triple, layout_of};
+use science_codegen::mangle::{MonoKey, mangle};
+use science_codegen::runtime::{RUNTIME, RtAggregate, RtParam, RtRet, runtime_fn};
+use science_codegen::target::{OptLevel, TargetConfig};
+use science_codegen_llvm::emit::{ExtBlock, ExtBody, ExtInst};
+use science_codegen_llvm::emit_and_link;
+use science_codegen_llvm::lower::{Lowerer, runtime_signature};
+
+/// The seven, by symbol, in `RUNTIME`'s order.
+const PUSHES: [&str; 7] = [
+    "science_string_push_bytes",
+    "science_string_push_i64",
+    "science_string_push_u64",
+    "science_string_push_f64",
+    "science_string_push_f32",
+    "science_string_push_bool",
+    "science_string_push_char",
+];
+
+/// Every one of them is declared, takes a `*mut ScienceString` first, and
+/// returns nothing.
+///
+/// **A table assertion, and the cheap half of the test below.** `RUNTIME` is
+/// §2.6's *"whole list"* and `tests/symbols.rs` already checks that it matches
+/// `science-rt`'s `#[no_mangle]` definitions **by name**. Names are not
+/// signatures: that test would pass with every one of these declared
+/// `(ptr, ptr)`. This is the shape, and the test after it is the behaviour.
+#[test]
+fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
+    for symbol in PUSHES {
+        let entry = runtime_fn(symbol)
+            .unwrap_or_else(|| panic!("`{symbol}` is not in `RUNTIME`, and `science-rt` exports it"));
+        assert_eq!(entry.ret, RtRet::Void, "`{symbol}` returns something");
+        assert_eq!(
+            entry.params.first(),
+            Some(&RtParam::Pointer),
+            "`{symbol}` does not take the accumulator first"
+        );
+    }
+    // And the second parameter of each is the width its name says, which is the
+    // transcription a reader has to check by eye and a test can check by hand.
+    let second = |symbol: &str| runtime_fn(symbol).expect("declared").params[1];
+    assert_eq!(second("science_string_push_i64"), RtParam::Int);
+    assert_eq!(second("science_string_push_u64"), RtParam::U64);
+    assert_eq!(second("science_string_push_f64"), RtParam::F64);
+    assert_eq!(second("science_string_push_f32"), RtParam::F32);
+    assert_eq!(second("science_string_push_bool"), RtParam::Bool);
+    assert_eq!(second("science_string_push_char"), RtParam::Char);
+    assert_eq!(runtime_fn("science_string_push_bytes").expect("declared").params.len(), 3);
+}
+
+/// **None of the seven returns an aggregate, so the derived `sret` set has not
+/// moved.**
+///
+/// `tests/runtime_abi.rs` in `science-codegen` names the nine; this asserts the
+/// *count* from the other side of Decision 42's line, because the count is what
+/// changes silently when a row is added carelessly. §9.2's finding was one
+/// entry point missing from that set; the same mistake in the other direction —
+/// a new row that lands in it by accident — is a call site that passes a return
+/// slot nobody wants.
+#[test]
+fn adding_seven_entry_points_left_the_sret_set_at_nine() {
+    let triple = Triple::host().expect("a supported host");
+    let indirect = RUNTIME
+        .iter()
+        .map(|entry| runtime_signature(triple, entry))
+        .filter(|sig| sig.ret.is_sret())
+        .count();
+    assert_eq!(
+        indirect, 9,
+        "the `sret` set moved when seven void-returning entry points were added"
+    );
+    assert_eq!(RUNTIME.len(), 54, "§2.6: \"they are the whole list\"");
+}
+
+/// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the
+/// seven appends to it, and the result is printed.
+///
+/// This is the sequence `science-mir`'s `ExprKind::FString` arm will emit:
+/// `science_string_from_bytes` for the first literal chunk, a
+/// `science_string_push_*` per piece, `science_print`, `science_string_free`.
+/// Written by hand because nothing produces it yet; written through
+/// [`runtime_signature`] and [`emit_and_link`] so that what it exercises is the
+/// compiler and not a copy of it.
+///
+/// **Every value is chosen so that a width error changes it.**
+///
+/// - `9007199254740993` is `2^53 + 1`: exact as an `i64` and **not**
+///   representable as an `f64`, so a signed integer that went through the float
+///   entry point comes back as `9007199254740992`.
+/// - `18446744073709551615` is `u64::MAX`: `-1` if the parameter is signed.
+/// - `2.5` and `0.5f32` are exact at both widths, so what they catch is not
+///   rounding but the **register file** — a double declared as an integer
+///   parameter arrives as `4612811918334230528`.
+/// - `true` catches a one-byte `_Bool` declared as anything wider only if the
+///   surrounding bytes are non-zero, so the `Char` that follows it is `'!'`,
+///   whose low byte is not zero.
+#[test]
+fn the_seven_entry_points_render_what_they_are_given() {
+    let scaffold = lower("return null\n");
+    let triple = Triple::host().expect("a supported host");
+    let mut lowerer = Lowerer::new(triple, &scaffold.krate.defs, &scaffold.types);
+
+    let string_layout = layout_of(triple, &RtAggregate::String.cg_ty());
+    let ret_layout = layout_of(triple, &CgTy::nullable(CgTy::Interface));
+    let science_main = AbiSignature::science(
+        triple,
+        mangle(&MonoKey::plain(&["main"])),
+        ret_layout.clone(),
+        vec![],
+    );
+
+    // One call, classified through the same function `build` classifies it
+    // through. A `ReturnClass` invented here would be a second copy of §4.2's
+    // rules with nothing comparing the two, which is §9.2's finding exactly.
+    let call = |symbol: &'static str, args: Vec<Operand>, sret_slot: Option<LocalId>| ExtInst::Above(
+        Inst::Call {
+            dest: None,
+            callee: Callee::Runtime(symbol),
+            args,
+            ret: runtime_signature(triple, runtime_fn(symbol).expect("an entry point")).ret,
+            sret_slot,
+        },
+    );
+
+    let opening = lowerer.intern_literal("n=");
+    let middle = lowerer.intern_literal(" u=");
+
+    let accumulator = LocalId(1);
+    // The accumulator's address, which is every push's first argument.
+    let address = science_codegen::backend::ValueId(0);
+    let insts = vec![
+        ExtInst::ReturnSlot { local: LocalId(0), layout: ret_layout },
+        ExtInst::Above(Inst::Store { local: LocalId(0), value: Operand::Null }),
+        ExtInst::Above(Inst::Alloca { local: accumulator, layout: string_layout }),
+        // The first chunk builds the accumulator; every piece after it appends.
+        call(
+            "science_string_from_bytes",
+            vec![
+                Operand::GlobalAddr(opening.bytes_symbol.clone()),
+                Operand::ConstInt(opening.len() as i128),
+            ],
+            Some(accumulator),
+        ),
+        ExtInst::LocalAddr { dest: address, local: accumulator },
+        call(
+            "science_string_push_i64",
+            vec![Operand::Value(address), Operand::ConstInt(9_007_199_254_740_993)],
+            None,
+        ),
+        call(
+            "science_string_push_bytes",
+            vec![
+                Operand::Value(address),
+                Operand::GlobalAddr(middle.bytes_symbol.clone()),
+                Operand::ConstInt(middle.len() as i128),
+            ],
+            None,
+        ),
+        // `u64::MAX` as the `i128` `Operand::ConstInt` carries: the bit pattern
+        // is what reaches `LLVMConstInt`, and reading it back as signed is the
+        // error this value exists to catch.
+        call(
+            "science_string_push_u64",
+            vec![Operand::Value(address), Operand::ConstInt(18_446_744_073_709_551_615i128)],
+            None,
+        ),
+        call(
+            "science_string_push_f64",
+            vec![Operand::Value(address), Operand::ConstFloat(2.5)],
+            None,
+        ),
+        call(
+            "science_string_push_f32",
+            vec![Operand::Value(address), Operand::ConstFloat(0.5)],
+            None,
+        ),
+        call("science_string_push_bool", vec![Operand::Value(address), Operand::ConstInt(1)], None),
+        call(
+            "science_string_push_char",
+            vec![Operand::Value(address), Operand::ConstInt(u32::from('!') as i128)],
+            None,
+        ),
+        call("science_print", vec![Operand::Value(address)], None),
+        // The free is not optional: `lower_print`'s own note is that the call
+        // site owns the temporary and nothing else releases it.
+        call("science_string_free", vec![Operand::Value(address)], None),
+    ];
+
+    let body = ExtBody {
+        blocks: vec![ExtBlock {
+            id: BlockId(0),
+            label: "entry".to_string(),
+            insts,
+            terminator: Terminator::Return(None),
+        }],
+    };
+
+    let c_main = lowerer.lower_c_main(&science_main).expect("the emitted `main`");
+    let mut module = lowerer.finish(vec![(science_main, body), c_main]);
+    // **The declarations this hand-built body needs, added the way `finish`
+    // would have.** `Lowerer::declare` interns one as a side effect of
+    // *lowering* a call, and nothing here lowered anything — so the module came
+    // back declaring only what `lower_c_main` called. The emitter catches the
+    // gap rather than emitting a call to an undeclared symbol, which is how
+    // this was found; what it must not do is invent a signature, so the
+    // signature added here is [`runtime_signature`]'s, which is the one `build`
+    // would have used.
+    for symbol in ["science_string_from_bytes", "science_print", "science_string_free"]
+        .into_iter()
+        .chain(PUSHES)
+    {
+        if module.declarations.iter().any(|sig| sig.symbol == symbol) {
+            continue;
+        }
+        module
+            .declarations
+            .push(runtime_signature(triple, runtime_fn(symbol).expect("an entry point")));
+    }
+
+    let dir = scratch("format", "pushes");
+    let output = executable(&dir, "pushes");
+    require_runtime();
+    let config = TargetConfig::new(triple, OptLevel::O0);
+    let built = match emit_and_link(&module, "format.science", &config, &output) {
+        Ok(built) => built,
+        Err(diagnostics) => panic!(
+            "the build failed:\n{}",
+            diagnostics
+                .iter()
+                .map(|d| format!("{}: {} {}", d.code, d.message, d.notes.join(" | ")))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    };
+    // The float arguments are in the float register file, which is the shape a
+    // wrong `RtParam` would change and which the output would also change — so
+    // this is a second reading of the same fact, and the cheaper one to debug.
+    assert!(
+        built.ir.contains("@science_string_push_f64(ptr %0, double")
+            || built.ir.contains("double 2.5"),
+        "the `f64` argument is not a double:\n{}",
+        built.ir
+    );
+    assert!(
+        built.ir.contains("i1 true") || built.ir.contains("i8 1"),
+        "the `bool` argument is not one byte:\n{}",
+        built.ir
+    );
+
+    let ran = run(&built);
+    assert_eq!(ran.status, Some(0), "stderr: {}", ran.stderr);
+    assert_eq!(
+        ran.stdout, "n=9007199254740993 u=184467440737095516152.50.5true!\n",
+        "one of the seven rendered its argument at the wrong width or in the wrong register"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

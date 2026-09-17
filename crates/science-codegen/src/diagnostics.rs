@@ -140,6 +140,31 @@ pub fn backend_not_compiled_in(backend: &str, how: &str) -> Diagnostic {
         .with_note(how.to_string())
 }
 
+/// `SC0400`, for the other thing it has to say: a construct this backend does
+/// not lower.
+///
+/// **The same code and a different sentence, and the sentence is the point.**
+/// §11 reserves `SC0400` for *"a toolchain feature required to build this
+/// program is not compiled into this `sciencec`"*, and both of these are that:
+/// one because the backend is absent, one because a piece of it is not written.
+/// [`backend_not_compiled_in`] says *"no `llvm` backend is compiled into this
+/// `sciencec`"*, and a code generator refusing a construct was reusing it —
+/// which reads, verbatim, as **"no `a tuple` backend is compiled into this
+/// `sciencec`"**. The construct goes into a slot shaped for the *name of a
+/// backend*, so the longer and more honest the description, the worse the
+/// sentence: the `Rvalue::Error` refusal reached three lines and the first two
+/// words of it were "no `an".
+///
+/// **The code is not split, because the two are one condition to a build
+/// script.** `sciencec`'s exit status and `SC0400` are what CI gates on, and a
+/// second code would make "this compiler cannot build that yet" two things to
+/// check. §11's band has no free code in it either, which is a smaller reason
+/// and would not have been enough on its own.
+pub fn construct_not_lowered(construct: &str, how: &str) -> Diagnostic {
+    Diagnostic::error(code::SC0400, format!("this `sciencec` cannot build {construct}"))
+        .with_note(how.to_string())
+}
+
 /// `SC0401`: no linker driver found.
 ///
 /// §11: *"Names the candidates searched, in order, and the `SCIENCE_LINKER`

@@ -120,22 +120,35 @@ fn the_module_says_what_stage_one_says_it_should() {
 ///
 /// A program past what this backend lowers is `SC0400` and not an internal
 /// error. This is the half of `lower`'s contract that a user meets first.
+/// **This test used to be about a second function, and a second function is
+/// now emitted.** The sentence it pinned — *"a second function is not
+/// lowered"* — was true when `science_codegen::backend::Operand` had no `Param`
+/// form, and `tests/past_stage_three.rs` is the file that made it false. What
+/// the test is *for* survives unchanged: a construct past the boundary is
+/// `SC0400` naming itself, and not an internal error.
+///
+/// The construct is now a `for` loop, which is past the boundary for a reason
+/// that has nothing to do with this crate: its `next` arrives as
+/// `science_mir::mir::Unresolved::IterateNext`, because
+/// `science_types::thir::ExprKind::For` has no field for the callee the
+/// checker found. That makes it a stable choice — it is refused by a hole above
+/// this crate rather than by an instruction this crate has not written — and
+/// the day it stops being refused, the sentence to replace is this one.
 #[test]
 fn a_program_past_the_boundary_is_refused_by_name() {
-    let lowered = lower("def helper() -> Int:
-    return 1
-
-print(\"hi\")
+    let lowered = lower("let mutable total be 0
+for i in 0..3:
+    total be total + i
 ");
     let dir = scratch("hello", "refused");
     let diagnostics = lowered
         .try_build(&dir.join("out"), OptLevel::O2)
         .map(|_| ())
-        .expect_err("a second function is not lowered");
+        .expect_err("a `for` loop is not lowered");
     let first = diagnostics.first().expect("a diagnostic");
     assert_eq!(first.code, science_codegen::diagnostics::code::SC0400);
     assert!(
-        first.message.contains("helper"),
+        first.message.contains("`for` loop"),
         "the refusal must name the construct, and it said: {}",
         first.message
     );

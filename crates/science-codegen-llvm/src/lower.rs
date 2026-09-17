@@ -40,6 +40,30 @@
 //! §4.6's operators on scalars at their own width and signedness
 //! ([`Lowerer::lower_binary`]).
 //!
+//! **Past stage 3** — and §10 does not number these together, so what follows
+//! is what one program needed rather than what one stage listed:
+//!
+//! - **A `choice` and a `match`.** [`Lowerer::choice_ty`] computes §3.3's
+//!   variants in declaration order, [`Lowerer::lower_discriminant`] reads the
+//!   tag, and `TerminatorKind::Switch` translates a variant's **`DefId`** into
+//!   a case value — which is the whole of the work, because MIR branches on a
+//!   definition and *"the numbering is a layout question"*.
+//! - **A function with parameters, and a call to it.** `Operand::Param` is
+//!   above the line now; a register parameter is stored into Decision 8's
+//!   `alloca` in the prologue, and an aggregate one **is** the caller's slot
+//!   ([`crate::emit::ExtInst::ParamSlot`], Decision 22). Only what `main`
+//!   reaches is emitted; [`Lowerer::lower_crate`] is the argument and the cost.
+//! - **A record.** [`Lowerer::record_ty`] is Decision 17's fields in
+//!   declaration order and [`Lowerer::place_address`] is §2.3's projection
+//!   table, with `deref` as the one row that is not an offset.
+//! - **A drop.** `TerminatorKind::Drop` is a `br` when the value owns nothing
+//!   and `science_string_free` when it is a `String`.
+//!   [`Lowerer::drop_runs_something`] is the predicate and finding 15 is why it
+//!   is not `science_codegen::descriptor::needs_drop`.
+//! - **Decision 6's `T?`**, in both representations: `null` is a tag store or a
+//!   null pointer, `?` is one comparison ([`Lowerer::lower_is_present`]), and
+//!   `T` into `T?` is `Coercion::Widen`.
+//!
 //! # What §10's stage 2 and stage 3 ask for that this language does not have
 //!
 //! Both of §10's programs print a computed value with `print(f"{x}")`.
@@ -65,8 +89,15 @@
 //! Everything not lowered is `SC0400`, which §11 defines as *"a toolchain
 //! feature required to build this program is not compiled into this
 //! `sciencec`"* — and an unlowered MIR construct is literally that. The refusal
-//! names the construct, so that a user who writes a `match` is told "a `match`"
-//! and not "internal error".
+//! names the construct, so that a user who writes a tuple is told "a tuple" and
+//! not "internal error".
+//!
+//! **A refusal whose stated reason has stopped being true is worse than no
+//! refusal**, and this file has had one: `store_null` refused a tagged nullable
+//! *"because the instruction set has no field projection"*, and the instruction
+//! set grew one. A reader who believes a message like that stops looking, so
+//! the check when anything is added here is not only *"does this still refuse"*
+//! but *"is the reason it gives still the reason"*.
 //!
 //! **Two of the refusals are not about effort.** Integer `/` and `%` and the
 //! two shifts are constructs this crate could emit an instruction for and
@@ -85,8 +116,12 @@
 //! walks `body.blocks()` and emits one [`ExtBlock`] per MIR block, and nothing
 //! merges or splits. `science-mir`'s §4 item 2 records that a **flagged drop**
 //! breaks the decision by becoming three blocks; a flagged drop is refused
-//! outright (`StatementKind::SetDropFlag` is `SC0400`), so this crate has not
-//! met the contradiction yet and the amendment that note asks for is still owed.
+//! outright — both `StatementKind::SetDropFlag` and a `TerminatorKind::Drop`
+//! carrying a flag are `SC0400` — so this crate has not met the contradiction
+//! yet and the amendment that note asks for is still owed. An **unflagged**
+//! drop is one block, which is why it could be lowered without meeting it: a
+//! drop that runs nothing is a `br`, and a drop of a `String` is one call and a
+//! `br`.
 //!
 //! **What a reader of `Built::ir` sees is not quite one-to-one, and the reason
 //! is not this crate.** That field holds the module *after* Decision 33's
@@ -174,15 +209,18 @@
 use std::collections::BTreeMap;
 
 use science_codegen::abi::{
-    AbiParam, AbiSignature, ArgClass, ParamAttrs, classify_extern_argument,
+    AbiParam, AbiSignature, ArgClass, ParamAttrs, ReturnClass, classify_extern_argument,
     classify_extern_return,
 };
 use science_codegen::backend::{
     BlockId, Callee, CmpOp, Inst, IntOp, FloatOp, LocalId, Operand, Terminator, ValueId,
 };
 use science_codegen::descriptor::StringLiteral;
-use science_codegen::diagnostics::backend_not_compiled_in;
-use science_codegen::layout::{CgTy, IntTy, Layout, PtrKind, Repr, Scalar, Triple, layout_of};
+use science_codegen::diagnostics::construct_not_lowered;
+use science_codegen::layout::{
+    CgTy, Field as CgField, IntTy, Layout, PtrKind, Repr, Scalar, Triple,
+    Variant as CgVariant, layout_of,
+};
 use science_codegen::mangle::{MonoKey, mangle};
 use science_codegen::runtime::{RUNTIME, RtAggregate, RtParam, RtRet, RuntimeFn, runtime_fn};
 use science_diagnostics::{Diagnostic, Span};
@@ -239,9 +277,17 @@ pub const ERROR_MESSAGE: &str = "error: the script returned an error, and this c
 /// a range was refused with a sentence about a function it does not call. A
 /// refusal that names the wrong construct is worse than one that names two.
 const UNTYPED: &str = "a value the front end left untyped: its `Ty` is `TyKind::Error` and no \
-                       diagnostic was reported for it. The two this compiler has met are a call \
+                       diagnostic was reported for it. The three this compiler has met are a call \
                        to `print` or `write`, whose signatures `science-resolve`'s `builtins.rs` \
-                       withdrew, and a `for` loop's range and iterator temporaries";
+                       withdrew; a `for` loop's range and iterator temporaries; and a \
+                       discriminant temporary, which is handled rather than refused";
+
+/// How deep [`Lowerer::cg_ty`] follows a type before it gives up.
+///
+/// See that function's note: this stops a compiler that met a self-containing
+/// type from dying with no diagnostic, and it is far above anything a program
+/// writes.
+const MAX_TYPE_DEPTH: u32 = 32;
 
 /// Why a program could not be lowered.
 ///
@@ -263,13 +309,22 @@ impl Unlowered {
     }
 
     /// The `SC0400` this becomes.
+    ///
+    /// **[`construct_not_lowered`] and not
+    /// `science_codegen::diagnostics::backend_not_compiled_in`**, which this
+    /// used and which is shaped for the *name of a backend*: it rendered every
+    /// refusal here as *"no `a tuple` backend is compiled into this
+    /// `sciencec`"*. Same code, same contract, a sentence the construct fits
+    /// into.
     pub fn to_diagnostic(&self) -> Diagnostic {
-        backend_not_compiled_in(
+        construct_not_lowered(
             &self.construct,
-            "this `sciencec` implements §10's stages 0 to 3 of `codegen-and-linking.md` — a \
-             script body, string literals and `print`, `extern \"C\"` declarations and the calls \
-             to them, the CFG, and scalar arithmetic — and refuses everything else rather than \
-             lowering a construct no execution test has ever run",
+            "this `sciencec` implements §10's stages 0 to 3 of `codegen-and-linking.md` and some \
+             of what comes after — a script body, string literals and `print`, `extern \"C\"` \
+             declarations and the calls to them, the CFG, scalar arithmetic, functions with \
+             parameters, records, `choice`s and `match`, `T?`, and drops of values that own \
+             nothing — and refuses everything else rather than lowering a construct no execution \
+             test has ever run",
         )
     }
 }
@@ -314,6 +369,15 @@ pub fn runtime_signature(target: Triple, entry: &RuntimeFn) -> AbiSignature {
                 RtParam::Usize => CgTy::Int(IntTy::Usize),
                 RtParam::Int => CgTy::Int(IntTy::I64),
                 RtParam::I32 => CgTy::Int(IntTy::I32),
+                RtParam::U64 => CgTy::Int(IntTy::U64),
+                RtParam::F64 => CgTy::Float(science_codegen::layout::FloatTy::F64),
+                RtParam::F32 => CgTy::Float(science_codegen::layout::FloatTy::F32),
+                // §3.1's memory form. Rust's `bool` across `extern "C"` is C's
+                // one-byte `_Bool`, and `CgTy::Bool` is that byte — a `Direct`
+                // `i8` argument, which is what `scalar_ty` builds and what the
+                // runtime's own `#[no_mangle] fn(.., flag: bool)` expects.
+                RtParam::Bool => CgTy::Bool,
+                RtParam::Char => CgTy::Char,
             };
             AbiParam {
                 name: format!("a{index}"),
@@ -401,6 +465,41 @@ pub struct Lowerer<'a> {
     literals: Vec<StringLiteral>,
     declarations: Vec<AbiSignature>,
     declared_foreign: Vec<ForeignSymbol>,
+    /// The definition of the entry point, once [`Lowerer::lower_crate`] has
+    /// found it. See [`Lowerer::symbol_of`]: it is the one definition whose
+    /// symbol is not its path.
+    entry: Option<DefId>,
+    /// Every reachable Science function's classified signature, built before
+    /// any body is lowered.
+    ///
+    /// **One table, and that is the point.** A definition and a call site that
+    /// each classified the same function would be two implementations of
+    /// §4.2's return rules with nothing comparing them, and §9.2's finding is
+    /// what one disagreement costs: *"a call site got `sret` wrong for one
+    /// symbol"*, which corrupts a register and links cleanly.
+    science: BTreeMap<DefId, AbiSignature>,
+}
+
+/// Every definition `entry` can reach, through [`MirBody::callees`].
+///
+/// A breadth-first walk over the bodies present, so a callee with no body — an
+/// `extern "C"` declaration, a builtin — contributes nothing and is not an
+/// error here; the call site is where those are resolved.
+fn reachable_from(bodies: &[MirBody], entry: DefId) -> std::collections::BTreeSet<DefId> {
+    let mut reached = std::collections::BTreeSet::new();
+    let mut queue = vec![entry];
+    while let Some(def) = queue.pop() {
+        if !reached.insert(def) {
+            continue;
+        }
+        let Some(body) = bodies.iter().find(|body| body.def() == def) else { continue };
+        for callee in body.callees() {
+            if !reached.contains(&callee) {
+                queue.push(callee);
+            }
+        }
+    }
+    reached
 }
 
 impl<'a> Lowerer<'a> {
@@ -422,6 +521,8 @@ impl<'a> Lowerer<'a> {
             literals: Vec::new(),
             declarations: Vec::new(),
             declared_foreign: Vec::new(),
+            entry: None,
+            science: BTreeMap::new(),
         }
     }
 
@@ -511,9 +612,27 @@ impl<'a> Lowerer<'a> {
     /// the `DefId`. Recorded rather than smoothed because the fix is to move the
     /// function, not to patch it.
     fn cg_ty(&self, ty: science_types::ty::Ty) -> Result<CgTy, Unlowered> {
+        self.cg_ty_at(ty, 0)
+    }
+
+    /// [`Lowerer::cg_ty`], counting how deep the nesting has gone.
+    ///
+    /// **The depth is a guard against a hang, not against a wrong answer.** A
+    /// record that contains itself has no finite layout and the type checker is
+    /// what rejects it; a code generator that met one anyway would recurse until
+    /// the stack ran out, which is a compiler that dies with no diagnostic. The
+    /// bound is far above anything a program writes and the refusal names both
+    /// causes, because from here they are indistinguishable.
+    fn cg_ty_at(&self, ty: science_types::ty::Ty, depth: u32) -> Result<CgTy, Unlowered> {
+        if depth > MAX_TYPE_DEPTH {
+            return Err(Unlowered::new(format!(
+                "a type nested more than {MAX_TYPE_DEPTH} deep, or a type that contains itself \
+                 and therefore has no size"
+            )));
+        }
         match self.types.kind(ty) {
             TyKind::Unit => Ok(CgTy::Unit),
-            TyKind::Nullable(inner) => Ok(CgTy::nullable(self.cg_ty(*inner)?)),
+            TyKind::Nullable(inner) => Ok(CgTy::nullable(self.cg_ty_at(*inner, depth + 1)?)),
             // `any I` — Decision 13's two-word fat pointer, with the null niche
             // in the data pointer (§3.4).
             TyKind::Object { .. } => Ok(CgTy::Interface),
@@ -538,6 +657,38 @@ impl<'a> Lowerer<'a> {
             {
                 Ok(CgTy::Interface)
             }
+            // §3.2's Decision 17, reached through the *definition* rather than
+            // through the name — which the arm below cannot do and says so.
+            TyKind::Named { def, args }
+                if args.is_empty() && self.defs.get(*def).kind == DefKind::Record =>
+            {
+                self.record_ty(*def, depth)
+            }
+            // §3.3's Decision 18 and §3.4's Decision 19, both of which
+            // `layout_of` already implements: what is needed here is the list
+            // of variants in declaration order, because **declaration order is
+            // what fixes the discriminant values** and nothing below this
+            // function can recover it.
+            TyKind::Named { def, args }
+                if args.is_empty() && self.defs.get(*def).kind == DefKind::Choice =>
+            {
+                self.choice_ty(*def, depth)
+            }
+            // A generic record or choice, named rather than swallowed by the
+            // arm below. Decision 42 puts the monomorphisation walk above this
+            // crate and `science_codegen::mono` is where it will live; until
+            // something runs it, a `Pair of (Int, Int)` reaches here with its
+            // arguments still on it and there is no substituted field list to
+            // lay out.
+            TyKind::Named { def, .. }
+                if matches!(self.defs.get(*def).kind, DefKind::Record | DefKind::Choice) =>
+            {
+                Err(Unlowered::new(format!(
+                    "a value of the generic type `{}`, which nothing has monomorphised: Decision \
+                     42 puts the walk above this crate and no phase runs it yet",
+                    self.defs.get(*def).name
+                )))
+            }
             TyKind::Named { def, args } if args.is_empty() => {
                 let name = self.defs.get(*def).name.as_str();
                 match name {
@@ -558,8 +709,314 @@ impl<'a> Lowerer<'a> {
                     other => Err(Unlowered::new(format!("a value of type `{other}`"))),
                 }
             }
+            // The remaining kinds, each named the way a user would recognise
+            // it. The `{other:?}` fallback below renders `TyKind`'s `Debug` —
+            // `Tuple([Ty(0), Ty(0)])` — which names an interned index a reader
+            // cannot look up and a construct they did not write.
+            TyKind::Tuple(_) => Err(Unlowered::new(
+                "a tuple, which has no `Ty -> CgTy` arm: §3.2's C layout applies to one unchanged \
+                 and the arm is simply not written",
+            )),
+            TyKind::Param { .. } | TyKind::SelfType { .. } | TyKind::SelfAssoc { .. } => {
+                Err(Unlowered::new(
+                    "a value whose type is still a type parameter, which nothing has \
+                     monomorphised: Decision 42 puts the walk above this crate and no phase runs \
+                     it yet",
+                ))
+            }
+            TyKind::Closure { .. } => Err(Unlowered::new(
+                "a closure, whose body `science-mir` does not lower at all — `Rvalue::Closure` \
+                 carries a THIR expression id and its captures, and nothing turns either into a \
+                 function",
+            )),
             other => Err(Unlowered::new(format!("a value of type `{other:?}`"))),
         }
+    }
+
+    /// A `record` as [`CgTy::Struct`]: Decision 17's fields, in declaration
+    /// order.
+    ///
+    /// **The order is read from `Declarations::record` and from nothing else.**
+    /// `science_types::items::Record::fields` is *"a record's fields, lowered,
+    /// in declaration order"*, and declaration order is what Decision 17 lays
+    /// out — *"fields in declaration order … no field reordering, ever"*. MIR's
+    /// `Rvalue::Record` carries its fields in the order they were **written**,
+    /// which for a record literal with named arguments is any order the author
+    /// liked, so a code generator that took MIR's order would lay out
+    /// `Doc(body: "b", title: "t")` differently from `Doc(title: "t",
+    /// body: "b")` — two layouts for one type, which is `LayoutCache`'s
+    /// `SC0404` if anything asked it and silence if nothing does.
+    fn record_ty(&self, def: DefId, depth: u32) -> Result<CgTy, Unlowered> {
+        let name = self.defs.get(def).name.clone();
+        let record = self.declarations()?.record(def).ok_or_else(|| {
+            Unlowered::new(format!(
+                "a value of type `{name}`, which the declaration table has no lowered field list \
+                 for"
+            ))
+        })?;
+        let mut fields = Vec::with_capacity(record.fields.len());
+        for (field, ty) in &record.fields {
+            fields.push(CgField::new(
+                self.defs.get(*field).name.clone(),
+                self.cg_ty_at(*ty, depth + 1)?,
+            ));
+        }
+        Ok(CgTy::strukt(name, fields))
+    }
+
+    /// A `choice` as [`CgTy::Choice`]: §3.3's variants, in declaration order.
+    ///
+    /// **A one-element payload is the element and is not wrapped**, and that is
+    /// a layout decision rather than a convenience. §3.3 makes the payload union
+    /// *"a union of the variant payloads"*, and the member for `Circle(F64)` is
+    /// an `F64`. Wrapping it in a one-field struct would give the same size and
+    /// the same offset and would cost Decision 19's niche: `CgTy::niche` answers
+    /// only for a pointer and for `any I`, so `choice { none, some(Box of T) }`
+    /// would stop being one word the moment the payload became a struct. What
+    /// the un-wrapping costs is one case in [`Lowerer::place_address`], where
+    /// MIR's `TupleField { index: 0 }` off such a variant is the identity rather
+    /// than a field lookup, and that function says so.
+    fn choice_ty(&self, def: DefId, depth: u32) -> Result<CgTy, Unlowered> {
+        let name = self.defs.get(def).name.clone();
+        let decls = self.declarations()?;
+        let order = self.choice_variants(def);
+        if order.is_empty() {
+            return Err(Unlowered::new(format!(
+                "a value of type `{name}`, a `choice` with no variants: it has no value and no \
+                 discriminant to hold one"
+            )));
+        }
+        let mut variants = Vec::with_capacity(order.len());
+        for variant in order {
+            let variant_name = self.defs.get(variant).name.clone();
+            // Absent is **not** the same as empty: a variant the declaration
+            // table has no entry for is a variant whose payload nobody lowered,
+            // and treating it as payload-free would put the wrong number of
+            // bytes in the union.
+            let declared = decls.variant(variant).ok_or_else(|| {
+                Unlowered::new(format!(
+                    "the variant `{name}.{variant_name}`, which the declaration table has no \
+                     lowered payload for"
+                ))
+            })?;
+            variants.push(match declared.payload.as_slice() {
+                [] => CgVariant::unit(variant_name),
+                [only] => CgVariant::with(variant_name, self.cg_ty_at(*only, depth + 1)?),
+                many => {
+                    let mut fields = Vec::with_capacity(many.len());
+                    for (index, ty) in many.iter().enumerate() {
+                        fields.push(CgField::new(
+                            index.to_string(),
+                            self.cg_ty_at(*ty, depth + 1)?,
+                        ));
+                    }
+                    let payload = CgTy::strukt(format!("{name}.{variant_name}"), fields);
+                    CgVariant::with(variant_name, payload)
+                }
+            });
+        }
+        Ok(CgTy::choice(name, variants))
+    }
+
+    /// A `choice`'s variants, in declaration order.
+    ///
+    /// **Declaration order is the discriminant numbering** — Decision 18:
+    /// *"discriminant values follow declaration order from zero"* — so this is
+    /// the function that decides what `switch` branches on, and it is a scan of
+    /// the definition table rather than a list on the choice because
+    /// `hir::DefTable` is flat and a variant's parent is the choice.
+    /// `DefTable::children` documents the order it yields and
+    /// `science-regions` and `science-types` both read it the same way.
+    fn choice_variants(&self, choice: DefId) -> Vec<DefId> {
+        self.defs
+            .children(choice)
+            .filter(|def| def.kind == DefKind::Variant)
+            .map(|def| def.id)
+            .collect()
+    }
+
+    /// Whether dropping a value of `ty` has to run anything.
+    ///
+    /// **This exists because `science_codegen::descriptor::needs_drop` answers
+    /// `false` for a `String`, and that is finding 15.** That function is a
+    /// predicate over [`CgTy`], and `CgTy` is *"the set of distinctions that
+    /// change a layout or an ABI classification, and nothing else"* — so a
+    /// `String` arrives at it as `RtAggregate::String.cg_ty()`, which is
+    /// `{ Ptr(Raw), Usize, Usize }`, and Decision 19's table makes `Raw` the one
+    /// pointer kind that owns nothing. The predicate is exactly right about
+    /// Science's own types and blind to all four of the runtime's owning
+    /// aggregates, because the model it reads deliberately erases what
+    /// distinguishes them. Nothing called it on one before this function
+    /// existed, so nothing was wrong; a code generator that called it on a
+    /// `Drop` terminator would have turned every dropped `String` into a leak
+    /// with no diagnostic.
+    ///
+    /// **So the walk is over `Ty` and not over `CgTy`**, which is the level
+    /// where a `String` is still a `String` and where a user's
+    /// `Doc implements Drop:` is visible at all.
+    ///
+    /// **It answers `true` where it cannot tell**, which is `science-mir`'s own
+    /// rule for the same question, and here the cost of that is a refusal
+    /// rather than a missed destructor. The types it will say `false` for are
+    /// the ones built only out of §3.1's scalars: a scalar, a record of them, a
+    /// `choice` whose payloads are them, and a tuple or nullable of those.
+    /// Everything else — a `String`, an `Array`, a `Map`, a `Box`, a trait
+    /// object, a type parameter, a closure, a type with its own `Drop` — is a
+    /// refusal that names the type.
+    ///
+    /// This is narrower than `science-mir`'s `needs_drop`, which answers `true`
+    /// for **every** `choice` — *"§4's true where it cannot tell"* — and that
+    /// difference is the whole reason a `match` over a payload-free `choice`
+    /// needs this function at all: MIR emits a `Drop` for the scrutinee of
+    /// every `match` in the language, so *"the smallest program that cannot be
+    /// built"* was never only about `cg_ty`.
+    fn drop_runs_something(&self, ty: Ty, depth: u32) -> Result<bool, Unlowered> {
+        if depth > MAX_TYPE_DEPTH {
+            return Ok(true);
+        }
+        // A user `Drop` implementation is a fact about a definition, and it is
+        // checked first because it overrides every structural answer below: a
+        // record of two `Int`s with a `Drop` of its own still has to run it.
+        if let (Some(decls), Some(interface)) = (self.decls, self.drop_interface()) {
+            if decls.methods().declares(self.types, ty, interface) {
+                return Ok(true);
+            }
+        }
+        match self.types.kind(ty) {
+            // `ty`'s §5: an erroneous type must not manufacture work any more
+            // than it manufactures a diagnostic.
+            TyKind::Error | TyKind::Unit => Ok(false),
+            // A borrow releases nothing; the referent's own storage-dead point
+            // is what releases it.
+            TyKind::Borrowed { .. } => Ok(false),
+            TyKind::Nullable(inner) => self.drop_runs_something(*inner, depth + 1),
+            TyKind::Tuple(elements) => {
+                for element in elements.clone() {
+                    if self.drop_runs_something(element, depth + 1)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            // A trait object's drop goes through a vtable this backend does not
+            // emit, so it is never inert — which is `descriptor::needs_drop`'s
+            // answer too, and right here for the same reason it is too coarse
+            // there: `Box of any I` and `borrowed any I` are one type to a
+            // layout and two to a destructor.
+            TyKind::Object { .. } => Ok(true),
+            TyKind::Named { def, args } => {
+                let def = *def;
+                if !args.is_empty() {
+                    return Ok(true);
+                }
+                match self.defs.get(def).kind {
+                    DefKind::Record => {
+                        let fields: Vec<Ty> = self
+                            .declarations()?
+                            .record(def)
+                            .map(|record| record.fields.iter().map(|(_, ty)| *ty).collect())
+                            .unwrap_or_default();
+                        for field in fields {
+                            if self.drop_runs_something(field, depth + 1)? {
+                                return Ok(true);
+                            }
+                        }
+                        Ok(false)
+                    }
+                    DefKind::Choice => {
+                        let decls = self.declarations()?;
+                        for variant in self.choice_variants(def) {
+                            let Some(declared) = decls.variant(variant) else { return Ok(true) };
+                            for payload in declared.payload.clone() {
+                                if self.drop_runs_something(payload, depth + 1)? {
+                                    return Ok(true);
+                                }
+                            }
+                        }
+                        Ok(false)
+                    }
+                    // A primitive, or a library type. The list is
+                    // [`Lowerer::cg_ty`]'s own and is kept the same shape on
+                    // purpose: a name that function can lay out as a scalar is
+                    // a name that owns nothing, and every other name — `String`
+                    // and `Array` and `Map` among them — is a refusal.
+                    _ => Ok(!matches!(
+                        self.defs.get(def).name.as_str(),
+                        "Int"
+                            | "I8"
+                            | "I16"
+                            | "I32"
+                            | "I64"
+                            | "U8"
+                            | "U16"
+                            | "U32"
+                            | "U64"
+                            | "F32"
+                            | "F64"
+                            | "Bool"
+                            | "Char"
+                    )),
+                }
+            }
+            // A type parameter, `Self`, an associated type, a closure: nothing
+            // here can see what is behind any of them.
+            _ => Ok(true),
+        }
+    }
+
+    /// Whether a type is the prelude's `String`, exactly.
+    ///
+    /// **Exactly, and not "a type whose layout is a `ScienceString`".** The
+    /// layout of `String` is `{ Ptr(Raw), Usize, Usize }`, which is also the
+    /// layout of `ScienceChars` and within one field of `ScienceArray`'s — so a
+    /// predicate on the layout would hand `science_string_free` a value that is
+    /// not a string, which frees a pointer with the wrong allocator's idea of
+    /// its size. The name is the distinction that survives, and it is the same
+    /// one [`Lowerer::cg_ty`] keys on for the same restricted reason: these are
+    /// prelude builtins, and a real lowering keys on the `DefId`.
+    fn is_string(&self, ty: Ty) -> bool {
+        matches!(
+            self.types.kind(ty),
+            TyKind::Named { def, args }
+                if args.is_empty()
+                    && self.defs.get(*def).is_builtin()
+                    && self.defs.get(*def).name == "String"
+        )
+    }
+
+    /// The prelude's `Drop` interface, if this compilation has one.
+    ///
+    /// **Found by scanning the definition table rather than asked of
+    /// `Prelude`**, because `Prelude`'s lookup is a closed list — *"a closed
+    /// list rather than a general lookup, so that adding a dependency on a
+    /// prelude name is an edit to this array and shows up in a diff"* — and
+    /// `Drop` is not on it. That array is `science-types`', which this crate
+    /// must not edit, and the scan asks exactly the question `Prelude::of`
+    /// asks: a builtin definition, an interface, named `Drop`.
+    ///
+    /// `Methods::answers_for` warns that a builtin interface is one the index
+    /// cannot speak for, and that is about the **negative** direction: the
+    /// prelude registers no implementations of its own, so silence is not a no.
+    /// What is read here is the positive direction, where the index is
+    /// complete — a user's `Doc implements Drop:` is written in the crate and is
+    /// therefore in `Methods::implemented`.
+    fn drop_interface(&self) -> Option<DefId> {
+        self.defs
+            .iter()
+            .find(|def| {
+                def.is_builtin() && def.kind == DefKind::Interface && def.name == "Drop"
+            })
+            .map(|def| def.id)
+    }
+
+    /// The declaration table, or the refusal for a build that was given none.
+    fn declarations(&self) -> Result<&'a Declarations, Unlowered> {
+        self.decls.ok_or_else(|| {
+            Unlowered::new(
+                "a user-defined type: this build was given no declaration table to read its \
+                 fields or variants from",
+            )
+        })
     }
 
     fn layout_of_ty(&self, ty: science_types::ty::Ty) -> Result<Layout, Unlowered> {
@@ -568,28 +1025,169 @@ impl<'a> Lowerer<'a> {
 
     /// Lower one crate's MIR.
     ///
-    /// `bodies` is every MIR body in the crate. Stage 1 has exactly one and it
-    /// is `main`; anything else is refused, because a second function means a
-    /// call to it and a call to it means the parameter operand
-    /// `science_codegen::backend::Operand` does not have (see
-    /// `crate::emit`'s `BodyState::params`).
+    /// `bodies` is every MIR body in the crate, and **what is emitted is what
+    /// `main` reaches**.
+    ///
+    /// **The decision.** The call graph is walked from `main` over
+    /// [`science_mir::mir::Body::callees`] and a body outside the closure is
+    /// dropped, not lowered and not refused.
+    ///
+    /// **The reason.** This used to refuse a program with a second function at
+    /// all, which was honest while no second function *could* be emitted. Now
+    /// that one can, the question is what to do with a function this backend
+    /// still cannot lower — a generic one, a method — that the program declares
+    /// and never calls. Refusing the whole program for it would refuse a
+    /// program for instructions that contribute nothing to the image, and
+    /// `examples/07_generics.science` is what that looks like: one unused
+    /// generic makes the file unbuildable. Decision 42 puts the monomorphisation
+    /// walk above this crate and `science_codegen::mono` is where a real one
+    /// belongs; this is the reachability half of it and no more, so it makes no
+    /// decision `mono` will have to unmake.
+    ///
+    /// **The cost, and it is a real one.** An error in an uncalled function is
+    /// not reported by `sciencec build`, so a refusal a user would want to see
+    /// is silent until something calls it. That is the ordinary cost of
+    /// monomorphisation-on-demand and Rust pays it too; what makes it
+    /// acceptable here is that `sciencec check` runs the whole front end over
+    /// every function whether or not it is called, so the only diagnostics this
+    /// hides are *this crate's* — the `SC0400`s that say a backend feature is
+    /// missing.
+    ///
+    /// **Two signatures for one function is the hazard this avoids next**, so
+    /// every reachable body's [`AbiSignature`] is built once, before any body is
+    /// lowered, and both the definition and every call site read that one entry.
+    /// A call site that classified the callee's return for itself is §9.2's
+    /// finding with the compiler on both ends of it.
     pub fn lower_crate(&mut self, bodies: &[MirBody]) -> Result<Lowered, Unlowered> {
         let entry = bodies
             .iter()
             .find(|body| self.defs.get(body.def()).name == "main")
             .ok_or_else(|| Unlowered::new("a program with no `main`"))?;
-        if bodies.len() > 1 {
-            let other = bodies
-                .iter()
-                .find(|body| self.defs.get(body.def()).name != "main")
-                .map(|body| self.defs.get(body.def()).name.clone())
-                .unwrap_or_default();
-            return Err(Unlowered::new(format!("a second function, `{other}`")));
+        self.entry = Some(entry.def());
+        let reachable = reachable_from(bodies, entry.def());
+
+        for body in bodies {
+            if !reachable.contains(&body.def()) {
+                continue;
+            }
+            let signature = self.science_signature(body)?;
+            self.science.insert(body.def(), signature);
         }
 
-        let science_main = self.lower_body(entry)?;
-        let c_main = self.lower_c_main(&science_main.0)?;
-        Ok(self.finish(vec![science_main, c_main]))
+        let mut definitions = Vec::new();
+        for body in bodies {
+            if !reachable.contains(&body.def()) {
+                continue;
+            }
+            definitions.push(self.lower_body(body)?);
+        }
+        let main_signature = self
+            .science
+            .get(&entry.def())
+            .cloned()
+            .expect("`main` is reachable from itself");
+        definitions.push(self.lower_c_main(&main_signature)?);
+        Ok(self.finish(definitions))
+    }
+
+    /// The classified signature of one Science function, derived from its MIR.
+    ///
+    /// **From MIR and not from `Declarations`, and the asymmetry with
+    /// [`Lowerer::declare_foreign`] is deliberate.** An `extern "C"` function
+    /// has no body, so its parameter types reach codegen through the
+    /// declaration table or through nothing. A Science function has a body, and
+    /// the body's locals `_1..=arg_count` *are* its parameters with the types
+    /// the checker gave them — already substituted, already in order, and
+    /// already what every `Assign` in the body was lowered against. Reading the
+    /// declaration instead would introduce a second source for a fact the body
+    /// carries, and the two disagreeing is a signature mismatch that links.
+    ///
+    /// `Declarations` is still consulted, for the two shapes MIR cannot
+    /// distinguish and this backend cannot emit: a generic function and a
+    /// method.
+    ///
+    /// **No parameter attributes are emitted, and that is finding 14 rather
+    /// than laziness.** Decision 24 wants `readonly nocapture` on a shared
+    /// borrow and `noalias nocapture` on an exclusive one, and §4.4 calls
+    /// `noalias` *"the single place in the language where a bug in region
+    /// inference produces a wrong answer rather than a missed error"*. Its own
+    /// mitigation is `--no-noalias`, which `TargetConfig` carries and **this
+    /// function cannot see**: a [`Lowerer`] is built from a `Triple`, and the
+    /// flag arrives at [`crate::emit`] one layer below. Emitting the attribute
+    /// with its escape hatch unreachable is the worst of the three options; the
+    /// cost of emitting none is an optimisation, which is the same trade
+    /// [`runtime_signature`] already takes for the same kind of reason.
+    fn science_signature(&mut self, body: &MirBody) -> Result<AbiSignature, Unlowered> {
+        let def = body.def();
+        let name = self.defs.get(def).name.clone();
+        if let Some(decls) = self.decls {
+            if let Some(signature) = decls.signature(def) {
+                if !signature.generics.is_empty() {
+                    return Err(Unlowered::new(format!(
+                        "a call to the generic function `{name}`, which nothing has \
+                         monomorphised: Decision 42 puts the walk above this crate and no phase \
+                         runs it yet"
+                    )));
+                }
+                if signature.self_param.is_some() {
+                    return Err(Unlowered::new(format!(
+                        "a call to the method `{name}`: its receiver is a `Self` this crate \
+                         cannot resolve to a concrete type, and Decision 11's method lookup does \
+                         not put what it found in the tree"
+                    )));
+                }
+            }
+        }
+        let ret_layout = self.layout_of_ty(body.local_decl(mir::Local::from_index(0)).ty)?;
+        let mut params = Vec::new();
+        for local in body.params() {
+            let decl = body.local_decl(local);
+            let param_name = decl
+                .def()
+                .map(|def| self.defs.get(def).name.clone())
+                .unwrap_or_else(|| format!("a{}", local.index()));
+            params.push((param_name, self.layout_of_ty(decl.ty)?, ParamAttrs::default()));
+        }
+        Ok(AbiSignature::science(self.target, self.symbol_of(def), ret_layout, params))
+    }
+
+    /// Decision 16's mangled symbol for one definition.
+    ///
+    /// The path is `DefTable::path_of`'s, split on its separator — **except for
+    /// the entry point, which is `_S4main` whatever module it is in**, and the
+    /// exception is finding 16 rather than a convenience.
+    ///
+    /// **What `path_of` actually returns for a script is `hello.main`.** The
+    /// crate root is unnamed and contributes nothing, but the *file's* module
+    /// is not the crate root: `resolve_module` names it after the file, so the
+    /// first path component of every definition in a single-file program is
+    /// that file's stem. Mangled, that makes `hello.science` and a byte-identical
+    /// copy called `prog.science` produce **different symbols for the same
+    /// source** — which is precisely the property Decision 16 gives as its own
+    /// reason for refusing hashes: *"a hash of a path … is stable only if the
+    /// path is, and the path is the thing that is not"*, and
+    /// *"deterministic from the source alone"*.
+    ///
+    /// **It is not repaired here, because it is not this crate's to repair.**
+    /// Whether a file's stem is part of its module path is
+    /// `type-checking-and-mir.md`'s question and `science-resolve`'s answer;
+    /// changing the mangling to hide it would make two different modules'
+    /// functions share a symbol, which is `SC0404` at best and a silently
+    /// wrong call at worst. What is done instead is the one case where the
+    /// answer is already fixed by another note: `script-mode.md` §2.3 and this
+    /// crate's own `lower_c_main` both name the entry point `_S4main`, and
+    /// `science-codegen`'s `tests/stage_one.rs` pins it, so the entry keeps
+    /// that symbol and every other definition carries the path it really has.
+    fn symbol_of(&self, def: DefId) -> String {
+        if self.entry == Some(def) {
+            return mangle(&MonoKey::plain(&["main"]));
+        }
+        let path = self.defs.path_of(def);
+        let components: Vec<&str> = path.split('.').filter(|part| !part.is_empty()).collect();
+        if components.is_empty() {
+            return mangle(&MonoKey::plain(&[self.defs.get(def).name.as_str()]));
+        }
+        mangle(&MonoKey::plain(&components))
     }
 
     /// The literals and declarations interned so far, with `definitions`,
@@ -637,14 +1235,21 @@ impl<'a> Lowerer<'a> {
     }
 
     fn lower_body(&mut self, body: &MirBody) -> Result<(AbiSignature, ExtBody), Unlowered> {
-        if body.params().next().is_some() {
-            return Err(Unlowered::new("a function with parameters"));
-        }
         let return_local = mir::Local::from_index(0);
         let return_id = LocalId(return_local.index() as u32);
-        let ret_layout = self.layout_of_ty(body.local_decl(return_local).ty)?;
-        let key = MonoKey::plain(&["main"]);
-        let sig = AbiSignature::science(self.target, mangle(&key), ret_layout.clone(), vec![]);
+        let cached = self.science.get(&body.def()).cloned();
+        let sig = match cached {
+            Some(existing) => existing,
+            None => self.science_signature(body)?,
+        };
+        let params: Vec<mir::Local> = body.params().collect();
+        if params.len() != sig.params.len() {
+            return Err(Unlowered::new(format!(
+                "a function whose MIR declares {} parameter(s) where its signature classifies {}",
+                params.len(),
+                sig.params.len()
+            )));
+        }
 
         // Decision 8: every local is an `alloca` in the entry block. MIR's
         // `StorageLive`/`StorageDead` are not modelled — an `alloca` lives for
@@ -657,6 +1262,9 @@ impl<'a> Lowerer<'a> {
             layouts: BTreeMap::new(),
             untyped: Vec::new(),
             entry: Vec::new(),
+            prologue: Vec::new(),
+            discriminants: BTreeMap::new(),
+            ret: sig.ret.clone(),
             next_value: 0,
             next_temp: body.local_count() as u32,
         };
@@ -694,6 +1302,40 @@ impl<'a> Lowerer<'a> {
             // private copy nothing ever returns.
             if id == return_id && sig.ret.is_sret() {
                 ctx.entry.push(ExtInst::ReturnSlot { local: id, layout: layout.clone() });
+            } else if let Some(index) = params.iter().position(|param| *param == local) {
+                // A parameter's local, and the two classes are two different
+                // bindings rather than one binding and a copy.
+                match sig.params[index].class {
+                    // Decision 22: *"by pointer to a caller-owned slot"*, so
+                    // the local **is** that slot. An `alloca` here would be a
+                    // private copy the caller never sees written, which is
+                    // `ExtInst::ReturnSlot`'s bug on the argument side.
+                    ArgClass::IndirectByPointer => ctx.entry.push(ExtInst::ParamSlot {
+                        local: id,
+                        index: index as u32,
+                        layout: layout.clone(),
+                    }),
+                    // A register parameter gets Decision 8's `alloca` and one
+                    // store in the prologue, which is what every C compiler
+                    // emits at `-O0` and what `mem2reg` removes at `-O2`.
+                    ArgClass::Direct => {
+                        ctx.entry.push(ExtInst::Above(Inst::Alloca {
+                            local: id,
+                            layout: layout.clone(),
+                        }));
+                        ctx.prologue.push(ExtInst::Above(Inst::Store {
+                            local: id,
+                            value: Operand::Param(index as u32),
+                        }));
+                    }
+                    // §3.2: a zero-sized argument is *"passed as nothing"*, so
+                    // there is nothing to store. The slot still exists, because
+                    // the body may still name the local.
+                    ArgClass::Ignore => ctx.entry.push(ExtInst::Above(Inst::Alloca {
+                        local: id,
+                        layout: layout.clone(),
+                    })),
+                }
             } else {
                 ctx.entry
                     .push(ExtInst::Above(Inst::Alloca { local: id, layout: layout.clone() }));
@@ -717,8 +1359,13 @@ impl<'a> Lowerer<'a> {
             });
         }
         // Every `alloca` in front of the entry block's own instructions, in one
-        // place, however late in the walk the slot was invented.
-        let entry = ctx.entry;
+        // place, however late in the walk the slot was invented — and then the
+        // prologue, which stores each register parameter into the slot the
+        // loop above reserved for it. The order is load-bearing in one
+        // direction only: a store needs its `alloca`, and an `alloca` invented
+        // late by `Lowerer::temp` still lands in front of every store.
+        let mut entry = ctx.entry;
+        entry.extend(ctx.prologue);
         if let Some(first) = blocks.first_mut() {
             let body_insts = std::mem::replace(&mut first.insts, entry);
             first.insts.extend(body_insts);
@@ -746,9 +1393,18 @@ impl<'a> Lowerer<'a> {
             }
             StatementKind::Activate(_) => Err(Unlowered::new("a two-phase borrow")),
             StatementKind::Nop => Ok(()),
+            // **Before the untyped check, not after it.** A discriminant read
+            // writes a local `lower_body` skipped — `science-mir` gives the
+            // temporary `Ty::ERROR` on purpose, because *"which variant a value
+            // holds has no Science type at all"* — so the ordinary path would
+            // refuse every `match` in the language with `UNTYPED`, naming a
+            // front-end hole for something the front end did deliberately.
+            StatementKind::Assign { place, rvalue: Rvalue::Discriminant(source) } => {
+                self.lower_discriminant(body, ctx, place, source, insts)
+            }
             StatementKind::Assign { place, rvalue } => {
                 if !place.projection.is_empty() {
-                    return Err(Unlowered::new("an assignment through a field or an index"));
+                    return self.lower_projected_assign(body, ctx, place, rvalue, insts);
                 }
                 let local = LocalId(place.local.index() as u32);
                 if ctx.untyped.contains(&local) {
@@ -763,6 +1419,311 @@ impl<'a> Lowerer<'a> {
                 self.lower_rvalue(body, ctx, rvalue, local, &layout, ty, insts)
             }
         }
+    }
+
+    /// An assignment whose destination is a field, a tuple element or a
+    /// variant's payload.
+    ///
+    /// **The value is computed into a slot codegen invents and then copied in,
+    /// and the copy is the cost.** [`Lowerer::lower_rvalue`] writes into a
+    /// `LocalId`, and every one of its ten cases ends in `Inst::Store` to that
+    /// local; giving each of them a second, address-shaped spelling would be
+    /// ten more places for a width to be wrong, in a crate whose §3 records two
+    /// findings that were exactly that. One extra `alloca` and one extra
+    /// load-store pair per projected assignment is what the uniformity costs,
+    /// and `-O2`'s `SROA` removes both — the slot has one store and one load and
+    /// never has its address escape, which is the shape that pass exists for.
+    /// At `-O0` it stands, and `-O0` is alloca-heavy by Decision 8 anyway.
+    fn lower_projected_assign(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        place: &mir::Place,
+        rvalue: &Rvalue,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let ty = place
+            .projection
+            .last()
+            .map(|projection| projection.ty())
+            .expect("a projected place has at least one projection");
+        let (address, layout) = self.place_address(ctx, place, insts)?;
+        let slot = self.temp(ctx, layout.clone());
+        self.lower_rvalue(body, ctx, rvalue, slot, &layout, ty, insts)?;
+        let value = ctx.value();
+        insts.push(ExtInst::Above(Inst::Load { dest: value, local: slot }));
+        insts.push(ExtInst::StoreAt {
+            address: Operand::Value(address),
+            layout,
+            value: Operand::Value(value),
+        });
+        Ok(())
+    }
+
+    /// §2.3's projection table, as a chain of addresses.
+    ///
+    /// Returns the address of the place and the layout of what is there. The
+    /// base is [`ExtInst::LocalAddr`] and every step after it is
+    /// [`ExtInst::FieldAddr`] at an offset `science-codegen`'s layout computed —
+    /// **except `deref`, which is the one row of that table that is not an
+    /// offset**: it loads a pointer and that pointer becomes the new base.
+    ///
+    /// Decision 9 applies and is visible here: *"codegen lowers each place
+    /// expression once per use and performs no common-subexpression
+    /// elimination"*, so two reads of `doc.title` build two GEPs and LLVM's GVN
+    /// is what merges them.
+    fn place_address(
+        &mut self,
+        ctx: &mut BodyCtx,
+        place: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(ValueId, Layout), Unlowered> {
+        let local = LocalId(place.local.index() as u32);
+        if ctx.untyped.contains(&local) {
+            return Err(Unlowered::new(UNTYPED));
+        }
+        let mut layout = ctx.layout(local)?.clone();
+        let mut address = ctx.value();
+        insts.push(ExtInst::LocalAddr { dest: address, local });
+
+        for projection in &place.projection {
+            // Every arm answers with a byte offset and the layout of what is
+            // there, and the two are applied together below. `deref` is the one
+            // that cannot: it replaces the base rather than adding to it, so it
+            // does its own work and leaves the loop early.
+            let (offset, next) = match projection {
+                mir::Projection::Field { field, .. } => {
+                    let (index, _) = self.field_index(*field)?;
+                    let Repr::Aggregate { fields } = &layout.repr else {
+                        return Err(Unlowered::new(
+                            "a field of a value whose representation is not Decision 17's \
+                             aggregate one",
+                        ));
+                    };
+                    let found = fields.get(index).ok_or_else(|| {
+                        Unlowered::new(
+                            "a field whose index the layout does not have: the declaration and \
+                             the layout disagree about how many fields this type has",
+                        )
+                    })?;
+                    (found.offset, found.layout.clone())
+                }
+                mir::Projection::Downcast { variant, .. } => {
+                    let (index, choice) = self.variant_index(*variant)?;
+                    let Repr::Tagged { payload_offset, variants, .. } = &layout.repr else {
+                        return Err(Unlowered::new(format!(
+                            "a downcast to `{}.{}`, whose layout is Decision 19's niched one \
+                             rather than Decision 18's tagged one: its payload is the whole value \
+                             and not a field at an offset",
+                            self.defs.get(choice).name,
+                            self.defs.get(*variant).name
+                        )));
+                    };
+                    let payload = variants
+                        .get(index)
+                        .and_then(|found| found.payload.clone())
+                        .ok_or_else(|| {
+                            Unlowered::new(format!(
+                                "a downcast to `{}`, which carries no payload to project into",
+                                self.defs.get(*variant).name
+                            ))
+                        })?;
+                    (*payload_offset, payload)
+                }
+                mir::Projection::TupleField { index, .. } => {
+                    let index = *index as usize;
+                    match &layout.repr {
+                        Repr::Aggregate { fields } => {
+                            let found = fields.get(index).ok_or_else(|| {
+                                Unlowered::new(format!(
+                                    "element {index} of a value that has {} of them",
+                                    fields.len()
+                                ))
+                            })?;
+                            (found.offset, found.layout.clone())
+                        }
+                        // **A one-element payload is its element**, by
+                        // `Lowerer::choice_ty`'s decision not to wrap it, so
+                        // `Number(v)`'s `.0` is the value itself at offset 0.
+                        // The `index == 0` guard is what keeps that from
+                        // becoming "any element of anything is the whole
+                        // thing".
+                        _ if index == 0 => (0, layout.clone()),
+                        _ => {
+                            return Err(Unlowered::new(format!(
+                                "element {index} of a value that is not an aggregate"
+                            )));
+                        }
+                    }
+                }
+                // The row of §2.3's table that is not an offset: `load ptr`,
+                // and the loaded pointer *is* the next base. The pointee's
+                // layout comes from the projection's own `ty`, which
+                // `science-mir` takes from the declaration rather than from the
+                // expression.
+                mir::Projection::Deref { ty } => {
+                    if !matches!(layout.repr, Repr::Scalar(Scalar::Pointer(_))) {
+                        return Err(Unlowered::new(
+                            "a dereference of a value that is not a pointer",
+                        ));
+                    }
+                    let pointee = self.layout_of_ty(*ty)?;
+                    let loaded = ctx.value();
+                    insts.push(ExtInst::LoadAt {
+                        dest: loaded,
+                        address: Operand::Value(address),
+                        layout: layout.clone(),
+                    });
+                    address = loaded;
+                    layout = pointee;
+                    continue;
+                }
+                mir::Projection::Index { .. } => {
+                    return Err(Unlowered::new(
+                        "an index, which §2.4 makes a bounds check and then a \
+                         `getelementptr`, and neither the check nor an `Array` value reaches \
+                         this backend",
+                    ));
+                }
+            };
+            layout = next;
+            let stepped = ctx.value();
+            insts.push(ExtInst::FieldAddr {
+                dest: stepped,
+                base: Operand::Value(address),
+                offset,
+            });
+            address = stepped;
+        }
+        Ok((address, layout))
+    }
+
+    /// A field's index in its record's declaration order, and the record.
+    fn field_index(&self, field: DefId) -> Result<(usize, DefId), Unlowered> {
+        let name = self.defs.get(field).name.clone();
+        let owner = self.defs.get(field).parent.ok_or_else(|| {
+            Unlowered::new(format!("the field `{name}`, which belongs to no record"))
+        })?;
+        let record = self.declarations()?.record(owner).ok_or_else(|| {
+            Unlowered::new(format!(
+                "the field `{name}` of `{}`, which the declaration table has no lowered field \
+                 list for",
+                self.defs.get(owner).name
+            ))
+        })?;
+        let index = record
+            .fields
+            .iter()
+            .position(|(def, _)| *def == field)
+            .ok_or_else(|| Unlowered::new(format!("the field `{name}`, which its record's field \
+                                                   list does not contain")))?;
+        Ok((index, owner))
+    }
+
+    /// A variant's discriminant value, and its `choice`.
+    ///
+    /// Decision 18: *"discriminant values follow declaration order from zero"*,
+    /// so the index **is** the value and [`Lowerer::choice_variants`] is what
+    /// fixes it.
+    fn variant_index(&self, variant: DefId) -> Result<(usize, DefId), Unlowered> {
+        let name = self.defs.get(variant).name.clone();
+        let choice = self.defs.get(variant).parent.ok_or_else(|| {
+            Unlowered::new(format!("the variant `{name}`, which belongs to no `choice`"))
+        })?;
+        let index = self
+            .choice_variants(choice)
+            .iter()
+            .position(|def| *def == variant)
+            .ok_or_else(|| {
+                Unlowered::new(format!(
+                    "the variant `{name}`, which `{}` does not declare",
+                    self.defs.get(choice).name
+                ))
+            })?;
+        Ok((index, choice))
+    }
+
+    /// `_n = discriminant(place)`: §3.3's tag, loaded.
+    ///
+    /// **This is where the slot for the result is invented.** MIR's discriminant
+    /// temporary is typed `Ty::ERROR` deliberately, so [`Lowerer::lower_body`]
+    /// skipped it along with the genuinely untyped locals and there is no
+    /// `alloca` for it. The width it needs is not a Science type at all — it is
+    /// `IntTy::discriminant_for(variant count)`, which is a *layout* fact — so
+    /// the slot cannot be reserved until the choice being read is known, which
+    /// is here and nowhere earlier. The `alloca` goes into the entry block's
+    /// list whatever block this statement is in, which is `BodyCtx::entry`'s
+    /// whole reason for existing.
+    ///
+    /// **A niched layout is refused rather than read.** Decision 19's enum *is*
+    /// its payload, so its "discriminant" is a comparison against the niche
+    /// values and not a field; answering with the raw pointer would make every
+    /// `switch` branch on an address, which verifies — a pointer is not an
+    /// integer, so in fact it does not, and the refusal is here so the message
+    /// names the construct rather than the instruction.
+    fn lower_discriminant(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        place: &mir::Place,
+        source: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        if !place.projection.is_empty() {
+            return Err(Unlowered::new("a discriminant read written through a field"));
+        }
+        if !source.projection.is_empty() {
+            return Err(Unlowered::new(
+                "a discriminant read through a field or an index: the tag is loaded from a \
+                 local's own address and this instruction set has no typed load from a computed \
+                 one",
+            ));
+        }
+        let source_ty = body.local_decl(source.local).ty;
+        let choice = match self.types.kind(source_ty) {
+            TyKind::Named { def, .. } if self.defs.get(*def).kind == DefKind::Choice => *def,
+            _ => {
+                return Err(Unlowered::new(
+                    "a discriminant read of a value that is not a `choice`: a `T?`'s presence \
+                     test is `Rvalue::IsPresent` and a niched layout has no tag to load",
+                ));
+            }
+        };
+        let layout = self.layout_of_ty(source_ty)?;
+        let Repr::Tagged { tag, .. } = &layout.repr else {
+            return Err(Unlowered::new(format!(
+                "a `match` over `{}`, whose layout is Decision 19's niched one rather than \
+                 Decision 18's tagged one: its discriminant is a comparison against the niche \
+                 and not a field to load",
+                self.defs.get(choice).name
+            )));
+        };
+        let tag_layout = layout_of(self.target, &CgTy::Int(*tag));
+        let dest = LocalId(place.local.index() as u32);
+        match ctx.layouts.get(&dest.0) {
+            Some(existing) if *existing == tag_layout => {}
+            Some(_) => {
+                return Err(Unlowered::new(
+                    "one local holding the discriminants of two `choice`s of different widths",
+                ));
+            }
+            None => {
+                ctx.untyped.retain(|untyped| *untyped != dest);
+                ctx.entry.push(ExtInst::Above(Inst::Alloca {
+                    local: dest,
+                    layout: tag_layout.clone(),
+                }));
+                ctx.layouts.insert(dest.0, tag_layout);
+            }
+        }
+        ctx.discriminants.insert(dest.0, choice);
+
+        let source_id = LocalId(source.local.index() as u32);
+        ctx.layout(source_id)?;
+        let value = ctx.value();
+        insts.push(ExtInst::LoadTag { dest: value, local: source_id });
+        insts.push(ExtInst::Above(Inst::Store { local: dest, value: Operand::Value(value) }));
+        Ok(())
     }
 
     /// One `Assign`'s right-hand side, ending in a store into `dest`.
@@ -789,7 +1750,7 @@ impl<'a> Lowerer<'a> {
                 self.build_string(text, dest, insts)
             }
             Rvalue::Use(operand) => {
-                let value = self.lower_operand(body, ctx, operand, Some(layout), insts)?;
+                let value = self.lower_operand(ctx, operand, Some(layout), insts)?;
                 insts.push(ExtInst::Above(Inst::Store { local: dest, value }));
                 Ok(())
             }
@@ -797,7 +1758,7 @@ impl<'a> Lowerer<'a> {
                 let operand_ty = self.operand_ty(body, operand).unwrap_or(ty);
                 let scalar = self.scalar_of(operand_ty)?;
                 let operand_layout = layout_of(self.target, &self.cg_ty(operand_ty)?);
-                let value = self.typed_operand(body, ctx, operand, &operand_layout, insts)?;
+                let value = self.typed_operand(ctx, operand, &operand_layout, insts)?;
                 let result = ctx.value();
                 match op {
                     UnaryOp::Neg => {
@@ -836,8 +1797,402 @@ impl<'a> Lowerer<'a> {
             Rvalue::Binary { op, lhs, rhs } => {
                 self.lower_binary(body, ctx, *op, lhs, rhs, dest, ty, insts)
             }
+            // §5.5's `?`: *"`?` evaluates to a `Bool` and never to the
+            // value"*, so this is one comparison and no branch.
+            Rvalue::IsPresent(operand) => {
+                self.lower_is_present(body, ctx, operand, dest, insts)
+            }
+            // Decision 6's `T` into `T?`. The other seven coercions box, build
+            // a vtable or copy through a borrow, and each is refused by name in
+            // [`Lowerer::lower_coercion`].
+            Rvalue::Coerce { operand, coercion, .. } => {
+                self.lower_coercion(body, ctx, *coercion, operand, dest, layout, insts)
+            }
+            Rvalue::Record { def, fields } => {
+                self.lower_record(ctx, *def, fields, dest, layout, insts)
+            }
+            Rvalue::Variant { variant, payload } => {
+                self.lower_variant(ctx, *variant, payload, dest, layout, insts)
+            }
             other => Err(Unlowered::new(describe_rvalue(other))),
         }
+    }
+
+    /// §5.5's `?`, which is one comparison.
+    ///
+    /// **Both of Decision 6's representations, and they ask different
+    /// questions.** A tagged nullable is present when its discriminant is not
+    /// the payload-free variant's; a niched one is present when its niche
+    /// scalar is not the encoded value, which in F0 is always the null pointer.
+    /// The discriminant is read off the layout in both cases rather than
+    /// written as a constant, so the two agree with [`Lowerer::store_null`] by
+    /// construction rather than by matching numbers.
+    ///
+    /// **§3.4's rule holds here too.** The niched read is
+    /// [`ExtInst::LoadNiche`] and not `Inst::Load`, because for `(any I)?` the
+    /// whole type is two words and *"the vtable slot of a null trait object is
+    /// undefined and codegen must never load it — including on the path that
+    /// tests for null"*. That path is this one.
+    fn lower_is_present(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        operand: &mir::Operand,
+        dest: LocalId,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let place = operand.place().ok_or_else(|| {
+            Unlowered::new(
+                "a `?` on a constant: the presence test reads a discriminant or a niche and needs \
+                 a slot to read it from",
+            )
+        })?;
+        if !place.projection.is_empty() {
+            return Err(Unlowered::new(
+                "a `?` on a field: the tag and the niche are read from a local's own address and \
+                 this instruction set has no typed load from a computed one",
+            ));
+        }
+        let ty = self
+            .operand_ty(body, operand)
+            .ok_or_else(|| Unlowered::new("a `?` on a value with no type"))?;
+        let layout = self.layout_of_ty(ty)?;
+        let local = LocalId(place.local.index() as u32);
+        if ctx.untyped.contains(&local) {
+            return Err(Unlowered::new(UNTYPED));
+        }
+        ctx.layout(local)?;
+        let result = ctx.value();
+        match &layout.repr {
+            Repr::Tagged { variants, .. } => {
+                let null = variants
+                    .iter()
+                    .find(|variant| variant.payload.is_none())
+                    .ok_or_else(|| {
+                        Unlowered::new("a `?` on a tagged type with no payload-free variant")
+                    })?
+                    .discriminant;
+                let tag = ctx.value();
+                insts.push(ExtInst::LoadTag { dest: tag, local });
+                insts.push(ExtInst::Above(Inst::Cmp {
+                    dest: result,
+                    op: CmpOp::Ne,
+                    signed: false,
+                    lhs: Operand::Value(tag),
+                    rhs: Operand::ConstInt(null as i128),
+                }));
+            }
+            Repr::Niched { niche, niche_variants, .. } => {
+                if niche.offset != 0 {
+                    return Err(Unlowered::new("a `?` on a nullable whose niche is not at offset 0"));
+                }
+                // F0's niche offers exactly one value and it is the null
+                // pointer. §3.4 generalises the rule — *"the `n` payload-free
+                // variants take the first `n` values of the niche"* — and a
+                // second value would need a comparison against an integer
+                // rather than against `null`, which is a different instruction
+                // and not one this has been asked for.
+                if niche_variants.iter().any(|(_, value)| *value != 0) {
+                    return Err(Unlowered::new(
+                        "a `?` on a niche encoding a value that is not the null pointer",
+                    ));
+                }
+                let data = ctx.value();
+                insts.push(ExtInst::LoadNiche { dest: data, local });
+                insts.push(ExtInst::Above(Inst::Cmp {
+                    dest: result,
+                    op: CmpOp::Ne,
+                    signed: false,
+                    lhs: Operand::Value(data),
+                    rhs: Operand::Null,
+                }));
+            }
+            _ => {
+                return Err(Unlowered::new(format!(
+                    "a `?` on `{}`, which is not a nullable type",
+                    self.types.render(self.defs, ty)
+                )));
+            }
+        }
+        insts.push(ExtInst::Above(Inst::Store { local: dest, value: Operand::Value(result) }));
+        Ok(())
+    }
+
+    /// Decision 6's widening, and a name for each of the seven this is not.
+    ///
+    /// **`Widen` writes the tag and then the payload, in that order, and
+    /// neither is optional.** A tagged `T?` is a discriminant at offset 0 and a
+    /// payload at `payload_offset`, and a widening that wrote only the payload
+    /// would leave the tag holding whatever the slot held — which for a freshly
+    /// `alloca`'d slot is a value that is `null` about half the time and is
+    /// never reported. A niched `T?` **is** its payload, so there is no tag to
+    /// write and the store is the ordinary one; that asymmetry is Decision 19
+    /// and is why the two arms do not share a line.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_coercion(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        coercion: science_types::assign::Coercion,
+        operand: &mir::Operand,
+        dest: LocalId,
+        layout: &Layout,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        use science_types::assign::Coercion;
+        match coercion {
+            // The types already agree and `assign`'s own note says *"nothing is
+            // emitted"* — so what is left is the assignment underneath it.
+            Coercion::Identity => {
+                let value = self.typed_operand(ctx, operand, layout, insts)?;
+                insts.push(ExtInst::Above(Inst::Store { local: dest, value }));
+                Ok(())
+            }
+            Coercion::Widen => match &layout.repr {
+                Repr::Tagged { payload_offset, variants, .. } => {
+                    let present = variants
+                        .iter()
+                        .find(|variant| variant.payload.is_some())
+                        .ok_or_else(|| {
+                            Unlowered::new(
+                                "a widening into a tagged type with no payload-carrying variant",
+                            )
+                        })?;
+                    let payload = present
+                        .payload
+                        .clone()
+                        .expect("the variant was found by having a payload");
+                    let discriminant = present.discriminant;
+                    let payload_offset = *payload_offset;
+                    insts.push(ExtInst::StoreTag { local: dest, discriminant });
+                    let base = ctx.value();
+                    insts.push(ExtInst::LocalAddr { dest: base, local: dest });
+                    let address = ctx.value();
+                    insts.push(ExtInst::FieldAddr {
+                        dest: address,
+                        base: Operand::Value(base),
+                        offset: payload_offset,
+                    });
+                    let value = self.typed_operand(ctx, operand, &payload, insts)?;
+                    insts.push(ExtInst::StoreAt {
+                        address: Operand::Value(address),
+                        layout: payload,
+                        value,
+                    });
+                    Ok(())
+                }
+                // Decision 19: the enum *is* the payload, and a present value
+                // is that payload written as itself. The niche value is the one
+                // bit pattern the payload cannot hold, so writing the payload
+                // is what makes it present — there is nothing else to say.
+                Repr::Niched { payload, .. } => {
+                    let payload = (**payload).clone();
+                    let value = self.typed_operand(ctx, operand, &payload, insts)?;
+                    insts.push(ExtInst::Above(Inst::Store { local: dest, value }));
+                    Ok(())
+                }
+                _ => Err(Unlowered::new(
+                    "a widening into a type that is neither Decision 18's tagged nullable nor \
+                     Decision 19's niched one",
+                )),
+            },
+            Coercion::Box | Coercion::BoxThenWiden => Err(Unlowered::new(
+                "a concrete error boxed into `any Error`, which allocates and fills a vtable: \
+                 this backend emits no vtables at all",
+            )),
+            Coercion::Unsize | Coercion::UnsizeInBox => Err(Unlowered::new(
+                "a borrow or a `Box` unsized into an interface object, which pairs the pointer \
+                 with a vtable this backend does not emit",
+            )),
+            Coercion::Copy | Coercion::CopyThenWiden | Coercion::CopyWhenPresent => {
+                let _ = body;
+                Err(Unlowered::new(
+                    "a `Copy` out of a borrow, which is a load through a pointer whose `Copy` \
+                     bound nothing here checks",
+                ))
+            }
+        }
+    }
+
+    /// A record literal: Decision 17's fields, written one at a time.
+    ///
+    /// **The order the fields are written in is MIR's and the order they are
+    /// *placed* in is the declaration's**, and keeping the two apart is the
+    /// whole of this function. `Rvalue::Record` carries `(field, operand)` pairs
+    /// in the order the literal spelled them, which for named-argument
+    /// construction is any order the author liked;
+    /// `Declarations::record().fields` is declaration order, which is what
+    /// Decision 17 lays out and what [`Lowerer::record_ty`] built the layout
+    /// from. Each field is looked up by its `DefId`, so the literal's order
+    /// changes the order of the stores and nothing else.
+    ///
+    /// **Every field must be named.** A literal that names fewer is refused
+    /// rather than partially written: the bytes of an unwritten field are
+    /// whatever the stack held, and a record with one of those in it is a wrong
+    /// answer that nothing reports. The type checker already requires all of
+    /// them, so this is a guard on a disagreement rather than a diagnostic a
+    /// user will see.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_record(
+        &mut self,
+        ctx: &mut BodyCtx,
+        def: DefId,
+        fields: &[(DefId, mir::Operand)],
+        dest: LocalId,
+        layout: &Layout,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let name = self.defs.get(def).name.clone();
+        let order: Vec<DefId> = self
+            .declarations()?
+            .record(def)
+            .ok_or_else(|| {
+                Unlowered::new(format!(
+                    "a `{name}` literal, whose record the declaration table has no lowered field \
+                     list for"
+                ))
+            })?
+            .fields
+            .iter()
+            .map(|(field, _)| *field)
+            .collect();
+        let Repr::Aggregate { fields: places } = &layout.repr else {
+            return Err(Unlowered::new(format!(
+                "a `{name}` literal whose layout is not Decision 17's aggregate one"
+            )));
+        };
+        if places.len() != order.len() {
+            return Err(Unlowered::new(format!(
+                "a `{name}` literal: its layout has {} field(s) and its declaration has {}",
+                places.len(),
+                order.len()
+            )));
+        }
+        if fields.len() != order.len() {
+            return Err(Unlowered::new(format!(
+                "a `{name}` literal that names {} of its {} field(s): the rest of the slot would \
+                 be whatever the stack held, which is a value nothing reports",
+                fields.len(),
+                order.len()
+            )));
+        }
+        let places = places.clone();
+        let base = ctx.value();
+        insts.push(ExtInst::LocalAddr { dest: base, local: dest });
+        for (field, operand) in fields {
+            let index = order.iter().position(|def| def == field).ok_or_else(|| {
+                Unlowered::new(format!(
+                    "a `{name}` literal naming `{}`, which is not one of its fields",
+                    self.defs.get(*field).name
+                ))
+            })?;
+            let place = &places[index];
+            let address = ctx.value();
+            insts.push(ExtInst::FieldAddr {
+                dest: address,
+                base: Operand::Value(base),
+                offset: place.offset,
+            });
+            let value = self.typed_operand(ctx, operand, &place.layout, insts)?;
+            insts.push(ExtInst::StoreAt {
+                address: Operand::Value(address),
+                layout: place.layout.clone(),
+                value,
+            });
+        }
+        Ok(())
+    }
+
+    /// A `choice` variant, constructed: §3.3's discriminant, then its payload.
+    ///
+    /// **The payload union is left alone for a payload-free variant**, which
+    /// Decision 18 permits — *"a variant with no payload contributes nothing to
+    /// the union"* — so `Format.Plain` is one store of one byte and the rest of
+    /// the slot keeps whatever it held. That is not a leak of anything: no
+    /// reader of a `choice` may look at a payload the discriminant does not
+    /// select, and `Projection::Downcast` is emitted only under a `match` arm
+    /// that tested the tag.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_variant(
+        &mut self,
+        ctx: &mut BodyCtx,
+        variant: DefId,
+        payload: &[mir::Operand],
+        dest: LocalId,
+        layout: &Layout,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let (index, choice) = self.variant_index(variant)?;
+        let Repr::Tagged { payload_offset, variants, .. } = &layout.repr else {
+            return Err(Unlowered::new(format!(
+                "a `{}.{}` value whose layout is Decision 19's niched one: constructing it means \
+                 writing the payload or the niche value, and not a discriminant field",
+                self.defs.get(choice).name,
+                self.defs.get(variant).name
+            )));
+        };
+        let payload_offset = *payload_offset;
+        let declared = variants.get(index).and_then(|place| place.payload.clone());
+        insts.push(ExtInst::StoreTag { local: dest, discriminant: index as u64 });
+        if payload.is_empty() {
+            return Ok(());
+        }
+        let declared = declared.ok_or_else(|| {
+            Unlowered::new(format!(
+                "a `{}` value given a payload its declaration does not have",
+                self.defs.get(variant).name
+            ))
+        })?;
+        let base = ctx.value();
+        insts.push(ExtInst::LocalAddr { dest: base, local: dest });
+        let start = ctx.value();
+        insts.push(ExtInst::FieldAddr {
+            dest: start,
+            base: Operand::Value(base),
+            offset: payload_offset,
+        });
+        // One element is the element, by `Lowerer::choice_ty`'s decision; more
+        // than one is the struct that function built, in positional order.
+        if payload.len() == 1 {
+            let value = self.typed_operand(ctx, &payload[0], &declared, insts)?;
+            insts.push(ExtInst::StoreAt {
+                address: Operand::Value(start),
+                layout: declared,
+                value,
+            });
+            return Ok(());
+        }
+        let Repr::Aggregate { fields } = &declared.repr else {
+            return Err(Unlowered::new(format!(
+                "a `{}` value with {} payload elements whose layout is not an aggregate",
+                self.defs.get(variant).name,
+                payload.len()
+            )));
+        };
+        if fields.len() != payload.len() {
+            return Err(Unlowered::new(format!(
+                "a `{}` value given {} payload element(s) where its layout has {}",
+                self.defs.get(variant).name,
+                payload.len(),
+                fields.len()
+            )));
+        }
+        let fields = fields.clone();
+        for (element, field) in payload.iter().zip(&fields) {
+            let address = ctx.value();
+            insts.push(ExtInst::FieldAddr {
+                dest: address,
+                base: Operand::Value(start),
+                offset: field.offset,
+            });
+            let value = self.typed_operand(ctx, element, &field.layout, insts)?;
+            insts.push(ExtInst::StoreAt {
+                address: Operand::Value(address),
+                layout: field.layout.clone(),
+                value,
+            });
+        }
+        Ok(())
     }
 
     /// §4.6's binary operators, on scalars.
@@ -917,8 +2272,8 @@ impl<'a> Lowerer<'a> {
             _ => false,
         };
         let float = matches!(scalar, Scalar::Float(_));
-        let left = self.typed_operand(body, ctx, lhs, &operand_layout, insts)?;
-        let right = self.typed_operand(body, ctx, rhs, &operand_layout, insts)?;
+        let left = self.typed_operand(ctx, lhs, &operand_layout, insts)?;
+        let right = self.typed_operand(ctx, rhs, &operand_layout, insts)?;
         let result = ctx.value();
 
         if comparison {
@@ -1014,12 +2369,30 @@ impl<'a> Lowerer<'a> {
     }
 
     /// The Science type of an operand that reads a place, if it reads one.
+    ///
+    /// **A projected place has a type too, and it is the projection's.**
+    /// `science-mir` carries a `Ty` on every projection step and takes it from
+    /// the *declaration* rather than from the expression, which is exactly what
+    /// makes it usable here. This used to answer `None` for anything projected,
+    /// which was right while no projection was lowered and became a wrong
+    /// answer the moment one was: `m.a is 80u8` is a place against a constant,
+    /// and with no type from the place [`Lowerer::lower_binary`] refused it as
+    /// *"a comparison of two constants"* — a message naming something the
+    /// program does not contain.
+    ///
+    /// **`Downcast` is the one step whose `ty` is not the value's**: it is the
+    /// *choice's* own type, because a downcast names a variant of it rather
+    /// than producing one. A place ending in a downcast is not a readable value
+    /// — MIR always follows one with a `TupleField` — so answering `None` is
+    /// right and answering with the choice would give a comparison the width of
+    /// the whole tagged union.
     fn operand_ty(&self, body: &MirBody, operand: &mir::Operand) -> Option<Ty> {
         let place = operand.place()?;
-        if !place.projection.is_empty() {
-            return None;
+        match place.projection.last() {
+            None => Some(body.local_decl(place.local).ty),
+            Some(mir::Projection::Downcast { .. }) => None,
+            Some(projection) => Some(projection.ty()),
         }
-        Some(body.local_decl(place.local).ty)
     }
 
     /// A type's scalar, for the two questions the instruction set asks about
@@ -1051,13 +2424,12 @@ impl<'a> Lowerer<'a> {
     /// through unchanged.
     fn typed_operand(
         &mut self,
-        body: &MirBody,
         ctx: &mut BodyCtx,
         operand: &mir::Operand,
         layout: &Layout,
         insts: &mut Vec<ExtInst>,
     ) -> Result<Operand, Unlowered> {
-        let lowered = self.lower_operand(body, ctx, operand, Some(layout), insts)?;
+        let lowered = self.lower_operand(ctx, operand, Some(layout), insts)?;
         match lowered {
             Operand::Value(_) => Ok(lowered),
             constant => {
@@ -1080,13 +2452,11 @@ impl<'a> Lowerer<'a> {
     /// only to refuse a `null` that is not going into a niche at offset 0.
     fn lower_operand(
         &mut self,
-        body: &MirBody,
         ctx: &mut BodyCtx,
         operand: &mir::Operand,
         expected: Option<&Layout>,
         insts: &mut Vec<ExtInst>,
     ) -> Result<Operand, Unlowered> {
-        let _ = body;
         match operand {
             mir::Operand::Const(Constant::Literal(literal)) => match literal {
                 // The literal's *value*; its width is the other operand's or
@@ -1117,7 +2487,14 @@ impl<'a> Lowerer<'a> {
             }
             mir::Operand::Copy(place) | mir::Operand::Move(place) => {
                 if !place.projection.is_empty() {
-                    return Err(Unlowered::new("a read through a field or an index"));
+                    let (address, layout) = self.place_address(ctx, place, insts)?;
+                    let dest = ctx.value();
+                    insts.push(ExtInst::LoadAt {
+                        dest,
+                        address: Operand::Value(address),
+                        layout,
+                    });
+                    return Ok(Operand::Value(dest));
                 }
                 let local = LocalId(place.local.index() as u32);
                 if ctx.untyped.contains(&local) {
@@ -1152,10 +2529,36 @@ impl<'a> Lowerer<'a> {
                 insts.push(ExtInst::Above(Inst::Store { local, value: Operand::Null }));
                 Ok(())
             }
-            Repr::Tagged { .. } => Err(Unlowered::new(
-                "a `null` of a tagged nullable, which needs a store to the tag byte and the \
-                 instruction set has no field projection",
-            )),
+            // **This used to be a refusal and its stated reason stopped being
+            // true.** The sentence was *"which needs a store to the tag byte
+            // and the instruction set has no field projection"*; the
+            // instruction set has one now, and a refusal that cites a missing
+            // thing that is present is worse than no refusal at all.
+            //
+            // The discriminant is read off the layout rather than written as
+            // `0`. `layout_of` desugars `T?` into a two-variant `choice` whose
+            // variant 0 is `null` and variant 1 is `present` — which are
+            // `science_rt`'s `SCIENCE_NULLABLE_NULL` and
+            // `SCIENCE_NULLABLE_PRESENT`, *"in that order"* — and asking the
+            // layout which variant carries no payload gets the same answer
+            // without a second copy of the convention. The payload union is
+            // left undefined, which is Decision 18's rule and is also what
+            // `abi.rs` means by *"the absent case is the all-zero byte pattern
+            // in both representations"*: the tag is the part that has to be
+            // written.
+            Repr::Tagged { variants, .. } => {
+                let null = variants
+                    .iter()
+                    .find(|variant| variant.payload.is_none())
+                    .ok_or_else(|| {
+                        Unlowered::new(
+                            "a `null` of a tagged type whose variants all carry a payload: it is \
+                             not a nullable",
+                        )
+                    })?;
+                insts.push(ExtInst::StoreTag { local, discriminant: null.discriminant });
+                Ok(())
+            }
             Repr::Niched { .. } => Err(Unlowered::new("a `null` whose niche is not at offset 0")),
             _ => Err(Unlowered::new("a `null` of a type that is not nullable")),
         }
@@ -1197,30 +2600,135 @@ impl<'a> Lowerer<'a> {
         insts: &mut Vec<ExtInst>,
     ) -> Result<Terminator, Unlowered> {
         match kind {
-            TerminatorKind::Return => Ok(Terminator::Return(None)),
+            // **What `ret` carries is decided by the classification and by
+            // nothing else.** An `sret` function returns nothing — the value
+            // went through the hidden pointer, and `_0` *is* that pointer's
+            // slot — and a `()` function returns nothing because there is
+            // nothing. A `Direct` return is the one that has to load `_0`, and
+            // it did not before because stage 1's only function was `main` and
+            // `main` returns `Error?` through `sret`. A `ret void` from a
+            // function LLVM declared as returning an `i64` is a verifier
+            // failure, so this one is loud; it is written out rather than
+            // guessed because the three cases are three different terminators.
+            TerminatorKind::Return => match &ctx.ret {
+                ReturnClass::Void | ReturnClass::Indirect => Ok(Terminator::Return(None)),
+                ReturnClass::Direct { .. } => {
+                    let local = LocalId(0);
+                    ctx.layout(local)?;
+                    let dest = ctx.value();
+                    insts.push(ExtInst::Above(Inst::Load { dest, local }));
+                    Ok(Terminator::Return(Some(Operand::Value(dest))))
+                }
+            },
             TerminatorKind::Goto { target } => Ok(Terminator::Goto(BlockId(target.index() as u32))),
             TerminatorKind::Unreachable => Ok(Terminator::Unreachable),
             TerminatorKind::Call { callee, args, destination, target } => {
-                self.lower_call(body, ctx, callee, args, destination, *target, insts)
+                self.lower_call(ctx, callee, args, destination, *target, insts)
             }
             // Decision 5 holds: one MIR block, one LLVM block, and an `If`
             // becomes the `br` that ends it. The condition is a `Bool`, so it
             // arrives as §3.1's `i8` memory form and `crate::emit` narrows it.
             TerminatorKind::If { cond, then_block, else_block } => {
-                let value = self.lower_operand(body, ctx, cond, None, insts)?;
+                let value = self.lower_operand(ctx, cond, None, insts)?;
                 Ok(Terminator::Branch {
                     cond: value,
                     then_block: BlockId(then_block.index() as u32),
                     else_block: BlockId(else_block.index() as u32),
                 })
             }
-            TerminatorKind::Switch { .. } => Err(Unlowered::new(
-                "a `match`, which needs §3.3's tagged layout and a `Ty -> CgTy` lowering for a \
-                 `choice`",
-            )),
-            TerminatorKind::Drop { .. } => Err(Unlowered::new(
-                "a drop of a named value, which needs Decision 12's drop glue",
-            )),
+            // §2.2's `switch`, and the translation it needs is from a `DefId`
+            // to a number. MIR branches on a variant's definition because
+            // *"the numbering is a layout question and `science-codegen` owns
+            // layout"*; Decision 18 makes the number the variant's position in
+            // declaration order, and [`Lowerer::variant_index`] is the one
+            // place that says so.
+            //
+            // **The arms are checked against the choice the discriminant came
+            // from, not merely translated.** An arm naming a variant of some
+            // other `choice` would otherwise become a case value that is a
+            // valid discriminant of *this* one — a `match` that branches to the
+            // wrong arm, verifies, links and runs.
+            TerminatorKind::Switch { discr, arms, otherwise } => {
+                let place = discr.place().ok_or_else(|| {
+                    Unlowered::new("a `switch` on a constant rather than on a discriminant read")
+                })?;
+                if !place.projection.is_empty() {
+                    return Err(Unlowered::new("a `switch` on a projected place"));
+                }
+                let local = LocalId(place.local.index() as u32);
+                let choice = *ctx.discriminants.get(&local.0).ok_or_else(|| {
+                    Unlowered::new(
+                        "a `switch` on a value no `Rvalue::Discriminant` in this body produced: \
+                         the variant numbering is the `choice`'s layout and there is nothing here \
+                         to read it off",
+                    )
+                })?;
+                let order = self.choice_variants(choice);
+                let value = self.lower_operand(ctx, discr, None, insts)?;
+                let mut lowered = Vec::with_capacity(arms.len());
+                for (variant, target) in arms {
+                    let index = order.iter().position(|def| def == variant).ok_or_else(|| {
+                        Unlowered::new(format!(
+                            "a `match` arm for `{}`, which is not a variant of `{}`",
+                            self.defs.get(*variant).name,
+                            self.defs.get(choice).name
+                        ))
+                    })?;
+                    lowered.push((index as u64, BlockId(target.index() as u32)));
+                }
+                Ok(Terminator::Switch {
+                    value,
+                    arms: lowered,
+                    default: BlockId(otherwise.index() as u32),
+                })
+            }
+            // **A drop that has to run nothing is a `br`, and a drop that has
+            // to run something is still refused.** See
+            // [`Lowerer::drop_runs_something`] for the predicate and for why
+            // `science_codegen::descriptor::needs_drop` is not it.
+            TerminatorKind::Drop { place, flag, target } => {
+                if flag.is_some() {
+                    return Err(Unlowered::new(
+                        "a conditionally moved value, which needs a drop flag: Decision 26's \
+                         flagged drop is three basic blocks where MIR has one, and no execution \
+                         test has run the shape",
+                    ));
+                }
+                let ty = place.ty(body);
+                if self.drop_runs_something(ty, 0)? {
+                    // Decision 12's `DropGlue::RuntimeCall`, and it is the one
+                    // owning type this backend can release without emitting a
+                    // glue function. `lower`'s own §1 already stated the rule
+                    // for the temporary a `print` makes — *"a `String` does not
+                    // need [glue] — the temporary is freed by a direct
+                    // `science_string_free` at the site that made it"* — and a
+                    // bound `String` is that same call at the site that drops
+                    // it. `science_string_free` takes the address and no
+                    // descriptor, which is what separates it from
+                    // `science_array_free` and `science_map_free`; those take
+                    // one and this backend emits none, so they are refused
+                    // below with the rest.
+                    if !self.is_string(ty) {
+                        return Err(Unlowered::new(format!(
+                            "a drop of a value of type `{}`, which owns something Decision 12's \
+                             glue would have to release: glue is an emitted `internal` function \
+                             per monomorphised type, this backend emits none, and the only \
+                             release it can make without one is `science_string_free`",
+                            self.types.render(self.defs, ty)
+                        )));
+                    }
+                    let (address, _) = self.place_address(ctx, place, insts)?;
+                    let free = self.declare("science_string_free")?;
+                    insts.push(ExtInst::Above(Inst::Call {
+                        dest: None,
+                        callee: Callee::Runtime("science_string_free"),
+                        args: vec![Operand::Value(address)],
+                        ret: free.ret.clone(),
+                        sret_slot: None,
+                    }));
+                }
+                Ok(Terminator::Goto(BlockId(target.index() as u32)))
+            }
         }
     }
 
@@ -1238,7 +2746,6 @@ impl<'a> Lowerer<'a> {
     #[allow(clippy::too_many_arguments)]
     fn lower_call(
         &mut self,
-        body: &MirBody,
         ctx: &mut BodyCtx,
         callee: &mir::Callee,
         args: &[mir::Operand],
@@ -1249,21 +2756,38 @@ impl<'a> Lowerer<'a> {
         let def = match callee {
             mir::Callee::Def(def) => *def,
             mir::Callee::Indirect(_) => return Err(Unlowered::new("a call through a closure")),
+            // **A call MIR makes to `science-rt` directly**, which
+            // `science-mir` calls *"the array-op hole kept open deliberately"*
+            // and which nothing produced until `f"…"` did. This used to be an
+            // outright refusal naming *"a whole-array call"*, which was the
+            // only kind anyone expected; a string interpolation is the first
+            // one that exists.
             mir::Callee::Runtime(symbol) => {
-                return Err(Unlowered::new(format!("a whole-array call to `{symbol}`")));
+                self.lower_runtime_call(ctx, symbol, args, destination, insts)?;
+                return Ok(match target {
+                    Some(block) => Terminator::Goto(BlockId(block.index() as u32)),
+                    None => Terminator::Unreachable,
+                });
             }
             mir::Callee::Unresolved(unresolved) => {
                 return Err(Unlowered::new(describe_unresolved(*unresolved)));
             }
         };
         if self.defs.get(def).kind == DefKind::ExternFn {
-            self.lower_foreign_call(body, ctx, def, args, destination, insts)?;
+            self.lower_foreign_call(ctx, def, args, destination, insts)?;
+        } else if self.defs.get(def).is_builtin() && self.defs.get(def).name == "print" {
+            self.lower_print(ctx, args, insts)?;
+        } else if let Some(sig) = self.science.get(&def).cloned() {
+            self.lower_science_call(ctx, &sig, args, destination, insts)?;
         } else {
             let name = self.defs.get(def).name.clone();
-            if !self.defs.get(def).is_builtin() || name != "print" {
-                return Err(Unlowered::new(format!("a call to `{name}`")));
-            }
-            self.lower_print(ctx, args, insts)?;
+            // Reachable and not in the table means the walk did not see it,
+            // which for a `Callee::Def` means the crate has no body for it: a
+            // builtin with no signature, or a declaration `science-mir`
+            // resolved and nothing lowered.
+            return Err(Unlowered::new(format!(
+                "a call to `{name}`, which this crate was given no MIR body for"
+            )));
         }
         match target {
             Some(block) => Ok(Terminator::Goto(BlockId(block.index() as u32))),
@@ -1355,6 +2879,259 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
+    /// A call MIR makes to a `science-rt` entry point by name.
+    ///
+    /// **The signature is [`RUNTIME`]'s and the arguments are matched to it,
+    /// not to the call.** `science_codegen::runtime` is §2.6's *"whole list"*
+    /// and [`runtime_signature`] derives the classification from it, so a call
+    /// site cannot disagree with a declaration about `sret` or about a width —
+    /// which is §9.2's finding and the reason the table exists at all. A symbol
+    /// that is not in the table is refused by name rather than declared on
+    /// trust, because a `declare` invented here is a symbol the linker will
+    /// happily fail on with `SC0402` instead of `SC0400`.
+    ///
+    /// # The two places a MIR operand and a C parameter are not one to one
+    ///
+    /// **A pointer parameter given an aggregate takes that aggregate's
+    /// address.** Every entry point on the runtime boundary takes an aggregate
+    /// as `*const`/`*mut` and never by value — that is Decision 22's *"one rule
+    /// … and it is 'pass a pointer'"* — so `science_string_push_i64(s, 42)`
+    /// has a MIR operand naming the `String` and a C parameter wanting its
+    /// address. [`Lowerer::lower_print`] has done exactly this since stage 1
+    /// with [`crate::emit::ExtInst::LocalAddr`]; this generalises it and makes
+    /// the rule explicit: **a pointer parameter given a place whose slot is not
+    /// itself a pointer is passed that slot's address.** A place whose slot
+    /// *is* a pointer passes its value, which is what `science_chars_next`'s
+    /// second argument and `science_string_push_bytes`'s already need.
+    ///
+    /// **A string literal spans two parameters.** `science_string_push_bytes`
+    /// takes `(ptr, len)`, and MIR has no operand that names a global — a
+    /// literal reaches here as `Constant::Literal(Literal::Str)` and nothing
+    /// else. So a literal landing on a pointer parameter whose successor is a
+    /// `usize` is interned and expanded into
+    /// [`science_codegen::backend::Operand::GlobalAddr`] and its length, which
+    /// is the same pair [`Lowerer::build_string`] has always emitted for
+    /// `science_string_from_bytes`. It is the one place the argument count and
+    /// the parameter count differ, it is stated here, and the arity check below
+    /// accounts for it rather than being skipped.
+    fn lower_runtime_call(
+        &mut self,
+        ctx: &mut BodyCtx,
+        symbol: &str,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let sig = self.declare(symbol)?;
+        let entry = runtime_fn(symbol).expect("`declare` found it");
+
+        // The expansion above means the arity is checked against the parameters
+        // a literal does *not* cover, so it is counted rather than compared.
+        let mut lowered: Vec<Operand> = Vec::with_capacity(sig.params.len());
+        let mut param = 0usize;
+        for arg in args {
+            let Some(class) = sig.params.get(param) else {
+                return Err(Unlowered::new(format!(
+                    "a call to `{symbol}` with more arguments than its {} parameter(s)",
+                    sig.params.len()
+                )));
+            };
+            if matches!(class.class, ArgClass::IndirectByPointer) {
+                return Err(Unlowered::new(format!(
+                    "a call to `{symbol}`, one of whose parameters is classified indirect: no \
+                     entry point in `RUNTIME` is, so this is a table that has changed under a \
+                     lowering that assumed it had not"
+                )));
+            }
+            if matches!(class.class, ArgClass::Ignore) {
+                param += 1;
+                continue;
+            }
+            let pointer = matches!(class.layout.repr, Repr::Scalar(Scalar::Pointer(_)));
+            // A literal into `(ptr, len)`.
+            if let mir::Operand::Const(Constant::Literal(Literal::Str(text))) = arg {
+                let follows_a_length = sig
+                    .params
+                    .get(param + 1)
+                    .is_some_and(|next| next.layout == layout_of(self.target, &CgTy::Int(IntTy::Usize)));
+                if !pointer || !follows_a_length {
+                    return Err(Unlowered::new(format!(
+                        "a string literal passed to `{symbol}` where its parameters are not a \
+                         pointer followed by a length: a literal has no other spelling in MIR and \
+                         no other lowering here"
+                    )));
+                }
+                let literal = self.intern_literal(text);
+                lowered.push(Operand::GlobalAddr(literal.bytes_symbol.clone()));
+                lowered.push(Operand::ConstInt(literal.len() as i128));
+                param += 2;
+                continue;
+            }
+            if pointer {
+                if let Some(place) = arg.place() {
+                    let (address, layout) = self.place_address(ctx, place, insts)?;
+                    if matches!(layout.repr, Repr::Scalar(Scalar::Pointer(_))) {
+                        // The slot holds a pointer: the value is the argument.
+                        let value = ctx.value();
+                        insts.push(ExtInst::LoadAt {
+                            dest: value,
+                            address: Operand::Value(address),
+                            layout,
+                        });
+                        lowered.push(Operand::Value(value));
+                    } else {
+                        lowered.push(Operand::Value(address));
+                    }
+                    param += 1;
+                    continue;
+                }
+            }
+            lowered.push(self.typed_operand(ctx, arg, &class.layout, insts)?);
+            param += 1;
+        }
+        if param != sig.params.len() {
+            return Err(Unlowered::new(format!(
+                "a call to `{symbol}` that fills {param} of its {} parameter(s)",
+                sig.params.len()
+            )));
+        }
+        self.emit_result(ctx, Callee::Runtime(entry.symbol), &sig.ret, lowered, destination, insts)
+    }
+
+    /// A call to another Science function: Decision 22's private convention.
+    ///
+    /// **The signature is the callee's own, read from the one table
+    /// [`Lowerer::lower_crate`] built.** Not re-derived here, and not read from
+    /// `Declarations`: §9.2's finding is a call site that classified one
+    /// symbol's return differently from its definition, and the only structural
+    /// defence against it is that there be one classification.
+    ///
+    /// **An aggregate argument is the caller's own slot, passed by address.**
+    /// Decision 22: *"every aggregate argument is passed by pointer to a
+    /// caller-owned slot"*, and [`science_codegen::abi::indirect_argument_attrs`]
+    /// says what that pointer means — a **move** into the callee, `nocapture`
+    /// and not `readonly`, so the callee may write through it and the caller
+    /// must treat the slot as moved-from. That makes `Operand::Copy` of an
+    /// aggregate the one shape this must refuse rather than lower: a copy is
+    /// MIR saying something else still owns the value, and handing the callee a
+    /// writable pointer to a slot somebody else still reads is a wrong answer
+    /// with no diagnostic anywhere. The repair, when a program needs it, is a
+    /// copy into an invented slot — which is what a real argument lowering does
+    /// and which is not guessed at here.
+    fn lower_science_call(
+        &mut self,
+        ctx: &mut BodyCtx,
+        sig: &AbiSignature,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        if args.len() != sig.params.len() {
+            return Err(Unlowered::new(format!(
+                "a call to `{}` with {} argument(s) where it declares {}",
+                sig.symbol,
+                args.len(),
+                sig.params.len()
+            )));
+        }
+        let mut lowered: Vec<Operand> = Vec::with_capacity(args.len());
+        for (arg, param) in args.iter().zip(&sig.params) {
+            match param.class {
+                ArgClass::Ignore => {}
+                ArgClass::Direct => {
+                    lowered.push(self.typed_operand(ctx, arg, &param.layout, insts)?);
+                }
+                ArgClass::IndirectByPointer => {
+                    let mir::Operand::Move(place) = arg else {
+                        return Err(Unlowered::new(format!(
+                            "an aggregate argument to `{}` that is not a move: Decision 22 passes \
+                             a pointer to the caller's own slot and the callee may write through \
+                             it, so a copy would hand it a slot something else still owns",
+                            sig.symbol
+                        )));
+                    };
+                    if !place.projection.is_empty() {
+                        return Err(Unlowered::new(format!(
+                            "an aggregate argument to `{}` that is a field rather than a whole \
+                             local: Decision 22 needs a slot to point at",
+                            sig.symbol
+                        )));
+                    }
+                    let local = LocalId(place.local.index() as u32);
+                    if ctx.untyped.contains(&local) {
+                        return Err(Unlowered::new(UNTYPED));
+                    }
+                    ctx.layout(local)?;
+                    let address = ctx.value();
+                    insts.push(ExtInst::LocalAddr { dest: address, local });
+                    lowered.push(Operand::Value(address));
+                }
+            }
+        }
+        self.emit_result(
+            ctx,
+            Callee::Science(sig.symbol.clone()),
+            &sig.ret,
+            lowered,
+            destination,
+            insts,
+        )
+    }
+
+    /// The call instruction and where its result lands, shared by the Science
+    /// and the foreign paths.
+    ///
+    /// The two used to have a copy of this each, and the copies were the same
+    /// four lines with the same `sret` question asked twice — which is §9.2's
+    /// shape exactly, so there is one of them.
+    fn emit_result(
+        &self,
+        ctx: &mut BodyCtx,
+        callee: Callee,
+        ret: &ReturnClass,
+        args: Vec<Operand>,
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        if !destination.projection.is_empty() {
+            return Err(Unlowered::new("a call whose result goes through a field"));
+        }
+        let dest_local = LocalId(destination.local.index() as u32);
+        // A `()`-returning function writes nowhere, and its MIR destination is
+        // a unit temporary with no slot of its own.
+        let has_slot = ctx.layouts.contains_key(&dest_local.0);
+        if ret.is_sret() {
+            if !has_slot {
+                return Err(Unlowered::new(
+                    "a call returning an aggregate into a destination with no slot",
+                ));
+            }
+            insts.push(ExtInst::Above(Inst::Call {
+                dest: None,
+                callee,
+                args,
+                ret: ret.clone(),
+                sret_slot: Some(dest_local),
+            }));
+            return Ok(());
+        }
+        let value = ctx.value();
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: Some(value),
+            callee,
+            args,
+            ret: ret.clone(),
+            sret_slot: None,
+        }));
+        if has_slot && !matches!(ret, ReturnClass::Void) {
+            insts.push(ExtInst::Above(Inst::Store {
+                local: dest_local,
+                value: Operand::Value(value),
+            }));
+        }
+        Ok(())
+    }
+
     /// §10's stage 2: a call into a C library.
     ///
     /// Decision 40 makes this *"a direct `call` to the declared symbol"*. What
@@ -1365,7 +3142,6 @@ impl<'a> Lowerer<'a> {
     /// puts `-lm` on the link line and nothing else.
     fn lower_foreign_call(
         &mut self,
-        body: &MirBody,
         ctx: &mut BodyCtx,
         def: DefId,
         args: &[mir::Operand],
@@ -1386,46 +3162,17 @@ impl<'a> Lowerer<'a> {
             if matches!(param.class, ArgClass::Ignore) {
                 continue;
             }
-            lowered.push(self.lower_operand(body, ctx, arg, Some(&param.layout), insts)?);
+            lowered.push(self.lower_operand(ctx, arg, Some(&param.layout), insts)?);
         }
 
-        if !destination.projection.is_empty() {
-            return Err(Unlowered::new("a foreign call whose result goes through a field"));
-        }
-        let dest_local = LocalId(destination.local.index() as u32);
-        // A `()`-returning foreign function writes nowhere, and its MIR
-        // destination is a unit temporary with no slot of its own.
-        let has_slot = ctx.layouts.contains_key(&dest_local.0);
-        if sig.ret.is_sret() {
-            if !has_slot {
-                return Err(Unlowered::new(
-                    "a foreign call returning an aggregate into a destination with no slot",
-                ));
-            }
-            insts.push(ExtInst::Above(Inst::Call {
-                dest: None,
-                callee: Callee::Foreign(sig.symbol.clone()),
-                args: lowered,
-                ret: sig.ret.clone(),
-                sret_slot: Some(dest_local),
-            }));
-            return Ok(());
-        }
-        let value = ctx.value();
-        insts.push(ExtInst::Above(Inst::Call {
-            dest: Some(value),
-            callee: Callee::Foreign(sig.symbol.clone()),
-            args: lowered,
-            ret: sig.ret.clone(),
-            sret_slot: None,
-        }));
-        if has_slot && !matches!(sig.ret, science_codegen::abi::ReturnClass::Void) {
-            insts.push(ExtInst::Above(Inst::Store {
-                local: dest_local,
-                value: Operand::Value(value),
-            }));
-        }
-        Ok(())
+        self.emit_result(
+            ctx,
+            Callee::Foreign(sig.symbol.clone()),
+            &sig.ret,
+            lowered,
+            destination,
+            insts,
+        )
     }
 
     /// The `declare` for one `extern "C"` function, interned.
@@ -1662,6 +3409,23 @@ struct BodyCtx {
     untyped: Vec<LocalId>,
     /// The entry block's `alloca`s, collected wherever they are invented.
     entry: Vec<ExtInst>,
+    /// The stores that bind each register parameter to its slot, emitted after
+    /// every `alloca` and before the first instruction of the user's `main`.
+    prologue: Vec<ExtInst>,
+    /// Which `choice` each discriminant slot was read from.
+    ///
+    /// **The table `TerminatorKind::Switch` cannot do without.** MIR branches on
+    /// a **`DefId`**, not on a number — `science-mir` says why: *"the numbering
+    /// is a layout question and `science-codegen` owns layout"* — and the local
+    /// the discriminant was read into is typed `Ty::ERROR`, because *"which
+    /// variant a value holds has no Science type at all"*. So by the time a
+    /// `switch` is reached there is nothing in the MIR that says which choice
+    /// the number came from, and the variant ordering is what turns a `DefId`
+    /// into a case value. This is filled in by
+    /// [`Lowerer::lower_discriminant`], which is the one place that still knows.
+    discriminants: BTreeMap<u32, DefId>,
+    /// How this function's return value comes back, for `TerminatorKind::Return`.
+    ret: ReturnClass,
     next_value: u32,
     next_temp: u32,
 }
@@ -1751,6 +3515,24 @@ fn describe_rvalue(rvalue: &Rvalue) -> &'static str {
         Rvalue::Coerce { .. } => "a coercion",
         Rvalue::Narrow { .. } => "a narrowed read",
         Rvalue::Closure { .. } => "a closure",
-        Rvalue::Error => "an expression the front end could not check",
+        // **This used to say *"an expression the front end could not check"*,
+        // and it went into `SC0400`'s slot — so `sciencec build` on a program
+        // that `sciencec check` had just passed printed *"no `an expression the
+        // front end could not check` backend is compiled into this
+        // `sciencec`"*, which blames the front end for a program the front end
+        // approved and blames the reader's source for a hole in the compiler.
+        //
+        // The occasion was a string interpolation: `f"{n}"` lexes, parses,
+        // resolves, type-checks and formats, and reaches MIR as
+        // `Rvalue::Error` because `science-mir`'s arm for it is not written.
+        // That is `UNTYPED`'s situation one level up — §5's *"the mistake has
+        // already been reported"* firing on a mistake nobody made — and the
+        // message now says which of the two it is, because from here they are
+        // the same value and only the wording can tell them apart.
+        Rvalue::Error => {
+            "an expression the front end replaced with a hole: its MIR is `Rvalue::Error`, and \
+             if `sciencec check` passed the same program then nothing was wrong with it and the \
+             gap is in a lowering rather than in the source"
+        }
     }
 }

@@ -198,6 +198,88 @@ fn the_float_type_kinds_are_what_the_emitter_compares_against() {
     }
 }
 
+/// `LLVMTypeKind::LLVMPointerTypeKind` is 12, asked of LLVM rather than of a
+/// header.
+///
+/// This is the constant the four address-taking instructions turn on —
+/// `FieldAddr`, `LoadAt`, `StoreAt` and `ParamSlot`. It is a **positional** C
+/// enum thirteen members down, which is the class `sys.rs` names as the
+/// dangerous one: an entry inserted above it shifts it, and a wrong answer here
+/// is a `getelementptr` on an `i64` that the check was supposed to stop.
+///
+/// The negative half is the one that would be silent. `INTEGER` is 8 and
+/// `POINTER` is 12, so a constant off by four would make every field address
+/// pass the guard and fail the verifier with a message about the GEP rather
+/// than about the base — which is loud, but names the wrong instruction.
+#[test]
+fn the_pointer_type_kind_is_what_the_address_instructions_compare_against() {
+    let scratch = Scratch::new();
+    unsafe {
+        let ptr = sys::LLVMPointerTypeInContext(scratch.ctx(), 0);
+        assert_eq!(sys::LLVMGetTypeKind(ptr), sys::type_kind::POINTER);
+        // Nothing this compiler can build answers yes by accident — and `i64`
+        // is the one that matters, because a pointer-width integer is what a
+        // mislowered address would be.
+        for other in [
+            sys::LLVMInt64TypeInContext(scratch.ctx()),
+            sys::LLVMInt8TypeInContext(scratch.ctx()),
+            sys::LLVMDoubleTypeInContext(scratch.ctx()),
+            sys::LLVMArrayType2(sys::LLVMInt8TypeInContext(scratch.ctx()), 8),
+        ] {
+            assert_ne!(sys::LLVMGetTypeKind(other), sys::type_kind::POINTER);
+        }
+        // And the three named constants are three different numbers, which is
+        // the property a positional enum loses first.
+        assert_ne!(sys::type_kind::POINTER, sys::type_kind::INTEGER);
+        assert_ne!(sys::type_kind::POINTER, sys::type_kind::DOUBLE);
+    }
+}
+
+/// `LLVMBuildInBoundsGEP2` with an `i8` element type and one index is a byte
+/// offset, and the offset LLVM's own `DataLayout` agrees it is.
+///
+/// **This is the claim the whole of field projection rests on.** `sys.rs`'s note
+/// on the declaration says the byte form is used *because* the LLVM struct
+/// type's member index is not the Science field index. That trade is only sound
+/// if `gep i8, ptr %p, N` really lands `N` bytes in — and with opaque pointers
+/// nothing about the emitted IR would look wrong if it did not.
+///
+/// Asserted by reading the IR, because a `getelementptr` on an `alloca` with a
+/// constant index is folded by LLVM into a form whose text names the offset.
+#[test]
+fn an_i8_gep_is_a_byte_offset() {
+    let scratch = Scratch::new();
+    scratch.begin("gep");
+    let b = scratch.builder.raw();
+    unsafe {
+        let i8_ty = sys::LLVMInt8TypeInContext(scratch.ctx());
+        let i64_ty = sys::LLVMInt64TypeInContext(scratch.ctx());
+        // `{ i8, [7 x i8], i64 }` — the shape `llvm_type` materialises for a
+        // record whose second field is at offset 8. The padding is explicit,
+        // which is exactly why the LLVM member index (2) is not the Science
+        // field index (1) and why the offset is what is passed.
+        let mut members = [i8_ty, sys::LLVMArrayType2(i8_ty, 7), i64_ty];
+        let strukt = sys::LLVMStructTypeInContext(scratch.ctx(), members.as_mut_ptr(), 3, 0);
+        let slot_name = cstr("s");
+        let slot = sys::LLVMBuildAlloca(b, strukt, slot_name.as_ptr());
+        let mut indices = [sys::LLVMConstInt(i64_ty, 8, 0)];
+        let gep_name = cstr("field");
+        let address =
+            sys::LLVMBuildInBoundsGEP2(b, i8_ty, slot, indices.as_mut_ptr(), 1, gep_name.as_ptr());
+        sys::LLVMBuildStore(b, sys::LLVMConstInt(i64_ty, 7, 0), address);
+    }
+    let ir = scratch.finish();
+    assert!(
+        ir.contains("getelementptr inbounds i8, ptr %s, i64 8"),
+        "an `i8` GEP of 8 is not eight bytes in — the whole of field projection rests on it \
+         being one:\n{ir}"
+    );
+    assert!(
+        ir.contains("store i64 7, ptr %field"),
+        "the store did not go through the computed address:\n{ir}"
+    );
+}
+
 /// `LLVMLinkage` and `LLVMUnnamedAddr`: Decision 15's
 /// `private unnamed_addr constant`, and Decision 12's `internal`.
 ///

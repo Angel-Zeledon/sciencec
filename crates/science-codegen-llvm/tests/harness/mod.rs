@@ -12,6 +12,15 @@
 //!
 //! **What it deliberately does not do** is assert anything about a program. It
 //! builds and it runs; every expectation lives in the test that has one.
+//!
+//! **`dead_code` is allowed, and the reason is the one this file exists for.**
+//! A `mod harness;` is compiled separately into *each* including test binary,
+//! so anything one file does not use is dead in that binary — and
+//! `formatting_boundary.rs` needs only [`lower`] and [`run`], because the
+//! function it builds is one no Science source produces. Without this, adding a
+//! test file that uses four of the six helpers turns the other two into
+//! warnings and the fix people reach for is to delete them.
+#![allow(dead_code)]
 
 use science_codegen::driver::BuildRequest;
 use science_codegen::target::OptLevel;

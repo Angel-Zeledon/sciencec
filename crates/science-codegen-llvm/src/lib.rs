@@ -48,13 +48,32 @@
 //! above this crate; [`lower`]'s own documentation is the account and
 //! `tests/stage_two_and_three.rs` is what was built instead.
 //!
-//! **The smallest program that still cannot be built is a `match`.** A
-//! two-variant payload-free `choice` has no `Ty -> CgTy` arm, so §3.3's tagged
-//! layout is never computed and `TerminatorKind::Switch` is refused before it
-//! is reached. After that: a second function (`Operand` has no `Param` form), a
-//! record (`Inst` has no field projection), a value whose `Drop` MIR emits
-//! (Decision 12's glue), and integer `/`, `%`, `<<` and `>>`, which are
-//! refused **deliberately** rather than for want of an instruction — see
+//! **A `choice`, a second function and a record are emitted too.** A `match`
+//! over a `choice` is §3.3's tagged layout and §2.2's `switch`, with the
+//! variant numbering taken from declaration order because MIR branches on a
+//! `DefId` and not on a number. A function with parameters is
+//! `science_codegen::backend::Operand::Param`, which is above the line now.
+//! A record is Decision 17's offsets reached through a `getelementptr`, and
+//! `science-codegen` grew no new layout rule for any of the three: §3 already
+//! said all of it and what was missing was the `Ty -> CgTy` lowering that reads
+//! it. Two more came with them because nothing could run without them —
+//! `TerminatorKind::Drop`, which is a `br` when the value owns nothing and
+//! `science_string_free` when it is a `String`, and Decision 6's `T?` in both
+//! of its representations. `tests/past_stage_three.rs` is twenty-eight programs
+//! that build, link, run and are asked what they printed.
+//!
+//! **The smallest program that still cannot be built is `let t be (1, 2)`** — a
+//! tuple, which `lower::Lowerer::cg_ty` has no arm for, exactly as a `choice`
+//! had none before this pass. Behind it, in the order they were measured: a
+//! **cast** (`Rvalue::Cast`, which for integers is one `trunc`/`sext`/`zext`
+//! and for a float is four more decisions nobody has made); a **method call**,
+//! whose receiver is a `Self` this crate cannot resolve and which is refused at
+//! the *signature* rather than at the call site; a **generic** function, which
+//! nothing monomorphises; **drop glue** for anything that owns something other
+//! than a bare `String`, which is Decision 12's emitted function; an **array**
+//! and an **index**, whose literal reaches MIR untyped and whose index needs
+//! §2.4's bounds check; and integer `/`, `%`, `<<` and `>>`, which are refused
+//! **deliberately** rather than for want of an instruction — see
 //! [`lower::Lowerer::lower_binary`]. Every refusal is `SC0400` and names the
 //! construct.
 //!
@@ -122,9 +141,10 @@
 //!
 //! # 3. What was found by running it
 //!
-//! Ten things that reading could not have established, each recorded where it
-//! bites. The first four were found by writing the crate; the rest were found by
-//! *running* it, which is the difference §10's staging exists to force.
+//! Seventeen things that reading could not have established, each recorded
+//! where it bites. The first four were found by writing the crate; the rest
+//! were found by *running* it, which is the difference §10's staging exists to
+//! force.
 //!
 //! 1. **Decision 36 is unimplementable through LLVM-C**, which has no
 //!    `TargetOptions` surface at all. [`machine`] is the account and the
@@ -203,11 +223,59 @@
 //!     [`link::undefined_symbols`] is the account, including why forcing the
 //!     linker into English was the wrong repair.
 //!
+//! 14. **Decision 24's parameter attributes cannot be emitted from where the
+//!     signature is built.** §4.4 calls `noalias` *"the single place in the
+//!     language where a bug in region inference produces a wrong answer rather
+//!     than a missed error"* and names `--no-noalias` as the mitigation that
+//!     *"should be taken"*. It was: `TargetConfig` carries the flag. But a
+//!     [`lower::Lowerer`] is built from a `Triple` and nothing else, and the
+//!     `TargetConfig` reaches [`emit`] one layer below — so the function that
+//!     classifies a Science parameter cannot see whether the escape hatch is
+//!     open. Emitting the attribute with its mitigation unreachable is the
+//!     worst of the three options, so **no parameter attributes are emitted on
+//!     any Science signature**, and the cost is an optimisation rather than an
+//!     answer. It is the same trade [`lower::runtime_signature`] takes for
+//!     finding 2's reason.
+//! 15. **`science_codegen::descriptor::needs_drop` answers `false` for a
+//!     `String`.** It is a predicate over `CgTy`, and `CgTy` is *"the set of
+//!     distinctions that change a layout or an ABI classification, and nothing
+//!     else"* — so a `String` arrives as `{ Ptr(Raw), Usize, Usize }` and
+//!     Decision 19's table makes `Raw` the one pointer kind that owns nothing.
+//!     The function is exactly right about Science's own types and blind to all
+//!     four of the runtime's owning aggregates, because the model it reads
+//!     erases what separates them. **Nothing had called it on one**, so nothing
+//!     was wrong; a `TerminatorKind::Drop` lowered through it would have turned
+//!     every dropped `String` into a leak with no diagnostic anywhere.
+//!     [`lower::Lowerer::drop_runs_something`] walks `Ty` instead and says why.
+//! 16. **Decision 16's mangled symbols carry the source file's stem.**
+//!     `DefTable::path_of` says *"the crate root is unnamed and contributes
+//!     nothing"*, and the file's module is not the crate root — `resolve_module`
+//!     names it after the file — so a script's `main` mangles as
+//!     `_S7fixture4main` and the same source copied to `prog.science` gets a
+//!     different symbol. That is precisely the property Decision 16 gives as
+//!     its own reason for refusing hashes: *"deterministic from the source
+//!     alone"*. It is **not** repaired here, because whether a file's stem is
+//!     part of its module path is `science-resolve`'s answer and hiding it in
+//!     the mangling would make two modules' functions share a symbol. The one
+//!     case another note already fixes is fixed: `script-mode.md` §2.3 and
+//!     [`lower::Lowerer::lower_c_main`] both name the entry `_S4main`, so the
+//!     entry keeps that and every other definition carries the path it has.
+//! 17. **`science-mir`'s `needs_drop` answers `true` for every `choice`**, so
+//!     MIR emits a `Drop` terminator for the scrutinee of every `match` in the
+//!     language — *"§4's true where it cannot tell"*. The last pass measured
+//!     the smallest unbuildable program as *"a `match` over a two-variant
+//!     payload-free `choice`"* and located it at `cg_ty`'s missing arm; the arm
+//!     was necessary and was not sufficient, because a `Drop` of a `Colour`
+//!     stood behind it. Two of the four things that pass listed as separate
+//!     items were one program.
+//!
 //! **And nine was itself found this way**, which is the point of the list: the
-//! numbering has grown four times and each entry is something the notes did not
+//! numbering has grown six times and each entry is something the notes did not
 //! say. Eleven, twelve and thirteen were all found by *running* a program —
 //! none of them changes the IR in a way that looks wrong, and two of them pass
-//! the verifier.
+//! the verifier. Fifteen and seventeen are the same shape one level up: a
+//! predicate that is right about the model it was written for and wrong about
+//! the caller that arrived later.
 
 #![warn(missing_docs)]
 

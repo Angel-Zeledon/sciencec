@@ -107,6 +107,10 @@ fn render_operand(operand: &Operand) -> String {
         Operand::ConstFloat(value) => format!("{value:?}"),
         Operand::GlobalAddr(symbol) => format!("@{symbol}"),
         Operand::Null => "null".to_string(),
+        // The *source* index, which is what the operand carries. This backend
+        // renders a transcript rather than a calling convention, so it does not
+        // apply the `sret` shift; `science-codegen-llvm`'s `emit` does.
+        Operand::Param(index) => format!("%arg{index}"),
     }
 }
 
