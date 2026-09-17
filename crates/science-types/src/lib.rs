@@ -45,7 +45,7 @@
 //! | Decision 1 | bidirectional checking, one [`Inference`] per body | [`check`] |
 //! | Decisions 7, 8 | flow narrowing over places, and rule 4's dependency | [`narrow`] |
 //! | Decisions 9, 10 | `SC0140`, with §5's four exclusions | [`unchecked`] |
-//! | Decision 11 | method lookup, and the ambiguity that is an error | [`methods`] |
+//! | Decision 11 | method lookup, the ambiguity that is an error, and the instance selection it does not name | [`methods`] |
 //! | §12 | the seam for MIR, stated as §5 states this one | [`thir`]'s §5 |
 //!
 //! [`items`] is the table of lowered declarations the fourth layer checks
@@ -405,12 +405,15 @@ pub mod codes {
     /// [`DOUBLE_NULLABLE`] makes about `T??`, one level down at the value.
     pub const PRESENCE_TEST_ON_NON_NULLABLE: Code = Code(530);
 
-    // --- Decision 11's two, `SC0531`-`SC0532` ---------------------------
+    // --- Decision 11's three, `SC0531`-`SC0533` -------------------------
     //
-    // §13 numbers neither, for the reason it numbers none of the six above: it
-    // was written before anything walked an expression, and a method call is
-    // the construct it assumed a checker resolved without saying what happens
-    // when it cannot.
+    // §13 numbers none of them, for the reason it numbers none of the six
+    // above: it was written before anything walked an expression, and a method
+    // call is the construct it assumed a checker resolved without saying what
+    // happens when it cannot. The third is newer than the other two and is
+    // `methods`'s §6 — the case where the lookup finds one method at several
+    // instantiations of one interface and the arguments are what tell them
+    // apart.
 
     /// One method name, two implementations, and no rule that picks.
     ///
@@ -431,6 +434,27 @@ pub mod codes {
     /// ask rather than one it answers with no — [`crate::methods::Methods::receiver`]
     /// is where the two are told apart.
     pub const NO_SUCH_METHOD: Code = Code(532);
+
+    /// The arguments fit no implementation of the interface. `methods`'s §6.
+    ///
+    /// **Decision 11's third case, which the decision does not have.** Where
+    /// every candidate for a name is an implementation of one interface at
+    /// different type arguments — `LoadError implements From of IoError:` and
+    /// `LoadError implements From of ParseError:` — the name is one method at
+    /// several instantiations and the *arguments* select among them. One
+    /// survivor resolves; several is [`AMBIGUOUS_METHOD`] with a message of its
+    /// own; none is this, and it is a type error rather than a lookup failure —
+    /// the method exists and nothing was passed that any instantiation of it
+    /// takes.
+    ///
+    /// **Not [`MISMATCHED_TYPES`]**, although it is a value that does not fit a
+    /// slot. That code is Decision 1's and its whole shape is *one* expected
+    /// type, taken from *one* annotation, which is what makes its message
+    /// nameable; here there are as many expected types as there are
+    /// implementations and the message has to list them. Reporting it as
+    /// `SC0525` would mean choosing one implementation to blame the argument
+    /// against, which is the choice this call could not make.
+    pub const NO_MATCHING_IMPLEMENTATION: Code = Code(533);
 
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
@@ -453,6 +477,7 @@ pub mod codes {
         PRESENCE_TEST_ON_NON_NULLABLE,
         AMBIGUOUS_METHOD,
         NO_SUCH_METHOD,
+        NO_MATCHING_IMPLEMENTATION,
     ];
 
     #[cfg(test)]

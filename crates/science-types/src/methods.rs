@@ -112,7 +112,7 @@
 //! and [`Methods::receiver`] returns `None` for a parameter so that the call
 //! is silent rather than wrong.
 //!
-//! # 6. The case Decision 11 calls an ambiguity and the corpus calls a program
+//! # 6. One interface at several arguments is selection, not overloading
 //!
 //! `examples/00_kitchen_sink.science` writes this:
 //!
@@ -125,28 +125,51 @@
 //! ```
 //!
 //! and then calls `LoadError.from(io_err)`. Two candidates named `from`, on one
-//! type, in the [`Form`] the call site used. §3's rule says that is an error —
-//! and it is not: the two are implementations of **one** interface at two
-//! different arguments, and the language distinguishes them by the *argument*,
-//! exactly as Rust's `From` does. Reporting it would report on a correct
-//! program, which is the one thing `examples/README.md` says the corpus exists
-//! to prevent.
+//! type, in the [`Form`] the call site used. §3's rule says that is an error,
+//! and reporting it would be reporting on a correct program — which is the one
+//! thing `examples/README.md` says the corpus exists to prevent.
 //!
-//! **Decision. Candidates that are all implementations of one interface are
-//! [`Found::Overloaded`], which is neither resolved nor reported.** The call
-//! keeps `method: None` and `Ty::ERROR`, exactly as an unresolved call always
-//! did, and nothing is said about it.
+//! **This is not overloading, and calling it that is what made it look
+//! undecidable.** `From`'s `from` is **one** method, declared once on the
+//! interface. What differs between the two candidates is not the method but
+//! *which instantiation of the interface* the call is in. That is **instance
+//! selection**, and it is what `impl From<A> for T` and `impl From<B> for T`
+//! are in Rust — nobody calls those an overload set, and nobody reaches for an
+//! overload-resolution algorithm to tell them apart.
 //!
-//! **The reason it is not resolved** is that choosing between them is
-//! selection by argument type — the argument has to be typed before the callee
-//! is known, which is the one thing Decision 1's bidirectional regime does not
-//! do — and *"an overload set"* is a language feature nobody has decided to
-//! have. **The reason it is not reported** is the paragraph above.
+//! **Decision. Where every candidate is an implementation of the same
+//! interface, differing only in the interface's type arguments, the argument
+//! types select among them.** That candidate set is [`Found::Instances`], and
+//! the selection itself is `BodyChecker::select` in [`crate::check`], because
+//! that is where the arguments are. Three outcomes, and each of them is an
+//! answer:
 //!
-//! **This is a gap in Decision 11 and not in this file.** The decision names
-//! two places to look and one rule for a tie, and it does not say that a
-//! generic interface makes the name-to-method map one-to-many. Until it does,
-//! the honest implementation refuses to guess in both directions.
+//! - **exactly one candidate accepts the arguments** — the call resolves to it,
+//!   exactly as [`Found::One`] resolves;
+//! - **more than one** — `SC0531`, Decision 11's code under a message that says
+//!   the arguments did not narrow it and names what each implementation takes;
+//! - **none** — `SC0533`, naming what was supplied and what the implementations
+//!   accept.
+//!
+//! **What this replaces is silence, and silence was worse than either answer.**
+//! The previous decision made this set neither resolved nor reported: the call
+//! kept `method: None` and [`Ty::ERROR`], so its arguments were never compared
+//! against any signature, its result type was whatever the hole produced, and
+//! the author was told nothing at all. A wrong answer is arguable; a call that
+//! is not checked is not.
+//!
+//! **This does not widen Decision 11.** Candidates from two *different*
+//! interfaces, and an inherent method beside an interface one, are §3's
+//! ambiguity unchanged — one of those candidates is not chosen by any argument,
+//! so there is nothing for an argument type to select on. `one_interface` is
+//! the whole of the condition. Two blocks implementing one interface at the
+//! *same* arguments never reach it either: that is Decision 12's coherence,
+//! `science-resolve` reports `SC0207`, and the driver does not type-check a
+//! file whose resolution errored.
+//!
+//! **The cost is Decision 1's, and it is stated where it is paid**:
+//! `BodyChecker::select` writes out which half of that decision this makes
+//! false and which half survives.
 
 use std::collections::HashMap;
 
@@ -199,6 +222,16 @@ impl Candidate {
         matches!(self.self_kind, Some(SelfKind::Mutable))
     }
 
+    /// The interface this candidate was reached through, when it was reached
+    /// through one. §6's selection names it in both of its messages, and the
+    /// name is the only thing in them that is the same for every candidate.
+    pub fn interface(&self) -> Option<DefId> {
+        match self.source {
+            Source::Interface(interface) => Some(interface),
+            Source::Inherent => None,
+        }
+    }
+
     /// Which kind of call site can reach it.
     pub fn form(&self) -> Form {
         match self.self_kind {
@@ -240,8 +273,12 @@ pub enum Found {
     /// Several candidates, all from implementations of **one** interface at
     /// different generic arguments — `LoadError implements From of IoError:`
     /// and `LoadError implements From of ParseError:`, which
-    /// `examples/00_kitchen_sink.science` writes side by side. §6.
-    Overloaded,
+    /// `examples/00_kitchen_sink.science` writes side by side.
+    ///
+    /// **Not an ambiguity and not an answer either**: it is the candidate set
+    /// the *argument types* choose from, in declaration order. §6, and
+    /// `BodyChecker::select` in [`crate::check`] is what chooses.
+    Instances(Vec<Candidate>),
     /// The receiver is a type this index can speak for, and it has no such
     /// method. This one is a diagnostic.
     None,
@@ -324,8 +361,9 @@ impl Methods {
             0 => Found::Mismatched,
             1 => Found::One(found.remove(0)),
             // §6, and it comes before §3's rule because it is not the thing
-            // §3 is about.
-            _ if one_interface(&found) => Found::Overloaded,
+            // §3 is about: these candidates are one method at several
+            // instantiations, and the arguments tell them apart.
+            _ if one_interface(&found) => Found::Instances(found),
             _ => Found::Ambiguous(found),
         }
     }

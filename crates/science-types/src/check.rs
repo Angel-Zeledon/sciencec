@@ -125,6 +125,14 @@
 //!   parameter**, because a method reached through a bound is generic in a way
 //!   monomorphisation has to resolve (`methods`'s §5). Both leave `method:
 //!   None` and [`Ty::ERROR`], and neither reports.
+//!
+//!   **One case that used to be here is not any more**, and it is the one
+//!   whose price this list understated: several implementations of one
+//!   interface, at different type arguments, reached by one name. That was
+//!   `method: None` and no diagnostic — an unchecked call rather than a hole in
+//!   a type — and `methods`'s §6 makes the arguments choose between them.
+//!   `BodyChecker::select` is the selection and it says what it costs Decision
+//!   1.
 //! - **Indexing and operators on user types.** `a[i]` is the `Index` interface
 //!   and `a + b` on a record is `Add`. **The lookup does not close these**, and
 //!   the blocker is not the lookup: the prelude declares `Add`, `Index` and the
@@ -315,6 +323,33 @@ enum Numeric {
 struct Typed {
     id: ExprId,
     ty: InferTy,
+}
+
+/// What the lookup at a call found: a callee, or none.
+///
+/// **It carries the arguments when they have already been synthesised**, which
+/// is `methods`'s §6 leaking exactly one fact into the shape of the answer:
+/// selection has to look at the argument types before it knows the callee, so
+/// at those calls the argument nodes exist before the lookup returns and every
+/// path afterwards — the resolved one and the two failed ones — has to use
+/// those nodes rather than build a second set. `None` is every other call,
+/// where nothing has been synthesised yet.
+enum Callee {
+    Found(Candidate, Option<Vec<Typed>>),
+    Missing(Option<Vec<Typed>>),
+}
+
+/// One candidate of `methods`'s §6, with the parameter types selection
+/// compares the arguments against.
+///
+/// The parameters are substituted — `Self` and the block's own generics — for
+/// the reason `BodyChecker::call_method` gives for substituting them there: a
+/// method's signature is written inside a block, and reading it raw compares
+/// against a `Self` rather than against a type a value can have.
+#[derive(Clone)]
+struct Instance {
+    candidate: Candidate,
+    params: Vec<(DefId, Ty)>,
 }
 
 /// The checker for one body. §3: one of these per body, dropped with it.
@@ -1454,11 +1489,14 @@ impl<'a> BodyChecker<'a> {
     /// a synthesis, there is no expected type to push into the receiver, and
     /// `methods`'s §1 keys the index on what the receiver's type *heads*.
     ///
-    /// **Three answers, and only one of them is a diagnostic.** A candidate
-    /// resolves, and its arguments are checked against real parameter types.
-    /// [`Found::None`] over a type this crate can speak for is `SC0532`.
-    /// Everything else — a prelude receiver, a type parameter, an already-wrong
-    /// type, and the two cases `methods`'s §5 and §6 name — leaves
+    /// **Four answers, and two of them are diagnostics.** A candidate resolves,
+    /// and its arguments are checked against real parameter types.
+    /// [`Found::None`] over a type this crate can speak for is `SC0532`, and
+    /// [`Found::Ambiguous`] is `SC0531`. [`Found::Instances`] is one method at
+    /// several instantiations of one interface and goes to
+    /// [`BodyChecker::select`], which resolves it or reports `SC0531` or
+    /// `SC0533`. What is left — a prelude receiver, a type parameter, an
+    /// already-wrong type, and the one case `methods`'s §5 names — leaves
     /// `method: None` and reports nothing, which is `ty`'s §5 and is what keeps
     /// the hole that remains from manufacturing a cascade.
     fn method_call(
@@ -1492,35 +1530,44 @@ impl<'a> BodyChecker<'a> {
         let recv = self.synth(receiver);
         let recv_ty = self.known_or_error(recv.ty);
         let revealed = self.revealed(recv_ty, span);
-        let found = self.lookup(revealed, name, Form::Value);
+        let self_ty = self.receiver_self_ty(revealed, span);
+        let found = self.lookup(revealed, name, Form::Value, args, self_ty);
 
-        let Some(candidate) = found else {
-            // §4 of `narrow`, as it still stands for an unresolved call: with
-            // no candidate there is no `SelfKind` to read, so the receiver's
-            // narrowing goes.
-            if let Some(place) = self.body.place_of(recv.id) {
-                self.facts.invalidate(&place);
+        let (candidate, supplied) = match found {
+            Callee::Found(candidate, supplied) => (candidate, supplied),
+            Callee::Missing(supplied) => {
+                // §4 of `narrow`, as it still stands for an unresolved call:
+                // with no candidate there is no `SelfKind` to read, so the
+                // receiver's narrowing goes.
+                if let Some(place) = self.body.place_of(recv.id) {
+                    self.facts.invalidate(&place);
+                }
+                let args = self.argument_ids(args, supplied);
+                let id = self.body.push_expr(
+                    ExprKind::MethodCall { receiver: recv.id, method: None, args },
+                    Ty::ERROR,
+                    span,
+                );
+                return Typed { id, ty: InferTy::Known(Ty::ERROR) };
             }
-            let args = args.iter().map(|arg| self.synth(&arg.value).id).collect();
-            let id = self.body.push_expr(
-                ExprKind::MethodCall { receiver: recv.id, method: None, args },
-                Ty::ERROR,
-                span,
-            );
-            return Typed { id, ty: InferTy::Known(Ty::ERROR) };
         };
 
         // Decision 8, now that the question can be asked: a `mutable self`
         // method is a write to the receiver and invalidates it; every other
         // form is not and does not. `narrow`'s §4.
+        //
+        // **At a §6 selection the arguments were synthesised before this
+        // point**, under the facts that held before the call rather than after
+        // it. That is the right order for a reader — the arguments are
+        // evaluated before the callee writes anything — and it is a difference
+        // from every other call, where the invalidation comes first.
         if candidate.writes_receiver() {
             if let Some(place) = self.body.place_of(recv.id) {
                 self.facts.invalidate(&place);
             }
         }
 
-        let self_ty = self.receiver_self_ty(revealed, span);
-        let (ids, ret) = self.call_method(&candidate, self_ty, generics, args, span);
+        let (ids, ret) = self.call_method(&candidate, self_ty, generics, args, supplied, span);
         let id = self.body.push_expr(
             ExprKind::MethodCall { receiver: recv.id, method: Some(candidate.method), args: ids },
             ret,
@@ -1548,14 +1595,19 @@ impl<'a> BodyChecker<'a> {
         span: Span,
     ) -> Typed {
         let revealed = self.revealed(receiver_ty, span);
-        let Some(candidate) = self.lookup(revealed, name, Form::Type) else {
-            let ids = args.iter().map(|arg| self.synth(&arg.value).id).collect();
-            let callee = self.body.push_expr(ExprKind::Error, Ty::ERROR, span);
-            let id = self.body.push_expr(ExprKind::Call { callee, args: ids }, Ty::ERROR, span);
-            return Typed { id, ty: InferTy::Known(Ty::ERROR) };
-        };
+        let (candidate, supplied) =
+            match self.lookup(revealed, name, Form::Type, args, revealed) {
+                Callee::Found(candidate, supplied) => (candidate, supplied),
+                Callee::Missing(supplied) => {
+                    let ids = self.argument_ids(args, supplied);
+                    let callee = self.body.push_expr(ExprKind::Error, Ty::ERROR, span);
+                    let id =
+                        self.body.push_expr(ExprKind::Call { callee, args: ids }, Ty::ERROR, span);
+                    return Typed { id, ty: InferTy::Known(Ty::ERROR) };
+                }
+            };
         let callee = self.body.push_expr(ExprKind::Item(candidate.method), Ty::ERROR, span);
-        let (ids, ret) = self.call_method(&candidate, revealed, generics, args, span);
+        let (ids, ret) = self.call_method(&candidate, revealed, generics, args, supplied, span);
         let id = self.body.push_expr(ExprKind::Call { callee, args: ids }, ret, span);
         if self.decls.prelude().is_never(self.types, ret) {
             self.diverged = true;
@@ -1573,16 +1625,24 @@ impl<'a> BodyChecker<'a> {
     /// before a parameter type is something a value can be compared against.
     /// Reading the signature raw is the bug that says `expected Self, found
     /// Doc` at a `-> Self` that is right.
+    ///
+    /// **`supplied` is `methods`'s §6 and nothing else.** At a call whose
+    /// callee was chosen by its arguments the argument nodes already exist, so
+    /// each one meets its parameter at [`BodyChecker::demand`] — which is
+    /// `check`'s own default arm — instead of being checked from the HIR a
+    /// second time. What the four forms with a genuine checking rule lose by
+    /// that is §1's inward push, and [`BodyChecker::select`] prices it.
     fn call_method(
         &mut self,
         candidate: &Candidate,
         self_ty: Ty,
         generics: &[hir::Type],
         args: &[hir::Arg],
+        supplied: Option<Vec<Typed>>,
         span: Span,
     ) -> (Vec<ExprId>, Ty) {
         let Some(sig) = self.decls.signature(candidate.method) else {
-            let ids = args.iter().map(|arg| self.synth(&arg.value).id).collect();
+            let ids = self.argument_ids(args, supplied);
             return (ids, Ty::ERROR);
         };
         let params: Vec<(DefId, Ty)> =
@@ -1600,14 +1660,21 @@ impl<'a> BodyChecker<'a> {
 
         let mut ids: Vec<ExprId> = Vec::with_capacity(args.len());
         for (at, arg) in args.iter().enumerate() {
+            let already = supplied.as_ref().and_then(|supplied| supplied.get(at).copied());
             match order[at].and_then(|index| params.get(index).copied()) {
                 Some((_, param_ty)) => {
                     let ty = self.apply(&block, param_ty, arg.span);
                     let ty = self.apply(&generic, ty, arg.span);
                     let ty = self.instantiate(ty, arg.span);
-                    ids.push(self.check(&arg.value, ty, Site::Argument));
+                    ids.push(match already {
+                        Some(typed) => self.demand(typed, ty, Site::Argument, arg.span),
+                        None => self.check(&arg.value, ty, Site::Argument),
+                    });
                 }
-                None => ids.push(self.synth(&arg.value).id),
+                None => ids.push(match already {
+                    Some(typed) => typed.id,
+                    None => self.synth(&arg.value).id,
+                }),
             }
         }
         let ret = self.apply(&block, ret, span);
@@ -1742,37 +1809,371 @@ impl<'a> BodyChecker<'a> {
         }
     }
 
-    /// Decision 11's lookup, with its two diagnostics.
+    /// Decision 11's lookup, with its diagnostics and `methods`'s §6
+    /// selection.
     ///
-    /// `None` is *"no answer"* and is not always a diagnostic: `methods`'s §1
-    /// distinguishes a receiver this crate can speak for from one it cannot,
-    /// and only the first reports.
-    fn lookup(&mut self, receiver: Ty, name: &hir::Ident, form: Form) -> Option<Candidate> {
-        let key = self.decls.methods().receiver(self.defs, self.types, receiver)?;
+    /// [`Callee::Missing`] is *"no answer"* and is not always a diagnostic:
+    /// `methods`'s §1 distinguishes a receiver this crate can speak for from
+    /// one it cannot, and only the first reports.
+    fn lookup(
+        &mut self,
+        receiver: Ty,
+        name: &hir::Ident,
+        form: Form,
+        args: &[hir::Arg],
+        self_ty: Ty,
+    ) -> Callee {
+        let Some(key) = self.decls.methods().receiver(self.defs, self.types, receiver) else {
+            return Callee::Missing(None);
+        };
         match self.decls.methods().lookup(key, &name.name, form) {
-            Found::One(candidate) => Some(candidate),
+            Found::One(candidate) => Callee::Found(candidate, None),
             Found::Ambiguous(candidates) => {
                 let diagnostic = self.ambiguous(receiver, name, &candidates);
                 self.diagnostics.push(diagnostic);
-                None
+                Callee::Missing(None)
             }
             // The name is there and the form is not: an instance method named
             // through its type, or an associated function called on a value.
             // `methods`'s §5 — F0 has no spelling for either, so a diagnostic
             // about one would be a language decision taken by a checker.
-            Found::Mismatched => None,
-            // Several implementations of one interface, selected by the
-            // argument rather than by the name. `methods`'s §6: not resolved,
-            // and not reported either.
-            Found::Overloaded => None,
+            Found::Mismatched => Callee::Missing(None),
+            // One method at several instantiations of one interface, which the
+            // arguments choose between: `methods`'s §6.
+            Found::Instances(candidates) => {
+                self.select(receiver, name, &candidates, args, self_ty)
+            }
             Found::None => {
                 if !self.types.references_error(receiver) {
                     let rendered = self.types.render(self.defs, receiver);
                     self.diagnostics.push(no_such_method(name.span, &name.name, &rendered));
                 }
-                None
+                Callee::Missing(None)
             }
         }
+    }
+
+    /// `methods`'s §6: the argument types choose among the implementations of
+    /// one interface.
+    ///
+    /// **Decision. The arguments are synthesised first, and a candidate
+    /// survives if no argument refutes it.** Exactly one survivor resolves the
+    /// call; more than one is `SC0531` under a message saying the arguments did
+    /// not narrow it; none is `SC0533`, naming what was supplied and what the
+    /// implementations accept. All three are answers, and what they replace is
+    /// silence — a call with `method: None`, arguments compared against no
+    /// signature at all, and nothing said about any of it.
+    ///
+    /// **The reason it terminates is that this is selection and not
+    /// inference.** The candidate set is finite, it is fixed before an argument
+    /// is looked at, and it comes from the receiver alone: no argument can add
+    /// a candidate, and no candidate can change an argument's type, because the
+    /// arguments are *synthesised* and never checked against an expectation
+    /// taken from a callee that has not been chosen.
+    ///
+    /// # The cost, which is Decision 1's first sentence
+    ///
+    /// > *"every call site knows its callee's types before it looks at the
+    /// > arguments"*
+    ///
+    /// **At these call sites that is now false**, and false in the direction
+    /// the sentence was written to exclude: the argument is synthesised first,
+    /// and its type is what picks the callee. That sentence is the reason §2 of
+    /// the note gives for the regime being bidirectional at all, so this is not
+    /// a detail of the implementation and it is not a temporary state.
+    ///
+    /// **What bounds it**, stated so that the next reader does not take it for
+    /// more than it is:
+    ///
+    /// - The choice is among a **known finite set** computed from the receiver,
+    ///   by a linear scan. There is no search and no backtracking: each
+    ///   candidate is tested once, against types that are already in hand.
+    /// - The argument types are **synthesised locally**, by the same walk any
+    ///   other expression gets. Nothing from a candidate's signature flows
+    ///   backwards into them, so no expectation crosses the undecided seam.
+    /// - Nothing crosses a **function boundary**. Every candidate's parameter
+    ///   types are annotations the declaration pass lowered, and no inference
+    ///   variable of this body is unified with anything outside it.
+    ///
+    /// So Decision 1's actual guarantee — *"there is no unifier across function
+    /// boundaries"*, and with it both dividends the note counts on: bodies that
+    /// check in parallel and in any order, and an error that can name a type a
+    /// human wrote. Those survive unchanged. What does not survive is the
+    /// sentence above, and two things that sentence implied:
+    ///
+    /// - **Checking mode does not reach an argument here.** §1's forms with a
+    ///   genuine checking rule — an `if`, a `match`, a block, a closure, and
+    ///   the tuple arm — are synthesised instead, so the expectation that would
+    ///   have been pushed into their sub-expressions is not. They meet the
+    ///   chosen parameter at [`BodyChecker::demand`] afterwards, which is a
+    ///   comparison and not a push.
+    /// - **An argument with no type of its own cannot select.** An unsuffixed
+    ///   literal and `null` are inference variables until something expects a
+    ///   type of them, and that something is the parameter of the callee this
+    ///   selection has not chosen yet. Such an argument refutes no candidate —
+    ///   refusing on an unanswerable question is §5's false positive — so it
+    ///   narrows nothing, and if more than one candidate is left the author is
+    ///   told exactly that, with the literal named as the reason. It is **not**
+    ///   left silent: `SC0531` with a note an author can act on is worth more
+    ///   than a call nobody checked. The argument itself is still checked, at
+    ///   [`BodyChecker::demand`], once a candidate has won.
+    ///
+    /// **An argument whose type references an error is the one case that stays
+    /// silent**, and that is `ty`'s §5 rather than a hole left here: an
+    /// erroneous type agrees with everything, so every candidate would survive
+    /// it, and the message would be about a mistake that is already reported
+    /// somewhere else.
+    fn select(
+        &mut self,
+        receiver: Ty,
+        name: &hir::Ident,
+        candidates: &[Candidate],
+        args: &[hir::Arg],
+        self_ty: Ty,
+    ) -> Callee {
+        let supplied: Vec<Typed> = args.iter().map(|arg| self.synth(&arg.value)).collect();
+        let Some(instances) = self.instances(candidates, self_ty) else {
+            return Callee::Missing(Some(supplied));
+        };
+        let unanswerable = supplied.iter().any(|typed| match self.infer.resolve(typed.ty) {
+            InferTy::Known(ty) => self.types.references_error(ty),
+            InferTy::Var(_) => false,
+        });
+        if unanswerable {
+            return Callee::Missing(Some(supplied));
+        }
+
+        let mut viable: Vec<usize> = Vec::new();
+        for (at, instance) in instances.iter().enumerate() {
+            if self.accepts(instance, args, &supplied) {
+                viable.push(at);
+            }
+        }
+        if viable.len() == 1 {
+            return Callee::Found(instances[viable[0]].candidate, Some(supplied));
+        }
+        let reported = if viable.is_empty() {
+            self.no_instance(receiver, name, &instances, &supplied)
+        } else {
+            let survivors: Vec<Instance> =
+                viable.iter().map(|at| instances[*at].clone()).collect();
+            self.undetermined(receiver, name, &survivors, &supplied)
+        };
+        self.diagnostics.push(reported);
+        Callee::Missing(Some(supplied))
+    }
+
+    /// Every candidate with its parameters substituted, or `None` if one of
+    /// them cannot be read.
+    ///
+    /// A candidate with no signature is *"cannot say"* and not *"takes
+    /// nothing"*, and one of those makes the whole selection unanswerable:
+    /// choosing among the rest would be choosing against a candidate nothing
+    /// was compared to.
+    ///
+    /// **What the substitution does not reach is the interface's own generic
+    /// parameters**, and selection inherits that rather than introducing it:
+    /// [`BodyChecker::block_substitution`] solves a block's generics from the
+    /// receiver and `Self` from the receiver, and nothing anywhere binds the
+    /// `T` of `interface From of T:` to the `ParseError` of `LoadError
+    /// implements From of ParseError:` — the arguments of an implemented
+    /// interface are not lowered by any pass. It shows only where a method is
+    /// *inherited* as a default body, because a block that writes the method
+    /// writes concrete parameter types with it, which is every implementation
+    /// in the corpus. Where it does show, one implementation already reported
+    /// `SC0525` (`expected T, found Io`) before any of this existed; with two,
+    /// the same hole comes out as `SC0533`. The fix is the interface's
+    /// arguments in `items`'s table, and it is a declaration-pass change.
+    fn instances(&mut self, candidates: &[Candidate], self_ty: Ty) -> Option<Vec<Instance>> {
+        let mut instances = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            let sig = self.decls.signature(candidate.method)?;
+            let declared: Vec<(DefId, Ty)> =
+                sig.params.iter().map(|param| (param.def, param.ty)).collect();
+            let block = self.block_substitution(candidate, self_ty);
+            let params = declared
+                .into_iter()
+                .map(|(def, ty)| (def, self.substituted(&block, ty)))
+                .collect();
+            instances.push(Instance { candidate: *candidate, params });
+        }
+        Some(instances)
+    }
+
+    /// Whether this implementation could be the one called.
+    ///
+    /// Arity first, because a candidate that cannot take this many arguments is
+    /// not the callee whatever the types say, and then one comparison per
+    /// argument. **The receiver is not compared again**: it is what produced
+    /// the candidate set, and every candidate in that set agrees about it.
+    fn accepts(&mut self, instance: &Instance, args: &[hir::Arg], supplied: &[Typed]) -> bool {
+        if instance.params.len() != args.len() {
+            return false;
+        }
+        let order = self.argument_order(&instance.params, args);
+        for (at, index) in order.iter().enumerate() {
+            let Some((_, param)) = index.and_then(|index| instance.params.get(index).copied())
+            else {
+                return false;
+            };
+            // A literal or `null`: no type until something expects one, so it
+            // refutes nothing.
+            let InferTy::Known(found) = self.infer.resolve(supplied[at].ty) else {
+                continue;
+            };
+            if !self.fits(found, param) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Whether a value of this type reaches that parameter.
+    ///
+    /// [`assignable`] at [`Site::Argument`], which is the relation the argument
+    /// will actually meet, plus §6.3's auto-borrow asked as a type question:
+    /// [`BodyChecker::auto_borrow`] would write the borrow the author was told
+    /// to leave out, so a parameter it reaches is a parameter this
+    /// implementation accepts. Asking the first and not the second would refuse
+    /// an implementation whose `borrowed` parameter the chosen call site takes
+    /// happily.
+    fn fits(&mut self, supplied: Ty, param: Ty) -> bool {
+        let source = self.unreported_reveal(supplied);
+        let target = self.unreported_reveal(param);
+        let methods = self.decls.methods();
+        if assignable(self.types, methods, self.coercions, Site::Argument, source, target)
+            .is_some()
+        {
+            return true;
+        }
+        let TyKind::Borrowed { mutable, .. } = *self.types.kind(target) else {
+            return false;
+        };
+        let borrowed = self.types.borrowed(mutable, source);
+        let methods = self.decls.methods();
+        assignable(self.types, methods, self.coercions, Site::Argument, borrowed, target).is_some()
+    }
+
+    /// [`BodyChecker::revealed`] with nothing reported.
+    ///
+    /// Selection asks a type question of every candidate and answers for one of
+    /// them, so an overflow reported here would be reported once per candidate.
+    /// It is reported once instead, at the comparison the winner's arguments go
+    /// through.
+    fn unreported_reveal(&mut self, ty: Ty) -> Ty {
+        self.aliases.reveal(self.types, ty).unwrap_or(Ty::ERROR)
+    }
+
+    /// [`BodyChecker::apply`] with nothing reported, for the same reason.
+    fn substituted(&mut self, substitution: &Substitution, ty: Ty) -> Ty {
+        substitution.apply(self.types, ty).unwrap_or(Ty::ERROR)
+    }
+
+    /// The argument nodes for a call that has no callee to check them against:
+    /// the ones selection already synthesised, or a synthesis of each.
+    fn argument_ids(&mut self, args: &[hir::Arg], supplied: Option<Vec<Typed>>) -> Vec<ExprId> {
+        match supplied {
+            Some(supplied) => supplied.iter().map(|typed| typed.id).collect(),
+            None => args.iter().map(|arg| self.synth(&arg.value).id).collect(),
+        }
+    }
+
+    /// How an argument reads in a selection message: its type, or what kind of
+    /// literal it is when it does not have one yet.
+    fn described(&mut self, typed: Typed) -> String {
+        match self.infer.resolve(typed.ty) {
+            InferTy::Known(ty) => format!("`{}`", self.types.render(self.defs, ty)),
+            InferTy::Var(var) => self.numeric_name(var).to_string(),
+        }
+    }
+
+    /// The arguments as a message lists them.
+    fn described_all(&mut self, supplied: &[Typed]) -> String {
+        if supplied.is_empty() {
+            return "no arguments".to_string();
+        }
+        let described: Vec<String> = supplied.iter().map(|typed| self.described(*typed)).collect();
+        described.join(", ")
+    }
+
+    /// What one implementation takes, as a message lists it.
+    fn described_params(&mut self, instance: &Instance) -> String {
+        if instance.params.is_empty() {
+            return "no arguments".to_string();
+        }
+        let rendered: Vec<String> = instance
+            .params
+            .iter()
+            .map(|(_, ty)| format!("`{}`", self.types.render(self.defs, *ty)))
+            .collect();
+        rendered.join(", ")
+    }
+
+    /// The interface every candidate of a §6 set came through, by name. The set
+    /// is *defined* by them sharing one, so the first answers for all of them.
+    fn interface_name(&self, instances: &[Instance]) -> String {
+        instances
+            .first()
+            .and_then(|instance| instance.candidate.interface())
+            .map(|interface| self.defs.get(interface).name.clone())
+            .unwrap_or_default()
+    }
+
+    /// Where each implementation is written, and what it takes.
+    fn accepted_by(&mut self, instances: &[Instance]) -> Vec<(Span, String)> {
+        instances
+            .iter()
+            .map(|instance| {
+                (self.defs.get(instance.candidate.method).span, self.described_params(instance))
+            })
+            .collect()
+    }
+
+    /// `SC0531` again, for the set the arguments did not narrow. `methods`'s
+    /// §6.
+    ///
+    /// **The same code as Decision 11's ambiguity and a different message**,
+    /// because the same thing went wrong — the call names more than one method
+    /// and the language has no spelling for saying which — reached by a
+    /// different road. A second code would make an author learn two numbers for
+    /// one sentence.
+    fn undetermined(
+        &mut self,
+        receiver: Ty,
+        name: &hir::Ident,
+        viable: &[Instance],
+        supplied: &[Typed],
+    ) -> Diagnostic {
+        let rendered = self.types.render(self.defs, receiver);
+        let interface = self.interface_name(viable);
+        let supplied_text = self.described_all(supplied);
+        let literal =
+            supplied.iter().any(|typed| matches!(self.infer.resolve(typed.ty), InferTy::Var(_)));
+        let accepts = self.accepted_by(viable);
+        instances_not_narrowed(
+            name.span,
+            &name.name,
+            &rendered,
+            &interface,
+            &supplied_text,
+            &accepts,
+            literal,
+        )
+    }
+
+    /// `SC0533` — the arguments fit none of the implementations.
+    fn no_instance(
+        &mut self,
+        receiver: Ty,
+        name: &hir::Ident,
+        instances: &[Instance],
+        supplied: &[Typed],
+    ) -> Diagnostic {
+        let rendered = self.types.render(self.defs, receiver);
+        let interface = self.interface_name(instances);
+        let supplied_text = self.described_all(supplied);
+        let accepts = self.accepted_by(instances);
+        no_matching_instance(name.span, &name.name, &rendered, &interface, &supplied_text, &accepts)
     }
 
     /// `SC0531`, built where the receiver's type and the candidates are both in
@@ -2542,6 +2943,80 @@ fn no_such_method(span: Span, name: &str, ty: &str) -> Diagnostic {
             "method lookup finds the inherent methods of the type and the methods of the \
              interfaces it implements, and neither has this name",
         )
+}
+
+/// `SC0531`, the second road to it: implementations of one interface that the
+/// arguments did not narrow to one. `methods`'s §6.
+///
+/// **The message says what the author has to change.** Decision 11's other
+/// message names two methods and cannot name the fix, because F0 has no
+/// qualified-call syntax; this one can, because the thing that chooses here is
+/// the argument, and an argument is something an author can give a type to.
+/// `literal` is the case where that is the whole story — a bare `1` or a `null`
+/// has no type until a signature expects one, and there is no signature yet.
+fn instances_not_narrowed(
+    span: Span,
+    name: &str,
+    receiver: &str,
+    interface: &str,
+    supplied: &str,
+    accepts: &[(Span, String)],
+    literal: bool,
+) -> Diagnostic {
+    let mut diagnostic = Diagnostic::error(
+        codes::AMBIGUOUS_METHOD,
+        format!(
+            "`{name}` on `{receiver}` could be {} implementations of `{interface}`",
+            accepts.len()
+        ),
+    )
+    .with_label(Label::primary(span, format!("supplied {supplied}, which fits all of them")));
+    for (at, params) in accepts {
+        diagnostic =
+            diagnostic.with_label(Label::secondary(*at, format!("one accepts {params}")));
+    }
+    diagnostic = diagnostic.with_note(
+        "these are one method at several instantiations of one interface, so the argument \
+         types are what choose between them — and here they did not narrow it to one",
+    );
+    if literal {
+        diagnostic = diagnostic.with_note(
+            "a literal or `null` has no type until a signature expects one, and which \
+             signature that is is what this call is trying to decide — give the argument \
+             a type first, with a suffix or a binding that is annotated",
+        );
+    }
+    diagnostic
+}
+
+/// `SC0533` — the arguments fit none of the implementations of the interface.
+///
+/// The sibling of [`instances_not_narrowed`] on the other side: there, more
+/// than one implementation took what was supplied; here, none did. Both name
+/// what each implementation accepts, because that list is the whole of what the
+/// author has to choose from and it is spread over as many blocks as there are
+/// candidates.
+fn no_matching_instance(
+    span: Span,
+    name: &str,
+    receiver: &str,
+    interface: &str,
+    supplied: &str,
+    accepts: &[(Span, String)],
+) -> Diagnostic {
+    let mut diagnostic = Diagnostic::error(
+        codes::NO_MATCHING_IMPLEMENTATION,
+        format!("no implementation of `{interface}` for `{receiver}` accepts {supplied}"),
+    )
+    .with_label(Label::primary(span, format!("`{name}` was given {supplied}")));
+    for (at, params) in accepts {
+        diagnostic =
+            diagnostic.with_label(Label::secondary(*at, format!("this one accepts {params}")));
+    }
+    diagnostic.with_note(
+        "these are one method at several instantiations of one interface, and the argument \
+         types choose between them — so an argument that fits none of them names no method",
+    )
 }
 
 /// `SC0529` — `let a, b be f()` against something that is not a pair.

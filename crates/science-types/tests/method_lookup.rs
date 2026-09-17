@@ -352,15 +352,12 @@ def read(doc: Doc) -> String:
     checked.assert_clean();
 }
 
-#[test]
-fn two_implementations_of_one_interface_are_not_an_ambiguity() {
-    // `methods`'s §6, which is the case Decision 11 calls an ambiguity and the
-    // corpus calls a program: `examples/00_kitchen_sink.science` implements
-    // `From` twice and then calls `LoadError.from(..)`. Not resolved, because
-    // choosing needs the argument's type; not reported, because the program is
-    // correct.
-    let checked = check(
-        "\
+// --- `methods`'s §6: one interface, several instantiations ----------------
+
+/// The corpus case, in the shape `examples/00_kitchen_sink.science` writes it:
+/// one interface implemented twice at two different type arguments, and a call
+/// that names the method by one name.
+const INSTANCES: &str = "\
 type ParseError:
     detail: String
 
@@ -377,12 +374,322 @@ LoadError implements From of ParseError:
 LoadError implements From of IoError:
     def from(value: IoError) -> Self:
         LoadError(detail: value.detail)
+";
+
+/// What an associated call resolved to, named by the type of its parameter —
+/// which is the only thing that tells two implementations of one interface
+/// apart, and therefore the only assertion worth making about which one won.
+fn selected(checked: &support::Checked, function: &str) -> String {
+    let body = checked.body(function);
+    let (_, call) = body
+        .exprs()
+        .find(|(_, expr)| matches!(expr.kind, ExprKind::Call { .. }))
+        .expect("the body has a call");
+    let ExprKind::Call { callee, .. } = call.kind else { unreachable!() };
+    let ExprKind::Item(def) = body.expr(callee).kind else {
+        panic!("the call did not resolve to a method");
+    };
+    let signature = checked.decls.signature(def).expect("the method has a signature");
+    checked.render(signature.params[0].ty)
+}
+
+#[test]
+fn the_corpus_case_resolves_by_the_argument_type() {
+    // `methods`'s §6, and the case Decision 11 calls an ambiguity and the
+    // corpus calls a program: `examples/00_kitchen_sink.science` implements
+    // `From` twice and then writes `LoadError.from(io_err)`. The two
+    // candidates are one method at two instantiations, so the argument picks,
+    // and the call is checked like any other.
+    let checked = check(&format!(
+        "{INSTANCES}
+def widen(err: IoError) -> LoadError:
+    LoadError.from(err)
+"
+    ));
+    checked.assert_clean();
+    assert_eq!(selected(&checked, "widen"), "IoError");
+    let body = checked.body("widen");
+    let (id, _) = body
+        .exprs()
+        .find(|(_, expr)| matches!(expr.kind, ExprKind::Call { .. }))
+        .expect("the body has a call");
+    // The whole of what the silence used to cost: the call has the method's
+    // return type instead of `Ty::ERROR`.
+    assert_eq!(checked.render(body.ty(id)), "LoadError");
+}
+
+#[test]
+fn the_other_argument_selects_the_other_implementation() {
+    let checked = check(&format!(
+        "{INSTANCES}
+def widen(err: ParseError) -> LoadError:
+    LoadError.from(err)
+"
+    ));
+    checked.assert_clean();
+    assert_eq!(selected(&checked, "widen"), "ParseError");
+}
+
+#[test]
+fn selection_works_through_a_value_receiver_too() {
+    // Nothing in §6 is about the associated form. The candidate set comes from
+    // the receiver either way, and the receiver is not selected on again.
+    let checked = check(
+        "\
+interface Absorb of T:
+    def absorb(self, value: T) -> String
+
+type IoError:
+    detail: String
+
+type ParseError:
+    detail: String
+
+type Log:
+    detail: String
+
+Log implements Absorb of IoError:
+    def absorb(self, value: IoError) -> String:
+        value.detail
+
+Log implements Absorb of ParseError:
+    def absorb(self, value: ParseError) -> String:
+        value.detail
+
+def record(log: Log, err: ParseError) -> String:
+    log.absorb(err)
+",
+    );
+    checked.assert_clean();
+    let body = checked.body("record");
+    let (_, call) = body
+        .exprs()
+        .find(|(_, expr)| matches!(expr.kind, ExprKind::MethodCall { .. }))
+        .expect("the body has a method call");
+    let ExprKind::MethodCall { method, .. } = call.kind else { unreachable!() };
+    let method = method.expect("the call resolved");
+    let signature = checked.decls.signature(method).expect("a signature");
+    assert_eq!(checked.render(signature.params[0].ty), "ParseError");
+}
+
+#[test]
+fn an_argument_that_fits_more_than_one_implementation_is_reported() {
+    // Selection that does not narrow to one is `SC0531` — Decision 11's code,
+    // because it is Decision 11's problem — under a message that says what
+    // failed here, which is the arguments and not the name. `IoError` fits the
+    // concrete implementation directly and the interface-object one through
+    // §6.3's auto-borrow and `assign`'s §4 unsizing.
+    let checked = check(
+        "\
+interface Note:
+    def note(self) -> String
+
+type IoError:
+    detail: String
+
+IoError implements Note:
+    def note(self) -> String:
+        self.detail
+
+type LoadError:
+    detail: String
+
+LoadError implements From of IoError:
+    def from(value: IoError) -> Self:
+        LoadError(detail: value.detail)
+
+LoadError implements From of (any Note):
+    def from(value: borrowed any Note) -> Self:
+        LoadError(detail: value.note())
 
 def widen(err: IoError) -> LoadError:
     LoadError.from(err)
 ",
     );
-    checked.assert_clean();
+    assert_eq!(checked.codes(), vec![531]);
+    assert_eq!(
+        checked.messages(),
+        vec!["`from` on `LoadError` could be 2 implementations of `From`".to_string()]
+    );
+    let diagnostic = checked.diagnostics.iter().next().expect("one diagnostic");
+    let labels: Vec<&str> =
+        diagnostic.labels.iter().map(|label| label.message.as_str()).collect();
+    assert_eq!(
+        labels,
+        vec![
+            "supplied `IoError`, which fits all of them",
+            "one accepts `IoError`",
+            "one accepts `borrowed any Note`",
+        ]
+    );
+    assert!(diagnostic.notes[0].contains("did not narrow it to one"));
+}
+
+#[test]
+fn an_argument_that_fits_no_implementation_is_reported() {
+    let checked = check(&format!(
+        "{INSTANCES}
+def widen(text: String) -> LoadError:
+    LoadError.from(text)
+"
+    ));
+    assert_eq!(checked.codes(), vec![533]);
+    assert_eq!(
+        checked.messages(),
+        vec!["no implementation of `From` for `LoadError` accepts `String`".to_string()]
+    );
+    let diagnostic = checked.diagnostics.iter().next().expect("one diagnostic");
+    let labels: Vec<&str> =
+        diagnostic.labels.iter().map(|label| label.message.as_str()).collect();
+    assert_eq!(
+        labels,
+        vec![
+            "`from` was given `String`",
+            "this one accepts `ParseError`",
+            "this one accepts `IoError`",
+        ]
+    );
+}
+
+#[test]
+fn an_argument_of_the_wrong_count_fits_no_implementation_either() {
+    // Arity is part of selection rather than a check after it: an
+    // implementation that cannot take this many arguments is not the callee
+    // whatever the types say, so this is the same diagnostic and not
+    // `SC0527` reported against a candidate nobody chose.
+    let checked = check(&format!(
+        "{INSTANCES}
+def widen(io: IoError, parse: ParseError) -> LoadError:
+    LoadError.from(io, parse)
+"
+    ));
+    assert_eq!(checked.codes(), vec![533]);
+    assert_eq!(
+        checked.messages(),
+        vec!["no implementation of `From` for `LoadError` accepts `IoError`, `ParseError`"
+            .to_string()]
+    );
+}
+
+#[test]
+fn a_literal_argument_cannot_select_and_the_message_says_why() {
+    // The case the ruling names: an argument that has no type until something
+    // expects one, at the one call where what expects it is what is being
+    // decided. It refutes no candidate, so nothing narrows — and the author is
+    // told that rather than left with a call nobody checked.
+    let checked = check(
+        "\
+type Load:
+    detail: String
+
+Load implements From of I64:
+    def from(value: I64) -> Self:
+        Load(detail: \"\")
+
+Load implements From of F64:
+    def from(value: F64) -> Self:
+        Load(detail: \"\")
+
+def widen() -> Load:
+    Load.from(1)
+",
+    );
+    assert_eq!(checked.codes(), vec![531]);
+    let diagnostic = checked.diagnostics.iter().next().expect("one diagnostic");
+    assert_eq!(diagnostic.labels[0].message, "supplied an integer literal, which fits all of them");
+    assert!(diagnostic.notes[1].contains("has no type until a signature expects one"));
+}
+
+#[test]
+fn a_null_argument_cannot_select_either_and_then_has_no_type_at_all() {
+    // `null` is the same case and one worse: no candidate won, so nothing ever
+    // expected a type of it, and Decision 2 has no default for `null` to fall
+    // back on. The second code is `SC0526` and it is the truth about the same
+    // line — pinned here so that a future fix to either one is noticed.
+    let checked = check(
+        "\
+type Load:
+    detail: String
+
+Load implements From of I64:
+    def from(value: I64) -> Self:
+        Load(detail: \"\")
+
+Load implements From of F64:
+    def from(value: F64) -> Self:
+        Load(detail: \"\")
+
+def widen() -> Load:
+    Load.from(null)
+",
+    );
+    assert_eq!(checked.codes(), vec![531, 526]);
+    let diagnostic = checked.diagnostics.iter().next().expect("one diagnostic");
+    assert_eq!(diagnostic.labels[0].message, "supplied `null`, which fits all of them");
+}
+
+#[test]
+fn two_different_interfaces_stay_decision_11s_ambiguity() {
+    // **Not widened.** Both interfaces are generic, both implementations are at
+    // different type arguments, and the argument would have told them apart —
+    // and it is still `SC0531`'s original message, because these are two
+    // methods and not one method twice. §6's condition is the interface and
+    // nothing else.
+    let checked = check(
+        "\
+interface Alpha of T:
+    def make(value: T) -> Self
+
+interface Beta of T:
+    def make(value: T) -> Self
+
+type IoError:
+    detail: String
+
+type ParseError:
+    detail: String
+
+type LoadError:
+    detail: String
+
+LoadError implements Alpha of IoError:
+    def make(value: IoError) -> Self:
+        LoadError(detail: value.detail)
+
+LoadError implements Beta of ParseError:
+    def make(value: ParseError) -> Self:
+        LoadError(detail: value.detail)
+
+def widen(err: IoError) -> LoadError:
+    LoadError.make(err)
+",
+    );
+    assert_eq!(checked.codes(), vec![531]);
+    assert_eq!(
+        checked.messages(),
+        vec!["`make` on `LoadError` could be 2 methods".to_string()]
+    );
+}
+
+#[test]
+fn an_inherent_method_beside_an_interface_one_is_not_selection() {
+    // `methods`'s §6's other half: one of these two is not chosen by any
+    // argument, so there is nothing to select on and §3's rule stands.
+    let checked = check(&format!(
+        "{INSTANCES}
+LoadError has:
+    def from(value: IoError) -> LoadError:
+        LoadError(detail: value.detail)
+
+def widen(err: IoError) -> LoadError:
+    LoadError.from(err)
+"
+    ));
+    assert_eq!(checked.codes(), vec![531]);
+    assert_eq!(
+        checked.messages(),
+        vec!["`from` on `LoadError` could be 3 methods".to_string()]
+    );
 }
 
 #[test]
