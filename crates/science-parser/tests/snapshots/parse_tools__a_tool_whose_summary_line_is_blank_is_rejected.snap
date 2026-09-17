@@ -11,5 +11,6 @@ Module @44..86
     body: Block @84..85
       tail: Int 0 @84..85
 --- diagnostics ---
-SC0195 @44..48 a `tool`'s description opens with its summary
+SC0195 @0..43 a `tool`'s description opens with its summary
+  note @44..48 the `tool` it describes
   note the first line, up to the first blank `##`, is the tool's title; the whole comment is its description, summary included

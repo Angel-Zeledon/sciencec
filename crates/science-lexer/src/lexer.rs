@@ -17,7 +17,7 @@
 
 use science_diagnostics::{Code, Diagnostic, Diagnostics, FileId, Label, Span, Suggestion};
 
-use crate::token::{IntBase, NumSuffix, Token, TokenKind};
+use crate::token::{DocComment, IntBase, NumSuffix, Token, TokenKind};
 
 // --- Lexical error codes (SC0001-SC0099) ---------------------------------
 
@@ -81,6 +81,12 @@ struct Lexer<'a> {
     /// consuming it, which is what lets a doc comment survive the line break
     /// and the indent that always sit between it and the thing it documents.
     doc_run: Vec<String>,
+    /// Where the lines in `doc_run` were written, merged as each arrives.
+    ///
+    /// Accumulated beside the text rather than recovered from it later: every
+    /// line has had its marker and one space stripped, so by the time the run
+    /// is handed over the source it came from is no longer in it.
+    doc_span: Option<Span>,
 }
 
 impl<'a> Lexer<'a> {
@@ -95,6 +101,7 @@ impl<'a> Lexer<'a> {
             depth: 0,
             pending_newline: false,
             doc_run: Vec::new(),
+            doc_span: None,
         }
     }
 
@@ -356,6 +363,13 @@ impl<'a> Lexer<'a> {
             let line = &self.src[start + 2..self.pos];
             let line = line.strip_prefix(' ').unwrap_or(line);
             self.doc_run.push(line.trim_end().to_string());
+            // The run's span grows by this line. It ends at the last character
+            // the line actually shows, so that a caret under the run is as
+            // wide as the run reads; the text above drops the same trailing
+            // whitespace for the same reason.
+            let end = start + self.src[start..self.pos].trim_end().len();
+            let line_span = self.span(start, end);
+            self.doc_span = Some(self.doc_span.map_or(line_span, |run| run.merge(line_span)));
         }
     }
 
@@ -1019,7 +1033,16 @@ impl<'a> Lexer<'a> {
         // A run reaches the next token with text of its own; the synthetic
         // tokens between a comment and the declaration leave it alone.
         let doc = if has_text && !self.doc_run.is_empty() {
-            Some(std::mem::take(&mut self.doc_run).join("\n"))
+            // The run's own span travels with it, not this token's: `SC0194`
+            // and `SC0195` are about the `##` lines, and the declaration
+            // underneath is one line below the text they ask the reader to
+            // edit. The fallback is unreachable — `doc_span` is set by the
+            // same push that fills `doc_run` — and is written rather than
+            // unwrapped because a panic in the lexer is never the right answer
+            // to a malformed file.
+            let run = self.doc_span.take().unwrap_or(span);
+            let text = std::mem::take(&mut self.doc_run).join("\n");
+            Some(DocComment { text, span: run })
         } else {
             None
         };

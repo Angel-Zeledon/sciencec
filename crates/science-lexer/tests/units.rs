@@ -1346,6 +1346,11 @@ fn equation_is_reserved_and_its_neighbours_are_not() {
 
 // --- doc comments ---------------------------------------------------------
 
+/// The text of a token's `##` run, for the tests that are about the text.
+fn doc_text(token: &science_lexer::Token) -> Option<&str> {
+    token.doc.as_ref().map(|d| d.text.as_str())
+}
+
 /// `##` survives lexing and reaches the token it documents.
 ///
 /// `strings-formatting-and-docs.md` §5.3 requires this in F0 and says why it
@@ -1357,14 +1362,14 @@ fn a_doc_comment_reaches_the_token_it_documents() {
     let documented: Vec<_> = t.iter().filter(|t| t.doc.is_some()).collect();
     assert_eq!(documented.len(), 1, "exactly one token carries the run");
     assert_eq!(documented[0].kind, Function, "and it is the declaration, not a newline");
-    assert_eq!(documented[0].doc.as_deref(), Some("Lists the runs."));
+    assert_eq!(doc_text(documented[0]), Some("Lists the runs."));
 }
 
 /// A run of several lines joins with line feeds, and the blank `##` is kept.
 #[test]
 fn a_doc_run_joins_its_lines() {
     let t = tokens("## Summary line.\n##\n## Body paragraph.\ndef f():\n    print(\"x\")\n");
-    let doc = t.iter().find_map(|t| t.doc.as_deref()).unwrap();
+    let doc = t.iter().find_map(doc_text).unwrap();
     assert_eq!(doc, "Summary line.\n\nBody paragraph.");
 }
 
@@ -1379,7 +1384,7 @@ fn an_ordinary_comment_documents_nothing() {
 #[test]
 fn three_hashes_are_still_documentation() {
     let t = tokens("### A heading\ndef f():\n    print(\"x\")\n");
-    assert_eq!(t.iter().find_map(|t| t.doc.as_deref()), Some("# A heading"));
+    assert_eq!(t.iter().find_map(doc_text), Some("# A heading"));
 }
 
 /// Indentation inside a doc comment is the author's and is kept, because a
@@ -1387,7 +1392,7 @@ fn three_hashes_are_still_documentation() {
 #[test]
 fn indentation_inside_a_doc_comment_survives() {
     let t = tokens("## Example:\n##     let x be 1\ndef f():\n    print(\"x\")\n");
-    let doc = t.iter().find_map(|t| t.doc.as_deref()).unwrap();
+    let doc = t.iter().find_map(doc_text).unwrap();
     assert_eq!(doc, "Example:\n    let x be 1");
 }
 
@@ -1397,6 +1402,53 @@ fn indentation_inside_a_doc_comment_survives() {
 #[test]
 fn a_doc_run_is_consumed_and_does_not_leak() {
     let t = tokens("## First.\ndef a():\n    print(\"x\")\ndef b():\n    print(\"y\")\n");
-    let docs: Vec<_> = t.iter().filter_map(|t| t.doc.as_deref()).collect();
+    let docs: Vec<_> = t.iter().filter_map(doc_text).collect();
     assert_eq!(docs, vec!["First."], "the second function carries nothing");
+}
+
+/// The run carries the span of the `##` lines, not of the token below them.
+///
+/// This is what `SC0194` and `SC0195` point at. Before the run had a span both
+/// of them had nowhere to put a caret but the declaration underneath, one line
+/// below the text they were talking about.
+#[test]
+fn a_doc_run_carries_the_span_of_its_own_lines() {
+    let src = "## Lists the runs.\ndef list_runs():\n    print(\"x\")\n";
+    let t = tokens(src);
+    let doc = t.iter().find_map(|t| t.doc.as_ref()).unwrap();
+    assert_eq!(&src[doc.span.start as usize..doc.span.end as usize], "## Lists the runs.");
+}
+
+/// The span covers the whole run, first `#` to last character of the last
+/// line. A caret under the first line of a four-line run that opens blank
+/// would be the same mistake three lines smaller.
+#[test]
+fn a_doc_run_span_covers_every_line_of_the_run() {
+    let src = "## Summary.\n##\n## Body.\ndef f():\n    print(\"x\")\n";
+    let t = tokens(src);
+    let doc = t.iter().find_map(|t| t.doc.as_ref()).unwrap();
+    assert_eq!(
+        &src[doc.span.start as usize..doc.span.end as usize],
+        "## Summary.\n##\n## Body."
+    );
+}
+
+/// Trailing whitespace is outside the span, so the caret is as wide as the
+/// run reads rather than as wide as it was typed.
+#[test]
+fn a_doc_run_span_stops_at_the_last_character_that_shows() {
+    let src = "## Lists the runs.   \ndef f():\n    print(\"x\")\n";
+    let t = tokens(src);
+    let doc = t.iter().find_map(|t| t.doc.as_ref()).unwrap();
+    assert_eq!(&src[doc.span.start as usize..doc.span.end as usize], "## Lists the runs.");
+}
+
+/// An indented run's span begins at its `#`, not at the left margin: it is the
+/// comment that is being pointed at and not the line it sits on.
+#[test]
+fn an_indented_doc_run_span_begins_at_its_hash() {
+    let src = "def f(\n        ## The run identifier.\n        run: String):\n    print(\"x\")\n";
+    let t = tokens(src);
+    let doc = t.iter().find_map(|t| t.doc.as_ref()).unwrap();
+    assert_eq!(&src[doc.span.start as usize..doc.span.end as usize], "## The run identifier.");
 }

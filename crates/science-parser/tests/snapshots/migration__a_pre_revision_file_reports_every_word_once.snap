@@ -39,12 +39,12 @@ Module @0..235
                   rhs: Int 1 @233..234
 --- diagnostics ---
 SC0139 @0..5 the declaration is written `interface`
-SC0141 @60..67 the inherent block is written `Type has:`
-SC0138 @138..142 the loop is written `for x in xs`
+SC0141 @56..67 the inherent block is written `Type has:`
+SC0138 @134..142 the loop is written `for x in xs`
   note `each` names the subject of a call, as in `docs.map(each.title)`, and nothing else
 SC0144 @168..175 the free function is `print`
   note `print` writes a newline; `write` is the form that does not
 SC0143 @197..208 the comparison is written `>=`
   note `is` and `is not` are the only comparisons written as words
-SC0142 @189..194 the unbounded loop is written `loop`
+SC0142 @189..210 the unbounded loop is written `loop`
   note end it with the condition negated: make `if not …: break` the first statement of the body, or write a count as a range, `for i in 0..n:`

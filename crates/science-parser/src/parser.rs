@@ -61,7 +61,7 @@
 //! long, and every `.` after it belongs to the postfix chain.
 
 use science_diagnostics::{Code, Diagnostic, Diagnostics, FileId, Label, Span, Suggestion};
-use science_lexer::{ReservedWord, Token, TokenKind};
+use science_lexer::{DocComment, ReservedWord, Token, TokenKind};
 
 use crate::ast::*;
 
@@ -368,12 +368,18 @@ impl<'t> Parser<'t> {
         &self.token_at(offset).kind
     }
 
-    /// The `##` run carried by the token about to be consumed.
+    /// The `##` run carried by the token about to be consumed, text and span.
     ///
     /// Cloned rather than taken: the token stream is borrowed, and a doc run
     /// is a handful of lines per declaration, so the copy is not worth an
     /// ownership mechanism to avoid.
-    fn peek_doc(&self) -> Option<String> {
+    ///
+    /// The span comes back with it because two diagnostics — `SC0194` and
+    /// `SC0195` — are about the `##` lines rather than about what they
+    /// document, and the tree keeps only the text: `ast::Item` and
+    /// `ast::Param` hold an `Option<String>`, because every later phase reads
+    /// a doc comment as prose and none of them points at one.
+    fn peek_doc(&self) -> Option<DocComment> {
         self.token_at(0).doc.clone()
     }
 
@@ -928,10 +934,12 @@ impl<'t> Parser<'t> {
             self.report_function_word();
             ItemKind::Fn(self.parse_fn(FnForm::Def, is_pub, start)?)
         } else if self.at(&TokenKind::Tool) {
-            // Checked before the declaration is read, so that the span the
-            // reader is pointed at is the word `tool` rather than whatever the
-            // signature ended on.
-            self.check_tool_description(doc.as_deref());
+            // Checked before the declaration is read, so that the span in
+            // hand is the word `tool` rather than whatever the signature ended
+            // on: `SC0190` puts its caret there, and `SC0195` — which points
+            // at the `##` run instead — uses it for the label that says which
+            // declaration the run belongs to.
+            self.check_tool_description(doc.as_ref());
             ItemKind::Fn(self.parse_fn(FnForm::Tool, is_pub, start)?)
         } else if self.at_reserved_declaration_word() {
             self.report_reserved_declaration_word();
@@ -964,7 +972,7 @@ impl<'t> Parser<'t> {
             return None;
         };
 
-        Some(Item { kind, span: start.merge(self.last_text_span()), doc })
+        Some(Item { kind, span: start.merge(self.last_text_span()), doc: doc.map(|d| d.text) })
     }
 
     fn reject_public(&mut self, public: Option<Span>, what: &str) {
@@ -1126,13 +1134,34 @@ impl<'t> Parser<'t> {
     /// `each` is still a keyword — it is the implicit closure subject in
     /// `docs.map(each.title)` — so this is the one migration here whose stale
     /// word is still a token. Only the loop dropped it.
+    ///
+    /// **The decision.** The primary label covers `for each`, which is the
+    /// span the suggestion replaces, and not the word `each` alone. The same
+    /// is done in `report_methods_after_has` and `report_while_word`, the
+    /// other two reporters in this block whose fix is wider than one word.
+    ///
+    /// **The reason.** The renderer prints a caret and a `= help:` line and
+    /// names the span of neither, so the reader has only the caret to tell
+    /// them what the replacement replaces. Under a caret on `each` alone, the
+    /// help line *"write the loop with: `for`"* reads as an instruction to
+    /// write a word that is already there — and taken literally it yields
+    /// `for for row in rows`. Widening the caret to the replaced text makes
+    /// the two halves of the diagnostic describe one edit.
+    ///
+    /// **The cost.** The caret now covers `for`, which the reader did not get
+    /// wrong, so the label has to keep naming the word that is wrong. The
+    /// alternative — teaching the renderer to draw the suggestion's span
+    /// whenever it differs from the label's — fixes the class rather than the
+    /// three instances, and is a change to every diagnostic in the compiler
+    /// rather than to these.
     fn report_each_after_for(&mut self, for_span: Span) {
         let span = self.span();
+        let head = for_span.merge(span);
         self.diagnostics.push(
             Diagnostic::error(codes::EACH_AFTER_FOR, "the loop is written `for x in xs`")
-                .with_label(Label::primary(span, "`each` is not part of the loop"))
+                .with_label(Label::primary(head, "`each` is not part of the loop"))
                 .with_suggestion(Suggestion {
-                    span: for_span.merge(span),
+                    span: head,
                     replacement: "for".to_string(),
                     message: "write the loop with".to_string(),
                 })
@@ -1145,16 +1174,23 @@ impl<'t> Parser<'t> {
     }
 
     /// Reports `Type has methods:` and steps over the `methods` (§5).
+    ///
+    /// The primary label covers `has methods`, the span the fix replaces, for
+    /// the reason written out over `report_each_after_for`: this was the
+    /// clearest of the three, because a caret under `methods` beside *"open
+    /// the block with: `has`"* told the reader to write the word they had
+    /// already written, and applying it by hand gave `Doc has has:`.
     fn report_methods_after_has(&mut self, has_span: Span) {
         let span = self.span();
+        let clause = has_span.merge(span);
         self.diagnostics.push(
             Diagnostic::error(
                 codes::METHODS_AFTER_HAS,
                 "the inherent block is written `Type has:`",
             )
-            .with_label(Label::primary(span, "`methods` is not a keyword in Science"))
+            .with_label(Label::primary(clause, "`methods` is not a keyword in Science"))
             .with_suggestion(Suggestion {
-                span: has_span.merge(span),
+                span: clause,
                 replacement: "has".to_string(),
                 message: "open the block with".to_string(),
             }),
@@ -1175,6 +1211,13 @@ impl<'t> Parser<'t> {
     /// the body's first statement, or that a count belongs in a range.
     /// Recovery drops the condition for the same reason, so the tree matches
     /// what applying the fix would produce.
+    ///
+    /// The primary label covers that whole head, for `report_each_after_for`'s
+    /// reason and for one more of its own: the condition really is discarded,
+    /// by the fix and by the recovery alike, and a caret on `while` alone said
+    /// that only the word was wrong. The label says why the condition is
+    /// underlined, because a reader who sees `n > 0` marked and is told only
+    /// that `while` is not a keyword has been shown two facts and given one.
     fn report_while_word(&mut self, start: Span) -> Expr {
         self.advance(); // `while`
         // Read the condition and drop it. Keeping it would mean inventing a
@@ -1184,7 +1227,10 @@ impl<'t> Parser<'t> {
         let head = start.merge(self.last_text_span());
         self.diagnostics.push(
             Diagnostic::error(codes::WHILE_WORD, "the unbounded loop is written `loop`")
-                .with_label(Label::primary(start, "`while` is not a keyword in Science"))
+                .with_label(Label::primary(
+                    head,
+                    "`while` is not a keyword in Science, and `loop` takes no condition",
+                ))
                 .with_suggestion(Suggestion {
                     span: head,
                     replacement: "loop".to_string(),
@@ -1260,7 +1306,22 @@ impl<'t> Parser<'t> {
     /// someone who has already decided to call the function, and here it is
     /// read by the caller *in order to* decide. The compiler knows this
     /// because the author wrote `tool`.
-    fn check_tool_description(&mut self, doc: Option<&str>) {
+    ///
+    /// **The decision.** `SC0195` puts its caret on the `##` run and names the
+    /// `tool` with a second label. `SC0190` keeps its caret on the word
+    /// `tool`.
+    ///
+    /// **The reason.** The two are about different things. `SC0195` is about
+    /// the run: it exists, and its first line is blank, and that first line is
+    /// the text the reader has to write. `SC0190` is about a run that is not
+    /// there, and an absent run has no span, so the declaration that needed
+    /// one is the only honest place to point.
+    ///
+    /// **The cost.** `SC0195` now points somewhere the word `tool` is not, so
+    /// it carries a secondary label to say which declaration is meant —
+    /// without it the snippet would show the run alone and the reader would
+    /// have to count lines to find what it belongs to.
+    fn check_tool_description(&mut self, doc: Option<&DocComment>) {
         let span = self.span();
         let Some(doc) = doc else {
             self.diagnostics.push(
@@ -1284,13 +1345,14 @@ impl<'t> Parser<'t> {
         // already splits one: the first line is the summary, and the short
         // title a caller displays is that summary. A run that opens with a
         // blank `##` has no first line to be it.
-        if doc.lines().next().is_none_or(str::is_empty) {
+        if doc.text.lines().next().is_none_or(str::is_empty) {
             self.diagnostics.push(
                 Diagnostic::error(
                     codes::TOOL_SUMMARY_BLANK,
                     "a `tool`'s description opens with its summary",
                 )
-                .with_label(Label::primary(span, "the `##` run above this `tool` starts blank"))
+                .with_label(Label::primary(doc.span, "this run opens with a blank `##`"))
+                .with_label(Label::secondary(span, "the `tool` it describes"))
                 .with_note(
                     "the first line, up to the first blank `##`, is the tool's title; the \
                      whole comment is its description, summary included",
@@ -1391,13 +1453,25 @@ impl<'t> Parser<'t> {
     /// question of documenting a `def`'s parameters stays open and belongs to
     /// `strings-formatting-and-docs.md`. There is no applicable fix: moving
     /// prose from one comment into another is an edit, not a substitution.
-    fn report_parameter_doc(&mut self, span: Span) {
+    ///
+    /// **The decision.** The caret goes on the `##` run and the parameter's
+    /// name takes a secondary label.
+    ///
+    /// **The reason.** The run is the text that has to move. Pointing at the
+    /// name put the caret on the line *below* the mistake and described
+    /// something the reader had written correctly.
+    ///
+    /// **The cost.** Two labels where there was one, and the run may be
+    /// several lines, in which case the renderer marks the first and says
+    /// where the span ends rather than drawing a bar down the gutter.
+    fn report_parameter_doc(&mut self, doc: Span, name: Span) {
         self.diagnostics.push(
             Diagnostic::error(
                 codes::PARAMETER_DOC_OUTSIDE_TOOL,
                 "only a `tool` documents its parameters one by one",
             )
-            .with_label(Label::primary(span, "this `##` comment is attached to a parameter"))
+            .with_label(Label::primary(doc, "this `##` comment documents a parameter"))
+            .with_label(Label::secondary(name, "the parameter it is attached to"))
             .with_note(
                 "move the text into the `##` comment above the declaration; a `tool` \
                  documents a parameter here because each one becomes a described field of \
@@ -1628,9 +1702,9 @@ impl<'t> Parser<'t> {
         self.expect(&TokenKind::Colon, "`:`")?;
         let ty = self.parse_type();
         let doc = match (form, doc) {
-            (FnForm::Tool, doc) => doc,
-            (FnForm::Def, Some(_)) => {
-                self.report_parameter_doc(name.span);
+            (FnForm::Tool, doc) => doc.map(|d| d.text),
+            (FnForm::Def, Some(found)) => {
+                self.report_parameter_doc(found.span, name.span);
                 None
             }
             (FnForm::Def, None) => None,

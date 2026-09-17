@@ -157,7 +157,7 @@ shape fails before anyone tries to run it.
 | `function_word` | `SC0156` | The word revision 3 renamed to `def`, which *does* carry an applicable fix — a word for a word, with nothing around it moving. It reported **two** diagnostics when the case was written, and the expectation has since shrunk to one; the file says what the second one was and why it happened, because the shape of that bug is the reason every recovery in `SC0190`–`SC0198` reports without consuming. |
 | `const_factor` | `SC0157` | `N * M`, the refusal `const-expression-arithmetic.md` §2.1 exists for. Also its recovery: the parser steps to the end of the const argument so the argument list still closes, and the case proves there is exactly **one** diagnostic and no cascade. |
 | `reserved_word_as_name` | `SC0102` | `def await(…)`. `await` is reserved for a later revision, so it is its own token and never an identifier; the parser refuses the name, and `describe` says which kind of word it is rather than leaving a later phase to complain about something that was never a name. |
-| `returns_word` | `SC0118` | The word §4.4 replaced with `->`. It is not one of revision 2's migrations — it predates them — but it is the same shape: an ordinary identifier where a keyword used to be, reported before the grammar can complain that a name is not the end of a line. Its fix replaces exactly the word the caret is under, which is what three of the six below do not do. |
+| `returns_word` | `SC0118` | The word §4.4 replaced with `->`. It is not one of revision 2's migrations — it predates them — but it is the same shape: an ordinary identifier where a keyword used to be, reported before the grammar can complain that a name is not the end of a line. Its fix replaces exactly the word the caret is under, which is what three of the six below **did not** do until the entry below was fixed. |
 
 The six below are `syntax-revision-2.md`'s migration block,
 `SC0138`–`SC0144`.
@@ -169,10 +169,10 @@ nothing at all.
 
 | Case | Code | What it pins down |
 |---|---|---|
-| `each_after_for` | `SC0138` | `for each x in xs`. The one word in the block that is still a keyword — `each` remains the closure subject of `docs.map(each.title)` — so only the loop dropped it, and the note says so. Its fix spans `for each`, not `each`. |
+| `each_after_for` | `SC0138` | `for each x in xs`. The one word in the block that is still a keyword — `each` remains the closure subject of `docs.map(each.title)` — so only the loop dropped it, and the note says so. Its fix spans `for each`, not `each`, and **so does its caret**: the expectation pins both, which is what the entry below fixed. The label still names `each`, because that is the word that is wrong. |
 | `trait_word` | `SC0139` | The word revision 2 §6 renamed to `interface`. One word for one word, reported without consuming, which is the shape `SC0156`'s bug was fixed into. |
-| `methods_after_has` | `SC0141` | `Type has methods:`. Its fix spans `has methods`. |
-| `while_word` | `SC0142` | The loop §2.2 removed. The only fix here that *discards* text: the replacement spans the whole head, condition included, because `loop` takes none, and what to do with the condition is in the note because it is not a substitution. Recovery drops the condition too, so the tree and the fix agree. |
+| `methods_after_has` | `SC0141` | `Type has methods:`. Its fix spans `has methods`, and so does its caret. This was the clearest of the three the entry below is about: a caret under `methods` beside *"open the block with: `has`"* told the reader to write the word they had already written. |
+| `while_word` | `SC0142` | The loop §2.2 removed. The only fix here that *discards* text: the replacement spans the whole head, condition included, because `loop` takes none, and what to do with the condition is in the note because it is not a substitution. Recovery drops the condition too, so the tree and the fix agree — and the caret spans the head as well, which is the one place in the block where widening it also made the diagnostic *honest* about what disappears. |
 | `comparison_phrase` | `SC0143` | All four phrases, because they are one decision — the shape `removed_comparison_symbols` has in the lexical shard. The label interpolates the phrase as written, so each spelling renders its own text, and the two-word and three-word forms take different spans. |
 | `println_word` | `SC0144` | The word §3.5 renamed to `print`. Recovery returns the `print` call that was meant, so the argument is parsed once and no second diagnostic follows about an undefined name. |
 
@@ -186,11 +186,11 @@ these expectations is the regression they exist to catch.
 | Case | Code | What it pins down |
 |---|---|---|
 | `tool_without_description` | `SC0190` | Decision 5, the only construct in Science for which documentation is mandatory. The message carries the *reason* — a model reads the description in order to decide whether to call the tool — because without it the diagnostic is "document your code", which a compiler has no business saying. The second note is the other half: an undescribed tool does not error, it is simply never chosen. |
-| `tool_summary_blank` | `SC0195` | The run exists and all of it is sent; what is missing is the summary §5.2 takes the `title` from. The distinction from `SC0190` is the point, and it is the reason two codes were spent rather than one. |
+| `tool_summary_blank` | `SC0195` | The run exists and all of it is sent; what is missing is the summary §5.2 takes the `title` from. The distinction from `SC0190` is the point, and it is the reason two codes were spent rather than one. The caret is on the `##` run and a secondary label names the `tool`, so the expectation pins a multi-line primary span and the `(continues to line N)` the renderer draws for one. |
 | `generic_tool` | `SC0191` | `tool f of T(…)`. Also its recovery: the parameter is **kept** after the report, so `T` still resolves where it is used and one stale word does not cost a name-resolution failure per mention. Exactly one diagnostic. |
 | `borrowed_tool_parameter` | `SC0192` | Both spellings, so the deleted span is pinned for `borrowed` alone and for `mutable borrowed` as a pair. Two parameters are two mistakes and two diagnostics, which is the count this case checks rather than a cascade. |
 | `tool_with_receiver` | `SC0193` | The **absence of a fix**, for `try_word`'s reason in a smaller way: deleting `self` from a list that continues would leave a leading comma, so there is nothing a tool can apply and the note says what to do instead. |
-| `parameter_doc_outside_tool` | `SC0194` | Decision 7 scoped to `tool` and to nothing else, so that documenting a `def`'s parameters stays `strings-formatting-and-docs.md`'s open question. No fix: moving prose from one comment into another is an edit, not a substitution. |
+| `parameter_doc_outside_tool` | `SC0194` | Decision 7 scoped to `tool` and to nothing else, so that documenting a `def`'s parameters stays `strings-formatting-and-docs.md`'s open question. No fix: moving prose from one comment into another is an edit, not a substitution. The caret is on the `##` comment, with the parameter's name as a secondary label. |
 | `reserved_declaration_word` | `SC0196` | One case for two words, because they are one decision — Decision 2 spends `tool` and only `tool`. Each carries its own reason, and what it replaces is the reason it exists: without it both fall through to `SC0101`, which calls them reserved "for a later phase". |
 | `tool_not_at_module_level` | `SC0197` | Two of §16.1's four places, which are the two code paths: `parse_member`, shared by the interface and implementation bodies, and `parse_stmt`. Both report *without consuming*, so the enclosing loop's own recovery drops the declaration and its block in one step — which is exactly what `SC0156` failed to do. |
 | `tool_without_body` | `SC0198` | There is no abstract tool. The neighbour it must not become is a `tool` whose body is indented with no `:`: that already reports the missing colon, and saying the body is absent as well would be a second true statement about one mistake. |
@@ -258,31 +258,63 @@ error makes it permanent.
   two words most likely to be met this way — `prompt` and `agent` in
   declaration position — so the phrase is left standing for the rest of the
   list, where nothing yet says what each word is being held for.
-- **`SC0194` and `SC0195` point at the declaration, not at the `##` line they
-  are about.** A doc comment is trivia carried on a token as a bare string, so
-  it has no span at all: `Token::doc` is an `Option<String>` and nothing
-  records where the run was. `SC0195`'s caret therefore lands on the word
-  `tool` and `SC0194`'s on the parameter's name, and in both cases the text the
-  reader has to edit is on the line above the one the renderer prints. Fixing
-  it means giving a doc run a span in the lexer, which every consumer of
-  `Token` then has to be told about; these two expectations pin the imprecise
-  version until somebody does.
+- **`SC0194` and `SC0195` pointed at the declaration, not at the `##` line
+  they are about.** **Fixed**, and kept here for what it cost. A doc comment is
+  trivia carried on a token, and it was carried as a bare string: `Token::doc`
+  was an `Option<String>` and nothing recorded where the run had been. `SC0195`'s
+  caret therefore landed on the word `tool` and `SC0194`'s on the parameter's
+  name, and in both cases the text the reader had to edit was on the line above
+  the one the renderer printed.
 
-- **Three migration fixes replace more text than their caret covers, and the
-  renderer prints neither span.** `SC0138`, `SC0141` and `SC0142` each put the
-  primary label on one word and the `Suggestion` on a wider span: `each` versus
-  `for each`, `methods` versus `has methods`, `while` versus the whole head
-  `while n > 0`. A tool applies the right thing. A reader sees a caret under
-  `methods` and a line saying *"open the block with: `has`"* and is being told
-  to write what they already wrote — and if they take it literally they get
-  `Doc has has:`. The four sound reporters beside them
-  (`SC0118`, `SC0139`, `SC0143`, `SC0144`) label exactly the span they
-  replace. The cheap
-  repair is to widen the primary label to the suggestion's span, so that the
-  caret and the `= help:` line are about the same text; for `SC0142` that also
-  makes the diagnostic honest, because the condition really is being discarded.
-  `each_after_for.stderr`, `methods_after_has.stderr` and `while_word.stderr`
-  pin the current text.
+  `Token::doc` is now an `Option<DocComment>` — the same text, plus the span of
+  the `##` lines, first `#` to the last character of the last line, trailing
+  whitespace excluded. The two diagnostics point at that span, and each keeps
+  the span it used to point at as a *secondary* label, so the snippet still
+  shows which declaration is meant: without one the renderer would print the
+  run alone and the reader would count lines to find it. `SC0190` did not move:
+  it is about a run that is **not there**, and an absent run has no span.
+
+  What it cost, which is the part worth keeping: every consumer of `Token::doc`
+  had to be told. `science-fmt`'s round-trip check compared the whole field and
+  now compares the text only, because re-indenting a run is exactly what a
+  formatter does and the span moving is not the run changing. The syntax tree
+  was left alone — `ast::Item` and `ast::Param` still hold an `Option<String>` —
+  because every later phase reads a doc comment as prose and none of them points
+  at one; `sciencec tools --json` derives a tool's description from it and is
+  byte-identical over `examples/` and over `crates/sciencec/tests/cli.rs`.
+
+- **Three migration fixes replaced more text than their caret covered, and the
+  renderer prints neither span.** **Half fixed** — the three, not the class.
+  `SC0138`, `SC0141` and `SC0142` each put the primary label on one word and the
+  `Suggestion` on a wider span: `each` versus `for each`, `methods` versus
+  `has methods`, `while` versus the whole head `while n > 0`. A tool applied the
+  right thing. A reader saw a caret under `methods` and a line saying *"open the
+  block with: `has`"* and was being told to write what they had already written
+  — and taken literally it gave `Doc has has:`. The four sound reporters beside
+  them (`SC0118`, `SC0139`, `SC0143`, `SC0144`) label exactly the span they
+  replace.
+
+  The repair taken was the cheap one: widen the primary label to the
+  suggestion's span, so the caret and the `= help:` line are about the same
+  text. For `SC0142` that also made the diagnostic honest — the condition really
+  is discarded, by the fix and by the recovery alike — and its label says so
+  now, because a caret over `n > 0` beside *"`while` is not a keyword"* shows
+  two facts and explains one. `each_after_for.stderr`,
+  `methods_after_has.stderr` and `while_word.stderr` pin the new text, and the
+  parser's snapshots pin the widened spans; no tree changed, so nothing cascaded.
+
+  **The general fix was not taken and is still open.** The renderer prints a
+  caret and a `= help:` line and names the span of neither, so a suggestion
+  whose span differs from its label's is invisible to the reader in every
+  diagnostic, not only these three. Teaching `science-diagnostics::render` to
+  draw the suggestion's span when it differs would fix the class. It was left
+  because it is a change to how *every* diagnostic in the compiler renders: it
+  has to decide what a second span is drawn as and where, and it has to decide
+  what to do about the legitimate cases in the other direction — `SC0116`
+  deliberately labels wider than it replaces, and `SC0107`'s deletion span
+  swallows the trailing space after `public` — and it would re-bless every
+  expectation in this directory. Widening three labels makes three messages
+  right today and does not stand in the way of it.
 - **`SC0203`, `SC0204` and `SC0205` print an absolute crate path where the
   reader wrote a bare name.** `self.defs.path_of(id)` yields
   `tests.ui.resolve.unknown_field.Doc` in this shard and `main.Doc` in a

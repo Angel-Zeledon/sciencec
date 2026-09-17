@@ -11,5 +11,6 @@ Module @0..108
     body: Block @106..107
       tail: Int 0 @106..107
 --- diagnostics ---
-SC0194 @81..84 only a `tool` documents its parameters one by one
+SC0194 @23..72 only a `tool` documents its parameters one by one
+  note @81..84 the parameter it is attached to
   note move the text into the `##` comment above the declaration; a `tool` documents a parameter here because each one becomes a described field of the schema its caller reads

@@ -19,12 +19,7 @@ pub struct Token {
     /// `strings-formatting-and-docs.md` §5.3 requires this in F0 and says why
     /// it cannot wait: *"once the lexer discards them every tool downstream is
     /// built assuming they are gone."* They were discarded until now.
-    ///
-    /// The text is the run with its `##` markers and one following space
-    /// removed, and its lines joined by line feeds. Nothing else is done to
-    /// it: deciding what a doc comment *means* — a summary line, a body,
-    /// Markdown — is §5.4's job and is not done here.
-    pub doc: Option<String>,
+    pub doc: Option<DocComment>,
 }
 
 impl Token {
@@ -33,9 +28,42 @@ impl Token {
     }
 
     /// The same token carrying a doc run.
-    pub fn with_doc(kind: TokenKind, span: Span, doc: Option<String>) -> Self {
+    pub fn with_doc(kind: TokenKind, span: Span, doc: Option<DocComment>) -> Self {
         Token { kind, span, doc }
     }
+}
+
+/// A `##` run: its text, and where the run was written.
+///
+/// **The decision.** A doc run carries a [`Span`] covering every `##` line in
+/// it, from the first `#` of the first line to the last non-blank character of
+/// the last. The run is one thing, so it gets one span, and the span is the
+/// whole of it.
+///
+/// **The reason.** Two diagnostics are *about the run* rather than about what
+/// it documents — `SC0194`, a `##` run before the parameter of a `def`, and
+/// `SC0195`, a `tool` description that opens blank. Until the run had a span
+/// they had nowhere to point but the declaration underneath, so the caret
+/// landed one line below the text the reader has to edit. A span covering only
+/// the first line would be the same mistake one line smaller: a run of four
+/// `##` lines that opens blank is wrong across all four.
+///
+/// **The cost.** Every consumer of [`Token::doc`] now reads a struct rather
+/// than a `String`, and the span moves whenever the text does — which is why
+/// `science-fmt`'s round-trip check compares [`DocComment::text`] and not the
+/// whole value, since reformatting a file is *expected* to move a run's
+/// offsets without changing what it says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocComment {
+    /// The run with its `##` markers and one following space removed, and its
+    /// lines joined by line feeds. Nothing else is done to it: deciding what a
+    /// doc comment *means* — a summary line, a body, Markdown — is §5.4's job
+    /// and is not done here.
+    pub text: String,
+    /// The `##` lines themselves, first `#` to last non-blank character.
+    /// Trailing whitespace is excluded so that a caret under the run is as
+    /// wide as the run reads, however it happened to be spelled.
+    pub span: Span,
 }
 
 /// Integer and float types of explicit width, as they appear in a literal's

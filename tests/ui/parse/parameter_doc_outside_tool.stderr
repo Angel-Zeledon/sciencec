@@ -1,7 +1,9 @@
 error[SC0194]: only a `tool` documents its parameters one by one
-  --> tests/ui/parse/parameter_doc_outside_tool.science:15:9
+  --> tests/ui/parse/parameter_doc_outside_tool.science:14:9
    |
+14 |         ## The run identifier, as printed in the run log.
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this `##` comment documents a parameter
 15 |         run: String) -> Int:
-   |         ^^^ this `##` comment is attached to a parameter
+   |         --- the parameter it is attached to
    |
    = note: move the text into the `##` comment above the declaration; a `tool` documents a parameter here because each one becomes a described field of the schema its caller reads

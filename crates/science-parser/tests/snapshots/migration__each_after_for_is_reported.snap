@@ -20,5 +20,5 @@ Module @0..77
             args
               Path `row` @72..75
 --- diagnostics ---
-SC0138 @44..48 the loop is written `for x in xs`
+SC0138 @40..48 the loop is written `for x in xs`
   note `each` names the subject of a call, as in `docs.map(each.title)`, and nothing else

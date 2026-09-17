@@ -15,5 +15,5 @@ Module @0..45
             args
               Path `n` @42..43
 --- diagnostics ---
-SC0142 @19..24 the unbounded loop is written `loop`
+SC0142 @19..30 the unbounded loop is written `loop`
   note end it with the condition negated: make `if not …: break` the first statement of the body, or write a count as a range, `for i in 0..n:`

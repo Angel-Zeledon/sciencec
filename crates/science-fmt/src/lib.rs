@@ -545,10 +545,21 @@ fn verify(
         // moving one — or letting a blank line come between it and what it
         // documents — changes what the program says about itself without
         // changing a single `TokenKind`.
-        if new.doc != old.doc {
+        //
+        // The *text* is compared and not the whole `DocComment`. A run also
+        // carries the span of the `##` lines it was written on, and moving
+        // those lines is exactly what a formatter is for: re-indenting a run
+        // shifts its offsets without changing one character of what it says,
+        // so comparing the span here would fail every file the formatter
+        // actually changed. The token's own span is skipped just above for
+        // the same reason.
+        let (new_doc, old_doc) = (new.doc.as_ref(), old.doc.as_ref());
+        if new_doc.map(|d| &d.text) != old_doc.map(|d| &d.text) {
             return Err(format!(
                 "the doc comment on `{:?}` changed from {:?} to {:?}",
-                old.kind, old.doc, new.doc
+                old.kind,
+                old_doc.map(|d| &d.text),
+                new_doc.map(|d| &d.text)
             ));
         }
     }

@@ -20,4 +20,4 @@ Module @0..102
           tail: Call @95..101
             callee: Path `Note` @95..99
 --- diagnostics ---
-SC0141 @8..15 the inherent block is written `Type has:`
+SC0141 @4..15 the inherent block is written `Type has:`
