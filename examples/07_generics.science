@@ -43,7 +43,13 @@ def identity of T(value: T) -> T:
 def largest of T: Ord(items: borrowed Array of T) -> (borrowed T)?:
     let mutable best be items.get(0)
     for item in items:
-        if item > best: best be item
+        # `best` is `(borrowed T)?`, so the comparison is behind a presence
+        # test — §4.2's narrowing is what makes the second line compare two
+        # `borrowed T` rather than a `borrowed T` against a nullable.
+        if best?:
+            if item > best: best be item
+        else:
+            best be item
     best
 
 # Several bounds joined by `+`, still in the parameter list.

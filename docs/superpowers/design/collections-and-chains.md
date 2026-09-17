@@ -630,6 +630,35 @@ This fixes, at zero cost, the single most-reported wart in Rust's collection API
 The word "consuming" appears exactly where a value is being destroyed, which is
 the standard §6 holds everywhere else.
 
+> **AMENDMENT 11a: the compiler did the opposite of this, and nothing noticed
+> for as long as it existed.** `Builder::lower_for` lowered `for rib in
+> self.ribs:` to a **move** of `self.ribs` — the consuming row, in the position
+> this amendment gives the borrowing one — out of a *shared borrow* of `self`.
+>
+> No phase reported it, and the reason is worth more than the bug. A move is
+> refused when it overlaps a **live borrow**, and lowering the loop as a move
+> meant there was no borrow to overlap. The check was not defeated; it was
+> never given anything to check. `science-mir` records it as the third instance
+> of the same shape: *a lowering gap does not fail, it goes quiet*.
+>
+> What it cost, concretely: `for doc in docs:` followed by any use of `docs`
+> should compile by this amendment's own promise, and did — by accident, since
+> nothing tracked that `docs` had been moved out of. The promise was being kept
+> and the rule behind it was absent.
+>
+> A `for` now takes one shared borrow of its subject, created before the header
+> and live across the back edge, so `for x in xs: xs.push(1)` is refused by
+> rule 4 with no rule of its own, and reading `xs` inside the loop and using it
+> after are both still accepted, asserted rather than assumed.
+>
+> **What this amendment does not say, and had to be decided:** whether the
+> borrow is of the *source* or of the *chain*. §4.4 gives `iterate()` a shared
+> borrow of the source, while the prelude makes `Array` its own `Iterate`
+> implementor with `next(mutable self)` — which reads as an exclusive borrow of
+> the same thing. The source reading was taken: the exclusive receiver belongs
+> to the chain, and a bare `for` never materialises one because `iterate()` has
+> no declaration. That is invisible today and arrives with `iterate()`.
+
 ### 4.3 What the items actually are
 
 `iterate()` yields `borrowed Item` uniformly — no conditional associated type, no

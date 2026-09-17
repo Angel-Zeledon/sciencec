@@ -346,7 +346,10 @@ const REGIONS: &[Finding] = &[];
 /// makes silence here have to be silence in two places at once.
 const TYPE_CHECKER_FINDINGS: &[(&str, usize)] = &[
     ("00_kitchen_sink.science", 3),
-    ("07_generics.science", 1),
+    // `07_generics` came off this list: `largest` compared a `borrowed T`
+    // against the `(borrowed T)?` that `get` returns, and now narrows first.
+    // The entry was closed by editing the program, which is what an entry
+    // here is *for* — the other two cannot be closed that way.
     ("08_dyn_dispatch.science", 3),
 ];
 

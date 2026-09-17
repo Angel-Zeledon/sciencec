@@ -560,7 +560,7 @@ list.
 | A closure value | A struct of `{ fn ptr, captures }`; a call through it is an indirect `call` |
 | Static and dynamic interface dispatch | A direct `call` or a vtable `load` + indirect `call` |
 | Vtables | `private unnamed_addr constant` arrays of function pointers |
-| `ScienceTypeInfo` / `ScienceMapInfo` descriptors | One `private unnamed_addr constant` per monomorphised instantiation (§3.6) |
+| `ScienceTypeInfo` / `ScienceMapInfo` descriptors | One `private unnamed_addr constant` per monomorphised instantiation (§3.5 — this read §3.6, which does not exist) |
 
 **Emitted as a runtime call:** every operation on `String`, `Array`, `Map`,
 `Box`; `print`; `read_file` / `write_file`; `panic`; and allocation. That is
@@ -1577,6 +1577,36 @@ The interface is small, and what crosses it is worth writing down now:
 | Layout: sizes, alignments, offsets, niches (§3) | Type construction in the backend's IR |
 | ABI classification: `sret`, by-pointer arguments, parameter attributes (§4) | Emitting those as the IR's attributes |
 | Mangling and the monomorphisation walk (§2.7, Decision 4) | Symbol and linkage creation |
+
+> **AMENDMENT 2: this row is the only sentence in the corpus that places the
+> monomorphisation walk, and no note describes it.** This note's own opening
+> says it is "everything *below* monomorphisation" and Decision 25 puts the walk
+> upstream; `type-checking-and-mir.md` names the key — the const-expression
+> normal form — and stops there. So the walk was built with no roots, no
+> worklist, no termination rule and no diagnostic specified, and every decision
+> below had to be taken rather than implemented.
+>
+> What was decided, recorded here so the next note does not re-decide it: the
+> emitted map **is** the dedup set, so the two cannot disagree; the call graph
+> is deliberately unused, because it is keyed on a definition while the walk is
+> keyed on a definition *and its arguments*, so `f` calling `f` is one edge
+> there and either one instance or infinitely many here; termination is
+> containment plus a depth backstop, because containment is sufficient for
+> growth and not necessary — const arguments do not nest, so `step of (N)`
+> calling `step of (N+1)` is caught only by depth; and reproducibility rests on
+> a `BTreeMap` keyed by mangled symbol, no identifier and no type reaching a
+> symbol, and no hashes, tested by lowering the whole corpus twice from fresh
+> tables and comparing bytes.
+>
+> **And it found this note's own §2.7 lossy.** The mangler encodes a *lowered*
+> type, which drops a pointer's pointee and an interface object's interface — so
+> `f of (Box of Int)` and `f of (Box of String)` were one symbol, as were
+> `g of (any Summarize)` and `g of (any Report)`. That is `SC0404` raised
+> against a program with nothing wrong with it, and unlike §15's
+> one-key-two-symbols it is the **detectable** direction and it fires on
+> ordinary code. Symbols now encode the checker's type nominally and share only
+> the grammar. Drop glue (Decision 12) and descriptors (Decision 20) inherit the
+> fix when they are built.
 | Drop-glue construction and descriptor contents (§2.5, §3.5) | Emitting them as functions and constants |
 | Which operations are runtime calls (§2.6) | Emitting the call |
 | The layout record for debug info (Decision 31) | Line tables in the backend's format |
@@ -2020,6 +2050,23 @@ sub-range in the README's partition, and nothing else. The partition gives
 boundary, `SC0460`–`SC0461` to linking, `SC0462`–`SC0470` to `rust-interop.md`,
 `SC0471`–`SC0479` to `native-dependencies.md`, and leaves `SC0480`–`SC0499`
 free. This note takes none of those.
+
+> **AMENDMENT 1: `SC0480`–`SC0499` are not free, and this table is one code
+> short.**
+>
+> The README gives `SC0480`–`SC0489` to `rust-binding-generation.md` and
+> `SC0490`–`SC0499` to `c-binding-coverage.md`. The partition quoted above was
+> accurate when written and the README's claims table has since moved; the
+> README is the allocation record and this paragraph is a copy of it, which is
+> the failure mode that section warns about in as many words — a derived list
+> maintained by hand is a cache with no invalidation.
+>
+> **The practical consequence is that the codegen band has no free code at
+> all**, which is why `SC0407` — infinite instantiation, from the
+> monomorphisation walk — was taken from the three this note reserves for §4.3's
+> ABI classifier rather than from a free pool that does not exist. Two of those
+> three remain, which is what the reserving sentence asks for. The table below
+> should gain its row.
 
 | Code | Meaning |
 |---|---|
