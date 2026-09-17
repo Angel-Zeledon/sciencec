@@ -60,7 +60,7 @@ use std::path::{Path, PathBuf};
 /// its arguments against nothing at all. `science-types`'s `methods` module is
 /// that lookup; the entry went with it, which is what this file's opening
 /// paragraph says a fix looks like.
-const REMAINING: &[(&str, &[u16])] = &[("20_extern.science", &[525])];
+const REMAINING: &[(&str, &[u16])] = &[];
 
 fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("examples")
@@ -152,15 +152,31 @@ fn every_pinned_file_is_in_the_corpus() {
 /// It was 147 before the checker learned §6.3's auto-borrow, 17 before the
 /// parser stopped reading a `(` after an indented block as a call, 11 before
 /// `assign`'s §4 admitted unsizing behind a borrow, 3 before checking mode
-/// learned that an `unsafe` block is a block, and 2 before Decision 11's method
-/// lookup landed.
+/// learned that an `unsafe` block is a block, 2 before Decision 11's method
+/// lookup landed, and 1 until `20_extern.science` stopped asking one record to
+/// be both a shared and an exclusive borrow of its buffer.
 ///
-/// **The one that is left is not this crate's**, and that is why the number
-/// stops here rather than at zero: `20_extern.science` wants `Span of F64`
-/// where a `MutableSpan of F64` is declared, and closing it is a mutability
-/// weakening that `region-inference.md` owns.
+/// **That last one was never this crate's to fix and it was not a weakening.**
+/// It was recorded here, and once in `ffi-c-boundary.md`, as a question for
+/// `region-inference.md` — on the reading that a `MutableSpan` should weaken to
+/// a `Span`. That reading was wrong twice over. Nothing about it concerns how
+/// long anything lives; it reached the region note because the symptom appeared
+/// at a borrow. And the weakening would not have helped: declaring the field
+/// exclusive makes a view over a shared borrow unconstructible, which is what
+/// the reading traded away without noticing.
+///
+/// The fix is one record generic over its storage, which is `ndarray`'s
+/// `ArrayBase` with `ArrayView` and `ArrayViewMut` over it — the answer the
+/// scientific-computing ecosystem reached for the identical problem.
+///
+/// **Zero is a worse guard than any other number**, because a corpus that
+/// reports nothing is also what a checker that has stopped running reports.
+/// `the_corpus_reports_exactly_what_is_pinned_and_nothing_else` walks every
+/// file either way, and `crates/sciencec/tests/cli.rs` runs the real binary
+/// over the same corpus, so silence here has to be silence in two places at
+/// once.
 #[test]
-fn the_corpus_is_down_to_one_diagnostic() {
+fn the_corpus_is_clean() {
     let total: usize = REMAINING.iter().map(|(_, codes)| codes.len()).sum();
-    assert_eq!(total, 1);
+    assert_eq!(total, 0);
 }

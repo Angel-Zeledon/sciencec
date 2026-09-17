@@ -28,6 +28,7 @@ science-codegen.workspace = true
 science-db.workspace = true
 science-diagnostics.workspace = true
 science-fmt.workspace = true
+science-types.workspace = true
 science-parser.workspace = true
 science-resolve.workspace = true
 

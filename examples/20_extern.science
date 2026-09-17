@@ -161,11 +161,24 @@ public choice BlasError:
     Shape(Int, Int)
     Overflow
 
-type MatrixView:
-    data: ffi.Span of F64
+# One record, generic over its storage. `gemm` reads `a` and `b` and writes
+# `c`, so the three cannot share one field type: `ffi.Span of F64` is a shared
+# borrow and `ffi.MutableSpan of F64` is an exclusive one, and no coercion
+# joins them — `Span` into `MutableSpan` would hand C a writable pointer to a
+# shared borrow, which is the unsound direction.
+#
+# Two unrelated record types would duplicate every field and every method. A
+# parameter over the storage keeps one declaration, and it is what `ndarray`
+# does with `ArrayBase`, `ArrayView` and `ArrayViewMut` for the identical
+# problem. `ffi-c-boundary.md` §1.7 carries the argument.
+type MatrixBase of S:
+    data: S
     rows: Int
     columns: Int
     leading: Int
+
+type MatrixView is MatrixBase of ffi.Span of F64
+type MutableMatrixView is MatrixBase of ffi.MutableSpan of F64
 
 # The signature contains no `ffi` type at all. Everything unverifiable is
 # inside the `unsafe` block, which is short on purpose: if an unsafe block is
@@ -180,7 +193,7 @@ type MatrixView:
 public def gemm(
     a: borrowed MatrixView,
     b: borrowed MatrixView,
-    c: mutable borrowed MatrixView,
+    c: mutable borrowed MutableMatrixView,
     alpha: F64,
     beta: F64
 ) -> BlasError?:

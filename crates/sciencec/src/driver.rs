@@ -281,17 +281,27 @@ impl Session {
 
     /// Everything the front half reports about one file, in pipeline order.
     ///
-    /// Resolution is skipped when lexing or parsing already found an error.
-    /// The parser recovers rather than aborting, so there *is* a tree to
-    /// resolve, but its error nodes would be reported a second time as
-    /// unresolved names, and a cascade buries the one diagnostic the reader
-    /// needs.
+    /// Each phase is skipped when an earlier one found an error, for the same
+    /// reason every time: the phases recover rather than aborting, so there
+    /// *is* something to hand on, but it is made of error nodes, and the next
+    /// phase would report each of them again under its own name. A cascade
+    /// buries the one diagnostic the reader needs.
+    ///
+    /// Concretely: the parser's error nodes come back as unresolved names, and
+    /// the resolver's unresolved names come back as `Ty::ERROR`, which `ty`'s
+    /// §5 makes agree with everything — so a file that failed to resolve would
+    /// type-check *silently and wrongly*, which is worse than not checking it.
     fn diagnostics(&self, file: FileId) -> Vec<Diagnostic> {
         let mut all = science_db::file_diagnostics(&self.db, file).to_vec();
-        if all.iter().any(|d| d.severity == science_diagnostics::Severity::Error) {
+        if has_error(&all) {
             return all;
         }
-        all.extend(self.resolved(file).1);
+        let (krate, resolution) = self.resolved(file);
+        all.extend(resolution);
+        if has_error(&all) {
+            return all;
+        }
+        all.extend(type_check(&krate));
         all
     }
 
@@ -386,6 +396,52 @@ fn io_reason(error: &std::io::Error) -> String {
         std::io::ErrorKind::PermissionDenied => "permission denied".to_string(),
         _ => error.to_string(),
     }
+}
+
+/// Whether anything here stops the pipeline.
+fn has_error(diagnostics: &[Diagnostic]) -> bool {
+    diagnostics.iter().any(|d| d.severity == science_diagnostics::Severity::Error)
+}
+
+/// Type-checks one resolved crate and returns what it found.
+///
+/// **Why this is here at all.** Until this function existed the driver ran the
+/// lexer, the parser and the resolver, and stopped. `science-types` had a type
+/// checker with THIR, bidirectional checking, flow narrowing, `SC0140`, method
+/// lookup and two coercions, tested by two hundred and sixty tests — and not
+/// one of its diagnostics could reach a person running `sciencec`. A phase
+/// nobody can invoke is a phase that does not exist for the user, however well
+/// it is tested.
+///
+/// **The order is fixed and it is not this function's to choose.** `Aliases`
+/// before `Declarations` because a declaration's annotation may name an alias;
+/// both before `check_crate` because a body is checked against signatures.
+/// `AtomOrder` first of all, because it is what makes a const expression's
+/// normal form reproducible — `normal.rs` §2, and the reason it is built from
+/// the `DefTable` rather than from `DefId`s.
+///
+/// **The cost.** Every table is rebuilt per file. That is right for `check`,
+/// which is a batch command over files named on one command line, and wrong
+/// for a language server, which wants them memoised per crate — that is what
+/// `science-db`'s query layer is for, and wiring these stages into it is the
+/// work this function stands in for. `science_db::pending` still has
+/// `unimplemented!` for every stage from HIR onward; this is the shortcut, and
+/// it is named as one so nobody mistakes it for the architecture.
+fn type_check(krate: &Crate) -> Vec<Diagnostic> {
+    let order = science_types::AtomOrder::of(&krate.defs);
+    let mut types = science_types::Types::new();
+    let mut diagnostics = science_diagnostics::Diagnostics::new();
+    let mut aliases = science_types::Aliases::of(krate, &mut types, &order, &mut diagnostics);
+    let decls = science_types::Declarations::of(krate, &mut types, &order, &mut diagnostics);
+    science_types::check_crate(
+        krate,
+        &decls,
+        &mut types,
+        &mut aliases,
+        &order,
+        &mut diagnostics,
+    );
+    diagnostics.into_vec()
 }
 
 #[cfg(test)]
