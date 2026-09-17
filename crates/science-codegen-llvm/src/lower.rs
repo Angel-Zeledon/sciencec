@@ -2730,14 +2730,22 @@ impl<'a> Lowerer<'a> {
         if self.is_string(self.referent(operand_ty)) {
             return self.lower_string_comparison(ctx, op, lhs, rhs, dest, insts);
         }
-        // **A reference as the operand of an operator is a front-end hole, and
-        // this is where a user meets it.** §3's finding 27: `science-types`
-        // wraps a *shared* borrow of a scalar in a `Coercion::Copy` before it
-        // reaches an operator and does not wrap an *exclusive* one, so
+        // **A reference as the operand of an operator, and this is where a
+        // user meets it.** §3's finding 27 *was* that `science-types` wrapped
+        // a shared borrow of a scalar in a `Coercion::Copy` before an operator
+        // saw it and did not wrap an exclusive one, so
         // `def bump(counter: mutable borrowed Int): counter be counter + 1` —
-        // which is `examples/01_functions.science`'s and which §4.7 gives the
-        // author no other way to write — arrives here as `_1 + 1` with `_1`
-        // holding a pointer.
+        // `examples/01_functions.science`'s, and the only spelling §4.7 leaves
+        // — arrived as `_1 + 1` with `_1` holding a pointer. That is closed:
+        // `assign`'s §7 no longer consults the borrow's mutability, gated to
+        // `Site::Operand` so an exclusive borrow reads as a value where the
+        // language offers no alternative and nowhere else.
+        //
+        // **What reaches here now is a borrow the coercion did not license**,
+        // which means the referent does not implement `Copy` as
+        // `Methods::declares` can see it — a bound on a type parameter is the
+        // case `operators.rs` pins, since §3's discipline refuses what it
+        // cannot see.
         //
         // **Refused by name rather than by accident.** Without this arm the
         // pointer reaches `typed_operand`, the constant beside it is given a
@@ -2749,10 +2757,7 @@ impl<'a> Lowerer<'a> {
         if let TyKind::Borrowed { mutable, .. } = *self.types.kind(operand_ty) {
             let written = if mutable { "mutable borrowed" } else { "borrowed" };
             return Err(Unlowered::new(format!(
-                "`{}` applied to a `{written} {}`: an operator reads its operands and this one is \
-                 a reference. `science-types` inserts the dereferencing coercion for a shared \
-                 borrow of a scalar and not for an exclusive one, so the operand reaches this \
-                 crate as a pointer — a hole above Decision 42's line, not below it",
+                "`{}` applied to a `{written} {}`: an operator reads its operands and this one \n                 is a reference. `science-types` inserts the dereferencing coercion at an \n                 operand when the referent implements `Copy`, so this one's does not — a \n                 bound on a type parameter is the case that cannot be seen — and the operand \n                 reaches this crate as a pointer",
                 op.as_str(),
                 self.render_referent(operand_ty)
             )));

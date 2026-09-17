@@ -3459,11 +3459,15 @@ impl<'a> BodyChecker<'a> {
         let source = self.revealed(ty, span);
         let TyKind::Borrowed { inner, .. } = *self.types.kind(source) else { return typed };
         let target = self.revealed(inner, span);
+        // `Site::Operand` is what admits §7 for an *exclusive* borrow, and
+        // this is the only caller that may: `read_value` is reached from the
+        // operands of an operator and from nowhere else, which is the whole of
+        // `Site::copies_exclusively`'s domain.
         let verdict = assignable(
             self.types,
             self.decls.methods(),
             self.coercions,
-            Site::Elsewhere,
+            Site::Operand,
             source,
             target,
         );
@@ -4515,7 +4519,35 @@ impl<'a> BodyChecker<'a> {
                     }
                     _ => self.synth(target),
                 };
+                // §4.7: *"borrows auto-dereference for field access, method
+                // calls, and assignment. There is no dereference operator."*
+                // The first two were implemented and this one was not, so
+                // `counter be 5` through a `mutable borrowed Int` was
+                // `SC0525` — *expected `mutable borrowed Int`, found an
+                // integer literal* — against the only spelling §4.7 leaves.
+                //
+                //
+                // **Only an exclusive borrow dereferences, and the shared one
+                // is the reason.** §4.7 states the rule without qualifying it,
+                // and taken unqualified it makes correct programs unspellable:
+                // `largest` in `examples/07_generics.science` narrows a
+                // `(borrowed T)?` and writes `best be item`, meaning *rebind
+                // the local* — the only thing it can mean, because a shared
+                // borrow cannot be written through at all. So a `mutable
+                // borrowed` target, which exists precisely to be written
+                // through, dereferences; every other target is a rebinding.
+                //
+                // **The cost, stated.** Rebinding a local that holds a
+                // `mutable borrowed` is then unspellable. That is the smaller
+                // loss: the language has no dereference operator to recover
+                // the write with, and it has `let` to recover the rebinding
+                // with.
                 let want = self.known_or_error(target.ty);
+                let revealed = self.revealed(want, stmt.span);
+                let want = match *self.types.kind(revealed) {
+                    TyKind::Borrowed { mutable: true, inner } => inner,
+                    _ => want,
+                };
                 let value = self.check(value, want, Site::Elsewhere);
                 // The binding's own word decides whether this write is
                 // allowed, but the types it reads are not final yet.
@@ -4871,15 +4903,19 @@ impl<'a> BodyChecker<'a> {
         let mut id = target;
         let mut whole = true;
         loop {
-            // Crossing a reference ends the walk: past it the storage written
-            // belongs to whatever the reference points at, and no binding in
-            // this body owns it.
+            // Crossing an exclusive reference ends the walk: past it the
+            // storage written belongs to whatever the reference points at,
+            // and no binding in this body owns it. A *shared* borrow is not
+            // crossed, because a write cannot go through one — assigning to a
+            // target of that type is a rebinding, and a rebinding is exactly
+            // what the word at the declaration governs. The two halves of
+            // `be` therefore split on one question, asked once each.
             let (ty, span) = {
                 let expr = self.body.expr(id);
                 (expr.ty, expr.span)
             };
             let revealed = self.revealed(ty, span);
-            if matches!(self.types.kind(revealed), TyKind::Borrowed { .. }) {
+            if matches!(self.types.kind(revealed), TyKind::Borrowed { mutable: true, .. }) {
                 return None;
             }
             // A type that did not come out says nothing about whether this is

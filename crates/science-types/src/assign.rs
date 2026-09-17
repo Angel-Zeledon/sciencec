@@ -460,6 +460,12 @@ pub enum Site {
     Return,
     /// An argument at a call.
     Argument,
+    /// An operand of an operator.
+    ///
+    /// Its own site because it is the one position where §4.7 leaves no other
+    /// spelling: there is no dereference operator, so `counter + 1` is how a
+    /// `mutable borrowed I64` is read, and it is the only how.
+    Operand,
     /// Everywhere else.
     Elsewhere,
 }
@@ -468,6 +474,28 @@ impl Site {
     /// Whether Decision 14's boxing applies here.
     pub fn boxes(self) -> bool {
         matches!(self, Site::Return | Site::Argument)
+    }
+
+    /// Whether §7 reads an **exclusive** borrow out as a value here.
+    ///
+    /// Only at an operand, and §5's bullet is why it is anywhere. That bullet
+    /// refused the conversion because a rule admitting it *"makes `mutable
+    /// borrowed T` usable wherever `T` is — which is a claim about
+    /// exclusivity made by a table that knows nothing about exclusivity"*,
+    /// and closed by saying the corpus needed the shared form and nothing
+    /// needed this one, *"so it is refused in the direction that can be
+    /// reversed"*.
+    ///
+    /// Something needs it. `def bump(counter: mutable borrowed Int): counter
+    /// be counter + 1` is `examples/01_functions.science` and §4.7 leaves it
+    /// as the only spelling there is, so the parameter could be written and
+    /// never read. Granting it **at the operand and nowhere else** answers the
+    /// objection rather than deleting it: an exclusive borrow still does not
+    /// return as a `T`, still does not pass as a `T`, and still is not usable
+    /// wherever a `T` is. It can be read for arithmetic, which is what the
+    /// absent dereference operator costs.
+    pub fn copies_exclusively(self) -> bool {
+        matches!(self, Site::Operand)
     }
 }
 
@@ -711,12 +739,12 @@ pub fn assignable(
         // gives `(borrowed T)?` and a signature saying `T?` is the same
         // answer for a `Copy` `T`.
         if let TyKind::Nullable(source_inner) = *types.kind(source) {
-            if copies(types, methods, coercions, source_inner, inner) {
+            if copies(types, methods, coercions, site, source_inner, inner) {
                 return Some(Coercion::CopyWhenPresent);
             }
         }
         // Rule 4. §7 then Decision 6: a `for` binding returned from a `-> T?`.
-        if copies(types, methods, coercions, source, inner) {
+        if copies(types, methods, coercions, site, source, inner) {
             return Some(Coercion::CopyThenWiden);
         }
         // Rule 5. `-> (T, Error?)`, which is the signature Decision 14 was
@@ -788,15 +816,31 @@ pub fn assignable(
     // Rule 9. §7. Not gated on the site: a copy of a `Copy` type is the same
     // value, so there is no position at which it would be a surprise, and the
     // corpus needs it at a block's tail as well as at a `return`.
-    if copies(types, methods, coercions, source, target) {
+    if copies(types, methods, coercions, site, source, target) {
         return Some(Coercion::Copy);
     }
 
     None
 }
 
-/// Whether `source` is a shared borrow of `target` and `target` is `Copy`:
-/// §7's rule, in the one place its three variants share.
+/// Whether `source` is a borrow of `target` and `target` is `Copy`: §7's
+/// rule, in the one place its three variants share.
+///
+/// **The borrow's mutability is not consulted, and §6 is the reason rather
+/// than an exception to it.** §6 excludes *"anything about regions, mutability
+/// or variance"*, and what it names is `mutable borrowed T` into `borrowed T`
+/// — a conversion whose **result is still a reference**, so what its region is
+/// becomes `region-inference.md`'s question and not this crate's. A copy out
+/// produces an owned value and no reference survives it, so there is no region
+/// to have a question about.
+///
+/// **Without it a `mutable borrowed` scalar can be written and never read.**
+/// §7's own argument is that the language has no dereference operator, so
+/// `counter + 1` is the only spelling there is; gating the rule on shared
+/// borrows made `def bump(counter: mutable borrowed I64)` — the example the
+/// note itself uses for exclusive borrows — a function whose parameter cannot
+/// appear on the right of its own assignment. MIR received a pointer where the
+/// operator wanted a value.
 ///
 /// Three things have to hold and each refuses something different:
 ///
@@ -810,13 +854,23 @@ pub fn assignable(
 /// - **The referent is `Copy`**, which is `copyable` for the shape and
 ///   [`Methods::declares`] for the declaration, exactly as §3 and §4 are two
 ///   halves — and with §7's inversion at the second half.
-fn copies(types: &Types, methods: &Methods, coercions: Coercions, source: Ty, target: Ty) -> bool {
+fn copies(
+    types: &Types,
+    methods: &Methods,
+    coercions: Coercions,
+    site: Site,
+    source: Ty,
+    target: Ty,
+) -> bool {
     let Some(copy) = coercions.copy_interface() else {
         return false;
     };
-    let TyKind::Borrowed { mutable: false, inner } = *types.kind(source) else {
+    let TyKind::Borrowed { mutable, inner } = *types.kind(source) else {
         return false;
     };
+    if mutable && !site.copies_exclusively() {
+        return false;
+    }
     types.compatible(inner, target)
         && copyable(types, inner)
         && methods.declares(types, inner, copy)

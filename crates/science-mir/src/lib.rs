@@ -573,8 +573,9 @@
 //!     because that is the only instrument that separates a
 //!     `science_string_free` of the right buffer from one of the wrong buffer:
 //!     the IR, the verifier and even the *count* of releases are identical.
-//! 15. **§4.7's *"borrows auto-dereference for assignment"* is implemented on
-//!     neither side of `be`, and the two sides belong to two crates.** §4 of
+//! 15. **§4.7's *"borrows auto-dereference for assignment"* was implemented on
+//!     neither side of `be`, and the two sides belong to two crates. Both
+//!     halves now exist.** §4 of
 //!     [`lower`] inserts a `Deref` for a *read* through a reference —
 //!     `self.tokens` is `(*_1).tokens` — and `StmtKind::Assign` took its
 //!     target from [`lower::Builder::as_place`] and wrote to it as it stood,
@@ -582,18 +583,29 @@
 //!     to `_1 = 1`: an `Int` stored into the slot holding the reference.
 //!     [`lower::Builder::assign_target`] is this crate's half.
 //!
-//!     **The other half is `science-types`' and it is the half a user meets.**
-//!     `counter be 5` does not check — `SC0525`, *expected `mutable borrowed
-//!     Int`, found an integer literal* — because the checker compares the
-//!     target's declared type against the value's and dereferences nothing.
+//!     **The other half was `science-types`' and it is the half a user meets.
+//!     It is written.** `counter be 5` did not check — `SC0525`, *expected
+//!     `mutable borrowed Int`, found an integer literal* — because the checker
+//!     compared the target's declared type against the value's and
+//!     dereferenced nothing; `check`'s `StmtKind::Assign` arm now takes the
+//!     referent as the expected type when the target is a `mutable borrowed`,
+//!     and only then. **Only the exclusive borrow dereferences**, because
+//!     `largest` in `examples/07_generics.science` narrows a `(borrowed T)?`
+//!     and writes `best be item` meaning *rebind the local* — the only thing
+//!     it can mean, since a shared borrow cannot be written through — so the
+//!     unqualified reading of §4.7 makes a correct program unspellable.
 //!     And `counter be counter + 1`, which is
 //!     `examples/01_functions.science`'s and which §4.7 leaves as the only
-//!     spelling the language has, checks *because* the checker types
+//!     spelling the language has, used to check *because* the checker typed
 //!     `mutable borrowed Int + 1` as `mutable borrowed Int` — an operator
 //!     applied to a reference, with no `Coercion::Copy` in front of it, where
-//!     the same function written `borrowed` gets one. So the program that
-//!     reaches this crate's hole is refused for the checker's hole first,
-//!     by `science-codegen-llvm`'s `lower_binary`, which names the seam.
+//!     the same function written `borrowed` got one. `assign`'s §7 no longer
+//!     consults the borrow's mutability: §6 excludes `mutable borrowed T` into
+//!     `borrowed T` because that result *is still a reference* and its region
+//!     is another crate's question, and a copy out leaves no reference to have
+//!     one. That file now checks clean, and what stops it is
+//!     `science-codegen-llvm`'s named refusal to lower a `Copy` out of a
+//!     borrow.
 //!
 //!     **Why the half is written anyway, with nothing to exercise it.** The
 //!     two fail in opposite directions. A checker that starts dereferencing

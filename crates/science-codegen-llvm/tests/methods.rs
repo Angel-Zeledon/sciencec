@@ -635,22 +635,24 @@ def main():
     assert!(text.contains("Ord"), "{text}");
 }
 
-/// An operator applied to a `mutable borrowed` scalar is refused, and the
-/// refusal names the phase the hole is in.
+/// An operator applied to an **exclusive** borrow of a scalar now reaches this
+/// crate, and what stops it is this crate's own hole.
 ///
-/// §3 finding 27. `def bump(counter: mutable borrowed Int):` with the body
-/// `counter be counter + 1` is `examples/01_functions.science`'s, and it is the
-/// last construct between that file and an executable. It **type-checks**: the
-/// checker wraps a
-/// shared borrow of a scalar in a `Coercion::Copy` before an operator sees it
-/// and does not wrap an exclusive one, so the operand arrives here as a
-/// pointer. Without this refusal the build ends in `SC0402` — *"a constant of a
-/// type this backend cannot build"*, from below the linker, about the constant
-/// beside it.
+/// §3 finding 27 was that `science-types` wrapped a shared borrow of a scalar in
+/// a `Coercion::Copy` before an operator saw it and did not wrap an exclusive
+/// one, so `def bump(counter: mutable borrowed Int):` with the body `counter be
+/// counter + 1` — `examples/01_functions.science`'s, and the only spelling §4.7
+/// leaves — arrived here as a pointer. **That hole is closed**, in `assign`'s
+/// §7 and gated to `Site::Operand`, and the file type-checks clean.
+///
+/// So the refusal this pins is no longer about the phase above. The coercion is
+/// inserted, and lowering *it* is the construct this backend does not have: a
+/// load through a pointer. The test is kept rather than deleted because the
+/// program is still the last one between that example and an executable — only
+/// the reason has moved one crate down, which is what the assertion now says.
 #[test]
-fn an_operator_on_an_exclusive_borrow_names_the_front_end() {
-    let source = "\
-def bump(counter: mutable borrowed Int):
+fn a_copy_out_of_a_borrow_is_the_construct_this_backend_lacks() {
+    let source = "def bump(counter: mutable borrowed Int):
     counter be counter + 1
 
 def main():
@@ -658,8 +660,8 @@ def main():
     bump(hits)
 ";
     let text = refusal("mutborrow", source);
-    assert!(text.contains("mutable borrowed Int"), "{text}");
-    assert!(text.contains("science-types"), "the refusal names the phase: {text}");
+    assert!(text.contains("`Copy` out of a borrow"), "{text}");
+    assert!(text.contains("load through a pointer"), "the refusal names the construct: {text}");
 }
 
 /// And the rest of `examples/01_functions.science` builds, links, runs and
