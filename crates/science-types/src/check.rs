@@ -1,0 +1,2101 @@
+//! Bidirectional checking — Decision 1, and the phase that finally walks an
+//! expression.
+//!
+//! > **Decision 1. Type checking is bidirectional, and there is no unifier
+//! > across function boundaries.**
+//!
+//! §5.2 makes every signature fully annotated, so every call site knows its
+//! callee's types before it looks at the arguments and every body has a known
+//! expected return type. That gives **checking** mode where the type is known
+//! and **synthesis** where it is not, and that is the whole algorithm: there is
+//! no Hindley-Milner, no generalisation, no let-polymorphism and no principal
+//! types.
+//!
+//! # 1. The two modes, and the one place they meet
+//!
+//! `BodyChecker::check` takes an expected type and a [`Site`];
+//! `BodyChecker::synth` takes neither and returns one. Four forms have a
+//! genuine checking rule — an `if`, a `match`, a block and a closure, each of
+//! which pushes the expectation *into* its sub-expressions rather than
+//! comparing afterwards — and everything else meets the expectation at
+//! `BodyChecker::demand`, which is the one place in this file that calls
+//! [`assignable`].
+//!
+//! That is deliberate and it is `lib.rs` §5's obligation discharged in one
+//! place: *"`check_expr` and `synth_expr` call `assignable`, and owe it the
+//! `Site` at every use. Passing one everywhere removes a decision from the
+//! language in silence"*. One call site means one thing to audit.
+//!
+//! **The order is the seam's order**, and it is not negotiable:
+//! [`TypeLowerer::lower`](crate::lowering::TypeLowerer::lower) at the annotation, [`Aliases::reveal`] before the
+//! comparison, [`assignable`] with the site. `BodyChecker::coerce` does the
+//! last two together so that a caller cannot do the third without the second —
+//! which is `lib.rs` §5's *"`Embedding` failing to match `Array of F32` at one
+//! site in ten"*.
+//!
+//! **And the types on THIR nodes are the *written* ones, not the revealed
+//! ones.** `alias`'s §1 is the argument: revealing eagerly would make a
+//! mismatch report `Array of F32` at a site where the reader wrote `Embedding`,
+//! *"and the name they chose disappears from the compiler's vocabulary"*.
+//! Revealing happens at the comparison and nowhere else, which is why
+//! `BodyChecker::revealed` is called at every point that inspects a type's
+//! *structure* and never at a point that stores one.
+//!
+//! # 2. Sites, named where they are
+//!
+//! Decision 14 boxes at a `return` and at an argument. This file passes
+//! [`Site::Return`] at a `return` statement and at the trailing expression of
+//! the *body* block, [`Site::Argument`] at every call argument, and
+//! [`Site::Elsewhere`] at a `let`, an assignment, a field initialiser and a
+//! tuple element. `assign`'s §5 says what getting that wrong costs in each
+//! direction, and the reason the site is threaded through `BodyChecker::check`
+//! rather than inferred from the node is that a trailing expression and a
+//! statement's expression are the same node kind.
+//!
+//! **Decision 14's own motivating example works because of the tuple rule.**
+//! `assign`'s §2: `(Doc, MyError)` is *not* assignable to `(Doc, Error?)`,
+//! because neither coercion recurses. `return (doc, err)` works because the
+//! thing in return position is a tuple **expression**, whose elements this
+//! checker visits one at a time — `BodyChecker::check`'s tuple arm — each at
+//! [`Site::Return`]. A checker that compared the synthesised tuple type against
+//! the signature and stopped would have implemented Decision 14 in a way that
+//! rejects the line that motivated it, and `tests/checking.rs` says so by name.
+//!
+//! # 3. One [`Inference`] per body, and it never escapes
+//!
+//! `infer`'s §1 makes an inference variable an index into a context *"scoped to
+//! one body and discarded when the body is done"*. This file is the only thing
+//! that makes one, it makes exactly one per body, and it drops it at the end of
+//! [`check_fn`]. Nothing it produces outlives it except a [`Ty`], which belongs
+//! to the table.
+//!
+//! # 4. The writeback, which is what `infer`'s §2 costs
+//!
+//! [`thir::Expr`] carries a [`Ty`] and not an [`InferTy`], because Decision 3
+//! says *a type* on every node and because every consumer of THIR — MIR,
+//! `SC0140`, exhaustiveness — wants one. But `1` has no type until the body
+//! ends.
+//!
+//! **Decision. A node whose type is still a variable is pushed with
+//! [`Ty::ERROR`] and recorded; when the body ends, Decision 2's defaulting
+//! runs, and then every recorded node is rewritten.** Two passes over a list,
+//! not a tree.
+//!
+//! The alternative — an `InferTy` on the node, collapsed by a fold afterwards —
+//! is the same work with a worse invariant: every consumer would have to handle
+//! a variant that cannot occur in a finished body, which is exactly the
+//! *"representation that can hold a type the language does not have"* `ty`'s §4
+//! refuses. **What this costs** is that a body inspected before the writeback
+//! sees `{unknown}` where a number will be, and that is a hazard for a future
+//! pass that wants to run during checking rather than after it.
+//!
+//! **Decision 2's defaulting is here and it needs two prelude ids**, which is
+//! `lib.rs` §5's own note: an unconstrained integer literal becomes `I64` and a
+//! float `F64`. A variable with no numeric origin that is still unbound is
+//! `SC0526`, once per class, because *"a class is one unknown however many
+//! expressions joined it"* (`infer`'s §5).
+//!
+//! # 5. What a literal will agree to
+//!
+//! **Decision. An unsuffixed integer literal is admitted at any numeric type; a
+//! float literal only at a floating one.** `let x: F64 be 1` is what a
+//! scientific program writes and refusing it would make the language spell
+//! `1.0` in a context where `1` is exact; `let n: I32 be 1.5` is a value the
+//! target cannot hold, and admitting it would be Decision 2's *"a scientific
+//! language that silently makes `1` an `I32` will be wrong on somebody's index
+//! arithmetic"* read backwards.
+//!
+//! A literal at a type this phase cannot classify — a type parameter, `Self`,
+//! anything in a table with no prelude — is admitted, because refusing on an
+//! unanswerable question is how a checker acquires a false positive.
+//!
+//! # 6. The holes, each priced
+//!
+//! These are real and they are stated rather than hidden. Every one of them
+//! produces [`Ty::ERROR`] and **no diagnostic**, which is `ty`'s §5: an
+//! erroneous type agrees with whatever it meets, so a hole costs nothing
+//! downstream and, in particular, cannot manufacture a cascade.
+//!
+//! - **Method calls.** Decision 11's lookup does not exist and the prelude
+//!   registers no methods. `doc.title()` has type [`Ty::ERROR`]. This is the
+//!   largest hole in the layer and it is the reason the acceptance test of
+//!   §4.3 is written with a *field* and not a method.
+//! - **Indexing and operators on user types.** `a[i]` is the `Index` interface
+//!   and `a + b` on a record is `Add`; both are Decision 11 again. Operators on
+//!   the prelude's numeric primitives *are* checked, structurally, because
+//!   those do not go through an implementation.
+//! - **A generic call's type arguments.** Explicit ones are used. An omitted
+//!   one is solved only where a parameter's type is the generic parameter
+//!   itself, which is the root-level match `infer`'s §2 admits; anything deeper
+//!   — `xs: Array of T` against an `Array of Int` — leaves `T` unsolved, and an
+//!   unsolved parameter becomes [`Ty::ERROR`] so that the arguments are still
+//!   checked against something that agrees. The general answer needs the nested
+//!   representation `infer`'s §2 describes and does not build.
+//! - **`Iterate`, and therefore `for`.** A `for` binds its pattern at
+//!   [`Ty::ERROR`]. Decision 15's `TryIterate` does not exist either, which is
+//!   why `SC0521` is still unclaimed by this crate.
+//! - **A `loop`'s value.** `break e` is checked and its type discarded; a
+//!   `loop` is [`Ty::UNIT`].
+//! - **Arity and kind of generic arguments**, which `lowering`'s §1 deferred to
+//!   *"whoever holds the declaration and the use at once"*. This file holds
+//!   both and still does not check it: the check wants `hir::GenericArity` and a
+//!   message about variadic const parameters, and it is one diagnostic that
+//!   belongs with the monomorphiser's, not four lines here.
+//! - **A record literal that omits a field.** The resolver reports an unknown
+//!   field (`SC0205`); a *missing* one is nobody's yet.
+//!
+//! # 7. Two rules the note does not name, and where they came from
+//!
+//! `type-checking-and-mir.md` §14 says the language has *"no subtyping, apart
+//! from the two implicit coercions of Decisions 6 and 14"*, and that is true of
+//! *coercions*. It is not the whole of what a call site does, and both of the
+//! following came from running this checker over `examples/` and finding it
+//! reporting on code the spec says is correct.
+//!
+//! **Auto-borrow at call sites** is §6.3 of the core spec — *"if a parameter is
+//! declared `borrowed T`, the caller writes `compare(a, b)"* — and the note
+//! does not mention it at all. It is an elaboration rather than a coercion and
+//! `BodyChecker::auto_borrow` is the argument for why that distinction is the
+//! one that decides where it lives. Without it, 60% of every diagnostic this
+//! checker produced over the corpus was a borrow the language had told the
+//! author not to write.
+//!
+//! **A comparison is compared through a borrow**, for the same reason one step
+//! further on: §5.4 makes `is` and `==` one operator dispatching to `Eq`, whose
+//! method takes `borrowed self`, so `name is ""` has a `borrowed String` and a
+//! `String` in the source and two `String`s in the call.
+//! `BodyChecker::compare` says what that can and cannot conclude.
+//!
+//! **What neither of them is**: the concrete-into-object coercion. `Doc` does
+//! not reach `borrowed any Summarize`, because `assign`'s §4 refuses `T` into
+//! `any I` for an interface that is not `Error` and does so by name. The corpus
+//! writes it — `describe_any(doc)` in `examples/08_dyn_dispatch.science` — so
+//! either the corpus or that refusal is wrong, and deciding which is a language
+//! decision rather than a checker's. It is left reported.
+
+use std::collections::HashMap;
+
+use science_diagnostics::{Diagnostic, Diagnostics, Label, Span};
+use science_lexer::NumSuffix;
+use science_resolve::hir::{self, BinaryOp, DefId, DefTable, Literal, Res, SelfKind, UnaryOp};
+
+use crate::alias::Aliases;
+use crate::assign::{assignable, Coercion, Coercions, Site};
+use crate::codes;
+use crate::diagnostics;
+use crate::infer::{InferTy, InferVar, Inference};
+use crate::items::{named, Declarations, Named, Signature};
+use crate::narrow::{self, Fact, Facts};
+use crate::normal::AtomOrder;
+use crate::subst::Substitution;
+use crate::thir::{self, Block, Body, ExprId, ExprKind, PatId, PatKind, Stmt, StmtKind};
+use crate::ty::{GenericArg, Ty, TyKind, Types};
+
+/// Checks every body in the crate, and runs the THIR analyses over each.
+///
+/// The order is `type-checking-and-mir.md` §12's, as far as this crate goes:
+/// declarations, then bodies, then the THIR passes. `SC0140` runs per body
+/// because it is a per-body question; narrowing runs *during* the body because
+/// its answer is a type.
+pub fn check_crate(
+    krate: &hir::Crate,
+    decls: &Declarations,
+    types: &mut Types,
+    aliases: &mut Aliases,
+    order: &AtomOrder,
+    diagnostics: &mut Diagnostics,
+) -> Vec<Body> {
+    let mut bodies = Vec::new();
+    for module in &krate.modules {
+        for item in &module.items {
+            collect(&item.kind, &mut |function, owner| {
+                let body =
+                    check_fn(function, owner, krate, decls, types, aliases, order, diagnostics);
+                crate::unchecked::report(&body, krate, decls, types, diagnostics);
+                bodies.push(body);
+            });
+        }
+    }
+    bodies
+}
+
+/// Walks the functions with bodies in one item, with the block that owns each.
+fn collect(kind: &hir::ItemKind, visit: &mut impl FnMut(&hir::Fn, Option<DefId>)) {
+    match kind {
+        hir::ItemKind::Fn(function) if function.body.is_some() => visit(function, None),
+        hir::ItemKind::Impl(block) => {
+            for method in block.methods.iter().filter(|m| m.body.is_some()) {
+                visit(method, Some(block.def));
+            }
+        }
+        hir::ItemKind::Interface(interface) => {
+            for method in interface.methods.iter().filter(|m| m.body.is_some()) {
+                visit(method, Some(interface.def));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Checks one body and hands back its THIR.
+#[allow(clippy::too_many_arguments)]
+pub fn check_fn(
+    function: &hir::Fn,
+    owner: Option<DefId>,
+    krate: &hir::Crate,
+    decls: &Declarations,
+    types: &mut Types,
+    aliases: &mut Aliases,
+    order: &AtomOrder,
+    diagnostics: &mut Diagnostics,
+) -> Body {
+    let coercions = Coercions::of(&krate.defs);
+    // `Self` and the block's associated types are substituted before anything
+    // in the body is compared, because both are holes `subst`'s §2 leaves
+    // standing and a body is the place that can fill them.
+    let self_subst = match owner {
+        Some(owner) => decls.body_substitution(&krate.defs, owner),
+        None => Substitution::new(),
+    };
+
+    let signature = decls.signature(function.def);
+    let ret = signature.map(|sig| sig.ret).unwrap_or(Ty::UNIT);
+
+    let checker = BodyChecker {
+        defs: &krate.defs,
+        decls,
+        order,
+        coercions,
+        types,
+        aliases,
+        diagnostics,
+        infer: Inference::new(),
+        body: Body::new(function.def, ret),
+        locals: Vec::new(),
+        facts: Facts::new(),
+        pending: Vec::new(),
+        numeric: Vec::new(),
+        self_subst,
+        ret,
+        diverged: false,
+        breaks: Vec::new(),
+    };
+    checker.run(function, signature)
+}
+
+/// Where an unsuffixed literal's type comes from when nothing constrains it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Numeric {
+    Integer,
+    Float,
+    /// `null`, which has no default at all: there is no type it means on its
+    /// own, so an unconstrained one is `SC0526` and not a guess.
+    Null,
+}
+
+/// A synthesised expression: the node, and what is known of its type.
+#[derive(Debug, Clone, Copy)]
+struct Typed {
+    id: ExprId,
+    ty: InferTy,
+}
+
+/// The checker for one body. §3: one of these per body, dropped with it.
+struct BodyChecker<'a> {
+    defs: &'a DefTable,
+    decls: &'a Declarations,
+    order: &'a AtomOrder,
+    coercions: Coercions,
+    types: &'a mut Types,
+    aliases: &'a mut Aliases,
+    diagnostics: &'a mut Diagnostics,
+    infer: Inference,
+    body: Body,
+    /// The bindings in scope, with the type each was given. A `Vec` for the
+    /// reason `Body::locals` is one.
+    locals: Vec<(DefId, InferTy)>,
+    facts: Facts,
+    /// Nodes whose type is still a variable. §4.
+    pending: Vec<(ExprId, InferVar)>,
+    numeric: Vec<(InferVar, Numeric)>,
+    self_subst: Substitution,
+    ret: Ty,
+    /// Whether control has already left on this path.
+    diverged: bool,
+    /// One entry per enclosing `loop`, true once it has seen a `break`.
+    breaks: Vec<bool>,
+}
+
+impl<'a> BodyChecker<'a> {
+    fn run(mut self, function: &hir::Fn, signature: Option<&Signature>) -> Body {
+        // The root block takes index zero, before anything inside it exists,
+        // which is what makes `Body::root` a constant.
+        let body_block = function.body.as_ref().expect("check_fn is given a function with a body");
+        let root = self.body.reserve_block(body_block.span);
+        // The return type is the signature's with `Self` and the block's
+        // associated types replaced. Reading it raw is the bug that says
+        // `expected Self, found ConfigError` at a `-> Self` that is right.
+        let ret = self.instantiate(self.ret, function.span);
+        self.ret = ret;
+        self.body.ret = ret;
+
+        if let Some(sig) = signature {
+            if let Some((def, kind)) = sig.self_param {
+                let owner = sig.owner.and_then(|owner| self.decls.self_ty(owner));
+                let mut ty = owner.unwrap_or(Ty::ERROR);
+                ty = match kind {
+                    SelfKind::Value => ty,
+                    SelfKind::Shared => self.types.borrowed(false, ty),
+                    SelfKind::Mutable => self.types.borrowed(true, ty),
+                };
+                self.bind_local(def, InferTy::Known(ty));
+            }
+            for param in &sig.params {
+                let ty = self.instantiate(param.ty, param.span);
+                self.bind_local(param.def, InferTy::Known(ty));
+            }
+        }
+
+        let ret = self.ret;
+        let block = self.block(body_block, Some((ret, Site::Return)));
+        self.body.fill_block(root, block);
+        self.body.diverges = self.diverged;
+        self.finish()
+    }
+
+    /// Decision 2's defaulting, then §4's writeback.
+    fn finish(mut self) -> Body {
+        // A class's numeric origin is a property of the class, not of the
+        // variable that happened to be created first, so the kinds are folded
+        // onto roots before anything is defaulted.
+        let mut kinds: HashMap<InferVar, Numeric> = HashMap::new();
+        for (var, kind) in std::mem::take(&mut self.numeric) {
+            let root = self.infer.find(var);
+            kinds
+                .entry(root)
+                .and_modify(|existing| *existing = widen_numeric(*existing, kind))
+                .or_insert(kind);
+        }
+
+        for root in self.infer.unresolved() {
+            let default = match kinds.get(&root) {
+                Some(Numeric::Integer) => self.decls.prelude().default_int(self.types),
+                Some(Numeric::Float) => self.decls.prelude().default_float(self.types),
+                Some(Numeric::Null) | None => None,
+            };
+            match default {
+                Some(ty) => {
+                    let _ = self.infer.bind(self.types, root, ty);
+                }
+                None => {
+                    let span = self.infer.origin(root);
+                    self.diagnostics.push(cannot_infer(span));
+                }
+            }
+        }
+
+        for (id, var) in std::mem::take(&mut self.pending) {
+            if let Some(ty) = self.infer.binding(var) {
+                self.body.set_ty(id, ty);
+            }
+        }
+        let locals = std::mem::take(&mut self.locals);
+        for (def, ty) in locals {
+            if let InferTy::Var(var) = ty {
+                if let Some(ty) = self.infer.binding(var) {
+                    self.body.set_local_ty(def, ty);
+                }
+            }
+        }
+        self.body
+    }
+
+    // --- the seam's three calls ------------------------------------------
+
+    /// The second of `lib.rs` §5's three calls, with its overflow reported.
+    fn revealed(&mut self, ty: Ty, span: Span) -> Ty {
+        match self.aliases.reveal(self.types, ty) {
+            Ok(revealed) => revealed,
+            Err(error) => {
+                self.diagnostics.push(diagnostics::overflowed(error, span));
+                Ty::ERROR
+            }
+        }
+    }
+
+    /// The first: an annotation inside a body.
+    fn lower_ty(&mut self, ty: &hir::Type) -> Ty {
+        let lowered = crate::lowering::TypeLowerer::new(
+            self.types,
+            self.defs,
+            self.order,
+            self.diagnostics,
+        )
+        .lower(ty);
+        self.instantiate(lowered, ty.span)
+    }
+
+    /// `Self` replaced by the block's self type.
+    fn instantiate(&mut self, ty: Ty, span: Span) -> Ty {
+        if self.self_subst.is_empty() {
+            return ty;
+        }
+        match self.self_subst.apply(self.types, ty) {
+            Ok(applied) => applied,
+            Err(error) => {
+                self.diagnostics.push(diagnostics::overflowed(error, span));
+                Ty::ERROR
+            }
+        }
+    }
+
+    /// The third, and the only call to it in this file. §1.
+    fn coerce(&mut self, expr: ExprId, from: Ty, to: Ty, site: Site, span: Span) -> ExprId {
+        let source = self.revealed(from, span);
+        let target = self.revealed(to, span);
+        match assignable(self.types, self.coercions, site, source, target) {
+            Some(Coercion::Identity) => expr,
+            Some(coercion) => {
+                self.body.push_expr(ExprKind::Coerce { operand: expr, coercion }, to, span)
+            }
+            None => match self.auto_borrow(expr, source, to, target, site, span) {
+                Some(borrowed) => borrowed,
+                None => {
+                    self.mismatch(from, to, span);
+                    // The node stays. Decision 3 makes THIR the tree a
+                    // diagnostic quotes, and replacing a mistyped expression
+                    // with a hole throws away the structure the next message
+                    // would have needed.
+                    expr
+                }
+            },
+        }
+    }
+
+    /// §6.3 of the core spec: **auto-borrow at call sites**.
+    ///
+    /// > *"If a parameter is declared `borrowed T`, the caller writes
+    /// > `compare(a, b)`, not `compare(borrowed a, borrowed b)`. … An explicit
+    /// > borrow remains legal where it clarifies."*
+    ///
+    /// **Decision. This is an elaboration and not a coercion, so it is here and
+    /// not in [`crate::assign`].** That module's §4 refuses *"anything about
+    /// regions, mutability or variance"* and it is right to: a coercion is a
+    /// relation between two types, and whether a borrow may be taken is a
+    /// question about a *place* and a region, which nothing in the type table
+    /// knows. What happens here is the other thing — the checker writing down
+    /// the `borrowed` the author was allowed to leave out, as an ordinary
+    /// [`ExprKind::Borrow`] node, which is Decision 3's third clause. MIR sees
+    /// the same tree whether or not the author typed the word, and the region
+    /// engine gets a borrow at a point rather than a coercion it has no lattice
+    /// for.
+    ///
+    /// **It applies at [`Site::Argument`] and nowhere else**, because §6.3 says
+    /// *"at call sites"*. A `let x: borrowed String be s` is not one, and
+    /// admitting it there would be a language change made by a checker.
+    ///
+    /// **The inner match has to be exact.** `Doc` reaches `borrowed Doc`;
+    /// `Doc` does not reach `borrowed any Summarize`, because that is the
+    /// concrete-into-object coercion `assign`'s §4 refuses by name, and
+    /// composing two things the design refuses one at a time is how a language
+    /// acquires a rule nobody decided.
+    ///
+    /// **And an exclusive auto-borrow invalidates the narrowing**, exactly as a
+    /// written one does — `narrow`'s §4 and Decision 8. It is the same event
+    /// and the author not having typed it changes nothing about who may write
+    /// through it.
+    fn auto_borrow(
+        &mut self,
+        expr: ExprId,
+        source: Ty,
+        written_target: Ty,
+        target: Ty,
+        site: Site,
+        span: Span,
+    ) -> Option<ExprId> {
+        if site != Site::Argument {
+            return None;
+        }
+        let TyKind::Borrowed { mutable, inner } = *self.types.kind(target) else {
+            return None;
+        };
+        let inner = self.revealed(inner, span);
+        if !self.types.compatible(source, inner) {
+            return None;
+        }
+        if mutable {
+            if let Some(place) = self.body.place_of(expr) {
+                self.facts.invalidate(&place);
+            }
+        }
+        Some(self.body.push_expr(
+            ExprKind::Borrow { mutable, operand: expr },
+            written_target,
+            span,
+        ))
+    }
+
+    fn mismatch(&mut self, found: Ty, expected: Ty, span: Span) {
+        let found = self.types.render(self.defs, found);
+        let expected = self.types.render(self.defs, expected);
+        self.diagnostics.push(mismatched_types(span, &expected, &found));
+    }
+
+    // --- modes ------------------------------------------------------------
+
+    /// Checking mode: the type is known, so push it inward. §1.
+    fn check(&mut self, expr: &hir::Expr, expected: Ty, site: Site) -> ExprId {
+        match &expr.kind {
+            hir::ExprKind::If(if_expr) => {
+                self.if_expr(if_expr, expr.span, Some((expected, site))).id
+            }
+            hir::ExprKind::Block(block) => {
+                let id = self.body.reserve_block(block.span);
+                let filled = self.block(block, Some((expected, site)));
+                let ty = filled.tail.map(|tail| self.body.ty(tail)).unwrap_or(Ty::UNIT);
+                self.body.fill_block(id, filled);
+                self.body.push_expr(ExprKind::Block(id), ty, expr.span)
+            }
+            hir::ExprKind::Match(match_expr) => {
+                self.match_expr(match_expr, expr.span, Some((expected, site))).id
+            }
+            hir::ExprKind::Closure { param, body } => {
+                self.closure(*param, body, expr.span, Some(expected)).id
+            }
+            hir::ExprKind::Tuple(elements) => {
+                // §2: the elements are visited one at a time, at this site,
+                // which is what makes Decision 14's own example compile.
+                let revealed = self.revealed(expected, expr.span);
+                if let TyKind::Tuple(expected_elements) = self.types.kind(revealed).clone() {
+                    if expected_elements.len() == elements.len() {
+                        let ids: Vec<ExprId> = elements
+                            .iter()
+                            .zip(expected_elements)
+                            .map(|(element, want)| self.check(element, want, site))
+                            .collect();
+                        return self.body.push_expr(ExprKind::Tuple(ids), expected, expr.span);
+                    }
+                }
+                let typed = self.synth(expr);
+                self.demand(typed, expected, site, expr.span)
+            }
+            _ => {
+                let typed = self.synth(expr);
+                self.demand(typed, expected, site, expr.span)
+            }
+        }
+    }
+
+    /// The one place [`assignable`] is reached from. §1.
+    fn demand(&mut self, typed: Typed, expected: Ty, site: Site, span: Span) -> ExprId {
+        match typed.ty {
+            InferTy::Known(found) => self.coerce(typed.id, found, expected, site, span),
+            InferTy::Var(var) => {
+                let target = self.revealed(expected, span);
+                // A variable stands for a *value*, so Decision 6's widening
+                // applies to it as it does to anything else: a literal reaching
+                // a `T?` slot takes `T` and widens, rather than becoming a `T?`
+                // that no arithmetic will accept afterwards.
+                //
+                // **Except `null`**, which is the one value whose type *is* the
+                // nullable. Widening it would ask `T` to hold it, and there is
+                // no `T` that does — Decision 6 makes `T?` a distinct type
+                // precisely so that `null` inhabits it and nothing else.
+                let nullable = matches!(*self.types.kind(target), TyKind::Nullable(_));
+                if self.literal_kind(var) == Some(Numeric::Null) {
+                    let admits = nullable
+                        || self.types.references_error(target)
+                        || !self.decls.prelude().is_available()
+                        || !is_prelude_named(self.types, target);
+                    if !admits {
+                        let rendered = self.types.render(self.defs, expected);
+                        self.diagnostics.push(mismatched_types(span, &rendered, "`null`"));
+                        return typed.id;
+                    }
+                    let _ = self.infer.bind(self.types, var, expected);
+                    return typed.id;
+                }
+                let (payload, widen) = match *self.types.kind(target) {
+                    TyKind::Nullable(inner) => (inner, true),
+                    _ => (expected, false),
+                };
+                if !self.literal_admits(var, payload, span) {
+                    let found = self.numeric_name(var);
+                    let expected = self.types.render(self.defs, expected);
+                    self.diagnostics.push(mismatched_types(span, &expected, found));
+                    return typed.id;
+                }
+                match self.infer.bind(self.types, var, payload) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        self.mismatch(payload, expected, span);
+                        return typed.id;
+                    }
+                }
+                if widen {
+                    self.body.push_expr(
+                        ExprKind::Coerce { operand: typed.id, coercion: Coercion::Widen },
+                        expected,
+                        span,
+                    )
+                } else {
+                    typed.id
+                }
+            }
+        }
+    }
+
+    /// The literal kind a variable came from, if it came from one.
+    fn literal_kind(&self, var: InferVar) -> Option<Numeric> {
+        self.numeric.iter().find(|(v, _)| *v == var).map(|(_, kind)| *kind)
+    }
+
+    /// §5. Whether a literal's variable will agree to this type.
+    fn literal_admits(&mut self, var: InferVar, target: Ty, span: Span) -> bool {
+        let Some(kind) = self.literal_kind(var) else {
+            // Not a literal: an ordinary variable, which takes what it is
+            // given and reports at the unification instead.
+            return true;
+        };
+        if self.types.references_error(target) || !self.decls.prelude().is_available() {
+            return true;
+        }
+        // Revealed, because `type Celsius is F64` is a floating type and the
+        // name is not. The seam's middle call, at the one comparison §5 makes.
+        let target = self.revealed(target, span);
+        let prelude = self.decls.prelude();
+        match kind {
+            // **The refusal is the narrow side, not the admission.** A literal
+            // is refused only at a type the prelude names and this phase can
+            // therefore classify; at anything else — a record, a type
+            // parameter, an `extern` alias whose right-hand side is not in the
+            // alias table — it is admitted, because deciding the question needs
+            // Decision 11's `From` and operator interfaces and §5 says a
+            // refusal on an unanswerable question is how a checker acquires a
+            // false positive.
+            Numeric::Integer => !prelude.is_definitely_not_numeric(self.types, target),
+            Numeric::Float => {
+                !prelude.is_definitely_not_numeric(self.types, target)
+                    && !prelude.is_integer(self.types, target)
+            }
+            // `null` only fits a nullable, and `demand` has already peeled one
+            // off, so reaching here at all means the slot was not one.
+            Numeric::Null => false,
+        }
+    }
+
+    fn numeric_name(&self, var: InferVar) -> &'static str {
+        match self.literal_kind(var) {
+            Some(Numeric::Integer) => "an integer literal",
+            Some(Numeric::Float) => "a floating-point literal",
+            Some(Numeric::Null) => "`null`",
+            None => "a value of an undetermined type",
+        }
+    }
+
+    // --- synthesis --------------------------------------------------------
+
+    fn synth(&mut self, expr: &hir::Expr) -> Typed {
+        let span = expr.span;
+        match &expr.kind {
+            hir::ExprKind::Literal(literal) => self.literal(literal, span),
+            hir::ExprKind::Path { res, generics } => self.path(*res, generics, span),
+            hir::ExprKind::SelfValue(res) => match res {
+                Res::Def(def) => {
+                    let ty = self.local_ty(*def);
+                    let typed = self.push_typed(ExprKind::SelfValue(*def), ty, span);
+                    self.narrowed(typed.id, ty, span)
+                }
+                _ => self.error_expr(span),
+            },
+            hir::ExprKind::Call { callee, args } => self.call(callee, args, span),
+            hir::ExprKind::MethodCall { receiver, args, .. } => {
+                let receiver = self.synth(receiver).id;
+                // §4 of `narrow`: a method may take `mutable self` and nothing
+                // here can tell, so the receiver's narrowing goes.
+                if let Some(place) = self.body.place_of(receiver) {
+                    self.facts.invalidate(&place);
+                }
+                let args = args.iter().map(|arg| self.synth(&arg.value).id).collect();
+                // §6: Decision 11's lookup does not exist.
+                let id = self.body.push_expr(
+                    ExprKind::MethodCall { receiver, method: None, args },
+                    Ty::ERROR,
+                    span,
+                );
+                Typed { id, ty: InferTy::Known(Ty::ERROR) }
+            }
+            hir::ExprKind::Field { base, name } => self.field(base, name, span),
+            hir::ExprKind::Index { base, index } => {
+                let base = self.synth(base).id;
+                let index = self.synth(index).id;
+                // §6: the `Index` interface is Decision 11's.
+                let id = self.body.push_expr(ExprKind::Index { base, index }, Ty::ERROR, span);
+                Typed { id, ty: InferTy::Known(Ty::ERROR) }
+            }
+            hir::ExprKind::StructLit { res, fields } => self.record_lit(*res, fields, span),
+            hir::ExprKind::Tuple(elements) => {
+                let mut ids = Vec::with_capacity(elements.len());
+                let mut tys = Vec::with_capacity(elements.len());
+                for element in elements {
+                    let typed = self.synth(element);
+                    ids.push(typed.id);
+                    tys.push(self.known_or_error(typed.ty));
+                }
+                let ty = self.types.tuple(tys);
+                let id = self.body.push_expr(ExprKind::Tuple(ids), ty, span);
+                Typed { id, ty: InferTy::Known(ty) }
+            }
+            hir::ExprKind::Unit => {
+                let id = self.body.push_expr(ExprKind::Unit, Ty::UNIT, span);
+                Typed { id, ty: InferTy::Known(Ty::UNIT) }
+            }
+            hir::ExprKind::Unary { op, operand } => self.unary(*op, operand, span),
+            hir::ExprKind::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, span),
+            hir::ExprKind::Cast { expr: operand, ty } => {
+                let operand = self.synth(operand).id;
+                let ty = self.lower_ty(ty);
+                let id = self.body.push_expr(ExprKind::Cast { operand }, ty, span);
+                Typed { id, ty: InferTy::Known(ty) }
+            }
+            hir::ExprKind::Present(inner) => self.present(inner, span),
+            hir::ExprKind::Borrowed { mutable, expr: inner } => {
+                let typed = self.synth(inner);
+                let inner_ty = self.known_or_error(typed.ty);
+                if *mutable {
+                    // Decision 8: the invalidation is at the point the
+                    // exclusive borrow is *created*. `narrow`'s §4.
+                    if let Some(place) = self.body.place_of(typed.id) {
+                        self.facts.invalidate(&place);
+                    }
+                }
+                let ty = self.types.borrowed(*mutable, inner_ty);
+                let id = self.body.push_expr(
+                    ExprKind::Borrow { mutable: *mutable, operand: typed.id },
+                    ty,
+                    span,
+                );
+                Typed { id, ty: InferTy::Known(ty) }
+            }
+            hir::ExprKind::Range { start, end, inclusive } => {
+                let start_typed = self.synth(start);
+                let end_ty = self.known_or_error(start_typed.ty);
+                let end = self.check(end, end_ty, Site::Elsewhere);
+                // §6: there is no `Range` type in the prelude to give this.
+                let id = self.body.push_expr(
+                    ExprKind::Range { start: start_typed.id, end, inclusive: *inclusive },
+                    Ty::ERROR,
+                    span,
+                );
+                Typed { id, ty: InferTy::Known(Ty::ERROR) }
+            }
+            hir::ExprKind::Closure { param, body } => self.closure(*param, body, span, None),
+            hir::ExprKind::Each(res) => match res {
+                Res::Def(def) => {
+                    let ty = self.local_ty(*def);
+                    let typed = self.push_typed(ExprKind::Local(*def), ty, span);
+                    self.narrowed(typed.id, ty, span)
+                }
+                _ => self.error_expr(span),
+            },
+            hir::ExprKind::If(if_expr) => self.if_expr(if_expr, span, None),
+            hir::ExprKind::Match(match_expr) => self.match_expr(match_expr, span, None),
+            hir::ExprKind::Loop { body } => self.loop_expr(body, span),
+            hir::ExprKind::For { pattern, iter, body } => self.for_expr(pattern, iter, body, span),
+            hir::ExprKind::Unsafe(block) | hir::ExprKind::Block(block) => {
+                let id = self.body.reserve_block(block.span);
+                let filled = self.block(block, None);
+                let ty = filled.tail.map(|tail| self.body.ty(tail)).unwrap_or(Ty::UNIT);
+                self.body.fill_block(id, filled);
+                let kind = if matches!(expr.kind, hir::ExprKind::Unsafe(_)) {
+                    ExprKind::Unsafe(id)
+                } else {
+                    ExprKind::Block(id)
+                };
+                let id = self.body.push_expr(kind, ty, span);
+                Typed { id, ty: InferTy::Known(ty) }
+            }
+            hir::ExprKind::Error => self.error_expr(span),
+        }
+    }
+
+    fn literal(&mut self, literal: &Literal, span: Span) -> Typed {
+        let (kind, name): (Option<Numeric>, Option<&str>) = match literal {
+            Literal::Bool(_) => (None, Some("Bool")),
+            Literal::Str(_) => (None, Some("String")),
+            Literal::Char(_) => (None, Some("Char")),
+            Literal::Int { suffix: Some(suffix), .. }
+            | Literal::Float { suffix: Some(suffix), .. } => (None, Some(suffix_name(*suffix))),
+            Literal::Int { .. } => (Some(Numeric::Integer), None),
+            Literal::Float { .. } => (Some(Numeric::Float), None),
+            Literal::Null => (Some(Numeric::Null), None),
+        };
+        let node = ExprKind::Literal(literal.clone());
+        match (kind, name.and_then(|name| self.decls.prelude().ty(self.types, name))) {
+            (_, Some(ty)) => {
+                let id = self.body.push_expr(node, ty, span);
+                Typed { id, ty: InferTy::Known(ty) }
+            }
+            (Some(kind), None) => {
+                // §4: the type is a variable until the body ends.
+                let var = self.infer.fresh(span);
+                self.numeric.push((var, kind));
+                let id = self.body.push_expr(node, Ty::ERROR, span);
+                self.pending.push((id, var));
+                Typed { id, ty: InferTy::Var(var) }
+            }
+            // A table with no prelude: there is no `Bool` to give this.
+            (None, None) => {
+                let id = self.body.push_expr(node, Ty::ERROR, span);
+                Typed { id, ty: InferTy::Known(Ty::ERROR) }
+            }
+        }
+    }
+
+    fn path(&mut self, res: Res, generics: &[hir::Type], span: Span) -> Typed {
+        match named(self.defs, res) {
+            Some(Named::Local(def)) => {
+                let ty = self.local_ty(def);
+                let typed = self.push_typed(ExprKind::Local(def), ty, span);
+                self.narrowed(typed.id, ty, span)
+            }
+            Some(Named::Function(def)) => {
+                let ty = self.function_as_value(def, span);
+                let id = self.body.push_expr(ExprKind::Item(def), ty, span);
+                Typed { id, ty: InferTy::Known(ty) }
+            }
+            Some(Named::Const(def)) => {
+                let ty = self.decls.const_ty(def).unwrap_or(Ty::ERROR);
+                let id = self.body.push_expr(ExprKind::Item(def), ty, span);
+                Typed { id, ty: InferTy::Known(ty) }
+            }
+            Some(Named::Variant(def)) => {
+                let ty = self.variant_as_value(def, generics);
+                let id = self.body.push_expr(ExprKind::Item(def), ty, span);
+                Typed { id, ty: InferTy::Known(ty) }
+            }
+            // A type in a value position, or a name that did not resolve.
+            // Both are already reported, by `SC0211` and `SC0200`.
+            Some(Named::Other) | None => self.error_expr(span),
+        }
+    }
+
+    /// A function named rather than called: its closure type (§1.2).
+    fn function_as_value(&mut self, def: DefId, span: Span) -> Ty {
+        let Some(sig) = self.decls.signature(def) else {
+            return Ty::ERROR;
+        };
+        let params: Vec<Ty> = sig.params.iter().map(|param| param.ty).collect();
+        let ret = sig.ret;
+        let params = params.into_iter().map(|ty| self.instantiate(ty, span)).collect();
+        let ret = self.instantiate(ret, span);
+        self.types.closure(params, ret)
+    }
+
+    fn variant_as_value(&mut self, def: DefId, generics: &[hir::Type]) -> Ty {
+        let Some(variant) = self.decls.variant(def) else {
+            return Ty::ERROR;
+        };
+        let (choice, payload, declared) =
+            (variant.choice, variant.payload.clone(), variant.generics.clone());
+        let written: Vec<GenericArg> = generics
+            .iter()
+            .map(|ty| {
+                let lowered = self.lower_ty(ty);
+                GenericArg::Type(lowered)
+            })
+            .collect();
+        // `Unbounded` on its own says nothing about the `T` of `Bound of T`, so
+        // every argument the author did not write is `Ty::ERROR` — §6's hole,
+        // spelled the way `ty`'s §5 spells every hole, so that the type agrees
+        // with whatever slot it reaches instead of contradicting it.
+        let args = if written.is_empty() { unknown_args(&declared) } else { written };
+        let choice_ty = self.types.named(choice, args);
+        if payload.is_empty() {
+            choice_ty
+        } else {
+            self.types.closure(payload, choice_ty)
+        }
+    }
+
+    /// A read, with Decision 7's fact applied if there is one.
+    ///
+    /// This is the only place narrowing changes anything, and it is one node:
+    /// `thir`'s §1 says why a narrowed read is not a retyped one.
+    fn narrowed(&mut self, id: ExprId, ty: InferTy, span: Span) -> Typed {
+        let InferTy::Known(known) = ty else {
+            return Typed { id, ty };
+        };
+        let Some(place) = self.body.place_of(id) else {
+            return Typed { id, ty };
+        };
+        if self.facts.get(&place) != Some(Fact::NonNull) {
+            return Typed { id, ty };
+        }
+        let revealed = self.revealed(known, span);
+        let TyKind::Nullable(inner) = *self.types.kind(revealed) else {
+            return Typed { id, ty };
+        };
+        let id = self.body.push_expr(ExprKind::Narrow(id), inner, span);
+        Typed { id, ty: InferTy::Known(inner) }
+    }
+
+    fn field(&mut self, base: &hir::Expr, name: &hir::Ident, span: Span) -> Typed {
+        let base = self.synth(base);
+        let base_ty = self.known_or_error(base.ty);
+        let revealed = self.revealed(base_ty, span);
+        let (def, args) = match self.types.kind(revealed).clone() {
+            TyKind::Named { def, args } => (def, args),
+            // A borrow is transparent to a field read: `borrowed Doc` has a
+            // `title` because a `Doc` has one, and F0 has no explicit
+            // dereference to write instead.
+            TyKind::Borrowed { inner, .. } => {
+                let inner = self.revealed(inner, span);
+                match self.types.kind(inner).clone() {
+                    TyKind::Named { def, args } => (def, args),
+                    _ => return self.unknown_field(base.id, revealed, name, span),
+                }
+            }
+            _ => return self.unknown_field(base.id, revealed, name, span),
+        };
+        let Some(record) = self.decls.record(def) else {
+            return self.unknown_field(base.id, revealed, name, span);
+        };
+        let generics = record.generics.clone();
+        let Some((field, field_ty)) =
+            record.fields.iter().find(|(id, _)| self.defs.get(*id).name == name.name).copied()
+        else {
+            return self.unknown_field(base.id, revealed, name, span);
+        };
+        // A field of `Matrix of (F32, 4)` is the declared field with the
+        // block's parameters replaced, which is `subst`'s whole job.
+        let substitution = Substitution::of_generics(&generics, &args);
+        let field_ty = match substitution.apply(self.types, field_ty) {
+            Ok(ty) => ty,
+            Err(error) => {
+                self.diagnostics.push(diagnostics::overflowed(error, span));
+                Ty::ERROR
+            }
+        };
+        let id =
+            self.body.push_expr(ExprKind::Field { base: base.id, field: Some(field) }, field_ty, span);
+        self.narrowed(id, InferTy::Known(field_ty), span)
+    }
+
+    fn unknown_field(
+        &mut self,
+        base: ExprId,
+        base_ty: Ty,
+        name: &hir::Ident,
+        span: Span,
+    ) -> Typed {
+        // A type that is already wrong says nothing more (`ty`'s §5), and a
+        // type this phase cannot see inside — a generic parameter, `Self`, an
+        // unresolved `Self.Item` — says nothing either, because *"`T` has no
+        // field `name`"* is a claim about an instantiation nobody has made yet.
+        let answerable = !matches!(
+            self.types.kind(base_ty),
+            TyKind::Param { .. } | TyKind::SelfType { .. } | TyKind::SelfAssoc { .. }
+        );
+        if answerable && !self.types.references_error(base_ty) && self.decls.prelude().is_available()
+        {
+            let rendered = self.types.render(self.defs, base_ty);
+            self.diagnostics.push(no_such_field(name.span, &name.name, &rendered));
+        }
+        let id =
+            self.body.push_expr(ExprKind::Field { base, field: None }, Ty::ERROR, span);
+        Typed { id, ty: InferTy::Known(Ty::ERROR) }
+    }
+
+    fn record_lit(&mut self, res: Res, fields: &[hir::FieldInit], span: Span) -> Typed {
+        let Some(def) = res.def_id() else {
+            for field in fields {
+                self.synth(&field.value);
+            }
+            return self.error_expr(span);
+        };
+        let Some(record) = self.decls.record(def) else {
+            for field in fields {
+                self.synth(&field.value);
+            }
+            return self.error_expr(span);
+        };
+        let declared = record.fields.clone();
+        let generics = record.generics.clone();
+
+        // `Wrapper(inner: value)` has to become `Wrapper of T`, not `Wrapper`.
+        // The arguments are solved the same root-level way a call's are (§6),
+        // out of the field types the declaration gives and the values the
+        // literal supplies — and an unsolved one becomes `Ty::ERROR` so that the
+        // fields are still checked against something that agrees.
+        let (substitution, args) = self.instantiate_record(&generics, &declared, fields);
+
+        let mut checked = Vec::with_capacity(fields.len());
+        for init in fields {
+            match declared.iter().find(|(id, _)| Some(*id) == init.field.def_id()).copied() {
+                Some((field, ty)) => {
+                    let ty = self.apply(&substitution, ty, init.span);
+                    let ty = self.instantiate(ty, init.span);
+                    let value = self.check(&init.value, ty, Site::Elsewhere);
+                    checked.push((field, value));
+                }
+                // The resolver reported `SC0205`. §6: a *missing* field is
+                // nobody's yet.
+                None => {
+                    self.synth(&init.value);
+                }
+            }
+        }
+        let ty = self.types.named(def, args);
+        let id = self.body.push_expr(ExprKind::Record { def, fields: checked }, ty, span);
+        Typed { id, ty: InferTy::Known(ty) }
+    }
+
+    /// §6's root-level instantiation, for a record literal.
+    ///
+    /// The same rule as a call's and the same refusal: a field whose declared
+    /// type *is* a parameter of the record solves it, and anything deeper does
+    /// not. A const parameter is never solved here at all — the matching of
+    /// [`crate::matching`] is the machinery for it and it wants an obligation to
+    /// discharge, which is `SC0262` and F1's — so it becomes
+    /// [`GenericArg::Error`], which `subst`'s own documentation says is *"the
+    /// same as too few arguments"*.
+    fn instantiate_record(
+        &mut self,
+        generics: &[hir::GenericParam],
+        declared: &[(DefId, Ty)],
+        fields: &[hir::FieldInit],
+    ) -> (Substitution, Vec<GenericArg>) {
+        if generics.is_empty() {
+            return (Substitution::new(), Vec::new());
+        }
+        let mut solved: HashMap<DefId, Ty> = HashMap::new();
+        for init in fields {
+            let Some(field) = init.field.def_id() else { continue };
+            let Some((_, field_ty)) = declared.iter().find(|(id, _)| *id == field) else {
+                continue;
+            };
+            let TyKind::Param { def } = *self.types.kind(*field_ty) else { continue };
+            if solved.contains_key(&def) || !generics.iter().any(|p| p.def == def) {
+                continue;
+            }
+            if let Some(ty) = self.probe(&init.value) {
+                solved.insert(def, ty);
+            }
+        }
+        let mut substitution = Substitution::new();
+        let mut args = Vec::with_capacity(generics.len());
+        for param in generics {
+            match param.kind {
+                hir::GenericParamKind::Type { .. } => {
+                    let ty = solved.get(&param.def).copied().unwrap_or(Ty::ERROR);
+                    substitution = substitution.with_type(param.def, ty);
+                    args.push(GenericArg::Type(ty));
+                }
+                hir::GenericParamKind::Const { .. } => args.push(GenericArg::Error),
+            }
+        }
+        (substitution, args)
+    }
+
+    fn call(&mut self, callee: &hir::Expr, args: &[hir::Arg], span: Span) -> Typed {
+        if let hir::ExprKind::Path { res, generics } = &callee.kind {
+            match named(self.defs, *res) {
+                // `panic` is a prelude name with no `hir::Fn` behind it, so
+                // there is no signature to read `-> Never` off. It is the one
+                // way a body diverges without a `return`, which is the half of
+                // `SC0140`'s fourth exclusion — *"or that panics on every
+                // path"* — that is a property of the body.
+                Some(Named::Function(def)) if Some(def) == self.decls.prelude().panic() => {
+                    let callee = self.body.push_expr(ExprKind::Item(def), Ty::ERROR, span);
+                    let ids = args.iter().map(|arg| self.synth(&arg.value).id).collect();
+                    let id = self
+                        .body
+                        .push_expr(ExprKind::Call { callee, args: ids }, Ty::ERROR, span);
+                    self.diverged = true;
+                    return Typed { id, ty: InferTy::Known(Ty::ERROR) };
+                }
+                Some(Named::Function(def)) if self.decls.signature(def).is_some() => {
+                    return self.call_signature(def, generics, args, span);
+                }
+                Some(Named::Variant(def)) if self.decls.variant(def).is_some() => {
+                    return self.call_variant(def, args, span);
+                }
+                _ => {}
+            }
+        }
+        // A closure value, or something already reported.
+        let callee = self.synth(callee);
+        let callee_ty = self.known_or_error(callee.ty);
+        let revealed = self.revealed(callee_ty, span);
+        if let TyKind::Closure { params, ret } = self.types.kind(revealed).clone() {
+            if params.len() != args.len() {
+                self.diagnostics.push(wrong_argument_count(span, params.len(), args.len()));
+            }
+            let ids = args
+                .iter()
+                .enumerate()
+                .map(|(at, arg)| match params.get(at) {
+                    Some(ty) => self.check(&arg.value, *ty, Site::Argument),
+                    None => self.synth(&arg.value).id,
+                })
+                .collect();
+            let id = self.body.push_expr(ExprKind::Call { callee: callee.id, args: ids }, ret, span);
+            return Typed { id, ty: InferTy::Known(ret) };
+        }
+        let ids = args.iter().map(|arg| self.synth(&arg.value).id).collect();
+        let id =
+            self.body.push_expr(ExprKind::Call { callee: callee.id, args: ids }, Ty::ERROR, span);
+        Typed { id, ty: InferTy::Known(Ty::ERROR) }
+    }
+
+    fn call_signature(
+        &mut self,
+        def: DefId,
+        generics: &[hir::Type],
+        args: &[hir::Arg],
+        span: Span,
+    ) -> Typed {
+        let sig = self.decls.signature(def).expect("checked by the caller");
+        let params: Vec<(DefId, Ty)> =
+            sig.params.iter().map(|param| (param.def, param.ty)).collect();
+        let ret = sig.ret;
+        let declared = sig.generics.clone();
+        let callee = self.body.push_expr(ExprKind::Item(def), Ty::ERROR, span);
+
+        if params.len() != args.len() {
+            self.diagnostics.push(wrong_argument_count(span, params.len(), args.len()));
+        }
+
+        // The arguments in the order the parameters are declared: a label names
+        // a parameter (`docs.sort(by: f)`), and an unlabelled argument takes
+        // the position it is in.
+        let order = self.argument_order(&params, args);
+        let substitution = self.instantiate_call(&declared, generics, &params, args, &order, span);
+
+        let mut ids: Vec<ExprId> = Vec::with_capacity(args.len());
+        for (at, arg) in args.iter().enumerate() {
+            match order[at].and_then(|index| params.get(index).copied()) {
+                Some((_, param_ty)) => {
+                    let param_ty = self.apply(&substitution, param_ty, arg.span);
+                    let param_ty = self.instantiate(param_ty, arg.span);
+                    ids.push(self.check(&arg.value, param_ty, Site::Argument));
+                }
+                None => ids.push(self.synth(&arg.value).id),
+            }
+        }
+        let ret = self.apply(&substitution, ret, span);
+        let ret = self.instantiate(ret, span);
+        let id = self.body.push_expr(ExprKind::Call { callee, args: ids }, ret, span);
+        if !self.decls.prelude().is_never(self.types, ret) {
+            return Typed { id, ty: InferTy::Known(ret) };
+        }
+        // `panic` and anything else declared `-> Never`: control does not come
+        // back, which is what `SC0140`'s fourth exclusion is written against.
+        self.diverged = true;
+        Typed { id, ty: InferTy::Known(ret) }
+    }
+
+    /// Which parameter each argument fills. §6 does not check arity beyond the
+    /// count; this is only the pairing.
+    fn argument_order(
+        &self,
+        params: &[(DefId, Ty)],
+        args: &[hir::Arg],
+    ) -> Vec<Option<usize>> {
+        args.iter()
+            .enumerate()
+            .map(|(at, arg)| match &arg.name {
+                Some(label) => params
+                    .iter()
+                    .position(|(def, _)| self.defs.get(*def).name == label.name)
+                    .or(Some(at)),
+                None => Some(at),
+            })
+            .map(|index| index.filter(|index| *index < params.len()))
+            .collect()
+    }
+
+    /// §6's root-level instantiation of a generic callee.
+    fn instantiate_call(
+        &mut self,
+        declared: &[hir::GenericParam],
+        explicit: &[hir::Type],
+        params: &[(DefId, Ty)],
+        args: &[hir::Arg],
+        order: &[Option<usize>],
+        span: Span,
+    ) -> Substitution {
+        if declared.is_empty() {
+            return Substitution::new();
+        }
+        let mut solved: HashMap<DefId, Ty> = HashMap::new();
+        for (param, written) in declared.iter().zip(explicit) {
+            if matches!(param.kind, hir::GenericParamKind::Type { .. }) {
+                let ty = self.lower_ty(written);
+                solved.insert(param.def, ty);
+            }
+        }
+        // A parameter whose type *is* the generic parameter is solved by the
+        // argument's synthesised type. Anything deeper is §6's hole.
+        for (at, arg) in args.iter().enumerate() {
+            let Some(index) = order[at] else { continue };
+            let Some((_, param_ty)) = params.get(index) else { continue };
+            let TyKind::Param { def } = *self.types.kind(*param_ty) else { continue };
+            if solved.contains_key(&def) || !declared.iter().any(|p| p.def == def) {
+                continue;
+            }
+            // Synthesising the argument here and again at the check below would
+            // build the node twice, so the probe is a *type* question only: it
+            // is asked of a literal's default and of a name's declared type,
+            // which is everything a root-level match can use.
+            if let Some(ty) = self.probe(&arg.value) {
+                solved.insert(def, ty);
+            }
+        }
+        let mut substitution = Substitution::new();
+        for param in declared {
+            match param.kind {
+                hir::GenericParamKind::Type { .. } => {
+                    // Unsolved becomes `Ty::ERROR`, which agrees with whatever
+                    // it meets, so the arguments are still checked against
+                    // something and the call reports nothing it cannot justify.
+                    let ty = solved.get(&param.def).copied().unwrap_or(Ty::ERROR);
+                    substitution = substitution.with_type(param.def, ty);
+                }
+                // A const argument at a call has no inference here: the
+                // one-variable matching of `crate::matching` is the machinery
+                // for it and it wants an obligation to discharge, which is
+                // `SC0262` and F1's.
+                hir::GenericParamKind::Const { .. } => {}
+            }
+        }
+        let _ = span;
+        substitution
+    }
+
+    /// The type of an argument, without building a node for it.
+    ///
+    /// Only the two shapes a root-level match can use — a name whose type is
+    /// declared, and a literal whose suffix fixes it. Everything else is
+    /// `None`, which §6 turns into [`Ty::ERROR`].
+    fn probe(&mut self, expr: &hir::Expr) -> Option<Ty> {
+        match &expr.kind {
+            hir::ExprKind::Path { res, .. } => match named(self.defs, *res)? {
+                Named::Local(def) => self.lookup_local(def)?.known(),
+                Named::Const(def) => self.decls.const_ty(def),
+                _ => None,
+            },
+            hir::ExprKind::Literal(literal) => {
+                let name = match literal {
+                    Literal::Bool(_) => "Bool",
+                    Literal::Str(_) => "String",
+                    Literal::Char(_) => "Char",
+                    Literal::Int { suffix: Some(suffix), .. }
+                    | Literal::Float { suffix: Some(suffix), .. } => suffix_name(*suffix),
+                    _ => return None,
+                };
+                self.decls.prelude().ty(self.types, name)
+            }
+            _ => None,
+        }
+    }
+
+    fn apply(&mut self, substitution: &Substitution, ty: Ty, span: Span) -> Ty {
+        if substitution.is_empty() {
+            return ty;
+        }
+        match substitution.apply(self.types, ty) {
+            Ok(applied) => applied,
+            Err(error) => {
+                self.diagnostics.push(diagnostics::overflowed(error, span));
+                Ty::ERROR
+            }
+        }
+    }
+
+    fn call_variant(&mut self, def: DefId, args: &[hir::Arg], span: Span) -> Typed {
+        let variant = self.decls.variant(def).expect("checked by the caller");
+        let (choice, payload, declared) =
+            (variant.choice, variant.payload.clone(), variant.generics.clone());
+        let callee = self.body.push_expr(ExprKind::Item(def), Ty::ERROR, span);
+        if payload.len() != args.len() {
+            self.diagnostics.push(wrong_argument_count(span, payload.len(), args.len()));
+        }
+        // `Labelled(2, "width")` fixes the `L` of `Tagged of (T, L)`, by the
+        // same root-level rule a call and a record literal use. §6.
+        let (substitution, generic_args) = self.instantiate_payload(&declared, &payload, args);
+        let ids = args
+            .iter()
+            .enumerate()
+            .map(|(at, arg)| match payload.get(at) {
+                Some(ty) => {
+                    let ty = self.apply(&substitution, *ty, arg.span);
+                    let ty = self.instantiate(ty, arg.span);
+                    self.check(&arg.value, ty, Site::Argument)
+                }
+                None => self.synth(&arg.value).id,
+            })
+            .collect();
+        let ty = self.types.named(choice, generic_args);
+        let id = self.body.push_expr(ExprKind::Call { callee, args: ids }, ty, span);
+        Typed { id, ty: InferTy::Known(ty) }
+    }
+
+    /// §6's root-level instantiation, for a variant's positional payload.
+    fn instantiate_payload(
+        &mut self,
+        declared: &[hir::GenericParam],
+        payload: &[Ty],
+        args: &[hir::Arg],
+    ) -> (Substitution, Vec<GenericArg>) {
+        if declared.is_empty() {
+            return (Substitution::new(), Vec::new());
+        }
+        let mut solved: HashMap<DefId, Ty> = HashMap::new();
+        for (at, arg) in args.iter().enumerate() {
+            let Some(param_ty) = payload.get(at) else { continue };
+            let TyKind::Param { def } = *self.types.kind(*param_ty) else { continue };
+            if solved.contains_key(&def) || !declared.iter().any(|p| p.def == def) {
+                continue;
+            }
+            if let Some(ty) = self.probe(&arg.value) {
+                solved.insert(def, ty);
+            }
+        }
+        let mut substitution = Substitution::new();
+        let mut generic_args = Vec::with_capacity(declared.len());
+        for param in declared {
+            match param.kind {
+                hir::GenericParamKind::Type { .. } => {
+                    let ty = solved.get(&param.def).copied().unwrap_or(Ty::ERROR);
+                    substitution = substitution.with_type(param.def, ty);
+                    generic_args.push(GenericArg::Type(ty));
+                }
+                hir::GenericParamKind::Const { .. } => generic_args.push(GenericArg::Error),
+            }
+        }
+        (substitution, generic_args)
+    }
+
+    fn unary(&mut self, op: UnaryOp, operand: &hir::Expr, span: Span) -> Typed {
+        match op {
+            UnaryOp::Not => {
+                let bool_ty = self.bool_ty();
+                let operand = match bool_ty {
+                    Some(ty) => self.check(operand, ty, Site::Elsewhere),
+                    None => self.synth(operand).id,
+                };
+                let ty = bool_ty.unwrap_or(Ty::ERROR);
+                let id = self.body.push_expr(ExprKind::Unary { op, operand }, ty, span);
+                Typed { id, ty: InferTy::Known(ty) }
+            }
+            UnaryOp::Neg => {
+                let typed = self.synth(operand);
+                let ty = typed.ty;
+                self.push_typed(ExprKind::Unary { op, operand: typed.id }, ty, span)
+            }
+        }
+    }
+
+    fn binary(&mut self, op: BinaryOp, lhs: &hir::Expr, rhs: &hir::Expr, span: Span) -> Typed {
+        match op {
+            // The short-circuit pair. The right operand is checked under what
+            // the left one established, which is what makes
+            // `if doc? and doc.title == t` work — `narrow`'s §2.
+            BinaryOp::And | BinaryOp::Or => {
+                let bool_ty = self.bool_ty();
+                let lhs = match bool_ty {
+                    Some(ty) => self.check(lhs, ty, Site::Elsewhere),
+                    None => self.synth(lhs).id,
+                };
+                let outcome = narrow::condition(&self.body, lhs);
+                let saved = self.facts.clone();
+                let gained =
+                    if op == BinaryOp::And { outcome.when_true } else { outcome.when_false };
+                self.facts.absorb(&gained);
+                let rhs = match bool_ty {
+                    Some(ty) => self.check(rhs, ty, Site::Elsewhere),
+                    None => self.synth(rhs).id,
+                };
+                self.facts = saved;
+                let ty = bool_ty.unwrap_or(Ty::ERROR);
+                let id = self.body.push_expr(ExprKind::Binary { op, lhs, rhs }, ty, span);
+                Typed { id, ty: InferTy::Known(ty) }
+            }
+            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le
+            | BinaryOp::Ge => {
+                let left = self.synth(lhs);
+                let right = self.synth(rhs);
+                self.compare(left, right, span);
+                let ty = self.bool_ty().unwrap_or(Ty::ERROR);
+                let id = self
+                    .body
+                    .push_expr(ExprKind::Binary { op, lhs: left.id, rhs: right.id }, ty, span);
+                Typed { id, ty: InferTy::Known(ty) }
+            }
+            // §6: an operator on a user type is the matching interface, which
+            // is Decision 11's. On the prelude's numerics it is not, so those
+            // are answered structurally and the rest is `Ty::ERROR`.
+            _ => {
+                let left = self.synth(lhs);
+                let right = self.synth(rhs);
+                let ty = match self.infer.unify(self.types, left.ty, right.ty) {
+                    Ok(unified) => unified,
+                    Err(_) => {
+                        let (found, expected) =
+                            (self.known_or_error(right.ty), self.known_or_error(left.ty));
+                        self.mismatch(found, expected, span);
+                        InferTy::Known(Ty::ERROR)
+                    }
+                };
+                let ty = match ty {
+                    InferTy::Known(known) if self.is_operand_type(known) => InferTy::Known(known),
+                    InferTy::Known(_) => InferTy::Known(Ty::ERROR),
+                    InferTy::Var(var) => InferTy::Var(var),
+                };
+                self.push_typed(ExprKind::Binary { op, lhs: left.id, rhs: right.id }, ty, span)
+            }
+        }
+    }
+
+    /// Whether the two sides of a comparison are the same thing.
+    ///
+    /// **Compared through a borrow, and neither side is coerced.** §5.4 makes
+    /// `a is b` and `a == b` one operator dispatching to `Eq`, whose method
+    /// takes `borrowed self` and a borrowed argument — so at the call site
+    /// §6.3's auto-borrow means the author writes neither `borrowed`, and
+    /// `name is ""` compares a `borrowed String` with a `String` in the source
+    /// and two `String`s in the call. Demanding that the two *written* types
+    /// agree reports on the borrow the language told the author to leave out.
+    ///
+    /// **What this phase can still say** is that the two values are the same
+    /// type once those borrows are stripped. What it cannot say is whether the
+    /// type implements `Eq` at all — Decision 11 — so a comparison of two
+    /// records is silent here and is `SC0525`'s sibling once the lookup exists.
+    fn compare(&mut self, left: Typed, right: Typed, span: Span) {
+        match (left.ty, right.ty) {
+            (InferTy::Known(l), InferTy::Known(r)) => {
+                let (peeled_left, peeled_right) =
+                    (self.peel_borrow(l, span), self.peel_borrow(r, span));
+                if !self.types.compatible(peeled_left, peeled_right) {
+                    self.mismatch(r, l, span);
+                }
+            }
+            (InferTy::Var(var), InferTy::Known(known))
+            | (InferTy::Known(known), InferTy::Var(var)) => {
+                let peeled = self.peel_borrow(known, span);
+                if self.literal_admits(var, peeled, span) {
+                    let _ = self.infer.bind(self.types, var, peeled);
+                } else {
+                    let found = self.numeric_name(var);
+                    let expected = self.types.render(self.defs, known);
+                    self.diagnostics.push(mismatched_types(span, &expected, found));
+                }
+            }
+            (InferTy::Var(_), InferTy::Var(_)) => {
+                let _ = self.infer.unify(self.types, left.ty, right.ty);
+            }
+        }
+    }
+
+    /// The type behind however many borrows, revealed at each step.
+    fn peel_borrow(&mut self, ty: Ty, span: Span) -> Ty {
+        let mut current = self.revealed(ty, span);
+        while let TyKind::Borrowed { inner, .. } = *self.types.kind(current) {
+            current = self.revealed(inner, span);
+        }
+        current
+    }
+
+    /// Whether an operator's result type is one this phase can name.
+    ///
+    /// A prelude numeric, or a type it cannot classify — a parameter, `Self`,
+    /// an already-erroneous type. A record is not: `a + b` on one is the `Add`
+    /// interface and §6 refuses to guess.
+    fn is_operand_type(&self, ty: Ty) -> bool {
+        self.types.references_error(ty)
+            || !self.decls.prelude().is_available()
+            || self.decls.prelude().is_numeric(self.types, ty)
+            || !is_prelude_named(self.types, ty)
+    }
+
+    fn present(&mut self, inner: &hir::Expr, span: Span) -> Typed {
+        let typed = self.synth(inner);
+        let inner_ty = self.known_or_error(typed.ty);
+        let revealed = self.revealed(inner_ty, span);
+        if !matches!(self.types.kind(revealed), TyKind::Nullable(_))
+            && !self.types.references_error(revealed)
+            && is_prelude_named(self.types, revealed)
+        {
+            let rendered = self.types.render(self.defs, inner_ty);
+            self.diagnostics.push(not_nullable(span, &rendered));
+        }
+        let ty = self.bool_ty().unwrap_or(Ty::ERROR);
+        let id = self.body.push_expr(ExprKind::Present(typed.id), ty, span);
+        Typed { id, ty: InferTy::Known(ty) }
+    }
+
+    fn closure(
+        &mut self,
+        param: DefId,
+        body: &hir::Expr,
+        span: Span,
+        expected: Option<Ty>,
+    ) -> Typed {
+        let expected = expected.map(|ty| self.revealed(ty, span));
+        let (param_ty, ret) = match expected.map(|ty| self.types.kind(ty).clone()) {
+            Some(TyKind::Closure { params, ret }) => (params.first().copied(), Some(ret)),
+            // §6: a closure in synthesis mode has no parameter type to take.
+            _ => (None, None),
+        };
+        self.bind_local(param, InferTy::Known(param_ty.unwrap_or(Ty::ERROR)));
+        let body_id = match ret {
+            Some(ret) => self.check(body, ret, Site::Return),
+            None => self.synth(body).id,
+        };
+        let body_ty = self.body.ty(body_id);
+        let ty = match (param_ty, ret) {
+            (Some(param_ty), Some(ret)) => self.types.closure(vec![param_ty], ret),
+            _ => self.types.closure(vec![param_ty.unwrap_or(Ty::ERROR)], body_ty),
+        };
+        let id = self.body.push_expr(ExprKind::Closure { param, body: body_id }, ty, span);
+        Typed { id, ty: InferTy::Known(ty) }
+    }
+
+    // --- control flow, which is where narrowing happens -------------------
+
+    fn if_expr(
+        &mut self,
+        if_expr: &hir::IfExpr,
+        span: Span,
+        expected: Option<(Ty, Site)>,
+    ) -> Typed {
+        let bool_ty = self.bool_ty();
+        let cond = match bool_ty {
+            Some(ty) => self.check(&if_expr.cond, ty, Site::Elsewhere),
+            None => self.synth(&if_expr.cond).id,
+        };
+        let outcome = narrow::condition(&self.body, cond);
+        let entry = self.facts.clone();
+
+        self.facts = entry.clone();
+        self.facts.absorb(&outcome.when_true);
+        self.diverged = false;
+        let then_block = self.body.reserve_block(if_expr.then_branch.span);
+        let filled = self.block(&if_expr.then_branch, expected);
+        let then_ty = filled.tail.map(|tail| self.body.ty(tail)).unwrap_or(Ty::UNIT);
+        self.body.fill_block(then_block, filled);
+        let then_diverges = self.diverged;
+        let then_facts = std::mem::take(&mut self.facts);
+
+        let (else_branch, else_ty, else_diverges, else_facts) = match &if_expr.else_branch {
+            Some(otherwise) => {
+                self.facts = entry;
+                self.facts.absorb(&outcome.when_false);
+                self.diverged = false;
+                let id = match expected {
+                    Some((ty, site)) => self.check(otherwise, ty, site),
+                    None => self.synth(otherwise).id,
+                };
+                let ty = self.body.ty(id);
+                (Some(id), ty, self.diverged, std::mem::take(&mut self.facts))
+            }
+            None => {
+                let mut facts = entry;
+                facts.absorb(&outcome.when_false);
+                (None, Ty::UNIT, false, facts)
+            }
+        };
+
+        // §4.2's third rule: a diverging branch contributes nothing, which is
+        // what leaves `if err?: return err` with `err` known null afterwards.
+        self.facts = Facts::join(then_facts, then_diverges, else_facts, else_diverges);
+        self.diverged = then_diverges && else_diverges;
+
+        let ty = match expected {
+            Some((ty, _)) => ty,
+            None if else_branch.is_some() && !then_diverges => then_ty,
+            None if else_branch.is_some() => else_ty,
+            None => Ty::UNIT,
+        };
+        let id = self.body.push_expr(
+            ExprKind::If { cond, then_branch: then_block, else_branch },
+            ty,
+            span,
+        );
+        Typed { id, ty: InferTy::Known(ty) }
+    }
+
+    fn match_expr(
+        &mut self,
+        match_expr: &hir::MatchExpr,
+        span: Span,
+        expected: Option<(Ty, Site)>,
+    ) -> Typed {
+        let scrutinee = self.synth(&match_expr.scrutinee);
+        let scrutinee_ty = self.known_or_error(scrutinee.ty);
+        let entry = self.facts.clone();
+        let mut arms = Vec::with_capacity(match_expr.arms.len());
+        let mut arm_ty = None;
+        let mut all_diverge = !match_expr.arms.is_empty();
+        let mut joined: Option<Facts> = None;
+        for arm in &match_expr.arms {
+            self.facts = entry.clone();
+            self.diverged = false;
+            let pattern = self.pattern(&arm.pattern, scrutinee_ty);
+            let body = match expected {
+                Some((ty, site)) => self.check(&arm.body, ty, site),
+                None => self.synth(&arm.body).id,
+            };
+            if arm_ty.is_none() {
+                arm_ty = Some(self.body.ty(body));
+            }
+            if !self.diverged {
+                all_diverge = false;
+                let facts = self.facts.clone();
+                joined = Some(match joined {
+                    Some(existing) => existing.meet(&facts),
+                    None => facts,
+                });
+            }
+            arms.push(thir::Arm { pattern, body, span: arm.span });
+        }
+        self.facts = joined.unwrap_or(entry);
+        self.diverged = all_diverge;
+        let ty = expected.map(|(ty, _)| ty).or(arm_ty).unwrap_or(Ty::UNIT);
+        let id = self
+            .body
+            .push_expr(ExprKind::Match { scrutinee: scrutinee.id, arms }, ty, span);
+        Typed { id, ty: InferTy::Known(ty) }
+    }
+
+    fn loop_expr(&mut self, body: &hir::Block, span: Span) -> Typed {
+        // §3 of `narrow`: the meet at the loop head, computed by subtracting
+        // before the body is entered.
+        for root in narrow::clobbered_roots(body) {
+            self.facts.invalidate_root(root);
+        }
+        let entry = self.facts.clone();
+        self.breaks.push(false);
+        let block = self.body.reserve_block(body.span);
+        let filled = self.block(body, None);
+        self.body.fill_block(block, filled);
+        let saw_break = self.breaks.pop().unwrap_or(true);
+        // Facts the body establishes do not survive the back edge. §3.
+        self.facts = entry;
+        self.diverged = !saw_break;
+        // §6: a `loop` has no value.
+        let id = self.body.push_expr(ExprKind::Loop { body: block }, Ty::UNIT, span);
+        Typed { id, ty: InferTy::Known(Ty::UNIT) }
+    }
+
+    fn for_expr(
+        &mut self,
+        pattern: &hir::Pattern,
+        iter: &hir::Expr,
+        body: &hir::Block,
+        span: Span,
+    ) -> Typed {
+        let iter = self.synth(iter).id;
+        for root in narrow::clobbered_roots(body) {
+            self.facts.invalidate_root(root);
+        }
+        let entry = self.facts.clone();
+        // §6: `Iterate` is Decision 11's, so the element type is unknown.
+        let pattern = self.pattern(pattern, Ty::ERROR);
+        self.breaks.push(false);
+        let block = self.body.reserve_block(body.span);
+        let filled = self.block(body, None);
+        self.body.fill_block(block, filled);
+        self.breaks.pop();
+        self.facts = entry;
+        // A `for` may iterate zero times, so it never diverges.
+        self.diverged = false;
+        let id = self.body.push_expr(ExprKind::For { pattern, iter, body: block }, Ty::UNIT, span);
+        Typed { id, ty: InferTy::Known(Ty::UNIT) }
+    }
+
+    fn block(&mut self, block: &hir::Block, expected: Option<(Ty, Site)>) -> Block {
+        let mut stmts = Vec::with_capacity(block.stmts.len());
+        for stmt in &block.stmts {
+            let kind = self.stmt(stmt);
+            stmts.push(Stmt { kind, span: stmt.span });
+        }
+        let tail = block.tail.as_ref().map(|tail| match expected {
+            Some((ty, site)) => self.check(tail, ty, site),
+            None => self.synth(tail).id,
+        });
+        // A block with no tail evaluates to `()`. A body whose signature says
+        // otherwise and that has not already left is a mismatch, and it is
+        // reported here because it is the one place both facts are in hand.
+        if tail.is_none() && !self.diverged {
+            if let Some((ty, _)) = expected {
+                let revealed = self.revealed(ty, block.span);
+                if !self.types.compatible(Ty::UNIT, revealed) {
+                    self.mismatch(Ty::UNIT, ty, block.span);
+                }
+            }
+        }
+        Block { stmts, tail, span: block.span }
+    }
+
+    fn stmt(&mut self, stmt: &hir::Stmt) -> StmtKind {
+        match &stmt.kind {
+            hir::StmtKind::Let(binding) => self.let_stmt(binding),
+            hir::StmtKind::Expr(expr) => {
+                let typed = self.synth(expr);
+                StmtKind::Expr(typed.id)
+            }
+            hir::StmtKind::Assign { target, value } => {
+                let target = self.synth(target);
+                let want = self.known_or_error(target.ty);
+                let value = self.check(value, want, Site::Elsewhere);
+                // Decision 7: a write invalidates the place and everything
+                // projected from it.
+                if let Some(place) = self.body.place_of(target.id) {
+                    self.facts.invalidate(&place);
+                }
+                StmtKind::Assign { target: target.id, value }
+            }
+            hir::StmtKind::Return(value) => {
+                let ret = self.ret;
+                let value = match value {
+                    Some(value) => Some(self.check(value, ret, Site::Return)),
+                    None => {
+                        let revealed = self.revealed(ret, stmt.span);
+                        if !self.types.compatible(Ty::UNIT, revealed) {
+                            self.mismatch(Ty::UNIT, ret, stmt.span);
+                        }
+                        None
+                    }
+                };
+                self.diverged = true;
+                StmtKind::Return(value)
+            }
+            hir::StmtKind::Break(value) => {
+                // §6: a `loop`'s value is not inferred, so the operand is
+                // synthesised and its type discarded.
+                let value = value.as_ref().map(|value| self.synth(value).id);
+                if let Some(seen) = self.breaks.last_mut() {
+                    *seen = true;
+                }
+                self.diverged = true;
+                StmtKind::Break(value)
+            }
+            hir::StmtKind::Continue => {
+                self.diverged = true;
+                StmtKind::Continue
+            }
+            hir::StmtKind::Error => StmtKind::Error,
+        }
+    }
+
+    fn let_stmt(&mut self, binding: &hir::Let) -> StmtKind {
+        let written: Vec<Option<hir::Type>> =
+            binding.bindings.iter().map(|bound| bound.ty.clone()).collect();
+        let annotations: Vec<Option<Ty>> =
+            written.iter().map(|ty| ty.as_ref().map(|ty| self.lower_ty(ty))).collect();
+
+        let value = if binding.bindings.len() == 1 {
+            match annotations[0] {
+                Some(ty) => {
+                    let id = self.check(&binding.value, ty, Site::Elsewhere);
+                    self.bind_local(binding.bindings[0].def, InferTy::Known(ty));
+                    id
+                }
+                None => {
+                    let typed = self.synth(&binding.value);
+                    self.bind_local(binding.bindings[0].def, typed.ty);
+                    typed.id
+                }
+            }
+        } else {
+            // Revision 2 §3.1's pair. The resolver knew the binding count and
+            // nothing about the initialiser's type, and said in as many words
+            // that *"the arity check belongs to `science-types`"*. This is it.
+            let expected = if annotations.iter().all(Option::is_some) {
+                let elements: Vec<Ty> = annotations.iter().map(|ty| ty.unwrap()).collect();
+                Some(self.types.tuple(elements))
+            } else {
+                None
+            };
+            let (id, ty) = match expected {
+                Some(ty) => (self.check(&binding.value, ty, Site::Elsewhere), ty),
+                None => {
+                    let typed = self.synth(&binding.value);
+                    let ty = self.known_or_error(typed.ty);
+                    (typed.id, ty)
+                }
+            };
+            let revealed = self.revealed(ty, binding.span);
+            let elements = match self.types.kind(revealed).clone() {
+                TyKind::Tuple(elements) => Some(elements),
+                _ => None,
+            };
+            match elements {
+                Some(elements) if elements.len() == binding.bindings.len() => {
+                    for (at, bound) in binding.bindings.iter().enumerate() {
+                        let ty = annotations[at].unwrap_or(elements[at]);
+                        self.bind_local(bound.def, InferTy::Known(ty));
+                    }
+                }
+                found => {
+                    if !self.types.references_error(revealed) {
+                        let rendered = self.types.render(self.defs, ty);
+                        self.diagnostics.push(binding_count(
+                            binding.span,
+                            binding.bindings.len(),
+                            found.as_ref().map(|e| e.len()),
+                            &rendered,
+                        ));
+                    }
+                    for (at, bound) in binding.bindings.iter().enumerate() {
+                        let ty = annotations[at].unwrap_or(Ty::ERROR);
+                        self.bind_local(bound.def, InferTy::Known(ty));
+                    }
+                }
+            }
+            id
+        };
+        StmtKind::Let { bindings: binding.bindings.iter().map(|b| b.def).collect(), value }
+    }
+
+    fn pattern(&mut self, pattern: &hir::Pattern, scrutinee: Ty) -> PatId {
+        let span = pattern.span;
+        match &pattern.kind {
+            hir::PatternKind::Wildcard => self.body.push_pat(PatKind::Wildcard, scrutinee, span),
+            hir::PatternKind::Literal(literal) => {
+                self.body.push_pat(PatKind::Literal(literal.clone()), scrutinee, span)
+            }
+            hir::PatternKind::Binding { mutable, def } => {
+                self.bind_local(*def, InferTy::Known(scrutinee));
+                self.body.push_pat(
+                    PatKind::Binding { mutable: *mutable, def: *def },
+                    scrutinee,
+                    span,
+                )
+            }
+            hir::PatternKind::Variant { res, elems } => {
+                let def = res.def_id();
+                let payload = def
+                    .and_then(|def| self.decls.variant(def))
+                    .map(|variant| variant.payload.clone())
+                    .unwrap_or_default();
+                let elems = elems
+                    .iter()
+                    .enumerate()
+                    .map(|(at, elem)| {
+                        let ty = payload.get(at).copied().unwrap_or(Ty::ERROR);
+                        self.pattern(elem, ty)
+                    })
+                    .collect();
+                self.body.push_pat(PatKind::Variant { def, elems }, scrutinee, span)
+            }
+            hir::PatternKind::Struct { res, fields } => {
+                let def = res.def_id();
+                let declared = def
+                    .and_then(|def| self.decls.record(def))
+                    .map(|record| record.fields.clone())
+                    .unwrap_or_default();
+                let fields = fields
+                    .iter()
+                    .filter_map(|field| {
+                        let id = field.field.def_id()?;
+                        let ty = declared
+                            .iter()
+                            .find(|(known, _)| *known == id)
+                            .map(|(_, ty)| *ty)
+                            .unwrap_or(Ty::ERROR);
+                        Some((id, self.pattern(&field.pattern, ty)))
+                    })
+                    .collect();
+                self.body.push_pat(PatKind::Record { def, fields }, scrutinee, span)
+            }
+            hir::PatternKind::Tuple(elements) => {
+                let revealed = self.revealed(scrutinee, span);
+                let tys = match self.types.kind(revealed).clone() {
+                    TyKind::Tuple(tys) if tys.len() == elements.len() => tys,
+                    _ => vec![Ty::ERROR; elements.len()],
+                };
+                let elements = elements
+                    .iter()
+                    .zip(tys)
+                    .map(|(element, ty)| self.pattern(element, ty))
+                    .collect();
+                self.body.push_pat(PatKind::Tuple(elements), scrutinee, span)
+            }
+            hir::PatternKind::Unit => self.body.push_pat(PatKind::Unit, Ty::UNIT, span),
+            hir::PatternKind::Or(alternatives) => {
+                let alternatives =
+                    alternatives.iter().map(|p| self.pattern(p, scrutinee)).collect();
+                self.body.push_pat(PatKind::Or(alternatives), scrutinee, span)
+            }
+            hir::PatternKind::Error => self.body.push_pat(PatKind::Error, Ty::ERROR, span),
+        }
+    }
+
+    // --- bookkeeping ------------------------------------------------------
+
+    fn bind_local(&mut self, def: DefId, ty: InferTy) {
+        let stored = self.known_or_error(ty);
+        self.locals.push((def, ty));
+        self.body.declare_local(def, stored);
+    }
+
+    fn lookup_local(&self, def: DefId) -> Option<InferTy> {
+        self.locals.iter().rev().find(|(id, _)| *id == def).map(|(_, ty)| *ty)
+    }
+
+    fn local_ty(&mut self, def: DefId) -> InferTy {
+        match self.lookup_local(def) {
+            Some(ty) => self.infer.resolve(ty),
+            // A binding this body did not introduce: a capture the resolver
+            // admitted, or a name already reported.
+            None => InferTy::Known(Ty::ERROR),
+        }
+    }
+
+    fn known_or_error(&mut self, ty: InferTy) -> Ty {
+        match self.infer.resolve(ty) {
+            InferTy::Known(known) => known,
+            InferTy::Var(_) => Ty::ERROR,
+        }
+    }
+
+    /// Pushes a node whose type may still be a variable, and records it for
+    /// §4's writeback if it is.
+    fn push_typed(&mut self, kind: ExprKind, ty: InferTy, span: Span) -> Typed {
+        let stored = self.known_or_error(ty);
+        let id = self.body.push_expr(kind, stored, span);
+        self.record_pending(id, ty);
+        Typed { id, ty }
+    }
+
+    fn record_pending(&mut self, id: ExprId, ty: InferTy) {
+        if let InferTy::Var(var) = ty {
+            self.pending.push((id, var));
+        }
+    }
+
+    fn bool_ty(&mut self) -> Option<Ty> {
+        self.decls.prelude().ty(self.types, "Bool")
+    }
+
+    fn error_expr(&mut self, span: Span) -> Typed {
+        let id = self.body.push_expr(ExprKind::Error, Ty::ERROR, span);
+        Typed { id, ty: InferTy::Known(Ty::ERROR) }
+    }
+}
+
+/// One [`GenericArg`] per declared parameter, all unknown.
+///
+/// `ty`'s §5 is the whole of why this is right: an erroneous type agrees with
+/// whatever it meets, so a `Bound of {unknown}` fits a `Bound of Int` slot and
+/// says nothing, where a `Bound` with *no* arguments would be a different type
+/// and would say something false.
+fn unknown_args(declared: &[hir::GenericParam]) -> Vec<GenericArg> {
+    declared
+        .iter()
+        .map(|param| match param.kind {
+            hir::GenericParamKind::Type { .. } => GenericArg::Type(Ty::ERROR),
+            hir::GenericParamKind::Const { .. } => GenericArg::Error,
+        })
+        .collect()
+}
+
+/// Whether a type is a prelude-shaped name this phase can classify.
+///
+/// A [`TyKind::Param`], a `Self`, a closure or a tuple is *not*, and §5 admits a
+/// literal at one rather than guessing.
+fn is_prelude_named(types: &Types, ty: Ty) -> bool {
+    matches!(types.kind(ty), TyKind::Named { .. })
+}
+
+/// Two literal kinds in one inference class. An integer literal unified with a
+/// float one is a float: `1 + 2.0` is the case, and the integer is the one that
+/// can be represented exactly in the other's type.
+fn widen_numeric(left: Numeric, right: Numeric) -> Numeric {
+    match (left, right) {
+        (Numeric::Null, other) | (other, Numeric::Null) => other,
+        (Numeric::Float, _) | (_, Numeric::Float) => Numeric::Float,
+        _ => Numeric::Integer,
+    }
+}
+
+fn suffix_name(suffix: NumSuffix) -> &'static str {
+    match suffix {
+        NumSuffix::I8 => "I8",
+        NumSuffix::I16 => "I16",
+        NumSuffix::I32 => "I32",
+        NumSuffix::I64 => "I64",
+        NumSuffix::U8 => "U8",
+        NumSuffix::U16 => "U16",
+        NumSuffix::U32 => "U32",
+        NumSuffix::U64 => "U64",
+        NumSuffix::F32 => "F32",
+        NumSuffix::F64 => "F64",
+    }
+}
+
+
+// --- the diagnostics this phase owns -------------------------------------
+
+/// `SC0525` — the bidirectional checker's central message.
+///
+/// It names the *declared* type first because Decision 1's first dividend is
+/// that *"error messages can name a declared type"*: the expectation came from
+/// an annotation a human wrote, and putting it first is what makes the message
+/// about that annotation rather than about the compiler's state.
+fn mismatched_types(span: Span, expected: &str, found: &str) -> Diagnostic {
+    Diagnostic::error(codes::MISMATCHED_TYPES, format!("expected `{expected}`, found `{found}`"))
+        .with_label(Label::primary(span, format!("this is `{found}`")))
+}
+
+/// `SC0526` — a class of inference variables that never got a type. §4.
+fn cannot_infer(span: Span) -> Diagnostic {
+    Diagnostic::error(codes::TYPE_ANNOTATIONS_NEEDED, "the type of this value cannot be inferred")
+        .with_label(Label::primary(span, "no annotation and nothing to infer from"))
+        .with_note(
+            "inference is local to one body (§5.2) and works from the root of a type outward, \
+             so a value whose type is a hole inside a known constructor needs the annotation \
+             written",
+        )
+}
+
+/// `SC0527` — a call with the wrong number of arguments.
+fn wrong_argument_count(span: Span, expected: usize, found: usize) -> Diagnostic {
+    let plural = if expected == 1 { "" } else { "s" };
+    Diagnostic::error(
+        codes::WRONG_ARGUMENT_COUNT,
+        format!("this call takes {expected} argument{plural} and was given {found}"),
+    )
+    .with_label(Label::primary(span, format!("{found} given")))
+}
+
+/// `SC0528` — a field the type does not have.
+fn no_such_field(span: Span, name: &str, ty: &str) -> Diagnostic {
+    Diagnostic::error(codes::NO_SUCH_FIELD, format!("`{ty}` has no field `{name}`"))
+        .with_label(Label::primary(span, "no such field"))
+}
+
+/// `SC0529` — `let a, b be f()` against something that is not a pair.
+///
+/// The resolver's `LetBinding` documentation hands this check here by name:
+/// *"whether the value actually is a tuple of the right width is not checked
+/// here … the arity check belongs to `science-types`"*.
+fn binding_count(span: Span, wanted: usize, found: Option<usize>, ty: &str) -> Diagnostic {
+    let message = match found {
+        Some(found) => format!("this `let` binds {wanted} names and the value has {found} parts"),
+        None => format!("this `let` binds {wanted} names and the value is not a tuple"),
+    };
+    Diagnostic::error(codes::BINDING_COUNT_MISMATCH, message)
+        .with_label(Label::primary(span, format!("the value is `{ty}`")))
+}
+
+/// `SC0530` — `e?` where `e` cannot be absent.
+fn not_nullable(span: Span, ty: &str) -> Diagnostic {
+    Diagnostic::error(codes::PRESENCE_TEST_ON_NON_NULLABLE, "this value is never absent")
+        .with_label(Label::primary(span, format!("`{ty}` is not a nullable type")))
+        .with_note("`?` tests a `T?` for a value; on a `T` it is always true")
+}

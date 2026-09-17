@@ -6,8 +6,8 @@ license.workspace = true
 
 [dependencies]
 science-diagnostics.workspace = true
+science-lexer.workspace = true
 science-resolve.workspace = true
 
 [dev-dependencies]
-science-lexer.workspace = true
 science-parser.workspace = true

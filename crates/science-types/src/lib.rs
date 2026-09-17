@@ -1,6 +1,7 @@
 //! `science-types` — the type checker, starting with its representation.
 //!
-//! This crate holds two layers and no checking. The first is the one thing
+//! This crate holds four layers, and the first three were built before the
+//! fourth walked an expression. The first is the one thing
 //! `const-expression-arithmetic.md` §10.1 says has to exist *before* a type
 //! checker is written: **the const-expression normal form**, `k + Σ cᵢ·aᵢ`,
 //! and the four commitments that hang off it.
@@ -33,7 +34,22 @@
 //! | §8 of [`ty`] | substitution, the type half and the const half together | [`subst`] |
 //!
 //! [`fold`] is the traversal the last two share, and §5 below is the seam the
-//! phase after this one starts at.
+//! fourth layer started at.
+//!
+//! The fourth is **the checking itself** — everything §5 said the next phase
+//! owned, which is now this one:
+//!
+//! | Note | What it is | Where it lives |
+//! |---|---|---|
+//! | Decision 3 | THIR: a type on every node, conversions explicit | [`thir`] |
+//! | Decision 1 | bidirectional checking, one [`Inference`] per body | [`check`] |
+//! | Decisions 7, 8 | flow narrowing over places, and rule 4's dependency | [`narrow`] |
+//! | Decisions 9, 10 | `SC0140`, with §5's four exclusions | [`unchecked`] |
+//! | §12 | the seam for MIR, stated as §5 states this one | [`thir`]'s §5 |
+//!
+//! [`items`] is the table of lowered declarations the fourth layer checks
+//! against, and it exists so that an annotation is lowered — and complained
+//! about — once rather than once per caller.
 //!
 //! The second layer is the first layer's first consumer, and that is the point
 //! of the ordering: `Matrix of (T, a + 1)` and `Matrix of (T, 1 + a)` become
@@ -86,25 +102,30 @@
 //!   everything its message needs, but the instantiation chain that makes the
 //!   diagnostic survivable is F1's, and a chain rendered before there is a
 //!   monomorphiser to walk would render whatever this crate happened to keep.
-//! - **Bidirectional checking, THIR, MIR, monomorphisation, method lookup,
-//!   narrowing, exhaustiveness.** None of it, and nothing here walks an
-//!   expression. The third layer stops one step short: it holds the inference
-//!   *variables* and not the rule that makes one, the assignability *relation*
-//!   and not the site that asks it, the substitution and not the call that
-//!   builds it. §5 states that seam precisely, because the next phase starts at
-//!   it and a seam a reader has to guess at is a seam that moves.
+//! - **MIR, monomorphisation, method lookup, exhaustiveness.** None of it.
+//!   [`thir`]'s §5 states the seam MIR starts at to the standard §5 below sets,
+//!   and names which of `region-inference.md` §10's six requirements THIR can
+//!   guarantee and which are MIR's by construction. Method lookup — Decision 11
+//!   — is the hole everything else in the fourth layer is shaped around:
+//!   [`check`]'s §6 prices it, and it is why `doc.title()` has no type and
+//!   `doc.title` does.
 //!
-//! # 4. Almost nothing calls any of this yet
+//! # 4. What calls this
 //!
-//! That is expected and it is the point of §10.1: these are the things that
-//! are cheap now and expensive later. The test suite is the only consumer, and
-//! it is written as the consumer the checker will be.
+//! The first three layers were written before there was a caller, which is the
+//! point of §10.1: they are the things that are cheap now and expensive later.
+//! The fourth layer is that caller. [`check::check_crate`] is the entry point —
+//! declarations, then bodies, then the THIR analyses — and every obligation §5
+//! raised below is now discharged by a named function, or is still open and
+//! said so in [`check`]'s §6.
 //!
-//! # 5. The seam, for the phase that starts at it
+//! # 5. The seam, as it was stated — and as it was taken up
 //!
-//! [`ty`]'s §8 stated the seam this layer was written against. This is the next
-//! one, stated to the same standard, because the phase after this one walks
-//! expressions and nothing here does.
+//! [`ty`]'s §8 stated the seam the third layer was written against. This was the
+//! next one, and it is left standing rather than rewritten, because a seam is
+//! worth more as a record of what was promised than as a description of what
+//! was built. Each item below now names the thing that took it up; where the
+//! answer is *"not yet"*, it says so.
 //!
 //! **The order of operations at an annotation** is fixed and is three calls:
 //! [`TypeLowerer::lower`] turns a `hir::Type` into a [`Ty`];
@@ -114,27 +135,39 @@
 //! type — it is `Embedding` failing to match `Array of F32` at one site in ten,
 //! wherever the author happened to write the alias.
 //!
-//! **What the next phase owns, and what each of them needs from here:**
+//! **What the next phase owns, and what took each of them up:**
 //!
 //! - **`check_expr` and `synth_expr`** call [`assignable`], and owe it the
 //!   [`Site`] at every use. Passing one everywhere removes a decision from the
 //!   language in silence; [`assign`]'s §5 names both directions of that.
+//!   — *Taken up by [`check`]'s §1, which funnels every call through one
+//!   function so that there is one thing to audit.*
 //! - **A `return` and a call argument** are the two sites that box, and the
 //!   coercion applies to *each element* of a returned tuple rather than to the
 //!   tuple — [`assign`]'s §2, which is Decision 14's own example.
+//!   — *Taken up by [`check`]'s §2, and tested by name.*
 //! - **The body's variables** are an [`Inference`], one per body, dropped with
-//!   it. [`infer`]'s §1.
+//!   it. [`infer`]'s §1. — *[`check`]'s §3.*
 //! - **Decision 2's defaulting** walks [`Inference::unresolved`] at the end of
 //!   the body and needs the prelude's ids for `I64` and `F64`.
+//!   — *[`check`]'s §4, with [`items::Prelude`] finding the ids the way
+//!   [`Coercions`] already found `Error`.*
 //! - **A call to a generic** builds a [`Substitution::of_generics`] and owes
 //!   the **arity and kind check**, which `lowering`'s §1 defers to whoever
 //!   holds the declaration and the use at once. This layer zips and does not
-//!   check.
+//!   check. — ***Still open.*** [`items`] holds the declaration and [`check`]
+//!   holds the use, and neither checks: [`check`]'s §6 says why, and the
+//!   inference of an omitted type argument is root-level only for the reason
+//!   [`infer`]'s §2 gives.
 //! - **Method lookup (Decision 11)** supplies [`Substitution::with_self`] with
 //!   the implementation block, which is the `owner` a `SelfType` already
-//!   carries.
+//!   carries. — ***Still open***, and it is the largest hole in the crate.
+//!   [`check::check_fn`] does build the `Self` substitution from the owner, so
+//!   a method *body* checks; a method *call* does not resolve.
 //! - **`SC0140`, `SC0521`, `SC0522`, narrowing and exhaustiveness** need an
-//!   expression, which this crate has never had.
+//!   expression, which this crate has never had. — *`SC0140` is [`unchecked`],
+//!   narrowing is [`narrow`]. `SC0521`, `SC0522` and exhaustiveness are still
+//!   open, and the `codes` module below says what each is waiting for.*
 //!
 //! **Three obligations this layer raises and cannot discharge**, each named
 //! where it is raised rather than collected into a list nobody reads:
@@ -159,27 +192,36 @@
 
 pub mod alias;
 pub mod assign;
+pub mod check;
 pub mod const_expr;
 pub mod diagnostics;
 pub mod fold;
 pub mod infer;
+pub mod items;
 pub mod lowering;
 pub mod matching;
 pub mod mono;
+pub mod narrow;
 pub mod normal;
 pub mod subst;
+pub mod thir;
 pub mod ty;
+pub mod unchecked;
 
 pub use alias::Aliases;
 pub use assign::{assignable, Coercion, Coercions, Site};
+pub use check::{check_crate, check_fn};
 pub use const_expr::{lower, ConstExpr, ConstExprKind};
 pub use fold::{fold_children, TypeFolder};
 pub use infer::{InferTy, InferVar, Inference, UnifyError};
+pub use items::{Declarations, Prelude, Signature};
 pub use lowering::TypeLowerer;
 pub use matching::{match_linear, Match, MatchError};
 pub use mono::MonoKey;
+pub use narrow::{Fact, Facts};
 pub use normal::{equal, normalise, Atom, AtomOrder, ConstEvalError, NormalForm, Term};
 pub use subst::Substitution;
+pub use thir::{Body, ExprId, ExprKind, Place};
 pub use ty::{GenericArg, Ty, TyKind, Types};
 
 /// The diagnostics this crate emits.
@@ -275,9 +317,134 @@ pub mod codes {
     pub const CYCLIC_ALIAS: Code = Code(524);
 
     // `SC0521` (`TryIterate` outside a failure context) and `SC0522` (a
-    // generic function across the C boundary) are §13's and are deliberately
-    // not defined here. Both are conditions about an *expression* — a `for`
-    // loop, a callback argument — and this crate has no expressions. A code
-    // defined before the phase that reports it is a code whose message is
-    // written against a guess.
+    // generic function across the C boundary) are §13's and are **still**
+    // deliberately not defined here, although this crate now has expressions.
+    //
+    // `SC0521` needs Decision 15's `TryIterate`, which does not exist: the
+    // prelude declares `Iterate` and no sibling, so there is no interface for a
+    // `for` loop to be over and no failure edge for it to be outside of.
+    // `SC0522` is a *declaration* check — a generic function reached through an
+    // `extern` block — and needs the monomorphiser's view of which
+    // instantiations cross. Both conditions are now one phase closer and
+    // neither is one phase away; a code defined before the check is a code
+    // whose message is written against a guess, which was the reason before and
+    // is the reason now.
+
+    // --- the expression checker, `SC0525`-`SC0530` -----------------------
+    //
+    // §13's three names stop at `SC0522`, and `SC0523`/`SC0524` were taken by
+    // `lowering` and `alias` from the same band for holes the note had not
+    // foreseen. These six continue that: each one is a condition the note
+    // assumes a checker reports and does not number, because §13 was written
+    // before anything walked an expression.
+
+    /// A value that does not fit the slot it is in.
+    ///
+    /// The central diagnostic of Decision 1 and the reason that decision was
+    /// taken: *"error messages can name a declared type"*, because every
+    /// expectation in a bidirectional checker came from an annotation a human
+    /// wrote. [`crate::check`]'s §1 makes every report of this code come from
+    /// one function, so that the site — and therefore Decision 14's boxing — is
+    /// decided in one place.
+    pub const MISMATCHED_TYPES: Code = Code(525);
+
+    /// A value whose type is a hole nothing filled.
+    ///
+    /// Decision 2 defaults an unconstrained *numeric* literal to `I64` or
+    /// `F64`; this is everything else, and `infer`'s §2 names the shape it
+    /// covers: *"`let xs be []` with no annotation, where the element type is a
+    /// hole inside a known constructor … the checker must report that it cannot
+    /// infer, rather than deferring"*. Reported once per inference class, not
+    /// once per expression, because *"a class is one unknown however many
+    /// expressions joined it"*.
+    pub const TYPE_ANNOTATIONS_NEEDED: Code = Code(526);
+
+    /// A call with the wrong number of arguments.
+    pub const WRONG_ARGUMENT_COUNT: Code = Code(527);
+
+    /// A field the receiver's type does not have.
+    ///
+    /// The resolver cannot report it — `ExprKind::Field` keeps a bare `Ident`
+    /// precisely because *"the answer depends on the type of the receiver"* —
+    /// so this is the first phase that can, and `SC0205` (a field a record
+    /// *literal* names and the record lacks) is its sibling one phase up.
+    pub const NO_SUCH_FIELD: Code = Code(528);
+
+    /// `let a, b be f()` where the value is not a pair.
+    ///
+    /// Handed here by name: `hir::LetBinding` says *"whether the value actually
+    /// is a tuple of the right width is not checked here … the arity check
+    /// belongs to `science-types`"*.
+    pub const BINDING_COUNT_MISMATCH: Code = Code(529);
+
+    /// `e?` where `e` is not nullable.
+    ///
+    /// Always true, so it is never what anyone meant — the same argument
+    /// [`DOUBLE_NULLABLE`] makes about `T??`, one level down at the value.
+    pub const PRESENCE_TEST_ON_NON_NULLABLE: Code = Code(530);
+
+    /// Every code this crate emits from its own bands, for the test that keeps
+    /// them inside those bands and distinct.
+    ///
+    /// **`SC0140` is not here**, and that is the point of the list: it is
+    /// `syntax-revision-2.md`'s code, implemented by
+    /// [`crate::unchecked`](crate::unchecked::UNCHECKED_ERROR) and borrowed
+    /// rather than claimed.
+    pub const ALL: &[Code] = &[
+        NOT_A_CONST_EXPRESSION,
+        NOT_PROVABLY_EQUAL,
+        DOUBLE_NULLABLE,
+        CONST_WHERE_TYPE_EXPECTED,
+        CYCLIC_ALIAS,
+        MISMATCHED_TYPES,
+        TYPE_ANNOTATIONS_NEEDED,
+        WRONG_ARGUMENT_COUNT,
+        NO_SUCH_FIELD,
+        BINDING_COUNT_MISMATCH,
+        PRESENCE_TEST_ON_NON_NULLABLE,
+    ];
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn every_code_is_in_a_band_this_crate_owns() {
+            for code in ALL {
+                assert!(
+                    (250..=299).contains(&code.0) || (520..=579).contains(&code.0),
+                    "{code} is outside SC0250-SC0299 and SC0520-SC0579"
+                );
+            }
+        }
+
+        #[test]
+        fn no_code_is_used_twice() {
+            let mut seen = ALL.to_vec();
+            seen.sort();
+            seen.dedup();
+            assert_eq!(seen.len(), ALL.len(), "two diagnostics share a code");
+        }
+
+        #[test]
+        fn the_two_codes_section_13_named_and_this_crate_cannot_report_are_free() {
+            // `SC0521` and `SC0522`. Taking either for something else would
+            // make the note's own table wrong about the compiler.
+            for reserved in [521u16, 522] {
+                assert!(
+                    !ALL.iter().any(|code| code.0 == reserved),
+                    "SC0{reserved} is reserved by §13 for a check this crate does not make"
+                );
+            }
+        }
+
+        #[test]
+        fn the_unchecked_error_code_is_borrowed_and_not_claimed() {
+            assert!(
+                !ALL.iter().any(|code| code.0 == 140),
+                "SC0140 belongs to `syntax-revision-2.md`; this crate implements it"
+            );
+            assert_eq!(crate::unchecked::UNCHECKED_ERROR.0, 140);
+        }
+    }
 }
