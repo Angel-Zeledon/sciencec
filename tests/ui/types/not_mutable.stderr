@@ -1,0 +1,19 @@
+error[SC0304]: `n` is not mutable
+  --> tests/ui/types/not_mutable.science:20:5
+   |
+19 | def bump(n: I64) -> I64:
+   |          - declared here
+20 |     n be n + 1
+   |     ^ assigned here
+   |
+   = note: a parameter cannot be declared mutable — bind a local from it: `let mutable n be n`
+
+error[SC0304]: `count` is not mutable
+  --> tests/ui/types/not_mutable.science:25:5
+   |
+24 |     let count: I64 be 0
+   |         ----- declared here, without `mutable`
+25 |     count be 3
+   |     ^^^^^ assigned here
+   |
+   = note: declare it `let mutable count`

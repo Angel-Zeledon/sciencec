@@ -469,6 +469,8 @@ pub fn check_fn(
         infer: Inference::new(),
         body: Body::new(function.def, ret),
         locals: Vec::new(),
+        bound_as: Vec::new(),
+        assignments: Vec::new(),
         facts: Facts::new(),
         pending: Vec::new(),
         numeric: Vec::new(),
@@ -575,6 +577,55 @@ struct Instance {
 }
 
 /// The checker for one body. §3: one of these per body, dropped with it.
+/// `SC0304` — a write to a binding that was never declared `mutable`.
+///
+/// **Borrowed from the ownership band, not claimed from this crate's.**
+/// `science-mir` and `science-regions` both record that `SC0303`-`SC0329` is
+/// free, and this takes the first of them. It is not in
+/// [`crate::codes::ALL`] for the same reason
+/// [`crate::unchecked::UNCHECKED_ERROR`] is not: that list is the codes this
+/// crate owns a *band* for, and the test beside it would rightly refuse a
+/// `3xx`.
+///
+/// **Why the type checker reports an ownership-band code.** The rule needs one
+/// fact — the word at the declaration — and no flow analysis whatsoever, so it
+/// is decided wherever the binding and the write are both in hand. That is
+/// this phase. Deferring it to `science-mir` would buy nothing and cost a
+/// diagnostic on programs that never reach MIR because they failed to type.
+pub const NOT_MUTABLE: science_diagnostics::Code = science_diagnostics::Code(304);
+
+/// How a binding was introduced, which decides whether `x be v` may write to
+/// it — and, when it may not, what the fix is.
+///
+/// **Decision. A binding is immutable unless it says otherwise**, which is
+/// revision 2 §2.2's own spelling: it writes `let mutable i be 0` before
+/// `i be i + 1`, and that word would mean nothing if the plain `let` also
+/// admitted the write. The rule is Rust's, arrived at from the same direction:
+/// the common case is a name given a value once, so the common case is the one
+/// that needs no keyword, and the rarer reassignment is the one that announces
+/// itself at the declaration where a reader is looking.
+///
+/// **The cost, stated.** A counting loop written the old way needs the word,
+/// and a parameter cannot be given it at all — there is nowhere in
+/// `name: Type` to put it, so a body that wants to reassign an argument binds
+/// a local from it. That is one extra line, and it buys a signature whose
+/// parameters mean the same thing on the last line of the body as on the
+/// first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BoundAs {
+    /// `let mutable x`, `mutable self`, or a pattern binding written
+    /// `mutable`. Assignable.
+    Mutable,
+    /// `let x be v`. The fix is one word at the `let`.
+    Let,
+    /// Bound by a `match`, `for` or closure pattern. The same word applies,
+    /// but at the pattern rather than at a `let`.
+    Pattern,
+    /// A parameter, or a `self` that is not `mutable self`. There is no word
+    /// to add, so the fix is a local.
+    Parameter,
+}
+
 struct BodyChecker<'a> {
     defs: &'a DefTable,
     decls: &'a Declarations,
@@ -588,6 +639,18 @@ struct BodyChecker<'a> {
     /// The bindings in scope, with the type each was given. A `Vec` for the
     /// reason `Body::locals` is one.
     locals: Vec<(DefId, InferTy)>,
+    /// How each binding in scope was introduced, which is what decides whether
+    /// it may be assigned to and what the fix is when it may not. Parallel to
+    /// `locals` rather than folded into it because only assignment reads it.
+    bound_as: Vec<(DefId, BoundAs)>,
+    /// Every assignment target, held until §4's writeback.
+    ///
+    /// The rule has to read types, and until writeback an unresolved variable
+    /// *is* [`Ty::ERROR`] in the body — `let count be 0` and a genuinely
+    /// failed lookup are the same value. Running the rule while that is true
+    /// means either missing `count be 3` or inventing an error on top of
+    /// somebody else's, so it runs once the variables have been resolved.
+    assignments: Vec<ExprId>,
     facts: Facts,
     /// Nodes whose type is still a variable. §4.
     pending: Vec<(ExprId, InferVar)>,
@@ -622,11 +685,17 @@ impl<'a> BodyChecker<'a> {
                     SelfKind::Shared => self.types.borrowed(false, ty),
                     SelfKind::Mutable => self.types.borrowed(true, ty),
                 };
-                self.bind_local(def, InferTy::Known(ty));
+                // `mutable self` is the receiver that may be written through;
+                // the other two spellings are the ones that promise not to.
+                let bound = match kind {
+                    SelfKind::Mutable => BoundAs::Mutable,
+                    SelfKind::Value | SelfKind::Shared => BoundAs::Parameter,
+                };
+                self.bind_local(def, InferTy::Known(ty), bound);
             }
             for param in &sig.params {
                 let ty = self.instantiate(param.ty, param.span);
-                self.bind_local(param.def, InferTy::Known(ty));
+                self.bind_local(param.def, InferTy::Known(ty), BoundAs::Parameter);
             }
         }
 
@@ -680,6 +749,12 @@ impl<'a> BodyChecker<'a> {
                     self.body.set_local_ty(def, ty);
                 }
             }
+        }
+
+        // Every type in the body is now the type it will be, which is what
+        // the mutability rule needs and could not have had earlier.
+        for target in std::mem::take(&mut self.assignments) {
+            self.check_assignable(target);
         }
         self.body
     }
@@ -4186,7 +4261,9 @@ impl<'a> BodyChecker<'a> {
             // §6: a closure in synthesis mode has no parameter type to take.
             _ => (None, None),
         };
-        self.bind_local(param, InferTy::Known(param_ty.unwrap_or(Ty::ERROR)));
+        // `x giving x * 2` binds its parameter the way a pattern does, and
+        // there is no place in that syntax for `mutable`.
+        self.bind_local(param, InferTy::Known(param_ty.unwrap_or(Ty::ERROR)), BoundAs::Parameter);
         let body_id = match ret {
             Some(ret) => self.check(body, ret, Site::Return),
             None => self.synth(body).id,
@@ -4440,6 +4517,9 @@ impl<'a> BodyChecker<'a> {
                 };
                 let want = self.known_or_error(target.ty);
                 let value = self.check(value, want, Site::Elsewhere);
+                // The binding's own word decides whether this write is
+                // allowed, but the types it reads are not final yet.
+                self.assignments.push(target.id);
                 // Decision 7: a write invalidates the place and everything
                 // projected from it.
                 if let Some(place) = self.body.place_of(target.id) {
@@ -4481,6 +4561,9 @@ impl<'a> BodyChecker<'a> {
     }
 
     fn let_stmt(&mut self, binding: &hir::Let) -> StmtKind {
+        // Revision 2 §3.1's `let value, err be f()` takes one `mutable` for
+        // the pair, so the word is the statement's and not each binding's.
+        let declared = if binding.mutable { BoundAs::Mutable } else { BoundAs::Let };
         let written: Vec<Option<hir::Type>> =
             binding.bindings.iter().map(|bound| bound.ty.clone()).collect();
         let annotations: Vec<Option<Ty>> =
@@ -4490,12 +4573,12 @@ impl<'a> BodyChecker<'a> {
             match annotations[0] {
                 Some(ty) => {
                     let id = self.check(&binding.value, ty, Site::Elsewhere);
-                    self.bind_local(binding.bindings[0].def, InferTy::Known(ty));
+                    self.bind_local(binding.bindings[0].def, InferTy::Known(ty), declared);
                     id
                 }
                 None => {
                     let typed = self.synth(&binding.value);
-                    self.bind_local(binding.bindings[0].def, typed.ty);
+                    self.bind_local(binding.bindings[0].def, typed.ty, declared);
                     typed.id
                 }
             }
@@ -4526,7 +4609,7 @@ impl<'a> BodyChecker<'a> {
                 Some(elements) if elements.len() == binding.bindings.len() => {
                     for (at, bound) in binding.bindings.iter().enumerate() {
                         let ty = annotations[at].unwrap_or(elements[at]);
-                        self.bind_local(bound.def, InferTy::Known(ty));
+                        self.bind_local(bound.def, InferTy::Known(ty), declared);
                     }
                 }
                 found => {
@@ -4541,7 +4624,7 @@ impl<'a> BodyChecker<'a> {
                     }
                     for (at, bound) in binding.bindings.iter().enumerate() {
                         let ty = annotations[at].unwrap_or(Ty::ERROR);
-                        self.bind_local(bound.def, InferTy::Known(ty));
+                        self.bind_local(bound.def, InferTy::Known(ty), declared);
                     }
                 }
             }
@@ -4619,7 +4702,8 @@ impl<'a> BodyChecker<'a> {
                 self.body.push_pat(PatKind::Literal(literal.clone()), scrutinee, span)
             }
             hir::PatternKind::Binding { mutable, def } => {
-                self.bind_local(*def, InferTy::Known(scrutinee));
+                let bound = if *mutable { BoundAs::Mutable } else { BoundAs::Pattern };
+                self.bind_local(*def, InferTy::Known(scrutinee), bound);
                 self.body.push_pat(
                     PatKind::Binding { mutable: *mutable, def: *def },
                     scrutinee,
@@ -4701,11 +4785,136 @@ impl<'a> BodyChecker<'a> {
 
     // --- bookkeeping ------------------------------------------------------
 
-    fn bind_local(&mut self, def: DefId, ty: InferTy) {
+    /// Brings a binding into scope.
+    ///
+    /// Takes the [`Form`] rather than defaulting it, so that a binding site
+    /// added later cannot quietly inherit "assignable" — which is exactly how
+    /// `mutable` came to be accepted everywhere and enforced nowhere.
+    fn bind_local(&mut self, def: DefId, ty: InferTy, bound: BoundAs) {
         let stored = self.known_or_error(ty);
         self.locals.push((def, ty));
+        self.bound_as.push((def, bound));
         self.body.declare_local(def, stored);
     }
+
+    /// Revision 2 §2.2's rule: `x be v` needs `x` to have been declared
+    /// `mutable`.
+    ///
+    /// Silent until now. `mutable` parsed, resolved, reached
+    /// `hir::PatternKind::Binding` — and nothing ever read it, so `let count
+    /// be 0` followed by `count be 3` checked, built, and printed `3`. The
+    /// word was decoration.
+    ///
+    /// **The rule governs owned storage, and stops at the first reference.**
+    /// `def retitle(doc: mutable borrowed Doc)` writing `doc.title be title`
+    /// is not reassigning `doc`; it is writing the referent, which is what
+    /// `mutable borrowed` is *for*. So the walk toward the root stops as soon
+    /// as it crosses a borrow, and from there the write is the borrow rules'
+    /// business — `science-regions`' — and not this one's. Only a path that
+    /// reaches a binding without crossing a reference writes that binding's
+    /// own storage, and only then does the word at its declaration decide.
+    fn check_assignable(&mut self, target: ExprId) {
+        let Some((root, whole)) = self.owned_root(target) else { return };
+        // A name this body never bound is not a local. Whatever else is wrong
+        // with assigning to it, it is not this rule's to report.
+        let Some(bound) = self.bound_as(root) else { return };
+        if bound == BoundAs::Mutable {
+            return;
+        }
+        let def = self.defs.get(root);
+        let name = def.name.clone();
+        let span = self.body.expr(target).span;
+        // A write through a projection is refused for the root's reason, but
+        // the reader is looking at `config.port`, so say which part decided.
+        let label = if whole {
+            "assigned here".to_string()
+        } else {
+            format!("this writes through `{name}`")
+        };
+        let fix = match bound {
+            BoundAs::Let => format!("declare it `let mutable {name}`"),
+            BoundAs::Pattern => format!("bind it `mutable {name}` in the pattern"),
+            // There is nowhere in `name: Type` to put the word, and `self`
+            // takes it before the name rather than after.
+            BoundAs::Parameter if name == "self" => {
+                "take the receiver as `mutable self`".to_string()
+            }
+            BoundAs::Parameter => {
+                format!("a parameter cannot be declared mutable — bind a local from it: `let mutable {name} be {name}`")
+            }
+            BoundAs::Mutable => unreachable!("returned above"),
+        };
+        let mut diagnostic = Diagnostic::error(NOT_MUTABLE, format!("`{name}` is not mutable"))
+            .with_label(Label::primary(span, label))
+            .with_note(fix);
+        if !def.is_builtin() {
+            // Saying "without `mutable`" at a parameter would be pointing at a
+            // place the word cannot go, which reads as a typo rather than a
+            // rule.
+            let at = match bound {
+                BoundAs::Parameter => "declared here",
+                _ => "declared here, without `mutable`",
+            };
+            diagnostic = diagnostic.with_label(Label::secondary(def.span, at));
+        }
+        self.diagnostics.push(diagnostic);
+    }
+
+    /// The binding an assignment writes the storage *of*, and whether the
+    /// target was that whole binding rather than a projection from it.
+    ///
+    /// `None` when the write does not land in a binding's own storage: it goes
+    /// through a borrow, or through a call, or the target is not a place at
+    /// all. Each of those is somebody else's rule, and answering `None` is how
+    /// this one declines to guess.
+    fn owned_root(&mut self, target: ExprId) -> Option<(DefId, bool)> {
+        let mut id = target;
+        let mut whole = true;
+        loop {
+            // Crossing a reference ends the walk: past it the storage written
+            // belongs to whatever the reference points at, and no binding in
+            // this body owns it.
+            let (ty, span) = {
+                let expr = self.body.expr(id);
+                (expr.ty, expr.span)
+            };
+            let revealed = self.revealed(ty, span);
+            if matches!(self.types.kind(revealed), TyKind::Borrowed { .. }) {
+                return None;
+            }
+            // A type that did not come out says nothing about whether this is
+            // a borrow, and §5's absorption means it never will. Reporting
+            // over it produces a second, wrong error on a program whose real
+            // problem is somewhere else — which is how `let slot be
+            // items.get_mut(0)` came to be told its binding was not mutable
+            // when the actual fault is that the prelude's method was never
+            // looked up.
+            if self.types.references_error(revealed) {
+                return None;
+            }
+            match &self.body.expr(id).kind {
+                ExprKind::Local(def) | ExprKind::SelfValue(def) => return Some((*def, whole)),
+                ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => {
+                    id = *base;
+                    whole = false;
+                }
+                // A narrowed read is the same storage at a smaller type, so it
+                // is transparent here exactly as it is to `Body::place_of`.
+                ExprKind::Narrow(operand) => id = *operand,
+                _ => return None,
+            }
+        }
+    }
+
+    /// How a binding was introduced, for the assignment rule.
+    ///
+    /// A binding this body never introduced is `None`: a static, a function
+    /// name, or a name the resolver could not place. None of those is a local
+    /// to be reassigned, and none of them is this rule's business.
+    fn bound_as(&self, def: DefId) -> Option<BoundAs> {
+        self.bound_as.iter().rev().find(|(id, _)| *id == def).map(|(_, bound)| *bound)
+    }
+
 
     fn lookup_local(&self, def: DefId) -> Option<InferTy> {
         self.locals.iter().rev().find(|(id, _)| *id == def).map(|(_, ty)| *ty)

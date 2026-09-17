@@ -1,0 +1,27 @@
+# UI test: a write to a binding that was never declared `mutable` (SC0304).
+#
+# `syntax-revision-2.md` §2.2 writes `let mutable i be 0` before `i be i + 1`,
+# and that word would mean nothing if the plain `let` also admitted the write.
+# Until this code existed it did: `mutable` parsed, resolved, reached
+# `hir::PatternKind::Binding` — and nothing ever read it, so this file checked,
+# built, and printed `3`.
+#
+# Two spellings are here together because the fix differs and the note is the
+# whole value of the diagnostic: a `let` takes the word, and a parameter has
+# nowhere to put it.
+#
+# A pattern binding — `for mutable i in …` — is the third spelling and is not
+# tested here, because the rule declines wherever the type did not come out
+# and `for i in 0..3` has no type at all: a range is `Ty::ERROR` until `Range`
+# exists in the prelude (see `SC0538`). That is a real gap, stated rather than
+# papered over.
+
+def bump(n: I64) -> I64:
+    n be n + 1
+    return n
+
+def main() -> Error?:
+    let count: I64 be 0
+    count be 3
+    print(f"{bump(count)}")
+    null
