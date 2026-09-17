@@ -20,7 +20,14 @@
   // lexer with it: token.rs has `"def" => Function` and `function` is now an
   // ordinary identifier. Writing the old word where a declaration belongs is
   // SC0156, which carries the one-word fix.
-  var DECLARE = ("def type choice interface implements has of borrowed any use " +
+  //
+  // `tool` joined this list from RESERVED: it left `ReservedWord` and became a
+  // declaration keyword of its own (`token.rs` has `"tool" => Tool`, no longer
+  // `Reserved(Tool)`), because a `tool` declaration checks five things a `def`
+  // does not — no generics, no borrowed parameter, no receiver, a required
+  // `##` description, a body — and a marker that changes nothing would have
+  // stayed a reservation.
+  var DECLARE = ("def tool type choice interface implements has of borrowed any use " +
     "public const extern unsafe let be mutable where giving").split(" ");
 
   // Control flow, the operators spelled as words, and the literals.
@@ -37,7 +44,7 @@
 
   // §13's "reserved, not yet used". Coloured differently on purpose: a reader
   // who meets one in a sample should see that it is not an ordinary name.
-  var RESERVED = ("agent tool prompt spawn send receive durable checkpoint resume supervise " +
+  var RESERVED = ("agent prompt spawn send receive durable checkpoint resume supervise " +
     "async await tensor shape model equation mod pure parallel on with yield assert move " +
     "static macro union kernel import").split(" ");
 

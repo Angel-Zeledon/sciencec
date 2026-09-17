@@ -23,6 +23,7 @@
   <nav>
     <a href="#tour">Tour</a>
     <a href="#interop">Interop</a>
+    <a href="#tools">Tools</a>
     <a href="#install">Install</a>
     <a href="#docs">Docs</a>
     <a href="#source">Source</a>
@@ -254,6 +255,57 @@ def main():
 </section>
 
 <!-- ==================================================================== -->
+<section id="tools">
+  <h2>A tool a model can call, with no schema to write</h2>
+  <p class="lede">
+    An MCP server makes its tools discoverable by publishing a JSON Schema for
+    each one. Every SDK for it asks you to write that schema beside the handler
+    and keep the two in step by hand; Python&rsquo;s reads the signature back at
+    run time, TypeScript&rsquo;s takes a schema you hand it. Science has neither
+    reflection nor a way to check that two artefacts agree, so the schema is
+    <em>derived</em> from the signature or the claim is empty.
+  </p>
+
+<pre data-science>choice Lineshape:
+    Gaussian
+    Lorentzian
+    PseudoVoigt
+
+## Integrates a spectral peak under a chosen line shape.
+tool integrate_peak(counts: Array of F64, window: U16,
+        profile: Lineshape) -&gt; F64:
+    0.0</pre>
+
+<pre class="shell"><code><span class="p">$</span> <span class="c">sciencec tools --json peaks.science</span>
+[{"name":"integrate_peak",
+  "inputSchema":{"type":"object","properties":{
+    "counts":{"type":"array","items":{"type":"number"}},
+    "window":{"type":"integer","minimum":0,"maximum":65535},
+    "profile":{"type":"string",
+               "enum":["Gaussian","Lorentzian","PseudoVoigt"]}},
+    "required":["counts","window","profile"]},
+  "description":"Integrates a spectral peak under a chosen line shape."}]</code></pre>
+
+  <p>
+    Nothing in that output was written twice. <code>window</code> is a
+    <code>U16</code>, so the model is told the value is between 0 and 65535 &mdash;
+    a bound no other SDK&rsquo;s <code>int</code> carries. <code>Lineshape</code> is
+    an ordinary <code>choice</code>, which is how Science already spells
+    alternatives, and it arrives as the exact set of strings the tool accepts.
+    The description is the <code>##</code> comment, because the description is
+    what a model reads to decide whether to call the tool: it is program data,
+    not documentation, and a tool without one does not fail &mdash; it is simply
+    never chosen.
+  </p>
+  <p>
+    One thing is deliberately missing. A <code>U64</code> gets
+    <code>minimum: 0</code> and <strong>no maximum</strong>, because
+    2<sup>64</sup>&minus;1 cannot be written exactly as a JSON number and
+    emitting it would be a lie about what the caller can send.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
 <section id="different">
   <h2>Decisions you will notice</h2>
 
@@ -313,15 +365,26 @@ def main():
 
   <p class="note">
     <code>sciencec</code> lexes, parses, resolves, formats and emits tool
-    schemas. There is no <code>build</code> command and no code generator:
-    typing <code>sciencec build</code> exits with <code>error: unknown command
-    &#96;build&#96;</code>, because type checking, region inference and code
-    generation have not been wired into the driver. Everything on this page and
-    in the <a href="reference.html">reference</a> is the language as designed,
-    and most of it is already what <code>sciencec</code> lexes, parses and
-    resolves &mdash; including <strong>the error model</strong>, which used to
-    be the exception here. A function that returns a pair &mdash;
-    <code>-&gt; (Config, Error?)</code> &mdash; the nullable type
+    schemas. <code>build</code> exists now and does real work &mdash; layout,
+    the C ABI, symbol mangling, monomorphisation &mdash; and then stops
+    cleanly, because there is no LLVM backend compiled in on the machine this
+    site is written on:
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0400]</span>: no `llvm` backend is compiled into this `sciencec`
+  = note: `science-codegen` computes layout, the C ABI, symbol names and the runtime boundary, but emitting an object file needs a backend and none is linked in
+  = note: install LLVM 18.1.8 &mdash; `winget install LLVM.LLVM --version 18.1.8` or `choco install llvm --version=18.1.8` &mdash; then set `LLVM_SYS_181_PREFIX` to the install root, and rebuild `sciencec` with the `science-codegen-llvm` backend</code></pre>
+
+  <p class="note">
+    Type checking and region inference still are not wired into the driver,
+    so <code>build</code>'s middle is a well-defined gap rather than a filled
+    one &mdash; what runs today is <code>check</code>'s lex-parse-resolve,
+    then codegen's target-independent half directly. Everything on this page
+    and in the <a href="reference.html">reference</a> is the language as
+    designed, and most of it is already what <code>sciencec</code> lexes,
+    parses and resolves &mdash; including <strong>the error model</strong>,
+    which used to be the exception here. A function that returns a pair
+    &mdash; <code>-&gt; (Config, Error?)</code> &mdash; the nullable type
     <code>T?</code>, the presence test <code>?</code> and the literal
     <code>null</code> all parse and resolve today. What is not built is what
     they <em>mean</em>: the narrowing that makes <code>if err?:</code> tell the
@@ -371,11 +434,10 @@ def main():
 <section id="source">
   <h2>Source</h2>
   <p class="lede">
-    Eight crates behind one driver, and all eight are real &mdash; nothing
-    below is a placeholder for a crate that does not exist. The compiler is a
-    set of memoised queries over a shared database rather than a pipeline,
-    which is what will make recompilation incremental once there is more to
-    recompile.
+    Nine crates behind one driver, and all nine are real &mdash; nothing below
+    is a placeholder for a crate that does not exist. The compiler is a set of
+    memoised queries over a shared database rather than a pipeline, which is
+    what will make recompilation incremental once there is more to recompile.
   </p>
 
   <div class="strip">
@@ -386,14 +448,20 @@ def main():
     <div><dt>science-fmt</dt><dd>The formatter behind <code>sciencec fmt</code>.</dd></div>
     <div><dt>science-db</dt><dd>The query database every other crate reads through.</dd></div>
     <div><dt>science-diagnostics</dt><dd>Rendering, spans, applicable fixes.</dd></div>
-    <div><dt>science-rt</dt><dd>The runtime every binary will link, once there is a code generator to call it.</dd></div>
+    <div><dt>science-codegen</dt><dd>Layout, the C ABI, mangling, monomorphisation &mdash; the half of code generation that does not need a backend.</dd></div>
+    <div><dt>science-rt</dt><dd>The runtime every binary will link, once a backend can call it.</dd></div>
   </div>
 
   <p class="note">
-    Ownership and region inference, and LLVM code generation, do not exist yet
-    even as empty crates &mdash; there is no <code>science-regions</code> and no
-    <code>science-codegen</code> today. When they land, <code>sciencec
-    build</code> lands with them.
+    Ownership and region inference do not exist yet even as an empty crate
+    &mdash; there is no <code>science-regions</code> today, and nothing calls
+    it into <code>check</code>. Nor does the other half of code generation:
+    <code>science-codegen</code> hands a finished lowering to a backend, and
+    the LLVM one, <code>science-codegen-llvm</code>, is deliberately absent,
+    because it needs an LLVM 18.1 installation and a workspace nobody can
+    build without one is a workspace nobody can contribute to. Until it
+    exists, <code>sciencec build</code> gets exactly as far as
+    <a href="reference.html#toolchain">the reference shows</a> and stops.
   </p>
 </section>
 

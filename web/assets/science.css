@@ -1,20 +1,88 @@
 /* Science — shared styles.
  *
- * One stylesheet for every page. Colours are tokens on :root, redefined for
- * dark under both `prefers-color-scheme` and an explicit `data-theme`, so a
- * page renders correctly in all three states a reader can be in.
+ * One stylesheet for every page. **The page is dark and blue-toned, always.**
+ * There is one set of tokens, declared once on :root, and they are the only
+ * values any page surface ever takes. There is no light variant, no
+ * `prefers-color-scheme` branch and no toggle.
+ *
+ * Two things about that, because both are decisions rather than defaults.
+ *
+ * **Why one theme and not two.** A second theme is only correct if *every*
+ * token is redefined with it. A token defined inside a media query but read
+ * outside one renders one theme's text on the other theme's ground, and this
+ * file has been in that state before. Half a theme is worse than none, so
+ * there is one, completely, and the contrast numbers below are a full audit
+ * of it rather than a sample of one half.
+ *
+ * **Why blue.** The code ground is `--code-bg`, `#0b0f1a`, a blue-black
+ * chosen when "Science Neon" was built, and the palette was designed to sit
+ * on it. The page ground used to be a teal-black with a cyan accent, which
+ * put the loudest thing on the page in the same hue family as `--c-type`,
+ * so a link and a type name competed. A slate-navy page in the same family
+ * as the listings harmonises instead, and the accent moves out of the code
+ * palette's way: `--accent` is a desaturated periwinkle at 219°, where
+ * `--c-type` is an electric cyan at 190°, and the two never share a ground.
+ *
+ * The page is a *lighter* blue than the code ground, not a darker one, so a
+ * listing reads as **inset** — something set into the page rather than
+ * painted on it, which is what every dark documentation theme does and what
+ * a reader expects of a listing. `--code-bg` sits **1.45:1** below `--paper`.
+ * That number is the design target, not an accident: below about 1.3 the two
+ * grounds read as one surface with a border drawn on it, and above about 1.6
+ * the page starts reading as grey against a black box. The separation is
+ * carried by the two fills, so the boundary survives with `--code-frame`
+ * removed.
+ *
+ * `--code-bg` was not darkened to get there. It is already near-black, and
+ * pushing it further would drain the blue that makes the neon palette sit
+ * right — and the palette is the one thing here that does not move. The page
+ * was lifted instead, which is why every foreground below was re-derived
+ * against the new ground rather than carried over from the old one.
+ *
+ * **Three legible levels, not two and a collision.** `--code-bg` is 1.45:1
+ * below the page; `--surface` (a card, a chip inside a callout) is 1.21:1
+ * above it; `--sunk` (an inline `code` chip) is 1.40:1 above it, and 1.16:1
+ * above `--surface`. Both raised levels are also clearly off the listing —
+ * 1.76:1 and 2.04:1 against `--code-bg` — so an inline chip never reads as a
+ * fragment of a code block.
+ *
+ * **Nothing outside a code block is decorated.** No gradient, no glow, no
+ * animation. Dark is not a licence to be loud: the rails are flat 3px tabs,
+ * the rules are hairlines, and the only saturated colour on the page is
+ * inside a `pre`.
  */
 :root {
-  --paper:#f4f6f5; --surface:#ffffff; --sunk:#eceff0; --ink:#121a18;
-  --muted:#5c6b66; --faint:#637370; --rule:#dde3e0;
-  --accent:#0d6e62; --accent-soft:#e2efec; --old:#9c5140; --old-soft:#f6e9e5;
-  --deep:#0a1614; --deep-ink:#d6e2de; --deep-rule:#1d2e2a;
+  /* The page. A slate-navy ramp: --paper is the ground, --surface is a card,
+   * --sunk is an inline code chip, --rule is a hairline.
+   *
+   * Every pairing the rules below can actually produce was measured against
+   * this ground, not estimated and not inherited. On --paper: --ink 11.76:1,
+   * --muted 7.49:1, --faint 6.24:1, --accent 6.69:1, --old 6.80:1. The
+   * tightest foreground anywhere on the page is --accent on --sunk at
+   * 4.76:1, and the tightest one that carries navigation is --faint on
+   * --paper at 6.24:1 — that is the sidebar's group headings, and it is
+   * checked rather than assumed because it is the pairing that failed the
+   * last time this palette moved. */
+  --paper:#243048; --surface:#2e3d59; --sunk:#35466a; --ink:#eef2fa;
+  --muted:#b8c4d8; --faint:#a6b3cb; --rule:#455878;
+  --accent:#94bbf2; --accent-soft:#2b3e63; --old:#e7ad96; --old-soft:#4a332a;
+  /* Reserved, and read by nothing today. These three have never been read by
+   * a rule in this file; they are re-toned with the rest rather than left as
+   * the old teal, so that a future rule reaching for one gets a colour that
+   * belongs to this palette. */
+  --deep:#111a2c; --deep-ink:#dfe7f6; --deep-rule:#243048;
   /* Syntax — "Science Neon". Declared once and never redefined, because
-   * every code surface on this site is dark in both themes. That is the
-   * decision that makes the palette possible: a neon hue survives on
+   * every code surface on this site is dark whatever the page does. That is
+   * the decision that makes the palette possible: a neon hue survives on
    * #0b0f1a and dies on paper, and a palette asked to do both ends up
    * doing neither. The editor's light theme is the one place a readable
-   * variant is needed, and it lives in editors/vscode/. */
+   * variant is needed, and it lives in editors/vscode/.
+   *
+   * Not one value here moved when the page went blue, and that is the point
+   * of having declared them once: the listing's ground is fixed, so the
+   * listing's colours are fixed, and re-toning the page could not reach
+   * them. Every value below is measured against --code-bg and clears 4.5:1
+   * there; the tightest is --c-com at 4.84. */
   --code-bg:#0b0f1a; --code-ink:#cdd8f0; --code-frame:#1b2440;
   --c-key:#e85aa8; --c-ctl:#e85aa8; --c-type:#4de8ff; --c-fn:#3dfca0;
   --c-str:#f6ff6b; --c-num:#c77dff; --c-par:#ffa23c; --c-op:#e85aa8;
@@ -22,32 +90,47 @@
   /* The block rail, kept separate from the syntax palette above on purpose:
    * these four paint a flat 3px tab on the left of a `pre`, never a gradient,
    * so the block kinds stay tellable apart without competing with the tokens
-   * inside them. Declared once, like the rest of the code chrome, because a
-   * code surface does not change with the page theme. */
+   * inside them. Declared once, like the rest of the code chrome.
+   *
+   * The rail is decoration, not information: a removed-syntax block is also
+   * captioned and struck through, and a shell block also carries its `$`.
+   * Nothing on this site is told apart by rail colour alone, which is why
+   * these four are allowed to sit between 2.4:1 and 3.3:1 against the
+   * listing behind them, and between 1.6:1 and 2.3:1 against the page on
+   * their other edge. Lifting the page moved the second of those numbers and
+   * not the first, which is the expected direction: the rail belongs to the
+   * listing. */
   --rail-code:#3d4f7a; --rail-shell:#2f6b52; --rail-err:#a34848; --rail-legacy:#4a5568;
   --sans:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
   --serif:"IBM Plex Serif",Georgia,"Times New Roman",serif;
   --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
 }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --paper:#0d1412; --surface:#141d1a; --sunk:#101816; --ink:#e4ebe8;
-    --muted:#93a29c; --faint:#7d8c86; --rule:#253029;
-    --accent:#55c4b3; --accent-soft:#14312c; --old:#d4907c; --old-soft:#33211c;
-    --deep:#060d0c; --deep-ink:#d6e2de; --deep-rule:#1a2a26;
-  }
-}
-:root[data-theme="dark"] {
-  --paper:#0d1412; --surface:#141d1a; --sunk:#101816; --ink:#e4ebe8;
-  --muted:#93a29c; --faint:#7d8c86; --rule:#253029;
-  --accent:#55c4b3; --accent-soft:#14312c; --old:#d4907c; --old-soft:#33211c;
-  --deep:#060d0c; --deep-ink:#d6e2de; --deep-rule:#1a2a26;
-}
+/* There was a `@media (prefers-color-scheme: dark)` block and a
+ * `[data-theme="dark"]` block here, each redefining thirteen of the tokens
+ * above for a second theme. Both are gone: the values they held are now the
+ * values on :root, re-toned to blue, and there is no second set. Nothing
+ * sets `data-theme`, so the attribute selector would match nothing even if
+ * it had stayed. Thirty-odd rules in this file read `--paper`, `--surface`,
+ * `--sunk`, `--rule`, `--ink`, `--muted`, `--faint`, `--accent` and `--old`;
+ * every one of them has exactly one value to read, on every machine.
+ *
+ * `color-scheme` is declared dark so the browser's own chrome agrees — the
+ * scrollbar, form controls, and the frame the browser paints before this
+ * stylesheet lands. Without it a reader gets a white scrollbar beside a navy
+ * page and a white flash on first paint, which is the half-flipped result
+ * this file exists to avoid. */
+:root { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 body { background: var(--paper); color: var(--ink); font-family: var(--sans);
   font-size: 16px; line-height: 1.6; margin: 0; -webkit-text-size-adjust: 100%; }
+
+/* The side gutter. 20px on a laptop, 16px once the viewport is narrow enough
+ * that twenty is a measurable fraction of the line. Declared as a rule rather
+ * than left to the 20px, because at 320px a pair of 20px gutters is an eighth
+ * of the screen. */
 .wrap { max-width: 62rem; margin: 0 auto; padding-inline: 20px; }
+@media (max-width: 30rem) { .wrap { padding-inline: 16px; } }
 
 /* The documentation runs wider than the landing page, because it has a
  * sidebar and the landing page does not. At 62rem a 15rem sidebar and its
@@ -134,24 +217,29 @@ p a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offse
 p a:hover, p a:focus-visible { text-decoration: none; }
 
 /* ---- code ---- */
-/* Every code surface is dark, in both themes. A reader in light mode gets a
- * light page and a dark listing — which is also what their editor gives them,
- * since nobody writes code on the colour of the page around it. */
+/* The listing is darker than the page, not lighter, and that is what makes it
+ * read as inset rather than as a panel laid on top. `--code-bg` and the ten
+ * syntax tokens are declared once on :root and read here; nothing redefines
+ * them, so there is nothing that could flip half of them. */
 pre { position: relative; font-family: var(--mono); font-size: 0.83rem; line-height: 1.7;
   background: var(--code-bg); color: var(--code-ink);
   border: 1px solid var(--code-frame); border-left: 0; border-radius: 0 3px 3px 0;
   padding: 1.1rem 1.25rem; margin: 0 0 1.25rem; overflow-x: auto; tab-size: 4; }
 
 /* The left rail is the one piece of ornament, and it is deliberately quiet:
- * a single flat 3px bar per block kind, not a gradient. A gradient rail reads
+ * a single flat 3px bar per block kind, never a gradient. A gradient rail reads
  * as decoration competing with the listing; a flat one reads as a tab colour,
  * which is what a reference manual uses. Painted as a background layer rather
  * than a border so it runs down the block's full height however tall it
  * grows. The hue still tells the block kinds apart — this one for Science
  * source — but none of them glow or shift. */
+/* No shadow. There was a `0 1px 2px rgba(0,0,0,0.30)` here, and on a page
+ * this dark it is a black shadow on a near-black ground: it renders nothing
+ * and costs a composited layer. The block is separated from the page by
+ * being darker than it and by `--code-frame`, which are the two things that
+ * actually do the work. */
 pre[data-science] {
   background: var(--rail-code) left / 3px 100% no-repeat, var(--code-bg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.30);
 }
 /* A block kept only for comparison: the syntax it shows has been removed from
  * the language. Marked three ways at once — a caption above it, a grey rail
@@ -160,9 +248,11 @@ pre[data-science] {
  * mistaking a removed form for a live one is the expensive mistake here. No
  * new palette entry: the rail and the strike both reuse the comment grey,
  * which already means "not the code". */
+/* This rule used to carry `box-shadow: none` to cancel the shadow the live
+ * block had. The live block no longer has one, so the cancellation named a
+ * property nothing sets, and it is gone with it. */
 pre[data-science][data-legacy] {
   background: var(--rail-legacy) left / 3px 100% no-repeat, var(--code-bg);
-  box-shadow: none;
 }
 .rm { color: var(--c-com); text-decoration: line-through; }
 .legend { font-family: var(--mono); font-size: 0.7rem; font-weight: 600;
@@ -213,9 +303,10 @@ pre code { background: none; padding: 0; font-size: 1em; }
  * saturated on a ground this dark is already emissive, and a shadow under it
  * only softens the glyph edges, which is the opposite of what a listing wants.
  * The identity now lives in the rail and in the palette, not in a blur. */
-/* The removed-syntax block does not glow. Nothing on this site should look
- * emissive and be wrong at the same time. */
-pre[data-science][data-legacy] span { text-shadow: none; }
+/* A `pre[data-science][data-legacy] span { text-shadow: none }` stood here,
+ * cancelling that glow on the removed-syntax block in particular. It named a
+ * property no rule in this file sets any more, which is the same dead-weight
+ * a half-removed theme leaves behind, so it is gone with the glow. */
 .e-code { color: #ff6e6e; font-weight: 600; } .e-hi { color: #ff6e6e; }
 /* Pale, not neon: a `help:` line is prose about the fix, not a token, so it
  * does not need the cyan that marks a type in the listing above it. */
