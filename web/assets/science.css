@@ -512,10 +512,13 @@ footer code { font-size: 0.82em; }
 footer .links { display: flex; gap: 1.4rem; flex-wrap: wrap; margin-bottom: 1rem; }
 footer .links a { font-family: var(--mono); font-size: 0.78rem; color: var(--accent); text-decoration: none; }
 
-@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+/* The considered `prefers-reduced-motion` block is at the foot of this file.
+ * A blanket `animation: none` used to sit here, which contradicted it: that
+ * block uses `1ms` rather than `none` because the `both` fill modes are
+ * load-bearing, and `animation-name: none` would have stripped them first. */
 
 /* --- reference-only ------------------------------------------------------ */
-.masthead { padding-block: 3.5rem 2rem; border-bottom: 2px solid var(--ink); }
+.masthead { padding-block: 3.5rem 2rem; position: relative; }
 .eyebrow { font-family: var(--mono); font-size: 0.72rem; font-weight: 500;
   letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); margin: 0 0 1rem; }
 .standfirst { font-family: var(--serif); font-size: 1.1rem; line-height: 1.55;
@@ -835,7 +838,22 @@ a, .btn, .doc, .bet, nav a, .card {
  * purely decorative motion on the site and it is one second long and does
  * not repeat — a loop would make the page feel like it was still loading. */
 @keyframes rule-draw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-header .rule, .masthead-rule {
+/* Drawn on the masthead's own bottom rule, through `::after`, rather than on
+ * an element added to five files. The selector this replaces — `header .rule,
+ * .masthead-rule` — matched nothing on any page, so the animation above was
+ * written, documented and never once run.
+ *
+ * At rest the transform is `none`, which is `scaleX(1)`: with the animation
+ * suppressed the rule is simply the line it always was, and nothing is ever
+ * parked at zero width waiting for something to start it. */
+.masthead::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--ink);
   transform-origin: left center;
   animation: rule-draw 900ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
 }
