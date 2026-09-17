@@ -85,6 +85,16 @@
 //! declines to flag it because its type needs no drop at all. One direction
 //! costs a byte that is then not spent; the other costs the language's claim.
 //!
+//! **That accounting is drop elaboration's and there is now a second
+//! consumer.** *"A drop flag on a local that does not need dropping"* is what
+//! calling a copy a move costs [`crate::drops`]; what it costs a **check** is a
+//! false positive, because whether a user type is `Copy` is Decision 11's
+//! lookup and this compiler has none, so every record operand arrives here as a
+//! move. `science-regions`' `moved` §3 item 4 pays that bill on its own side —
+//! it reports rule 3 only where the type owns something — rather than asking
+//! this rule to reverse, because reversing it would move the cost back onto
+//! drop elaboration, where the direction above is right.
+//!
 //! **The exception, and it is deliberate.** Every argument of a call **whose
 //! signature this crate cannot see** is `Copy`, whatever its type. A call whose
 //! signature is unknown has unknown argument passing, and marking the arguments

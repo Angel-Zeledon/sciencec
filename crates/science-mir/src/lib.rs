@@ -36,10 +36,16 @@
 //! # 2. What is deliberately not in here
 //!
 //! - **Region inference.** This is what it runs on. §5 is the seam.
-//! - **Borrow checking, of any kind.** No `SC0301`, no `SC0330`. The move
-//!   analysis of [`moves`] is *only* Decision 26's input, and [`moves`]'s §1
-//!   says why sharing it with a use-after-move check now — before that check
-//!   exists — would fix the lattice around a question nobody has asked.
+//! - **Borrow checking, of any kind.** No `SC0301`, no `SC0330` — **and
+//!   `SC0301` is now checked, one crate down, against this one's tables.**
+//!   [`moves`]'s §1 used to decline to share its lattice *"with a check that
+//!   does not exist"*; the check exists, it is `science-regions`' `moved`, and
+//!   what it needed was one reader ([`moves::Moves::walk`]) and no change to
+//!   the lattice, to the join or to what a statement does. That is the outcome
+//!   §1 was holding out for, and it is worth separating from what did not
+//!   change: this crate still reports nothing, still holds no
+//!   [`science_diagnostics::Diagnostics`], and the ownership block §3 leaves
+//!   free is as free as it was.
 //! - **Optimisation.** No constant folding, no block merging, no dead-code
 //!   elimination. A `Goto` chain that a peephole would collapse is left alone,
 //!   because `codegen-and-linking.md` Decision 5 wants a MIR dump and an IR
@@ -251,7 +257,7 @@
 //! the authority and a correction that lives only in code is a correction
 //! nobody reads.
 //!
-//! **Thirteen, and two of them are now closed rather than open.** Items 9 and
+//! **Fourteen, and two of them are now closed rather than open.** Items 9 and
 //! 10 were both *"a note prescribes something the ABI below it cannot
 //! express"*, and both were closed by changing the ABI rather than by softening
 //! the note: `science_string_with_capacity` for §1.7's capacity, and an
@@ -512,6 +518,42 @@
 //!     parameter's rather than a Science type's — §9.3's *"a length is a
 //!     `usize` and an index is an `Int`"* — so there is no Science type for it
 //!     to disagree with, which is a second reason it is not a literal.
+//! 14. **§5's exception was written as a condition and implemented as one
+//!     spelling of it, and the gap between the two is a use-after-free that
+//!     runs.** The condition is *"a call whose signature is unknown has unknown
+//!     argument passing"*; the implementation asked *"is the callee a
+//!     [`mir::Callee::Unresolved`]"*, which is only the half where the **name**
+//!     did not resolve. The other half is a name that resolves to a definition
+//!     with no [`science_types::items::Signature`] behind it, and F0 has
+//!     exactly one: `print`. `science-resolve`'s `builtins.rs` writes
+//!     `strings-formatting-and-docs.md` §4.1's
+//!     `def print(value: borrowed any Display)` out, measures it, and withdraws
+//!     it — twice, for two different reasons — leaving the name resolved and
+//!     the parameter undeclared.
+//!
+//!     So `print(s)` lowered to `move _1`, [`drops`] read the local as
+//!     moved-out and deleted its `Drop`, and `science-codegen-llvm`'s
+//!     `lower_print` — which frees what it is handed the last reference to —
+//!     released the buffer at the first call. `print(s)` twice built, linked,
+//!     ran, exited 0 and printed the string and then an empty line.
+//!
+//!     **Neither note is at fault and that is the finding.** §12 says nothing
+//!     about a declaration with no signature because nothing in
+//!     `type-checking-and-mir.md` anticipates one; the shape is an artefact of
+//!     a *prelude* that resolves more names than it declares, which is
+//!     `builtins.rs`'s decision and a legitimate one. What this crate owed was
+//!     to ask its own question — *can I see how this callee takes its
+//!     arguments?* — rather than a proxy for it.
+//!     [`lower::Builder::has_no_signature`] is the predicate.
+//!
+//!     **It is items 3, 4 and 7's shape for the fourth time**, one phase lower
+//!     and with a worse ending: a gap that does not fail, goes quiet, and this
+//!     time the quiet is a program that prints the wrong answer rather than a
+//!     diagnostic that is not reported. `science-codegen-llvm`'s
+//!     `tests/printing.rs` is the program, built and run and its stdout read,
+//!     because that is the only instrument that separates a
+//!     `science_string_free` of the right buffer from one of the wrong buffer:
+//!     the IR, the verifier and even the *count* of releases are identical.
 
 pub mod callgraph;
 pub mod capture;

@@ -179,7 +179,7 @@
 //!
 //! # 3. What was found by running it
 //!
-//! Twenty-two things that reading could not have established, each recorded
+//! Twenty-three things that reading could not have established, each recorded
 //! where it bites. The first four were found by writing the crate; the rest
 //! were found by *running* it, which is the difference §10's staging exists to
 //! force.
@@ -213,6 +213,9 @@
 //!    backend with an untypeable local in it. `science-resolve`'s `builtins.rs`
 //!    wrote the signature, measured seven corpus false positives and withdrew
 //!    it; [`lower`] skips the dead slot and refuses anything that touches it.
+//!    **The missing signature is not only a dead slot**, and finding 23 is the
+//!    rest of the bill: with nothing to read, `science-mir` had to guess how
+//!    `print` takes its argument, and the guess decided who frees a `String`.
 //! 8. **A constant operand took its default width rather than the other
 //!    operand's**, so `x + 1` on an `I32` built `add i32 %x, i64 1`. A verifier
 //!    failure, and unreachable from any program this compiler can compile, which
@@ -403,6 +406,44 @@
 //!     that always does — and the reason to write that down is that the
 //!     expectation was then checked rather than trusted.
 //!
+//! 23. **`lower_print` freed what it printed, and for two calls out of three
+//!     that was right.** Three operand shapes reach [`lower::Lowerer::lower_print`]
+//!     and the free was emitted for all of them. For a literal it is correct —
+//!     Decision 15 builds a `String` with no MIR local, so nothing else can
+//!     release it — and for an `f"…"` passed straight to `print` it was
+//!     correct *by accident*, because a temporary whose last use is the call
+//!     looks the same to MIR whether the callee consumes it or not. For a
+//!     **binding** it was a use-after-free:
+//!
+//!     ```text
+//!     let s be "hola"
+//!     print(s)
+//!     print(s)
+//!     ```
+//!
+//!     builds, links, verifies, runs, exits 0 and prints `hola` and then an
+//!     empty line — `science_string_free` leaves the header zeroed and
+//!     `science_print` renders a zero-length string as nothing.
+//!
+//!     **The root cause is a phase up and the repair is in both.**
+//!     `science-mir`'s `lower` §5 made the argument a `move` because `print`
+//!     has no signature (finding 7), so drop elaboration deleted the binding's
+//!     `Drop` and this call site became its only releaser. That crate now reads
+//!     a missing signature as *"unknown argument passing"* and emits a `copy`,
+//!     which is what §4.1's `def print(value: borrowed any Display)` means at
+//!     this level; here, the `Copy` arm stopped being a refusal saying *"this
+//!     call site frees what it prints"* — a sentence describing the bug rather
+//!     than avoiding it — and became the arm that prints and does not free.
+//!
+//!     **What it says about this crate's instruments is the reason it is on
+//!     this list.** Findings 12 and 18 are both *"the IR cannot express the
+//!     wrongness, so the verifier cannot see it"*. This one is worse: the IR is
+//!     not merely ambiguous, it is **identical**, and so is the number of
+//!     `science_string_free` calls. What changed is which value got the one
+//!     release there was. No assertion over the module separates the two
+//!     versions; `tests/printing.rs` runs the program and reads its stdout,
+//!     which is the only instrument that does.
+//!
 //! **And nine was itself found this way**, which is the point of the list: the
 //! numbering has grown seven times and each entry is something the notes did
 //! not say. Eleven, twelve, thirteen and eighteen were all found by *running* a
@@ -414,6 +455,14 @@
 //! shape: a refusal that names a construct correctly and hides how little was
 //! missing — and twenty is that shape's consequence, because a refusal that
 //! hides how little was missing also hides what was standing behind it.
+//!
+//! **Twelve, eighteen and twenty-three are one family and it is the family to
+//! read first if you are changing an operand.** Twelve is a width the opaque
+//! pointer erased, eighteen an indirection it erased, and twenty-three an
+//! *ownership* the IR never carried in the first place — nothing in LLVM
+//! records who is supposed to free a buffer, so the only check available is to
+//! run the program and read what it wrote. Each was found that way and none of
+//! them could have been found any other way.
 //!
 //! **Twenty and twenty-one are one pair, and it is the pair to read first if
 //! you are changing a cast.** The front end types every cast as its target and

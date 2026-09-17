@@ -149,8 +149,10 @@ fn every_entry_point_the_runtime_has() {
 /// moves the value you were about to use is a diagnostic in the `SC0300` range
 /// caused by a line the user added to understand a different problem"*. If the
 /// hole were a move, `print(s)` on the last line would be a use-after-move —
-/// and because `print` also *frees* what it prints, the failure past the
-/// checker is a double free rather than a diagnostic.
+/// and `science-regions`' `moved` reports that now, so the failure is a
+/// diagnostic rather than a program that runs and prints an empty line.
+/// Crate §3 finding 23 is the version of this sentence that was true while
+/// `print` freed what it printed.
 ///
 /// The interpolation reads `s` twice on purpose: two shared loans of one place
 /// at once is what §1.6's borrow makes legal and what a move would not.
@@ -181,7 +183,7 @@ fn a_bound_interpolation_is_freed_once() {
     assert_eq!(
         printed.matches("@science_string_free(").count() - 1,
         1,
-        "an `f\"…\"` passed to `print` should be freed once, at the call site:\n{printed}"
+        "an `f\"…\"` passed to `print` should be freed once, by its scope:\n{printed}"
     );
 
     // And both run, which is the half a count cannot see: a free of a slot

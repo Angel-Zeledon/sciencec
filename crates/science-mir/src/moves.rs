@@ -5,15 +5,24 @@
 //! `type-checking-and-mir.md` Decision 26 asks for one thing: *"flags are
 //! generated **only** for locals the move analysis proves conditionally
 //! moved, never for every local, which is the difference between a rare cost
-//! and a tax on every function"*. This module is that proof, and nothing else
-//! consumes it.
+//! and a tax on every function"*. This module is that proof.
 //!
-//! **It is not a use-after-move check.** `SC0301` and `SC0302` are the core
-//! spec's and belong to whatever runs after region inference; this pass reports
-//! nothing, has no `Diagnostics` and cannot be made to emit one. Sharing the
-//! dataflow later is the right move; sharing it *now*, before there is a
-//! consumer, would fix the lattice around a second question before that
-//! question has been asked.
+//! **It is still not a use-after-move check**, and it is now what one is
+//! written against. `SC0301` is the core spec's §6.1 rule 3 and belongs to a
+//! phase that reports; this pass reports nothing, has no `Diagnostics` and
+//! cannot be made to emit one, which is `lib.rs`'s §3 and not a property of
+//! this module.
+//!
+//! **The second consumer arrived and the lattice did not move.** This entry
+//! used to end *"sharing the dataflow later is the right move; sharing it now,
+//! before there is a consumer, would fix the lattice around a second question
+//! before that question has been asked"*. The consumer is
+//! `science-regions`' `moved`, and the question it asks — *"what is this
+//! local's state at the point the program reads it"* — needed one new reader,
+//! [`Moves::walk`], and no change to [`State`], to the join, or to what a
+//! statement does. So the bet §2 took is settled: three values were enough for
+//! both questions, and the reason to record that is that it was not obvious in
+//! advance and the alternative was irreversible.
 //!
 //! # 2. The lattice, which is three values and not a bitset pair
 //!
@@ -49,6 +58,18 @@
 //! a double `_free` is a bug it will not catch, and §12 names this phase as
 //! *"the phase that has to be right"*. A leak is a bug a profiler finds; a
 //! double free is a bug a user finds. The imprecision leaks toward the leak.
+//!
+//! **And toward a false positive, for the consumer that arrived second.** The
+//! paragraph above prices this against *drop elaboration*, which is the only
+//! thing that read the analysis when it was written. A **check** reads the same
+//! `Gone` the other way round: `Scopes.lookup` in
+//! `examples/21_compiler_shapes.science` compares `binding.name` and then reads
+//! `binding.definition`, and whole-local tracking hears the whole `binding` go.
+//! `science-regions`' `moved` §3 item 3 therefore abandons any local whose
+//! reaching move went through a projection, which loses the errors that are
+//! real. **The direction of a conservatism is relative to its consumer**, and
+//! the entry that closes both is move paths — the thing this section declined
+//! to build, now with a second reason to.
 //!
 //! # 4. `needs_drop`, and what it cannot know
 //!
@@ -115,15 +136,44 @@ impl Moves {
     /// The states just before a block's terminator.
     ///
     /// Recomputed by replaying the block rather than stored per point: a body
-    /// has far more points than blocks, and the only consumer — drop
-    /// elaboration — asks about terminators, which is where every
-    /// [`TerminatorKind::Drop`] is.
+    /// has far more points than blocks, and this consumer — drop elaboration —
+    /// asks about terminators, which is where every [`TerminatorKind::Drop`]
+    /// is.
     pub fn before_terminator(&self, body: &Body, block: crate::mir::BlockId) -> Vec<State> {
+        let mut states = self.walk(body, block);
+        states.pop().expect("`walk` always ends with the terminator's states")
+    }
+
+    /// The states at **every** point of a block, in point order: one entry per
+    /// statement and a last one for the terminator.
+    ///
+    /// **The decision. The replay is public, per point, and still not stored.**
+    /// [`before_terminator`](Moves::before_terminator) is one element of this
+    /// and is now written in terms of it, so the two cannot disagree about what
+    /// a statement does.
+    ///
+    /// **The reason it is here at all** is that §1's *"sharing the dataflow
+    /// later is the right move; sharing it now, before there is a consumer,
+    /// would fix the lattice around a second question before that question has
+    /// been asked"* has come due. The second consumer is
+    /// `science-regions`' use-after-move check, which asks *"what is this
+    /// local's state where the program reads it"* — a question about a
+    /// statement, not about a terminator — and the lattice did not have to
+    /// change to answer it, which is the outcome §1 was holding out for.
+    ///
+    /// **The cost** is one `Vec<State>` per point of the block, allocated per
+    /// call and not cached. A caller that wants the whole body calls this once
+    /// per block, which is the shape both consumers have.
+    pub fn walk(&self, body: &Body, block: crate::mir::BlockId) -> Vec<Vec<State>> {
+        let statements = &body.block(block).statements;
+        let mut out = Vec::with_capacity(statements.len() + 1);
         let mut states = self.entry[block.index()].clone();
-        for statement in &body.block(block).statements {
+        for statement in statements {
+            out.push(states.clone());
             apply_statement(&statement.kind, &mut states);
         }
-        states
+        out.push(states);
+        out
     }
 }
 

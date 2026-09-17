@@ -11,12 +11,42 @@
 //!
 //! # 2. What is not reported from this crate
 //!
-//! - **`SC0301` and `SC0302`** — use after move — are the core spec's, and
-//!   §12 says *"not claimed and not reused"*. The move analysis they need is
-//!   `science_mir::moves`, whose §1 declines to share its lattice with a check
-//!   that does not exist. [`MOVED_WHILE_BORROWED`] is a different question — a
-//!   move that is legal except that something is still watching — and it is
-//!   this crate's.
+//! - **`SC0301` is the core spec's §6.1 rule 3, and this crate now *reports*
+//!   it without *allocating* it.** The two words are not the same thing, and
+//!   §12's *"not claimed and not reused"* is about the first: it says
+//!   `region-inference.md` does not put `SC0301` in its own block, and
+//!   `docs/superpowers/design/README.md` records the code against
+//!   `ffi-c-boundary.md`, which calls it *"(existing) use after move — applies
+//!   unchanged inside `unsafe`"*. Existing, in a note that reuses it, means the
+//!   code was allocated by the core spec itself and is waiting for a phase that
+//!   can check it.
+//!
+//!   That phase is this one, and the reason is not opportunism: rule 3 needs
+//!   the move analysis (`science_mir::moves`), the point numbering
+//!   ([`crate::points`]) and what each point does to each place
+//!   ([`crate::access`]), and this crate is where all three already are.
+//!   `science_mir`'s §1 used to decline to share its lattice *"with a check
+//!   that does not exist"*; the check exists, it is [`crate::moved`], and
+//!   sharing cost one reader and no change to the lattice.
+//!
+//!   **The ownership block this crate leaves free is unchanged.** `SC0300`,
+//!   `SC0303`–`SC0329` and `SC0399` were free before and are free after:
+//!   reporting a code another document allocated adds nothing to what §12
+//!   claims.
+//! - **`SC0302` is not reported from here, and it is not use after move.**
+//!   The allocation record's own gloss for it is
+//!   `ffi-c-boundary.md`'s *"(existing) conflicting borrows — what catches
+//!   `gemm(a, b, a)`"*, which is §6.1 **rule 4** — the rule
+//!   [`CONFLICTING_BORROWS`] implements in general and reports against an
+//!   access. Emitting `SC0302` as well would be two codes for one violation,
+//!   decided by which note the reader happened to come from, and §7.3's
+//!   treatment of `SC0331` — *"a specialisation … and should be implemented as
+//!   one"* — is the precedent for refusing that. What `SC0302` is still owed is
+//!   the **specialisation**: a call that passes one place to two parameters,
+//!   which needs `ffi-c-boundary.md`'s `extern` signatures to say which
+//!   parameters are `mutable borrowed`, and F0 has no such declaration to read.
+//! - [`MOVED_WHILE_BORROWED`] is a third question again — a move that is legal
+//!   except that something is still watching — and it is this crate's.
 //! - **`SC0331` and `SC0332`** are `collections-and-chains.md`'s, and §7.3 is
 //!   explicit that `SC0331` *"is a specialisation of `SC0330` and should be
 //!   implemented as one"*. [`CONFLICTING_BORROWS`] is the general check; the
@@ -31,6 +61,18 @@
 //! - **`SC0380`** is `ffi-c-boundary.md`'s.
 
 use science_diagnostics::Code;
+
+/// A value is used after it is moved — §6.1 rule 3.
+///
+/// **Allocated by the core spec and reported by [`crate::moved`]**, which §2
+/// above distinguishes from the codes this crate claims. `science-diagnostics`'
+/// `render` module documents the layout for it, and that worked example is what
+/// the reporter renders against.
+///
+/// Distinct from [`MOVED_WHILE_BORROWED`] in the direction that matters for a
+/// message: there the move is legal and the *order* is wrong; here the move
+/// already happened and the value is simply not there.
+pub const USE_AFTER_MOVE: Code = Code(301);
 
 /// A shared borrow and an exclusive one overlap. §7.3, and the code §7.1
 /// renders in full.

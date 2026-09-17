@@ -29,6 +29,7 @@
 //! | 2 | the forward walk that emits constraints | [`generate`] |
 //! | 3 | the worklist fixpoint | [`solve`] |
 //! | 4 | the conflict check, **over accesses and not only borrows** | [`check`] |
+//! | — | §6.1 rule 3, which is not one of §3's five steps | [`moved`] |
 //! | — | what a place's regions are, per Decision 3 | [`regions`] |
 //! | — | what Decision 7 would serialise | [`summary`] |
 //! | — | the per-body record all three consumers read | [`analysis`] |
@@ -41,6 +42,22 @@
 //! [`codes`] says what is *not* allocated and why, and the free block
 //! `SC0300`, `SC0303`–`SC0329`, `SC0399` is as free after this crate as before
 //! it.
+//!
+//! **And one code this crate reports without allocating.** `SC0301` — use
+//! after move, core spec §6.1 rule 3 — was allocated by the core spec, named by
+//! six design notes and constructed by nothing in the workspace. It is checked
+//! here now, by [`moved`], and [`codes`]'s §2 is the argument that *reporting*
+//! a code and *claiming* one are different acts: §12's *"not claimed and not
+//! reused"* says `region-inference.md` puts `SC0301` in nobody's block, not
+//! that no phase may check rule 3. What made it possible is that this crate
+//! already holds everything rule 3 needs — the point numbering, the access
+//! table, and a callee summary it does not even use for this — so the whole
+//! check is a reading of [`science_mir::moves`] and 30 lines of walk.
+//!
+//! **`SC0302` is still reported from nowhere and [`codes`] says why**: the
+//! allocation record's own gloss for it is *conflicting borrows*, which is rule
+//! 4 and is [`codes::CONFLICTING_BORROWS`]'s, and what is left over is a
+//! specialisation for `extern` signatures F0 cannot write.
 //!
 //! # 3. What happened on `examples/21_compiler_shapes.science`
 //!
@@ -268,8 +285,15 @@
 //! - **Cross-crate summaries.** [`summary`]'s §2. Decision 7's serialisation
 //!   has no format to go into, so a callee with no body here is treated as
 //!   opaque — [`generate`]'s §5 and §7 — which errs toward rejecting.
-//! - **A move through an unresolved call.** `science-mir`'s `lower` §5 marks
-//!   those arguments `Copy` deliberately, so `SC0334` cannot see them.
+//! - **A move through a call whose signature is not visible.** `science-mir`'s
+//!   `lower` §5 marks those arguments `Copy` deliberately, so neither `SC0334`
+//!   nor [`moved`] can see them.
+//! - **A conditional move, a partial move, and a move of a value that owns
+//!   nothing.** Three cases rule 3 forbids and [`moved`]'s §3 declines, each
+//!   for its own stated reason and each with a program in `tests/moved.rs`.
+//!   The middle one is `science-mir`'s whole-local move tracking met by the
+//!   first consumer that cannot live with it, and it is the only one of the
+//!   three whose fix is in another crate.
 //! - **Move paths.** `science-mir`'s `moves` §3 tracks per local, so a partial
 //!   move of one field is a move of the whole value here too.
 //! - **`unsafe`.** Decision 10's escape hatch needs a marker MIR does not carry
@@ -377,6 +401,40 @@
 //!     which is why §5 exists. `science-mir`'s §7 item 5 states the same
 //!     finding from the other side.
 //!
+//! 13. **`science-mir`'s two conservatisms are priced for drop elaboration and
+//!     the price is different for a *check*.** Both are stated as *"the
+//!     doubt goes this way and here is what it costs"*, and both costings are
+//!     correct for the consumer they were written for and wrong for this one.
+//!
+//!     - `lower` §5: *"calling a copy a move … costs at worst a drop flag on a
+//!       local that does not need dropping"*. Against rule 3 it costs a **false
+//!       positive on a correct program**, because whether a user record is
+//!       `Copy` is Decision 11's lookup and there is none.
+//!       `examples/21_compiler_shapes.science`'s `DefTable.alloc` is the
+//!       program: it builds a `Def` out of a `DefId` and returns that same
+//!       `DefId`, and a checker that trusted the operand would refuse the file
+//!       the whole engine is accepted against.
+//!     - `moves` §3: *"the imprecision leaks toward the leak"*, because a
+//!       partially moved local is `Maybe`, is not dropped, and the rest leaks.
+//!       Against rule 3 it leaks toward a false positive instead —
+//!       `Scopes.lookup` in the same file compares `binding.name` and then
+//!       reads `binding.definition`.
+//!
+//!     Neither note is wrong; both are incomplete in the same way, and the
+//!     entry worth recording is the shape: **a conservatism has a direction
+//!     only relative to a consumer, and the second consumer can be on the other
+//!     side of it.** [`moved`]'s §3 items 3 and 4 are what this crate does
+//!     about it, and both are refusals to report rather than changes to the
+//!     analysis, because changing the analysis would move the cost back onto
+//!     drop elaboration where it was already priced.
+//! 14. **`region-inference.md` §12's *"not claimed and not reused"* was read as
+//!     *"not checkable here"* for as long as there was nothing to check with.**
+//!     The sentence is about which note **allocates** `SC0301`; nothing in it
+//!     forbids the phase that has the move analysis, the point numbering and
+//!     the access table from reporting rule 3. §12 should say which *phase* is
+//!     expected to check a code it declines to allocate, because the reading
+//!     that it is nobody's survived three crates and a corpus.
+//!
 //! # 9. Can this engine be written in Science?
 //!
 //! §11 asks it and Decision 11 answers *"index-not-pointer throughout"*. Held,
@@ -414,6 +472,7 @@ pub mod constraints;
 pub mod dump;
 pub mod generate;
 pub mod liveness;
+pub mod moved;
 pub mod points;
 pub mod regions;
 pub mod solve;
@@ -591,6 +650,12 @@ pub fn analyse_crate(
     for body in bodies {
         if let Some(one) = analysis.bodies.get(&body.def()) {
             check::check_body(context.defs, body, one, diagnostics);
+            // Rule 3, which is an ownership question rather than a region one.
+            // [`moved`]'s §1 is why it is reported from this crate and its §2 is
+            // why it is run from here rather than from `check_body`. After the
+            // borrow check, because a body with both mistakes has a borrow the
+            // author can see and a move they cannot.
+            moved::use_after_move(context, body, one, diagnostics);
         }
     }
 
