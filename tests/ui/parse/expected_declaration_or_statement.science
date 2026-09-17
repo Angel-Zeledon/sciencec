@@ -1,0 +1,11 @@
+# What `SC0101` has left to report now that the top level admits statements:
+# a token that can begin neither half of it.
+#
+# The message names both halves. Until `script-mode.md` §8.1 landed it named
+# only declarations and carried the note "a module holds declarations only; a
+# statement belongs in a function body" — a grammar commitment that lived in
+# shipped diagnostic text and was never argued for. The first clause of it
+# stopped being true the day the top level gained a second production, and
+# this case is what would have caught it.
+
+)

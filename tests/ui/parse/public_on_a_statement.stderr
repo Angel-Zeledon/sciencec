@@ -1,0 +1,7 @@
+error[SC0107]: `public` has no meaning on a statement
+ --> tests/ui/parse/public_on_a_statement.science:9:1
+  |
+9 | public print("hello")
+  | ^^^^^^ a statement declares no name to export
+  |
+  = help: the statement runs either way: delete `public `

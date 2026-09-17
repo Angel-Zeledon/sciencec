@@ -1,0 +1,51 @@
+---
+source: crates/science-parser/tests/parse_script.rs
+expression: "parse_source(r#\"type Doc:\n    title: String\n\ninterface Summarize:\n    def summarize(self) -> String\n\nDoc has:\n    def new(title: String) -> Doc:\n        Doc(title: title)\n\nDoc implements Summarize:\n    def summarize(self) -> String:\n        self.title\n\nlet doc be Doc.new(\"a\")\ndoc.title\n\"#)"
+---
+Module @0..271
+  Record `Doc` @0..27
+    fields
+      Field `title` @14..27
+        type: Path `String` @21..27
+  Interface `Summarize` @29..83
+    methods
+      Fn `summarize` @54..83
+        receiver: self @68..72
+        ret: Path `String` @77..83
+  Has @85..154
+    type: Path `Doc` @85..88
+    methods
+      Fn `new` @98..154
+        params
+          Param `title` @106..119
+            type: Path `String` @113..119
+        ret: Path `Doc` @124..127
+        body: Block @137..154
+          tail: StructLit `Doc` @137..154
+            fields
+              FieldInit `title` @141..153
+                value: Path `title` @148..153
+  Implements @156..235
+    interface: Bound `Summarize` @171..180
+    type: Path `Doc` @156..159
+    methods
+      Fn `summarize` @186..235
+        receiver: self @200..204
+        ret: Path `String` @209..215
+        body: Block @225..235
+          tail: Field `title` @225..235
+            base: Self @225..229
+  Fn `main` @237..270
+    ret: Nullable @270..270
+      Path `Error` @270..270
+    body: Block @237..270
+      Let `doc` @237..260
+        value: Method `new` @248..260
+          receiver: Path `Doc` @248..251
+          args
+            Str "a" @256..259
+      Field `title` @261..270
+        base: Path `doc` @261..264
+      tail: Null @270..270
+--- diagnostics ---
+(none)

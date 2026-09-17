@@ -1,0 +1,9 @@
+# `public` exports a declaration, and a statement is not one: there is no name
+# for another module to reach. `script-mode.md` §8 reuses `SC0107`, the code
+# the parser already spends on a misplaced `public`, rather than taking a
+# number for this.
+#
+# One stray word, one diagnostic. The word is stepped over and the statement
+# behind it still parses, so nothing cascades from it.
+
+public print("hello")

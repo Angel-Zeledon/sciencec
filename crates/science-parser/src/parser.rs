@@ -101,6 +101,14 @@ pub mod codes {
     pub const NESTED_EACH: Code = Code(115);
     /// `Array of Doc.new()`, whose `.new()` §4.3 refuses to attach by guessing.
     pub const AMBIGUOUS_GENERIC_CALL: Code = Code(116);
+    /// A file with top-level statements that also declares `main`.
+    ///
+    /// `script-mode.md` §2.2 allocates it, and `docs/superpowers/design/
+    /// README.md` records it as that note's one claim on the syntax range.
+    /// The top-level statements *are* a `main`, so a second one is two
+    /// answers to "what runs first" and the note refuses to pick between them
+    /// on the reader's behalf.
+    pub const SCRIPT_AND_MAIN: Code = Code(117);
     /// The word `returns` where §4.4 now writes `->`.
     pub const RETURNS_WORD: Code = Code(118);
 
@@ -426,6 +434,20 @@ impl<'t> Parser<'t> {
         matches!(self.peek_ahead(offset), TokenKind::Ident(name) if name == word)
     }
 
+    /// Whether `word` stands at `offset` in *declaration* position: the word
+    /// itself, and a name after it.
+    ///
+    /// The two words this is asked about — `function` and `trait` — are
+    /// ordinary identifiers to the lexer, so they arrive at the top level
+    /// looking exactly like the first token of a statement. The test lives in
+    /// one place rather than three so that the migration diagnostics and
+    /// [`at_top_level_statement`](Self::at_top_level_statement) cannot come to
+    /// disagree about what a declaration is; if they did, a file could be read
+    /// as a script by one and as a module by the other.
+    fn at_word_declaration(&self, offset: usize, word: &str) -> bool {
+        self.word_at(offset, word) && matches!(self.peek_ahead(offset + 1), TokenKind::Ident(_))
+    }
+
     fn eat(&mut self, kind: &TokenKind) -> Option<Token> {
         if self.at(kind) {
             Some(self.advance())
@@ -589,6 +611,48 @@ impl<'t> Parser<'t> {
 
     // --- module ----------------------------------------------------------
 
+    /// A whole file: declarations and statements, in source order.
+    ///
+    /// **The decision.** The top level of a `.science` file is a sequence of
+    /// *items and statements* (`script-mode.md` §1.1), and the statements are
+    /// desugared **here**, into the body of a generated `def main() -> Error?`
+    /// appended to the module's items. No new statement form, no new keyword,
+    /// no new node: `parse_stmt` is the one the function bodies already use, and what comes out is a [`Module`] of [`Item`]s
+    /// exactly as before.
+    ///
+    /// **What puts a file in script mode is that it contains a top-level
+    /// statement**, and nothing else. Not a flag, not an extension, not the
+    /// name of the file, not a shebang — §9.3 of that note rejects each of
+    /// those on the ground that the same text would then parse two ways
+    /// depending on something the file does not record. A reader decides by
+    /// looking at the left margin, which is where the statement is.
+    ///
+    /// **The reason for desugaring rather than carrying a script through the
+    /// compiler** is that the alternative is two grammars. Every phase after
+    /// this one — the resolver, `science-fmt`'s tree check, `sciencec tools
+    /// --json`, and every phase not written yet — walks items; a second
+    /// top-level shape would have to be taught to all of them, and §9.2 of the
+    /// note works through why the second shape is never smaller than the
+    /// first. Here it is one function that builds one [`FnDecl`], and nothing
+    /// downstream learns the word "script".
+    ///
+    /// **The cost, in three parts, none of which is hypothetical.**
+    ///
+    /// 1. **Generated nodes have no source text.** The `main`, its return
+    ///    type and the `null` that ends its body are given zero-width spans —
+    ///    the name at the start of the first statement, the rest at the end of
+    ///    the last — so a diagnostic that reaches one points at the edge of
+    ///    the script rather than at a token the author never typed.
+    ///    `script-mode.md` §6.3 asks the renderer to call that point "the end
+    ///    of the script"; until it does, a message about it reads as a message
+    ///    about nothing.
+    /// 2. **A message can name a function the author did not write.** Anything
+    ///    that says "in function `main`" about a script is naming a word that
+    ///    is not in the file. §13 of the note lists this as the failure mode
+    ///    that survives testing, because it is confusing rather than wrong.
+    /// 3. **A hand-written `main` collides with the generated one.** That
+    ///    collision is `SC0117` rather than a duplicate definition; see
+    ///    `report_script_and_main` below.
     pub fn parse_module(&mut self) -> Module {
         let span = match (self.tokens.first(), self.tokens.last()) {
             (Some(first), Some(last)) => first.span.merge(last.span),
@@ -596,30 +660,224 @@ impl<'t> Parser<'t> {
         };
 
         let mut items = Vec::new();
+        let mut script: Vec<Stmt> = Vec::new();
         loop {
             self.skip_newlines();
-            match self.peek() {
-                TokenKind::Eof => break,
-                TokenKind::Indent => {
-                    let span = self.span();
-                    self.error(
-                        codes::UNEXPECTED_TOKEN,
-                        "unexpected indentation at the top level of a module",
-                        span,
-                    );
-                    self.skip_indented_region();
-                }
-                TokenKind::Dedent => {
-                    self.advance();
-                }
-                _ => match self.parse_item() {
+            if self.at(&TokenKind::Eof) {
+                break;
+            }
+            if self.at(&TokenKind::Indent) {
+                let span = self.span();
+                self.error(
+                    codes::UNEXPECTED_TOKEN,
+                    "unexpected indentation at the top level of a module",
+                    span,
+                );
+                self.skip_indented_region();
+                continue;
+            }
+            if self.at(&TokenKind::Dedent) {
+                self.advance();
+                continue;
+            }
+            if self.at_top_level_statement() {
+                self.parse_top_level_statement(&mut script);
+            } else {
+                match self.parse_item() {
                     Some(item) => items.push(item),
                     None => self.synchronize(),
-                },
+                }
+            }
+        }
+
+        if !script.is_empty() {
+            match explicit_main(&items) {
+                Some(declared) => self.report_script_and_main(declared, &script),
+                None => items.push(script_body(script, span)),
             }
         }
 
         Module { items, span }
+    }
+
+    /// One top-level statement, read with the same [`parse_stmt`] the body of
+    /// every function is read with.
+    ///
+    /// The loop here is `parse_indented_block`'s, minus the block: report,
+    /// recover, and guarantee forward progress, because a recovery that
+    /// consumes nothing at the top level of a file is a hang.
+    ///
+    /// [`parse_stmt`]: Self::parse_stmt
+    fn parse_top_level_statement(&mut self, script: &mut Vec<Stmt>) {
+        // `public` exports a *declaration*. A statement is not a declaration
+        // and has nothing to export, so the word is reported — `SC0107`, the
+        // code the parser already spends on a misplaced `public`, reused per
+        // §8 of the note rather than given a number of its own — and then
+        // stepped over, so that the statement behind it still parses and one
+        // stray word costs one diagnostic.
+        if self.at(&TokenKind::Public) {
+            let word = self.span();
+            self.advance();
+            // The deletion covers the space after the word as well. Deleting
+            // `public` alone would leave the statement one column in from the
+            // left margin, and in a language that delimits blocks by
+            // indentation that is not cosmetic: the "fix" would trade one
+            // diagnostic for `SC0004`.
+            let span = Span::new(word.file, word.start, self.span().start.max(word.end));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    codes::MISPLACED_PUBLIC,
+                    "`public` has no meaning on a statement",
+                )
+                .with_label(Label::primary(word, "a statement declares no name to export"))
+                .with_suggestion(Suggestion {
+                    span,
+                    replacement: String::new(),
+                    message: "the statement runs either way".to_string(),
+                }),
+            );
+        }
+
+        let before = self.pos;
+        match self.parse_stmt() {
+            Some(stmt) => {
+                script.push(stmt);
+                self.expect_line_end();
+            }
+            None => self.synchronize(),
+        }
+        if self.pos == before {
+            self.advance();
+        }
+    }
+
+    /// Whether the logical line the cursor is on is a statement rather than a
+    /// declaration.
+    ///
+    /// **The decision** is `script-mode.md` §8.2's, restated: every
+    /// declaration but an implementation is settled by its first token, and an
+    /// implementation begins with the type being implemented — so a name at
+    /// the left margin could begin either one. The rule that separates them is
+    /// **exact, not a heuristic**: the line is an implementation header if and
+    /// only if the word `implements` or the word `has` occurs in it at bracket
+    /// depth zero, before its `:` or its end.
+    ///
+    /// **The reason it is exact** is that both are reserved words, so neither
+    /// can occur in an expression, a path, a type or an assignment target. One
+    /// linear scan of one logical line decides it: no backtracking, no
+    /// speculative parse, no diagnostic held back and thrown away.
+    ///
+    /// **The cost** is an obligation on every future syntax change: the day
+    /// either word can stand in expression position, this stops being exact
+    /// and starts being a guess, silently. What keeps that honest is
+    /// `implements_and_has_cannot_stand_in_expression_position`, in
+    /// `crates/science-parser/tests/parse_script.rs`: it asserts the premise
+    /// rather than the conclusion, so the rule here cannot decay into a
+    /// heuristic without a test going red.
+    fn at_top_level_statement(&self) -> bool {
+        // `public` belongs to the declaration behind it, so the question is
+        // asked about that declaration; the misplaced word is reported by
+        // `parse_top_level_statement` if the answer comes back "statement".
+        let from = usize::from(self.at(&TokenKind::Public));
+        match self.peek_ahead(from) {
+            // Nothing in the language declares with one of these.
+            TokenKind::Let | TokenKind::Return | TokenKind::Break | TokenKind::Continue => true,
+            // §8.2's case, and the only one that needs the scan.
+            TokenKind::Ident(_) => {
+                !self.at_word_declaration(from, "function")
+                    && !self.at_word_declaration(from, "trait")
+                    && !self.impl_header_at(from)
+            }
+            // `unsafe extern` opens a foreign block; `unsafe` alone opens a
+            // block expression, which is a statement like any other.
+            TokenKind::Unsafe => !self.at_ahead(from + 1, &TokenKind::Extern),
+            // Every word a declaration can begin with. `Self` is here because
+            // it names a type — `Self implements ..` is the one thing it can
+            // begin at the top level — and `Reserved` because a word held for
+            // a later revision should be reported as the declaration it was
+            // meant to be, not parsed as an expression.
+            TokenKind::Function
+            | TokenKind::Tool
+            | TokenKind::Type
+            | TokenKind::Choice
+            | TokenKind::Interface
+            | TokenKind::Const
+            | TokenKind::Use
+            | TokenKind::Public
+            | TokenKind::Extern
+            | TokenKind::SelfType
+            | TokenKind::Reserved(_) => false,
+            // Anything else is a statement exactly when it could be one. A
+            // token that begins neither falls through to `parse_item`, whose
+            // `SC0101` names both halves of the top level.
+            kind => self.starts_expr(kind),
+        }
+    }
+
+    /// Whether `implements` or `has` occurs at bracket depth zero in the
+    /// logical line beginning at `from`, before its `:` or its end.
+    ///
+    /// The depth is what keeps `Grid of (T, const ROWS: Int) has:` readable:
+    /// the `:` inside the parameter list is not the header's.
+    fn impl_header_at(&self, from: usize) -> bool {
+        let mut depth = 0usize;
+        let mut offset = from;
+        loop {
+            match self.peek_ahead(offset) {
+                TokenKind::Eof
+                | TokenKind::Newline
+                | TokenKind::Indent
+                | TokenKind::Dedent => return false,
+                TokenKind::Implements | TokenKind::Has if depth == 0 => return true,
+                TokenKind::Colon if depth == 0 => return false,
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1)
+                }
+                _ => {}
+            }
+            offset += 1;
+        }
+    }
+
+    /// `SC0117`: the file has top-level statements *and* declares `main`.
+    ///
+    /// **The decision** is §2.2's: this is an error, not a precedence rule.
+    /// The three alternatives each need the reader to know a rule they will
+    /// never look up — statements then `main`, `main` and the statements are
+    /// module initialisation, or `main` is silently dead — and one coherent
+    /// answer beats two.
+    ///
+    /// **No applicable fix**, deliberately. There are two reasonable repairs —
+    /// move the statements into `main`, or delete `main` and let the
+    /// statements be the script — and the compiler cannot choose between
+    /// them, so it names both and applies neither.
+    ///
+    /// **The script body is then not generated at all.** Generating it anyway
+    /// would declare `main` twice and buy the reader a duplicate-definition
+    /// error about a function only one of whose declarations is in the file:
+    /// one mistake, two diagnostics, and the second one unanswerable.
+    fn report_script_and_main(&mut self, declared: Span, script: &[Stmt]) {
+        let first = script[0].span;
+        self.diagnostics.push(
+            Diagnostic::error(
+                codes::SCRIPT_AND_MAIN,
+                "this file has top-level statements and also declares `main`",
+            )
+            .with_label(Label::primary(declared, "`main` is declared here"))
+            .with_label(Label::secondary(
+                first,
+                "the top-level statements start here, and are already a `main`",
+            ))
+            .with_note(
+                "a file whose top level holds statements is a script: the statements are the \
+                 program, and the compiler writes the `main` that runs them",
+            )
+            .with_note(
+                "move the statements into `main`, or delete `main` and let the statements be \
+                 the script",
+            ),
+        );
     }
 
     /// One declaration.
@@ -820,7 +1078,7 @@ impl<'t> Parser<'t> {
     /// Whether the cursor is on `trait Name`, the pre-revision spelling of
     /// `interface Name` (§6).
     fn at_trait_word(&self) -> bool {
-        self.word_at(0, "trait") && matches!(self.peek_ahead(1), TokenKind::Ident(_))
+        self.at_word_declaration(0, "trait")
     }
 
     /// Reports the old `trait` spelling and steps over the word.
@@ -923,7 +1181,7 @@ impl<'t> Parser<'t> {
     /// The lookahead is an identifier, which is what separates the keyword
     /// that was from a variable called `function` — now an ordinary name.
     fn at_function_word(&self) -> bool {
-        self.word_at(0, "function") && matches!(self.peek_ahead(1), TokenKind::Ident(_))
+        self.at_word_declaration(0, "function")
     }
 
     /// Reports `function` and steps over it, so `parse_fn` sees what it
@@ -4177,8 +4435,19 @@ impl<'t> Parser<'t> {
                 Diagnostic::error(codes::EXPECTED_ITEM, message.clone())
                     .with_label(Label::primary(self.span(), message))
                     .with_label(Label::secondary(head.span, "this begins an implementation"))
+                    // The note that stood here said *"a module holds
+                    // declarations only; a statement belongs in a function
+                    // body"*. `script-mode.md` §8.1 predicted the day that
+                    // clause stopped being true, and this is it: a top-level
+                    // line beginning with a name is now a statement unless
+                    // `implements` or `has` is in it. So the line that reaches
+                    // this point is one that *does* contain one of those words
+                    // and still is not an implementation — and the note's job
+                    // is to say which word made the parser read it this way.
                     .with_note(
-                        "a module holds declarations only; a statement belongs in a function body",
+                        "a top-level line beginning with a name is an implementation when \
+                         `implements` or `has` follows the type, and a statement when neither \
+                         does",
                     ),
             );
             return None;
@@ -4326,14 +4595,103 @@ enum Member {
     Method(FnDecl),
 }
 
-/// The list of declaration keywords, as a diagnostic says it.
+/// What may stand at the top level of a file, as a diagnostic says it.
 ///
 /// Written once because it appears in two messages that must not drift apart:
 /// a line that starts with the wrong keyword, and a line that starts with a
 /// name but never reaches `implements`.
+///
+/// **"or a statement" is the half `script-mode.md` §8.1 required.** Until that
+/// note landed this message ended at the closing parenthesis and a companion
+/// note said *"a module holds declarations only; a statement belongs in a
+/// function body"* — a sentence that was a grammar commitment, was never
+/// argued for, and stopped being true the day the top level admitted
+/// statements. What is left for `SC0101` to report is a token that can begin
+/// neither half, which is why the message now names both.
 const EXPECTED_DECLARATION: &str = "expected a declaration (`def`, `tool`, `type`, `choice`, \
                                     `interface`, `const`, `use`, or a type followed by \
-                                    `implements` or `has`)";
+                                    `implements` or `has`) or a statement";
+
+/// The `main` a file declares for itself, if it declares one.
+///
+/// A `tool main` counts. The collision `SC0117` is about is over the *name*,
+/// and which word declared it changes nothing about there being two.
+fn explicit_main(items: &[Item]) -> Option<Span> {
+    items.iter().find_map(|item| match &item.kind {
+        ItemKind::Fn(decl) if decl.name.name == "main" => Some(decl.name.span),
+        _ => None,
+    })
+}
+
+/// A file's top-level statements, as the `def main() -> Error?` the author did
+/// not type.
+///
+/// **The signature is `-> Error?`, and it is not sugar for `-> ((), Error?)`.**
+/// `script-mode.md` §2.3 chose the type and flagged that nothing in the core
+/// spec said a lone `E?` return was legal. It is: the corpus has had one since
+/// before this note — `examples/09_absence_and_failure.science` declares both
+/// `def save_config(..) -> Error?` and `def start(..) -> Error?`, and says in
+/// as many words why the lone form is not the pair — *"a def with no value to
+/// hand back returns the error alone. The pair would have `()` in its first
+/// slot and a name bound to it could do nothing."* So the question the note
+/// raised is settled by what the compiler already accepts, and this function
+/// needed no license it did not have.
+///
+/// **The type is `-> Error?` rather than nothing** because revision 2 makes
+/// `if err?: return err` the idiom for every fallible call, and a script is
+/// mostly IO. A top level on which the language's own error model does not
+/// typecheck would need a workaround on the first line of most programs.
+///
+/// **The body always ends in `null`, and never in the last statement.**
+/// §2.3's "falling off the end is an implicit `return null`" is spelled here:
+/// the tail expression is a generated `null`, and a trailing expression
+/// statement stays a statement instead of being promoted to the tail the way
+/// [`finish_block`] would promote it. Promoting it would make the value of
+/// `print("hello")` the script's return value, and `()` is not an `Error?`.
+///
+/// Every generated node gets a zero-width span — the name where the script
+/// starts, the return type and the `null` where it ends — because a span that
+/// covered real tokens would underline code the author wrote to explain a
+/// function they did not.
+fn script_body(stmts: Vec<Stmt>, module: Span) -> Item {
+    let first = stmts.first().map_or(module, |stmt| stmt.span);
+    let last = stmts.last().map_or(module, |stmt| stmt.span);
+    let span = first.merge(last);
+    let opens = Span::at(span.file, span.start);
+    let ends = Span::at(span.file, span.end);
+
+    let error = Path {
+        segments: vec![PathSegment {
+            name: Ident::new("Error", ends),
+            generics: Vec::new(),
+            span: ends,
+        }],
+        span: ends,
+    };
+    let ret = Type {
+        kind: TypeKind::Nullable(Box::new(Type {
+            kind: TypeKind::Path(error),
+            span: ends,
+        })),
+        span: ends,
+    };
+    let tail = Expr { kind: ExprKind::Literal(Literal::Null), span: ends };
+    let body = Block { stmts, tail: Some(Box::new(tail)), span };
+
+    let decl = FnDecl {
+        form: FnForm::Def,
+        is_pub: false,
+        name: Ident::new("main", opens),
+        generics: Vec::new(),
+        self_param: None,
+        params: Vec::new(),
+        ret: Some(ret),
+        where_clause: Vec::new(),
+        body: Some(body),
+        span,
+    };
+    Item { kind: ItemKind::Fn(decl), span, doc: None }
+}
 
 fn empty_block(span: Span) -> Block {
     Block { stmts: Vec::new(), tail: None, span: Span::at(span.file, span.start) }
@@ -4803,6 +5161,8 @@ mod tests {
             codes::EXPECTED_MEMBER,
             codes::NESTED_EACH,
             codes::AMBIGUOUS_GENERIC_CALL,
+            // `script-mode.md`'s one claim on this range.
+            codes::SCRIPT_AND_MAIN,
             // `mcp-servers.md` §16.1's block. It is the one block in this
             // range that a sibling note allocated rather than the parser, so
             // it is the one most able to drift: the check that it has not is

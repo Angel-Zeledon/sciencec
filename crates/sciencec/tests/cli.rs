@@ -586,3 +586,122 @@ fn the_all_functions_flag_is_not_a_file() {
     let run = sciencec(&["check", "--all-functions"]);
     run.failed();
 }
+
+// --- script mode ---------------------------------------------------------
+//
+// `script-mode.md` §1.1: the top level of a file is a sequence of items *and*
+// statements. The parser desugars the statements into a generated `def main()
+// -> Error?`, so what these assert is that the three commands that walk what
+// the parser produces are handed an ordinary module and behave exactly as they
+// do for any other file.
+//
+// The files are written to the scratch directory rather than to `examples/`,
+// because `examples/` is the corpus three other suites measure themselves
+// against and a file added there is a change to all of them.
+
+/// **The gap this closed.**
+///
+/// One line, no `def`, no `main`, no indentation. Before the top level
+/// admitted statements this answered ``error[SC0101]: expected `implements` or
+/// `has` after `print`, found `(` `` — a syntax error on the first statement
+/// of the first program the language would ever run.
+#[test]
+fn a_one_line_script_checks_clean() {
+    let file = scratch("hello.science", b"print(\"hello, world\")\n");
+    sciencec(&["check", &file]).succeeded().silent_stderr();
+}
+
+/// The file a reader writes second, and the one a careless fix breaks: a
+/// declaration and a statement together. The failure mode of a new top-level
+/// production is not that the statement is rejected, it is that the
+/// declaration beside it is.
+#[test]
+fn a_declaration_and_a_statement_check_clean_together() {
+    let file = scratch(
+        "mixed.science",
+        b"def double(n: I64) -> I64:\n\x20   n * 2\n\nprint(double(21))\n",
+    );
+    sciencec(&["check", &file]).succeeded().silent_stderr();
+}
+
+/// §2.2, end to end: one diagnostic, and no duplicate definition behind it.
+///
+/// The script body is not generated when the file declares `main`, which is
+/// what keeps one mistake to one message. `tests/ui/parse/script_and_main.*`
+/// pins the rendering; this pins the exit code and the count.
+#[test]
+fn a_script_body_beside_a_declared_main_is_one_error() {
+    let file =
+        scratch("both.science", b"let x be 1\n\ndef main():\n\x20   print(x)\n");
+    let run = sciencec(&["check", &file]);
+    run.failed().stderr_contains("SC0117");
+    assert_eq!(run.summary(), Some("1 error"), "stderr:\n{}", run.stderr);
+}
+
+/// `sciencec fmt` round-trips a script.
+///
+/// The formatter works on the token stream and never looks at the syntax tree
+/// for layout, so a top-level statement lays out like any other line. What it
+/// *does* do with the tree is verify its own output — it re-parses and
+/// compares trees modulo spans — and that check sees the generated `main` on
+/// both sides. It agrees because the desugaring is a deterministic function of
+/// the token stream, which is the property that makes a parser-side desugaring
+/// safe for a formatter at all.
+#[test]
+fn fmt_round_trips_a_script_and_is_idempotent() {
+    let source = "use data (Record)\n\
+                  \n\
+                  type Reading:\n\
+                  \x20   temperature: F32\n\
+                  \n\
+                  Reading implements Record\n\
+                  \n\
+                  let readings be load()\n\
+                  print(\"kept:\", readings.len())\n";
+    let file = scratch("fmt_script.science", source.as_bytes());
+    let first = sciencec(&["fmt", &file]);
+    first.succeeded().silent_stderr();
+    assert_eq!(first.stdout, source, "formatting a script must not change it");
+
+    let again = scratch("fmt_script_2.science", first.stdout.as_bytes());
+    let second = sciencec(&["fmt", &again]);
+    second.succeeded().silent_stderr();
+    assert_eq!(second.stdout, first.stdout, "`fmt` must be idempotent on a script");
+}
+
+/// `sciencec tools --json` still selects exactly the `tool` declarations.
+///
+/// The generated `main` is a `def`, so the walk that reads the word a function
+/// was declared with passes over it without being told anything about scripts.
+#[test]
+fn tools_json_ignores_the_script_body() {
+    let file = scratch(
+        "tooled.science",
+        b"## Adds two numbers.\n\
+          tool add(a: I64, b: I64) -> I64:\n\x20   a + b\n\nprint(add(1, 2))\n",
+    );
+    let run = sciencec(&["tools", "--json", &file]);
+    run.succeeded().silent_stderr();
+    assert!(run.stdout.contains(r#""name":"add""#), "{}", run.stdout);
+    assert!(!run.stdout.contains("main"), "{}", run.stdout);
+}
+
+/// **The cost, pinned rather than hidden.**
+///
+/// `--all-functions` walks every function in the module, and after the
+/// desugaring the generated `main` is one of them. So a census of a script
+/// reports a function the author did not write. That is the desugaring's
+/// advertised price — later phases are handed a `main` and are told nothing
+/// about where it came from — and the honest place for it is a test that says
+/// so, not a special case in the walk that would teach `sciencec` the word
+/// "script" in order to hide it.
+#[test]
+fn the_census_of_a_script_names_the_generated_main() {
+    let file = scratch("census_script.science", b"print(\"hello\")\n");
+    let run = sciencec(&["tools", "--json", "--all-functions", &file]);
+    run.succeeded().silent_stderr();
+    assert_eq!(
+        run.stdout,
+        r#"[{"name":"main","inputSchema":{"type":"object","properties":{},"required":[]}}]"#
+    );
+}

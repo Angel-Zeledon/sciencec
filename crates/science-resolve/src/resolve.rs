@@ -19,6 +19,33 @@
 //! 4. **Bodies.** The recursive walk that turns paths into [`Res`], opens and
 //!    closes ribs, and settles §4.4's three ambiguities.
 //!
+//! # Where the script body went
+//!
+//! `script-mode.md` §1.1 gives a file a top level of items *and* statements,
+//! and §10.2 costs the resolver's share of it: walk 2 skipping statements,
+//! walk 4 opening a top-level rib, and `ItemDefs` gaining a variant to keep
+//! the arrays index-aligned. **None of that was built, and none of it is
+//! missing.** The parser desugars a file's top-level statements into a
+//! generated `def main() -> Error?` before this pass ever sees the tree, so
+//! what arrives here is an ordinary module whose items happen to include a
+//! `main`. There is no code below that knows the word "script", and that is
+//! the point: a second top-level shape would have had to be taught to every
+//! walk here and to every phase after it.
+//!
+//! One consequence is worth naming, because it looks like an omission and is
+//! not. §3.3 forbids an item body from reading a top-level `let` — the reason
+//! is §6.2's interprocedural order, which would need a dependency cycle
+//! resolved across the call graph rather than along it — and **the desugaring
+//! enforces that rule by construction**. A top-level `let` binds a local of
+//! the generated `main`; a `def` beside it is a sibling item and not nested in
+//! `main`'s scope, so its body cannot see the binding and step 4 says so
+//! without being told anything. What is *not* built is `SC0212`, the tailored
+//! message that would say *"`threshold` is a script binding"* instead of
+//! `SC0200`'s *"cannot find `threshold` in this scope"*. That message is the
+//! whole of what `SC0212` would add, and buying it means teaching this pass
+//! which item is the script body and which of its statements bind names —
+//! which is exactly the knowledge the desugaring exists to keep out.
+//!
 //! # Not stopping at the first error
 //!
 //! A name that does not resolve is reported once and becomes [`Res::Error`];

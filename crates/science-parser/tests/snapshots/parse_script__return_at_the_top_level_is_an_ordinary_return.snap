@@ -1,0 +1,27 @@
+---
+source: crates/science-parser/tests/parse_script.rs
+expression: "parse_source(r#\"let text, err be read_file(\"run.csv\")\nif err?:\n    return err\n\nprint(text)\n\"#)"
+---
+Module @0..75
+  Fn `main` @0..74
+    ret: Nullable @74..74
+      Path `Error` @74..74
+    body: Block @0..74
+      Let `text, err` @0..37
+        value: Call @17..37
+          callee: Path `read_file` @17..26
+          args
+            Str "run.csv" @27..36
+      If @38..61
+        cond: Present @41..45
+          Path `err` @41..44
+        then: Block @51..61
+          Return @51..61
+            value: Path `err` @58..61
+      Call @63..74
+        callee: Path `print` @63..68
+        args
+          Path `text` @69..73
+      tail: Null @74..74
+--- diagnostics ---
+(none)

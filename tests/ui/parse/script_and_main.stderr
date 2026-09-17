@@ -1,0 +1,11 @@
+error[SC0117]: this file has top-level statements and also declares `main`
+  --> tests/ui/parse/script_and_main.science:15:5
+   |
+11 | let threshold be 0.5f32
+   | ----------------------- the top-level statements start here, and are already a `main`
+...
+15 | def main():
+   |     ^^^^ `main` is declared here
+   |
+   = note: a file whose top level holds statements is a script: the statements are the program, and the compiler writes the `main` that runs them
+   = note: move the statements into `main`, or delete `main` and let the statements be the script

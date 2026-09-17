@@ -1,0 +1,16 @@
+# A file whose top level holds statements is a script: the statements are the
+# program, and the compiler writes the `main` that runs them. Declaring one as
+# well is two answers to "what runs first", and `script-mode.md` §2.2 refuses
+# to pick between them on the reader's behalf.
+#
+# There is deliberately no applicable fix. Two repairs are reasonable — move
+# the statements into `main`, or delete `main` and let the statements be the
+# script — and a compiler that applied either would be choosing what the
+# program is.
+
+let threshold be 0.5f32
+
+print("threshold:", threshold)
+
+def main():
+    print("and this one")

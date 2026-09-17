@@ -1,0 +1,16 @@
+---
+source: crates/science-parser/tests/parse_script.rs
+expression: "parse_source(\"print(\\\"hello, world\\\")\\n\")"
+---
+Module @0..22
+  Fn `main` @0..21
+    ret: Nullable @21..21
+      Path `Error` @21..21
+    body: Block @0..21
+      Call @0..21
+        callee: Path `print` @0..5
+        args
+          Str "hello, world" @6..20
+      tail: Null @21..21
+--- diagnostics ---
+(none)

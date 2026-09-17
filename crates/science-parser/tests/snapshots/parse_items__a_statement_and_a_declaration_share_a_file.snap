@@ -7,5 +7,12 @@ Module @0..27
     fields
       Field `title` @15..27
         type: Path `String` @21..27
+  Fn `main` @0..7
+    ret: Nullable @7..7
+      Path `Error` @7..7
+    body: Block @0..7
+      Let `x` @0..7
+        value: Int 1 @6..7
+      tail: Null @7..7
 --- diagnostics ---
-SC0101 @0..3 expected a declaration (`def`, `tool`, `type`, `choice`, `interface`, `const`, `use`, or a type followed by `implements` or `has`), found `let`
+(none)

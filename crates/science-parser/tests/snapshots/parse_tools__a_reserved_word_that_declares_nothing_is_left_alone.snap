@@ -4,4 +4,4 @@ expression: "parse_source_allowing_errors(\"prompt\n\")"
 ---
 Module @0..7
 --- diagnostics ---
-SC0101 @0..6 expected a declaration (`def`, `tool`, `type`, `choice`, `interface`, `const`, `use`, or a type followed by `implements` or `has`), found `prompt`, which is reserved for a later phase
+SC0101 @0..6 expected a declaration (`def`, `tool`, `type`, `choice`, `interface`, `const`, `use`, or a type followed by `implements` or `has`) or a statement, found `prompt`, which is reserved for a later phase

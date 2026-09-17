@@ -259,6 +259,16 @@ fn implements_still_requires_an_interface_name() {
 
 /// And for an interface's own super list, which is `SC0102` followed by the
 /// same pre-existing cascade. Unchanged for the same reason.
+///
+/// The cascade's third diagnostic changed shape when the top level began
+/// admitting statements, and the count did not: the `(Int) -> Bool:` the
+/// interface header left behind used to be `SC0101`, *expected a
+/// declaration*, and is now read as a statement that does not end its line —
+/// `SC0100`, *expected end of line, found `->`*. The residue of it is what
+/// puts a `Fn \`main\`` in the dump of a file that declares no such thing, and
+/// that is the desugaring's advertised cost showing up where costs show up
+/// first: in a file that did not parse, where every top-level line the parser
+/// classifies is a guess.
 #[test]
 fn a_super_interface_list_still_requires_names() {
     insta::assert_snapshot!(parse_source_allowing_errors(

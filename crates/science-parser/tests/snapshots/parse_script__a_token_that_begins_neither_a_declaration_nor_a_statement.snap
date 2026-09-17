@@ -1,0 +1,7 @@
+---
+source: crates/science-parser/tests/parse_script.rs
+expression: "parse_source_allowing_errors(\")\\n\")"
+---
+Module @0..2
+--- diagnostics ---
+SC0101 @0..1 expected a declaration (`def`, `tool`, `type`, `choice`, `interface`, `const`, `use`, or a type followed by `implements` or `has`) or a statement, found `)`

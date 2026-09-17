@@ -1,0 +1,25 @@
+---
+source: crates/science-parser/tests/parse_script.rs
+expression: "parse_source(r#\"let text be read(\"run.csv\")\nlet count be text.lines().len()\nprint(count)\n\"#)"
+---
+Module @0..73
+  Fn `main` @0..72
+    ret: Nullable @72..72
+      Path `Error` @72..72
+    body: Block @0..72
+      Let `text` @0..27
+        value: Call @12..27
+          callee: Path `read` @12..16
+          args
+            Str "run.csv" @17..26
+      Let `count` @28..59
+        value: Method `len` @41..59
+          receiver: Method `lines` @41..53
+            receiver: Path `text` @41..45
+      Call @60..72
+        callee: Path `print` @60..65
+        args
+          Path `count` @66..71
+      tail: Null @72..72
+--- diagnostics ---
+(none)

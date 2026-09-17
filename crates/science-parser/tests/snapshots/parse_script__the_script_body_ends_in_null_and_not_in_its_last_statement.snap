@@ -1,0 +1,16 @@
+---
+source: crates/science-parser/tests/parse_script.rs
+expression: "parse_source(\"print(1)\\n\")"
+---
+Module @0..9
+  Fn `main` @0..8
+    ret: Nullable @8..8
+      Path `Error` @8..8
+    body: Block @0..8
+      Call @0..8
+        callee: Path `print` @0..5
+        args
+          Int 1 @6..7
+      tail: Null @8..8
+--- diagnostics ---
+(none)

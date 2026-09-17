@@ -1,0 +1,16 @@
+---
+source: crates/science-parser/tests/parse_script.rs
+expression: "parse_source_allowing_errors(\"public print(\\\"hi\\\")\\n\")"
+---
+Module @0..19
+  Fn `main` @7..18
+    ret: Nullable @18..18
+      Path `Error` @18..18
+    body: Block @7..18
+      Call @7..18
+        callee: Path `print` @7..12
+        args
+          Str "hi" @13..17
+      tail: Null @18..18
+--- diagnostics ---
+SC0107 @0..6 `public` has no meaning on a statement

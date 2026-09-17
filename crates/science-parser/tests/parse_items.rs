@@ -766,8 +766,23 @@ fn error_missing_function_name() {
     ]));
 }
 
+/// A statement and a declaration in one file, which is the first thing a
+/// reader who has just met script mode writes.
+///
+/// It used to be `SC0101`, *expected a declaration, found `let`*, and the test
+/// was called `error_statement_at_top_level`. `script-mode.md` §1.3 makes the
+/// two coexist: the `let` becomes the body of the generated `def main() ->
+/// Error?` that the dump below shows appended to the module, the `type` stays
+/// exactly where it was, and **there is no diagnostic at all** — which is the
+/// property this case now pins, because the failure mode a new top-level
+/// production has is not rejecting the statement, it is rejecting the
+/// declaration beside it.
+///
+/// The generated `main` is the desugaring made visible. Its span is the
+/// statements it holds; its name, its return type and its `null` tail have
+/// zero-width spans, because none of the three is in the file.
 #[test]
-fn error_statement_at_top_level() {
+fn a_statement_and_a_declaration_share_a_file() {
     // let x be 1
     // type Doc:
     //     title: String
