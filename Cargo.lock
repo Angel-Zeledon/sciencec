@@ -464,6 +464,7 @@ dependencies = [
  "science-parser",
  "science-resolve",
  "science-testkit",
+ "science-types",
 ]
 
 [[package]]
