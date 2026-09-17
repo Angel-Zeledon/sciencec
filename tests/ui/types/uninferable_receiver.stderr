@@ -1,0 +1,8 @@
+error[SC0536]: the type argument of `Array` cannot be inferred here
+  --> tests/ui/types/uninferable_receiver.science:21:5
+   |
+21 |     Array.new()
+   |     ^^^^^^^^^^^ nothing here fixes `T`
+   |
+   = note: an associated function is reached through a type and not through a value, so the type's arguments come from the instantiation the caller writes or from the arguments of this call, and from nowhere else
+   = note: write the instantiation, in parentheses so that the `.` applies to the whole type: `(Array of ..).new(..)`

@@ -359,6 +359,35 @@ const BLOCKS: &[Block] = &[
         interface: None,
         assoc: &[],
         methods: &[
+            // **`new` is decided here, and no note declares it.** §3.6 is
+            // headed *"Five signatures"* and `new` is not one of them; what the
+            // notes have is *use* — §6.11 writes `let mutable values be
+            // Array.new()` and §3.7 writes `Set.new()` and `Deque.new()` — and
+            // `examples/` writes `(Array of X).new()` eleven times. So the
+            // name, the arity and the absence of an argument are attested and
+            // only the declaration was missing.
+            //
+            // **The decision is `-> Array of T` and nothing else**: an
+            // associated function whose return names the block's own parameter.
+            // It is the only spelling available, because the alternatives are
+            // not signatures — they are rules about where `T` comes from, and
+            // they live at the call. `science-types`' `receiver_arguments`
+            // settles that: the instantiation the author wrote, or §6's
+            // root-level match against the arguments, and `SC0536` when neither
+            // answers.
+            //
+            // **The cost is that §6.11's own example does not compile.** `let
+            // mutable values be Array.new()` has no instantiation, no
+            // arguments, and no expected type, so nothing fixes `T`; the note
+            // is reading `T` out of a later `push(value)` and out of the
+            // function's `-> (Array of F64, TextError?)`, which is inference
+            // across statements that Decision 1 does not have and does not
+            // intend to. The same is true of §3.7's `Set.new()`. The corpus
+            // already writes the form that does compile. This is a real
+            // disagreement between `stdlib-core.md` and the compiler and it is
+            // named rather than papered over: whoever reconciles them either
+            // rewrites those two examples or argues for an expectation that
+            // reaches into an associated call.
             Method {
                 name: "new",
                 recv: None,
@@ -407,6 +436,10 @@ const BLOCKS: &[Block] = &[
         interface: None,
         assoc: &[],
         methods: &[
+            // `Array.new`'s decision, one arity up, with the same citation
+            // (none) and the same cost. `examples/09` and `examples/12` write
+            // `(Map of (String, String)).new()`, which is the form that
+            // compiles; a bare `Map.new()` is `SC0536` naming both `K` and `V`.
             Method {
                 name: "new",
                 recv: None,
@@ -470,6 +503,34 @@ const BLOCKS: &[Block] = &[
         ],
     },
     // --- Box --------------------------------------------------------------
+    //
+    // **`new` is decided here, no note declares it, and it is the one
+    // declaration in this file that the corpus now disagrees with.**
+    //
+    // `def new(value: T) -> Box of T` is the only signature `Box.new` can have:
+    // it takes the value, it moves it to the heap, and what comes back is a
+    // `Box` of the value's type. Nothing else is expressible and nothing else
+    // would be true.
+    //
+    // **What disagrees is not the signature — it is a coercion two sentences of
+    // `science-types`' `assign` do not agree about.** Six corpus sites write
+    // `Box.new(Doc(..))` where a `Box of any Summarize` is declared. With this
+    // signature the call is `Box of Doc`, and `Box of Doc` reaching `Box of any
+    // Summarize` is an *unsizing under a type constructor*, which `assign`'s §4
+    // lists first among *"three things it deliberately does not reach"* — while
+    // §5 of the same file says an owned `any Summarize` *"is constructed where
+    // it is written — `Box.new(doc)` — and the corpus already writes every one
+    // of them that way"*. §4 also closes its list with *"none of which the
+    // corpus writes"*, and that clause is now false.
+    //
+    // **The declaration stays**, for the reason a wrong signature would not:
+    // this one is right, and withdrawing it would put all ten calls back to
+    // `Ty::ERROR` — including the two, in `18_ownership` and `19_stdlib`, that
+    // check clean against it today. The gap is a missing coercion and a
+    // missing coercion is not a reason to delete a correct declaration.
+    // `science-types/tests/corpus.rs` pins the six and carries the three ways
+    // they close; all three are `type-checking-and-mir.md` §6.2's, not this
+    // file's.
     Block {
         ty: "Box",
         generics: &["T"],
@@ -484,11 +545,27 @@ const BLOCKS: &[Block] = &[
     },
     // --- String, §6.9 -----------------------------------------------------
     //
-    // Thirteen of the note's nineteen. The six left out are named in the
-    // report: `truncate` contradicts eighteen corpus call sites, and
-    // `from_bytes`, `slice`, `bytes`, `lines` and `split` return `Range`,
-    // `Characters`, `Lines` and `Split` — four Level 1 types §9 lists and the
-    // prelude does not have.
+    // Thirteen of the note's nineteen, and `new` is the one of the thirteen
+    // that a note declares in full: §6.9's first line is `def new() -> String`,
+    // so it is transcription and not a decision.
+    //
+    // The six left out, with the reason each is out — and the grouping is
+    // finer than it was, because two of them were being refused for a reason
+    // that is not theirs:
+    //
+    // - `truncate` contradicts eighteen corpus call sites, which read it as
+    //   `-> String`; §6.9 makes it `(mutable self, bytes: Int)` with no return.
+    // - `slice`, `lines` and `split` return `Range`, `Lines` and `Split` —
+    //   Level 1 types §9 lists and the prelude does not have.
+    // - `from_bytes` and `bytes` are **expressible today**: `borrowed Array of
+    //   U8`, `(String, TextError?)` and `borrowed Array of U8` name nothing the
+    //   prelude lacks. They stay out for a different reason, which is that no
+    //   program in `examples/` calls either, so landing them would be landing a
+    //   signature the acceptance corpus cannot measure. `from_bytes` is now
+    //   *reachable* — `science-types` accepts a prelude type as the receiver of
+    //   an associated call, which is what `String.new()` needed — so the day
+    //   the corpus writes one, the declaration is a transcription of §6.9 and
+    //   two lines.
     Block {
         ty: "String",
         generics: &[],

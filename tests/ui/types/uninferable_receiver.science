@@ -1,0 +1,24 @@
+# UI test: an associated call through a generic type's bare name, whose own
+# type arguments nothing at the call fixes (SC0536).
+#
+# `Array.new()` names the type `Array`, and `Array` is `Array of T`. An
+# associated function is reached through a type and not through a value, so
+# there is no receiver to read `T` off: it comes from the instantiation the
+# caller writes — `(Array of Int).new()`, which is how every `Array` and `Map`
+# construction in `examples/` is spelled — or from a root-level match against
+# the call's arguments, and from nowhere else. Here `new` takes none.
+#
+# What this replaces is a type with a free parameter in it. Before the code
+# existed the call synthesised `Array of T` for a `T` bound in `builtins.rs`,
+# and the author was shown `expected Array of Int, found Array of T`.
+#
+# `stdlib-core.md` §6.11 writes this exact line, and the compiler and the note
+# disagree about it: the note is reading `T` out of a later `push` and out of
+# the function's return type, which is inference across statements that
+# Decision 1 does not have.
+
+def numbers() -> Array of Int:
+    Array.new()
+
+def main():
+    print(numbers().length())

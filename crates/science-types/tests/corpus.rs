@@ -130,10 +130,82 @@ use std::path::{Path, PathBuf};
 // item > best` — which is the same one-line fix `parent_of` took. It is pinned
 // rather than made, because `examples/` is not this change's to edit. Owner:
 // whoever owns the corpus, and it is the last of the five's family.
+// --- the fourth arrival of the same shape, and the first one no edit closes
+//
+// `BodyChecker::type_receiver` accepted `Record | Choice | Alias | Interface |
+// Union`, and `builtins.rs` allocates `Array`, `Map`, `Box`, `String` and
+// `Chars` as `DefKind::Primitive`. So **a call reached through a prelude type
+// resolved to nothing**: `String.new()`, `(Array of T).new()`, `Map.new()` and
+// `Box.new(x)` were `Ty::ERROR`, in fifteen of the twenty-two files here, and
+// `ty`'s §5 made every one of them agree with whatever slot it was written
+// into. One word in that `matches!` closed it, and what it exposed is below.
+//
+// **Two files stopped reporting and are not on this list.**
+// `18_ownership.science`'s `boxed() -> Box of Doc` and `19_stdlib.science`'s
+// `boxed(record) -> Box of Record` now type-check for real, against a real
+// signature, and pass.
+//
+// **Six sites in two files report, and they are one finding.** Every one of
+// them is `Box.new(C(..))` in a slot declared `Box of any Summarize`:
+//
+// ```text
+// def into_summary(flag: Bool) -> Box of any Summarize:
+//     if flag:
+//         Box.new(Doc(title: "a", body: "..."))
+// ```
+//
+// `Box.new(value: T) -> Box of T` is the declaration, the argument fixes `T`,
+// and the call is `Box of Doc`. `Box of Doc` reaching `Box of any Summarize` is
+// an **unsizing under a type constructor**, and `assign`'s §4 lists that first
+// among *"three things it deliberately does not reach"*, on §2's grounds.
+//
+// **So this is not a defect in `examples/`, and it is not a wrong signature.**
+// §5 of the same file says, in as many words, *"an owned `any Summarize` is
+// constructed where it is written — `Box.new(doc)` — and the corpus already
+// writes every one of them that way"*. The corpus is writing the form the note
+// tells it to write, against a refusal the note also wrote. The compiler is the
+// first thing that could hold both sentences at once, and they do not agree.
+//
+// **What the corpus does falsify is one clause.** §4 closes its three refusals
+// with *"and none of which the corpus writes"*. It writes the first one, six
+// times, and only the absent declaration kept that invisible.
+//
+// **Three things would close it, and each is a note's rather than a checker's:**
+//
+// 1. **`Box of C` unsizes to `Box of any I`**, a coercion beside
+//    `Coercion::Unsize`. This is the cheapest and the best-argued: it is
+//    representationally the *same* operation — a pointer that already exists
+//    paired with a vtable known at the site, no allocation and no value moved —
+//    and §2's stated reason for refusing conversions under a constructor,
+//    *"rewriting every element of a container that already exists, at a cost
+//    proportional to its length"*, does not hold of a constructor that holds one
+//    element and does not rewrite it. That is the identical exemption §2 already
+//    grants `Coercion::CopyWhenPresent`. It is **not** taken here for two
+//    reasons: `type-checking-and-mir.md` §6.2 owns the count of implicit
+//    coercions and this would change it, and a `Coercion` variant nothing
+//    lowers is worse than the refusal — `science-mir` and `science-codegen`
+//    would each have to emit the vtable pair, and neither is this change's.
+// 2. **`Box.new`'s `T` comes from the expectation** rather than from the
+//    argument, so the slot's `any Summarize` instantiates it. That needs
+//    Decision 14's boxing widened from `Error` to every interface — §5 admits
+//    it *"for `Error` alone"* — and an expectation threaded into a method call,
+//    which Decision 1 does not have.
+// 3. **`Box.new` is not an ordinary generic function** but the written-out form
+//    of Decision 14's boxing, whose result type is the slot's. That is the
+//    reading §5's prose supports, and it is a specification nobody has written.
+//
+// Owner: `type-checking-and-mir.md` §6.2, then whoever lowers the coercion it
+// chooses.
 const REMAINING: &[(&str, &[u16])] = &[
+    // Three `Box.new(Doc(..))` in `as_summary`, each in a `-> Box of any
+    // Summarize` arm.
+    ("00_kitchen_sink.science", &[525, 525, 525]),
     // `largest` compares `item`, a `borrowed T` bound by a `for`, against
     // `best`, a `(borrowed T)?` bound from `items.get(0)`.
     ("07_generics.science", &[525]),
+    // `into_summary`'s two arms, and the `describe_boxed(Box.new(..))` in
+    // `main`.
+    ("08_dyn_dispatch.science", &[525, 525, 525]),
 ];
 
 fn examples_dir() -> PathBuf {
@@ -284,8 +356,28 @@ fn every_pinned_file_is_in_the_corpus() {
 /// element in every loop body in the corpus was unchecked — which is a larger
 /// unchecked surface than one diagnostic, and the trade is stated here rather
 /// than left to be noticed.
+///
+/// # **It is 7, and the six that arrived are a third kind of entry**
+///
+/// The two kinds this file had were *the checker is right about a gap in the
+/// language* (no edit to `examples/` closes it) and *the checker is right about
+/// a program* (one edit does). The six `Box.new` sites are neither. The
+/// **program** is the one `assign`'s §5 tells an author to write, in those
+/// words, and the **refusal** is the one `assign`'s §4 wrote down, in those
+/// words, and the two are in the same file. Nothing here is wrong; two
+/// sentences are, and a compiler is the first thing able to hold both at once.
+///
+/// **The trade is the same one `Array.get` and `Iterate` made, and it is much
+/// the larger.** A prelude type could not be the receiver of an associated
+/// call at all, so `String.new()`, `(Array of T).new()`, `Map.new()` and
+/// `Box.new(x)` were `Ty::ERROR` in fifteen of the twenty-two files here.
+/// Against six diagnostics this buys every one of those calls a type, two
+/// files off this list entirely, and the argument of every `Box.new` in the
+/// corpus checked against a parameter for the first time. Stating the size of
+/// what was unchecked is the point: the number going up is the smaller half of
+/// the measurement.
 #[test]
 fn the_corpus_reports_only_what_no_program_can_say() {
     let total: usize = REMAINING.iter().map(|(_, codes)| codes.len()).sum();
-    assert_eq!(total, 1);
+    assert_eq!(total, 7);
 }

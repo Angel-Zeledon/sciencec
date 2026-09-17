@@ -315,10 +315,40 @@ const REGIONS: &[Finding] = &[];
 /// rather than in the return type, and it closes the same way: one presence
 /// test. The fix is the corpus's and this entry is its handoff.
 ///
-/// `science-types/tests/corpus.rs` pins the identical fact against the library
-/// rather than the binary, which is what makes silence here have to be silence
-/// in two places at once.
-const TYPE_CHECKER_FINDINGS: &[(&str, usize)] = &[("07_generics.science", 1)];
+/// **And the fifth of the family is here, six times, in two files.** It is the
+/// first one that is neither the checker being right about a program nor the
+/// checker being right about a gap: it is two sentences of `assign.rs` that do
+/// not agree, and a declaration landing is what made them meet.
+///
+/// `BodyChecker::type_receiver` accepted `Record | Choice | Alias | Interface |
+/// Union`, and `builtins.rs` allocates `Array`, `Map`, `Box`, `String` and
+/// `Chars` as `DefKind::Primitive` — so a call reached through a prelude *type*
+/// found no receiver and came back `Ty::ERROR`. That is every `String.new()`,
+/// `(Array of T).new()`, `Map.new()` and `Box.new(x)` in `examples/`, silently,
+/// in most of the files this test walks. Accepting `Primitive` gives all of
+/// them a type.
+///
+/// What then reports is `Box.new(Doc(..))` in a slot declared `Box of any
+/// Summarize`: the argument fixes `T`, the call is `Box of Doc`, and `Box of
+/// Doc` reaching `Box of any Summarize` is an unsizing under a type
+/// constructor — `assign`'s §4, first of *"three things it deliberately does
+/// not reach"*. The same file's §5 says an owned `any Summarize` *"is
+/// constructed where it is written — `Box.new(doc)` — and the corpus already
+/// writes every one of them that way"*. Both sentences are in `assign.rs` and
+/// the corpus obeys the second.
+///
+/// **Two files came off this list in the same change** — `18_ownership` and
+/// `19_stdlib`, whose `Box.new` returns a concrete `Box of Doc` and `Box of
+/// Record` and now checks against a real signature.
+///
+/// `science-types/tests/corpus.rs` pins the identical facts against the library
+/// rather than the binary, and carries the three ways this closes. That is what
+/// makes silence here have to be silence in two places at once.
+const TYPE_CHECKER_FINDINGS: &[(&str, usize)] = &[
+    ("00_kitchen_sink.science", 3),
+    ("07_generics.science", 1),
+    ("08_dyn_dispatch.science", 3),
+];
 
 #[test]
 fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {

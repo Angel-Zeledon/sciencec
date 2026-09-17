@@ -176,8 +176,26 @@
 //! have been faked with a list of error-shaped types; this one could not,
 //! because the interface is whatever the program wrote.
 //!
-//! **Three things it deliberately does not reach**, each of which is a separate
-//! decision and none of which the corpus writes: an unsizing under a type
+//! **Three things it deliberately does not reach**, each a separate decision.
+//!
+//! **The clause that stood here said "none of which the corpus writes", and it
+//! was false — the corpus writes the first one six times.** It was true when
+//! written only because `Box` had no declaration, so `Box.new(doc)` came back
+//! `Ty::ERROR` and agreed with everything. Giving the prelude that declaration
+//! is what made the six visible, which is the third time this week a
+//! declaration has revealed something an error type was absorbing.
+//!
+//! Worse, §5 below points *at* the form §4 refuses: it says an owned
+//! `any Summarize` "is constructed where it is written — `Box.new(doc)` — and
+//! the corpus already writes every one of them that way". So the file tells an
+//! author to write the thing the file refuses. That is not a defect in
+//! `examples/` and not a wrong signature; it is two sentences here that do not
+//! agree, and closing it is `type-checking-and-mir.md` §6.2's, because §6.2
+//! owns the count of implicit coercions.
+//!
+//! The three:
+//!
+//! an unsizing under a type
 //! constructor (§2); a mutability change alongside the unsizing (§5's last
 //! bullet); and `borrowed C` into `(borrowed any I)?`, which would be an
 //! `UnsizeThenWiden` and is refused for the reason §5 refuses the other

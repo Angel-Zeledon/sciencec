@@ -722,6 +722,348 @@ def read() -> String:
     checked.assert_clean();
 }
 
+// --- a prelude type as the receiver of an associated call ------------------
+//
+// `BodyChecker::type_receiver` used to accept `Record | Choice | Alias |
+// Interface | Union` and nothing else, and `builtins.rs` allocates `Array`,
+// `Map`, `Box`, `String` and `Chars` as `DefKind::Primitive`. So a call
+// *through* one of those names found no receiver type, fell through to the
+// value path, synthesised the *type's* path expression as if it were a value,
+// and came back `Ty::ERROR` — silently, because `ty`'s §5 makes an error type
+// agree with everything downstream.
+//
+// That is every `String.new()`, `(Array of T).new()`, `Map.new()` and
+// `Box.new(x)` in `examples/`, which is most files in the corpus. The tests
+// below are the hole named: each one asserts a *type*, because the code the
+// hole produced was not a missing diagnostic but a missing type.
+
+/// The hole, at the simplest receiver there is: a prelude type with no
+/// parameters and an associated function that takes nothing.
+///
+/// `String.new()` is `stdlib-core.md` §6.9's first line. The assertion is that
+/// it lowers to an [`ExprKind::Call`] at a definition — `check`'s §"a method
+/// reached through a type" — and that the call's type is `String` and not
+/// `Ty::ERROR`.
+#[test]
+fn an_associated_function_on_a_prelude_type_resolves_through_its_type() {
+    let checked = check(
+        "\
+def scratch() -> String:
+    String.new()
+",
+    );
+    checked.assert_clean();
+    let body = checked.body("scratch");
+    let (id, call) = body
+        .exprs()
+        .find(|(_, expr)| matches!(expr.kind, ExprKind::Call { .. }))
+        .expect("the body has a call");
+    let ExprKind::Call { callee, args } = &call.kind else { unreachable!() };
+    assert!(args.is_empty());
+    let ExprKind::Item(method) = body.expr(*callee).kind else {
+        panic!("the callee is the method's own definition")
+    };
+    assert!(checked.krate.defs.get(method).is_builtin(), "`String.new` is the prelude's");
+    assert_eq!(checked.render(body.ty(id)), "String");
+}
+
+/// The same receiver, with the type's own arguments written — which is how
+/// `examples/07_generics.science`, `examples/10_loops.science` and
+/// `examples/12_operators.science` spell every `Array` and `Map` construction
+/// in the corpus, and why §4.3 requires the parentheses.
+#[test]
+fn an_explicit_instantiation_fixes_the_prelude_blocks_parameters() {
+    let checked = check(
+        "\
+def numbers() -> Array of Int:
+    (Array of Int).new()
+
+def settings() -> Map of (String, Int):
+    (Map of (String, Int)).new()
+",
+    );
+    checked.assert_clean();
+    assert_eq!(checked.render(tail(&checked, "numbers")), "Array of Int");
+    assert_eq!(checked.render(tail(&checked, "settings")), "Map of (String, Int)");
+}
+
+/// The receiver written bare, with the *argument* fixing the block's parameter.
+///
+/// `Box.new(doc)` is the one prelude associated function the corpus writes
+/// without an instantiation, five times, and `check`'s `receiver_arguments` is
+/// the rule that gives it a type. Both halves are asserted: the call's type,
+/// and that the argument met a real parameter rather than a bare `T`.
+#[test]
+fn an_argument_fixes_the_receivers_parameter_at_an_associated_call() {
+    let checked = program(
+        "
+def own(doc: Doc) -> Box of Doc:
+    Box.new(doc)
+",
+    );
+    checked.assert_clean();
+    assert_eq!(checked.render(tail(&checked, "own")), "Box of Doc");
+}
+
+/// And the argument is *checked*, which is what the hole cost: before, every
+/// `Box.new(..)` in the corpus accepted anything.
+#[test]
+fn the_argument_of_an_associated_call_is_checked_against_the_solved_parameter() {
+    let checked = program(
+        "
+def own(doc: Doc) -> Box of String:
+    Box.new(doc)
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(
+        checked.messages(),
+        vec!["expected `Box of String`, found `Box of Doc`".to_string()]
+    );
+}
+
+/// `SC0536`, and the case it is for: a generic type named bare with nothing at
+/// the call to fix its arguments.
+///
+/// What this replaces is a [`Ty`] with a free parameter in it — `Array of T`
+/// for a `T` bound in `builtins.rs` — reported at the author as `expected Array
+/// of Int, found Array of T`. The fix the message offers is the instantiation,
+/// which the corpus already writes everywhere else.
+///
+/// [`Ty`]: science_types::Ty
+#[test]
+fn a_bare_generic_receiver_that_nothing_fixes_is_reported() {
+    let checked = check(
+        "\
+def numbers() -> Array of Int:
+    Array.new()
+",
+    );
+    assert_eq!(checked.codes(), vec![536]);
+    let diagnostic = checked.diagnostics.iter().next().expect("one diagnostic");
+    assert_eq!(diagnostic.message, "the type argument of `Array` cannot be inferred here");
+    assert_eq!(diagnostic.labels[0].message, "nothing here fixes `T`");
+    assert!(diagnostic.notes[1].contains("(Array of ..).new(..)"));
+}
+
+/// The same code, plural, and on a *user's* generic type — because the rule is
+/// about an associated call and not about the prelude.
+///
+/// `Wrapper.holding(7)` cannot be solved: an unsuffixed literal is an inference
+/// variable until a parameter expects a type of it, and the parameter here is
+/// the unsolved one. This is the narrowing `receiver_arguments` prices.
+#[test]
+fn an_unsuffixed_literal_cannot_fix_a_receivers_parameter() {
+    let checked = check(
+        "\
+type Wrapper of T:
+    inner: T
+
+Wrapper of T has:
+    def holding(value: T) -> Wrapper of T:
+        Wrapper(inner: value)
+
+def wrapped() -> Wrapper of Int:
+    Wrapper.holding(7)
+",
+    );
+    assert_eq!(checked.codes(), vec![536]);
+    assert_eq!(checked.messages(), vec![
+        "the type argument of `Wrapper` cannot be inferred here".to_string()
+    ]);
+
+    // The instantiation is the fix, and it is the spelling the message offers.
+    let fixed = check(
+        "\
+type Wrapper of T:
+    inner: T
+
+Wrapper of T has:
+    def holding(value: T) -> Wrapper of T:
+        Wrapper(inner: value)
+
+def wrapped() -> Wrapper of Int:
+    (Wrapper of Int).holding(7)
+",
+    );
+    fixed.assert_clean();
+}
+
+/// The suffixed literal, for the control: it is the *probe* that fails above
+/// and not the rule, so a literal with a type solves the receiver.
+#[test]
+fn a_suffixed_literal_does_fix_a_receivers_parameter() {
+    let checked = check(
+        "\
+def held() -> Box of I64:
+    Box.new(7i64)
+",
+    );
+    checked.assert_clean();
+    assert_eq!(checked.render(tail(&checked, "held")), "Box of I64");
+}
+
+/// An argument whose own type references an error solves nothing **and reports
+/// nothing**, which is `ty`'s §5 rather than a hole left in the rule.
+///
+/// This is `examples/04_enums.science`'s `Box.new(Leaf(1))`: `Leaf` is a
+/// variant of `Tree of T`, §6's probe cannot type the unsuffixed `1`, and the
+/// variant call is `Tree of <error>` before the receiver is ever solved.
+/// Telling that author to instantiate `Box` would be advice that does not help.
+#[test]
+fn an_erroneous_argument_neither_solves_the_receiver_nor_reports_it() {
+    let checked = check(
+        "\
+choice Tree of T:
+    Leaf(T)
+    Node(Box of (Tree of T), Box of (Tree of T))
+
+def grow():
+    let tree be Node(Box.new(Leaf(1)), Box.new(Leaf(2)))
+",
+    );
+    checked.assert_clean();
+}
+
+// --- the negative: what a builtin still does not answer --------------------
+
+/// **`Methods::surface_is_closed` is why this reports nothing**, and the test
+/// is written as a pair so that the silence is visible as a *decision* rather
+/// than as a gap somebody forgot.
+///
+/// A user's `Doc has:` block is every inherent method `Doc` will ever have, so
+/// a name it does not have is `SC0532`. The prelude's blocks are a partial
+/// transcription of `stdlib-core.md` §9 — `String` has thirteen of its nineteen
+/// — so a name they do not have means *"not written down yet"*, and reporting
+/// it would put a diagnostic on `text.slice(0..4)`, which is a correct program.
+///
+/// The day §9 is transcribed whole, the second half of this test is what has to
+/// change, and `methods`'s §8 says so.
+#[test]
+fn a_missing_method_reports_on_a_user_type_and_is_silent_on_a_builtin() {
+    let user = program(
+        "
+def read(doc: Doc) -> String:
+    doc.shorten()
+",
+    );
+    assert_eq!(user.codes(), vec![532]);
+
+    let builtin = check(
+        "\
+def read(text: borrowed String) -> Int:
+    text.shorten()
+",
+    );
+    builtin.assert_clean();
+}
+
+/// The same silence through a *type* receiver, which is the arm this change
+/// opened: `String.bogus()` now reaches the index where it used to stop at
+/// `type_receiver`, and `surface_is_closed` is what keeps it quiet.
+#[test]
+fn a_missing_associated_function_on_a_builtin_is_silent_for_the_same_reason() {
+    let checked = check(
+        "\
+def scratch() -> String:
+    String.bogus()
+",
+    );
+    checked.assert_clean();
+}
+
+/// A prelude head the index has **no entry for at all** — `Methods::receiver`'s
+/// own arm, one step before `surface_is_closed`.
+///
+/// `builtins.rs` declares blocks on five of its types and on none of the
+/// numeric primitives, so `I64` is a receiver this compiler cannot speak for
+/// rather than one it answers no about. Accepting `DefKind::Primitive` at
+/// `type_receiver` does not change that, and this is the test that says so.
+#[test]
+fn a_prelude_type_with_no_declared_block_is_still_a_receiver_nothing_is_known_about() {
+    let checked = check(
+        "\
+def zero() -> I64:
+    I64.new()
+",
+    );
+    checked.assert_clean();
+}
+
+/// `Found::Mismatched` through a prelude type: the name is there and the form
+/// is not.
+///
+/// `String.length()` names an instance method through its type. F0 has no
+/// qualified-call syntax, so `methods`'s §5 makes this silence rather than a
+/// diagnostic — the same answer `Doc.describe()` gets above, now reachable on a
+/// builtin too.
+#[test]
+fn an_instance_method_named_through_a_prelude_type_is_not_reported_either() {
+    let checked = check(
+        "\
+def size() -> Int:
+    String.length()
+",
+    );
+    checked.assert_clean();
+}
+
+// --- the finding this change exposed --------------------------------------
+
+/// **`Box of C` does not reach `Box of any I`, and `assign`'s §4 says so.**
+///
+/// Six corpus sites write exactly this and were invisible while `Box.new`
+/// resolved to nothing. It is pinned here as well as in `tests/corpus.rs`
+/// because the corpus test pins a *code* against a file and this pins the
+/// relation: the mismatch is between two `Box`es, the coercion that would close
+/// it is an unsizing under a type constructor, and `assign`'s §4 lists that by
+/// name as one of *"three things it deliberately does not reach"*.
+///
+/// The same file's §5 says *"an owned `any Summarize` is constructed where it is
+/// written — `Box.new(doc)` — and the corpus already writes every one of them
+/// that way"*, so the program is the one the note endorses and the refusal is
+/// the one the note wrote. That is the finding, and neither half of it is this
+/// test's to change.
+#[test]
+fn a_box_of_a_concrete_type_does_not_reach_a_box_of_an_interface_object() {
+    let checked = program(
+        "
+def into_summary(doc: Doc) -> Box of any Summarize:
+    Box.new(doc)
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(
+        checked.messages(),
+        vec!["expected `Box of any Summarize`, found `Box of Doc`".to_string()]
+    );
+
+    // The control, and it is the half `assign`'s §4 *did* admit: behind a
+    // borrow the same unsizing is free and happens.
+    let borrowed = program(
+        "
+def describe(doc: Doc) -> String:
+    describe_any(borrowed doc)
+
+def describe_any(value: borrowed any Summarize) -> String:
+    value.summarize()
+",
+    );
+    borrowed.assert_clean();
+}
+
+/// The tail expression's type, for the tests above that assert what a call
+/// produced rather than what it reported.
+fn tail(checked: &support::Checked, function: &str) -> science_types::Ty {
+    let body = checked.body(function);
+    let (id, _) = body
+        .exprs()
+        .filter(|(_, expr)| matches!(expr.kind, ExprKind::Call { .. }))
+        .last()
+        .expect("the body has a call");
+    body.ty(id)
+}
+
 // --- the prelude's own declarations ---------------------------------------
 
 /// `builtins.rs`' blocks reach this index through the same two arms a user's

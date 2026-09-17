@@ -317,7 +317,7 @@
 //!   check, and the kind of a const argument is that check rather than this
 //!   one.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use science_diagnostics::{Diagnostic, Diagnostics, Label, Span};
 use science_lexer::NumSuffix;
@@ -1946,12 +1946,220 @@ impl<'a> BodyChecker<'a> {
                 }
             };
         let callee = self.body.push_expr(ExprKind::Item(candidate.method), Ty::ERROR, span);
-        let (ids, ret) = self.call_method(&candidate, revealed, generics, args, supplied, span);
+        let (self_ty, supplied) =
+            self.receiver_arguments(revealed, &candidate, args, supplied, span);
+        let (ids, ret) = self.call_method(&candidate, self_ty, generics, args, supplied, span);
         let id = self.body.push_expr(ExprKind::Call { callee, args: ids }, ret, span);
         if self.decls.prelude().is_never(self.types, ret) {
             self.diverged = true;
         }
         Typed { id, ty: InferTy::Known(ret) }
+    }
+
+    /// The receiver of an associated call, with the block's own type arguments
+    /// filled in: `Box` becoming `Box of Doc` at `Box.new(doc)`.
+    ///
+    /// # The decision, and why it has to be taken somewhere
+    ///
+    /// **Decision. At an associated call whose receiver names a generic type
+    /// and writes no arguments, the block's type parameters are solved by §6's
+    /// root-level match against the call's arguments, and the arguments are
+    /// *synthesised* to do it.**
+    ///
+    /// [`BodyChecker::block_substitution`] solves a block's parameters by
+    /// matching the block's self type against the **receiver's**, which is the
+    /// whole answer at a method call: `docs.push(d)` has a receiver whose type
+    /// is `Array of Doc` and `T` is read straight off it. An associated call
+    /// has no receiver value, so the only arguments its type carries are the
+    /// ones the author wrote — `(Array of Int).new()`, which is how
+    /// `examples/07_generics.science` spells it and why §4.3 requires the
+    /// parentheses. When none were written there is nothing on the receiver's
+    /// side at all, and *something* has to happen.
+    ///
+    /// **What used to happen is the thing this exists to stop.** The pattern
+    /// `Box of T` zipped against a receiver carrying no arguments matched
+    /// nothing, `T` stayed unsolved, and the block substitution left a
+    /// [`TyKind::Param`] standing in the signature — so `Box.new(doc)`
+    /// synthesised `Box of T`, and `doc` was checked against a bare `T` bound
+    /// in `builtins.rs`. Both halves then reported, and both messages named a
+    /// parameter the author cannot see: `expected Box of Doc, found Box of T`,
+    /// and `expected T, found Doc`. A type with a free parameter in it is not a
+    /// type, and a diagnostic that prints one is the checker leaking its table.
+    ///
+    /// # Why the arguments are synthesised rather than probed
+    ///
+    /// [`BodyChecker::instantiate_call`] solves a *callee's* generics by the
+    /// same root-level match and asks [`BodyChecker::probe`] instead, because
+    /// synthesising there would build every argument node twice. Here it would
+    /// not: [`BodyChecker::call_method`] already takes `supplied`, which means
+    /// exactly *"these arguments are synthesised already, meet their parameters
+    /// at [`BodyChecker::demand`]"*, and that path exists because
+    /// [`BodyChecker::select`] needed it.
+    ///
+    /// The probe would also not have done. It answers for a name whose type is
+    /// declared and a literal whose suffix fixes it, and of the **ten
+    /// `Box.new(..)` calls in `examples/` it answers for exactly one** —
+    /// `19_stdlib`'s `Box.new(record)`. The other nine hand it a record literal
+    /// (`Box.new(Doc(title: "a", body: "..."))`, six of them), a variant call
+    /// (`Box.new(Leaf(1))`, two) or an ordinary call (`Box.new(produce())`),
+    /// and it probes every one of them to `None` — which §6 turns into
+    /// [`Ty::ERROR`], and `Box of ERROR` agrees with every `Box` it meets.
+    /// That is the same silence this change is about, one constructor down, so
+    /// the narrow answer would have looked like a fix and checked nothing.
+    ///
+    /// # What it costs
+    ///
+    /// **Decision 1's first sentence, at these call sites, exactly as
+    /// [`BodyChecker::select`] already pays it**: the argument is synthesised
+    /// before its parameter type is known, so checking mode does not reach into
+    /// it and an `if`, a `match`, a block or a closure handed to an associated
+    /// function of a generic type is synthesised rather than pushed into. It
+    /// meets the solved parameter at [`BodyChecker::demand`] afterwards.
+    /// Nothing crosses a function boundary and no inference variable of this
+    /// body is unified with anything outside it, so the guarantee Decision 1
+    /// actually rests on is untouched.
+    ///
+    /// **An argument with no type of its own solves nothing.** An unsuffixed
+    /// literal and `null` are inference variables until a parameter expects a
+    /// type of them, and the parameter here *is* the unsolved one — so
+    /// `Wrapper.holding(7)` cannot be solved from its argument and is
+    /// [`codes::UNINFERABLE_RECEIVER`], with the instantiation offered as the
+    /// fix. That is a real narrowing of what may be written bare, and it is the
+    /// direction that can be reversed: an expectation pushed into an associated
+    /// call would widen it later, and no note has asked for one.
+    ///
+    /// **This is a solve and never a check.** A parameter the arguments do not
+    /// determine becomes [`Ty::ERROR`] *and* reports, rather than becoming
+    /// `Ty::ERROR` in silence; nothing here compares an argument against
+    /// anything, so no diagnostic of any other code comes out of it.
+    ///
+    /// **With one exception, which is `ty`'s §5 and not a softening.** An
+    /// argument whose synthesised type *references* an error would have solved
+    /// the parameter and could not, so the parameter is filled with
+    /// [`Ty::ERROR`] and **nothing is reported for it**. `examples/04_enums`'
+    /// `Box.new(Leaf(1))` is the case: `Leaf` is a variant of `Tree of T`, the
+    /// unsuffixed `1` probes to `None` under §6, and `Leaf(1)` therefore
+    /// synthesises as `Tree of ERROR` before this function is reached. Telling
+    /// that author to write `(Box of (Tree of Int)).new(..)` would be advice
+    /// that does not help — the argument is still untyped afterwards — and it
+    /// would blame the receiver for a hole §6 left at the literal. The silence
+    /// there is owned by §6's probe, is older than this function, and is named
+    /// rather than inherited.
+    fn receiver_arguments(
+        &mut self,
+        receiver: Ty,
+        candidate: &Candidate,
+        args: &[hir::Arg],
+        supplied: Option<Vec<Typed>>,
+        span: Span,
+    ) -> (Ty, Option<Vec<Typed>>) {
+        let TyKind::Named { def, args: ref written } = *self.types.kind(receiver) else {
+            return (receiver, supplied);
+        };
+        if !written.is_empty() {
+            return (receiver, supplied);
+        }
+        // The block's parameters, and the shape they sit in on its own self
+        // type: `Array of T has:` gives `[T]` and `Array of T`. A block on a
+        // type with no parameters has neither and leaves through here, which is
+        // every `String.new()` and every `Doc.new("scratch")` in the corpus.
+        let declared: Vec<hir::GenericParam> = match self.decls.block_generics(candidate.block) {
+            Some(generics) if !generics.is_empty() => generics.to_vec(),
+            _ => return (receiver, supplied),
+        };
+        let Some(block_self) = self.decls.self_ty(candidate.block) else {
+            return (receiver, supplied);
+        };
+        let TyKind::Named { def: owner, args: pattern } = self.types.kind(block_self).clone()
+        else {
+            return (receiver, supplied);
+        };
+        if owner != def || pattern.is_empty() {
+            return (receiver, supplied);
+        }
+
+        let supplied: Vec<Typed> = match supplied {
+            Some(supplied) => supplied,
+            None => args.iter().map(|arg| self.synth(&arg.value)).collect(),
+        };
+
+        let mut solved: HashMap<DefId, Ty> = HashMap::new();
+        // Parameters an argument would have solved, had that argument had a
+        // type. They are filled with [`Ty::ERROR`] like any other unsolved
+        // parameter and are the ones the diagnostic below does *not* claim.
+        let mut poisoned: HashSet<DefId> = HashSet::new();
+        if let Some(sig) = self.decls.signature(candidate.method) {
+            let params: Vec<(DefId, Ty)> =
+                sig.params.iter().map(|param| (param.def, param.ty)).collect();
+            let order = self.argument_order(&params, args);
+            for (at, arg) in args.iter().enumerate() {
+                let Some(index) = order.get(at).copied().flatten() else { continue };
+                let Some((_, param_ty)) = params.get(index).copied() else { continue };
+                let Some((param, borrowed)) = self.root_param(param_ty) else { continue };
+                if solved.contains_key(&param) || !declared.iter().any(|p| p.def == param) {
+                    continue;
+                }
+                let Some(typed) = supplied.get(at).copied() else { continue };
+                let InferTy::Known(ty) = self.infer.resolve(typed.ty) else { continue };
+                // An erroneous argument narrows nothing: `ty`'s §5 makes it
+                // agree with everything, and solving a parameter to it would
+                // spread one mistake into the receiver's type.
+                // [`BodyChecker::select`] declines the same argument for the
+                // same reason. It also **silences** the report below, which is
+                // the other half of the same rule: this argument *does* mention
+                // the parameter, so the author has not left it open — the
+                // checker failed to type what they wrote, and `Box.new(Leaf(1))`
+                // must not be told to instantiate its receiver when the
+                // instantiation would not help.
+                if self.types.references_error(ty) {
+                    poisoned.insert(param);
+                    continue;
+                }
+                let ty = if borrowed { self.peel_borrow(ty, arg.span) } else { ty };
+                solved.insert(param, ty);
+            }
+        }
+
+        let mut filled: Vec<GenericArg> = Vec::with_capacity(pattern.len());
+        let mut unsolved: Vec<String> = Vec::new();
+        let mut consts = false;
+        for argument in &pattern {
+            match argument {
+                GenericArg::Type(ty) => match *self.types.kind(*ty) {
+                    TyKind::Param { def: param } => match solved.get(&param) {
+                        Some(ty) => filled.push(GenericArg::Type(*ty)),
+                        None => {
+                            if !poisoned.contains(&param) {
+                                unsolved.push(self.defs.get(param).name.clone());
+                            }
+                            filled.push(GenericArg::Type(Ty::ERROR));
+                        }
+                    },
+                    // Not a bare parameter: the block wrote a concrete type
+                    // into its own self type, so there is nothing to solve and
+                    // nothing to report.
+                    _ => filled.push(GenericArg::Type(*ty)),
+                },
+                // A const parameter of the block. No argument solves one —
+                // `matching`'s one-variable solve wants an obligation to
+                // discharge, which is `SC0262` and F1's — so the written
+                // instantiation is the only spelling, and the message says so.
+                GenericArg::Const(_) => {
+                    consts = true;
+                    filled.push(GenericArg::Error);
+                }
+                // Already erroneous before this function ran: `ty`'s §5 again,
+                // and reporting on it would be a second diagnostic for one
+                // mistake.
+                GenericArg::Error => filled.push(GenericArg::Error),
+            }
+        }
+        if !unsolved.is_empty() || consts {
+            let name = self.defs.get(def).name.clone();
+            let method = self.defs.get(candidate.method).name.clone();
+            self.diagnostics.push(uninferable_receiver(span, &name, &method, &unsolved, consts));
+        }
+        (self.types.named(def, filled), Some(supplied))
     }
 
     /// The arguments checked against a resolved method's parameters, and the
@@ -2148,6 +2356,52 @@ impl<'a> BodyChecker<'a> {
     /// cannot either, because whether `DefTable` is a type is a fact about the
     /// definition it resolved to and not about the expression. This is the
     /// first phase that holds both.
+    ///
+    /// # `DefKind::Primitive` is in the list, and it is why most of the corpus
+    /// was unchecked
+    ///
+    /// **Decision. A prelude type is a receiver.** The list used to be `Record
+    /// | Choice | Alias | Interface | Union`, and `builtins.rs` allocates
+    /// `Array`, `Map`, `Box`, `String` and `Chars` as `DefKind::Primitive` —
+    /// they are §8's library types, with a representation in `science-rt` and
+    /// no declaration in any `.science` file, and `Primitive` is the kind that
+    /// says so. So `String.new()` was not a call through a type: it fell to the
+    /// value path, [`BodyChecker::synth`] was handed a path expression naming a
+    /// *type*, and the answer was [`Ty::ERROR`].
+    ///
+    /// **Nothing reported it**, which is the shape of the cost rather than an
+    /// accident. `ty`'s §5 makes an error type agree with everything, so the
+    /// call sat in whatever slot it was written into and the slot stopped being
+    /// checked. `String.new()`, `(Array of T).new()`, `Map.new()` and
+    /// `Box.new(x)` are how every owned collection and every heap indirection
+    /// in the language is built, and they appear in fifteen of the
+    /// twenty-two files in `examples/`.
+    ///
+    /// **The kind was never the question the lookup wanted asked.** `methods`'s
+    /// §1 keys its index on *"the definition a receiver's type heads"*, and
+    /// `ty`'s [`TyKind::Named`] documentation already says a checker's question
+    /// about a name is *"which definition"* and never *"which kind of
+    /// definition"* — the whole reason a record, a choice, an alias and a
+    /// primitive share one variant there. Testing the kind here was the one
+    /// place that asked the other question, and a `DefKind` this arm had not
+    /// heard of was silently *"not a type"*.
+    ///
+    /// **What it costs is that the arm now reaches declarations that are
+    /// partial.** A prelude block is a transcription of `stdlib-core.md` §9 and
+    /// is not finished, so an associated function the prelude has not written
+    /// down is reached and found missing. [`Methods::surface_is_closed`] is
+    /// what keeps that silent — a builtin head's method set is open — so
+    /// `String.bogus()` reports nothing, exactly as `text.bogus()` on a value
+    /// receiver reports nothing. The silence is the same one, now reachable
+    /// through one more spelling, and it closes when §9 is transcribed whole.
+    ///
+    /// **And it reaches a second hole one level in**, which is a generic prelude
+    /// type named with no arguments: `Box.new(x)` and a bare `Array.new()`.
+    /// [`BodyChecker::receiver_arguments`] is that rule and states its own
+    /// decision; before this arm accepted `Primitive`, no prelude call ever got
+    /// far enough to meet it.
+    ///
+    /// [`Methods::surface_is_closed`]: crate::methods::Methods::surface_is_closed
     fn type_receiver(&mut self, receiver: &hir::Expr) -> Option<Ty> {
         let hir::ExprKind::Path { res, generics } = &receiver.kind else { return None };
         match res {
@@ -2160,6 +2414,11 @@ impl<'a> BodyChecker<'a> {
                         | hir::DefKind::Alias
                         | hir::DefKind::Interface
                         | hir::DefKind::Union
+                        // §8's library types — `Array`, `Map`, `Box`, `String`,
+                        // `Chars` — and every scalar. See the decision above:
+                        // leaving this out made every `String.new()` in the
+                        // corpus a `Ty::ERROR` that agreed with its slot.
+                        | hir::DefKind::Primitive
                 ) {
                     return None;
                 }
@@ -3801,6 +4060,52 @@ fn unsatisfied_bound(
 /// imposes: only where the receiver is a type this crate holds an
 /// implementation table for. The prelude registers no methods at all, so a call
 /// on a `String` reaches neither this function nor any other.
+/// `SC0536`: an associated call reached through a generic type's bare name,
+/// whose own type arguments nothing at the call fixes.
+///
+/// **The message names the parameters that are open and offers the spelling**,
+/// because unlike `SC0526` this one has a fix that is always available and
+/// always writable. `examples/07_generics.science` already writes it and says
+/// why the parentheses are required — *"`Wrapper of Int.holding(7)` would not
+/// say whether `.holding` belongs to `Int` or to the whole type"* — so the
+/// second note quotes the corpus rather than inventing a form.
+///
+/// **No [`Suggestion`] is attached**, although one would be machine-applicable
+/// in shape. The replacement needs the type the author meant, which is exactly
+/// what nothing at this call determined; a suggestion with a hole in it is a
+/// fix a tool applies and gets a second error from.
+///
+/// [`Suggestion`]: science_diagnostics::Suggestion
+fn uninferable_receiver(
+    span: Span,
+    ty: &str,
+    method: &str,
+    unsolved: &[String],
+    consts: bool,
+) -> Diagnostic {
+    let plural = if unsolved.len() + usize::from(consts) == 1 { "" } else { "s" };
+    let named: Vec<String> = unsolved.iter().map(|name| format!("`{name}`")).collect();
+    let label = if named.is_empty() {
+        format!("`{ty}`'s const argument{plural} can only come from an instantiation")
+    } else {
+        format!("nothing here fixes {}", named.join(", "))
+    };
+    Diagnostic::error(
+        codes::UNINFERABLE_RECEIVER,
+        format!("the type argument{plural} of `{ty}` cannot be inferred here"),
+    )
+    .with_label(Label::primary(span, label))
+    .with_note(
+        "an associated function is reached through a type and not through a value, so the \
+         type's arguments come from the instantiation the caller writes or from the arguments \
+         of this call, and from nowhere else",
+    )
+    .with_note(format!(
+        "write the instantiation, in parentheses so that the `.` applies to the whole type: \
+         `({ty} of ..).{method}(..)`"
+    ))
+}
+
 fn no_such_method(span: Span, name: &str, ty: &str) -> Diagnostic {
     Diagnostic::error(codes::NO_SUCH_METHOD, format!("`{ty}` has no method `{name}`"))
         .with_label(Label::primary(span, "no such method"))

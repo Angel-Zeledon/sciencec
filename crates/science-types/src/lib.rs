@@ -174,8 +174,12 @@
 //!   exist and three of them are now not; the fourth is in [`check`]'s §6.*
 //! - **`SC0140`, `SC0521`, `SC0522`, narrowing and exhaustiveness** need an
 //!   expression, which this crate has never had. — *`SC0140` is [`unchecked`],
-//!   narrowing is [`narrow`]. `SC0521`, `SC0522` and exhaustiveness are still
-//!   open, and the `codes` module below says what each is waiting for.*
+//!   narrowing is [`narrow`]. **`SC0522` shipped, and not from here** — it needs
+//!   the monomorphiser's view of which instantiations cross into C, so
+//!   `science-codegen` emits it and this crate's reservation test, which
+//!   asserts the code is absent from its own list, still passes. `SC0521` and
+//!   exhaustiveness are still open, and the `codes` module below says what each
+//!   is waiting for.*
 //!
 //! **Four obligations this layer raised, and the two that are now
 //! discharged**, each named where it is raised rather than collected into a
@@ -429,10 +433,23 @@ pub mod codes {
     /// A method the receiver's type does not have.
     ///
     /// [`NO_SUCH_FIELD`]'s sibling, and reported under the same restraint: only
-    /// where the question is answerable. `builtins.rs` registers no methods at
-    /// all, so a receiver of prelude type is a question this compiler cannot
-    /// ask rather than one it answers with no — [`crate::methods::Methods::receiver`]
-    /// is where the two are told apart.
+    /// where the question is answerable. A receiver of prelude type is still
+    /// that restraint's case, and the reason has moved rather than gone:
+    /// `builtins.rs` used to register no methods at all, and now registers a
+    /// *partial* transcription of `stdlib-core.md` §9 — so
+    /// [`crate::methods::Methods::receiver`] tells apart a builtin head with
+    /// nothing behind it from one with a block, and
+    /// [`crate::methods::Methods::surface_is_closed`] tells apart *"this type
+    /// has no such method"* from *"the prelude has not written it down"*.
+    /// `String.slice(0..4)` is a correct program and neither of them reports on
+    /// it.
+    ///
+    /// **Both arms are reachable through a type as well as through a value**
+    /// now that [`crate::check`]'s `type_receiver` accepts a
+    /// [`DefKind::Primitive`] receiver, which is the same silence arriving
+    /// through one more spelling and not a second decision.
+    ///
+    /// [`DefKind::Primitive`]: science_resolve::hir::DefKind::Primitive
     pub const NO_SUCH_METHOD: Code = Code(532);
 
     /// The arguments fit no implementation of the interface. `methods`'s §6.
@@ -514,6 +531,42 @@ pub mod codes {
     /// carries no method the prelude has transcribed.
     pub const NO_OPERATOR_IMPLEMENTATION: Code = Code(535);
 
+    // --- the associated call, `SC0536` -----------------------------------
+
+    /// A generic type reached through its bare name at an associated call,
+    /// whose own type arguments nothing at the call fixes.
+    ///
+    /// **`Box.new(doc)` names the type `Box`, and `Box` is `Box of T`.** An
+    /// associated function has no receiver *value*, so the block's parameters
+    /// are not read off one; they come from the instantiation the author wrote
+    /// — `(Array of Int).new()`, which is how `examples/07_generics.science`
+    /// spells it — or from the call's arguments by
+    /// [`crate::check`]'s §6 root-level match, and from nowhere else. This is
+    /// the case where neither gave an answer.
+    ///
+    /// **What it replaces is a type with a free parameter in it.** Before this
+    /// code, an unwritten, unsolved `T` stayed a [`TyKind::Param`](crate::TyKind::Param)
+    /// in the call's result, so `let xs be Array.new()` bound `xs` at `Array of
+    /// T` for a `T` bound in no scope the author can see, and the first
+    /// mismatch downstream printed that `T` at the author. A parameter that
+    /// escapes its binder is not a type, and the sentence to say about one is
+    /// not `expected Array of Int, found Array of T`.
+    ///
+    /// **Not [`TYPE_ANNOTATIONS_NEEDED`]**, although both are *"nothing fixed
+    /// this"*. `SC0526` is `infer`'s hole inside a known constructor and its
+    /// fix is an annotation on the binding; this one's fix is on the
+    /// **receiver**, it is available whatever the binding says, and the
+    /// language already has the spelling — so the message points at the
+    /// receiver and offers it.
+    ///
+    /// **`docs/superpowers/design/README.md` is not edited**, which is the
+    /// convention `science-codegen`'s `diagnostics` states: *"the row belongs
+    /// to whoever maintains the allocation record"*. Its table reads
+    /// `SC0523`–`SC0535` for this crate and that range is now one short. It is
+    /// inside `type-checking-and-mir.md` §13's band either way, and the report
+    /// that landed this code names the row as the thing to extend.
+    pub const UNINFERABLE_RECEIVER: Code = Code(536);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -538,6 +591,7 @@ pub mod codes {
         NO_MATCHING_IMPLEMENTATION,
         UNSATISFIED_BOUND,
         NO_OPERATOR_IMPLEMENTATION,
+        UNINFERABLE_RECEIVER,
     ];
 
     #[cfg(test)]
