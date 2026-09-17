@@ -363,6 +363,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "science-codegen"
+version = "0.0.1"
+dependencies = [
+ "science-diagnostics",
+ "science-rt",
+]
+
+[[package]]
 name = "science-db"
 version = "0.0.1"
 dependencies = [
@@ -438,6 +446,7 @@ dependencies = [
 name = "sciencec"
 version = "0.0.1"
 dependencies = [
+ "science-codegen",
  "science-db",
  "science-diagnostics",
  "science-fmt",

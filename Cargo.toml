@@ -10,6 +10,7 @@ members = [
     "crates/science-types",
     "crates/science-db",
     "crates/science-rt",
+    "crates/science-codegen",
     "crates/sciencec",
 ]
 
@@ -28,5 +29,6 @@ science-resolve = { path = "crates/science-resolve" }
 science-types = { path = "crates/science-types" }
 science-db = { path = "crates/science-db" }
 science-rt = { path = "crates/science-rt" }
+science-codegen = { path = "crates/science-codegen" }
 sciencec = { path = "crates/sciencec" }
 insta = "1"
