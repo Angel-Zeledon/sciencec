@@ -41,11 +41,14 @@
 //!
 //! # 3. What is not in here, and is not an oversight
 //!
-//! - **Methods.** `builtins.rs` is explicit that the prelude registers none,
-//!   and a user's `Doc has:` block does register them — but an *index from a
-//!   receiver type to a method* is Decision 11's lookup, which
-//!   `type-checking-and-mir.md` §6.1 owns and which nothing in this crate
-//!   builds. The methods are walked here for their bodies and for nothing else.
+//! - **The method index itself.** It is [`crate::methods`] and not this
+//!   module, although this table is what builds it and hands it out
+//!   ([`Declarations::methods`]). The split is that this table answers *"what
+//!   does this declaration say"* and that one answers *"which declaration does
+//!   this receiver reach"*, and the second question needs the first one
+//!   answered first: the index is keyed on the head of a **lowered** self type,
+//!   so it cannot be built until every `Doc has:` block's `Doc` has been
+//!   lowered once — which is §1's whole argument, one level up.
 //! - **Arity and kind checking of generic arguments.** `lowering`'s §1 defers
 //!   it to *"whoever holds the declaration and the use at once"*, which is this
 //!   table plus a call site. It is still deferred: [`Signature::generics`] is
@@ -60,6 +63,7 @@ use science_diagnostics::{Diagnostics, Span};
 use science_resolve::hir::{self, DefId, DefKind, DefTable, Res, SelfKind};
 
 use crate::lowering::TypeLowerer;
+use crate::methods::Methods;
 use crate::normal::AtomOrder;
 use crate::subst::Substitution;
 use crate::ty::{Ty, TyKind, Types};
@@ -227,8 +231,9 @@ impl Prelude {
     /// The **refusal** side of [`crate::check`]'s §5, and it is deliberately a
     /// short closed list rather than the complement of [`Prelude::is_numeric`].
     /// A `Doc` is not numeric either, but saying so needs to know that no
-    /// implementation of `From of Int` exists — which is Decision 11's lookup —
-    /// and `ffi.CInt` is numeric although §5.1 does not list it, because
+    /// implementation of `From of Int` exists — which [`Declarations::methods`]
+    /// could now answer and which §5.1 has not made the rule — and `ffi.CInt`
+    /// is numeric although §5.1 does not list it, because
     /// `ffi-c-boundary.md` §1.6 keeps the C widths as *distinct* types rather
     /// than as non-numbers. Naming the four the compiler is sure about is the
     /// answer that cannot be wrong in the direction that matters.
@@ -256,6 +261,13 @@ pub struct Declarations {
     block_assocs: HashMap<DefId, Vec<(String, DefId, Ty)>>,
     /// The interface an implementation block implements, when it names one.
     implemented: HashMap<DefId, DefId>,
+    /// The generic parameters an implementation block declares — the `T` of
+    /// `Wrapper of T has:` — which is what a call through that block's methods
+    /// solves against the receiver. [`crate::check`]'s `block_substitution`.
+    block_generics: HashMap<DefId, Vec<hir::GenericParam>>,
+    /// Decision 11's index, built from the self types above once they are all
+    /// lowered. §3.
+    methods: Methods,
     prelude: Prelude,
 }
 
@@ -276,7 +288,15 @@ impl Declarations {
                 decls.item(&item.kind, krate, types, order, diagnostics);
             }
         }
+        // Second, and only second: the index reads the self types the loop
+        // above lowered, so it cannot be filled in during it.
+        decls.methods = Methods::of(krate, types, &decls);
         decls
+    }
+
+    /// Decision 11's lookup. §3.
+    pub fn methods(&self) -> &Methods {
+        &self.methods
     }
 
     /// The prelude ids. §2.
@@ -298,6 +318,11 @@ impl Declarations {
 
     pub fn const_ty(&self, def: DefId) -> Option<Ty> {
         self.consts.get(&def).copied()
+    }
+
+    /// The generic parameters an implementation block declares.
+    pub fn block_generics(&self, owner: DefId) -> Option<&[hir::GenericParam]> {
+        self.block_generics.get(&owner).map(|generics| generics.as_slice())
     }
 
     /// What `Self` means inside a block. `lib.rs` §5: *"the `owner` a
@@ -420,6 +445,7 @@ impl Declarations {
             hir::ItemKind::Impl(block) => {
                 let self_ty = lower(types, krate, order, diagnostics, &block.self_ty);
                 self.self_types.insert(block.def, self_ty);
+                self.block_generics.insert(block.def, block.generics.clone());
                 if let Some(Res::Def(interface)) =
                     block.interface.as_ref().and_then(|bound| bound.interface_res())
                 {

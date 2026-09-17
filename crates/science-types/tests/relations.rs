@@ -22,6 +22,8 @@ use science_diagnostics::{Diagnostics, FileId, Span};
 use science_resolve::hir::{self, DefKind};
 use science_types::assign::{assignable, Coercion, Coercions, Site};
 use science_types::ty::{GenericArg, Ty, TyKind, Types};
+use science_types::items::Declarations;
+use science_types::methods::Methods;
 use science_types::{codes, Aliases, AtomOrder, NormalForm, Substitution, TypeLowerer};
 
 // --- the fixture ---------------------------------------------------------
@@ -32,6 +34,18 @@ use science_types::{codes, Aliases, AtomOrder, NormalForm, Substitution, TypeLow
 /// alias whose body mentions a const parameter, which is the one place where
 /// alias expansion and the const half of substitution meet, and the place a
 /// test that only used `type Embedding is Array of F32` would never reach.
+///
+/// **The two implementation blocks at the foot are load-bearing and are there
+/// for one reason each.** `assign`'s §3 and §4 discharge their obligations
+/// against Decision 11's index, so a fixture that declared no implementation
+/// at all would make every boxing and every unsizing test below assert `None`
+/// — passing, and testing nothing. `Doc implements Summarize:` is what makes
+/// the *refusal* to box a `Doc` into an `any Summarize` a statement about §5's
+/// rule rather than about an implementation that is not there, and `Failure
+/// implements Error:` is the concrete error type Decision 14 is written about.
+/// They are last in the file so that the interface's own `Item` and
+/// `summarize` are still the first definitions of those names, which is what
+/// `Program::def` and `Program::method` find.
 const FIXTURE: &str = "\
 type Doc:
     title: String
@@ -76,6 +90,7 @@ def shapes(
     borrowed_docs: Array of (borrowed Doc),
     borrowed_summarizers: Array of (borrowed any Summarize),
     borrowed_optional_doc: borrowed (Doc?),
+    concrete_failure: Failure,
 ) -> Int:
     0
 
@@ -89,6 +104,18 @@ def spellings of (T, const N: Int, const K: Int)(
     nullable_parameter: T?,
 ) -> Int:
     0
+
+type Failure:
+    detail: String
+
+Doc implements Summarize:
+    type Item is String
+    def summarize(self) -> String:
+        self.title
+
+Failure implements Error:
+    def describe(self) -> String:
+        self.detail
 ";
 
 /// The whole pipeline, plus the alias table built over it.
@@ -97,6 +124,16 @@ struct Program {
     order: AtomOrder,
     types: Types,
     aliases: Aliases,
+    /// The declarations, held for one thing only: Decision 11's method index,
+    /// which is what `assign`'s §3 and §4 obligations are discharged against.
+    ///
+    /// Built through [`Declarations`] because `methods`'s §1 keys the index on
+    /// a **lowered** self type and there is exactly one thing in the crate that
+    /// lowers one. Its diagnostics go to a sink of their own: this harness
+    /// asserts on what the *relations* reported, and a declaration pass
+    /// lowering the fixture's annotations a second time would report the same
+    /// mistake twice.
+    decls: Declarations,
     /// Everything the alias pass and the lowerings reported. Resolution's own
     /// diagnostics are asserted empty by [`Program::new`].
     diagnostics: Diagnostics,
@@ -119,7 +156,9 @@ impl Program {
         let mut types = Types::new();
         let mut diagnostics = Diagnostics::new();
         let aliases = Aliases::of(&krate, &mut types, &order, &mut diagnostics);
-        Program { krate, order, types, aliases, diagnostics }
+        let decls =
+            Declarations::of(&krate, &mut types, &order, &mut Diagnostics::new());
+        Program { krate, order, types, aliases, decls, diagnostics }
     }
 
     /// Lowers the named parameter's annotation.
@@ -164,6 +203,11 @@ impl Program {
 
     fn coercions(&self) -> Coercions {
         Coercions::of(&self.krate.defs)
+    }
+
+    /// Decision 11's index, as the relation asks it.
+    fn methods(&self) -> &Methods {
+        self.decls.methods()
     }
 
     /// The definition with this name and kind. The fixture declares each such
@@ -580,7 +624,7 @@ fn a_substituted_term_takes_the_provenance_of_what_replaced_it() {
 
 /// `assignable` with the fixture's prelude and a site.
 fn fits(program: &Program, site: Site, source: Ty, target: Ty) -> Option<Coercion> {
-    assignable(&program.types, program.coercions(), site, source, target)
+    assignable(&program.types, program.methods(), program.coercions(), site, source, target)
 }
 
 #[test]
@@ -621,12 +665,12 @@ fn a_concrete_type_boxes_at_a_return_and_at_an_argument_and_nowhere_else() {
     // it is invisible in the code that has it and invisible in the code that
     // does not.
     let mut program = Program::new(FIXTURE);
-    let doc = program.ty("shapes", "doc");
+    let failure = program.ty("shapes", "concrete_failure");
     let boxed = program.ty("shapes", "boxed");
 
-    assert_eq!(fits(&program, Site::Return, doc, boxed), Some(Coercion::Box));
-    assert_eq!(fits(&program, Site::Argument, doc, boxed), Some(Coercion::Box));
-    assert_eq!(fits(&program, Site::Elsewhere, doc, boxed), None);
+    assert_eq!(fits(&program, Site::Return, failure, boxed), Some(Coercion::Box));
+    assert_eq!(fits(&program, Site::Argument, failure, boxed), Some(Coercion::Box));
+    assert_eq!(fits(&program, Site::Elsewhere, failure, boxed), None);
 }
 
 #[test]
@@ -636,18 +680,20 @@ fn a_concrete_type_boxes_into_the_nullable_object_a_fallible_signature_names() {
     // the coercion is two steps and this is the one that actually fires in a
     // real program.
     let mut program = Program::new(FIXTURE);
-    let doc = program.ty("shapes", "doc");
+    let concrete = program.ty("shapes", "concrete_failure");
     let failure = program.ty("shapes", "failure");
 
-    assert_eq!(fits(&program, Site::Return, doc, failure), Some(Coercion::BoxThenWiden));
-    assert_eq!(fits(&program, Site::Elsewhere, doc, failure), None);
+    assert_eq!(fits(&program, Site::Return, concrete, failure), Some(Coercion::BoxThenWiden));
+    assert_eq!(fits(&program, Site::Elsewhere, concrete, failure), None);
 }
 
 #[test]
 fn a_concrete_type_does_not_box_into_an_interface_that_is_not_error() {
     // §6.2: Decision 14 is "the one implicit coercion in the language besides
     // `T` into `T?`". An owned `any Summarize` is constructed where it is
-    // written, and §5's first bullet is why.
+    // written, and §5's first bullet is why. `Doc` *does* implement
+    // `Summarize` in the fixture, so what is being asserted here is the rule
+    // and not a missing implementation.
     let mut program = Program::new(FIXTURE);
     let doc = program.ty("shapes", "doc");
     let summarizer = program.ty("shapes", "summarizer");
@@ -770,27 +816,72 @@ fn unsizing_does_not_also_widen() {
 }
 
 #[test]
-fn unsizing_admits_what_decision_eleven_would_refuse_and_says_so() {
-    // §4's cost, tested so that acquiring the lookup breaks this test rather
-    // than passing silently. `Int` implements nothing, and this crate agrees
-    // it may be unsized — exactly as §3 already agrees an `Int` may be boxed
-    // into an `any Error`.
+fn unsizing_refuses_what_implements_nothing_and_admits_what_implements_it() {
+    // §4's obligation, discharged. This test was
+    // `unsizing_admits_what_decision_eleven_would_refuse_and_says_so` and it
+    // asserted the opposite: with no lookup, `Int` implements nothing and the
+    // relation agreed it could be unsized anyway. The lookup exists, so the
+    // two halves are now separable and both are asserted here — the refusal
+    // is the new behaviour and the admission is the proof that the refusal is
+    // not simply the rule going dark.
     let mut program = Program::new(
         "\
 interface Summarize:
     def summarize(self) -> String
 
-def shapes(borrowed_int: borrowed Int, borrowed_summarizer: borrowed any Summarize) -> Int:
+type Doc:
+    title: String
+
+Doc implements Summarize:
+    def summarize(self) -> String:
+        self.title
+
+def shapes(
+    borrowed_int: borrowed Int,
+    borrowed_doc: borrowed Doc,
+    borrowed_summarizer: borrowed any Summarize,
+) -> Int:
     0
 ",
     );
     let borrowed_int = program.ty("shapes", "borrowed_int");
+    let borrowed_doc = program.ty("shapes", "borrowed_doc");
     let borrowed_summarizer = program.ty("shapes", "borrowed_summarizer");
     assert_eq!(
         fits(&program, Site::Argument, borrowed_int, borrowed_summarizer),
-        Some(Coercion::Unsize),
-        "the obligation `assign`'s §4 records is still outstanding"
+        None,
+        "`Int` implements nothing, and §4's obligation is no longer outstanding"
     );
+    assert_eq!(
+        fits(&program, Site::Argument, borrowed_doc, borrowed_summarizer),
+        Some(Coercion::Unsize),
+        "`Doc implements Summarize:` is written, so the unsizing is real"
+    );
+}
+
+#[test]
+fn boxing_refuses_a_type_that_does_not_implement_error() {
+    // §3's obligation, the same way round. `Int` is what that section named as
+    // the thing this crate would agree to box, for as long as there was no
+    // lookup to ask.
+    let mut program = Program::new(
+        "\
+type ConfigError:
+    detail: String
+
+ConfigError implements Error:
+    def describe(self) -> String:
+        self.detail
+
+def shapes(number: Int, failure: ConfigError, boxed: any Error) -> Int:
+    0
+",
+    );
+    let number = program.ty("shapes", "number");
+    let failure = program.ty("shapes", "failure");
+    let boxed = program.ty("shapes", "boxed");
+    assert_eq!(fits(&program, Site::Return, number, boxed), None);
+    assert_eq!(fits(&program, Site::Return, failure, boxed), Some(Coercion::Box));
 }
 
 #[test]
@@ -877,8 +968,11 @@ fn with_no_prelude_the_relation_is_compatible_plus_decision_six() {
     let unit_or_nothing = types.nullable(Ty::UNIT);
     let coercions = Coercions::new();
     assert_eq!(
-        assignable(&types, coercions, Site::Return, Ty::UNIT, unit_or_nothing),
+        assignable(&types, &Methods::default(), coercions, Site::Return, Ty::UNIT, unit_or_nothing),
         Some(Coercion::Widen)
     );
-    assert_eq!(assignable(&types, coercions, Site::Return, unit_or_nothing, Ty::UNIT), None);
+    assert_eq!(
+        assignable(&types, &Methods::default(), coercions, Site::Return, unit_or_nothing, Ty::UNIT),
+        None
+    );
 }

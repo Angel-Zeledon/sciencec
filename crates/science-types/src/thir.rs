@@ -22,14 +22,20 @@
 //! always complete, and a hole in it is a type rather than an absence.
 //!
 //! **Method calls resolved.** [`ExprKind::MethodCall`] carries
-//! `method: Option<DefId>` and **this crate always writes `None`**. Decision 11's
-//! lookup is not built; there is no implementation table for it to consult, and
-//! the prelude registers no methods at all — `builtins.rs` says so in as many
-//! words. The slot is here rather than added later because the node's *shape*
-//! is a commitment: a reader of this file should see that a resolved method is
-//! where the answer goes, and a checker that acquires the lookup fills a field
-//! rather than changing an IR. What it costs today is stated in
-//! [`crate::check`]'s §6 and it is the largest hole in this layer.
+//! `method: Option<DefId>`, and it is **filled**: [`crate::methods`] is
+//! Decision 11's lookup and [`crate::check`]'s `method_call` writes what it
+//! found. The slot was here before the lookup was, on the argument that the
+//! node's *shape* is a commitment — *"a checker that acquires the lookup fills
+//! a field rather than changing an IR"* — and that is what happened, which is
+//! why this paragraph is the only thing in this file that changed.
+//!
+//! **`None` still occurs and still means one thing**: the receiver is a type
+//! this crate holds no implementations for. The prelude registers no methods at
+//! all — `builtins.rs` says so in as many words — so `"a".length()` resolves to
+//! nothing, and a type parameter's bound is not searched
+//! (`methods`'s §5). A consumer of THIR must handle it, and the honest
+//! handling is the one this crate gives the node: the call's type is
+//! [`Ty::ERROR`] and nothing downstream may assume more.
 //!
 //! **Implicit conversions explicit.** [`ExprKind::Coerce`] carries the
 //! [`Coercion`] [`crate::assign`] returned, and [`ExprKind::Narrow`] carries
@@ -184,8 +190,14 @@ pub enum ExprKind {
     },
     /// `receiver.method(args)`.
     ///
-    /// `method` is `None` from this crate, always. Decision 11's lookup is not
-    /// built and §1 says why the slot is here anyway.
+    /// `method` is the definition Decision 11's lookup found, and `None` where
+    /// it found nothing — a receiver of prelude type, a type parameter, a type
+    /// that was already wrong. §1.
+    ///
+    /// An *associated* function is not one of these: `Doc.blank()` has no
+    /// receiver value, so it is an [`ExprKind::Call`] at the method's own
+    /// definition and never a `MethodCall` with a receiver standing for a
+    /// type.
     MethodCall {
         receiver: ExprId,
         method: Option<DefId>,

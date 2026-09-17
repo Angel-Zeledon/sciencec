@@ -45,6 +45,7 @@
 //! | Decision 1 | bidirectional checking, one [`Inference`] per body | [`check`] |
 //! | Decisions 7, 8 | flow narrowing over places, and rule 4's dependency | [`narrow`] |
 //! | Decisions 9, 10 | `SC0140`, with §5's four exclusions | [`unchecked`] |
+//! | Decision 11 | method lookup, and the ambiguity that is an error | [`methods`] |
 //! | §12 | the seam for MIR, stated as §5 states this one | [`thir`]'s §5 |
 //!
 //! [`items`] is the table of lowered declarations the fourth layer checks
@@ -102,13 +103,17 @@
 //!   everything its message needs, but the instantiation chain that makes the
 //!   diagnostic survivable is F1's, and a chain rendered before there is a
 //!   monomorphiser to walk would render whatever this crate happened to keep.
-//! - **MIR, monomorphisation, method lookup, exhaustiveness.** None of it.
-//!   [`thir`]'s §5 states the seam MIR starts at to the standard §5 below sets,
-//!   and names which of `region-inference.md` §10's six requirements THIR can
-//!   guarantee and which are MIR's by construction. Method lookup — Decision 11
-//!   — is the hole everything else in the fourth layer is shaped around:
-//!   [`check`]'s §6 prices it, and it is why `doc.title()` has no type and
-//!   `doc.title` does.
+//! - **MIR, monomorphisation, exhaustiveness.** None of it. [`thir`]'s §5
+//!   states the seam MIR starts at to the standard §5 below sets, and names
+//!   which of `region-inference.md` §10's six requirements THIR can guarantee
+//!   and which are MIR's by construction.
+//!
+//!   **Method lookup used to be listed here** — *"the hole everything else in
+//!   the fourth layer is shaped around"*, the reason `doc.title()` had no type
+//!   where `doc.title` did. It is [`methods`], and what it closed is recorded
+//!   below rather than here, because four separate conservatisms in this crate
+//!   were written against its absence and each of them said so in its own
+//!   words.
 //!
 //! # 4. What calls this
 //!
@@ -161,36 +166,44 @@
 //!   [`infer`]'s §2 gives.
 //! - **Method lookup (Decision 11)** supplies [`Substitution::with_self`] with
 //!   the implementation block, which is the `owner` a `SelfType` already
-//!   carries. — ***Still open***, and it is the largest hole in the crate.
-//!   [`check::check_fn`] does build the `Self` substitution from the owner, so
-//!   a method *body* checks; a method *call* does not resolve.
+//!   carries. — *Taken up by [`methods`], which is the index, and by
+//!   [`check`]'s `method_call`, which is the call site. A method call carries
+//!   the definition it resolved to, its arguments are checked against that
+//!   definition's parameters, and `Self` at the call becomes the receiver's
+//!   type. Four things in this crate were conservative because it did not
+//!   exist and three of them are now not; the fourth is in [`check`]'s §6.*
 //! - **`SC0140`, `SC0521`, `SC0522`, narrowing and exhaustiveness** need an
 //!   expression, which this crate has never had. — *`SC0140` is [`unchecked`],
 //!   narrowing is [`narrow`]. `SC0521`, `SC0522` and exhaustiveness are still
 //!   open, and the `codes` module below says what each is waiting for.*
 //!
-//! **Four obligations this layer raises and cannot discharge**, each named
-//! where it is raised rather than collected into a list nobody reads:
+//! **Four obligations this layer raised, and the two that are now
+//! discharged**, each named where it is raised rather than collected into a
+//! list nobody reads:
 //!
 //! 1. *"`S` implements `Error`"*, owed by every [`Coercion::Box`]. [`assign`]'s
-//!    §3. Until Decision 11's lookup exists, this crate will agree that an `Int`
-//!    may be boxed.
+//!    §3. — **Discharged** by [`Methods::implements`]: the rule asks whether
+//!    the crate declares `S implements Error:`, and this crate no longer
+//!    agrees that an `Int` may be boxed.
 //! 2. *"`C` implements `I`"*, owed by every [`Coercion::Unsize`]. [`assign`]'s
 //!    §4, which admits `borrowed C` into `borrowed any I` because that
 //!    conversion allocates nothing and changes no value. It is the same
 //!    obligation as the one above and wider — one interface there, every
-//!    interface a program declares here — so it is listed separately rather
-//!    than folded in, and until the lookup exists this crate will agree that a
-//!    `borrowed Int` may be unsized to a `borrowed any Summarize`.
+//!    interface a program declares here — which is why it was listed
+//!    separately. — **Discharged by the same predicate**, and the width is why
+//!    the predicate had to be an index rather than a list of names.
 //! 3. *"this implementation supplies every associated type its interface
 //!    declares"* — §5.4's completeness check, which `science-resolve` names as
 //!    this crate's. An unbound `Self.Item` is left standing by [`subst`]'s §2
-//!    precisely so that the phase which can see both blocks reports it.
+//!    precisely so that the phase which can see both blocks reports it. —
+//!    ***Still open***: [`items::Declarations::body_substitution`] now pairs the
+//!    two blocks, so the *information* is here; what is missing is the check
+//!    and a code for it.
 //! 4. *"this instantiation's const arguments are in range"*. [`Substitution`]
 //!    returns [`ConstEvalError`] and reports nothing ([`subst`]'s §4); a caller
 //!    with a span turns it into `SC0260` through
 //!    [`diagnostics::overflowed`], and F1's `SC0262` replaces that with the
-//!    instantiation chain §9.4 asks for.
+//!    instantiation chain §9.4 asks for. — ***Still open***.
 //!
 //! **And one thing the next phase must not do.** It must not put an inference
 //! variable in the type table. [`infer`]'s §1 is the argument and §2 is the
@@ -207,6 +220,7 @@ pub mod infer;
 pub mod items;
 pub mod lowering;
 pub mod matching;
+pub mod methods;
 pub mod mono;
 pub mod narrow;
 pub mod normal;
@@ -224,6 +238,7 @@ pub use infer::{InferTy, InferVar, Inference, UnifyError};
 pub use items::{Declarations, Prelude, Signature};
 pub use lowering::TypeLowerer;
 pub use matching::{match_linear, Match, MatchError};
+pub use methods::{Candidate, Form, Found, Methods, Source};
 pub use mono::MonoKey;
 pub use narrow::{Fact, Facts};
 pub use normal::{equal, normalise, Atom, AtomOrder, ConstEvalError, NormalForm, Term};
@@ -390,6 +405,33 @@ pub mod codes {
     /// [`DOUBLE_NULLABLE`] makes about `T??`, one level down at the value.
     pub const PRESENCE_TEST_ON_NON_NULLABLE: Code = Code(530);
 
+    // --- Decision 11's two, `SC0531`-`SC0532` ---------------------------
+    //
+    // §13 numbers neither, for the reason it numbers none of the six above: it
+    // was written before anything walked an expression, and a method call is
+    // the construct it assumed a checker resolved without saying what happens
+    // when it cannot.
+
+    /// One method name, two implementations, and no rule that picks.
+    ///
+    /// **The load-bearing half of Decision 11**: *"an ambiguity is an error,
+    /// never a priority ordering"*. A priority ordering resolves the call
+    /// silently and the author finds out at run time that the wrong code ran;
+    /// this makes them say which they meant. The message names **both**
+    /// candidates and the block each came from, because that is the whole value
+    /// of the decision — [`crate::methods`]'s §3, and its §5 for the one thing
+    /// the message cannot offer, which is a spelling for the answer.
+    pub const AMBIGUOUS_METHOD: Code = Code(531);
+
+    /// A method the receiver's type does not have.
+    ///
+    /// [`NO_SUCH_FIELD`]'s sibling, and reported under the same restraint: only
+    /// where the question is answerable. `builtins.rs` registers no methods at
+    /// all, so a receiver of prelude type is a question this compiler cannot
+    /// ask rather than one it answers with no — [`crate::methods::Methods::receiver`]
+    /// is where the two are told apart.
+    pub const NO_SUCH_METHOD: Code = Code(532);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -409,6 +451,8 @@ pub mod codes {
         NO_SUCH_FIELD,
         BINDING_COUNT_MISMATCH,
         PRESENCE_TEST_ON_NON_NULLABLE,
+        AMBIGUOUS_METHOD,
+        NO_SUCH_METHOD,
     ];
 
     #[cfg(test)]

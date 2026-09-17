@@ -35,6 +35,14 @@ def takes_embedding(e: Embedding) -> Bool:
 
 def takes_error(err: Error?) -> Bool:
     true
+
+Doc has:
+    def describe(self) -> String:
+        self.title
+
+MyError implements Error:
+    def message(self) -> String:
+        self.detail
 ";
 
 fn program(body: &str) -> support::Checked {
@@ -60,10 +68,12 @@ def title_of(doc: Doc) -> String:
 }
 
 #[test]
-fn a_method_call_has_the_slot_for_its_implementation_and_no_answer() {
-    // Decision 3's second clause, and `check`'s §6: the largest hole in the
-    // layer. The node carries `method: Option<DefId>` so that acquiring
-    // Decision 11's lookup fills a field rather than changing an IR.
+fn a_method_call_carries_the_implementation_it_resolved_to() {
+    // Decision 3's second clause, which was the largest hole in the layer and
+    // is now a lookup: the node's `method: Option<DefId>` names the `describe`
+    // in `Doc has:`, and the call has that method's return type rather than
+    // `Ty::ERROR`. `check`'s §6 used to price this; `methods` is what closed
+    // it.
     let checked = program(
         "
 def shout(doc: Doc) -> Bool:
@@ -72,7 +82,33 @@ def shout(doc: Doc) -> Bool:
 ",
     );
     checked.assert_clean();
+    let describe = checked.def("describe", science_resolve::hir::DefKind::Fn);
     let body = checked.body("shout");
+    let (_, call) = body
+        .exprs()
+        .find(|(_, expr)| matches!(expr.kind, ExprKind::MethodCall { .. }))
+        .expect("the body has a method call");
+    let ExprKind::MethodCall { method, .. } = call.kind else { unreachable!() };
+    assert_eq!(method, Some(describe));
+    assert_eq!(checked.render(call.ty), "String");
+}
+
+#[test]
+fn a_method_on_a_prelude_type_is_still_unresolved_and_still_silent() {
+    // The hole that survives, asserted so that it is a decision and not a
+    // surprise: `builtins.rs` registers no methods, so a receiver of prelude
+    // type reaches no candidate — and `methods`'s §1 makes that a silence
+    // rather than `SC0532`, because the alternative is a false positive on
+    // every correct program that calls one.
+    let checked = program(
+        "
+def length_of(doc: Doc) -> Bool:
+    let _size be doc.title.length()
+    true
+",
+    );
+    checked.assert_clean();
+    let body = checked.body("length_of");
     let (_, call) = body
         .exprs()
         .find(|(_, expr)| matches!(expr.kind, ExprKind::MethodCall { .. }))
@@ -412,13 +448,13 @@ def sometimes(doc: Doc?) -> Bool:
 
 #[test]
 fn an_erroneous_type_agrees_with_whatever_it_meets() {
-    // `ty`'s §5, reached through the checker: a method call has no type, and
-    // the `Ty::ERROR` it gets makes every use of the result silent rather than
-    // producing one message per use.
+    // `ty`'s §5, reached through the checker: a method call on a prelude type
+    // still has no type, and the `Ty::ERROR` it gets makes every use of the
+    // result silent rather than producing one message per use.
     let checked = program(
         "
 def cascade(doc: Doc) -> String:
-    let unknown be doc.describe()
+    let unknown be doc.title.length()
     let _first be unknown
     let _second: I32 be unknown
     doc.title
@@ -583,6 +619,14 @@ interface Summarize:
 
 interface Reset:
     def reset(mutable self)
+
+Doc implements Summarize:
+    def summarize(self) -> String:
+        self.title
+
+Doc implements Reset:
+    def reset(mutable self):
+        self.title be \"\"
 
 def describe_any(value: borrowed any Summarize) -> String:
     \"\"

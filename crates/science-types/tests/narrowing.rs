@@ -347,14 +347,19 @@ def scan(a: Doc?, start: I64) -> String?:
 }
 
 #[test]
-fn a_method_call_on_the_receiver_gives_up_the_narrowing() {
-    // `narrow`'s §4's conservatism, stated there and asserted here: with no
-    // Decision 11 lookup there is no way to know whether a method takes
-    // `mutable self`, so every method call invalidates its receiver.
+fn a_shared_method_call_on_the_receiver_keeps_the_narrowing() {
+    // `narrow`'s §4, as it reads now that Decision 11's lookup answers it.
+    // `length` takes `self`, so there is no way to write through the receiver
+    // and the fact about it stands — which is what the rule always should have
+    // said and could not, because nothing could see the `SelfKind`.
     let checked = check(
         "\
 type Doc:
     title: String
+
+Doc has:
+    def length(self) -> I64:
+        0
 
 def touch(a: Doc?) -> String?:
     if a?:
@@ -363,7 +368,55 @@ def touch(a: Doc?) -> String?:
     null
 ",
     );
+    checked.assert_clean();
+}
+
+#[test]
+fn a_mutable_method_call_on_the_receiver_gives_up_the_narrowing() {
+    // The other half, and the one that is Decision 8: `clear` takes `mutable
+    // self`, an exclusive borrow of the receiver is what calling it is, and
+    // the narrowing goes at the point the borrow is created. `a` is a `Doc?`
+    // again afterwards, so `a.title` is `SC0528`.
+    let checked = check(
+        "\
+type Doc:
+    title: String
+
+Doc has:
+    def clear(mutable self):
+        self.title be \"\"
+
+def touch(a: Doc?) -> String?:
+    if a?:
+        a.clear()
+        return a.title
+    null
+",
+    );
     assert_eq!(checked.codes(), vec![528]);
+}
+
+#[test]
+fn a_method_this_crate_cannot_resolve_still_gives_up_the_narrowing() {
+    // What survives of the conservatism, asserted so that it stays a decision:
+    // the prelude registers no methods, so `length` on a `String` resolves to
+    // nothing, there is no `SelfKind` to read, and the safe answer is the old
+    // one. `methods`'s §5 names what closing this needs.
+    let checked = check(
+        "\
+type Doc:
+    title: String
+
+def touch(a: String?) -> Bool:
+    if a?:
+        let _seen be a.length()
+        return a?
+    false
+",
+    );
+    // `a` is a `String?` again at the `a?`, so the presence test is not
+    // `SC0530` — which is exactly the observation: the narrowing was lost.
+    checked.assert_clean();
 }
 
 // --- the facts themselves -------------------------------------------------

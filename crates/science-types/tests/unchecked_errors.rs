@@ -25,6 +25,18 @@ def find(key: String) -> (Doc, Error?):
 
 def blank() -> Doc:
     Doc(title: \"\")
+
+Doc has:
+    # Exclusion 2 at a method: a parameter that is itself an `E?`, so the
+    # obligation moves on.
+    def carry(self, err: Error?) -> Bool:
+        true
+
+    # And a method that takes *anything*, which is not the same thing. The
+    # parameter is a type parameter, so the argument type-checks and the
+    # obligation stays where it was.
+    def show of T(self, value: T) -> Bool:
+        true
 ";
 
 fn program(body: &str) -> support::Checked {
@@ -276,14 +288,51 @@ def examined() -> Doc:
 }
 
 #[test]
-fn an_error_given_to_a_method_counts_because_nothing_can_say_otherwise() {
-    // The second refusal to guess: Decision 11's lookup does not exist, so
-    // there is no parameter type to compare against.
+fn an_error_given_to_a_method_that_takes_one_counts() {
+    // Exclusion 2 at a method. This was the second *refusal to guess* — with
+    // no Decision 11 lookup there was no parameter type to compare against, so
+    // an argument to any method at all excused the binding. There is a
+    // parameter type now, and `carry` takes an `Error?`, so this is the
+    // exclusion proper rather than a shrug.
     let checked = program(
         "
 def given() -> Doc:
     let doc, err be find(\"a\")
-    let _shown be doc.describe(err)
+    let _shown be doc.carry(err)
+    doc
+",
+    );
+    checked.assert_clean();
+}
+
+#[test]
+fn an_error_given_to_a_method_that_takes_anything_is_still_unchecked() {
+    // The other half, which the old refusal could not see: `show` takes a `T`,
+    // the argument type-checks, and nothing about the call is the obligation
+    // moving on. §5's second exclusion is about a function *"taking `E?`"* for
+    // exactly this reason, and the `Call` arm has always read it that way.
+    let checked = program(
+        "
+def given() -> Doc:
+    let doc, err be find(\"a\")
+    let _shown be doc.show(err)
+    doc
+",
+    );
+    assert_eq!(checked.codes(), vec![140]);
+}
+
+#[test]
+fn an_error_given_to_a_method_this_crate_cannot_resolve_still_counts() {
+    // What survives of the refusal, and its domain: the receiver is a
+    // `String`, the prelude registers no methods, and with no candidate there
+    // is no parameter list to read. `method_takes_error` errs the way §5 says
+    // this diagnostic has to err.
+    let checked = program(
+        "
+def given() -> Doc:
+    let doc, err be find(\"a\")
+    let _shown be doc.title.append(err)
     doc
 ",
     );
@@ -319,6 +368,36 @@ def branching(ok: Bool) -> Doc:
 ",
     );
     assert_eq!(checked.codes(), vec![140]);
+}
+
+#[test]
+fn a_concrete_error_type_is_a_candidate_and_not_only_any_error() {
+    // §5 of `unchecked`, and the widening Decision 11's index paid for: the
+    // condition is *"`E?` where `E` implements `Error`"*, and until there was
+    // a lookup this pass could only recognise `E?` where `E` was literally
+    // `any Error`. `ConfigError` is the shape `examples/09_absence_and_failure
+    // .science` returns from half its functions.
+    let checked = check(
+        "type Doc:
+    title: String
+
+type ConfigError:
+    detail: String
+
+ConfigError implements Error:
+    def describe(self) -> String:
+        self.detail
+
+def load(key: String) -> (Doc, ConfigError?):
+    (Doc(title: key), null)
+
+def ignores() -> Doc:
+    let doc, err be load(\"a\")
+    doc
+",
+    );
+    assert_eq!(checked.codes(), vec![140]);
+    assert_eq!(checked.messages(), vec!["`err` is never checked for an error".to_string()]);
 }
 
 // --- what is not a candidate ---------------------------------------------

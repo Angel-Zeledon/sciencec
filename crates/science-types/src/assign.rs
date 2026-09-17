@@ -23,20 +23,29 @@
 //! ```text
 //!   compatible(S, T)                                    =>  Identity
 //!   T = U?  and  compatible(S, U)                       =>  Widen
-//!   T = (any Error)?  and  boxable(S)  and  boxes(site) =>  BoxThenWiden
+//!   T = (any Error)?  and  may_box(S)  and  boxes(site) =>  BoxThenWiden
 //!   T = borrowed[m] any I  and  S = borrowed[m] C
-//!                          and  unsizable(C)            =>  Unsize
-//!   T = any Error  and  boxable(S)  and  boxes(site)    =>  Box
+//!                and  unsizable(C)  and  C implements I =>  Unsize
+//!   T = any Error  and  may_box(S)  and  boxes(site)    =>  Box
 //!   otherwise                                           =>  not assignable
 //! ```
 //!
 //! read in that order, where `boxes(site)` is true at a `return` and at an
-//! argument and nowhere else, `boxable(S)` is §3, `unsizable(C)` is §4, and
-//! `borrowed[m]` is a borrow whose mutability is `m` — the same `m` on both
-//! sides, because changing that is not this table's question. The first rule
-//! subsumes every case where nothing has to happen, including `S = T?` into
-//! `T?` and anything involving [`Ty::ERROR`] — which is what keeps one bad
-//! annotation to one diagnostic here as everywhere else.
+//! argument and nowhere else, `may_box(S)` is §3 — a structural predicate and
+//! the implementation index, together — `unsizable(C)` is §4's structural half
+//! and *`C` implements `I`* is its other one, and `borrowed[m]` is a borrow
+//! whose mutability is `m` — the same `m` on both sides, because changing that
+//! is not this table's question.
+//!
+//! **Two of those five rules ask [`crate::methods`] a question**, and that is
+//! new: §3 and §4 both used to be *proposals with an obligation attached*,
+//! admitted on shape alone and left for a caller to check. Decision 11's index
+//! is the caller that can, so the relation asks it directly and the obligation
+//! is gone rather than moved.
+//!
+//! **The first rule subsumes every case where nothing has to happen**,
+//! including `S = T?` into `T?` and anything involving [`Ty::ERROR`] — which is
+//! what keeps one bad annotation to one diagnostic here as everywhere else.
 //!
 //! # 2. The coercions are top-level, and that is a decision
 //!
@@ -66,24 +75,33 @@
 //! synthesised type against the signature and stops has implemented Decision 14
 //! in a way that rejects the line that motivated it.
 //!
-//! # 3. What this cannot check, and refuses to pretend about
+//! # 3. The obligation, and who discharges it now
 //!
-//! **Decision 14 boxes *"a concrete error type"*, and this relation cannot tell
-//! whether a type is one.** That question is *does `S` implement `Error`*, and
-//! answering it needs the implementation lookup of Decision 11, which is not
-//! built. So the rule here checks the **target** exactly — the prelude's
-//! `Error` interface, as an object, with no arguments — and admits any source
-//! that is not structurally incapable of being one — the `boxable` predicate at
-//! the foot of this file.
+//! **Decision 14 boxes *"a concrete error type"*, and the question that makes
+//! it one is *does `S` implement `Error`*.** This relation used to be unable to
+//! ask: the lookup that answers it is Decision 11's, it was not built, and
+//! [`Coercion::Box`] was therefore *a proposal with an obligation attached* —
+//! the caller owed the answer, no caller could give it, and this crate agreed
+//! that an `Int` may be boxed into an `any Error`.
 //!
-//! **[`Coercion::Box`] is therefore a proposal with an obligation attached**:
-//! the caller owes *"`S` implements `Error`"* and must discharge it before the
-//! coercion is real. Until a caller does, this crate will say that `Int` may be
-//! boxed into `any Error`. That is stated here rather than hidden, and it is
-//! the one place in this module where the answer is not the whole answer. The
-//! alternative — inventing a list of types that may be errors — would be a
-//! guess with no caller, and it would be consulted instead of the real check
-//! once the real check existed.
+//! **[`crate::methods`] is that lookup, and this rule now asks it.** The
+//! relation takes the index and the check is in two halves, which stay two
+//! because they refuse different things:
+//!
+//! - **`boxable`** is the *structural* half at the foot of this file — a
+//!   nullable, a borrow and another interface object are refused whatever they
+//!   implement, and each for a reason of its own.
+//! - **[`Methods::implements`]** is the *declaration* half: the crate contains
+//!   `S implements Error:`, or it does not.
+//!
+//! **What the second half cannot see is what it says no to**, and that is the
+//! new cost in place of the old one. It looks for a written implementation and
+//! nothing else: no blanket implementation, no supertrait, and no bound on a
+//! type parameter. A type whose head this crate cannot find at all — a
+//! parameter, `Self`, an erroneous type — is *admitted*, because refusing on an
+//! unanswerable question is how a checker acquires a false positive, and that
+//! is `check`'s §5 read across at the one place where it is a coercion rather
+//! than a literal.
 //!
 //! # 4. Unsizing behind a borrow
 //!
@@ -127,19 +145,20 @@
 //! corpus needs one outside both: `Renderer(target: borrowed doc)` is a record
 //! field initialiser, which is [`Site::Elsewhere`].
 //!
-//! **The cost, stated the way §3 states Box's.** Whether `C` implements `I` is
-//! Decision 11's implementation lookup, and it does not exist. So this rule
-//! checks the **shape** on both sides — a borrow on the left, a borrow of an
-//! object on the right, the same mutability, and a referent that is not
-//! structurally incapable of implementing anything, the `unsizable` predicate
-//! at the foot of this file — and **[`Coercion::Unsize`] is a proposal with an
-//! obligation attached**: the caller owes *"`C` implements `I`"*. Until a
-//! caller discharges it, this crate will agree that a `borrowed Int` may be
-//! unsized to a `borrowed any Summarize`, exactly as it already agrees that an
-//! `Int` may be boxed into an `any Error`. The obligation is the wider of the
-//! two — Box's target is one known interface, this one's is every interface a
-//! program declares — and that is the price of the decision, recorded here
-//! rather than discovered later.
+//! **The obligation, discharged the way §3's is.** Whether `C` implements `I`
+//! is the same question one interface wider — Box's target is the one known
+//! `Error` and this one's is every interface a program declares — and it is
+//! answered by the same index. So this rule checks the **shape** on both sides
+//! — a borrow on the left, a borrow of an object on the right, the same
+//! mutability, and a referent that is not structurally incapable of
+//! implementing anything, the `unsizable` predicate at the foot of this file —
+//! and then asks [`Methods::implements`] whether the crate declares `C
+//! implements I:`. A `borrowed Int` no longer reaches a `borrowed any
+//! Summarize`, which is what this paragraph promised would change.
+//!
+//! **The wider obligation is the one that pays for the index.** Box's could
+//! have been faked with a list of error-shaped types; this one could not,
+//! because the interface is whatever the program wrote.
 //!
 //! **Three things it deliberately does not reach**, each of which is a separate
 //! decision and none of which the corpus writes: an unsizing under a type
@@ -190,6 +209,7 @@
 
 use science_resolve::hir::{DefId, DefKind, DefTable};
 
+use crate::methods::Methods;
 use crate::ty::{Ty, TyKind, Types};
 
 /// Where a value is being put.
@@ -331,8 +351,17 @@ impl Coercions {
 /// THIR has to make explicit.
 ///
 /// Both types must be revealed; see this module's opening paragraph.
+///
+/// **`methods` is how §3's and §4's obligations are discharged**, and it is a
+/// parameter rather than a field of [`Coercions`] so that every call site shows
+/// that the question is being asked. An empty index — every test in this crate
+/// that builds no declarations — answers *"nothing implements anything"*, and
+/// the two rules that depend on it do not fire; that is the honest answer for a
+/// compilation with no implementations in it, and it is the reason the
+/// predicate admits rather than refuses wherever it cannot see a head.
 pub fn assignable(
     types: &Types,
+    methods: &Methods,
     coercions: Coercions,
     site: Site,
     source: Ty,
@@ -351,7 +380,10 @@ pub fn assignable(
         }
         // Rule 3. `-> (T, Error?)`, which is the signature Decision 14 was
         // written against.
-        if site.boxes() && coercions.is_any_error(types, inner) && boxable(types, source) {
+        if site.boxes()
+            && coercions.is_any_error(types, inner)
+            && may_box(types, methods, coercions, source)
+        {
             return Some(Coercion::BoxThenWiden);
         }
         return None;
@@ -362,9 +394,9 @@ pub fn assignable(
     if let TyKind::Borrowed { mutable, inner: object } = *types.kind(target) {
         // Nothing below this can apply to a borrowed target — rule 5's target
         // is `any Error`, unborrowed — so this arm answers for all of them.
-        if !matches!(types.kind(object), TyKind::Object { .. }) {
+        let TyKind::Object { interface, .. } = *types.kind(object) else {
             return None;
-        }
+        };
         let TyKind::Borrowed { mutable: source_mutable, inner: referent } =
             *types.kind(source)
         else {
@@ -375,15 +407,31 @@ pub fn assignable(
         if source_mutable != mutable || !unsizable(types, referent) {
             return None;
         }
+        // §4's obligation, discharged: the interface is the one the target
+        // names, and the index is asked whether the referent implements it.
+        if !methods.implements(types, referent, interface) {
+            return None;
+        }
         return Some(Coercion::Unsize);
     }
 
     // Rule 5. Decision 14.
-    if site.boxes() && coercions.is_any_error(types, target) && boxable(types, source) {
+    if site.boxes()
+        && coercions.is_any_error(types, target)
+        && may_box(types, methods, coercions, source)
+    {
         return Some(Coercion::Box);
     }
 
     None
+}
+
+/// Whether `source` may be boxed into `any Error`: §3's two halves together.
+fn may_box(types: &Types, methods: &Methods, coercions: Coercions, source: Ty) -> bool {
+    let Some(error) = coercions.error_interface() else {
+        return false;
+    };
+    boxable(types, source) && methods.implements(types, source, error)
 }
 
 /// Whether `source` is a shape that could be a concrete error type.
@@ -402,7 +450,8 @@ pub fn assignable(
 ///   relation nobody has specified.
 ///
 /// Everything else — a named type, a type parameter with a bound, `Self` — is
-/// admitted here and owes the obligation.
+/// admitted here and goes on to §3's second half, which is the implementation
+/// index.
 fn boxable(types: &Types, source: Ty) -> bool {
     !matches!(
         types.kind(source),
@@ -431,7 +480,7 @@ fn boxable(types: &Types, source: Ty) -> bool {
 ///   as `boxable` refuses it.
 ///
 /// Everything else — a named type, a type parameter with a bound, `Self` — is
-/// admitted here and owes §4's obligation.
+/// admitted here and goes on to [`Methods::implements`].
 ///
 /// **The shapes are the same three as `boxable`'s and the predicates are still
 /// two**, because the reasons are not the same three: `boxable` refuses a

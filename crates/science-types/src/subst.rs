@@ -44,7 +44,9 @@
 //! written in an interface resolves to the interface's declaration, which has
 //! no type at all until an implementation supplies it. Answering the second
 //! means pairing an interface with an implementation, which is Decision 11's
-//! lookup and is not built. So an unbound
+//! lookup — [`crate::methods`] — and which this module still does not do: the
+//! pairing is [`crate::items::Declarations::body_substitution`]'s and a
+//! substitution is handed one already built. So an unbound
 //! [`TyKind::SelfAssoc`](crate::TyKind::SelfAssoc) is left standing rather than
 //! turned into [`Ty::ERROR`]: the type is not wrong, it is
 //! not yet known, and the phase that knows is the phase that should say.

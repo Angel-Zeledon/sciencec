@@ -58,9 +58,16 @@
 //!   spelling. Decision 16's exhaustiveness is not built, so this module cannot
 //!   confirm the arms are the right ones — and reporting a binding the author
 //!   plainly examined would be the fifth entry in the hated list.
-//! - **An argument to a *method*.** Decision 11's lookup does not exist, so
-//!   there is no parameter type to compare against. Silence is the only honest
-//!   answer and it is the safe direction.
+//! - **An argument to a *method* whose parameter is of error type**, which is
+//!   exclusion 2 again and no longer a refusal to guess. It was one: with no
+//!   Decision 11 lookup a method call had no parameter type to compare
+//!   against, so *any* argument to *any* method counted and `doc.show(err)`
+//!   excused the binding. [`crate::methods`] resolves the call, so the same
+//!   question the `Call` arm asks is asked here — *is the parameter at this
+//!   position itself an `E?`* — and `doc.show(err)` reports again unless
+//!   `show` takes one. A method this crate still cannot resolve falls back to
+//!   the old answer, and [`method_takes_error`] says why that is the safe
+//!   direction rather than an oversight.
 //! - **Anything wrapped in a coercion.** `return err` against an `Error?`
 //!   signature may box, and the box is a node ([`ExprKind::Coerce`]); the reader
 //!   search looks through it, because the value that reached the `return` is
@@ -89,20 +96,24 @@
 //! type. So `SC0140` is not the THIR pass §15 warns about, and the phase
 //! ordering stays an argument about nothing that has happened yet.
 //!
-//! # 5. The one place this is weaker than §5 says
+//! # 5. The condition, which is §5's own and no longer narrower
 //!
-//! §5's condition is *"`E?` where `E` implements `Error`"*, and **this pass
-//! recognises `E?` only where `E` is literally `any Error`** — the type
-//! `Error?` expands to, and the type §6.2 says *"every fallible function in the
-//! language"* returns. A binding of a *concrete* `MyError?` is not reported.
+//! §5's condition is *"`E?` where `E` implements `Error`"*. This pass used to
+//! recognise `E?` only where `E` was literally `any Error` — the type `Error?`
+//! expands to — and a binding of a concrete `ConfigError?` was not reported,
+//! because *does `S` implement `Error`* was `assign`'s §3 obligation and
+//! nothing could discharge it.
 //!
-//! The reason is `assign`'s §3, quoted: the question *does `S` implement
-//! `Error`* needs Decision 11's lookup and *"until a caller does, this crate
-//! will say that `Int` may be boxed"*. Reporting on a guess would put the
-//! hated-false-positive risk on the type test as well as on the exclusion list,
-//! and the exclusion list is where §15 already says the risk is. Widening this
-//! is one predicate, and it is the predicate `assign`'s §3 obligation hands
-//! over.
+//! **[`Methods::implements`] discharges it, and this is the predicate that
+//! section said it would hand over.** [`is_error_nullable`] now answers for
+//! `any Error` *and* for any type the crate declares `implements Error:`, which
+//! is what §5 wrote and what `examples/09_absence_and_failure.science` returns
+//! from half its functions.
+//!
+//! **What the widening cannot see it does not report.** `methods`'s §4 answers
+//! from written implementations only, so an error type reached through a type
+//! parameter's bound is still not a candidate. That is the safe direction for
+//! this diagnostic and the same one §2's list is written in.
 
 use science_diagnostics::{Diagnostic, Diagnostics, Label, Span};
 use science_resolve::hir::{self, DefId, DefTable};
@@ -139,7 +150,7 @@ pub fn report(
         return;
     }
 
-    for candidate in collect(body, types, coercions, &krate.defs) {
+    for candidate in collect(body, decls, types, coercions, &krate.defs) {
         if !read_anywhere(body, decls, types, coercions, candidate.def) {
             let name = &krate.defs.get(candidate.def).name;
             diagnostics.push(unchecked_error(candidate.span, name));
@@ -160,6 +171,7 @@ struct Candidate {
 /// an arm per node kind is a walk that can forget one.
 fn collect(
     body: &Body,
+    decls: &Declarations,
     types: &Types,
     coercions: Coercions,
     defs: &DefTable,
@@ -170,7 +182,7 @@ fn collect(
             let StmtKind::Let { bindings, value } = &stmt.kind else { continue };
             for (at, def) in bindings.iter().enumerate() {
                 let Some(ty) = body.local_ty(*def) else { continue };
-                if !is_error_nullable(types, coercions, ty) {
+                if !is_error_nullable(decls, types, coercions, ty) {
                     continue;
                 }
                 // Decision 10.
@@ -188,12 +200,32 @@ fn collect(
     out
 }
 
-/// §5's condition, as far as this phase can answer it. §5 of this module.
-fn is_error_nullable(types: &Types, coercions: Coercions, ty: Ty) -> bool {
-    match types.kind(ty) {
-        TyKind::Nullable(inner) => coercions.is_any_error(types, *inner),
-        _ => false,
+/// §5's condition: `E?` where `E` implements `Error`.
+fn is_error_nullable(
+    decls: &Declarations,
+    types: &Types,
+    coercions: Coercions,
+    ty: Ty,
+) -> bool {
+    let TyKind::Nullable(inner) = types.kind(ty) else {
+        return false;
+    };
+    if coercions.is_any_error(types, *inner) {
+        return true;
     }
+    // The concrete half, which is `assign`'s §3 obligation asked as a
+    // question. A table with no prelude has no `Error` interface and answers
+    // `false`, which is right for a compilation with no interfaces in it.
+    let Some(error) = coercions.error_interface() else {
+        return false;
+    };
+    // `implements` *admits* a type whose head it cannot see — a parameter,
+    // `Self` — because that is the direction a coercion has to err in. Here it
+    // is the wrong direction: a binding whose type this pass cannot classify
+    // is not a binding it should demand a test for. So the head has to be a
+    // type the index can answer about.
+    matches!(types.kind(*inner), TyKind::Named { .. })
+        && decls.methods().implements(types, *inner, error)
 }
 
 /// Exclusion 3. `let missing: Error? be null`, and the `err` half of a pair
@@ -245,9 +277,14 @@ fn read_anywhere(
                         && argument_takes_error(body, decls, types, coercions, *callee, at)
                 })
             }
-            ExprKind::MethodCall { receiver, args, .. } => {
+            // Exclusion 2 at a method, which is the same question now that
+            // there is a signature to ask it of. §2.
+            ExprKind::MethodCall { receiver, method, args } => {
                 mentions(body, *receiver, &wanted)
-                    || args.iter().any(|arg| mentions(body, *arg, &wanted))
+                    || args.iter().enumerate().any(|(at, arg)| {
+                        mentions(body, *arg, &wanted)
+                            && method_takes_error(decls, types, coercions, *method, at)
+                    })
             }
             // A `match` on it. §2.
             ExprKind::Match { scrutinee, .. } => mentions(body, *scrutinee, &wanted),
@@ -287,7 +324,7 @@ fn argument_takes_error(
         return match types.kind(callee_ty) {
             TyKind::Closure { params, .. } => params
                 .get(at)
-                .map(|ty| is_error_nullable(types, coercions, *ty))
+                .map(|ty| is_error_nullable(decls, types, coercions, *ty))
                 .unwrap_or(false),
             _ => false,
         };
@@ -295,7 +332,31 @@ fn argument_takes_error(
     decls
         .signature(def)
         .and_then(|sig| sig.params.get(at))
-        .map(|param| is_error_nullable(types, coercions, param.ty))
+        .map(|param| is_error_nullable(decls, types, coercions, param.ty))
+        .unwrap_or(false)
+}
+
+/// Whether a resolved method's parameter at this position is of error type.
+///
+/// **An *unresolved* method still excuses every argument**, and that is the
+/// half of §2's old refusal that survives. With no candidate there is no
+/// parameter list, so the choice is between excusing an argument that may be
+/// being handled and reporting one that may be — and §5 of the note is explicit
+/// that a false positive is what would make this diagnostic hated. The domain
+/// is now the receivers `methods`'s §1 cannot speak for rather than every
+/// method call in the language.
+fn method_takes_error(
+    decls: &Declarations,
+    types: &Types,
+    coercions: Coercions,
+    method: Option<DefId>,
+    at: usize,
+) -> bool {
+    let Some(method) = method else { return true };
+    decls
+        .signature(method)
+        .and_then(|sig| sig.params.get(at))
+        .map(|param| is_error_nullable(decls, types, coercions, param.ty))
         .unwrap_or(false)
 }
 

@@ -95,13 +95,22 @@
 //! crate could have quietly relied on it — `SC0140` — does not:
 //! [`crate::unchecked`]'s §2 reads the THIR's *structure*, not its narrowing.
 //!
-//! **And one conservatism the absence of Decision 11 forces.** A method call
-//! may take `mutable self`, and with no implementation lookup there is no way
-//! to know whether this one does. So [`crate::check`] invalidates the
-//! receiver's place at *every* method call. `if doc?: doc.title` narrows;
-//! `if doc?: doc.title()` does not narrow anything after it. That is a real
-//! loss and it is the safe direction; it is priced here rather than in the
-//! method-call arm, because it is a narrowing decision and not a call one.
+//! **And the conservatism Decision 11 retired.** A method call may take
+//! `mutable self`, and until [`crate::methods`] existed there was no way to ask
+//! whether this one does — so every method call invalidated its receiver, and
+//! `if doc?: doc.title()` narrowed nothing after it. The lookup answers the
+//! question now: [`Candidate::writes_receiver`](crate::methods::Candidate::writes_receiver)
+//! is the one bit of the signature this decision needs, and
+//! [`crate::check`]'s `method_call` invalidates on `mutable self` and on
+//! nothing else. A `self` or `borrowed self` method keeps the narrowing, which
+//! is what the rule always should have said.
+//!
+//! **What survives is the unresolved call**, and it is the same
+//! conservatism with a smaller domain: a receiver whose type this crate holds
+//! no implementations for — a prelude type, a type parameter — resolves to no
+//! candidate, there is still no `SelfKind` to read, and the receiver is still
+//! invalidated. `methods`'s §5 names what closing that needs, and it is a
+//! method on a *bound* rather than anything narrowing owns.
 //!
 //! # 5. What §4.2 left underdetermined
 //!

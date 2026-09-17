@@ -116,14 +116,23 @@
 //! erroneous type agrees with whatever it meets, so a hole costs nothing
 //! downstream and, in particular, cannot manufacture a cascade.
 //!
-//! - **Method calls.** Decision 11's lookup does not exist and the prelude
-//!   registers no methods. `doc.title()` has type [`Ty::ERROR`]. This is the
-//!   largest hole in the layer and it is the reason the acceptance test of
-//!   §4.3 is written with a *field* and not a method.
+//! - **Method calls on a receiver this crate holds no implementations for.**
+//!   The lookup exists — [`crate::methods`], and `BodyChecker::method_call` is
+//!   the call site — so `doc.describe()` resolves, its arguments are checked
+//!   against real parameters, and the call has the method's return type. What
+//!   is left is the receivers the index cannot speak for: a **prelude type**,
+//!   because `builtins.rs` registers no methods at all, and a **type
+//!   parameter**, because a method reached through a bound is generic in a way
+//!   monomorphisation has to resolve (`methods`'s §5). Both leave `method:
+//!   None` and [`Ty::ERROR`], and neither reports.
 //! - **Indexing and operators on user types.** `a[i]` is the `Index` interface
-//!   and `a + b` on a record is `Add`; both are Decision 11 again. Operators on
-//!   the prelude's numeric primitives *are* checked, structurally, because
-//!   those do not go through an implementation.
+//!   and `a + b` on a record is `Add`. **The lookup does not close these**, and
+//!   the blocker is not the lookup: the prelude declares `Add`, `Index` and the
+//!   rest as *names with no methods on them*, so there is no signature for an
+//!   operator to resolve to and no rule anywhere saying which method name each
+//!   operator dispatches to. That is a prelude change and a decision the note
+//!   has not taken. Operators on the prelude's numeric primitives *are*
+//!   checked, structurally, because those do not go through an implementation.
 //! - **A generic call's type arguments.** Explicit ones are used. An omitted
 //!   one is solved only where a parameter's type is the generic parameter
 //!   itself, which is the root-level match `infer`'s §2 admits; anything deeper
@@ -132,8 +141,11 @@
 //!   checked against something that agrees. The general answer needs the nested
 //!   representation `infer`'s §2 describes and does not build.
 //! - **`Iterate`, and therefore `for`.** A `for` binds its pattern at
-//!   [`Ty::ERROR`]. Decision 15's `TryIterate` does not exist either, which is
-//!   why `SC0521` is still unclaimed by this crate.
+//!   [`Ty::ERROR`]. The lookup does not close this one either, and for the
+//!   same reason as the operators: the prelude's `Iterate` declares no `next`
+//!   and has no `Item`, so there is nothing for a loop to read an element type
+//!   out of. Decision 15's `TryIterate` does not exist at all, which is why
+//!   `SC0521` is still unclaimed by this crate.
 //! - **A `loop`'s value.** `break e` is checked and its type discarded; a
 //!   `loop` is [`Ty::UNIT`].
 //! - **Arity and kind of generic arguments**, which `lowering`'s §1 deferred to
@@ -189,6 +201,7 @@ use crate::codes;
 use crate::diagnostics;
 use crate::infer::{InferTy, InferVar, Inference};
 use crate::items::{named, Declarations, Named, Signature};
+use crate::methods::{Candidate, Form, Found};
 use crate::narrow::{self, Fact, Facts};
 use crate::normal::AtomOrder;
 use crate::subst::Substitution;
@@ -439,6 +452,25 @@ impl<'a> BodyChecker<'a> {
         self.instantiate(lowered, ty.span)
     }
 
+    /// One generic argument at a use, which may be a type or a const.
+    ///
+    /// [`TypeLowerer::lower_arg`] is the one function that can tell them apart,
+    /// because the answer is the *kind of the parameter* and not the shape of
+    /// what was written.
+    fn lower_generic_arg(&mut self, ty: &hir::Type) -> GenericArg {
+        let arg = crate::lowering::TypeLowerer::new(
+            self.types,
+            self.defs,
+            self.order,
+            self.diagnostics,
+        )
+        .lower_arg(ty);
+        match arg {
+            GenericArg::Type(lowered) => GenericArg::Type(self.instantiate(lowered, ty.span)),
+            other => other,
+        }
+    }
+
     /// `Self` replaced by the block's self type.
     fn instantiate(&mut self, ty: Ty, span: Span) -> Ty {
         if self.self_subst.is_empty() {
@@ -457,7 +489,7 @@ impl<'a> BodyChecker<'a> {
     fn coerce(&mut self, expr: ExprId, from: Ty, to: Ty, site: Site, span: Span) -> ExprId {
         let source = self.revealed(from, span);
         let target = self.revealed(to, span);
-        match assignable(self.types, self.coercions, site, source, target) {
+        match assignable(self.types, self.decls.methods(), self.coercions, site, source, target) {
             Some(Coercion::Identity) => expr,
             Some(coercion) => {
                 self.body.push_expr(ExprKind::Coerce { operand: expr, coercion }, to, span)
@@ -540,7 +572,8 @@ impl<'a> BodyChecker<'a> {
         // The target is a borrow, so the only verdicts reachable are the two
         // below: neither Decision 6's nor Decision 14's rule has a borrow on
         // its right.
-        let coercion = assignable(self.types, self.coercions, site, borrowed, target)?;
+        let coercion =
+            assignable(self.types, self.decls.methods(), self.coercions, site, borrowed, target)?;
         if mutable {
             if let Some(place) = self.body.place_of(expr) {
                 self.facts.invalidate(&place);
@@ -713,10 +746,11 @@ impl<'a> BodyChecker<'a> {
             // is refused only at a type the prelude names and this phase can
             // therefore classify; at anything else — a record, a type
             // parameter, an `extern` alias whose right-hand side is not in the
-            // alias table — it is admitted, because deciding the question needs
-            // Decision 11's `From` and operator interfaces and §5 says a
-            // refusal on an unanswerable question is how a checker acquires a
-            // false positive.
+            // alias table — it is admitted. Deciding the question means asking
+            // whether the type implements `From of Int`, which the index could
+            // now answer and which §5.1 has still not made the rule, and §5
+            // says a refusal on an unanswerable question is how a checker
+            // acquires a false positive.
             Numeric::Integer => !prelude.is_definitely_not_numeric(self.types, target),
             Numeric::Float => {
                 !prelude.is_definitely_not_numeric(self.types, target)
@@ -753,27 +787,16 @@ impl<'a> BodyChecker<'a> {
                 _ => self.error_expr(span),
             },
             hir::ExprKind::Call { callee, args } => self.call(callee, args, span),
-            hir::ExprKind::MethodCall { receiver, args, .. } => {
-                let receiver = self.synth(receiver).id;
-                // §4 of `narrow`: a method may take `mutable self` and nothing
-                // here can tell, so the receiver's narrowing goes.
-                if let Some(place) = self.body.place_of(receiver) {
-                    self.facts.invalidate(&place);
-                }
-                let args = args.iter().map(|arg| self.synth(&arg.value).id).collect();
-                // §6: Decision 11's lookup does not exist.
-                let id = self.body.push_expr(
-                    ExprKind::MethodCall { receiver, method: None, args },
-                    Ty::ERROR,
-                    span,
-                );
-                Typed { id, ty: InferTy::Known(Ty::ERROR) }
+            hir::ExprKind::MethodCall { receiver, method, generics, args } => {
+                self.method_call(receiver, method, generics, args, span)
             }
             hir::ExprKind::Field { base, name } => self.field(base, name, span),
             hir::ExprKind::Index { base, index } => {
                 let base = self.synth(base).id;
                 let index = self.synth(index).id;
-                // §6: the `Index` interface is Decision 11's.
+                // §6: `a[i]` is the `Index` interface, and the prelude declares
+            // that interface with no methods on it — so there is nothing for
+            // the lookup to find and nothing to check the index against.
                 let id = self.body.push_expr(ExprKind::Index { base, index }, Ty::ERROR, span);
                 Typed { id, ty: InferTy::Known(Ty::ERROR) }
             }
@@ -1422,6 +1445,363 @@ impl<'a> BodyChecker<'a> {
         (substitution, generic_args)
     }
 
+    // --- Decision 11, at a call ------------------------------------------
+
+    /// `receiver.method(args)` — the lookup, and the signature it finds.
+    ///
+    /// **Decision. The receiver is synthesised first and the method is found
+    /// from its type**, which is the order Decision 1 forces: a method call is
+    /// a synthesis, there is no expected type to push into the receiver, and
+    /// `methods`'s §1 keys the index on what the receiver's type *heads*.
+    ///
+    /// **Three answers, and only one of them is a diagnostic.** A candidate
+    /// resolves, and its arguments are checked against real parameter types.
+    /// [`Found::None`] over a type this crate can speak for is `SC0532`.
+    /// Everything else — a prelude receiver, a type parameter, an already-wrong
+    /// type, and the two cases `methods`'s §5 and §6 name — leaves
+    /// `method: None` and reports nothing, which is `ty`'s §5 and is what keeps
+    /// the hole that remains from manufacturing a cascade.
+    fn method_call(
+        &mut self,
+        receiver: &hir::Expr,
+        name: &hir::Ident,
+        generics: &[hir::Type],
+        args: &[hir::Arg],
+        span: Span,
+    ) -> Typed {
+        // `ConfigError.NotFound("port")`: a choice's *variant*, reached
+        // through the name of its type. The parser cannot tell it from a call
+        // to an associated function — both are a receiver, a name and an
+        // argument list — and the resolver cannot either, because the answer
+        // is which child of which definition the two names reach. This is the
+        // first phase holding both, and it is the same three questions §4.4
+        // hands over one construct along.
+        if let Some(variant) = self.variant_receiver(receiver, name) {
+            return self.call_variant(variant, args, span);
+        }
+
+        // `DefTable.new()`: the receiver names a *type*, so there is no
+        // receiver value and the resolved call is an ordinary `Call` at the
+        // method's definition. THIR gains no node for a receiver that is not
+        // there, which is `thir`'s §4 — a `DefId` standing for *"there is no
+        // answer"* is a lie a later pass can dereference.
+        if let Some(ty) = self.type_receiver(receiver) {
+            return self.associated_call(ty, name, generics, args, span);
+        }
+
+        let recv = self.synth(receiver);
+        let recv_ty = self.known_or_error(recv.ty);
+        let revealed = self.revealed(recv_ty, span);
+        let found = self.lookup(revealed, name, Form::Value);
+
+        let Some(candidate) = found else {
+            // §4 of `narrow`, as it still stands for an unresolved call: with
+            // no candidate there is no `SelfKind` to read, so the receiver's
+            // narrowing goes.
+            if let Some(place) = self.body.place_of(recv.id) {
+                self.facts.invalidate(&place);
+            }
+            let args = args.iter().map(|arg| self.synth(&arg.value).id).collect();
+            let id = self.body.push_expr(
+                ExprKind::MethodCall { receiver: recv.id, method: None, args },
+                Ty::ERROR,
+                span,
+            );
+            return Typed { id, ty: InferTy::Known(Ty::ERROR) };
+        };
+
+        // Decision 8, now that the question can be asked: a `mutable self`
+        // method is a write to the receiver and invalidates it; every other
+        // form is not and does not. `narrow`'s §4.
+        if candidate.writes_receiver() {
+            if let Some(place) = self.body.place_of(recv.id) {
+                self.facts.invalidate(&place);
+            }
+        }
+
+        let self_ty = self.receiver_self_ty(revealed, span);
+        let (ids, ret) = self.call_method(&candidate, self_ty, generics, args, span);
+        let id = self.body.push_expr(
+            ExprKind::MethodCall { receiver: recv.id, method: Some(candidate.method), args: ids },
+            ret,
+            span,
+        );
+        if self.decls.prelude().is_never(self.types, ret) {
+            self.diverged = true;
+        }
+        Typed { id, ty: InferTy::Known(ret) }
+    }
+
+    /// `DefTable.new()` — a method reached through a type rather than a value.
+    ///
+    /// It becomes an [`ExprKind::Call`] at the method's own definition, because
+    /// that is what it is: a function with no receiver, named by the block that
+    /// declares it. The alternative — a `MethodCall` whose receiver node stands
+    /// for a type — would put an expression in the tree for something the
+    /// author did not evaluate, and MIR would have to know to skip it.
+    fn associated_call(
+        &mut self,
+        receiver_ty: Ty,
+        name: &hir::Ident,
+        generics: &[hir::Type],
+        args: &[hir::Arg],
+        span: Span,
+    ) -> Typed {
+        let revealed = self.revealed(receiver_ty, span);
+        let Some(candidate) = self.lookup(revealed, name, Form::Type) else {
+            let ids = args.iter().map(|arg| self.synth(&arg.value).id).collect();
+            let callee = self.body.push_expr(ExprKind::Error, Ty::ERROR, span);
+            let id = self.body.push_expr(ExprKind::Call { callee, args: ids }, Ty::ERROR, span);
+            return Typed { id, ty: InferTy::Known(Ty::ERROR) };
+        };
+        let callee = self.body.push_expr(ExprKind::Item(candidate.method), Ty::ERROR, span);
+        let (ids, ret) = self.call_method(&candidate, revealed, generics, args, span);
+        let id = self.body.push_expr(ExprKind::Call { callee, args: ids }, ret, span);
+        if self.decls.prelude().is_never(self.types, ret) {
+            self.diverged = true;
+        }
+        Typed { id, ty: InferTy::Known(ret) }
+    }
+
+    /// The arguments checked against a resolved method's parameters, and the
+    /// type the call has.
+    ///
+    /// This is [`BodyChecker::call_signature`]'s body with the callee's node
+    /// removed and one substitution more: a method's signature is written in a
+    /// block, so `Self`, the block's associated types and the block's own
+    /// generic parameters all stand in it and all three have to be replaced
+    /// before a parameter type is something a value can be compared against.
+    /// Reading the signature raw is the bug that says `expected Self, found
+    /// Doc` at a `-> Self` that is right.
+    fn call_method(
+        &mut self,
+        candidate: &Candidate,
+        self_ty: Ty,
+        generics: &[hir::Type],
+        args: &[hir::Arg],
+        span: Span,
+    ) -> (Vec<ExprId>, Ty) {
+        let Some(sig) = self.decls.signature(candidate.method) else {
+            let ids = args.iter().map(|arg| self.synth(&arg.value).id).collect();
+            return (ids, Ty::ERROR);
+        };
+        let params: Vec<(DefId, Ty)> =
+            sig.params.iter().map(|param| (param.def, param.ty)).collect();
+        let ret = sig.ret;
+        let declared = sig.generics.clone();
+
+        if params.len() != args.len() {
+            self.diagnostics.push(wrong_argument_count(span, params.len(), args.len()));
+        }
+
+        let block = self.block_substitution(candidate, self_ty);
+        let order = self.argument_order(&params, args);
+        let generic = self.instantiate_call(&declared, generics, &params, args, &order, span);
+
+        let mut ids: Vec<ExprId> = Vec::with_capacity(args.len());
+        for (at, arg) in args.iter().enumerate() {
+            match order[at].and_then(|index| params.get(index).copied()) {
+                Some((_, param_ty)) => {
+                    let ty = self.apply(&block, param_ty, arg.span);
+                    let ty = self.apply(&generic, ty, arg.span);
+                    let ty = self.instantiate(ty, arg.span);
+                    ids.push(self.check(&arg.value, ty, Site::Argument));
+                }
+                None => ids.push(self.synth(&arg.value).id),
+            }
+        }
+        let ret = self.apply(&block, ret, span);
+        let ret = self.apply(&generic, ret, span);
+        let ret = self.instantiate(ret, span);
+        (ids, ret)
+    }
+
+    /// `Self`, the block's associated types, and the block's generics.
+    ///
+    /// **`Self` is the *receiver's* type and not the block's written self
+    /// type**, which is the more precise of the two and the one the author can
+    /// see: inside `Window of (T, const WIDTH: Int) has:` the block's is
+    /// `Window of (T, WIDTH)` and the receiver's is `Window of (F32, 8)`, and a
+    /// `-> Self` should report as the second.
+    ///
+    /// **The block's generics are solved by a root-level match** — the same
+    /// rule and the same restriction `check`'s §6 states for a call's type
+    /// arguments. `Window of (T, WIDTH)` against `Window of (F32, 8)` pairs the
+    /// arguments positionally and takes the ones that are a bare parameter;
+    /// anything deeper is left unsolved, which leaves a `TyKind::Param`
+    /// standing in the signature and compares against it.
+    fn block_substitution(&mut self, candidate: &Candidate, self_ty: Ty) -> Substitution {
+        let mut substitution = self.decls.body_substitution(self.defs, candidate.block);
+        substitution = substitution.with_self(candidate.owner, self_ty);
+        let declared = match self.decls.block_generics(candidate.block) {
+            Some(generics) if !generics.is_empty() => generics.to_vec(),
+            _ => return substitution,
+        };
+        let Some(block_self) = self.decls.self_ty(candidate.block) else { return substitution };
+        let (TyKind::Named { args: pattern, .. }, TyKind::Named { args: actual, .. }) =
+            (self.types.kind(block_self).clone(), self.types.kind(self_ty).clone())
+        else {
+            return substitution;
+        };
+        for (pattern, actual) in pattern.iter().zip(&actual) {
+            match (pattern, actual) {
+                (GenericArg::Type(pattern), GenericArg::Type(actual)) => {
+                    let TyKind::Param { def } = *self.types.kind(*pattern) else { continue };
+                    if declared.iter().any(|param| param.def == def) {
+                        substitution = substitution.with_type(def, *actual);
+                    }
+                }
+                (GenericArg::Const(pattern), GenericArg::Const(actual)) => {
+                    // The same root-level rule one kind down: a pattern that is
+                    // the parameter itself — `WIDTH`, not `WIDTH + 1` — is
+                    // solved by the argument. The general case is
+                    // `matching::match_linear`, and it wants an obligation to
+                    // discharge, which is `SC0262` and F1's.
+                    let Some(def) = bare_const_param(pattern) else { continue };
+                    if declared.iter().any(|param| param.def == def) {
+                        substitution = substitution.with_const(def, actual.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        substitution
+    }
+
+    /// The type `Self` means at a call: the receiver's, with a borrow taken off.
+    ///
+    /// A borrow is transparent to the lookup (`methods`'s §1) and it has to be
+    /// transparent here too, or a method on `Doc` called through a `borrowed
+    /// Doc` would substitute `Self := borrowed Doc` and every `-> Self` in the
+    /// block would come back borrowed.
+    fn receiver_self_ty(&mut self, receiver: Ty, span: Span) -> Ty {
+        match *self.types.kind(receiver) {
+            TyKind::Borrowed { inner, .. } => {
+                let inner = self.revealed(inner, span);
+                self.receiver_self_ty(inner, span)
+            }
+            _ => receiver,
+        }
+    }
+
+    /// A receiver that names a choice type, and a name that is one of its
+    /// variants.
+    ///
+    /// Before [`BodyChecker::type_receiver`], because a variant is not a method
+    /// and asking the method index about it would answer `SC0532` for a
+    /// construct that is not a method call at all.
+    fn variant_receiver(&self, receiver: &hir::Expr, name: &hir::Ident) -> Option<DefId> {
+        let hir::ExprKind::Path { res: Res::Def(def), .. } = &receiver.kind else {
+            return None;
+        };
+        if self.defs.get(*def).kind != hir::DefKind::Choice {
+            return None;
+        }
+        let variant = self
+            .defs
+            .children(*def)
+            .find(|child| child.kind == hir::DefKind::Variant && child.name == name.name)?
+            .id;
+        // Only when the declaration table has it: `call_variant` reads the
+        // payload out of that table and asserts it is there.
+        self.decls.variant(variant).map(|_| variant)
+    }
+
+    /// A receiver that names a type rather than holding a value.
+    ///
+    /// `DefTable.new()` and `Self.new()`. The parser cannot tell this from
+    /// `defs.alloc()` — both are a receiver and a name — and the resolver
+    /// cannot either, because whether `DefTable` is a type is a fact about the
+    /// definition it resolved to and not about the expression. This is the
+    /// first phase that holds both.
+    fn type_receiver(&mut self, receiver: &hir::Expr) -> Option<Ty> {
+        let hir::ExprKind::Path { res, generics } = &receiver.kind else { return None };
+        match res {
+            Res::Def(def) => {
+                let def = *def;
+                if !matches!(
+                    self.defs.get(def).kind,
+                    hir::DefKind::Record
+                        | hir::DefKind::Choice
+                        | hir::DefKind::Alias
+                        | hir::DefKind::Interface
+                        | hir::DefKind::Union
+                ) {
+                    return None;
+                }
+                // `(Window of (Int, 4)).empty()`: the arguments are lowered as
+                // *arguments* and not as types, because one of them is a const
+                // expression and lowering it as a type is `SC0523` reported at
+                // a receiver that is correct.
+                let args: Vec<GenericArg> =
+                    generics.iter().map(|ty| self.lower_generic_arg(ty)).collect();
+                Some(self.types.named(def, args))
+            }
+            Res::SelfTy(owner) => self.decls.self_ty(*owner),
+            Res::Error => None,
+        }
+    }
+
+    /// Decision 11's lookup, with its two diagnostics.
+    ///
+    /// `None` is *"no answer"* and is not always a diagnostic: `methods`'s §1
+    /// distinguishes a receiver this crate can speak for from one it cannot,
+    /// and only the first reports.
+    fn lookup(&mut self, receiver: Ty, name: &hir::Ident, form: Form) -> Option<Candidate> {
+        let key = self.decls.methods().receiver(self.defs, self.types, receiver)?;
+        match self.decls.methods().lookup(key, &name.name, form) {
+            Found::One(candidate) => Some(candidate),
+            Found::Ambiguous(candidates) => {
+                let diagnostic = self.ambiguous(receiver, name, &candidates);
+                self.diagnostics.push(diagnostic);
+                None
+            }
+            // The name is there and the form is not: an instance method named
+            // through its type, or an associated function called on a value.
+            // `methods`'s §5 — F0 has no spelling for either, so a diagnostic
+            // about one would be a language decision taken by a checker.
+            Found::Mismatched => None,
+            // Several implementations of one interface, selected by the
+            // argument rather than by the name. `methods`'s §6: not resolved,
+            // and not reported either.
+            Found::Overloaded => None,
+            Found::None => {
+                if !self.types.references_error(receiver) {
+                    let rendered = self.types.render(self.defs, receiver);
+                    self.diagnostics.push(no_such_method(name.span, &name.name, &rendered));
+                }
+                None
+            }
+        }
+    }
+
+    /// `SC0531`, built where the receiver's type and the candidates are both in
+    /// hand. `methods`'s §3 is the argument for every line of it.
+    fn ambiguous(&self, receiver: Ty, name: &hir::Ident, candidates: &[Candidate]) -> Diagnostic {
+        let rendered = self.types.render(self.defs, receiver);
+        let mut diagnostic = Diagnostic::error(
+            codes::AMBIGUOUS_METHOD,
+            format!("`{}` on `{rendered}` could be {} methods", name.name, candidates.len()),
+        )
+        .with_label(Label::primary(
+            name.span,
+            format!("{} implementations declare `{}`", candidates.len(), name.name),
+        ));
+        for candidate in candidates {
+            let source =
+                crate::methods::describe_source(self.defs, self.types, receiver, candidate);
+            diagnostic = diagnostic.with_label(Label::secondary(
+                self.defs.get(candidate.method).span,
+                format!("one is declared by {source}"),
+            ));
+        }
+        diagnostic.with_note(
+            "method lookup is inherent methods and then interface methods, and an ambiguity is \
+             an error and never a priority ordering — a winner picked here would be picked \
+             silently, and the program would call a method its author did not mean",
+        )
+    }
+
     fn unary(&mut self, op: UnaryOp, operand: &hir::Expr, span: Span) -> Typed {
         match op {
             UnaryOp::Not => {
@@ -1514,9 +1894,15 @@ impl<'a> BodyChecker<'a> {
     /// agree reports on the borrow the language told the author to leave out.
     ///
     /// **What this phase can still say** is that the two values are the same
-    /// type once those borrows are stripped. What it cannot say is whether the
-    /// type implements `Eq` at all — Decision 11 — so a comparison of two
-    /// records is silent here and is `SC0525`'s sibling once the lookup exists.
+    /// type once those borrows are stripped. What it still does not say is
+    /// whether the type implements `Eq` at all, and that is no longer for want
+    /// of a lookup: [`Methods::implements`](crate::methods::Methods::implements)
+    /// would answer it. What is missing is a *code* and the decision behind it
+    /// — whether comparing two records that implement nothing is an error, and
+    /// what it is called — which §5.4 leaves to the interface list and §13
+    /// does not number. So a comparison of two records is still silent, and
+    /// the blocker is now a diagnostic nobody has specified rather than a
+    /// question nobody could ask.
     fn compare(&mut self, left: Typed, right: Typed, span: Span) {
         match (left.ty, right.ty) {
             (InferTy::Known(l), InferTy::Known(r)) => {
@@ -1746,7 +2132,8 @@ impl<'a> BodyChecker<'a> {
             self.facts.invalidate_root(root);
         }
         let entry = self.facts.clone();
-        // §6: `Iterate` is Decision 11's, so the element type is unknown.
+        // §6: the prelude's `Iterate` declares no `next` and no `Item`, so
+        // there is nothing for a loop to read an element type out of.
         let pattern = self.pattern(pattern, Ty::ERROR);
         self.breaks.push(false);
         let block = self.body.reserve_block(body.span);
@@ -2121,6 +2508,40 @@ fn wrong_argument_count(span: Span, expected: usize, found: usize) -> Diagnostic
 fn no_such_field(span: Span, name: &str, ty: &str) -> Diagnostic {
     Diagnostic::error(codes::NO_SUCH_FIELD, format!("`{ty}` has no field `{name}`"))
         .with_label(Label::primary(span, "no such field"))
+}
+
+/// The const parameter a pattern *is*, when it is one and nothing more.
+///
+/// `WIDTH` matches and solves; `WIDTH + 1` does not, and `2 * WIDTH` does not.
+/// That is the root-level restriction of `check`'s §6 read one kind down, and
+/// the general answer is `matching::match_linear` under an obligation nobody
+/// discharges yet.
+fn bare_const_param(pattern: &crate::normal::NormalForm) -> Option<DefId> {
+    if pattern.constant() != 0 || pattern.terms().len() != 1 {
+        return None;
+    }
+    let term = &pattern.terms()[0];
+    if term.coefficient() != 1 {
+        return None;
+    }
+    match term.atom() {
+        crate::normal::Atom::Param { def, .. } => Some(def),
+    }
+}
+
+/// `SC0532` — a method the receiver's type does not have.
+///
+/// [`no_such_field`]'s sibling, reported under the restraint `methods`'s §1
+/// imposes: only where the receiver is a type this crate holds an
+/// implementation table for. The prelude registers no methods at all, so a call
+/// on a `String` reaches neither this function nor any other.
+fn no_such_method(span: Span, name: &str, ty: &str) -> Diagnostic {
+    Diagnostic::error(codes::NO_SUCH_METHOD, format!("`{ty}` has no method `{name}`"))
+        .with_label(Label::primary(span, "no such method"))
+        .with_note(
+            "method lookup finds the inherent methods of the type and the methods of the \
+             interfaces it implements, and neither has this name",
+        )
 }
 
 /// `SC0529` — `let a, b be f()` against something that is not a pair.

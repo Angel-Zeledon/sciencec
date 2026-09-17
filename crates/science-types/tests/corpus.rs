@@ -51,16 +51,16 @@ use std::path::{Path, PathBuf};
 /// question, not this crate's. Owner: the FFI note, then whoever owns
 /// mutability weakening.
 ///
-/// **`21_compiler_shapes.science`, `SC0526`** — `the type of this value cannot
-/// be inferred`, at `defs.alloc(DefKind.Module, "main", null)`. `alloc` is
-/// declared `parent: DefId?` twenty lines above, and the `null` would take that
-/// type if the call were resolved. It is not: Decision 11's implementation
-/// lookup does not exist, so a method call carries `method: None` and its
-/// arguments are synthesised against nothing. Owner: `science-types`, blocked
-/// on Decision 11 — `check`'s §6 and `lib`'s list of what the layer cannot
-/// discharge.
-const REMAINING: &[(&str, &[u16])] =
-    &[("20_extern.science", &[525]), ("21_compiler_shapes.science", &[526])];
+/// **`21_compiler_shapes.science` is no longer here**, and the shape of what
+/// closed it is worth keeping: its `SC0526` was `the type of this value cannot
+/// be inferred` at `defs.alloc(DefKind.Module, "main", null)`, where `alloc`
+/// declares `parent: DefId?` twenty lines above. The `null` had nothing to take
+/// its type from because the call resolved to nothing — Decision 11's lookup
+/// did not exist, so every method call carried `method: None` and synthesised
+/// its arguments against nothing at all. `science-types`'s `methods` module is
+/// that lookup; the entry went with it, which is what this file's opening
+/// paragraph says a fix looks like.
+const REMAINING: &[(&str, &[u16])] = &[("20_extern.science", &[525])];
 
 fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("examples")
@@ -151,10 +151,16 @@ fn every_pinned_file_is_in_the_corpus() {
 ///
 /// It was 147 before the checker learned §6.3's auto-borrow, 17 before the
 /// parser stopped reading a `(` after an indented block as a call, 11 before
-/// `assign`'s §4 admitted unsizing behind a borrow, and 3 before checking mode
-/// learned that an `unsafe` block is a block.
+/// `assign`'s §4 admitted unsizing behind a borrow, 3 before checking mode
+/// learned that an `unsafe` block is a block, and 2 before Decision 11's method
+/// lookup landed.
+///
+/// **The one that is left is not this crate's**, and that is why the number
+/// stops here rather than at zero: `20_extern.science` wants `Span of F64`
+/// where a `MutableSpan of F64` is declared, and closing it is a mutability
+/// weakening that `region-inference.md` owns.
 #[test]
-fn the_corpus_is_down_to_two_diagnostics() {
+fn the_corpus_is_down_to_one_diagnostic() {
     let total: usize = REMAINING.iter().map(|(_, codes)| codes.len()).sum();
-    assert_eq!(total, 2);
+    assert_eq!(total, 1);
 }
