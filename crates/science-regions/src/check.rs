@@ -198,9 +198,9 @@ fn rule_five(
 
     let mut diagnostic = Diagnostic::error(
         codes::BORROW_OUTLIVES_REFERENT,
-        format!("`{borrowed}` is borrowed for longer than `{referent}` exists"),
+        format!("{borrowed} is borrowed for longer than {referent} exists"),
     )
-    .with_label(Label::secondary(data.span, format!("`{borrowed}` is borrowed here")));
+    .with_label(Label::secondary(data.span, format!("{borrowed} is borrowed here")));
     if let Some(last) = last_use(analysis, data, region) {
         diagnostic = diagnostic.with_label(Label::primary(
             last.span,
@@ -212,7 +212,7 @@ fn rule_five(
     }
     Some(
         diagnostic
-            .with_label(Label::secondary(span, format!("`{referent}` is declared here")))
+            .with_label(Label::secondary(span, format!("{referent} is declared here")))
             .with_note(
                 "a borrow may not outlive what it points at (§6.1 rule 5); the value's \
                  storage ends at the close of the scope it was declared in",
@@ -294,14 +294,14 @@ fn narrative(
     let moved = access.kind == AccessKind::Move;
     let code = if moved { codes::MOVED_WHILE_BORROWED } else { codes::CONFLICTING_BORROWS };
     let headline = if moved {
-        format!("`{name}` is moved while it is still borrowed")
+        format!("{name} is moved while it is still borrowed")
     } else {
-        format!("`{name}` is borrowed here and {} before the borrow ends", verb(access))
+        format!("{name} is borrowed here and {} before the borrow ends", verb(access))
     };
     let held = if exclusive { "exclusively" } else { "shared" };
 
     let mut diagnostic = Diagnostic::error(code, headline)
-        .with_label(Label::secondary(data.span, format!("`{name}` is borrowed here, {held}")))
+        .with_label(Label::secondary(data.span, format!("{name} is borrowed here, {held}")))
         .with_label(Label::primary(access.span, format!("...and {}", access.kind.described())));
     if let Some(last) = last_use(analysis, data, region) {
         if last.span != access.span {
@@ -445,6 +445,27 @@ fn undetermined(defs: &DefTable, body: &Body, analysis: &BodyAnalysis) -> Vec<Di
         .collect()
 }
 
+/// A place's name as a message should show it.
+///
+/// **A name is quoted and a description is not.** `name_of` falls back to a
+/// phrase when a local has no name -- §7.2's *"with no names available, the
+/// message has no choice but to describe the program"* -- and the fallback was
+/// being wrapped in backticks at every call site, so `SC0333` over the corpus
+/// read *"`this expression` is borrowed for longer than `this expression`
+/// exists"*: one phrase, three times, punctuated as though it were an
+/// identifier the reader could go and find in the file.
+///
+/// The cost is that two descriptions in one message still read alike. That is
+/// a real limit of having no names, and §7.2's problem rather than this
+/// function's; what this removes is the false promise that they were names.
+fn display(text: String, named: bool) -> String {
+    if named {
+        format!("`{text}`")
+    } else {
+        text
+    }
+}
+
 // --- naming ---------------------------------------------------------------
 
 /// What the author calls a place, for a message that cannot print `'a`.
@@ -454,11 +475,11 @@ fn undetermined(defs: &DefTable, body: &Body, analysis: &BodyAnalysis) -> Vec<Di
 /// a description rather than `_7`, because a number the author cannot find in
 /// the file is worse than a phrase.
 pub fn name_of(defs: &DefTable, body: &Body, place: &Place) -> String {
-    let mut out = match body.local_decl(place.local).kind {
-        LocalKind::Param(def) | LocalKind::Binding(def) => defs.get(def).name.clone(),
-        LocalKind::Return => "the returned value".to_string(),
-        LocalKind::Temp => "this expression".to_string(),
-        LocalKind::DropFlag(_) => "a drop flag".to_string(),
+    let (mut out, named) = match body.local_decl(place.local).kind {
+        LocalKind::Param(def) | LocalKind::Binding(def) => (defs.get(def).name.clone(), true),
+        LocalKind::Return => ("the returned value".to_string(), false),
+        LocalKind::Temp => ("this expression".to_string(), false),
+        LocalKind::DropFlag(_) => ("a drop flag".to_string(), false),
     };
     for step in &place.projection {
         match step {
@@ -477,6 +498,6 @@ pub fn name_of(defs: &DefTable, body: &Body, place: &Place) -> String {
             Projection::Index { .. } => out.push_str("[..]"),
         }
     }
-    out
+    display(out, named)
 }
 
