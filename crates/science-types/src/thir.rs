@@ -316,6 +316,22 @@ pub enum ExprKind {
         pattern: PatId,
         iter: ExprId,
         body: BlockId,
+        /// The `Iterate.next` this loop calls, as the checker resolved it.
+        ///
+        /// **The seam `science-mir`'s `Unresolved::IterateNext` was named
+        /// for.** That variant's own note states it: *"`thir::ExprKind::For`
+        /// has no field for a callee, so this crate cannot name what that
+        /// lookup found without redoing the lookup, and method lookup is
+        /// Decision 11's and lives one level up"* — and
+        /// [`super::check`]'s `iterate_item` had the `DefId` in hand the whole
+        /// time and dropped it on the floor, because it was written to answer
+        /// only *"what does this loop bind"*. This is the field it asks for.
+        ///
+        /// **`None` is a subject that does not implement `Iterate`**, which is
+        /// the same set of loops whose element type is already `Ty::ERROR` —
+        /// `for k in some_map:`, a user type with no `implements Iterate:`.
+        /// The two answers come from one lookup, so they cannot disagree.
+        next: Option<DefId>,
     },
     Block(BlockId),
     Unsafe(BlockId),
@@ -337,6 +353,26 @@ pub enum ExprKind {
     /// point at which the narrowing was *used*, not the point at which it was
     /// established.
     Narrow(ExprId),
+    /// `[1, 2, 3]` — Decision 10's array literal, with its elements in the
+    /// order they were written.
+    ///
+    /// **This variant is what the paragraph below [`ExprKind::Error`] used to
+    /// be about.** The literal was typed in full here — the elements unified,
+    /// the element type defaulted, `Array of T` interned — and then lowered as
+    /// an `Error`, because *"`science-mir` matches this enum exhaustively in
+    /// three places and a new variant is a compile error in a crate that
+    /// change did not own"*. So the type travelled and the shape stopped, and
+    /// no array literal could be built by any backend however complete.
+    ///
+    /// The three places were the cost and the cost was paid: this carries the
+    /// element ids, and `science-mir` lowers them to Decision 5's *"call to a
+    /// runtime entry point, never an inlined MIR loop"* — one
+    /// `science_array_with_capacity` and one `science_array_push` per element.
+    ///
+    /// **The element type is not carried and is not needed here.** It is
+    /// `Array of T`'s own argument, which every consumer already has through
+    /// the node's `ty`; carrying it twice is two places for it to disagree.
+    Array(Vec<ExprId>),
     /// A value this phase did not build.
     ///
     /// **Two cases, and they are not the same case.** Usually the type could
@@ -344,13 +380,11 @@ pub enum ExprKind {
     /// answer — and then `ty` is [`Ty::ERROR`], which is `ty`'s §5 and what
     /// keeps a hole to one diagnostic.
     ///
-    /// **But `ty` is not always [`Ty::ERROR`], and the array literal is why.**
-    /// `[1, 2, 3]` is typed in full by [`crate::check`]'s `array_lit` —
-    /// Decision 10 makes it an `Array of T` and the elements are unified and
-    /// reported on — and there is no THIR variant to carry its *shape*,
-    /// because `science-mir` matches this enum exhaustively in three places and
-    /// a new variant is a compile error in a crate that change did not own. So
-    /// the type travels and the shape stops here.
+    /// **The other case is a type that is known and a value that is still not
+    /// built**, which an empty `[]` with no expected type is: `array_lit`
+    /// reports `SC0282` and has no element type to intern, so the node carries
+    /// [`Ty::ERROR`] and no shape. The array literal *used* to be the standing
+    /// example of this and is now [`ExprKind::Array`].
     ///
     /// **Nothing downstream may read the two together.** This variant means
     /// *"no value was built"*; whether the type is known is a separate

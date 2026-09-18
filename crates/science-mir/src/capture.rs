@@ -222,7 +222,10 @@ impl Walker<'_> {
                     self.bind_expr(*value);
                 }
             }
-            ExprKind::Tuple(elements) => {
+            // An array literal's elements are ordinary expressions, exactly
+            // as a tuple's are; the two differ in what is built from them and
+            // not in what they bind.
+            ExprKind::Tuple(elements) | ExprKind::Array(elements) => {
                 for element in elements {
                     self.bind_expr(*element);
                 }
@@ -272,7 +275,7 @@ impl Walker<'_> {
                 }
             }
             ExprKind::Loop { body } => self.bind_block(*body),
-            ExprKind::For { pattern, iter, body } => {
+            ExprKind::For { pattern, iter, body, .. } => {
                 self.bind_pat(*pattern);
                 self.bind_expr(*iter);
                 self.bind_block(*body);
@@ -411,7 +414,10 @@ impl Walker<'_> {
                     self.expr(*value, Ctx::Consume(*value));
                 }
             }
-            ExprKind::Tuple(elements) => {
+            // An array literal consumes each element: `science_array_push`
+            // copies the value into the buffer and the literal is the only
+            // owner afterwards, which is a move and not a read.
+            ExprKind::Tuple(elements) | ExprKind::Array(elements) => {
                 for element in elements {
                     self.expr(*element, Ctx::Consume(*element));
                 }

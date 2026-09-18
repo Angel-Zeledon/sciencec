@@ -3800,17 +3800,20 @@ impl<'a> BodyChecker<'a> {
             self.diagnostics.push(empty_array_no_type(span));
             return self.error_expr(span);
         }
-        // The element nodes go into the arena and nothing keeps their ids: see
-        // the second cost above. They are reachable by a walk and not by a
-        // pointer, which is what the missing THIR variant costs.
+        // The element ids are kept now — `thir::ExprKind::Array` carries
+        // them — where they used to go into the arena and be reachable only by
+        // a walk. That was *"what the missing THIR variant costs"*, and the
+        // variant exists.
         //
         // The type so far, and the element that last made it concrete — §7.2's
         // *"secondary on the element that fixed the type"*. It starts at the
         // first element whether or not that element knows its own type, so a
         // literal-only array points at its first entry.
         let mut settled: Option<(InferTy, Span)> = None;
+        let mut ids: Vec<ExprId> = Vec::with_capacity(elements.len());
         for element in elements {
             let typed = self.synth(element);
+            ids.push(typed.id);
             let Some((so_far, fixed_at)) = settled else {
                 settled = Some((typed.ty, element.span));
                 continue;
@@ -3863,7 +3866,15 @@ impl<'a> BodyChecker<'a> {
             None => Ty::ERROR,
         };
         let ty = self.array_of(element_ty);
-        let id = self.body.push_expr(ExprKind::Error, ty, span);
+        // An element type this phase could not settle leaves the literal
+        // unbuilt rather than half-built: `Array of <error>` has no element
+        // layout, so a backend handed the shape would have to invent one.
+        let kind = if self.types.references_error(ty) {
+            ExprKind::Error
+        } else {
+            ExprKind::Array(ids)
+        };
+        let id = self.body.push_expr(kind, ty, span);
         Typed { id, ty: InferTy::Known(ty) }
     }
 
@@ -3882,10 +3893,14 @@ impl<'a> BodyChecker<'a> {
         expected: Ty,
         span: Span,
     ) -> ExprId {
-        for element in elements {
-            self.check(element, element_ty, Site::Elsewhere);
-        }
-        self.body.push_expr(ExprKind::Error, expected, span)
+        let ids: Vec<ExprId> =
+            elements.iter().map(|element| self.check(element, element_ty, Site::Elsewhere)).collect();
+        let kind = if self.types.references_error(expected) {
+            ExprKind::Error
+        } else {
+            ExprKind::Array(ids)
+        };
+        self.body.push_expr(kind, expected, span)
     }
 
     /// What an `Array of T` holds, when the type is one.
@@ -4529,7 +4544,10 @@ impl<'a> BodyChecker<'a> {
         // Over anything else — a `Map`, a user type with no
         // `implements Iterate:` — there is still nothing to read and the
         // binding is [`Ty::ERROR`].
-        let element = self.iterate_item(iter, span).unwrap_or(Ty::ERROR);
+        let (element, next) = match self.iterate_item(iter, span) {
+            Some((element, next)) => (element, Some(next)),
+            None => (Ty::ERROR, None),
+        };
         let pattern = self.pattern(pattern, element);
         self.breaks.push(false);
         let block = self.body.reserve_block(body.span);
@@ -4539,7 +4557,8 @@ impl<'a> BodyChecker<'a> {
         self.facts = entry;
         // A `for` may iterate zero times, so it never diverges.
         self.diverged = false;
-        let id = self.body.push_expr(ExprKind::For { pattern, iter, body: block }, Ty::UNIT, span);
+        let id =
+            self.body.push_expr(ExprKind::For { pattern, iter, body: block, next }, Ty::UNIT, span);
         Typed { id, ty: InferTy::Known(Ty::UNIT) }
     }
 
@@ -4561,7 +4580,7 @@ impl<'a> BodyChecker<'a> {
     /// the subject is a type parameter or a tuple, and the candidate named
     /// `next` came from somewhere other than `Iterate`. Each leaves the binding
     /// at [`Ty::ERROR`], which is where every `for` in the language used to be.
-    fn iterate_item(&mut self, iter: ExprId, span: Span) -> Option<Ty> {
+    fn iterate_item(&mut self, iter: ExprId, span: Span) -> Option<(Ty, DefId)> {
         let iterate = self.decls.prelude().get("Iterate")?;
         let ty = self.body.ty(iter);
         let revealed = self.revealed(ty, span);
@@ -4577,7 +4596,10 @@ impl<'a> BodyChecker<'a> {
         let substitution = self.block_substitution(&candidate, self_ty, span);
         let ret = self.apply(&substitution, ret, span);
         match *self.types.kind(ret) {
-            TyKind::Nullable(inner) => Some(inner),
+            // The method comes back beside the element type because both are
+            // this one lookup's answer, and `thir::ExprKind::For::next` exists
+            // so that `science-mir` does not have to repeat it.
+            TyKind::Nullable(inner) => Some((inner, candidate.method)),
             _ => None,
         }
     }

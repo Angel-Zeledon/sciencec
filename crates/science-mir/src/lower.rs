@@ -490,6 +490,16 @@ const PUSH_F64: &str = "science_string_push_f64";
 const PUSH_F32: &str = "science_string_push_f32";
 const PUSH_BOOL: &str = "science_string_push_bool";
 const PUSH_CHAR: &str = "science_string_push_char";
+/// Decision 10's array literal, as Decision 5's *"call to a runtime entry
+/// point, never an inlined MIR loop"*: one constructor and one push per
+/// element. The descriptor each of these also takes is **not** passed from
+/// here — `science-codegen-llvm`'s `lower_runtime_call` fills it from the
+/// destination's own element type, because a descriptor is a global that
+/// crate interns and this one has no way to name one.
+const ARRAY_WITH_CAPACITY: &str = "science_array_with_capacity";
+const ARRAY_PUSH: &str = "science_array_push";
+const ARRAY_LEN: &str = "science_array_len";
+const PANIC_BYTES: &str = "science_panic_bytes";
 const PUSH_STR: &str = "science_string_push_str";
 
 /// How one interpolation hole reaches its entry point.
@@ -1083,6 +1093,57 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 self.assign(block, dest, rvalue, span);
                 block
             }
+            // Decision 10's `[1, 2, 3]`. **The same shape as `lower_fstring`
+            // one construct over**, and for the same reason: §4's *"in F0, a
+            // whole-array operation lowers to a call to a runtime or library
+            // entry point, never to an inlined MIR loop"* — so this is n + 1
+            // straight-line calls and no back edge, which is what
+            // `tests/no_invented_loops.rs` holds this crate to.
+            //
+            // **The accumulator is borrowed once per push, exclusively, and
+            // the borrow is §6's two-phase kind** — `lower_fstring`'s §1 is
+            // the argument and it transfers unchanged: one borrow held across
+            // the whole sequence would be an exclusive loan live over the
+            // evaluation of every element, and an element is an arbitrary
+            // expression.
+            //
+            // **Each element is borrowed *shared* and not moved**, because
+            // `science_array_push` takes a pointer and copies `size` bytes out
+            // of it. What owns the element afterwards is the array; the
+            // element's own slot is dead after the push, which is
+            // `crate::moves`' question and not this one.
+            ExprKind::Array(elements) => {
+                let count = elements.len() as u64;
+                let mut block = self.emit_call(
+                    dest.clone(),
+                    Callee::Runtime(ARRAY_WITH_CAPACITY),
+                    vec![Operand::Const(Constant::Count(count))],
+                    block,
+                    span,
+                );
+                if elements.is_empty() {
+                    return block;
+                }
+                // One discard slot for the whole sequence, for
+                // `lower_fstring`'s reason: every push returns nothing and a
+                // `TerminatorKind::Call` has a destination whether or not
+                // there is a value for it.
+                let discard = Place::local(self.temp(Ty::UNIT, span, block));
+                for element in elements {
+                    let (accumulator, next) = self.accumulator_ref(&dest, block, span);
+                    block = next;
+                    let (value, next) = self.element_move(*element, block, span);
+                    block = next;
+                    block = self.emit_call(
+                        discard.clone(),
+                        Callee::Runtime(ARRAY_PUSH),
+                        vec![accumulator, value],
+                        block,
+                        span,
+                    );
+                }
+                block
+            }
             ExprKind::Tuple(elements) => {
                 let mut operands = Vec::with_capacity(elements.len());
                 for element in elements {
@@ -1174,8 +1235,8 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 self.lower_if(dest, *cond, *then_branch, *else_branch, block, span)
             }
             ExprKind::Loop { body } => self.lower_loop(dest, *body, block, span),
-            ExprKind::For { pattern, iter, body } => {
-                self.lower_for(dest, *pattern, *iter, *body, block, span)
+            ExprKind::For { pattern, iter, body, next } => {
+                self.lower_for(dest, *pattern, *iter, *body, *next, block, span)
             }
             ExprKind::Match { scrutinee, arms } => {
                 self.lower_match(dest, *scrutinee, arms, block, span)
@@ -1288,12 +1349,14 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
 
     /// §7. The shape of a `for`: one shared borrow of its subject, and a
     /// named hole where the `next()` that reads through it goes.
+    #[allow(clippy::too_many_arguments)]
     fn lower_for(
         &mut self,
         dest: Place,
         pattern: PatId,
         iter: ExprId,
         body: thir::BlockId,
+        next_method: Option<DefId>,
         mut block: BlockId,
         span: Span,
     ) -> BlockId {
@@ -1307,6 +1370,32 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         block = next;
         let source = self.auto_deref(source);
         let source_ty = self.place_ty(&source);
+        // **Shared, on §4.4's authority, and that is now in open conflict with
+        // the callee this loop calls.** The prelude declares `Iterate.next` as
+        // `def next(mutable self)`, so a call through a shared reference is
+        // precisely the mismatch §6 exists to catch — and §4.4 says in as many
+        // words that a `for`'s source is *borrowed shared*, which is what
+        // `tests/iteration.rs` pins on that citation. Both cannot be right.
+        //
+        // **It is left at shared, deliberately.** A spec section is not
+        // overridden from inside a lowering to make one construct convenient,
+        // and nothing observable turns on it today: every `implements Iterate`
+        // block in `science-resolve`'s `builtins` declares `methods: &[]`, so
+        // all three subjects resolve to the *interface's* bodiless `next` and
+        // no `for` loop reaches an executable in any case.
+        //
+        // **The contradiction is deeper than a borrow kind and is written here
+        // because this is where it surfaces.** `Array of T implements Iterate`
+        // directly, with `next(mutable self)` and no cursor field — so there is
+        // nowhere for the iteration state to live, and `next` on an array
+        // cannot advance no matter which borrow it is called through.
+        // `collections-and-chains.md`'s AMENDMENT 14 says `Range` implements
+        // `Iterate` *"directly"* precisely because it is **not a container**,
+        // which reads as containers being meant to hand out an iterator the way
+        // `String.chars()` hands out a `Chars`. Whoever reconciles that either
+        // gives `Array`'s `Iterate` a cursor or takes the implementation off
+        // `Array` and puts it on an iterator type; until then this borrow's
+        // kind follows the note that exists.
         let iterator_ty = self.context.types.borrowed(false, source_ty);
         let iterator = self.temp(iterator_ty, span, block);
         // `in_argument` is `false`: a loop's borrow is not an argument borrow.
@@ -1317,6 +1406,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
 
         // The element the loop produces, and the presence test over it. Both
         // are allocated outside the loop for `lower_loop`'s reason.
+        //
         let element_ty = self.thir.pat(pattern).ty;
         let element = self.temp(element_ty, span, block);
         let present = self.temp(self.bool_ty, span, block);
@@ -1328,16 +1418,65 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         let exit = self.new_block();
         self.terminate(block, TerminatorKind::Goto { target: head }, span);
 
-        // §7.2. The one line the seam is behind: when `thir::ExprKind::For`
-        // carries the `next` that `check`'s `iterate_item` already resolves,
-        // this is `Callee::Def(def)` and nothing else here changes. The
-        // argument is a `Copy` either way — it is a reference — so §5's rule
-        // that every operand of an unresolved call is a copy is met without a
-        // `force_copy` and stays met when the callee arrives.
+        // §7.2, and the seam is closed. `thir::ExprKind::For` now carries the
+        // `next` that `check`'s `iterate_item` resolves, so this is
+        // `Callee::Def` for every subject that implements `Iterate` and
+        // `Unresolved::IterateNext` only for the ones that do not — which is
+        // the same set whose element type is `Ty::ERROR`, because both answers
+        // come out of that one lookup. The argument is a `Copy` either way —
+        // it is a reference — so §5's rule that every operand of an unresolved
+        // call is a copy is met without a `force_copy`.
+        // **The field is here and it is deliberately not used, which is a
+        // result and not an omission.** Building `Callee::Def(next_method)` is
+        // one line, it compiles, and it was measured: it unblocks **no**
+        // program and breaks a correct one. Four things stand between the
+        // resolved callee and a `for` loop that runs, and none of them is in
+        // this crate:
+        //
+        // 1. **No `next` has a body.** All three `implements Iterate` blocks in
+        //    `science-resolve`'s `builtins` declare `methods: &[]`, so every
+        //    subject resolves to the *interface's* `next`, which is a default
+        //    body with no implementation — the same monomorphisation gap that
+        //    blocks `examples/06` and `08`. A resolved callee with no body and
+        //    an unresolved one are equally un-runnable.
+        //
+        // 2. **`Array of T implements Iterate` has nowhere to keep a cursor.**
+        //    `next(mutable self)` on an array would have to advance something,
+        //    and an array is a buffer, a length and a capacity — so `next`
+        //    cannot advance no matter what calls it.
+        //    `collections-and-chains.md`'s AMENDMENT 14 says `Range`
+        //    implements `Iterate` *"directly"* precisely because it is **not a
+        //    container**, which reads as containers being meant to hand out an
+        //    iterator the way `String.chars()` hands out a `Chars`. This is a
+        //    specification question, not an implementation one.
+        //
+        // 3. **`next(mutable self)` contradicts §4.4**, which says a `for`'s
+        //    source is borrowed *shared* and which `tests/iteration.rs` pins on
+        //    that citation. §7.1's borrow above follows the note.
+        //
+        // 4. **`def next(mutable self) -> Self.Item?` relates no region.** The
+        //    returned borrow is given no connection to `self`'s lifetime, so a
+        //    function that returns an element of its own parameter —
+        //    `examples/19_stdlib.science`'s `find` is exactly this — has a
+        //    genuinely undetermined signature once region inference can see the
+        //    loop at all. `science-regions`' `check` §6 suppresses `SC0340`
+        //    there today *because* the callee is unresolved, and says the
+        //    suppression *"should be removed when Decision 11's method lookup
+        //    reaches the container types"*. Removing it now turns a correct
+        //    program into an error, which is the measurement that sent this
+        //    line back.
+        //
+        // So the seam §7.2 named is closed on the THIR side — `ExprKind::For`
+        // carries the `DefId`, `check`'s `iterate_item` returns it beside the
+        // element type it was already computing, and neither is looked up twice
+        // — and this is the one line that flips when the four above are
+        // answered.
+        let _ = next_method;
+        let callee = Callee::Unresolved(Unresolved::IterateNext);
         self.terminate(
             head,
             TerminatorKind::Call {
-                callee: Callee::Unresolved(Unresolved::IterateNext),
+                callee,
                 args: vec![Operand::Copy(Place::local(iterator))],
                 destination: Place::local(element),
                 target: Some(test),
@@ -1848,7 +1987,16 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 // produced rather than off the receiver's THIR node, so the
                 // reference handed to the callee has the callee's parameter
                 // type by construction.
+                //
+                // `deref_to_hole` is the narrow's half of the same rule, and
+                // this is its third caller for its third symptom: `a.length()`
+                // where `a` is a `(borrowed String)?` inside `if a?:` reborrowed
+                // the *slot*, so `science_string_len` read a length field out of
+                // the address of a pointer and printed it. No verifier objects
+                // — the argument is a `ptr` either way — which is why this one
+                // had to be read off a program's stdout.
                 let place = self.auto_deref(place);
+                let place = self.deref_to_hole(place, receiver);
                 let ty = self.place_ty(&place);
                 let borrowed = self.context.types.borrowed(mutable, ty);
                 let temp = self.temp(borrowed, span, block);
@@ -2133,6 +2281,272 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         (Operand::Move(Place::local(temp)), block)
     }
 
+    /// §2.4's bounds check, emitted as statements before the place that needs
+    /// it.
+    ///
+    /// # The decision
+    ///
+    /// `xs[i]` keeps its [`Projection::Index`], and the check that makes the
+    /// projection safe is emitted **here**, in MIR, as an ordinary
+    /// `science_array_len`, a comparison, and a branch to
+    /// `science_panic_bytes`. A backend then lowers the projection itself as
+    /// one unconditional call.
+    ///
+    /// # The reason, which is Decision 42's line
+    ///
+    /// A bounds check is three basic blocks and a place projection is not a
+    /// statement — so a backend reading `Projection::Index` has nowhere to put
+    /// the branch, which is the sentence `science-codegen-llvm` refused the
+    /// construct with. MIR is where blocks are made. The alternative was to
+    /// replace the projection with a `science_array_get` and a null test, which
+    /// is fewer instructions and would have taken `Projection::Index` out of
+    /// the language: `science-regions` reads it — §2 item 1 does not descend
+    /// into an index — and `places.rs` pins its existence. Keeping the
+    /// projection keeps the borrow checker's view of `xs[i]` intact, and the
+    /// check rides in front of it.
+    ///
+    /// **One comparison, unsigned, and that is not an optimisation.** An `Int`
+    /// index has to be refused for being negative as well as for being too
+    /// large; comparing as `U64` does both at once, because a negative `i64`
+    /// reinterprets as a `u64` above any length an array can have. The
+    /// alternative is two comparisons joined by an `and`, which is two more
+    /// blocks for an answer that is the same. `science_array_len` never returns
+    /// a negative, so its own cast is faithful.
+    ///
+    /// # The cost
+    ///
+    /// **A call per index, and no hoisting.** `for i in 0..xs.length():` pays
+    /// `science_array_len` every turn, where the length is loop-invariant and a
+    /// real compiler would read it once. That is the cost of the length living
+    /// behind Decision 5's runtime call rather than in a field this crate can
+    /// name, and it is left to LLVM, which can hoist the call only if it can
+    /// prove the array is not written to — which it cannot, today, because
+    /// nothing marks `science_array_len` as reading no more than its argument.
+    ///
+    /// **Anything that is not an `Array of T` is left alone**, which today is
+    /// every index into a `Map` and into a user type with an `Index`
+    /// implementation. Those are refused below this crate for reasons of their
+    /// own, and inventing a length call for them would name an entry point they
+    /// do not have.
+    fn bounds_check(
+        &mut self,
+        array: &Place,
+        index: Local,
+        index_ty: Ty,
+        block: BlockId,
+        span: Span,
+    ) -> BlockId {
+        let Some(u64_ty) = self.context.decls.prelude().ty(self.context.types, "U64") else {
+            return block;
+        };
+        let Some(bool_ty) = self.context.decls.prelude().ty(self.context.types, "Bool") else {
+            return block;
+        };
+        let Some(int_ty) = self.context.decls.prelude().ty(self.context.types, "Int") else {
+            return block;
+        };
+        if !self.is_array(array) {
+            return block;
+        }
+
+        // The length, through a shared borrow of the array: `science_array_len`
+        // takes a pointer and reads a header field, so the borrow lives exactly
+        // as long as the call does.
+        let array_ty = self.place_ty(array);
+        let borrowed = self.context.types.borrowed(false, array_ty);
+        let reference = self.temp(borrowed, span, block);
+        let mut block =
+            self.borrow_place(Place::local(reference), false, array.clone(), block, span, true);
+        let length = self.temp(int_ty, span, block);
+        block = self.emit_call(
+            Place::local(length),
+            Callee::Runtime(ARRAY_LEN),
+            vec![Operand::Move(Place::local(reference))],
+            block,
+            span,
+        );
+
+        // Both sides to `U64`, then one `<`.
+        let wide_index = self.temp(u64_ty, span, block);
+        self.assign(
+            block,
+            Place::local(wide_index),
+            Rvalue::Cast {
+                operand: Operand::Copy(Place::local(index)),
+                from: index_ty,
+                ty: u64_ty,
+            },
+            span,
+        );
+        let wide_length = self.temp(u64_ty, span, block);
+        self.assign(
+            block,
+            Place::local(wide_length),
+            Rvalue::Cast {
+                operand: Operand::Copy(Place::local(length)),
+                from: int_ty,
+                ty: u64_ty,
+            },
+            span,
+        );
+        let ok = self.temp(bool_ty, span, block);
+        self.assign(
+            block,
+            Place::local(ok),
+            Rvalue::Binary {
+                op: BinaryOp::Lt,
+                lhs: Operand::Copy(Place::local(wide_index)),
+                rhs: Operand::Copy(Place::local(wide_length)),
+            },
+            span,
+        );
+
+        let in_bounds = self.new_block();
+        let out_of_bounds = self.new_block();
+        self.terminate(
+            block,
+            TerminatorKind::If {
+                cond: Operand::Copy(Place::local(ok)),
+                then_block: in_bounds,
+                else_block: out_of_bounds,
+            },
+            span,
+        );
+        // **The message names the construct and not the numbers.** A panic that
+        // read *"index 7 out of bounds for length 3"* would be the better
+        // sentence and needs a formatted `String` built on the failing path,
+        // which is `science_string_from_bytes`, three pushes and a free on a
+        // path that ends in `science_panic` — every one of which can itself
+        // fail while the program is already failing. A constant costs nothing
+        // and says which check fired.
+        let discard = Place::local(self.push_local(Ty::UNIT, LocalKind::Temp, span));
+        self.terminate(
+            out_of_bounds,
+            TerminatorKind::Call {
+                callee: Callee::Runtime(PANIC_BYTES),
+                args: vec![Operand::Const(Constant::Literal(Literal::Str(
+                    "index out of bounds".to_string(),
+                )))],
+                destination: discard,
+                target: None,
+            },
+            span,
+        );
+        in_bounds
+    }
+
+    /// Whether a place is an `Array of T`, which is what [`Builder::bounds_check`]
+    /// has an entry point for.
+    fn is_array(&mut self, place: &Place) -> bool {
+        let written = self.place_ty(place);
+        let ty = self.revealed(written);
+        let TyKind::Named { def, args } = self.context.types.kind(ty) else { return false };
+        // `Prelude::is` is no help: it answers for a primitive, and requires
+        // the arguments to be empty, which `Array of T` never is.
+        let Some(array) = self.context.decls.prelude().get("Array") else { return false };
+        *def == array && args.len() == 1
+    }
+
+    /// An array literal's element, **consumed** into a slot the push takes the
+    /// address of.
+    ///
+    /// # The decision
+    ///
+    /// The element is evaluated into a temporary of its own and handed over as
+    /// `Operand::Move`, not as a borrow.
+    ///
+    /// # The reason, which is an ownership fact about the runtime
+    ///
+    /// `science_array_push(array, info, value)` copies `info.size` bytes out of
+    /// `value` into the buffer and the array owns them from then on — it is a
+    /// **move** through a pointer, which is exactly what
+    /// `science_codegen::abi`'s indirect-argument rule already means by one.
+    /// This was written as [`Builder::borrow_hole`] first, which is the same
+    /// address and the opposite ownership: `["a", "bb"]` pushed each temporary
+    /// `String`, then dropped the temporary at the end of its statement, and
+    /// `science_array_free` freed the same buffers a second time. The program
+    /// printed its length correctly and trapped on the way out, which is the
+    /// shape of defect that a length assertion cannot see.
+    ///
+    /// Spelling it as a move is not decoration: it is what makes MIR's own
+    /// move analysis stop emitting the drop, so the fix is one MIR fact rather
+    /// than a suppression somewhere below.
+    ///
+    /// # The cost
+    ///
+    /// One temporary per element, where a borrow of an existing place would
+    /// have needed none. A copy type does not care — `[1, 2, 3]` stores three
+    /// integers into three slots the optimiser folds away — and an owning
+    /// element has to be moved somewhere anyway.
+    fn element_move(&mut self, element: ExprId, block: BlockId, span: Span) -> (Operand, BlockId) {
+        let ty = self.thir.expr(element).ty;
+        let temp = self.temp(ty, span, block);
+        let block = self.expr_into(Place::local(temp), element, block);
+        (Operand::Move(Place::local(temp)), block)
+    }
+
+    /// §4's dereference, applied against the **hole's** type and not only the
+    /// place's, because a narrow is the one case where the two disagree.
+    ///
+    /// # The decision
+    ///
+    /// After [`Builder::auto_deref`] has taken the place as far as its own
+    /// written type says, one more `Deref` is projected if the *hole* is a
+    /// borrow and the place is not.
+    ///
+    /// # The reason
+    ///
+    /// [`Builder::as_place`] sees through `ExprKind::Narrow` on the stated
+    /// ground that *"a narrowed read is the same storage seen at a smaller
+    /// type, so it is the same place"*. That is true, and it means the place
+    /// behind `f"{found}"` inside `if found?:` is still written `(borrowed
+    /// I64)?` while the hole itself is a `borrowed I64`. `auto_deref` matches
+    /// on the place's type, sees a nullable rather than a borrow, and stops —
+    /// so the pointer reached the entry point in place of the referent.
+    ///
+    /// **It was a different defect in each of the two callers, from one cause.**
+    /// [`Builder::value_hole`] handed `science_string_push_i64` a pointer where
+    /// it declares an `i64`, which `LLVMVerifyModule` rejects only because the
+    /// two happen to be different LLVM types — a referent of pointer width
+    /// would have printed an address and verified. [`Builder::borrow_hole`]
+    /// reborrowed the *slot* rather than the string, so
+    /// `science_string_push_str` read a `ScienceString` out of the address of a
+    /// pointer to one and took SIGBUS on the length field. Both are fixed here
+    /// rather than twice, because a second copy is a second thing to get wrong.
+    ///
+    /// # The cost
+    ///
+    /// It trusts the hole's type over the place's, which is the right way round
+    /// for a narrow and would be the wrong way round for a coercion — a coerced
+    /// value is a new value in a new representation, and `as_place` already
+    /// declines to see through one for exactly that reason. So this is sound
+    /// only as long as that stays true, and it is named here so the day it
+    /// changes there is something to find.
+    fn deref_to_hole(&mut self, place: Place, hole: ExprId) -> Place {
+        let hole_ty = self.revealed(self.thir.expr(hole).ty);
+        if !matches!(self.context.types.kind(hole_ty), TyKind::Borrowed { .. }) {
+            return place;
+        }
+        // **The place must still be the nullable, and "not a borrow" is not the
+        // same test.** `auto_deref` ends on the referent by design — a
+        // `borrowed Doc` receiver comes back as `(*_1)`, of type `Doc`, which is
+        // not a borrow and is already right. Keying on that alone projected a
+        // second deref onto every such receiver and gave `(*(*_1))`, which
+        // `science-mir`'s own `places.rs` catches. What distinguishes the narrow
+        // is that the place is a `T?` whose payload is the borrow: the storage
+        // holds a pointer, the hole names the referent, and nothing has stepped
+        // through it yet.
+        let written = self.revealed(self.place_ty(&place));
+        let TyKind::Nullable(payload) = *self.context.types.kind(written) else {
+            return place;
+        };
+        let payload = self.revealed(payload);
+        let TyKind::Borrowed { inner, .. } = *self.context.types.kind(payload) else {
+            return place;
+        };
+        place.project(Projection::Deref { ty: inner })
+    }
+
     /// A hole the runtime renders from a register, read rather than consumed.
     ///
     /// [`Builder::auto_deref`] is §4's rule and it is what makes `f"{n}"` work
@@ -2144,6 +2558,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         match self.as_place(hole, block) {
             Some((place, block)) => {
                 let place = self.auto_deref(place);
+                let place = self.deref_to_hole(place, hole);
                 let ty = self.place_ty(&place);
                 let operand = self.read(place, ty);
                 (operand, block)
@@ -2168,6 +2583,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     fn borrow_hole(&mut self, hole: ExprId, block: BlockId, span: Span) -> (Operand, BlockId) {
         let (place, block) = self.borrow_source(hole, block, span);
         let place = self.auto_deref(place);
+        let place = self.deref_to_hole(place, hole);
         let ty = self.place_ty(&place);
         let borrowed = self.context.types.borrowed(false, ty);
         let temp = self.temp(borrowed, span, block);
@@ -2540,6 +2956,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 // is what `Projection::Index`'s equality rests on.
                 let temp = self.temp(index_ty, span, block);
                 let block = self.expr_into(Place::local(temp), index, block);
+                let block = self.bounds_check(&place, temp, index_ty, block, span);
                 let ty = self.element_ty(&place);
                 Some((place.project(Projection::Index { index: temp, ty }), block))
             }

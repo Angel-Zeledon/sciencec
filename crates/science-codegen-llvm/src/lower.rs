@@ -237,7 +237,7 @@ use science_resolve::hir::{self, DefId, DefKind, DefTable, Literal};
 use science_types::Types;
 use science_types::items::Declarations;
 use science_types::methods::{Form, Found};
-use science_types::ty::{Ty, TyKind};
+use science_types::ty::{GenericArg, Ty, TyKind};
 
 use crate::emit::{ConvOp, ExtBlock, ExtBody, ExtInst};
 
@@ -902,9 +902,10 @@ impl<'a> Lowerer<'a> {
         if !self.drop_runs_something(ty, 0)? {
             return Ok(None);
         }
-        // The one owning type with no glue of its own: a direct runtime call,
-        // which every caller emits inline rather than through a function.
-        if self.is_string(ty) {
+        // The owning types with no glue of their own: a direct runtime call,
+        // which every caller emits inline rather than through a function. The
+        // `Ok(None)` is why every caller has to ask `direct_release` too.
+        if self.direct_release(ty)?.is_some() {
             return Ok(None);
         }
         let Some(def) = self.concrete_head(ty) else {
@@ -956,6 +957,10 @@ impl<'a> Lowerer<'a> {
                 continue;
             }
             let inner = self.intern_drop_glue(*field_ty, depth + 1)?;
+            let direct = match &inner {
+                Some(_) => None,
+                None => self.direct_release(*field_ty)?,
+            };
             let address = ValueId(next_value);
             next_value += 1;
             insts.push(ExtInst::FieldAddr {
@@ -963,22 +968,31 @@ impl<'a> Lowerer<'a> {
                 base: Operand::Param(0),
                 offset: places[index].offset,
             });
-            let (callee, symbol_of_call) = match &inner {
-                Some(glue) => (Callee::Science(glue.clone()), glue.clone()),
-                None => (
-                    Callee::Runtime("science_string_free"),
-                    "science_string_free".to_string(),
-                ),
+            let (callee, ret) = match (&inner, &direct) {
+                (Some(glue), _) => (Callee::Science(glue.clone()), ReturnClass::Void),
+                (None, Some((symbol, _))) => {
+                    (Callee::Runtime(symbol), self.declare(symbol)?.ret.clone())
+                }
+                // `drop_runs_something` said the field owns something, and
+                // neither path claimed it. That is a hole in this crate and
+                // not a program the user can be told about, so it is refused
+                // by name rather than releasing nothing.
+                (None, None) => {
+                    return Err(Unlowered::new(format!(
+                        "drop glue for `{name}`: its field of type `{}` owns something that is \
+                         neither a runtime aggregate nor a record with glue",
+                        self.types.render(self.defs, *field_ty)
+                    )));
+                }
             };
-            let ret = match &inner {
-                Some(_) => ReturnClass::Void,
-                None => self.declare("science_string_free")?.ret.clone(),
-            };
-            let _ = symbol_of_call;
+            let mut args = vec![Operand::Value(address)];
+            if let Some((_, Some(descriptor))) = &direct {
+                args.push(Operand::GlobalAddr(descriptor.clone()));
+            }
             insts.push(ExtInst::Above(Inst::Call {
                 dest: None,
                 callee,
-                args: vec![Operand::Value(address)],
+                args,
                 ret,
                 sret_slot: None,
             }));
@@ -1045,6 +1059,101 @@ impl<'a> Lowerer<'a> {
         let cg = self.record_or_choice_ty(concrete)?;
         let info = science_codegen::descriptor::type_info(self.target, &cg, None);
         Ok(self.descriptors.intern(&MonoKey::plain(&[name.as_str()]), info))
+    }
+
+    /// `Array of T`'s element, when the type is one.
+    ///
+    /// The head has to be the **prelude's** `Array`, for the reason
+    /// `science-types`' `array_element` gives: a user may declare a type of
+    /// that name. This crate has no `WANTED` list of its own, so the check is
+    /// the name plus the arity plus `DefKind::Record`'s absence — every
+    /// builtin generic is none of the kinds a user's `Array` could be.
+    fn array_element(&self, ty: Ty) -> Option<Ty> {
+        let TyKind::Named { def, args } = self.types.kind(self.referent(ty)) else {
+            return None;
+        };
+        if self.defs.get(*def).name != "Array" || args.len() != 1 {
+            return None;
+        }
+        match args[0] {
+            GenericArg::Type(element) => Some(element),
+            _ => None,
+        }
+    }
+
+    /// The element type a runtime call's descriptor should describe.
+    ///
+    /// **Read off whichever operand is the array, and the destination is the
+    /// fallback.** `science_array_push(array, info, value)` has the array in
+    /// front of it; `science_array_with_capacity(info, n)` has no array
+    /// operand at all, because the array is what it *returns* — so the
+    /// destination is where the element type lives for that one. Asking the
+    /// operands first and the destination second covers both without either
+    /// call site being named here.
+    fn array_operand_element(
+        &self,
+        body: &MirBody,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+    ) -> Option<Ty> {
+        for arg in args {
+            if let Some(place) = arg.place() {
+                if let Some(element) = self.array_element(place.ty(body)) {
+                    return Some(element);
+                }
+            }
+        }
+        self.array_element(destination.ty(body))
+    }
+
+    /// Decision 20's descriptor for an element type, whatever kind it is.
+    ///
+    /// **Wider than [`Lowerer::intern_descriptor`] on purpose.** That one
+    /// answers for the concrete type behind a box, which is a record or a
+    /// `choice` by construction. An array's element is any type at all —
+    /// `Array of Int`, `Array of Doc`, `Array of String` — and what a
+    /// descriptor needs of it is a size, an alignment and whether it owns
+    /// something, all three of which `cg_ty` and `drop_runs_something` answer
+    /// for every type this backend lays out.
+    ///
+    /// **The key is the element's rendered name**, which is what makes two
+    /// `Array of Int` literals in one module share one global. It is not a
+    /// mangled path because an element may be a type with no path — a tuple,
+    /// a `T?` — and Decision 16's mangling has no spelling for those; the
+    /// rendering does, and it is injective over the types that reach here.
+    fn intern_element_descriptor(&mut self, element: Ty) -> Result<String, Unlowered> {
+        // **Decision 20's `drop_fn`, filled in.** This used to refuse any
+        // element that owned something, on the ground that *"this backend emits
+        // glue for a record and names it in no descriptor yet"* — the first
+        // half of which was already false when it was written, and the second
+        // half is what this fills. `science_array_free` runs `drop_fn` over the
+        // live prefix of the buffer, and `drop_fn`'s signature is a pointer to
+        // one element and nothing back, which is exactly the signature of both
+        // things that can go there: `intern_drop_glue`'s glue function for a
+        // record, and `science_string_free` for a `String`.
+        //
+        // **An element whose release needs a descriptor of its own is still
+        // refused, and `Array of (Array of T)` is the whole of that set.**
+        // `science_array_free(P, D)` takes two arguments where `drop_fn` calls
+        // with one, so a nested array's element cannot be named here at all;
+        // closing it means a one-argument thunk per element type, which is a
+        // function this crate would emit for no program that has run.
+        let drop_fn = match self.direct_release(element)? {
+            Some((_, Some(_))) => {
+                return Err(Unlowered::new(format!(
+                    "an `Array of {}`, whose element is released by a runtime call that takes a \
+                     descriptor of its own: Decision 20's `drop_fn` is called with the element's \
+                     address and nothing else, and there is no one-argument symbol to name",
+                    self.types.render(self.defs, element)
+                )));
+            }
+            Some((symbol, None)) => Some(symbol.to_string()),
+            None => self.intern_drop_glue(element, 0)?,
+        };
+        let cg = self.cg_ty(element)?;
+        let info = science_codegen::descriptor::type_info(self.target, &cg, drop_fn);
+        let rendered = self.types.render(self.defs, element);
+        Ok(self.descriptors.intern(&MonoKey::plain(&[rendered.as_str()]), info))
     }
 
     /// The [`CgTy`] of a record or choice definition, for a descriptor.
@@ -1206,10 +1315,22 @@ impl<'a> Lowerer<'a> {
             // interned index a reader cannot look up, which is the exact
             // complaint the `Tuple` arm below used to carry about the same
             // fallback.
+            // `Array of T` — §2.6's runtime aggregate, whose *value* is the
+            // three-word `ScienceArray` and whose element travels beside every
+            // operation as a `ScienceTypeInfo`. The descriptor is not part of
+            // the value and so not part of this: `Lowerer::intern_descriptor`
+            // interns one per element type and
+            // `Lowerer::lower_runtime_call` puts it in the call.
+            TyKind::Named { def, args }
+                if args.len() == 1 && self.defs.get(*def).name == "Array" =>
+            {
+                Ok(RtAggregate::Array.cg_ty())
+            }
             TyKind::Named { args, .. } if !args.is_empty() => Err(Unlowered::new(format!(
                 "a value of type `{}`, one of §2.6's runtime containers: its value is a \
                  `science-rt` aggregate reached through a `ScienceTypeInfo` descriptor, and this \
-                 backend emits no descriptor",
+                 backend emits a descriptor for an element type and a vtable for an interface, \
+                 and has no lowering for this one",
                 self.types.render(self.defs, ty)
             ))),
             TyKind::Named { def, args } if args.is_empty() => {
@@ -1540,6 +1661,40 @@ impl<'a> Lowerer<'a> {
             // here can see what is behind any of them.
             _ => Ok(true),
         }
+    }
+
+    /// The owning types this backend releases with a direct runtime call,
+    /// and the descriptor that call needs.
+    ///
+    /// **Decision 12's `DropGlue::RuntimeCall`, as one predicate instead of
+    /// two call sites' worth of special cases.** A `String` is released by
+    /// `science_string_free(address)` and an `Array of T` by
+    /// `science_array_free(address, descriptor)`; neither has — or wants — a
+    /// glue function, because the runtime already owns the knowledge of how
+    /// to free the buffer. Both the drop terminator and the field loop inside
+    /// [`Lowerer::intern_drop_glue`] ask here, so the two never disagree about
+    /// which release a type gets.
+    ///
+    /// **The second element is the descriptor's symbol and not the descriptor**,
+    /// for [`Lowerer::lower_runtime_call`]'s reason: only this crate interns
+    /// globals, so MIR passes the array and codegen supplies the `ScienceTypeInfo`
+    /// beside it. `science_string_free` takes none, which is exactly what
+    /// separates the two signatures.
+    ///
+    /// `None` means the type is not one of these — either it owns nothing, or
+    /// it owns something through fields and wants glue.
+    fn direct_release(
+        &mut self,
+        ty: Ty,
+    ) -> Result<Option<(&'static str, Option<String>)>, Unlowered> {
+        if self.is_string(ty) {
+            return Ok(Some(("science_string_free", None)));
+        }
+        if let Some(element) = self.array_element(ty) {
+            let descriptor = self.intern_element_descriptor(element)?;
+            return Ok(Some(("science_array_free", Some(descriptor))));
+        }
+        Ok(None)
     }
 
     /// Whether a type is the prelude's `String`, exactly.
@@ -2284,7 +2439,22 @@ impl<'a> Lowerer<'a> {
                 // `science-mir` takes from the declaration rather than from the
                 // expression.
                 mir::Projection::Deref { ty } => {
-                    if !matches!(layout.repr, Repr::Scalar(Scalar::Pointer(_))) {
+                    // **A niched layout whose payload is a pointer dereferences
+                    // like the pointer it is, and that is Decision 19 rather
+                    // than a relaxation of this check.** `(borrowed T)?` is
+                    // `Repr::Niched` over a `Scalar(Pointer)` with null as the
+                    // niche value — the *whole* layout is the payload's, which
+                    // is what `Repr::Niched`'s own doc says — so the slot holds
+                    // a pointer and nothing else. MIR reaches here only where a
+                    // narrowing already established the value is not null:
+                    // `f"{found}"` inside `if found?:`. The guard still refuses
+                    // everything that is not pointer-shaped, which is what it
+                    // was written for.
+                    let pointee_repr = match &layout.repr {
+                        Repr::Niched { payload, .. } => &payload.repr,
+                        other => other,
+                    };
+                    if !matches!(pointee_repr, Repr::Scalar(Scalar::Pointer(_))) {
                         return Err(Unlowered::new(
                             "a dereference of a value that is not a pointer",
                         ));
@@ -2300,12 +2470,72 @@ impl<'a> Lowerer<'a> {
                     layout = pointee;
                     continue;
                 }
-                mir::Projection::Index { .. } => {
-                    return Err(Unlowered::new(
-                        "an index, which §2.4 makes a bounds check and then a \
-                         `getelementptr`, and neither the check nor an `Array` value reaches \
-                         this backend",
-                    ));
+                // **One call, no branch, and the branch is not missing.** This
+                // used to be the refusal *"an index, which §2.4 makes a bounds
+                // check and then a `getelementptr`, and neither the check nor
+                // an `Array` value reaches this backend"*, which was a true
+                // description of the problem and the wrong crate to solve it
+                // in: a place projection is not a statement, so there is
+                // nowhere here to put three basic blocks. `science-mir`'s
+                // `bounds_check` emits them in front of the place, so what is
+                // left is the address, and `science_array_get` is the entry
+                // point that computes one.
+                //
+                // **Decision 5, again**: the element address is a runtime call
+                // and not a `getelementptr` this crate opens `ScienceArray` to
+                // build. The layout of the buffer is the runtime's, the
+                // descriptor is what says how wide an element is, and a
+                // `getelementptr` here would be this crate asserting a stride
+                // it does not own.
+                //
+                // The returned pointer **is** the next base, exactly as
+                // `Projection::Deref`'s loaded pointer is — the difference is
+                // that this one is computed rather than loaded, so there is no
+                // `LoadAt` and the pointee's layout comes from the
+                // projection's own `ty`.
+                //
+                // **`get_mut` for a read as well as for a write, and that is
+                // the sound direction rather than the lazy one.** A place
+                // projection does not know which it is in — `place_address` has
+                // twelve call sites and no mutability parameter — so one of the
+                // two entry points has to serve both. `science_array_get`
+                // returns a `*const u8` that the runtime derived from a shared
+                // `&ScienceArray`; `xs[1] be 99` would then write through a
+                // pointer derived from a shared reference, which is undefined
+                // under Rust's aliasing model on the `science-rt` side of the
+                // boundary even though every compiler today emits the store.
+                // Reading through the `*mut` that `science_array_get_mut`
+                // returns has no such problem. The cost is that the read path
+                // asks the runtime for an exclusive pointer it does not need;
+                // the borrow checker's view of `xs[i]` is `Projection::Index`
+                // and `science-regions`, not which symbol this picks, so
+                // nothing above is loosened by it.
+                mir::Projection::Index { index, ty } => {
+                    let element = self.layout_of_ty(*ty)?;
+                    let descriptor = self.intern_element_descriptor(*ty)?;
+                    let index_local = LocalId(index.index() as u32);
+                    let index_value = ctx.value();
+                    ctx.layout(index_local)?;
+                    insts.push(ExtInst::Above(Inst::Load {
+                        dest: index_value,
+                        local: index_local,
+                    }));
+                    let sig = self.declare("science_array_get_mut")?;
+                    let result = ctx.value();
+                    insts.push(ExtInst::Above(Inst::Call {
+                        dest: Some(result),
+                        callee: Callee::Runtime("science_array_get_mut"),
+                        args: vec![
+                            Operand::Value(address),
+                            Operand::GlobalAddr(descriptor),
+                            Operand::Value(index_value),
+                        ],
+                        ret: sig.ret.clone(),
+                        sret_slot: None,
+                    }));
+                    address = result;
+                    layout = element;
+                    continue;
                 }
             };
             layout = next;
@@ -4346,28 +4576,38 @@ impl<'a> Lowerer<'a> {
                     // `science_string_free` at the site that made it"* — and a
                     // bound `String` is that same call at the site that drops
                     // it. `science_string_free` takes the address and no
-                    // descriptor, which is what separates it from
-                    // `science_array_free` and `science_map_free`; those take
-                    // one and this backend emits none, so they are refused
-                    // below with the rest.
-                    // A `String` is released by a direct call with no glue
-                    // function at all — `lower`'s §1 states that rule for the
-                    // temporary a `print` makes and it is the same call here.
-                    // Everything else that owns something goes through
+                    // descriptor; `science_array_free` takes one, and
+                    // `direct_release` is what supplies it — the descriptor is
+                    // a global, so it is interned here and not passed down from
+                    // MIR. Everything else that owns something goes through
                     // Decision 12's glue, which is emitted on demand.
                     let glue = self.intern_drop_glue(ty, 0)?;
-                    let (address, _) = self.place_address(ctx, place, insts)?;
-                    let (callee, ret) = match &glue {
-                        Some(symbol) => (Callee::Science(symbol.clone()), ReturnClass::Void),
-                        None => (
-                            Callee::Runtime("science_string_free"),
-                            self.declare("science_string_free")?.ret.clone(),
-                        ),
+                    let direct = match &glue {
+                        Some(_) => None,
+                        None => self.direct_release(ty)?,
                     };
+                    let (address, _) = self.place_address(ctx, place, insts)?;
+                    let (callee, ret) = match (&glue, &direct) {
+                        (Some(symbol), _) => (Callee::Science(symbol.clone()), ReturnClass::Void),
+                        (None, Some((symbol, _))) => {
+                            (Callee::Runtime(symbol), self.declare(symbol)?.ret.clone())
+                        }
+                        (None, None) => {
+                            return Err(Unlowered::new(format!(
+                                "a drop of `{}`, which owns something this crate releases neither \
+                                 by a runtime call nor by Decision 12's glue",
+                                self.types.render(self.defs, ty)
+                            )));
+                        }
+                    };
+                    let mut args = vec![Operand::Value(address)];
+                    if let Some((_, Some(descriptor))) = &direct {
+                        args.push(Operand::GlobalAddr(descriptor.clone()));
+                    }
                     insts.push(ExtInst::Above(Inst::Call {
                         dest: None,
                         callee,
-                        args: vec![Operand::Value(address)],
+                        args,
                         ret,
                         sret_slot: None,
                     }));
@@ -4410,7 +4650,7 @@ impl<'a> Lowerer<'a> {
             // only kind anyone expected; a string interpolation is the first
             // one that exists.
             mir::Callee::Runtime(symbol) => {
-                self.lower_runtime_call(ctx, symbol, args, destination, insts)?;
+                self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;
                 return Ok(match target {
                     Some(block) => Terminator::Goto(BlockId(block.index() as u32)),
                     None => Terminator::Unreachable,
@@ -4450,7 +4690,7 @@ impl<'a> Lowerer<'a> {
         } else if let Some(sig) = self.science.get(&def).cloned() {
             self.lower_science_call(ctx, &sig, args, destination, insts)?;
         } else if let Some(symbol) = self.prelude_method(def) {
-            self.lower_runtime_call(ctx, symbol, args, destination, insts)?;
+            self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;
         } else {
             let name = self.defs.get(def).name.clone();
             // **Decision 13's vtable, named as itself.** A method the lookup
@@ -4893,8 +5133,10 @@ impl<'a> Lowerer<'a> {
     /// `science_string_from_bytes`. It is the one place the argument count and
     /// the parameter count differ, it is stated here, and the arity check below
     /// accounts for it rather than being skipped.
+    #[allow(clippy::too_many_arguments)]
     fn lower_runtime_call(
         &mut self,
+        body: &MirBody,
         ctx: &mut BodyCtx,
         symbol: &str,
         args: &[mir::Operand],
@@ -4904,11 +5146,52 @@ impl<'a> Lowerer<'a> {
         let sig = self.declare(symbol)?;
         let entry = runtime_fn(symbol).expect("`declare` found it");
 
+        // **§6's descriptor is inserted here and passed by nobody.** An entry
+        // point that takes a `ScienceTypeInfo` takes it at a position that is
+        // *"not consistent"* across the table — `RuntimeFn::descriptor_index`
+        // is that finding, and it is why the position is asked for rather
+        // than assumed — and `science-mir` cannot supply the argument at all:
+        // a descriptor is a global this crate interns, and MIR has no operand
+        // that names a global. So the caller above the line passes the values
+        // and this fills the hole from the element type, which it reads off
+        // whichever operand is the array.
+        let descriptor_at = entry.descriptor_index();
+        // The element type, kept past the descriptor it is interned for: it is
+        // also the layout of the slot a by-value element has to be spilled
+        // into, which is the argument case below that has no place to take an
+        // address of.
+        let mut element_ty = None;
+        let descriptor = match descriptor_at {
+            None => None,
+            Some(_) => {
+                let element = self
+                    .array_operand_element(body, args, destination)
+                    .ok_or_else(|| {
+                        Unlowered::new(format!(
+                            "a call to `{symbol}`, which takes a `ScienceTypeInfo`, with no \
+                             operand this crate can read an element type off: the descriptor \
+                             names the element and there is nothing here to name"
+                        ))
+                    })?;
+                element_ty = Some(element);
+                Some(self.intern_element_descriptor(element)?)
+            }
+        };
+
         // The expansion above means the arity is checked against the parameters
         // a literal does *not* cover, so it is counted rather than compared.
         let mut lowered: Vec<Operand> = Vec::with_capacity(sig.params.len());
         let mut param = 0usize;
         for arg in args {
+            // The descriptor occupies its own parameter and consumes no
+            // argument, so it is emitted when the walk reaches its position
+            // and the argument being placed goes after it.
+            if descriptor_at == Some(param) {
+                if let Some(symbol) = &descriptor {
+                    lowered.push(Operand::GlobalAddr(symbol.clone()));
+                    param += 1;
+                }
+            }
             let Some(class) = sig.params.get(param) else {
                 return Err(Unlowered::new(format!(
                     "a call to `{symbol}` with more arguments than its {} parameter(s)",
@@ -4964,9 +5247,55 @@ impl<'a> Lowerer<'a> {
                     param += 1;
                     continue;
                 }
+                // **A value with no place, into a parameter that wants its
+                // address: spill it.** `xs.push(30)` is the shape —
+                // `science_array_push(P, D, P)` takes a pointer to the
+                // *element*, and MIR hands over `Operand::Const(30)`, which has
+                // no slot anywhere because a constant is not stored until
+                // something stores it. Without this the argument reached
+                // `typed_operand` against a pointer layout and came out as
+                // *"a constant of a type this backend cannot build at ptr"*,
+                // which is a true sentence about a program the user wrote
+                // correctly.
+                //
+                // **The slot is the caller's and its layout is the element's.**
+                // `science_codegen::abi`'s rule for an indirect argument is a
+                // caller-owned slot, and this is that with one difference worth
+                // naming: the runtime reads the element and copies it in, so
+                // the slot is not moved-from and nothing outlives the call.
+                // The layout comes from the element type the descriptor was
+                // interned for — the same `T`, by construction, since both are
+                // read off the same array — and not from the operand, which
+                // carries no type at all.
+                let Some(element) = element_ty else {
+                    return Err(Unlowered::new(format!(
+                        "a value passed by address to `{symbol}`, which is not one of the entry \
+                         points this crate reads an element type for: there is nothing to give \
+                         the spill slot a layout"
+                    )));
+                };
+                let layout = self.layout_of_ty(element)?;
+                let slot = self.temp(ctx, layout.clone());
+                let value = self.typed_operand(ctx, arg, &layout, insts)?;
+                insts.push(ExtInst::Above(Inst::Store { local: slot, value }));
+                let address = ctx.value();
+                insts.push(ExtInst::LocalAddr { dest: address, local: slot });
+                lowered.push(Operand::Value(address));
+                param += 1;
+                continue;
             }
             lowered.push(self.typed_operand(ctx, arg, &class.layout, insts)?);
             param += 1;
+        }
+        // A descriptor in the *last* position — `science_array_free(P, D)`,
+        // `science_map_free(P, D)` — is reached after the arguments run out
+        // rather than between two of them, which is the other half of
+        // `descriptor_index` not being a constant.
+        if descriptor_at == Some(param) {
+            if let Some(symbol) = &descriptor {
+                lowered.push(Operand::GlobalAddr(symbol.clone()));
+                param += 1;
+            }
         }
         if param != sig.params.len() {
             return Err(Unlowered::new(format!(
@@ -5040,6 +5369,45 @@ impl<'a> Lowerer<'a> {
             ("String", "is_empty", "science_string_is_empty"),
             ("String", "new", "science_string_new"),
             ("String", "push_str", "science_string_push_str"),
+            // `Array of T`'s two descriptor-free rows. **Only two**, and the
+            // line is `RuntimeFn::descriptor_index`: `science_array_len(P)` and
+            // `science_array_is_empty(P)` read a header field, so they take the
+            // array and nothing else and are the same shape as `String`'s rows
+            // one type up. `push`, `get` and `pop` all take a `D`, which
+            // `lower_runtime_call` does supply — but `get` hands back a raw
+            // pointer that a `borrowed T?` has to be built out of, and that is
+            // §3.4's niche rather than a table row. They are added when a
+            // program that runs them is.
+            ("Array", "length", "science_array_len"),
+            ("Array", "is_empty", "science_array_is_empty"),
+            // The one row here that *does* take a descriptor, and it costs
+            // nothing extra: `science_array_new(D)` has no array operand, so
+            // `array_operand_element` reads `T` off the destination — the same
+            // fallback `science_array_with_capacity` already relies on, which
+            // is why `[1, 2, 3]` and `(Array of Int).new()` are one path.
+            ("Array", "new", "science_array_new"),
+            ("Array", "push", "science_array_push"),
+            // **`get` is a row and `xs[i]` is not, and the difference is a
+            // basic block.** §3.6 declares `get(self, index: Int) -> (borrowed
+            // T)?` and `science_array_get` returns a null pointer out of
+            // bounds — which is not an error path to be branched on, it *is*
+            // the value: §3.4's null niche in the data word, the same
+            // representation `Lowerer::lower_c_main` already tests an `Error?`
+            // with. So the whole of `get` is one call whose result is stored,
+            // and nothing about it needs control flow.
+            //
+            // `xs[i]` is the other half of §2.4 and is refused: `Index.index`
+            // returns a `borrowed T` and not an option, so somewhere between
+            // the null and the element there has to be a comparison, a branch
+            // and a `science_panic_bytes` — three blocks where this backend's
+            // runtime-call lowering builds one, and a place projection is not
+            // a statement, so the blocks cannot be made where the index is
+            // read. The repair is above this crate: `science-mir` already
+            // emits exactly that shape for `assert`, and a `Projection::Index`
+            // expanded into statements there would arrive here as a call and a
+            // branch this already lowers. That is Decision 42's line, and it
+            // is left where it is rather than guessed at.
+            ("Array", "get", "science_array_get"),
         ];
         if !self.defs.get(def).is_builtin() {
             return None;
@@ -5049,7 +5417,17 @@ impl<'a> Lowerer<'a> {
         let TyKind::Named { def: receiver, args } = self.types.kind(self_ty) else {
             return None;
         };
-        if !args.is_empty() || !self.defs.get(*receiver).is_builtin() {
+        // **The arguments are ignored and the head is not.** The block that
+        // declares `length` on an array is `Array of T has:`, so its `Self` is
+        // `Array of T` and never argument-free; keying on the head alone is
+        // what lets a generic prelude block have a row at all. It is sound for
+        // the rows that are here because each of them reads a header field
+        // that is the same field whatever `T` is — which is exactly why they
+        // are the rows that take no descriptor. A row whose entry point takes a
+        // `D` would need `T` back, and `lower_runtime_call` is where that is
+        // recovered, not here.
+        let _ = args;
+        if !self.defs.get(*receiver).is_builtin() {
             return None;
         }
         let receiver = self.defs.get(*receiver).name.as_str();

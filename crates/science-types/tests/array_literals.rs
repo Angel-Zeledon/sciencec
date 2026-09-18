@@ -325,10 +325,20 @@ def run() -> I64:
 
 #[test]
 fn the_literal_is_a_typed_hole_and_not_an_untyped_one() {
-    // THIR has no array-literal variant — `science-mir` matches that enum
-    // exhaustively in three places — so the literal's *shape* stops here and
-    // its *type* travels. What this pins is the half that matters downstream:
-    // the node is `ExprKind::Error`, and its type is not `Ty::ERROR`.
+    // **This test used to pin a hole, and the hole is closed.** The sentence
+    // it asserted was *"the node is `ExprKind::Error`, and its type is not
+    // `Ty::ERROR`"* — true while THIR had no array-literal variant, so the
+    // literal's *shape* stopped in this crate and only its *type* travelled.
+    // `thir::ExprKind::Array` is that variant, the three exhaustive matches in
+    // `science-mir` that its doc comment named as the cost have their arms,
+    // and `[1, 2, 3]` now reaches the LLVM backend as Decision 5's
+    // `science_array_with_capacity` and one `science_array_push` per element.
+    //
+    // What the test is *for* is unchanged and is why it keeps its name: the
+    // literal carries a real `Array of I64` and not `Ty::ERROR`, because that
+    // type is what a declared parameter is checked against and `ty`'s §5
+    // absorption would have made an erroneous one agree with everything. The
+    // half that changed is the node beside it.
     let checked = support::check(
         "\
 def counts() -> Bool:
@@ -338,11 +348,17 @@ def counts() -> Bool:
     );
     checked.assert_clean();
     let body = checked.body("counts");
-    let hole = body
+    let literal = body
         .exprs()
-        .find(|(_, expr)| matches!(expr.kind, ExprKind::Error))
-        .expect("the literal is a hole");
-    assert_eq!(checked.render(hole.1.ty), "Array of I64");
+        .find(|(_, expr)| matches!(expr.kind, ExprKind::Array(_)))
+        .expect("the literal is an array node");
+    assert_eq!(checked.render(literal.1.ty), "Array of I64");
+    let ExprKind::Array(elements) = &literal.1.kind else { unreachable!() };
+    assert_eq!(elements.len(), 3, "the elements travel, in the order they were written");
+    assert!(
+        !body.exprs().any(|(_, expr)| matches!(expr.kind, ExprKind::Error)),
+        "a clean program has no hole left in it"
+    );
 }
 
 // --- §2: the slice that is not built -------------------------------------

@@ -167,6 +167,7 @@ pub fn describe(kind: &ExprKind) -> String {
         ExprKind::Index { .. } => "index",
         ExprKind::Record { .. } => "record",
         ExprKind::Tuple(_) => "tuple",
+        ExprKind::Array(_) => "array",
         ExprKind::Unit => "unit",
         ExprKind::Unary { .. } => "unary",
         ExprKind::Binary { .. } => "binary",
