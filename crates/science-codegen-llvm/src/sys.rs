@@ -575,6 +575,20 @@ unsafe extern "C" {
         packed: LLVMBool,
     ) -> LLVMValueRef;
 
+    /// `LLVMValueRef LLVMConstArray2(LLVMTypeRef ElementTy, LLVMValueRef *ConstantVals, uint64_t Length)`
+    ///
+    /// The `2` form for [`LLVMArrayType2`]'s reason: the count is a `uint64_t`
+    /// rather than the `unsigned` the older `LLVMConstArray` takes, and the two
+    /// are declared side by side in this LLVM. Decision 13's vtable is what
+    /// needs it — `[N x ptr]` holding one method address per slot — and it is
+    /// the only constant aggregate in this backend that is not a struct, so it
+    /// is the only caller.
+    pub fn LLVMConstArray2(
+        element_ty: LLVMTypeRef,
+        constant_vals: *mut LLVMValueRef,
+        length: u64,
+    ) -> LLVMValueRef;
+
     /// `LLVMValueRef LLVMAddGlobal(LLVMModuleRef M, LLVMTypeRef Ty, const char *Name)`
     pub fn LLVMAddGlobal(m: LLVMModuleRef, ty: LLVMTypeRef, name: *const c_char) -> LLVMValueRef;
 

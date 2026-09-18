@@ -143,7 +143,7 @@ use science_codegen::backend::{
     Backend, BackendError, BlockId, Body, Callee, CmpOp, EmitKind, FloatOp, FuncId, Inst,
     IntOp, LocalId, Operand, Terminator, ValueId,
 };
-use science_codegen::descriptor::{MapInfo, StringLiteral, TypeInfo};
+use science_codegen::descriptor::{MapInfo, StringLiteral, TypeInfo, Vtable};
 use science_codegen::layout::{FloatTy, Layout, Repr, Scalar, Triple};
 use science_codegen::target::TargetConfig;
 
@@ -1555,6 +1555,25 @@ impl LlvmBackend {
         ret: &ReturnClass,
         sret_slot: &Option<LocalId>,
     ) -> Result<(), BackendError> {
+        // **The indirect case is resolved first and separately, because it has
+        // no symbol to look anything up by.** Every other callee names a
+        // declaration this module already holds — that declaration is where
+        // the function type and the classified signature come from — and
+        // Decision 13's dispatch has neither: what it has is a pointer loaded
+        // out of a vtable and the interface's own declaration of what lives in
+        // that slot, which `Callee::Indirect` carries for exactly this reason.
+        if let Callee::Indirect { function, signature } = callee {
+            let pointer = *state.values.get(&function.0).ok_or_else(|| {
+                BackendError::Other(format!(
+                    "the dispatch of `{}` through a value no instruction in this block produced",
+                    signature.symbol
+                ))
+            })?;
+            let (fn_type, _) = self.fn_type(signature);
+            return self.emit_call_through(
+                state, dest, pointer, fn_type, signature, args, ret, sret_slot,
+            );
+        }
         let symbol = match callee {
             Callee::Runtime(symbol) => (*symbol).to_string(),
             Callee::Science(symbol) | Callee::Foreign(symbol) => symbol.clone(),
@@ -1568,6 +1587,7 @@ impl LlvmBackend {
                     ),
                 });
             }
+            Callee::Indirect { .. } => unreachable!("returned above"),
         };
         let declared = self
             .declared
@@ -1576,7 +1596,33 @@ impl LlvmBackend {
         let function = declared.value;
         let fn_type = declared.fn_type;
         let sig = &declared.sig;
+        self.emit_call_through(state, dest, function, fn_type, sig, args, ret, sret_slot)
+    }
 
+    /// The half of [`LlvmBackend::emit_call`] that is the same whether the
+    /// callee was found by symbol or loaded out of a vtable: materialise the
+    /// arguments at the parameter layouts, build the `call`, and put `sret`
+    /// back on the call site.
+    ///
+    /// **Shared rather than copied, and the `sret` attribute is why.**
+    /// `sys::LLVMAddCallSiteAttribute`'s own note says what a missing one
+    /// costs on System V, and a second copy of this function would be a second
+    /// place for it to go missing — on the dispatch path, where the receiver
+    /// is erased and the symptom would be a corrupted register in whichever
+    /// implementation happened to run.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_call_through(
+        &self,
+        state: &mut BodyState,
+        dest: &Option<ValueId>,
+        function: sys::LLVMValueRef,
+        fn_type: sys::LLVMTypeRef,
+        sig: &AbiSignature,
+        args: &[Operand],
+        ret: &ReturnClass,
+        sret_slot: &Option<LocalId>,
+    ) -> Result<(), BackendError> {
+        let symbol = sig.symbol.clone();
         let mut values: Vec<sys::LLVMValueRef> = Vec::with_capacity(args.len() + 1);
         if ret.is_sret() {
             let slot = sret_slot.ok_or_else(|| {
@@ -1961,6 +2007,68 @@ impl Backend for LlvmBackend {
             sys::LLVMSetGlobalConstant(global, 1);
             sys::LLVMSetLinkage(global, sys::linkage::PRIVATE);
             sys::LLVMSetUnnamedAddress(global, sys::unnamed_addr::GLOBAL);
+        }
+        self.verified = false;
+        Ok(())
+    }
+
+    /// Decision 13's vtable: `[N x ptr]`, one method address per slot.
+    ///
+    /// **Every slot is looked up by symbol and a missing one is an error here
+    /// rather than a null.** `define_type_info` takes the same line about its
+    /// `drop_fn` and for a sharper reason: a null in a descriptor's drop slot
+    /// means *"nothing to drop"* and is a legitimate value, while a null in a
+    /// vtable slot is a call through `any I` that jumps to address zero. There
+    /// is no reading of a missing method that produces a working program, so
+    /// the module is refused while there is still something to say about it.
+    ///
+    /// The lookup is `LLVMGetNamedFunction` and not a declaration: every method
+    /// a vtable names is a function this module defines, and the emission
+    /// driver declares all of them before the first vtable is defined. A
+    /// backend that declared one here would paper over a reachability bug —
+    /// the method would be declared, never defined, and the failure would move
+    /// from this line to the linker.
+    fn define_vtable(&mut self, vtable: &Vtable) -> Result<(), BackendError> {
+        if vtable.is_empty() {
+            return Err(BackendError::Other(format!(
+                "the vtable `{}` has no slots: an interface with no methods needs no table, and \
+                 a zero-length one is a global nothing can index",
+                vtable.symbol
+            )));
+        }
+        let module = self.module_ref()?;
+        let mut slots: Vec<sys::LLVMValueRef> = Vec::with_capacity(vtable.methods.len());
+        for method in &vtable.methods {
+            let name = cstr(method);
+            let value = unsafe { sys::LLVMGetNamedFunction(module.raw(), name.as_ptr()) };
+            if value.is_null() {
+                return Err(BackendError::Other(format!(
+                    "the vtable `{}` names `{method}`, which the module does not define",
+                    vtable.symbol
+                )));
+            }
+            slots.push(value);
+        }
+        let ptr_ty = self.ptr_ty();
+        let constant = unsafe {
+            sys::LLVMConstArray2(ptr_ty, slots.as_mut_ptr(), slots.len() as u64)
+        };
+        let array_ty = unsafe { sys::LLVMArrayType2(ptr_ty, slots.len() as u64) };
+        let name = cstr(&vtable.symbol);
+        let global = unsafe { sys::LLVMAddGlobal(module.raw(), array_ty, name.as_ptr()) };
+        unsafe {
+            sys::LLVMSetInitializer(global, constant);
+            sys::LLVMSetGlobalConstant(global, 1);
+            sys::LLVMSetLinkage(global, sys::linkage::PRIVATE);
+            // **Not `unnamed_addr`, unlike every other constant here.** A
+            // descriptor and a string literal may be merged with a
+            // bit-identical twin because nothing compares their addresses;
+            // two vtables that happen to hold the same method addresses are
+            // two different types' tables, and the day anything asks *"is this
+            // the same implementation"* — a downcast, an equality on `any I` —
+            // the answer has to be about identity. Leaving the address named
+            // costs a merge LLVM would otherwise make and keeps that question
+            // answerable.
         }
         self.verified = false;
         Ok(())

@@ -53,6 +53,68 @@ pub struct TypeInfo {
     pub drop_fn: Option<String>,
 }
 
+/// Decision 13's vtable: the method table one `T implements I:` block puts
+/// behind an `any I`.
+///
+/// **The decision.** One `private unnamed_addr constant [N x ptr]` per
+/// `(interface, concrete type)` pair, holding the address of each of the
+/// interface's methods **in the interface's own declaration order**, and every
+/// `any I` made from that type carries the address of that one global in its
+/// second word.
+///
+/// **The reason the order is the interface's and not the block's.** The slot
+/// index is the only thing a call site through `any I` knows: it has the
+/// interface's declaration — which says `message` is slot 0 — and a vtable
+/// pointer, and nothing else. An `implements` block may write its methods in
+/// any order it likes, and two blocks for one interface routinely do; if the
+/// table followed the block, two implementations of one interface would
+/// disagree about which slot `message` is, and the call would jump to whatever
+/// the other type happened to write first. That is a program that verifies,
+/// links, and calls the wrong method — this file's neighbours are full of that
+/// shape, and this is its version.
+///
+/// It is the same convention Decision 18 uses for a `choice`: position in
+/// declaration order *is* the index, derived from the source and from nothing
+/// else.
+///
+/// **The cost.** A global per `(interface, type)` pair rather than per type,
+/// and the slot order is a contract between two places that never see each
+/// other — [`crate::backend::Backend::define_vtable`] writes it and the
+/// dispatching call site reads it. Both derive the order from the same walk of
+/// the interface's children, which is what keeps them in step; a second
+/// ordering rule anywhere is the defect this comment exists to prevent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Vtable {
+    /// The constant's symbol.
+    pub symbol: String,
+    /// The mangled symbol of each method, in the interface's declaration
+    /// order. Never empty: an interface with no methods needs no table, and
+    /// emitting a zero-length one would be a global nothing can index.
+    pub methods: Vec<String>,
+}
+
+impl Vtable {
+    /// The symbol a vtable for `(interface, concrete)` is emitted under.
+    ///
+    /// Derived from the two mangled names rather than from a counter, so that
+    /// interning the same pair twice from two call sites lands on one global
+    /// without either call site having to know the other happened —
+    /// [`DescriptorTable::symbol_for`]'s reason, applied to a pair.
+    pub fn symbol_for(interface: &MonoKey, concrete: &MonoKey) -> String {
+        format!("{}.vtable.{}", mangle(concrete), mangle(interface))
+    }
+
+    /// How many slots the table has.
+    pub fn len(&self) -> usize {
+        self.methods.len()
+    }
+
+    /// Whether the table has no slots, which no emitted vtable may be.
+    pub fn is_empty(&self) -> bool {
+        self.methods.is_empty()
+    }
+}
+
 /// A `ScienceMapInfo` to be emitted as a constant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapInfo {

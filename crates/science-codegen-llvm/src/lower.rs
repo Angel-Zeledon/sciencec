@@ -222,7 +222,7 @@ use science_codegen::abi::{
 use science_codegen::backend::{
     BlockId, Callee, CmpOp, Inst, IntOp, FloatOp, LocalId, Operand, Terminator, ValueId,
 };
-use science_codegen::descriptor::StringLiteral;
+use science_codegen::descriptor::{StringLiteral, Vtable};
 use science_codegen::diagnostics::construct_not_lowered;
 use science_codegen::layout::{
     CgTy, Field as CgField, IntTy, Layout, PtrKind, Repr, Scalar, Triple,
@@ -236,6 +236,7 @@ use science_parser::ast::{BinaryOp, UnaryOp};
 use science_resolve::hir::{self, DefId, DefKind, DefTable, Literal};
 use science_types::Types;
 use science_types::items::Declarations;
+use science_types::methods::{Form, Found};
 use science_types::ty::{Ty, TyKind};
 
 use crate::emit::{ConvOp, ExtBlock, ExtBody, ExtInst};
@@ -439,6 +440,9 @@ pub struct ForeignSymbol {
 pub struct Lowered {
     /// The string literals, in the order they were interned.
     pub literals: Vec<StringLiteral>,
+    /// Decision 13's vtables, one per `(interface, concrete type)` pair any
+    /// coercion in this module needed, in the order they were interned.
+    pub vtables: Vec<Vtable>,
     /// Declarations for every runtime entry point and foreign symbol the
     /// module calls.
     pub declarations: Vec<AbiSignature>,
@@ -490,6 +494,11 @@ pub struct Lowerer<'a> {
     library_order: Vec<String>,
     libraries_used: Vec<String>,
     literals: Vec<StringLiteral>,
+    /// The vtables interned so far, keyed by symbol through
+    /// [`Lowerer::intern_vtable`]'s own search — the same shape `literals`
+    /// uses, and for the same reason: two coercion sites that need one table
+    /// must land on one global.
+    vtables: Vec<Vtable>,
     declarations: Vec<AbiSignature>,
     declared_foreign: Vec<ForeignSymbol>,
     /// The definition of the entry point, once [`Lowerer::lower_crate`] has
@@ -507,12 +516,44 @@ pub struct Lowerer<'a> {
     science: BTreeMap<DefId, AbiSignature>,
 }
 
-/// Every definition `entry` can reach, through [`MirBody::callees`].
+/// Every definition `entry` can reach, through [`MirBody::callees`] **and
+/// through every vtable a coercion in a reached body builds**.
 ///
 /// A breadth-first walk over the bodies present, so a callee with no body — an
 /// `extern "C"` declaration, a builtin — contributes nothing and is not an
 /// error here; the call site is where those are resolved.
-fn reachable_from(bodies: &[MirBody], entry: DefId) -> std::collections::BTreeSet<DefId> {
+///
+/// # The vtable half, and why `callees` alone is not enough
+///
+/// [`MirBody::callees`] reports the targets of `TerminatorKind::Call` with a
+/// [`mir::Callee::Def`] in it — every call whose callee is known statically.
+/// A method reached **only** through `any I` is never one of those: the call
+/// site knows the interface and the slot, and the concrete implementation is
+/// exactly the thing it does not know. So a walk over `callees` alone stops
+/// one step short of every method a vtable holds, and the methods would be
+/// left out of `Lowerer::science`, never lowered, and named by a vtable
+/// global as functions the module does not define.
+///
+/// **That failure is caught rather than silent** — `define_vtable` refuses a
+/// table naming a function the module has no definition for — which is why
+/// this walk can be a fixed point over an easy-to-state rule rather than a
+/// proof: what fills a vtable is a *coercion*, coercions are statements in a
+/// body, and a body is only walked if something reaches it. The closure is
+/// therefore over the same queue as the calls, and a method that itself
+/// coerces something into an interface contributes its own tables on the pass
+/// that reaches it.
+///
+/// **A pair this cannot resolve contributes nothing and is not an error
+/// here.** `vtable_slots` refuses a default body and an unresolvable lookup
+/// with a message naming both the method and the type; this walk would have
+/// to invent a worse one, and the coercion that needs the table is lowered
+/// later in the same run, where the refusal is in hand and has a span behind
+/// it.
+fn reachable_from(
+    lowerer: &Lowerer<'_>,
+    bodies: &[MirBody],
+    entry: DefId,
+) -> std::collections::BTreeSet<DefId> {
     let mut reached = std::collections::BTreeSet::new();
     let mut queue = vec![entry];
     while let Some(def) = queue.pop() {
@@ -523,6 +564,11 @@ fn reachable_from(bodies: &[MirBody], entry: DefId) -> std::collections::BTreeSe
         for callee in body.callees() {
             if !reached.contains(&callee) {
                 queue.push(callee);
+            }
+        }
+        for method in lowerer.vtable_methods_of(body) {
+            if !reached.contains(&method) {
+                queue.push(method);
             }
         }
     }
@@ -546,6 +592,7 @@ impl<'a> Lowerer<'a> {
             library_order: Vec::new(),
             libraries_used: Vec::new(),
             literals: Vec::new(),
+            vtables: Vec::new(),
             declarations: Vec::new(),
             declared_foreign: Vec::new(),
             entry: None,
@@ -626,6 +673,190 @@ impl<'a> Lowerer<'a> {
         literal
     }
 
+    /// The interface an `any I` type names, seeing through a `T?`.
+    ///
+    /// `Error?` is `(any Error)?` — the nullable is the outside — so a
+    /// `BoxThenWiden` coercion's destination arrives here wrapped and a `Box`
+    /// coercion's does not. One function for both, because every caller wants
+    /// the same answer and none of them wants to know which spelling it got.
+    fn object_interface(&self, ty: Ty) -> Option<DefId> {
+        match self.types.kind(ty) {
+            TyKind::Object { interface, .. } => Some(*interface),
+            TyKind::Nullable(inner) => self.object_interface(*inner),
+            // `borrowed any I` is the ordinary parameter spelling and
+            // `Coercion::Unsize`'s destination; the borrow is ownership and
+            // not representation — `cg_ty_at`'s own arm for it is the account
+            // — so what the pair describes is the same interface.
+            TyKind::Borrowed { inner, .. } => self.object_interface(*inner),
+            // `Error?` also reaches this crate as a `Named` at the interface's
+            // own definition — `cg_ty_at` has the same two arms for the same
+            // reason, and its note is the account.
+            TyKind::Named { def, .. } if self.defs.get(*def).kind == DefKind::Interface => {
+                Some(*def)
+            }
+            _ => None,
+        }
+    }
+
+    /// The definition a concrete type is headed by: the `Doc` of a `Doc`, of a
+    /// `borrowed Doc`, and of a `Box of Doc`.
+    ///
+    /// `None` for anything with no single head — a parameter, a tuple, a
+    /// closure — which is a coercion this backend cannot build a table for and
+    /// which [`Lowerer::vtable_slots`] refuses by name rather than guessing.
+    fn concrete_head(&self, ty: Ty) -> Option<DefId> {
+        match self.types.kind(ty) {
+            TyKind::Named { def, .. } => Some(*def),
+            TyKind::Borrowed { inner, .. } => self.concrete_head(*inner),
+            _ => None,
+        }
+    }
+
+    /// Decision 13's slot order: every method `interface` declares, in
+    /// declaration order, resolved to the implementation `concrete` answers it
+    /// with.
+    ///
+    /// **The order is read off the interface's children and nowhere else**, for
+    /// `science_codegen::descriptor::Vtable`'s reason: the slot index is the
+    /// only thing a call site through `any I` knows, so two implementations of
+    /// one interface have to agree about it, and the only thing they share is
+    /// the interface's own declaration.
+    ///
+    /// **A default body is refused rather than placed in a slot.** Decision 15
+    /// lets an interface write a body, `methods`' §2 makes it callable on the
+    /// implementor, and putting it in a vtable would need the body
+    /// monomorphised at the implementor's `Self` — which is the same
+    /// monomorphisation `tests/methods.rs`'s
+    /// `interface_default_bodies_are_refused` pins as absent. The refusal names
+    /// the method, because *"an interface default body"* with no name is a
+    /// message a reader cannot act on.
+    fn vtable_slots(&self, interface: DefId, concrete: DefId) -> Result<Vec<DefId>, Unlowered> {
+        let Some(decls) = self.decls else {
+            return Err(Unlowered::new(
+                "a vtable with no declaration table to read the interface's methods from",
+            ));
+        };
+        let declared: Vec<(String, DefId)> = self
+            .defs
+            .children(interface)
+            .filter(|def| def.kind == DefKind::Fn)
+            .map(|def| (def.name.clone(), def.id))
+            .collect();
+        if declared.is_empty() {
+            return Err(Unlowered::new(format!(
+                "a value coerced into `any {}`, an interface this compiler declares no methods \
+                 for: `builtins.rs` leaves fourteen of the prelude's interfaces as names with no \
+                 method set, and a table with no slots is a table nothing can dispatch through",
+                self.defs.get(interface).name
+            )));
+        }
+        let mut slots = Vec::with_capacity(declared.len());
+        for (name, declared_def) in &declared {
+            if decls.signature(*declared_def).is_some_and(|sig| sig.has_body) {
+                return Err(Unlowered::new(format!(
+                    "`{}`'s default body in a vtable slot for `{}`: Decision 15's defaulted \
+                     method has to be monomorphised at the implementor's `Self` before it has an \
+                     address, and this backend monomorphises nothing",
+                    name,
+                    self.defs.get(concrete).name
+                )));
+            }
+            match decls.methods().lookup(concrete, name, Form::Value) {
+                Found::One(candidate) => slots.push(candidate.method),
+                _ => {
+                    return Err(Unlowered::new(format!(
+                        "no single `{}` on `{}` to fill `any {}`'s slot for it: conformance is \
+                         `science-types`' `conform` to report, and a table filled from an \
+                         unresolved lookup would dispatch to whichever candidate came first",
+                        name,
+                        self.defs.get(concrete).name,
+                        self.defs.get(interface).name
+                    )));
+                }
+            }
+        }
+        Ok(slots)
+    }
+
+    /// The `(interface, concrete)` pair a coercion needs a table for, when it
+    /// is one of the four that builds an interface object.
+    ///
+    /// `ty` is the coercion's *destination* — `any I`, or `(any I)?` for the
+    /// widening pair — and the source comes off the operand, through one
+    /// borrow if there is one. `None` for every other coercion, and for one
+    /// whose ends this crate cannot name: a coercion out of a type parameter
+    /// has no concrete head, which is monomorphisation's to supply.
+    fn vtable_pair(
+        &self,
+        body: &MirBody,
+        coercion: science_types::assign::Coercion,
+        operand: &mir::Operand,
+        ty: Ty,
+    ) -> Option<(DefId, DefId)> {
+        use science_types::assign::Coercion;
+        if !matches!(
+            coercion,
+            Coercion::Box | Coercion::BoxThenWiden | Coercion::Unsize | Coercion::UnsizeInBox
+        ) {
+            return None;
+        }
+        let interface = self.object_interface(ty)?;
+        let source = self.operand_ty(body, operand)?;
+        let concrete = self.concrete_head(source)?;
+        // A coercion whose source is already the interface is a widening of an
+        // interface object, not the construction of one, and has no table of
+        // its own to build.
+        if concrete == interface {
+            return None;
+        }
+        Some((interface, concrete))
+    }
+
+    /// Every method a vtable built by this body would hold.
+    ///
+    /// [`reachable_from`]'s second half. Pairs whose slots do not resolve are
+    /// skipped here and refused at the coercion, which is the only place a
+    /// message about them can say where the coercion was.
+    fn vtable_methods_of(&self, body: &MirBody) -> Vec<DefId> {
+        let mut out = Vec::new();
+        for (_, block) in body.blocks() {
+            for statement in &block.statements {
+                let StatementKind::Assign { rvalue, .. } = &statement.kind else { continue };
+                let Rvalue::Coerce { operand, coercion, ty } = rvalue else { continue };
+                let Some((interface, concrete)) =
+                    self.vtable_pair(body, *coercion, operand, *ty)
+                else {
+                    continue;
+                };
+                if let Ok(slots) = self.vtable_slots(interface, concrete) {
+                    out.extend(slots);
+                }
+            }
+        }
+        out
+    }
+
+    /// Intern the vtable for `(interface, concrete)`, returning the global
+    /// every coercion to that pair must name.
+    fn intern_vtable(
+        &mut self,
+        interface: DefId,
+        concrete: DefId,
+    ) -> Result<Vtable, Unlowered> {
+        let symbol = Vtable::symbol_for(
+            &MonoKey::plain(&[self.defs.get(interface).name.as_str()]),
+            &MonoKey::plain(&[self.defs.get(concrete).name.as_str()]),
+        );
+        if let Some(existing) = self.vtables.iter().find(|v| v.symbol == symbol) {
+            return Ok(existing.clone());
+        }
+        let methods =
+            self.vtable_slots(interface, concrete)?.into_iter().map(|m| self.symbol_of(m)).collect();
+        let vtable = Vtable { symbol, methods };
+        self.vtables.push(vtable.clone());
+        Ok(vtable)
+    }
+
     /// A `science_types::Ty` as a [`CgTy`].
     ///
     /// **This is the `Ty -> CgTy` lowering `science-codegen`'s §2 says does not
@@ -663,6 +894,30 @@ impl<'a> Lowerer<'a> {
             // `any I` — Decision 13's two-word fat pointer, with the null niche
             // in the data pointer (§3.4).
             TyKind::Object { .. } => Ok(CgTy::Interface),
+            // **A borrow of an interface object is itself two words, and this
+            // arm used to say one.** `borrowed any I` is the ordinary way an
+            // interface object is passed — `def report(err: borrowed any
+            // Error)` in `examples/09_absence_and_failure.science`, `def
+            // describe_any(value: borrowed any Summarize)` in
+            // `examples/08_dyn_dispatch.science` — and a dispatch through it
+            // needs the vtable the borrow carries. A one-word `Ptr` has
+            // nowhere to put it, so `Coercion::Unsize` would have had nothing
+            // to write and the call site nothing to read.
+            //
+            // It was one word because nothing could build one: all four
+            // coercions that produce an interface object were refused, so the
+            // arm was never reached with an `Object` inside it and the
+            // shorthand held. `Box of any I` is the same shape for the same
+            // reason and is reached through the `Named` arms below.
+            //
+            // The ownership difference between `any I` and `borrowed any I` is
+            // real and is not a representation difference: both are
+            // `{ data, vtable }`, and which one frees the data is
+            // `TerminatorKind::Drop`'s question, exactly as it is for
+            // `Box of C` against `borrowed C`.
+            TyKind::Borrowed { inner, .. } if self.object_interface(*inner).is_some() => {
+                Ok(CgTy::Interface)
+            }
             TyKind::Borrowed { mutable, .. } => Ok(CgTy::Ptr(if *mutable {
                 PtrKind::MutBorrow
             } else {
@@ -1163,7 +1418,7 @@ impl<'a> Lowerer<'a> {
             .find(|body| self.defs.get(body.def()).name == "main")
             .ok_or_else(|| Unlowered::new("a program with no `main`"))?;
         self.entry = Some(entry.def());
-        let reachable = reachable_from(bodies, entry.def());
+        let reachable = reachable_from(self, bodies, entry.def());
 
         for body in bodies {
             if !reachable.contains(&body.def()) {
@@ -1439,6 +1694,7 @@ impl<'a> Lowerer<'a> {
             .collect();
         Lowered {
             literals: std::mem::take(&mut self.literals),
+            vtables: std::mem::take(&mut self.vtables),
             declarations: std::mem::take(&mut self.declarations),
             definitions,
             libraries,
@@ -2070,7 +2326,7 @@ impl<'a> Lowerer<'a> {
             // vtable or need a branch, and each is refused by name in
             // [`Lowerer::lower_coercion`].
             Rvalue::Coerce { operand, coercion, .. } => {
-                self.lower_coercion(body, ctx, *coercion, operand, dest, layout, insts)
+                self.lower_coercion(body, ctx, *coercion, operand, dest, layout, ty, insts)
             }
             Rvalue::Record { def, fields } => {
                 self.lower_record(ctx, *def, fields, dest, layout, insts)
@@ -2107,6 +2363,55 @@ impl<'a> Lowerer<'a> {
                 self.lower_cast(ctx, operand, *from, *target, dest, insts)
             }
             Rvalue::Ref { place, .. } => {
+                // **A borrow of something already behind a fat pointer copies
+                // the fat pointer; it does not take its address.** `def report
+                // (err: borrowed any Error)` calling `err.message()` lowers to
+                // `_2 = borrowed (*_1)` — a reborrow of the referent — and the
+                // referent is `any Error`, which is two words. Storing *the
+                // address of* those two words would make `_2` a pointer to a
+                // fat pointer while its type says it is one, and the dispatch
+                // that reads slot 0 out of it would read the data word as a
+                // vtable. The value that a `borrowed any I` holds is the pair
+                // itself, so a reborrow is the pair, copied.
+                //
+                // This is the same rule Decision 13's representation already
+                // implies and the same one `&*x` follows for a `&dyn T`: the
+                // width of a reference is the width of what it refers to
+                // needing, and for an unsized referent that is two words, not
+                // one.
+                if layout == &layout_of(self.target, &CgTy::Interface) {
+                    // The place is a reborrow — `borrowed (*_1)` — and the
+                    // pair to copy is what `_1` holds, so the `Deref` comes
+                    // off rather than being followed. Following it is what
+                    // `place_address` would do and it cannot: its `Deref` arm
+                    // refuses a base that is not a scalar pointer, and a fat
+                    // pointer is two words. That refusal is right for every
+                    // other reader and this is the one place that has to step
+                    // around it rather than through it.
+                    let Some((mir::Projection::Deref { .. }, head)) =
+                        place.projection.split_last()
+                    else {
+                        return Err(Unlowered::new(
+                            "a borrow producing an interface object out of a place that is not a \
+                             reborrow: `any I` is two words and the only thing that already holds \
+                             them is another reference to the same object",
+                        ));
+                    };
+                    let source =
+                        mir::Place { local: place.local, projection: head.to_vec() };
+                    let (address, _) = self.place_address(ctx, &source, insts)?;
+                    let value = ctx.value();
+                    insts.push(ExtInst::LoadAt {
+                        dest: value,
+                        address: Operand::Value(address),
+                        layout: layout.clone(),
+                    });
+                    insts.push(ExtInst::Above(Inst::Store {
+                        local: dest,
+                        value: Operand::Value(value),
+                    }));
+                    return Ok(());
+                }
                 if !matches!(layout.repr, Repr::Scalar(Scalar::Pointer(_))) {
                     return Err(Unlowered::new(
                         "a borrow stored into a slot that is not a pointer: the reference's own \
@@ -2370,6 +2675,7 @@ impl<'a> Lowerer<'a> {
         operand: &mir::Operand,
         dest: LocalId,
         layout: &Layout,
+        ty: Ty,
         insts: &mut Vec<ExtInst>,
     ) -> Result<(), Unlowered> {
         use science_types::assign::Coercion;
@@ -2385,13 +2691,13 @@ impl<'a> Lowerer<'a> {
                 self.lower_widen(ctx, Widened::Operand(operand), dest, layout, insts)
             }
             Coercion::Box | Coercion::BoxThenWiden => Err(Unlowered::new(
-                "a concrete error boxed into `any Error`, which allocates and fills a vtable: \
-                 this backend emits no vtables at all",
+                "a concrete value boxed into an interface object, which allocates: the vtable \
+                 half is emitted now and the heap half is not, so `Coercion::Unsize` — a borrow \
+                 paired with the same table — is what this backend builds today",
             )),
-            Coercion::Unsize | Coercion::UnsizeInBox => Err(Unlowered::new(
-                "a borrow or a `Box` unsized into an interface object, which pairs the pointer \
-                 with a vtable this backend does not emit",
-            )),
+            Coercion::Unsize | Coercion::UnsizeInBox => {
+                self.lower_unsize(body, ctx, operand, dest, ty, insts)
+            }
             // §7, whole: `borrowed T` into `T` is the load and nothing else.
             // The destination's layout is checked against the referent's rather
             // than assumed equal to it, because the two come from different
@@ -2451,6 +2757,114 @@ impl<'a> Lowerer<'a> {
                  basic block\" — the same line integer `/` is refused at",
             )),
         }
+    }
+
+    /// Decision 13's unsizing: an existing pointer paired with a vtable.
+    ///
+    /// **The decision. `{ data, vtable }` is written at the destination's
+    /// offset 0, and that is the whole of it for all four destination
+    /// spellings.** `borrowed any I` and `Box of any I` are the fat pointer
+    /// itself; `(any I)?` is `Repr::Niched` with the niche in the data word
+    /// (§3.4), so the *same two stores* at the same two offsets produce a
+    /// present nullable and there is no tag to write. Decision 19's asymmetry,
+    /// which [`Lowerer::lower_widen`] has to branch on, does not arise here
+    /// because an interface object is never the tagged form.
+    ///
+    /// **The data word is the operand, unchanged.** `Coercion::Unsize` is
+    /// `borrowed C` into `borrowed any I` and `Coercion::UnsizeInBox` is
+    /// `Box of C` into `Box of any I`; `assign`'s §4 says of both that they
+    /// *"pair an existing pointer with a vtable"* and allocate nothing, so the
+    /// pointer that arrives is the pointer that is stored. Whatever owned the
+    /// referent before still owns it — this writes no ownership and takes
+    /// none.
+    ///
+    /// **The vtable word is a global's address and never a computed value.**
+    /// `science_codegen::descriptor::Vtable` is the account: one table per
+    /// `(interface, concrete type)` pair, interned, so two unsizings of one
+    /// pair name one global.
+    fn lower_unsize(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        operand: &mir::Operand,
+        dest: LocalId,
+        ty: Ty,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let Some(interface) = self.object_interface(ty) else {
+            return Err(Unlowered::new(format!(
+                "an unsizing into `{}`, which is not an interface object: the destination of a \
+                 `Coercion::Unsize` is `any I` by construction, so this is a type table and a \
+                 coercion that disagree",
+                self.types.render(self.defs, ty)
+            )));
+        };
+        let Some(source) = self.operand_ty(body, operand) else {
+            return Err(Unlowered::new(
+                "an unsizing of an operand with no place to read a type from: a constant cannot \
+                 be borrowed, and the concrete type is what names the vtable",
+            ));
+        };
+        let Some(concrete) = self.concrete_head(source) else {
+            return Err(Unlowered::new(format!(
+                "an unsizing of `{}`, whose concrete type this crate cannot name: a type \
+                 parameter's vtable is chosen by the instantiation, which is \
+                 `science_codegen::mono`'s and not this crate's",
+                self.types.render(self.defs, source)
+            )));
+        };
+        let vtable = self.intern_vtable(interface, concrete)?;
+
+        // The fat pointer's own layout, taken from `CgTy::Interface` rather
+        // than off the destination: the destination may be the niched `(any
+        // I)?`, whose payload is this and whose `Repr` is not an aggregate, and
+        // both spellings write the same two words at the same two offsets.
+        let fat = layout_of(self.target, &CgTy::Interface);
+        let Repr::Aggregate { fields } = &fat.repr else {
+            return Err(Unlowered::new(
+                "an interface object whose layout is not the two-word aggregate `CgTy::Interface` \
+                 lays out: `science-codegen`'s `layout` and this lowering disagree about \
+                 Decision 13's representation",
+            ));
+        };
+        let (data_place, vtable_place) = match fields.as_slice() {
+            [data, table] => (data.clone(), table.clone()),
+            _ => {
+                return Err(Unlowered::new(format!(
+                    "an interface object with {} word(s) rather than two",
+                    fields.len()
+                )));
+            }
+        };
+
+        let base = ctx.value();
+        insts.push(ExtInst::LocalAddr { dest: base, local: dest });
+
+        let data = self.typed_operand(ctx, operand, &data_place.layout, insts)?;
+        let data_address = ctx.value();
+        insts.push(ExtInst::FieldAddr {
+            dest: data_address,
+            base: Operand::Value(base),
+            offset: data_place.offset,
+        });
+        insts.push(ExtInst::StoreAt {
+            address: Operand::Value(data_address),
+            layout: data_place.layout.clone(),
+            value: data,
+        });
+
+        let table_address = ctx.value();
+        insts.push(ExtInst::FieldAddr {
+            dest: table_address,
+            base: Operand::Value(base),
+            offset: vtable_place.offset,
+        });
+        insts.push(ExtInst::StoreAt {
+            address: Operand::Value(table_address),
+            layout: vtable_place.layout.clone(),
+            value: Operand::GlobalAddr(vtable.symbol),
+        });
+        Ok(())
     }
 
     /// Decision 6's widening, with the payload's value left open.
@@ -3705,12 +4119,12 @@ impl<'a> Lowerer<'a> {
             // that *has* a default body is refused one layer up, at its
             // signature. So this arm is dynamic dispatch, and saying so is
             // worth more than saying there is no body.
-            if let Some(interface) = self.declaring_interface(def) {
-                return Err(Unlowered::new(format!(
-                    "a call to the method `{name}` through `any {interface}`: Decision 13 \
-                     dispatches it through a vtable and this backend emits none — there is one \
-                     body per implementation and the receiver is the only thing that says which"
-                )));
+            if self.declaring_interface(def).is_some() {
+                self.lower_dispatch(ctx, def, args, destination, insts)?;
+                return Ok(match target {
+                    Some(block) => Terminator::Goto(BlockId(block.index() as u32)),
+                    None => Terminator::Unreachable,
+                });
             }
             // Reachable and not in the table means the walk did not see it,
             // which for a `Callee::Def` means the crate has no body for it: a
@@ -3726,6 +4140,212 @@ impl<'a> Lowerer<'a> {
             // nor anything else this crate emits is one.
             None => Ok(Terminator::Unreachable),
         }
+    }
+
+    /// Decision 13's dispatch: the call a vtable slot answers.
+    ///
+    /// **The shape, and every step of it is forced.** A `borrowed any I` is
+    /// `{ data, vtable }`; the receiver arrives as a place holding those two
+    /// words. The vtable word is loaded, the slot is reached by a byte offset
+    /// — `slot * pointer_size`, which is what [`ExtInst::FieldAddr`] emits and
+    /// what `tests/abi_claims.rs`'s `an_i8_gep_is_a_byte_offset` pins — the
+    /// function pointer is loaded out of it, and the call passes the **data**
+    /// word as the receiver. The concrete method's own `self` is a
+    /// `borrowed C`, which is that same pointer: an implementation is an
+    /// ordinary method and the erasure is entirely in the caller.
+    ///
+    /// **The slot index is the method's position among the interface's
+    /// `DefKind::Fn` children, and it is computed here from the same walk
+    /// `Lowerer::vtable_slots` fills the table with.** Two walks of one list
+    /// in one file is how the writer and the reader of a slot stay in step;
+    /// `science_codegen::descriptor::Vtable`'s own note is why a second
+    /// ordering rule anywhere would be a call that lands on the wrong method.
+    ///
+    /// **What it cannot do, named rather than guessed.** A default body has no
+    /// slot — `vtable_slots` refuses the table before this is reached — and a
+    /// receiver that is not a place has no address to read two words from.
+    fn lower_dispatch(
+        &mut self,
+        ctx: &mut BodyCtx,
+        method: DefId,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let name = self.defs.get(method).name.clone();
+        let interface = self.defs.get(method).parent.ok_or_else(|| {
+            Unlowered::new(format!("a dispatch of `{name}`, which is declared inside nothing"))
+        })?;
+        let slot = self
+            .defs
+            .children(interface)
+            .filter(|def| def.kind == DefKind::Fn)
+            .position(|def| def.id == method)
+            .ok_or_else(|| {
+                Unlowered::new(format!(
+                    "a dispatch of `{name}`, which `any {}`'s own declaration does not list",
+                    self.defs.get(interface).name
+                ))
+            })?;
+        let signature = self.dispatch_signature(method)?;
+
+        let Some((receiver, rest)) = args.split_first() else {
+            return Err(Unlowered::new(format!(
+                "a dispatch of `{name}` with no receiver: the fat pointer is the first argument \
+                 and there is nothing here to read a vtable out of"
+            )));
+        };
+        let Some(place) = receiver.place() else {
+            return Err(Unlowered::new(format!(
+                "a dispatch of `{name}` on a receiver that is not a place: `any {}` is two words \
+                 in memory and a constant has no address to read them from",
+                self.defs.get(interface).name
+            )));
+        };
+
+        let fat = layout_of(self.target, &CgTy::Interface);
+        let Repr::Aggregate { fields } = &fat.repr else {
+            return Err(Unlowered::new(
+                "an interface object whose layout is not the two-word aggregate `CgTy::Interface` \
+                 lays out",
+            ));
+        };
+        let [data_place, table_place] = fields.as_slice() else {
+            return Err(Unlowered::new(format!(
+                "an interface object with {} word(s) rather than two",
+                fields.len()
+            )));
+        };
+        let (data_place, table_place) = (data_place.clone(), table_place.clone());
+
+        let (base, _) = self.place_address(ctx, place, insts)?;
+
+        let data_address = ctx.value();
+        insts.push(ExtInst::FieldAddr {
+            dest: data_address,
+            base: Operand::Value(base),
+            offset: data_place.offset,
+        });
+        let data = ctx.value();
+        insts.push(ExtInst::LoadAt {
+            dest: data,
+            address: Operand::Value(data_address),
+            layout: data_place.layout.clone(),
+        });
+
+        let table_address = ctx.value();
+        insts.push(ExtInst::FieldAddr {
+            dest: table_address,
+            base: Operand::Value(base),
+            offset: table_place.offset,
+        });
+        let table = ctx.value();
+        insts.push(ExtInst::LoadAt {
+            dest: table,
+            address: Operand::Value(table_address),
+            layout: table_place.layout.clone(),
+        });
+
+        let slot_address = ctx.value();
+        insts.push(ExtInst::FieldAddr {
+            dest: slot_address,
+            base: Operand::Value(table),
+            offset: slot as u64 * table_place.layout.size,
+        });
+        let function = ctx.value();
+        insts.push(ExtInst::LoadAt {
+            dest: function,
+            address: Operand::Value(slot_address),
+            layout: table_place.layout.clone(),
+        });
+
+        // The receiver is the data word; every other argument is materialised
+        // at the layout the *interface* declared for it, which is the same
+        // layout every implementation was classified at — `intern_vtable`
+        // checks that rather than assuming it.
+        let mut lowered = vec![Operand::Value(data)];
+        let declared: Vec<Layout> =
+            signature.params.iter().skip(1).map(|param| param.layout.clone()).collect();
+        if rest.len() != declared.len() {
+            return Err(Unlowered::new(format!(
+                "a dispatch of `{name}` passing {} argument(s) where `any {}` declares {}",
+                rest.len(),
+                self.defs.get(interface).name,
+                declared.len()
+            )));
+        }
+        for (arg, layout) in rest.iter().zip(&declared) {
+            lowered.push(self.typed_operand(ctx, arg, layout, insts)?);
+        }
+
+        let ret = signature.ret.clone();
+        self.emit_result(
+            ctx,
+            Callee::Indirect { function, signature: Box::new(signature) },
+            &ret,
+            lowered,
+            destination,
+            insts,
+        )
+    }
+
+    /// The ABI signature a dispatch through `any I` calls at: the interface's
+    /// own declaration, with the receiver erased to a raw pointer.
+    ///
+    /// **The receiver is `ptr` and not `Self`.** `Self` is a different
+    /// concrete type in every implementation and has no layout here; what the
+    /// fat pointer carries is the address of the value, and every
+    /// implementation's own `self` is a `borrowed C` — the same pointer,
+    /// classified the same way. The rest of the signature is the declaration's
+    /// verbatim, because `conform` has already checked that every
+    /// implementation matches it at the type level.
+    ///
+    /// **`symbol` is a description and not a symbol**, which is what
+    /// `Callee::Indirect` documents it as: there is no symbol for a call whose
+    /// callee is a value, and a message about a wrong argument count needs
+    /// something a reader recognises.
+    fn dispatch_signature(&self, method: DefId) -> Result<AbiSignature, Unlowered> {
+        let name = self.defs.get(method).name.clone();
+        let Some(decls) = self.decls else {
+            return Err(Unlowered::new(format!(
+                "a dispatch of `{name}` with no declaration table to read the interface's \
+                 signature from"
+            )));
+        };
+        let Some(signature) = decls.signature(method) else {
+            return Err(Unlowered::new(format!(
+                "a dispatch of `{name}`, which the declaration table has no signature for"
+            )));
+        };
+        if !signature.generics.is_empty() {
+            return Err(Unlowered::new(format!(
+                "a dispatch of the generic method `{name}`: a generic method has no single \
+                 vtable slot — Decision 13's table is one pointer per method and a generic one \
+                 needs one per instantiation, which is monomorphisation's"
+            )));
+        }
+        if signature.self_param.is_none() {
+            return Err(Unlowered::new(format!(
+                "a dispatch of `{name}`, which takes no receiver: an associated function is \
+                 reached through a type and there is no value carrying a vtable to find it with"
+            )));
+        }
+        let interface = self.defs.get(method).parent.map(|p| self.defs.get(p).name.clone());
+        let description = match interface {
+            Some(interface) => format!("any {interface}::{name}"),
+            None => name.clone(),
+        };
+        let ret_layout = self.layout_of_ty(signature.ret)?;
+        let mut params = vec![(
+            "self".to_string(),
+            layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow)),
+            ParamAttrs::default(),
+        )];
+        for param in &signature.params {
+            let param_name = self.defs.get(param.def).name.clone();
+            params.push((param_name, self.layout_of_ty(param.ty)?, ParamAttrs::default()));
+        }
+        Ok(AbiSignature::science(self.target, description, ret_layout, params))
     }
 
     /// `print`, of a literal or of a `String` the program holds.

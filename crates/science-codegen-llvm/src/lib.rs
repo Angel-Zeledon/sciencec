@@ -1029,6 +1029,15 @@ pub fn emit_and_link(
         for (signature, _) in &lowered.definitions {
             ids.push(backend.declare_function(signature)?);
         }
+        // **After every declaration and before every body.** A vtable holds
+        // the address of each method it names, so the declarations have to
+        // exist for `define_vtable` to find them; and the bodies have to be
+        // able to name the vtable global, so it has to exist before they are
+        // emitted. There is exactly one window that satisfies both and this is
+        // it.
+        for vtable in &lowered.vtables {
+            backend.define_vtable(vtable)?;
+        }
         for (id, (signature, body)) in ids.into_iter().zip(&lowered.definitions) {
             backend.define_function_ext(id, signature, body)?;
         }

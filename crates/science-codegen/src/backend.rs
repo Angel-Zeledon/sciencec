@@ -66,7 +66,7 @@
 //! mitigation and *"it is not optional"*.
 
 use crate::abi::{AbiSignature, ReturnClass};
-use crate::descriptor::{MapInfo, StringLiteral, TypeInfo};
+use crate::descriptor::{MapInfo, StringLiteral, TypeInfo, Vtable};
 use crate::layout::Layout;
 use crate::target::{Intrinsic, TargetConfig};
 
@@ -229,6 +229,33 @@ pub enum Callee {
     Foreign(String),
     /// A whitelisted intrinsic (Decision 37).
     Intrinsic(Intrinsic),
+    /// Decision 13's dynamic dispatch: a function pointer loaded out of a
+    /// vtable, called through the signature the *interface* declared.
+    ///
+    /// **The signature travels with the call and not with the callee, and
+    /// that is what makes this safe to have.** Every other variant names a
+    /// symbol a backend can look the type up from; this one names a value, so
+    /// the `Inst::Call`'s own `ret` — and the parameter layouts its arguments
+    /// were materialised at — are the only description of what is being
+    /// called. `science-codegen-llvm`'s `Lowerer::dispatch_signature` builds
+    /// that description from the interface's declaration and checks every
+    /// implementation's against it before either reaches a vtable, which is
+    /// §9.2's *"two signatures for one function"* hazard answered by
+    /// comparing them rather than by trusting that they agree.
+    Indirect {
+        /// The function pointer, loaded out of the vtable by an earlier
+        /// instruction in this block.
+        function: ValueId,
+        /// What is being called, as the interface declared it. Boxed because
+        /// an [`AbiSignature`] is much larger than every other variant here
+        /// and a `Callee` is copied at every call site.
+        ///
+        /// [`AbiSignature::symbol`] is not a symbol for this variant — there
+        /// is no symbol — and carries a description for diagnostics instead:
+        /// `any Error::message`, which is what a reader needs when the call
+        /// is refused or when its argument count is wrong.
+        signature: Box<AbiSignature>,
+    },
 }
 
 /// One instruction.
@@ -449,6 +476,15 @@ pub trait Backend {
 
     /// Emit one `ScienceMapInfo`.
     fn define_map_info(&mut self, symbol: &str, info: &MapInfo) -> Result<(), BackendError>;
+
+    /// Emit one of Decision 13's vtables (`Vtable`).
+    ///
+    /// **Called after every function the table names has been declared**, and
+    /// the implementation may rely on that: a backend that has to look a
+    /// method up by symbol has nothing to look up until the declaration pass
+    /// has run, and a table holding a null where a method belongs is a call
+    /// through `any I` that jumps to zero.
+    fn define_vtable(&mut self, vtable: &Vtable) -> Result<(), BackendError>;
 
     /// Declare a function: a `declare` for a foreign or runtime symbol, or a
     /// forward declaration of a Science one.

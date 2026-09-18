@@ -35,7 +35,7 @@ use crate::backend::{
     Backend, BackendError, Block, Body, Callee, CmpOp, EmitKind, FloatOp, FuncId, Inst, IntOp,
     Operand, Terminator,
 };
-use crate::descriptor::{MapInfo, StringLiteral, TypeInfo};
+use crate::descriptor::{MapInfo, StringLiteral, TypeInfo, Vtable};
 use crate::layout::{Layout, Repr, Scalar};
 use crate::target::TargetConfig;
 
@@ -119,6 +119,10 @@ fn render_callee(callee: &Callee) -> String {
         Callee::Runtime(symbol) => format!("@{symbol}"),
         Callee::Science(symbol) | Callee::Foreign(symbol) => format!("@{symbol}"),
         Callee::Intrinsic(intrinsic) => format!("@{}", intrinsic.llvm_name()),
+        // A value, not a symbol: the transcript prints it the way it prints
+        // every other value, which is what makes a vtable dispatch legible in
+        // one — the `%N` here is the function pointer the slot was loaded into.
+        Callee::Indirect { function, .. } => format!("%{}", function.0),
     }
 }
 
@@ -265,6 +269,18 @@ impl Backend for TextBackend {
             "@{symbol} = private unnamed_addr constant %ScienceMapInfo {{ \
              key {{ i64 {}, i64 {} }}, value {{ i64 {}, i64 {} }}, ptr @{}, ptr @{} }}",
             info.key.size, info.key.align, info.value.size, info.value.align, info.hash_fn, info.eq_fn
+        ));
+        Ok(())
+    }
+
+    fn define_vtable(&mut self, vtable: &Vtable) -> Result<(), BackendError> {
+        let slots: Vec<String> =
+            vtable.methods.iter().map(|symbol| format!("ptr @{symbol}")).collect();
+        self.line(format!(
+            "@{} = private unnamed_addr constant [{} x ptr] [{}]",
+            vtable.symbol,
+            vtable.len(),
+            slots.join(", ")
         ));
         Ok(())
     }

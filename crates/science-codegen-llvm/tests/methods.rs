@@ -484,15 +484,131 @@ def main():
     assert!(text.contains("monomorphisation"), "{text}");
 }
 
-/// A call through `any I` needs Decision 13's vtable and this backend emits
-/// none.
+/// Decision 13's dispatch, run: a call through `any I` reaches the
+/// implementation the receiver was made from.
 ///
-/// The refusal used to be *"a call to `size`, which this crate was given no MIR
-/// body for"*, which is true and says nothing about why there is no body:
-/// there is one per implementation and the receiver is the only thing that
-/// says which.
+/// **This test used to assert the refusal** — *"a call to `size` … Decision 13
+/// dispatches it through a vtable and this backend emits none"* — and the
+/// refusal is what `Lowerer::lower_dispatch` replaced.
+///
+/// **`409` for `lower_dispatch`'s own version of this file's reason.** A
+/// dispatch is three loads before the call — the data word, the vtable word,
+/// the slot — and every one of them is a pointer that opaque pointers make
+/// indistinguishable from the pointer beside it. A receiver read out of the
+/// vtable word, or a function pointer read out of the data word, is a program
+/// that verifies; one that reads the *address* of the pair instead of the pair
+/// prints a number that is not 409, and a jump through the wrong word does not
+/// come back at all.
 #[test]
-fn a_call_through_an_interface_object_is_refused_as_a_vtable() {
+fn a_call_through_an_interface_object_dispatches_to_the_implementation() {
+    let source = "\
+interface Summarize:
+    def size(self) -> Int
+
+type Doc:
+    n: Int
+
+Doc implements Summarize:
+    def size(self) -> Int:
+        self.n
+
+def measure(it: borrowed any Summarize) -> Int:
+    it.size()
+
+def main():
+    print(measure(Doc(n: 409)))
+";
+    assert_eq!(prints("vtable", source), "409\n");
+}
+
+/// **Two implementations of one interface, dispatched through one call
+/// site**, which is the property a vtable exists for and the one a direct
+/// call cannot fake.
+///
+/// A backend that resolved `size` statically — to whichever implementation it
+/// met first — passes the test above and fails this one: the two answers
+/// would be the same number twice. `11` and `22` rather than `1` and `2` so
+/// that a slot read off by one, or a table shared between the two types,
+/// prints something no arithmetic on the right answer produces.
+#[test]
+fn two_implementations_reach_two_bodies_through_one_call_site() {
+    let source = "\
+interface Summarize:
+    def size(self) -> Int
+
+type Doc:
+    n: Int
+
+type Note:
+    m: Int
+
+Doc implements Summarize:
+    def size(self) -> Int:
+        self.n
+
+Note implements Summarize:
+    def size(self) -> Int:
+        self.m
+
+def measure(it: borrowed any Summarize) -> Int:
+    it.size()
+
+def main():
+    print(measure(Doc(n: 11)))
+    print(measure(Note(m: 22)))
+";
+    assert_eq!(prints("vtable_two", source), "11\n22\n");
+}
+
+/// The second slot of a two-method interface, which is what says the index is
+/// the method's position and not always zero.
+///
+/// **One table, two slots, and the call sites differ only in which one they
+/// read.** A dispatch that ignored the index — or computed it from the
+/// implementation block's order rather than the interface's — would print the
+/// same number twice here, and `Doc implements` deliberately writes its two
+/// methods in the *opposite* order to the interface's declaration so that a
+/// table filled from the block would swap them.
+#[test]
+fn the_slot_index_is_the_methods_position_in_the_interface() {
+    let source = "\
+interface Pair:
+    def first(self) -> Int
+    def second(self) -> Int
+
+type Doc:
+    a: Int
+    b: Int
+
+Doc implements Pair:
+    def second(self) -> Int:
+        self.b
+
+    def first(self) -> Int:
+        self.a
+
+def take_first(it: borrowed any Pair) -> Int:
+    it.first()
+
+def take_second(it: borrowed any Pair) -> Int:
+    it.second()
+
+def main():
+    let doc be Doc(a: 7, b: 9)
+    print(take_first(doc))
+    print(take_second(doc))
+";
+    assert_eq!(prints("vtable_slots", source), "7\n9\n");
+}
+
+/// The vtable is a `private unnamed_addr`-free constant array of pointers, and
+/// the dispatch loads out of it rather than calling a symbol.
+///
+/// The shape assertions sit beside the execution tests above for this file's
+/// stated reason: they pin *how* it is done, and the programs above pin that
+/// what it does is right.
+#[test]
+fn the_dispatch_loads_a_slot_and_calls_through_it() {
     let source = "\
 interface Summarize:
     def size(self) -> Int
@@ -510,9 +626,22 @@ def measure(it: borrowed any Summarize) -> Int:
 def main():
     print(measure(Doc(n: 1)))
 ";
-    let text = refusal("vtable", source);
-    assert!(text.contains("vtable"), "{text}");
-    assert!(text.contains("any Summarize"), "{text}");
+    let text = ir("vtable_ir", source);
+    assert!(
+        text.contains("x ptr] ["),
+        "the vtable is not a constant array of pointers:\n{text}"
+    );
+    assert!(
+        text.contains(".vtable."),
+        "no vtable global was emitted:\n{text}"
+    );
+    // The call is through a loaded value, not a named function: `size` has a
+    // definition in this module, so a backend that called it directly would
+    // also produce a working program — and would not be dispatching.
+    assert!(
+        text.contains("call i64 %"),
+        "the dispatch is not a call through a value:\n{text}"
+    );
 }
 
 /// A method on a **generic** block is still a refusal, and it names the
