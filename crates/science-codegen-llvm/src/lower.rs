@@ -3773,7 +3773,7 @@ impl<'a> Lowerer<'a> {
                 base: Operand::Value(base),
                 offset: place.offset,
             });
-            let value = self.typed_operand(ctx, operand, &place.layout, insts)?;
+            let value = self.field_value(ctx, operand, &place.layout, insts)?;
             insts.push(ExtInst::StoreAt {
                 address: Operand::Value(address),
                 layout: place.layout.clone(),
@@ -3781,6 +3781,68 @@ impl<'a> Lowerer<'a> {
             });
         }
         Ok(())
+    }
+
+    /// One field or element's value, with Decision 15's string construction
+    /// folded in.
+    ///
+    /// # The decision
+    ///
+    /// A `Literal::Str` reaching a field is built into a slot of its own with
+    /// [`Lowerer::build_string`] and then loaded; everything else goes to
+    /// [`Lowerer::typed_operand`] unchanged.
+    ///
+    /// # The reason
+    ///
+    /// `Doc(title: "a", body: "…")` was refused — *"a string literal read as a
+    /// value rather than bound or printed: Decision 15 makes it a
+    /// `science_string_from_bytes` call, which needs a slot to own the result
+    /// and a `science_string_free` to pair with"*. Both halves of that sentence
+    /// are answered here rather than being reasons to refuse:
+    ///
+    /// - **The slot** is one this function invents, exactly as a `let` binding's
+    ///   is. `science_string_from_bytes` returns three words through `sret`, so
+    ///   it needs somewhere to write; a field address cannot be that somewhere,
+    ///   because `Inst::Call`'s `sret_slot` names a local and not an arbitrary
+    ///   address. The slot is written once and copied once.
+    /// - **The free** is the record's, not this site's, and that is what makes
+    ///   the ownership right rather than merely convenient. The literal is
+    ///   *moved* into the field, so the record owns it from the store onward
+    ///   and Decision 12's glue — which `intern_drop_glue` already emits for a
+    ///   record with a `String` field — is the pairing the message asked for.
+    ///   A `science_string_free` here would be a double free, which is the
+    ///   defect `element_move` was written for one container over.
+    ///
+    /// **This was never about strings being hard.** A string literal bound to a
+    /// `let` and a string literal printed both worked, and so did one passed to
+    /// a function; what had no path was the one position where the value's
+    /// owner is a field. A record with a `String` in it is not a corner of this
+    /// language.
+    ///
+    /// # The cost
+    ///
+    /// One slot and one aggregate copy per literal field, where a construction
+    /// straight into the field would need neither. `sret_slot` taking a
+    /// `LocalId` is what stands between the two, and widening it to an address
+    /// is a change to the backend's instruction set for an optimisation
+    /// `mem2reg` already takes: the slot is written once, read once, and never
+    /// escapes.
+    fn field_value(
+        &mut self,
+        ctx: &mut BodyCtx,
+        operand: &mir::Operand,
+        layout: &Layout,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<Operand, Unlowered> {
+        let mir::Operand::Const(Constant::Literal(Literal::Str(text))) = operand else {
+            return self.typed_operand(ctx, operand, layout, insts);
+        };
+        let text = text.clone();
+        let slot = self.temp(ctx, layout.clone());
+        self.build_string(&text, slot, insts)?;
+        let loaded = ctx.value();
+        insts.push(ExtInst::Above(Inst::Load { dest: loaded, local: slot }));
+        Ok(Operand::Value(loaded))
     }
 
     /// A tuple literal: each element written at its own offset.

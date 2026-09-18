@@ -959,3 +959,49 @@ fn the_unannotated_tuple_literal_is_a_front_end_hole() {
         "let t be (1i64, 2i64)\nmatch t:\n\x20   (a, b):\n\x20       print(f\"{a}{b}\")\n";
     assert_eq!(bytes("tuple-suffixed", suffixed), "12\n");
 }
+
+/// A record with `String` fields, built from literals, read back, and released.
+///
+/// # What this is measuring
+///
+/// `Doc(title: "a", body: "…")` was refused, with a message that named both of
+/// its own obstacles — *"Decision 15 makes it a `science_string_from_bytes`
+/// call, which needs a slot to own the result and a `science_string_free` to
+/// pair with"*. Neither was a reason to refuse. The slot is one the field's
+/// lowering invents, exactly as a `let` binding's is; the free is the
+/// **record's**, because the literal is moved into the field and Decision 12's
+/// glue already frees a `String` field.
+///
+/// **This was never about strings being hard**, which is what made it worth
+/// finding. A string literal bound to a `let`, printed, or passed to a function
+/// all worked. The one position with no path was the one where the value's
+/// owner is a field — and a record with a `String` in it is not a corner of
+/// this language, it is most of the programs anybody writes.
+///
+/// # Why the assertions are what they are
+///
+/// **Two fields, with different contents and different lengths.** One field
+/// would agree with a lowering that built the right string and stored it at the
+/// wrong offset; two that are distinguishable by both content and length do
+/// not. The lengths are read back through `String.length()` rather than trusted
+/// to the printed text, because a `ScienceString` whose pointer is right and
+/// whose length word is wrong prints correctly right up until something reads
+/// the header.
+///
+/// **The exit status is the ownership assertion.** The record owns both
+/// strings; a `science_string_free` at the construction site as well would be a
+/// double free, and the process would abort on the way out with the stdout
+/// already correct — which is exactly the shape the array literal's own double
+/// free took, and exactly why `bytes` asserts the status.
+#[test]
+fn a_record_owns_the_string_literals_it_was_built_from() {
+    assert_eq!(
+        bytes(
+            "record-strings",
+            "type Doc:\n    title: String\n    body: String\n\n\
+             let d be Doc(title: \"hola\", body: \"mundo!\")\n\
+             print(f\"{d.title}/{d.body} {d.title.length()} {d.body.length()}\")\n",
+        ),
+        "hola/mundo! 4 6\n"
+    );
+}
