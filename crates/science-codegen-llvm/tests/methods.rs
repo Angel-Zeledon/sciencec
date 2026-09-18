@@ -601,6 +601,64 @@ def main():
     assert_eq!(prints("vtable_slots", source), "7\n9\n");
 }
 
+/// Decision 12's glue, run: a record that owns a `String` is built, used and
+/// dropped.
+///
+/// **What a wrong answer looks like here, and why the assertion is the exit
+/// status.** The glue releases the `String` the record owns. Emitting none
+/// leaks — invisible in a program this size. Emitting one that frees the
+/// wrong offset, or frees twice, is `science_dealloc` on a pointer the
+/// allocator did not give out, which aborts: the status is `Some(0)` only if
+/// the release happened exactly once at exactly the right address. The `3` is
+/// the other half — it says the record's *other* field is still readable
+/// after the glue was emitted for it, so a glue that walked the wrong field
+/// list would be caught by the number rather than by the crash.
+#[test]
+fn a_record_that_owns_a_string_is_dropped_through_its_glue() {
+    let source = "\
+type Doc:
+    title: String
+    n: I64
+
+def main():
+    let text be \"hola\"
+    let doc be Doc(title: text, n: 3)
+    print(f\"{doc.n}\")
+";
+    assert_eq!(prints("glue", source), "3\n");
+}
+
+/// Glue recurses, and it releases in **reverse declaration order**.
+///
+/// `science_codegen::descriptor::drop_glue` fixes that order and nothing in
+/// F0 can observe it — a `String`'s release has no side effect a program can
+/// see — so what this asserts is that the nested record's *own* glue ran at
+/// all: `Outer` owns no `String` directly, and a walk that only looked one
+/// level deep would emit nothing for it, leak both strings and still exit 0
+/// with `5` on stdout. What makes that visible is the third string: if
+/// `Inner`'s glue is missing, `Outer`'s is too, and `Inner` is then dropped
+/// by nothing at either level.
+#[test]
+fn glue_recurses_into_a_nested_record() {
+    let source = "\
+type Inner:
+    a: String
+    b: String
+
+type Outer:
+    n: I64
+    inner: Inner
+
+def main():
+    let x be \"one\"
+    let y be \"two\"
+    let inner be Inner(a: x, b: y)
+    let outer be Outer(n: 5, inner: inner)
+    print(f\"{outer.n}\")
+";
+    assert_eq!(prints("glue_nested", source), "5\n");
+}
+
 /// Decision 14's box, run: a concrete value moved to the heap, reached again
 /// through the vtable, and read back.
 ///

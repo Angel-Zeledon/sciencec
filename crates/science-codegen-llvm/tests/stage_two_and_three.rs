@@ -506,15 +506,19 @@ fn the_boundary_is_where_it_says_it_is() {
         // `IntOp`'s own note says the caller has already made.
         ("div", "let a be 6\nlet b be a / 2\nprint(\"x\")\n", "divide-by-zero"),
         ("shift", "let a be 6\nlet b be a << 2\nprint(\"x\")\n", "shift"),
-        // A value that owns something Decision 12's glue would have to release.
-        // A drop is lowered now in two of its three cases — a `br` when the
-        // value owns nothing, `science_string_free` when it is a `String` — and
-        // this is the third: an owning type that is not a bare `String` needs
-        // the emitted glue function, and this backend emits none.
+        // A value that owns something Decision 12's glue would have to
+        // release. **Three of the four cases are lowered now**: a `br` when
+        // the value owns nothing, `science_string_free` when it is a bare
+        // `String`, and `Lowerer::intern_drop_glue`'s emitted function when it
+        // is a record — `tests/methods.rs` runs a record that owns a `String`
+        // and a record that owns one through a nested record. What is left is
+        // a `choice`: releasing its payload means switching on the
+        // discriminant and dropping only the active variant, which is one
+        // block per arm where the glue builder emits one block.
         (
             "drop",
             "choice C:\n    A\n    B(String)\n\nlet c be A\nprint(\"x\")\n",
-            "owns something",
+            "is not a record",
         ),
         // **Still refused, and no longer for the reason this list was written
         // with.** `cg_ty` has the `TyKind::Tuple` arm now and

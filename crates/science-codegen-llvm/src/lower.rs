@@ -506,6 +506,14 @@ pub struct Lowerer<'a> {
     /// boxes of one type name one global — that decision's *"never constructed
     /// twice"*, enforced by the table rather than by this crate remembering.
     descriptors: DescriptorTable,
+    /// The symbols of every drop-glue function already emitted, which is both
+    /// the dedup set and the recursion guard — [`Lowerer::intern_drop_glue`]
+    /// claims a symbol before it builds the body, so a record reaching itself
+    /// through a field finds the claim rather than recursing.
+    glue: std::collections::BTreeSet<String>,
+    /// The glue bodies, appended to the module's definitions by
+    /// [`Lowerer::finish`].
+    glue_definitions: Vec<(AbiSignature, ExtBody)>,
     declarations: Vec<AbiSignature>,
     declared_foreign: Vec<ForeignSymbol>,
     /// The definition of the entry point, once [`Lowerer::lower_crate`] has
@@ -601,6 +609,8 @@ impl<'a> Lowerer<'a> {
             literals: Vec::new(),
             vtables: Vec::new(),
             descriptors: DescriptorTable::new(),
+            glue: std::collections::BTreeSet::new(),
+            glue_definitions: Vec::new(),
             declarations: Vec::new(),
             declared_foreign: Vec::new(),
             entry: None,
@@ -842,6 +852,166 @@ impl<'a> Lowerer<'a> {
             }
         }
         out
+    }
+
+    /// Decision 12's glue for one type, emitted once and interned by symbol.
+    ///
+    /// **The decision. Glue is an ordinary definition this crate appends to
+    /// the module, not a new kind of thing the backend has to know about.**
+    /// A glue function takes a pointer to the value and releases what the
+    /// value owns, in reverse declaration order; that is a signature and a
+    /// body, which is what [`Lowered::definitions`] already carries and what
+    /// [`Lowerer::lower_c_main`] already builds by hand. Adding a `define_*`
+    /// for it would be a second path to the same emitter.
+    ///
+    /// **Reverse declaration order, because `science_codegen::descriptor`'s
+    /// `drop_glue` says so** and because it is the order a reader of the
+    /// source would run destructors in if the fields were bindings. Nothing
+    /// in F0 can observe the difference today — a `String`'s release has no
+    /// side effect a program can see — and the order is followed anyway,
+    /// because the first type whose `Drop` implementation prints something
+    /// would observe it and the glue would be wrong in a way no test written
+    /// before that day could catch.
+    ///
+    /// **`None` is an answer and not a failure**: a type that owns nothing
+    /// needs no glue, which is the case Decision 20's `drop_fn: null` exists
+    /// for and the case that keeps this out of the hot path for an
+    /// `Array of F64`.
+    ///
+    /// # What it does not do
+    ///
+    /// **A `choice` whose payload owns something is refused.** Releasing one
+    /// means switching on the discriminant and dropping only the active
+    /// variant's payload, which is a `switch` and one block per arm inside a
+    /// function this builds as a single block. `descriptor::drop_glue` has
+    /// the same hole from the other side — it answers `fields: vec![]` for
+    /// anything that is not `Repr::Aggregate` — so the refusal is named here
+    /// rather than silently dropping nothing, which is the shape that leaks.
+    ///
+    /// **The linkage is external where Decision 12 asks for `internal`.**
+    /// `sys::linkage::INTERNAL` exists and `declare_function` has no way to
+    /// be told, so glue is visible in the symbol table. That costs an
+    /// optimisation and a tidy symbol table; it costs no correctness, and the
+    /// alternative today is a second definition path.
+    fn intern_drop_glue(&mut self, ty: Ty, depth: u32) -> Result<Option<String>, Unlowered> {
+        if depth > MAX_TYPE_DEPTH {
+            return Err(Unlowered::new(
+                "a type nested past this crate's depth bound while building its drop glue",
+            ));
+        }
+        if !self.drop_runs_something(ty, 0)? {
+            return Ok(None);
+        }
+        // The one owning type with no glue of its own: a direct runtime call,
+        // which every caller emits inline rather than through a function.
+        if self.is_string(ty) {
+            return Ok(None);
+        }
+        let Some(def) = self.concrete_head(ty) else {
+            return Err(Unlowered::new(format!(
+                "drop glue for `{}`, whose concrete type this crate cannot name",
+                self.types.render(self.defs, ty)
+            )));
+        };
+        let name = self.defs.get(def).name.clone();
+        if self.defs.get(def).kind != DefKind::Record {
+            return Err(Unlowered::new(format!(
+                "drop glue for `{name}`, which is not a record: releasing a `choice`'s payload \
+                 means switching on the discriminant and dropping only the active variant, which \
+                 is one block per arm where this builds one block"
+            )));
+        }
+        let symbol = format!("{}.drop", mangle(&MonoKey::plain(&[name.as_str()])));
+        if self.glue.contains(&symbol) {
+            return Ok(Some(symbol));
+        }
+        // Recorded *before* the body is built, so a record that reaches
+        // itself through a field asks for a symbol that is already claimed
+        // rather than recursing until the stack runs out. The depth bound
+        // above is the second guard and this is the first.
+        self.glue.insert(symbol.clone());
+
+        let layout = self.layout_of_ty(ty)?;
+        let Repr::Aggregate { fields: places } = &layout.repr else {
+            return Err(Unlowered::new(format!(
+                "drop glue for `{name}`, whose layout is not Decision 17's aggregate one"
+            )));
+        };
+        let places = places.clone();
+        let field_tys = self.record_field_types(def)?;
+        if field_tys.len() != places.len() {
+            return Err(Unlowered::new(format!(
+                "drop glue for `{name}`: its layout has {} field(s) and its declaration has {}",
+                places.len(),
+                field_tys.len()
+            )));
+        }
+
+        let pointer = layout_of(self.target, &CgTy::Ptr(PtrKind::MutBorrow));
+        let mut insts: Vec<ExtInst> = Vec::new();
+        let mut next_value = 0u32;
+        // Reverse declaration order.
+        for (index, field_ty) in field_tys.iter().enumerate().rev() {
+            if !self.drop_runs_something(*field_ty, 0)? {
+                continue;
+            }
+            let inner = self.intern_drop_glue(*field_ty, depth + 1)?;
+            let address = ValueId(next_value);
+            next_value += 1;
+            insts.push(ExtInst::FieldAddr {
+                dest: address,
+                base: Operand::Param(0),
+                offset: places[index].offset,
+            });
+            let (callee, symbol_of_call) = match &inner {
+                Some(glue) => (Callee::Science(glue.clone()), glue.clone()),
+                None => (
+                    Callee::Runtime("science_string_free"),
+                    "science_string_free".to_string(),
+                ),
+            };
+            let ret = match &inner {
+                Some(_) => ReturnClass::Void,
+                None => self.declare("science_string_free")?.ret.clone(),
+            };
+            let _ = symbol_of_call;
+            insts.push(ExtInst::Above(Inst::Call {
+                dest: None,
+                callee,
+                args: vec![Operand::Value(address)],
+                ret,
+                sret_slot: None,
+            }));
+        }
+
+        let signature = AbiSignature::science(
+            self.target,
+            symbol.clone(),
+            layout_of(self.target, &CgTy::Unit),
+            vec![("self".to_string(), pointer, ParamAttrs::default())],
+        );
+        let body = ExtBody {
+            blocks: vec![ExtBlock {
+                id: BlockId(0),
+                label: "entry".to_string(),
+                insts,
+                terminator: Terminator::Return(None),
+            }],
+        };
+        self.glue_definitions.push((signature, body));
+        Ok(Some(symbol))
+    }
+
+    /// A record's field types, in declaration order.
+    fn record_field_types(&self, def: DefId) -> Result<Vec<Ty>, Unlowered> {
+        let name = self.defs.get(def).name.clone();
+        let decls = self.declarations()?;
+        let record = decls.record(def).ok_or_else(|| {
+            Unlowered::new(format!(
+                "drop glue for `{name}`, which the declaration table has no lowered field list for"
+            ))
+        })?;
+        Ok(record.fields.iter().map(|(_, ty)| *ty).collect())
     }
 
     /// Intern Decision 20's descriptor for a type a box allocates for,
@@ -1736,6 +1906,10 @@ impl<'a> Lowerer<'a> {
         // Decision 4: *"every monomorphised item is emitted in sorted order of
         // its mangled symbol name."* One line, and it closes Gate J's named
         // hazard by construction rather than by testing.
+        // Decision 12's glue, which is emitted while bodies are lowered and
+        // so is not in the list the caller handed over. Appended before the
+        // sort, so Decision 4's order covers it too.
+        definitions.extend(std::mem::take(&mut self.glue_definitions));
         definitions.sort_by(|a, b| a.0.symbol.cmp(&b.0.symbol));
         // Decision 28's source order, filtered to the blocks a call actually
         // reached. `library_order` is the order; `libraries_used` is the set.
@@ -4176,22 +4350,25 @@ impl<'a> Lowerer<'a> {
                     // `science_array_free` and `science_map_free`; those take
                     // one and this backend emits none, so they are refused
                     // below with the rest.
-                    if !self.is_string(ty) {
-                        return Err(Unlowered::new(format!(
-                            "a drop of a value of type `{}`, which owns something Decision 12's \
-                             glue would have to release: glue is an emitted `internal` function \
-                             per monomorphised type, this backend emits none, and the only \
-                             release it can make without one is `science_string_free`",
-                            self.types.render(self.defs, ty)
-                        )));
-                    }
+                    // A `String` is released by a direct call with no glue
+                    // function at all — `lower`'s §1 states that rule for the
+                    // temporary a `print` makes and it is the same call here.
+                    // Everything else that owns something goes through
+                    // Decision 12's glue, which is emitted on demand.
+                    let glue = self.intern_drop_glue(ty, 0)?;
                     let (address, _) = self.place_address(ctx, place, insts)?;
-                    let free = self.declare("science_string_free")?;
+                    let (callee, ret) = match &glue {
+                        Some(symbol) => (Callee::Science(symbol.clone()), ReturnClass::Void),
+                        None => (
+                            Callee::Runtime("science_string_free"),
+                            self.declare("science_string_free")?.ret.clone(),
+                        ),
+                    };
                     insts.push(ExtInst::Above(Inst::Call {
                         dest: None,
-                        callee: Callee::Runtime("science_string_free"),
+                        callee,
                         args: vec![Operand::Value(address)],
-                        ret: free.ret.clone(),
+                        ret,
                         sret_slot: None,
                     }));
                 }

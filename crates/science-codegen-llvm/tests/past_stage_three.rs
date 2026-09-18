@@ -736,9 +736,15 @@ fn what_is_refused_names_itself() {
             "",
         ),
         (
+            // A `choice` whose payload owns something, which is the half of
+            // Decision 12's glue a record no longer needs: dropping one means
+            // switching on the discriminant and releasing only the active
+            // variant, which is one block per arm where `intern_drop_glue`
+            // builds one block. A record that owns a `String` is not in this
+            // list any more — `tests/methods.rs` runs one.
             "refuse-owning-drop",
             "choice C:\n    A\n    B(String)\n\nlet c be A\nprint(\"x\")\n",
-            "owns something",
+            "is not a record",
         ),
         // **A tuple and a cast used to be here** and are not: both build now,
         // and `tests/casts.rs` and the tuple section above are the programs
@@ -848,15 +854,19 @@ fn a_tuple_of_mixed_widths_is_laid_out_by_the_c_rule() {
 ///
 /// `drop_runs_something` walks a tuple element by element, so a tuple holding a
 /// `String` owns something and its `TerminatorKind::Drop` needs Decision 12's
-/// emitted glue — which this backend emits for nothing. The *layout* is fine;
-/// it is the destructor that is missing, and the message names the type rather
-/// than saying "a tuple", which is the difference between a refusal a reader
-/// can act on and one that sends them to the wrong file.
+/// emitted glue. **A record now gets one** — `Lowerer::intern_drop_glue` emits
+/// it, and `tests/methods.rs` runs a program that owns a `String` and drops it
+/// — and a tuple still does not, for a reason the message now names: glue is
+/// interned by the symbol its type's *definition* mangles to, and a tuple has
+/// no definition to mangle. The *layout* is fine, as the test above this one
+/// shows; it is the destructor that is missing, and the message names the type
+/// rather than saying "a tuple", which is the difference between a refusal a
+/// reader can act on and one that sends them to the wrong file.
 #[test]
 fn a_tuple_that_owns_something_is_refused_for_the_drop_and_not_the_layout() {
     let text = refusal("tuple-owning", "let s be \"hola\"\nlet t be (s, s)\nprint(\"x\")\n");
     assert!(
-        text.contains("owns something") && text.contains("(String, String)"),
+        text.contains("drop glue") && text.contains("(String, String)"),
         "a tuple holding a `String` should be refused for its drop, by name:\n{text}"
     );
 }

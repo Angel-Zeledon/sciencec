@@ -19,12 +19,27 @@ target/
 # executable. Both are output; the `.science` file is the source of truth.
 # Scoped to the corpus and the scratch tree rather than global, so a genuinely
 # committed binary elsewhere would still be visible.
-examples/*.exe
-examples/*.obj
-examples/*.o
-examples/*.pdb
+#
+# **The extension list was the whole rule and it had a hole the size of two
+# of the three supported hosts.** `Session::executable_path` gives the output
+# `.exe` on Windows and *no extension at all* on macOS and Linux, so a pattern
+# per extension matches nothing on either — and `sciencec build examples/…`
+# there leaves an executable that `git add -A` will happily commit. It did.
+# The corpus is a closed set of `.science` files and one `README.md`, so the
+# rule is inverted: ignore everything in `examples/`, then name what belongs.
+examples/*
+!examples/*.science
+!examples/*.md
+!examples/*/
 tests/**/*.exe
 tests/**/*.obj
+tests/**/*.o
+
+# --- Agent worktrees -----------------------------------------------------
+# `.claude/worktrees/` holds git worktrees a background agent works in. Each
+# is a checkout of this repository, so adding one produces a gitlink to an
+# "embedded git repository" that a clone cannot follow.
+.claude/
 
 # --- A vendored LLVM checkout --------------------------------------------
 # `llvm-project/` is ~600 MB of clone and is not a dependency: this backend
