@@ -265,3 +265,44 @@ print(f\"{xs[1]} {xs[0].length()}\")
         "beta 5\n"
     );
 }
+
+/// The most ordinary loop there is, run: index, accumulate, divide, report.
+///
+/// # Why this test is here and not in a smaller one
+///
+/// `total be total + xs[i]` was **refused** while `print(f"{xs[i]}")` worked,
+/// and the gap between those two sentences is the whole finding. An f-string
+/// hole reads through `value_hole`, which never asks for a coercion; an
+/// arithmetic operand goes through `Coercion::Copy`, and that coercion is
+/// `science-types` saying *"`Index.index` returns `&T`, load it"* about a place
+/// `science-mir` had already lowered to the element itself. Two true views of
+/// one expression, and the backend refused the join.
+///
+/// Nothing smaller would have found it. Every array test in this file reads an
+/// element through a `print`, which is the one position that does not take the
+/// path that was broken — so the suite was green and the single most common
+/// loop in any program did not build.
+///
+/// The program is kept whole rather than reduced for that reason: it indexes,
+/// accumulates across iterations, divides (which is its own guard), and prints.
+/// A reduction to `10 + xs[1]` reproduces the refusal but would not have been
+/// written, because nobody doubted that arithmetic worked.
+#[test]
+fn a_counting_loop_over_an_array_adds_up() {
+    assert_eq!(
+        prints(
+            "counting-loop",
+            "let xs: Array of Int be [4, 8, 15, 16, 23, 42]\n\
+             let n be xs.length()\n\
+             let mutable total be 0\n\
+             let mutable i be 0\n\
+             loop:\n\
+             \x20   if i is n:\n\
+             \x20       break\n\
+             \x20   total be total + xs[i]\n\
+             \x20   i be i + 1\n\
+             print(f\"n={n} total={total} mean={total / n}\")\n",
+        ),
+        "n=6 total=108 mean=18\n"
+    );
+}

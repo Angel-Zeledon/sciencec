@@ -3408,6 +3408,44 @@ impl<'a> Lowerer<'a> {
             // finding 12's shape, which opaque pointers make invisible to the
             // verifier.
             Coercion::Copy => {
+                // **A `Copy` whose operand is already the value is the
+                // identity, and `xs[i]` is how that arises.**
+                //
+                // The decision. When the operand's own type is not a borrow,
+                // this emits the ordinary read that `Rvalue::Use` emits and
+                // nothing else.
+                //
+                // The reason, and it is a disagreement between two true views
+                // rather than a bug in either. `science-types` types `xs[i]` as
+                // `Index.index`'s return, which is `&T`, and records a `Copy`
+                // coercion to get the `T` the expression is used as.
+                // `science-mir` lowers the same expression to a **place** —
+                // `Projection::Index` carries the *element* type, because a
+                // projection to an element is the element and not a reference
+                // to one — so by the time the coercion arrives the load it
+                // describes has already happened. `copy_out_of_borrow` then
+                // refused, correctly by its own lights: there was no pointer to
+                // read through.
+                //
+                // The cost, stated. This makes `Coercion::Copy` accept an
+                // operand the coercion was not written for, so the one thing it
+                // must not do is accept a *wrong* one: the destination's layout
+                // is still checked against the operand's below, which is the
+                // check finding 12 exists for and the only one that catches a
+                // size disagreement opaque pointers hide.
+                //
+                // It was found by the most ordinary loop there is —
+                // `total be total + xs[i]` — which is worth saying because
+                // `print(f"{xs[i]}")` worked the whole time: an f-string hole
+                // reads through `value_hole`, which never asks for a coercion.
+                let operand_ty = self.operand_ty(body, operand);
+                if operand_ty
+                    .is_some_and(|ty| !matches!(self.types.kind(ty), TyKind::Borrowed { .. }))
+                {
+                    let value = self.typed_operand(ctx, operand, layout, insts)?;
+                    insts.push(ExtInst::Above(Inst::Store { local: dest, value }));
+                    return Ok(());
+                }
                 let (value, referent) = self.copy_out_of_borrow(body, ctx, operand, insts)?;
                 if referent != *layout {
                     return Err(Unlowered::new(format!(
