@@ -567,6 +567,71 @@ const BLOCKS: &[Block] = &[
                 params: &[("index", INT)],
                 ret: Some(Ty::Opt(&Ty::Ref(&Ty::Var("T")))),
             },
+            // **Decided: `get_mutably` is transcribed, and the corpus's
+            // `get_mut` is not it.**
+            //
+            // `indexing-and-array-literals.md` §1.4's Decision 5 writes the
+            // block out in Science and gives *both* halves, name and types:
+            //
+            // ```text
+            // Array of T has:
+            //     def get(self, at: Int) -> (borrowed T)?
+            //     def get_mutably(mutable self, at: Int) -> (mutable borrowed T)?
+            // ```
+            //
+            // So this is transcription under the rule [`INTERFACE_DECLS`]
+            // states — *declared only where a note gives the method's name and
+            // its types* — and nothing here is invented. The parameter is named
+            // `index` rather than §1.4's `at` to agree with `get` two entries
+            // up, which §3.6 spells that way; §1.4 spells `get`'s `at` too, so
+            // the note disagrees with itself about the label and this file
+            // already took `stdlib-core.md`'s side for the read-only twin.
+            //
+            // **It is the mutable half of an operation whose other three
+            // spellings are already declared.** `Array of T implements
+            // IndexMutably of Int` is in [`BLOCKS`] below, so `a[i] be v`
+            // checks; `get` is here, so the checked read checks. Without this
+            // there is no checked *mutable* access at all — the author who
+            // wants "give me a handle to element 0 if it is there" has only the
+            // panicking bracket form.
+            //
+            // **This is not `from_bytes`' case, although it looks like it.**
+            // The `String` block below leaves `from_bytes` and `bytes` out
+            // because they are expressible and *no program in `examples/` calls
+            // either*, so the acceptance corpus cannot measure them. Here the
+            // corpus does call the operation — `19_stdlib.science:180` writes
+            // `items.get_mut(0)`, and `examples/README.md` lists
+            // `Array.get_mut` twice — it just calls it by a name no note gives.
+            // The operation is attested; the spelling is the corpus's error.
+            //
+            // **The disagreement, stated for a human rather than settled here.**
+            // `get_mut` is an abbreviation, and `collections-and-chains.md` §4.3
+            // forbids abbreviations where a word exists — §5's table retires
+            // `min`/`max`, `size_hint` and `dedup` under exactly that rule, and
+            // §5.4 already spells the sibling accessors `values_mutably` and
+            // `iterate_mutably`. So the language's own naming rule gives
+            // `get_mutably` and the corpus wrote Rust's name. **Declaring
+            // `get_mut` instead would carve the one exception §5 refuses to
+            // carve**, in a file nobody reads, on the evidence of one call site.
+            // The fix is three characters in `19_stdlib.science` and two lines
+            // in `examples/README.md`, and it is the corpus's to make; until it
+            // does, `items.get_mut(0)` stays `SC0532` and the message is true.
+            //
+            // **The cost.** A declared prelude method with no row in
+            // `science-codegen-llvm`'s `prelude_method` table is accepted by the
+            // front end and refused by the backend with `SC0400`, after the link
+            // — the trade `FUNCTIONS`' comment above declines to make for
+            // `print_error`. It is a smaller cost here for two reasons: nothing
+            // in `examples/` reaches this declaration today (the one call site
+            // is misspelled), so no program's diagnostic gets worse, and the row
+            // is one line against a `science-rt` entry point that is
+            // `science_array_get`'s mutable twin.
+            Method {
+                name: "get_mutably",
+                recv: Some(SelfKind::Mutable),
+                params: &[("index", INT)],
+                ret: Some(Ty::Opt(&Ty::MutRef(&Ty::Var("T")))),
+            },
             // **`pop` is deliberately absent.** §3.2 names it — *"`Array` has
             // `push` and `pop`"* — and gives it no signature, and the two
             // candidates differ in what a program may write:
@@ -1036,10 +1101,31 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     // `ArrayIterate of T` and its two siblings, which are types the prelude
     // does not have, so they are `slice`'s case one type along.
     //
-    // **`len` is deliberately absent.** `collections-and-chains.md` §3.1 lists
-    // `len()` in the column of names it rejects — *"the abbreviation goes"* —
-    // and §1.4 says `length()` is the `O(1)` one. So `xs.len()` names nothing
-    // any note gives, and `SC0532` on it is true.
+    // **`len` is deliberately absent, and it is now a measured corpus
+    // disagreement rather than a hypothetical one.**
+    // `collections-and-chains.md` §5's rejected-names table lists `len()` /
+    // `count()` against the surviving `count()` / `length()` pair — *"the
+    // abbreviation goes, and the surviving pair now marks an `O(1)` lookup
+    // against an `O(n)` consumption"* — §4.3 is the general rule it applies,
+    // and `stdlib-shape-and-packages.md` §"naming" restates it as
+    // *"`length()`, not `len()`"*. So `xs.len()` names nothing any note gives,
+    // and `SC0532` on it is true.
+    //
+    // `examples/21_compiler_shapes.science` writes it three times — lines 82,
+    // 185 and 256 — which is the corpus disagreeing with the spec, not a hole
+    // in this table. The fix is `length()` at those three sites. Note that
+    // several *illustrative* notes (`models-and-inference.md`, `data-io.md`,
+    // `script-mode.md`, `region-inference.md`'s `v.push(v.len())`) write
+    // `len()` in sample code; none of them is the note that owns collection
+    // naming, and §5's table is the one that decided. Whoever reconciles them
+    // either fixes the samples or reopens §5 — but the prelude cannot declare
+    // both spellings without making the abbreviation rule a dead letter.
+    //
+    // `get_mut` is the same finding one method along: `19_stdlib.science:180`
+    // writes it, `indexing-and-array-literals.md` §1.4 spells it
+    // `get_mutably`, and that name *is* transcribed in [`BLOCKS`] above with
+    // the reasoning. It is not listed here because a name no note gives does
+    // not belong in a table of names the notes give.
     //
     // `clone` is the `String` row's last two lines again: [`IMPLEMENTS`]' own
     // comment says `Array of T implements Clone` *"holds only where `T:

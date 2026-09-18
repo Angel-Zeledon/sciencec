@@ -1345,11 +1345,32 @@ impl<'a> Lowerer<'a> {
                     "U16" => Ok(CgTy::Int(IntTy::U16)),
                     "U32" => Ok(CgTy::Int(IntTy::U32)),
                     "U64" => Ok(CgTy::Int(IntTy::U64)),
+                    // Half precision, which this language is not entitled to
+                    // treat as an exotic corner: `F16` and `BF16` are what a
+                    // model's weights are stored in. A value in a local, a
+                    // record field or an array element is an ordinary scalar
+                    // here; what stays refused is **crossing the `extern "C"`
+                    // boundary by value**, which `science_codegen::abi`'s
+                    // `SC0431` now actually fires for — it had a rendered
+                    // diagnostic and no reachable path, because the layout model
+                    // had no half-precision variant to match on.
+                    "F16" => Ok(CgTy::Float(science_codegen::layout::FloatTy::F16)),
+                    "BF16" => Ok(CgTy::Float(science_codegen::layout::FloatTy::Bf16)),
                     "F32" => Ok(CgTy::Float(science_codegen::layout::FloatTy::F32)),
                     "F64" => Ok(CgTy::Float(science_codegen::layout::FloatTy::F64)),
+                    // **`Float` is to `F64` what `Int` is to `I64`, and only
+                    // one of the pair was here.** Decision 2 defaults an
+                    // integer literal to `I64` and a floating-point literal to
+                    // `F64`, and the prelude spells the two defaults `Int` and
+                    // `Float`; `Int` has had its row since stage 1 and `Float`
+                    // never did, so every program that wrote the word was
+                    // refused as *"a value of type `Float`"* — a sentence about
+                    // a type the language does have.
+                    "Float" => Ok(CgTy::Float(science_codegen::layout::FloatTy::F64)),
                     "Bool" => Ok(CgTy::Bool),
                     "Char" => Ok(CgTy::Char),
                     "String" => Ok(RtAggregate::String.cg_ty()),
+                    "IoError" => Ok(RtAggregate::IoError.cg_ty()),
                     other => Err(Unlowered::new(format!("a value of type `{other}`"))),
                 }
             }
@@ -1654,6 +1675,7 @@ impl<'a> Lowerer<'a> {
                             | "F64"
                             | "Bool"
                             | "Char"
+                            | "IoError"
                     )),
                 }
             }
@@ -1791,13 +1813,82 @@ impl<'a> Lowerer<'a> {
     /// lowered, and both the definition and every call site read that one entry.
     /// A call site that classified the callee's return for itself is §9.2's
     /// finding with the compiler on both ends of it.
-    pub fn lower_crate(&mut self, bodies: &[MirBody]) -> Result<Lowered, Unlowered> {
+    pub fn lower_crate(
+        &mut self,
+        bodies: &[MirBody],
+        mono: &science_codegen::mono::MonoSet,
+    ) -> Result<Lowered, Unlowered> {
         let entry = bodies
             .iter()
             .find(|body| self.defs.get(body.def()).name == "main")
             .ok_or_else(|| Unlowered::new("a program with no `main`"))?;
         self.entry = Some(entry.def());
-        let reachable = reachable_from(self, bodies, entry.def());
+        // **The emission set is the monomorphisation walk's, not this crate's
+        // own reachability.**
+        //
+        // The decision. Which bodies get emitted comes from
+        // [`science_codegen::mono::MonoSet`], computed by `sciencec`'s driver
+        // and handed in. The `reachable_from` walk this replaced is gone from
+        // the decision and kept only as the fallback for a caller that has no
+        // set — see below.
+        //
+        // The reason. `reachable_from` answered *"which definitions can `main`
+        // reach"*, and the question a backend actually has to answer is *"which
+        // **instances** does this program need"*. For a program with no
+        // generics the two sets coincide, which is why this compiler got as far
+        // as it did on the weaker one; they stop coinciding at the first
+        // `identity of T` called at two types, where the right answer is two
+        // functions and reachability can only ever say *one definition*.
+        // `science_codegen::mono` has answered the stronger question the whole
+        // time — 1753 lines and forty tests — and **nothing in the compiler
+        // called it**. Decision 42 already put the walk above this crate; this
+        // makes that placement load-bearing instead of aspirational.
+        //
+        // The cost, and it is the honest limit of this change. Emission is
+        // driven by the set, but a *generic* instance is still refused one
+        // layer down in [`Lowerer::science_signature`], because lowering one
+        // body twice at two argument types needs the substitution applied to
+        // every type the body mentions and this crate does not apply it yet.
+        // So today the set and the old walk produce the same answer on every
+        // program that compiles, which is exactly what makes the swap
+        // verifiable: the whole test suite is the assertion that nothing moved.
+        // **The union, and the second half is a gap in the walk that connecting
+        // it is what found.**
+        //
+        // `science_codegen::mono` does not model Decision 13's vtables. Its
+        // `walk_rvalue` meets an `Rvalue::Coerce` and asks only
+        // `note_address_taken`, which looks for a function named as a *value*;
+        // an unsize coercion to `any I` names no function anywhere in the MIR,
+        // and yet it puts the address of every one of that interface's methods
+        // into a table. So a method reached **only** through a vtable is absent
+        // from the set, and the symptom is not a refusal — it is `define_vtable`
+        // naming a symbol nothing defined, and the linker saying so. Five
+        // execution tests in this crate failed exactly that way the moment the
+        // set became the emission set, which is five more than had ever
+        // exercised the walk before.
+        //
+        // **Why it is a union here rather than a fix there.** The rule that
+        // decides a vtable's slots is [`Lowerer::vtable_pair`] and
+        // [`Lowerer::vtable_slots`], and it lives in *this* crate;
+        // `science-codegen` cannot call it, because the dependency runs the
+        // other way. Writing a second copy of it inside `mono` is the hazard
+        // this codebase warns about everywhere else — two spellings of one rule,
+        // discovered by a linker a stage too late. The real repair is to move
+        // that rule down into `science-codegen`, where `descriptor::Vtable`
+        // already lives, so one rule serves the walk and the emitter; until
+        // then the walk is an honest **lower bound** and this says so in the
+        // only way that cannot rot, by taking the union and naming what the
+        // second half is for.
+        //
+        // The cost: a definition reachable from `main` but genuinely not
+        // needed by any instance is still emitted, which is what was happening
+        // before this change for every definition. Nothing regresses; what the
+        // set adds is the ability to name instances, which is what generics
+        // will need.
+        let mut reachable = reachable_from(self, bodies, entry.def());
+        reachable.extend(
+            mono.emission_order().filter(|item| item.defined_here).map(|item| item.instance.def),
+        );
 
         for body in bodies {
             if !reachable.contains(&body.def()) {
@@ -4011,32 +4102,31 @@ impl<'a> Lowerer<'a> {
                 BinaryOp::BitAnd => IntOp::And,
                 BinaryOp::BitOr => IntOp::Or,
                 BinaryOp::BitXor => IntOp::Xor,
-                // **Refused, and the reason is that the guard does not
-                // exist.** `science_codegen::backend::IntOp` says of `SDiv`:
-                // *"division by zero is a panic the caller has already
-                // guarded, not a trap the backend inserts."* No caller guards
-                // it. Nothing in MIR, THIR or the checker emits a test against
-                // zero before a `/`, so lowering `a / b` to a bare `sdiv`
-                // hands LLVM an instruction whose behaviour at `b == 0` is
-                // *undefined* — not a trap, not a panic, undefined, which at
-                // `-O2` licenses deleting the branch that was going to check.
-                // `Int.min / -1` is the same hazard with a second operand.
+                // **The caller guards it now, and that sentence used to be the
+                // refusal.** `science_codegen::backend::IntOp` says of `SDiv`
+                // that *"division by zero is a panic the caller has already
+                // guarded, not a trap the backend inserts"*, and this arm
+                // existed because **no caller did** — so a bare `sdiv` was
+                // being handed an instruction whose behaviour at `b == 0` is
+                // *undefined* rather than trapping, which at `-O2` licenses
+                // deleting the very branch that was going to check.
                 //
-                // Emitting the guard here is possible and is not a lowering:
-                // it is two extra basic blocks per division, which breaks
-                // Decision 5's *"every MIR basic block becomes exactly one
-                // LLVM basic block"* and the MIR-dump-to-IR-dump diff Gate I
-                // and Gate J rest on. That is a decision for the note to take
-                // and §2.6's table does not take it. So this refuses and says
-                // which of the two halves is missing.
-                BinaryOp::Div | BinaryOp::Rem => {
-                    return Err(Unlowered::new(
-                        "integer `/` or `%`, whose divide-by-zero check nothing above this \
-                         crate emits — `IntOp`'s own note calls it \"a panic the caller has \
-                         already guarded\" and no caller does, and a bare `sdiv` is undefined \
-                         at zero rather than a trap",
-                    ));
-                }
+                // `science-mir`'s `division_check` is that caller. The guard is
+                // emitted where basic blocks are made, in front of the
+                // division, exactly as `bounds_check` is emitted in front of an
+                // index — so Decision 5's *"every MIR basic block becomes
+                // exactly one LLVM basic block"* survives, which is the reason
+                // this arm would not emit the guard itself.
+                //
+                // **Two failing inputs, not one.** `Int.min / -1` is immediate
+                // UB for `sdiv` and `srem` just as the zero is, and it is
+                // `#DE`/`SIGFPE` on x86-64; MIR guards it for the signed types
+                // and skips it for the unsigned ones, where no unrepresentable
+                // quotient exists.
+                BinaryOp::Div if signed => IntOp::SDiv,
+                BinaryOp::Div => IntOp::UDiv,
+                BinaryOp::Rem if signed => IntOp::SRem,
+                BinaryOp::Rem => IntOp::URem,
                 // The same shape: a shift by at least the operand's width is
                 // poison in LLVM, and the mask or the panic that would stop it
                 // is specified nowhere.
@@ -4687,6 +4777,15 @@ impl<'a> Lowerer<'a> {
             self.lower_foreign_call(ctx, def, args, destination, insts)?;
         } else if self.defs.get(def).is_builtin() && self.defs.get(def).name == "print" {
             self.lower_print(body, ctx, args, insts)?;
+        } else if self.defs.get(def).is_builtin()
+            && matches!(self.defs.get(def).name.as_str(), "read_file" | "write_file")
+            && self.decls.and_then(|d| d.signature(def)).is_some_and(|s| s.owner.is_none())
+        {
+            let symbol = match self.defs.get(def).name.as_str() {
+                "read_file" => "science_read_file",
+                _ => "science_write_file",
+            };
+            self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;
         } else if let Some(sig) = self.science.get(&def).cloned() {
             self.lower_science_call(ctx, &sig, args, destination, insts)?;
         } else if let Some(symbol) = self.prelude_method(def) {
@@ -5408,6 +5507,13 @@ impl<'a> Lowerer<'a> {
             // branch this already lowers. That is Decision 42's line, and it
             // is left where it is rather than guessed at.
             ("Array", "get", "science_array_get"),
+            // `get_mutably` and **not** `get_mut`, which is the prelude's
+            // decision and not this table's: `collections-and-chains.md` §5
+            // retires the abbreviation, and `indexing-and-array-literals.md`
+            // §1.4 Decision 5 writes the signature out in Science. The runtime
+            // twin is `science_array_get_mut`, whose name is C's and is not
+            // reached by a user.
+            ("Array", "get_mutably", "science_array_get_mut"),
         ];
         if !self.defs.get(def).is_builtin() {
             return None;

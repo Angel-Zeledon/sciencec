@@ -2,18 +2,18 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![f]))"
 ---
-Module `main` #356 @0..23
-  Fn `f` #357 @0..23
+Module `main` #359 @0..23
+  Fn `f` #360 @0..23
     params
-      Param `x` #358 @18..23
+      Param `x` #361 @18..23
         type: Path -> `Int` #17 @18..21
     body: Block @0..15
-      Let `x` #359 @0..3
-        value: Path -> `x` #358 @0..1
-      Let `y` #360 @4..7
+      Let `x` #362 @0..3
+        value: Path -> `x` #361 @0..1
+      Let `y` #363 @4..7
         value: Path -> <error> @4..5
-      Let `z` #361 @8..11
-        value: Path -> `x` #359 @8..9
-      tail: Path -> `x` #359 @12..13
+      Let `z` #364 @8..11
+        value: Path -> `x` #362 @8..9
+      tail: Path -> `x` #362 @12..13
 --- diagnostics ---
 SC0200 @4..5 cannot find `z` in this scope

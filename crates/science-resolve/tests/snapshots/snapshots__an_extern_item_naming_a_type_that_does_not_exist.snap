@@ -2,13 +2,13 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![foreign]))"
 ---
-Module `main` #356 @0..59
+Module `main` #359 @0..59
   Extern "C" unsafe @0..59
     Library "hdf5" @52..59
     items
-      ExternStatic `H5T_NATIVE_DOUBLE_g` #357 @0..23
+      ExternStatic `H5T_NATIVE_DOUBLE_g` #360 @0..23
         type: Path -> <error> @0..3
-      ExternFn `H5open` #358 @24..35
+      ExternFn `H5open` #361 @24..35
         ret: Path -> <error> @24..28
 --- diagnostics ---
 SC0200 @0..3 cannot find `Hid` in this scope
