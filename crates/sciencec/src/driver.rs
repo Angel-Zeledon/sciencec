@@ -222,6 +222,44 @@ impl Session {
             // the one way to report it that a user cannot act on.
             return Err(vec![science_codegen::diagnostics::no_entry_point(&display_path(path))]);
         };
+        // **A file with no entry point is refused here, as `SC0403`, and not by
+        // the backend as `SC0400`.**
+        //
+        // The decision. `build` asks `science-codegen` whether the crate has an
+        // entry point before it hands anything to a backend, and reports
+        // `SC0403` when it has none.
+        //
+        // The reason. The two refusals say opposite things about what the
+        // reader should do. §11 defines `SC0400` as *"a toolchain feature
+        // required to build this program is not compiled into this
+        // `sciencec`"*, and its whole obligation is to name *"how to obtain a
+        // build that has it"* — it tells the reader to go and install
+        // something. `SC0403` is the code §11 added for the other case, quoting
+        // the gap it fills: *"`script-mode.md` §4.2 rule 3 defines this
+        // situation as a library build and does not say what happens when
+        // somebody asks for a binary."* A file of declarations is not waiting
+        // on a package; it is not a program, and no version of this compiler
+        // will ever build it into one. `examples/20_extern.science` is the
+        // corpus's instance — `extern` blocks, a handle type and three wrapper
+        // functions, and deliberately no `main` — and it used to be told to
+        // upgrade its toolchain. `mono.rs` §7 already claimed this was
+        // happening (*"a file with no entry point is a library, and `sciencec
+        // build` already refuses it"*) and `SC0403` had no caller; this is the
+        // caller.
+        //
+        // The cost. `build` now runs the entry-point rule twice — once here and
+        // once inside `Mono::collect`'s root set — and a build that *does* have
+        // a `main` pays one extra scan of the body list for the check that says
+        // so. That is the same order as the double front-end run the block
+        // above already pays for, and a great deal cheaper.
+        if science_codegen::mono::entry_point(
+            &krate.defs,
+            lowered.bodies.iter().map(science_mir::mir::Body::def),
+        )
+        .is_none()
+        {
+            return Err(vec![science_codegen::diagnostics::no_entry_point(&display_path(path))]);
+        }
         let request = science_codegen::driver::BuildRequest::new(vec![display_path(path)]);
         // Decision 28 makes the source order of the `library` clauses the link
         // order, so the blocks are collected in source order and handed over as

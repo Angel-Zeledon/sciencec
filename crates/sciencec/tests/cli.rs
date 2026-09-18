@@ -1267,6 +1267,64 @@ fn a_build_without_the_backend_is_sc0400_and_says_what_turns_it_on() {
     assert_eq!(run.summary(), Some("1 error"), "stderr:\n{}", run.stderr);
 }
 
+/// **A file with no entry point is `SC0403`, not `SC0400`, and the difference
+/// is what the reader is told to do about it.**
+///
+/// `codegen-and-linking.md` §11 splits the two deliberately. `SC0400` is *"a
+/// toolchain feature required to build this program is not compiled into this
+/// `sciencec`"* and must name *"how to obtain a build that has it"* — it sends
+/// the reader to install something. `SC0403` is the row §11 added for the case
+/// where there is nothing to install: *"`script-mode.md` §4.2 rule 3 defines
+/// this situation as a library build and does not say what happens when
+/// somebody asks for a binary."*
+///
+/// Before this, the LLVM backend's root-set lookup produced *"this `sciencec`
+/// cannot build a program with no `main`"* under `SC0400`, whose note lists the
+/// stages this compiler implements — so a user handed a library was told their
+/// compiler was too old, and `SC0403` had no caller anywhere in the workspace
+/// even though `mono.rs` §7 asserted in prose that `build` already refused this.
+///
+/// No `#[cfg]`: the refusal is the driver's and comes before any backend, so
+/// the sentence is the same with and without `--features llvm`. That is half
+/// the point — the answer must not depend on which toolchain the reader has.
+#[test]
+fn a_build_of_a_file_with_no_entry_point_is_sc0403_and_calls_it_a_library() {
+    let file = scratch(
+        "build_library_only.science",
+        b"public def helper(x: Int) -> Int:\n    x + 1\n",
+    );
+    let run = sciencec(&["build", &file]);
+    run.failed()
+        .stderr_contains("SC0403")
+        .stderr_contains("has no entry point")
+        .stderr_contains("`sciencec check` is the command for one");
+    assert!(
+        !run.stderr.contains("SC0400"),
+        "a library was told to upgrade its toolchain:\n{}",
+        run.stderr
+    );
+    assert_eq!(run.summary(), Some("1 error"), "stderr:\n{}", run.stderr);
+}
+
+/// The corpus's own instance of the case above, by name.
+///
+/// `examples/20_extern.science` is `extern` blocks, a handle type and three
+/// hand-written wrappers, and `examples/README.md` calls the corpus *"input
+/// data for the lexer and parser test suites"* rather than a set of programs.
+/// It has no `main` and is not meant to acquire one: nothing in it is callable
+/// without OpenBLAS, HDF5 and cuDNN on the machine, and the file's own header
+/// says *"nothing in this file is safe to call"*. So the right outcome is a
+/// refusal that says *library*, and this pins it against the file rather than
+/// against a fixture, because the fixture cannot go stale and the corpus can.
+#[test]
+fn the_extern_example_is_refused_as_a_library_and_not_as_a_missing_feature() {
+    let run = sciencec(&["check", "examples/20_extern.science"]);
+    run.succeeded();
+    let run = sciencec(&["build", "examples/20_extern.science"]);
+    run.failed().stderr_contains("SC0403").stderr_contains("no entry point");
+    assert!(!run.stderr.contains("SC0400"), "{}", run.stderr);
+}
+
 /// With the backend, the same command produces a program that prints
 /// `hello, world` and exits 0. §10's stage 1 and its gate, through the command
 /// line a user actually types.

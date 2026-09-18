@@ -665,6 +665,52 @@ pub enum RootSet {
     EveryBody,
 }
 
+/// The entry point of one crate: a module-level `def main` with a body.
+///
+/// **The decision: the rule lives here, as a free function, and
+/// [`Mono::entry_point`] calls it.** It used to be a method and nothing but
+/// the walk could ask the question, so the one caller that needed the answer
+/// *before* the walk — `sciencec`'s `build`, deciding whether the file it was
+/// handed is a program at all — could not have it, and the refusal for a file
+/// with no `main` came out of the LLVM backend as `SC0400` instead of the
+/// `SC0403` §11 defines for exactly that case.
+///
+/// **The reason it is not copied into the driver instead.** §7's own note on
+/// `RootSet::EveryBody` is about what happens when a visibility rule exists in
+/// two places at once, and *"which function is the program"* is a rule of the
+/// same kind: a second copy in `sciencec` would be a second answer the day
+/// `script-mode.md`'s `tool` form becomes an entry point in its own right.
+/// One function, two callers.
+///
+/// **The lowest [`DefId`] when there are several**, which is the one
+/// command-line order picked, and that is the correct dependence rather than
+/// the hazard `normal.rs` §2 is about: *which file is the program* is
+/// genuinely a fact about the invocation, and `script-mode.md`'s driver rule
+/// is already *"the first module is the one the user named"*. Nothing derived
+/// from this reaches a symbol.
+///
+/// **The cost.** The caller supplies the set of defs that have bodies, because
+/// a `main` without one is a declaration and not a program. `script-mode.md`'s
+/// synthesised script `main` is in that set like any other, which is what
+/// makes a file with top-level statements a binary.
+pub fn entry_point(defs: &DefTable, bodies: impl IntoIterator<Item = DefId>) -> Option<DefId> {
+    let mut found: Option<DefId> = None;
+    for def in bodies {
+        let entry = defs.get(def);
+        if entry.kind != DefKind::Fn || entry.name != "main" {
+            continue;
+        }
+        let module = entry.parent.map(|parent| defs.get(parent).kind);
+        if module != Some(DefKind::Module) {
+            continue;
+        }
+        if found.is_none_or(|current| def.index() < current.index()) {
+            found = Some(def);
+        }
+    }
+    found
+}
+
 // --- the walk -------------------------------------------------------------
 
 /// The monomorphisation walk.
@@ -791,30 +837,10 @@ impl<'a> Mono<'a> {
         }
     }
 
-    /// The entry point: a module-level `def main`.
-    ///
-    /// **The lowest [`DefId`] when there are several**, which is the one
-    /// command-line order picked, and that is the correct dependence rather
-    /// than the hazard `normal.rs` §2 is about: *which file is the program* is
-    /// genuinely a fact about the invocation, and `script-mode.md`'s driver
-    /// rule is already *"the first module is the one the user named"*. Nothing
-    /// derived from this reaches a symbol.
+    /// The entry point: a module-level `def main`. The walk's view of the free
+    /// [`entry_point`], which carries the rule and the argument for it.
     pub fn entry_point(&self) -> Option<DefId> {
-        let mut found: Option<DefId> = None;
-        for def in self.bodies.keys().copied() {
-            let entry = self.defs.get(def);
-            if entry.kind != DefKind::Fn || entry.name != "main" {
-                continue;
-            }
-            let module = entry.parent.map(|parent| self.defs.get(parent).kind);
-            if module != Some(DefKind::Module) {
-                continue;
-            }
-            if found.is_none_or(|current| def.index() < current.index()) {
-                found = Some(def);
-            }
-        }
-        found
+        entry_point(self.defs, self.bodies.keys().copied())
     }
 
     // --- walking one body -------------------------------------------------
