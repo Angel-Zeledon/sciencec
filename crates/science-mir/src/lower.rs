@@ -461,6 +461,7 @@
 use std::collections::HashMap;
 
 use science_diagnostics::Span;
+use science_lexer::IntBase;
 use science_resolve::hir::{BinaryOp, DefId, DefKind, DefTable, Literal, SelfKind};
 use science_types::alias::Aliases;
 use science_types::items::Declarations;
@@ -1174,8 +1175,17 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 self.lower_short_circuit(dest, *op, *lhs, *rhs, block, span)
             }
             ExprKind::Binary { op, lhs, rhs } => {
+                let operand_ty = self.thir.ty(*lhs);
                 let (left, block) = self.operand(*lhs, block);
                 let (right, block) = self.operand(*rhs, block);
+                // §4.6's `/` and `%`, which are the only two operators in the
+                // language with an input they are not defined on.
+                let (left, right, block) = match op {
+                    BinaryOp::Div | BinaryOp::Rem => {
+                        self.division_check(left, right, operand_ty, block, span)
+                    }
+                    _ => (left, right, block),
+                };
                 self.assign(block, dest, Rvalue::Binary { op: *op, lhs: left, rhs: right }, span);
                 block
             }
@@ -2435,6 +2445,263 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         in_bounds
     }
 
+    /// §4.6's division guard, emitted as statements before the `/` or the `%`
+    /// that needs it.
+    ///
+    /// # The decision
+    ///
+    /// `a / b` keeps its [`Rvalue::Binary`], and the two tests that make the
+    /// instruction defined are emitted **here**, in MIR, as comparisons, a
+    /// [`TerminatorKind::If`] apiece, and a diverging `science_panic_bytes` on
+    /// the failing edge — exactly the shape [`Builder::bounds_check`] takes for
+    /// `xs[i]`, and for the same reason: a guard is basic blocks, an rvalue is
+    /// not a block, and MIR is where blocks are made.
+    ///
+    /// # The reason, which is `science_codegen::backend::IntOp`'s own sentence
+    ///
+    /// `IntOp::SDiv` says *"division by zero is a panic the caller has already
+    /// guarded, not a trap the backend inserts."* Until now no caller guarded
+    /// it, and `science-codegen-llvm` refused integer `/` and `%` outright with
+    /// a message naming this missing half. This is that half. It is the caller
+    /// the sentence was written for.
+    ///
+    /// **There are two failing inputs and this refuses both.** Division by zero
+    /// is the one everybody names. `Int.min / -1` is the other: its answer is
+    /// `2^63`, which is not an `Int`, and it is not merely undefined in the
+    /// abstract — `idiv` on x86-64 raises `#DE` and `sdiv` on AArch64 is
+    /// unspecified, so the program that reaches it dies with `SIGFPE` and no
+    /// message, or worse, silently. LLVM calls *both* of them immediate
+    /// undefined behaviour for `sdiv`/`srem`, which at `-O2` licenses deleting
+    /// whatever branch was about to test them — so a guard that covered only
+    /// the zero would still leave the second input free to delete code around
+    /// it. Checking one and not the other would be the more comfortable
+    /// half-measure and it is not a correct compiler. The cost of the second
+    /// test is paid only where it can fire: unsigned division has no overflow,
+    /// and the whole second test is skipped for it.
+    ///
+    /// **The tests are bit-pattern comparisons, not casts.** `b == 0`,
+    /// `b == -1` and `a == T.min` are each one [`BinaryOp::Eq`] against an
+    /// integer constant whose *bits* are written out at the operand's width —
+    /// all-ones for `-1`, the sign bit alone for the minimum. Equality does not
+    /// read signedness, so this needs no widening cast and no
+    /// signed-versus-unsigned comparison; the alternative, casting both sides
+    /// to `U64` the way [`Builder::bounds_check`] does, would be two more
+    /// statements for a question that is already answered at the natural width,
+    /// and `bounds_check` only pays them because *its* question is an ordering
+    /// and orderings do read signedness.
+    ///
+    /// **The numerator is tested last and only on the `-1` edge**, so the
+    /// common path through a division is one comparison and one branch, not
+    /// three. The two tests are chained as separate [`TerminatorKind::If`]s
+    /// rather than joined by an `and` for the reason §10 item 1 already gives
+    /// for `and`: it is blocks and edges either way, and this way the second
+    /// comparison is not evaluated when the first has already decided.
+    ///
+    /// # The cost
+    ///
+    /// **A branch per division, and no hoisting.** `n / 2` pays a test against
+    /// zero that a constant folder ought to delete at MIR level; nothing here
+    /// folds it, and this crate leaves it to LLVM, which does delete it when
+    /// the divisor is a literal because it can see the comparison's answer.
+    /// Where the divisor is a loop-invariant variable the test stays in the
+    /// loop, which is the same cost `bounds_check` records.
+    ///
+    /// **Four extra basic blocks per signed division**, two per unsigned. That
+    /// breaks the *"every MIR basic block becomes exactly one LLVM basic
+    /// block"* reading of the MIR-dump-to-IR-dump correspondence in the same
+    /// way `bounds_check` already breaks it — the correspondence survives, it
+    /// is just that one *expression* is now several blocks, which was already
+    /// true of `and`, `or` and `if`.
+    ///
+    /// **The messages name the check and not the numbers**, for the reason
+    /// [`Builder::bounds_check`]'s note gives in full: formatting the operands
+    /// means building a `String` on the path that is already failing.
+    ///
+    /// **A type this cannot name in the prelude is left unguarded** rather than
+    /// guessed at — a hand-built definition table with no prelude in it, which
+    /// is every test in this crate that does not go through the resolver. Those
+    /// never reach a backend. `Float` division is left alone on purpose: IEEE
+    /// 754 division by zero is an infinity, which is a value, and `frem`'s note
+    /// in `science-codegen-llvm` says the same of the remainder.
+    fn division_check(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        ty: Ty,
+        block: BlockId,
+        span: Span,
+    ) -> (Operand, Operand, BlockId) {
+        let ty = self.stripped(ty);
+        let Some((bits, signed)) = self.integer_width(ty) else { return (lhs, rhs, block) };
+        let Some(bool_ty) = self.context.decls.prelude().ty(self.context.types, "Bool") else {
+            return (lhs, rhs, block);
+        };
+
+        // Both operands into temporaries first. The guard reads each of them
+        // twice — once to test, once to divide — and an [`Operand`] handed in
+        // may be a `Move` out of a place, which is readable exactly once.
+        let numerator = self.temp(ty, span, block);
+        self.assign(block, Place::local(numerator), Rvalue::Use(lhs), span);
+        let divisor = self.temp(ty, span, block);
+        self.assign(block, Place::local(divisor), Rvalue::Use(rhs), span);
+
+        // `b != 0`.
+        let nonzero = self.temp(bool_ty, span, block);
+        self.assign(
+            block,
+            Place::local(nonzero),
+            Rvalue::Binary {
+                op: BinaryOp::Ne,
+                lhs: Operand::Copy(Place::local(divisor)),
+                rhs: Self::bits(0),
+            },
+            span,
+        );
+        let divides = self.new_block();
+        let by_zero = self.new_block();
+        self.terminate(
+            block,
+            TerminatorKind::If {
+                cond: Operand::Copy(Place::local(nonzero)),
+                then_block: divides,
+                else_block: by_zero,
+            },
+            span,
+        );
+        self.panic_with(by_zero, "divide by zero", span);
+
+        let mut block = divides;
+        if signed {
+            // `b == -1`, as all-ones at this width.
+            let all_ones = (1u128 << bits) - 1;
+            let minus_one = self.temp(bool_ty, span, block);
+            self.assign(
+                block,
+                Place::local(minus_one),
+                Rvalue::Binary {
+                    op: BinaryOp::Eq,
+                    lhs: Operand::Copy(Place::local(divisor)),
+                    rhs: Self::bits(all_ones),
+                },
+                span,
+            );
+            let maybe_overflow = self.new_block();
+            let ok = self.new_block();
+            self.terminate(
+                block,
+                TerminatorKind::If {
+                    cond: Operand::Copy(Place::local(minus_one)),
+                    then_block: maybe_overflow,
+                    else_block: ok,
+                },
+                span,
+            );
+
+            // `a == T.min`, as the sign bit alone. Reached only when the
+            // divisor is already known to be `-1`.
+            let least = self.temp(bool_ty, span, maybe_overflow);
+            self.assign(
+                maybe_overflow,
+                Place::local(least),
+                Rvalue::Binary {
+                    op: BinaryOp::Eq,
+                    lhs: Operand::Copy(Place::local(numerator)),
+                    rhs: Self::bits(1u128 << (bits - 1)),
+                },
+                span,
+            );
+            let overflows = self.new_block();
+            self.terminate(
+                maybe_overflow,
+                TerminatorKind::If {
+                    cond: Operand::Copy(Place::local(least)),
+                    then_block: overflows,
+                    else_block: ok,
+                },
+                span,
+            );
+            self.panic_with(overflows, "division overflows", span);
+            block = ok;
+        }
+
+        (
+            Operand::Copy(Place::local(numerator)),
+            Operand::Copy(Place::local(divisor)),
+            block,
+        )
+    }
+
+    /// An integer constant written as the bits it is, at whatever width the
+    /// other operand of the comparison has.
+    ///
+    /// **A [`Literal`] and not a [`Constant::Count`]**, although this number is
+    /// one the lowering computed rather than one the author wrote, which is
+    /// `Count`'s whole distinction. `Count` carries the second half of that
+    /// claim too — *"its width is the parameter's and never `Int`'s"*, a
+    /// `usize`, which `dump` prints as `0usize`. The constant here has the
+    /// width of the value it is compared against, which is an `I8` as readily
+    /// as an `I64`, so `usize` would be the wrong sentence in the dump and the
+    /// wrong one for a consumer that believed it. `science-codegen-llvm`
+    /// materialises a literal at the layout of the expression it sits in, which
+    /// is exactly the behaviour these bit patterns need.
+    fn bits(value: u128) -> Operand {
+        Operand::Const(Constant::Literal(Literal::Int {
+            value,
+            base: IntBase::Dec,
+            suffix: None,
+        }))
+    }
+
+    /// Terminates `block` with a diverging `science_panic_bytes(message)`.
+    ///
+    /// The destination is a fresh unit local and the target is `None`, which is
+    /// how [`Builder::bounds_check`] spells the same thing: the callee returns
+    /// `Never`, so there is no value and no successor, and a
+    /// [`TerminatorKind::Call`] has a destination whether or not there is
+    /// anything to put in it.
+    fn panic_with(&mut self, block: BlockId, message: &str, span: Span) {
+        let discard = Place::local(self.push_local(Ty::UNIT, LocalKind::Temp, span));
+        self.terminate(
+            block,
+            TerminatorKind::Call {
+                callee: Callee::Runtime(PANIC_BYTES),
+                args: vec![Operand::Const(Constant::Literal(Literal::Str(
+                    message.to_string(),
+                )))],
+                destination: discard,
+                target: None,
+            },
+            span,
+        );
+    }
+
+    /// The width in bits of an integer type, and whether it is signed.
+    ///
+    /// `None` for everything else — a `Float`, a record, a type this
+    /// [`Declarations`]' prelude has no name for — which is what leaves those
+    /// divisions unguarded. `Int` is `I64`: §2.1 says so, and
+    /// [`Builder::push_of`] already reads the two as one type.
+    fn integer_width(&mut self, ty: Ty) -> Option<(u32, bool)> {
+        const WIDTHS: &[(&str, u32, bool)] = &[
+            ("Int", 64, true),
+            ("I64", 64, true),
+            ("I32", 32, true),
+            ("I16", 16, true),
+            ("I8", 8, true),
+            ("U64", 64, false),
+            ("U32", 32, false),
+            ("U16", 16, false),
+            ("U8", 8, false),
+        ];
+        let ty = self.stripped(ty);
+        let prelude = self.context.decls.prelude();
+        let types = &*self.context.types;
+        WIDTHS
+            .iter()
+            .find(|(name, _, _)| prelude.is(types, ty, name))
+            .map(|(_, bits, signed)| (*bits, *signed))
+    }
+
     /// Whether a place is an `Array of T`, which is what [`Builder::bounds_check`]
     /// has an entry point for.
     fn is_array(&mut self, place: &Place) -> bool {
@@ -2645,7 +2912,15 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             direct(PUSH_U64)
         } else if is("U8") || is("U16") || is("U32") {
             Push::Value { symbol: PUSH_U64, widen: Some("U64") }
-        } else if is("F64") {
+        } else if is("F64") || is("Float") {
+            // **`Float` is a prelude name of its own, not a spelling of
+            // `F64`.** Decision 2 defaults a floating-point literal to `F64`
+            // and the prelude also carries `Float` as the name a user writes,
+            // exactly as it carries `Int` beside `I64` — and the `Int` row
+            // above has always named both while this one named one. So
+            // `let x: Float be 2.5` checked, lowered, and was refused at the
+            // interpolation as a hole *"of type `Float`"*, which is a sentence
+            // about a type the language does have.
             direct(PUSH_F64)
         } else if is("F32") {
             direct(PUSH_F32)

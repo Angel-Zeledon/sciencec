@@ -511,9 +511,16 @@ fn the_boundary_is_where_it_says_it_is() {
         // construct. The callee hole is still there behind it and is still
         // this list's reason for the row.
         ("for", "let mutable t be 0\nfor i in 0..3:\n    t be t + i\n", "`Range of I64`"),
-        // Refused rather than emitted: nothing above emits the zero check that
-        // `IntOp`'s own note says the caller has already made.
-        ("div", "let a be 6\nlet b be a / 2\nprint(\"x\")\n", "divide-by-zero"),
+        // **`div` was a row here and is not one any more.** It read *"refused
+        // rather than emitted: nothing above emits the zero check that
+        // `IntOp`'s own note says the caller has already made"*, and
+        // `science-mir`'s `division_check` is now the caller that makes it — in
+        // front of the division, where basic blocks are made, which is why the
+        // guard could never have been emitted from this crate without breaking
+        // Decision 5. `tests/past_stage_three.rs` runs the three programs that
+        // say so: a division, a division by a computed zero, and `Int.min / -1`.
+        // The row is deleted rather than reworded because this list is *"what is
+        // past the boundary"* and division no longer is.
         ("shift", "let a be 6\nlet b be a << 2\nprint(\"x\")\n", "shift"),
         // A value that owns something Decision 12's glue would have to
         // release. **Three of the four cases are lowered now**: a `br` when
@@ -598,7 +605,8 @@ fn nothing_past_the_boundary_produces_an_executable() {
     for source in [
         "let mutable t be 0\nfor i in 0..3:\n    t be t + i\n",
         "let t be (1, 2)\nprint(\"x\")\n",
-        "let a be 6\nlet b be a / 2\nprint(\"x\")\n",
+        // Division left this list with the row above it: it builds, and
+        // `tests/past_stage_three.rs` asserts that it also *runs*.
     ] {
         let dir = scratch("stage23", "refused");
         let output = executable(&dir, "refused");

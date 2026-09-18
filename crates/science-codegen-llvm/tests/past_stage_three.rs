@@ -780,17 +780,50 @@ fn what_is_refused_names_itself() {
     }
 }
 
-/// Integer `/` and `%` are still refused, and still for the reason that is not
-/// effort.
+/// Integer `/` and `%` build now, and the guard that let them is the whole of
+/// why.
 ///
-/// Carried here because this file moved the boundary and a reader of it will
-/// ask whether division moved too. It did not: `IntOp::SDiv`'s own note calls
-/// division by zero *"a panic the caller has already guarded"* and no caller
-/// guards it, so a bare `sdiv` is undefined at zero rather than a trap.
+/// **This test asserted the refusal and its own sentence is what changed.** It
+/// read *"still refused, and still for the reason that is not effort … no
+/// caller guards it, so a bare `sdiv` is undefined at zero rather than a
+/// trap"*. `IntOp::SDiv`'s note — *"division by zero is a panic the caller has
+/// already guarded, not a trap the backend inserts"* — is unchanged and is now
+/// satisfied: `science-mir`'s `division_check` is the caller, emitting the
+/// comparison and the diverging `science_panic_bytes` in front of the division,
+/// where basic blocks are made. Decision 5 is why it is emitted there and not
+/// here.
+///
+/// **Both failing inputs are exercised, because there are two.** `Int.min / -1`
+/// is immediate UB for `sdiv` and `srem` exactly as the zero is, and it is
+/// `#DE`/`SIGFPE` on x86-64 — a guard that caught only the zero would leave a
+/// program that traps at `-O0` and has its branch deleted at `-O2`.
+///
+/// **The divisor is computed and not written.** `6 / 0` is a constant the
+/// optimiser folds, so a fixture that wrote the zero would prove the guard fires
+/// at compile time and nothing about the emitted branch. `a - a` reaches `-O2`
+/// as a value LLVM has to test.
 #[test]
 fn integer_division_is_still_refused_for_the_reason_that_is_not_effort() {
-    let text = refusal("refuse-div", "let a be 6\nlet b be a / 2\nprint(\"x\")\n");
-    assert!(text.contains("sdiv") || text.contains("divide-by-zero"), "{text}");
+    assert_eq!(bytes("div-ok", "print(f\"{7 / 2} {7 % 2} {-9 / 2}\")\n"), "3 1 -4\n");
+
+    let zero = output("div-zero", "let a be 7\nlet b be a - a\nprint(f\"{a / b}\")\n");
+    assert_ne!(zero.status, Some(0), "a division by zero exited cleanly");
+    assert!(
+        zero.stderr.contains("divide by zero"),
+        "the panic does not say which guard fired: {}",
+        zero.stderr
+    );
+
+    let overflow = output(
+        "div-overflow",
+        "let a be -9223372036854775807 - 1\nlet b be 0 - 1\nprint(f\"{a / b}\")\n",
+    );
+    assert_ne!(overflow.status, Some(0), "`Int.min / -1` exited cleanly");
+    assert!(
+        overflow.stderr.contains("overflow"),
+        "the panic does not say which guard fired: {}",
+        overflow.stderr
+    );
 }
 
 // --- a tuple --------------------------------------------------------------

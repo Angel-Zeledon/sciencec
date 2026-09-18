@@ -6,6 +6,13 @@ license.workspace = true
 
 [dependencies]
 science-diagnostics.workspace = true
+# For `IntBase`, which `Literal::Int` needs a value of and which
+# `science_resolve::hir` does not re-export along with `Literal` itself. Every
+# crate this one already depends on depends on the lexer, so the edge adds no
+# compilation unit to the graph; it is here so that `Builder::bits`'s constants
+# can be written as literals rather than as `Constant::Count`, whose width is a
+# `usize` and whose dump says so.
+science-lexer.workspace = true
 science-resolve.workspace = true
 science-types.workspace = true
 
