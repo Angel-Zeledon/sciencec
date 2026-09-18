@@ -7,12 +7,22 @@
 //! rather than lowered from source — and asserts that it exits 1 and says
 //! something on stderr beginning with §2.3's `error: `.
 //!
-//! **Why the second one is not a Science program, and it is not a shortcut.**
-//! §2.3's fourth row needs a non-null `(any Error)?`. Producing one from source
-//! means a concrete error type, a `BoxThenWiden` coercion, a heap box and a
-//! vtable with `Error.message` in it, and this backend has none of the four.
-//! So the row would be untestable until stage 4, which is exactly the state
-//! that let it sit unreachable and aborting.
+//! **Why the second one is not a Science program, and what has changed.** It
+//! was written when §2.3's fourth row needed *"a concrete error type, a
+//! `BoxThenWiden` coercion, a heap box and a vtable with `Error.message` in
+//! it, and this backend has none of the four"*. It now has all four:
+//! `tests/methods.rs`'s `a_boxed_error_is_reached_through_its_vtable_and_read_back`
+//! is that row reached from source, and it asserts the same status this file
+//! does plus the number the boxed value gave back.
+//!
+//! **This file is kept anyway, and the reason is the one its last paragraph
+//! already gives.** A test that builds its own `_S4main` *"can pass while the
+//! lowering that would produce the same shape is wrong"* — and the converse
+//! is what makes it worth keeping now that the lowering exists: this one
+//! holds `lower_c_main` to §2.3 against a value nothing in the front end
+//! chose, so a change to boxing cannot quietly move what `main` does with a
+//! non-null error. The two tests fail for different reasons, which is the
+//! whole of why there are two.
 //!
 //! What this file does instead is invent the **value** and keep everything else
 //! real: the `main` under test is the one [`Lowerer::lower_c_main`] emits, the
@@ -27,8 +37,9 @@
 //! **The cost.** A test that builds its own `_S4main` can pass while the
 //! lowering that would produce the same shape is wrong — so this file asserts
 //! nothing about how an error gets into that slot, only about what `main` does
-//! once it is there. The day a Science program can return an error, the second
-//! test should become the first's shape and this paragraph should go.
+//! once it is there. That day has come and the paragraph above is what it
+//! changed: the second test stayed, and the program that produces the shape
+//! for real lives in `tests/methods.rs`.
 //!
 //! §10's discipline is what both halves are held to: *"no stage is finished
 //! until an execution test asserts its output and exit code."* Each assertion
@@ -107,8 +118,8 @@ fn a_script_body_that_returns_null_exits_zero_and_says_nothing() {
 #[test]
 fn a_script_body_that_returns_an_error_exits_one_and_says_something() {
     // A crate to borrow a `DefTable` and a `Types` from. The `Lowerer` needs
-    // both to exist; this test's `_S4main` is built from neither, because there
-    // is no Science source that produces it.
+    // both to exist; this test's `_S4main` is built from neither, because the
+    // point of it is a value the front end did not choose.
     let lowered = lower("return null\n");
     let triple = Triple::host().expect("a supported host");
     let mut lowerer = Lowerer::new(triple, &lowered.krate.defs, &lowered.types);

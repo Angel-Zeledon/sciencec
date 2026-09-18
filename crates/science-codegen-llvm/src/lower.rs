@@ -222,7 +222,7 @@ use science_codegen::abi::{
 use science_codegen::backend::{
     BlockId, Callee, CmpOp, Inst, IntOp, FloatOp, LocalId, Operand, Terminator, ValueId,
 };
-use science_codegen::descriptor::{StringLiteral, Vtable};
+use science_codegen::descriptor::{DescriptorTable, StringLiteral, TypeInfo, Vtable};
 use science_codegen::diagnostics::construct_not_lowered;
 use science_codegen::layout::{
     CgTy, Field as CgField, IntTy, Layout, PtrKind, Repr, Scalar, Triple,
@@ -443,6 +443,9 @@ pub struct Lowered {
     /// Decision 13's vtables, one per `(interface, concrete type)` pair any
     /// coercion in this module needed, in the order they were interned.
     pub vtables: Vec<Vtable>,
+    /// Decision 20's `ScienceTypeInfo` descriptors, one per type a box in this
+    /// module allocates for, in the order they were interned.
+    pub descriptors: Vec<(String, TypeInfo)>,
     /// Declarations for every runtime entry point and foreign symbol the
     /// module calls.
     pub declarations: Vec<AbiSignature>,
@@ -499,6 +502,10 @@ pub struct Lowerer<'a> {
     /// uses, and for the same reason: two coercion sites that need one table
     /// must land on one global.
     vtables: Vec<Vtable>,
+    /// Decision 20's descriptors, interned by monomorphisation key so that two
+    /// boxes of one type name one global — that decision's *"never constructed
+    /// twice"*, enforced by the table rather than by this crate remembering.
+    descriptors: DescriptorTable,
     declarations: Vec<AbiSignature>,
     declared_foreign: Vec<ForeignSymbol>,
     /// The definition of the entry point, once [`Lowerer::lower_crate`] has
@@ -593,6 +600,7 @@ impl<'a> Lowerer<'a> {
             libraries_used: Vec::new(),
             literals: Vec::new(),
             vtables: Vec::new(),
+            descriptors: DescriptorTable::new(),
             declarations: Vec::new(),
             declared_foreign: Vec::new(),
             entry: None,
@@ -834,6 +842,52 @@ impl<'a> Lowerer<'a> {
             }
         }
         out
+    }
+
+    /// Intern Decision 20's descriptor for a type a box allocates for,
+    /// returning the global every call site must name.
+    ///
+    /// **`drop_fn` is `None`, and that is a limit rather than an answer.** The
+    /// field tells `science_box_free` what to run over the value before
+    /// releasing the allocation, and this backend emits no glue — Decision
+    /// 12's glue is an emitted `internal` function per monomorphised type and
+    /// `TerminatorKind::Drop` already refuses every type that would need one.
+    /// So `None` is true of every box this backend can build today: the only
+    /// types that reach here own nothing, because a type that owns something
+    /// cannot be dropped and therefore cannot be a local this coercion reads
+    /// from.
+    ///
+    /// **What it would become.** When glue lands, this is the one line that
+    /// changes, and the `Option` is already the shape the runtime reads: a
+    /// `None` lets it skip the destructor loop entirely, which
+    /// `science_codegen::descriptor::TypeInfo` calls out as the performance
+    /// reason the field is not a do-nothing function.
+    fn intern_descriptor(&mut self, concrete: DefId, source: Ty) -> Result<String, Unlowered> {
+        let name = self.defs.get(concrete).name.clone();
+        if self.drop_runs_something(source, 0)? {
+            return Err(Unlowered::new(format!(
+                "a `{name}` boxed into an interface object, which owns something a box would \
+                 have to release: Decision 12's glue is an emitted function per monomorphised \
+                 type, this backend emits none, and a descriptor claiming there is nothing to \
+                 drop would leak the value every time the box is freed"
+            )));
+        }
+        let cg = self.record_or_choice_ty(concrete)?;
+        let info = science_codegen::descriptor::type_info(self.target, &cg, None);
+        Ok(self.descriptors.intern(&MonoKey::plain(&[name.as_str()]), info))
+    }
+
+    /// The [`CgTy`] of a record or choice definition, for a descriptor.
+    fn record_or_choice_ty(&self, def: DefId) -> Result<CgTy, Unlowered> {
+        match self.defs.get(def).kind {
+            DefKind::Record => self.record_ty(def, 0),
+            DefKind::Choice => self.choice_ty(def, 0),
+            _ => Err(Unlowered::new(format!(
+                "a box of `{}`, which is neither a record nor a `choice`: a descriptor needs a \
+                 size and an alignment, and this crate lays out neither for it",
+                self.defs.get(def).name
+            ))),
+        }
     }
 
     /// Intern the vtable for `(interface, concrete)`, returning the global
@@ -1695,6 +1749,10 @@ impl<'a> Lowerer<'a> {
         Lowered {
             literals: std::mem::take(&mut self.literals),
             vtables: std::mem::take(&mut self.vtables),
+            descriptors: std::mem::take(&mut self.descriptors)
+                .type_infos()
+                .map(|(symbol, info)| (symbol.clone(), info.clone()))
+                .collect(),
             declarations: std::mem::take(&mut self.declarations),
             definitions,
             libraries,
@@ -2388,17 +2446,23 @@ impl<'a> Lowerer<'a> {
                     // pointer is two words. That refusal is right for every
                     // other reader and this is the one place that has to step
                     // around it rather than through it.
-                    let Some((mir::Projection::Deref { .. }, head)) =
-                        place.projection.split_last()
-                    else {
-                        return Err(Unlowered::new(
-                            "a borrow producing an interface object out of a place that is not a \
-                             reborrow: `any I` is two words and the only thing that already holds \
-                             them is another reference to the same object",
-                        ));
+                    // A reborrow — `borrowed (*_1)` — reads the pair `_1`
+                    // holds, so the `Deref` comes off rather than being
+                    // followed; `place_address` cannot follow it at all,
+                    // because its `Deref` arm refuses a base that is not a
+                    // scalar pointer and a fat pointer is two words. A borrow
+                    // of an owned `any I` local has no `Deref` to remove and
+                    // the pair is simply where the place says it is. Both are
+                    // the same sentence — *the value of a reference to an
+                    // interface object is the pair itself* — and the only
+                    // difference is whether one indirection has already been
+                    // written down.
+                    let source = match place.projection.split_last() {
+                        Some((mir::Projection::Deref { .. }, head)) => {
+                            mir::Place { local: place.local, projection: head.to_vec() }
+                        }
+                        _ => place.clone(),
                     };
-                    let source =
-                        mir::Place { local: place.local, projection: head.to_vec() };
                     let (address, _) = self.place_address(ctx, &source, insts)?;
                     let value = ctx.value();
                     insts.push(ExtInst::LoadAt {
@@ -2690,11 +2754,9 @@ impl<'a> Lowerer<'a> {
             Coercion::Widen => {
                 self.lower_widen(ctx, Widened::Operand(operand), dest, layout, insts)
             }
-            Coercion::Box | Coercion::BoxThenWiden => Err(Unlowered::new(
-                "a concrete value boxed into an interface object, which allocates: the vtable \
-                 half is emitted now and the heap half is not, so `Coercion::Unsize` — a borrow \
-                 paired with the same table — is what this backend builds today",
-            )),
+            Coercion::Box | Coercion::BoxThenWiden => {
+                self.lower_box(body, ctx, operand, dest, ty, insts)
+            }
             Coercion::Unsize | Coercion::UnsizeInBox => {
                 self.lower_unsize(body, ctx, operand, dest, ty, insts)
             }
@@ -2759,6 +2821,156 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// Decision 14's boxing: a concrete value moved to the heap and paired
+    /// with a vtable.
+    ///
+    /// **The decision. One `science_box_new`, and the fat pointer is built
+    /// from what it returns.** The runtime entry point takes a descriptor and
+    /// a pointer to the value, allocates `size` bytes at `align`, and copies
+    /// the value in; the allocation's address is the data word and the table
+    /// is the vtable word, exactly as [`Lowerer::lower_unsize`] writes them.
+    /// The two coercions differ in where the data word comes from and in
+    /// nothing else, which is why they share everything below the allocation.
+    ///
+    /// **The value needs an address and may not have one.** `science_box_new`
+    /// copies *from memory*, so an operand that is a constant — no place, no
+    /// slot — is materialised into a temporary first and the temporary's
+    /// address is what is passed. An operand that is already a place is read
+    /// where it is: MIR has moved it, so nothing else will read it again.
+    ///
+    /// **What it does not do: free anything.** The box outlives this
+    /// statement by construction — it is the value the destination holds —
+    /// and releasing it is `TerminatorKind::Drop`'s, which refuses an
+    /// interface object today because the drop goes through a vtable slot
+    /// this backend does not yet emit. So a boxed value is allocated and
+    /// never freed, and the shape of that leak is bounded by what
+    /// [`Lowerer::intern_descriptor`] admits: a type that owns nothing, whose
+    /// box is `size` bytes of plain data. It is a leak and it is named as one.
+    fn lower_box(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        operand: &mir::Operand,
+        dest: LocalId,
+        ty: Ty,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let Some(interface) = self.object_interface(ty) else {
+            return Err(Unlowered::new(format!(
+                "a box into `{}`, which is not an interface object",
+                self.types.render(self.defs, ty)
+            )));
+        };
+        let Some(source) = self.operand_ty(body, operand) else {
+            return Err(Unlowered::new(
+                "a box of an operand with no type to read a size from: the descriptor is what \
+                 says how many bytes to allocate and a constant carries none",
+            ));
+        };
+        let Some(concrete) = self.concrete_head(source) else {
+            return Err(Unlowered::new(format!(
+                "a box of `{}`, whose concrete type this crate cannot name",
+                self.types.render(self.defs, source)
+            )));
+        };
+        let vtable = self.intern_vtable(interface, concrete)?;
+        let descriptor = self.intern_descriptor(concrete, source)?;
+        let value_layout = self.layout_of_ty(source)?;
+
+        // The address the runtime copies from. A place is read where it is; a
+        // constant has no address until this makes one.
+        let value_address = match operand.place() {
+            Some(place) => {
+                let (address, _) = self.place_address(ctx, place, insts)?;
+                address
+            }
+            None => {
+                let slot = self.temp(ctx, value_layout.clone());
+                let value = self.typed_operand(ctx, operand, &value_layout, insts)?;
+                insts.push(ExtInst::Above(Inst::Store { local: slot, value }));
+                let address = ctx.value();
+                insts.push(ExtInst::LocalAddr { dest: address, local: slot });
+                address
+            }
+        };
+
+        let box_new = self.declare("science_box_new")?;
+        let boxed = ctx.value();
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: Some(boxed),
+            callee: Callee::Runtime("science_box_new"),
+            args: vec![
+                Operand::GlobalAddr(descriptor),
+                Operand::Value(value_address),
+            ],
+            ret: box_new.ret.clone(),
+            sret_slot: None,
+        }));
+
+        self.store_fat_pointer(ctx, dest, Operand::Value(boxed), &vtable, insts)
+    }
+
+    /// The two stores every interface object is built with: the data word,
+    /// then the table.
+    ///
+    /// Shared by [`Lowerer::lower_unsize`] and [`Lowerer::lower_box`] because
+    /// the pair is the same pair — `science_codegen::descriptor::Vtable`'s
+    /// slot order is meaningless if one of the two writes it at a different
+    /// offset than the other reads it from, and one function is how they
+    /// cannot.
+    fn store_fat_pointer(
+        &mut self,
+        ctx: &mut BodyCtx,
+        dest: LocalId,
+        data: Operand,
+        vtable: &Vtable,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let fat = layout_of(self.target, &CgTy::Interface);
+        let Repr::Aggregate { fields } = &fat.repr else {
+            return Err(Unlowered::new(
+                "an interface object whose layout is not the two-word aggregate `CgTy::Interface` \
+                 lays out: `science-codegen`'s `layout` and this lowering disagree about \
+                 Decision 13's representation",
+            ));
+        };
+        let [data_place, table_place] = fields.as_slice() else {
+            return Err(Unlowered::new(format!(
+                "an interface object with {} word(s) rather than two",
+                fields.len()
+            )));
+        };
+        let (data_place, table_place) = (data_place.clone(), table_place.clone());
+
+        let base = ctx.value();
+        insts.push(ExtInst::LocalAddr { dest: base, local: dest });
+
+        let data_address = ctx.value();
+        insts.push(ExtInst::FieldAddr {
+            dest: data_address,
+            base: Operand::Value(base),
+            offset: data_place.offset,
+        });
+        insts.push(ExtInst::StoreAt {
+            address: Operand::Value(data_address),
+            layout: data_place.layout.clone(),
+            value: data,
+        });
+
+        let table_address = ctx.value();
+        insts.push(ExtInst::FieldAddr {
+            dest: table_address,
+            base: Operand::Value(base),
+            offset: table_place.offset,
+        });
+        insts.push(ExtInst::StoreAt {
+            address: Operand::Value(table_address),
+            layout: table_place.layout.clone(),
+            value: Operand::GlobalAddr(vtable.symbol.clone()),
+        });
+        Ok(())
+    }
+
     /// Decision 13's unsizing: an existing pointer paired with a vtable.
     ///
     /// **The decision. `{ data, vtable }` is written at the destination's
@@ -2814,57 +3026,11 @@ impl<'a> Lowerer<'a> {
             )));
         };
         let vtable = self.intern_vtable(interface, concrete)?;
-
-        // The fat pointer's own layout, taken from `CgTy::Interface` rather
-        // than off the destination: the destination may be the niched `(any
-        // I)?`, whose payload is this and whose `Repr` is not an aggregate, and
-        // both spellings write the same two words at the same two offsets.
-        let fat = layout_of(self.target, &CgTy::Interface);
-        let Repr::Aggregate { fields } = &fat.repr else {
-            return Err(Unlowered::new(
-                "an interface object whose layout is not the two-word aggregate `CgTy::Interface` \
-                 lays out: `science-codegen`'s `layout` and this lowering disagree about \
-                 Decision 13's representation",
-            ));
-        };
-        let (data_place, vtable_place) = match fields.as_slice() {
-            [data, table] => (data.clone(), table.clone()),
-            _ => {
-                return Err(Unlowered::new(format!(
-                    "an interface object with {} word(s) rather than two",
-                    fields.len()
-                )));
-            }
-        };
-
-        let base = ctx.value();
-        insts.push(ExtInst::LocalAddr { dest: base, local: dest });
-
-        let data = self.typed_operand(ctx, operand, &data_place.layout, insts)?;
-        let data_address = ctx.value();
-        insts.push(ExtInst::FieldAddr {
-            dest: data_address,
-            base: Operand::Value(base),
-            offset: data_place.offset,
-        });
-        insts.push(ExtInst::StoreAt {
-            address: Operand::Value(data_address),
-            layout: data_place.layout.clone(),
-            value: data,
-        });
-
-        let table_address = ctx.value();
-        insts.push(ExtInst::FieldAddr {
-            dest: table_address,
-            base: Operand::Value(base),
-            offset: vtable_place.offset,
-        });
-        insts.push(ExtInst::StoreAt {
-            address: Operand::Value(table_address),
-            layout: vtable_place.layout.clone(),
-            value: Operand::GlobalAddr(vtable.symbol),
-        });
-        Ok(())
+        // The data word is the operand itself, materialised at the pointer
+        // layout the pair's first field has.
+        let pointer = layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow));
+        let data = self.typed_operand(ctx, operand, &pointer, insts)?;
+        self.store_fat_pointer(ctx, dest, data, &vtable, insts)
     }
 
     /// Decision 6's widening, with the payload's value left open.

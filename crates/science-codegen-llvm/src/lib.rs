@@ -1035,6 +1035,9 @@ pub fn emit_and_link(
         // able to name the vtable global, so it has to exist before they are
         // emitted. There is exactly one window that satisfies both and this is
         // it.
+        for (symbol, info) in &lowered.descriptors {
+            backend.define_type_info(symbol, info)?;
+        }
         for vtable in &lowered.vtables {
             backend.define_vtable(vtable)?;
         }

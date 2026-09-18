@@ -601,6 +601,55 @@ def main():
     assert_eq!(prints("vtable_slots", source), "7\n9\n");
 }
 
+/// Decision 14's box, run: a concrete value moved to the heap, reached again
+/// through the vtable, and read back.
+///
+/// **`409` is the whole assertion and it is about the allocation.**
+/// `science_box_new` copies `info.size` bytes from the value's address into a
+/// fresh allocation, so a descriptor with the wrong size copies the wrong
+/// number of bytes and a data word built from the wrong pointer reads
+/// whatever the heap held. Either way the number that comes back out through
+/// `message` is not the number that went in — and the failing edge of §2.3
+/// below it would still be taken, which is why the *number* is asserted and
+/// not just the exit status.
+///
+/// The program returns the error rather than binding it to a local that goes
+/// out of scope, because dropping an interface object goes through a vtable
+/// slot this backend does not emit; `lower_box`'s own note is the account of
+/// what that costs.
+#[test]
+fn a_boxed_error_is_reached_through_its_vtable_and_read_back() {
+    let source = "\
+type Boom:
+    code: I64
+
+Boom implements Error:
+    def message(self) -> String:
+        f\"boom {self.code}\"
+
+def fail() -> Error?:
+    Boom(code: 409)
+
+def report(err: borrowed any Error) -> String:
+    err.message()
+
+def main() -> Error?:
+    let err be fail()
+    if err?:
+        print(report(err))
+    err
+";
+    let dir = scratch("methods", "boxed");
+    require_runtime();
+    let built = lower(source).build_at(&executable(&dir, "boxed"), OptLevel::O2);
+    let ran = run(&built);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(ran.stdout, "boom 409\n", "stderr: {}", ran.stderr);
+    // §2.3's fourth row, reached from a Science program rather than from a
+    // hand-written `_S4main`: see `tests/exit_code.rs`.
+    assert_eq!(ran.status, Some(1), "stderr: {}", ran.stderr);
+}
+
 /// The vtable is a `private unnamed_addr`-free constant array of pointers, and
 /// the dispatch loads out of it rather than calling a symbol.
 ///
