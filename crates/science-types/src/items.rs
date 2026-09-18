@@ -236,6 +236,17 @@ const WANTED: &[&str] = &[
     // the literal at `Ty::ERROR` — the same admission every other judgement in
     // `check` makes through `Prelude::is_available`, for the same reason.
     "Array",
+    // `Range`, which `check`'s `range_expr` builds, and it is here for
+    // `Array`'s reason exactly: `a..b` has to be *named* at a type, not merely
+    // recognised at one. `builtins.rs` declares `Range of T implements
+    // Iterate: type Item is T`, so this id is what makes `for i in 0..n:` bind
+    // `i` through the same `iterate_item` reading every other `for` goes
+    // through, instead of at `Ty::ERROR`.
+    //
+    // Recognising a user's own `Range` as the prelude's would be the worse
+    // half of the same mistake `Iterate` is on this list to avoid, and holding
+    // the id answers both questions with one lookup.
+    "Range",
 ];
 
 impl Prelude {

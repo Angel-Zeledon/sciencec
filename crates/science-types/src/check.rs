@@ -250,6 +250,17 @@
 //!   answers `Item` with `Char`, so `for c in text.chars()` binds `c` at
 //!   `Char`. `BodyChecker::iterate_item` is the reading.
 //!
+//!   **`for i in 0..n:` goes through the same reading now.** The prelude
+//!   declares `Range of T implements Iterate: type Item is T` — AMENDMENT 14 of
+//!   `collections-and-chains.md`, whose whole argument is that this is *"what
+//!   makes `for i in 0..n:` the same construct as everything else rather than a
+//!   special case in the parser"* — and `BodyChecker::range_expr` gives the
+//!   expression its type. Nothing in `for_expr` knows about ranges, which is
+//!   the point: the counting loop was the last construct in the language whose
+//!   binding was [`Ty::ERROR`] *with no diagnostic anywhere*, and it stopped
+//!   being one by the subject gaining a type rather than by `for` gaining an
+//!   arm.
+//!
 //!   **What does not close is `for x in xs` over an `Array` or a `Map`**, and
 //!   that is a language decision rather than a transcription: whether
 //!   `Array of T`'s `Item` is `T` or `borrowed T` decides whether every `for`
@@ -1499,16 +1510,7 @@ impl<'a> BodyChecker<'a> {
                 Typed { id, ty: InferTy::Known(ty) }
             }
             hir::ExprKind::Range { start, end, inclusive } => {
-                let start_typed = self.synth(start);
-                let end_ty = self.known_or_error(start_typed.ty);
-                let end = self.check(end, end_ty, Site::Elsewhere);
-                // §6: there is no `Range` type in the prelude to give this.
-                let id = self.body.push_expr(
-                    ExprKind::Range { start: start_typed.id, end, inclusive: *inclusive },
-                    Ty::ERROR,
-                    span,
-                );
-                Typed { id, ty: InferTy::Known(Ty::ERROR) }
+                self.range_expr(start, end, *inclusive, span)
             }
             hir::ExprKind::Closure { param, body } => self.closure(*param, body, span, None),
             hir::ExprKind::Each(res) => match res {
@@ -3914,6 +3916,94 @@ impl<'a> BodyChecker<'a> {
         }
     }
 
+    /// `a..b` and `a..=b`, at `Range of T`.
+    ///
+    /// **Decision. A range is a `Range of T` where `T` is the unification of
+    /// its two ends, and a range whose ends disagree is
+    /// [`codes::MISMATCHED_TYPES`] at the end that broke it.** Before this the
+    /// expression was typed [`Ty::ERROR`] with the comment *"§6: there is no
+    /// `Range` type in the prelude to give this"*, and that had two costs, of
+    /// which only the first was ever visible. `for i in 0..n:` bound `i` at
+    /// [`Ty::ERROR`], so the loop variable of the most-written loop in the
+    /// language was the one binding in a checked program that no rule could
+    /// read — `mutability.rs` pins the consequence. And everywhere *else* a
+    /// range can be written — a `let`, an argument, a return — `ty`'s §5
+    /// absorption made it agree with whatever it met, so `def f(n: Int)`
+    /// called as `f(0..3)` type-checked.
+    ///
+    /// **Both ends are synthesised and then unified, rather than the end being
+    /// checked against the start.** The old code did the latter, and it is
+    /// wrong in the direction the corpus writes: `0..width` starts at an
+    /// integer literal, whose type is a variable until §4's writeback, so
+    /// checking `width` against it pushed an unresolved hole inward. Unifying
+    /// lets the *concrete* end fix the class whichever side it is on, which is
+    /// [`BodyChecker::unify_element`]'s whole job one construct over.
+    ///
+    /// **A range of literals defaults here rather than at
+    /// [`BodyChecker::finish`]**, for `array_lit`'s reason and by the same
+    /// three lines: `infer`'s §2 has no `Range of ?0` to intern, so `T` has to
+    /// be a [`Ty`] now. `0..5` is therefore a `Range of I64`, which is
+    /// Decision 2's default and not a decision this function takes.
+    ///
+    /// **What it does not do is bound `T`.** `"a".."b"` types at
+    /// `Range of String` and is refused by nothing, because the interface that
+    /// would refuse it — a `Step` no note writes — does not exist. The honest
+    /// statement is in `builtins.rs` beside the declaration; what is closed
+    /// here is the disagreement between the ends, which is the mistake an
+    /// author actually makes.
+    fn range_expr(
+        &mut self,
+        start: &hir::Expr,
+        end: &hir::Expr,
+        inclusive: bool,
+        span: Span,
+    ) -> Typed {
+        let start_typed = self.synth(start);
+        let end_typed = self.synth(end);
+        let element = match self.unify_element(start_typed.ty, end_typed.ty, end.span) {
+            Some(joined) => joined,
+            None => {
+                let expected = self.render_infer(start_typed.ty);
+                let found = self.render_infer(end_typed.ty);
+                self.diagnostics.push(range_ends_disagree(end.span, &expected, &found));
+                // The start's type is kept, so the range still has the type
+                // the author's first end asked for and one wrong end costs one
+                // diagnostic.
+                start_typed.ty
+            }
+        };
+        let element = match element {
+            InferTy::Known(ty) => ty,
+            InferTy::Var(var) => match self.default_of(var) {
+                Some(ty) => {
+                    let _ = self.infer.bind(self.types, var, ty);
+                    ty
+                }
+                // A class with no default is `null..null`, which `finish`
+                // reports as `SC0526`; saying anything here would be the same
+                // hole counted twice.
+                None => Ty::ERROR,
+            },
+        };
+        let ty = self.range_of(element);
+        let id = self.body.push_expr(
+            ExprKind::Range { start: start_typed.id, end: end_typed.id, inclusive },
+            ty,
+            span,
+        );
+        Typed { id, ty: InferTy::Known(ty) }
+    }
+
+    /// `Range of T`, interned. [`Ty::ERROR`] where there is no prelude to name
+    /// `Range` with, which is `Prelude::is_available`'s admission and is
+    /// exactly [`BodyChecker::array_of`]'s.
+    fn range_of(&mut self, element: Ty) -> Ty {
+        match self.decls.prelude().get("Range") {
+            Some(range) => self.types.named(range, vec![GenericArg::Type(element)]),
+            None => Ty::ERROR,
+        }
+    }
+
     /// Two element types made one. §3.1's *"the unification of the element
     /// types"*, and `None` where they do not unify.
     ///
@@ -4434,7 +4524,9 @@ impl<'a> BodyChecker<'a> {
         let entry = self.facts.clone();
         // §6, narrowed: the prelude now declares `Iterate` with `Item` and
         // `next`, so a loop over something that implements it binds at a real
-        // type. Over anything else — an `Array`, a `Map`, a user type with no
+        // type. `Array of T`, `Chars` and — since `Range of T implements
+        // Iterate:` landed — `0..n` all arrive here with an `Item` to read.
+        // Over anything else — a `Map`, a user type with no
         // `implements Iterate:` — there is still nothing to read and the
         // binding is [`Ty::ERROR`].
         let element = self.iterate_item(iter, span).unwrap_or(Ty::ERROR);
@@ -5332,6 +5424,30 @@ fn array_element_mismatch(
          (§3.1), and there is no implicit numeric conversion (§5.1): write the suffix, the \
          `as`, or the literal you meant",
     )
+}
+
+/// `SC0525` at the end of a range that does not agree with its start.
+///
+/// **It is [`codes::MISMATCHED_TYPES`] and not a code of its own**, because
+/// that is what it is: two expressions in one construct that must have one
+/// type and do not. `array_literals`' `SC0524` exists for a reason this does
+/// not have — an array literal has *n* elements and the message has to say
+/// which one fixed the type, so it carries a secondary label at that element.
+/// A range has two ends; the start is the one the primary span is not on, and
+/// a second label pointing four characters left says nothing a reader cannot
+/// see.
+///
+/// `expected` and `found` arrive rendered, backticks and all, for
+/// [`array_element_mismatch`]'s reason: either may be a phrase — *"an integer
+/// literal"* — rather than a type, which is the case `0..5.0` is.
+fn range_ends_disagree(span: Span, expected: &str, found: &str) -> Diagnostic {
+    Diagnostic::error(codes::MISMATCHED_TYPES, format!("expected {expected}, found {found}"))
+        .with_label(Label::primary(span, format!("this is {found}")))
+        .with_note(
+            "a range is a `Range of T` where `T` is the unification of its two ends (§4.5), \
+             and there is no implicit numeric conversion (§5.1): write the suffix, the `as`, \
+             or the end you meant",
+        )
 }
 
 /// `SC0282` — `[]` where nothing says what it holds.

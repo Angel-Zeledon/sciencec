@@ -657,14 +657,23 @@ pub mod codes {
     /// of `Index` at a range for anything.
     ///
     /// **The reason it is a refusal and not a type.** What was there before was
-    /// worse than either: a range expression carries no type (`check`'s
-    /// `synth` gives it [`crate::Ty::ERROR`] because §6 has no `Range` in the
-    /// prelude to give it), and `Index.index` wants an `Int`, so the untyped
+    /// worse than either: a range expression carried no type — `check`'s
+    /// `synth` gave it [`crate::Ty::ERROR`], because §6 had no `Range` in the
+    /// prelude to give it — and `Index.index` wants an `Int`, so the untyped
     /// index and the `Int` **agreed by cancelling** — `ty`'s §5 absorption
     /// working exactly as designed on two values neither of which was wrong —
     /// and `xs[1..3]` came out as one *element*. A wrong type with no
     /// diagnostic is the one outcome this crate's §6 is written to keep from
     /// happening silently.
+    ///
+    /// **`Range` exists now, and this code survives it unchanged.** The prelude
+    /// declares `Range of T implements Iterate:` and `check`'s `range_expr`
+    /// types `1..3` at `Range of I64`, so the cancelling above can no longer
+    /// happen — but a type for the *index expression* is not a `Slice of T` for
+    /// the result, and the result is what has no spelling. What did change is
+    /// that this code stopped being the only thing standing between `xs[1..3]`
+    /// and a wrong answer, which is why its condition is still *"the type it
+    /// would produce does not exist"* and not *"the index has no type"*.
     ///
     /// **What it costs, stated plainly.** Slicing is specified in full and
     /// does not work, and this code is where the author finds out. Building
@@ -684,11 +693,15 @@ pub mod codes {
     /// missing.
     ///
     /// **The domain is syntactic and that is deliberate.** It is a range
-    /// *written in an index bracket*, which is the only place one can be: both
-    /// ends are required outside brackets (§2.2, still unimplemented), so
-    /// `let r be 1..3` types at [`crate::Ty::ERROR`] and there is no range
-    /// value to reach an index through a name. A method that takes a range —
-    /// `text.slice(0..4)` — is a call and not an index, and is untouched.
+    /// *written in an index bracket*, and it stays that way now that a range
+    /// bound to a name has a type. `let r be 1..3` followed by `xs[r]` is not
+    /// this code: the index is a `Range of I64` where `Index of Int` wants an
+    /// `Int`, so it is [`MISMATCHED_TYPES`], which names both types and is the
+    /// better sentence of the two for a reader who wrote the name. Widening
+    /// this code to *"the index is a range however it got here"* would replace
+    /// that with a message about a `Slice` the author never mentioned. A method
+    /// that takes a range — `text.slice(0..4)` — is a call and not an index,
+    /// and is untouched.
     pub const RANGE_INDEX_NEEDS_SLICE: Code = Code(538);
 
     /// A value interpolated into an `f"…"` that does not implement `Display`.

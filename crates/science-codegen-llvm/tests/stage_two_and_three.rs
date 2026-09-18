@@ -499,9 +499,18 @@ fn no_fast_math_flag_reaches_any_of_these_programs() {
 #[test]
 fn the_boundary_is_where_it_says_it_is() {
     let cases: &[(&str, &str, &str)] = &[
-        // §10's own stage 3 program. The hole is above this crate:
-        // `thir::ExprKind::For` has no field for a callee.
-        ("for", "let mutable t be 0\nfor i in 0..3:\n    t be t + i\n", "`for` loop"),
+        // §10's own stage 3 program. The hole is above this crate, and **what
+        // it is has changed while the row has not moved.** It was
+        // `thir::ExprKind::For` having no field for a callee, which this crate
+        // reports as a `for` loop; the refusal that fires first is now the
+        // range *temporary*, because `science-resolve`'s `builtins.rs` gained
+        // `Range of T implements Iterate:` and `science-types` types `0..3` at
+        // `Range of I64` instead of `TyKind::Error`. A value of that type is
+        // one of §2.6's runtime containers and this backend emits no
+        // descriptor for one, so the fragment is the type and no longer the
+        // construct. The callee hole is still there behind it and is still
+        // this list's reason for the row.
+        ("for", "let mutable t be 0\nfor i in 0..3:\n    t be t + i\n", "`Range of I64`"),
         // Refused rather than emitted: nothing above emits the zero check that
         // `IntOp`'s own note says the caller has already made.
         ("div", "let a be 6\nlet b be a / 2\nprint(\"x\")\n", "divide-by-zero"),

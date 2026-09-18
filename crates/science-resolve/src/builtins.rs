@@ -82,7 +82,19 @@ const C_SCALARS: &[&str] = &[
 /// whose variants are in the prelude puts four more names in every program's
 /// scope (§4.5 makes a variant reachable unqualified), which is a namespace
 /// decision this pass has no reason to take on the way past.
-const LIBRARY_TYPES: &[&str] = &["Array", "Map", "Box", "Chars", "IoError", "TextError"];
+///
+/// **`Range` joins them, and it is the type `0..n` has.** The core spec §4.5
+/// gives the expression and no type, and
+/// `collections-and-chains.md`'s AMENDMENT 14 gives the type its only surface:
+/// *"`Range` is not a container and implements `Iterate` directly, which is
+/// what makes `for i in 0..n:` the same construct as everything else rather
+/// than a special case in the parser"*. Until this line existed the expression
+/// had no nominal type at all — `science-types`' `check` typed it
+/// `Ty::ERROR` — so the loop variable of the most-written loop in the language
+/// had no type either, and `ty`'s §5 absorption made a range agree with
+/// everything it met anywhere else it was written.
+const LIBRARY_TYPES: &[&str] =
+    &["Array", "Map", "Box", "Chars", "Range", "IoError", "TextError"];
 
 /// The interfaces the compiler knows about (§5.4).
 /// §5.4 lists seventeen, and the operator ones are load-bearing: "a scientific
@@ -902,6 +914,40 @@ const BLOCKS: &[Block] = &[
         generics: &[],
         interface: Some(("Iterate", &[])),
         assoc: &[("Item", CHAR)],
+        methods: &[],
+    },
+    // --- `Range of T implements Iterate`, AMENDMENT 14 --------------------
+    //
+    // **`Item is T` and not `borrowed T`, which is where this differs from
+    // `Array` twenty lines up.** A range holds two ends and *computes* each
+    // element; there is no element in memory for a borrow to point at, and
+    // `Iterate.next` returning `(borrowed Self.Item)?` over a value the call
+    // just produced is a borrow of a temporary. `Array`'s borrow is there to
+    // stop `for row in matrix:` copying a row per iteration; the cost this one
+    // declines is a copy of an integer, which is the thing a register holds.
+    //
+    // **`Range` is generic over its element, and the one argument against that
+    // is worth stating.** Every range in `examples/` is over `Int` — `0..width`
+    // with `width: Int`, `first..last` with both `Int`, and bare literals — so
+    // a non-generic `Range` with `Item is Int` would carry the whole corpus.
+    // It would also make `0..5` an `Int` range, and Decision 2 defaults an
+    // unsuffixed integer literal to `I64`, so `let mutable sum be 0` beside
+    // `for i in 0..5:` would be an `I64` meeting an `Int` at the first `+`.
+    // Generic is the form that leaves Decision 2 alone, and it is the form
+    // `data-io.md` §2 already writes: `def slice(self, range: Range of U64)`.
+    //
+    // **The parameter is unbounded**, which is deliberate and is the one thing
+    // this declaration does not say. `Range of String` is unusable rather than
+    // unwritable — `..` over two strings types, and the loop over it yields a
+    // `String` nothing can produce — because the bound that would refuse it is
+    // `T: Step`, a `stdlib-core.md` interface no note has written. The refusal
+    // that exists today is `science-types`' `check`: the two ends must be one
+    // type, which is what a range written wrong actually gets wrong.
+    Block {
+        ty: "Range",
+        generics: &["T"],
+        interface: Some(("Iterate", &[])),
+        assoc: &[("Item", Ty::Var("T"))],
         methods: &[],
     },
 ];

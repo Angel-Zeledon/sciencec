@@ -17,12 +17,19 @@
 //! **Where the rule declines, and why that is not hidden.** It reads types,
 //! and an unresolved inference variable is stored as `Ty::ERROR` until §4's
 //! writeback — so it runs *after* writeback, and where a type still did not
-//! come out it stays silent rather than guess. Two constructs land there
-//! today: a range has no type at all (`SC0538`'s note: there is no `Range` in
-//! the prelude), so `for i in 0..3` cannot be told its `i` is not mutable;
-//! and a method whose name the prelude has not transcribed carries no type, so
-//! `let slot be items.pop()` gives the rule nothing to read. Both are pinned
-//! below as the silences they are.
+//! come out it stays silent rather than guess. **One construct lands there
+//! today**, and it used to be two: a method whose name the prelude has not
+//! transcribed carries no type, so `let slot be items.pop()` gives the rule
+//! nothing to read. It is pinned below as the silence it is.
+//!
+//! **The other one is closed, and the flip is the point.** This header used to
+//! say *"a range has no type at all (`SC0538`'s note: there is no `Range` in
+//! the prelude), so `for i in 0..3` cannot be told its `i` is not mutable"*.
+//! `builtins.rs` now declares `Range of T implements Iterate: type Item is T`,
+//! so `check`'s `iterate_item` reads a real element type off it and the loop
+//! variable is an ordinary binding with an ordinary type. The pin below that
+//! recorded the silence is now the refusal, and it changed by one word — the
+//! rule already had the pattern arm, exactly as the old comment predicted.
 //!
 //! **The second one used to be stated as `items.get_mut(0)` and is narrower
 //! now.** `methods`' §8a closed the surrounding hole: a method on a prelude
@@ -145,16 +152,19 @@ def retitle(doc: mutable borrowed Doc, title: String):
     checked.assert_clean();
 }
 
-// --- the silences, pinned -------------------------------------------------
+// --- the third spelling, which used to be a silence ------------------------
 
+/// **The gap this file recorded, now closed.** It read: *"`for mutable i in
+/// 0..3` parses and checks, so the word is accepted at a pattern; it is simply
+/// never enforced there, because `0..3` carries no type and `i` therefore has
+/// none either. When `Range` exists in the prelude this test flips to a `304`
+/// and the change is one line."* `Range` exists, and this is the flip.
+///
+/// A pattern binding is the **third** spelling of `mutable` — `let` and a
+/// parameter are the other two, above — and it is the one no test could reach
+/// while the rule's precondition was a type the checker never synthesised.
 #[test]
-fn a_loop_variable_over_a_range_is_not_caught_because_a_range_has_no_type() {
-    // **This is a gap, recorded rather than papered over.** `for mutable i in
-    // 0..3` parses and checks, so the word is accepted at a pattern; it is
-    // simply never enforced there, because `0..3` carries no type and `i`
-    // therefore has none either. When `Range` exists in the prelude this test
-    // flips to a `304` and the change is one line — the rule already has the
-    // pattern arm and its own note.
+fn a_loop_variable_over_a_range_is_a_binding_like_any_other() {
     let checked = support::check(
         "\
 def counted() -> Bool:
@@ -163,8 +173,28 @@ def counted() -> Bool:
     true
 ",
     );
+    assert_eq!(checked.codes(), vec![304]);
+    assert_eq!(checked.messages(), vec!["`i` is not mutable"]);
+}
+
+/// And its pair, for this file's own rule: a rule that refuses everything is
+/// not a rule. `for mutable i in …` is the spelling that makes the write legal,
+/// and it has to keep working or the flip above is a regression wearing a
+/// test's clothes.
+#[test]
+fn a_loop_variable_declared_mutable_may_be_written() {
+    let checked = support::check(
+        "\
+def counted() -> Bool:
+    for mutable i in 0..3:
+        i be 9
+    true
+",
+    );
     checked.assert_clean();
 }
+
+// --- the silence that is left, pinned --------------------------------------
 
 /// The second silence the header names, pinned.
 ///

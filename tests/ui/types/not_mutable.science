@@ -10,11 +10,11 @@
 # whole value of the diagnostic: a `let` takes the word, and a parameter has
 # nowhere to put it.
 #
-# A pattern binding — `for mutable i in …` — is the third spelling and is not
-# tested here, because the rule declines wherever the type did not come out
-# and `for i in 0..3` has no type at all: a range is `Ty::ERROR` until `Range`
-# exists in the prelude (see `SC0538`). That is a real gap, stated rather than
-# papered over.
+# A pattern binding — `for mutable i in …` — is the third spelling and it is
+# not tested here, but it is no longer a gap: `Range of T implements Iterate:`
+# is in the prelude, so `for i in 0..3` binds an `I64` and a write to it is
+# this same `SC0304`. `science-types`' `tests/mutability.rs` holds that pair,
+# where the rule and its two other spellings already live.
 
 def bump(n: I64) -> I64:
     n be n + 1

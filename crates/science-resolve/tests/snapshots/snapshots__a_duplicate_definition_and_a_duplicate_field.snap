@@ -2,16 +2,16 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![first, second, doc]))"
 ---
-Module `main` #352 @0..42
-  Fn `twice` #353 @0..7
+Module `main` #356 @0..42
+  Fn `twice` #357 @0..7
     body: Block @6..7
-  Fn `twice` #354 @8..15
+  Fn `twice` #358 @8..15
     body: Block @14..15
-  Record `Doc` #355 @16..42
+  Record `Doc` #359 @16..42
     fields
-      Field `title` #356 @16..28
+      Field `title` #360 @16..28
         type: Path -> `String` #16 @16..22
-      Field `title` #357 @29..38
+      Field `title` #361 @29..38
         type: Path -> `Int` #17 @29..32
 --- diagnostics ---
 SC0201 @8..13 the name `twice` is defined more than once

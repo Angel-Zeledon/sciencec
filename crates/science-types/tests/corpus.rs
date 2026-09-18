@@ -536,10 +536,84 @@ fn every_pinned_file_is_in_the_corpus() {
 /// through a `Box`, and `builtins.rs`' `UNWRITTEN` and `WHOLLY_OPEN` are the
 /// named, cited, shrinking lists that keep them silent. The four left are the
 /// residue that no note excuses.
+///
+/// # **It is still 4, and `Range` is the second question the corpus passed
+/// outright**
+///
+/// `builtins.rs` declares `Range of T implements Iterate: type Item is T` and
+/// `check`'s `range_expr` types every `a..b` in the language, where the
+/// expression used to be [`Ty::ERROR`] with no diagnostic. **This number did
+/// not move**, and the pin is recorded here unmoved rather than left to be
+/// inferred from its own absence.
+///
+/// Each of the four preceding declarations — `Array.get`, `Iterate` on
+/// `Array`, associated calls on a prelude head, `methods`' §8a — added a
+/// diagnostic to this list on contact with the corpus, so the expected outcome
+/// was a fifth. It did not arrive, and the reason is a fact about the corpus:
+/// **every range in `examples/` is over one integer type on both ends**, and
+/// every loop body that consumes one is inside a function whose return type
+/// pins the accumulator to that same type. `10_loops`' `ruler`, `triangular`,
+/// `slice_sum`, `first_multiple` and `checkerboard`, `00_kitchen_sink`'s
+/// `ruler`, `13_inline_blocks`' `for _ in 0..stack.length():` and
+/// `15_comments`' `for _ in a..b:` are the whole set. Nothing in it mixes `Int`
+/// with `I64`, which is the one disagreement the new type is able to see —
+/// `builtins.rs`' `Array of T implements Index of Int` block already names
+/// that wart and says it is `stdlib-core.md` §3.6's against Decision 2's, not
+/// this layer's.
+///
+/// **Exactly this file's own warning applies**, for the reason the
+/// exhaustiveness section states: a new type reporting nothing on its first
+/// contact with real programs is indistinguishable from a type nothing reads.
+/// [`the_range_check_had_a_corpus_to_look_at`] is what tells them apart — it
+/// counts the range expressions this test walked, asserts a floor, and asserts
+/// that **not one of them is an error type**, which is the property that was
+/// false for every range in the corpus until this change.
 #[test]
 fn the_corpus_reports_only_what_no_program_can_say() {
     let total: usize = REMAINING.iter().map(|(_, codes)| codes.len()).sum();
     assert_eq!(total, 4);
+}
+
+/// The evidence that a silent `Range` is a checked silence.
+///
+/// Built on [`the_exhaustiveness_check_had_a_corpus_to_look_at`]'s model and
+/// with one assertion that test has no analogue for: the **types**. A floor on
+/// the count says the walk reached ranges; `Ty::ERROR` on none of them says
+/// each one got a type, which is the whole of what this change did and the
+/// exact thing that was false before it. A range still typed `Ty::ERROR`
+/// reports nothing anywhere — that was the old behaviour and it is invisible to
+/// every other test in this file.
+#[test]
+fn the_range_check_had_a_corpus_to_look_at() {
+    use science_types::thir::ExprKind;
+
+    let mut ranges = 0;
+    let mut files = 0;
+    for path in corpus() {
+        let source = std::fs::read_to_string(&path).expect("readable corpus file");
+        let checked = support::check_allowing_resolution_errors(&source);
+        let mut found = 0;
+        for body in &checked.bodies {
+            for (_, expr) in body.exprs() {
+                if !matches!(expr.kind, ExprKind::Range { .. }) {
+                    continue;
+                }
+                found += 1;
+                assert!(
+                    !checked.types.references_error(expr.ty),
+                    "a range in {} has no type: {}",
+                    path.display(),
+                    checked.render(expr.ty)
+                );
+            }
+        }
+        if found > 0 {
+            files += 1;
+        }
+        ranges += found;
+    }
+    assert!(ranges >= 8, "the corpus writes more than 8 ranges, found {ranges}");
+    assert!(files >= 4, "and they are spread over the corpus, found {files} files");
 }
 
 /// The evidence that the silence above is a checked silence.

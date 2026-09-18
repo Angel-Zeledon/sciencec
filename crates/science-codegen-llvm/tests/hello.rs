@@ -147,6 +147,15 @@ fn the_module_says_what_stage_one_says_it_should() {
 /// checker found. That makes it a stable choice — it is refused by a hole above
 /// this crate rather than by an instruction this crate has not written — and
 /// the day it stops being refused, the sentence to replace is this one.
+///
+/// **The sentence it is refused *with* changed, and the construct did not.**
+/// `0..3` is a `Range of I64` now — `builtins.rs` declares `Range of T
+/// implements Iterate:` and `science-types`' `range_expr` builds the type,
+/// where before the expression was `TyKind::Error` — so the first refusal is
+/// the range temporary as one of §2.6's runtime containers rather than the
+/// unresolved `next` behind it. Both are `SC0400` and both are above this
+/// crate, which is what this test is for; the fragment names the type because
+/// that is the sentence a user now meets first.
 #[test]
 fn a_program_past_the_boundary_is_refused_by_name() {
     let lowered = lower("let mutable total be 0
@@ -161,7 +170,7 @@ for i in 0..3:
     let first = diagnostics.first().expect("a diagnostic");
     assert_eq!(first.code, science_codegen::diagnostics::code::SC0400);
     assert!(
-        first.message.contains("`for` loop"),
+        first.message.contains("`Range of I64`"),
         "the refusal must name the construct, and it said: {}",
         first.message
     );
