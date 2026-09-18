@@ -460,6 +460,14 @@ unsafe extern "C" {
     pub fn LLVMIntTypeInContext(c: LLVMContextRef, num_bits: c_uint) -> LLVMTypeRef;
 
     /// `LLVMTypeRef LLVMFloatTypeInContext(LLVMContextRef C)`
+    /// LLVM's `half`, the IEEE binary16. Present in LLVM-C since long before
+    /// the 18 this crate pins.
+    pub fn LLVMHalfTypeInContext(c: LLVMContextRef) -> LLVMTypeRef;
+    /// LLVM's `bfloat`. **Not a synonym for `half`** — same width, different
+    /// bit layout (8 exponent bits against 5), which is why
+    /// `science_codegen::layout::FloatTy` has two variants rather than one
+    /// "half" and why these are two entry points rather than one.
+    pub fn LLVMBFloatTypeInContext(c: LLVMContextRef) -> LLVMTypeRef;
     pub fn LLVMFloatTypeInContext(c: LLVMContextRef) -> LLVMTypeRef;
 
     /// `LLVMTypeRef LLVMDoubleTypeInContext(LLVMContextRef C)`

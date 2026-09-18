@@ -197,3 +197,53 @@ fn a_failed_read_still_hands_back_a_usable_empty_string() {
         free(p);
     }
 }
+
+#[cfg(not(miri))]
+#[test]
+fn the_error_half_a_caller_receives_is_the_byte_image_codegen_branches_on() {
+    // `tests/layout.rs` pins the byte image of an `IoError?` this file *builds*.
+    // This pins the byte image of the one `science_write_file` actually
+    // **returns**, on both paths, and the two are not the same claim: the
+    // layout test would still pass if this entry point returned a correct
+    // struct through a convention that dropped its second byte, or if some
+    // future rewrite set `present` to `1` rather than to
+    // `SCIENCE_NULLABLE_PRESENT`.
+    //
+    // It is worth a test of its own because of what codegen does with it.
+    // §5.2's `present` byte *is* the `Bool` that Science's `err?` yields, so
+    // the emitted code for `if err?:` is a one-byte load at offset 0 and a
+    // branch — not a comparison against a constant. A `present` byte that were
+    // any other non-zero value would still be "present" to every assertion in
+    // this file and would still branch correctly, but it would stop being a
+    // `Bool` the moment anything printed it.
+    unsafe {
+        let path = scratch("error-half-byte-image.txt");
+        let p = s(path.to_str().unwrap());
+        let contents = s("x");
+
+        let ok = science_write_file(&p, &contents);
+        assert_eq!(
+            std::mem::transmute::<ScienceNullableIoError, [u8; 2]>(ok),
+            [SCIENCE_NULLABLE_NULL, 0],
+            "success is two zero bytes: the tag, then the payload the runtime \
+             zeroes so a memory dump reads cleanly"
+        );
+
+        let mut missing = scratch("error-half-byte-image-dir");
+        missing.push("no-such-directory");
+        missing.push("file.txt");
+        let q = s(missing.to_str().unwrap());
+        let failed = science_write_file(&q, &contents);
+        assert_eq!(
+            std::mem::transmute::<ScienceNullableIoError, [u8; 2]>(failed),
+            [SCIENCE_NULLABLE_PRESENT, ScienceIoError::NOT_FOUND.0],
+            "failure is the tag then the discriminant, in that order"
+        );
+        assert_eq!(SCIENCE_NULLABLE_PRESENT, 1, "`present` is a `Bool`, not merely non-zero");
+
+        free(q);
+        free(contents);
+        free(p);
+        let _ = std::fs::remove_file(&path);
+    }
+}

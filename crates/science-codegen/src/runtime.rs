@@ -104,6 +104,29 @@ pub enum RtAggregate {
     TypeInfo,
     /// `{ key, value, hash_fn, eq_fn }` — eight words.
     MapInfo,
+    /// `u8` — one byte, the five payload-free variants of `science-rt`'s §8.1.
+    ///
+    /// **Decision: `IoError` gets a row of its own, even though no `RUNTIME`
+    /// signature mentions it.** Every other row here is the type of an entry
+    /// point's argument or return; this one is the type of a *local*. §8 gives
+    /// `read_file` the return `(String, IoError?)` and `write_file` the return
+    /// `IoError?`, so a program that calls either binds a name of type
+    /// `IoError`, and a backend lowering that binding needs a [`CgTy`] for the
+    /// bare type and not only for the nullable wrapper.
+    ///
+    /// **The reason it is here and not written out in the backend** is §9.2's
+    /// finding, the one this module exists for: two phases that each spell a
+    /// runtime type out separately agree until one of them is edited. The
+    /// variant list fixes the discriminant values — `NOT_FOUND` is 0 and
+    /// `OTHER` is 4, and `science-rt`'s `tests/layout.rs` pins exactly those
+    /// numbers — so a second copy of that list in a second crate is a second
+    /// place for the numbering to drift.
+    ///
+    /// **The cost is a row that `RUNTIME`'s signatures never name**, which
+    /// makes this the first entry in [`RtAggregate::ALL`] that is not reachable
+    /// from a symbol. That is paid for by [`RtAggregate::NullableIoError`]
+    /// being defined in terms of it below, so the two cannot disagree.
+    IoError,
     /// `{ present: u8, error: u8 }` — two bytes, and §2's named exception:
     /// *"at two bytes it comes back in a register on both conventions"*.
     NullableIoError,
@@ -113,14 +136,15 @@ pub enum RtAggregate {
 }
 
 impl RtAggregate {
-    /// All eight, in a fixed order.
-    pub const ALL: [RtAggregate; 8] = [
+    /// All nine, in a fixed order.
+    pub const ALL: [RtAggregate; 9] = [
         RtAggregate::String,
         RtAggregate::Chars,
         RtAggregate::Array,
         RtAggregate::Map,
         RtAggregate::TypeInfo,
         RtAggregate::MapInfo,
+        RtAggregate::IoError,
         RtAggregate::NullableIoError,
         RtAggregate::StringAndIoError,
     ];
@@ -134,6 +158,7 @@ impl RtAggregate {
             RtAggregate::Map => "ScienceMap",
             RtAggregate::TypeInfo => "ScienceTypeInfo",
             RtAggregate::MapInfo => "ScienceMapInfo",
+            RtAggregate::IoError => "ScienceIoError",
             RtAggregate::NullableIoError => "ScienceNullableIoError",
             RtAggregate::StringAndIoError => "ScienceStringAndIoError",
         }
@@ -215,7 +240,7 @@ impl RtAggregate {
             // unreachable, and an integer newtype with five named constants
             // guarantees nothing of the sort, because the next version has a
             // sixth.
-            RtAggregate::NullableIoError => CgTy::nullable(CgTy::choice(
+            RtAggregate::IoError => CgTy::choice(
                 "ScienceIoError",
                 vec![
                     Variant::unit("not_found"),
@@ -224,7 +249,8 @@ impl RtAggregate {
                     Variant::unit("invalid_data"),
                     Variant::unit("other"),
                 ],
-            )),
+            ),
+            RtAggregate::NullableIoError => CgTy::nullable(RtAggregate::IoError.cg_ty()),
             // §5.4: a pair is *a plain struct, and both fields are live at
             // once*. Not an enum, no tag, nothing for a niche to disambiguate.
             RtAggregate::StringAndIoError => CgTy::strukt(
@@ -727,6 +753,26 @@ mod tests {
             want.sort_unstable();
             assert_eq!(derived, want, "{abi:?}");
         }
+    }
+
+    #[test]
+    fn io_error_is_one_byte_and_its_nullable_is_that_byte_plus_a_tag() {
+        // The bare row exists for a *local* and not for a signature, so nothing
+        // in `RUNTIME` would have caught it being wrong. What it has to be is
+        // fixed by `science-rt`'s `#[repr(transparent)] struct ScienceIoError(pub
+        // u8)` and by that crate's `tests/layout.rs`, which pins one byte at
+        // alignment one; and `IoError?` has to be exactly that byte with a
+        // discriminant in front of it, which is §8.1's refusal of the niche.
+        assert_eq!(RtAggregate::IoError.layout(Triple::X86_64LinuxGnu).size, 1);
+        assert_eq!(RtAggregate::IoError.layout(Triple::X86_64LinuxGnu).align, 1);
+        assert_eq!(RtAggregate::NullableIoError.layout(Triple::X86_64LinuxGnu).size, 2);
+        // The one thing the two rows sharing a definition is meant to buy: the
+        // nullable is built *from* the bare type, so a variant added to one is
+        // added to both.
+        assert_eq!(
+            RtAggregate::NullableIoError.cg_ty(),
+            CgTy::nullable(RtAggregate::IoError.cg_ty())
+        );
     }
 
     #[test]

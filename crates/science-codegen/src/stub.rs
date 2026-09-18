@@ -91,6 +91,12 @@ fn render_scalar(scalar: Scalar) -> String {
         Scalar::Bool => "i8".to_string(),
         Scalar::Char => "i32".to_string(),
         Scalar::Int(int) => format!("i{}", int.width(crate::layout::Triple::X86_64LinuxGnu) * 8),
+        // LLVM's own spellings: `half` for IEEE binary16, `bfloat` for
+        // bfloat16. They are two distinct LLVM types and the transcript names
+        // them apart, because merging them in a dump hides exactly the
+        // distinction a reader is checking.
+        Scalar::Float(crate::layout::FloatTy::F16) => "half".to_string(),
+        Scalar::Float(crate::layout::FloatTy::Bf16) => "bfloat".to_string(),
         Scalar::Float(crate::layout::FloatTy::F32) => "float".to_string(),
         Scalar::Float(crate::layout::FloatTy::F64) => "double".to_string(),
         Scalar::Pointer(_) => "ptr".to_string(),

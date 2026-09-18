@@ -226,6 +226,12 @@ fn encode_ty(ty: &CgTy) -> String {
             IntTy::Isize => "y",
         }
         .to_string(),
+        // Itanium spells `_Float16` `Dh` and `__bf16` `DF16b`; both are used
+        // here verbatim rather than invented, so that a symbol this compiler
+        // emits demangles to the type the author wrote in any tool that knows
+        // the Itanium grammar.
+        CgTy::Float(FloatTy::F16) => "Dh".to_string(),
+        CgTy::Float(FloatTy::Bf16) => "DF16b".to_string(),
         CgTy::Float(FloatTy::F32) => "f".to_string(),
         CgTy::Float(FloatTy::F64) => "d".to_string(),
         CgTy::Ptr(kind) => match kind {

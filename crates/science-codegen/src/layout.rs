@@ -195,22 +195,70 @@ impl IntTy {
     }
 }
 
-/// A floating-point type. F0 has two; `F16` and `BF16` across the `extern`
-/// boundary are `SC0431` and are not in the model at all.
+/// A floating-point type. F0 has four: the two IEEE binary formats and the two
+/// half-precision ones.
+///
+/// **The decision.** `F16` and `BF16` are in the layout model, with a size and
+/// an alignment, exactly like `F32`. They are refused **only** where
+/// `ffi-c-boundary.md` refuses them, which is by value across the `extern "C"`
+/// boundary ([`crate::abi::AbiRefusal::HalfPrecision`], `SC0431`).
+///
+/// **The reason.** The sentence this comment replaced said they were *"not in
+/// the model at all"*, and that conflated two different questions. *How wide is
+/// an `F16`, and where does the next field of a record start?* has one answer
+/// that all three targets agree on: two bytes, aligned to two, exactly as
+/// `_Float16` and `__bf16` are laid out by the System V psABI, AAPCS64 §5.1 and
+/// MSVC. *Which register does an `F16` parameter arrive in?* is the question
+/// the three ABIs answer differently, and that is the one `SC0431` refuses. A
+/// value living in a local, a record field or an array element never asks the
+/// second question. Science is a language for scientific computing and machine
+/// learning; half precision is a headline type, and refusing to give it a
+/// **size** refused the whole feature in order to avoid one narrow ABI hazard.
+///
+/// **The cost.** [`FloatTy`] is no longer a type whose `width()` is also its
+/// register class: an HFA of `F16`s is four half-registers on AAPCS64, and
+/// `abi.rs`'s homogeneous-float-aggregate member count now has a two-byte
+/// member to count. That is priced in the ABI module and costs nothing
+/// here, because the `extern` path refuses half precision before it gets there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[allow(missing_docs)]
 pub enum FloatTy {
+    /// IEEE 754 `binary16`: 1 sign, 5 exponent, 10 significand bits.
+    F16,
+    /// `bfloat16`: 1 sign, 8 exponent, 7 significand bits — `F32`'s exponent
+    /// range in half the bits. **Not** IEEE `binary16`, and the two are
+    /// separate variants rather than one "half" because they have different bit
+    /// layouts, different LLVM types (`half` against `bfloat`) and different
+    /// numeric behaviour; a backend that merged them would round wrongly.
+    Bf16,
     F32,
     F64,
 }
 
 impl FloatTy {
     /// Width in bytes, which is also the alignment on every F0 target.
+    ///
+    /// Two bytes for both half-precision types, on all three targets: the
+    /// System V psABI gives `_Float16` size 2 align 2, AAPCS64 gives the
+    /// half-precision type size 2 align 2, and MSVC's `_Float16` matches.
+    /// There is no target in F0's set where this differs, which is why the
+    /// function still takes no [`Triple`].
     pub fn width(self) -> u64 {
         match self {
+            FloatTy::F16 | FloatTy::Bf16 => 2,
             FloatTy::F32 => 4,
             FloatTy::F64 => 8,
         }
+    }
+
+    /// Whether this is one of the two half-precision formats.
+    ///
+    /// The one predicate `abi.rs` needs in order to refuse exactly what
+    /// `ffi-c-boundary.md` `SC0431` refuses and nothing more. It is here rather
+    /// than there so that a second backend asking "is this the type whose C ABI
+    /// is unsettled?" gets the same answer from the same place.
+    pub fn is_half(self) -> bool {
+        matches!(self, FloatTy::F16 | FloatTy::Bf16)
     }
 }
 
@@ -821,9 +869,61 @@ mod tests {
         assert_eq!(size_align(&CgTy::Bool), (1, 1));
         assert_eq!(size_align(&CgTy::Char), (4, 4));
         assert_eq!(size_align(&CgTy::Int(IntTy::I64)), (8, 8));
+        assert_eq!(size_align(&CgTy::Float(FloatTy::F16)), (2, 2));
+        assert_eq!(size_align(&CgTy::Float(FloatTy::Bf16)), (2, 2));
         assert_eq!(size_align(&CgTy::Float(FloatTy::F32)), (4, 4));
         assert_eq!(size_align(&CgTy::Ptr(PtrKind::Box)), (8, 8));
         assert_eq!(size_align(&CgTy::Interface), (16, 8));
+    }
+
+    /// **This is a layout claim, not a "this runs" claim.** It asserts what
+    /// `layout_of` computes for the two half-precision types against the
+    /// platform ABI's numbers for `_Float16`/`__bf16` — size 2, align 2, and
+    /// the C placement rule applied to them. It says nothing about whether a
+    /// program using `F16` builds, links or runs; that needs an instruction
+    /// selector, which lives in `science-codegen-llvm`.
+    #[test]
+    fn half_precision_is_two_bytes_aligned_to_two_and_packs_like_the_c_type_does() {
+        for half in [FloatTy::F16, FloatTy::Bf16] {
+            assert_eq!(size_align(&CgTy::Float(half)), (2, 2), "{half:?}");
+            assert!(half.is_half(), "{half:?}");
+
+            // A record of four halves is eight bytes with no padding, which is
+            // Decision 17's C rule and also what a C compiler does to
+            // `struct { _Float16 a, b, c, d; }`.
+            let vec4 = CgTy::strukt(
+                "Half4",
+                vec![
+                    Field::new("x", CgTy::Float(half)),
+                    Field::new("y", CgTy::Float(half)),
+                    Field::new("z", CgTy::Float(half)),
+                    Field::new("w", CgTy::Float(half)),
+                ],
+            );
+            assert_eq!(size_align(&vec4), (8, 2), "{half:?}");
+
+            // An array's size is its stride: four elements, eight bytes, no
+            // gap. The module note's one deliberate disagreement with C++
+            // applies to a two-byte element like any other.
+            assert_eq!(size_align(&CgTy::array(CgTy::Float(half), 4)), (8, 2), "{half:?}");
+
+            // C layout, not field reordering: `{ F16, F32 }` pads the half up
+            // to the float's alignment and is eight bytes, never six.
+            let mixed = CgTy::strukt(
+                "Mixed",
+                vec![
+                    Field::new("h", CgTy::Float(half)),
+                    Field::new("f", CgTy::Float(FloatTy::F32)),
+                ],
+            );
+            assert_eq!(size_align(&mixed), (8, 4), "{half:?}");
+        }
+
+        // `F16` and `BF16` are two types, not one "half". They are the same
+        // width and are never interchangeable: the bit layouts differ, so a
+        // backend that unified them would round wrongly.
+        assert_ne!(FloatTy::F16, FloatTy::Bf16);
+        assert!(!FloatTy::F32.is_half() && !FloatTy::F64.is_half());
     }
 
     #[test]

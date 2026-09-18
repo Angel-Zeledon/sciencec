@@ -47,7 +47,7 @@
 use science_diagnostics::{Diagnostic, Label, Span};
 
 use crate::diagnostics::code;
-use crate::layout::{CAbi, CgTy, FloatTy, Layout, Scalar, Triple, scalar_leaves};
+use crate::layout::{CAbi, CgTy, Layout, Scalar, Triple, scalar_leaves};
 
 /// Which register file an eightbyte goes in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,8 +308,16 @@ pub fn classify_extern_return(
     layout: &Layout,
     abi: CAbi,
 ) -> Result<ReturnClass, AbiRefusal> {
-    if let CgTy::Float(FloatTy::F32) = ty {
-        // F32 is fine; the refusal is F16/BF16, which are not in the model.
+    // Half precision is refused in return position for the same reason it is
+    // refused in argument position: it is the *register* the three ABIs
+    // disagree about, and a return value is in a register. `F32` and `F64` are
+    // fine.
+    //
+    // The arm this replaced was a no-op `if let` that mentioned the refusal and
+    // never produced it, because [`FloatTy`] had no half-precision variant to
+    // match on. It has one now, so the check is real.
+    if matches!(ty, CgTy::Float(float) if float.is_half()) {
+        return Err(AbiRefusal::HalfPrecision);
     }
     Ok(classify_return(abi, layout))
 }
@@ -317,6 +325,26 @@ pub fn classify_extern_return(
 fn check_extern_scalar(ty: &CgTy, layout: &Layout, position: &str) -> Result<ArgClass, AbiRefusal> {
     match ty {
         CgTy::Unit => Ok(ArgClass::Ignore),
+        // `SC0431`, and this is the **only** place half precision is refused.
+        //
+        // **The decision.** `F16`/`BF16` by value across the `extern "C"`
+        // boundary is refused; everywhere else they are ordinary scalars with
+        // an ordinary layout.
+        //
+        // **The reason.** `ffi-c-boundary.md` scopes the code to the boundary,
+        // and the boundary is where the disagreement is: System V passes
+        // `_Float16` in the low 16 bits of an SSE register, AAPCS64 passes it
+        // in a half-register with the rest unspecified, and MSVC has no stable
+        // answer at all. There is no correct classification to give, so
+        // guessing is §4.1's `dgemm` again — it links cleanly and returns the
+        // wrong number. A local, a record field or an array element asks no
+        // such question: it asks only how wide the value is, which
+        // [`FloatTy::width`] answers identically on all three.
+        //
+        // **The cost.** A C library taking a `_Float16` argument cannot be
+        // called by value; `borrowed F16` and `ffi.Span of F16` both work and
+        // the parser already says so in its own note on `SC0431`.
+        CgTy::Float(float) if float.is_half() => Err(AbiRefusal::HalfPrecision),
         CgTy::Bool | CgTy::Char | CgTy::Int(_) | CgTy::Float(_) | CgTy::Ptr(_) => {
             debug_assert!(matches!(layout.repr, crate::layout::Repr::Scalar(_)));
             Ok(ArgClass::Direct)
@@ -706,6 +734,94 @@ mod tests {
         // `ffi.Span of T` lowers to a bare pointer, which passes.
         let span = CgTy::Ptr(PtrKind::Raw);
         assert_eq!(classify_extern_argument(&span, &lay(&span)), Ok(ArgClass::Direct));
+    }
+
+    /// The two halves of the half-precision question, pinned apart.
+    ///
+    /// `SC0431` is about the `extern "C"` boundary and nothing else. Inside
+    /// Science, where both sides are this compiler at this version, an `F16` is
+    /// a two-byte scalar and passes directly like any other scalar — the
+    /// register question the three C ABIs disagree about does not arise,
+    /// because there is no second implementation to disagree with.
+    #[test]
+    fn half_precision_is_refused_at_the_extern_boundary_and_only_there() {
+        for half in [FloatTy::F16, FloatTy::Bf16] {
+            let ty = CgTy::Float(half);
+            let layout = lay(&ty);
+
+            // The refusal, in both positions, and it is `HalfPrecision` and not
+            // the aggregate refusal: a two-byte float is not an aggregate and
+            // the message must not say it is.
+            assert_eq!(
+                classify_extern_argument(&ty, &layout),
+                Err(AbiRefusal::HalfPrecision),
+                "{half:?}"
+            );
+            assert_eq!(
+                classify_extern_return(&ty, &layout, CAbi::SystemVAmd64),
+                Err(AbiRefusal::HalfPrecision),
+                "{half:?}"
+            );
+
+            // And the other half: inside Science it is an ordinary scalar.
+            assert_eq!(classify_science_argument(&layout), ArgClass::Direct, "{half:?}");
+            assert_eq!(
+                classify_return(CAbi::SystemVAmd64, &layout),
+                ReturnClass::Direct { registers: vec![RegClass::Sse] },
+                "{half:?}"
+            );
+            // Two bytes is one of Win64's four legal sizes, and a lone float
+            // member comes back in `xmm0`.
+            assert_eq!(
+                classify_return(CAbi::Win64, &layout),
+                ReturnClass::Direct { registers: vec![RegClass::Sse] },
+                "{half:?}"
+            );
+        }
+
+        // A record whose fields are halves is refused as an aggregate, by the
+        // aggregate rule, not by `SC0431` — it never reaches the half check,
+        // and the diagnostic the user reads is the right one.
+        let pair = strukt(&[CgTy::Float(FloatTy::F16), CgTy::Float(FloatTy::F16)]);
+        assert!(matches!(
+            classify_extern_argument(&pair, &lay(&pair)),
+            Err(AbiRefusal::AggregateByValue { .. })
+        ));
+
+        // `F32` and `F64` are untouched by any of this.
+        assert_eq!(classify_extern_argument(&F32, &lay(&F32)), Ok(ArgClass::Direct));
+        assert!(classify_extern_return(&F64, &lay(&F64), CAbi::Aapcs64).is_ok());
+    }
+
+    /// AAPCS64 counts a homogeneous aggregate of halves as an HFA, and the
+    /// member count is members and not bytes.
+    ///
+    /// This is a *Science* ABI claim: the `extern` path refuses half precision
+    /// before ever asking. It is asserted because the HFA rule tests element
+    /// width implicitly, through `leaves.len() * first.width() == layout.size`,
+    /// and a two-byte member is the first thing to exercise that arithmetic
+    /// with a width that is neither 4 nor 8.
+    #[test]
+    fn an_aggregate_of_four_halves_is_an_hfa_of_four_and_not_of_one() {
+        let ty = strukt(&[
+            CgTy::Float(FloatTy::F16),
+            CgTy::Float(FloatTy::F16),
+            CgTy::Float(FloatTy::F16),
+            CgTy::Float(FloatTy::F16),
+        ]);
+        assert_eq!(
+            classify_return(CAbi::Aapcs64, &lay(&ty)),
+            ReturnClass::Direct { registers: vec![RegClass::Sse; 4] }
+        );
+        // Mixing the two half types is not homogeneous: `F16` and `BF16` are
+        // the same width and different types, which is exactly the case the
+        // `*float == first` test exists for.
+        let mixed = strukt(&[CgTy::Float(FloatTy::F16), CgTy::Float(FloatTy::Bf16)]);
+        assert!(!matches!(
+            classify_return(CAbi::Aapcs64, &lay(&mixed)),
+            ReturnClass::Direct { ref registers } if registers.len() == 2
+                && registers[0] == RegClass::Sse
+        ));
     }
 
     #[test]

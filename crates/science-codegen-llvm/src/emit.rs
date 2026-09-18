@@ -696,6 +696,12 @@ impl LlvmBackend {
             Scalar::Bool => unsafe { sys::LLVMInt8TypeInContext(self.context.raw()) },
             Scalar::Char => unsafe { sys::LLVMInt32TypeInContext(self.context.raw()) },
             Scalar::Int(int) => self.int_ty((int.width(self.triple()) * 8) as u32),
+            Scalar::Float(FloatTy::F16) => unsafe {
+                sys::LLVMHalfTypeInContext(self.context.raw())
+            },
+            Scalar::Float(FloatTy::Bf16) => unsafe {
+                sys::LLVMBFloatTypeInContext(self.context.raw())
+            },
             Scalar::Float(FloatTy::F32) => unsafe {
                 sys::LLVMFloatTypeInContext(self.context.raw())
             },
@@ -1427,13 +1433,23 @@ impl LlvmBackend {
                 "a float-to-integer conversion whose destination is not an integer".to_string(),
             ));
         };
-        let float_bits = match float {
-            FloatTy::F32 => 32u32,
-            FloatTy::F64 => 64,
+        // **The intrinsic's suffix is a name, not a width, and `bfloat` is
+        // where the difference bites.** `F16` and `BF16` are both sixteen bits,
+        // so a `format!("…f{float_bits}")` built from the width spells
+        // `llvm.fptosi.sat.i32.f16` for both — which is correct for `half` and
+        // silently **wrong** for `bfloat`, whose overload suffix is `.bf16`.
+        // LLVM would accept the declaration and select the wrong intrinsic,
+        // which is a verifier-clean wrong answer. The suffix is therefore
+        // carried as the string it is.
+        let float_suffix = match float {
+            FloatTy::F16 => "f16",
+            FloatTy::Bf16 => "bf16",
+            FloatTy::F32 => "f32",
+            FloatTy::F64 => "f64",
         };
         let int_bits = (int.width(self.triple()) * 8) as u32;
         let which = if signed { "fptosi" } else { "fptoui" };
-        let symbol = format!("llvm.{which}.sat.i{int_bits}.f{float_bits}");
+        let symbol = format!("llvm.{which}.sat.i{int_bits}.{float_suffix}");
         let int_ty = self.int_ty(int_bits);
         let float_ty = self.scalar_ty(Scalar::Float(float));
         let mut params = [float_ty];
