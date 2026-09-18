@@ -1005,3 +1005,42 @@ fn a_record_owns_the_string_literals_it_was_built_from() {
         "hola/mundo! 4 6\n"
     );
 }
+
+/// The same literal, in a tuple, returned across a call.
+///
+/// **A second owner and not a second spelling.** `lower_record`, `lower_tuple`
+/// and `lower_variant` each had this hole for the same reason, and all three
+/// now go through one `field_value` — fixing only the record would have left a
+/// user working out which containers a string is allowed in. The tuple is
+/// returned from a function and destructured, so the string crosses a call
+/// boundary and a binding before anything reads its header.
+#[test]
+fn a_tuple_carries_a_string_literal_across_a_call() {
+    assert_eq!(
+        bytes(
+            "tuple-strings",
+            "def pair() -> (String, Int):\n    (\"nombre\", 7)\n\n\
+             let s, n be pair()\nprint(f\"{s}/{n} {s.length()}\")\n",
+        ),
+        "nombre/7 6\n"
+    );
+}
+
+/// `String.starts_with`, whose two halves both already existed.
+///
+/// `RUNTIME` declared `science_string_starts_with(P, P) -> Bool` and the
+/// prelude declared the method; the only thing missing was the row in
+/// `prelude_method` saying which is which — that table's own stated failure
+/// mode. Both answers are asserted, because a row naming the wrong symbol would
+/// very likely still return *something* of type `Bool`.
+#[test]
+fn starts_with_answers_both_ways() {
+    assert_eq!(
+        bytes(
+            "starts-with",
+            "let s be \"hola mundo\"\nlet p be \"hola\"\nlet q be \"adios\"\n\
+             print(f\"{s.starts_with(p)} {s.starts_with(q)}\")\n",
+        ),
+        "true false\n"
+    );
+}

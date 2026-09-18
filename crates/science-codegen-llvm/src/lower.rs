@@ -3815,9 +3815,12 @@ impl<'a> Lowerer<'a> {
     ///
     /// **This was never about strings being hard.** A string literal bound to a
     /// `let` and a string literal printed both worked, and so did one passed to
-    /// a function; what had no path was the one position where the value's
-    /// owner is a field. A record with a `String` in it is not a corner of this
-    /// language.
+    /// a function; what had no path was every position where the value's owner
+    /// is an *aggregate* — a record field, a tuple element, or a `choice`
+    /// variant's payload. All three call this, because all three had the same
+    /// hole for the same reason and fixing one of them would have left a user
+    /// wondering which containers strings are allowed in. `Loaded("…")` is as
+    /// ordinary as `Doc(title: "…")`.
     ///
     /// # The cost
     ///
@@ -3896,7 +3899,7 @@ impl<'a> Lowerer<'a> {
                 base: Operand::Value(base),
                 offset: place.offset,
             });
-            let value = self.typed_operand(ctx, operand, &place.layout, insts)?;
+            let value = self.field_value(ctx, operand, &place.layout, insts)?;
             insts.push(ExtInst::StoreAt {
                 address: Operand::Value(address),
                 layout: place.layout.clone(),
@@ -3957,7 +3960,7 @@ impl<'a> Lowerer<'a> {
         // One element is the element, by `Lowerer::choice_ty`'s decision; more
         // than one is the struct that function built, in positional order.
         if payload.len() == 1 {
-            let value = self.typed_operand(ctx, &payload[0], &declared, insts)?;
+            let value = self.field_value(ctx, &payload[0], &declared, insts)?;
             insts.push(ExtInst::StoreAt {
                 address: Operand::Value(start),
                 layout: declared,
@@ -5530,6 +5533,21 @@ impl<'a> Lowerer<'a> {
             ("String", "is_empty", "science_string_is_empty"),
             ("String", "new", "science_string_new"),
             ("String", "push_str", "science_string_push_str"),
+            // **`starts_with` is a row because both halves already existed.**
+            // `RUNTIME` declares `science_string_starts_with(P, P) -> Bool` and
+            // `builtins.rs` declares the method; only the sentence saying which
+            // is which was missing, which is this table's stated failure mode —
+            // *"a prelude method added to `builtins.rs` is not added here, and
+            // the symptom is a refusal rather than a wrong answer"*.
+            //
+            // **Its four siblings are not rows and cannot be.** The prelude
+            // also declares `contains`, `ends_with`, `find`, `replace` and
+            // `trim`, and `science-rt` exports an entry point for **none** of
+            // them — so those are declared-and-unimplemented, which is a
+            // different gap from this one and is not closed by guessing a
+            // symbol. The refusal a user meets for them names the method, which
+            // is the right report.
+            ("String", "starts_with", "science_string_starts_with"),
             // `Array of T`'s two descriptor-free rows. **Only two**, and the
             // line is `RuntimeFn::descriptor_index`: `science_array_len(P)` and
             // `science_array_is_empty(P)` read a header field, so they take the
