@@ -835,6 +835,21 @@ pub struct BuildInput<'a> {
     pub externs: &'a [&'a science_resolve::hir::ExternBlock],
     /// Every MIR body in the crate.
     pub bodies: &'a [MirBody],
+    /// Decision 42's monomorphisation set: every instance this program needs,
+    /// in emission order, computed above this crate.
+    ///
+    /// **It is the emission set and not a hint.** `lower_crate` used to decide
+    /// for itself which bodies to emit, with a reachability walk of its own
+    /// over `bodies` from `main`. That walk answered a strictly weaker question
+    /// — *which definitions are reachable* rather than *which instances exist*
+    /// — and it could not answer the stronger one, because instantiating a
+    /// generic callee needs `&mut Types` and this crate is handed a `&Types` on
+    /// purpose.
+    ///
+    /// `science_codegen::mono` had the answer the whole time: 1753 lines, forty
+    /// tests, and **no caller anywhere in the compiler**. This field is the
+    /// caller.
+    pub mono: &'a science_codegen::mono::MonoSet,
     /// Where the executable goes.
     pub output: PathBuf,
 }
@@ -975,7 +990,7 @@ pub fn build(input: &BuildInput) -> Result<Built, Diagnostics> {
         input.decls,
         input.externs,
     );
-    let lowered = match lowerer.lower_crate(input.bodies) {
+    let lowered = match lowerer.lower_crate(input.bodies, input.mono) {
         Ok(lowered) => lowered,
         Err(unlowered) => {
             diagnostics.push(unlowered.to_diagnostic());

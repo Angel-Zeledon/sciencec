@@ -28,6 +28,7 @@ use science_codegen_llvm::{BuildInput, Built, build};
 use science_diagnostics::{Diagnostics, FileId};
 use science_mir::mir::Body;
 use science_resolve::hir;
+use science_codegen::mono::MonoSet;
 use science_types::items::Declarations;
 use science_types::{Aliases, AtomOrder, Types, check_crate, thir};
 
@@ -37,6 +38,14 @@ pub struct Lowered {
     pub types: Types,
     pub decls: Declarations,
     pub bodies: Vec<Body>,
+    /// Decision 42's walk, run here for the reason `sciencec`'s driver runs it
+    /// there: it needs `&mut Types`, and `try_build` takes `&self`.
+    ///
+    /// **The harness runs the real walk rather than handing over an empty set**,
+    /// so every execution test in this crate exercises the same emission path a
+    /// `sciencec build` does. A harness that short-circuited it would leave the
+    /// one thing the swap changed untested by the only tests that run programs.
+    pub mono: MonoSet,
 }
 
 /// Lex, parse, resolve, check and lower one source file.
@@ -70,7 +79,11 @@ pub fn lower(source: &str) -> Lowered {
         };
         science_mir::lower_crate(&mut context, &thir)
     };
-    Lowered { krate, types, decls, bodies }
+    let mono = {
+        let mut walk = science_codegen::mono::Mono::new(&krate.defs, &decls, &mut types, &bodies);
+        walk.collect(science_codegen::mono::RootSet::EntryPoint)
+    };
+    Lowered { krate, types, decls, bodies, mono }
 }
 
 fn codes(diagnostics: &Diagnostics) -> Vec<(u16, String)> {
@@ -101,6 +114,7 @@ impl Lowered {
             decls: &self.decls,
             externs: &externs,
             bodies: &self.bodies,
+            mono: &self.mono,
             output: output.to_path_buf(),
         };
         build(&input).map_err(|diagnostics| diagnostics.into_vec())

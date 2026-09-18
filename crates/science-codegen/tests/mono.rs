@@ -1013,3 +1013,54 @@ def main():
     // The `extern` callee is counted rather than emitted: §8.
     assert_eq!(set.holes().extern_calls, 1, "{:?}", set.holes());
 }
+
+/// The walk's symbols and the LLVM backend's are the same symbols.
+///
+/// **This is the fact everything else about connecting the two rests on**, and
+/// until it was asserted it was an inference from reading two files. `mangle`'s
+/// own doc states the intent — *"`_S`, the length prefixes and the `E`
+/// separator live in exactly one function, and everything that produces a
+/// Science symbol calls it … what must **not** be duplicated is the frame
+/// around them: two spellings of the length prefix is two symbol schemes, and a
+/// linker would tell you about it a stage too late"* — but intent is not
+/// agreement. `science-codegen-llvm`'s `symbol_of` builds a
+/// [`science_types::MonoKey`] out of the definition's path components and calls
+/// [`science_codegen::mangle::mangle`]; [`Mono::symbol_of`] builds its own path
+/// and calls `assemble` directly. Both end at `assemble`, and this asserts that
+/// the *paths* agree too — which is the half neither doc comment covers.
+///
+/// **Non-generic only, deliberately.** For an instance with arguments the two
+/// cannot agree, because the backend has no arguments to encode: it refuses a
+/// generic function outright. That refusal is the thing being removed, and the
+/// precondition for removing it is that the schemes already coincide where both
+/// have an answer. If this test ever fails, driving emission from a `MonoSet`
+/// is a symbol migration and not a rewiring, which is a completely different
+/// piece of work — so the failure message says that rather than just reporting
+/// two strings.
+#[test]
+fn the_walk_and_the_backend_agree_on_a_plain_symbol() {
+    let source = "\
+def double(n: Int) -> Int:
+    n * 2
+
+def main():
+    let a be double(21)
+";
+    let mut lowered = lower(source);
+    let set = lowered.mono(RootSet::EntryPoint);
+
+    for item in set.emission_order() {
+        if item.instance.is_generic() {
+            continue;
+        }
+        let name = &lowered.krate.defs.get(item.instance.def).name;
+        let theirs = science_codegen::mangle::mangle(
+            &science_codegen::mangle::MonoKey::plain(&[name.as_str()]),
+        );
+        assert_eq!(
+            item.symbol, theirs,
+            "the monomorphisation walk and `science-codegen-llvm`'s `symbol_of` disagree about \
+             `{name}`: connecting the two is a symbol migration, not a rewiring"
+        );
+    }
+}

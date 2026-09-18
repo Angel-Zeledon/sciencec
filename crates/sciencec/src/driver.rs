@@ -214,7 +214,7 @@ impl Session {
     fn emit_executable(&mut self, path: &Path, file: FileId) -> Result<(), Vec<Diagnostic>> {
         let (sources, _) = self.crate_sources(path, file);
         let (krate, _) = self.resolved(&sources);
-        let Some(lowered) = lower_to_mir(&krate) else {
+        let Some(mut lowered) = lower_to_mir(&krate) else {
             // Unreachable in practice: `diagnostics` has already run the same
             // phases and the caller stopped on an error. Kept as a value rather
             // than an `expect`, because "the type checker reported nothing and
@@ -260,6 +260,27 @@ impl Session {
         {
             return Err(vec![science_codegen::diagnostics::no_entry_point(&display_path(path))]);
         }
+        // **Decision 42's walk, run here and handed down.** The walk needs
+        // `&mut Types` — instantiating `identity of T` at `Int` interns types
+        // that did not exist before — and `BuildInput::types` is a `&Types`,
+        // because a backend must not be able to invent one. So the walk cannot
+        // live inside `science-codegen-llvm` even if Decision 42 did not
+        // already put it above the line; this is the last place that holds the
+        // table mutably.
+        //
+        // **`RootSet::EntryPoint`**, which is what `sciencec build` means: the
+        // set of things the program reaches from `main`. The other root set
+        // exists for a library build and this command does not do one — the
+        // `SC0403` above is the refusal that says so.
+        let mono = {
+            let mut walk = science_codegen::mono::Mono::new(
+                &krate.defs,
+                &lowered.decls,
+                &mut lowered.types,
+                &lowered.bodies,
+            );
+            walk.collect(science_codegen::mono::RootSet::EntryPoint)
+        };
         let request = science_codegen::driver::BuildRequest::new(vec![display_path(path)]);
         // Decision 28 makes the source order of the `library` clauses the link
         // order, so the blocks are collected in source order and handed over as
@@ -272,6 +293,7 @@ impl Session {
             decls: &lowered.decls,
             externs: &externs,
             bodies: &lowered.bodies,
+            mono: &mono,
             output: executable_path(path),
         };
         match science_codegen_llvm::build(&input) {
