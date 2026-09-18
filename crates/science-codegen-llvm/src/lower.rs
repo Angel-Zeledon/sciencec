@@ -446,6 +446,14 @@ pub struct Lowered {
     /// Decision 20's `ScienceTypeInfo` descriptors, one per type a box in this
     /// module allocates for, in the order they were interned.
     pub descriptors: Vec<(String, TypeInfo)>,
+    /// Decision 20's `ScienceMapInfo`s, in emission order.
+    ///
+    /// **A second list and not a second kind of entry**, because a
+    /// `ScienceMapInfo` is a different *type* — two nested descriptors and two
+    /// function pointers where a `ScienceTypeInfo` is two integers and one —
+    /// and `Backend` has had `define_map_info` beside `define_type_info` since
+    /// before either had a caller. This is the caller for the second.
+    pub map_descriptors: Vec<(String, science_codegen::descriptor::MapInfo)>,
     /// Declarations for every runtime entry point and foreign symbol the
     /// module calls.
     pub declarations: Vec<AbiSignature>,
@@ -1156,6 +1164,115 @@ impl<'a> Lowerer<'a> {
         Ok(self.descriptors.intern(&MonoKey::plain(&[rendered.as_str()]), info))
     }
 
+    /// `Map of (K, V)`'s key and value, when the type is one.
+    fn map_key_value(&self, ty: Ty) -> Option<(Ty, Ty)> {
+        let TyKind::Named { def, args } = self.types.kind(self.referent(ty)) else {
+            return None;
+        };
+        if self.defs.get(*def).name != "Map" || args.len() != 2 {
+            return None;
+        }
+        match (&args[0], &args[1]) {
+            (GenericArg::Type(key), GenericArg::Type(value)) => Some((*key, *value)),
+            _ => None,
+        }
+    }
+
+    /// The key and value a map call's descriptor should describe.
+    ///
+    /// [`Lowerer::array_operand_element`]'s rule, one container over: ask the
+    /// operands first and the destination second. `science_map_new(D)` has no
+    /// map operand at all — the map is what it *returns* — so the destination
+    /// is where the types live for that one, and every other entry point has
+    /// the map in front of it.
+    fn map_operand_kv(
+        &self,
+        body: &MirBody,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+    ) -> Option<(Ty, Ty)> {
+        for arg in args {
+            if let Some(place) = arg.place() {
+                if let Some(pair) = self.map_key_value(place.ty(body)) {
+                    return Some(pair);
+                }
+            }
+        }
+        self.map_key_value(destination.ty(body))
+    }
+
+    /// Decision 20's `ScienceMapInfo` for one key/value pair.
+    ///
+    /// # The decision
+    ///
+    /// Two nested `ScienceTypeInfo`s, built by the same
+    /// [`Lowerer::intern_element_descriptor`] an array's element goes through,
+    /// plus the key's `hash_fn` and `eq_fn` read from
+    /// [`science_codegen::runtime::map_key_support`].
+    ///
+    /// # The reason the pair is asked for rather than derived
+    ///
+    /// **The tempting default is wrong exactly where it would be reached.**
+    /// Hashing the key's bytes and comparing the key's bytes looks like it
+    /// works for every key; it does not, because a record with padding has
+    /// bytes that take no part in equality, so two values that *are* equal can
+    /// hash differently. A table cannot detect that — it loses entries as a
+    /// function of what the allocator last left in the padding, which is a bug
+    /// that reproduces on one machine and not the next. Refusing costs a
+    /// diagnostic; defaulting costs that.
+    ///
+    /// So `map_key_support` names a pair for `String` and for the eight-byte
+    /// integers and refuses everything else, and this turns that refusal into
+    /// a sentence naming the key type.
+    ///
+    /// # The cost
+    ///
+    /// A `Map` keyed by `U8` or by a record is refused today although both are
+    /// perfectly sensible keys. Each integer width needs its own symbol pair,
+    /// because a `ScienceHashFn` is handed a `*const u8` and no size and so
+    /// cannot ask how wide its key is — an eight-byte read from a one-byte
+    /// slot reads past the key array.
+    fn intern_map_descriptor(&mut self, key: Ty, value: Ty) -> Result<String, Unlowered> {
+        let key_cg = self.cg_ty(key)?;
+        let Some((hash, eq)) = science_codegen::runtime::map_key_support(&key_cg) else {
+            return Err(Unlowered::new(format!(
+                "a `Map` keyed by `{}`, for which no `hash_fn`/`eq_fn` pair exists:                  `runtime::map_key_support` names one for `String` and for the eight-byte                  integers and refuses the rest, because a byte-wise default hashes a record's                  padding and would lose entries as a function of what the allocator left there",
+                self.types.render(self.defs, key)
+            )));
+        };
+        // Declared so the module has a `declare` for each: a `ScienceMapInfo`
+        // holding the address of a symbol nothing declared is a global that
+        // fails to link, which is `define_vtable`'s lesson one descriptor over.
+        self.declare(hash)?;
+        self.declare(eq)?;
+        let key_symbol = self.intern_element_descriptor(key)?;
+        let value_symbol = self.intern_element_descriptor(value)?;
+        let key_info = self
+            .descriptors
+            .type_infos()
+            .find(|(symbol, _)| *symbol == &key_symbol)
+            .map(|(_, info)| info.clone())
+            .expect("just interned");
+        let value_info = self
+            .descriptors
+            .type_infos()
+            .find(|(symbol, _)| *symbol == &value_symbol)
+            .map(|(_, info)| info.clone())
+            .expect("just interned");
+        let rendered = format!(
+            "{},{}",
+            self.types.render(self.defs, key),
+            self.types.render(self.defs, value)
+        );
+        let info = science_codegen::descriptor::MapInfo {
+            key: key_info,
+            value: value_info,
+            hash_fn: hash.to_string(),
+            eq_fn: eq.to_string(),
+        };
+        Ok(self.descriptors.intern_map(&MonoKey::plain(&[rendered.as_str()]), info))
+    }
+
     /// The [`CgTy`] of a record or choice definition, for a descriptor.
     fn record_or_choice_ty(&self, def: DefId) -> Result<CgTy, Unlowered> {
         match self.defs.get(def).kind {
@@ -1325,6 +1442,18 @@ impl<'a> Lowerer<'a> {
                 if args.len() == 1 && self.defs.get(*def).name == "Array" =>
             {
                 Ok(RtAggregate::Array.cg_ty())
+            }
+            // `Map of (K, V)` — §2.6's other runtime aggregate. Its *value* is
+            // the six-word `ScienceMap`; its key and value travel beside every
+            // operation inside one `ScienceMapInfo`, which carries two nested
+            // `ScienceTypeInfo`s **and** the key's `hash_fn` and `eq_fn`. That
+            // pair is the whole of what makes a map harder than an array: the
+            // runtime has no fallback for either, and the descriptor is the
+            // only place they can come from.
+            TyKind::Named { def, args }
+                if args.len() == 2 && self.defs.get(*def).name == "Map" =>
+            {
+                Ok(RtAggregate::Map.cg_ty())
             }
             TyKind::Named { args, .. } if !args.is_empty() => Err(Unlowered::new(format!(
                 "a value of type `{}`, one of §2.6's runtime containers: its value is a \
@@ -1715,6 +1844,15 @@ impl<'a> Lowerer<'a> {
         if let Some(element) = self.array_element(ty) {
             let descriptor = self.intern_element_descriptor(element)?;
             return Ok(Some(("science_array_free", Some(descriptor))));
+        }
+        // A `Map` releases through `science_map_free(P, D)`, which runs the
+        // key's and the value's `drop_fn` over the live slots. Its descriptor
+        // takes two arguments like an array's, so a `Map` nested inside either
+        // container meets the same refusal `Array of (Array of T)` does, for
+        // the same reason: Decision 20's `drop_fn` is called with one address.
+        if let Some((key, value)) = self.map_key_value(ty) {
+            let descriptor = self.intern_map_descriptor(key, value)?;
+            return Ok(Some(("science_map_free", Some(descriptor))));
         }
         Ok(None)
     }
@@ -2166,11 +2304,18 @@ impl<'a> Lowerer<'a> {
             .filter(|name| used.contains(name))
             .cloned()
             .collect();
+        // Taken once: the table owns both lists and reading the second after
+        // moving it out is the mistake this shape exists to make impossible.
+        let descriptors = std::mem::take(&mut self.descriptors);
         Lowered {
             literals: std::mem::take(&mut self.literals),
             vtables: std::mem::take(&mut self.vtables),
-            descriptors: std::mem::take(&mut self.descriptors)
+            descriptors: descriptors
                 .type_infos()
+                .map(|(symbol, info)| (symbol.clone(), info.clone()))
+                .collect(),
+            map_descriptors: descriptors
+                .map_infos()
                 .map(|(symbol, info)| (symbol.clone(), info.clone()))
                 .collect(),
             declarations: std::mem::take(&mut self.declarations),
@@ -5328,6 +5473,25 @@ impl<'a> Lowerer<'a> {
         let descriptor = match descriptor_at {
             None => None,
             Some(_) => {
+                // **A `science_map_*` call's descriptor is a `ScienceMapInfo`
+                // and not a `ScienceTypeInfo`**, and the symbol is what says
+                // which. `RuntimeFn::descriptor_index` answers *where* the
+                // descriptor goes and is silent about *what* it is, because
+                // every entry point that takes one took the same kind until
+                // `Map` arrived. Keying on the prefix rather than adding a
+                // second field to `RuntimeFn` keeps the table describing
+                // signatures; the day a third descriptor kind exists, that is
+                // the trade to revisit.
+                if symbol.starts_with("science_map_") {
+                    let (key, value) =
+                        self.map_operand_kv(body, args, destination).ok_or_else(|| {
+                            Unlowered::new(format!(
+                                "a call to `{symbol}`, which takes a `ScienceMapInfo`, with no \
+                                 operand this crate can read a key and value type off"
+                            ))
+                        })?;
+                    Some(self.intern_map_descriptor(key, value)?)
+                } else {
                 let element = self
                     .array_operand_element(body, args, destination)
                     .ok_or_else(|| {
@@ -5339,6 +5503,7 @@ impl<'a> Lowerer<'a> {
                     })?;
                 element_ty = Some(element);
                 Some(self.intern_element_descriptor(element)?)
+                }
             }
         };
 
@@ -5594,6 +5759,18 @@ impl<'a> Lowerer<'a> {
             // twin is `science_array_get_mut`, whose name is C's and is not
             // reached by a user.
             ("Array", "get_mutably", "science_array_get_mut"),
+            // `Map of (K, V)`'s surface. **Five rows and not seven**, and the
+            // two that are missing are missing for two different reasons.
+            // `insert` and `remove` return `V?` through §5.3's bool-plus-out-
+            // parameter convention, which is two results where a row maps one
+            // call to one symbol; `is_empty` has no runtime twin at all —
+            // `science_map_len` is the only length there is, and comparing it
+            // to zero is an instruction this table cannot express. Both are
+            // added when the shape that carries them is.
+            ("Map", "new", "science_map_new"),
+            ("Map", "get", "science_map_get"),
+            ("Map", "contains", "science_map_contains"),
+            ("Map", "length", "science_map_len"),
         ];
         if !self.defs.get(def).is_builtin() {
             return None;

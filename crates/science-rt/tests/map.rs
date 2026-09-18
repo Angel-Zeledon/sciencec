@@ -443,3 +443,177 @@ extern "C" fn hash_counted_id(key: *const u8) -> u64 {
 extern "C" fn eq_counted_id(a: *const u8, b: *const u8) -> bool {
     unsafe { (*a.cast::<Counted>()).id == (*b.cast::<Counted>()).id }
 }
+
+// ---------------------------------------------------------------------------
+// The key-support pair the compiler can actually name.
+//
+// Every test above this line supplies `hash_u64`/`eq_u64` from
+// `tests/common/mod.rs` — hand-written in the test crate, agreeing with nothing
+// the compiler could emit a reference to. That is how `Map` stayed fully tested
+// and entirely unreachable at the same time: the table was exercised through
+// function pointers that exist only here, so a complete table and a compiler
+// with nothing to put in `hash_fn` looked identical from this file.
+//
+// `science_codegen::runtime::map_key_support` now answers "which two symbols go
+// into this `ScienceMapInfo`" for `String` and for eight-byte integer keys. The
+// tests below drive a real `ScienceMap` through *those* symbols and nothing
+// else, so that the pair the compiler will name is a pair that has been run.
+// ---------------------------------------------------------------------------
+
+/// `science_int_hash`/`science_int_eq` drive a real table, across the rehashes
+/// that a hash function only affects the distribution of.
+#[test]
+fn the_int_key_pair_drives_a_real_table() {
+    unsafe {
+        let info = ScienceMapInfo {
+            key: i64_info(),
+            value: i64_info(),
+            hash_fn: science_int_hash,
+            eq_fn: science_int_eq,
+        };
+        let mut m = science_map_new(&info);
+
+        for i in 0..2000i64 {
+            assert_eq!(insert(&mut m, &info, i, i * 3), None);
+        }
+        assert_eq!(science_map_len(&m), 2000);
+        for i in 0..2000i64 {
+            assert_eq!(get(&m, &info, i), Some(i * 3), "key {i} lost across rehash");
+            assert!(contains(&m, &info, i));
+        }
+        assert_eq!(get(&m, &info, 2000), None);
+        assert!(!contains(&m, &info, -1));
+
+        // Replacement and removal both go through `eq_fn`, so they are the part
+        // a merely-plausible equality gets wrong.
+        assert_eq!(insert(&mut m, &info, 7, 70), Some(21));
+        assert_eq!(get(&m, &info, 7), Some(70));
+        assert_eq!(remove(&mut m, &info, 7), Some(70));
+        assert_eq!(get(&m, &info, 7), None);
+        assert_eq!(science_map_len(&m), 1999);
+
+        science_map_free(&mut m, &info);
+    }
+}
+
+/// The extreme bit patterns, pinned separately from the loop above because they
+/// are what a sign-extending or truncating integer hash collapses onto each
+/// other, and a collapse is invisible in a test whose keys are all small and
+/// positive.
+#[test]
+fn the_int_key_pair_handles_negative_and_extreme_keys() {
+    unsafe {
+        let info = ScienceMapInfo {
+            key: i64_info(),
+            value: i64_info(),
+            hash_fn: science_int_hash,
+            eq_fn: science_int_eq,
+        };
+        let mut m = science_map_new(&info);
+        for i in -50..50i64 {
+            assert_eq!(insert(&mut m, &info, i, i), None);
+        }
+        assert_eq!(science_map_len(&m), 100);
+        for i in -50..50i64 {
+            assert_eq!(get(&m, &info, i), Some(i));
+        }
+        assert_eq!(insert(&mut m, &info, i64::MAX, 1), None);
+        assert_eq!(insert(&mut m, &info, i64::MIN, 2), None);
+        assert_eq!(get(&m, &info, i64::MAX), Some(1));
+        assert_eq!(get(&m, &info, i64::MIN), Some(2));
+        assert_eq!(get(&m, &info, -1), Some(-1));
+        assert_eq!(science_map_len(&m), 102);
+        science_map_free(&mut m, &info);
+    }
+}
+
+/// The one contract `ScienceMapInfo` imposes, asserted directly on the pair that
+/// will be named for `Int`: **equal keys hash equal**.
+///
+/// Directly, and not through the table, because the table cannot detect a
+/// violation — a pair that disagreed would make the tests above lose entries
+/// occasionally, as a function of capacity, which is a flake and not a failure.
+#[test]
+fn the_int_key_pair_agrees_with_itself() {
+    unsafe {
+        for value in [0i64, 1, -1, 42, i64::MIN, i64::MAX, 1 << 32] {
+            let (a, b) = (value, value);
+            let (pa, pb) = ((&raw const a).cast::<u8>(), (&raw const b).cast::<u8>());
+            assert!(science_int_eq(pa, pb), "{value} is not equal to itself");
+            assert_eq!(
+                science_int_hash(pa),
+                science_int_hash(pb),
+                "{value} does not hash equal to itself"
+            );
+        }
+        let (x, y) = (1i64, 2i64);
+        assert!(!science_int_eq(
+            (&raw const x).cast::<u8>(),
+            (&raw const y).cast::<u8>()
+        ));
+    }
+}
+
+/// `science_string_hash` and `science_string_eq` fill a `ScienceMapInfo`'s two
+/// slots **with no adaptor in between**, which is the claim `map_key_support`
+/// rests on for `String` keys.
+///
+/// Their Rust signatures say `*const ScienceString` where `ScienceHashFn` and
+/// `ScienceEqFn` say `*const u8`. In the C ABI those are one pointer, so codegen
+/// will take the address of `science_string_hash` and store it straight into a
+/// `hash_fn` slot. The `transmute` below *is* that store, written in Rust: if
+/// the two were not ABI-compatible, this test is what would crash, rather than
+/// an emitted program nobody could reduce.
+///
+/// `tests/common/mod.rs`'s `hash_link_string`/`eq_link_string` stay what the
+/// other string tests use; they are a Rust type-checking convenience, and this
+/// test is the record that they are only that.
+#[test]
+fn the_string_key_pair_needs_no_shim() {
+    unsafe {
+        let info = ScienceMapInfo {
+            key: string_info(),
+            value: i64_info(),
+            // SAFETY: `*const ScienceString` and `*const u8` are the same
+            // pointer in the C ABI, which is the sentence this test runs.
+            hash_fn: std::mem::transmute::<
+                unsafe extern "C" fn(*const ScienceString) -> u64,
+                ScienceHashFn,
+            >(science_string_hash),
+            eq_fn: std::mem::transmute::<
+                unsafe extern "C" fn(*const ScienceString, *const ScienceString) -> bool,
+                ScienceEqFn,
+            >(science_string_eq),
+        };
+        let mut m = science_map_new(&info);
+
+        for i in 0..200i64 {
+            let key = s(&format!("key-{i}"));
+            let mut old = 0i64;
+            assert!(!science_map_insert(
+                &mut m,
+                &info,
+                (&raw const key).cast::<u8>(),
+                (&raw const i).cast::<u8>(),
+                (&raw mut old).cast::<u8>(),
+            ));
+        }
+        assert_eq!(science_map_len(&m), 200);
+
+        // A freshly built key with the same bytes must find the entry: hashing
+        // the contents and not the buffer is the whole point of the pair.
+        for i in 0..200i64 {
+            let probe = s(&format!("key-{i}"));
+            let found = science_map_get(&m, &info, (&raw const probe).cast::<u8>());
+            assert!(!found.is_null(), "key-{i} not found through the real pair");
+            assert_eq!(*found.cast::<i64>(), i);
+            free(probe);
+        }
+
+        let absent = s("key-200");
+        assert!(science_map_get(&m, &info, (&raw const absent).cast::<u8>()).is_null());
+        free(absent);
+
+        science_map_free(&mut m, &info);
+    }
+}

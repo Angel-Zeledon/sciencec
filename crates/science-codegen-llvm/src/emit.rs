@@ -2090,13 +2090,73 @@ impl Backend for LlvmBackend {
         Ok(())
     }
 
-    fn define_map_info(&mut self, _symbol: &str, _info: &MapInfo) -> Result<(), BackendError> {
-        Err(BackendError::Unsupported {
-            what: "a `ScienceMapInfo`: stage 4's containers are not lowered, and emitting a \
-                   descriptor whose `hash_fn` and `eq_fn` no function in the module defines \
-                   would produce a module that verifies and crashes"
-                .to_string(),
-        })
+    /// Decision 20's `ScienceMapInfo`: two nested descriptors and two function
+    /// addresses.
+    ///
+    /// **The refusal this replaced was right about the hazard and wrong about
+    /// the remedy.** It read: *"emitting a descriptor whose `hash_fn` and
+    /// `eq_fn` no function in the module defines would produce a module that
+    /// verifies and crashes"* — true, and the answer is to check, exactly as
+    /// [`LlvmBackend::define_type_info`] checks its `drop_fn` and
+    /// [`LlvmBackend::define_vtable`] checks every slot. A null in a
+    /// descriptor's function slot is worse than a link error, because the
+    /// runtime calls it: a `hash_fn` that is null is a jump to address zero on
+    /// the first `insert`.
+    ///
+    /// `LLVMGetNamedFunction` finds a **declaration** as well as a definition,
+    /// which is what makes this work at all: `science_string_hash` and
+    /// `science_int_hash` live in `science-rt` and this module only declares
+    /// them. That is the difference from a vtable slot, whose method this
+    /// module is expected to define, and it is why the error below says
+    /// *declares* rather than *defines*.
+    fn define_map_info(&mut self, symbol: &str, info: &MapInfo) -> Result<(), BackendError> {
+        let module = self.module_ref()?;
+        let usize_ty = self.int_ty((self.triple().pointer_width() * 8) as u32);
+        let ptr_ty = self.ptr_ty();
+        let mut nested = |descriptor: &science_codegen::descriptor::TypeInfo| {
+            let mut members = [
+                unsafe { sys::LLVMConstInt(usize_ty, descriptor.size, 0) },
+                unsafe { sys::LLVMConstInt(usize_ty, descriptor.align, 0) },
+                unsafe { sys::LLVMConstPointerNull(ptr_ty) },
+            ];
+            unsafe { sys::LLVMConstStructInContext(self.context.raw(), members.as_mut_ptr(), 3, 0) }
+        };
+        let key = nested(&info.key);
+        let value = nested(&info.value);
+
+        let mut function = |name: &str| -> Result<sys::LLVMValueRef, BackendError> {
+            let c_name = cstr(name);
+            let found = unsafe { sys::LLVMGetNamedFunction(module.raw(), c_name.as_ptr()) };
+            if found.is_null() {
+                return Err(BackendError::Other(format!(
+                    "the map descriptor `{symbol}` names `{name}`, which the module does not                      declare: the runtime calls it on the first operation, so a null here is a                      jump to address zero rather than a link error"
+                )));
+            }
+            Ok(found)
+        };
+        let hash = function(&info.hash_fn)?;
+        let eq = function(&info.eq_fn)?;
+
+        let mut members = [key, value, hash, eq];
+        let constant = unsafe {
+            sys::LLVMConstStructInContext(self.context.raw(), members.as_mut_ptr(), 4, 0)
+        };
+        let global_ty = {
+            let mut info_ty = [usize_ty, usize_ty, ptr_ty];
+            let nested_ty = self.anon_struct(&mut info_ty);
+            let mut tys = [nested_ty, nested_ty, ptr_ty, ptr_ty];
+            self.anon_struct(&mut tys)
+        };
+        let name = cstr(symbol);
+        let global = unsafe { sys::LLVMAddGlobal(module.raw(), global_ty, name.as_ptr()) };
+        unsafe {
+            sys::LLVMSetInitializer(global, constant);
+            sys::LLVMSetGlobalConstant(global, 1);
+            sys::LLVMSetLinkage(global, sys::linkage::PRIVATE);
+            sys::LLVMSetUnnamedAddress(global, sys::unnamed_addr::GLOBAL);
+        }
+        self.verified = false;
+        Ok(())
     }
 
     fn declare_function(&mut self, sig: &AbiSignature) -> Result<FuncId, BackendError> {

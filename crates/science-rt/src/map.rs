@@ -532,3 +532,71 @@ pub unsafe extern "C" fn science_map_remove(
     map.tombstones += 1;
     true
 }
+
+// --- Key support: the `hash_fn`/`eq_fn` pair for `Int` -----------------------
+//
+// **Decided here, because the measurement that prompted it is worth writing
+// down.** `ScienceMapInfo` needs a `hash_fn` and an `eq_fn` for every key type,
+// and until now this crate supplied exactly one pair's worth of them:
+// `science_string_hash` and `science_string_eq` in `string.rs`, both documented
+// as *"the natural `hash_fn`/`eq_fn` for a `Map` keyed by `String`"*. `Int` —
+// the other key type the prelude's own examples use, in
+// `examples/19_stdlib.science`'s `Map of (String, Int)` and in §3.6's
+// discussion of `a Map of (Int, _)` — had **no pair at all**. `tests/map.rs`
+// did not notice, because it declares `hash_u64` and `eq_u64` in its own
+// `tests/common/mod.rs` and passes those; every test passed while the compiler
+// had nothing it could name.
+//
+// The alternative was for codegen to emit the pair itself, which it can: they
+// are a load and a compare, and `EMITTED_FN_SIGNATURES` in
+// `science-codegen/src/runtime.rs` already states the two C signatures. It was
+// rejected because `String`'s pair is a runtime symbol and a key type whose
+// support lives in two different places is a key type whose support disagrees
+// in two different places. One mechanism — look the symbol pair up by key type,
+// declare it, take its address — covers both.
+//
+// **The cost, stated rather than hidden: this pair is for eight-byte integer
+// keys only.** A `ScienceHashFn` receives a `*const u8` and no size, so it
+// cannot ask how wide its key is; reading eight bytes out of a one-byte slot is
+// not a worse hash, it is a read past the end of the key array. A `Map of (U8,
+// _)` therefore still has no pair, and adding one means adding a symbol per
+// width rather than widening this one.
+
+/// `Hash` for an eight-byte integer key — `Int`, and any other 64-bit integer.
+///
+/// **Returns the key's bits unchanged, and that is the whole function.**
+/// [`ScienceHashFn`] requires only that equal keys hash equal, and the table
+/// puts every hash it is given through splitmix64 before the low bits select a
+/// slot, so the identity is already a well-distributed hash *as the table uses
+/// it*. Hashing here as well would be a second mix of the same bits, which
+/// costs instructions in the hottest loop the map has and buys nothing the
+/// first mix did not already buy.
+///
+/// [`ScienceHashFn`]: crate::ScienceHashFn
+///
+/// # Safety
+///
+/// `key` must be non-null, aligned for `i64`, and point to a live eight-byte
+/// integer.
+#[no_mangle]
+pub unsafe extern "C" fn science_int_hash(key: *const u8) -> u64 {
+    // SAFETY: the caller guarantees a live, aligned eight-byte integer.
+    unsafe { key.cast::<u64>().read() }
+}
+
+/// `Eq::eq` for an eight-byte integer key.
+///
+/// Compares the bits, which for a fixed-width two's-complement integer is the
+/// same relation as `==` at every signedness — so one symbol serves `Int`,
+/// `I64` and `U64` rather than three. This is exactly the relation
+/// [`science_int_hash`] agrees with: equal bits, equal hash.
+///
+/// # Safety
+///
+/// Both pointers must be non-null, aligned for `i64`, and point to live
+/// eight-byte integers.
+#[no_mangle]
+pub unsafe extern "C" fn science_int_eq(a: *const u8, b: *const u8) -> bool {
+    // SAFETY: the caller guarantees two live, aligned eight-byte integers.
+    unsafe { a.cast::<u64>().read() == b.cast::<u64>().read() }
+}

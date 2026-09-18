@@ -126,7 +126,7 @@ fn the_derived_sret_set_is_ten_and_moved_once() {
         indirect, 10,
         "the derived `sret` set is not the ten `science-rt` §2 and          `science-codegen`'s `runtime.rs` both now name"
     );
-    assert_eq!(RUNTIME.len(), 55, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 57, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

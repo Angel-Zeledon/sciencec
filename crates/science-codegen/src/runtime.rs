@@ -477,6 +477,13 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_map_get", params: &[P, D, P], ret: RtRet::Ptr },
     RuntimeFn { symbol: "science_map_contains", params: &[P, D, P], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_map_remove", params: &[P, D, P, P], ret: RtRet::Bool },
+    // The `hash_fn`/`eq_fn` pair for an eight-byte integer key. These are never
+    // *called* by emitted code — their addresses go into a `ScienceMapInfo`
+    // global — but they are declared here for the same reason every other
+    // symbol is: [`map_key_support`] names them, and a name that is not in
+    // `RUNTIME` is a name the linker learns about too late.
+    RuntimeFn { symbol: "science_int_hash", params: &[P], ret: RtRet::U64 },
+    RuntimeFn { symbol: "science_int_eq", params: &[P, P], ret: RtRet::Bool },
     // --- mem.rs ---
     RuntimeFn { symbol: "science_alloc", params: &[Z, Z], ret: RtRet::Ptr },
     RuntimeFn { symbol: "science_realloc", params: &[P, Z, Z, Z], ret: RtRet::Ptr },
@@ -566,6 +573,61 @@ pub const EMITTED_FN_SIGNATURES: &[(&str, &str)] = &[
     ("hash_fn", "uint64_t (*)(const uint8_t *key)"),
     ("eq_fn", "bool (*)(const uint8_t *a, const uint8_t *b)"),
 ];
+
+/// The `hash_fn` and `eq_fn` symbols for a `Map` key type, or `None` if this
+/// compiler has no pair for it.
+///
+/// **This is the mechanism `EMITTED_FN_SIGNATURES` describes the shape of and
+/// nothing supplied.** That constant states the two C signatures a
+/// `ScienceMapInfo`'s function-pointer slots take, and it has stated them
+/// correctly all along; what did not exist was any way to get from a key type
+/// to the two symbols that fill them. So `Map` was declared in the prelude,
+/// implemented in full in `science-rt/src/map.rs`, declared in `RUNTIME` above,
+/// and given `RtAggregate::Map` and `RtAggregate::MapInfo` — and a backend that
+/// wanted to build a `ScienceMapInfo` had nowhere to ask what to put in its
+/// last two fields.
+///
+/// **Two key types are supported, and the boundary is the point.** `String`
+/// resolves to `science_string_hash`/`science_string_eq`, which are `string.rs`'s
+/// and have been there all along. Eight-byte integers resolve to
+/// `science_int_hash`/`science_int_eq`, which `map.rs` did not have until now
+/// and whose absence is documented there.
+///
+/// Everything else is `None`, and a `None` is a **refusal, not a default**. The
+/// tempting default — compare the bytes, hash the bytes — is wrong for exactly
+/// the types where it would be reached: a record with padding has bytes that do
+/// not participate in equality, and two equal values that differ in a pad byte
+/// would hash differently, which is the one property
+/// [`ScienceHashFn`](science_rt::ScienceHashFn) requires and the one whose
+/// violation the table cannot detect. A `Map` keyed by such a type would lose
+/// entries at run time, silently, as a function of allocator contents. Refusing
+/// at compile time costs a diagnostic and a key type; defaulting costs a bug
+/// nobody can reproduce.
+///
+/// The caller declares both symbols with [`runtime_fn`], takes their addresses,
+/// and stores them into the `hash_fn` and `eq_fn` fields of
+/// [`RtAggregate::MapInfo`]'s layout, in that order.
+pub fn map_key_support(key: &CgTy) -> Option<(&'static str, &'static str)> {
+    match key {
+        // §3.1 gives `String` its own runtime aggregate, so a `String` key is a
+        // `ScienceString` by value in the key array and the pair takes a
+        // pointer to it. `science_string_hash`'s Rust signature says `*const
+        // ScienceString` where `ScienceHashFn` says `*const u8`; those are the
+        // same pointer in the C ABI, which is why no shim is needed and why
+        // `tests/map.rs`'s `hash_link_string` is a Rust type-checking
+        // convenience rather than a call the compiler must emit.
+        CgTy::Struct { name, .. } if name == "ScienceString" => {
+            Some(("science_string_hash", "science_string_eq"))
+        }
+        // Width, not signedness, decides: see `science_int_eq` for why one
+        // symbol serves `I64` and `U64` both. `Usize`/`Isize` are deliberately
+        // absent — their width is the target's, so a pair chosen here would be
+        // right on a 64-bit target and a buffer overrun on a 32-bit one, and
+        // this function has no target to ask.
+        CgTy::Int(IntTy::I64 | IntTy::U64) => Some(("science_int_hash", "science_int_eq")),
+        _ => None,
+    }
+}
 
 /// How an owned `T?` comes back from the runtime, in both cases.
 ///
@@ -701,9 +763,20 @@ impl ExitContract {
 mod tests {
     use super::*;
 
+    /// **Was fifty-five, and is fifty-seven.** The two added are
+    /// `science_int_hash` and `science_int_eq`, the `hash_fn`/`eq_fn` pair for
+    /// an eight-byte integer `Map` key — see [`map_key_support`] for why the
+    /// pair is a runtime symbol rather than something codegen emits, and
+    /// `science-rt/src/map.rs` for why `String` had a pair all along and `Int`
+    /// had none.
+    ///
+    /// The number is pinned rather than derived on purpose: §2.6 says of these
+    /// symbols *"they are the whole list"*, and a count that moves without
+    /// anyone noticing is a list that is no longer whole. The assertion that
+    /// changed here changed because the list did.
     #[test]
-    fn there_are_fifty_five_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 55, "§2.6: \"they are the whole list\"");
+    fn there_are_fifty_seven_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 57, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");
@@ -712,6 +785,69 @@ mod tests {
         symbols.sort_unstable();
         symbols.dedup();
         assert_eq!(symbols.len(), count);
+    }
+
+    /// The pair `map_key_support` names must be a pair the linker will resolve,
+    /// which means both halves must be in `RUNTIME`.
+    ///
+    /// This is the assertion that would have failed the whole time had
+    /// `map_key_support` existed before `science_int_hash` did: `String`'s two
+    /// symbols were declared, `Int`'s two did not exist in any crate, and
+    /// nothing anywhere would have said so.
+    #[test]
+    fn every_key_support_symbol_is_a_declared_runtime_entry_point() {
+        let keys = [
+            RtAggregate::String.cg_ty(),
+            CgTy::Int(IntTy::I64),
+            CgTy::Int(IntTy::U64),
+        ];
+        for key in keys {
+            let (hash, eq) = map_key_support(&key).expect("a supported key type");
+            assert!(runtime_fn(hash).is_some(), "{hash} is not in RUNTIME");
+            assert!(runtime_fn(eq).is_some(), "{eq} is not in RUNTIME");
+        }
+    }
+
+    /// The supported set is exactly `String` and the eight-byte integers, and
+    /// everything else is a refusal.
+    ///
+    /// The negative half is the half worth having. `map_key_support` documents
+    /// why a byte-comparing default would be wrong — padding bytes do not
+    /// participate in equality, so two equal records could hash differently and
+    /// the table cannot tell — and this pins that no such default has crept in.
+    /// `Usize` and `Isize` are in the refused list for their own reason: their
+    /// width is the target's, and this function has no target to ask.
+    #[test]
+    fn only_string_and_eight_byte_integers_have_a_key_pair() {
+        assert_eq!(
+            map_key_support(&RtAggregate::String.cg_ty()),
+            Some(("science_string_hash", "science_string_eq"))
+        );
+        assert_eq!(
+            map_key_support(&CgTy::Int(IntTy::I64)),
+            Some(("science_int_hash", "science_int_eq"))
+        );
+        assert_eq!(
+            map_key_support(&CgTy::Int(IntTy::U64)),
+            Some(("science_int_hash", "science_int_eq")),
+            "width and not signedness decides; see `science_int_eq`"
+        );
+
+        for refused in [
+            CgTy::Int(IntTy::I32),
+            CgTy::Int(IntTy::U8),
+            CgTy::Int(IntTy::Usize),
+            CgTy::Int(IntTy::Isize),
+            CgTy::Bool,
+            CgTy::Char,
+            CgTy::Float(crate::layout::FloatTy::F64),
+            CgTy::Unit,
+            CgTy::Interface,
+            RtAggregate::Array.cg_ty(),
+            CgTy::strukt("Point", vec![Field::new("x", CgTy::Int(IntTy::I64))]),
+        ] {
+            assert_eq!(map_key_support(&refused), None, "{refused:?} must be refused");
+        }
     }
 
     #[test]

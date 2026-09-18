@@ -203,7 +203,19 @@ fn nothing_outside_the_table_is_callable() {
     // `strings-formatting-and-docs.md` §1.7 prescribes *"one allocation"* and
     // fifty-four entry points had no way to express a capacity, so this is a
     // note's requirement arriving rather than codegen being made simpler.
-    assert_eq!(RUNTIME.len(), 55);
+    //
+    // **Fifty-seven now**, and the two that joined pass Decision 14's test for
+    // the same reason the others did. `science_int_hash` and `science_int_eq`
+    // are the `hash_fn`/`eq_fn` pair for an eight-byte `Map` key. They are not
+    // *called* by emitted code at all — their addresses are stored into a
+    // `ScienceMapInfo` global — and codegen could have emitted the two bodies
+    // itself, since they are a load and a compare. `runtime::map_key_support`
+    // records why it does not: `String`'s pair has always been a runtime symbol
+    // (`science_string_hash`, `science_string_eq`), and a key type whose hash
+    // and equality live in two different crates depending on the key is a key
+    // type whose hash and equality disagree in two different crates. So this is
+    // one mechanism covering both, not a convenience.
+    assert_eq!(RUNTIME.len(), 57);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

@@ -1053,6 +1053,14 @@ pub fn emit_and_link(
         for (symbol, info) in &lowered.descriptors {
             backend.define_type_info(symbol, info)?;
         }
+        // **After the function declarations and after the type infos**, both
+        // deliberately: a `ScienceMapInfo` names its key's `hash_fn` and
+        // `eq_fn` by symbol and `define_map_info` refuses one the module has
+        // not declared, which is the check that keeps a null out of a slot the
+        // runtime calls on the first `insert`.
+        for (symbol, info) in &lowered.map_descriptors {
+            backend.define_map_info(symbol, info)?;
+        }
         for vtable in &lowered.vtables {
             backend.define_vtable(vtable)?;
         }
