@@ -5293,7 +5293,13 @@ fn widen_numeric(left: Numeric, right: Numeric) -> Numeric {
     }
 }
 
-fn suffix_name(suffix: NumSuffix) -> &'static str {
+/// The prelude name a literal's suffix names.
+///
+/// `pub(crate)` rather than private: [`crate::constant`]'s unannotated-const
+/// inference needs the same mapping this module's own [`BodyChecker::literal`]
+/// uses for a suffixed numeric literal, and a second copy of this match is a
+/// second place §5.1's eight names can go out of sync with `builtins.rs`.
+pub(crate) fn suffix_name(suffix: NumSuffix) -> &'static str {
     match suffix {
         NumSuffix::I8 => "I8",
         NumSuffix::I16 => "I16",

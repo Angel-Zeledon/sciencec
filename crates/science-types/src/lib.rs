@@ -232,6 +232,7 @@ pub mod assign;
 pub mod check;
 pub mod conform;
 pub mod const_expr;
+pub mod constant;
 pub mod diagnostics;
 pub mod exhaustive;
 pub mod fold;
@@ -912,6 +913,62 @@ pub mod codes {
     /// uses.
     pub const MISMATCHED_IMPLEMENTATION: Code = Code(541);
 
+    // --- the const initialiser, `SC0542` ----------------------------------
+
+    /// `const NAME be e` where `e` is not a literal this phase can evaluate.
+    ///
+    /// **Closes a real silence, not a hypothetical one.** Before this code,
+    /// `crate::items::Declarations::item`'s `Const` arm read a stale comment
+    /// promising that *"the body walk is what learns it"* and ran no walk at
+    /// all: `self.consts` took `Ty::ERROR` for every unannotated constant, and
+    /// `science-mir`'s lowering emitted `science_mir::mir::Constant::Item` for
+    /// every reference to one, which every backend refuses by name — `check`
+    /// reported nothing, and `build`
+    /// failed two phases later with a message about a function, for a program
+    /// that named no function. `const BAD be side_effecting_call()` passed
+    /// `check` clean and only `sciencec build` said anything was wrong.
+    ///
+    /// **The fix is [`crate::constant::lower`], and it is a walk in the literal
+    /// sense of the stale comment's promise — of the initialiser's syntax, not
+    /// of a checked body.** A module-level `const`'s value has to be known
+    /// before the first body is checked, because any body in the crate may
+    /// name it (`crate::items`'s own §1: *"a signature cannot depend on
+    /// anything a body computes"*), so there is no ordering in which the
+    /// ordinary bidirectional checker — which resolves calls and methods
+    /// through [`Declarations`](crate::items::Declarations) — could run on a
+    /// const's initialiser at declaration time without asking for the very
+    /// table it is building. Restricting the initialiser to §4.4's literal
+    /// forms sidesteps the cycle instead of breaking it: a literal needs no
+    /// declaration to type, so evaluating one is safe at the point every other
+    /// declaration is lowered, and [`crate::mir::lower`](../../science_mir/lower/index.html)
+    /// substitutes the result at every use — never a call, because a constant
+    /// is a value the compiler already has and not a function it invokes.
+    ///
+    /// **What it costs.** `const AREA be WIDTH * HEIGHT` and `const N be
+    /// other_module::M` are exactly as refused as `const BAD be
+    /// side_effecting_call()` — this code does not distinguish "not constant"
+    /// from "constant, but not a bare literal yet". A real constant folder over
+    /// arithmetic and const-to-const references is future work and a second
+    /// slice; today's corpus (`examples/02_bindings.science`'s `WIDTH` and
+    /// `GREETING`) needs only the literal case, and a code that admits more
+    /// than it evaluates is the wrong direction to guess in.
+    ///
+    /// **Not [`science_codegen`'s `SC0405`]**, which this code was written to
+    /// make unnecessary rather than to duplicate. `SC0405` is
+    /// `not_a_constant`, reported where a *codegen* pass tries to place an
+    /// initialiser in a data section — a phase downstream of monomorphisation
+    /// that this crate does not depend on (`science-codegen`'s own
+    /// `Cargo.toml` names the direction: it depends on this crate, and not the
+    /// other way). Refusing here, before MIR is even built, means `SC0405`'s
+    /// condition — a const that reached codegen with an initialiser nothing
+    /// folded — can no longer arise from *this* front end, and `SC0405` is
+    /// left with no caller. That is the honest state to leave it in: the two
+    /// checks answer the same question from two different layers, and only one
+    /// of them can run first.
+    ///
+    /// [`science_codegen`'s `SC0405`]: ../../science_codegen/diagnostics/fn.not_a_constant.html
+    pub const CONST_INITIALISER_NOT_A_LITERAL: Code = Code(542);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -946,6 +1003,7 @@ pub mod codes {
         UNIMPLEMENTED_INTERFACE_METHOD,
         NOT_AN_INTERFACE_METHOD,
         MISMATCHED_IMPLEMENTATION,
+        CONST_INITIALISER_NOT_A_LITERAL,
     ];
 
     #[cfg(test)]

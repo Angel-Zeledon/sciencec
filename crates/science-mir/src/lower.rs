@@ -1086,8 +1086,32 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 }
             },
             ExprKind::Item(def) => {
+                // A `const` is a value known at compile time, so a reference
+                // to one substitutes that value rather than naming the
+                // `const` the way a call names a function. `Constant::Item`
+                // is a def *no backend can build a value from* — it exists
+                // for a function or a unit variant named as a value, and
+                // every backend refuses it for anything else — so a `const`
+                // that reached here as one would fail two phases later with a
+                // message about "a value", for a program that named none.
+                //
+                // `science_types::items::Declarations::const_value` is
+                // `crate::science-types`'s `constant` module's answer to
+                // "what does this `const` denote", computed once when
+                // declarations are lowered and not re-derived per use, which
+                // is `items.rs`'s own §1 argument applied to a fourth table.
+                // It is `None` for every def that is not a `const` — a
+                // function or a variant included — so this check costs
+                // nothing on the paths [`DefKind::Variant`] below already
+                // owns; it is also `None` for a `const` whose initialiser
+                // `constant::lower` could not evaluate to a literal or could
+                // not confirm against the `const`'s type, and for both this
+                // arm falls back to the pre-existing [`Constant::Item`],
+                // exactly as if this substitution did not exist.
                 let rvalue = if self.context.defs.get(*def).kind == DefKind::Variant {
                     Rvalue::Variant { variant: *def, payload: Vec::new() }
+                } else if let Some(literal) = self.context.decls.const_value(*def) {
+                    Rvalue::Use(Operand::Const(Constant::Literal(literal.clone())))
                 } else {
                     Rvalue::Use(Operand::Const(Constant::Item(*def)))
                 };

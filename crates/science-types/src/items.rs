@@ -24,6 +24,12 @@
 //! signature cannot depend on anything a *body* computes. Nothing in the
 //! language lets it.
 //!
+//! **The one narrow exception is an unannotated `const`'s own type**, which
+//! §4.4 defines as its initialiser's — and the initialiser is not a body in
+//! this argument's sense, because [`crate::constant`] restricts it to a bare
+//! literal and a literal needs no declaration to type. `crate::constant`'s
+//! module doc §2 is the fuller version of this paragraph.
+//!
 //! # 2. The prelude ids, found by name, once
 //!
 //! [`Prelude`] is the same compromise [`Coercions`](crate::assign::Coercions)
@@ -383,6 +389,16 @@ pub struct Declarations {
     records: HashMap<DefId, Record>,
     variants: HashMap<DefId, Variant>,
     consts: HashMap<DefId, Ty>,
+    /// A `const`'s value, when [`crate::constant::lower`] could evaluate its
+    /// initialiser and confirm it denotes a value of the const's own type.
+    ///
+    /// **Absent is the common case for now**, not a failure: every `const`
+    /// whose initialiser is anything but a bare literal — a call, an operator,
+    /// another `const` — has no entry here, and `science-mir`'s lowering
+    /// falls back to `science_mir::mir::Constant::Item` for it exactly as it
+    /// always has. `crate::constant`'s module doc §3 is the scope this table
+    /// admits and the reason it is drawn there.
+    const_values: HashMap<DefId, hir::Literal>,
     /// An implementation or interface block's `Self`. §1.
     self_types: HashMap<DefId, Ty>,
     /// `type Item is Int` in a block, by the block that wrote it: the name, the
@@ -458,6 +474,17 @@ impl Declarations {
 
     pub fn const_ty(&self, def: DefId) -> Option<Ty> {
         self.consts.get(&def).copied()
+    }
+
+    /// The value a `const` denotes, for `science-mir` to substitute at every
+    /// reference in place of `science_mir::mir::Constant::Item`. `None` for
+    /// every `def` that is not a `const` at all, and for a `const` whose
+    /// initialiser `crate::constant::lower` could not evaluate or could not
+    /// confirm against its type — both read the same to a caller, which is
+    /// right: either way there is nothing here to substitute, and MIR's
+    /// existing fallback is what a caller wants.
+    pub fn const_value(&self, def: DefId) -> Option<&hir::Literal> {
+        self.const_values.get(&def)
     }
 
     /// The generic parameters an implementation block declares.
@@ -706,14 +733,20 @@ impl Declarations {
             }
             hir::ItemKind::Const(konst) => {
                 // A constant's annotation is optional; with none, its type is
-                // its value's and the body walk is what learns it. `Ty::ERROR`
-                // until then, which is compatible with everything and reports
-                // nothing.
-                let ty = match &konst.ty {
-                    Some(ty) => lower(types, krate, order, diagnostics, ty),
-                    None => Ty::ERROR,
-                };
-                self.consts.insert(konst.def, ty);
+                // its value's. `crate::constant::lower` is the walk that
+                // learns it — the module doc there has the full argument for
+                // why it is a walk of the initialiser's *syntax* and not of a
+                // checked body, and `lib.rs`'s `codes::CONST_INITIALISER_NOT_A_LITERAL`
+                // has the history of the comment this replaces, which promised
+                // the walk and did not perform it.
+                let annotation =
+                    konst.ty.as_ref().map(|ty| lower(types, krate, order, diagnostics, ty));
+                let evaluated =
+                    crate::constant::lower(&konst.value, annotation, &self.prelude, types, diagnostics);
+                self.consts.insert(konst.def, evaluated.ty);
+                if let Some(value) = evaluated.value {
+                    self.const_values.insert(konst.def, value);
+                }
             }
             hir::ItemKind::Impl(block) => {
                 let self_ty = lower(types, krate, order, diagnostics, &block.self_ty);
