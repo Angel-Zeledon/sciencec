@@ -2,6 +2,6 @@ error[SC0530]: this value is never absent
   --> tests/ui/types/presence_test_on_non_nullable.science:10:11
    |
 10 |     print(n?)
-   |           ^^ `Int` is not a nullable type
+   |           ^^ `I64` is not a nullable type
    |
    = note: `?` tests a `T?` for a value; on a `T` it is always true

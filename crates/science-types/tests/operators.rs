@@ -819,7 +819,7 @@ def first(xs: borrowed Array of I64, key: String) -> I64:
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `Int`, found `String`"]);
+    assert_eq!(checked.messages(), vec!["expected `I64`, found `String`"]);
 }
 
 /// Decision 2's whole content: two interfaces, and a container that implements

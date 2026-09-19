@@ -59,8 +59,58 @@ pub struct Prelude {
 /// §5.1, plus the aliases. `Never` is §4.5.
 const PRIMITIVES: &[&str] = &[
     "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64", "F16", "BF16", "F32", "F64", "Bool",
-    "Char", "String", "Int", "Float", "Never",
+    "Char", "String", "Never",
 ];
+
+/// The primitives that have two spellings, and **one type**.
+///
+/// # The decision
+///
+/// `Int` and `I64` name one definition, and so do `Float` and `F64`. The
+/// canonical definition is the **width**, and the short name is a second
+/// spelling of it.
+///
+/// That direction is the codebase's own, not a preference: the rendered name
+/// reaches diagnostics through `Def::name`, and some forty existing tests
+/// already pin `I64` and `F64` as what a type renders as. Making `Int`
+/// canonical would have rewritten every one of them for a cosmetic choice,
+/// which is churn rather than a decision. It also matches how the note phrases
+/// it — *"`Int` **is** `I64`"* names the width as the thing and the short name
+/// as the way to say it.
+///
+/// # The reason: the notes say so, and this file disagreed with them
+///
+/// `codegen-and-linking.md` §4 is unambiguous — ***"`Int` is `I64`**, per the
+/// runtime's §4 and core spec §5.1"* — and `indexing-and-array-literals.md`
+/// §3.2 writes *"an unsuffixed integer literal is `Int` (`I64`)"*. This table
+/// declared them as two separate primitives, which made them two types that do
+/// not unify, and `ty`'s §5 has no implicit numeric conversion to paper over
+/// it. The consequence was not academic: `Array.length()` returns `Int` and an
+/// unsuffixed literal defaults to `I64`, so
+///
+/// ```text
+/// let mutable total be 0
+/// total be total + xs[i]
+/// ```
+///
+/// was `SC0525`, *"expected `Int`, found `I64`"*, in the most ordinary loop
+/// anybody writes. `builtins.rs` had the disagreement recorded as a stated cost
+/// — *"the disagreement is `stdlib-core.md` §3.6's against Decision 2's integer
+/// default"* — and recording it was the right thing to do right up until the
+/// notes settled it, which they had.
+///
+/// # The cost
+///
+/// **Two names reach `Def::name` as one**, so `Types::render` prints `Int`
+/// where a program may have written `I64`, and Decision 16 mangles `Int` into
+/// symbols where it used to mangle `I64`. Both are deterministic and neither is
+/// a width change: the layout was `I64`'s before and is `I64`'s now.
+///
+/// **`I8`/`I16`/`I32` stay their own definitions**, which makes `I64` the one
+/// width in the family that is not, and that asymmetry is real. It is the
+/// asymmetry the language already has: `Int` is the type a program is expected
+/// to write and the others are what you reach for when the width is the point.
+pub const ALIASED_PRIMITIVES: &[(&str, &str)] = &[("Int", "I64"), ("Float", "F64")];
 
 /// The C scalar vocabulary of `ffi-c-boundary.md` §1.3, usable inside an
 /// `extern` block. They are deliberately *not* aliases of the Science
@@ -1615,6 +1665,19 @@ pub fn build(defs: &mut DefTable) -> Prelude {
 
     for name in PRIMITIVES.iter().chain(LIBRARY_TYPES).chain(C_SCALARS) {
         declare(defs, DefKind::Primitive, name, &mut prelude);
+    }
+    // The second spelling of a primitive that has two. No `alloc`: the whole
+    // point is that `Int` and `I64` are one `DefId` and therefore one `Ty`,
+    // which is what makes them unify. Pushing a name is all a second spelling
+    // is, because `Prelude::names` is a lookup table and not a definition list.
+    for (alias, canonical) in ALIASED_PRIMITIVES {
+        let id = prelude
+            .names
+            .iter()
+            .find(|(name, _)| name == canonical)
+            .map(|(_, id)| *id)
+            .expect("a canonical primitive is declared above");
+        prelude.names.push(((*alias).to_string(), id));
     }
     for name in INTERFACES {
         declare(defs, DefKind::Interface, name, &mut prelude);

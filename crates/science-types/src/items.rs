@@ -261,6 +261,20 @@ impl Prelude {
             if let Some(wanted) = WANTED.iter().find(|name| **name == def.name) {
                 names.entry(*wanted).or_insert(def.id);
             }
+            // **A primitive with two spellings is one definition**, and this
+            // scan matches on `Def::name`, which carries only the canonical
+            // one. Without this, `Int` is found and `I64` is not — and the
+            // symptom is not a missing name but a missing *default*:
+            // `Prelude::default_int` answers `None`, an unsuffixed integer
+            // literal's class is never fixed, and `[4, 8, 15]` is `SC0526`,
+            // *"the type of this value cannot be inferred"*. The list is
+            // `science-resolve`'s so that the two crates cannot disagree about
+            // which names are one type.
+            for (alias, canonical) in science_resolve::builtins::ALIASED_PRIMITIVES {
+                if def.name == *canonical {
+                    names.entry(*alias).or_insert(def.id);
+                }
+            }
         }
         Prelude { names }
     }

@@ -8,4 +8,4 @@ error[SC0539]: this block does not implement `Render`'s method `width`
    |                ^^^^^^ `width` is missing from this implementation
    |
    = note: an interface method with no body is required of every implementation; one with a body is a default the block may leave out
-   = note: write it in this block: `def width(self) -> Int:`
+   = note: write it in this block: `def width(self) -> I64:`

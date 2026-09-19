@@ -82,7 +82,7 @@ def ruler(width: Int) -> Bool:
 ",
             "ruler",
         ),
-        "Range of Int",
+        "Range of I64",
     );
 }
 
@@ -125,7 +125,7 @@ def counted(n: Int) -> Bool:
         "counted",
     );
     assert_eq!(half_open, inclusive);
-    assert_eq!(inclusive, "Range of Int");
+    assert_eq!(inclusive, "Range of I64");
 }
 
 // --- the loop, which is what the type is for ------------------------------
@@ -153,17 +153,40 @@ def triangular(n: Int) -> Int:
 /// The same loop with the accumulator pinned to the *other* integer type, which
 /// is the first thing the element type is able to say.
 ///
-/// `sum` is an `I64` by annotation and `i` is an `Int` off the range, and §5.1
-/// keeps those two primitives apart — `stdlib-core.md` §3.6's `Int` index
-/// against Decision 2's `I64` literal is the same disagreement, named in
-/// `builtins.rs`. The point here is not which side is right; it is that the
-/// checker can now see there are two sides.
+/// **The disagreement this test was written for is settled, and the test now
+/// pins the settlement.** It read: *"`sum` is an `I64` by annotation and `i` is
+/// an `Int` off the range, and §5.1 keeps those two primitives apart …  the
+/// point here is not which side is right; it is that the checker can now see
+/// there are two sides."* There are no longer two sides.
+/// `codegen-and-linking.md` §4 says ***"`Int` is `I64`"*** and
+/// `indexing-and-array-literals.md` §3.2 writes *"an unsuffixed integer literal
+/// is `Int` (`I64`)"*; `builtins.rs` declared them as two primitives anyway,
+/// which made them two types that do not unify. They are one definition now,
+/// so the first program below checks clean.
+///
+/// **The test keeps its name and its job**, because the job was never about
+/// `Int` in particular: a loop variable that meets an integer of a *different
+/// width* is still `SC0525`, and that is the half worth guarding. `I32` is the
+/// wrong integer here in the way `Int` never really was.
 #[test]
 fn a_loop_variable_that_meets_the_wrong_integer_is_reported() {
-    let checked = support::check(
+    // One type, two spellings: nothing to report.
+    support::check(
         "\
 def triangular(n: Int) -> I64:
     let mutable sum: I64 be 0
+    for i in 0..=n:
+        sum be sum + i
+    sum
+",
+    )
+    .assert_clean();
+
+    // A genuinely different width still is.
+    let checked = support::check(
+        "\
+def triangular(n: Int) -> I32:
+    let mutable sum: I32 be 0
     for i in 0..=n:
         sum be sum + i
     sum
@@ -207,7 +230,7 @@ def caller() -> Int:
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `Int`, found `Range of I64`"]);
+    assert_eq!(checked.messages(), vec!["expected `I64`, found `Range of I64`"]);
 }
 
 /// Its pair: the argument that is a number is untouched, so the rule above is
@@ -239,7 +262,7 @@ def counted(n: Int, text: String) -> Bool:
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `Int`, found `String`"]);
+    assert_eq!(checked.messages(), vec!["expected `I64`, found `String`"]);
 }
 
 /// The same disagreement between two *literal classes*, where neither end has a
@@ -289,7 +312,7 @@ def upto(n: I32) -> Range of Int:
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `Range of Int`, found `Range of I32`"]);
+    assert_eq!(checked.messages(), vec!["expected `Range of I64`, found `Range of I32`"]);
 }
 
 // --- the index bracket, which this change had to leave alone ---------------
@@ -329,7 +352,7 @@ def middle(xs: borrowed Array of Int) -> Bool:
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `Int`, found `Range of I64`"]);
+    assert_eq!(checked.messages(), vec!["expected `I64`, found `Range of I64`"]);
 }
 
 /// **What is *not* closed, pinned as the silence it is.** `T` is unbounded:

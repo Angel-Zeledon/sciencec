@@ -112,7 +112,7 @@ def length_of(doc: Doc) -> Bool:
         .find(|(_, expr)| matches!(expr.kind, ExprKind::MethodCall { .. }))
         .expect("the body has a method call");
     assert!(matches!(call.kind, ExprKind::MethodCall { method: Some(_), .. }));
-    assert_eq!(checked.render(call.ty), "Int");
+    assert_eq!(checked.render(call.ty), "I64");
 }
 
 #[test]

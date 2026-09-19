@@ -1,10 +1,10 @@
-error[SC0534]: `Int` does not implement `Summarize`
+error[SC0534]: `I64` does not implement `Summarize`
   --> tests/ui/types/unsatisfied_bound.science:25:11
    |
 21 | def describe of T: Summarize(value: borrowed T) -> String:
    |                    --------- `T` was declared `Summarize`
 ...
 25 |     print(describe(n))
-   |           ^^^^^^^^^^^ `T` is `Int` here
+   |           ^^^^^^^^^^^ `T` is `I64` here
    |
-   = note: an implementation is a block the program writes: `Int implements Summarize:`
+   = note: an implementation is a block the program writes: `I64 implements Summarize:`

@@ -226,8 +226,8 @@ fn one_generic_called_at_two_types_is_two_items() {
         .map(|item| item.description.as_str())
         .collect();
     assert_eq!(identity.len(), 2, "{identity:?}");
-    assert!(identity.iter().any(|d| d.contains("Int")), "{identity:?}");
-    assert!(identity.iter().any(|d| d.contains("Float")), "{identity:?}");
+    assert!(identity.iter().any(|d| d.contains("I64")), "{identity:?}");
+    assert!(identity.iter().any(|d| d.contains("F64")), "{identity:?}");
 }
 
 #[test]
@@ -276,7 +276,7 @@ def main():
         .map(|item| item.description.as_str())
         .collect();
     assert_eq!(unwrapped.len(), 1, "{}", set.render());
-    assert!(unwrapped[0].contains("Int"), "{unwrapped:?}");
+    assert!(unwrapped[0].contains("I64"), "{unwrapped:?}");
 }
 
 #[test]
@@ -390,8 +390,8 @@ def main():
     let notes = diagnostic.notes.join("\n");
     // The chain, not a depth: every link is an instantiation the walk took,
     // and the reader can see the growth by reading down the list.
-    assert!(notes.contains("grow[Int]"), "{notes}");
-    assert!(notes.contains("Holder of Int"), "{notes}");
+    assert!(notes.contains("grow[I64]"), "{notes}");
+    assert!(notes.contains("Holder of I64"), "{notes}");
     assert!(notes.contains("contains an earlier one"), "{notes}");
 }
 
@@ -798,7 +798,7 @@ def main():
         .emission_order()
         .find(|item| item.description.starts_with("width"))
         .expect("width");
-    assert_eq!(width.description, "width[Int, 4]");
+    assert_eq!(width.description, "width[I64, 4]");
     assert!(width.symbol.ends_with("K14"), "{}", width.symbol);
     assert_eq!(width.instance.key().len(), 1);
     assert_eq!(width.instance.key().args()[0].as_constant(), Some(4));
@@ -828,7 +828,7 @@ def main():
         .emission_order()
         .find(|item| item.description.starts_with("width"))
         .expect("width");
-    assert_eq!(width.description, "width[Int, 3]", "{}", set.render());
+    assert_eq!(width.description, "width[I64, 3]", "{}", set.render());
 }
 
 #[test]
@@ -859,7 +859,7 @@ def main():
         .expect("SC0407");
     let notes = diagnostic.notes.join("\n");
     assert!(notes.contains("the containment rule did not fire"), "{notes}");
-    assert!(notes.contains("step[Int, 1]"), "{notes}");
+    assert!(notes.contains("step[I64, 1]"), "{notes}");
     // And the walk stopped: the set is bounded by the limit rather than by the
     // machine's memory.
     assert!(set.len() <= Mono::LIMIT + 2, "{} items", set.len());
@@ -909,7 +909,7 @@ def main():
 ";
     let mut lowered = lower(source);
     let set = lowered.mono(RootSet::EntryPoint);
-    assert!(set.render().contains("identity[Int]"), "{}", set.render());
+    assert!(set.render().contains("identity[I64]"), "{}", set.render());
 }
 
 #[test]
@@ -959,7 +959,7 @@ def main():
         .emission_order()
         .find(|item| item.description.starts_with("Cell.get"))
         .unwrap_or_else(|| panic!("{}", set.render()));
-    assert_eq!(get.description, "Cell.get[Int]", "{}", set.render());
+    assert_eq!(get.description, "Cell.get[I64]", "{}", set.render());
 }
 
 #[test]

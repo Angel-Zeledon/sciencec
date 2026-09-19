@@ -409,7 +409,7 @@ fn a_const_parameter_in_a_type_position_is_reported() {
 fn a_type_renders_as_the_surface_syntax_that_would_write_it() {
     let mut harness = Harness::new(FIXTURE);
     let pair = harness.lower("shapes", "pair");
-    assert_eq!(harness.render(pair), "(Doc, Int)");
+    assert_eq!(harness.render(pair), "(Doc, I64)");
     assert_eq!(harness.render(Ty::UNIT), "()");
 
     // A prelude type prints its bare name: the prelude's module is `core` and
@@ -432,6 +432,6 @@ fn a_closure_type_is_its_shape_and_the_order_of_it_matters() {
     let mapper = harness.lower("shapes", "mapper");
     let reversed = harness.lower("shapes", "reversed");
     assert_ne!(mapper, reversed);
-    assert_eq!(harness.render(mapper), "(Doc) -> Int");
-    assert_eq!(harness.render(reversed), "(Int) -> Doc");
+    assert_eq!(harness.render(mapper), "(Doc) -> I64");
+    assert_eq!(harness.render(reversed), "(I64) -> Doc");
 }

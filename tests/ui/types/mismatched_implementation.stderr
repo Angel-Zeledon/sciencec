@@ -5,10 +5,10 @@ error[SC0541]: `render` does not have the signature `Render` declares for it
    |         ------ `render` is declared here
 ...
 27 |     def render(self, width: Bool) -> Int:
-   |         ^^^^^^ parameter 1 is `Bool`; `Render` declares `Int`
+   |         ^^^^^^ parameter 1 is `Bool`; `Render` declares `I64`
    |
    = note: an implementation is held to the declaration, because a call through the interface — `any Summarize`, or a body checked against a bound — is dispatched at the declared signature and not at this one
-   = note: write the declared signature: `def render(self, width: Int) -> String:`
+   = note: write the declared signature: `def render(self, width: I64) -> String:`
 
 error[SC0541]: `reset` does not have the signature `Reset` declares for it
   --> tests/ui/types/mismatched_implementation.science:31:9

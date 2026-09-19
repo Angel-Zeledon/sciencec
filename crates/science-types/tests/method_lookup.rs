@@ -783,8 +783,8 @@ def settings() -> Map of (String, Int):
 ",
     );
     checked.assert_clean();
-    assert_eq!(checked.render(tail(&checked, "numbers")), "Array of Int");
-    assert_eq!(checked.render(tail(&checked, "settings")), "Map of (String, Int)");
+    assert_eq!(checked.render(tail(&checked, "numbers")), "Array of I64");
+    assert_eq!(checked.render(tail(&checked, "settings")), "Map of (String, I64)");
 }
 
 /// The receiver written bare, with the *argument* fixing the block's parameter.
