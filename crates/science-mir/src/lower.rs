@@ -1406,19 +1406,31 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         // gives `Array`'s `Iterate` a cursor or takes the implementation off
         // `Array` and puts it on an iterator type; until then this borrow's
         // kind follows the note that exists.
-        let iterator_ty = self.context.types.borrowed(false, source_ty);
+        // Exclusive exactly where the callee is real and the subject is the
+        // loop's own temporary; shared everywhere else, which is §4.4's case.
+        let exclusive = next_method.is_some_and(|def| self.owner_is_a_type(def))
+            && self.as_place(iter, block).is_none();
+        let iterator_ty = self.context.types.borrowed(exclusive, source_ty);
         let iterator = self.temp(iterator_ty, span, block);
         // `in_argument` is `false`: a loop's borrow is not an argument borrow.
         // It is created once, read once per turn, and lives across the whole
         // loop, which is the opposite of the single-use-at-one-call shape §6
         // reserves two phases for.
-        block = self.borrow_place(Place::local(iterator), false, source, block, span, false);
+        block = self.borrow_place(Place::local(iterator), exclusive, source, block, span, false);
 
         // The element the loop produces, and the presence test over it. Both
         // are allocated outside the loop for `lower_loop`'s reason.
         //
+        // **The slot is `Item?` and the binding is `Item`, which used to be one
+        // type doing both jobs.** `next` returns `Self.Item?` — that is what
+        // `Rvalue::IsPresent` below asks about — while the pattern binds the
+        // `Item` inside it. While the callee was unresolved nothing checked the
+        // destination against a signature and one slot went unnoticed; a real
+        // call makes it visible immediately, because `Char?` is a discriminant
+        // and a payload where `Char` is four bytes.
         let element_ty = self.thir.pat(pattern).ty;
-        let element = self.temp(element_ty, span, block);
+        let slot_ty = self.context.types.nullable(element_ty);
+        let element = self.temp(slot_ty, span, block);
         let present = self.temp(self.bool_ty, span, block);
         let discard = self.temp(Ty::UNIT, span, block);
 
@@ -1481,8 +1493,40 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         // element type it was already computing, and neither is looked up twice
         // — and this is the one line that flips when the four above are
         // answered.
-        let _ = next_method;
-        let callee = Callee::Unresolved(Unresolved::IterateNext);
+        // **Resolved only when the `next` belongs to a *type*, and that
+        // discriminator is the whole of why this line can be flipped at all.**
+        //
+        // The decision. A `next` whose owner is an implementation block becomes
+        // a `Callee::Def`; one whose owner is the `interface` stays
+        // `Unresolved::IterateNext`.
+        //
+        // The reason. The four things standing between the resolved callee and
+        // a loop that runs were listed here, and the discriminator answers
+        // three of them at once. A `next` declared on the interface has **no
+        // body anywhere** and needs one copy per implementor, which is
+        // monomorphisation; `Array of T implements Iterate` has nowhere to keep
+        // a cursor, so its `next` could not advance whatever called it; and
+        // `science-regions` suppresses `SC0340` for a body that calls something
+        // unresolved, so resolving those would turn `examples/19_stdlib`'s
+        // `find` into a false positive. All three are true of exactly the
+        // blocks that declare `methods: &[]`, and of none that declare a `next`
+        // of their own — today that is `Chars`, whose `next` is
+        // `science_chars_next` and whose state is its own offset.
+        //
+        // The cost, and it is the fourth item unchanged. `Iterate.next` is
+        // `def next(mutable self)`, and §4.4 says a `for`'s source is borrowed
+        // *shared*. They still disagree, and this takes the exclusive borrow
+        // only where the subject is a temporary the loop itself owns — see the
+        // borrow above. A subject that is a named collection keeps §4.4's
+        // shared borrow, because that is the case §4.4 is about:
+        // `collections-and-chains.md` §4.2's AMENDMENT 11 says `for x in xs:`
+        // desugars to `xs.iterate()`, so the collection is borrowed shared by
+        // `iterate` and the *iterator* is what the loop advances. `Array` has
+        // no `iterate` yet, which is why it is still on the unresolved side.
+        let callee = match next_method.filter(|def| self.owner_is_a_type(*def)) {
+            Some(def) => Callee::Def(def),
+            None => Callee::Unresolved(Unresolved::IterateNext),
+        };
         self.terminate(
             head,
             TerminatorKind::Call {
@@ -1512,7 +1556,19 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
 
         self.loops.push(LoopScope { head, exit, depth: self.scopes.len() });
         self.push_scope();
-        let bound = self.bind_pattern(&Place::local(element), pattern, body_block);
+        // Decision 7's narrowing, as a statement: the `If` above established
+        // that the `Item?` holds a value and this is the read of it. Same shape
+        // `ExprKind::Narrow` lowers to one construct over, and it works for
+        // both of Decision 18's and 19's layouts because `Rvalue::Narrow` now
+        // has a lowering for each.
+        let narrowed = self.temp(element_ty, span, body_block);
+        self.assign(
+            body_block,
+            Place::local(narrowed),
+            Rvalue::Narrow { operand: Operand::Copy(Place::local(element)), ty: element_ty },
+            span,
+        );
+        let bound = self.bind_pattern(&Place::local(narrowed), pattern, body_block);
         let after = self.lower_block(Place::local(discard), body, bound);
         let after = self.pop_scope(after, span);
         self.terminate(after, TerminatorKind::Goto { target: head }, span);
@@ -2750,6 +2806,21 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         let temp = self.temp(ty, span, block);
         let block = self.expr_into(Place::local(temp), element, block);
         (Operand::Move(Place::local(temp)), block)
+    }
+
+    /// Whether a method's owner is a type's block rather than an `interface`'s.
+    ///
+    /// The question `lower_for` needs answered is *"does this `next` have a
+    /// body"*, and the honest proxy for it is *"was it declared on the
+    /// implementor"*: an `interface` block's method is a declaration or a
+    /// default, and a default needs monomorphising before it is a callee
+    /// anything can emit. `Signature::owner` is the block, and only an
+    /// `interface` block has [`DefKind::Interface`].
+    fn owner_is_a_type(&self, def: DefId) -> bool {
+        let Some(owner) = self.context.decls.signature(def).and_then(|s| s.owner) else {
+            return false;
+        };
+        self.context.defs.get(owner).kind != DefKind::Interface
     }
 
     /// Whether this hole is a narrow whose option is laid out as a

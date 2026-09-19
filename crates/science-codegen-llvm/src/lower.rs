@@ -1502,6 +1502,12 @@ impl<'a> Lowerer<'a> {
                     "Bool" => Ok(CgTy::Bool),
                     "Char" => Ok(CgTy::Char),
                     "String" => Ok(RtAggregate::String.cg_ty()),
+                    // `Chars`, §8's one iterator: `{ ptr, len, offset }`. It
+                    // **borrows** the string it walks and owns nothing, so it
+                    // needs no `drop_fn` and no descriptor — which is what
+                    // makes it the one runtime aggregate that is an ordinary
+                    // value here.
+                    "Chars" => Ok(RtAggregate::Chars.cg_ty()),
                     "IoError" => Ok(RtAggregate::IoError.cg_ty()),
                     other => Err(Unlowered::new(format!("a value of type `{other}`"))),
                 }
@@ -1807,7 +1813,17 @@ impl<'a> Lowerer<'a> {
                             | "F64"
                             | "Bool"
                             | "Char"
+                            | "F16"
+                            | "BF16"
                             | "IoError"
+                            // **`Chars` owns nothing, which is the whole
+                            // reason it can be an iterator at all.** It is
+                            // `{ ptr, len, offset }` *into a string somebody
+                            // else owns*, so there is no buffer to free and no
+                            // `drop_fn` to name — unlike `String`, `Array` and
+                            // `Map` three lines up, which are on the other side
+                            // of this list for exactly that difference.
+                            | "Chars"
                     )),
                 }
             }
@@ -2528,7 +2544,7 @@ impl<'a> Lowerer<'a> {
                     // comment there: the skip is only sound while nothing
                     // touches the local, and this is where that stops being
                     // true.
-                    return Err(Unlowered::new(UNTYPED));
+                    return Err(Unlowered::new(format!("{UNTYPED} (local _{})", local.0)));
                 }
                 let layout = ctx.layout(local)?.clone();
                 let ty = body.local_decl(place.local).ty;
@@ -2596,7 +2612,7 @@ impl<'a> Lowerer<'a> {
     ) -> Result<(ValueId, Layout), Unlowered> {
         let local = LocalId(place.local.index() as u32);
         if ctx.untyped.contains(&local) {
-            return Err(Unlowered::new(UNTYPED));
+            return Err(Unlowered::new(format!("{UNTYPED} (local _{})", local.0)));
         }
         let mut layout = ctx.layout(local)?.clone();
         let mut address = ctx.value();
@@ -3360,7 +3376,7 @@ impl<'a> Lowerer<'a> {
         let layout = self.layout_of_ty(ty)?;
         let local = LocalId(place.local.index() as u32);
         if ctx.untyped.contains(&local) {
-            return Err(Unlowered::new(UNTYPED));
+            return Err(Unlowered::new(format!("{UNTYPED} (local _{})", local.0)));
         }
         ctx.layout(local)?;
         let result = ctx.value();
@@ -4780,7 +4796,7 @@ impl<'a> Lowerer<'a> {
                 }
                 let local = LocalId(place.local.index() as u32);
                 if ctx.untyped.contains(&local) {
-                    return Err(Unlowered::new(UNTYPED));
+                    return Err(Unlowered::new(format!("{UNTYPED} (local _{})", local.0)));
                 }
                 ctx.layout(local)?;
                 let dest = ctx.value();
@@ -5907,6 +5923,7 @@ impl<'a> Lowerer<'a> {
             // symbol. The refusal a user meets for them names the method, which
             // is the right report.
             ("String", "starts_with", "science_string_starts_with"),
+            ("String", "chars", "science_string_chars"),
             // `Array of T`'s two descriptor-free rows. **Only two**, and the
             // line is `RuntimeFn::descriptor_index`: `science_array_len(P)` and
             // `science_array_is_empty(P)` read a header field, so they take the
@@ -6055,8 +6072,18 @@ impl<'a> Lowerer<'a> {
     /// that is not one of `Map`'s two.
     fn owned_nullable_method(&self, def: DefId) -> Option<&'static str> {
         /// `(the block's `Self`, the method) -> the entry point`.
-        const OWNED_NULLABLE_METHODS: &[(&str, &str, &str)] =
-            &[("Map", "insert", "science_map_insert"), ("Map", "remove", "science_map_remove")];
+        const OWNED_NULLABLE_METHODS: &[(&str, &str, &str)] = &[
+            ("Map", "insert", "science_map_insert"),
+            ("Map", "remove", "science_map_remove"),
+            // **`Chars.next`, and it is why the convention was worth building
+            // once.** `science_chars_next(iter, out) -> Bool` is the same shape
+            // as the two above — its own documentation calls it *"the
+            // owned-`T?` convention … §5.3"* — so `for c in text.chars():`
+            // needed no machinery of its own, only this row. The `for` lowering
+            // above it is Decision 7's narrowing and a back edge, both of which
+            // already existed.
+            ("Chars", "next", "science_chars_next"),
+        ];
         if !self.defs.get(def).is_builtin() {
             return None;
         }
@@ -6137,43 +6164,65 @@ impl<'a> Lowerer<'a> {
         destination: &mir::Place,
         insts: &mut Vec<ExtInst>,
     ) -> Result<(), Unlowered> {
-        if !matches!(symbol, "science_map_insert" | "science_map_remove") {
-            return Err(Unlowered::new(format!(
-                "`{symbol}` through §5.3's convention: `owned_nullable_method`'s table names \
-                 only `Map`'s two, and `Array.pop` is not declared in the prelude for its own \
-                 reason — see `science-resolve`'s `builtins.rs`"
-            )));
-        }
         let sig = self.declare(symbol)?;
         let entry = runtime_fn(symbol).expect("`declare` found it");
 
-        let (key_ty, value_ty) = self.map_operand_kv(body, args, destination).ok_or_else(|| {
-            Unlowered::new(format!(
-                "a call to `{symbol}`, which takes a `ScienceMapInfo`, with no operand this crate \
-                 can read a key and value type off"
-            ))
-        })?;
-        let descriptor = self.intern_map_descriptor(key_ty, value_ty)?;
-
+        // **The receiver, then the descriptor if the entry point wants one,
+        // then the rest — in that order, read off `RUNTIME` rather than
+        // written out per symbol.**
+        //
+        // This used to name `Map`'s two symbols and refuse everything else,
+        // which was honest while they were the only two. `Chars.next` is the
+        // third and it takes **no** descriptor: a `ScienceChars` is a pointer,
+        // a length and an offset into somebody else's bytes, so there is no
+        // element type to describe. Keying the descriptor on
+        // `RuntimeFn::descriptor_index` instead of on the symbol is what lets
+        // one function serve both shapes, and it is the same question
+        // `lower_runtime_call` already asks.
         let Some(self_place) = args.first().and_then(|arg| arg.place()) else {
             return Err(Unlowered::new(format!(
                 "a call to `{symbol}` whose receiver is not a place this crate can take the \
                  address of"
             )));
         };
-        let map_ptr = self.pointer_to_place(ctx, self_place, insts)?;
-
-        let Some(key_arg) = args.get(1) else {
-            return Err(Unlowered::new(format!("a call to `{symbol}` with no key")));
-        };
-        let key_ptr = self.pointer_to_operand(ctx, key_arg, key_ty, insts)?;
-
-        let mut lowered = vec![map_ptr, Operand::GlobalAddr(descriptor), key_ptr];
-        if symbol == "science_map_insert" {
-            let Some(value_arg) = args.get(2) else {
-                return Err(Unlowered::new(format!("a call to `{symbol}` with no value")));
+        let receiver = self.pointer_to_place(ctx, self_place, insts)?;
+        let mut lowered = vec![receiver];
+        // The declared types of the arguments after the receiver, in order.
+        //
+        // **Declared and not read off the operand**, because an operand need
+        // not have a type at all: `m.insert("uno", 1)` passes a
+        // `Constant::Literal`, which carries none, and asking it produced a
+        // refusal about a program that was perfectly well typed. A map's key
+        // and value come from the descriptor that was just interned for them;
+        // anything else falls back to the operand, which is right for every
+        // shape that passes a place.
+        let mut declared: Vec<Ty> = Vec::new();
+        if entry.descriptor_index().is_some() {
+            let (key_ty, value_ty) =
+                self.map_operand_kv(body, args, destination).ok_or_else(|| {
+                    Unlowered::new(format!(
+                        "a call to `{symbol}`, which takes a `ScienceMapInfo`, with no operand \
+                         this crate can read a key and value type off"
+                    ))
+                })?;
+            lowered.push(Operand::GlobalAddr(self.intern_map_descriptor(key_ty, value_ty)?));
+            declared.push(key_ty);
+            declared.push(value_ty);
+        }
+        // Every remaining Science argument is passed by address: `insert`'s key
+        // and value, `remove`'s key, and — for `Chars.next`, which takes only
+        // `self` — none at all.
+        for (position, arg) in args.iter().skip(1).enumerate() {
+            let ty = match declared.get(position) {
+                Some(ty) => *ty,
+                None => self.operand_ty(body, arg).ok_or_else(|| {
+                    Unlowered::new(format!(
+                        "an argument to `{symbol}` with no type: §5.3's convention passes each \
+                         by address and a slot needs a layout"
+                    ))
+                })?,
             };
-            lowered.push(self.pointer_to_operand(ctx, value_arg, value_ty, insts)?);
+            lowered.push(self.pointer_to_operand(ctx, arg, ty, insts)?);
         }
 
         // **A checked assumption, not a guessed one.** `RUNTIME`'s signature
@@ -6193,7 +6242,20 @@ impl<'a> Lowerer<'a> {
 
         let dest_local = LocalId(destination.local.index() as u32);
         let dest_layout = ctx.layout(dest_local)?.clone();
-        let cg_value = self.cg_ty(value_ty)?;
+        // **The payload's type is the destination's, not an argument's.** It
+        // used to be read off the map's value type, which is the same thing for
+        // `insert` and `remove` and nothing at all for `Chars.next`, whose
+        // `Char?` has no argument to read it from. The destination *is* the
+        // `T?` this convention exists to build, so its payload is the one type
+        // every call of this shape has.
+        let dest_ty = destination.ty(body);
+        let TyKind::Nullable(payload_ty) = *self.types.kind(self.referent(dest_ty)) else {
+            return Err(Unlowered::new(format!(
+                "a call to `{symbol}` whose destination is `{}` rather than a `T?`: §5.3's                  convention builds an option out of a `bool` and an out-parameter, and there is                  nothing else for it to build",
+                self.types.render(self.defs, dest_ty)
+            )));
+        };
+        let cg_value = self.cg_ty(payload_ty)?;
         let flag = ctx.value();
 
         match owned_nullable_return(&cg_value) {
@@ -6329,7 +6391,7 @@ impl<'a> Lowerer<'a> {
                     }
                     let local = LocalId(place.local.index() as u32);
                     if ctx.untyped.contains(&local) {
-                        return Err(Unlowered::new(UNTYPED));
+                        return Err(Unlowered::new(format!("{UNTYPED} (local _{})", local.0)));
                     }
                     ctx.layout(local)?;
                     let address = ctx.value();

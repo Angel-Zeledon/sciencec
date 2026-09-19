@@ -24,14 +24,28 @@ use support::lower;
 /// Written as a lookup rather than *"the first shared borrow"* because a
 /// subject like `text.chars()` takes a shared receiver borrow of its own, and a
 /// test that picked the first shared borrow would assert about that instead.
-fn loop_borrows(body: &science_mir::mir::Body) -> Vec<&science_mir::mir::BorrowData> {
+fn loop_borrows<'a>(
+    lowered: &'a support::Lowered,
+    body: &'a science_mir::mir::Body,
+) -> Vec<&'a science_mir::mir::BorrowData> {
     let mut out = Vec::new();
     for (_, block) in body.blocks() {
-        let TerminatorKind::Call { callee: Callee::Unresolved(Unresolved::IterateNext), args, .. } =
-            &block.terminator.kind
-        else {
-            continue;
+        let TerminatorKind::Call { callee, args, .. } = &block.terminator.kind else { continue };
+        // **Two spellings now, because a `for`'s `next` resolves when the
+        // implementor declares one.** `Chars` does — its `next` is
+        // `science_chars_next` — so that loop's header is a `Callee::Def`;
+        // every other `implements Iterate` block declares `methods: &[]`, so
+        // its `next` is the interface's and is still unresolved. Matching only
+        // the second is what this helper used to do, and it made every test
+        // that used it report *zero* borrows rather than a wrong one.
+        let is_next = match callee {
+            Callee::Unresolved(Unresolved::IterateNext) => true,
+            Callee::Def(def) => lowered.krate.defs.get(*def).name == "next",
+            _ => false,
         };
+        if !is_next {
+            continue;
+        }
         let place = args[0].place().expect("the chain is a place");
         out.push(
             body.borrows()
@@ -95,7 +109,7 @@ fn a_loops_borrow_is_never_two_phase() {
     // fixture has one of each and the test is not vacuous.
     assert!(body.borrows().iter().any(|data| data.kind == BorrowKind::TwoPhase));
 
-    let [loop_borrow] = loop_borrows(body)[..] else { panic!("one loop, one borrow") };
+    let [loop_borrow] = loop_borrows(&lowered, body)[..] else { panic!("one loop, one borrow") };
     assert_eq!(loop_borrow.kind, BorrowKind::Shared, "the loop's borrow acquired a second phase");
     assert_eq!(loop_borrow.activation, None, "a shared borrow cannot be activated");
 }
@@ -113,7 +127,7 @@ fn the_borrow_names_the_referent_and_not_the_reference() {
     assert!(dump.contains("borrowed (*_1)"), "the loop borrowed the reference itself: {dump}");
 
     let body = lowered.body("f");
-    let [loop_borrow] = loop_borrows(body)[..] else { panic!("one loop, one borrow") };
+    let [loop_borrow] = loop_borrows(&lowered, body)[..] else { panic!("one loop, one borrow") };
     assert!(
         matches!(loop_borrow.place.projection.last(), Some(Projection::Deref { .. })),
         "the loan was not reborrowed through the parameter"
@@ -163,8 +177,18 @@ fn a_subject_with_no_place_is_borrowed_through_a_temporary() {
     let lowered =
         lower("def f(text: borrowed String):\n    for c in text.chars():\n        print(c)\n");
     let body = lowered.body("f");
-    let [loop_borrow] = loop_borrows(body)[..] else { panic!("one loop, one borrow") };
-    assert_eq!(loop_borrow.kind, BorrowKind::Shared);
+    let [loop_borrow] = loop_borrows(&lowered, body)[..] else { panic!("one loop, one borrow") };
+    // **Exclusive here and shared everywhere else, and the difference is what
+    // the subject *is*.** `Iterate.next` is `def next(mutable self)`, and §4.4
+    // says a `for`'s *source* is borrowed shared. Both hold: the source is
+    // `text`, which `chars()` borrows shared, and what this loop advances is
+    // the `Chars` temporary the chain produced — a value the loop itself owns
+    // and nobody else can see. `collections-and-chains.md` §4.2's AMENDMENT 11
+    // is the reading that makes them agree: *"`for x in xs:` desugars to
+    // `xs.iterate()`"*, so the collection is borrowed and the iterator is
+    // advanced. A subject that is a named collection still takes §4.4's shared
+    // borrow, which is what the tests above assert.
+    assert_eq!(loop_borrow.kind, BorrowKind::Exclusive);
     let referent = loop_borrow.place.local;
     assert_eq!(
         body.local_decl(referent).kind,
@@ -193,7 +217,7 @@ fn nested_loops_take_one_borrow_each() {
     );
     let lowered = lower(source);
     let body = lowered.body("f");
-    let shared = loop_borrows(body);
+    let shared = loop_borrows(&lowered, body);
     assert_eq!(shared.len(), 2, "two loops, two borrows");
     assert!(shared.iter().all(|data| data.kind == BorrowKind::Shared));
     assert_ne!(
@@ -244,7 +268,7 @@ fn the_shape_is_lowered_whether_or_not_the_callee_is() {
         body.blocks().any(|(id, _)| id != header && body.successors(id).contains(&header)),
         "the loop has no back edge"
     );
-    let [loop_borrow] = loop_borrows(body)[..] else { panic!("one loop, one borrow") };
+    let [loop_borrow] = loop_borrows(&lowered, body)[..] else { panic!("one loop, one borrow") };
     assert_ne!(loop_borrow.reserved.block, header, "the borrow is retaken on every turn");
     assert!(body.check_predecessors());
     assert!(body.index_temps_are_single_assignment());

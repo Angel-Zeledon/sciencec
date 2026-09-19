@@ -249,7 +249,20 @@ fn the_solver_converges_quickly_on_the_whole_file() {
         .map(|body| checked.analysis.body(body.def()).expect("analysed").solution.iterations())
         .max()
         .expect("bodies");
-    assert!(worst <= 8, "the fixpoint took {worst} sweeps on a body with no cycle worth that");
+    // **The bound moved from 8 to 9, and the sweep it bought is accounted for
+    // rather than absorbed.** `for c in text.chars():` now calls a real
+    // `Chars.next`, which is `def next(mutable self)`, so the loop takes an
+    // **exclusive** borrow of the chars temporary where it used to take a
+    // shared one. An exclusive loan constrains more than a shared one does, and
+    // `examples/10_loops.science` has the file's deepest nesting, so it is the
+    // body that pays.
+    //
+    // The bound is still tight on purpose. This number is a canary for the
+    // solver's *shape* — the comment above says a solver applying constraints
+    // in dependency order would flatten it — not a budget, so it is raised by
+    // exactly the sweep the change costs and no more. A jump to 20 would stop
+    // being able to fail.
+    assert!(worst <= 9, "the fixpoint took {worst} sweeps on a body with no cycle worth that");
 }
 
 /// Two runs agree. §10 item 6, one level on: a summary that moved between runs

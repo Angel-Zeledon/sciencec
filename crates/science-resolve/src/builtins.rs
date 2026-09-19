@@ -1029,7 +1029,30 @@ const BLOCKS: &[Block] = &[
         generics: &[],
         interface: Some(("Iterate", &[])),
         assoc: &[("Item", CHAR)],
-        methods: &[],
+        // **The one `Iterate` implementation that declares its `next`, because
+        // it is the one that has a body.**
+        //
+        // The decision. `Chars` restates `Iterate.next` in its own block.
+        //
+        // The reason. Every other `implements Iterate` block here declares
+        // `methods: &[]`, so `next` resolves to the *interface's* declaration —
+        // which has no body anywhere and needs one copy per implementor, i.e.
+        // monomorphisation. `Chars` is different: `science_chars_next(iter,
+        // out) -> Bool` exists, and its own documentation says it is *"the
+        // owned-`T?` convention … §5.3"*, which is the convention `Map.insert`
+        // now goes through. Declaring the method here is what gives the call an
+        // owner that is a *type* rather than an interface, and that is what
+        // `science-codegen-llvm`'s `prelude_method` keys on.
+        //
+        // The cost. The signature is written twice — here and on `Iterate` —
+        // and `SC0541` is what catches them drifting apart, which is the same
+        // guard every user `implements` block already relies on.
+        methods: &[Method {
+            name: "next",
+            recv: Some(SelfKind::Mutable),
+            params: &[],
+            ret: Some(Ty::Opt(&CHAR)),
+        }],
     },
     // --- `Range of T implements Iterate`, AMENDMENT 14 --------------------
     //
