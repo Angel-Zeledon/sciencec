@@ -229,7 +229,10 @@ use science_codegen::layout::{
     Variant as CgVariant, layout_of,
 };
 use science_codegen::mangle::{MonoKey, mangle};
-use science_codegen::runtime::{RUNTIME, RtAggregate, RtParam, RtRet, RuntimeFn, runtime_fn};
+use science_codegen::runtime::{
+    OwnedNullableReturn, RUNTIME, RtAggregate, RtParam, RtRet, RuntimeFn, owned_nullable_return,
+    runtime_fn,
+};
 use science_diagnostics::{Diagnostic, Span};
 use science_mir::mir::{self, Body as MirBody, Constant, Rvalue, StatementKind, TerminatorKind};
 use science_parser::ast::{BinaryOp, UnaryOp};
@@ -3019,6 +3022,75 @@ impl<'a> Lowerer<'a> {
             Rvalue::IsPresent(operand) => {
                 self.lower_is_present(body, ctx, operand, dest, insts)
             }
+            // Decision 7's narrowing: the payload of a `T?` the program has
+            // already tested.
+            //
+            // **The decision.** A niched option is the value already and is
+            // moved; a tagged one is a load at the payload's offset.
+            //
+            // **The reason both shapes are here and neither is a branch.** The
+            // `If` that established presence has already run — that is what
+            // `Rvalue::Narrow` *means*, and `science-types` emits it only where
+            // §7's narrowing applies — so this is a representation change and
+            // not a test. Decision 19 puts a `(&T)?`'s niche in the pointer, so
+            // the option and its payload are the same word and there is nothing
+            // to do; Decision 18 lays an `I64?` out as a discriminant and a
+            // payload, so the payload has an offset and is read from it.
+            //
+            // **The cost.** The discriminant is not re-checked. Reading the
+            // payload of an absent value would be whatever the slot held, and
+            // what stops that is `science-types`' narrowing rather than
+            // anything here — the same trust `Projection::Downcast` already
+            // places in `match`.
+            Rvalue::Narrow { operand, .. } => {
+                let source = self.operand_ty(body, operand).ok_or_else(|| {
+                    Unlowered::new(
+                        "a narrowed read of an operand with no type: the payload's offset is the \
+                         option's and there is nothing here to read it from",
+                    )
+                })?;
+                let option = self.layout_of_ty(source)?;
+                match &option.repr {
+                    // Same bits: `Decision 19`'s niche is in the payload.
+                    Repr::Niched { .. } | Repr::Scalar(_) => {
+                        let value = self.typed_operand(ctx, operand, layout, insts)?;
+                        insts.push(ExtInst::Above(Inst::Store { local: dest, value }));
+                        Ok(())
+                    }
+                    Repr::Tagged { payload_offset, .. } => {
+                        let offset = *payload_offset;
+                        let place = operand.place().ok_or_else(|| {
+                            Unlowered::new(
+                                "a narrowed read of a tagged option that is not a place: the \
+                                 payload is read at an offset and a constant has no address",
+                            )
+                        })?;
+                        let (base, _) = self.place_address(ctx, place, insts)?;
+                        let address = ctx.value();
+                        insts.push(ExtInst::FieldAddr {
+                            dest: address,
+                            base: Operand::Value(base),
+                            offset,
+                        });
+                        let value = ctx.value();
+                        insts.push(ExtInst::LoadAt {
+                            dest: value,
+                            address: Operand::Value(address),
+                            layout: layout.clone(),
+                        });
+                        insts.push(ExtInst::Above(Inst::Store {
+                            local: dest,
+                            value: Operand::Value(value),
+                        }));
+                        Ok(())
+                    }
+                    _ => Err(Unlowered::new(format!(
+                        "a narrowed read of `{}`, whose layout is neither Decision 18's tagged \
+                         pair nor Decision 19's niche",
+                        self.types.render(self.defs, source)
+                    ))),
+                }
+            }
             // Decision 6's `T` into `T?` and `assign`'s §7 copy out of a
             // borrow, in two of its three shapes. The other five box, build a
             // vtable or need a branch, and each is refused by name in
@@ -5036,6 +5108,8 @@ impl<'a> Lowerer<'a> {
             self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;
         } else if let Some(sig) = self.science.get(&def).cloned() {
             self.lower_science_call(ctx, &sig, args, destination, insts)?;
+        } else if let Some(symbol) = self.owned_nullable_method(def) {
+            self.lower_owned_nullable_call(body, ctx, symbol, args, destination, insts)?;
         } else if let Some(symbol) = self.prelude_method(def) {
             self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;
         } else {
@@ -5445,6 +5519,87 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// The pointer a runtime parameter wants for a MIR *place* argument:
+    /// either the place's own address, or the pointer the place holds.
+    ///
+    /// **Factored out of [`Lowerer::lower_runtime_call`]'s per-argument loop**,
+    /// which drew exactly this distinction inline before
+    /// [`Lowerer::lower_owned_nullable_call`] needed to draw it too, at a
+    /// receiver and at a key rather than at one generic parameter. A pointer
+    /// parameter given a place whose slot is itself a pointer — `mutable
+    /// self` on a builtin method, which arrives as the auto-borrow's slot —
+    /// takes the pointer *stored there*; a place whose slot holds the value
+    /// directly takes the slot's own address. [`Lowerer::lower_runtime_call`]'s
+    /// own doc comment states the rule in full; this is that rule with no
+    /// change of behaviour, so the two callers cannot answer it differently.
+    fn pointer_to_place(
+        &mut self,
+        ctx: &mut BodyCtx,
+        place: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<Operand, Unlowered> {
+        let (address, layout) = self.place_address(ctx, place, insts)?;
+        if matches!(layout.repr, Repr::Scalar(Scalar::Pointer(_))) {
+            let value = ctx.value();
+            insts.push(ExtInst::LoadAt { dest: value, address: Operand::Value(address), layout });
+            Ok(Operand::Value(value))
+        } else {
+            Ok(Operand::Value(address))
+        }
+    }
+
+    /// Spill an operand with no place of its own into a fresh slot at
+    /// `layout`, and return the slot's address.
+    ///
+    /// **Also factored out of [`Lowerer::lower_runtime_call`]**, whose own
+    /// comment at the one call site this used to be inline at —
+    /// *"a value with no place, into a parameter that wants its address"* —
+    /// is the account of why this exists at all, unchanged by moving it here.
+    /// [`Lowerer::lower_owned_nullable_call`] reaches it through
+    /// [`Lowerer::pointer_to_operand`] for `Map.insert`'s `value: V`, which is
+    /// owned and by-value exactly the way `xs.push(30)`'s argument is.
+    fn spill_to_pointer(
+        &mut self,
+        ctx: &mut BodyCtx,
+        arg: &mir::Operand,
+        layout: &Layout,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<Operand, Unlowered> {
+        let slot = self.temp(ctx, layout.clone());
+        // `field_value` and not `typed_operand`, for the one operand that is
+        // not a value yet: a string literal. `m.insert("uno", 1)` moves the key
+        // into the call, so the key argument is a `String` that has to be
+        // *constructed* — Decision 15's `science_string_from_bytes` — and
+        // `field_value` is where that construction already lives, written for a
+        // record field and true of every position whose owner is not the
+        // literal itself. The call takes ownership, so there is no free here,
+        // exactly as a record field has none.
+        let value = self.field_value(ctx, arg, layout, insts)?;
+        insts.push(ExtInst::Above(Inst::Store { local: slot, value }));
+        let address = ctx.value();
+        insts.push(ExtInst::LocalAddr { dest: address, local: slot });
+        Ok(Operand::Value(address))
+    }
+
+    /// [`Lowerer::pointer_to_place`] when the operand has one,
+    /// [`Lowerer::spill_to_pointer`] when it does not — the same choice
+    /// [`Lowerer::lower_runtime_call`]'s loop makes per parameter, made once
+    /// here for a caller that already knows the Science type to spill at
+    /// rather than reading it off a descriptor's element.
+    fn pointer_to_operand(
+        &mut self,
+        ctx: &mut BodyCtx,
+        arg: &mir::Operand,
+        ty: Ty,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<Operand, Unlowered> {
+        if let Some(place) = arg.place() {
+            return self.pointer_to_place(ctx, place, insts);
+        }
+        let layout = self.layout_of_ty(ty)?;
+        self.spill_to_pointer(ctx, arg, &layout, insts)
+    }
+
     /// A call MIR makes to a `science-rt` entry point by name.
     ///
     /// **The signature is [`RUNTIME`]'s and the arguments are matched to it,
@@ -5508,6 +5663,11 @@ impl<'a> Lowerer<'a> {
         // into, which is the argument case below that has no place to take an
         // address of.
         let mut element_ty = None;
+        let mut map_kv: Option<(Ty, Ty)> = None;
+        // Which of a map entry point's `P` parameters this argument is: the
+        // key comes before the value, and `science_map_get`/`contains`/`remove`
+        // have only the key.
+        let mut map_pointer_args = 0usize;
         let descriptor = match descriptor_at {
             None => None,
             Some(_) => {
@@ -5528,6 +5688,11 @@ impl<'a> Lowerer<'a> {
                                  operand this crate can read a key and value type off"
                             ))
                         })?;
+                    // Remembered for the same reason `element_ty` is: a `P`
+                    // parameter with no place behind it needs a layout for the
+                    // slot it is spilled into, and a map's arguments are a key
+                    // then a value, in that order, after the map itself.
+                    map_kv = Some((key, value));
                     Some(self.intern_map_descriptor(key, value)?)
                 } else {
                 let element = self
@@ -5598,19 +5763,7 @@ impl<'a> Lowerer<'a> {
             }
             if pointer {
                 if let Some(place) = arg.place() {
-                    let (address, layout) = self.place_address(ctx, place, insts)?;
-                    if matches!(layout.repr, Repr::Scalar(Scalar::Pointer(_))) {
-                        // The slot holds a pointer: the value is the argument.
-                        let value = ctx.value();
-                        insts.push(ExtInst::LoadAt {
-                            dest: value,
-                            address: Operand::Value(address),
-                            layout,
-                        });
-                        lowered.push(Operand::Value(value));
-                    } else {
-                        lowered.push(Operand::Value(address));
-                    }
+                    lowered.push(self.pointer_to_place(ctx, place, insts)?);
                     param += 1;
                     continue;
                 }
@@ -5634,20 +5787,23 @@ impl<'a> Lowerer<'a> {
                 // interned for — the same `T`, by construction, since both are
                 // read off the same array — and not from the operand, which
                 // carries no type at all.
-                let Some(element) = element_ty else {
-                    return Err(Unlowered::new(format!(
-                        "a value passed by address to `{symbol}`, which is not one of the entry \
-                         points this crate reads an element type for: there is nothing to give \
-                         the spill slot a layout"
-                    )));
+                let spill_ty = match (element_ty, map_kv) {
+                    (Some(element), _) => element,
+                    (None, Some((key, value))) => {
+                        let ty = if map_pointer_args == 0 { key } else { value };
+                        map_pointer_args += 1;
+                        ty
+                    }
+                    (None, None) => {
+                        return Err(Unlowered::new(format!(
+                            "a value passed by address to `{symbol}`, which is not one of the \
+                             entry points this crate reads an element type for: there is nothing \
+                             to give the spill slot a layout"
+                        )));
+                    }
                 };
-                let layout = self.layout_of_ty(element)?;
-                let slot = self.temp(ctx, layout.clone());
-                let value = self.typed_operand(ctx, arg, &layout, insts)?;
-                insts.push(ExtInst::Above(Inst::Store { local: slot, value }));
-                let address = ctx.value();
-                insts.push(ExtInst::LocalAddr { dest: address, local: slot });
-                lowered.push(Operand::Value(address));
+                let layout = self.layout_of_ty(spill_ty)?;
+                lowered.push(self.spill_to_pointer(ctx, arg, &layout, insts)?);
                 param += 1;
                 continue;
             }
@@ -5797,14 +5953,17 @@ impl<'a> Lowerer<'a> {
             // twin is `science_array_get_mut`, whose name is C's and is not
             // reached by a user.
             ("Array", "get_mutably", "science_array_get_mut"),
-            // `Map of (K, V)`'s surface. **Five rows and not seven**, and the
-            // two that are missing are missing for two different reasons.
-            // `insert` and `remove` return `V?` through §5.3's bool-plus-out-
-            // parameter convention, which is two results where a row maps one
-            // call to one symbol; `is_empty` has no runtime twin at all —
-            // `science_map_len` is the only length there is, and comparing it
-            // to zero is an instruction this table cannot express. Both are
-            // added when the shape that carries them is.
+            // `Map of (K, V)`'s surface. **Four rows here and not seven**, and
+            // the three that are missing are missing for two different
+            // reasons. `insert` and `remove` return `V?` through §5.3's
+            // bool-plus-out-parameter convention, which is two results where
+            // a row in *this* table maps one call to one symbol — they are
+            // wired now, in [`Lowerer::owned_nullable_method`] and
+            // [`Lowerer::lower_owned_nullable_call`], a second table for the
+            // reason that function's own doc comment gives; `is_empty` has no
+            // runtime twin at all — `science_map_len` is the only length
+            // there is, and comparing it to zero is an instruction this table
+            // cannot express, so it stays missing until that shape exists.
             ("Map", "new", "science_map_new"),
             ("Map", "get", "science_map_get"),
             ("Map", "contains", "science_map_contains"),
@@ -5837,6 +5996,276 @@ impl<'a> Lowerer<'a> {
             .iter()
             .find(|(ty, name, _)| *ty == receiver && *name == method)
             .map(|(_, _, symbol)| *symbol)
+    }
+
+    /// The `science-rt` entry point a method reaches through §5.3's
+    /// bool-plus-out-parameter convention, if it is one.
+    ///
+    /// # The decision
+    ///
+    /// A second closed table, `(Self, method) -> symbol`, read exactly the
+    /// way [`Lowerer::prelude_method`]'s is — by the block's `Self` and the
+    /// method's name, both required, `is_builtin` filtered on both — but kept
+    /// apart from `PRELUDE_METHODS` rather than added to it, because a row in
+    /// that table promises [`Lowerer::lower_runtime_call`]'s one-call,
+    /// one-symbol, one-result shape, and this convention keeps none of the
+    /// three: `Map.insert` passes two Science arguments where
+    /// `science_map_insert` takes five, the fifth is a pointer no MIR operand
+    /// names, and the `Bool` that comes back is not the call's result — it is
+    /// consumed building the `V?` that is.
+    ///
+    /// # The reason this is a table and not a rule read off [`RUNTIME`]
+    ///
+    /// This crate's own doc comment on
+    /// [`science_codegen::runtime::OwnedNullableReturn`] asks for the
+    /// representation question to be *derived*, and the derived half is
+    /// derived: once a call site is known to use this convention,
+    /// [`science_codegen::runtime::owned_nullable_return`] answers tag-or-
+    /// niche from the payload type alone, and
+    /// [`Lowerer::lower_owned_nullable_call`] asks it rather than
+    /// re-deciding. What is not derivable from `RUNTIME` is *which* entry
+    /// points the convention applies to, and a structural guess — "a `Bool`
+    /// return with a trailing pointer parameter" — has two false positives
+    /// sitting in the same table as the two true ones. `science_chars_next(P,
+    /// P) -> Bool` has that exact shape and is not this convention at all: it
+    /// is an iterator's "was there another `Char`", and the pointer it writes
+    /// through is a loop variable's out-parameter, written on every call
+    /// whether or not the `bool` is `true`. `science_map_contains(P, D, P) ->
+    /// Bool` has the same shape read the other way: its trailing pointer is
+    /// the *key*, an input the call reads, not an output it writes. Telling
+    /// the three apart needs to know whether the trailing pointer is written
+    /// unconditionally, read, or written only when the `bool` says so — which
+    /// is semantics `RtParam::Pointer` does not carry and `RUNTIME`'s table is
+    /// not the place to teach it, because every other parameter already means
+    /// "a pointer" without qualification. So the table is hand-maintained,
+    /// for [`Lowerer::prelude_method`]'s own reason restated: two honest
+    /// answers exist for a call this crate must lower — a table, or a
+    /// structural rule that answers `science_chars_next` wrong — and the
+    /// table is the smaller mistake.
+    ///
+    /// # The cost
+    ///
+    /// Two rows. A third — `Array.pop`, `science-rt`'s other user of this
+    /// convention — is not one of them: `science-resolve`'s `builtins.rs`
+    /// leaves `pop` undeclared on purpose, with its own note explaining that
+    /// the choice between `pop(mutable self) -> T?` and `pop(mutable self)`
+    /// is not this crate's to settle by being the first thing that happens to
+    /// need an answer. That reasoning is read and still stands, so this table
+    /// has no `Array` row and `lower_owned_nullable_call` refuses any symbol
+    /// that is not one of `Map`'s two.
+    fn owned_nullable_method(&self, def: DefId) -> Option<&'static str> {
+        /// `(the block's `Self`, the method) -> the entry point`.
+        const OWNED_NULLABLE_METHODS: &[(&str, &str, &str)] =
+            &[("Map", "insert", "science_map_insert"), ("Map", "remove", "science_map_remove")];
+        if !self.defs.get(def).is_builtin() {
+            return None;
+        }
+        let owner = self.decls?.signature(def)?.owner?;
+        let self_ty = self.decls?.self_ty(owner)?;
+        let TyKind::Named { def: receiver, .. } = self.types.kind(self_ty) else {
+            return None;
+        };
+        if !self.defs.get(*receiver).is_builtin() {
+            return None;
+        }
+        let receiver = self.defs.get(*receiver).name.as_str();
+        let method = self.defs.get(def).name.as_str();
+        OWNED_NULLABLE_METHODS
+            .iter()
+            .find(|(ty, name, _)| *ty == receiver && *name == method)
+            .map(|(_, _, symbol)| *symbol)
+    }
+
+    /// `Map.insert` and `Map.remove`: §5.3's convention, lowered.
+    ///
+    /// # The shape, restated at the call site
+    ///
+    /// `science_map_insert(P map, D, P key, P value, P out_old) -> Bool` and
+    /// `science_map_remove(P map, D, P key, P out_old) -> Bool` both hand a
+    /// `V?` back as a `bool` plus an out-parameter this function invents —
+    /// there is no MIR operand for it, because Science's `insert`/`remove`
+    /// take two or one arguments where the runtime takes five or four. So
+    /// this does not call [`Lowerer::lower_runtime_call`] at all: that
+    /// function's arity check and its `emit_result` both assume what this
+    /// call breaks.
+    ///
+    /// # Building the pointer arguments
+    ///
+    /// The receiver and the key are read the way every other builtin
+    /// method's are — [`Lowerer::pointer_to_place`] — and the value (`insert`
+    /// only) is Science's owned `V`, spilled into a fresh slot when it has no
+    /// place of its own exactly the way `xs.push(30)`'s literal is
+    /// ([`Lowerer::pointer_to_operand`]). The descriptor is `Map`'s own
+    /// `ScienceMapInfo`, read off the receiver the same way
+    /// [`Lowerer::lower_runtime_call`] reads it for `get` and `contains`.
+    ///
+    /// # Building the out-parameter and consuming the `bool`
+    ///
+    /// **The destination's own storage is the out-parameter, in both
+    /// representations, and nothing is copied into it afterwards.** The
+    /// destination is already an `alloca` sized for `V?` — every MIR local
+    /// is, since Decision 8 — and in each of Decision 19's two shapes that
+    /// `alloca` already contains, or *is*, exactly where the payload belongs:
+    ///
+    /// - **[`OwnedNullableReturn::StoreBoolIntoTag`]**: the payload sits at
+    ///   the tag's `payload_offset`, so [`crate::emit::ExtInst::FieldAddr`]
+    ///   off the destination's own address is the out-parameter the runtime
+    ///   call is given directly. `science_map_insert` then writes `V` there
+    ///   itself on `true` and touches nothing on `false` — which is correct
+    ///   either way, because the tag written next is what makes the payload
+    ///   meaningful or not. That tag write is
+    ///   [`crate::emit::ExtInst::StoreTagFromValue`] of the call's own `Bool`
+    ///   result: one store, no branch, for the reason that instruction's own
+    ///   doc comment gives.
+    /// - **[`OwnedNullableReturn::BranchAndMaterialiseNull`]**: the whole
+    ///   destination *is* the payload (Decision 19), so its address is the
+    ///   out-parameter with no field to project into. On `true` the call has
+    ///   already written the answer where it belongs; on `false` the slot
+    ///   holds whatever an uninitialised `alloca` holds, and turning that
+    ///   into `null` is [`crate::emit::ExtInst::LoadNiche`] to read the
+    ///   (possibly garbage) niche scalar back, [`crate::emit::ExtInst::Select`]
+    ///   to choose between it and [`Operand::Null`] on the call's `Bool`, and
+    ///   one more store to put the chosen value back — three instructions and
+    ///   no branch, which is what [`crate::emit::ExtInst::Select`]'s own doc
+    ///   comment argues Decision 5 requires here.
+    fn lower_owned_nullable_call(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        symbol: &str,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        if !matches!(symbol, "science_map_insert" | "science_map_remove") {
+            return Err(Unlowered::new(format!(
+                "`{symbol}` through §5.3's convention: `owned_nullable_method`'s table names \
+                 only `Map`'s two, and `Array.pop` is not declared in the prelude for its own \
+                 reason — see `science-resolve`'s `builtins.rs`"
+            )));
+        }
+        let sig = self.declare(symbol)?;
+        let entry = runtime_fn(symbol).expect("`declare` found it");
+
+        let (key_ty, value_ty) = self.map_operand_kv(body, args, destination).ok_or_else(|| {
+            Unlowered::new(format!(
+                "a call to `{symbol}`, which takes a `ScienceMapInfo`, with no operand this crate \
+                 can read a key and value type off"
+            ))
+        })?;
+        let descriptor = self.intern_map_descriptor(key_ty, value_ty)?;
+
+        let Some(self_place) = args.first().and_then(|arg| arg.place()) else {
+            return Err(Unlowered::new(format!(
+                "a call to `{symbol}` whose receiver is not a place this crate can take the \
+                 address of"
+            )));
+        };
+        let map_ptr = self.pointer_to_place(ctx, self_place, insts)?;
+
+        let Some(key_arg) = args.get(1) else {
+            return Err(Unlowered::new(format!("a call to `{symbol}` with no key")));
+        };
+        let key_ptr = self.pointer_to_operand(ctx, key_arg, key_ty, insts)?;
+
+        let mut lowered = vec![map_ptr, Operand::GlobalAddr(descriptor), key_ptr];
+        if symbol == "science_map_insert" {
+            let Some(value_arg) = args.get(2) else {
+                return Err(Unlowered::new(format!("a call to `{symbol}` with no value")));
+            };
+            lowered.push(self.pointer_to_operand(ctx, value_arg, value_ty, insts)?);
+        }
+
+        // **A checked assumption, not a guessed one.** `RUNTIME`'s signature
+        // for either symbol always has exactly one more parameter than the
+        // arguments built above — the out-parameter this call site invents —
+        // and if that ever stops being true, `owned_nullable_method`'s table
+        // and `RUNTIME` have drifted apart, and guessing which parameter is
+        // missing would silently build the wrong call rather than refuse one.
+        if sig.params.len() != lowered.len() + 1 {
+            return Err(Unlowered::new(format!(
+                "`{symbol}` declares {} parameter(s) and this call built {}: §5.3's convention \
+                 expects exactly one more, the out-parameter this call site invents",
+                sig.params.len(),
+                lowered.len()
+            )));
+        }
+
+        let dest_local = LocalId(destination.local.index() as u32);
+        let dest_layout = ctx.layout(dest_local)?.clone();
+        let cg_value = self.cg_ty(value_ty)?;
+        let flag = ctx.value();
+
+        match owned_nullable_return(&cg_value) {
+            OwnedNullableReturn::StoreBoolIntoTag => {
+                let Repr::Tagged { payload_offset, .. } = &dest_layout.repr else {
+                    return Err(Unlowered::new(
+                        "a `V?` `owned_nullable_return` classified tagged, whose destination's \
+                         own layout is Decision 19's niched one instead: the layout engine and \
+                         this convention have disagreed about the same type",
+                    ));
+                };
+                let dest_addr = ctx.value();
+                insts.push(ExtInst::LocalAddr { dest: dest_addr, local: dest_local });
+                let payload_addr = ctx.value();
+                insts.push(ExtInst::FieldAddr {
+                    dest: payload_addr,
+                    base: Operand::Value(dest_addr),
+                    offset: *payload_offset,
+                });
+                lowered.push(Operand::Value(payload_addr));
+                insts.push(ExtInst::Above(Inst::Call {
+                    dest: Some(flag),
+                    callee: Callee::Runtime(entry.symbol),
+                    args: lowered,
+                    ret: sig.ret.clone(),
+                    sret_slot: None,
+                }));
+                insts.push(ExtInst::StoreTagFromValue {
+                    local: dest_local,
+                    value: Operand::Value(flag),
+                });
+            }
+            OwnedNullableReturn::BranchAndMaterialiseNull => {
+                let dest_addr = ctx.value();
+                insts.push(ExtInst::LocalAddr { dest: dest_addr, local: dest_local });
+                lowered.push(Operand::Value(dest_addr));
+                insts.push(ExtInst::Above(Inst::Call {
+                    dest: Some(flag),
+                    callee: Callee::Runtime(entry.symbol),
+                    args: lowered,
+                    ret: sig.ret.clone(),
+                    sret_slot: None,
+                }));
+                let raw = ctx.value();
+                insts.push(ExtInst::LoadNiche { dest: raw, local: dest_local });
+                // The niche's own scalar type, and not `V`'s whole layout:
+                // `ExtInst::LoadNiche` reads one pointer-sized word regardless
+                // of how wide `V` is (`any I` is two), and `Operand::Null`
+                // materialises as one opaque `ptr` (`crate::emit`'s
+                // `operand`), so `Select`'s two operands are always
+                // pointer-sized even when `V` is not. Every niche this crate
+                // lays out is a pointer at offset 0 (`CgTy::niche`'s doc: "the
+                // four never-null pointer kinds and `any I`"), and `scalar_ty`
+                // erases `PtrKind` to one opaque type, so `Ptr(Raw)` stands in
+                // for whichever kind `V`'s actual niche is without claiming to
+                // know which.
+                let niche_layout = layout_of(self.target, &CgTy::Ptr(PtrKind::Raw));
+                let chosen = ctx.value();
+                insts.push(ExtInst::Select {
+                    dest: chosen,
+                    cond: Operand::Value(flag),
+                    if_true: Operand::Value(raw),
+                    if_false: Operand::Null,
+                    layout: niche_layout,
+                });
+                insts.push(ExtInst::Above(Inst::Store {
+                    local: dest_local,
+                    value: Operand::Value(chosen),
+                }));
+            }
+        }
+        Ok(())
     }
 
     /// A call to another Science function: Decision 22's private convention.

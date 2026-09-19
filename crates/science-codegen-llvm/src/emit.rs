@@ -50,10 +50,11 @@
 //! `GlobalAddr`, `Null` and now `Param`, and `Inst` has `Alloca`, `Load`,
 //! `Store`, two binaries, a `Cmp` and a `Call`. Stages 1 to 3 needed five
 //! things that vocabulary could not express, and a `choice`, a second function
-//! and a record need four more; each one is a variant of [`ExtInst`] rather
-//! than a peek. **One of the nine has since moved above the line**:
-//! `Operand::Param` is `science_codegen::backend`'s now, because a body naming
-//! its own argument is not an LLVM fact and the operand's note says so.
+//! and a record need four more, and §5.3's bool-plus-out-parameter convention
+//! needs two more still; each one is a variant of [`ExtInst`] rather than a
+//! peek. **One of the eleven has since moved above the line**: `Operand::Param`
+//! is `science_codegen::backend`'s now, because a body naming its own argument
+//! is not an LLVM fact and the operand's note says so.
 //!
 //! The first three are stage 1's:
 //!
@@ -102,6 +103,38 @@
 //! 9. **A load and a store through a computed address** ([`ExtInst::LoadAt`],
 //!    [`ExtInst::StoreAt`]). `Inst::Load` and `Inst::Store` name a `LocalId`,
 //!    so neither can reach a field once its address has been computed.
+//!
+//! `Map.insert` and `Map.remove` add two more, and both exist for the same
+//! reason: `science-rt`'s §5.3 hands a `V?` back as one `bool` plus an
+//! out-parameter [`crate::lower::Lowerer::lower_owned_nullable_call`] invents,
+//! and turning that pair into a `V?` needs one instruction per representation
+//! Decision 19 has.
+//!
+//! 10. **A discriminant written from a value, not a constant**
+//!     ([`ExtInst::StoreTagFromValue`]). [`ExtInst::StoreTag`] writes §3.3's
+//!     tag from a number known when the module is built — every `choice`
+//!     literal and every `null` is one — and the tag `Map.insert` writes is
+//!     not: it is the runtime's own `bool`, and §5.3 says outright that the
+//!     two are *"the same byte as the discriminant of §5.1"*, which is what
+//!     makes a store of it, and not a branch that picks one of two constants,
+//!     the correct instruction.
+//! 11. **A `select`** ([`ExtInst::Select`]). Decision 19's other
+//!     representation has no tag to write. The runtime's out-parameter *is*
+//!     the payload there, written when the `bool` comes back `true` and left
+//!     untouched — not zeroed, *untouched* — when it comes back `false`, so
+//!     the value already sitting in the destination's own memory is either
+//!     the answer or garbage and nothing above this line can tell which
+//!     without reading the `bool`. The honest fix is a branch, and Decision 5
+//!     has nowhere to put one: it gives exactly one LLVM block to one MIR
+//!     block, a call is a statement inside that block rather than its
+//!     terminator, and `crate::lower`'s own module note already made this
+//!     argument once, about a place projection rather than a call — *"a place
+//!     projection is not a statement, so there is nowhere here to put three
+//!     basic blocks"*. A `select` needs no block at all: it reads the
+//!     (possibly garbage) payload unconditionally, the `bool` unconditionally,
+//!     and picks between that payload and a null pointer as a value, which is
+//!     safe precisely because the garbage is never the operand a later
+//!     instruction reads — only `select`'s own choice is.
 //!
 //! Every one is a local extension and every one is meant to be deleted: when
 //! `Inst` grows an `AddrOf`, a field projection and a load and store through a
@@ -399,6 +432,38 @@ pub enum ExtInst {
         /// The discriminant value, from declaration order starting at zero.
         discriminant: u64,
     },
+    /// Store §3.3's discriminant into a [`Repr::Tagged`] local, from a
+    /// **runtime value** rather than a number known when the module is built.
+    ///
+    /// **The tenth hole, and it exists for §5.3's convention and nothing
+    /// else.** `ExtInst::StoreTag` covers every discriminant this crate had
+    /// occasion to write before `Map.insert` and `Map.remove`: a `choice`
+    /// literal names its variant in the source, and `store_null` reads the
+    /// null variant's number off the layout — both are constants by the time
+    /// they reach an instruction. `science_map_insert`'s `bool` is not: it is
+    /// the answer to "was there a displaced value", computed by
+    /// `science-rt` at run time, and `science-rt`'s §5.3 makes the two
+    /// representations coincide on purpose — *"the returned `bool` is the same
+    /// byte as the discriminant of §5.1"* — so `SCIENCE_NULLABLE_NULL == 0`
+    /// and `false` agree, `SCIENCE_NULLABLE_PRESENT == 1` and `true` agree,
+    /// and the whole repair is one store of a value that already has the
+    /// right bit pattern.
+    ///
+    /// **The width is checked and not assumed.** A `T?` is always a two-variant
+    /// `choice`, so [`science_codegen::layout::IntTy::discriminant_for`]
+    /// always answers `U8` for its tag, and `RtRet::Bool`'s memory form is
+    /// `i8` too (§3.1) — the two happen to agree for every payload type this
+    /// crate lays out, and [`LlvmBackend`]'s emitter checks that they do
+    /// rather than trusting the coincidence, for `Inst::Store`'s reason:
+    /// opaque pointers make a width mismatch here legal IR that writes past
+    /// the tag and into the payload union.
+    StoreTagFromValue {
+        /// The tagged local — a `V?` under construction, never a `choice` a
+        /// program wrote, because nothing else builds a tag from a value.
+        local: LocalId,
+        /// The runtime's `bool`, in its §3.1 memory form.
+        value: Operand,
+    },
     /// The address of a byte offset within an aggregate: §2.3's `.field`.
     ///
     /// **The seventh hole, and it is the one §2's closing sentence named.**
@@ -450,6 +515,71 @@ pub enum ExtInst {
         layout: Layout,
         /// What to write.
         value: Operand,
+    },
+    /// `select`: choose one of two values of the same layout, with no branch
+    /// and no basic block of its own.
+    ///
+    /// **The eleventh hole, and the other half of §5.3's repair.** Decision
+    /// 19's niched `T?` has no tag for [`ExtInst::StoreTagFromValue`] to write
+    /// — the whole layout *is* the payload — so `Map.insert`'s out-parameter
+    /// is the destination's own address, written by `science_map_insert` when
+    /// its `bool` is `true` and left alone when it is `false`. Left alone
+    /// means exactly that: whatever bit pattern the destination's `alloca`
+    /// happened to hold, which is what every other local in this crate holds
+    /// before its first store. Reading that as the answer on the `false` edge
+    /// is not a subtle bug, it is a published one, waiting for `Map.remove`
+    /// to be the first caller: the value would be whatever a previous local
+    /// left on the stack, and it would be a different wrong value on every
+    /// run.
+    ///
+    /// **A branch, and not this instruction, is the reading that fits the
+    /// module's existing prose** — `crate::lower`'s own note about
+    /// `xs[i]` calls a branch and the two blocks it needs *"the honest fix"*
+    /// for a comparable gap, and declines only because a place projection has
+    /// nowhere to put them. A call does have somewhere: it is a statement, not
+    /// a projection, and [`crate::lower::Lowerer::lower_call`] already returns
+    /// a [`Terminator`] downstream of it. The reason this crate still does not
+    /// branch here is Decision 5, not a shortage of blocks: *"every MIR basic
+    /// block becomes exactly one LLVM basic block, and codegen merges
+    /// nothing"* — read the other way, one MIR block does not become *two*
+    /// LLVM blocks either, and every block this crate emits for a user's body
+    /// already has a source block behind it except [`Lowerer::lower_c_main`]'s
+    /// three, which are a whole function with no MIR body to hold a second
+    /// terminator. Inventing a block *inside* `Map.remove`'s MIR block to hold
+    /// the null-materialising store would be the same move `lower_c_main`
+    /// makes, made somewhere Decision 5 claims exclusively for MIR — so the
+    /// two are not offered the same excuse.
+    ///
+    /// **What a `select` buys instead**: the payload is read unconditionally —
+    /// `ExtInst::LoadNiche`, on a slot that may hold garbage — and so is the
+    /// `bool`, and LLVM's `select` on an `i1` and two operands of the same
+    /// type is defined for every input, including a garbage operand on the
+    /// branch not taken: the garbage is never observed, because `select`
+    /// produces the *chosen* operand's value and nothing reads the other one
+    /// through it. That is the same reasoning [`ExtInst::StoreTag`]'s own note
+    /// already relies on for the payload union of a payload-free variant —
+    /// *"left undefined, which Decision 18 permits"* — read at the value level
+    /// instead of the memory level.
+    Select {
+        /// Where the chosen value goes.
+        dest: ValueId,
+        /// The condition: `i1`, or §3.1's `i8` memory form of a `Bool`, on the
+        /// same terms [`Terminator::Branch`]'s own `cond` accepts — this
+        /// crate's `bool_cond` narrows it the same way.
+        cond: Operand,
+        /// The value when `cond` is true.
+        if_true: Operand,
+        /// The value when `cond` is false. `Operand::Null` for §5.3's use:
+        /// Decision 19's absent case, materialised directly rather than read
+        /// from anywhere.
+        if_false: Operand,
+        /// The layout both operands share, so each can be materialised at its
+        /// own type rather than guessed from the other the way
+        /// [`LlvmBackend::width_hint`] guesses for arithmetic — this
+        /// instruction has exactly two operands and carrying the type is
+        /// cheaper than the inference [`ExtInst::Const`]'s own note found
+        /// unsound.
+        layout: Layout,
     },
 }
 
@@ -1171,6 +1301,36 @@ impl LlvmBackend {
                 let store = unsafe { sys::LLVMBuildStore(b, value, slot) };
                 unsafe { sys::LLVMSetAlignment(store, layout.align as c_uint) };
             }
+            ExtInst::StoreTagFromValue { local, value } => {
+                let (slot, _, layout) = state.local_entry(*local)?;
+                let ty = self.tag_ty(&layout).ok_or_else(|| {
+                    BackendError::Other(format!(
+                        "local _{} is written with a discriminant and its representation is not \
+                         Decision 18's tagged one",
+                        local.0
+                    ))
+                })?;
+                let v = self.operand(state, value, Some(ty))?;
+                let v = self.widen_bool(v, ty);
+                // §5.3's convention is a `bool`, and a `T?` is always a
+                // two-variant `choice`, so this width check is not expected to
+                // fire — see the variant's own doc for why the two widths
+                // happen to agree. It is here anyway, for `Inst::Store`'s
+                // reason: opaque pointers make a mismatched store legal IR
+                // that overwrites the payload union rather than only the tag.
+                let value_ty = unsafe { sys::LLVMTypeOf(v) };
+                if value_ty != ty {
+                    return Err(BackendError::Other(format!(
+                        "local _{}'s discriminant is {} and the runtime `bool` written into it \
+                         is {}; §5.3's convention only holds where the two agree",
+                        local.0,
+                        self.describe_type(ty),
+                        self.describe_type(value_ty)
+                    )));
+                }
+                let store = unsafe { sys::LLVMBuildStore(b, v, slot) };
+                unsafe { sys::LLVMSetAlignment(store, layout.align as c_uint) };
+            }
             ExtInst::FieldAddr { dest, base, offset } => {
                 let pointer = self.operand(state, base, Some(self.ptr_ty()))?;
                 if !self.value_is_pointer(pointer) {
@@ -1233,6 +1393,32 @@ impl LlvmBackend {
                 let store = unsafe { sys::LLVMBuildStore(b, v, pointer) };
                 unsafe { sys::LLVMSetAlignment(store, layout.align as c_uint) };
             }
+            ExtInst::Select { dest, cond, if_true, if_false, layout } => {
+                let c = self.bool_cond(state, cond, "a `select`")?;
+                let ty = self.llvm_type(layout);
+                let t = self.operand(state, if_true, Some(ty))?;
+                let f = self.operand(state, if_false, Some(ty))?;
+                // The same width check every other instruction in this file
+                // that takes an `Operand` against a `Layout` carries: an
+                // opaque `select %c, i64 %t, ptr %f` (mismatched operand
+                // types) is a verifier failure, so this is a refusal rather
+                // than a miscompile, but `describe_type` is worth the two
+                // extra branches for the message it can give at a call site
+                // three functions removed from the mistake.
+                let t_ty = unsafe { sys::LLVMTypeOf(t) };
+                let f_ty = unsafe { sys::LLVMTypeOf(f) };
+                if t_ty != ty || f_ty != ty {
+                    return Err(BackendError::Other(format!(
+                        "a `select` at {}, whose true operand is {} and false operand is {}",
+                        self.describe_type(ty),
+                        self.describe_type(t_ty),
+                        self.describe_type(f_ty)
+                    )));
+                }
+                let name = cstr(&format!("v{}", dest.0));
+                let value = unsafe { sys::LLVMBuildSelect(b, c, t, f, name.as_ptr()) };
+                state.values.insert(dest.0, value);
+            }
             ExtInst::Above(Inst::Call { dest, callee, args, ret, sret_slot }) => {
                 self.emit_call(state, dest, callee, args, ret, sret_slot)?;
             }
@@ -1250,6 +1436,50 @@ impl LlvmBackend {
             Repr::Tagged { tag, .. } => Some(self.scalar_ty(Scalar::Int(*tag))),
             _ => None,
         }
+    }
+
+    /// An `Operand` as an `i1`, narrowing §3.1's `i8` memory form of a `Bool`
+    /// rather than refusing it.
+    ///
+    /// **Factored out of `Terminator::Branch` rather than written twice.**
+    /// [`ExtInst::Select`] needs exactly this conversion for exactly this
+    /// reason — a condition that came from `Inst::Load` of a `Bool` local, or
+    /// from an `Inst::Call` returning `RtRet::Bool`, is an `i8`, and both
+    /// `LLVMBuildCondBr` and `LLVMBuildSelect` require an `i1` — so a second
+    /// copy of the five lines below is a second place for the two to drift
+    /// apart, which is the failure mode every other shared check in this file
+    /// (`niche_ty`, `tag_ty`, `widen_bool`) already exists to avoid.
+    ///
+    /// `what` names the instruction in the one message this can produce, the
+    /// same way `Terminator::Branch`'s own inline version used to.
+    fn bool_cond(
+        &self,
+        state: &BodyState,
+        cond: &Operand,
+        what: &str,
+    ) -> Result<sys::LLVMValueRef, BackendError> {
+        let c = self.operand(state, cond, Some(self.int_ty(1)))?;
+        // `trunc i8 -> i1` keeps the low bit, which is the right answer for
+        // the only two values a `Bool` slot may hold. It is also why
+        // `crate::lower` emits `not x` as `x == 0` rather than as a bitwise
+        // complement: a `Bool` whose slot held `0xff` would truncate to
+        // `true`, and a complement of the memory form is exactly how `0xff`
+        // would get in there.
+        let c = if self.value_is_int_of_width(c, 8) {
+            let name = cstr("cond");
+            unsafe { sys::LLVMBuildTrunc(self.builder.raw(), c, self.int_ty(1), name.as_ptr()) }
+        } else {
+            c
+        };
+        if !self.value_is_int_of_width(c, 1) {
+            return Err(BackendError::Unsupported {
+                what: format!(
+                    "{what} on a condition that is neither `i1` nor §3.1's `i8` memory form of \
+                     a `Bool`"
+                ),
+            });
+        }
+        Ok(c)
     }
 
     /// Whether a value is a pointer.
@@ -1743,36 +1973,7 @@ impl LlvmBackend {
                 sys::LLVMBuildBr(b, state.block(*target)?);
             },
             Terminator::Branch { cond, then_block, else_block } => {
-                let c = self.operand(state, cond, Some(self.int_ty(1)))?;
-                // **`i1`, and §3.1's other form is narrowed rather than
-                // refused.** `Bool` is *"`i1` in registers and `i8` in
-                // memory"*, and [`LlvmBackend::scalar_ty`] answers with the
-                // memory form — so a condition that came from `Inst::Load` of a
-                // `Bool` local is an `i8` and `br i8` is a verifier failure.
-                // This used to refuse, by name, because nothing in stage 1 could
-                // produce a loaded `Bool` condition and `sys.rs`'s rule is
-                // *"declare only what you call"*. Stage 3's every `if` produces
-                // one, so `LLVMBuildTrunc` is now called and therefore declared.
-                //
-                // `trunc i8 -> i1` keeps the low bit, which is the right answer
-                // for the only two values a `Bool` slot may hold. It is also
-                // why `crate::lower` emits `not x` as `x == 0` rather than as
-                // a bitwise complement: a `Bool` whose slot held `0xff` would
-                // truncate to `true`, and a complement of the memory form is
-                // exactly how `0xff` would get in there.
-                let c = if self.value_is_int_of_width(c, 8) {
-                    let name = cstr("cond");
-                    unsafe { sys::LLVMBuildTrunc(b, c, self.int_ty(1), name.as_ptr()) }
-                } else {
-                    c
-                };
-                if !self.value_is_int_of_width(c, 1) {
-                    return Err(BackendError::Unsupported {
-                        what: "a branch on a condition that is neither `i1` nor §3.1's `i8` \
-                               memory form of a `Bool`"
-                            .to_string(),
-                    });
-                }
+                let c = self.bool_cond(state, cond, "a branch")?;
                 unsafe {
                     sys::LLVMBuildCondBr(
                         b,

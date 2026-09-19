@@ -89,6 +89,70 @@ fn an_integer_keyed_map_has_a_hash_and_an_equality() {
     );
 }
 
+/// The whole round trip: insert, overwrite, read, remove.
+///
+/// # What this needed that nothing else did
+///
+/// `Map.insert(mutable self, key: K, value: V) -> V?` is §5.3's
+/// **bool-plus-out-parameter** convention: `science_map_insert(P, D, P, P, P)
+/// -> Bool` says *whether* a value came back in its return and *what* it was
+/// through a trailing pointer, and the two together are the `V?`. Three things
+/// had to exist for that:
+///
+/// - **An out-slot the call site invents.** Nothing in MIR names it; Science
+///   passes two arguments where the entry point takes five.
+/// - **A tag written from a value.** `ExtInst::StoreTag` takes a *constant*
+///   discriminant, so a `T?` built out of a returned `bool` was not expressible
+///   at all, and a place projection cannot make the basic blocks a branch would
+///   need.
+/// - **A narrowed read of a tagged option.** `Rvalue::Narrow` had no lowering:
+///   `(&T)?` is Decision 19's niche and needs none, but `I64?` is Decision 18's
+///   discriminant-and-payload and the payload has to be loaded at its offset.
+///   `let x: Int? be 5` followed by `if x?: print(f"{x}")` did not build
+///   either, which says this was never about maps.
+///
+/// # Why every number is asserted
+///
+/// The two first inserts must report **no** previous value, the overwrite must
+/// report `1` and not `11`, the read must see the overwrite, and the remove
+/// must hand back what was there and shrink the table. A convention that
+/// returned the *new* value, or that reported presence inverted, passes a test
+/// that only checks the length — and both are one character's worth of mistake.
+#[test]
+fn a_map_insert_overwrite_read_and_remove_round_trip() {
+    assert_eq!(
+        prints(
+            "round-trip",
+            "let mutable m be (Map of (String, Int)).new()\n\
+             let first be m.insert(\"uno\", 1)\n\
+             let second be m.insert(\"dos\", 2)\n\
+             print(f\"n={m.length()} first={first?} second={second?}\")\n\
+             let old be m.insert(\"uno\", 11)\n\
+             if old?:\n\
+             \x20   print(f\"overwrote, previous={old}\")\n\
+             let k be \"uno\"\n\
+             let got be m.get(k)\n\
+             if got?:\n\
+             \x20   print(f\"read={got} n={m.length()}\")\n\
+             let gone be m.remove(k)\n\
+             if gone?:\n\
+             \x20   print(f\"removed={gone} n={m.length()}\")\n",
+        ),
+        "n=2 first=false second=false\noverwrote, previous=1\nread=11 n=2\nremoved=11 n=1\n"
+    );
+}
+
+/// A narrowed read of a **tagged** option, with no map anywhere near it.
+///
+/// Kept separate because the defect was separate: `Rvalue::Narrow` had no
+/// lowering for Decision 18's layout, and the smallest program that shows it
+/// is three lines. A test that only exercised it through `Map.insert` would
+/// have left a reader thinking the two were the same feature.
+#[test]
+fn a_tagged_option_narrows_to_its_payload() {
+    assert_eq!(prints("narrow", "let x: Int? be 5\nif x?:\n    print(f\"{x}\")\n"), "5\n");
+}
+
 /// A key with no pair is refused, and the refusal says why rather than
 /// defaulting.
 ///

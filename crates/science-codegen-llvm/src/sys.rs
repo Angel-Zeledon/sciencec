@@ -1010,6 +1010,26 @@ unsafe extern "C" {
         name: *const c_char,
     ) -> LLVMValueRef;
 
+    /// `LLVMValueRef LLVMBuildSelect(LLVMBuilderRef, LLVMValueRef If, LLVMValueRef Then, LLVMValueRef Else, const char *Name)`
+    ///
+    /// §5.3's bool-plus-out-parameter convention is the one caller: Decision
+    /// 19's niched `T?` has no tag to write a `bool` into, and turning the
+    /// runtime's `bool` plus a possibly-garbage payload into a defined value
+    /// needs a choice with no branch, because `emit.rs`'s `ExtInst::Select`
+    /// note explains why a branch has nowhere to put its blocks at a call
+    /// site inside a MIR block. `If` must be `i1` — `crate::emit`'s
+    /// `bool_cond` narrows `Terminator::Branch`'s condition the same way and
+    /// this reuses it — and `Then`/`Else` must be the same type, which
+    /// `emit_inst`'s own check enforces because opaque pointers no longer
+    /// make LLVM enforce it for us.
+    pub fn LLVMBuildSelect(
+        b: LLVMBuilderRef,
+        if_: LLVMValueRef,
+        then_: LLVMValueRef,
+        else_: LLVMValueRef,
+        name: *const c_char,
+    ) -> LLVMValueRef;
+
     /// `LLVMValueRef LLVMBuildNeg(LLVMBuilderRef, LLVMValueRef V, const char *Name)`
     ///
     /// `not` and unary `-` are §4.6's two prefix operators and both are

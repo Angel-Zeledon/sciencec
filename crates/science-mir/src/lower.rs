@@ -2752,6 +2752,25 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         (Operand::Move(Place::local(temp)), block)
     }
 
+    /// Whether this hole is a narrow whose option is laid out as a
+    /// discriminant and a payload rather than as a niche.
+    ///
+    /// The question is asked of *types* and not of layouts, because layout is
+    /// `science-codegen`'s and this crate must not learn it: a `T?` gets
+    /// Decision 19's niche exactly when `T` is a borrow, which is a fact about
+    /// the type. Anything else is Decision 18's tagged pair, where the place
+    /// and the value are not the same bytes.
+    fn narrowed_payload_is_not_a_borrow(&mut self, place: &Place, hole: ExprId) -> bool {
+        let hole_ty = self.revealed(self.thir.expr(hole).ty);
+        if matches!(self.context.types.kind(hole_ty), TyKind::Borrowed { .. }) {
+            return false;
+        }
+        let written = self.revealed(self.place_ty(place));
+        let TyKind::Nullable(payload) = *self.context.types.kind(written) else { return false };
+        let payload = self.revealed(payload);
+        !matches!(self.context.types.kind(payload), TyKind::Borrowed { .. })
+    }
+
     /// §4's dereference, applied against the **hole's** type and not only the
     /// place's, because a narrow is the one case where the two disagree.
     ///
@@ -2824,6 +2843,38 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     fn value_hole(&mut self, hole: ExprId, block: BlockId) -> (Operand, BlockId) {
         match self.as_place(hole, block) {
             Some((place, block)) => {
+                // **A narrow is the same place only when the payload is a
+                // borrow, and this is where that stops being true.**
+                //
+                // `as_place` sees through `ExprKind::Narrow` because *"a
+                // narrowed read is the same storage seen at a smaller type"*.
+                // For a `(&T)?` that is exact: Decision 19 puts the niche in
+                // the pointer, so the option and the payload are the same word
+                // and `deref_to_hole` steps through it. For an `I64?` it is
+                // false — Decision 18 lays that out as a discriminant *and* a
+                // payload, two words where the payload is one — so the place
+                // is not the value at any offset the hole knows about.
+                //
+                // The value path is always right: `Builder::operand` emits
+                // `Rvalue::Narrow`, which is the representation change stated
+                // as a statement, and codegen lowers it. So a hole whose
+                // narrowed payload is not a borrow takes that path instead.
+                //
+                // Found by `f"{old}"` where `old` came from `Map.insert`'s
+                // `V?`: the whole two-word option reached
+                // `science_string_push_i64`, which the verifier caught only
+                // because `[2 x i64]` and `i64` are different LLVM types.
+                if self.narrowed_payload_is_not_a_borrow(&place, hole) {
+                    // **`element_move` and not `operand`**, and the difference
+                    // is the whole of why the first attempt at this changed
+                    // nothing: `Builder::operand` asks `as_place` too, so it
+                    // hands back the very place this arm is trying to get away
+                    // from. Evaluating into a temporary is what forces
+                    // `expr_into`, which lowers the `ExprKind::Narrow` to the
+                    // `Rvalue::Narrow` that states the representation change.
+                    let span = self.thir.expr(hole).span;
+                    return self.element_move(hole, block, span);
+                }
                 let place = self.auto_deref(place);
                 let place = self.deref_to_hole(place, hole);
                 let ty = self.place_ty(&place);
