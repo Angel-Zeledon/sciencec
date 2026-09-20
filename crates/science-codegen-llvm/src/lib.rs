@@ -850,6 +850,18 @@ pub struct BuildInput<'a> {
     /// tests, and **no caller anywhere in the compiler**. This field is the
     /// caller.
     pub mono: &'a science_codegen::mono::MonoSet,
+    /// The same instances, each with a **concrete** body: `mono`'s items are
+    /// names and these are what a backend emits.
+    ///
+    /// **Separate from `mono` because they cost something to make.**
+    /// Substituting a body interns types that did not exist while it was still
+    /// generic, so building these needs `&mut Types` — which is exactly what
+    /// `bodies` and `types` are handed here as shared references to prevent a
+    /// backend from having. `science_codegen::mono::Mono::instantiate` is the
+    /// one place that holds the table mutably and knows each instance's
+    /// substitution, and this field is its output carried across the line
+    /// Decision 42 draws.
+    pub instances: &'a [science_codegen::mono::MonoBody],
     /// Where the executable goes.
     pub output: PathBuf,
 }
@@ -990,7 +1002,7 @@ pub fn build(input: &BuildInput) -> Result<Built, Diagnostics> {
         input.decls,
         input.externs,
     );
-    let lowered = match lowerer.lower_crate(input.bodies, input.mono) {
+    let lowered = match lowerer.lower_crate(input.bodies, input.instances, input.mono) {
         Ok(lowered) => lowered,
         Err(unlowered) => {
             diagnostics.push(unlowered.to_diagnostic());

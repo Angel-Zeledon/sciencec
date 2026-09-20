@@ -272,14 +272,22 @@ impl Session {
         // set of things the program reaches from `main`. The other root set
         // exists for a library build and this command does not do one — the
         // `SC0403` above is the refusal that says so.
-        let mono = {
+        // **The walk, and then the substitution, in one borrow of `Types`.**
+        // `Mono::instantiate` is what turns each named instance into a body a
+        // backend can emit, and it interns types that did not exist while the
+        // body was still generic — so it needs the same `&mut Types` the walk
+        // holds and has to run before the walk is dropped. That is why the two
+        // are one block here and one value out of it.
+        let (mono, instances) = {
             let mut walk = science_codegen::mono::Mono::new(
                 &krate.defs,
                 &lowered.decls,
                 &mut lowered.types,
                 &lowered.bodies,
             );
-            walk.collect(science_codegen::mono::RootSet::EntryPoint)
+            let mut set = walk.collect(science_codegen::mono::RootSet::EntryPoint);
+            let instances = walk.instantiate(&mut set);
+            (set, instances)
         };
         let request = science_codegen::driver::BuildRequest::new(vec![display_path(path)]);
         // Decision 28 makes the source order of the `library` clauses the link
@@ -294,6 +302,7 @@ impl Session {
             externs: &externs,
             bodies: &lowered.bodies,
             mono: &mono,
+            instances: &instances,
             output: executable_path(path),
         };
         match science_codegen_llvm::build(&input) {

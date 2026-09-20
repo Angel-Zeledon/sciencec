@@ -28,7 +28,7 @@ use science_codegen_llvm::{BuildInput, Built, build};
 use science_diagnostics::{Diagnostics, FileId};
 use science_mir::mir::Body;
 use science_resolve::hir;
-use science_codegen::mono::MonoSet;
+use science_codegen::mono::{MonoBody, MonoSet};
 use science_types::items::Declarations;
 use science_types::{Aliases, AtomOrder, Types, check_crate, thir};
 
@@ -46,6 +46,9 @@ pub struct Lowered {
     /// `sciencec build` does. A harness that short-circuited it would leave the
     /// one thing the swap changed untested by the only tests that run programs.
     pub mono: MonoSet,
+    /// The same instances, each with its body substituted. The driver builds
+    /// these in the same borrow of `Types` the walk holds, and so does this.
+    pub instances: Vec<MonoBody>,
 }
 
 /// Lex, parse, resolve, check and lower one source file.
@@ -79,11 +82,13 @@ pub fn lower(source: &str) -> Lowered {
         };
         science_mir::lower_crate(&mut context, &thir)
     };
-    let mono = {
+    let (mono, instances) = {
         let mut walk = science_codegen::mono::Mono::new(&krate.defs, &decls, &mut types, &bodies);
-        walk.collect(science_codegen::mono::RootSet::EntryPoint)
+        let mut set = walk.collect(science_codegen::mono::RootSet::EntryPoint);
+        let instances = walk.instantiate(&mut set);
+        (set, instances)
     };
-    Lowered { krate, types, decls, bodies, mono }
+    Lowered { krate, types, decls, bodies, mono, instances }
 }
 
 fn codes(diagnostics: &Diagnostics) -> Vec<(u16, String)> {
@@ -115,6 +120,7 @@ impl Lowered {
             externs: &externs,
             bodies: &self.bodies,
             mono: &self.mono,
+            instances: &self.instances,
             output: output.to_path_buf(),
         };
         build(&input).map_err(|diagnostics| diagnostics.into_vec())

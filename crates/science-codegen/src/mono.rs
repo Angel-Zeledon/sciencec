@@ -529,6 +529,26 @@ pub struct MonoItem {
     pub defined_here: bool,
 }
 
+/// One instance, with the body a backend emits for it.
+///
+/// **The symbol is the identity and the [`DefId`] is not**, which is the whole
+/// of what monomorphisation changes for a backend: `identity[Int]` and
+/// `identity[F64]` share a [`Body::def`] and must not share a function. Every
+/// map a backend keys by definition has to be re-keyed by this `symbol`, and
+/// [`MonoSet::callee_at`] is how a call site gets from its block to the symbol
+/// it calls.
+#[derive(Debug, Clone)]
+pub struct MonoBody {
+    /// The mangled symbol — the same string as the [`MonoItem`] this came from.
+    pub symbol: String,
+    /// The definition and the arguments it was reached with.
+    pub instance: Instance,
+    /// The body, with every type substituted. It still carries the *generic*
+    /// definition's [`Body::def`], because that is what it is a body of; the
+    /// `symbol` is what distinguishes this copy from the others.
+    pub body: Body,
+}
+
 /// What the walk could not follow. §8.
 ///
 /// Counts rather than lists for the four that are structural and a list for the
@@ -579,6 +599,35 @@ pub struct MonoSet {
     /// Every distinct type argument the walk saw, rendered. §10: this is what
     /// Decision 20's descriptor emission will be a function of.
     types_reached: BTreeSet<String>,
+    /// Which instance each call site calls, keyed by the **calling instance's**
+    /// symbol and the block the call terminates.
+    ///
+    /// **This is the half of monomorphisation a set of items cannot carry.** A
+    /// [`science_mir::Callee::Def`] names a definition, and after this walk one
+    /// definition is several functions; `identity[Int]` and `identity[F64]`
+    /// are two symbols behind one [`DefId`], so a backend holding only the item
+    /// set can tell that both exist and not which of them a given call wants.
+    ///
+    /// **Recorded here rather than recovered there**, because the answer is
+    /// [`Mono::solve_call`]'s and it is already computed: the walk has to solve
+    /// every call's instantiation to know what to enqueue. A backend that
+    /// re-derived it would be a second copy of the unification, in a crate that
+    /// cannot see [`Substitution`], discovering a disagreement at link time —
+    /// which is the hazard this codebase closes everywhere else by having one
+    /// spelling of a rule.
+    ///
+    /// Keyed on the *caller's symbol* and not its [`DefId`] for the reason the
+    /// map exists at all: the same call site in a generic body calls a
+    /// different instance in each instantiation of that body. `f[T]` calling
+    /// `g[T]` calls `g[Int]` from `f[Int]` and `g[F64]` from `f[F64]`, out of
+    /// one block of one MIR body.
+    ///
+    /// A [`BTreeMap`] for Decision 4's reason, one level down from
+    /// [`MonoSet::emission_order`]: the iteration order of this map reaches the
+    /// image through nothing today, and `self-hosting.md` §15 names hash-map
+    /// order as the unknown behind Gate J, so it is closed by construction
+    /// before something depends on it.
+    calls: BTreeMap<(String, u32), String>,
     holes: Holes,
     diagnostics: Vec<Diagnostic>,
 }
@@ -594,6 +643,24 @@ impl MonoSet {
     /// phrasing.
     pub fn emission_order(&self) -> impl Iterator<Item = &MonoItem> {
         self.items.values()
+    }
+
+    /// The instance the call terminating `block` of `caller` calls.
+    ///
+    /// `None` for a call the walk did not follow — a runtime entry point, an
+    /// `extern` function, an unresolved method, an instantiation it could not
+    /// make concrete — each of which [`MonoSet::holes`] has already counted.
+    /// A backend meeting one falls back to whatever it did before there was a
+    /// map, which for every one of those is the right answer: none of them is
+    /// an instance.
+    pub fn callee_at(&self, caller: &str, block: science_mir::mir::BlockId) -> Option<&str> {
+        self.calls.get(&(caller.to_string(), block.index() as u32)).map(String::as_str)
+    }
+
+    /// Every call the walk followed, as `(caller symbol, block, callee
+    /// symbol)`. For a dump and for a test that wants the whole map.
+    pub fn call_sites(&self) -> impl Iterator<Item = (&str, u32, &str)> {
+        self.calls.iter().map(|((caller, block), callee)| (caller.as_str(), *block, callee.as_str()))
     }
 
     /// The symbols, in emission order.
@@ -754,6 +821,49 @@ impl<'a> Mono<'a> {
         Mono { defs, decls, types, bodies: index, impl_ordinal }
     }
 
+    /// Every item in `set` that this crate has a body for, as a **concrete**
+    /// body: `science_mir::instantiate` applied with the instance's own
+    /// substitution.
+    ///
+    /// # Why it is a method here and not a step in the driver
+    ///
+    /// Substituting a type interns types that did not exist before —
+    /// `identity[Int]`'s return is a `Ty` nothing had built while the body was
+    /// still generic — so this needs [`Types`] mutably, and a [`Mono`] is
+    /// holding it. The driver cannot take it back until the walk is dropped,
+    /// and by then [`Mono::substitution_of`] is gone with it. Splitting the two
+    /// would mean a second copy of the substitution rule outside the only type
+    /// that knows the argument order [`Instance`] documents.
+    ///
+    /// # What is left out, and why each is right
+    ///
+    /// An item with `defined_here == false` is an `extern` declaration or a
+    /// prelude signature: there is no body to instantiate and the backend
+    /// emits a declaration. An item whose substitution does not evaluate is
+    /// dropped with its [`ConstEvalError`] turned into an [`Unsolved`] on the
+    /// set's holes, for `ty`'s §5 reason the rest of this file follows — an
+    /// instance that vanished silently is a link error with no author.
+    pub fn instantiate(&mut self, set: &mut MonoSet) -> Vec<MonoBody> {
+        let mut out = Vec::with_capacity(set.len());
+        let items: Vec<(String, Instance)> = set
+            .emission_order()
+            .filter(|item| item.defined_here)
+            .map(|item| (item.symbol.clone(), item.instance.clone()))
+            .collect();
+        for (symbol, instance) in items {
+            let Some(body) = self.bodies.get(&instance.def).copied() else { continue };
+            let subst = self.substitution_of(&instance);
+            match science_mir::instantiate(body, &subst, self.types) {
+                Ok(body) => out.push(MonoBody { symbol, instance, body }),
+                Err(_) => set.holes.unsolved.push(Unsolved::Residual {
+                    def: instance.def,
+                    param: 0,
+                }),
+            }
+        }
+        out
+    }
+
     /// Every instance the program needs, from the given roots. §1.
     pub fn collect(&mut self, roots: RootSet) -> MonoSet {
         let mut set = MonoSet::default();
@@ -862,7 +972,7 @@ impl<'a> Mono<'a> {
         let caller_subst = self.substitution_of(caller);
         let function_values = function_values(body);
 
-        for (_, block) in body.blocks() {
+        for (block_id, block) in body.blocks() {
             for statement in &block.statements {
                 if let StatementKind::Assign { rvalue, .. } = &statement.kind {
                     self.walk_rvalue(rvalue, symbol, queue, set, statement.span);
@@ -889,6 +999,21 @@ impl<'a> Mono<'a> {
                     let solved =
                         self.solve_call(&caller_subst, body, *def, args, destination, set);
                     let Some(instance) = solved else { continue };
+                    // **The map is written here and not at the pop**, because
+                    // this is the only point that knows *which call site* the
+                    // instance came from; by the time the task is dequeued the
+                    // block is gone and only the caller's symbol survives.
+                    //
+                    // A symbol that will not assemble is left out rather than
+                    // guessed at. `symbol_of`'s [`Unsolved`] is the same one
+                    // `assemble_instance` has already pushed onto
+                    // `holes.unsolved` for this instance, so the count is not
+                    // doubled and the backend's fallback arm is reached with
+                    // the refusal it would have produced anyway.
+                    if let Ok(callee_symbol) = self.symbol_of(&instance) {
+                        set.calls
+                            .insert((symbol.to_string(), block_id.index() as u32), callee_symbol);
+                    }
                     self.enqueue(instance, chain, symbol, span, queue, set);
                 }
             }
@@ -1388,7 +1513,7 @@ impl<'a> Mono<'a> {
 
     /// The substitution a body is walked under: `Self`, the block's associated
     /// types, and the instance's own arguments.
-    fn substitution_of(&self, instance: &Instance) -> Substitution {
+    pub fn substitution_of(&self, instance: &Instance) -> Substitution {
         let owner = self.decls.signature(instance.def).and_then(|signature| signature.owner);
         let mut subst = match owner {
             Some(owner) => self.decls.body_substitution(self.defs, owner),

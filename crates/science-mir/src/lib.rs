@@ -666,12 +666,14 @@ pub mod callgraph;
 pub mod capture;
 pub mod drops;
 pub mod dump;
+pub mod instantiate;
 pub mod lower;
 pub mod mir;
 pub mod moves;
 
 pub use callgraph::CallGraph;
 pub use capture::{Capture, Use};
+pub use instantiate::instantiate;
 pub use lower::{lower_body, lower_crate, Context};
 pub use mir::{
     BasicBlock, BlockId, Body, BorrowData, BorrowId, BorrowKind, Callee, Local, LocalKind, Operand,

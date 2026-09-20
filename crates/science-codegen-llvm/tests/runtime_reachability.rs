@@ -160,7 +160,7 @@ fn declared_runtime_symbols(source: &str) -> Vec<&'static str> {
         &program.decls,
         &externs,
     );
-    let lowered = lowerer.lower_crate(&program.bodies, &program.mono).unwrap_or_else(|e| {
+    let lowered = lowerer.lower_crate(&program.bodies, &program.instances, &program.mono).unwrap_or_else(|e| {
         panic!("a fixture in this file's own corpus failed to lower: {}", e.construct)
     });
     lowered

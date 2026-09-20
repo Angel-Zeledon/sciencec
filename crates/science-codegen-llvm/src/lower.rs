@@ -539,7 +539,31 @@ pub struct Lowerer<'a> {
     /// §4.2's return rules with nothing comparing them, and §9.2's finding is
     /// what one disagreement costs: *"a call site got `sret` wrong for one
     /// symbol"*, which corrupts a register and links cleanly.
-    science: BTreeMap<DefId, AbiSignature>,
+    /// **Keyed by symbol and no longer by definition, which is the whole of
+    /// what monomorphisation changes here.** After `science_codegen::mono`
+    /// runs, one [`DefId`] is several functions: `identity[Int]` and
+    /// `identity[F64]` are two symbols, two signatures — their parameters are
+    /// classified differently, an `i64` in a register against an `sret` slot —
+    /// and one body. A map keyed by definition can hold exactly one of them,
+    /// and the one it holds decides how *both* call sites pass their
+    /// arguments. That is §9.2's finding with generics behind it, and it links
+    /// cleanly.
+    science: BTreeMap<String, AbiSignature>,
+    /// Which symbol each definition had, for the callers that still only know
+    /// a [`DefId`]: a vtable slot, and the fallback when the walk recorded no
+    /// instance for a call site.
+    ///
+    /// **A lower bound on purpose.** A generic definition has several symbols
+    /// and this keeps whichever was entered last, so it is only ever consulted
+    /// where the definition is known to have one — which is every place a
+    /// [`DefId`] is still enough. [`Lowerer::symbol_for_call`] states the rule
+    /// and prefers the call map wherever there is one.
+    by_def: BTreeMap<DefId, String>,
+    /// `science_codegen::mono`'s call map, for the whole of
+    /// [`Lowerer::lower_crate`]. `None` for a lowerer built for a stage the
+    /// walk does not run in, where [`Lowerer::symbol_for_call`] falls back to
+    /// the definition.
+    calls: Option<&'a science_codegen::mono::MonoSet>,
 }
 
 /// Every definition `entry` can reach, through [`MirBody::callees`] **and
@@ -626,6 +650,8 @@ impl<'a> Lowerer<'a> {
             declared_foreign: Vec::new(),
             entry: None,
             science: BTreeMap::new(),
+            by_def: BTreeMap::new(),
+            calls: None,
         }
     }
 
@@ -2184,8 +2210,10 @@ impl<'a> Lowerer<'a> {
     pub fn lower_crate(
         &mut self,
         bodies: &[MirBody],
-        mono: &science_codegen::mono::MonoSet,
+        instances: &'a [science_codegen::mono::MonoBody],
+        mono: &'a science_codegen::mono::MonoSet,
     ) -> Result<Lowered, Unlowered> {
+        self.calls = Some(mono);
         let entry = bodies
             .iter()
             .find(|body| self.defs.get(body.def()).name == "main")
@@ -2253,52 +2281,116 @@ impl<'a> Lowerer<'a> {
         // before this change for every definition. Nothing regresses; what the
         // set adds is the ability to name instances, which is what generics
         // will need.
-        let mut reachable = reachable_from(self, bodies, entry.def());
-        reachable.extend(
-            mono.emission_order().filter(|item| item.defined_here).map(|item| item.instance.def),
-        );
-
+        // **What is emitted is one function per *instance*, and the list of
+        // instances is `science_codegen::mono`'s own.**
+        //
+        // The decision. `instances` — a `MonoBody` each, carrying the mangled
+        // symbol and a body with every type already substituted — replaces the
+        // `&[MirBody]` this loop used to walk. The old reachability walk
+        // survives only for the union below.
+        //
+        // The reason. The comment this replaces said the honest thing: *"a
+        // generic instance is still refused one layer down in
+        // `science_signature`, because lowering one body twice at two argument
+        // types needs the substitution applied to every type the body mentions
+        // and this crate does not apply it yet"*. It still does not apply it —
+        // `science_mir::instantiate` does, above the line Decision 42 draws —
+        // and what arrives here is concrete MIR. So the refusal has nothing
+        // left to refuse, and this crate did not learn about generics; it
+        // stopped being handed any.
+        //
+        // The cost: a body per instance rather than per definition, which is
+        // what monomorphisation costs by definition and is paid in compile
+        // time and image size. `identity` called at three types is three
+        // functions, and the alternative — one function and a dictionary — is
+        // a different language with a different performance story, which
+        // Decision 42 already settled.
+        //
+        // **The union with the reachability walk stays, and for the unchanged
+        // reason**: `mono` does not model Decision 13's vtables, so a method
+        // reached only through one is absent from its set and the symptom is a
+        // linker error rather than a refusal. That gap is a rule living in
+        // this crate that `science-codegen` cannot call; the union is the
+        // honest lower bound until the rule moves down. A definition reached
+        // that way is emitted at its plain instance, which is correct for
+        // every method a vtable can hold — an interface method is not generic
+        // in the receiver, it is one entry per concrete implementor.
+        //
+        // **The collision check survives the re-keying, and it had to be
+        // rewritten rather than kept.** It used to read the `science` map and
+        // ask whether a *different definition* had already claimed this
+        // symbol; now the map is keyed by symbol, so a second claim would
+        // simply overwrite the first and the `define` would be emitted twice
+        // under one name, which is finding 25 exactly. So the owner of each
+        // symbol is tracked here, in `claimed`, and the two cases are
+        // separated by what they mean: the same definition reaching one symbol
+        // twice is monomorphisation meeting the same instance by two paths and
+        // is a *deduplication*; two definitions reaching one symbol is the
+        // mangling failing to separate them and is a refusal.
+        let mut emitted: Vec<(String, &MirBody)> = Vec::new();
+        let mut claimed: std::collections::BTreeMap<String, DefId> =
+            std::collections::BTreeMap::new();
+        let mut claim = |symbol: &str, def: DefId, defs: &DefTable| -> Result<bool, Unlowered> {
+            match claimed.get(symbol) {
+                Some(other) if *other == def => Ok(false),
+                Some(other) => Err(Unlowered::new(format!(
+                    "two definitions that mangle to one symbol, `{symbol}`: `{}` and `{}`. \
+                     Decision 16 builds a symbol out of the definition's path, and the path of a \
+                     method runs through a block `science-resolve` leaves unnamed",
+                    defs.path_of(*other),
+                    defs.path_of(def),
+                ))),
+                None => {
+                    claimed.insert(symbol.to_string(), def);
+                    Ok(true)
+                }
+            }
+        };
+        for instance in instances {
+            if claim(&instance.symbol, instance.body.def(), self.defs)? {
+                emitted.push((instance.symbol.clone(), &instance.body));
+            }
+        }
+        let reachable = reachable_from(self, bodies, entry.def());
+        let instantiated: std::collections::BTreeSet<DefId> =
+            instances.iter().map(|instance| instance.body.def()).collect();
         for body in bodies {
             if !reachable.contains(&body.def()) {
                 continue;
             }
-            let signature = self.science_signature(body)?;
-            // **Two definitions, one symbol, and nothing else would notice.**
-            // A module with two `define`s of one name links: LLVM renames the
-            // second, every call resolves to the first, and the program runs
-            // and prints one function's answer twice. That is finding 25's
-            // failure mode and it is worse than a linker error, so the class is
-            // closed from both ends — [`Lowerer::path_components`] gives a
-            // method the name of the type it belongs to, and this refuses
-            // whatever that still does not separate rather than emitting it.
-            if let Some(other) = self
-                .science
-                .iter()
-                .find(|(_, existing)| existing.symbol == signature.symbol)
-                .map(|(def, _)| *def)
-            {
-                return Err(Unlowered::new(format!(
-                    "two definitions that mangle to one symbol, `{}`: `{}` and `{}`. Decision 16 \
-                     builds a symbol out of the definition's path, and the path of a method runs \
-                     through a block `science-resolve` leaves unnamed",
-                    signature.symbol,
-                    self.defs.path_of(other),
-                    self.defs.path_of(body.def()),
-                )));
+            // **A definition the walk already reached is not re-emitted under
+            // this crate's own mangling.** The two manglings agree today —
+            // both are `science_codegen::mangle` over the definition's path —
+            // but they are two pieces of code and nothing forces them to, and
+            // a disagreement would put the same function in the module twice
+            // under two names, the second silently dead. The fallback's job is
+            // the definitions `mono` *missed*, which is the vtable-only
+            // methods the comment above names, so it asks exactly that.
+            if instantiated.contains(&body.def()) {
+                continue;
             }
-            self.science.insert(body.def(), signature);
+            let symbol = self.symbol_of(body.def());
+            if claim(&symbol, body.def(), self.defs)? {
+                emitted.push((symbol, body));
+            }
+        }
+
+        for (symbol, body) in &emitted {
+            let signature = self.science_signature(body, symbol)?;
+            self.by_def.insert(body.def(), symbol.clone());
+            self.science.insert(symbol.clone(), signature);
         }
 
         let mut definitions = Vec::new();
-        for body in bodies {
-            if !reachable.contains(&body.def()) {
-                continue;
-            }
-            definitions.push(self.lower_body(body)?);
+        for (symbol, body) in &emitted {
+            definitions.push(self.lower_body(body, symbol)?);
         }
+        // `main` is never generic — it takes no parameters — so it has exactly
+        // one instance and `by_def` is enough to name it.
         let main_signature = self
-            .science
+            .by_def
             .get(&entry.def())
+            .and_then(|symbol| self.science.get(symbol))
             .cloned()
             .expect("`main` is reachable from itself");
         definitions.push(self.lower_c_main(&main_signature)?);
@@ -2335,18 +2427,33 @@ impl<'a> Lowerer<'a> {
     /// with its escape hatch unreachable is the worst of the three options; the
     /// cost of emitting none is an optimisation, which is the same trade
     /// [`runtime_signature`] already takes for the same kind of reason.
-    fn science_signature(&mut self, body: &MirBody) -> Result<AbiSignature, Unlowered> {
+    fn science_signature(
+        &mut self,
+        body: &MirBody,
+        symbol: &str,
+    ) -> Result<AbiSignature, Unlowered> {
         let def = body.def();
         let name = self.defs.get(def).name.clone();
         if let Some(decls) = self.decls {
             if let Some(signature) = decls.signature(def) {
-                if !signature.generics.is_empty() {
-                    return Err(Unlowered::new(format!(
-                        "a call to the generic function `{name}`, which nothing has \
-                         monomorphised: Decision 42 puts the walk above this crate and no phase \
-                         runs it yet"
-                    )));
-                }
+                // **The refusal that used to be here is gone, and nothing
+                // replaced it.** It read *"a call to the generic function
+                // `{name}`, which nothing has monomorphised: Decision 42 puts
+                // the walk above this crate and no phase runs it yet"*. A
+                // phase runs it now: `science_codegen::mono` names the
+                // instances and `science_mir::instantiate` substitutes each
+                // body, so a `MirBody` arriving here is concrete whatever its
+                // definition's `generics` say. Asking the *declaration*
+                // whether the function is generic would now be asking the
+                // wrong table — the declaration describes the definition and
+                // this is one of its instances.
+                //
+                // What still catches a body that slipped through
+                // unsubstituted is `layout_of_ty`, which refuses a
+                // `TyKind::Param` by name. That is the property
+                // `science_mir::instantiate`'s header relies on: a missed
+                // substitution site is a refusal at a boundary already built
+                // to report one, not a wrong layout that runs.
                 // **A method's receiver is a parameter like any other, and the
                 // one thing that made it not one was a guess.** This used to
                 // refuse every method outright, saying *"its receiver is a
@@ -2401,7 +2508,19 @@ impl<'a> Lowerer<'a> {
                 .unwrap_or_else(|| format!("a{}", local.index()));
             params.push((param_name, self.layout_of_ty(decl.ty)?, ParamAttrs::default()));
         }
-        Ok(AbiSignature::science(self.target, self.symbol_of(def), ret_layout, params))
+        // **The symbol is the instance's, except for the entry point.**
+        // `science_codegen::mono` mangles `main` from its path like any other
+        // definition, and [`Lowerer::symbol_of`]'s own documentation is why
+        // that is the one name this crate does not take: `script-mode.md`
+        // §2.3, `lower_c_main` and `science-codegen`'s `tests/stage_one.rs`
+        // all say the entry point is `_S4main` whatever module it is in. The
+        // map key stays the instance's symbol — it is an identity, not a name
+        // — and only the emitted name is overridden.
+        let symbol = match self.entry == Some(def) {
+            true => self.symbol_of(def),
+            false => symbol.to_string(),
+        };
+        Ok(AbiSignature::science(self.target, symbol, ret_layout, params))
     }
 
     /// Decision 16's mangled symbol for one definition.
@@ -2564,13 +2683,17 @@ impl<'a> Lowerer<'a> {
         id
     }
 
-    fn lower_body(&mut self, body: &MirBody) -> Result<(AbiSignature, ExtBody), Unlowered> {
+    fn lower_body(
+        &mut self,
+        body: &MirBody,
+        symbol: &str,
+    ) -> Result<(AbiSignature, ExtBody), Unlowered> {
         let return_local = mir::Local::from_index(0);
         let return_id = LocalId(return_local.index() as u32);
-        let cached = self.science.get(&body.def()).cloned();
+        let cached = self.science.get(symbol).cloned();
         let sig = match cached {
             Some(existing) => existing,
-            None => self.science_signature(body)?,
+            None => self.science_signature(body, symbol)?,
         };
         let params: Vec<mir::Local> = body.params().collect();
         if params.len() != sig.params.len() {
@@ -2595,6 +2718,8 @@ impl<'a> Lowerer<'a> {
             prologue: Vec::new(),
             discriminants: BTreeMap::new(),
             ret: sig.ret.clone(),
+            symbol: symbol.to_string(),
+            block: mir::BlockId::from_index(0),
             next_value: 0,
             next_temp: body.local_count() as u32,
         };
@@ -2675,6 +2800,7 @@ impl<'a> Lowerer<'a> {
 
         let mut blocks: Vec<ExtBlock> = Vec::new();
         for (id, block) in body.blocks() {
+            ctx.block = id;
             let mut insts: Vec<ExtInst> = Vec::new();
             for statement in &block.statements {
                 self.lower_statement(body, &mut ctx, &statement.kind, &mut insts)?;
@@ -5302,6 +5428,41 @@ impl<'a> Lowerer<'a> {
     ///    *"a direct `call` to the declared symbol — no thunk, no wrapper, no
     ///    trampoline"*.
     #[allow(clippy::too_many_arguments)]
+    /// Which **instance** the call terminating the current block calls.
+    ///
+    /// # The two answers, and why the order between them is this way round
+    ///
+    /// `science_codegen::mono`'s call map is asked first, because it is the
+    /// only source that can distinguish `g[Int]` from `g[F64]` at one call
+    /// site: it holds [`Mono::solve_call`]'s answer, which unified the
+    /// callee's declared signature against the actual argument types in the
+    /// *instantiated* caller. Nothing in this crate can recompute that —
+    /// `Substitution` lives in `science-types` and the unification in
+    /// `science-codegen` — and a second copy of it here, disagreeing at link
+    /// time, is the hazard this codebase closes everywhere else by keeping one
+    /// spelling of a rule.
+    ///
+    /// [`Lowerer::by_def`] answers second, for the call the map did not
+    /// record: a body reached only through a vtable (the union in
+    /// [`Lowerer::lower_crate`] says why the walk misses those), and any
+    /// lowerer built for a stage that runs no walk at all. Every such callee
+    /// has exactly one symbol, because a definition with more than one is a
+    /// generic and a generic is what the walk *does* record — so the fallback
+    /// is never the ambiguous case, which is what makes it safe rather than a
+    /// guess.
+    ///
+    /// `None` means neither knows the callee, and the arm below treats that
+    /// as it always did: a runtime entry point, an `extern` declaration, or
+    /// the refusal that names what is missing.
+    fn symbol_for_call(&self, ctx: &BodyCtx, def: DefId) -> Option<String> {
+        if let Some(mono) = self.calls {
+            if let Some(symbol) = mono.callee_at(&ctx.symbol, ctx.block) {
+                return Some(symbol.to_string());
+            }
+        }
+        self.by_def.get(&def).cloned()
+    }
+
     fn lower_call(
         &mut self,
         body: &MirBody,
@@ -5368,7 +5529,7 @@ impl<'a> Lowerer<'a> {
                 _ => "science_write_file",
             };
             self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;
-        } else if let Some(sig) = self.science.get(&def).cloned() {
+        } else if let Some(sig) = self.symbol_for_call(ctx, def).and_then(|symbol| self.science.get(&symbol).cloned()) {
             self.lower_science_call(ctx, &sig, args, destination, insts)?;
         } else if let Some(symbol) = self.owned_nullable_method(def) {
             self.lower_owned_nullable_call(body, ctx, symbol, args, destination, insts)?;
@@ -7137,6 +7298,22 @@ struct BodyCtx {
     discriminants: BTreeMap<u32, DefId>,
     /// How this function's return value comes back, for `TerminatorKind::Return`.
     ret: ReturnClass,
+    /// The mangled symbol of the **instance** being lowered, and the block the
+    /// walk is in.
+    ///
+    /// **Together they are the key of `science_codegen::mono`'s call map**,
+    /// which is the only thing that can say which instance a
+    /// [`mir::Callee::Def`] calls: after monomorphisation one definition is
+    /// several functions, and the same call site in `f[T]` calls `g[Int]` from
+    /// `f[Int]` and `g[F64]` from `f[F64]` out of one block of one MIR body.
+    ///
+    /// On the context rather than threaded through
+    /// [`Lowerer::lower_terminator`] and [`Lowerer::lower_call`] as two more
+    /// parameters, because every other per-body fact the call site needs is
+    /// already here and a second channel for the same kind of fact is the
+    /// thing that gets out of step.
+    symbol: String,
+    block: mir::BlockId,
     next_value: u32,
     next_temp: u32,
 }
