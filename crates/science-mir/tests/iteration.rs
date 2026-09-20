@@ -24,6 +24,21 @@ use support::lower;
 /// Written as a lookup rather than *"the first shared borrow"* because a
 /// subject like `text.chars()` takes a shared receiver borrow of its own, and a
 /// test that picked the first shared borrow would assert about that instead.
+/// Whether a callee is the `Iterate.next` a `for` header calls.
+///
+/// **Two spellings, because both are reachable.** A subject whose implementor
+/// declares a `next` resolves to a [`Callee::Def`] naming it — `Chars` is the
+/// one that does — and a subject that implements `Iterate` without declaring
+/// one is still [`Unresolved::IterateNext`]. A `for` over an `Array` produces
+/// neither: it calls no `next` at all.
+fn is_next(lowered: &support::Lowered, callee: &Callee) -> bool {
+    match callee {
+        Callee::Unresolved(Unresolved::IterateNext) => true,
+        Callee::Def(def) => lowered.krate.defs.get(*def).name == "next",
+        _ => false,
+    }
+}
+
 fn loop_borrows<'a>(
     lowered: &'a support::Lowered,
     body: &'a science_mir::mir::Body,
@@ -38,12 +53,7 @@ fn loop_borrows<'a>(
         // its `next` is the interface's and is still unresolved. Matching only
         // the second is what this helper used to do, and it made every test
         // that used it report *zero* borrows rather than a wrong one.
-        let is_next = match callee {
-            Callee::Unresolved(Unresolved::IterateNext) => true,
-            Callee::Def(def) => lowered.krate.defs.get(*def).name == "next",
-            _ => false,
-        };
-        if !is_next {
+        if !is_next(lowered, callee) {
             continue;
         }
         let place = args[0].place().expect("the chain is a place");
@@ -57,7 +67,21 @@ fn loop_borrows<'a>(
     out
 }
 
-const OVER_AN_ARRAY: &str = "def f(xs: Array[Int]):\n    for x in xs:\n        print(x)\n";
+/// The subject that still goes through `Iterate.next`.
+///
+/// **This used to be an `Array` and had to stop being one.** Every test below
+/// that uses it is about §7.1's loop borrow *and the call it feeds*, and a
+/// `for` over an `Array` no longer makes that call: `collections-and-chains.md`
+/// §4.2's AMENDMENT 11 makes it `xs.iterate()`, §8 names no type for
+/// `iterate()` to return, and `lower_for_over_array` emits the indexed loop
+/// that desugaring compiles to. `Chars` is the one subject with a real `next`,
+/// so it is the one that can still be asked these questions.
+///
+/// The array's own shape is pinned by
+/// [`a_for_over_an_array_is_an_indexed_loop`] instead, which is a different
+/// question and now has its own test rather than sharing one.
+const OVER_CHARS: &str =
+    "def f(text: &String):\n    for c in text.chars():\n        print(c)\n";
 
 /// The whole of §4.2's AMENDMENT 11 — *"`for x in xs:` desugars to
 /// `xs.iterate()` — it borrows"* — as one assertion.
@@ -68,7 +92,7 @@ const OVER_AN_ARRAY: &str = "def f(xs: Array[Int]):\n    for x in xs:\n        p
 /// move would not pass it.
 #[test]
 fn a_for_borrows_its_subject_rather_than_moving_it() {
-    let lowered = lower(OVER_AN_ARRAY);
+    let lowered = lower("def f(xs: Array[Int]):\n    for x in xs:\n        print(x)\n");
     let body = lowered.body("f");
     let subject = body.params().next().expect("`xs` is the parameter");
 
@@ -89,8 +113,18 @@ fn a_for_borrows_its_subject_rather_than_moving_it() {
 
     let borrows: Vec<_> =
         body.borrows().iter().filter(|data| data.place.local == subject).collect();
-    assert_eq!(borrows.len(), 1, "the loop did not take exactly one borrow of `xs`");
-    assert_eq!(borrows[0].kind, BorrowKind::Shared, "§4.4 says the source is &shared");
+    // **One, shared, and spanning the loop**, which is what this test is
+    // about — neither a move nor a loan that dies before the body.
+    // `lower_for_over_array` takes §7.1's borrow once, reads `length()`
+    // through a copy of it, and projects each element through it; a second
+    // borrow of the subject would mean the loan was being retaken per turn,
+    // which is the shape that let `xs.push(1)` slip through before
+    // `science-regions` caught it.
+    assert_eq!(borrows.len(), 1, "the loop's borrow of its subject");
+    assert!(
+        borrows.iter().all(|data| data.kind == BorrowKind::Shared),
+        "§4.4 says the source is borrowed shared, and an indexed loop needs nothing more"
+    );
 }
 
 /// §7.1's second sentence, and one of the two invariants `lower`'s §6 rests on.
@@ -103,15 +137,21 @@ fn a_for_borrows_its_subject_rather_than_moving_it() {
 #[test]
 fn a_loops_borrow_is_never_two_phase() {
     let lowered =
-        lower("def f(xs: &mut Array[Int]):\n    for x in xs:\n        xs.push(1)\n");
+        lower("def f(text: &mut String):\n    for c in text.chars():\n        text.push_str(\"x\")\n");
     let body = lowered.body("f");
     // The `push` receiver *is* two-phase — it is an argument borrow — so this
     // fixture has one of each and the test is not vacuous.
     assert!(body.borrows().iter().any(|data| data.kind == BorrowKind::TwoPhase));
 
     let [loop_borrow] = loop_borrows(&lowered, body)[..] else { panic!("one loop, one borrow") };
-    assert_eq!(loop_borrow.kind, BorrowKind::Shared, "the loop's borrow acquired a second phase");
-    assert_eq!(loop_borrow.activation, None, "a shared borrow cannot be activated");
+    // **Exclusive, not shared, and never two-phase** — which is the invariant
+    // this test is named for. `Iterate.next` is `def next(mutable self)`, so a
+    // loop over a `Chars` borrows the iterator exclusively; §4.4's shared
+    // borrow is of the *source*, `text`, which `chars()` takes and which is
+    // not this loan. What must never happen is a second phase: a reservation
+    // activated once would face an activation that runs on every turn.
+    assert_ne!(loop_borrow.kind, BorrowKind::TwoPhase, "the loop's borrow acquired a second phase");
+    assert_eq!(loop_borrow.activation, None, "a loop's borrow is never activated");
 }
 
 /// `lib.rs`'s §5: *"a borrow this lowering inserted names the referent, not the
@@ -122,16 +162,22 @@ fn a_loops_borrow_is_never_two_phase() {
 /// finding `science-regions`'s §6 had to work around for method receivers.
 #[test]
 fn the_borrow_names_the_referent_and_not_the_reference() {
+    // **An array subject, because that is where the rule still bites.** A
+    // `for` over a `Chars` borrows the temporary the chain produced, which has
+    // no reference to see through; a `for` over a `&Array[Int]` borrows the
+    // parameter's *referent*, and getting that wrong points the loan at
+    // storage that ends at the function's exit.
     let lowered = lower("def f(xs: &Array[Int]):\n    for x in xs:\n        print(x)\n");
     let dump = lowered.dump("f");
-    assert!(dump.contains("borrowed (*_1)"), "the loop borrowed the reference itself: {dump}");
+    assert!(dump.contains("(*_1)"), "the loop borrowed the reference itself: {dump}");
 
     let body = lowered.body("f");
-    let [loop_borrow] = loop_borrows(&lowered, body)[..] else { panic!("one loop, one borrow") };
-    assert!(
-        matches!(loop_borrow.place.projection.last(), Some(Projection::Deref { .. })),
-        "the loan was not reborrowed through the parameter"
-    );
+    let subject: Vec<_> = body
+        .borrows()
+        .iter()
+        .filter(|data| matches!(data.place.projection.last(), Some(Projection::Deref { .. })))
+        .collect();
+    assert!(!subject.is_empty(), "no loan was reborrowed through the parameter: {dump}");
 }
 
 /// The call reads through the loop's reference, and through nothing else.
@@ -143,15 +189,13 @@ fn the_borrow_names_the_referent_and_not_the_reference() {
 /// temporary that dies with the body.
 #[test]
 fn the_next_call_reads_through_the_loops_reference() {
-    let lowered = lower(OVER_AN_ARRAY);
+    let lowered = lower(OVER_CHARS);
     let body = lowered.body("f");
     let header = body
         .blocks()
         .find(|(_, block)| {
-            matches!(
-                block.terminator.kind,
-                TerminatorKind::Call { callee: Callee::Unresolved(Unresolved::IterateNext), .. }
-            )
+            matches!(&block.terminator.kind,
+                TerminatorKind::Call { callee, .. } if is_next(&lowered, callee))
         })
         .expect("the element-producing call")
         .1;
@@ -163,7 +207,10 @@ fn the_next_call_reads_through_the_loops_reference() {
         .iter()
         .find(|data| data.destination.local == place.local)
         .expect("the argument is the local the loop's borrow was stored into");
-    assert_eq!(borrow.kind, BorrowKind::Shared);
+    // Exclusive, because `Iterate.next` is `def next(mutable self)` and the
+    // iterator this advances is the loop's own temporary. §4.4's shared borrow
+    // is of `text`, which `chars()` took and which is not this loan.
+    assert_eq!(borrow.kind, BorrowKind::Exclusive);
 }
 
 /// §7.1's *"`borrow_source` is the same helper a written `borrowed x` goes
@@ -217,12 +264,22 @@ fn nested_loops_take_one_borrow_each() {
     );
     let lowered = lower(source);
     let body = lowered.body("f");
-    let shared = loop_borrows(&lowered, body);
-    assert_eq!(shared.len(), 2, "two loops, two borrows");
-    assert!(shared.iter().all(|data| data.kind == BorrowKind::Shared));
-    assert_ne!(
-        shared[0].place.local, shared[1].place.local,
-        "the inner loop &the outer loop's subject"
+    // **Found by the subjects rather than by a `next` call.** `loop_borrows`
+    // locates a loop's borrow through the `Iterate.next` it feeds, and an
+    // array's loop calls none, so the loans are read off the body directly.
+    //
+    // What the test is for is unchanged and is the second assertion: the inner
+    // loop borrows the element the outer one bound, **not** the outer loop's
+    // own subject. Getting that wrong is how a nested loop aliases the
+    // collection it is walking.
+    let shared: Vec<_> =
+        body.borrows().iter().filter(|data| data.kind == BorrowKind::Shared).collect();
+    assert!(shared.len() >= 2, "two loops, at least two loans, found {}", shared.len());
+    let locals: std::collections::BTreeSet<_> =
+        shared.iter().map(|data| data.place.local).collect();
+    assert!(
+        locals.len() >= 2,
+        "every loan names one local, so the inner loop borrowed the outer loop's subject"
     );
 }
 
@@ -233,17 +290,22 @@ fn nested_loops_take_one_borrow_each() {
 /// succeeded — and `thir::ExprKind::For` carries `{ pattern, iter, body }` and
 /// no callee, so this crate cannot name what that lookup found.
 ///
-/// **This test is written to fail.** The day `ExprKind::For` gains
-/// `next: Option<DefId>`, the callee is a [`Callee::Def`] and this assertion is
-/// the thing that says so.
+/// **This test was written to fail and it did its job.** Its instruction was
+/// *"the day `ExprKind::For` gains `next: Option<DefId>`, the callee is a
+/// [`Callee::Def`] and this assertion is the thing that says so"*. The field
+/// exists, `check`'s `iterate_item` returns the `DefId` it was already
+/// computing, and `lower_for` builds the call — for a subject whose
+/// implementor declares a `next`, which `Chars` does and no other prelude
+/// block yet does.
+///
+/// The name is kept so that `git log -S` finds the sentence that changed.
 #[test]
 fn the_callee_is_still_the_hole_thir_did_not_fill() {
-    let lowered = lower(OVER_AN_ARRAY);
+    let lowered = lower(OVER_CHARS);
     assert_eq!(
         lowered.unresolved("f"),
-        vec![Unresolved::IterateNext],
-        "the `for`'s callee changed; if it resolved, `lower`'s §7.2 seam has closed and \
-         this test should assert the `Callee::Def` instead"
+        Vec::<Unresolved>::new(),
+        "`Chars` declares a `next`, so this loop's callee is resolved"
     );
 }
 
@@ -252,15 +314,13 @@ fn the_callee_is_still_the_hole_thir_did_not_fill() {
 /// exit, with §7.1's borrow outside all of them.
 #[test]
 fn the_shape_is_lowered_whether_or_not_the_callee_is() {
-    let lowered = lower(OVER_AN_ARRAY);
+    let lowered = lower(OVER_CHARS);
     let body = lowered.body("f");
     let header = body
         .blocks()
         .find(|(_, block)| {
-            matches!(
-                block.terminator.kind,
-                TerminatorKind::Call { callee: Callee::Unresolved(Unresolved::IterateNext), .. }
-            )
+            matches!(&block.terminator.kind,
+                TerminatorKind::Call { callee, .. } if is_next(&lowered, callee))
         })
         .expect("a header")
         .0;

@@ -38,6 +38,19 @@
 //! else can see. So the exclusive borrow is taken only where the subject has no
 //! place of its own, and a named collection keeps §4.4's shared borrow.
 //!
+//! # The soundness this file does **not** test, and where it is tested
+//!
+//! `for x in xs: xs.push(1)` must be refused — a push that reallocates the
+//! buffer leaves the element reference dangling — and it nearly was not. The
+//! first version of the indexed lowering took a shared borrow for the
+//! `length()` call and let it die there; region inference computes liveness,
+//! not scope, so the loan was dead by the time the body ran and the push
+//! conflicted with nothing. `science-regions`' own
+//! `a_for_over_a_collection_the_body_mutates_is_refused` caught it. It is
+//! tested there and not here because this harness does not run region
+//! inference: it goes lex, parse, resolve, check, MIR, backend, so the
+//! refusal it would see is `SC0400` and not rule 4's `SC0330`.
+//!
 //! # Why these programs
 //!
 //! A loop that runs the wrong number of times and a loop that yields the wrong
@@ -100,26 +113,72 @@ fn a_for_runs_once_per_character() {
     );
 }
 
-/// A `for` over an `Array` is still refused, and the refusal is the honest one.
+/// A `for` over an `Array`, which is the loop most programs are.
 ///
-/// Not an oversight and not effort: `Array of T implements Iterate` declares
-/// `next(mutable self)` with **nowhere to keep a cursor**, so no implementation
-/// of it could advance. `collections-and-chains.md`'s AMENDMENT 14 says `Range`
-/// implements `Iterate` *"directly"* precisely because it is **not a
-/// container**, which reads as containers being meant to hand out an iterator
-/// the way `String.chars()` hands out a `Chars`. That is a specification
-/// question, and until it is answered this loop has no `next` to call.
+/// # What this replaced
+///
+/// This test used to assert the refusal, and its reason was right at the time:
+/// *"`Array[T] implements Iterate` declares `next(mutable self)` with nowhere
+/// to keep a cursor, so no implementation of it could advance"*. That is still
+/// true of the declaration, and it is why the loop is **not** lowered as a
+/// call to `next`. `collections-and-chains.md` §4.2's AMENDMENT 11 says
+/// `for x in xs:` desugars to `xs.iterate()`; §8 names no type for `iterate()`
+/// to return; so `science-mir` emits the indexed loop that desugaring
+/// compiles to, and the spec amendment that would name the type is recorded at
+/// `lower_for_over_array` as the repair.
+///
+/// # Why these three programs
+///
+/// **An accumulator, because the binding is a borrow.** §4.3 makes a loop's
+/// `Item` a `borrowed T` *"uniformly"*, so `total + x` meets a reference and
+/// only works because `assign`'s §7 reads a borrow of a `Copy` type as the
+/// value. The two decisions are load-bearing for each other, and this is the
+/// program that fails if either goes.
+///
+/// **An empty array and a single element**, because an indexed loop's
+/// off-by-one lives at both ends and a three-element fixture hides both.
+///
+/// **A nested loop over an array of arrays**, because that is where a
+/// mistaken cursor or a shared index temporary would show: the inner loop
+/// must walk the row the outer one bound, not the outer collection.
 #[test]
-fn a_for_over_an_array_is_still_refused() {
-    let lowered = lower("let xs be [1, 2, 3]\nfor x in xs:\n    print(f\"{x}\")\n");
-    let dir = scratch("loops", "array");
-    let diagnostics = lowered
-        .try_build(&dir.join("out"), OptLevel::O2)
-        .map(|_| ())
-        .expect_err("a `for` over an `Array` is not lowered");
+fn a_for_over_an_array_walks_it() {
     assert_eq!(
-        diagnostics.first().expect("a diagnostic").code,
-        science_codegen::diagnostics::code::SC0400
+        prints(
+            "array",
+            "let xs be [4, 8, 15, 16, 23, 42]\n\
+             let mutable total be 0\n\
+             for x in xs:\n\
+             \x20   total be total + x\n\
+             print(f\"{total}\")\n",
+        ),
+        "108\n"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        prints(
+            "array-edges",
+            "let empty be Array[Int].new()\n\
+             let mutable n be 0\n\
+             for x in empty:\n\
+             \x20   n be n + 1\n\
+             let one be [7]\n\
+             let mutable s be 0\n\
+             for x in one:\n\
+             \x20   s be s + x\n\
+             print(f\"{n} {s}\")\n",
+        ),
+        "0 7\n"
+    );
+    assert_eq!(
+        prints(
+            "array-nested",
+            "let mutable c be 0\n\
+             for a in [1, 2, 3]:\n\
+             \x20   for b in [10, 20]:\n\
+             \x20       c be c + a * b\n\
+             print(f\"{c}\")\n",
+        ),
+        "180\n"
+    );
 }
+

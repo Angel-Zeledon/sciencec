@@ -147,40 +147,29 @@ def go(xs: &Array[Int]):
 
     // The loop's borrow is the one whose reference the element-producing call
     // reads; `science-mir`'s `tests/iteration.rs` finds it the same way.
-    let chain = body
-        .blocks()
-        .find_map(|(_, block)| match &block.terminator.kind {
-            science_mir::mir::TerminatorKind::Call {
-                callee:
-                    science_mir::mir::Callee::Unresolved(science_mir::mir::Unresolved::IterateNext),
-                args,
-                ..
-            } => args[0].place().map(|place| place.local),
-            _ => None,
-        })
-        .expect("a `for` with an element-producing call");
+    // **The loan is found by what it is, not by the call it used to feed.** A
+    // `for` over an `Array` calls no `next` — AMENDMENT 11's desugaring is
+    // lowered as the indexed loop it compiles to — so the loop's loan is the
+    // shared borrow of the subject that everything in the body is projected
+    // through. That projection is exactly why the loan stays live, and the
+    // region assertion below is the check on it.
     let loan = body
         .borrows()
         .iter()
-        .find(|data| data.destination.local == chain)
+        .find(|data| data.kind == science_mir::mir::BorrowKind::Shared)
         .expect("the loop's borrow");
     let region = analysis.solution.region(analysis.table.loan(loan.id));
 
     // The header is the block the call is in; every point from the borrow's
     // reservation onwards that is inside the loop must be in the region.
+    // **The header is the block the loop branches from, found by the back
+    // edge rather than by a `next` call.** An `Array`'s loop calls none, and
+    // what this test is about is unchanged: the loan must be live at the
+    // header, or it ends before the second turn and rule 4 sees only the
+    // first.
     let header = body
         .blocks()
-        .find(|(_, block)| {
-            matches!(
-                block.terminator.kind,
-                science_mir::mir::TerminatorKind::Call {
-                    callee: science_mir::mir::Callee::Unresolved(
-                        science_mir::mir::Unresolved::IterateNext
-                    ),
-                    ..
-                }
-            )
-        })
+        .find(|(id, _)| body.predecessors(*id).len() > 1)
         .expect("a header")
         .0;
     for point in body.points() {
@@ -216,10 +205,17 @@ def go(xs: &Array[Int]):
     for x in xs:
         print(x)
 ";
+    // **The suppression this pinned is no longer reached, and that is the
+    // point rather than a regression.** It read *"the `for`'s callee resolved;
+    // `lower`'s §7.2 seam has closed and this suppression can go"*, and for
+    // an `Array` it has: the loop calls no `next` at all, so there is no hole
+    // in the body for Decision 6 to be excused by. The excuse survives for the
+    // subjects that still have one — a `for` over something that implements
+    // `Iterate` and declares no `next` — and this asserts the array's own
+    // answer instead of the one it used to share.
     let checked = check(source);
     assert!(
-        checked.analysis_of("go").calls_a_hole,
-        "the `for`'s callee resolved; `lower`'s §7.2 seam has closed and this \
-         suppression can go"
+        !checked.analysis_of("go").calls_a_hole,
+        "a `for` over an `Array` calls nothing unresolved, so nothing excuses it"
     );
 }

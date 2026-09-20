@@ -52,7 +52,7 @@ Module @0..286
             Path `I32` @281..284
 --- diagnostics ---
 SC0420 @48..54 `String` cannot cross the C boundary
-  note a C string is NUL-terminated and a Science `String` is UTF-8 bytes with a length; write `ffi.CStr` for one that is &and `ffi.CString` for one Science owns, and expect the copy both of them make
+  note a C string is NUL-terminated and a Science `String` is UTF-8 bytes with a length; write `ffi.CStr` for one that is borrowed and `ffi.CString` for one Science owns, and expect the copy both of them make
 SC0420 @73..89 `Map` cannot cross the C boundary
   note a `Map` is a Science hash table, and the C side does not know its layout
 SC0420 @108..119 `Option` cannot cross the C boundary
@@ -67,6 +67,6 @@ SC0421 @217..227 `Array[T]` has no C representation
   note the length does not cross the ABI — it exists on the Science side so that the wrapper's bounds check is an expression the compiler checks
   note a call site still passes the array: `&Array[T]` coerces to `ffi.Span[T]` there, and `.span()` names the conversion where it has to be written out
 SC0420 @246..252 `String` cannot cross the C boundary
-  note a C string is NUL-terminated and a Science `String` is UTF-8 bytes with a length; write `ffi.CStr` for one that is &and `ffi.CString` for one Science owns, and expect the copy both of them make
+  note a C string is NUL-terminated and a Science `String` is UTF-8 bytes with a length; write `ffi.CStr` for one that is borrowed and `ffi.CString` for one Science owns, and expect the copy both of them make
 SC0420 @277..285 `Box` cannot cross the C boundary
   note a `Box` owns what it points at under Science's allocator; pass `ffi.Pointer[T]` and say in the binding who frees it

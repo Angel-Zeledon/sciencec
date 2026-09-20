@@ -524,10 +524,10 @@ fn check_reports_the_borrow_check() {
     let run = sciencec(&["check", &file]);
     run.failed()
         .stderr_contains("error[SC0333]")
-        .stderr_contains("is &for longer than")
+        .stderr_contains("is borrowed for longer than")
         // Decision 9's three spans reach the user, which is the half of the
         // phase a wiring could drop without the code going missing.
-        .stderr_contains("`t` is &here")
+        .stderr_contains("`t` is borrowed here")
         .stderr_contains("there is no lifetime syntax to widen");
     assert_eq!(run.summary(), Some("1 error"), "stderr:\n{}", run.stderr);
 }

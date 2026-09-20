@@ -1394,6 +1394,45 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         mut block: BlockId,
         span: Span,
     ) -> BlockId {
+        // **AMENDMENT 11's desugaring, taken for the one subject that cannot
+        // express it any other way.**
+        //
+        // The decision. `for x in xs:` over an `Array[T]` is lowered here as
+        // the indexed loop `xs.iterate()` would compile to, rather than as a
+        // call to a `next` that does not exist.
+        //
+        // The reason. `collections-and-chains.md` §4.2's AMENDMENT 11 says
+        // *"`for x in xs:` desugars to `xs.iterate()`"*, and §4.1 gives the
+        // three sources. §8's closed library names **no type for `iterate()`
+        // to return**, and `Array[T] implements Iterate` — declared with
+        // `next(mutable self)` and no cursor field — cannot advance anything,
+        // whoever calls it. So the construct the notes specify has no
+        // spelling, and the loop the notes describe has an exact lowering.
+        //
+        // What this is *not* is an invented loop.
+        // `tests/no_invented_loops.rs` states the claim it guards — *"every
+        // loop in a body's CFG comes from a `loop` or a `for` the author
+        // wrote; this crate synthesises no loop"* — and one written `for`
+        // produces one loop header here.
+        //
+        // **§4.4's shared borrow is the right one here and costs nothing.**
+        // The contradiction that forces `for c in text.chars():` to borrow
+        // exclusively — `Iterate.next` is `def next(mutable self)` — does not
+        // arise, because no `next` is called: the cursor is a local of this
+        // loop's own, and the array is only read.
+        //
+        // The cost, and the repair. `Array` is the one subject with a
+        // lowering of its own, so a user type implementing `Iterate` goes
+        // through the general path and a `for` over an `Array` does not. The
+        // repair is the type §8 is missing — an iterator `Array[T].iterate()`
+        // returns, holding the cursor `Array` has nowhere to keep, with
+        // `Iterate` implemented on *it* rather than on the container. That is
+        // a spec amendment, and until it lands this is what the amendment
+        // would compile to.
+        if let Some((place, next)) = self.array_subject(iter, block, span) {
+            return self.lower_for_over_array(dest, pattern, place, body, next, span);
+        }
+
         // §7.1. The loop's own borrow. `borrow_source` is the same helper a
         // written `borrowed x` goes through, so a subject with no place — the
         // chain temporary of `for x in xs.iterate_consuming():` — lands in a
@@ -2780,6 +2819,188 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             .iter()
             .find(|(name, _, _)| prelude.is(types, ty, name))
             .map(|(_, bits, signed)| (*bits, *signed))
+    }
+
+    /// The loop subject as an array place, when it is one.
+    ///
+    /// Evaluated through `borrow_source` for its reason: a subject with no
+    /// place of its own lands in a temporary with a storage-dead point rather
+    /// than in a special case here.
+    fn array_subject(
+        &mut self,
+        iter: ExprId,
+        block: BlockId,
+        span: Span,
+    ) -> Option<(Place, BlockId)> {
+        let (place, next) = self.borrow_source(iter, block, span);
+        let place = self.auto_deref(place);
+        self.is_array(&place).then_some((place, next))
+    }
+
+    /// `for x in xs:` as the indexed loop AMENDMENT 11's `xs.iterate()` would
+    /// compile to.
+    ///
+    /// **The comparison is unsigned and the bound is read once.** `i` starts
+    /// at zero and only ever grows, so `i < len` as `U64` is the same question
+    /// `bounds_check` asks one construct over, asked with the same
+    /// instruction. Reading `length()` outside the loop is correct here where
+    /// it would not be in general, because the borrow this loop holds is
+    /// shared and nothing inside it can push.
+    ///
+    /// **The binding is a borrow, and that is the note's decision rather than
+    /// this crate's.** §4.3 says `iterate()` yields `borrowed Item`
+    /// *"uniformly"*, and §4's own argument is that the alternative copies
+    /// every element of every loop — for an `Array[Array[F64]]` a heap
+    /// allocation per row per turn. So the element place is borrowed into the
+    /// pattern rather than read out of it.
+    fn lower_for_over_array(
+        &mut self,
+        dest: Place,
+        pattern: PatId,
+        array: Place,
+        body: thir::BlockId,
+        mut block: BlockId,
+        span: Span,
+    ) -> BlockId {
+        let Some(int_ty) = self.context.decls.prelude().ty(self.context.types, "Int") else {
+            return block;
+        };
+        let Some(u64_ty) = self.context.decls.prelude().ty(self.context.types, "U64") else {
+            return block;
+        };
+        let element_ty = self.element_ty(&array);
+
+        // **§7.1's loop borrow, and it is load-bearing rather than
+        // decorative.** The loan is taken before the loop with `in_argument`
+        // false, so it lives across every turn, and the length call *copies*
+        // it rather than consuming it — a shared borrow is `Copy`.
+        //
+        // The first version of this took the borrow for the length call and
+        // let it die there, on the reasoning that the element projection would
+        // carry its own loan per turn. That is a **soundness hole**, and
+        // `science-regions`' `a_for_over_a_collection_the_body_mutates_is_
+        // refused` caught it: with no loan spanning the loop,
+        // `for x in xs: xs.push(1)` was accepted, and a push that reallocates
+        // the buffer leaves the element reference pointing at freed memory.
+        // §7.1's borrow is what makes the body's write conflict, and it has to
+        // outlive the header to do it.
+        let array_ty = self.place_ty(&array);
+        let borrowed = self.context.types.borrowed(false, array_ty);
+        let reference = self.temp(borrowed, span, block);
+        block =
+            self.borrow_place(Place::local(reference), false, array.clone(), block, span, false);
+        let length = self.temp(int_ty, span, block);
+        block = self.emit_call(
+            Place::local(length),
+            Callee::Runtime(ARRAY_LEN),
+            vec![Operand::Copy(Place::local(reference))],
+            block,
+            span,
+        );
+
+        let cursor = self.temp(int_ty, span, block);
+        let zero = Self::bits(0);
+        self.assign(block, Place::local(cursor), Rvalue::Use(zero), span);
+
+        let head = self.new_block();
+        let body_block = self.new_block();
+        let exit = self.new_block();
+        self.terminate(block, TerminatorKind::Goto { target: head }, span);
+
+        let wide_cursor = self.temp(u64_ty, span, head);
+        self.assign(
+            head,
+            Place::local(wide_cursor),
+            Rvalue::Cast { operand: Operand::Copy(Place::local(cursor)), from: int_ty, ty: u64_ty },
+            span,
+        );
+        let wide_length = self.temp(u64_ty, span, head);
+        self.assign(
+            head,
+            Place::local(wide_length),
+            Rvalue::Cast { operand: Operand::Copy(Place::local(length)), from: int_ty, ty: u64_ty },
+            span,
+        );
+        let more = self.temp(self.bool_ty, span, head);
+        self.assign(
+            head,
+            Place::local(more),
+            Rvalue::Binary {
+                op: BinaryOp::Lt,
+                lhs: Operand::Copy(Place::local(wide_cursor)),
+                rhs: Operand::Copy(Place::local(wide_length)),
+            },
+            span,
+        );
+        self.terminate(
+            head,
+            TerminatorKind::If {
+                cond: Operand::Copy(Place::local(more)),
+                then_block: body_block,
+                else_block: exit,
+            },
+            span,
+        );
+
+        self.loops.push(LoopScope { head, exit, depth: self.scopes.len() });
+        self.push_scope();
+        // **The projection's index is a body-local temporary, not the
+        // cursor.** `Projection::Index`'s own note says the temporary is
+        // *"assigned exactly once and never reassigned … which is what makes
+        // structural equality on this variant mean the same element rather
+        // than the same spelling"*, and `Body::index_temps_are_single_
+        // assignment` checks it. A loop's cursor is assigned twice — once at
+        // zero and once by the increment — so projecting through it would make
+        // two different elements compare equal, and the acceptance test caught
+        // exactly that. Copying it into a temporary the body writes once says
+        // what is true: within one turn, this names one element.
+        let at = self.temp(int_ty, span, body_block);
+        self.assign(
+            body_block,
+            Place::local(at),
+            Rvalue::Use(Operand::Copy(Place::local(cursor))),
+            span,
+        );
+        // **The element is reached *through* the loop's loan, not beside it.**
+        //
+        // `(*reference)[at]` rather than `xs[at]`, and the difference is the
+        // whole of whether `for x in xs: xs.push(1)` is refused. A loan whose
+        // last use is the length call before the loop is *dead* by the time
+        // the body runs — region inference computes liveness, not scope — so
+        // the push conflicted with nothing and a reallocation would have left
+        // the element reference dangling. Reading the loan on every turn is
+        // what the general path gets for free from calling `next` through it,
+        // and projecting through it here buys the same thing without a call
+        // per iteration.
+        let through = Place::local(reference).project(Projection::Deref { ty: array_ty });
+        let element = through.project(Projection::Index { index: at, ty: element_ty });
+        let binding_ty = self.context.types.borrowed(false, element_ty);
+        let bound_to = self.temp(binding_ty, span, body_block);
+        let mut after =
+            self.borrow_place(Place::local(bound_to), false, element, body_block, span, false);
+        after = self.bind_pattern(&Place::local(bound_to), pattern, after);
+        let discard = self.temp(Ty::UNIT, span, after);
+        after = self.lower_block(Place::local(discard), body, after);
+        after = self.pop_scope(after, span);
+        let stepped = self.temp(int_ty, span, after);
+        let one = Self::bits(1);
+        self.assign(
+            after,
+            Place::local(stepped),
+            Rvalue::Binary { op: BinaryOp::Add, lhs: Operand::Copy(Place::local(cursor)), rhs: one },
+            span,
+        );
+        self.assign(
+            after,
+            Place::local(cursor),
+            Rvalue::Use(Operand::Copy(Place::local(stepped))),
+            span,
+        );
+        self.terminate(after, TerminatorKind::Goto { target: head }, span);
+        self.loops.pop();
+
+        self.assign(exit, dest, Rvalue::Use(Operand::Const(Constant::Unit)), span);
+        exit
     }
 
     /// Whether a place is an `Array of T`, which is what [`Builder::bounds_check`]

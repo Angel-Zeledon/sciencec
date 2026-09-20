@@ -3390,6 +3390,22 @@ impl<'a> BodyChecker<'a> {
             | BinaryOp::Ge => {
                 let left = self.synth(lhs);
                 let right = self.synth(rhs);
+                // **`assign`'s §7 at a comparison's operands, which the
+                // arithmetic arm below has always had and this one did not.**
+                //
+                // AMENDMENT 7's reading — *"`borrowed F32 + borrowed F32` is
+                // `F32`"* as one coercion rather than an implementation per
+                // primitive per operator — says nothing about `+` in
+                // particular, and `is` is the same question: an operator reads
+                // its operands. Without the peel, `if x is 3` inside
+                // `for x in xs:` was refused, because §4.3 makes a loop's
+                // binding a `borrowed T` *"uniformly"* and a comparison then
+                // met a pointer. The two decisions are load-bearing for each
+                // other exactly as `builtins.rs` says of the arithmetic pair:
+                // `Item is &T` without this makes the most ordinary test in
+                // the most ordinary loop a type error.
+                let left = self.read_value(left, lhs.span);
+                let right = self.read_value(right, rhs.span);
                 // §6: `is` and `is not` require `Eq`, and `< > <= >=`
                 // require `Ord`. Both are the *implementation* check and
                 // neither is a dispatch — `implements_operand` says what that
@@ -4668,13 +4684,62 @@ impl<'a> BodyChecker<'a> {
                 // loss: the language has no dereference operator to recover
                 // the write with, and it has `let` to recover the rebinding
                 // with.
-                let want = self.known_or_error(target.ty);
-                let revealed = self.revealed(want, stmt.span);
-                let want = match *self.types.kind(revealed) {
-                    TyKind::Borrowed { mutable: true, inner } => inner,
-                    _ => want,
+                // **A target whose type is still a class is *unified* with,
+                // not demanded of.**
+                //
+                // The decision. When the target's type has not been resolved
+                // yet, the value is synthesised and the two are unified.
+                // Only a target with a real type is checked against it.
+                //
+                // The reason, and it is the plainest program there is:
+                //
+                // ```text
+                // let mutable n be 0
+                // n be n + 1
+                // ```
+                //
+                // did not compile. `known_or_error` answers `Ty::ERROR` for an
+                // unresolved class — that is what it is for — and the value
+                // was then checked against `Ty::ERROR`, which `ty`'s §5 makes
+                // agree with anything. Agreeing is the right behaviour when
+                // the error is *somebody else's*; here the "error" was only
+                // *not yet known*, and because `n` appears on the right the
+                // class being bound was `n`'s own. So `n` became `Ty::ERROR`,
+                // §5 suppressed the cascade, and the program reached the
+                // backend with a local that had no type and no diagnostic
+                // explaining why. `n be 0 + 1` worked, because the value's
+                // class was a different variable and poisoning it cost
+                // nothing visible.
+                //
+                // Unifying instead is what `binary` already does with its two
+                // operands, and it leaves the class for `finish` to default —
+                // which is how `let p be 0 + 1` has always worked.
+                //
+                // The cost. A mismatch between an unresolved target and a
+                // concrete value is now reported by unification rather than by
+                // `check`, so it is `SC0525` without the site's wording. The
+                // alternative is a message that names `{unknown}` as the
+                // expected type, which is worse.
+                let value = match self.infer.resolve(target.ty) {
+                    InferTy::Var(var) => {
+                        let typed = self.synth(value);
+                        if self.infer.unify(self.types, InferTy::Var(var), typed.ty).is_err() {
+                            let (found, expected) =
+                                (self.known_or_error(typed.ty), self.known_or_error(target.ty));
+                            self.mismatch(found, expected, stmt.span);
+                        }
+                        typed.id
+                    }
+                    InferTy::Known(_) => {
+                        let want = self.known_or_error(target.ty);
+                        let revealed = self.revealed(want, stmt.span);
+                        let want = match *self.types.kind(revealed) {
+                            TyKind::Borrowed { mutable: true, inner } => inner,
+                            _ => want,
+                        };
+                        self.check(value, want, Site::Elsewhere)
+                    }
                 };
-                let value = self.check(value, want, Site::Elsewhere);
                 // The binding's own word decides whether this write is
                 // allowed, but the types it reads are not final yet.
                 self.assignments.push(target.id);

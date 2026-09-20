@@ -192,7 +192,27 @@ fn the_calls_it_cannot_resolve_are_the_container_methods() {
         (1..=8).contains(&methods),
         "expected at most eight unresolved method calls, found {methods}; {unresolved:?}"
     );
-    assert_eq!(iterate, 3, "the example writes three `for` loops");
+    // **Zero, and the sentence that pinned three is what changed.** It read
+    // *"`IterateNext` is pinned at three because it is one per `for` and the
+    // file writes three"*, which was true while every `for` reached MIR as a
+    // call to a `next` nothing could name. Two things have happened since. A
+    // `for` over a **`Chars`** resolves its `next`, because `Chars` declares
+    // one and `science_chars_next` implements it. A `for` over an **`Array`**
+    // calls no `next` at all: `collections-and-chains.md` §4.2's AMENDMENT 11
+    // makes it `xs.iterate()`, §8 names no type for `iterate()` to return, and
+    // `lower_for_over_array` emits the indexed loop that desugaring compiles
+    // to. This file's three loops are all over arrays.
+    //
+    // **What the row was for survives.** `Unresolved::IterateNext` is still
+    // reachable — a `for` over a subject that implements `Iterate` and
+    // declares no `next` of its own still produces one — and this file simply
+    // writes no such loop. The count is pinned rather than dropped so that a
+    // regression putting one back is visible.
+    assert_eq!(
+        iterate, 0,
+        "every `for` here is over an `Array`, which lowers to an indexed loop and calls no \
+         `next`; {unresolved:?}"
+    );
 }
 
 /// And the fourth: the example's own §5 says the bump arena and the interner

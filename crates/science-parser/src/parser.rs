@@ -5642,7 +5642,7 @@ fn science_layout_note(name: &str) -> Option<&'static str> {
     Some(match name {
         "String" => {
             "a C string is NUL-terminated and a Science `String` is UTF-8 bytes with a \
-             length; write `ffi.CStr` for one that is &and `ffi.CString` for one \
+             length; write `ffi.CStr` for one that is borrowed and `ffi.CString` for one \
              Science owns, and expect the copy both of them make"
         }
         "Map" => "a `Map` is a Science hash table, and the C side does not know its layout",
