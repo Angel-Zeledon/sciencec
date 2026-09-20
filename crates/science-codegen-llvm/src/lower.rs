@@ -6366,6 +6366,7 @@ impl<'a> Lowerer<'a> {
                 sig.params.len()
             )));
         }
+        let mut aliases_destination = false;
         let mut lowered: Vec<Operand> = Vec::with_capacity(args.len());
         for (arg, param) in args.iter().zip(&sig.params) {
             match param.class {
@@ -6394,18 +6395,28 @@ impl<'a> Lowerer<'a> {
                         return Err(Unlowered::new(format!("{UNTYPED} (local _{})", local.0)));
                     }
                     ctx.layout(local)?;
+                    // **The one place a by-pointer argument and the result can
+                    // be the same memory.** `s be wrap(s)` moves `s` into the
+                    // call by address and asks for the result through `sret`
+                    // into the same slot, so the callee builds its answer on
+                    // top of the argument it is still reading. It printed the
+                    // empty string and exited 0.
+                    if place.local == destination.local && destination.projection.is_empty() {
+                        aliases_destination = true;
+                    }
                     let address = ctx.value();
                     insts.push(ExtInst::LocalAddr { dest: address, local });
                     lowered.push(Operand::Value(address));
                 }
             }
         }
-        self.emit_result(
+        self.emit_result_maybe_aliased(
             ctx,
             Callee::Science(sig.symbol.clone()),
             &sig.ret,
             lowered,
             destination,
+            aliases_destination,
             insts,
         )
     }
@@ -6416,6 +6427,66 @@ impl<'a> Lowerer<'a> {
     /// The two used to have a copy of this each, and the copies were the same
     /// four lines with the same `sret` question asked twice — which is §9.2's
     /// shape exactly, so there is one of them.
+    /// [`Lowerer::emit_result`], with the one case where the result's slot and
+    /// an argument's are the same memory.
+    ///
+    /// # The decision
+    ///
+    /// When the destination is also a by-pointer argument, the call returns
+    /// into a slot this invents and the value is copied over afterwards.
+    ///
+    /// # The reason
+    ///
+    /// Decision 22 passes an aggregate argument as *"a pointer to a
+    /// caller-owned slot"*, and the return of an aggregate is `sret` into
+    /// another. `s be wrap(s)` makes those the same slot, so a callee that
+    /// reads its argument to build its answer — which is what a function
+    /// taking a `String` and returning one usually does — writes over the
+    /// bytes it has not finished reading. The program printed the empty
+    /// string, exited 0, and said nothing. It is the worst shape a defect can
+    /// have, and `s be transform(s)` is an ordinary thing to write.
+    ///
+    /// Neither end can be dropped: the argument must be the caller's slot
+    /// because the callee may write through it, and the return must be `sret`
+    /// because the value does not fit in registers. What can go is their being
+    /// the *same* slot.
+    ///
+    /// # The cost
+    ///
+    /// One slot and one copy, for calls where the destination is also an
+    /// argument and nowhere else. `mem2reg` removes neither, because the slot
+    /// escapes into the call — so this is a real copy of an aggregate, paid
+    /// only by the shape that was silently wrong before.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_result_maybe_aliased(
+        &mut self,
+        ctx: &mut BodyCtx,
+        callee: Callee,
+        ret: &ReturnClass,
+        args: Vec<Operand>,
+        destination: &mir::Place,
+        aliases_destination: bool,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        if !aliases_destination || !ret.is_sret() {
+            return self.emit_result(ctx, callee, ret, args, destination, insts);
+        }
+        let dest_local = LocalId(destination.local.index() as u32);
+        let layout = ctx.layout(dest_local)?.clone();
+        let scratch = self.temp(ctx, layout.clone());
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: None,
+            callee,
+            args,
+            ret: ret.clone(),
+            sret_slot: Some(scratch),
+        }));
+        let value = ctx.value();
+        insts.push(ExtInst::Above(Inst::Load { dest: value, local: scratch }));
+        insts.push(ExtInst::Above(Inst::Store { local: dest_local, value: Operand::Value(value) }));
+        Ok(())
+    }
+
     fn emit_result(
         &self,
         ctx: &mut BodyCtx,

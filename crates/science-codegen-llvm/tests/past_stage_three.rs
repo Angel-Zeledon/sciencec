@@ -1044,3 +1044,85 @@ fn starts_with_answers_both_ways() {
         "true false\n"
     );
 }
+
+/// `s be f(s)` — a call whose result lands in the slot its argument came from.
+///
+/// # What this is measuring
+///
+/// **A silent wrong answer, which is the worst shape a defect has.**
+///
+/// ```text
+/// let mutable s be "xy"
+/// s be wrap(s)
+/// print(f"{s}")
+/// ```
+///
+/// printed the empty string, exited 0, and reported nothing. Decision 22
+/// passes an aggregate argument as *"a pointer to a caller-owned slot"* and an
+/// aggregate return comes back through `sret` into another — and `s be wrap(s)`
+/// makes those the same slot, so a callee that reads its argument to build its
+/// answer writes over the bytes it has not finished reading. A function taking
+/// a `String` and returning one is the ordinary case, and `s be transform(s)`
+/// is an ordinary thing to write.
+///
+/// Neither end could be dropped: the argument must be the caller's slot
+/// because the callee may write through it, and the return must be `sret`
+/// because three words do not fit in registers. What could go is their being
+/// the *same* slot.
+///
+/// # Why these programs
+///
+/// **`double` reads its argument twice**, so a lowering that copied the first
+/// read before clobbering would still be caught by the second.
+///
+/// **The record case is here because the bug is about slots, not strings.**
+/// `Doc` is an aggregate with a `String` in it, reached through `sret` for the
+/// same reason, and a fix keyed on `String` would pass the first assertion and
+/// fail this one.
+///
+/// **The loop repeats it five times**, because the failure mode next door is a
+/// double free: the scratch slot the result now lands in is copied into the
+/// destination, and if the copy were a second owner the fifth iteration would
+/// abort rather than print. The length is `2^5` and the exit status is the
+/// other half of the assertion.
+#[test]
+fn a_call_whose_result_replaces_its_own_argument_is_not_clobbered() {
+    assert_eq!(
+        bytes(
+            "alias-self",
+            "def double(s: String) -> String:\n    f\"{s}{s}\"\n\n\
+             let mutable s be \"ab\"\n\
+             s be double(s)\n\
+             s be double(s)\n\
+             print(f\"{s} {s.length()}\")\n",
+        ),
+        "abababab 8\n"
+    );
+    assert_eq!(
+        bytes(
+            "alias-record",
+            "type Doc:\n    title: String\n\n\
+             def relabel(d: Doc) -> Doc:\n    Doc(title: f\"[{d.title}]\")\n\n\
+             let mutable d be Doc(title: \"hola\")\n\
+             d be relabel(d)\n\
+             d be relabel(d)\n\
+             print(f\"{d.title}\")\n",
+        ),
+        "[[hola]]\n"
+    );
+    assert_eq!(
+        bytes(
+            "alias-loop",
+            "def double(s: String) -> String:\n    f\"{s}{s}\"\n\n\
+             let mutable acc be \"x\"\n\
+             let mutable i be 0\n\
+             loop:\n\
+             \x20   if i is 5:\n\
+             \x20       break\n\
+             \x20   acc be double(acc)\n\
+             \x20   i be i + 1\n\
+             print(f\"{acc.length()}\")\n",
+        ),
+        "32\n"
+    );
+}
