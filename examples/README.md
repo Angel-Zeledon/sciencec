@@ -76,12 +76,12 @@ here so that changing one is a single, visible decision.
   writes its reading down and every other file draws from it: `Box` has `new`
   and nothing else; `String` has `new`, `length`, `is_empty`, `push_str`,
   `truncate`, `starts_with`, `chars`; `Array` has `new`, `length`, `is_empty`,
-  `push`, `pop`, `get`, `get_mut`; `Map` has `new`, `length`, `insert`, `get`,
+  `push`, `pop`, `get`, `get_mutably`; `Map` has `new`, `length`, `insert`, `get`,
   `remove`, `contains`. `Error` has `message`, which §5.5 writes out itself.
 - **A nullable has no methods at all.** `Option`'s `is_some`, `unwrap` and
   `unwrap_or` went with the type, and §5.5 put nothing in their place but the
   postfix `?`. So the accessors that used to return an `Option` — `Array.get`,
-  `Array.get_mut`, `Array.pop`, `Map.get`, `Map.remove`, `Map.insert` — return
+  `Array.get_mutably`, `Array.pop`, `Map.get`, `Map.remove`, `Map.insert` — return
   `T?`, and every use of one in the corpus is a `?` test followed by a branch.
   Nothing in §8 says a nullable has *no* methods; the corpus reads the absence
   of a type as the absence of its method set, because the alternative is to
@@ -163,6 +163,7 @@ here so that changing one is a single, visible decision.
   introduces generic arguments (§4.3) and so is no longer an identifier, which
   rules out the name an associated constructor would otherwise want.
 - **The `ffi` module does not exist yet.** `20_extern.science` writes `ffi.Span`, `ffi.MutableSpan`, `ffi.Pointer`, `ffi.OpaqueHandle`, `ffi.CStr`, `ffi.Uninitialized`, `ffi.CLayout`, `ffi.Complex32` and `ffi.Complex64`, and the C scalar aliases `CInt`, `CUInt` and `CSizeT`. §8 of the core spec declares the F0 library closed and none of these is in it; `ffi-c-boundary.md` §10.3 asks for the module as a spec change rather than assuming it. The file is in the corpus because it is *syntactically* correct, which is what the corpus is for, and its names resolve only once that module lands.
+- **`text` and `compiler.frontend` do not exist either.** `17_modules.science` imports `text.parser`, `compiler.frontend.lexer` and `compiler.frontend.diagnostics`; none of the three is a file anywhere in the crate, and nothing anywhere defines `Token`, `lex`, `Lexer`, `TokenKind`, `Span`, `Diagnostic`, `Label` or `render`. §8 declares the F0 library closed with no `text` in it, which is the same closure the `ffi` bullet reads from, not a second kind of gap. The resolver is not at fault — reconstructing the crate with stub `text.science` and `compiler/frontend/{lexer,diagnostics}.science` files gets a clean `check`, exit 0 — so the four `SC0202`s this file leaves behind are the corpus telling the truth about a library that has not been written. The cost is that `check examples/*.science` is not clean on this file until `text` and a `compiler.frontend` lexer/diagnostics module land; until then its names resolve only on paper.
 - **Modules have no declaration form.** §4.4 makes a file a module and a
   directory with `mod.science` a module, and gives no `mod` item;
   `17_modules.science` therefore declares nothing and relies on file-as-module.

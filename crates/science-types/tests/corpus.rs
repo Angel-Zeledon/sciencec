@@ -228,40 +228,32 @@ use std::path::{Path, PathBuf};
 // now does, and the reason it is not a weakening is that the allocation is
 // still exactly where the author wrote it. `assign`'s §4 and §4a carry that
 // argument; §6.2 should carry the correction.
-/// **`19_stdlib.science`, `SC0532`** — *"`Array of Int` has no method
-/// `get_mut`"*, at `let slot be items.get_mut(0)`. **It is a true positive and
-/// that is why it is here rather than excused.** `methods`' §8a closed the hole
-/// that hid it: a prelude type's method surface used to be open at *every* name,
-/// so `"hi".no_such_method()` checked clean and so did this. The name is now
-/// judged against `builtins.rs`' `UNWRITTEN`, which is read out of
-/// `stdlib-core.md` and `collections-and-chains.md` — and **neither note gives
-/// `Array` a `get_mut`**. Mutable element access is `IndexMutably` (§2.1, and
-/// `indexing-and-array-literals.md` §1.1's Decision 2), spelled `items[0] be v`.
-/// So the corpus is writing a name the language does not have, and the entry is
-/// a handoff rather than a hole: either the note gains `get_mut` and
-/// `builtins.rs` gains the row, or the example is rewritten through
-/// `IndexMutably`. Owner: whoever owns `stdlib-core.md` §3.6, then this file.
+/// **Both entries closed, and neither closed by the compiler gaining
+/// anything — the corpus was wrong and is now corrected.**
 ///
-/// **`21_compiler_shapes.science`, three `SC0532`** — *"`Array of Def` has no
-/// method `len`"*, and twice more on `Array of Token` and `Array of
-/// Diagnostic`. The same true positive with a sharper answer: the notes do not
-/// merely omit `len`, they **reject it**. `collections-and-chains.md` §3.1 puts
-/// `len()` in the column of names it turns down — *"the abbreviation goes"* —
-/// against a surviving `length()`, and §3.1's general rule is that *"no name is
-/// an abbreviation where a word exists"*. `Array.length` is declared in
-/// `builtins.rs` with a real signature, so the fix is three characters in three
-/// places and the diagnostic already names it. It is pinned rather than applied
-/// because `examples/21_compiler_shapes.science` is input to the MIR and
-/// codegen corpora as well as to this one, and a call that changes from
-/// unresolved to resolved changes what those lower. Owner: this file, once the
-/// corpus edit can be measured across all three layers.
+/// **`19_stdlib.science` used to write `items.get_mut(0)`.** `methods`' §8a
+/// judged the name against `builtins.rs`' `UNWRITTEN`, read out of
+/// `stdlib-core.md` and `collections-and-chains.md`, and neither note gave
+/// `Array` a `get_mut` — but `indexing-and-array-literals.md` §1.4 Decision 5
+/// writes the signature out in Science as `get_mutably`, and `builtins.rs`
+/// declares exactly that name (§5.4 spells the siblings `values_mutably` and
+/// `iterate_mutably` the same way). The file now calls `items.get_mutably(0)`
+/// and `check` has nothing left to say about it.
 ///
-/// **Both entries are the measured cost of closing `methods`' §8a**, stated
+/// **`21_compiler_shapes.science` used to write `.len()` three times** —
+/// `Array of Def`, `Array of Token` and `Array of Diagnostic`.
+/// `collections-and-chains.md` §5's rejected-names table retires it by name —
+/// *"`count()` vs `length()` ← `len()`/`count()` — the abbreviation goes"*,
+/// under §4.3's rule against abbreviations — and `stdlib-shape-and-packages.md`
+/// restates it as *"`length()`, not `len()`"*. `Array.length()` is declared in
+/// `builtins.rs`. The file now calls `.length()` at all three sites.
+///
+/// **Both entries were the measured cost of closing `methods`' §8a**, stated
 /// here rather than absorbed: before it, this constant was empty because the
 /// checker had nothing to say about a method on a prelude type, not because
-/// there was nothing to say.
-const REMAINING: &[(&str, &[u16])] =
-    &[("19_stdlib.science", &[532]), ("21_compiler_shapes.science", &[532, 532, 532])];
+/// there was nothing to say. Now it is empty again because the two names were
+/// corpus mistakes rather than a compiler or spec gap, and both are fixed.
+const REMAINING: &[(&str, &[u16])] = &[];
 
 fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("examples")
@@ -568,10 +560,24 @@ fn every_pinned_file_is_in_the_corpus() {
 /// counts the range expressions this test walked, asserts a floor, and asserts
 /// that **not one of them is an error type**, which is the property that was
 /// false for every range in the corpus until this change.
+///
+/// # **It is 0 again, and this time the corpus moved, not the checker**
+///
+/// The four were re-verified against the notes that were supposed to govern
+/// them, rather than taken on trust, and both held up as real: `get_mut` is in
+/// neither `stdlib-core.md` nor `collections-and-chains.md`, and `len` is the
+/// name `collections-and-chains.md` §5 names and rejects. But
+/// `indexing-and-array-literals.md` §1.4 Decision 5 — a note `REMAINING`'s
+/// entry for `19_stdlib.science` did not cite — spells the mutable accessor
+/// `get_mutably` and `builtins.rs` already declares it, so `Array` was never
+/// missing a mutable `get`; the corpus was calling it by the wrong name.
+/// `19_stdlib.science` now calls `get_mutably`, and `21_compiler_shapes.science`
+/// now calls `length()` at its three sites. Neither the compiler nor the spec
+/// changed; `examples/` did.
 #[test]
 fn the_corpus_reports_only_what_no_program_can_say() {
     let total: usize = REMAINING.iter().map(|(_, codes)| codes.len()).sum();
-    assert_eq!(total, 4);
+    assert_eq!(total, 0);
 }
 
 /// The evidence that a silent `Range` is a checked silence.

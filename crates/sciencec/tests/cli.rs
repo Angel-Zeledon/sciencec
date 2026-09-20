@@ -369,20 +369,26 @@ const REGIONS: &[Finding] = &[];
 /// **Each entry carries the code it is pinned for**, which the shape `(file,
 /// count, code)` is: the list used to hold `SC0525` alone and hard-coded it in
 /// the assertion, and a second kind of finding could not be told from a first
-/// one drifting. `science-types/tests/corpus.rs`' `REMAINING` argues both
-/// entries against the note that governs them — `get_mut` is in neither
-/// `stdlib-core.md` nor `collections-and-chains.md`, and `len` is a name
-/// `collections-and-chains.md` §3.1 **rejects** by name in favour of `length`
-/// — so these are the corpus being wrong rather than the compiler.
+/// one drifting.
+///
+/// **It held two entries, and they are gone, because the corpus was wrong
+/// rather than the compiler.** `19_stdlib.science` wrote `items.get_mut(0)`;
+/// `indexing-and-array-literals.md` §1.4 Decision 5 spells the method
+/// `get_mutably`, and `builtins.rs` declares that name, not `get_mut`.
+/// `21_compiler_shapes.science` wrote `.len()` three times;
+/// `collections-and-chains.md` §5's rejected-names table retires it by name —
+/// *"`count()` vs `length()` ← `len()`/`count()` — the abbreviation goes"* —
+/// and `stdlib-shape-and-packages.md` restates it as *"`length()`, not
+/// `len()`"*, while `Array.length()` is declared. Both files now write the
+/// name the note gives, and `check` reports nothing on either. The list is
+/// empty and the test still walks every file, which is the property that made
+/// emptiness readable the first time this list closed.
 ///
 /// **The property that made emptiness readable still holds, in reverse.**
-/// `science-types/tests/corpus.rs` pins the identical four facts against the
-/// library rather than the binary, so a change that silences them here has to
-/// silence them in two places at once.
-const TYPE_CHECKER_FINDINGS: &[(&str, usize, &str)] = &[
-    ("19_stdlib.science", 1, "error[SC0532]"),
-    ("21_compiler_shapes.science", 3, "error[SC0532]"),
-];
+/// `science-types/tests/corpus.rs` pins the identical fact against the
+/// library rather than the binary, so a change that un-silences either file
+/// here has to un-silence it in two places at once.
+const TYPE_CHECKER_FINDINGS: &[(&str, usize, &str)] = &[];
 
 #[test]
 fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {

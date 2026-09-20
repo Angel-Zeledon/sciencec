@@ -499,18 +499,12 @@ fn no_fast_math_flag_reaches_any_of_these_programs() {
 #[test]
 fn the_boundary_is_where_it_says_it_is() {
     let cases: &[(&str, &str, &str)] = &[
-        // §10's own stage 3 program. The hole is above this crate, and **what
-        // it is has changed while the row has not moved.** It was
-        // `thir::ExprKind::For` having no field for a callee, which this crate
-        // reports as a `for` loop; the refusal that fires first is now the
-        // range *temporary*, because `science-resolve`'s `builtins.rs` gained
-        // `Range of T implements Iterate:` and `science-types` types `0..3` at
-        // `Range of I64` instead of `TyKind::Error`. A value of that type is
-        // one of §2.6's runtime containers and this backend emits no
-        // descriptor for one, so the fragment is the type and no longer the
-        // construct. The callee hole is still there behind it and is still
-        // this list's reason for the row.
-        ("for", "let mutable t be 0\nfor i in 0..3:\n    t be t + i\n", "`Range[I64]`"),
+        // **`for` left this list.** It read *"a value of type `Range[I64]`,
+        // one of §2.6's runtime containers"*, which was true while a `for`
+        // over a range built one. AMENDMENT 14 says a `Range` is **not** a
+        // container — it holds two ends and computes each element — so the
+        // loop is lowered as the counting loop that describes and no `Range`
+        // value exists at run time. `tests/loops.rs` runs the programs.
         // **`div` was a row here and is not one any more.** It read *"refused
         // rather than emitted: nothing above emits the zero check that
         // `IntOp`'s own note says the caller has already made"*, and
@@ -603,7 +597,6 @@ fn the_boundary_is_where_it_says_it_is() {
 #[test]
 fn nothing_past_the_boundary_produces_an_executable() {
     for source in [
-        "let mutable t be 0\nfor i in 0..3:\n    t be t + i\n",
         "let t be (1, 2)\nprint(\"x\")\n",
         // Division left this list with the row above it: it builds, and
         // `tests/past_stage_three.rs` asserts that it also *runs*.

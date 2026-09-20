@@ -182,3 +182,59 @@ fn a_for_over_an_array_walks_it() {
     );
 }
 
+
+/// `for i in a..b:` — the counting loop, which is the most-written loop there
+/// is.
+///
+/// # Why no `Range` is built
+///
+/// `collections-and-chains.md`'s AMENDMENT 14 says `Range` implements
+/// `Iterate` *"directly, which is what makes `for i in 0..n:` the same
+/// construct as everything else rather than a special case in the parser"* —
+/// and the ground it gives is that a range **is not a container**: it holds
+/// two ends and *computes* each element. So there is nothing to iterate over,
+/// only arithmetic, and `science-mir` emits the arithmetic. No `Range[T]`
+/// value exists at run time, which is why this stopped being *"a value of
+/// §2.6's runtime containers"* without anything lowering one.
+///
+/// §4.1 is the difference from the array loop: a `Range`'s `Item` is `T` and
+/// not `&T`, because there is no element in memory for a borrow to point at.
+/// The pattern binds a value and the loop borrows nothing.
+///
+/// # Why these four
+///
+/// **Exclusive and inclusive**, because `..` and `..=` differ by exactly one
+/// element and a lowering that confused them still produces a plausible sum.
+///
+/// **Two empty ranges**, `5..5` and `5..0`, because the test is at the head
+/// and a loop that ran once before checking would pass every other assertion
+/// here.
+///
+/// **`0..xs.length()` with an index**, because that is the shape the language
+/// is for and it is the one that needs both ends evaluated once: an end
+/// re-read every turn is a different loop from the one the author wrote.
+#[test]
+fn a_counting_loop_over_a_range_adds_up() {
+    assert_eq!(
+        prints(
+            "range",
+            "let mutable total be 0\n\
+             for i in 0..5:\n\
+             \x20   total be total + i\n\
+             let mutable t2 be 0\n\
+             for i in 0..=5:\n\
+             \x20   t2 be t2 + i\n\
+             let mutable n be 0\n\
+             for i in 5..5:\n\
+             \x20   n be n + 1\n\
+             for i in 5..0:\n\
+             \x20   n be n + 1\n\
+             let xs be [10, 20, 30]\n\
+             let mutable s be 0\n\
+             for i in 0..xs.length():\n\
+             \x20   s be s + xs[i]\n\
+             print(f\"{total} {t2} {n} {s}\")\n",
+        ),
+        "10 15 0 60\n"
+    );
+}

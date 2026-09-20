@@ -140,27 +140,19 @@ fn the_module_says_what_stage_one_says_it_should() {
 /// the test is *for* survives unchanged: a construct past the boundary is
 /// `SC0400` naming itself, and not an internal error.
 ///
-/// The construct is now a `for` loop, which is past the boundary for a reason
-/// that has nothing to do with this crate: its `next` arrives as
-/// `science_mir::mir::Unresolved::IterateNext`, because
-/// `science_types::thir::ExprKind::For` has no field for the callee the
-/// checker found. That makes it a stable choice — it is refused by a hole above
-/// this crate rather than by an instruction this crate has not written — and
-/// the day it stops being refused, the sentence to replace is this one.
-///
-/// **The sentence it is refused *with* changed, and the construct did not.**
-/// `0..3` is a `Range of I64` now — `builtins.rs` declares `Range of T
-/// implements Iterate:` and `science-types`' `range_expr` builds the type,
-/// where before the expression was `TyKind::Error` — so the first refusal is
-/// the range temporary as one of §2.6's runtime containers rather than the
-/// unresolved `next` behind it. Both are `SC0400` and both are above this
-/// crate, which is what this test is for; the fragment names the type because
-/// that is the sentence a user now meets first.
+/// **The construct moved again, and the loop is no longer past the boundary.**
+/// `for i in 0..3:` builds and runs: `collections-and-chains.md`'s
+/// AMENDMENT 14 says a `Range` *"is not a container"* and computes each
+/// element, so `lower_for_over_range` emits the counting loop the note
+/// describes and no `Range[I64]` value is ever built. A **generic function
+/// call** takes its place, which is past the boundary for a reason nothing
+/// here can move: no phase substitutes type arguments into a body.
 #[test]
 fn a_program_past_the_boundary_is_refused_by_name() {
-    let lowered = lower("let mutable total be 0
-for i in 0..3:
-    total be total + i
+    let lowered = lower("def identity[T](value: T) -> T:
+    value
+
+let v be identity(1)
 ");
     let dir = scratch("hello", "refused");
     let diagnostics = lowered
@@ -170,7 +162,7 @@ for i in 0..3:
     let first = diagnostics.first().expect("a diagnostic");
     assert_eq!(first.code, science_codegen::diagnostics::code::SC0400);
     assert!(
-        first.message.contains("`Range[I64]`"),
+        first.message.contains("monomorphis"),
         "the refusal must name the construct, and it said: {}",
         first.message
     );

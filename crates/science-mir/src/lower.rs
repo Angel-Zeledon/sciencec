@@ -1419,6 +1419,37 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         mut block: BlockId,
         span: Span,
     ) -> BlockId {
+        // **`for i in a..b:` is the counting loop it names, and the `Range`
+        // is never built.**
+        //
+        // The decision. A `for` whose subject is written as a range lowers to
+        // a cursor, a comparison and a back edge. No `Rvalue::Range` is
+        // emitted and no `Range[T]` value exists at run time.
+        //
+        // The reason. `collections-and-chains.md`'s AMENDMENT 14 says `Range`
+        // implements `Iterate` *"directly, which is what makes `for i in 0..n:`
+        // the same construct as everything else rather than a special case in
+        // the parser"* — and it says so on the ground that a range **is not a
+        // container**: it holds two ends and *computes* each element. So there
+        // is nothing to iterate over, only arithmetic, and the honest lowering
+        // of the construct the note describes is the arithmetic.
+        //
+        // §4.1 makes the difference from the array case explicit: a `Range`'s
+        // `Item` is `T` and not `&T`, because there is no element in memory
+        // for a borrow to point at. So the pattern binds a **value**, and the
+        // loop takes no borrow of anything — which is also why §4.4's question
+        // about the source does not arise.
+        //
+        // The cost. A range bound to a name first — `let r be 0..n` then
+        // `for i in r:` — is not this shape and still needs `Range[T]` as a
+        // value, which no backend lowers. That is one construct rather than
+        // the whole family, and it is the one the notes call *"a value of
+        // §2.6's runtime containers"*.
+        if let thir::ExprKind::Range { start, end, inclusive } = self.thir.expr(iter).kind {
+            return self
+                .lower_for_over_range(dest, pattern, start, end, inclusive, body, block, span);
+        }
+
         // **AMENDMENT 11's desugaring, taken for the one subject that cannot
         // express it any other way.**
         //
@@ -2844,6 +2875,116 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             .iter()
             .find(|(name, _, _)| prelude.is(types, ty, name))
             .map(|(_, bits, signed)| (*bits, *signed))
+    }
+
+
+    /// `for i in a..b:` as the counting loop AMENDMENT 14 describes.
+    ///
+    /// **Both ends are evaluated once, before the loop.** `for i in 0..xs.
+    /// length():` must not call `length()` on every turn, and more than
+    /// performance rests on it: an end that is re-evaluated is a different
+    /// loop from the one the author wrote whenever the expression can change.
+    ///
+    /// **The comparison is signed and follows the spelling.** `a..b` stops
+    /// before `b` and `a..=b` includes it, which is the only thing
+    /// `inclusive` decides. Signed because the ends are the author's own
+    /// values and an `Int` is `I64`: `for i in -3..0:` is an ordinary loop,
+    /// where `bounds_check`'s unsigned comparison one construct over is about
+    /// an index that must not be negative at all.
+    ///
+    /// **A range that is already empty runs zero times**, because the test is
+    /// at the head. `for i in 5..5:` and `for i in 5..0:` both fall straight
+    /// to the exit.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_for_over_range(
+        &mut self,
+        dest: Place,
+        pattern: PatId,
+        start: ExprId,
+        end: ExprId,
+        inclusive: bool,
+        body: thir::BlockId,
+        mut block: BlockId,
+        span: Span,
+    ) -> BlockId {
+        let element_ty = self.thir.pat(pattern).ty;
+
+        // Both ends into temporaries of the loop variable's own type, so the
+        // comparison and the increment are all at one width.
+        let low = self.temp(element_ty, span, block);
+        block = self.expr_into(Place::local(low), start, block);
+        let high = self.temp(element_ty, span, block);
+        block = self.expr_into(Place::local(high), end, block);
+
+        let cursor = self.temp(element_ty, span, block);
+        self.assign(
+            block,
+            Place::local(cursor),
+            Rvalue::Use(Operand::Copy(Place::local(low))),
+            span,
+        );
+
+        let head = self.new_block();
+        let body_block = self.new_block();
+        let exit = self.new_block();
+        self.terminate(block, TerminatorKind::Goto { target: head }, span);
+
+        let more = self.temp(self.bool_ty, span, head);
+        self.assign(
+            head,
+            Place::local(more),
+            Rvalue::Binary {
+                op: if inclusive { BinaryOp::Le } else { BinaryOp::Lt },
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Copy(Place::local(high)),
+            },
+            span,
+        );
+        self.terminate(
+            head,
+            TerminatorKind::If {
+                cond: Operand::Copy(Place::local(more)),
+                then_block: body_block,
+                else_block: exit,
+            },
+            span,
+        );
+
+        self.loops.push(LoopScope { head, exit, depth: self.scopes.len() });
+        self.push_scope();
+        // The binding is a fresh local holding the cursor's *value*, not the
+        // cursor: §4.1's `Item is T`, and a body that shadows or rebinds it
+        // must not move the loop's own counter.
+        let bound_to = self.temp(element_ty, span, body_block);
+        self.assign(
+            body_block,
+            Place::local(bound_to),
+            Rvalue::Use(Operand::Copy(Place::local(cursor))),
+            span,
+        );
+        let mut after = self.bind_pattern(&Place::local(bound_to), pattern, body_block);
+        let discard = self.temp(Ty::UNIT, span, after);
+        after = self.lower_block(Place::local(discard), body, after);
+        after = self.pop_scope(after, span);
+        let stepped = self.temp(element_ty, span, after);
+        let one = Self::bits(1);
+        self.assign(
+            after,
+            Place::local(stepped),
+            Rvalue::Binary { op: BinaryOp::Add, lhs: Operand::Copy(Place::local(cursor)), rhs: one },
+            span,
+        );
+        self.assign(
+            after,
+            Place::local(cursor),
+            Rvalue::Use(Operand::Copy(Place::local(stepped))),
+            span,
+        );
+        self.terminate(after, TerminatorKind::Goto { target: head }, span);
+        self.loops.pop();
+
+        self.assign(exit, dest, Rvalue::Use(Operand::Const(Constant::Unit)), span);
+        exit
     }
 
     /// The loop subject as an array place, when it is one.

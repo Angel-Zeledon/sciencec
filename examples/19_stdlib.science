@@ -151,7 +151,7 @@ def strings() -> Int:
             letters be letters + 1
     letters
 
-# --- Array: new, length, is_empty, push, pop, get, get_mut ------------------
+# --- Array: new, length, is_empty, push, pop, get, get_mutably --------------
 
 def arrays() -> Int:
     # An associated def on a generic type takes parentheses around the
@@ -177,7 +177,7 @@ def arrays() -> Int:
     else:
         print("empty")
 
-    let slot be items.get_mut(0)
+    let slot be items.get_mutably(0)
     if slot?:
         slot be 10
     else:

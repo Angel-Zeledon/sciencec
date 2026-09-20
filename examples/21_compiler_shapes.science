@@ -79,7 +79,7 @@ DefTable has:
     # the borrow to the table and forbid the next `alloc`, which is exactly
     # the pattern that forces `'a` into Rust signatures.
     def alloc(mutable self, kind: DefKind, name: String, parent: DefId?) -> DefId:
-        let id be DefId(index: self.defs.len())
+        let id be DefId(index: self.defs.length())
         self.defs.push(Def(id: id, kind: kind, name: name, parent: parent))
         id
 
@@ -182,7 +182,7 @@ Parser has:
         self.position be self.position + 1
 
     def at_end(self) -> Bool:
-        self.position >= self.tokens.len()
+        self.position >= self.tokens.length()
 
 # ---------------------------------------------------------------------------
 # 4. Two borrows, one structure
@@ -253,7 +253,7 @@ Diagnostics has:
         self.items.push(Diagnostic(code: code, message: message))
 
     def is_empty(self) -> Bool:
-        self.items.len() is 0
+        self.items.length() is 0
 
 # The walk: a shared borrow of the table, an exclusive borrow of the sink, and
 # they are separate parameters so nothing is aliased.
