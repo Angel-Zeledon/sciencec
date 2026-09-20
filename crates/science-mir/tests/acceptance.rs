@@ -227,7 +227,7 @@ fn node_new_stores_two_borrows_into_one_record() {
     assert_eq!(
         node_new.params().count(),
         2,
-        "both borrowed fields must arrive as separate parameters, or Decision 3 \
+        "both &fields must arrive as separate parameters, or Decision 3 \
          has nothing to infer a relation between"
     );
 }

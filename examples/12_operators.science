@@ -33,7 +33,7 @@ type Point:
     y: Int
 
 type Registry:
-    points: Array of Point
+    points: Array[Point]
 
 def origin() -> Point:
     Point(x: 0, y: 0)
@@ -42,13 +42,13 @@ def origin() -> Point:
 # postfix, so it applies to everything to its left on that rung:
 # `registry.points.get(0)?` asks about the result of the call, not about
 # `registry`.
-def has_first(registry: borrowed Registry) -> Bool:
+def has_first(registry: &Registry) -> Bool:
     registry.points.get(0)?
 
 # Because it binds tightest, covering *less* than the whole chain takes
 # parentheses — and the presence test answers a question rather than
 # unwrapping, so reading through it is `if`, not an operator.
-def first_x(registry: borrowed Registry) -> Int?:
+def first_x(registry: &Registry) -> Int?:
     let first be registry.points.get(0)
     if first?:
         return first.x
@@ -56,7 +56,7 @@ def first_x(registry: borrowed Registry) -> Int?:
 
 # `?` inside a larger expression: it produces a `Bool`, so it composes with
 # `and`, `or` and `not` like any other boolean.
-def is_ready(registry: borrowed Registry) -> Bool:
+def is_ready(registry: &Registry) -> Bool:
     registry.points.get(0)? and not registry.points.is_empty()
 
 # `@` is matrix multiply and sits with `* / %`. The library of §8 is `Box`,
@@ -64,15 +64,15 @@ def is_ready(registry: borrowed Registry) -> Bool:
 # reaches a user type through an operator interface just as `+` does (§5.4).
 # Tensors arrive in F1; the operator and its precedence are F0.
 type Row:
-    cells: Array of Int
+    cells: Array[Int]
 
 Row implements Add:
     def add(self, other: Row) -> Row:
-        Row(cells: (Array of Int).new())
+        Row(cells: Array[Int].new())
 
 Row implements MatMul:
     def matmul(self, other: Row) -> Row:
-        Row(cells: (Array of Int).new())
+        Row(cells: Array[Int].new())
 
 def main():
     let mutable a be 10
@@ -104,8 +104,8 @@ def main():
     let mixed be 1 + 10 % 4 * 2
 
     # --- Matrix multiply ----------------------------------------------------
-    let left be Row(cells: (Array of Int).new())
-    let right be Row(cells: (Array of Int).new())
+    let left be Row(cells: Array[Int].new())
+    let right be Row(cells: Array[Int].new())
     # `@` sits with `*`, so it binds tighter than `+`: (left @ right) + left.
     let matmul_then_add be left @ right + left
 
@@ -168,11 +168,11 @@ def main():
     # a generic instantiation before calling one of its associated functions,
     # which takes parentheses so that the `.` cannot attach to the last type
     # argument instead (§4.3).
-    let registry be Registry(points: (Array of Point).new())
+    let registry be Registry(points: Array[Point].new())
     let point be origin()
     let field be point.x
-    let generic_then_called be (Array of Point).new()
-    let generic_then_called_then_field be (Map of (String, Int)).new().length()
+    let generic_then_called be Array[Point].new()
+    let generic_then_called_then_field be Map[String, Int].new().length()
     let called_then_field be origin().y
     let negated_field be -point.x
     let field_arithmetic be point.x * 2 + point.y
@@ -201,15 +201,15 @@ def main():
 
     # --- `borrowed`, at the unary level with `-` and `not` ------------------
     #
-    # A parameter declared borrowed is borrowed at the call site with nothing
+    # A parameter declared &is &at the call site with nothing
     # written for it (§6.3), so the operator is only wanted where a borrow is
     # made outside a call. Being unary it binds looser than field access, so
-    # `borrowed point.x` borrows the field and not the record.
-    let shared be borrowed point
-    let shared_field be borrowed point.x
+    # `&point.x` borrows the field and not the record.
+    let shared be &point
+    let shared_field be &point.x
     let mutable owner be origin()
-    let exclusive be mutable borrowed owner
-    let exclusive_field be mutable borrowed owner.y
+    let exclusive be &mut owner
+    let exclusive_field be &mut owner.y
 
     print(bit_precedence)
     print(logical_precedence)

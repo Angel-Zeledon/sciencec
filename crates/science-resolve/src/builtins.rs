@@ -1,6 +1,6 @@
 //! The prelude: the names §5.1 and §8 say exist before any file is read.
 //!
-//! Without this, `def f(a: borrowed String)` reports an unresolved name, and every
+//! Without this, `def f(a: &String)` reports an unresolved name, and every
 //! later phase would have to special-case a handful of strings — exactly the
 //! string lookup the HIR exists to abolish. So the primitives, the library
 //! types, their variants, the compiler-known traits and the free functions all
@@ -277,7 +277,7 @@ const FFI_INTERFACES: &[&str] = &["CLayout"];
 
 /// `(choice type name, [(variant name, payload arity)])`.
 ///
-/// Empty since revision 2 §3. `Option of T` became `T?` and `Result of (T, E)`
+/// Empty since revision 2 §3. `Option[T]` became `T?` and `Result[T, E]`
 /// became the pair `-> (T, E?)`, which took `Some`, `None`, `Ok` and `Err`
 /// with them. The table stays because the prelude will have a choice type
 /// again and the machinery below is the part worth keeping; an empty table is
@@ -306,15 +306,15 @@ const CHOICES: &[(&str, &[(&str, usize)])] = &[];
 enum Ty {
     /// A prelude type with no arguments: `Int`, `Bool`, `String`.
     Name(&'static str),
-    /// A prelude type applied to arguments: `Array of T`.
+    /// A prelude type applied to arguments: `Array[T]`.
     App(&'static str, &'static [Ty]),
     /// A generic parameter of the enclosing block, by name.
     Var(&'static str),
     /// `Self.Item` (§5.4).
     Assoc(&'static str),
-    /// `borrowed T`.
+    /// `&T`.
     Ref(&'static Ty),
-    /// `mutable borrowed T`. Written out rather than a flag on [`Ty::Ref`]
+    /// `&mut T`. Written out rather than a flag on [`Ty::Ref`]
     /// because the one declaration that needs it — `IndexMutably.index_mutably`
     /// — is the only place in this file where the two differ, and a `bool` at
     /// every `Ref` would be a parameter every other line has to read past.
@@ -346,14 +346,14 @@ struct Method {
     ret: Option<Ty>,
 }
 
-/// `Array of T has:`, or `String implements Clone:`.
+/// `Array[T] has:`, or `String implements Clone:`.
 #[derive(Debug, Clone, Copy)]
 struct Block {
     ty: &'static str,
-    /// The block's own generic parameters — the `T` of `Array of T has:`.
+    /// The block's own generic parameters — the `T` of `Array[T] has:`.
     generics: &'static [&'static str],
     /// `Some` for `implements`, `None` for the inherent `has:`, carrying the
-    /// interface's *arguments*: `Array of T implements Index of Int:` is
+    /// interface's *arguments*: `Array[T] implements Index[Int]:` is
     /// `Some(("Index", &[INT]))`. The list is empty for an interface that takes
     /// no parameter, which is every one of them but two.
     interface: Option<(&'static str, &'static [Ty])>,
@@ -366,7 +366,7 @@ struct Block {
 #[derive(Debug, Clone, Copy)]
 struct InterfaceDecl {
     name: &'static str,
-    /// The interface's own parameters — the `Idx` of `interface Index of Idx:`.
+    /// The interface's own parameters — the `Idx` of `interface Index[Idx]:`.
     /// Empty for every interface that is a bare name.
     generics: &'static [&'static str],
     /// `type Item`, declared and unanswered.
@@ -437,13 +437,13 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
     // Science, verbatim:
     //
     // ```text
-    // interface Index of Idx:
+    // interface Index[Idx]:
     //     type Output
-    //     def index(self, at: Idx) -> borrowed Self.Output
+    //     def index(self, at: Idx) -> &Self.Output
     //
-    // interface IndexMutably of Idx:
+    // interface IndexMutably[Idx]:
     //     type Output
-    //     def index_mutably(mutable self, at: Idx) -> mutable borrowed Self.Output
+    //     def index_mutably(mutable self, at: Idx) -> &mut Self.Output
     // ```
     //
     // So no name and no type here is invented. What *was* missing is the
@@ -451,7 +451,7 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
     // note's own amendment names as the blocker — `Iterate.Item` was the only
     // associated type in the language and `Iterate` takes no parameter. The
     // shape turned out to be two independent pieces the declarer already had
-    // one of each: `From of ParseError` is a parameterised interface the
+    // one of each: `From[ParseError]` is a parameterised interface the
     // corpus writes, `Iterate.Item` is an associated type an implementation
     // answers, and nothing in `science-types` cared that no declaration put the
     // two in one interface. [`InterfaceDecl::generics`] and [`Block::interface`]
@@ -517,11 +517,11 @@ const NUMERIC: &[&str] =
 /// corpus wart and §6.3 makes `String: Add` concatenation; both are read out of
 /// the note rather than decided here.
 ///
-/// **What is not here is every generic type.** `Array of T implements Clone`
+/// **What is not here is every generic type.** `Array[T] implements Clone`
 /// holds only where `T: Clone`, and a conditional implementation is not
 /// something this index can express — `methods`' §4 says in as many words that
 /// a blanket implementation *"is not looked through"*. Declaring it
-/// unconditionally would admit `Array of Doc: Clone` for a `Doc` that is not
+/// unconditionally would admit `Array[Doc]: Clone` for a `Doc` that is not
 /// clonable; declaring it not at all leaves the bound unanswerable, which is
 /// what `Methods::answers_for` now says out loud rather than guessing.
 const IMPLEMENTS: &[(&str, &[&str])] = &[
@@ -571,11 +571,11 @@ const BLOCKS: &[Block] = &[
             // headed *"Five signatures"* and `new` is not one of them; what the
             // notes have is *use* — §6.11 writes `let mutable values be
             // Array.new()` and §3.7 writes `Set.new()` and `Deque.new()` — and
-            // `examples/` writes `(Array of X).new()` eleven times. So the
+            // `examples/` writes `(Array[X]).new()` eleven times. So the
             // name, the arity and the absence of an argument are attested and
             // only the declaration was missing.
             //
-            // **The decision is `-> Array of T` and nothing else**: an
+            // **The decision is `-> Array[T]` and nothing else**: an
             // associated function whose return names the block's own parameter.
             // It is the only spelling available, because the alternatives are
             // not signatures — they are rules about where `T` comes from, and
@@ -588,7 +588,7 @@ const BLOCKS: &[Block] = &[
             // mutable values be Array.new()` has no instantiation, no
             // arguments, and no expected type, so nothing fixes `T`; the note
             // is reading `T` out of a later `push(value)` and out of the
-            // function's `-> (Array of F64, TextError?)`, which is inference
+            // function's `-> (Array[F64], TextError?)`, which is inference
             // across statements that Decision 1 does not have and does not
             // intend to. The same is true of §3.7's `Set.new()`. The corpus
             // already writes the form that does compile. This is a real
@@ -609,8 +609,8 @@ const BLOCKS: &[Block] = &[
                 params: &[("value", Ty::Var("T"))],
                 ret: None,
             },
-            // §3.6 verbatim, parentheses and all: `borrowed T?` would read as
-            // `borrowed (T?)`.
+            // §3.6 verbatim, parentheses and all: `&T?` would read as
+            // `&(T?)`.
             Method {
                 name: "get",
                 recv: Some(SelfKind::Shared),
@@ -624,9 +624,9 @@ const BLOCKS: &[Block] = &[
             // block out in Science and gives *both* halves, name and types:
             //
             // ```text
-            // Array of T has:
-            //     def get(self, at: Int) -> (borrowed T)?
-            //     def get_mutably(mutable self, at: Int) -> (mutable borrowed T)?
+            // Array[T] has:
+            //     def get(self, at: Int) -> (&T)?
+            //     def get_mutably(mutable self, at: Int) -> (&mut T)?
             // ```
             //
             // So this is transcription under the rule [`INTERFACE_DECLS`]
@@ -638,8 +638,8 @@ const BLOCKS: &[Block] = &[
             // already took `stdlib-core.md`'s side for the read-only twin.
             //
             // **It is the mutable half of an operation whose other three
-            // spellings are already declared.** `Array of T implements
-            // IndexMutably of Int` is in [`BLOCKS`] below, so `a[i] be v`
+            // spellings are already declared.** `Array[T] implements
+            // IndexMutably[Int]` is in [`BLOCKS`] below, so `a[i] be v`
             // checks; `get` is here, so the checked read checks. Without this
             // there is no checked *mutable* access at all — the author who
             // wants "give me a handle to element 0 if it is there" has only the
@@ -711,7 +711,7 @@ const BLOCKS: &[Block] = &[
         methods: &[
             // `Array.new`'s decision, one arity up, with the same citation
             // (none) and the same cost. `examples/09` and `examples/12` write
-            // `(Map of (String, String)).new()`, which is the form that
+            // `(Map[String, String]).new()`, which is the form that
             // compiles; a bare `Map.new()` is `SC0536` naming both `K` and `V`.
             Method {
                 name: "new",
@@ -732,13 +732,13 @@ const BLOCKS: &[Block] = &[
             },
             // **Decided here, not read out of a note.** §3.6 gives `Array.get`
             // and not `Map.get`; `examples/09` writes *"`Map.get` hands back
-            // `(borrowed V)?` for the same reason"* and `science-regions`'
+            // `(&V)?` for the same reason"* and `science-regions`'
             // `generate` §7 says *"the real `Map.get` borrows only the map"*.
             // Two decisions are being taken:
             //
             // 1. **The value comes back borrowed, not owned.** `-> V?` would
             //    force a copy of every value read out of a map, which for a
-            //    `Map of (String, Array of F64)` is the whole array. The cost
+            //    `Map[String, Array[F64]]` is the whole array. The cost
             //    is that a caller who wants an owned value writes `.clone()`,
             //    and that `Map` cannot later be given a `get` that returns by
             //    value under the same name.
@@ -746,7 +746,7 @@ const BLOCKS: &[Block] = &[
             //    into the call, so `settings.get(key)` inside a loop would
             //    consume `key` on the first iteration. The cost is that a
             //    caller holding an owned key relies on §6.3's auto-borrow, and
-            //    that a `Map of (Int, _)` borrows a number to look it up.
+            //    that a `Map[Int, _]` borrows a number to look it up.
             Method {
                 name: "get",
                 recv: Some(SelfKind::Shared),
@@ -780,7 +780,7 @@ const BLOCKS: &[Block] = &[
     // **`new` is decided here, no note declares it, and it is the one
     // declaration in this file that the corpus now disagrees with.**
     //
-    // `def new(value: T) -> Box of T` is the only signature `Box.new` can have:
+    // `def new(value: T) -> Box[T]` is the only signature `Box.new` can have:
     // it takes the value, it moves it to the heap, and what comes back is a
     // `Box` of the value's type. Nothing else is expressible and nothing else
     // would be true.
@@ -788,7 +788,7 @@ const BLOCKS: &[Block] = &[
     // **What disagrees is not the signature — it is a coercion two sentences of
     // `science-types`' `assign` do not agree about.** Six corpus sites write
     // `Box.new(Doc(..))` where a `Box of any Summarize` is declared. With this
-    // signature the call is `Box of Doc`, and `Box of Doc` reaching `Box of any
+    // signature the call is `Box[Doc]`, and `Box[Doc]` reaching `Box of any
     // Summarize` is an *unsizing under a type constructor*, which `assign`'s §4
     // lists first among *"three things it deliberately does not reach"* — while
     // §5 of the same file says an owned `any Summarize` *"is constructed where
@@ -830,8 +830,8 @@ const BLOCKS: &[Block] = &[
     //   `-> String`; §6.9 makes it `(mutable self, bytes: Int)` with no return.
     // - `slice`, `lines` and `split` return `Range`, `Lines` and `Split` —
     //   Level 1 types §9 lists and the prelude does not have.
-    // - `from_bytes` and `bytes` are **expressible today**: `borrowed Array of
-    //   U8`, `(String, TextError?)` and `borrowed Array of U8` name nothing the
+    // - `from_bytes` and `bytes` are **expressible today**: `&Array of
+    //   U8`, `(String, TextError?)` and `&Array[U8]` name nothing the
     //   prelude lacks. They stay out for a different reason, which is that no
     //   program in `examples/` calls either, so landing them would be landing a
     //   signature the acceptance corpus cannot measure. `from_bytes` is now
@@ -923,21 +923,21 @@ const BLOCKS: &[Block] = &[
             },
         ],
     },
-    // --- `Array of T implements Iterate`, `collections-and-chains.md` §4 ---
+    // --- `Array[T] implements Iterate`, `collections-and-chains.md` §4 ---
     //
-    // **`Item` is `borrowed T`, and that is the note's decision rather than
+    // **`Item` is `&T`, and that is the note's decision rather than
     // this file's.** §4.2's AMENDMENT 11 makes `for x in xs:` desugar to
     // `xs.iterate()`, §4.1 gives the three sources — `iterate()`,
-    // `iterate_mutably()`, `iterate_consuming()` — with `Item = borrowed Doc`,
-    // `mutable borrowed Doc` and `Doc` respectively, and §4.3 says
-    // `iterate()` yields `borrowed Item` *"uniformly — no conditional
+    // `iterate_mutably()`, `iterate_consuming()` — with `Item = &Doc`,
+    // `&mut Doc` and `Doc` respectively, and §4.3 says
+    // `iterate()` yields `&Item` *"uniformly — no conditional
     // associated type, no specialisation"*. §5's `owned()` is then declared
-    // `where Self.Item is borrowed T, T: Clone`, which is a clause that means
+    // `where Self.Item is &T, T: Clone`, which is a clause that means
     // nothing unless `Item` is already a borrow.
     //
     // **The alternative is ruinous for this audience.** `Item is T` copies
     // every element of every `for` loop in the language; for an `Array of
-    // (Array of F64)` that is a heap allocation per row per iteration, which is
+    // (Array[F64])` that is a heap allocation per row per iteration, which is
     // the normal case rather than the pathological one. The word "consuming"
     // exists precisely so that the copying form has somewhere to be written.
     //
@@ -957,17 +957,17 @@ const BLOCKS: &[Block] = &[
     //
     // **`Map` is *not* here, and its absence is a finding.**
     // `collections-and-chains.md` §1.3 says what `Map.iterate()` yields and it
-    // is not a `V` and not a tuple: *"`type Entry of (K, V): key: K; value:
+    // is not a `V` and not a tuple: *"`type Entry[K, V]: key: K; value:
     // V`"*, with §1.3's whole argument being that *"pairs are records, never
     // tuples"* because `each.key` works with §4.6's implicit subject and
     // `each.0` does not. `Entry` is not in §8's closed library, this table
     // declares names and methods and cannot give a record its *fields*, and the
-    // two spellings that are expressible are both wrong: `Item is borrowed V`
-    // throws the key away, and `Item is (borrowed K, borrowed V)` is the tuple
+    // two spellings that are expressible are both wrong: `Item is &V`
+    // throws the key away, and `Item is (&K, &V)` is the tuple
     // §1.3 refuses. `examples/10_loops.science` already walks a map through an
     // `Array` of its keys and says in a comment that it does so because §8 does
     // not give `Map` an `Iterate`. So the honest declaration is none, and what
-    // it waits for is `Entry of (K, V)` as a Level 1 record.
+    // it waits for is `Entry[K, V]` as a Level 1 record.
     Block {
         ty: "Array",
         generics: &["T"],
@@ -975,10 +975,10 @@ const BLOCKS: &[Block] = &[
         assoc: &[("Item", Ty::Ref(&Ty::Var("T")))],
         methods: &[],
     },
-    // --- `Array of T implements Index of Int`, §1.1 ------------------------
+    // --- `Array[T] implements Index[Int]`, §1.1 ------------------------
     //
     // **`Idx` is `Int`, and it is read off `Array.get` rather than decided
-    // here.** §3.6 declares `def get(self, index: Int) -> (borrowed T)?` and
+    // here.** §3.6 declares `def get(self, index: Int) -> (&T)?` and
     // §1.3's canonical discharged index is `a[i]` inside
     // `for i in 0..a.length():`, whose bound is `length() -> Int`. So both the
     // sibling accessor and the loop the note writes hand an `Int`, and the two
@@ -993,19 +993,19 @@ const BLOCKS: &[Block] = &[
     // which is the worse half of the same wart. Named in the report as the
     // thing to reconcile.
     //
-    // **`Output is T` and not `borrowed T`**, which is where this differs from
+    // **`Output is T` and not `&T`**, which is where this differs from
     // `Iterate.Item` above. The borrow is in the *method's return* — `->
-    // borrowed Self.Output` — so `Output` is the element and the reference is
-    // the interface's, not the associated type's. Writing `borrowed T` here
-    // would make `a[i]` a `borrowed borrowed T`.
+    // &Self.Output` — so `Output` is the element and the reference is
+    // the interface's, not the associated type's. Writing `&T` here
+    // would make `a[i]` a `&&T`.
     //
     // **`Map` is deliberately absent, and it is the same finding
-    // `Map`'s missing `Iterate` is.** `Map of (K, V) implements Index of K`
+    // `Map`'s missing `Iterate` is.** `Map[K, V] implements Index[K]`
     // would be an indexing operation that panics on a key that is not there,
     // and §1.3's four discharge rules are all about an *extent* — none of them
     // can speak about a key. §1.1 never names `Map`, so declaring it would be
     // deciding what `m[k]` does on a miss in a file nobody reads. `Map.get`
-    // returns `(borrowed V)?` and says so.
+    // returns `(&V)?` and says so.
     Block {
         ty: "Array",
         generics: &["T"],
@@ -1054,12 +1054,12 @@ const BLOCKS: &[Block] = &[
             ret: Some(Ty::Opt(&CHAR)),
         }],
     },
-    // --- `Range of T implements Iterate`, AMENDMENT 14 --------------------
+    // --- `Range[T] implements Iterate`, AMENDMENT 14 --------------------
     //
-    // **`Item is T` and not `borrowed T`, which is where this differs from
+    // **`Item is T` and not `&T`, which is where this differs from
     // `Array` twenty lines up.** A range holds two ends and *computes* each
     // element; there is no element in memory for a borrow to point at, and
-    // `Iterate.next` returning `(borrowed Self.Item)?` over a value the call
+    // `Iterate.next` returning `(&Self.Item)?` over a value the call
     // just produced is a borrow of a temporary. `Array`'s borrow is there to
     // stop `for row in matrix:` copying a row per iteration; the cost this one
     // declines is a copy of an integer, which is the thing a register holds.
@@ -1072,10 +1072,10 @@ const BLOCKS: &[Block] = &[
     // unsuffixed integer literal to `I64`, so `let mutable sum be 0` beside
     // `for i in 0..5:` would be an `I64` meeting an `Int` at the first `+`.
     // Generic is the form that leaves Decision 2 alone, and it is the form
-    // `data-io.md` §2 already writes: `def slice(self, range: Range of U64)`.
+    // `data-io.md` §2 already writes: `def slice(self, range: Range[U64])`.
     //
     // **The parameter is unbounded**, which is deliberate and is the one thing
-    // this declaration does not say. `Range of String` is unusable rather than
+    // this declaration does not say. `Range[String]` is unusable rather than
     // unwritable — `..` over two strings types, and the loop over it yields a
     // `String` nothing can produce — because the bound that would refuse it is
     // `T: Step`, a `stdlib-core.md` interface no note has written. The refusal
@@ -1171,7 +1171,7 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     // `push` and `pop` and no `pop_front`"*) as a name only, `sort` is
     // `collections-and-chains.md` §3.2 and §3.3, `reserve` is §5.3. The three
     // `iterate*` are §5.4 and they *do* have signatures — they return
-    // `ArrayIterate of T` and its two siblings, which are types the prelude
+    // `ArrayIterate[T]` and its two siblings, which are types the prelude
     // does not have, so they are `slice`'s case one type along.
     //
     // **`len` is deliberately absent, and it is now a measured corpus
@@ -1201,7 +1201,7 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     // not belong in a table of names the notes give.
     //
     // `clone` is the `String` row's last two lines again: [`IMPLEMENTS`]' own
-    // comment says `Array of T implements Clone` *"holds only where `T:
+    // comment says `Array[T] implements Clone` *"holds only where `T:
     // Clone`"* and that a conditional implementation is not something that
     // table can express — so the implementation is asserted to exist, is not
     // declared, and its method name is *"not written down"* by the same
@@ -1238,7 +1238,7 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
 /// the question itself is unanswered.
 ///
 /// - **`Box`.** Nothing in `stdlib-core.md` or `collections-and-chains.md` says
-///   whether a method call on a `Box of T` reaches `T`'s methods. Both notes
+///   whether a method call on a `Box[T]` reaches `T`'s methods. Both notes
 ///   mention `Box` only as a bare name in a list of Level 1 types; neither
 ///   gives it a `has:` block, a `get`, or a dereference rule. The corpus writes
 ///   `boxed.summarize()` on a `Box of any Summarize` in three files — including
@@ -1276,11 +1276,11 @@ pub fn is_unwritten(ty: &str, method: &str) -> bool {
 
 /// The free functions' signatures.
 ///
-/// **`read_file` takes a `borrowed String`, and `stdlib-core.md` §5.2 says it
-/// should take a `borrowed Path`.** The deviation is deliberate and it is
+/// **`read_file` takes a `&String`, and `stdlib-core.md` §5.2 says it
+/// should take a `&Path`.** The deviation is deliberate and it is
 /// costed: `Path` is not in the prelude, §5.2's own mitigation is `SC0257` —
 /// *"a `String` was passed where a `Path` is expected"*, with an applicable fix
-/// — and that diagnostic is unwritten. Declaring `borrowed Path` today would
+/// — and that diagnostic is unwritten. Declaring `&Path` today would
 /// turn every `read_file("a.txt")` in the corpus into a bare type mismatch with
 /// no help text, which is the worse half of the note's own argument. The
 /// report names it as the deviation that should be closed by whoever lands
@@ -1292,7 +1292,7 @@ pub fn is_unwritten(ty: &str, method: &str) -> bool {
 /// reading.
 ///
 /// `strings-formatting-and-docs.md` §4.1 gives
-/// `def print(value: borrowed any Display)`.
+/// `def print(value: &any Display)`.
 ///
 /// # The first measurement, and what happened to it
 ///
@@ -1313,10 +1313,10 @@ pub fn is_unwritten(ty: &str, method: &str) -> bool {
 ///
 /// **Causes 1 and 2 are closed.** They were the checker's, not the
 /// signature's, and they are fixed where they live: `science-types`' `check`
-/// §5b defaults a literal that meets a `borrowed any I` slot and hands it to
-/// the ordinary coercion, and §1b stops a borrowed expectation at a branch so
+/// §5b defaults a literal that meets a `&any I` slot and hands it to
+/// the ordinary coercion, and §1b stops a &expectation at a branch so
 /// that §6.3's auto-borrow is taken at the argument. Both were wrong about
-/// programs that never mention `print` — `def show(v: borrowed any Display)` in
+/// programs that never mention `print` — `def show(v: &any Display)` in
 /// a user's own file met each of them — so closing them was owed whatever
 /// happens here.
 ///
@@ -1331,13 +1331,13 @@ pub fn is_unwritten(ty: &str, method: &str) -> bool {
 /// **Declaring the parameter breaks the back half of the compiler, and the
 /// back half already says so in as many words.** With the signature in place,
 /// `print(x)` stops being *move `x` into the call* and becomes a `Borrow`
-/// under a `Coerce { Unsize }` — a `borrowed any Display`.
+/// under a `Coerce { Unsize }` — a `&any Display`.
 /// `science-codegen-llvm`'s `lower_print` matches exactly two operand shapes,
 /// a string constant and a moved `String` local, and its own refusal text for
 /// everything else is:
 ///
 /// > *"a `print` of a value that is not a `String`: `print` takes
-/// > `borrowed any Display`, this backend emits no vtables, and there is no
+/// > `&any Display`, this backend emits no vtables, and there is no
 /// > `display` method on `Display` to call through even if it did"*
 ///
 /// So every `print` in every program becomes `Unlowered`. The same function's
@@ -1361,7 +1361,7 @@ pub fn is_unwritten(ty: &str, method: &str) -> bool {
 /// crate's `print_takes_one_value`. That the argument must implement `Display`
 /// is a fact about the *value*, and nothing below the type checker can carry
 /// it: `Display` has no method (see §"The declared surface" above for why),
-/// that backend emits no vtables, and a `borrowed any Display` is a type no
+/// that backend emits no vtables, and a `&any Display` is a type no
 /// phase after this one can render.
 ///
 /// **What it costs.** `print(doc)` on a type with no `Display` is still
@@ -1373,7 +1373,7 @@ pub fn is_unwritten(ty: &str, method: &str) -> bool {
 /// **What closes it**, in order: `science-rt` gains a renderer behind
 /// `Display` — §3.1's `Formatter`, or an entry point per prelude type on the
 /// model of `science_string_push_*`; `science-codegen-llvm` gains a vtable and
-/// `lower_print` gains an arm for a `borrowed any Display`; then this list
+/// `lower_print` gains an arm for a `&any Display`; then this list
 /// gains four lines, [`Ty`] gains an `Any(&'static str)` variant lowering to
 /// [`hir::TypeKind::Any`], and `examples/04_enums.science` owes one
 /// implementation block.
@@ -1416,7 +1416,7 @@ struct Declarer<'a> {
 /// and its associated types.
 ///
 /// `Self` is not among them, and that is a decision: every declaration below
-/// writes its own type out — `Array.new() -> Array of T`, not `-> Self`. The
+/// writes its own type out — `Array.new() -> Array[T]`, not `-> Self`. The
 /// two are the same type after `check`'s `block_substitution` runs, and the
 /// written-out form is the one a reader of this file can check against the note
 /// it came from without holding a substitution in their head.
@@ -1897,14 +1897,14 @@ mod tests {
         //
         // `indexing-and-array-literals.md` §1.1, Decision 2:
         //
-        //     interface Index of Idx:
+        //     interface Index[Idx]:
         //         type Output
-        //         def index(self, at: Idx) -> borrowed Self.Output
+        //         def index(self, at: Idx) -> &Self.Output
         //
-        //     interface IndexMutably of Idx:
+        //     interface IndexMutably[Idx]:
         //         type Output
         //         def index_mutably(mutable self, at: Idx)
-        //             -> mutable borrowed Self.Output
+        //             -> &mut Self.Output
         let read = INTERFACE_DECLS.iter().find(|d| d.name == "Index").expect("`Index`");
         assert_eq!(read.generics, &["Idx"]);
         assert_eq!(read.assoc, &["Output"]);
@@ -1929,9 +1929,9 @@ mod tests {
 
     #[test]
     fn an_array_is_indexed_by_an_int_and_yields_its_element() {
-        // `Output is T` and not `borrowed T`: the borrow is in the interface's
+        // `Output is T` and not `&T`: the borrow is in the interface's
         // return, so writing it here too would make `a[i]` a
-        // `borrowed borrowed T`.
+        // `&&T`.
         let blocks: Vec<&Block> = BLOCKS
             .iter()
             .filter(|block| {
@@ -1953,8 +1953,8 @@ mod tests {
     fn a_map_is_not_indexable() {
         // §1.1 never names `Map`, and §1.3's four discharge rules are all about
         // an *extent* — none of them can speak about a key. `Map.get` returns
-        // `(borrowed V)?` and says so. Pinned, so that adding `Map implements
-        // Index of K:` is a decision somebody takes rather than a line somebody
+        // `(&V)?` and says so. Pinned, so that adding `Map implements
+        // Index[K]:` is a decision somebody takes rather than a line somebody
         // adds.
         assert!(!BLOCKS.iter().any(|block| {
             block.ty == "Map" && matches!(block.interface, Some(("Index" | "IndexMutably", _)))

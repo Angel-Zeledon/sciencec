@@ -35,7 +35,7 @@ Doc has:
     # And a method that takes *anything*, which is not the same thing. The
     # parameter is a type parameter, so the argument type-checks and the
     # obligation stays where it was.
-    def show of T(self, value: T) -> Bool:
+    def show[T](self, value: T) -> Bool:
         true
 ";
 
@@ -459,7 +459,7 @@ const CONCRETE: &str = "\
 choice ParseError:
     Bad(I64)
 
-def parse(s: borrowed String) -> (I64, ParseError?):
+def parse(s: &String) -> (I64, ParseError?):
     (0, null)
 ";
 
@@ -534,7 +534,7 @@ choice ParseError:
 type Doc:
     title: String
 
-def parse(s: borrowed String) -> (Doc?, ParseError?):
+def parse(s: &String) -> (Doc?, ParseError?):
     (null, null)
 
 def ignores() -> Bool:

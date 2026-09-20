@@ -88,7 +88,7 @@ fn a_body_with_no_loop_has_no_back_edge() {
 
 #[test]
 fn an_index_is_a_projection_and_not_a_loop() {
-    let lowered = lower("def f(xs: Array of Int, i: Int) -> Int:\n    xs[i]\n");
+    let lowered = lower("def f(xs: Array[Int], i: Int) -> Int:\n    xs[i]\n");
     assert!(
         loop_headers(lowered.body("f")).is_empty(),
         "indexing lowered to a loop; §3.4's hole is closed"

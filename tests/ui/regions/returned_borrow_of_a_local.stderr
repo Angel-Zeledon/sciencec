@@ -1,11 +1,11 @@
-error[SC0333]: `value` is borrowed for longer than `value` exists
-  --> tests/ui/regions/returned_borrow_of_a_local.science:14:5
+error[SC0100]: `borrowed T` is now written `&T`
+  --> tests/ui/regions/returned_borrow_of_a_local.science:13:17
    |
-14 |     let value be 5
-   |     ^^^^^^^^^^^^^^ ...and the borrow is still needed here, after the value is gone (continues to line 15)
-   |         ----- `value` is declared here
+13 | def escape() -> borrowed Int:
+   |                 ^^^^^^^^ `borrowed T` is now written `&T`
+
+error[SC0100]: `borrowed x` is now written `&x`
+  --> tests/ui/regions/returned_borrow_of_a_local.science:15:5
+   |
 15 |     borrowed value
-   |     -------------- `value` is borrowed here
-   |
-   = note: a borrow may not outlive what it points at (§6.1 rule 5); the value's storage ends at the close of the scope it was declared in
-   = note: there is no lifetime syntax to widen: the fix is to return an owned value or an index, which is what `examples/21_compiler_shapes.science` §1 does
+   |     ^^^^^^^^ `borrowed x` is now written `&x`

@@ -31,7 +31,7 @@ use compiler.frontend.diagnostics (
 
 # §8 gives `String` no `clone`, so an owned copy is built from `String.new()`
 # and `push_str`.
-def copy_of(text: borrowed String) -> String:
+def copy_of(text: &String) -> String:
     let mutable out be String.new()
     out.push_str(text)
     out
@@ -59,11 +59,11 @@ Document has:
     public def is_empty(self) -> Bool:
         self.body.is_empty()
 
-public def parse(source: borrowed String) -> Array of Token:
+public def parse(source: &String) -> Array[Token]:
     lex(source)
 
 # Private by default: no `public`.
-def helper(document: borrowed Document) -> Int:
+def helper(document: &Document) -> Int:
     document.body.length()
 
 def clamp(width: U16) -> U16:
@@ -76,7 +76,7 @@ Document implements Report:
 public def main():
     let source be "def main(): print(\"hi\")"
 
-    # A parameter declared `borrowed` is borrowed at the call site with
+    # A parameter declared `borrowed` is &at the call site with
     # nothing written for it (§6.3).
     let tokens be parse(source)
     print(tokens.length())

@@ -1,8 +1,11 @@
-error[SC0191]: a `tool` is not generic
+error[SC0100]: `of T` is now written `[T]`
   --> tests/ui/parse/generic_tool.science:15:14
    |
 15 | tool largest of T(values: Array of T) -> Int:
-   |              ^^^^ a type parameter has no single schema
+   |              ^^ `of T` is now written `[T]`
+
+error[SC0100]: `Array of T` is now written `Array[T]`
+  --> tests/ui/parse/generic_tool.science:15:33
    |
-   = note: one tool is one entry in the list its caller is given, with one parameter schema; write one tool per concrete type
-   = help: make the declaration concrete: delete `of T`
+15 | tool largest of T(values: Array of T) -> Int:
+   |                                 ^^ `Array of T` is now written `Array[T]`

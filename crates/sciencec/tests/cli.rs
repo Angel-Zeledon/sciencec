@@ -515,19 +515,19 @@ fn check_reports_the_borrow_check() {
             "type Table:\n",
             "    n: I64\n",
             "\n",
-            "def leak() -> borrowed Table:\n",
+            "def leak() -> &Table:\n",
             "    let t be Table(n: 1)\n",
-            "    borrowed t\n",
+            "    &t\n",
         )
         .as_bytes(),
     );
     let run = sciencec(&["check", &file]);
     run.failed()
         .stderr_contains("error[SC0333]")
-        .stderr_contains("is borrowed for longer than")
+        .stderr_contains("is &for longer than")
         // Decision 9's three spans reach the user, which is the half of the
         // phase a wiring could drop without the code going missing.
-        .stderr_contains("`t` is borrowed here")
+        .stderr_contains("`t` is &here")
         .stderr_contains("there is no lifetime syntax to widen");
     assert_eq!(run.summary(), Some("1 error"), "stderr:\n{}", run.stderr);
 }
@@ -559,7 +559,7 @@ fn a_type_error_stops_the_borrow_check_before_it_invents_anything() {
             "type Table:\n",
             "    n: I64\n",
             "\n",
-            "def lookup(t: borrowed Table, k: borrowed String) -> borrowed Table:\n",
+            "def lookup(t: &Table, k: &String) -> &Table:\n",
             "    t.missing(k)\n",
             "\n",
             "def main():\n",
@@ -783,7 +783,7 @@ fn a_module_a_use_names_is_compiled_with_it() {
         &[
             (
                 "text/parser.science",
-                "public def lex(source: borrowed String) -> Int:\n    source.length()\n",
+                "public def lex(source: &String) -> Int:\n    source.length()\n",
             ),
             (
                 "main.science",
@@ -807,7 +807,7 @@ fn a_module_imported_whole_is_reached_through_its_path() {
         &[
             (
                 "text/parser.science",
-                "public def lex(source: borrowed String) -> Int:\n    source.length()\n",
+                "public def lex(source: &String) -> Int:\n    source.length()\n",
             ),
             (
                 "main.science",
@@ -941,7 +941,7 @@ fn the_schema_comes_out_of_the_signature() {
     let file = scratch(
         "tools.science",
         b"## Counts events above a threshold.\n\
-          tool count_above(samples: Array of F64, floor: U16) -> U64:\n\
+          tool count_above(samples: Array[F64], floor: U16) -> U64:\n\
           \x20   0\n",
     );
     let run = sciencec(&["tools", "--json", &file]);
@@ -1048,7 +1048,7 @@ fn a_function_that_is_not_a_tool_is_not_in_the_list() {
     let file = scratch(
         "plain.science",
         b"## Counts events above a threshold.\n\
-          def count_above(samples: Array of F64, floor: U16) -> U64:\n\
+          def count_above(samples: Array[F64], floor: U16) -> U64:\n\
           \x20   0\n\
           ## Label a run.\n\
           tool label(name: String) -> Int:\n\x20   0\n",
@@ -1080,7 +1080,7 @@ fn the_old_walk_over_every_function_is_unchanged() {
     let file = scratch(
         "census.science",
         b"## Counts events above a threshold.\n\
-          def count_above(samples: Array of F64, floor: U16) -> U64:\n\
+          def count_above(samples: Array[F64], floor: U16) -> U64:\n\
           \x20   0\n",
     );
     let run = sciencec(&["tools", "--json", "--all-functions", &file]);

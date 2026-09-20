@@ -5448,7 +5448,7 @@ fn array_element_mismatch(
     .with_label(Label::primary(span, format!("this is {found}")))
     .with_label(Label::secondary(fixed_at, format!("this is {expected}")))
     .with_note(
-        "an array literal is an `Array of T` where `T` is the unification of its elements \
+        "an array literal is an `Array[T]` where `T` is the unification of its elements \
          (§3.1), and there is no implicit numeric conversion (§5.1): write the suffix, the \
          `as`, or the literal you meant",
     )
@@ -5472,7 +5472,7 @@ fn range_ends_disagree(span: Span, expected: &str, found: &str) -> Diagnostic {
     Diagnostic::error(codes::MISMATCHED_TYPES, format!("expected {expected}, found {found}"))
         .with_label(Label::primary(span, format!("this is {found}")))
         .with_note(
-            "a range is a `Range of T` where `T` is the unification of its two ends (§4.5), \
+            "a range is a `Range[T]` where `T` is the unification of its two ends (§4.5), \
              and there is no implicit numeric conversion (§5.1): write the suffix, the `as`, \
              or the end you meant",
         )
@@ -5490,7 +5490,7 @@ fn empty_array_no_type(span: Span) -> Diagnostic {
         .with_label(Label::primary(span, "nothing here says what `[]` holds"))
         .with_note(
             "an empty literal takes its element type from the expected type at its position \
-             (§3.3), and there is none here: annotate the binding — `let xs: Array of F64 be []`",
+             (§3.3), and there is none here: annotate the binding — `let xs: Array[F64] be []`",
         )
 }
 
@@ -5507,7 +5507,7 @@ fn range_index_needs_slice(span: Span, ty: &str) -> Diagnostic {
     )
     .with_label(Label::primary(span, format!("slicing a `{ty}` is not implemented")))
     .with_note(
-        "`a[1..5]` is specified as a `Slice of T` — a borrow and a length, which does not copy \
+        "`a[1..5]` is specified as a `Slice[T]` — a borrow and a length, which does not copy \
          (§2.3) — and this compiler declares no such type. Index one element at a time, or \
          iterate: `xs.iterate().skip(1).take(2)`",
     )

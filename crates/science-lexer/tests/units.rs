@@ -512,7 +512,7 @@ fn keywords_are_resolved() {
     assert_eq!(bare("return break continue"), vec![Return, Break, Continue]);
     assert_eq!(bare("type choice interface"), vec![Type, Choice, Interface]);
     assert_eq!(bare("implements has"), vec![Implements, Has]);
-    assert_eq!(bare("of borrowed any"), vec![Of, Borrowed, Any]);
+    assert_eq!(bare("of &any"), vec![Of, Borrowed, Any]);
     assert_eq!(bare("use public const"), vec![Use, Public, Const]);
     assert_eq!(bare("giving null"), vec![Giving, Null]);
     assert_eq!(bare("true false"), vec![True, False]);
@@ -580,7 +580,7 @@ fn the_multi_word_keywords_are_sequences_and_not_single_tokens() {
     // revision 2 §2.1 and §5 cut each down to one word.
     assert_eq!(bare("for x in xs:"), vec![For, id("x"), In, id("xs"), Colon]);
     assert_eq!(bare("let mutable x be 0"), vec![Let, Mutable, id("x"), Be, int(0, Dec, None)]);
-    assert_eq!(bare("mutable borrowed Doc"), vec![Mutable, Borrowed, id("Doc")]);
+    assert_eq!(bare("&mut Doc"), vec![Mutable, Borrowed, id("Doc")]);
     assert_eq!(bare("Doc has:"), vec![id("Doc"), Has, Colon]);
 }
 
@@ -1009,7 +1009,7 @@ fn a_generic_signature_lexes_without_turbofish_ambiguity() {
     // §4.4's `largest`. Generic arguments are spelled `of T` and borrows
     // `borrowed T`, so nothing here needs brackets at all.
     assert_eq!(
-        bare("def largest of T(items: borrowed Array of T) -> borrowed T:"),
+        bare("def largest[T](items: &Array[T]) -> &T:"),
         vec![
             Function,
             id("largest"),
@@ -1034,8 +1034,8 @@ fn a_generic_signature_lexes_without_turbofish_ambiguity() {
 #[test]
 fn several_generic_arguments_are_parenthesised() {
     assert_eq!(
-        bare("Map of (String, Int)"),
-        vec![id("Map"), Of, LParen, id("String"), Comma, id("Int"), RParen]
+        bare("Map[String, Int]"),
+        vec![id("Map"), LBracket, id("String"), Comma, id("Int"), RParen]
     );
 }
 
@@ -1113,14 +1113,14 @@ fn a_declaration_of_every_shape_produces_no_diagnostics() {
     let src = "\
 public type Doc:
     title: String
-    body: borrowed Doc
+    body: &Doc
 
-choice Result of (T, E):
+choice Result[T, E]:
     Ok(T)
     Err(E)
 
 const WIDTH be 768
-type Embedding is Array of F32
+type Embedding is Array[F32]
 
 Doc implements Summarize:
     def summarize(self) -> String:
@@ -1130,7 +1130,7 @@ Doc has:
     def is_empty(self) -> Bool:
         self.body.len() is 0
 
-def report(docs: borrowed Array of any Summarize) -> String:
+def report(docs: &Array[any Summarize]) -> String:
     for doc in docs:
         if doc.score >= 5 and doc.rank < 10:
             return try doc.summarize()
@@ -1306,7 +1306,7 @@ fn a_line_beginning_with_where_continues_the_signature_above() {
     // §4.4 writes a long signature with its bounds on the next line, indented.
     // Under the ordinary rule that indentation would open a block the body
     // could then never match, so `where` continues the line instead.
-    let src = "def best_of of T(x: borrowed T) -> String\n        where T: Ord:\n    x.preview()\n";
+    let src = "def best_of[T](x: &T) -> String\n        where T: Ord:\n    x.preview()\n";
     assert!(codes(src).is_empty(), "{:?}", messages(src));
     assert_eq!(
         kinds(src),

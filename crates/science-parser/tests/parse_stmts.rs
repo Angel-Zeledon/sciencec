@@ -13,7 +13,7 @@ fn let_bindings() {
     let greeting be "hola"
     let mutable count be 0
     let annotated: Int be 42
-    let mutable typed: mutable borrowed String be mutable borrowed owner
+    let mutable typed: &mut String be &mut owner
 "#
     ));
 }
@@ -70,7 +70,7 @@ fn assignment_takes_a_whole_expression() {
 #[test]
 fn an_assignment_is_allowed_in_an_inline_body() {
     insta::assert_snapshot!(parse_body(
-        r#"def largest(items: borrowed Array of Int) -> Int:
+        r#"def largest(items: &Array[Int]) -> Int:
     let mutable best be 0
     for item in items:
         if item > best: best be item
@@ -93,7 +93,7 @@ fn a_let_in_an_inline_body_is_rejected() {
 #[test]
 fn jumps() {
     insta::assert_snapshot!(parse_body(
-        r#"def f(items: borrowed Array of Int) -> Option of Int:
+        r#"def f(items: &Array[Int]) -> Option[Int]:
     for item in items:
         if item % 2 is not 0:
             continue
@@ -217,7 +217,7 @@ fn inline_and_block_bodies_agree() {
 #[test]
 fn return_and_break_carry_an_array_literal() {
     insta::assert_snapshot!(parse_body(
-        "def pick(ready: Bool) -> Array of Int:
+        "def pick(ready: Bool) -> Array[Int]:
     if ready: return [0]
     loop:
         break [1, 2]

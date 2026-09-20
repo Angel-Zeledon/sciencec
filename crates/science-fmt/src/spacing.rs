@@ -48,8 +48,9 @@ pub fn ends_expression(kind: &K) -> bool {
 
 /// Whether `prev` and `next` are written with no space between them.
 ///
-/// `prev_unary` says whether `prev` is a unary `-`; the caller computes it once
-/// per token, because it depends on the token *before* `prev`.
+/// `prev_unary` says whether `prev` is a unary `-` or a borrow-prefix `&`; the
+/// caller computes it once per token, because it depends on the token *before*
+/// `prev`.
 pub fn glued(prev: &K, next: &K, prev_unary: bool) -> bool {
     // An `f"…"` is glued end to end, and this comes before everything else.
     //
@@ -120,6 +121,18 @@ pub fn glued(prev: &K, next: &K, prev_unary: bool) -> bool {
         // `-1`, but `- -1` rather than `--1`: two minus signs run together are
         // still two tokens, and writing them that way is a dare.
         K::Minus if prev_unary => !matches!(next, K::Minus),
+        // `&T`, `&mut T`, `&doc.title` — the borrow sigil of §4.3 is always
+        // glued to what it borrows, `mut` included, and the only question is
+        // whether *this* `&` is that sigil or the infix `BitAnd` of `a & b`.
+        // `prev_unary` is the same "did the token before this one end an
+        // expression" test `-` uses to tell its own two readings apart
+        // (`parser.rs`'s `parse_type_atom`/`parse_unary` decide it the same
+        // way, by grammar position rather than by the character), so a plain
+        // `&` gets no exception here the way `Minus` needs one for `- -1`:
+        // two ampersands in a row are only ever an infix one followed by a
+        // borrow (`a & &b`), never two borrows, so gluing them into `&&`
+        // cannot happen by accident.
+        K::Amp if prev_unary => true,
         _ => false,
     }
 }
@@ -204,7 +217,7 @@ impl Spacing {
                     depth = 0;
                     continue;
                 }
-                K::Minus => unary[i] = !previous.is_some_and(ends_expression),
+                K::Minus | K::Amp => unary[i] = !previous.is_some_and(ends_expression),
                 K::Use if at_line_start => in_use = true,
                 K::LParen | K::LBracket | K::LBrace => {
                     // `use text.parser (Token, lex)` is a selection, not a

@@ -83,8 +83,8 @@ fn a_boxed_unsizing_is_one_coerce_rvalue_carrying_the_object_type() {
     assert_eq!(
         found,
         vec![
-            (Coercion::UnsizeInBox, "move", "Box of any Summarize".to_string()),
-            (Coercion::UnsizeInBox, "move", "Box of any Summarize".to_string()),
+            (Coercion::UnsizeInBox, "move", "Box[any Summarize]".to_string()),
+            (Coercion::UnsizeInBox, "move", "Box[any Summarize]".to_string()),
         ],
     );
 }
@@ -152,10 +152,10 @@ fn the_two_unsizings_differ_only_in_the_type_they_produce() {
             // borrowed any Reset`, and §4 carries the mutability through
             // unchanged rather than weakening it.
             Coercion::Unsize => assert!(
-                ty == "borrowed any Summarize" || ty == "mutable borrowed any Reset",
+                ty == "&any Summarize" || ty == "&mut any Reset",
                 "an unexpected borrow unsizing: {ty}",
             ),
-            Coercion::UnsizeInBox => assert_eq!(ty, "Box of any Summarize"),
+            Coercion::UnsizeInBox => assert_eq!(ty, "Box[any Summarize]"),
             other => panic!("unexpected coercion in `main`: {other:?}"),
         }
     }

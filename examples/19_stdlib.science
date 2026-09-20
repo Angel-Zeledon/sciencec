@@ -1,6 +1,6 @@
 # 19 - The F0 standard library
-# Spec: §8. The whole of it: `Box of T`, `String` and `borrowed String`,
-# `Array of T`, `Map of (K, V)`, `Error`, the free functions `print`, `write`,
+# Spec: §8. The whole of it: `Box[T]`, `String` and `&String`,
+# `Array[T]`, `Map[K, V]`, `Error`, the free functions `print`, `write`,
 # `panic`, `read_file` and `write_file`, and the interfaces of §5.4 — here
 # `Copy`, `Clone`, `Drop`, `Eq`, `Ord`, `Iterate` and `From`.
 #
@@ -11,8 +11,8 @@
 # corpus's standing reading of them, recorded in `examples/README.md`.
 # Between them they cover the whole surface the rest of the corpus uses.
 #
-# Two entries this file used to carry are gone. §5.5 replaced `Option of T`
-# with `T?` and `Result of (T, E)` with a second return value of type
+# Two entries this file used to carry are gone. §5.5 replaced `Option[T]`
+# with `T?` and `Result[T, E]` with a second return value of type
 # `Error?`, and their method sets went with the types: `is_some`, `is_ok`,
 # `unwrap` and `unwrap_or` name nothing now. What stands in their place is
 # smaller than what it replaced — the postfix `?`, the literal `null`, and
@@ -30,7 +30,7 @@ choice LoadError:
 
 # §8 gives `String` no `clone`. An owned copy is built out of the two methods
 # it does have, which is also the only way F0 has of concatenating.
-def copy_of(text: borrowed String) -> String:
+def copy_of(text: &String) -> String:
     let mutable out be String.new()
     out.push_str(text)
     out
@@ -40,20 +40,20 @@ def copy_of(text: borrowed String) -> String:
 # A search that may find nothing returns a nullable. There is no wrapper to
 # construct: the found record *is* the value, and `null` is the other one
 # (§5.5).
-def find(records: borrowed Array of Record, key: borrowed String) -> (borrowed Record)?:
+def find(records: &Array[Record], key: &String) -> (&Record)?:
     for record in records:
         if record.key is key:
             return record
     null
 
-def hits_of(records: borrowed Array of Record) -> Int?:
+def hits_of(records: &Array[Record]) -> Int?:
     let first be records.get(0)
     if first?:
         return first.hits
     null
 
-def absence_surface(records: borrowed Array of Record) -> Int:
-    # A parameter declared `borrowed` is borrowed at the call site without
+def absence_surface(records: &Array[Record]) -> Int:
+    # A parameter declared `borrowed` is &at the call site without
     # the caller writing anything (§6.3).
     #
     # `found.is_some()` was a method call; `found?` is the operator that
@@ -93,13 +93,13 @@ def absence_surface(records: borrowed Array of Record) -> Int:
 # `read_file` has a value and a failure, so it returns the pair. `write_file`
 # has only a failure, so it returns the error alone: the value slot would be
 # `()` and a name bound to it could do nothing.
-def load(path: borrowed String) -> (String, IoError?):
+def load(path: &String) -> (String, IoError?):
     read_file(path)
 
-def store(path: borrowed String, text: borrowed String) -> IoError?:
+def store(path: &String, text: &String) -> IoError?:
     write_file(path, text)
 
-def failure_surface(path: borrowed String) -> String:
+def failure_surface(path: &String) -> String:
     # `outcome.is_ok()` was a method on a wrapper. The pair has no wrapper:
     # the call produces the two names it was always producing, and `?` asks
     # about the second of them.
@@ -115,7 +115,7 @@ def failure_surface(path: borrowed String) -> String:
 # is an ordinary call to the `From` implementation at the bottom of this
 # file, and it is three lines because the check, the conversion and the
 # return are three separate things (§5.5).
-def load_record(path: borrowed String) -> (Record, LoadError?):
+def load_record(path: &String) -> (Record, LoadError?):
     let text, err be load(path)
     if err?:
         return (Record.new(String.new()), LoadError.from(err))
@@ -125,15 +125,15 @@ def load_record(path: borrowed String) -> (Record, LoadError?):
 
 # `Box` has exactly one associated def and no methods. It is never built
 # with the named-argument form, which §4.4 reserves for record types.
-def boxed(record: Record) -> Box of Record:
+def boxed(record: Record) -> Box[Record]:
     Box.new(record)
 
 # --- String: new, length, is_empty, push_str, truncate, starts_with, chars --
 
 def strings() -> Int:
-    # `String` owns its bytes; `borrowed String` is a view of them.
+    # `String` owns its bytes; `&String` is a view of them.
     let owned: String be "owned, UTF-8"
-    let view: borrowed String be borrowed owned
+    let view: &String be &owned
     print(owned.length())
     print(view.is_empty())
     print(owned.starts_with("owned"))
@@ -155,9 +155,9 @@ def strings() -> Int:
 
 def arrays() -> Int:
     # An associated def on a generic type takes parentheses around the
-    # type, because `Array of Int.new()` does not say whether `.new()`
+    # type, because `Array[Int].new()` does not say whether `.new()`
     # belongs to `Int` or to the whole type (§4.3, SC0116).
-    let mutable items: Array of Int be (Array of Int).new()
+    let mutable items: Array[Int] be Array[Int].new()
     print(items.is_empty())
     items.push(1)
     items.push(2)
@@ -169,7 +169,7 @@ def arrays() -> Int:
 
     print(items.length())
 
-    # Reading goes through `get`, which returns `(borrowed T)?`: §8 gives no
+    # Reading goes through `get`, which returns `(&T)?`: §8 gives no
     # indexing operator that can panic, because §5.5 puts absence in the type.
     let first be items.get(0)
     if first?:
@@ -192,7 +192,7 @@ def arrays() -> Int:
 # --- Map: new, length, insert, get, remove, contains ------------------------
 
 def maps() -> Int:
-    let mutable counts: Map of (String, Int) be (Map of (String, Int)).new()
+    let mutable counts: Map[String, Int] be Map[String, Int].new()
 
     # `insert` returns the value it displaced, if there was one, so its
     # result is a `V?` and not a `V`.
@@ -235,11 +235,11 @@ Record implements Clone:
         Record(key: copy_of(self.key), hits: self.hits)
 
 Record implements Eq:
-    def eq(self, other: borrowed Record) -> Bool:
+    def eq(self, other: &Record) -> Bool:
         self.key is other.key
 
 Record implements Ord:
-    def less(self, other: borrowed Record) -> Bool:
+    def less(self, other: &Record) -> Bool:
         self.hits < other.hits
 
 Record implements Drop:
@@ -274,7 +274,7 @@ Countdown implements Iterate:
 # that the *call* is written by the caller, at the return, which is
 # `load_record` above. The orphan rule (§5.4) is satisfied by `LoadError`,
 # declared in this file.
-LoadError implements From of IoError:
+LoadError implements From[IoError]:
     def from(inner: IoError) -> Self:
         Missing("the file could not be read")
 
@@ -288,7 +288,7 @@ LoadError implements From of IoError:
 # enumerate, so a new variant added to the choice breaks this def loudly.
 # The interface form would compose across a library boundary and would box;
 # there is no boundary here, and the exhaustiveness is worth more (§5.5).
-def required(path: borrowed String) -> String:
+def required(path: &String) -> String:
     let record, err be load_record(path)
     if err?:
         match err:
@@ -303,7 +303,7 @@ def main():
     print(maps())
     print(strings())
 
-    let records: Array of Record be (Array of Record).new()
+    let records: Array[Record] be Array[Record].new()
     print(absence_surface(records))
     print(failure_surface("science.toml"))
     print(required("science.toml"))

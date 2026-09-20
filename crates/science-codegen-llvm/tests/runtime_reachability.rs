@@ -204,7 +204,7 @@ const CORPUS: &[(&str, &str)] = &[
     (
         "array_new_and_string_literal",
         "def main():\n\
-         \x20   let ys be (Array of Int).new()\n\
+         \x20   let ys be Array[Int].new()\n\
          \x20   let s be \"hola\"\n\
          \x20   print(f\"{ys.length()} {s}\")\n",
     ),
@@ -216,7 +216,7 @@ const CORPUS: &[(&str, &str)] = &[
     (
         "map_string_keyed",
         "def main():\n\
-         \x20   let m be (Map of (String, Int)).new()\n\
+         \x20   let m be Map[String, Int].new()\n\
          \x20   let probe be \"uno\"\n\
          \x20   let found be m.get(probe)\n\
          \x20   print(f\"{m.length()} {m.contains(probe)} {found?}\")\n",
@@ -224,7 +224,7 @@ const CORPUS: &[(&str, &str)] = &[
     (
         "map_int_keyed",
         "def main():\n\
-         \x20   let m be (Map of (Int, Int)).new()\n\
+         \x20   let m be Map[Int, Int].new()\n\
          \x20   print(f\"{m.length()} {m.contains(7)}\")\n",
     ),
     // `maps.rs`'s `a_map_insert_overwrite_read_and_remove_round_trip`,
@@ -236,7 +236,7 @@ const CORPUS: &[(&str, &str)] = &[
     (
         "map_insert_remove_round_trip",
         "def main():\n\
-         \x20   let mutable m be (Map of (String, Int)).new()\n\
+         \x20   let mutable m be Map[String, Int].new()\n\
          \x20   let first be m.insert(\"uno\", 1)\n\
          \x20   let second be m.insert(\"dos\", 2)\n\
          \x20   print(f\"n={m.length()} first={first?} second={second?}\")\n\
@@ -338,7 +338,7 @@ const ALLOWLIST: &[(&str, &str)] = &[
     (
         "science_array_as_ptr",
         "no method of this name is declared on `Array` anywhere; confirmed empirically \
-         (`SC0532`, \"`Array of I64` has no method `as_ptr`\"). Runtime-internal, defined in \
+         (`SC0532`, \"`Array[I64]` has no method `as_ptr`\"). Runtime-internal, defined in \
          `science-rt/src/array.rs` and named by no codegen crate",
     ),
     (

@@ -7,8 +7,8 @@
 #
 # F0 has no variants with named fields, so every payload here is positional.
 #
-# The library supplies no generic choice of its own. `Option of T` and
-# `Result of (T, E)` used to stand here for the one- and two-parameter forms;
+# The library supplies no generic choice of its own. `Option[T]` and
+# `Result[T, E]` used to stand here for the one- and two-parameter forms;
 # §5.5 replaced them with `T?` and a second return value, which took `Some`,
 # `None`, `Ok` and `Err` with them. Those four names are now free, and the
 # generic choices below are ordinary user declarations like any other.
@@ -35,29 +35,29 @@ choice Shape:
 
 # Generic choices, exactly as §4.4 declares them. One type argument needs no
 # parentheses; two do (§4.3).
-choice Bound of T:
+choice Bound[T]:
     Exact(T)
     Unbounded
 
-choice Tagged of (T, Label):
+choice Tagged[T, Label]:
     Untagged(T)
     Labelled(T, Label)
 
 # A generic choice over two parameters with mixed payloads.
-choice Either of (L, R):
+choice Either[L, R]:
     Left(L)
     Right(R)
     Neither
 
 # A choice whose payload is itself a generic type. A nested `of` takes
 # parentheses (§4.3).
-choice Tree of T:
+choice Tree[T]:
     Leaf(T)
-    Node(Box of (Tree of T), Box of (Tree of T))
+    Node(Box[Tree[T]], Box[Tree[T]])
 
 # A choice carrying a borrow: the region is inferred like any other.
 choice Slot:
-    Filled(borrowed String)
+    Filled(&String)
     Empty
 
 # Error choices are ordinary choices.
@@ -78,26 +78,26 @@ def main():
     let triangle be Triangle(3.0, 4.0, 5.0)
 
     let exact be Exact(7)
-    let unbounded: Bound of Int be Unbounded
-    let plain: Tagged of (Int, String) be Untagged(1)
-    let labelled: Tagged of (Int, String) be Labelled(2, "width")
+    let unbounded: Bound[Int] be Unbounded
+    let plain: Tagged[Int, String] be Untagged(1)
+    let labelled: Tagged[Int, String] be Labelled(2, "width")
 
-    let left: Either of (Int, String) be Left(1)
-    let right: Either of (Int, String) be Right("one")
+    let left: Either[Int, String] be Left(1)
+    let right: Either[Int, String] be Right("one")
 
     # `Box` is built through its associated function (§4.4): named-argument
     # construction is for record types only.
     let tree be Node(Box.new(Leaf(1)), Box.new(Leaf(2)))
 
     let text be "borrowed"
-    let slot be Filled(borrowed text)
+    let slot be Filled(&text)
 
     # A variant may be qualified by its type, and the two spellings mean the
     # same thing (§4.7). The qualified form is what disambiguates when two
     # choices in scope share a variant name.
     let qualified be Format.Markdown
     let empty_slot be Slot.Empty
-    let qualified_unbounded: Bound of Int be Bound.Unbounded
+    let qualified_unbounded: Bound[Int] be Bound.Unbounded
     let qualified_exact be Bound.Exact(1)
 
     # Absence is *not* a choice. A value that may be missing has a nullable

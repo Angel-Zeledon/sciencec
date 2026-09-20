@@ -164,7 +164,7 @@ fn the_kitchen_sink_no_longer_moves_a_value_that_is_still_borrowed() {
             let named = decl.def().map(|def| checked.krate.defs.get(def).name.clone());
             assert_eq!(
                 named, None,
-                "`describe` moves the binding `{}` again, so the auto-borrow of `borrowed T` \
+                "`describe` moves the binding `{}` again, so the auto-borrow of `&T` \
                  has regressed and `SC0334` is about to come back",
                 named.clone().unwrap_or_default()
             );

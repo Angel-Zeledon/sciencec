@@ -323,13 +323,13 @@ Note implements Summarize:
 fn a_generic_interface_is_compared_after_substitution() {
     support::check(
         "\
-interface Convert of Source:
+interface Convert[Source]:
     def convert(self, from: Source) -> I64
 
 type Doc:
     title: String
 
-Doc implements Convert of I64:
+Doc implements Convert[I64]:
     def convert(self, from: I64) -> I64:
         from
 ",
@@ -345,13 +345,13 @@ Doc implements Convert of I64:
 fn a_generic_interface_at_the_wrong_argument_is_refused() {
     let checked = support::check(
         "\
-interface Convert of Source:
+interface Convert[Source]:
     def convert(self, from: Source) -> I64
 
 type Doc:
     title: String
 
-Doc implements Convert of I64:
+Doc implements Convert[I64]:
     def convert(self, from: Bool) -> I64:
         1
 ",
@@ -365,7 +365,7 @@ Doc implements Convert of I64:
 fn one_interface_at_several_arguments_is_clean() {
     support::check(
         "\
-interface From of Source:
+interface From[Source]:
     def from(value: Source) -> Self
 
 type ParseError:
@@ -377,11 +377,11 @@ type IoError2:
 type LoadError:
     detail: String
 
-LoadError implements From of ParseError:
+LoadError implements From[ParseError]:
     def from(value: ParseError) -> Self:
         LoadError(detail: value.detail)
 
-LoadError implements From of IoError2:
+LoadError implements From[IoError2]:
     def from(value: IoError2) -> Self:
         LoadError(detail: value.detail)
 ",
@@ -548,9 +548,9 @@ fn an_unanswered_associated_type_is_not_compared() {
 type Grid:
     cell: F64
 
-Grid implements Index of I64:
-    def index(self, at: I64) -> borrowed F64:
-        borrowed self.cell
+Grid implements Index[I64]:
+    def index(self, at: I64) -> &F64:
+        &self.cell
 ",
     )
     .assert_clean();
@@ -563,9 +563,9 @@ fn an_unanswered_associated_type_does_not_excuse_the_receiver() {
 type Grid:
     cell: F64
 
-Grid implements Index of I64:
-    def index(mutable self, at: I64) -> borrowed F64:
-        borrowed self.cell
+Grid implements Index[I64]:
+    def index(mutable self, at: I64) -> &F64:
+        &self.cell
 ",
     );
     assert_eq!(checked.codes(), vec![541]);

@@ -269,13 +269,13 @@ fn creating_an_exclusive_borrow_invalidates_the_narrowing() {
 type Doc:
     title: String
 
-def take(doc: mutable borrowed Doc) -> Bool:
+def take(doc: &mut Doc) -> Bool:
     true
 
 def use_after_borrow(start: Doc?) -> String?:
     let mutable a be start
     if a?:
-        let _taken be take(mutable borrowed a)
+        let _taken be take(&mut a)
         return a.title
     null
 ",
@@ -291,12 +291,12 @@ fn a_shared_borrow_leaves_the_narrowing_standing() {
 type Doc:
     title: String
 
-def look(doc: borrowed Doc) -> Bool:
+def look(doc: &Doc) -> Bool:
     true
 
 def use_after_borrow(a: Doc?) -> String?:
     if a?:
-        let _seen be look(borrowed a)
+        let _seen be look(&a)
         return a.title
     null
 ",

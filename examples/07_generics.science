@@ -11,11 +11,11 @@ type Doc:
     title: String
     body: String
 
-type Pair of (A, B):
+type Pair[A, B]:
     first: A
     second: B
 
-type Wrapper of T:
+type Wrapper[T]:
     inner: T
 
 interface Summarize:
@@ -29,23 +29,23 @@ Doc implements Summarize:
         self.body.truncate(200)
 
 # No bound at all: the body may only move or borrow the value.
-def identity of T(value: T) -> T:
+def identity[T](value: T) -> T:
     value
 
 # A single bound, written in the parameter list. Copied from §4.4, including
 # `items.get(0)`, which is the one `Array` accessor §3.6 gives.
 #
 # The return is nullable and that is not a stylistic choice: `get` is
-# `-> (borrowed T)?`, so an empty array has no first element and `largest` has
-# no answer to give. It used to be written `-> borrowed T`, which type-checked
+# `-> (&T)?`, so an empty array has no first element and `largest` has
+# no answer to give. It used to be written `-> &T`, which type-checked
 # only while `Array.get` had no declaration and everything it returned was an
 # error type that agreed with anything.
-def largest of T: Ord(items: borrowed Array of T) -> (borrowed T)?:
+def largest[T: Ord](items: &Array[T]) -> (&T)?:
     let mutable best be items.get(0)
     for item in items:
-        # `best` is `(borrowed T)?`, so the comparison is behind a presence
+        # `best` is `(&T)?`, so the comparison is behind a presence
         # test — §4.2's narrowing is what makes the second line compare two
-        # `borrowed T` rather than a `borrowed T` against a nullable.
+        # `&T` rather than a `&T` against a nullable.
         if best?:
             if item > best: best be item
         else:
@@ -53,12 +53,12 @@ def largest of T: Ord(items: borrowed Array of T) -> (borrowed T)?:
     best
 
 # Several bounds joined by `+`, still in the parameter list.
-def duplicate of T: Clone + Eq(value: borrowed T) -> Pair of (T, T):
+def duplicate[T: Clone + Eq](value: &T) -> Pair[T, T]:
     Pair(first: value.clone(), second: value.clone())
 
 # The same bounds moved into a `where` clause, which keeps a long signature
 # readable.
-def describe of T(x: borrowed T) -> String where T: Summarize + Clone:
+def describe[T](x: &T) -> String where T: Summarize + Clone:
     x.summarize()
 
 # A `where` clause with several bounded parameters. The signature no longer
@@ -72,8 +72,8 @@ def describe of T(x: borrowed T) -> String where T: Summarize + Clone:
 # `rank` below has no such comment and is formatted normally, which is what
 # makes the difference visible.
 # fmt: skip
-def merge of (A, B)(left: borrowed A,
-        right: borrowed B) -> String where A: Summarize, B: Summarize + Clone:
+def merge[A, B](left: &A,
+        right: &B) -> String where A: Summarize, B: Summarize + Clone:
     let mutable out be String.new()
     out.push_str(left.preview())
     out.push_str(" / ")
@@ -81,33 +81,33 @@ def merge of (A, B)(left: borrowed A,
     out
 
 # A bound in the parameter list and a `where` clause at once.
-def rank of T: Ord(items: borrowed Array of T, fallback: borrowed T) -> borrowed T
+def rank[T: Ord](items: &Array[T], fallback: &T) -> &T
         where T: Clone:
     if items.is_empty(): fallback else: largest(items)
 
 # Several type parameters, each used in a different position. Two or more
 # parameters take parentheses, exactly as two or more arguments do (§4.3).
-def swap of (A, B)(pair: Pair of (A, B)) -> Pair of (B, A):
+def swap[A, B](pair: Pair[A, B]) -> Pair[B, A]:
     Pair(first: pair.second, second: pair.first)
 
 # Nested generic arguments in the signature: the inner `of` is parenthesized
-# so that `Wrapper of T` cannot be read as two arguments to `Array`. `Array.get`
-# returns `(borrowed T)?` (§8): there is no indexing operator that can panic,
+# so that `Wrapper[T]` cannot be read as two arguments to `Array`. `Array.get`
+# returns `(&T)?` (§8): there is no indexing operator that can panic,
 # so the absence is in the type and `?` is what asks about it. Inside
 # `if found?:` the compiler knows `found` is not null, so the field access
 # needs no unwrapping (§5.5).
-def first_inner of T(items: borrowed Array of (Wrapper of T)) -> (borrowed T)?:
+def first_inner[T](items: &Array[Wrapper[T]]) -> (&T)?:
     let found be items.get(0)
     if found?:
-        return borrowed found.inner
+        return &found.inner
     null
 
 # An inherent block on a generic type, with an associated def that names
-# its instantiation at the call site: `(Wrapper of Int).holding(1)`.
+# its instantiation at the call site: `Wrapper[Int].holding(1)`.
 # It cannot itself be called `of`: §4.3 makes `of` the word that introduces
 # generic arguments, so it is a keyword and no longer an identifier.
-Wrapper of T has:
-    def holding(inner: T) -> Wrapper of T:
+Wrapper[T] has:
+    def holding(inner: T) -> Wrapper[T]:
         Wrapper(inner: inner)
 
 # A generic type used at several different instantiations: monomorphization
@@ -120,7 +120,7 @@ def main():
     let doc be Doc(title: "Monomorphization", body: "One copy per instantiation.")
     print(describe(doc))
 
-    # A parameter declared `borrowed` is borrowed at the call site without the
+    # A parameter declared `borrowed` is &at the call site without the
     # caller writing anything (§6.3).
     let pair be Pair(first: 1, second: "one")
     let flipped be swap(pair)
@@ -132,12 +132,12 @@ def main():
 
     # An associated def reached through an explicit instantiation. A
     # generic type needs parentheses before the `.`, because
-    # `Wrapper of Int.holding(7)` would not say whether `.holding` belongs to
+    # `Wrapper[Int].holding(7)` would not say whether `.holding` belongs to
     # `Int` or to the whole type (§4.3, SC0116).
-    let wrapped be (Wrapper of Int).holding(7)
+    let wrapped be Wrapper[Int].holding(7)
     print(wrapped.inner)
 
-    let wrappers: Array of (Wrapper of Int) be (Array of (Wrapper of Int)).new()
+    let wrappers: Array[Wrapper[Int]] be Array[Wrapper[Int]].new()
     let value be first_inner(wrappers)
     if value?:
         print(value)

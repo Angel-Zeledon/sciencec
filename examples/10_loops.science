@@ -13,21 +13,21 @@ type Doc:
 
 # --- 1. `for` over anything implementing `Iterate` --------------------------
 
-def total(items: borrowed Array of Int) -> Int:
+def total(items: &Array[Int]) -> Int:
     let mutable sum be 0
     for item in items:
         sum be sum + item
     sum
 
-def titles(docs: borrowed Array of Doc):
+def titles(docs: &Array[Doc]):
     for doc in docs:
         print(doc.title)
 
 # §8 does not say `Map` implements `Iterate`, and its method set is closed,
 # so a map is walked through an `Array` of its keys and `Map.get`.
-def dump(settings: borrowed Map of (String, String), keys: borrowed Array of String):
+def dump(settings: &Map[String, String], keys: &Array[String]):
     for key in keys:
-        # `Map.get` returns `(borrowed V)?`, so the loop body asks with `?`
+        # `Map.get` returns `(&V)?`, so the loop body asks with `?`
         # rather than matching a variant. Inside the then-branch `value` is
         # known not to be null (§5.5).
         let value be settings.get(key)
@@ -38,8 +38,8 @@ def dump(settings: borrowed Map of (String, String), keys: borrowed Array of Str
             print("absent")
 
 # `String.chars` is the one iterator §8 hands out by name: it implements
-# `Iterate of Char`.
-def count_spaces(text: borrowed String) -> Int:
+# `Iterate[Char]`.
+def count_spaces(text: &String) -> Int:
     let mutable spaces be 0
     for c in text.chars():
         if c is ' ':
@@ -49,14 +49,14 @@ def count_spaces(text: borrowed String) -> Int:
 # `for` with `continue` to skip, and `break` to stop early. A search that may
 # find nothing returns a nullable, and `null` is the answer when the loop
 # runs out (§5.5).
-def first_even(items: borrowed Array of Int) -> Int?:
+def first_even(items: &Array[Int]) -> Int?:
     for item in items:
         if item % 2 is not 0:
             continue
         return item
     null
 
-def count_until_zero(items: borrowed Array of Int) -> Int:
+def count_until_zero(items: &Array[Int]) -> Int:
     let mutable seen be 0
     for item in items:
         if item is 0:
@@ -85,13 +85,13 @@ def triangular(n: Int) -> Int:
 # A range need not start at zero, and either end may be any expression. The
 # ends are written with `..` and never with `:`, which already opens blocks
 # and separates match arms, fields, named arguments and bounds (§4.5).
-def slice_sum(items: borrowed Array of Int, first: Int, last: Int) -> Int:
+def slice_sum(items: &Array[Int], first: Int, last: Int) -> Int:
     let mutable sum be 0
     for index in first..last:
         sum be sum + value_at(items, index)
     sum
 
-def value_at(items: borrowed Array of Int, index: Int) -> Int:
+def value_at(items: &Array[Int], index: Int) -> Int:
     let cell be items.get(index)
     if cell?: cell else: 0
 
@@ -116,7 +116,7 @@ def countdown(start: Int):
         n be n - 1
 
 # The condition is what the loop is about, so it stays a condition.
-def drain(stack: mutable borrowed Array of Int):
+def drain(stack: &mut Array[Int]):
     loop:
         if stack.is_empty():
             break
@@ -125,7 +125,7 @@ def drain(stack: mutable borrowed Array of Int):
 # A compound condition using `and` / `or`. This one is a formula, so the
 # symbols carry it better than the words would (§4.6), and negating it whole
 # keeps the formula readable.
-def advance(index: Int, limit: Int, items: borrowed Array of Int) -> Int:
+def advance(index: Int, limit: Int, items: &Array[Int]) -> Int:
     let mutable i be index
     loop:
         if not (i < limit and i < items.length()):
@@ -137,15 +137,15 @@ def advance(index: Int, limit: Int, items: borrowed Array of Int) -> Int:
 
 type Reader:
     path: String
-    lines: Array of String
+    lines: Array[String]
     cursor: Int
 
 # An inherent block, so `next_line` needs no interface to arrive through (§4.4).
 Reader has:
     def new(path: String) -> Reader:
-        Reader(path: path, lines: (Array of String).new(), cursor: 0)
+        Reader(path: path, lines: Array[String].new(), cursor: 0)
 
-    def next_line(mutable self) -> (borrowed String)?:
+    def next_line(mutable self) -> (&String)?:
         let line be self.lines.get(self.cursor)
         self.cursor be self.cursor + 1
         line
@@ -154,7 +154,7 @@ Reader has:
 # two arms now: `?` asks whether the reader handed anything back, and the
 # narrowing that follows the check is what lets `line.is_empty()` be written
 # on the next line without unwrapping anything (§5.5).
-def read_until_blank(handle: mutable borrowed Reader) -> Int:
+def read_until_blank(handle: &mut Reader) -> Int:
     let mutable lines be 0
     loop:
         let line be handle.next_line()
@@ -168,7 +168,7 @@ def read_until_blank(handle: mutable borrowed Reader) -> Int:
 # `loop` whose body is a `match`. The absence of a value is not a variant, so
 # the `?` test ends the loop and the `match` is left to do what it is for:
 # distinguishing between values of a type that has cases.
-def consume(tokens: mutable borrowed Array of Int) -> Int:
+def consume(tokens: &mut Array[Int]) -> Int:
     let mutable kept be 0
     loop:
         let value be tokens.pop()
@@ -181,7 +181,7 @@ def consume(tokens: mutable borrowed Array of Int) -> Int:
 
 # --- 5. Nesting -------------------------------------------------------------
 
-def grid_sum(rows: borrowed Array of (Array of Int)) -> Int:
+def grid_sum(rows: &Array[Array[Int]]) -> Int:
     let mutable sum be 0
     for row in rows:
         for cell in row:
@@ -201,7 +201,7 @@ def checkerboard(side: Int) -> Int:
 
 # A `loop` inside a `loop` inside a `for`. The inner `break` ends the inner
 # loop only.
-def deeply_nested(rows: borrowed Array of (Array of Int)) -> Int:
+def deeply_nested(rows: &Array[Array[Int]]) -> Int:
     let mutable found be 0
     for row in rows:
         let mutable index be 0
@@ -216,7 +216,7 @@ def deeply_nested(rows: borrowed Array of (Array of Int)) -> Int:
             index be index + 1
     found
 
-def is_zero_at(row: borrowed Array of Int, index: Int) -> Bool:
+def is_zero_at(row: &Array[Int], index: Int) -> Bool:
     let cell be row.get(index)
     cell? and cell is 0
 
@@ -224,12 +224,12 @@ def main():
     # A collection is built through its associated function, never with the
     # named-argument form reserved for record types, and naming a generic
     # type before the `.` takes parentheses (§4.3).
-    let mutable numbers be (Array of Int).new()
+    let mutable numbers be Array[Int].new()
     numbers.push(4)
     numbers.push(0)
     numbers.push(7)
 
-    # A parameter declared `borrowed` or `mutable borrowed` is borrowed at
+    # A parameter declared `borrowed` or `mutable borrowed` is &at
     # the call site with nothing written for it (§6.3).
     print(total(numbers))
     print(count_until_zero(numbers))

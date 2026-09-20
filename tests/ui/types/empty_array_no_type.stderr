@@ -4,4 +4,4 @@ error[SC0282]: this empty array literal has no element type
 13 |     let nothing be []
    |                    ^^ nothing here says what `[]` holds
    |
-   = note: an empty literal takes its element type from the expected type at its position (§3.3), and there is none here: annotate the binding — `let xs: Array of F64 be []`
+   = note: an empty literal takes its element type from the expected type at its position (§3.3), and there is none here: annotate the binding — `let xs: Array[F64] be []`

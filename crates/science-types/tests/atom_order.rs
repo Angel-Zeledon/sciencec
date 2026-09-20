@@ -53,26 +53,26 @@ fn const_params(defs: &DefTable) -> Vec<(DefId, String)> {
 }
 
 const FIXTURE: &str = "\
-type Window of (T, const WIDTH: Int):
-    items: Array of T
+type Window[T, const WIDTH: Int]:
+    items: Array[T]
 
-type Grid of (T, const ROWS: Int, const COLS: Int):
-    cells: Array of T
+type Grid[T, const ROWS: Int, const COLS: Int]:
+    cells: Array[T]
 
-type Cube of (T, const DEPTH: Int):
-    slabs: Array of T
+type Cube[T, const DEPTH: Int]:
+    slabs: Array[T]
 ";
 
 /// The same declarations, with the first and the last `type` swapped.
 const REORDERED_FIXTURE: &str = "\
-type Cube of (T, const DEPTH: Int):
-    slabs: Array of T
+type Cube[T, const DEPTH: Int]:
+    slabs: Array[T]
 
-type Grid of (T, const ROWS: Int, const COLS: Int):
-    cells: Array of T
+type Grid[T, const ROWS: Int, const COLS: Int]:
+    cells: Array[T]
 
-type Window of (T, const WIDTH: Int):
-    items: Array of T
+type Window[T, const WIDTH: Int]:
+    items: Array[T]
 ";
 
 // --- the half that has to be true ----------------------------------------

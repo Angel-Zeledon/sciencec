@@ -1,17 +1,35 @@
+error[SC0100]: `borrowed T` is now written `&T`
+  --> tests/ui/parse/borrowed_tool_parameter.science:12:23
+   |
+12 | tool count_rows(rows: borrowed Array of Int, scratch: mutable borrowed Int) -> Int:
+   |                       ^^^^^^^^ `borrowed T` is now written `&T`
+
 error[SC0192]: a `tool` owns its arguments
   --> tests/ui/parse/borrowed_tool_parameter.science:12:23
    |
 12 | tool count_rows(rows: borrowed Array of Int, scratch: mutable borrowed Int) -> Int:
-   |                       ^^^^^^^^ there is nothing here to borrow from
+   |                       ^^^^^^^^^^^^^^^^^^^^^ there is nothing here to borrow from
    |
    = note: a tool's arguments are built from what the caller sent, so the tool is the only owner there is
-   = help: take the value: delete `borrowed`
+   = help: take the value: delete `borrowed Array of Int`
+
+error[SC0100]: `Array of T` is now written `Array[T]`
+  --> tests/ui/parse/borrowed_tool_parameter.science:12:38
+   |
+12 | tool count_rows(rows: borrowed Array of Int, scratch: mutable borrowed Int) -> Int:
+   |                                      ^^ `Array of T` is now written `Array[T]`
+
+error[SC0100]: `mutable borrowed T` is now written `&mut T`
+  --> tests/ui/parse/borrowed_tool_parameter.science:12:55
+   |
+12 | tool count_rows(rows: borrowed Array of Int, scratch: mutable borrowed Int) -> Int:
+   |                                                       ^^^^^^^ `mutable borrowed T` is now written `&mut T`
 
 error[SC0192]: a `tool` owns its arguments
   --> tests/ui/parse/borrowed_tool_parameter.science:12:55
    |
 12 | tool count_rows(rows: borrowed Array of Int, scratch: mutable borrowed Int) -> Int:
-   |                                                       ^^^^^^^^^^^^^^^^ there is nothing here to borrow from
+   |                                                       ^^^^^^^^^^^^^^^^^^^^ there is nothing here to borrow from
    |
    = note: a tool's arguments are built from what the caller sent, so the tool is the only owner there is
-   = help: take the value: delete `mutable borrowed`
+   = help: take the value: delete `mutable borrowed Int`

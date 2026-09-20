@@ -54,7 +54,7 @@ fn variant_patterns() {
 #[test]
 fn record_patterns() {
     insta::assert_snapshot!(parse_body(
-        r#"def f(p: borrowed Point) -> String:
+        r#"def f(p: &Point) -> String:
     match p:
         Point(x: 0, y: 0): "origin"
         Point(x: 0, y: y): "on the Y axis"
@@ -107,7 +107,7 @@ fn an_empty_argument_list_in_a_pattern_is_a_variant() {
 #[test]
 fn for_loop_patterns() {
     insta::assert_snapshot!(parse_body(
-        r#"def f(pairs: borrowed Array of Pair, n: Int):
+        r#"def f(pairs: &Array[Pair], n: Int):
     for (a, b) in pairs:
         print(a)
     for i in 0..n:
@@ -122,7 +122,7 @@ fn for_loop_patterns() {
 #[test]
 fn the_arm_separator_is_whatever_follows_the_pattern() {
     insta::assert_snapshot!(parse_body(
-        r#"def f(p: borrowed Point) -> Int:
+        r#"def f(p: &Point) -> Int:
     match p:
         Point(x: x, y: y): x
 "#

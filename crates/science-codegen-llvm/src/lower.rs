@@ -3579,7 +3579,7 @@ impl<'a> Lowerer<'a> {
             // other — would verify, link and run, which is why it is refused
             // rather than approximated.
             Coercion::CopyWhenPresent => Err(Unlowered::new(
-                "a `Copy` out of a `(borrowed T)?`, which `assign`'s §7 runs only when the value \
+                "a `Copy` out of a `(&T)?`, which `assign`'s §7 runs only when the value \
                  is present: that is a test and two edges, which is three basic blocks where MIR \
                  has one, and Decision 5 says \"every MIR basic block becomes exactly one LLVM \
                  basic block\" — the same line integer `/` is refused at",
@@ -5473,7 +5473,7 @@ impl<'a> Lowerer<'a> {
             _ => {
                 return Err(Unlowered::new(
                     "a `print` of something other than one value: §4.1 declares \
-                     `def print(value: borrowed any Display)` and this call has a different \
+                     `def print(value: &any Display)` and this call has a different \
                      number of arguments",
                 ));
             }
@@ -5522,7 +5522,7 @@ impl<'a> Lowerer<'a> {
         match named {
             Some(name) => format!(
                 "a `print` of a value of type `{name}`: §4.1 declares `print` as \
-                 `def print(value: borrowed any Display)` and the only renderer in this compiler \
+                 `def print(value: &any Display)` and the only renderer in this compiler \
                  is §1.7's builder, whose entry points cover `Int`/`I64`, `U64`, `F64`, `F32`, \
                  `Bool`, `Char` and `String`. §3.1's `Formatter` — which is what a user type \
                  would render through — is specified by no note and declared by no prelude, and \

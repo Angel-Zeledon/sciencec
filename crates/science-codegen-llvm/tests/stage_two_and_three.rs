@@ -510,7 +510,7 @@ fn the_boundary_is_where_it_says_it_is() {
         // descriptor for one, so the fragment is the type and no longer the
         // construct. The callee hole is still there behind it and is still
         // this list's reason for the row.
-        ("for", "let mutable t be 0\nfor i in 0..3:\n    t be t + i\n", "`Range of I64`"),
+        ("for", "let mutable t be 0\nfor i in 0..3:\n    t be t + i\n", "`Range[I64]`"),
         // **`div` was a row here and is not one any more.** It read *"refused
         // rather than emitted: nothing above emits the zero check that
         // `IntOp`'s own note says the caller has already made"*, and
@@ -570,7 +570,7 @@ fn the_boundary_is_where_it_says_it_is() {
         // as a `TyKind::Param` with no layout.
         (
             "generic",
-            "def identity of T(value: T) -> T:\n    value\n\nlet v be identity(1)\nprint(\"x\")\n",
+            "def identity[T](value: T) -> T:\n    value\n\nlet v be identity(1)\nprint(\"x\")\n",
             "monomorphis",
         ),
     ];

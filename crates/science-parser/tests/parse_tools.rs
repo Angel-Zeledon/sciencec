@@ -153,7 +153,7 @@ fn a_def_without_a_description_is_fine() {
 fn a_generic_tool_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         "## Return the largest of the values.
-tool largest of T(values: Array of T) -> Int:
+tool largest of T(values: Array[T]) -> Int:
     0
 "
     ));
@@ -169,7 +169,7 @@ tool largest of T(values: Array of T) -> Int:
 fn a_borrowed_tool_parameter_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         "## Count the rows of a table.
-tool count_rows(rows: borrowed Array of Int, scratch: mutable borrowed Int) -> Int:
+tool count_rows(rows: &Array[Int], scratch: &mut Int) -> Int:
     0
 "
     ));

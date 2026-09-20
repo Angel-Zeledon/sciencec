@@ -16,7 +16,7 @@ const FIXTURE: &str = "\
 type Doc:
     title: String
 
-type Embedding is Array of F32
+type Embedding is Array[F32]
 
 type MyError:
     detail: String
@@ -249,7 +249,7 @@ fn an_alias_and_its_expansion_are_one_type_at_a_site() {
     // of F32` at one site in ten"*. This is that site.
     let checked = program(
         "
-def pass_through(raw: Array of F32) -> Bool:
+def pass_through(raw: Array[F32]) -> Bool:
     takes_embedding(raw)
 ",
     );
@@ -559,7 +559,7 @@ fn a_parameter_declared_borrowed_is_borrowed_automatically() {
     // `assign`.
     let checked = program(
         "
-def length(text: borrowed String) -> I64:
+def length(text: &String) -> I64:
     0
 
 def measure(owned: String) -> I64:
@@ -573,14 +573,14 @@ def measure(owned: String) -> I64:
         .filter(|(_, expr)| matches!(expr.kind, ExprKind::Borrow { mutable: false, .. }))
         .map(|(_, expr)| checked.render(expr.ty))
         .collect();
-    assert_eq!(borrows, vec!["borrowed String".to_string()]);
+    assert_eq!(borrows, vec!["&String".to_string()]);
 }
 
 #[test]
 fn auto_borrow_covers_the_exclusive_case_too() {
     let checked = program(
         "
-def retitle(doc: mutable borrowed Doc, title: String):
+def retitle(doc: &mut Doc, title: String):
     doc.title be title
 
 def rename(start: Doc) -> Bool:
@@ -601,7 +601,7 @@ fn an_exclusive_auto_borrow_invalidates_the_narrowing_like_a_written_one() {
     // Decision 8 does not care whether the author typed the word.
     let checked = program(
         "
-def retitle(doc: mutable borrowed Doc, title: String):
+def retitle(doc: &mut Doc, title: String):
     doc.title be title
 
 def after(start: Doc?) -> String?:
@@ -622,7 +622,7 @@ fn auto_borrow_does_not_apply_away_from_a_call() {
     let checked = program(
         "
 def kept(owned: String) -> Bool:
-    let _view: borrowed String be owned
+    let _view: &String be owned
     true
 ",
     );
@@ -645,7 +645,7 @@ def kept(owned: String) -> Bool:
 fn a_branch_at_a_borrowed_argument_takes_one_borrow_above_the_branch() {
     let checked = program(
         "
-def length(text: borrowed String) -> I64:
+def length(text: &String) -> I64:
     0
 
 def pick(flag: Bool) -> I64:
@@ -675,7 +675,7 @@ def pick(flag: Bool) -> I64:
 fn a_branch_whose_value_does_not_fit_the_parameter_is_still_refused() {
     let checked = program(
         "
-def length(text: borrowed String) -> I64:
+def length(text: &String) -> I64:
     0
 
 def pick(flag: Bool) -> I64:
@@ -694,7 +694,7 @@ fn a_branch_at_a_borrowed_binding_is_still_refused() {
     let checked = program(
         "
 def pick(flag: Bool) -> Bool:
-    let _view: borrowed String be if flag: \"yes\" else: \"no\"
+    let _view: &String be if flag: \"yes\" else: \"no\"
     true
 ",
     );
@@ -724,7 +724,7 @@ def pick(flag: Bool, left: Doc, right: Doc) -> String:
     let _ = coerce_id;
     let ExprKind::Coerce { operand, coercion } = coerce.kind else { unreachable!() };
     assert_eq!(coercion, Coercion::Unsize);
-    assert_eq!(checked.render(coerce.ty), "borrowed any Summarize");
+    assert_eq!(checked.render(coerce.ty), "&any Summarize");
     let ExprKind::Borrow { operand: branch, .. } = body.expr(operand).kind else {
         panic!("the coercion sits on a borrow")
     };
@@ -754,17 +754,17 @@ Doc implements Reset:
     def reset(mutable self):
         self.title be \"\"
 
-def describe_any(value: borrowed any Summarize) -> String:
+def describe_any(value: &any Summarize) -> String:
     \"\"
 
-def clear(value: mutable borrowed any Reset):
+def clear(value: &mut any Reset):
     let _touched be 1
 
-def describe_boxed(value: Box of any Summarize) -> String:
+def describe_boxed(value: Box[any Summarize]) -> String:
     \"\"
 
 type Renderer:
-    target: borrowed any Summarize
+    target: &any Summarize
 ";
 
 #[test]
@@ -788,9 +788,9 @@ def main_line(doc: Doc) -> String:
         .expect("the argument is coerced");
     let ExprKind::Coerce { operand, coercion } = coerce.kind else { unreachable!() };
     assert_eq!(coercion, Coercion::Unsize);
-    assert_eq!(checked.render(coerce.ty), "borrowed any Summarize");
+    assert_eq!(checked.render(coerce.ty), "&any Summarize");
     assert!(matches!(body.expr(operand).kind, ExprKind::Borrow { mutable: false, .. }));
-    assert_eq!(checked.render(body.ty(operand)), "borrowed Doc");
+    assert_eq!(checked.render(body.ty(operand)), "&Doc");
 }
 
 #[test]
@@ -811,7 +811,7 @@ def main_line(note: Doc):
         .expect("the argument is coerced");
     let ExprKind::Coerce { operand, coercion } = coerce.kind else { unreachable!() };
     assert_eq!(coercion, Coercion::Unsize);
-    assert_eq!(checked.render(coerce.ty), "mutable borrowed any Reset");
+    assert_eq!(checked.render(coerce.ty), "&mut any Reset");
     assert!(matches!(body.expr(operand).kind, ExprKind::Borrow { mutable: true, .. }));
 }
 
@@ -838,7 +838,7 @@ fn a_written_borrow_unsizes_at_a_field_initialiser() {
     let checked = program(&format!(
         "{DISPATCH}
 def main_line(doc: Doc) -> Renderer:
-    Renderer(target: borrowed doc)
+    Renderer(target: &doc)
 "
     ));
     checked.assert_clean();
@@ -858,7 +858,7 @@ fn an_object_behind_a_borrow_does_not_upcast_to_another_one() {
     // subinterface relation nobody has specified.
     let checked = program(&format!(
         "{DISPATCH}
-def main_line(summary: borrowed any Summarize):
+def main_line(summary: &any Summarize):
     clear(summary)
 "
     ));
@@ -891,7 +891,7 @@ Note implements Summarize:
     def summarize(self) -> String:
         self.text
 
-def describe_boxed(value: Box of any Summarize) -> String:
+def describe_boxed(value: Box[any Summarize]) -> String:
     \"\"
 ";
 
@@ -914,7 +914,7 @@ fn into_summary_returns_two_different_boxed_concrete_types() {
     // types so that the rule is not reading one of them.
     let checked = program(&format!(
         "{BOXED_DISPATCH}
-def into_summary(flag: Bool) -> Box of any Summarize:
+def into_summary(flag: Bool) -> Box[any Summarize]:
     if flag:
         Box.new(Doc(title: \"a\"))
     else:
@@ -941,7 +941,7 @@ choice Format:
     Plain
     Markdown
 
-def as_summary(format: borrowed Format) -> Box of any Summarize:
+def as_summary(format: &Format) -> Box[any Summarize]:
     match format:
         Json: Box.new(Doc(title: \"json\"))
         Plain: Box.new(Doc(title: \"plain\"))
@@ -975,11 +975,11 @@ def main_line() -> String:
         .expect("the argument is coerced");
     let ExprKind::Coerce { operand, coercion } = coerce.kind else { unreachable!() };
     assert_eq!(coercion, Coercion::UnsizeInBox);
-    assert_eq!(checked.render(coerce.ty), "Box of any Summarize");
+    assert_eq!(checked.render(coerce.ty), "Box[any Summarize]");
     // The operand is the `Box.new` the author wrote, at its own type. That is
     // where the allocation is, and §4a's claim is that the conversion adds no
     // second one.
-    assert_eq!(checked.render(body.ty(operand)), "Box of Doc");
+    assert_eq!(checked.render(body.ty(operand)), "Box[Doc]");
     // And it is not a `Borrow`, which is the fact `science-mir`'s `argument`
     // keys its two-phase path on: a coercion over a borrow reserves a loan
     // there, and this one has no loan under it to reserve.
@@ -1022,10 +1022,10 @@ fn a_box_under_a_container_still_does_not_unsize() {
     // already objects, which is why this refusal costs the corpus nothing.
     let checked = program(&format!(
         "{BOXED_DISPATCH}
-def describe_all(items: borrowed Array of (Box of any Summarize)) -> Bool:
+def describe_all(items: &Array[Box[any Summarize]]) -> Bool:
     true
 
-def main_line(docs: borrowed Array of (Box of Doc)) -> Bool:
+def main_line(docs: &Array[Box[Doc]]) -> Bool:
     describe_all(docs)
 "
     ));
@@ -1074,7 +1074,7 @@ fn a_comparison_looks_through_the_borrow_the_author_did_not_write() {
     // reports on the borrow §6.3 told the author to leave out.
     let checked = program(
         "
-def named(name: borrowed String) -> Bool:
+def named(name: &String) -> Bool:
     name is \"\"
 ",
     );
@@ -1106,7 +1106,7 @@ fn a_field_of_a_generic_parameter_is_silent() {
     // and no diagnostic.
     let checked = program(
         "
-def field_of of T(value: T) -> Bool:
+def field_of[T](value: T) -> Bool:
     let _read be value.title
     true
 ",
@@ -1163,7 +1163,7 @@ def stays() -> Bool:
 // only the first half would notice.
 
 const GENERIC_CHOICE: &str = "\
-choice E of (L, R):
+choice E[L, R]:
     Left(L)
     Right(R)
 ";
@@ -1175,7 +1175,7 @@ fn a_generic_choices_payload_binds_at_the_scrutinees_arguments() {
     // `L`*, on a correct program.
     let checked = check(&format!(
         "{GENERIC_CHOICE}
-def f(e: E of (I64, Bool)) -> I64:
+def f(e: E[I64, Bool]) -> I64:
     match e:
         Left(n): n
         Right(_): 0
@@ -1191,7 +1191,7 @@ fn a_generic_choices_payload_is_still_checked_at_those_arguments() {
     // turned the payload into something that agrees with everything.
     let checked = check(&format!(
         "{GENERIC_CHOICE}
-def f(e: E of (I64, Bool)) -> I64:
+def f(e: E[I64, Bool]) -> I64:
     match e:
         Left(n): n
         Right(b): b
@@ -1208,7 +1208,7 @@ fn a_borrowed_scrutinee_is_read_through_for_its_arguments() {
     // `borrowed I64`.
     let checked = check(&format!(
         "{GENERIC_CHOICE}
-def f(e: borrowed E of (I64, Bool)) -> I64:
+def f(e: &E[I64, Bool]) -> I64:
     match e:
         Left(n): n
         Right(_): 0
@@ -1223,15 +1223,15 @@ fn a_nested_payload_is_substituted_at_every_depth() {
     // `Pair of (T, T)` are rewritten by the same fold that rewrites a bare `T`.
     let checked = check(
         "\
-type Pair of (A, B):
+type Pair[A, B]:
     left: A
     right: B
 
-choice Wrap of T:
-    One(Array of T)
-    Two(Pair of (T, T))
+choice Wrap[T]:
+    One(Array[T])
+    TwoPair[T, T]
 
-def total(w: borrowed Wrap of I64) -> I64:
+def total(w: &Wrap[I64]) -> I64:
     match w:
         One(xs): 0
         Two(p): p.left
@@ -1244,15 +1244,15 @@ def total(w: borrowed Wrap of I64) -> I64:
 fn a_nested_payload_is_still_checked_at_every_depth() {
     let checked = check(
         "\
-type Pair of (A, B):
+type Pair[A, B]:
     left: A
     right: B
 
-choice Wrap of T:
-    One(Array of T)
-    Two(Pair of (T, T))
+choice Wrap[T]:
+    One(Array[T])
+    TwoPair[T, T]
 
-def total(w: borrowed Wrap of Bool) -> I64:
+def total(w: &Wrap[Bool]) -> I64:
     match w:
         One(xs): 0
         Two(p): p.left
@@ -1268,11 +1268,11 @@ fn a_generic_records_field_pattern_binds_at_the_scrutinees_arguments() {
     // substituted for `p.left`; the pattern spelling did not.
     let checked = check(
         "\
-type Pair of (A, B):
+type Pair[A, B]:
     left: A
     right: B
 
-def left_of(p: Pair of (I64, Bool)) -> I64:
+def left_of(p: Pair[I64, Bool]) -> I64:
     match p:
         Pair(left: l, right: _): l
 ",
@@ -1284,11 +1284,11 @@ def left_of(p: Pair of (I64, Bool)) -> I64:
 fn a_generic_records_field_pattern_is_still_checked_at_those_arguments() {
     let checked = check(
         "\
-type Pair of (A, B):
+type Pair[A, B]:
     left: A
     right: B
 
-def left_of(p: Pair of (I64, Bool)) -> I64:
+def left_of(p: Pair[I64, Bool]) -> I64:
     match p:
         Pair(left: _, right: r): r
 ",
@@ -1305,11 +1305,11 @@ fn an_uninstantiated_scrutinee_leaves_the_payload_as_declared() {
     // and this pins that the empty answer is not `Ty::ERROR`.
     let checked = check(
         "\
-choice E of (L, R):
+choice E[L, R]:
     Left(L)
     Right(R)
 
-def first of (A, B)(e: E of (A, B), fallback: A) -> A:
+def first[A, B](e: E[A, B], fallback: A) -> A:
     match e:
         Left(n): n
         Right(_): fallback

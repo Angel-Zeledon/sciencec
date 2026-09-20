@@ -170,7 +170,7 @@ for i in 0..3:
     let first = diagnostics.first().expect("a diagnostic");
     assert_eq!(first.code, science_codegen::diagnostics::code::SC0400);
     assert!(
-        first.message.contains("`Range of I64`"),
+        first.message.contains("`Range[I64]`"),
         "the refusal must name the construct, and it said: {}",
         first.message
     );

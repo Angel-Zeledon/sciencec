@@ -25,15 +25,15 @@ def clamp_low(value: Int, floor: Int) -> Int:
         return floor
     value
 
-# Several parameters, all borrowed. `borrowed T` is what `&T` was.
-def longest(a: borrowed String, b: borrowed String) -> borrowed String:
+# Several parameters, all borrowed. `&T` is what `&T` was.
+def longest(a: &String, b: &String) -> &String:
     if a.length() > b.length(): a else: b
 
 # Exclusive borrow: the callee may mutate through it. Borrows
 # auto-dereference for assignment and Science has no dereference operator at
 # all (§4.7), so the parameter is written plainly on both sides. Assignment
 # uses `be`, the same word that binds (§4.4).
-def bump(counter: mutable borrowed Int):
+def bump(counter: &mut Int):
     counter be counter + 1
 
 # Ownership is taken: the caller loses the value.
@@ -50,7 +50,7 @@ def factorial(n: Int) -> Int:
 
 # A predicate whose whole point is the word: `is not` is the only spelling of
 # inequality, and it says what it means.
-def has_name(name: borrowed String) -> Bool:
+def has_name(name: &String) -> Bool:
     name is not ""
 
 # Nested calls, and a call used as an argument.
@@ -62,7 +62,7 @@ def main():
     print(factorial(10))
     print(has_name("Kepler"))
 
-    # A parameter declared `borrowed` or `mutable borrowed` is borrowed at
+    # A parameter declared `borrowed` or `mutable borrowed` is &at
     # the call site without the caller writing anything (§6.3). The signature
     # still says which it is, so nothing is lost to the reader.
     let mutable hits be 0

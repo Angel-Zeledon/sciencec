@@ -45,7 +45,7 @@ choice Shape:
 fn a_missing_variant_is_named_with_its_payload_as_wildcards() {
     let checked = check(&format!(
         "{SHAPE}
-def area(figure: borrowed Shape) -> I64:
+def area(figure: &Shape) -> I64:
     match figure:
         Nothing: 0
         Circle(r): r
@@ -54,7 +54,7 @@ def area(figure: borrowed Shape) -> I64:
     assert_eq!(checked.codes(), vec![250]);
     assert_eq!(
         said(&checked),
-        "`borrowed Shape` has a value no arm of this `match` covers: `Rect(_, _)`"
+        "`&Shape` has a value no arm of this `match` covers: `Rect(_, _)`"
     );
 }
 
@@ -64,27 +64,27 @@ def area(figure: borrowed Shape) -> I64:
 fn a_variant_with_no_payload_prints_bare() {
     let checked = check(&format!(
         "{SHAPE}
-def area(figure: borrowed Shape) -> I64:
+def area(figure: &Shape) -> I64:
     match figure:
         Circle(r): r
         Rect(w, h): w * h
 "
     ));
-    assert_eq!(said(&checked), "`borrowed Shape` has a value no arm of this `match` covers: `Nothing`");
+    assert_eq!(said(&checked), "`&Shape` has a value no arm of this `match` covers: `Nothing`");
 }
 
 #[test]
 fn several_missing_variants_are_listed_in_declaration_order() {
     let checked = check(&format!(
         "{SHAPE}
-def area(figure: borrowed Shape) -> I64:
+def area(figure: &Shape) -> I64:
     match figure:
         Nothing: 0
 "
     ));
     assert_eq!(
         said(&checked),
-        "`borrowed Shape` has values no arm of this `match` covers: `Circle(_)`, `Rect(_, _)`"
+        "`&Shape` has values no arm of this `match` covers: `Circle(_)`, `Rect(_, _)`"
     );
 }
 
@@ -101,14 +101,14 @@ choice Wide:
     D
     E
 
-def pick(wide: borrowed Wide) -> I64:
+def pick(wide: &Wide) -> I64:
     match wide:
         A: 1
 ",
     );
     assert_eq!(
         said(&checked),
-        "`borrowed Wide` has values no arm of this `match` covers: `B`, `C`, `D`, and 1 more"
+        "`&Wide` has values no arm of this `match` covers: `B`, `C`, `D`, and 1 more"
     );
 }
 
@@ -116,7 +116,7 @@ def pick(wide: borrowed Wide) -> I64:
 fn every_variant_named_is_exhaustive() {
     check(&format!(
         "{FORMAT}
-def name_of(format: borrowed Format) -> I64:
+def name_of(format: &Format) -> I64:
     match format:
         Plain: 0
         Markdown: 1
@@ -130,7 +130,7 @@ def name_of(format: borrowed Format) -> I64:
 fn a_wildcard_covers_the_rest() {
     check(&format!(
         "{FORMAT}
-def name_of(format: borrowed Format) -> I64:
+def name_of(format: &Format) -> I64:
     match format:
         Plain: 0
         _: 1
@@ -143,7 +143,7 @@ def name_of(format: borrowed Format) -> I64:
 fn a_binding_covers_the_rest() {
     check(&format!(
         "{FORMAT}
-def name_of(format: borrowed Format) -> I64:
+def name_of(format: &Format) -> I64:
     match format:
         Plain: 0
         other: 1
@@ -157,7 +157,7 @@ def name_of(format: borrowed Format) -> I64:
 fn alternatives_complete_a_set_between_them() {
     check(&format!(
         "{FORMAT}
-def name_of(format: borrowed Format) -> I64:
+def name_of(format: &Format) -> I64:
     match format:
         Plain | Markdown | Json: 0
 "
@@ -242,14 +242,14 @@ def kind(c: Char) -> I64:
 fn a_string_always_needs_a_catch_all() {
     let checked = check(
         "\
-def kind(text: borrowed String) -> I64:
+def kind(text: &String) -> I64:
     match text:
         \"hello\": 1
 ",
     );
     assert_eq!(
         said(&checked),
-        "`borrowed String` has a value no arm of this `match` covers: `_`"
+        "`&String` has a value no arm of this `match` covers: `_`"
     );
 }
 
@@ -293,14 +293,14 @@ type Point:
     x: I64
     y: I64
 
-def classify(point: borrowed Point) -> I64:
+def classify(point: &Point) -> I64:
     match point:
         Point(x: 0, y: 0): 0
 ",
     );
     assert_eq!(
         said(&checked),
-        "`borrowed Point` has a value no arm of this `match` covers: `Point(x: _, y: _)`"
+        "`&Point` has a value no arm of this `match` covers: `Point(x: _, y: _)`"
     );
 }
 
@@ -312,7 +312,7 @@ type Point:
     x: I64
     y: I64
 
-def classify(point: borrowed Point) -> I64:
+def classify(point: &Point) -> I64:
     match point:
         Point(x: 0, y: 0): 0
         Point(x: x, y: y): 1
@@ -330,7 +330,7 @@ fn a_witness_nested_inside_a_variant_names_the_inner_shape() {
 choice Wrapped:
     One(Format)
 
-def unwrap(wrapped: borrowed Wrapped) -> I64:
+def unwrap(wrapped: &Wrapped) -> I64:
     match wrapped:
         One(Plain): 0
         One(Markdown): 1
@@ -338,7 +338,7 @@ def unwrap(wrapped: borrowed Wrapped) -> I64:
     ));
     assert_eq!(
         said(&checked),
-        "`borrowed Wrapped` has a value no arm of this `match` covers: `One(Json)`"
+        "`&Wrapped` has a value no arm of this `match` covers: `One(Json)`"
     );
 }
 
@@ -447,7 +447,7 @@ def explain(error: LoadError?) -> I64:
 fn an_arm_below_a_catch_all_is_dead() {
     let checked = check(&format!(
         "{FORMAT}
-def name_of(format: borrowed Format) -> I64:
+def name_of(format: &Format) -> I64:
     match format:
         _: 0
         Plain: 1
@@ -461,7 +461,7 @@ def name_of(format: borrowed Format) -> I64:
 fn an_arm_repeating_a_variant_is_dead() {
     let checked = check(&format!(
         "{FORMAT}
-def name_of(format: borrowed Format) -> I64:
+def name_of(format: &Format) -> I64:
     match format:
         Plain: 0
         Markdown: 1
@@ -497,7 +497,7 @@ fn a_match_can_be_both_dead_and_short() {
     assert_eq!(
         codes(&format!(
             "{FORMAT}
-def name_of(format: borrowed Format) -> I64:
+def name_of(format: &Format) -> I64:
     match format:
         Plain: 0
         Plain: 1
@@ -516,7 +516,7 @@ fn a_narrower_arm_above_a_wider_one_leaves_it_alive() {
 choice Wrapped:
     One(Format)
 
-def unwrap(wrapped: borrowed Wrapped) -> I64:
+def unwrap(wrapped: &Wrapped) -> I64:
     match wrapped:
         One(Plain): 0
         One(other): 1
@@ -531,7 +531,7 @@ def unwrap(wrapped: borrowed Wrapped) -> I64:
 fn a_dead_alternative_inside_a_live_arm_is_not_reported() {
     check(&format!(
         "{FORMAT}
-def name_of(format: borrowed Format) -> I64:
+def name_of(format: &Format) -> I64:
     match format:
         Plain | Plain | Markdown: 0
         Json: 1
@@ -549,7 +549,7 @@ def name_of(format: borrowed Format) -> I64:
 fn a_type_parameter_needs_a_catch_all() {
     let checked = check(
         "\
-def pick of T(value: T) -> I64:
+def pick[T](value: T) -> I64:
     match value:
         _: 0
 ",
@@ -563,7 +563,7 @@ def pick of T(value: T) -> I64:
 fn an_unresolved_variant_pattern_reports_nothing_here() {
     let source = format!(
         "{FORMAT}
-def name_of(format: borrowed Format) -> I64:
+def name_of(format: &Format) -> I64:
     match format:
         Plain: 0
         Nonsense: 1
@@ -596,12 +596,12 @@ def name_of(format: borrowed Format) -> I64:
 fn a_generic_choice_is_complete_at_its_declared_variants() {
     let checked = check(
         "\
-choice Either of (L, R):
+choice Either[L, R]:
     Left(L)
     Right(R)
     Neither
 
-def pick(value: borrowed Either of (I64, Bool)) -> I64:
+def pick(value: &Either[I64, Bool]) -> I64:
     match value:
         Left(n): 1
         Neither: 0
@@ -609,7 +609,7 @@ def pick(value: borrowed Either of (I64, Bool)) -> I64:
     );
     assert_eq!(
         said(&checked),
-        "`borrowed Either of (I64, Bool)` has a value no arm of this `match` covers: `Right(_)`"
+        "`&Either[I64, Bool]` has a value no arm of this `match` covers: `Right(_)`"
     );
 }
 
@@ -617,12 +617,12 @@ def pick(value: borrowed Either of (I64, Bool)) -> I64:
 fn a_generic_choice_with_every_variant_is_exhaustive() {
     check(
         "\
-choice Either of (L, R):
+choice Either[L, R]:
     Left(L)
     Right(R)
     Neither
 
-def pick(value: borrowed Either of (I64, Bool)) -> I64:
+def pick(value: &Either[I64, Bool]) -> I64:
     match value:
         Left(n): 1
         Right(flag): 2

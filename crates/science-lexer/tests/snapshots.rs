@@ -163,17 +163,17 @@ public type Doc:
     title: String
     body: String
 
-def largest of T(items: borrowed Array of T) -> borrowed T where T: Ord:
+def largest[T](items: &Array[T]) -> &T where T: Ord:
     let mutable best be items.get(0)
     for item in items:
         if item > best: best be item
     best
 
-def read_config(path: borrowed String) -> (Config, Error?):
+def read_config(path: &String) -> (Config, Error?):
     let text, err be read_file(path)   # the error comes back beside the value
     if err?:
         return (Config.empty(), err)
-    parse(borrowed text)
+    parse(&text)
 "
     ));
 }

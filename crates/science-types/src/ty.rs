@@ -41,7 +41,7 @@
 //!    key of the map that finds it. The alternative is hashing through the
 //!    index, which needs the table inside the hasher and therefore needs the
 //!    table borrowed while it is being mutated, which is §2's refusal.
-//! 3. **Construction is no longer free.** Building `Array of Int` is a hash
+//! 3. **Construction is no longer free.** Building `Array[Int]` is a hash
 //!    lookup, not a `Box::new`. That is the right side of the trade only
 //!    because a checker builds a type once and compares it many times.
 //!
@@ -148,13 +148,13 @@
 //! # 6. `Self` arrives unsubstituted, and so do aliases
 //!
 //! [`TyKind::SelfType`] and [`TyKind::SelfAssoc`] carry the block that wrote
-//! them and nothing more, and a `type Embedding is Array of F32` interns as
-//! its own [`TyKind::Named`] rather than as `Array of F32`. Both are holes and
+//! them and nothing more, and a `type Embedding is Array[F32]` interns as
+//! its own [`TyKind::Named`] rather than as `Array[F32]`. Both are holes and
 //! both are the same hole: expanding either needs the crate's *items*, needs a
 //! substitution over [`Ty`], and needs a cycle check with a diagnostic of its
 //! own.
 //!
-//! The cost is stated plainly: until then, `Embedding` and `Array of F32` are
+//! The cost is stated plainly: until then, `Embedding` and `Array[F32]` are
 //! two `Ty`s denoting one type, and `compatible` says they differ. Nothing in
 //! F0 relies on them agreeing, and the first thing that does is the change
 //! that has to land expansion.
@@ -236,10 +236,10 @@ impl Ty {
 /// answer is recorded so that no later phase has to ask again.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum GenericArg {
-    /// A type argument: the `T` of `Array of T`.
+    /// A type argument: the `T` of `Array[T]`.
     Type(Ty),
-    /// A const argument: the `4` of `Window of (Int, 4)`, the `a + 1` of
-    /// `Matrix of (T, a + 1)`, and a bare const parameter used as one.
+    /// A const argument: the `4` of `Window[Int, 4]`, the `a + 1` of
+    /// `Matrix[T, a + 1]`, and a bare const parameter used as one.
     ///
     /// Already normalised. §3 is why it has to be, and why the provenance it
     /// carries is the first spelling's.
@@ -293,14 +293,14 @@ pub enum TyKind {
     /// would be a second thing to keep in step with the resolver.
     Named { def: DefId, args: Vec<GenericArg> },
     /// A generic type parameter standing for itself: the `T` inside
-    /// `def largest of T(..)`.
+    /// `def largest[T](..)`.
     ///
     /// A variant of its own rather than a [`TyKind::Named`] at a `TypeParam`
     /// definition, because substitution asks *"is this a thing I replace?"* at
     /// every node, and that answer should be the discriminant rather than a
     /// table lookup.
     Param { def: DefId },
-    /// `borrowed T` and `mutable borrowed T`.
+    /// `&T` and `&mut T`.
     Borrowed { mutable: bool, inner: Ty },
     /// Two or more elements. `(T)` is `T`, and the parser builds no
     /// one-element tuple.
@@ -407,7 +407,7 @@ impl Types {
         self.intern(TyKind::Param { def })
     }
 
-    /// `borrowed T`, or `mutable borrowed T`.
+    /// `&T`, or `&mut T`.
     pub fn borrowed(&mut self, mutable: bool, inner: Ty) -> Ty {
         self.intern(TyKind::Borrowed { mutable, inner })
     }
@@ -485,9 +485,9 @@ impl Types {
 
     /// The type as a diagnostic spells it, in surface syntax.
     ///
-    /// `Array of T`, `Map of (String, Int)`, `mutable borrowed Doc`,
+    /// `Array[T]`, `Map[String, Int]`, `&mut Doc`,
     /// `(any Error)?`. The parentheses around a borrow under a `?` are not
-    /// decoration: `borrowed T?` parses as `borrowed (T?)`, so printing a
+    /// decoration: `&T?` parses as `&(T?)`, so printing a
     /// nullable borrow without them prints a type that reads back as a
     /// different one.
     ///
@@ -510,7 +510,7 @@ impl Types {
             }
             TyKind::Param { def } => out.push_str(&defs.get(*def).name),
             TyKind::Borrowed { mutable, inner } => {
-                out.push_str(if *mutable { "mutable borrowed " } else { "borrowed " });
+                out.push_str(if *mutable { "&mut " } else { "&" });
                 self.render_into(defs, *inner, out);
             }
             TyKind::Tuple(elements) => {
@@ -535,9 +535,9 @@ impl Types {
                 self.render_into(defs, *ret, out);
             }
             TyKind::Nullable(inner) => {
-                // `borrowed T?` is `borrowed (T?)`, so a nullable borrow needs
+                // `&T?` is `&(T?)`, so a nullable borrow needs
                 // its parentheses to survive a round trip. Decision 6 writes it
-                // `(borrowed T)?` for the same reason.
+                // `(&T)?` for the same reason.
                 let wrap = matches!(self.kind(*inner), TyKind::Borrowed { .. });
                 if wrap {
                     out.push('(');
@@ -559,17 +559,17 @@ impl Types {
         }
     }
 
-    /// `of T`, `of (T, 4)`, or nothing. `AGENTS.md` §3: one argument takes no
-    /// parentheses and two or more must have them.
+    /// `[T]`, `[T, 4]`, or nothing.
+    ///
+    /// Brackets always wrap the list now (§4.3): there is no bare,
+    /// unbracketed form to weigh against a parenthesised one the way `of T`
+    /// against `of (T, 4)` used to be, so one argument and several are
+    /// printed the same way.
     fn render_args(&self, defs: &DefTable, args: &[GenericArg], out: &mut String) {
         if args.is_empty() {
             return;
         }
-        out.push_str(" of ");
-        let parenthesised = args.len() > 1;
-        if parenthesised {
-            out.push('(');
-        }
+        out.push('[');
         for (at, arg) in args.iter().enumerate() {
             if at > 0 {
                 out.push_str(", ");
@@ -580,9 +580,7 @@ impl Types {
                 GenericArg::Error => out.push_str("{unknown}"),
             }
         }
-        if parenthesised {
-            out.push(')');
-        }
+        out.push(']');
     }
 
     // --- interning internals ---------------------------------------------

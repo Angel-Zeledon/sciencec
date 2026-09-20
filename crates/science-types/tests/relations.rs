@@ -50,14 +50,14 @@ const FIXTURE: &str = "\
 type Doc:
     title: String
 
-type Embedding is Array of F32
+type Embedding is Array[F32]
 
-type Pair of T is (T, T)
+type Pair[T] is (T, T)
 
-type Matrix of (T, const N: Int):
-    cells: Array of T
+type Matrix[T, const N: Int]:
+    cells: Array[T]
 
-type Grid of (T, const N: Int) is Matrix of (T, N)
+type Grid[T, const N: Int] is Matrix[T, N]
 
 interface Summarize:
     type Item
@@ -69,45 +69,45 @@ Doc has:
 
 def shapes(
     alias_written: Embedding,
-    expansion_written: Array of F32,
-    nested_alias: Array of Embedding,
-    nested_expansion: Array of (Array of F32),
-    pair_of_docs: Pair of Doc,
+    expansion_written: Array[F32],
+    nested_alias: Array[Embedding],
+    nested_expansion: Array[Array[F32]],
+    pair_of_docs: Pair[Doc],
     docs_tuple: (Doc, Doc),
     doc: Doc,
     optional_doc: Doc?,
-    docs: Array of Doc,
-    optional_docs: Array of (Doc?),
+    docs: Array[Doc],
+    optional_docs: Array[Doc?],
     failure: Error?,
     boxed: any Error,
     summarizer: any Summarize,
-    borrowed_doc: borrowed Doc,
-    mutable_borrowed_doc: mutable borrowed Doc,
-    borrowed_summarizer: borrowed any Summarize,
-    mutable_borrowed_summarizer: mutable borrowed any Summarize,
-    borrowed_failure: borrowed any Error,
-    owned_box: Box of any Summarize,
-    borrowed_docs: Array of (borrowed Doc),
-    borrowed_summarizers: Array of (borrowed any Summarize),
-    borrowed_optional_doc: borrowed (Doc?),
+    borrowed_doc: &Doc,
+    mutable_borrowed_doc: &mut Doc,
+    borrowed_summarizer: &any Summarize,
+    mutable_borrowed_summarizer: &mut any Summarize,
+    borrowed_failure: &any Error,
+    owned_box: Box[any Summarize],
+    borrowed_docs: Array[&Doc],
+    borrowed_summarizers: Array[&any Summarize],
+    borrowed_optional_doc: &(Doc?),
     concrete_failure: Failure,
-    boxed_doc: Box of Doc,
-    boxed_int: Box of Int,
-    boxed_failure: Box of Failure,
-    boxed_error_object: Box of any Error,
-    boxed_optional_doc: Box of (Doc?),
-    boxed_borrowed_doc: Box of (borrowed Doc),
-    boxed_docs: Array of (Box of Doc),
-    owned_boxes: Array of (Box of any Summarize),
+    boxed_doc: Box[Doc],
+    boxed_int: Box[Int],
+    boxed_failure: Box[Failure],
+    boxed_error_object: Box[any Error],
+    boxed_optional_doc: Box[Doc?],
+    boxed_borrowed_doc: Box[&Doc],
+    boxed_docs: Array[Box[Doc]],
+    owned_boxes: Array[Box[any Summarize]],
 ) -> Int:
     0
 
-def spellings of (T, const N: Int, const K: Int)(
-    shifted: Matrix of (T, N + 1),
-    substituted: Matrix of (T, K + 1),
-    bare: Matrix of (T, N),
-    concrete: Matrix of (F32, N),
-    aliased: Grid of (T, N),
+def spellings[T, const N: Int, const K: Int](
+    shifted: Matrix[T, N + 1],
+    substituted: Matrix[T, K + 1],
+    bare: Matrix[T, N],
+    concrete: Matrix[F32, N],
+    aliased: Grid[T, N],
     parameter: T,
     nullable_parameter: T?,
 ) -> Int:
@@ -324,7 +324,7 @@ fn an_alias_and_its_expansion_are_one_type_once_revealed() {
     let revealed_alias = program.reveal(alias);
     let revealed_expansion = program.reveal(expansion);
     assert_eq!(revealed_alias, revealed_expansion);
-    assert_eq!(program.render(revealed_alias), "Array of F32");
+    assert_eq!(program.render(revealed_alias), "Array[F32]");
     // §1: the written type keeps its name, so a diagnostic can still say it.
     assert_eq!(program.render(alias), "Embedding");
 }
@@ -335,7 +335,7 @@ fn an_alias_inside_a_type_is_expanded_too() {
     let nested_alias = program.revealed("shapes", "nested_alias");
     let nested_expansion = program.revealed("shapes", "nested_expansion");
     assert_eq!(nested_alias, nested_expansion);
-    assert_eq!(program.render(nested_alias), "Array of Array of F32");
+    assert_eq!(program.render(nested_alias), "Array[Array] of F32");
 }
 
 #[test]
@@ -356,7 +356,7 @@ fn a_generic_alias_carries_its_const_argument_through() {
     let aliased = program.revealed("spellings", "aliased");
     let bare = program.revealed("spellings", "bare");
     assert_eq!(aliased, bare);
-    assert_eq!(program.render(aliased), "Matrix of (T, N)");
+    assert_eq!(program.render(aliased), "Matrix[T, N]");
 }
 
 #[test]
@@ -415,8 +415,8 @@ def uses(c: C) -> Int:
 fn a_cycle_through_a_generic_argument_is_still_a_cycle() {
     let program = Program::new(
         "\
-type Wrapper of T is Array of T
-type Knot is Wrapper of Knot
+type Wrapper[T] is Array[T]
+type Knot is Wrapper[Knot]
 ",
     );
     assert_eq!(program.codes(), vec![codes::CYCLIC_ALIAS.0]);
@@ -542,7 +542,7 @@ fn substituting_a_const_parameter_rewrites_the_normal_form_inside_the_type() {
     let subst = Substitution::new().with_const(n, k_form);
     let substituted = subst.apply(&mut program.types, shifted).unwrap();
     assert_eq!(substituted, expected);
-    assert_eq!(program.render(substituted), "Matrix of (T, 1 + K)");
+    assert_eq!(program.render(substituted), "Matrix[T, 1 + K]");
 }
 
 #[test]
@@ -553,7 +553,7 @@ fn substituting_a_const_parameter_with_a_literal_makes_a_constant_extent() {
 
     let subst = Substitution::new().with_const(n, NormalForm::literal(4));
     let substituted = subst.apply(&mut program.types, bare).unwrap();
-    assert_eq!(program.render(substituted), "Matrix of (T, 4)");
+    assert_eq!(program.render(substituted), "Matrix[T, 4]");
 
     let parameter = program.ty("spellings", "parameter");
     let TyKind::Named { args, .. } = program.types.kind(substituted) else {
@@ -853,9 +853,9 @@ Doc implements Summarize:
         self.title
 
 def shapes(
-    borrowed_int: borrowed Int,
-    borrowed_doc: borrowed Doc,
-    borrowed_summarizer: borrowed any Summarize,
+    borrowed_int: &Int,
+    borrowed_doc: &Doc,
+    borrowed_summarizer: &any Summarize,
 ) -> Int:
     0
 ",

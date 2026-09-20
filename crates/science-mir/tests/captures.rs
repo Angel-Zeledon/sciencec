@@ -34,10 +34,10 @@ def sink(f: (Int) -> Int) -> Int:
 def take(f: (Wrapper) -> Int) -> Int:
     1
 
-def bump(c: mutable borrowed Config) -> Int:
+def bump(c: &mut Config) -> Int:
     1
 
-def peek(c: borrowed Config) -> Int:
+def peek(c: &Config) -> Int:
     1
 
 def consume(w: Wrapper) -> Int:
@@ -124,7 +124,7 @@ def go() -> Int:
 fn the_implicit_each_form_captures_nothing() {
     let source = format!(
         "{PRE}
-def go(c: borrowed Config) -> Int:
+def go(c: &Config) -> Int:
     peek(c)
 "
     );
@@ -154,7 +154,7 @@ fn a_write_through_a_capture_is_an_exclusive_borrow() {
     let source = format!(
         "{PRE}
 def go(c: Config) -> Int:
-    sink(item giving bump(mutable borrowed c))
+    sink(item giving bump(&mut c))
 "
     );
     let lowered = lower(&source);
@@ -200,7 +200,7 @@ def go(w: Wrapper) -> Int:
 fn a_capture_names_the_referent_and_not_the_reference() {
     let source = format!(
         "{PRE}
-def go(c: borrowed Config) -> Int:
+def go(c: &Config) -> Int:
     sink(item giving c.port)
 "
     );
@@ -222,7 +222,7 @@ def go(c: borrowed Config) -> Int:
 fn two_captures_are_two_borrows_in_first_mention_order() {
     let source = format!(
         "{PRE}
-def go(c: borrowed Config, d: borrowed Config) -> Int:
+def go(c: &Config, d: &Config) -> Int:
     sink(item giving d.port + c.host)
 "
     );
@@ -246,7 +246,7 @@ fn a_capture_is_never_two_phase() {
     let source = format!(
         "{PRE}
 def go(c: Config) -> Int:
-    sink(item giving bump(mutable borrowed c))
+    sink(item giving bump(&mut c))
 "
     );
     let lowered = lower(&source);
@@ -289,7 +289,7 @@ def go() -> Int:
 fn a_nested_closure_captures_through_both_levels() {
     let source = format!(
         "{PRE}
-def go(c: borrowed Config) -> Int:
+def go(c: &Config) -> Int:
     sink(item giving sink(other giving c.port))
 "
     );

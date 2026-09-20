@@ -202,7 +202,7 @@ fn a_bound_interpolation_is_freed_once() {
 /// runtime, which is what it did when it did not.
 #[test]
 fn a_borrowed_hole_renders_its_referent() {
-    let source = "def saluda(quien: borrowed String, veces: borrowed Int) -> Int:\n\
+    let source = "def saluda(quien: &String, veces: &Int) -> Int:\n\
                   \x20   print(f\"hola {quien} x{veces}\")\n\
                   \x20   return 0\n\
                   \n\

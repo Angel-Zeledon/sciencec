@@ -25,7 +25,7 @@ fn reported(source: &str) -> Vec<u16> {
 #[test]
 fn a_return_borrowed_from_either_parameter_is_a_set_and_not_an_error() {
     let source = "\
-def pick(x: borrowed Int, y: borrowed Int, left: Bool) -> borrowed Int:
+def pick(x: &Int, y: &Int, left: Bool) -> &Int:
     if left:
         return x
     y
@@ -44,7 +44,7 @@ def pick(x: borrowed Int, y: borrowed Int, left: Bool) -> borrowed Int:
 #[test]
 fn a_return_borrowed_from_one_parameter_names_it() {
     let source = "\
-def first(x: borrowed Int, y: borrowed Int) -> borrowed Int:
+def first(x: &Int, y: &Int) -> &Int:
     x
 ";
     let checked = check(source);
@@ -64,7 +64,7 @@ type Table:
     size: Int
 
 Table has:
-    def echo(self, other: borrowed Int) -> borrowed Int:
+    def echo(self, other: &Int) -> &Int:
         other
 ";
     let checked = check(source);
@@ -83,7 +83,7 @@ Table has:
 #[test]
 fn a_signature_with_no_borrow_in_the_return_has_no_regions() {
     let source = "\
-def add(x: borrowed Int, y: borrowed Int) -> Int:
+def add(x: &Int, y: &Int) -> Int:
     1
 ";
     let checked = check(source);
@@ -97,9 +97,9 @@ def add(x: borrowed Int, y: borrowed Int) -> Int:
 #[test]
 fn returning_a_borrow_of_a_local_is_rule_five_and_not_ambiguity() {
     let source = "\
-def escape(x: borrowed Int) -> borrowed Int:
+def escape(x: &Int) -> &Int:
     let local be 5
-    borrowed local
+    &local
 ";
     assert_eq!(reported(source), vec![333]);
 }
@@ -120,10 +120,10 @@ def escape(x: borrowed Int) -> borrowed Int:
 #[test]
 fn only_a_function_that_never_returns_reaches_sc0340() {
     let source = "\
-def a(x: borrowed Int) -> borrowed Int:
+def a(x: &Int) -> &Int:
     b(x)
 
-def b(x: borrowed Int) -> borrowed Int:
+def b(x: &Int) -> &Int:
     a(x)
 ";
     let checked = check(source);
@@ -139,7 +139,7 @@ def b(x: borrowed Int) -> borrowed Int:
 #[test]
 fn a_self_recursive_function_that_never_returns_reaches_it_too() {
     let source = "\
-def only(x: borrowed Int) -> borrowed Int:
+def only(x: &Int) -> &Int:
     only(x)
 ";
     assert_eq!(reported(source), vec![340]);
@@ -169,7 +169,7 @@ def only(x: borrowed Int) -> borrowed Int:
 #[test]
 fn a_missing_container_declaration_suppresses_sc0340_rather_than_causing_it() {
     let source = "\
-def make(m: borrowed Map of (String, Int)) -> borrowed Int:
+def make(m: &Map[String, Int]) -> &Int:
     m.values().get(0)
 ";
     let checked = check(source);
@@ -199,13 +199,13 @@ type Def:
     name: Int
 
 type Table:
-    items: Array of Def
+    items: Array[Def]
 
 Table has:
-    def get(self, at: Int) -> borrowed Def:
+    def get(self, at: Int) -> &Def:
         self.items.get(at)
 
-    def first(self) -> borrowed Def:
+    def first(self) -> &Def:
         self.get(0)
 ";
     let checked = check(source);

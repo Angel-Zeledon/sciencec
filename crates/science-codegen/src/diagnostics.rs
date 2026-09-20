@@ -418,7 +418,7 @@ mod tests {
             not_a_constant(Span::new(science_diagnostics::FileId(0), 0, 1)),
             cross_compilation_unsupported("aarch64-apple-darwin", "x86_64-pc-windows-msvc"),
             cyclic_instantiation(
-                &["f[Int]".to_string(), "f[Array of Int]".to_string()],
+                &["f[Int]".to_string(), "f[Array[Int]]".to_string()],
                 Some(1),
                 Span::new(science_diagnostics::FileId(0), 0, 1),
             ),
@@ -443,8 +443,8 @@ mod tests {
     fn sc0407_names_the_chain_and_not_a_depth() {
         let chain = vec![
             "reduce[Int]".to_string(),
-            "reduce[Array of Int]".to_string(),
-            "reduce[Array of (Array of Int)]".to_string(),
+            "reduce[Array[Int]]".to_string(),
+            "reduce[Array[Array[Int]]]".to_string(),
         ];
         let span = Span::new(science_diagnostics::FileId(0), 0, 1);
         let diagnostic = cyclic_instantiation(&chain, Some(2), span);

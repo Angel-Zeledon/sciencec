@@ -101,7 +101,7 @@ impl Cause {
             }
             Cause::Borrowed => "the borrow is taken here".to_string(),
             Cause::Returned => "returned here".to_string(),
-            Cause::ReborrowedFrom => "borrowed through a reference here".to_string(),
+            Cause::ReborrowedFrom => "&through a reference here".to_string(),
             Cause::Coerced => "coerced here".to_string(),
             Cause::Captured(at) => format!("captured by the closure here (capture {at})"),
         }

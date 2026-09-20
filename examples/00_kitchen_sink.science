@@ -28,17 +28,17 @@ type Doc:
 # region of `source` is inferred and propagated to every site that builds an
 # `Excerpt` (§6.2).
 type Excerpt:
-    source: borrowed Doc
+    source: &Doc
     limit: Int
 
-type Pair of (A, B):
+type Pair[A, B]:
     first: A
     second: B
 
 # (2) Const generics. A generic parameter may be a value as well as a type
 # (§5.3), and F1's shapes are built out of exactly this.
-type Window of (T, const WIDTH: Int):
-    items: Array of T
+type Window[T, const WIDTH: Int]:
+    items: Array[T]
 
 # (5) The choices that the exhaustive `match`es below are taken over.
 choice Format:
@@ -61,13 +61,13 @@ choice ParseError:
 #
 # `From` takes one source type per implementation, so a def whose
 # callees fail in two different ways needs two of them, as this one does.
-LoadError implements From of ParseError:
+LoadError implements From[ParseError]:
     def from(inner: ParseError) -> Self:
         match inner:
             Empty: Malformed("empty document")
             Unsupported(what): Malformed(what)
 
-LoadError implements From of IoError:
+LoadError implements From[IoError]:
     def from(inner: IoError) -> Self:
         NotFound("unreadable")
 
@@ -100,9 +100,9 @@ Doc has:
 
 # (2) The const parameter is an ordinary value inside the body, which is what
 # makes it useful: it sizes a loop the compiler can unroll.
-Window of (T, const WIDTH: Int) has:
-    def empty() -> Window of (T, WIDTH):
-        Window(items: (Array of T).new())
+Window[T, const WIDTH: Int] has:
+    def empty() -> Window[T, WIDTH]:
+        Window(items: Array[T].new())
 
     def capacity(self) -> Int:
         WIDTH
@@ -112,7 +112,7 @@ Window of (T, const WIDTH: Int) has:
 
 # §8 gives `String` no `clone`, so an owned copy is built from the two
 # methods it does have.
-def copy_of(text: borrowed String) -> String:
+def copy_of(text: &String) -> String:
     let mutable out be String.new()
     out.push_str(text)
     out
@@ -204,11 +204,11 @@ Counts implements Copy
 
 # A bound in the parameter list. Monomorphization emits one specialized copy
 # per instantiation (§5.3), so the call to `preview` is resolved statically.
-def describe of T: Summarize(value: borrowed T) -> String:
+def describe[T: Summarize](value: &T) -> String:
     value.preview()
 
 # Several bounds joined by `+`, written in a `where` clause.
-def best_of of T(left: borrowed T, right: borrowed T) -> String
+def best_of[T](left: &T, right: &T) -> String
         where T: Summarize + Clone:
     if left.summarize().length() >= right.summarize().length():
         left.preview()
@@ -216,7 +216,7 @@ def best_of of T(left: borrowed T, right: borrowed T) -> String
         right.preview()
 
 # A generic type built at two different instantiations.
-def paired of (A, B)(first: A, second: B) -> Pair of (A, B):
+def paired[A, B](first: A, second: B) -> Pair[A, B]:
     Pair(first: first, second: second)
 
 # ---------------------------------------------------------------------------
@@ -225,15 +225,15 @@ def paired of (A, B)(first: A, second: B) -> Pair of (A, B):
 
 # `any Interface` only behind an indirection: a borrow here, a `Box` below
 # (§4.3).
-def describe_any(value: borrowed any Summarize) -> String:
+def describe_any(value: &any Summarize) -> String:
     value.preview()
 
-def describe_boxed(value: Box of any Summarize) -> String:
+def describe_boxed(value: Box[any Summarize]) -> String:
     value.summarize()
 
 # `Box` is built through its associated function, never by named-argument
 # construction: that form is for record types only (§4.4).
-def as_summary(format: borrowed Format) -> Box of any Summarize:
+def as_summary(format: &Format) -> Box[any Summarize]:
     match format:
         Json: Box.new(Doc(title: "json", body: "{}"))
         Plain: Box.new(Doc(title: "plain", body: "..."))
@@ -245,14 +245,14 @@ def as_summary(format: borrowed Format) -> Box of any Summarize:
 
 # Every variant is listed; there is no wildcard arm. A missing variant is an
 # error in the `SC0250` range and the diagnostic lists what is missing (§11.3).
-def extension(format: borrowed Format) -> String:
+def extension(format: &Format) -> String:
     match format:
         Plain: "txt"
         Markdown: "md"
         Json: "json"
 
 # Variant patterns that bind their payload, in block form.
-def explain(error: borrowed LoadError) -> String:
+def explain(error: &LoadError) -> String:
     match error:
         NotFound(path):
             let mutable out be String.new()
@@ -268,12 +268,12 @@ def explain(error: borrowed LoadError) -> String:
 
 # Absence is `T?` and `null` is its other value. There is nothing to wrap
 # (§5.5).
-def shorten(text: borrowed String, limit: Int) -> String?:
+def shorten(text: &String, limit: Int) -> String?:
     if text.is_empty(): null else: text.truncate(limit)
 
 # Two nullable results in a row. `?` asks, and the narrowing inside the
 # then-branch is what lets the next line read the value without a cast.
-def first_heading(doc: borrowed Doc) -> String?:
+def first_heading(doc: &Doc) -> String?:
     let heading be doc.heading()
     if not heading?:
         return null
@@ -286,7 +286,7 @@ def first_heading(doc: borrowed Doc) -> String?:
 
 # The concrete error form: the caller can tell the cases apart, and `match`
 # over a `ParseError` stays exhaustive.
-def parse_format(name: borrowed String) -> (Format, ParseError?):
+def parse_format(name: &String) -> (Format, ParseError?):
     if name.is_empty():
         return (Plain, ParseError.Empty)
     match name:
@@ -302,7 +302,7 @@ def parse_format(name: borrowed String) -> (Format, ParseError?):
 # implementation above. `try` used to make those two calls invisibly, and no
 # section of the spec ever said that it did — which is why §5.5 moved the
 # conversion to the caller, where it is written down (§5.5).
-def load(path: borrowed String) -> (Doc, LoadError?):
+def load(path: &String) -> (Doc, LoadError?):
     let text, io_err be read_file(path)
     if io_err?:
         return (Doc.new(""), LoadError.from(io_err))
@@ -317,7 +317,7 @@ def load(path: borrowed String) -> (Doc, LoadError?):
 # `-> (Doc, (any Error)?)`. It composes across a library boundary and it
 # boxes, where the concrete form above does neither. Both are legal and the
 # choice is the author's (§5.5).
-def open(path: borrowed String) -> (Doc, Error?):
+def open(path: &String) -> (Doc, Error?):
     let doc, err be load(path)
     if err?:
         return (Doc.new(""), err)
@@ -339,7 +339,7 @@ def ruler(width: Int) -> Int:
 # (9) A closure, in the chain that is the shape most Science code takes
 # (§4.6). `each` names the subject of the enclosing call without declaring
 # it; `name giving expression` declares it where `each` will not do.
-def headlines(docs: borrowed Array of Doc) -> Array of String:
+def headlines(docs: &Array[Doc]) -> Array[String]:
     docs
         .iterate()
         .discard(each.is_empty())
@@ -347,7 +347,7 @@ def headlines(docs: borrowed Array of Doc) -> Array of String:
         .take(5)
         .collect()
 
-def by_length(docs: borrowed Array of Doc) -> Array of String:
+def by_length(docs: &Array[Doc]) -> Array[String]:
     docs
         .iterate()
         .map(doc giving doc.summarize())
@@ -362,7 +362,7 @@ def main():
     let doc be Doc(title: "Regions", body: "# A region is a set of program points.")
 
     # (10) The type holding the borrow, built from a local.
-    let excerpt be Excerpt(source: borrowed doc, limit: 40)
+    let excerpt be Excerpt(source: &doc, limit: 40)
 
     # (1) and (4a): generics with bounds, dispatched statically.
     print(describe(doc))
@@ -402,10 +402,10 @@ def main():
         print(describe(opened))
 
     # (2): a const generic instantiated at a literal width. A generic type
-    # needs parentheses before the `.`, because `Window of (Int, 4).empty()`
+    # needs parentheses before the `.`, because `Window[Int, 4].empty()`
     # would not say whether `.empty()` belongs to `4` or to the whole type
     # (§4.3, SC0116).
-    let window be (Window of (Int, 4)).empty()
+    let window be Window[Int, 4].empty()
     print(window.capacity())
     print(window.is_full())
 
@@ -427,7 +427,7 @@ def main():
     print(ruler(20))
 
     # (9): the closures, in chains.
-    let docs be (Array of Doc).new()
+    let docs be Array[Doc].new()
     print(headlines(docs).length())
     print(by_length(docs).length())
 

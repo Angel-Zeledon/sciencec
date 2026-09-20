@@ -1258,7 +1258,7 @@ mod tests {
         assert_eq!(arity, GenericArity { leading: 2, trailing: 0, variadic: false });
         assert!(!arity.admits(1));
         assert!(arity.admits(2));
-        assert!(!arity.admits(3), "`Map of (String, Int, Bool)` is still wrong");
+        assert!(!arity.admits(3), "`Map[String, Int, Bool]` is still wrong");
         assert_eq!(arity.describe(), "2 generic arguments");
     }
 

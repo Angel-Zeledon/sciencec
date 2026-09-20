@@ -54,7 +54,7 @@ fn ty_of(
 fn a_borrowed_copy_reads_as_a_value() {
     let checked = support::check(
         "\
-def read(value: borrowed I64) -> I64:
+def read(value: &I64) -> I64:
     value
 ",
     );
@@ -72,12 +72,12 @@ def read(value: borrowed I64) -> I64:
 fn a_borrowed_string_does_not_read_as_a_value() {
     let checked = support::check(
         "\
-def read(value: borrowed String) -> String:
+def read(value: &String) -> String:
     value
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `String`, found `borrowed String`"]);
+    assert_eq!(checked.messages(), vec!["expected `String`, found `&String`"]);
 }
 
 /// The same question asked of a type the *program* declares, both ways round.
@@ -96,15 +96,15 @@ type Held:
 
 Marker implements Copy
 
-def read_marker(value: borrowed Marker) -> Marker:
+def read_marker(value: &Marker) -> Marker:
     value
 
-def read_held(value: borrowed Held) -> Held:
+def read_held(value: &Held) -> Held:
     value
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `Held`, found `borrowed Held`"]);
+    assert_eq!(checked.messages(), vec!["expected `Held`, found `&Held`"]);
     assert_eq!(coercions(&checked, "read_marker"), vec![Coercion::Copy]);
 }
 
@@ -113,12 +113,12 @@ def read_held(value: borrowed Held) -> Held:
 fn an_exclusive_borrow_of_a_copy_does_not_read_as_a_value() {
     let checked = support::check(
         "\
-def read(value: mutable borrowed I64) -> I64:
+def read(value: &mut I64) -> I64:
     value
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `I64`, found `mutable borrowed I64`"]);
+    assert_eq!(checked.messages(), vec!["expected `I64`, found `&mut I64`"]);
 }
 
 /// §7's inversion of §3's discipline: `Methods::declares` refuses what it
@@ -131,12 +131,12 @@ def read(value: mutable borrowed I64) -> I64:
 fn a_copy_bound_on_a_type_parameter_does_not_license_the_read() {
     let checked = support::check(
         "\
-def read of T: Copy(value: borrowed T) -> T:
+def read[T: Copy](value: &T) -> T:
     value
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `T`, found `borrowed T`"]);
+    assert_eq!(checked.messages(), vec!["expected `T`, found `&T`"]);
 }
 
 /// `Coercion::CopyThenWiden`: §7's rule then Decision 6's, which is what a
@@ -145,7 +145,7 @@ def read of T: Copy(value: borrowed T) -> T:
 fn a_borrowed_copy_reaches_a_nullable_of_the_value() {
     let checked = support::check(
         "\
-def read(value: borrowed I64) -> I64?:
+def read(value: &I64) -> I64?:
     value
 ",
     );
@@ -162,7 +162,7 @@ def read(value: borrowed I64) -> I64?:
 fn a_nullable_borrow_of_a_copy_reaches_the_nullable_value() {
     let checked = support::check(
         "\
-def first(values: borrowed Array of Char) -> Char?:
+def first(values: &Array[Char]) -> Char?:
     values.get(0)
 ",
     );
@@ -179,14 +179,14 @@ def first(values: borrowed Array of Char) -> Char?:
 fn the_copy_does_not_recurse_into_a_container() {
     let checked = support::check(
         "\
-def read(values: Array of (borrowed I64)) -> Array of I64:
+def read(values: Array[&I64]) -> Array[I64]:
     values
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
     assert_eq!(
         checked.messages(),
-        vec!["expected `Array of I64`, found `Array of borrowed I64`"]
+        vec!["expected `Array[I64]`, found `Array[&I64]`"]
     );
 }
 
@@ -202,7 +202,7 @@ fn a_for_over_an_array_binds_a_borrowed_element() {
 type Doc:
     title: String
 
-def walk(docs: borrowed Array of Doc):
+def walk(docs: &Array[Doc]):
     for doc in docs:
         let title be doc.title
 ",
@@ -232,7 +232,7 @@ def walk(docs: borrowed Array of Doc):
 fn a_loop_over_an_array_of_numbers_still_adds_up() {
     let checked = support::check(
         "\
-def total(numbers: borrowed Array of I64) -> I64:
+def total(numbers: &Array[I64]) -> I64:
     let mutable total be 0
     for n in numbers:
         total be total + n
@@ -254,7 +254,7 @@ def total(numbers: borrowed Array of I64) -> I64:
 fn a_loop_over_an_array_of_strings_does_not_add_up() {
     let checked = support::check(
         "\
-def joined(words: borrowed Array of String, seed: String) -> String:
+def joined(words: &Array[String], seed: String) -> String:
     let mutable out be seed
     for word in words:
         out be out + word
@@ -265,7 +265,7 @@ def joined(words: borrowed Array of String, seed: String) -> String:
     // so `methods`' §8 keeps the operator silent; what is left is the
     // structural answer, which refuses a `borrowed String` against a `String`.
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `String`, found `borrowed String`"]);
+    assert_eq!(checked.messages(), vec!["expected `String`, found `&String`"]);
 }
 
 /// `Map` is deliberately not an `Iterate`, and `builtins.rs` says why: §1.3 of
@@ -276,7 +276,7 @@ def joined(words: borrowed Array of String, seed: String) -> String:
 fn a_for_over_a_map_still_binds_nothing() {
     let checked = support::check(
         "\
-def walk(settings: borrowed Map of (String, String)):
+def walk(settings: &Map[String, String]):
     for entry in settings:
         let held be entry
 ",
@@ -290,7 +290,7 @@ def walk(settings: borrowed Map of (String, String)):
 fn chars_still_binds_a_char_by_value() {
     let checked = support::check(
         "\
-def spaces(text: borrowed String) -> I64:
+def spaces(text: &String) -> I64:
     let mutable seen be 0
     for c in text.chars():
         if c is ' ':
@@ -462,18 +462,18 @@ fn indexing_dispatches_to_index_for_its_type() {
 type Grid:
     cell: F64
 
-Grid implements Index of I64:
-    def index(self, at: I64) -> borrowed F64:
-        borrowed self.cell
+Grid implements Index[I64]:
+    def index(self, at: I64) -> &F64:
+        &self.cell
 
-def at(grid: borrowed Grid) -> F64:
+def at(grid: &Grid) -> F64:
     grid[0]
 ",
     );
     checked.assert_clean();
     assert_eq!(
         ty_of(&checked, "at", |kind| matches!(kind, ExprKind::Index { .. })),
-        "borrowed F64"
+        "&F64"
     );
     // And §7 then reads the `F64` out of it, which is the whole point of
     // putting a type on this node.
@@ -488,11 +488,11 @@ fn the_index_operand_is_checked() {
 type Grid:
     cell: F64
 
-Grid implements Index of I64:
-    def index(self, at: I64) -> borrowed F64:
-        borrowed self.cell
+Grid implements Index[I64]:
+    def index(self, at: I64) -> &F64:
+        &self.cell
 
-def at(grid: borrowed Grid, key: String) -> F64:
+def at(grid: &Grid, key: String) -> F64:
     grid[key]
 ",
     );
@@ -508,7 +508,7 @@ fn indexing_a_type_that_implements_nothing_is_refused() {
 type Grid:
     cell: F64
 
-def at(grid: borrowed Grid) -> F64:
+def at(grid: &Grid) -> F64:
     grid[0]
 ",
     );
@@ -635,7 +635,7 @@ def before(a: I64, b: I64) -> Bool:
 def letters(a: Char, b: Char) -> Bool:
     a < b
 
-def words(a: borrowed String, b: borrowed String) -> Bool:
+def words(a: &String, b: &String) -> Bool:
     a < b
 ",
     )
@@ -649,7 +649,7 @@ def words(a: borrowed String, b: borrowed String) -> Bool:
 fn a_comparison_on_a_type_parameter_reports_nothing() {
     support::check(
         "\
-def largest of T(a: borrowed T, b: borrowed T) -> Bool
+def largest[T](a: &T, b: &T) -> Bool
         where T: Ord:
     a > b
 ",
@@ -736,14 +736,14 @@ def sum(a: Vector, b: Vector) -> Vector:
 fn an_array_element_has_the_arrays_element_type() {
     let checked = support::check(
         "\
-def first(xs: borrowed Array of I64) -> I64:
+def first(xs: &Array[I64]) -> I64:
     xs[0]
 ",
     );
     checked.assert_clean();
     assert_eq!(
         ty_of(&checked, "first", |kind| matches!(kind, ExprKind::Index { .. })),
-        "borrowed I64"
+        "&I64"
     );
     // §7 reads the `I64` out of the borrow, which is what makes the element
     // usable as a value.
@@ -757,13 +757,13 @@ fn an_array_element_used_as_the_wrong_type_is_refused() {
     // checked clean.
     let checked = support::check(
         "\
-def first(xs: borrowed Array of I64) -> String:
+def first(xs: &Array[I64]) -> String:
     let a be xs[0]
     return a
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `String`, found `borrowed I64`"]);
+    assert_eq!(checked.messages(), vec!["expected `String`, found `&I64`"]);
 }
 
 #[test]
@@ -772,14 +772,14 @@ fn the_element_type_follows_the_arrays_argument() {
     // argument is what fixes it.
     let checked = support::check(
         "\
-def first(xs: borrowed Array of String) -> borrowed String:
+def first(xs: &Array[String]) -> &String:
     xs[0]
 ",
     );
     checked.assert_clean();
     assert_eq!(
         ty_of(&checked, "first", |kind| matches!(kind, ExprKind::Index { .. })),
-        "borrowed String"
+        "&String"
     );
 }
 
@@ -787,7 +787,7 @@ def first(xs: borrowed Array of String) -> borrowed String:
 fn a_write_through_an_index_is_checked_against_the_element() {
     let checked = support::check(
         "\
-def set(xs: mutable borrowed Array of I64):
+def set(xs: &mut Array[I64]):
     xs[0] be \"nueve\"
 ",
     );
@@ -802,7 +802,7 @@ def set(xs: mutable borrowed Array of I64):
 fn the_notes_own_scale_loop_compiles() {
     support::check(
         "\
-def scale(values: mutable borrowed Array of F64, factor: F64):
+def scale(values: &mut Array[F64], factor: F64):
     for i in 0..values.length():
         values[i] be values[i] * factor
 ",
@@ -814,7 +814,7 @@ def scale(values: mutable borrowed Array of F64, factor: F64):
 fn the_index_operand_is_checked_against_the_declared_index_type() {
     let checked = support::check(
         "\
-def first(xs: borrowed Array of I64, key: String) -> I64:
+def first(xs: &Array[I64], key: String) -> I64:
     xs[key]
 ",
     );
@@ -831,14 +831,14 @@ fn a_write_through_a_type_with_no_index_mutably_names_that_interface() {
 type Grid:
     cell: F64
 
-Grid implements Index of I64:
-    def index(self, at: I64) -> borrowed F64:
-        borrowed self.cell
+Grid implements Index[I64]:
+    def index(self, at: I64) -> &F64:
+        &self.cell
 
-def read(grid: borrowed Grid) -> F64:
+def read(grid: &Grid) -> F64:
     grid[0]
 
-def write(grid: mutable borrowed Grid):
+def write(grid: &mut Grid):
     grid[0] be 1.0
 ",
     );
@@ -853,11 +853,11 @@ fn a_type_that_implements_index_mutably_may_be_written_through() {
 type Grid:
     cell: F64
 
-Grid implements IndexMutably of I64:
-    def index_mutably(mutable self, at: I64) -> mutable borrowed F64:
-        mutable borrowed self.cell
+Grid implements IndexMutably[I64]:
+    def index_mutably(mutable self, at: I64) -> &mut F64:
+        &mut self.cell
 
-def write(grid: mutable borrowed Grid):
+def write(grid: &mut Grid):
     grid[0] be 1.0
 ",
     );
@@ -871,11 +871,11 @@ fn the_write_slot_is_the_referent_and_a_wrong_value_is_still_refused() {
 type Grid:
     cell: F64
 
-Grid implements IndexMutably of I64:
-    def index_mutably(mutable self, at: I64) -> mutable borrowed F64:
-        mutable borrowed self.cell
+Grid implements IndexMutably[I64]:
+    def index_mutably(mutable self, at: I64) -> &mut F64:
+        &mut self.cell
 
-def write(grid: mutable borrowed Grid):
+def write(grid: &mut Grid):
     grid[0] be \"nueve\"
 ",
     );
@@ -893,7 +893,7 @@ fn a_map_is_not_indexable_and_is_silent_about_it() {
     // sentence as "this type has no such operation".
     support::check(
         "\
-def at(m: borrowed Map of (String, I64), key: borrowed String) -> I64:
+def at(m: &Map[String, I64], key: &String) -> I64:
     m[key]
 ",
     )

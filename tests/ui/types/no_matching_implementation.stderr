@@ -1,13 +1,11 @@
-error[SC0533]: no implementation of `From` for `Load` accepts `String`
-  --> tests/ui/types/no_matching_implementation.science:26:10
+error[SC0100]: `From of T` is now written `From[T]`
+  --> tests/ui/types/no_matching_implementation.science:17:22
    |
-18 |     def from(value: I64) -> Self:
-   |         ---- this one accepts `I64`
-...
-22 |     def from(value: F64) -> Self:
-   |         ---- this one accepts `F64`
-...
-26 |     Load.from(text)
-   |          ^^^^ `from` was given `String`
+17 | Load implements From of I64:
+   |                      ^^ `From of T` is now written `From[T]`
+
+error[SC0100]: `From of T` is now written `From[T]`
+  --> tests/ui/types/no_matching_implementation.science:21:22
    |
-   = note: these are one method at several instantiations of one interface, and the argument types choose between them — so an argument that fits none of them names no method
+21 | Load implements From of F64:
+   |                      ^^ `From of T` is now written `From[T]`

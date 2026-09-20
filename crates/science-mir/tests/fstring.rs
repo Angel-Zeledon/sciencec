@@ -157,7 +157,7 @@ fn a_string_hole_is_borrowed_and_not_moved() {
 
     let shared: Vec<&science_mir::BorrowData> =
         body.borrows().iter().filter(|data| data.place == s).collect();
-    assert_eq!(shared.len(), 1, "the hole should be borrowed exactly once");
+    assert_eq!(shared.len(), 1, "the hole should be &exactly once");
     assert_eq!(shared[0].kind, BorrowKind::Shared, "§1.6 asks for a read, not a write");
 
     assert!(
@@ -171,7 +171,7 @@ fn a_string_hole_is_borrowed_and_not_moved() {
             &block.terminator.kind,
             TerminatorKind::Drop { place, .. } if *place == s
         )),
-        "a `String` that was only borrowed is still dropped here"
+        "a `String` that was only &is still dropped here"
     );
 }
 
@@ -233,7 +233,7 @@ fn the_accumulator_is_borrowed_once_per_call_and_every_borrow_activates() {
                 if *destination == place
         )
     });
-    assert!(built, "the borrowed place is not the one `science_string_with_capacity` wrote");
+    assert!(built, "the &place is not the one `science_string_with_capacity` wrote");
 }
 
 /// **Each of the eight entry points is chosen by the hole's type.**
@@ -273,7 +273,7 @@ fn the_entry_point_is_chosen_by_the_holes_type() {
 /// does when you run it.
 #[test]
 fn a_borrowed_hole_renders_its_referent() {
-    let source = "def f(s: borrowed String, n: borrowed Int) -> Int:\n\
+    let source = "def f(s: &String, n: &Int) -> Int:\n\
                   \x20   print(f\"{s}{n}\")\n\x20   return 0\n";
     let lowered = lower(source);
     assert_eq!(

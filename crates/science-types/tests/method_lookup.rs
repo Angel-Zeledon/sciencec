@@ -129,7 +129,7 @@ fn a_method_is_found_through_a_borrow() {
     // to write instead, so a borrow is transparent to the lookup.
     let checked = program(
         "
-def read(doc: borrowed Doc) -> String:
+def read(doc: &Doc) -> String:
     doc.describe()
 ",
     );
@@ -190,7 +190,7 @@ def fresh() -> Doc:
 fn a_methods_arguments_are_checked_against_its_parameters() {
     let checked = program(
         "
-def rename(doc: mutable borrowed Doc) -> Bool:
+def rename(doc: &mut Doc) -> Bool:
     doc.retitle(1)
     true
 ",
@@ -225,7 +225,7 @@ def walk(doc: Doc) -> Bool:
 fn a_method_call_with_the_wrong_number_of_arguments_is_reported() {
     let checked = program(
         "
-def rename(doc: mutable borrowed Doc) -> Bool:
+def rename(doc: &mut Doc) -> Bool:
     doc.retitle()
     true
 ",
@@ -239,14 +239,14 @@ fn a_generic_block_solves_its_parameter_from_the_receiver() {
     // receiver is a `Wrapper of I64`, and the call has type `I64`.
     let checked = check(
         "\
-type Wrapper of T:
+type Wrapper[T]:
     value: T
 
-Wrapper of T has:
+Wrapper[T] has:
     def get(self) -> T:
         self.value
 
-def unwrap(w: Wrapper of I64) -> I64:
+def unwrap(w: Wrapper[I64]) -> I64:
     w.get()
 ",
     );
@@ -367,11 +367,11 @@ type IoError:
 type LoadError:
     detail: String
 
-LoadError implements From of ParseError:
+LoadError implements From[ParseError]:
     def from(value: ParseError) -> Self:
         LoadError(detail: value.detail)
 
-LoadError implements From of IoError:
+LoadError implements From[IoError]:
     def from(value: IoError) -> Self:
         LoadError(detail: value.detail)
 ";
@@ -436,7 +436,7 @@ fn selection_works_through_a_value_receiver_too() {
     // the receiver either way, and the receiver is not selected on again.
     let checked = check(
         "\
-interface Absorb of T:
+interface Absorb[T]:
     def absorb(self, value: T) -> String
 
 type IoError:
@@ -448,11 +448,11 @@ type ParseError:
 type Log:
     detail: String
 
-Log implements Absorb of IoError:
+Log implements Absorb[IoError]:
     def absorb(self, value: IoError) -> String:
         value.detail
 
-Log implements Absorb of ParseError:
+Log implements Absorb[ParseError]:
     def absorb(self, value: ParseError) -> String:
         value.detail
 
@@ -494,12 +494,12 @@ IoError implements Note:
 type LoadError:
     detail: String
 
-LoadError implements From of IoError:
+LoadError implements From[IoError]:
     def from(value: IoError) -> Self:
         LoadError(detail: value.detail)
 
-LoadError implements From of (any Note):
-    def from(value: borrowed any Note) -> Self:
+LoadError implements From[any Note]:
+    def from(value: &any Note) -> Self:
         LoadError(detail: value.note())
 
 def widen(err: IoError) -> LoadError:
@@ -519,7 +519,7 @@ def widen(err: IoError) -> LoadError:
         vec![
             "supplied `IoError`, which fits all of them",
             "one accepts `IoError`",
-            "one accepts `borrowed any Note`",
+            "one accepts `&any Note`",
         ]
     );
     assert!(diagnostic.notes[0].contains("did not narrow it to one"));
@@ -582,11 +582,11 @@ fn a_literal_argument_cannot_select_and_the_message_says_why() {
 type Load:
     detail: String
 
-Load implements From of I64:
+Load implements From[I64]:
     def from(value: I64) -> Self:
         Load(detail: \"\")
 
-Load implements From of F64:
+Load implements From[F64]:
     def from(value: F64) -> Self:
         Load(detail: \"\")
 
@@ -611,11 +611,11 @@ fn a_null_argument_cannot_select_either_and_then_has_no_type_at_all() {
 type Load:
     detail: String
 
-Load implements From of I64:
+Load implements From[I64]:
     def from(value: I64) -> Self:
         Load(detail: \"\")
 
-Load implements From of F64:
+Load implements From[F64]:
     def from(value: F64) -> Self:
         Load(detail: \"\")
 
@@ -637,10 +637,10 @@ fn two_different_interfaces_stay_decision_11s_ambiguity() {
     // nothing else.
     let checked = check(
         "\
-interface Alpha of T:
+interface Alpha[T]:
     def make(value: T) -> Self
 
-interface Beta of T:
+interface Beta[T]:
     def make(value: T) -> Self
 
 type IoError:
@@ -652,11 +652,11 @@ type ParseError:
 type LoadError:
     detail: String
 
-LoadError implements Alpha of IoError:
+LoadError implements Alpha[IoError]:
     def make(value: IoError) -> Self:
         LoadError(detail: value.detail)
 
-LoadError implements Beta of ParseError:
+LoadError implements Beta[ParseError]:
     def make(value: ParseError) -> Self:
         LoadError(detail: value.detail)
 
@@ -775,16 +775,16 @@ def scratch() -> String:
 fn an_explicit_instantiation_fixes_the_prelude_blocks_parameters() {
     let checked = check(
         "\
-def numbers() -> Array of Int:
-    (Array of Int).new()
+def numbers() -> Array[Int]:
+    Array[Int].new()
 
-def settings() -> Map of (String, Int):
-    (Map of (String, Int)).new()
+def settings() -> Map[String, Int]:
+    Map[String, Int].new()
 ",
     );
     checked.assert_clean();
-    assert_eq!(checked.render(tail(&checked, "numbers")), "Array of I64");
-    assert_eq!(checked.render(tail(&checked, "settings")), "Map of (String, I64)");
+    assert_eq!(checked.render(tail(&checked, "numbers")), "Array[I64]");
+    assert_eq!(checked.render(tail(&checked, "settings")), "Map[String, I64]");
 }
 
 /// The receiver written bare, with the *argument* fixing the block's parameter.
@@ -797,12 +797,12 @@ def settings() -> Map of (String, Int):
 fn an_argument_fixes_the_receivers_parameter_at_an_associated_call() {
     let checked = program(
         "
-def own(doc: Doc) -> Box of Doc:
+def own(doc: Doc) -> Box[Doc]:
     Box.new(doc)
 ",
     );
     checked.assert_clean();
-    assert_eq!(checked.render(tail(&checked, "own")), "Box of Doc");
+    assert_eq!(checked.render(tail(&checked, "own")), "Box[Doc]");
 }
 
 /// And the argument is *checked*, which is what the hole cost: before, every
@@ -811,14 +811,14 @@ def own(doc: Doc) -> Box of Doc:
 fn the_argument_of_an_associated_call_is_checked_against_the_solved_parameter() {
     let checked = program(
         "
-def own(doc: Doc) -> Box of String:
+def own(doc: Doc) -> Box[String]:
     Box.new(doc)
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
     assert_eq!(
         checked.messages(),
-        vec!["expected `Box of String`, found `Box of Doc`".to_string()]
+        vec!["expected `Box[String]`, found `Box[Doc]`".to_string()]
     );
 }
 
@@ -835,7 +835,7 @@ def own(doc: Doc) -> Box of String:
 fn a_bare_generic_receiver_that_nothing_fixes_is_reported() {
     let checked = check(
         "\
-def numbers() -> Array of Int:
+def numbers() -> Array[Int]:
     Array.new()
 ",
     );
@@ -843,7 +843,7 @@ def numbers() -> Array of Int:
     let diagnostic = checked.diagnostics.iter().next().expect("one diagnostic");
     assert_eq!(diagnostic.message, "the type argument of `Array` cannot be inferred here");
     assert_eq!(diagnostic.labels[0].message, "nothing here fixes `T`");
-    assert!(diagnostic.notes[1].contains("(Array of ..).new(..)"));
+    assert!(diagnostic.notes[1].contains("Array[..].new(..)"));
 }
 
 /// The same code, plural, and on a *user's* generic type — because the rule is
@@ -856,14 +856,14 @@ def numbers() -> Array of Int:
 fn an_unsuffixed_literal_cannot_fix_a_receivers_parameter() {
     let checked = check(
         "\
-type Wrapper of T:
+type Wrapper[T]:
     inner: T
 
-Wrapper of T has:
-    def holding(value: T) -> Wrapper of T:
+Wrapper[T] has:
+    def holding(value: T) -> Wrapper[T]:
         Wrapper(inner: value)
 
-def wrapped() -> Wrapper of Int:
+def wrapped() -> Wrapper[Int]:
     Wrapper.holding(7)
 ",
     );
@@ -875,15 +875,15 @@ def wrapped() -> Wrapper of Int:
     // The instantiation is the fix, and it is the spelling the message offers.
     let fixed = check(
         "\
-type Wrapper of T:
+type Wrapper[T]:
     inner: T
 
-Wrapper of T has:
-    def holding(value: T) -> Wrapper of T:
+Wrapper[T] has:
+    def holding(value: T) -> Wrapper[T]:
         Wrapper(inner: value)
 
-def wrapped() -> Wrapper of Int:
-    (Wrapper of Int).holding(7)
+def wrapped() -> Wrapper[Int]:
+    Wrapper[Int].holding(7)
 ",
     );
     fixed.assert_clean();
@@ -895,12 +895,12 @@ def wrapped() -> Wrapper of Int:
 fn a_suffixed_literal_does_fix_a_receivers_parameter() {
     let checked = check(
         "\
-def held() -> Box of I64:
+def held() -> Box[I64]:
     Box.new(7i64)
 ",
     );
     checked.assert_clean();
-    assert_eq!(checked.render(tail(&checked, "held")), "Box of I64");
+    assert_eq!(checked.render(tail(&checked, "held")), "Box[I64]");
 }
 
 /// An argument whose own type references an error solves nothing **and reports
@@ -914,9 +914,9 @@ def held() -> Box of I64:
 fn an_erroneous_argument_neither_solves_the_receiver_nor_reports_it() {
     let checked = check(
         "\
-choice Tree of T:
+choice Tree[T]:
     Leaf(T)
-    Node(Box of (Tree of T), Box of (Tree of T))
+    Node(Box[Tree[T]], Box[Tree[T]])
 
 def grow():
     let tree be Node(Box.new(Leaf(1)), Box.new(Leaf(2)))
@@ -950,12 +950,12 @@ def read(doc: Doc) -> String:
 
     let builtin = check(
         "\
-def read(text: borrowed String) -> Int:
+def read(text: &String) -> Int:
     text.shorten()
 ",
     );
     assert_eq!(builtin.codes(), vec![532]);
-    assert_eq!(builtin.messages(), vec!["`borrowed String` has no method `shorten`"]);
+    assert_eq!(builtin.messages(), vec!["`&String` has no method `shorten`"]);
 }
 
 /// The probe that proved the hole, as it was measured: exit 0, no diagnostic,
@@ -967,7 +967,7 @@ def read(text: borrowed String) -> Int:
 fn every_misspelling_on_a_prelude_receiver_is_reported() {
     let checked = check(
         "\
-def probe(text: borrowed String, items: borrowed Array of I64) -> Bool:
+def probe(text: &String, items: &Array[I64]) -> Bool:
     let a be text.no_such_method()
     let b be items.no_such_method()
     true
@@ -987,7 +987,7 @@ def probe(text: borrowed String, items: borrowed Array of I64) -> Bool:
 fn a_name_a_note_gives_and_the_prelude_has_not_written_is_silent() {
     check(
         "\
-def uses(text: mutable borrowed String, items: mutable borrowed Array of I64) -> Bool:
+def uses(text: &mut String, items: &mut Array[I64]) -> Bool:
     text.truncate(4)
     let s be text.slice(0..4)
     let p be items.pop()
@@ -1014,7 +1014,7 @@ def uses(text: mutable borrowed String, items: mutable borrowed Array of I64) ->
 #[test]
 fn a_method_of_a_methodless_prelude_interface_is_silent() {
     check(
-        "def copies(text: borrowed String) -> Bool:
+        "def copies(text: &String) -> Bool:
     let a be text.clone()
     let b be text.owned()
     true
@@ -1072,7 +1072,7 @@ def scratch() -> String:
 fn an_untranscribed_associated_function_on_a_builtin_is_silent() {
     check(
         "\
-def scratch(bytes: borrowed Array of U8) -> Bool:
+def scratch(bytes: &Array[U8]) -> Bool:
     let s, err be String.from_bytes(bytes)
     true
 ",
@@ -1138,7 +1138,7 @@ def size() -> Int:
 fn a_box_of_a_concrete_type_reaches_a_box_of_an_interface_object() {
     let checked = program(
         "
-def into_summary(doc: Doc) -> Box of any Summarize:
+def into_summary(doc: Doc) -> Box[any Summarize]:
     Box.new(doc)
 ",
     );
@@ -1152,14 +1152,14 @@ def into_summary(doc: Doc) -> Box of any Summarize:
 type Untouched:
     detail: String
 
-def into_summary(value: Untouched) -> Box of any Summarize:
+def into_summary(value: Untouched) -> Box[any Summarize]:
     Box.new(value)
 ",
     );
     assert_eq!(refused.codes(), vec![525]);
     assert_eq!(
         refused.messages(),
-        vec!["expected `Box of any Summarize`, found `Box of Untouched`".to_string()]
+        vec!["expected `Box[any Summarize]`, found `Box[Untouched]`".to_string()]
     );
 
     // The control, and it is the half `assign`'s §4 admitted first: behind a
@@ -1167,9 +1167,9 @@ def into_summary(value: Untouched) -> Box of any Summarize:
     let borrowed = program(
         "
 def describe(doc: Doc) -> String:
-    describe_any(borrowed doc)
+    describe_any(&doc)
 
-def describe_any(value: borrowed any Summarize) -> String:
+def describe_any(value: &any Summarize) -> String:
     value.summarize()
 ",
     );
@@ -1197,7 +1197,7 @@ fn tail(checked: &support::Checked, function: &str) -> science_types::Ty {
 fn a_prelude_method_resolves_with_its_declared_types() {
     let checked = check(
         "\
-def lookup(settings: borrowed Map of (String, String), key: borrowed String) -> (borrowed String)?:
+def lookup(settings: &Map[String, String], key: &String) -> (&String)?:
     settings.get(key)
 ",
     );
@@ -1208,7 +1208,7 @@ def lookup(settings: borrowed Map of (String, String), key: borrowed String) -> 
         .find(|(_, expr)| matches!(expr.kind, ExprKind::MethodCall { .. }))
         .expect("the body has a method call");
     assert!(matches!(call.kind, ExprKind::MethodCall { method: Some(_), .. }));
-    assert_eq!(checked.render(call.ty), "(borrowed String)?");
+    assert_eq!(checked.render(call.ty), "(&String)?");
 }
 
 /// The three ways a declared prelude method is now *checked* rather than
@@ -1218,7 +1218,7 @@ def lookup(settings: borrowed Map of (String, String), key: borrowed String) -> 
 fn a_prelude_method_call_is_checked_against_its_declaration() {
     let checked = check(
         "\
-def wrong(settings: borrowed Map of (String, I64)) -> Bool:
+def wrong(settings: &Map[String, I64]) -> Bool:
     settings.contains(1)
 ",
     );
@@ -1238,7 +1238,7 @@ def wrong(settings: borrowed Map of (String, I64)) -> Bool:
 fn a_declarations_borrow_sources_names_the_parameters_the_return_can_reach() {
     let checked = check(
         "\
-def read(path: borrowed String) -> (borrowed String)?:
+def read(path: &String) -> (&String)?:
     null
 ",
     );

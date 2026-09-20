@@ -55,7 +55,7 @@ Doc implements Summarize:
 type Plain:
     n: I64
 
-def describe of T: Summarize(value: borrowed T) -> String:
+def describe[T: Summarize](value: &T) -> String:
     value.preview()
 ";
 
@@ -90,7 +90,7 @@ fn a_user_type_with_no_implementation_is_reported_too() {
     assert_eq!(
         codes(
             "\
-def bad(p: borrowed Plain) -> String:
+def bad(p: &Plain) -> String:
     describe(p)
 "
         ),
@@ -106,7 +106,7 @@ fn a_bound_written_in_a_where_clause_is_the_same_bound() {
     assert_eq!(
         codes(
             "\
-def show of T(value: borrowed T) -> String where T: Summarize:
+def show[T](value: &T) -> String where T: Summarize:
     value.preview()
 
 def bad(n: I64) -> String:
@@ -123,7 +123,7 @@ fn an_explicit_type_argument_is_held_to_the_bound() {
     assert_eq!(
         codes(
             "\
-def bad(n: borrowed I64) -> String:
+def bad(n: &I64) -> String:
     describe of I64(n)
 "
         ),
@@ -139,10 +139,10 @@ fn a_bound_on_a_method_is_checked_as_well_as_one_on_a_function() {
         codes(
             "\
 Plain has:
-    def show of T: Summarize(self, value: borrowed T) -> String:
+    def show[T: Summarize](self, value: &T) -> String:
         value.preview()
 
-def bad(p: borrowed Plain, n: I64) -> String:
+def bad(p: &Plain, n: I64) -> String:
     p.show(n)
 "
         ),
@@ -160,10 +160,10 @@ fn a_parameter_with_two_bounds_reports_the_one_that_fails() {
 interface Render:
     def render(self) -> String
 
-def both of T: Summarize + Render(value: borrowed T) -> String:
+def both[T: Summarize + Render](value: &T) -> String:
     value.preview()
 
-def bad(d: borrowed Doc) -> String:
+def bad(d: &Doc) -> String:
     both(d)
 "
         ),
@@ -202,7 +202,7 @@ def bad(n: I64) -> String:
 fn a_type_that_implements_the_interface_checks_clean() {
     program(
         "\
-def good(d: borrowed Doc) -> String:
+def good(d: &Doc) -> String:
     describe(d)
 ",
     )
@@ -229,7 +229,7 @@ fn an_interface_object_satisfies_a_bound_at_its_own_interface() {
     // interface implements it.
     program(
         "\
-def good(value: borrowed any Summarize) -> String:
+def good(value: &any Summarize) -> String:
     describe(value)
 ",
     )
@@ -244,7 +244,7 @@ fn the_callers_own_bounded_parameter_is_passed_on_without_a_report() {
     // cannot ask.
     program(
         "\
-def outer of U: Summarize(value: borrowed U) -> String:
+def outer[U: Summarize](value: &U) -> String:
     describe(value)
 ",
     )
@@ -258,10 +258,10 @@ fn a_bound_on_a_parameter_this_call_did_not_solve_is_not_reported() {
     // left. `largest(items)` in `examples/07_generics.science` is this case.
     program(
         "\
-def deep of T: Summarize(items: borrowed Array of T) -> I64:
+def deep[T: Summarize](items: &Array[T]) -> I64:
     1
 
-def a(xs: borrowed Array of I64) -> I64:
+def a(xs: &Array[I64]) -> I64:
     deep(xs)
 ",
     )
@@ -277,7 +277,7 @@ fn a_bound_at_a_prelude_interface_is_answered_for_a_prelude_type() {
     // because nothing could be said.
     program(
         "\
-def duplicate of T: Clone(value: borrowed T) -> I64:
+def duplicate[T: Clone](value: &T) -> I64:
     1
 
 def a(n: I64) -> I64:
@@ -295,7 +295,7 @@ fn a_prelude_type_that_does_not_implement_a_prelude_interface_is_sc0534() {
     // silence. `methods`' §7.
     let checked = check(&format!(
         "{FIXTURE}
-def biggest of T: Ord(a: borrowed T, b: borrowed T) -> I64:
+def biggest[T: Ord](a: &T, b: &T) -> I64:
     1
 
 def a() -> I64:
@@ -315,10 +315,10 @@ fn an_applied_prelude_type_is_still_not_answerable() {
     // false positive here. So the answer is *"cannot say"*, and it is silent.
     program(
         "\
-def biggest of T: Ord(a: borrowed T, b: borrowed T) -> I64:
+def biggest[T: Ord](a: &T, b: &T) -> I64:
     1
 
-def a(xs: borrowed Array of I64) -> I64:
+def a(xs: &Array[I64]) -> I64:
     biggest(xs, xs)
 ",
     )
@@ -339,10 +339,10 @@ fn the_cost_of_that_restraint_is_stated_as_a_test() {
     // type's `Clone` comes from.
     program(
         "\
-def duplicate of T: Clone(value: borrowed T) -> I64:
+def duplicate[T: Clone](value: &T) -> I64:
     1
 
-def a(p: borrowed Plain) -> I64:
+def a(p: &Plain) -> I64:
     duplicate(p)
 ",
     )
@@ -357,7 +357,7 @@ fn a_closure_bound_names_no_interface_and_is_not_checked() {
     // rather than leaving it to be discovered.
     program(
         "\
-def apply of F(f: F) -> I64 where F: (I64) -> I64:
+def apply[F](f: F) -> I64 where F: (I64) -> I64:
     1
 
 def a(n: I64) -> I64:
@@ -373,7 +373,7 @@ fn a_bound_whose_interface_did_not_resolve_says_nothing() {
     // bound rather than to a type.
     let checked = support::check_allowing_resolution_errors(
         "\
-def describe of T: Bogus(value: borrowed T) -> I64:
+def describe[T: Bogus](value: &T) -> I64:
     1
 
 def a(n: I64) -> I64:

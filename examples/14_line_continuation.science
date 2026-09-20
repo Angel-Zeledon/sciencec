@@ -17,7 +17,7 @@ type Config:
     retries: U8
     verbose: Bool
 
-choice Outcome of (T, E):
+choice Outcome[T, E]:
     Loaded(T)
     Rejected(E)
 
@@ -28,7 +28,7 @@ interface Summarize:
 
 # A signature broken across lines inside its parameter list.
 def connect(
-    host: borrowed String,
+    host: &String,
     port: U16,
     retries: U8,
 ) -> Bool:
@@ -36,27 +36,27 @@ def connect(
 
 # Two or more generic parameters take parentheses (§4.3), and parentheses
 # continue, so the generic parameter list breaks across lines as well.
-def constrained of (
+def constrained[
     A: Summarize,
     B: Summarize,
-)(left: borrowed A, right: borrowed B) -> String:
+](left: &A, right: &B) -> String:
     left.summarize()
 
 # A `where` clause spread over the parameter parentheses and the body line.
-def described of T(
-    value: borrowed T,
+def described[T](
+    value: &T,
 ) -> String where T: Summarize + Clone:
     value.summarize()
 
-# A nested generic type broken across lines. `Array of (Outcome of (…))` is
+# A nested generic type broken across lines. `Array[Outcome[…]]` is
 # the parenthesized nesting of §4.3, and each of those parentheses continues.
 def deep(
-    items: borrowed Array of (
-        Outcome of (
+    items: &Array[
+        Outcome[
             Config,
             String,
-        )
-    ),
+        ]
+    ],
 ) -> Int:
     items.length()
 
@@ -65,7 +65,7 @@ def deep(
 # §4.6: a chain is broken across lines by indenting the continuation, and a
 # line whose continuation begins with `.` continues. This is the only thing
 # besides an unclosed bracket that may be split across lines at all.
-def hosts(configs: borrowed Array of Config) -> Array of String:
+def hosts(configs: &Array[Config]) -> Array[String]:
     configs
         .iterate()
         .discard(each.verbose)
@@ -75,7 +75,7 @@ def hosts(configs: borrowed Array of Config) -> Array of String:
 
 # The two kinds of continuation nest: a chain broken by `.`, one of whose
 # calls is itself broken inside its parentheses.
-def named_hosts(configs: borrowed Array of Config) -> Array of String:
+def named_hosts(configs: &Array[Config]) -> Array[String]:
     configs
         .iterate()
         .map(
@@ -101,7 +101,7 @@ def main():
     )
 
     # A deeply nested call: the indentation inside is free-form. A parameter
-    # declared `borrowed` is borrowed at the call site without the caller
+    # declared `borrowed` is &at the call site without the caller
     # writing anything (§6.3), so `config.host` is passed plainly.
     #
     # The free-form indentation is the demonstration, so it is held against
@@ -138,12 +138,12 @@ def main():
     # parentheses (§4.3, `SC0116`), and those parentheses continue like any
     # other, trailing comma included (§4.7).
     let items be (
-        Array of (
-            Outcome of (
+        Array[
+            Outcome[
                 Config,
                 String,
-            )
-        )
+            ]
+        ]
     ).new()
     let element be items.get(
         0,

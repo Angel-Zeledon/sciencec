@@ -1,5 +1,5 @@
-error[SC0200]: `Signal` has no variant `Pending`
-  --> tests/ui/resolve/unresolved_variant.science:17:16
+error[SC0100]: `borrowed T` is now written `&T`
+  --> tests/ui/resolve/unresolved_variant.science:15:16
    |
-17 |         Signal.Pending: 1
-   |                ^^^^^^^ no such variant
+15 | def code_of(s: borrowed Signal) -> Int:
+   |                ^^^^^^^^ `borrowed T` is now written `&T`

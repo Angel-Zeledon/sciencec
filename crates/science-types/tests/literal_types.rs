@@ -133,7 +133,7 @@ fn an_integer_literal_does_not_unify_with_a_name_that_takes_arguments() {
     assert_eq!(
         codes(
             "\
-def by_value(value: Array of I64) -> I64:
+def by_value(value: Array[I64]) -> I64:
     1
 
 def a() -> I64:
@@ -155,7 +155,7 @@ fn an_integer_literal_does_not_unify_with_an_interface_object() {
     assert_eq!(
         codes(
             "\
-def by_value(value: borrowed any Summarize) -> I64:
+def by_value(value: &any Summarize) -> I64:
     1
 
 def a() -> I64:
@@ -243,7 +243,7 @@ fn an_integer_literal_at_a_type_parameter_is_admitted() {
     assert_eq!(
         codes(
             "\
-def by_value of T(value: T) -> I64:
+def by_value[T](value: T) -> I64:
     1
 
 def a() -> I64:
@@ -313,7 +313,7 @@ fn a_literal_at_a_borrowed_parameter_is_borrowed_rather_than_retyped() {
     // reference, and no `Borrow` node for MIR to take the borrow at.
     let checked = program(
         "\
-def by_ref(value: borrowed I64) -> I64:
+def by_ref(value: &I64) -> I64:
     1
 
 def a() -> I64:
@@ -325,7 +325,7 @@ def a() -> I64:
     let literal = checked.find("a", |kind| matches!(kind, ExprKind::Literal(_)));
     assert_eq!(checked.render(body.ty(literal)), "I64");
     let borrow = checked.find("a", |kind| matches!(kind, ExprKind::Borrow { .. }));
-    assert_eq!(checked.render(body.ty(borrow)), "borrowed I64");
+    assert_eq!(checked.render(body.ty(borrow)), "&I64");
 }
 
 // --- §5b: a literal at a `borrowed any I` parameter ----------------------
@@ -344,7 +344,7 @@ def a() -> I64:
 fn an_integer_literal_reaches_a_borrowed_display_object() {
     let checked = program(
         "\
-def show(value: borrowed any Display) -> I64:
+def show(value: &any Display) -> I64:
     1
 
 def a() -> I64:
@@ -363,9 +363,9 @@ def a() -> I64:
     // And the two nodes above it are the ordinary pair: §6.3's borrow, then
     // §4's unsizing. Nothing here is a third rule about literals.
     let borrow = checked.find("a", |kind| matches!(kind, ExprKind::Borrow { .. }));
-    assert_eq!(checked.render(body.ty(borrow)), "borrowed I64");
+    assert_eq!(checked.render(body.ty(borrow)), "&I64");
     let coerce = checked.find("a", |kind| matches!(kind, ExprKind::Coerce { .. }));
-    assert_eq!(checked.render(body.ty(coerce)), "borrowed any Display");
+    assert_eq!(checked.render(body.ty(coerce)), "&any Display");
 }
 
 /// A float literal takes `F64`, which is Decision 2's other default.
@@ -373,7 +373,7 @@ def a() -> I64:
 fn a_float_literal_reaches_a_borrowed_display_object() {
     let checked = program(
         "\
-def show(value: borrowed any Display) -> I64:
+def show(value: &any Display) -> I64:
     1
 
 def a() -> I64:
@@ -396,7 +396,7 @@ fn a_literal_at_an_object_the_default_does_not_implement_is_still_refused() {
 interface Tally:
     def tally(self) -> I64
 
-def show(value: borrowed any Tally) -> I64:
+def show(value: &any Tally) -> I64:
     1
 
 def a() -> I64:
@@ -442,7 +442,7 @@ fn a_literal_at_a_borrowed_slot_that_is_not_a_call_is_refused() {
         codes(
             "\
 def a() -> I64:
-    let n: borrowed I64 be 42
+    let n: &I64 be 42
     1
 "
         ),
@@ -575,7 +575,7 @@ fn null_does_not_unify_with_an_interface_object() {
     assert_eq!(
         codes(
             "\
-def by_value(value: borrowed any Summarize) -> I64:
+def by_value(value: &any Summarize) -> I64:
     1
 
 def a() -> I64:
@@ -627,7 +627,7 @@ fn null_at_a_type_parameter_is_admitted() {
     assert_eq!(
         codes(
             "\
-def by_value of T(value: T) -> I64:
+def by_value[T](value: T) -> I64:
     1
 
 def a() -> I64:

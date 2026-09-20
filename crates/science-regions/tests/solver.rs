@@ -20,12 +20,12 @@ fn a_loans_region_is_more_than_the_point_it_was_taken_at() {
 type Doc:
     title: Int
 
-def look(d: borrowed Doc) -> Int:
+def look(d: &Doc) -> Int:
     d.title
 
 def go():
     let doc be Doc(title: 0)
-    let s be borrowed doc
+    let s be &doc
     print(look(s))
 ";
     let checked = check(source);
@@ -60,13 +60,13 @@ type Def:
     name: Int
 
 type Table:
-    items: Array of Def
+    items: Array[Def]
 
 Table has:
-    def get(self, at: Int) -> borrowed Def:
+    def get(self, at: Int) -> &Def:
         self.items.get(at)
 
-    def first(self) -> borrowed Def:
+    def first(self) -> &Def:
         let found be self.get(0)
         found
 ";
@@ -155,7 +155,7 @@ def branchy(n: Int) -> Int:
 #[test]
 fn a_parameter_region_holds_everywhere_and_a_return_region_does_not() {
     let source = "\
-def first(x: borrowed Int, n: Int) -> borrowed Int:
+def first(x: &Int, n: Int) -> &Int:
     let mutable i be 0
     loop:
         if i >= n:

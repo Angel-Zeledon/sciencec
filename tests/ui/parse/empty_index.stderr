@@ -1,3 +1,9 @@
+error[SC0100]: `Array of T` is now written `Array[T]`
+  --> tests/ui/parse/empty_index.science:16:22
+   |
+16 | def first(row: Array of Int) -> Int:
+   |                      ^^ `Array of T` is now written `Array[T]`
+
 error[SC0151]: this index bracket has no index in it
   --> tests/ui/parse/empty_index.science:17:15
    |

@@ -24,9 +24,9 @@ type Doc:
     title: Int
 
 type Holder:
-    items: Array of (borrowed Doc)
+    items: Array[&Doc]
 
-def hold(h: borrowed Holder) -> Int:
+def hold(h: &Holder) -> Int:
     1
 ";
     let checked = check(source);
@@ -66,13 +66,13 @@ fn a_move_through_an_unresolved_call_is_invisible() {
 type Doc:
     title: Int
 
-def look(d: borrowed Doc) -> Int:
+def look(d: &Doc) -> Int:
     d.title
 
 def go():
-    let mutable list be (Array of Doc).new()
+    let mutable list be Array[Doc].new()
     let doc be Doc(title: 0)
-    let s be borrowed doc
+    let s be &doc
     list.insert(0, doc)
     print(look(s))
 ";
@@ -96,15 +96,15 @@ def go():
 fn decision_threes_empty_intersection_surfaces_as_rule_five() {
     let source = "\
 type Plan:
-    input: borrowed Int
-    output: borrowed Int
+    input: &Int
+    output: &Int
 
-def build(a: borrowed Int, b: borrowed Int) -> Plan:
+def build(a: &Int, b: &Int) -> Plan:
     Plan(input: a, output: b)
 
-def go(long: borrowed Int) -> Plan:
+def go(long: &Int) -> Plan:
     let short be 1
-    build(long, borrowed short)
+    build(long, &short)
 ";
     let checked = check(source);
     assert_eq!(
@@ -143,10 +143,10 @@ fn the_depth_cap_is_not_reached_by_the_acceptance_case() {
 #[test]
 fn a_type_parameter_carries_no_region() {
     let source = "\
-type Box of T:
+type Box[T]:
     value: T
 
-def hold of T(b: borrowed Box of T) -> Int:
+def hold[T](b: &Box[T]) -> Int:
     1
 ";
     let checked = check(source);
@@ -170,25 +170,25 @@ def hold of T(b: borrowed Box of T) -> Int:
 fn unsafe_does_not_relax_anything_because_mir_carries_no_marker() {
     let source = "\
 type Arena:
-    items: Array of Int
+    items: Array[Int]
 
 Arena has:
-    def alloc(self) -> borrowed Int:
+    def alloc(self) -> &Int:
         let value be 0
-        borrowed value
+        &value
 ";
     let checked = check(source);
     assert_eq!(checked.reported(), vec![333]);
 
     let wrapped = "\
 type Arena:
-    items: Array of Int
+    items: Array[Int]
 
 Arena has:
-    def alloc(self) -> borrowed Int:
+    def alloc(self) -> &Int:
         unsafe:
             let value be 0
-            borrowed value
+            &value
 ";
     let checked = check(wrapped);
     assert_eq!(

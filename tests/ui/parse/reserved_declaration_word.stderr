@@ -4,7 +4,7 @@ error[SC0196]: `prompt` is reserved and declares nothing
 19 | prompt fit_report(run: String) -> Int:
    | ^^^^^^ a declaration cannot begin with `prompt`
    |
-   = note: a prompt is an ordinary function returning `Array of Message`; its arguments carry no schema, so there is nothing for a declaration form to derive and nothing for it to check
+   = note: a prompt is an ordinary function returning `Array[Message]`; its arguments carry no schema, so there is nothing for a declaration form to derive and nothing for it to check
    = note: `tool` is the one word of the three that was spent, because it is the one whose obligations a compiler can check
 
 error[SC0196]: `agent` is reserved and declares nothing

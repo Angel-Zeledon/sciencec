@@ -57,7 +57,7 @@ fn loop_borrows<'a>(
     out
 }
 
-const OVER_AN_ARRAY: &str = "def f(xs: Array of Int):\n    for x in xs:\n        print(x)\n";
+const OVER_AN_ARRAY: &str = "def f(xs: Array[Int]):\n    for x in xs:\n        print(x)\n";
 
 /// The whole of §4.2's AMENDMENT 11 — *"`for x in xs:` desugars to
 /// `xs.iterate()` — it borrows"* — as one assertion.
@@ -90,7 +90,7 @@ fn a_for_borrows_its_subject_rather_than_moving_it() {
     let borrows: Vec<_> =
         body.borrows().iter().filter(|data| data.place.local == subject).collect();
     assert_eq!(borrows.len(), 1, "the loop did not take exactly one borrow of `xs`");
-    assert_eq!(borrows[0].kind, BorrowKind::Shared, "§4.4 says the source is borrowed shared");
+    assert_eq!(borrows[0].kind, BorrowKind::Shared, "§4.4 says the source is &shared");
 }
 
 /// §7.1's second sentence, and one of the two invariants `lower`'s §6 rests on.
@@ -103,7 +103,7 @@ fn a_for_borrows_its_subject_rather_than_moving_it() {
 #[test]
 fn a_loops_borrow_is_never_two_phase() {
     let lowered =
-        lower("def f(xs: mutable borrowed Array of Int):\n    for x in xs:\n        xs.push(1)\n");
+        lower("def f(xs: &mut Array[Int]):\n    for x in xs:\n        xs.push(1)\n");
     let body = lowered.body("f");
     // The `push` receiver *is* two-phase — it is an argument borrow — so this
     // fixture has one of each and the test is not vacuous.
@@ -122,9 +122,9 @@ fn a_loops_borrow_is_never_two_phase() {
 /// finding `science-regions`'s §6 had to work around for method receivers.
 #[test]
 fn the_borrow_names_the_referent_and_not_the_reference() {
-    let lowered = lower("def f(xs: borrowed Array of Int):\n    for x in xs:\n        print(x)\n");
+    let lowered = lower("def f(xs: &Array[Int]):\n    for x in xs:\n        print(x)\n");
     let dump = lowered.dump("f");
-    assert!(dump.contains("borrowed (*_1)"), "the loop borrowed the reference itself: {dump}");
+    assert!(dump.contains("&(*_1)"), "the loop &the reference itself: {dump}");
 
     let body = lowered.body("f");
     let [loop_borrow] = loop_borrows(&lowered, body)[..] else { panic!("one loop, one borrow") };
@@ -175,7 +175,7 @@ fn the_next_call_reads_through_the_loops_reference() {
 #[test]
 fn a_subject_with_no_place_is_borrowed_through_a_temporary() {
     let lowered =
-        lower("def f(text: borrowed String):\n    for c in text.chars():\n        print(c)\n");
+        lower("def f(text: &String):\n    for c in text.chars():\n        print(c)\n");
     let body = lowered.body("f");
     let [loop_borrow] = loop_borrows(&lowered, body)[..] else { panic!("one loop, one borrow") };
     // **Exclusive here and shared everywhere else, and the difference is what
@@ -210,7 +210,7 @@ fn a_subject_with_no_place_is_borrowed_through_a_temporary() {
 #[test]
 fn nested_loops_take_one_borrow_each() {
     let source = concat!(
-        "def f(rows: borrowed Array of (Array of Int)):\n",
+        "def f(rows: &Array[Array[Int]]):\n",
         "    for row in rows:\n",
         "        for cell in row:\n",
         "            print(cell)\n",
@@ -222,7 +222,7 @@ fn nested_loops_take_one_borrow_each() {
     assert!(shared.iter().all(|data| data.kind == BorrowKind::Shared));
     assert_ne!(
         shared[0].place.local, shared[1].place.local,
-        "the inner loop borrowed the outer loop's subject"
+        "the inner loop &the outer loop's subject"
     );
 }
 

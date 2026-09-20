@@ -1,3 +1,9 @@
+error[SC0100]: `Array of T` is now written `Array[T]`
+  --> tests/ui/parse/reversed_index_range.science:16:28
+   |
+16 | def windows(samples: Array of Int) -> Int:
+   |                            ^^ `Array of T` is now written `Array[T]`
+
 error[SC0154]: this range starts at 5 and ends at 1, so it holds nothing
   --> tests/ui/parse/reversed_index_range.science:17:26
    |

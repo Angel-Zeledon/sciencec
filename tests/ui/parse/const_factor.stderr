@@ -1,3 +1,15 @@
+error[SC0100]: `of T` is now written `[T]`
+  --> tests/ui/parse/const_factor.science:15:7
+   |
+15 | def f of (const N: Int, const M: Int)(w: Grid of (Int, N * M)):
+   |       ^^ `of T` is now written `[T]`
+
+error[SC0100]: `Grid of T` is now written `Grid[T]`
+  --> tests/ui/parse/const_factor.science:15:47
+   |
+15 | def f of (const N: Int, const M: Int)(w: Grid of (Int, N * M)):
+   |                                               ^^ `Grid of T` is now written `Grid[T]`
+
 error[SC0157]: a const expression multiplies only by a literal
   --> tests/ui/parse/const_factor.science:15:58
    |

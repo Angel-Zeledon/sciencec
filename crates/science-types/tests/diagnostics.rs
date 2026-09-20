@@ -34,10 +34,10 @@ fn atom(def: DefId) -> Atom {
 
 
 const SOURCE: &str = "\
-def residual of (const n: Int, const m: Int)(
-    block: Grid of (F32, n),
-    reference: Grid of (F32, m),
-) -> Grid of (F32, n):
+def residual[const n: Int, const m: Int](
+    block: Grid[F32, n],
+    reference: Grid[F32, m],
+) -> Grid[F32, n]:
     block.minus(reference, 1)
 ";
 

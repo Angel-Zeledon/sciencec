@@ -92,7 +92,7 @@ let readings be load()
 
 print(summary(readings))
 
-def summary(values: borrowed Array of F32) -> String:
+def summary(values: &Array[F32]) -> String:
     values.mean().to_string()
 "#
     ));
@@ -107,7 +107,7 @@ fn a_file_of_declarations_only_gains_nothing() {
         r#"type Doc:
     title: String
 
-def render(doc: borrowed Doc) -> String:
+def render(doc: &Doc) -> String:
     doc.title
 "#
     ));
@@ -153,10 +153,10 @@ doc.title
 #[test]
 fn a_parameter_lists_colon_does_not_end_the_scan() {
     insta::assert_snapshot!(parse_source(
-        r#"type Grid of (T, const ROWS: Int):
-    cells: Array of T
+        r#"type Grid[T, const ROWS: Int]:
+    cells: Array[T]
 
-Grid of (T, const ROWS: Int) has:
+Grid[T, const ROWS: Int] has:
     def rows(self) -> Int:
         ROWS
 "#

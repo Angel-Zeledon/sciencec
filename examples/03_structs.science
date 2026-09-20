@@ -13,12 +13,12 @@ type Doc:
 # A field may be a borrow. The region parameter is implicit: the programmer
 # never writes one (§6.1).
 type View:
-    source: borrowed Doc
+    source: &Doc
 
-# Several borrowed fields, shared and exclusive.
+# Several &fields, shared and exclusive.
 type Editor:
-    document: mutable borrowed Doc
-    template: borrowed Doc
+    document: &mut Doc
+    template: &Doc
     revision: Int
 
 # A record may hold other records by value.
@@ -29,16 +29,16 @@ type Bundle:
 
 # Generic parameters. One parameter needs no parentheses; more than one does,
 # because the comma would otherwise be ambiguous (§4.3).
-type Wrapper of T:
+type Wrapper[T]:
     inner: T
 
-type Pair of (A, B):
+type Pair[A, B]:
     first: A
     second: B
 
 # A const generic parameter: a value, not a type (§5.3).
-type Grid of (T, const ROWS: Int, const COLS: Int):
-    cells: Array of T
+type Grid[T, const ROWS: Int, const COLS: Int]:
+    cells: Array[T]
 
 type Marker:
     tag: U8
@@ -54,11 +54,11 @@ def make_doc() -> Doc:
 def make_doc_reordered() -> Doc:
     Doc(body: "...", title: "a")
 
-def title_of(view: borrowed View) -> borrowed String:
+def title_of(view: &View) -> &String:
     # Borrows auto-dereference for field access, so the chain reads through
     # `source` with nothing written for it: Science has no dereference
     # operator at all (§4.7).
-    borrowed view.source.title
+    &view.source.title
 
 # A type may have methods that come from no interface, and a def with no
 # `self` receiver is an associated def called through the type (§4.4).
@@ -71,13 +71,13 @@ Doc has:
 
 # An inherent block on a generic type names its parameters the same way the
 # declaration does.
-Grid of (T, const ROWS: Int, const COLS: Int) has:
+Grid[T, const ROWS: Int, const COLS: Int] has:
     def area() -> Int:
         ROWS * COLS
 
 # Trailing commas are allowed in every parenthesized and bracketed list,
 # construction included (§4.7).
-def make_pair() -> Pair of (Int, Int):
+def make_pair() -> Pair[Int, Int]:
     Pair(
         first: 1,
         second: 2,
@@ -88,7 +88,7 @@ def main():
 
     # A record that stores a borrow of a local. The borrow ends with `view`,
     # so `doc` is still usable afterwards.
-    let view be View(source: borrowed doc)
+    let view be View(source: &doc)
     print(title_of(view))
 
     let bundle be Bundle(primary: doc, secondary: make_doc_reordered(), label: "pair")
@@ -110,6 +110,6 @@ def main():
     print(marker.tag)
 
     # An associated def on a generic type takes parentheses around the
-    # type, because `Grid of (Int, 3, 3).area()` does not say whether
+    # type, because `Grid[Int, 3, 3].area()` does not say whether
     # `.area()` belongs to the last argument or to the whole type (§4.3).
-    print((Grid of (Int, 3, 3)).area())
+    print(Grid[Int, 3, 3].area())

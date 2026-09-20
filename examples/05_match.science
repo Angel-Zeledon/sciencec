@@ -22,19 +22,19 @@ type Point:
 
 # §8 gives `String` no `clone`, so an owned copy is built from `String.new()`
 # and `push_str`, which is the whole of what §8 offers for building one.
-def copy_of(text: borrowed String) -> String:
+def copy_of(text: &String) -> String:
     let mutable out be String.new()
     out.push_str(text)
     out
 
-def emphasized(text: borrowed String) -> String:
+def emphasized(text: &String) -> String:
     let mutable out be String.new()
     out.push_str("*")
     out.push_str(text)
     out.push_str("*")
     out
 
-def quoted(text: borrowed String) -> String:
+def quoted(text: &String) -> String:
     let mutable out be String.new()
     out.push_str("\"")
     out.push_str(text)
@@ -43,7 +43,7 @@ def quoted(text: borrowed String) -> String:
 
 # --- Variant patterns, inline arms ------------------------------------------
 
-def name_of(format: borrowed Format) -> String:
+def name_of(format: &Format) -> String:
     match format:
         Plain: "plain"
         Markdown: "markdown"
@@ -52,7 +52,7 @@ def name_of(format: borrowed Format) -> String:
 # The same match with every pattern qualified by its type. `Plain` and
 # `Format.Plain` are the same thing, and the qualified form is what
 # disambiguates when two choices in scope share a variant name (§4.7).
-def name_of_qualified(format: borrowed Format) -> String:
+def name_of_qualified(format: &Format) -> String:
     match format:
         Format.Plain: "plain"
         Format.Markdown: "markdown"
@@ -67,7 +67,7 @@ def digit_name(digit: Int) -> String:
         2: "two"
         _: "many"
 
-def char_name(c: borrowed Char) -> String:
+def char_name(c: &Char) -> String:
     match c:
         ',': "comma"
         ';': "semicolon"
@@ -83,7 +83,7 @@ def is_vowel(c: Char) -> Bool:
         'u': true
         _: false
 
-def is_greeting(text: borrowed String) -> Bool:
+def is_greeting(text: &String) -> Bool:
     match text:
         "hello": true
         "hi": true
@@ -96,7 +96,7 @@ def describe_flag(flag: Bool) -> String:
 
 # --- Variant patterns that bind their payload -------------------------------
 
-def describe(token: borrowed Token) -> String:
+def describe(token: &Token) -> String:
     match token:
         Ident(name): copy_of(name)
         Number(value): digit_name(value)
@@ -111,7 +111,7 @@ def size_class(n: Int) -> String:
         3 | 4 | 5 | 6: "medium"
         _: "large"
 
-def is_punctuation(token: borrowed Token) -> Bool:
+def is_punctuation(token: &Token) -> Bool:
     match token:
         Symbol(',') | Symbol(';') | Symbol('.'): true
         _: false
@@ -127,7 +127,7 @@ def quadrant(point: (Int, Int)) -> String:
 
 # --- Record patterns, which mirror construction with named fields -----------
 
-def classify(point: borrowed Point) -> String:
+def classify(point: &Point) -> String:
     match point:
         Point(x: 0, y: 0): "origin"
         Point(x: 0, y: y): "on the Y axis"
@@ -135,7 +135,7 @@ def classify(point: borrowed Point) -> String:
         Point(x: x, y: y): "general"
 
 # A record pattern may ignore a field with the wildcard.
-def x_of(point: borrowed Point) -> Int:
+def x_of(point: &Point) -> Int:
     match point:
         Point(x: x, y: _): x
 
@@ -150,7 +150,7 @@ def passthrough(n: Int) -> Int:
 
 # `panic` has type `Never`, which coerces to any type. That is what lets one
 # arm of a `match` bail out while the others produce a `String` (§4.7).
-def require_text(token: borrowed Token) -> String:
+def require_text(token: &Token) -> String:
     match token:
         Ident(name): copy_of(name)
         Number(value): digit_name(value)
@@ -159,7 +159,7 @@ def require_text(token: borrowed Token) -> String:
 
 # --- Block-form arms, and nesting -------------------------------------------
 
-def render(token: borrowed Token, format: borrowed Format) -> String:
+def render(token: &Token, format: &Format) -> String:
     match token:
         Number(value):
             let doubled be value * 2
@@ -180,7 +180,7 @@ def render(token: borrowed Token, format: borrowed Format) -> String:
 
 # There is no `if` in a pattern, so a condition on the payload goes in the arm
 # body.
-def shout_level(token: borrowed Token) -> String:
+def shout_level(token: &Token) -> String:
     match token:
         Ident(name):
             if name.length() > 10: "long" else: "short"

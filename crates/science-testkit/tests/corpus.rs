@@ -93,8 +93,8 @@ fn the_acceptance_program_exists_and_names_every_requirement() {
         ("of T: Summarize", "generics with bounds"),
         ("const ", "const generics"),
         ("type Item is", "associated types"),
-        ("borrowed any Summarize", "a trait dispatched dynamically"),
-        ("Box of any Summarize", "a trait object behind a box"),
+        ("&any Summarize", "a trait dispatched dynamically"),
+        ("Box[any Summarize]", "a trait object behind a box"),
         ("match ", "an exhaustive match"),
         // §11.1's sixth requirement was "Option and Result with `try`" and is
         // now "a nullable type and a fallible function returning `(T, Error?)`".
@@ -106,7 +106,7 @@ fn the_acceptance_program_exists_and_names_every_requirement() {
         ("implements Add", "a user type implementing an operator trait"),
         ("in 0..", "a range-driven loop"),
         ("each.", "a closure"),
-        ("borrowed Doc", "a type holding a borrow in a field"),
+        ("&Doc", "a type holding a borrow in a field"),
     ] {
         assert!(
             text.contains(needle),

@@ -11,7 +11,7 @@ const WIDTH be 768
 const GREETING be "hola"
 
 # A type alias. `type X is Y` names a type; `type X:` declares a record.
-type Embedding is Array of F32
+type Embedding is Array[F32]
 type Counter is I64
 
 def main():
@@ -62,11 +62,11 @@ def main():
     let floated be answer as F64
     let truncated be alias_float as Int
 
-    # A borrow is a binding like any other. The type is `borrowed T`, and
+    # A borrow is a binding like any other. The type is `&T`, and
     # `borrowed` is also the unary operator that makes one (§4.6).
-    let view: borrowed String be borrowed greeting
+    let view: &String be &greeting
     let mutable owner be "mutable text"
-    let exclusive: mutable borrowed String be mutable borrowed owner
+    let exclusive: &mut String be &mut owner
 
     # A constant is used by name and has no storage of its own.
     print(WIDTH)

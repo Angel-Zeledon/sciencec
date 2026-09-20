@@ -13,13 +13,13 @@ type Doc:
 # A record whose field is a borrow. Its region parameter is implicit and
 # propagated to every site that instantiates the type (§6.2).
 type View:
-    source: borrowed Doc
+    source: &Doc
 
 type Editor:
-    target: mutable borrowed Doc
+    target: &mut Doc
 
 type Span:
-    text: borrowed String
+    text: &String
     start: Int
     end: Int
 
@@ -61,7 +61,7 @@ def rebind() -> String:
 # --- Shared borrows ---------------------------------------------------------
 
 # Any number of shared borrows may coexist.
-def compare(a: borrowed Doc, b: borrowed Doc) -> Bool:
+def compare(a: &Doc, b: &Doc) -> Bool:
     a.body.length() > b.body.length()
 
 def many_shared():
@@ -70,30 +70,30 @@ def many_shared():
     # `borrowed` is the unary operator that makes a borrow, and it is what a
     # binding needs: there is no call here to borrow on the programmer's
     # behalf (§4.6).
-    let one be borrowed doc
-    let two be borrowed doc
-    let three be borrowed doc
+    let one be &doc
+    let two be &doc
+    let three be &doc
     print(compare(one, two))
     print(three.summarize())
 
     # At a call site nothing is written at all: `compare` declares both
-    # parameters `borrowed`, so both arguments are borrowed automatically
+    # parameters `borrowed`, so both arguments are &automatically
     # (§6.3). The signature still says which it is, so the reader keeps the
     # information and only the noise goes.
     print(compare(doc, doc))
 
 # A borrow returned from a function: its region is inferred from the argument.
-def longest(a: borrowed String, b: borrowed String) -> borrowed String:
+def longest(a: &String, b: &String) -> &String:
     if a.length() > b.length(): a else: b
 
-def title_of(doc: borrowed Doc) -> borrowed String:
-    borrowed doc.title
+def title_of(doc: &Doc) -> &String:
+    &doc.title
 
 # --- Exclusive borrows ------------------------------------------------------
 
 # Exactly one exclusive borrow, and never at the same time as a shared one.
 # Assignment through it uses `be`, the same word that binds (§4.3).
-def retitle(doc: mutable borrowed Doc, title: String):
+def retitle(doc: &mut Doc, title: String):
     doc.title be title
 
 def exclusive_then_shared():
@@ -107,15 +107,15 @@ def exclusive_then_shared():
     print(doc.summarize())
 
     # An explicit borrow remains legal where it clarifies (§6.3).
-    retitle(mutable borrowed doc, "renamed again")
+    retitle(&mut doc, "renamed again")
     print(doc.summarize())
 
 # Borrowing two different fields of the same record at once. Borrows
 # auto-dereference for field access, so nothing is written for the outer
 # `mutable borrowed`: Science has no dereference operator (§4.7).
-def disjoint_fields(doc: mutable borrowed Doc) -> Int:
-    let title be borrowed doc.title
-    let body be borrowed doc.body
+def disjoint_fields(doc: &mut Doc) -> Int:
+    let title be &doc.title
+    let body be &doc.body
     title.length() + body.length()
 
 # --- Borrows stored in records ----------------------------------------------
@@ -126,16 +126,16 @@ def store_a_borrow():
     # `view` borrows `doc`. Construction is not a call, so the borrow is
     # written out; the region of the field is inferred so that the borrow
     # cannot outlive its referent (§6.1 rule 5).
-    let view be View(source: borrowed doc)
+    let view be View(source: &doc)
     print(view.source.summarize())
     print(title_of(view.source))
 
 def store_an_exclusive_borrow():
     let mutable doc be produce()
-    let editor be Editor(target: mutable borrowed doc)
+    let editor be Editor(target: &mut doc)
     editor.target.title be "edited"
 
-def span_of(text: borrowed String) -> Span:
+def span_of(text: &String) -> Span:
     Span(text: text, start: 0, end: text.length())
 
 # --- Copy types -------------------------------------------------------------
@@ -161,10 +161,10 @@ def copies():
 
 # `Box` is built through its associated function; named-argument construction
 # is for record types only (§4.4).
-def boxed() -> Box of Doc:
+def boxed() -> Box[Doc]:
     Box.new(produce())
 
-def describe_boxed(value: borrowed Box of Doc) -> String:
+def describe_boxed(value: &Box[Doc]) -> String:
     value.summarize()
 
 # --- Scopes and drop --------------------------------------------------------
@@ -188,7 +188,7 @@ def main():
     let mutable edited be produce()
     print(disjoint_fields(edited))
 
-    let text be "a borrowed string"
+    let text be "a &string"
     let span be span_of(text)
     print(span.end)
 

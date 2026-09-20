@@ -311,7 +311,7 @@ def main():
 #[test]
 fn a_method_is_called_through_a_borrowed_parameter() {
     let source = "\
-def longest(a: borrowed String, b: borrowed String) -> borrowed String:
+def longest(a: &String, b: &String) -> &String:
     if a.length() > b.length(): a else: b
 
 def main():
@@ -365,7 +365,7 @@ def main():
 #[test]
 fn printing_a_borrowed_string_frees_nothing() {
     let source = "\
-def show(s: borrowed String):
+def show(s: &String):
     print(s)
     print(s)
 
@@ -442,7 +442,7 @@ choice Format:
     Plain
     Markdown
 
-def name_of(format: borrowed Format) -> Int:
+def name_of(format: &Format) -> Int:
     match format:
         Plain: 10
         Markdown: 20
@@ -512,7 +512,7 @@ Doc implements Summarize:
     def size(self) -> Int:
         self.n
 
-def measure(it: borrowed any Summarize) -> Int:
+def measure(it: &any Summarize) -> Int:
     it.size()
 
 def main():
@@ -550,7 +550,7 @@ Note implements Summarize:
     def size(self) -> Int:
         self.m
 
-def measure(it: borrowed any Summarize) -> Int:
+def measure(it: &any Summarize) -> Int:
     it.size()
 
 def main():
@@ -587,10 +587,10 @@ Doc implements Pair:
     def first(self) -> Int:
         self.a
 
-def take_first(it: borrowed any Pair) -> Int:
+def take_first(it: &any Pair) -> Int:
     it.first()
 
-def take_second(it: borrowed any Pair) -> Int:
+def take_second(it: &any Pair) -> Int:
     it.second()
 
 def main():
@@ -688,7 +688,7 @@ Boom implements Error:
 def fail() -> Error?:
     Boom(code: 409)
 
-def report(err: borrowed any Error) -> String:
+def report(err: &any Error) -> String:
     err.message()
 
 def main() -> Error?:
@@ -727,7 +727,7 @@ Doc implements Summarize:
     def size(self) -> Int:
         self.n
 
-def measure(it: borrowed any Summarize) -> Int:
+def measure(it: &any Summarize) -> Int:
     it.size()
 
 def main():
@@ -762,10 +762,10 @@ def main():
 #[test]
 fn a_method_on_a_generic_block_is_refused_as_a_generic() {
     let source = "\
-type Wrapper of T:
+type Wrapper[T]:
     inner: T
 
-Wrapper of T has:
+Wrapper[T] has:
     def get(self) -> Int:
         1
 
@@ -819,7 +819,7 @@ def main():
 #[test]
 fn string_equality_compares_bytes_and_not_buffers() {
     let source = "\
-def same(a: borrowed String, b: borrowed String) -> Bool:
+def same(a: &String, b: &String) -> Bool:
     a is b
 
 def main():
@@ -842,7 +842,7 @@ def main():
 #[test]
 fn a_string_is_compared_against_a_literal() {
     let source = "\
-def has_name(name: borrowed String) -> Bool:
+def has_name(name: &String) -> Bool:
     name is not \"\"
 
 def main():
@@ -860,7 +860,7 @@ def main():
 #[test]
 fn ordering_two_strings_is_refused() {
     let source = "\
-def before(a: borrowed String, b: borrowed String) -> Bool:
+def before(a: &String, b: &String) -> Bool:
     a < b
 
 def main():
@@ -893,7 +893,7 @@ def main():
 /// value would print `1` after three. Only the sequence distinguishes them.
 #[test]
 fn a_copy_out_of_a_borrow_reads_the_value_behind_it() {
-    let source = "def bump(counter: mutable borrowed Int):
+    let source = "def bump(counter: &mut Int):
     counter be counter + 1
 
 def main():
@@ -917,10 +917,10 @@ def main():
 #[test]
 fn a_copy_out_of_a_shared_borrow_is_the_value_at_its_own_width() {
     let source = "\
-def read(value: borrowed I64) -> I64:
+def read(value: &I64) -> I64:
     value
 
-def sum(a: borrowed I64, b: borrowed I64) -> I64:
+def sum(a: &I64, b: &I64) -> I64:
     a + b
 
 def main():
@@ -948,16 +948,16 @@ def main():
 #[test]
 fn a_copy_out_of_a_borrow_at_the_narrow_widths() {
     let source = "\
-def byte(value: borrowed U8) -> U8:
+def byte(value: &U8) -> U8:
     value
 
-def add_bytes(a: borrowed U8, b: borrowed U8) -> U8:
+def add_bytes(a: &U8, b: &U8) -> U8:
     a + b
 
-def letter(value: borrowed Char) -> Char:
+def letter(value: &Char) -> Char:
     value
 
-def flag(value: borrowed Bool) -> Bool:
+def flag(value: &Bool) -> Bool:
     value
 
 def main():
@@ -983,10 +983,10 @@ def main():
 #[test]
 fn a_copy_out_of_a_borrowed_float_is_a_float_load() {
     let source = "\
-def read(value: borrowed F64) -> F64:
+def read(value: &F64) -> F64:
     value
 
-def add(a: borrowed F64, b: borrowed F64) -> F64:
+def add(a: &F64, b: &F64) -> F64:
     a + b
 
 def main():
@@ -1018,7 +1018,7 @@ type Pair:
 
 Pair implements Copy
 
-def whole(p: borrowed Pair) -> Pair:
+def whole(p: &Pair) -> Pair:
     p
 
 def main():
@@ -1043,7 +1043,7 @@ def main():
 #[test]
 fn a_copy_out_of_a_borrow_then_widened_is_present() {
     let source = "\
-def maybe(value: borrowed Int) -> Int?:
+def maybe(value: &Int) -> Int?:
     value
 
 def main():
@@ -1088,10 +1088,10 @@ def clamp_low(value: Int, floor: Int) -> Int:
         return floor
     value
 
-def longest(a: borrowed String, b: borrowed String) -> borrowed String:
+def longest(a: &String, b: &String) -> &String:
     if a.length() > b.length(): a else: b
 
-def bump(counter: mutable borrowed Int):
+def bump(counter: &mut Int):
     counter be counter + 1
 
 def consume(text: String) -> Int:
@@ -1103,7 +1103,7 @@ def factorial(n: Int) -> Int:
     else:
         n * factorial(n - 1)
 
-def has_name(name: borrowed String) -> Bool:
+def has_name(name: &String) -> Bool:
     name is not \"\"
 
 def main():
@@ -1148,7 +1148,7 @@ def main():
 #[test]
 fn a_copy_that_runs_only_when_present_is_refused() {
     let source = "\
-def unwrap(value: (borrowed Int)?) -> Int?:
+def unwrap(value: (&Int)?) -> Int?:
     value
 
 def main():
@@ -1187,7 +1187,7 @@ def clamp_low(value: Int, floor: Int) -> Int:
         return floor
     value
 
-def longest(a: borrowed String, b: borrowed String) -> borrowed String:
+def longest(a: &String, b: &String) -> &String:
     if a.length() > b.length(): a else: b
 
 def consume(text: String) -> Int:
@@ -1199,7 +1199,7 @@ def factorial(n: Int) -> Int:
     else:
         n * factorial(n - 1)
 
-def has_name(name: borrowed String) -> Bool:
+def has_name(name: &String) -> Bool:
     name is not \"\"
 
 def main():

@@ -62,7 +62,7 @@ def counted() -> Bool:
 ",
             "counted",
         ),
-        "Range of I64",
+        "Range[I64]",
     );
 }
 
@@ -82,7 +82,7 @@ def ruler(width: Int) -> Bool:
 ",
             "ruler",
         ),
-        "Range of I64",
+        "Range[I64]",
     );
 }
 
@@ -98,7 +98,7 @@ def ruler(first: I32) -> Bool:
 ",
             "ruler",
         ),
-        "Range of I32",
+        "Range[I32]",
     );
 }
 
@@ -125,7 +125,7 @@ def counted(n: Int) -> Bool:
         "counted",
     );
     assert_eq!(half_open, inclusive);
-    assert_eq!(inclusive, "Range of I64");
+    assert_eq!(inclusive, "Range[I64]");
 }
 
 // --- the loop, which is what the type is for ------------------------------
@@ -230,7 +230,7 @@ def caller() -> Int:
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `I64`, found `Range of I64`"]);
+    assert_eq!(checked.messages(), vec!["expected `I64`, found `Range[I64]`"]);
 }
 
 /// Its pair: the argument that is a number is untouched, so the rule above is
@@ -293,7 +293,7 @@ def counted() -> Bool:
 fn a_range_may_be_written_in_a_signature_and_returned() {
     let checked = support::check(
         "\
-def upto(n: Int) -> Range of Int:
+def upto(n: Int) -> Range[Int]:
     0..n
 ",
     );
@@ -307,12 +307,12 @@ def upto(n: Int) -> Range of Int:
 fn a_returned_range_must_have_the_element_type_the_signature_says() {
     let checked = support::check(
         "\
-def upto(n: I32) -> Range of Int:
+def upto(n: I32) -> Range[Int]:
     0..n
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `Range of I64`, found `Range of I32`"]);
+    assert_eq!(checked.messages(), vec!["expected `Range[I64]`, found `Range[I32]`"]);
 }
 
 // --- the index bracket, which this change had to leave alone ---------------
@@ -328,7 +328,7 @@ def upto(n: I32) -> Range of Int:
 fn a_range_written_in_an_index_bracket_is_still_the_slice_refusal() {
     let checked = support::check(
         "\
-def middle(xs: borrowed Array of Int) -> Bool:
+def middle(xs: &Array[Int]) -> Bool:
     let cell be xs[1..3]
     true
 ",
@@ -345,14 +345,14 @@ def middle(xs: borrowed Array of Int) -> Bool:
 fn a_range_bound_to_a_name_and_used_as_an_index_is_an_ordinary_mismatch() {
     let checked = support::check(
         "\
-def middle(xs: borrowed Array of Int) -> Bool:
+def middle(xs: &Array[Int]) -> Bool:
     let r be 1..3
     let cell be xs[r]
     true
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `I64`, found `Range of I64`"]);
+    assert_eq!(checked.messages(), vec!["expected `I64`, found `Range[I64]`"]);
 }
 
 /// **What is *not* closed, pinned as the silence it is.** `T` is unbounded:
@@ -386,6 +386,6 @@ def counted(first: String, last: String) -> Bool:
 ",
             "counted",
         ),
-        "Range of String",
+        "Range[String]",
     );
 }

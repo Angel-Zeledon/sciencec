@@ -116,14 +116,14 @@ fn is_clean(source: &str) -> bool {
 // --- 1. reproducibility ---------------------------------------------------
 
 const TWO_GENERICS: &str = "\
-type Pair of (A, B):
+type Pair[A, B]:
     first: A
     second: B
 
-def identity of T(value: T) -> T:
+def identity[T](value: T) -> T:
     value
 
-def pair_up of (A, B)(left: A, right: B) -> Pair of (A, B):
+def pair_up[A, B](left: A, right: B) -> Pair[A, B]:
     Pair(first: left, second: right)
 
 def main():
@@ -235,7 +235,7 @@ fn the_same_generic_at_the_same_type_is_one_item() {
     // The fixed point: `pair_up` is called twice at `(I64, F64)` in a loop-free
     // body and once at `(F64, I64)`, so the set has two and not three.
     let source = "\
-def take of T(value: T) -> T:
+def take[T](value: T) -> T:
     value
 
 def main():
@@ -257,10 +257,10 @@ fn nested_arguments_are_recovered_from_the_call_site() {
     // *lowered* type and gets the answer, which is the reason the recovery is
     // worth having rather than a workaround.
     let source = "\
-type Holder of T:
+type Holder[T]:
     item: T
 
-def unwrap of T(holder: Holder of T) -> T:
+def unwrap[T](holder: Holder[T]) -> T:
     holder.item
 
 def main():
@@ -284,10 +284,10 @@ fn an_uncalled_generic_is_not_emitted() {
     // The root set doing its job: a generic nothing reaches has no instance,
     // and a monomorphiser that emitted one would have had to invent arguments.
     let source = "\
-def used of T(value: T) -> T:
+def used[T](value: T) -> T:
     value
 
-def never_used of T(value: T) -> T:
+def never_used[T](value: T) -> T:
     value
 
 def main():
@@ -349,10 +349,10 @@ fn a_generic_that_grows_its_own_argument_is_sc0407() {
     // `grow of T` calling `grow of (Holder of T)` needs `grow[Int]`,
     // `grow[Holder of Int]`, `grow[Holder of (Holder of Int)]`, forever.
     let source = "\
-type Holder of T:
+type Holder[T]:
     item: T
 
-def grow of T(value: T) -> Int:
+def grow[T](value: T) -> Int:
     let wrapped be Holder(item: value)
     grow(wrapped)
 
@@ -369,10 +369,10 @@ def main():
 #[test]
 fn sc0407_prints_the_chain_and_the_chain_grows() {
     let source = "\
-type Holder of T:
+type Holder[T]:
     item: T
 
-def grow of T(value: T) -> Int:
+def grow[T](value: T) -> Int:
     let wrapped be Holder(item: value)
     grow(wrapped)
 
@@ -391,7 +391,7 @@ def main():
     // The chain, not a depth: every link is an instantiation the walk took,
     // and the reader can see the growth by reading down the list.
     assert!(notes.contains("grow[I64]"), "{notes}");
-    assert!(notes.contains("Holder of I64"), "{notes}");
+    assert!(notes.contains("Holder[I64]"), "{notes}");
     assert!(notes.contains("contains an earlier one"), "{notes}");
 }
 
@@ -401,7 +401,7 @@ fn ordinary_recursion_terminates_and_is_one_item() {
     // which is every recursive function anybody writes. This is the test that
     // says the termination rule is not a recursion ban.
     let source = "\
-def countdown of T(value: T, n: Int) -> Int:
+def countdown[T](value: T, n: Int) -> Int:
     if n <= 0: 0 else: countdown(value, n - 1)
 
 def main():
@@ -453,10 +453,10 @@ fn two_pointer_instantiations_are_two_symbols() {
     // `SC0404` raised against a program with nothing wrong with it. This pass
     // encodes the checker's `Ty`, so they are two.
     let source = "\
-type Boxed of T:
+type Boxed[T]:
     item: T
 
-def unwrap of T(b: Boxed of T) -> T:
+def unwrap[T](b: Boxed[T]) -> T:
     b.item
 
 def main():
@@ -503,12 +503,12 @@ Doc implements Summarize:
     def summarize(self) -> String:
         self.title
 
-def hold of T(value: Box of T) -> Bool:
+def hold[T](value: Box[T]) -> Bool:
     true
 
 def main():
     let concrete be hold(Box.new(Doc(title: \"a\")))
-    let erased: Box of any Summarize be Box.new(Doc(title: \"b\"))
+    let erased: Box[any Summarize] be Box.new(Doc(title: \"b\"))
     let dynamic be hold(erased)
 ";
     let mut lowered = lower(source);
@@ -588,7 +588,7 @@ fn a_generic_passed_to_an_extern_function_is_sc0522() {
 unsafe extern \"C\" library \"m\":
     def install(callback: ffi.FunctionPointer) -> Int
 
-def identity of T(value: T) -> T:
+def identity[T](value: T) -> T:
     value
 
 def main():
@@ -663,7 +663,7 @@ fn an_unsolved_instantiation_is_recorded_rather_than_guessed() {
     // inventing arguments for it. The alternative — emitting it with `T` still
     // in the symbol — is a symbol two instantiations could share.
     let source = "\
-def generic of T(value: T) -> T:
+def generic[T](value: T) -> T:
     value
 
 def main():
@@ -780,16 +780,16 @@ fn a_const_argument_reaches_the_symbol_through_mono_key() {
     // const field is encoded from that key and from nothing else, and this is
     // the end-to-end evidence that the two agree.
     let source = "\
-type Window of (T, const N: Int):
+type Window[T, const N: Int]:
     first: T
 
-def width of (T, const N: Int)(w: Window of (T, N)) -> Int:
+def width[T, const N: Int](w: Window[T, N]) -> Int:
     let k: Int be 1
     k
 
 def main():
     let x: Int be 1
-    let w: Window of (Int, 4) be Window(first: x)
+    let w: Window[Int, 4] be Window(first: x)
     let n be width(w)
 ";
     let mut lowered = lower(source);
@@ -810,16 +810,16 @@ fn a_const_argument_is_recovered_by_one_variable_linear_matching() {
     // site says `4`, so `N = 3` — a division with a remainder check, which is
     // `science_types::matching` and is not reimplemented here.
     let source = "\
-type Window of (T, const N: Int):
+type Window[T, const N: Int]:
     first: T
 
-def width of (T, const N: Int)(w: Window of (T, N + 1)) -> Int:
+def width[T, const N: Int](w: Window[T, N + 1]) -> Int:
     let k: Int be 1
     k
 
 def main():
     let x: Int be 1
-    let w: Window of (Int, 4) be Window(first: x)
+    let w: Window[Int, 4] be Window(first: x)
     let n be width(w)
 ";
     let mut lowered = lower(source);
@@ -838,16 +838,16 @@ fn a_growing_const_argument_is_caught_by_the_backstop() {
     // the containment rule cannot fire. The depth backstop is what stops it,
     // and the message says which of the two rules it was.
     let source = "\
-type Window of (T, const N: Int):
+type Window[T, const N: Int]:
     first: T
 
-def step of (T, const N: Int)(w: Window of (T, N)) -> Int:
-    let bigger: Window of (T, N + 1) be Window(first: w.first)
+def step[T, const N: Int](w: Window[T, N]) -> Int:
+    let bigger: Window[T, N + 1] be Window(first: w.first)
     step(bigger)
 
 def main():
     let x: Int be 1
-    let w: Window of (Int, 1) be Window(first: x)
+    let w: Window[Int, 1] be Window(first: x)
     let n be step(w)
 ";
     let mut lowered = lower(source);
@@ -868,16 +868,16 @@ def main():
 #[test]
 fn a_long_chain_is_still_readable() {
     let source = "\
-type Window of (T, const N: Int):
+type Window[T, const N: Int]:
     first: T
 
-def step of (T, const N: Int)(w: Window of (T, N)) -> Int:
-    let bigger: Window of (T, N + 1) be Window(first: w.first)
+def step[T, const N: Int](w: Window[T, N]) -> Int:
+    let bigger: Window[T, N + 1] be Window(first: w.first)
     step(bigger)
 
 def main():
     let x: Int be 1
-    let w: Window of (Int, 1) be Window(first: x)
+    let w: Window[Int, 1] be Window(first: x)
     let n be step(w)
 ";
     let mut lowered = lower(source);
@@ -901,7 +901,7 @@ fn a_literal_argument_is_solved_from_the_destination() {
     // §2 cost 2. `Constant::Literal` carries no type, so the only site left is
     // the destination — and it works when the destination has one.
     let source = "\
-def identity of T(value: T) -> T:
+def identity[T](value: T) -> T:
     value
 
 def main():
@@ -923,7 +923,7 @@ fn an_unannotated_literal_binding_leaves_nothing_to_read() {
     // `science-types` now defaults an unannotated numeric binding, and §2's
     // note about it should be deleted rather than this test relaxed.
     let source = "\
-def identity of T(value: T) -> T:
+def identity[T](value: T) -> T:
     value
 
 def main():
@@ -941,12 +941,12 @@ fn a_method_on_a_generic_type_is_instantiated_from_its_receiver() {
     // receiver is what solves them: `self_ty(owner)` is `Cell of T` and the
     // call site's `args[0]` is a `borrowed Cell of Int`.
     let source = "\
-type Cell of T:
+type Cell[T]:
     value: T
 
-Cell of T has:
-    def get(self) -> borrowed T:
-        borrowed self.value
+Cell[T] has:
+    def get(self) -> &T:
+        &self.value
 
 def main():
     let n: Int be 1
@@ -965,12 +965,12 @@ def main():
 #[test]
 fn one_method_at_two_receiver_types_is_two_items() {
     let source = "\
-type Cell of T:
+type Cell[T]:
     value: T
 
-Cell of T has:
-    def get(self) -> borrowed T:
-        borrowed self.value
+Cell[T] has:
+    def get(self) -> &T:
+        &self.value
 
 def main():
     let n: Int be 1

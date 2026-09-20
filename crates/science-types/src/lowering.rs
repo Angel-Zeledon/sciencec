@@ -364,7 +364,7 @@ fn const_where_type_expected(span: Span, found: &str) -> Diagnostic {
     Diagnostic::error(codes::CONST_WHERE_TYPE_EXPECTED, "a const expression is not a type")
         .with_label(Label::primary(span, found))
         .with_note(
-            "const expressions are generic arguments — the `4` of `Window of (Int, 4)` — so \
+            "const expressions are generic arguments — the `4` of `Window[Int, 4]` — so \
              one belongs inside an `of (..)` list and nowhere else",
         )
 }

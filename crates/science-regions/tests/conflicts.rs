@@ -19,13 +19,13 @@ const DOC: &str = "\
 type Doc:
     title: Int
 
-def look(d: borrowed Doc) -> Int:
+def look(d: &Doc) -> Int:
     d.title
 
 def take(d: Doc) -> Int:
     d.title
 
-def touch(d: mutable borrowed Doc):
+def touch(d: &mut Doc):
     d.title be 1
 ";
 
@@ -37,8 +37,8 @@ fn a_shared_borrow_and_an_exclusive_one_cannot_overlap() {
         "{DOC}
 def go():
     let mutable doc be Doc(title: 0)
-    let shared be borrowed doc
-    touch(mutable borrowed doc)
+    let shared be &doc
+    touch(&mut doc)
     print(look(shared))
 "
     );
@@ -54,9 +54,9 @@ fn moving_the_last_use_above_the_conflict_is_enough() {
         "{DOC}
 def go():
     let mutable doc be Doc(title: 0)
-    let shared be borrowed doc
+    let shared be &doc
     print(look(shared))
-    touch(mutable borrowed doc)
+    touch(&mut doc)
 "
     );
     assert_eq!(only(&source), Vec::<u16>::new());
@@ -69,8 +69,8 @@ fn many_shared_borrows_are_fine() {
         "{DOC}
 def go():
     let doc be Doc(title: 0)
-    let a be borrowed doc
-    let b be borrowed doc
+    let a be &doc
+    let b be &doc
     print(look(a))
     print(look(b))
 "
@@ -83,9 +83,9 @@ def go():
 #[test]
 fn a_borrow_may_not_outlive_its_referent() {
     let source = "\
-def escape() -> borrowed Int:
+def escape() -> &Int:
     let value be 5
-    borrowed value
+    &value
 ";
     assert_eq!(only(source), vec![333]);
 }
@@ -97,7 +97,7 @@ fn a_value_may_not_be_moved_while_borrowed() {
         "{DOC}
 def go():
     let doc be Doc(title: 0)
-    let shared be borrowed doc
+    let shared be &doc
     print(take(doc))
     print(look(shared))
 "
@@ -115,12 +115,12 @@ type Pair:
     left: Int
     right: Int
 
-def keep(x: borrowed Int) -> Bool:
+def keep(x: &Int) -> Bool:
     true
 
 def go():
     let mutable p be Pair(left: 0, right: 0)
-    let l be borrowed p.left
+    let l be &p.left
     p.right be 1
     print(keep(l))
 ";
@@ -135,12 +135,12 @@ type Pair:
     left: Int
     right: Int
 
-def keep(x: borrowed Int) -> Bool:
+def keep(x: &Int) -> Bool:
     true
 
 def go():
     let mutable p be Pair(left: 0, right: 0)
-    let l be borrowed p.left
+    let l be &p.left
     p.left be 1
     print(keep(l))
 ";
@@ -169,7 +169,7 @@ Counter has:
 
 def go():
     let mutable c be Counter(total: 0)
-    let s be borrowed c
+    let s be &c
     c.bump(s.read())
 ";
     assert_eq!(only(source), Vec::<u16>::new());
@@ -192,7 +192,7 @@ Counter has:
 
 def go():
     let mutable c be Counter(total: 0)
-    let s be borrowed c
+    let s be &c
     c.bump(s.read())
     print(s.read())
 ";
@@ -211,16 +211,16 @@ type Symbol:
     name: Int
 
 type Table:
-    items: Array of Symbol
+    items: Array[Symbol]
 
 Table has:
-    def find(self, name: Int) -> borrowed Symbol:
+    def find(self, name: Int) -> &Symbol:
         self.items.get(name)
 
     def add(mutable self, name: Int):
         self.items.push(Symbol(name: name))
 
-    def intern(mutable self, name: Int) -> borrowed Symbol:
+    def intern(mutable self, name: Int) -> &Symbol:
         let found be self.find(name)
         self.add(name)
         found
@@ -237,7 +237,7 @@ type Symbol:
     name: Int
 
 type Table:
-    items: Array of Symbol
+    items: Array[Symbol]
 
 Table has:
     def position(self, name: Int) -> Int:
@@ -261,8 +261,8 @@ fn the_message_is_a_narrative_over_spans_and_names_no_region() {
         "{DOC}
 def go():
     let mutable doc be Doc(title: 0)
-    let shared be borrowed doc
-    touch(mutable borrowed doc)
+    let shared be &doc
+    touch(&mut doc)
     print(look(shared))
 "
     );

@@ -8,7 +8,7 @@
 #### Several hashes are just part of the comment text.
 # A comment containing a # hash, a "quoted string", 'c', and 0xFF.
 # A comment holding words that would otherwise be keywords: def return
-# let be mutable type choice implements has of borrowed any null interface
+# let be mutable type choice implements has of &any null interface
 # giving >= — none of them lex, because the line ended at the hash.
 # A comment with unicode: ¿qué tal? — 你好 — 😀
 

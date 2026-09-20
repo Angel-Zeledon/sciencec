@@ -59,7 +59,7 @@ fn codes(source: &str) -> Vec<String> {
 /// the fix takes both words down to one.
 #[test]
 fn each_after_for_is_reported() {
-    let source = "def f(rows: borrowed Array of Int):\n    for each row in rows:\n        g(row)\n";
+    let source = "def f(rows: &Array[Int]):\n    for each row in rows:\n        g(row)\n";
     insta::assert_snapshot!(parse_source_allowing_errors(source));
 
     let (code, message, replaced, replacement) = only_fix(source);
@@ -73,7 +73,7 @@ fn each_after_for_is_reported() {
 /// read as it was meant to be.
 #[test]
 fn each_after_for_does_not_derail_the_rest_of_the_file() {
-    let source = "def f(rows: borrowed Array of Int):\n    for each row in rows:\n        g(row)\n    for row in rows:\n        g(row)\n";
+    let source = "def f(rows: &Array[Int]):\n    for each row in rows:\n        g(row)\n    for row in rows:\n        g(row)\n";
     assert_eq!(codes(source), ["SC0138"]);
     insta::assert_snapshot!(parse_source_allowing_errors(source));
 }
@@ -359,7 +359,7 @@ fn a_single_equals_is_still_the_missing_be_and_not_the_new_diagnostic() {
 /// list in one pass, not one error per run.
 #[test]
 fn a_pre_revision_file_reports_every_word_once() {
-    let source = "trait Summarize:\n    def summarize(self) -> String\n\nDoc has methods:\n    def show(self, rows: borrowed Array of Int, n: Int):\n        for each row in rows:\n            println(row)\n        while n is at least 0:\n            n be n - 1\n";
+    let source = "trait Summarize:\n    def summarize(self) -> String\n\nDoc has methods:\n    def show(self, rows: &Array[Int], n: Int):\n        for each row in rows:\n            println(row)\n        while n is at least 0:\n            n be n - 1\n";
     assert_eq!(
         codes(source),
         ["SC0139", "SC0141", "SC0138", "SC0144", "SC0142", "SC0143"],
@@ -388,13 +388,13 @@ fn a_pre_revision_file_reports_every_word_once() {
 #[test]
 fn a_bracket_after_a_freed_word_is_read_as_the_migration() {
     assert_eq!(
-        codes("def h(while: Array of Int, above: Array of Int, n: Int):\n    let a be while[0]\n"),
+        codes("def h(while: Array[Int], above: Array[Int], n: Int):\n    let a be while[0]\n"),
         ["SC0142", "SC0100"],
         "`while[0]` is the removed loop, and the `SC0100` after it is the block \
          the recovery then wanted - the same pair `while(0)` has always produced"
     );
     assert_eq!(
-        codes("def h(above: Array of Int, n: Int):\n    let b be n is above [0]\n"),
+        codes("def h(above: Array[Int], n: Int):\n    let b be n is above [0]\n"),
         ["SC0143"],
         "`is above` is the removed comparison phrase, as it is before a `(`"
     );

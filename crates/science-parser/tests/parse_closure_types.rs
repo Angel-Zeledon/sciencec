@@ -112,7 +112,7 @@ fn a_nullable_closure_needs_its_own_parentheses() {
 /// below, which is the test that would have caught it.
 #[test]
 fn generic_arguments_bind_tighter_than_the_arrow() {
-    insta::assert_snapshot!(shape_of_type("Array of Int -> Bool"));
+    insta::assert_snapshot!(shape_of_type("Array[Int] -> Bool"));
 }
 
 /// §4.3 permits one generic argument to be parenthesised or not. Those two
@@ -121,7 +121,7 @@ fn generic_arguments_bind_tighter_than_the_arrow() {
 /// parens close the list, so the arrow is outside.
 #[test]
 fn the_two_spellings_of_one_generic_argument_agree() {
-    assert_eq!(shape_of_type("Array of Int -> Bool"), shape_of_type("Array of (Int) -> Bool"));
+    assert_eq!(shape_of_type("Array[Int] -> Bool"), shape_of_type("Array[Int] -> Bool"));
 }
 
 /// A closure *as* a generic argument writes the parentheses it needs, which is
@@ -169,7 +169,7 @@ fn a_closure_returning_a_closure() {
 #[test]
 fn a_closure_in_a_where_bound() {
     insta::assert_snapshot!(parse_source(
-        r#"def keep of P(items: Array of Int, p: P) -> Array of Int where P: (borrowed Int) -> Bool:
+        r#"def keep[P](items: Array[Int], p: P) -> Array[Int] where P: (&Int) -> Bool:
     items
 "#
     ));
@@ -192,7 +192,7 @@ fn a_closure_as_an_inline_generic_bound() {
 #[test]
 fn a_closure_bound_in_a_list_with_interface_bounds() {
     insta::assert_snapshot!(parse_source(
-        r#"def run of F(f: F) -> Int where F: Clone + (Int) -> Bool + Send:
+        r#"def run[F](f: F) -> Int where F: Clone + (Int) -> Bool + Send:
     0
 "#
     ));
@@ -205,7 +205,7 @@ fn a_closure_bound_in_a_list_with_interface_bounds() {
 #[test]
 fn an_unparenthesised_left_hand_side_is_one_parameter() {
     insta::assert_snapshot!(parse_source(
-        r#"def run of F(f: F) -> Int where F: Int -> Bool:
+        r#"def run[F](f: F) -> Int where F: Int -> Bool:
     0
 "#
     ));
@@ -222,7 +222,7 @@ fn a_fallible_return_shape_is_still_a_tuple() {
         r#"def load(path: String) -> (Config, Error?):
     0
 
-def load_as of T(path: String) -> (T, Error?) where T: Clone:
+def load_as[T](path: String) -> (T, Error?) where T: Clone:
     0
 "#
     ));
@@ -304,7 +304,7 @@ fn a_closure_over_a_single_tuple_cannot_be_spelled() {
 #[test]
 fn a_bound_that_opens_with_a_paren_needs_an_arrow() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        r#"def run of F(f: F) -> Int where F: (Int):
+        r#"def run[F](f: F) -> Int where F: (Int):
     0
 "#
     ));
@@ -315,7 +315,7 @@ fn a_bound_that_opens_with_a_paren_needs_an_arrow() {
 #[test]
 fn an_empty_parameter_list_is_not_a_bound() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        r#"def run of F(f: F) -> Int where F: ():
+        r#"def run[F](f: F) -> Int where F: ():
     0
 "#
     ));

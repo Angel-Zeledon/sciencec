@@ -1,35 +1,29 @@
-error[SC0541]: `render` does not have the signature `Render` declares for it
-  --> tests/ui/types/mismatched_implementation.science:27:9
+error[SC0100]: `of T` is now written `[T]`
+  --> tests/ui/types/mismatched_implementation.science:20:19
    |
-15 |     def render(self, width: Int) -> String
-   |         ------ `render` is declared here
-...
-27 |     def render(self, width: Bool) -> Int:
-   |         ^^^^^^ parameter 1 is `Bool`; `Render` declares `I64`
-   |
-   = note: an implementation is held to the declaration, because a call through the interface — `any Summarize`, or a body checked against a bound — is dispatched at the declared signature and not at this one
-   = note: write the declared signature: `def render(self, width: I64) -> String:`
+20 | interface Convert of Source:
+   |                   ^^ `of T` is now written `[T]`
 
-error[SC0541]: `reset` does not have the signature `Reset` declares for it
-  --> tests/ui/types/mismatched_implementation.science:31:9
+error[SC0102]: expected an identifier, found end of line
+  --> tests/ui/types/mismatched_implementation.science:20:29
    |
-18 |     def reset(mutable self)
-   |         ----- `reset` is declared here
-...
-31 |     def reset(self):
-   |         ^^^^^ this takes `self`; `Reset` declares `mutable self`
-   |
-   = note: an implementation is held to the declaration, because a call through the interface — `any Summarize`, or a body checked against a bound — is dispatched at the declared signature and not at this one
-   = note: write the declared signature: `def reset(mutable self):`
+20 | interface Convert of Source:
+   |                             ^ expected an identifier, found end of line (continues to line 21)
 
-error[SC0541]: `convert` does not have the signature `Convert` declares for it
-  --> tests/ui/types/mismatched_implementation.science:35:9
+error[SC0100]: expected `:`, found end of line
+  --> tests/ui/types/mismatched_implementation.science:20:29
+   |
+20 | interface Convert of Source:
+   |                             ^ expected `:`, found end of line (continues to line 21)
+
+error[SC0100]: unexpected indentation at the top level of a module
+  --> tests/ui/types/mismatched_implementation.science:21:1
    |
 21 |     def convert(self, from: Source) -> I64
-   |         ------- `convert` is declared here
-...
-35 |     def convert(self, from: Bool) -> I64:
-   |         ^^^^^^^ parameter 1 is `Bool`; `Convert` declares `I64`
+   | ^^^^ unexpected indentation at the top level of a module
+
+error[SC0100]: `Convert of T` is now written `Convert[T]`
+  --> tests/ui/types/mismatched_implementation.science:34:24
    |
-   = note: an implementation is held to the declaration, because a call through the interface — `any Summarize`, or a body checked against a bound — is dispatched at the declared signature and not at this one
-   = note: write the declared signature: `def convert(self, from: I64) -> I64:`
+34 | Doc implements Convert of I64:
+   |                        ^^ `Convert of T` is now written `Convert[T]`

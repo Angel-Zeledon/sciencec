@@ -1,8 +1,14 @@
-error[SC0100]: expected `]`, found `,`
-  --> tests/ui/parse/index_arity_and_open_ranges.science:23:20
+error[SC0100]: `Array of T` is now written `Array[T]`
+  --> tests/ui/parse/index_arity_and_open_ranges.science:22:20
    |
-23 |     let cell be m[1, 1]
-   |                    ^ expected `]`, found `,`
+22 | def views(m: Array of Int, samples: Array of Int):
+   |                    ^^ `Array of T` is now written `Array[T]`
+
+error[SC0100]: `Array of T` is now written `Array[T]`
+  --> tests/ui/parse/index_arity_and_open_ranges.science:22:43
+   |
+22 | def views(m: Array of Int, samples: Array of Int):
+   |                                           ^^ `Array of T` is now written `Array[T]`
 
 error[SC0105]: expected an expression, found `..`
   --> tests/ui/parse/index_arity_and_open_ranges.science:24:25

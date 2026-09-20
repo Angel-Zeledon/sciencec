@@ -18,7 +18,7 @@ fn a_shared_borrow_is_one_phase() {
         "type Doc:\n",
         "    hits: Int\n",
         "\n",
-        "def read(d: borrowed Doc) -> Int:\n",
+        "def read(d: &Doc) -> Int:\n",
         "    d.hits\n",
         "\n",
         "def f(d: Doc) -> Int:\n",
@@ -40,7 +40,7 @@ fn an_exclusive_borrow_bound_to_a_name_is_one_phase() {
         "    hits: Int\n",
         "\n",
         "def f(d: Doc):\n",
-        "    let r be mutable borrowed d\n",
+        "    let r be &mut d\n",
     );
     let lowered = lower(source);
     let body = lowered.body("f");
@@ -55,11 +55,11 @@ fn an_exclusive_borrow_in_argument_position_is_two_phase() {
         "type Doc:\n",
         "    hits: Int\n",
         "\n",
-        "def bump(d: mutable borrowed Doc):\n",
+        "def bump(d: &mut Doc):\n",
         "    d.hits be d.hits + 1\n",
         "\n",
         "def f(d: Doc):\n",
-        "    bump(mutable borrowed d)\n",
+        "    bump(&mut d)\n",
     );
     let lowered = lower(source);
     let body = lowered.body("f");
@@ -83,11 +83,11 @@ fn the_activation_is_an_explicit_statement() {
         "type Doc:\n",
         "    hits: Int\n",
         "\n",
-        "def bump(d: mutable borrowed Doc):\n",
+        "def bump(d: &mut Doc):\n",
         "    d.hits be d.hits + 1\n",
         "\n",
         "def f(d: Doc):\n",
-        "    bump(mutable borrowed d)\n",
+        "    bump(&mut d)\n",
     );
     let lowered = lower(source);
     let body = lowered.body("f");
@@ -109,7 +109,7 @@ fn the_activation_is_an_explicit_statement() {
 fn push_of_len_reserves_before_the_argument_and_activates_after() {
     let source = concat!(
         "type Bag:\n",
-        "    items: Array of Int\n",
+        "    items: Array[Int]\n",
         "\n",
         "Bag has:\n",
         "    def len(self) -> Int:\n",
@@ -187,7 +187,7 @@ fn a_reborrowed_receiver_is_still_two_phase() {
         assert!(data.activation.is_some(), "a two-phase borrow was never activated");
         assert!(
             !data.place.is_local(),
-            "the receiver was borrowed rather than reborrowed: {}",
+            "the receiver was &rather than reborrowed: {}",
             science_mir::dump::body(&lowered.krate.defs, body)
         );
     }

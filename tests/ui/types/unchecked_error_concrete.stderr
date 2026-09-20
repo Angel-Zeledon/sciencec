@@ -1,7 +1,5 @@
-error[SC0140]: `err` is never checked for an error
-  --> tests/ui/types/unchecked_error_concrete.science:24:16
+error[SC0100]: `borrowed T` is now written `&T`
+  --> tests/ui/types/unchecked_error_concrete.science:20:14
    |
-24 |     let value, err be parse("x")
-   |                ^^^ bound here and never tested
-   |
-   = note: test it with `if err?:`, pass it on, or return it — or rename it to `_err` to say the failure is deliberately ignored
+20 | def parse(s: borrowed String) -> (I64, ParseError?):
+   |              ^^^^^^^^ `borrowed T` is now written `&T`

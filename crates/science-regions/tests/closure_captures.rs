@@ -29,10 +29,10 @@ type Config:
 def sink(f: (Int) -> Int) -> Int:
     1
 
-def bump(c: mutable borrowed Config) -> Int:
+def bump(c: &mut Config) -> Int:
     1
 
-def peek(c: borrowed Config) -> Int:
+def peek(c: &Config) -> Int:
     1
 ";
 
@@ -46,9 +46,9 @@ def peek(c: borrowed Config) -> Int:
 fn a_write_while_a_captured_borrow_is_live_is_refused() {
     let source = format!(
         "{PRE}
-def go(c: mutable borrowed Config) -> Int:
+def go(c: &mut Config) -> Int:
     let f be item giving c.port
-    let n be bump(mutable borrowed c)
+    let n be bump(&mut c)
     sink(f)
 "
     );
@@ -70,10 +70,10 @@ def go(c: mutable borrowed Config) -> Int:
 fn the_same_write_after_the_closure_is_dead_is_accepted() {
     let source = format!(
         "{PRE}
-def go(c: mutable borrowed Config) -> Int:
+def go(c: &mut Config) -> Int:
     let f be item giving c.port
     let n be sink(f)
-    bump(mutable borrowed c)
+    bump(&mut c)
 "
     );
     let checked = check(&source);
@@ -87,7 +87,7 @@ def go(c: mutable borrowed Config) -> Int:
 fn a_capture_loan_outlives_the_statement_that_took_it() {
     let source = format!(
         "{PRE}
-def go(c: borrowed Config) -> Int:
+def go(c: &Config) -> Int:
     let f be item giving c.port
     let n be peek(c)
     sink(f)
@@ -115,7 +115,7 @@ def go(c: borrowed Config) -> Int:
 fn two_captures_get_two_unrelated_regions() {
     let source = format!(
         "{PRE}
-def go(c: borrowed Config, d: borrowed Config) -> Int:
+def go(c: &Config, d: &Config) -> Int:
     let f be item giving c.port + d.host
     sink(f)
 "

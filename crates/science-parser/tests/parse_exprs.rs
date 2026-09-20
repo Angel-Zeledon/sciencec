@@ -49,7 +49,7 @@ fn postfix_binds_tighter_than_unary() {
         ",
     );
     assert_shape(
-        "borrowed point.x",
+        "&point.x",
         "
         Borrowed
           Field `x`
@@ -57,7 +57,7 @@ fn postfix_binds_tighter_than_unary() {
         ",
     );
     assert_shape(
-        "mutable borrowed owner.y",
+        "&mut owner.y",
         "
         Borrowed mutable
           Field `y`
@@ -413,7 +413,7 @@ fn ampersand_is_only_bitwise_and_now_that_borrows_are_words() {
     // A borrow on the right of the operator: `borrowed` is unary, so it takes
     // only the operand after it.
     assert_shape(
-        "a & borrowed b",
+        "a & &b",
         "
         Binary `&`
           lhs: Path `a`
@@ -422,14 +422,14 @@ fn ampersand_is_only_bitwise_and_now_that_borrows_are_words() {
         ",
     );
     assert_shape(
-        "borrowed a",
+        "&a",
         "
         Borrowed
           Path `a`
         ",
     );
     assert_shape(
-        "mutable borrowed a",
+        "&mut a",
         "
         Borrowed mutable
           Path `a`
@@ -538,7 +538,7 @@ fn method_chains_nest_to_the_left() {
 #[test]
 fn a_chain_may_be_broken_by_a_leading_dot() {
     insta::assert_snapshot!(parse_body(
-        r#"def headlines(docs: borrowed Array of Doc) -> Array of String:
+        r#"def headlines(docs: &Array[Doc]) -> Array[String]:
     docs
         .iterate()
         .discard(each.is_empty())
@@ -764,7 +764,7 @@ fn an_each_inside_an_unclaimed_argument_is_fine() {
 #[test]
 fn a_nested_each_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "def f(outer: borrowed Array of Doc):\n    outer.map(each.inner.map(each.x))\n"
+        "def f(outer: &Array[Doc]):\n    outer.map(each.inner.map(each.x))\n"
     ));
 }
 
@@ -904,7 +904,7 @@ fn self_is_an_expression() {
 #[test]
 fn a_name_may_be_instantiated_before_an_associated_call() {
     assert_shape(
-        "(Array of Doc).new()",
+        "Array[Doc].new()",
         "
         Method `new`
           receiver: Path `Array`
@@ -914,7 +914,7 @@ fn a_name_may_be_instantiated_before_an_associated_call() {
     );
     // Two or more arguments take parentheses of their own (§4.3).
     assert_shape(
-        "(Map of (String, Int)).new()",
+        "Map[String, Int].new()",
         "
         Method `new`
           receiver: Path `Map`
@@ -924,7 +924,7 @@ fn a_name_may_be_instantiated_before_an_associated_call() {
         ",
     );
     assert_shape(
-        "(Array of Box of any Summarize).new()",
+        "Array[Box[any Summarize]].new()",
         "
         Method `new`
           receiver: Path `Array`
@@ -944,7 +944,7 @@ fn a_name_may_be_instantiated_before_an_associated_call() {
 #[test]
 fn a_bare_generic_before_an_associated_call_is_ambiguous() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "def f():\n    let a be Array of Doc.new()\n"
+        "def f():\n    let a be Array[Doc].new()\n"
     ));
 }
 
@@ -1114,7 +1114,7 @@ fn indexing_field_access_and_indexing_again_associate_left() {
 #[test]
 fn inline_if_else() {
     insta::assert_snapshot!(parse_source(
-        "def longest(a: borrowed String, b: borrowed String) -> borrowed String:\n    if a.length() > b.length(): a else: b\n"
+        "def longest(a: &String, b: &String) -> &String:\n    if a.length() > b.length(): a else: b\n"
     ));
 }
 
@@ -1177,7 +1177,7 @@ fn if_as_a_value() {
 #[test]
 fn match_with_inline_and_block_arms() {
     insta::assert_snapshot!(parse_source(
-        r#"def describe(format: borrowed Format) -> String:
+        r#"def describe(format: &Format) -> String:
     match format:
         Plain: "plain"
         Markdown:
@@ -1192,7 +1192,7 @@ fn match_with_inline_and_block_arms() {
 #[test]
 fn nested_match() {
     insta::assert_snapshot!(parse_source(
-        r#"def render(token: borrowed Token, format: borrowed Format) -> String:
+        r#"def render(token: &Token, format: &Format) -> String:
     match token:
         Number(value):
             match format:
@@ -1222,7 +1222,7 @@ fn match_as_the_value_of_a_binding() {
 #[test]
 fn loops_in_both_forms() {
     insta::assert_snapshot!(parse_source(
-        r#"def f(stack: mutable borrowed Array of Int, lines: borrowed Array of String):
+        r#"def f(stack: &mut Array[Int], lines: &Array[String]):
     for _ in 0..stack.length(): stack.pop()
     for line in lines: print(line)
     loop: break
@@ -1397,7 +1397,7 @@ fn a_tuple_after_an_unsafe_block_is_not_a_call_on_it() {
 #[test]
 fn a_chain_broken_over_lines_is_still_one_expression() {
     insta::assert_snapshot!(parse_body(
-        "def titles(docs: Array of Doc) -> Array of String:
+        "def titles(docs: Array[Doc]) -> Array[String]:
     docs
         .iterate()
         .map(each.title)
@@ -1416,7 +1416,7 @@ fn a_chain_broken_over_lines_is_still_one_expression() {
 /// `[-1]` with `.last()` needs only the bracket and produces the same program.
 #[test]
 fn the_negative_index_fix_replaces_the_bracket_and_nothing_else() {
-    let source = "def f(row: Array of Int) -> Int:\n    return row[-1]\n";
+    let source = "def f(row: Array[Int]) -> Int:\n    return row[-1]\n";
     let (tokens, lexical) = science_lexer::lex(common::FILE, source);
     assert!(lexical.iter().next().is_none(), "the source should lex clean");
     let (_, diagnostics) = science_parser::parse_module(&tokens, common::FILE);
@@ -1439,7 +1439,7 @@ fn the_negative_index_fix_replaces_the_bracket_and_nothing_else() {
 /// might be wrong is worse than a note that is right.
 #[test]
 fn a_negative_index_other_than_one_offers_a_note_and_no_fix() {
-    let source = "def f(row: Array of Int) -> Int:\n    return row[-2]\n";
+    let source = "def f(row: Array[Int]) -> Int:\n    return row[-2]\n";
     let (tokens, _) = science_lexer::lex(common::FILE, source);
     let (_, diagnostics) = science_parser::parse_module(&tokens, common::FILE);
     let diagnostic = diagnostics.iter().next().expect("`row[-2]` should be reported");

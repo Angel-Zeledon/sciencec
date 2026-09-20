@@ -2003,10 +2003,57 @@ impl Resolver {
                     },
                 }
             }
-            ast::ExprKind::Index { base, index } => hir::ExprKind::Index {
-                base: Box::new(self.resolve_expr(base)),
-                index: Box::new(self.resolve_expr(index)),
-            },
+            // `xs[i]`, or `Array[Int]` — and only this phase can tell them
+            // apart.
+            //
+            // # The decision
+            //
+            // An index whose base names a **type** is not an index: it is that
+            // type applied to one argument, and it resolves as the path
+            // `Array[Int]` would. Everything else is the index it looks like.
+            //
+            // # The reason it is decided here and not in the parser
+            //
+            // `Array[Int]` and `xs[i]` are the same tokens — a path, a
+            // bracket, a path, a bracket — and nothing in the token stream
+            // separates a type applied to an argument from a value subscripted
+            // by a name. The difference is *what `Array` is*, which is a fact
+            // about the program's names, and this phase is the one that has
+            // them. A rule of thumb was available and refused: types are
+            // `UpperCamel` in every line of this corpus, and making the grammar
+            // depend on capitalisation would be a language change smuggled in
+            // as a parsing convenience.
+            //
+            // The parser decides what the tokens *do* settle: two or more
+            // arguments cannot be an index, because an index takes exactly one
+            // subscript, so `Map[String, Int]` never reaches here as an index
+            // at all. What is left for this arm is the single-argument case.
+            //
+            // **This is the shape the arm two up already has.** `text.parser.
+            // WIDTH` parses as a field access and resolves as a path, for the
+            // same reason and through the same kind of non-reporting lookup.
+            //
+            // # The cost
+            //
+            // A local named `Array` shadows the type, and then `Array[Int]` is
+            // an index again — which is correct, and is exactly what
+            // [`Self::type_named`]'s rib check enforces, but it means the
+            // reading of a line can change when a binding is introduced above
+            // it. That is true of every name in the language and is why
+            // shadowing a type name is a poor idea rather than a new hazard.
+            ast::ExprKind::Index { base, index } => {
+                match self.index_as_instantiation(base, index) {
+                    Some(path) => {
+                        let (res, generics) = self.resolve_path(&path);
+                        let res = self.reject_module_as_value(res, &path);
+                        hir::ExprKind::Path { res, generics }
+                    }
+                    None => hir::ExprKind::Index {
+                        base: Box::new(self.resolve_expr(base)),
+                        index: Box::new(self.resolve_expr(index)),
+                    },
+                }
+            }
             // `[a, b, c]` — the array literal of
             // `indexing-and-array-literals.md` §3.1.
             //
@@ -2249,6 +2296,91 @@ impl Resolver {
     /// produce a module: ribs first — and a rib *hit* is a refusal, because a
     /// local shadows a module — then this module, the prelude, and the crate
     /// root's children.
+    /// `Array[Int]` read as a path, when `Array` names a type.
+    ///
+    /// `None` leaves the expression the index it parsed as. The index is
+    /// turned into a type argument by [`Self::expr_as_type_arg`], and a
+    /// subscript that is not one — `xs[i + 1]`, `xs[f(n)]` — answers `None`
+    /// there, so a value subscripted by an expression is never mistaken for an
+    /// instantiation even if something has shadowed a type name with it.
+    fn index_as_instantiation(
+        &self,
+        base: &ast::Expr,
+        index: &ast::Expr,
+    ) -> Option<ast::Path> {
+        let ast::ExprKind::Path(path) = &base.kind else { return None };
+        let last = path.segments.last()?;
+        if !last.generics.is_empty() {
+            return None;
+        }
+        // Only a bare name can be a type here: `a.b[i]` is a field and then an
+        // index, and a type reached through a module is written in a type
+        // position rather than subscripted in an expression.
+        if path.segments.len() != 1 {
+            return None;
+        }
+        self.type_named(&last.name.name)?;
+        let argument = self.expr_as_type_arg(index)?;
+        let mut path = path.clone();
+        let segment = path.segments.last_mut()?;
+        segment.generics = vec![argument];
+        segment.span = segment.span.merge(index.span);
+        path.span = path.span.merge(index.span);
+        Some(path)
+    }
+
+    /// One subscript as a generic argument, or `None` when it is not one.
+    ///
+    /// A bare path is a type argument and an integer literal is a const one,
+    /// which is the whole of what a single-argument instantiation can be
+    /// written with. Anything else — arithmetic, a call, a string — is a
+    /// subscript and says so by answering `None`.
+    fn expr_as_type_arg(&self, index: &ast::Expr) -> Option<ast::Type> {
+        match &index.kind {
+            ast::ExprKind::Path(path) => {
+                Some(ast::Type { kind: ast::TypeKind::Path(path.clone()), span: index.span })
+            }
+            // **A type argument may itself be generic**, and it arrives the
+            // same way its parent did: `Array[Array[Int]].new()` parses as an
+            // index of an index, because neither bracket holds a comma. The
+            // recursion is the same question asked one level down, so a
+            // subscript that is not a type still answers `None` there and the
+            // whole expression stays the index it parsed as.
+            ast::ExprKind::Index { base, index: inner } => {
+                let path = self.index_as_instantiation(base, inner)?;
+                let span = index.span;
+                Some(ast::Type { kind: ast::TypeKind::Path(path), span })
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a bare name is a type here, asked without reporting anything.
+    ///
+    /// [`Self::module_named`]'s shape, one namespace over: the ribs are
+    /// checked first so that a local shadows a type, and the current module
+    /// and the prelude are then asked in the order
+    /// [`Self::resolve_name`] would ask them.
+    fn type_named(&self, name: &str) -> Option<DefId> {
+        if self.ribs.lookup(name).is_some() {
+            return None;
+        }
+        for module in [self.current_module, self.prelude] {
+            if let Some(def) = self.scopes.get(&module).and_then(|s| s.names.get(name)) {
+                return matches!(
+                    self.defs.get(*def).kind,
+                    DefKind::Record
+                        | DefKind::Choice
+                        | DefKind::Primitive
+                        | DefKind::Alias
+                        | DefKind::Interface
+                )
+                .then_some(*def);
+            }
+        }
+        None
+    }
+
     fn module_named(&self, name: &str) -> Option<DefId> {
         if self.ribs.lookup(name).is_some() {
             return None;

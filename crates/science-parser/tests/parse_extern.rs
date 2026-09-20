@@ -56,10 +56,10 @@ fn the_block_of_section_1_1() {
         transpose_b: CblasTranspose,
         m: BlasInt, n: BlasInt, k: BlasInt,
         alpha: F64,
-        a: ffi.Span of F64, lda: BlasInt,
-        b: ffi.Span of F64, ldb: BlasInt,
+        a: ffi.Span[F64], lda: BlasInt,
+        b: ffi.Span[F64], ldb: BlasInt,
         beta: F64,
-        c: ffi.MutableSpan of F64, ldc: BlasInt,
+        c: ffi.MutableSpan[F64], ldc: BlasInt,
     )
 "#
     ));
@@ -106,7 +106,7 @@ fn exported_globals() {
     def H5open() -> Herr
     static H5T_NATIVE_DOUBLE_g: Hid
     static H5T_NATIVE_INT_g: Hid
-    static PyExc_TypeError: ffi.Pointer of PyObject
+    static PyExc_TypeError: ffi.Pointer[PyObject]
 "#
     ));
 }
@@ -120,11 +120,11 @@ fn the_complex_types_are_ordinary_ffi_types() {
     type BlasInt is I32
     def cblas_zgemv(
         m: BlasInt,
-        alpha: borrowed ffi.Complex64,
-        a: ffi.Span of ffi.Complex64,
-        y: ffi.MutableSpan of ffi.Complex64,
+        alpha: &ffi.Complex64,
+        a: ffi.Span[ffi.Complex64],
+        y: ffi.MutableSpan[ffi.Complex64],
     ) symbol "cblas_zgemv"
-    def cblas_cdotu(x: ffi.Span of ffi.Complex32) -> ffi.Complex32
+    def cblas_cdotu(x: ffi.Span[ffi.Complex32]) -> ffi.Complex32
 "#
     ));
 }
@@ -140,7 +140,7 @@ fn unions_are_opaque_blobs_of_a_size_and_an_alignment() {
     type Hid is I64
     union H5L_info2_t: size 32 align 8
     union H5R_ref_t: size 64 align 8
-    def H5Rget_type(reference: borrowed H5R_ref_t) -> I32
+    def H5Rget_type(reference: &H5R_ref_t) -> I32
 "#
     ));
 }
@@ -152,8 +152,8 @@ fn unions_are_opaque_blobs_of_a_size_and_an_alignment() {
 fn a_variadic_function_is_recognised_and_refused() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"unsafe extern "C" library "python3":
-    def PyErr_Format(kind: ffi.Pointer of PyObject, format: ffi.CStr, ...) -> ffi.Pointer of PyObject
-    def PyErr_SetString(kind: ffi.Pointer of PyObject, message: ffi.CStr)
+    def PyErr_Format(kind: ffi.Pointer[PyObject], format: ffi.CStr, ...) -> ffi.Pointer[PyObject]
+    def PyErr_SetString(kind: ffi.Pointer[PyObject], message: ffi.CStr)
 "#
     ));
 }
@@ -181,7 +181,7 @@ fn a_variadic_function_does_not_derail_the_block() {
 fn an_array_in_a_signature_names_the_span_that_replaces_it() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"unsafe extern "C" library "openblas":
-    def takes(a: borrowed Array of F64, b: mutable borrowed Array of F64, c: Array of I32)
+    def takes(a: &Array[F64], b: &mut Array[F64], c: Array[I32])
 "#
     ));
 }
@@ -192,14 +192,14 @@ fn an_array_in_a_signature_names_the_span_that_replaces_it() {
 fn the_science_layouts_are_refused_by_name() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"unsafe extern "C" library "z":
-    def a(text: borrowed String)
-    def b(table: Map of (String, I32))
-    def c(maybe: Option of I32) -> Result of (I32, I32)
+    def a(text: &String)
+    def b(table: Map[String, I32])
+    def c(maybe: Option[I32]) -> Result[I32, I32]
     def d(pair: (I32, I32))
     def e(value: any Summarize)
-    type Bad is Array of F64
+    type Bad is Array[F64]
     static worse: String
-    const WORST be 1 as Box of I32
+    const WORST be 1 as Box[I32]
 "#
     ));
 }
@@ -211,7 +211,7 @@ fn the_science_layouts_are_refused_by_name() {
 fn half_precision_is_refused_by_value_and_admitted_by_reference() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         r#"unsafe extern "C" library "cudnn":
-    def scale(alpha: F16, out: mutable borrowed F16, buffer: ffi.Span of BF16) -> BF16
+    def scale(alpha: F16, out: &mut F16, buffer: ffi.Span[BF16]) -> BF16
 "#
     ));
 }
@@ -350,15 +350,15 @@ fn the_two_exact_fixes_replace_exactly_what_they_should() {
     assert_eq!(
         fixes(
             r#"unsafe extern "C" library "openblas":
-    def takes(a: borrowed Array of F64, b: mutable borrowed Array of F64)
+    def takes(a: &Array[F64], b: &mut Array[F64])
 "#
         ),
         vec![
-            ("SC0421".to_string(), "borrowed Array of F64".to_string(), "ffi.Span of F64".to_string()),
+            ("SC0421".to_string(), "&Array[F64]".to_string(), "ffi.Span[F64]".to_string()),
             (
                 "SC0421".to_string(),
-                "mutable borrowed Array of F64".to_string(),
-                "ffi.MutableSpan of F64".to_string()
+                "&mut Array[F64]".to_string(),
+                "ffi.MutableSpan[F64]".to_string()
             ),
         ]
     );
@@ -392,7 +392,7 @@ fn the_diagnostics_with_no_mechanical_fix_offer_none() {
     union H5R_ref_t: size 64
 "#,
         r#"unsafe extern "C" library "z":
-    def a(text: borrowed String)
+    def a(text: &String)
 "#,
     ] {
         assert!(fixes(source).is_empty(), "this diagnostic should not offer a fix:\n{source}");

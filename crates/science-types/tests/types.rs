@@ -31,13 +31,13 @@ const FIXTURE: &str = "\
 type Doc:
     title: String
 
-type Matrix of (T, const N: Int):
-    cells: Array of T
+type Matrix[T, const N: Int]:
+    cells: Array[T]
 
-def spellings of (T, const N: Int)(
-    left: Matrix of (T, N + 1),
-    right: Matrix of (T, 1 + N),
-    bare: Matrix of (T, N),
+def spellings[T, const N: Int](
+    left: Matrix[T, N + 1],
+    right: Matrix[T, 1 + N],
+    bare: Matrix[T, N],
     parameter: T,
 ) -> Int:
     0
@@ -46,24 +46,24 @@ def shapes(
     plain: Doc,
     optional: Doc?,
     twice: Doc??,
-    borrow: borrowed Doc,
-    exclusive: mutable borrowed Doc,
-    optional_borrow: (borrowed Doc)?,
+    borrow: &Doc,
+    exclusive: &mut Doc,
+    optional_borrow: (&Doc)?,
     pair: (Doc, Int),
-    docs: Array of Doc,
+    docs: Array[Doc],
     failure: Error?,
     mapper: (Doc) -> Int,
     reversed: (Int) -> Doc,
 ) -> Int:
     0
 
-def again(more: Array of Doc) -> Int:
+def again(more: Array[Doc]) -> Int:
     0
 
 def value_as_type(width: 4) -> Int:
     0
 
-def parameter_as_type of (const N: Int)(width: N) -> Int:
+def parameter_as_type[const N: Int](width: N) -> Int:
     0
 ";
 
@@ -165,7 +165,7 @@ fn one_type_written_in_two_functions_is_one_id() {
     let here = harness.lower("shapes", "docs");
     let there = harness.lower("again", "more");
     assert_eq!(here, there);
-    assert_eq!(harness.render(here), "Array of Doc");
+    assert_eq!(harness.render(here), "Array[Doc]");
 }
 
 #[test]
@@ -200,8 +200,8 @@ fn types_that_differ_only_in_a_flag_are_different_ids() {
     let shared = harness.lower("shapes", "borrow");
     let exclusive = harness.lower("shapes", "exclusive");
     assert_ne!(shared, exclusive);
-    assert_eq!(harness.render(shared), "borrowed Doc");
-    assert_eq!(harness.render(exclusive), "mutable borrowed Doc");
+    assert_eq!(harness.render(shared), "&Doc");
+    assert_eq!(harness.render(exclusive), "&mut Doc");
 }
 
 // --- const arguments -----------------------------------------------------
@@ -227,7 +227,7 @@ fn a_bare_const_parameter_is_a_const_argument_and_not_a_type() {
     let mut harness = Harness::new(FIXTURE);
     let bare = harness.lower("spellings", "bare");
     let TyKind::Named { args, .. } = harness.types.kind(bare).clone() else {
-        panic!("`Matrix of (T, N)` is a named type");
+        panic!("`Matrix[T, N]` is a named type");
     };
     assert_eq!(args.len(), 2);
     assert!(matches!(args[0], GenericArg::Type(_)), "`T` is a type argument");
@@ -300,7 +300,7 @@ fn a_nullable_borrow_renders_with_the_parentheses_it_needs() {
     // parentheses is a rendering that reads back as a different type.
     let mut harness = Harness::new(FIXTURE);
     let optional_borrow = harness.lower("shapes", "optional_borrow");
-    assert_eq!(harness.render(optional_borrow), "(borrowed Doc)?");
+    assert_eq!(harness.render(optional_borrow), "(&Doc)?");
 }
 
 #[test]
@@ -415,11 +415,11 @@ fn a_type_renders_as_the_surface_syntax_that_would_write_it() {
     // A prelude type prints its bare name: the prelude's module is `core` and
     // no `use` can reach it, so a path a reader cannot write is noise.
     let docs = harness.lower("shapes", "docs");
-    assert_eq!(harness.render(docs), "Array of Doc");
+    assert_eq!(harness.render(docs), "Array[Doc]");
 
     // Two or more arguments take parentheses; one does not.
     let matrix = harness.lower("spellings", "bare");
-    assert_eq!(harness.render(matrix), "Matrix of (T, N)");
+    assert_eq!(harness.render(matrix), "Matrix[T, N]");
 }
 
 #[test]

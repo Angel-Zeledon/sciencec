@@ -45,7 +45,7 @@ fn node_gets_two_region_variables_and_relates_neither_to_the_other() {
     let analysis = checked.analysis.body(body.def()).expect("analysed");
 
     let returns = &analysis.summary.returns;
-    assert_eq!(returns.len(), 2, "`Node of T` did not get one region per borrowed field");
+    assert_eq!(returns.len(), 2, "`Node[T]` did not get one region per &field");
 
     // Each return position is tied to exactly one parameter, and they are
     // different parameters.

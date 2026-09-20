@@ -30,7 +30,7 @@ fn interface_with_a_default_method() {
 #[test]
 fn generic_interface() {
     insta::assert_snapshot!(parse_source(
-        r#"interface From of T:
+        r#"interface From[T]:
     def from(value: T) -> Self
 "#
     ));
@@ -56,10 +56,10 @@ fn interface_with_required_interfaces() {
 #[test]
 fn a_generic_interface_with_required_interfaces() {
     insta::assert_snapshot!(parse_source(
-        r#"interface Pretty of T: Summarize + Clone:
+        r#"interface Pretty[T]: Summarize + Clone:
     def pretty(self) -> T
 
-interface Plain of (T): Summarize + Clone:
+interface Plain[T]: Summarize + Clone:
     def plain(self) -> T
 "#
     ));
@@ -135,8 +135,8 @@ fn a_type_implements_an_interface() {
 #[test]
 fn a_generic_type_implements_a_generic_interface() {
     insta::assert_snapshot!(parse_source(
-        r#"Pair of (A, B) implements Swap of Pair of (B, A):
-    def swapped(self) -> Pair of (B, A):
+        r#"Pair[A, B] implements Swap[Pair[B, A]]:
+    def swapped(self) -> Pair[B, A]:
         Pair(first: self.second, second: self.first)
 "#
     ));
@@ -147,8 +147,8 @@ fn a_generic_type_implements_a_generic_interface() {
 #[test]
 fn a_generic_implementation_echoes_its_parameters() {
     insta::assert_snapshot!(parse_source(
-        r#"Pair of (A, B) implements Swap:
-    type Swapped is Pair of (B, A)
+        r#"Pair[A, B] implements Swap:
+    type Swapped is Pair[B, A]
 
     def swapped(self: Self) -> Self.Swapped:
         Pair(first: self.second, second: self.first)
@@ -177,8 +177,8 @@ fn has_with_an_associated_function() {
 #[test]
 fn has_on_a_generic_type() {
     insta::assert_snapshot!(parse_source(
-        r#"Array of T has:
-    def new() -> Array of T:
+        r#"Array[T] has:
+    def new() -> Array[T]:
         empty()
 "#
     ));
@@ -224,7 +224,7 @@ def main():
 #[test]
 fn an_implementation_with_a_where_clause() {
     insta::assert_snapshot!(parse_source(
-        r#"Pair of (A, B) implements Summarize where A: Clone, B: Clone:
+        r#"Pair[A, B] implements Summarize where A: Clone, B: Clone:
     def summarize(self) -> String:
         "pair"
 "#
@@ -236,7 +236,7 @@ fn an_implementation_with_a_where_clause() {
 #[test]
 fn a_where_clause_ends_at_the_colon_that_opens_the_block() {
     insta::assert_snapshot!(parse_source(
-        r#"def f of T() -> T where T: A + B:
+        r#"def f[T]() -> T where T: A + B:
     body()
 "#
     ));
@@ -253,12 +253,12 @@ fn an_associated_type_is_declared_in_an_interface_and_bound_in_an_implementation
     insta::assert_snapshot!(parse_source(
         r#"interface Iterate:
     type Item
-    def next(mutable self) -> Option of Self.Item
+    def next(mutable self) -> Option[Self].Item
 
 Countdown implements Iterate:
     type Item is Int
 
-    def next(mutable self) -> Option of Self.Item:
+    def next(mutable self) -> Option[Self].Item:
         None
 "#
     ));
@@ -284,7 +284,7 @@ fn self_dot_item_names_an_associated_type_in_a_return_position() {
 #[test]
 fn a_projection_through_something_other_than_self_is_a_plain_path() {
     insta::assert_snapshot!(parse_source(
-        r#"interface Produce of T:
+        r#"interface Produce[T]:
     def produce(self) -> T.Output
 "#
     ));
@@ -355,7 +355,7 @@ fn a_non_member_in_an_interface_body_is_rejected() {
 #[test]
 fn a_non_path_interface_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        r#"Point implements borrowed Doc:
+        r#"Point implements &Doc:
     def f(self) -> Int:
         1
 "#

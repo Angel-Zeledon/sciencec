@@ -36,7 +36,7 @@ unsafe extern "C" library "openblas" via pkg-config "openblas":
     # than into wrong answers for large matrices.
     type BlasInt is I32
 
-    # §1.2, the function. `ffi.Span of F64` is a pointer and a length, of
+    # §1.2, the function. `ffi.Span[F64]` is a pointer and a length, of
     # which only the pointer crosses the ABI; the length is there so the
     # wrapper's bounds check is an expression the compiler checks.
     def cblas_dgemm(
@@ -45,26 +45,26 @@ unsafe extern "C" library "openblas" via pkg-config "openblas":
         transpose_b: CblasTranspose,
         m: BlasInt, n: BlasInt, k: BlasInt,
         alpha: F64,
-        a: ffi.Span of F64, lda: BlasInt,
-        b: ffi.Span of F64, ldb: BlasInt,
+        a: ffi.Span[F64], lda: BlasInt,
+        b: ffi.Span[F64], ldb: BlasInt,
         beta: F64,
-        c: ffi.MutableSpan of F64, ldc: BlasInt,
+        c: ffi.MutableSpan[F64], ldc: BlasInt,
     )
 
     # §4.1 of the coverage audit: the complex types, which half of LAPACK
     # and every `z`- and `c`-prefixed BLAS routine needs.
     def cblas_zdotu_sub(
         n: BlasInt,
-        x: ffi.Span of ffi.Complex64, incx: BlasInt,
-        y: ffi.Span of ffi.Complex64, incy: BlasInt,
-        result: mutable borrowed ffi.Complex64,
+        x: ffi.Span[ffi.Complex64], incx: BlasInt,
+        y: ffi.Span[ffi.Complex64], incy: BlasInt,
+        result: &mut ffi.Complex64,
     )
 
     def cblas_cdotu_sub(
         n: BlasInt,
-        x: ffi.Span of ffi.Complex32, incx: BlasInt,
-        y: ffi.Span of ffi.Complex32, incy: BlasInt,
-        result: mutable borrowed ffi.Complex32,
+        x: ffi.Span[ffi.Complex32], incx: BlasInt,
+        y: ffi.Span[ffi.Complex32], incy: BlasInt,
+        result: &mut ffi.Complex32,
     )
 
 # §1.6: the other half of the hazard. Same names, same argument counts, same
@@ -75,9 +75,9 @@ unsafe extern "C" library "openblas64_" kind static:
 
     def dgemm_lp64(
         m: BlasInt64, n: BlasInt64, k: BlasInt64,
-        a: ffi.Span of F64,
-        b: ffi.Span of F64,
-        c: ffi.MutableSpan of F64,
+        a: ffi.Span[F64],
+        b: ffi.Span[F64],
+        c: ffi.MutableSpan[F64],
     ) symbol "dgemm_64_"
 
 # --- §4.2 of the audit: exported globals -----------------------------------
@@ -115,8 +115,8 @@ unsafe extern "C" library "hdf5" via pkg-config "hdf5":
     union H5L_info2_t: size 32 align 8
     union H5R_ref_t: size 64 align 8
 
-    def H5Rget_type(reference: borrowed H5R_ref_t) -> CInt
-    def H5Rdestroy(reference: mutable borrowed H5R_ref_t) -> Herr
+    def H5Rget_type(reference: &H5R_ref_t) -> CInt
+    def H5Rdestroy(reference: &mut H5R_ref_t) -> Herr
 
 # --- §5.2: a library that may not be installed ------------------------------
 
@@ -130,7 +130,7 @@ unsafe extern "C" library "cudnn" when available:
 
     def cudnnGetVersion() -> CSizeT
     def cudnnCreate(
-        handle: mutable borrowed ffi.Uninitialized of CudnnHandle,
+        handle: &mut ffi.Uninitialized[CudnnHandle],
     ) -> CudnnStatus
     def cudnnDestroy(handle: CudnnHandle) -> CudnnStatus
 
@@ -162,8 +162,8 @@ public choice BlasError:
     Overflow
 
 # One record, generic over its storage. `gemm` reads `a` and `b` and writes
-# `c`, so the three cannot share one field type: `ffi.Span of F64` is a shared
-# borrow and `ffi.MutableSpan of F64` is an exclusive one, and no coercion
+# `c`, so the three cannot share one field type: `ffi.Span[F64]` is a shared
+# borrow and `ffi.MutableSpan[F64]` is an exclusive one, and no coercion
 # joins them — `Span` into `MutableSpan` would hand C a writable pointer to a
 # shared borrow, which is the unsound direction.
 #
@@ -171,14 +171,14 @@ public choice BlasError:
 # parameter over the storage keeps one declaration, and it is what `ndarray`
 # does with `ArrayBase`, `ArrayView` and `ArrayViewMut` for the identical
 # problem. `ffi-c-boundary.md` §1.7 carries the argument.
-type MatrixBase of S:
+type MatrixBase[S]:
     data: S
     rows: Int
     columns: Int
     leading: Int
 
-type MatrixView is MatrixBase of ffi.Span of F64
-type MutableMatrixView is MatrixBase of ffi.MutableSpan of F64
+type MatrixView is MatrixBase[ffi.Span[F64]]
+type MutableMatrixView is MatrixBase[ffi.MutableSpan[F64]]
 
 # The signature contains no `ffi` type at all. Everything unverifiable is
 # inside the `unsafe` block, which is short on purpose: if an unsafe block is
@@ -191,9 +191,9 @@ type MutableMatrixView is MatrixBase of ffi.MutableSpan of F64
 # tell them apart: the concrete form is the one that keeps `match`
 # exhaustive, and it does not box (§5.5).
 public def gemm(
-    a: borrowed MatrixView,
-    b: borrowed MatrixView,
-    c: mutable borrowed MutableMatrixView,
+    a: &MatrixView,
+    b: &MatrixView,
+    c: &mut MutableMatrixView,
     alpha: F64,
     beta: F64
 ) -> BlasError?:

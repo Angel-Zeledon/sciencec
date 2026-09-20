@@ -27,18 +27,18 @@ choice Format:
 
 # Inline, as written in the spec. This is a comparison of two lengths, so it
 # is written with symbols (§4.6).
-def longest(a: borrowed String, b: borrowed String) -> borrowed String:
+def longest(a: &String, b: &String) -> &String:
     if a.length() > b.length(): a else: b
 
 # The same thing, indented.
-def longest_indented(a: borrowed String, b: borrowed String) -> borrowed String:
+def longest_indented(a: &String, b: &String) -> &String:
     if a.length() > b.length():
         a
     else:
         b
 
 # An inline `if` with no `else`: its type is `()`.
-def warn_if_empty(text: borrowed String):
+def warn_if_empty(text: &String):
     if text.is_empty(): print("empty")
 
 # An inline `if` used as the value of a binding. The `let` is outside the
@@ -91,17 +91,17 @@ def double(n: Int) -> Int:
 
 # --- Loops ------------------------------------------------------------------
 
-def drain(stack: mutable borrowed Array of Int):
+def drain(stack: &mut Array[Int]):
     for _ in 0..stack.length(): stack.pop()
 
-def shout(lines: borrowed Array of String):
+def shout(lines: &Array[String]):
     for line in lines: print(line)
 
-def spin(limit: mutable borrowed Int):
+def spin(limit: &mut Int):
     loop: break
 
 # The other two statements an inline body may be: `continue` and `break`.
-def count_short(lines: borrowed Array of String) -> Int:
+def count_short(lines: &Array[String]) -> Int:
     let mutable seen be 0
     for line in lines:
         if line.is_empty(): continue
@@ -112,13 +112,13 @@ def count_short(lines: borrowed Array of String) -> Int:
 # --- `match` arms -----------------------------------------------------------
 
 # Every arm inline.
-def name_of(format: borrowed Format) -> String:
+def name_of(format: &Format) -> String:
     match format:
         Plain: "plain"
         Markdown: "markdown"
 
 # Arms mixing the inline and the indented form.
-def describe(format: borrowed Format) -> String:
+def describe(format: &Format) -> String:
     match format:
         Plain: "plain"
         Markdown:

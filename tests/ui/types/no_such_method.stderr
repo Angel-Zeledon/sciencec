@@ -14,7 +14,7 @@ error[SC0532]: `String` has no method `name_of`
    |
    = note: method lookup finds the inherent methods of the type and the methods of the interfaces it implements, and neither has this name
 
-error[SC0532]: `Array of I64` has no method `name_of`
+error[SC0532]: `Array[I64]` has no method `name_of`
   --> tests/ui/types/no_such_method.science:28:17
    |
 28 |     print(items.name_of())

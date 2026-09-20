@@ -225,9 +225,9 @@ fn rule_five(
 
     let mut diagnostic = Diagnostic::error(
         codes::BORROW_OUTLIVES_REFERENT,
-        format!("{borrowed} is borrowed for longer than {referent} exists"),
+        format!("{borrowed} is &for longer than {referent} exists"),
     )
-    .with_label(Label::secondary(data.span, format!("{borrowed} is borrowed here")));
+    .with_label(Label::secondary(data.span, format!("{borrowed} is &here")));
     if let Some(last) = last_use(analysis, data, region) {
         diagnostic = diagnostic.with_label(Label::primary(
             last.span,
@@ -323,12 +323,12 @@ fn narrative(
     let headline = if moved {
         format!("{name} is moved while it is still borrowed")
     } else {
-        format!("{name} is borrowed here and {} before the borrow ends", verb(access))
+        format!("{name} is &here and {} before the borrow ends", verb(access))
     };
     let held = if exclusive { "exclusively" } else { "shared" };
 
     let mut diagnostic = Diagnostic::error(code, headline)
-        .with_label(Label::secondary(data.span, format!("{name} is borrowed here, {held}")))
+        .with_label(Label::secondary(data.span, format!("{name} is &here, {held}")))
         .with_label(Label::primary(access.span, format!("...and {}", access.kind.described())));
     if let Some(last) = last_use(analysis, data, region) {
         if last.span != access.span {
@@ -355,7 +355,7 @@ fn verb(access: &Access) -> &'static str {
         AccessKind::Write => "modified",
         AccessKind::Move => "moved",
         AccessKind::Borrow(BorrowKind::Shared, _) => "borrowed",
-        AccessKind::Borrow(_, _) => "borrowed exclusively",
+        AccessKind::Borrow(_, _) => "&exclusively",
         AccessKind::Drop { .. } => "dropped",
         AccessKind::StorageDead => "dropped",
         AccessKind::StorageLive => "reintroduced",
@@ -433,9 +433,9 @@ fn no_common_region(defs: &DefTable, body: &Body, analysis: &BodyAnalysis) -> Ve
                     statement.span,
                     "there is no point at which all of these borrows are valid",
                 ))
-                .with_note(format!("the borrowed fields are {}", fields.join(", ")))
+                .with_note(format!("the &fields are {}", fields.join(", ")))
                 .with_note(
-                    "a value whose borrowed fields never overlap is dead the moment it is \
+                    "a value whose &fields never overlap is dead the moment it is \
                      built; the fix is to make the two sources live in one scope, or to own \
                      one of them",
                 ),

@@ -1,10 +1,11 @@
-error[SC0534]: `I64` does not implement `Summarize`
-  --> tests/ui/types/unsatisfied_bound.science:25:11
+error[SC0100]: `of T` is now written `[T]`
+  --> tests/ui/types/unsatisfied_bound.science:21:14
    |
 21 | def describe of T: Summarize(value: borrowed T) -> String:
-   |                    --------- `T` was declared `Summarize`
-...
-25 |     print(describe(n))
-   |           ^^^^^^^^^^^ `T` is `I64` here
+   |              ^^ `of T` is now written `[T]`
+
+error[SC0100]: `borrowed T` is now written `&T`
+  --> tests/ui/types/unsatisfied_bound.science:21:37
    |
-   = note: an implementation is a block the program writes: `I64 implements Summarize:`
+21 | def describe of T: Summarize(value: borrowed T) -> String:
+   |                                     ^^^^^^^^ `borrowed T` is now written `&T`

@@ -131,7 +131,7 @@ fn a_mutable_borrowed_parameter_may_be_written_through() {
     // toward the root stops at the first borrow for exactly this.
     let checked = support::check(
         "\
-def bump(counter: mutable borrowed I64):
+def bump(counter: &mut I64):
     counter be counter + 1
 ",
     );
@@ -145,7 +145,7 @@ fn a_field_behind_a_mutable_borrowed_parameter_may_be_written() {
 type Doc:
     title: String
 
-def retitle(doc: mutable borrowed Doc, title: String):
+def retitle(doc: &mut Doc, title: String):
     doc.title be title
 ",
     );
@@ -209,7 +209,7 @@ def counted() -> Bool:
 fn a_binding_from_an_untranscribed_prelude_method_has_no_type_to_check() {
     let checked = support::check(
         "\
-def take(items: mutable borrowed Array of I64) -> Bool:
+def take(items: &mut Array[I64]) -> Bool:
     let slot be items.pop()
     slot be 1
     true
@@ -224,7 +224,7 @@ def take(items: mutable borrowed Array of I64) -> Bool:
 fn a_binding_from_a_name_no_note_gives_is_reported() {
     let checked = support::check(
         "\
-def take(items: mutable borrowed Array of I64) -> Bool:
+def take(items: &mut Array[I64]) -> Bool:
     let slot be items.get_mut(0)
     true
 ",

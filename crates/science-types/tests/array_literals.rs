@@ -52,7 +52,7 @@ def counts() -> Bool:
     // Decision 2's defaults, applied to the element class: an unsuffixed
     // integer literal is `I64`. §3.2 says so of a literal array in as many
     // words.
-    assert_eq!(local_ty(&checked, "counts", "counts"), "Array of I64");
+    assert_eq!(local_ty(&checked, "counts", "counts"), "Array[I64]");
 }
 
 #[test]
@@ -65,7 +65,7 @@ def weights() -> Bool:
 ",
     );
     checked.assert_clean();
-    assert_eq!(local_ty(&checked, "weights", "weights"), "Array of F64");
+    assert_eq!(local_ty(&checked, "weights", "weights"), "Array[F64]");
 }
 
 #[test]
@@ -89,7 +89,7 @@ def identity() -> Bool:
     // change; it was invisible because no construct built a nested application
     // out of a literal. Fixing it is a `render_into` change with its own
     // snapshot churn and is not this change's.
-    assert_eq!(local_ty(&checked, "identity", "identity"), "Array of Array of F64");
+    assert_eq!(local_ty(&checked, "identity", "identity"), "Array[Array] of F64");
 }
 
 #[test]
@@ -106,7 +106,7 @@ def flagged() -> Bool:
 ",
     );
     assert_eq!(checked.codes(), vec![525]);
-    assert_eq!(checked.messages(), vec!["expected `Bool`, found `Array of I64`"]);
+    assert_eq!(checked.messages(), vec!["expected `Bool`, found `Array[I64]`"]);
 }
 
 // --- §3.2: the elements unify, with no implicit numeric conversion --------
@@ -180,12 +180,12 @@ fn an_integer_literal_still_reaches_a_float_element_type() {
     let checked = support::check(
         "\
 def weights() -> Bool:
-    let weights: Array of F64 be [1, 2.5, 3]
+    let weights: Array[F64] be [1, 2.5, 3]
     true
 ",
     );
     checked.assert_clean();
-    assert_eq!(local_ty(&checked, "weights", "weights"), "Array of F64");
+    assert_eq!(local_ty(&checked, "weights", "weights"), "Array[F64]");
 }
 
 // --- Decision 11: the empty literal --------------------------------------
@@ -214,12 +214,12 @@ fn an_empty_literal_takes_its_element_type_from_an_annotation() {
     let checked = support::check(
         "\
 def empty() -> Bool:
-    let empty: Array of F64 be []
+    let empty: Array[F64] be []
     true
 ",
     );
     checked.assert_clean();
-    assert_eq!(local_ty(&checked, "empty", "empty"), "Array of F64");
+    assert_eq!(local_ty(&checked, "empty", "empty"), "Array[F64]");
 }
 
 #[test]
@@ -228,10 +228,10 @@ fn an_empty_literal_takes_its_element_type_from_a_parameter() {
     // at `Site::Argument` and the arm is the same one.
     support::check(
         "\
-def push_all(into: Array of F64, more: Array of F64) -> Bool:
+def push_all(into: Array[F64], more: Array[F64]) -> Bool:
     true
 
-def run(results: Array of F64) -> Bool:
+def run(results: Array[F64]) -> Bool:
     push_all(results, [])
 ",
     )
@@ -265,7 +265,7 @@ fn an_annotated_literal_checks_its_elements_against_the_annotation() {
     let checked = support::check(
         "\
 def counts() -> Bool:
-    let counts: Array of String be [1, 2, 3]
+    let counts: Array[String] be [1, 2, 3]
     true
 ",
     );
@@ -278,12 +278,12 @@ fn an_annotated_literal_whose_elements_fit_still_passes() {
     let checked = support::check(
         "\
 def names() -> Bool:
-    let names: Array of String be [\"alpha\", \"beta\", \"gamma\"]
+    let names: Array[String] be [\"alpha\", \"beta\", \"gamma\"]
     true
 ",
     );
     checked.assert_clean();
-    assert_eq!(local_ty(&checked, "names", "names"), "Array of String");
+    assert_eq!(local_ty(&checked, "names", "names"), "Array[String]");
 }
 
 #[test]
@@ -293,7 +293,7 @@ fn an_alias_of_an_array_still_admits_a_literal() {
     // with `Array of F32` and a literal reaches it.
     support::check(
         "\
-type Embedding is Array of F32
+type Embedding is Array[F32]
 
 def make() -> Bool:
     let e: Embedding be [1.0f32, 2.0f32]
@@ -311,7 +311,7 @@ fn a_synthesised_literal_is_the_same_type_the_prelude_writes() {
     // would ever reach a declared parameter. §6.3's auto-borrow rides on top,
     // which is the second half of what this passes through.
     support::check(
-        "def total(xs: borrowed Array of I64) -> I64:
+        "def total(xs: &Array[I64]) -> I64:
     0
 
 def run() -> I64:
@@ -352,7 +352,7 @@ def counts() -> Bool:
         .exprs()
         .find(|(_, expr)| matches!(expr.kind, ExprKind::Array(_)))
         .expect("the literal is an array node");
-    assert_eq!(checked.render(literal.1.ty), "Array of I64");
+    assert_eq!(checked.render(literal.1.ty), "Array[I64]");
     let ExprKind::Array(elements) = &literal.1.kind else { unreachable!() };
     assert_eq!(elements.len(), 3, "the elements travel, in the order they were written");
     assert!(
@@ -370,7 +370,7 @@ fn a_closed_range_index_is_refused() {
     // as one `borrowed I64` and was returned as an `I64` with nothing said.
     let checked = support::check(
         "\
-def slice(xs: borrowed Array of I64) -> I64:
+def slice(xs: &Array[I64]) -> I64:
     let s be xs[1..3]
     s
 ",
@@ -388,7 +388,7 @@ fn an_ordinary_index_is_untouched() {
     // an index bracket and about nothing else.
     support::check(
         "\
-def first(xs: borrowed Array of I64) -> I64:
+def first(xs: &Array[I64]) -> I64:
     xs[0]
 ",
     )
@@ -399,7 +399,7 @@ def first(xs: borrowed Array of I64) -> I64:
 fn an_inclusive_range_index_is_refused_too() {
     let checked = support::check(
         "\
-def slice(xs: borrowed Array of I64) -> I64:
+def slice(xs: &Array[I64]) -> I64:
     let s be xs[1..=3]
     s
 ",
@@ -431,7 +431,7 @@ fn a_range_passed_to_a_method_is_not_an_index() {
     // silent for the reason it was before this change, not because of it.
     support::check(
         "\
-def head(text: borrowed String) -> Bool:
+def head(text: &String) -> Bool:
     let s be text.slice(0..4)
     true
 ",

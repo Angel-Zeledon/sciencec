@@ -387,7 +387,7 @@ fn a_unit_returning_function_is_called_for_its_effect() {
 #[test]
 fn an_uncalled_function_this_backend_cannot_lower_does_not_stop_the_build() {
     let source = format!(
-        "{PUTCHAR}def identity of T(value: T) -> T:\n    value\n\n\
+        "{PUTCHAR}def identity[T](value: T) -> T:\n    value\n\n\
          def reached(n: I32) -> I32:\n    n\n\n\
          let r be unsafe: putchar(reached(75))\n"
     );
@@ -400,7 +400,7 @@ fn calling_a_generic_function_is_refused_and_says_what_is_missing() {
     let text = refusal(
         "params-generic",
         &format!(
-            "{PUTCHAR}def identity of T(value: T) -> T:\n    value\n\n\
+            "{PUTCHAR}def identity[T](value: T) -> T:\n    value\n\n\
              let r be unsafe: putchar(identity(75))\n"
         ),
     );

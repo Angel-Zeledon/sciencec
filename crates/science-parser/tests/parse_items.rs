@@ -148,8 +148,7 @@ fn function_with_parenthesised_generics() {
     insta::assert_snapshot!(parse_report(vec![
         Function,
         id("paired"),
-        Of,
-        LParen,
+        LBracket,
         id("A"),
         Comma,
         id("B"),
@@ -219,7 +218,7 @@ fn function_with_where_clause() {
 /// suggestions, so the fix is asserted directly.
 #[test]
 fn the_word_returns_is_reported_where_an_arrow_belongs() {
-    let source = r#"def longest(a: borrowed String) returns borrowed String:
+    let source = r#"def longest(a: &String) returns &String:
     a
 "#;
     insta::assert_snapshot!(parse_source_allowing_errors(source));
@@ -409,8 +408,7 @@ fn generic_argument_forms() {
         id("a"),
         Colon,
         id("Map"),
-        Of,
-        LParen,
+        LBracket,
         id("String"),
         Comma,
         id("Int"),
@@ -419,11 +417,9 @@ fn generic_argument_forms() {
         id("b"),
         Colon,
         id("Array"),
-        Of,
-        LParen,
+        LBracket,
         id("Map"),
-        Of,
-        LParen,
+        LBracket,
         id("String"),
         Comma,
         id("Int"),
@@ -433,8 +429,7 @@ fn generic_argument_forms() {
         id("c"),
         Colon,
         id("Window"),
-        Of,
-        LParen,
+        LBracket,
         id("Int"),
         Comma,
         int(4),
@@ -505,8 +500,7 @@ fn record_generic_with_borrowed_field() {
         Public,
         Type,
         id("Pair"),
-        Of,
-        LParen,
+        LBracket,
         id("A"),
         Comma,
         id("B"),
@@ -538,8 +532,7 @@ fn record_with_const_generic_params() {
     insta::assert_snapshot!(parse_report(vec![
         Type,
         id("Grid"),
-        Of,
-        LParen,
+        LBracket,
         id("T"),
         Comma,
         Const,
@@ -575,8 +568,7 @@ fn choice_with_positional_payloads() {
     insta::assert_snapshot!(parse_report(vec![
         Choice,
         id("Result"),
-        Of,
-        LParen,
+        LBracket,
         id("T"),
         Comma,
         id("E"),
@@ -1015,7 +1007,7 @@ fn the_nine_unit_aliases_of_scientific_libraries_12_3() {
 
     for (name, exponents) in aliases {
         let vector = exponents.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(", ");
-        let source = format!("type {name} of T is Quantity of (T, {vector})\n");
+        let source = format!("type {name} of T is Quantity[T, {vector}]\n");
         let module = parse_clean(&source);
 
         let arguments = alias_arguments(&module);
@@ -1039,8 +1031,8 @@ fn the_nine_unit_aliases_of_scientific_libraries_12_3() {
 #[test]
 fn a_dimension_vector_with_negative_exponents() {
     insta::assert_snapshot!(common::parse_source(concat!(
-        "type Velocity of T is Quantity of (T, 1, 0, -1, 0, 0, 0, 0)\n",
-        "type Pressure of T is Quantity of (T, -1, 1, -2, 0, 0, 0, 0)\n",
+        "type Velocity[T] is Quantity[T, 1, 0, -1, 0, 0, 0, 0]\n",
+        "type Pressure[T] is Quantity[T, -1, 1, -2, 0, 0, 0, 0]\n",
     )));
 }
 
@@ -1062,7 +1054,7 @@ fn negative_zero_and_the_value_boundary() {
     /// with whether the lexer was happy.
     #[track_caller]
     fn const_arg_value(literal: &str) -> (Option<i128>, bool) {
-        let source = format!("type Row is Window of (Int, {literal})\n");
+        let source = format!("type Row is Window[Int, {literal}]\n");
         let file = science_diagnostics::FileId(0);
         let (tokens, lexical) = science_lexer::lex(file, &source);
         let (module, diagnostics) = science_parser::parse_module(&tokens, file);
@@ -1113,8 +1105,8 @@ fn negative_zero_and_the_value_boundary() {
 /// not the other would be a rule with exactly one instance in the language.
 #[test]
 fn a_space_after_the_minus_does_not_change_the_const_argument() {
-    let spaced = common::parse_source("type Row is Window of (Int, - 1)\n");
-    let tight = common::parse_source("type Row is Window of (Int, -1)\n");
+    let spaced = common::parse_source("type Row is Window[Int, - 1]\n");
+    let tight = common::parse_source("type Row is Window[Int, -1]\n");
     // Only the spans differ, so the shapes are what get compared.
     assert_eq!(common::strip_spans(&spaced), common::strip_spans(&tight));
     insta::assert_snapshot!(spaced);
@@ -1132,9 +1124,9 @@ fn a_space_after_the_minus_does_not_change_the_const_argument() {
 fn a_negative_literal_is_not_a_type() {
     insta::assert_snapshot!(parse_source_allowing_errors(concat!(
         "def f(x: -1): x\n",
-        "type Bad is Window of (Int, -1.5)\n",
-        "type Worse is Window of (Int, -\"a\")\n",
-        "type Worst is Window of (Int, -true)\n",
+        "type Bad is Window[Int, -1.5]\n",
+        "type Worse is Window[Int, -\"a\"]\n",
+        "type Worst is Window[Int, -true]\n",
     )));
 }
 
@@ -1150,7 +1142,7 @@ fn a_negative_literal_is_not_a_type() {
 #[test]
 fn a_const_argument_may_name_a_parameter_and_do_arithmetic() {
     insta::assert_snapshot!(parse_source(
-        "def f of (const N: Int)(w: Grid of (Int, N + 1)):
+        "def f[const N: Int](w: Grid[Int, N + 1]):
     print(\"x\")
 "
     ));
@@ -1161,7 +1153,7 @@ fn a_const_argument_may_name_a_parameter_and_do_arithmetic() {
 #[test]
 fn const_arithmetic_keeps_the_languages_precedence() {
     insta::assert_snapshot!(parse_source(
-        "def f of (const N: Int)(w: Grid of (Int, N * 3 + 1)):
+        "def f[const N: Int](w: Grid[Int, N * 3 + 1]):
     print(\"x\")
 "
     ));
@@ -1176,7 +1168,7 @@ fn const_arithmetic_keeps_the_languages_precedence() {
 #[test]
 fn two_const_parameters_cannot_be_multiplied() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "def f of (const N: Int, const M: Int)(w: Grid of (Int, N * M)):
+        "def f[const N: Int, const M: Int](w: Grid[Int, N * M]):
     print(\"x\")
 "
     ));

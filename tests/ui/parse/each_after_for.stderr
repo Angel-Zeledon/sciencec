@@ -1,3 +1,9 @@
+error[SC0100]: `Array of T` is now written `Array[T]`
+ --> tests/ui/parse/each_after_for.science:9:22
+  |
+9 | def main(rows: Array of Int):
+  |                      ^^ `Array of T` is now written `Array[T]`
+
 error[SC0138]: the loop is written `for x in xs`
   --> tests/ui/parse/each_after_for.science:10:5
    |

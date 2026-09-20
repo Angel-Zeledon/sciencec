@@ -1,3 +1,9 @@
+error[SC0100]: `Array of T` is now written `Array[T]`
+  --> tests/ui/parse/array_comprehension.science:20:20
+   |
+20 | def main(xs: Array of Int):
+   |                    ^^ `Array of T` is now written `Array[T]`
+
 error[SC0153]: Science has no comprehensions; write the chain
   --> tests/ui/parse/array_comprehension.science:21:19
    |

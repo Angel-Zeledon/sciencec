@@ -38,11 +38,22 @@
 //! above` and `is below` are recognised in the same place for one purpose
 //! only: to report that they were removed.
 //!
-//! **`of` introduces arguments in a type and parameters in a declaration
-//! head.** `Array of Doc` passes an argument; `def largest of T(..)` and
-//! `Grid of (T, const ROWS: Int) has:` declare parameters. Nothing in
-//! the token stream distinguishes them, and nothing has to: the two are read
-//! by different functions, reached from different places in the grammar.
+//! **`[...]` introduces arguments in a type and parameters in a declaration
+//! head.** `Array[Doc]` passes an argument; `def largest[T](..)` and
+//! `Grid[T, const ROWS: Int] has:` declare parameters. Nothing in the token
+//! stream distinguishes them, and nothing has to: the two are read by
+//! different functions (`parse_generic_args` and `parse_generic_params`),
+//! reached from different places in the grammar — `parse_path_segments` is
+//! read instead of `parse_path` at every declaration head for exactly this
+//! reason.
+//!
+//! **`of` survives in one place brackets could not reach.** §4.3's old
+//! spelling is refused everywhere else by name, but the associated-call
+//! escape valve `(Array of Doc).new()` still reads `of`, because a `[` there
+//! would be indistinguishable from indexing — `parse_postfix`'s `[` already
+//! means "index the thing on the left," and `Array[Doc]` and `xs[i]` are the
+//! same three tokens with no later one to tell them apart. See
+//! `parse_instantiation`'s doc comment for the full argument.
 //!
 //! **Two ambiguities are left for name resolution**, because §4.4 says they
 //! cannot be settled by syntax: `Doc()` parses as a call, not as a record with
@@ -266,7 +277,7 @@ pub mod ffi_codes {
     pub const UNION_WITHOUT_LAYOUT: Code = Code(417);
     /// A type §1.3's closed vocabulary cannot represent at the boundary.
     pub const NOT_FFI_REPRESENTABLE: Code = Code(420);
-    /// `Array of T` in an extern signature; names `ffi.Span of T` as the fix
+    /// `Array[T]` in an extern signature; names `ffi.Span[T]` as the fix
     /// (§8, `SC0421`).
     pub const ARRAY_IN_SIGNATURE: Code = Code(421);
     /// `F16` or `BF16` passed by value across the boundary (§8, `SC0431`).
@@ -293,7 +304,7 @@ pub mod ffi_codes {
 /// `(`, because neither ever reaches the fork.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BoundPosition {
-    /// `of T: ..` and `where T: ..` — what a parameter must satisfy, which a
+    /// `[T: ..]` and `where T: ..` — what a parameter must satisfy, which a
     /// closure type is one of the ways of saying.
     Constraint,
     /// `interface Foo: ..`, `implements ..`, `any ..` — positions that hold an
@@ -308,13 +319,22 @@ enum BoundPosition {
 /// to be told something, rather than simply reading the token: the arrow is
 /// unambiguous, but *whose* it is depends on whether the argument list was
 /// parenthesised, and that is a fact the argument itself cannot see.
+///
+/// **Only the `of`-style escape valve still has an `Enclosing` reading.**
+/// `[...]` closes its own list the way `of (..)` always did, so
+/// `parse_generic_args` passes `Argument` unconditionally; `Enclosing` exists
+/// for `parse_of_style_generic_args`'s bare form, `Array of Int -> Bool`,
+/// which is the one generic-argument position left where a list has no
+/// delimiter of its own to close it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArrowAfter {
-    /// Inside `of (..)`: the parens close the list, so an arrow written inside
-    /// them is the argument's own.
+    /// Inside `[..]` or the `of`-style escape valve's own `of (..)`: an
+    /// explicit delimiter closes the list, so an arrow written inside it is
+    /// the argument's own.
     Argument,
-    /// After a bare `of T`: the arrow belongs to whatever the path is part of,
-    /// so `Array of Int -> Bool` takes an array and gives a `Bool`.
+    /// After the `of`-style escape valve's bare `of T`, which has no
+    /// delimiter of its own: the arrow belongs to whatever the path is part
+    /// of, so `Array of Int -> Bool` takes an array and gives a `Bool`.
     Enclosing,
 }
 
@@ -908,7 +928,7 @@ impl<'t> Parser<'t> {
     /// Whether `implements` or `has` occurs at bracket depth zero in the
     /// logical line beginning at `from`, before its `:` or its end.
     ///
-    /// The depth is what keeps `Grid of (T, const ROWS: Int) has:` readable:
+    /// The depth is what keeps `Grid[T, const ROWS: Int] has:` readable:
     /// the `:` inside the parameter list is not the header's.
     fn impl_header_at(&self, from: usize) -> bool {
         let mut depth = 0usize;
@@ -1057,12 +1077,16 @@ impl<'t> Parser<'t> {
     fn parse_fn(&mut self, form: FnForm, is_pub: bool, start: Span) -> Option<FnDecl> {
         self.advance(); // `def` or `tool`
         let name = self.expect_ident()?;
-        // Taken before the list is read so that the fix can delete the `of`
-        // along with what follows it; afterwards the `of` is gone from view.
-        let of_span = self.at(&TokenKind::Of).then(|| self.span());
+        // Taken before the list is read so that the fix can delete the `[`
+        // along with what follows it; afterwards the bracket is gone from
+        // view. A tool written with the refused `of T` spelling is not
+        // caught here — `parse_generic_params` already reported that, and a
+        // second diagnostic about the same bracket would be the cascade
+        // `check_tool_is_concrete` exists to avoid elsewhere.
+        let generics_span = self.at(&TokenKind::LBracket).then(|| self.span());
         let generics = self.parse_generic_params();
         if form == FnForm::Tool {
-            self.check_tool_is_concrete(of_span, &generics);
+            self.check_tool_is_concrete(generics_span, &generics);
         }
         let (self_param, params) = self.parse_params(form);
         // The receiver is dropped rather than kept, so the tree holds the tool
@@ -1431,9 +1455,9 @@ impl<'t> Parser<'t> {
     /// would leave every mention of `T` in the signature unresolved, and one
     /// stale word would cost a diagnostic plus a name-resolution failure per
     /// use — which is the cascade, arriving from a later phase.
-    fn check_tool_is_concrete(&mut self, of_span: Option<Span>, generics: &[GenericParam]) {
-        let (Some(of_span), Some(last)) = (of_span, generics.last()) else { return };
-        let clause = of_span.merge(last.span);
+    fn check_tool_is_concrete(&mut self, generics_span: Option<Span>, generics: &[GenericParam]) {
+        let (Some(generics_span), Some(last)) = (generics_span, generics.last()) else { return };
+        let clause = generics_span.merge(last.span);
         self.diagnostics.push(
             Diagnostic::error(codes::GENERIC_TOOL, "a `tool` is not generic")
                 .with_label(Label::primary(clause, "a type parameter has no single schema"))
@@ -1473,19 +1497,28 @@ impl<'t> Parser<'t> {
         );
     }
 
-    /// The span of the `borrowed` or `mutable borrowed` that opens a type.
+    /// The span of the `&` or `&mut` that opens a type.
     ///
-    /// A [`Type`] records *that* it is borrowed and not where the words are,
-    /// because until now nothing needed to point at them. They are recovered
-    /// from the token stream instead of being added to every type in the tree
-    /// for one diagnostic's sake: a borrow prefix is one or two tokens, it
-    /// begins where the type begins, and the scan stops on the third.
+    /// A [`Type`] records *that* it is borrowed and not where the sigil sits,
+    /// because until now nothing needed to point at it. It is recovered from
+    /// the token stream instead of being added to every type in the tree for
+    /// one diagnostic's sake: a borrow prefix is one or two tokens, it begins
+    /// where the type begins, and the scan stops on the third.
+    ///
+    /// **Matches `Amp`/`Mut`, not `Borrowed`/`Mutable`.** The two keywords the
+    /// old spelling used are still lexable — kept only so `borrowed T` can be
+    /// refused by name (§4.3) — but a well-formed borrow never contains them
+    /// once the parser gets here, so scanning for them would leave this
+    /// function returning `ty.span`'s fallback on every call and the
+    /// diagnostic's `help: take the value: delete …` pointing at the whole
+    /// type, generic arguments and all, rather than the one or two tokens
+    /// that actually need to go.
     fn borrow_words(&self, ty: &Type) -> Span {
         let first = self.tokens.partition_point(|t| t.span.start < ty.span.start);
         let mut words = None;
         for token in &self.tokens[first..] {
             match token.kind {
-                TokenKind::Mutable | TokenKind::Borrowed => {
+                TokenKind::Amp | TokenKind::Mut => {
                     words = Some(words.map_or(token.span, |s: Span| s.merge(token.span)));
                 }
                 _ => break,
@@ -1602,7 +1635,7 @@ impl<'t> Parser<'t> {
         let (word, note) = match self.peek() {
             TokenKind::Reserved(ReservedWord::Prompt) => (
                 "prompt",
-                "a prompt is an ordinary function returning `Array of Message`; its \
+                "a prompt is an ordinary function returning `Array[Message]`; its \
                  arguments carry no schema, so there is nothing for a declaration form to \
                  derive and nothing for it to check",
             ),
@@ -1776,8 +1809,8 @@ impl<'t> Parser<'t> {
 
     /// `type` introduces two declarations, told apart by what follows the
     /// name: `is` makes it an alias (§4.4), a block makes it a record. The
-    /// generic parameters come first either way, so `type Handle of T is Box
-    /// of T` needs no lookahead beyond the one token.
+    /// generic parameters come first either way, so `type Handle[T] is
+    /// Box[T]` needs no lookahead beyond the one token.
     fn parse_type_item(&mut self, is_pub: bool, start: Span) -> Option<ItemKind> {
         self.advance(); // `type`
         let name = self.expect_ident()?;
@@ -2502,7 +2535,7 @@ impl<'t> Parser<'t> {
                     self.report_half_precision_by_value(ty, &name);
                     return;
                 }
-                // The arguments of `ffi.Span of T`, `ffi.Pointer of T` and the
+                // The arguments of `ffi.Span[T]`, `ffi.Pointer[T]` and the
                 // rest name a pointee, never a value the ABI passes.
                 for argument in path.segments.iter().flat_map(|s| s.generics.iter()) {
                     self.check_ffi_type(argument, false);
@@ -2539,7 +2572,7 @@ impl<'t> Parser<'t> {
             // already.
             // `T?` has no C spelling in general. A nullable *pointer* would be
             // exactly C's own convention, but this phase cannot tell a pointer
-            // from anything else — `Doc?` and `ffi.Ptr of Doc?` are the same
+            // from anything else — `Doc?` and `(ffi.Ptr[Doc])?` are the same
             // shape here — so it rejects the form and leaves the narrower
             // positive case to whoever knows the type.
             TypeKind::Nullable(_) => self.report_not_ffi_representable(
@@ -2558,18 +2591,18 @@ impl<'t> Parser<'t> {
     /// §1.3, and `SC0421` by the name §8 gives it.
     ///
     /// The suggestion is exact and the call site does not move: §1.3 coerces
-    /// `borrowed Array of T` to `ffi.Span of T` at an extern call site for
-    /// precisely this reason, so rewriting the declaration is the whole fix.
+    /// `&Array[T]` to `ffi.Span[T]` at an extern call site for precisely this
+    /// reason, so rewriting the declaration is the whole fix.
     fn report_array_in_signature(&mut self, ty: &Type, mutable: Option<bool>, element: &str) {
         let span = ty.span;
         let replacement = match mutable {
-            Some(true) => format!("ffi.MutableSpan of {element}"),
-            _ => format!("ffi.Span of {element}"),
+            Some(true) => format!("ffi.MutableSpan[{element}]"),
+            _ => format!("ffi.Span[{element}]"),
         };
         self.diagnostics.push(
             Diagnostic::error(
                 ffi_codes::ARRAY_IN_SIGNATURE,
-                "`Array of T` has no C representation",
+                "`Array[T]` has no C representation",
             )
             .with_label(Label::primary(
                 span,
@@ -2585,8 +2618,8 @@ impl<'t> Parser<'t> {
                  the wrapper's bounds check is an expression the compiler checks",
             )
             .with_note(
-                "a call site still passes the array: `borrowed Array of T` coerces to \
-                 `ffi.Span of T` there, and `.span()` names the conversion where it has to \
+                "a call site still passes the array: `&Array[T]` coerces to \
+                 `ffi.Span[T]` there, and `.span()` names the conversion where it has to \
                  be written out",
             ),
         );
@@ -2619,7 +2652,7 @@ impl<'t> Parser<'t> {
                  `__half` is a struct around an `unsigned short`",
             )
             .with_note(
-                "pass it by reference — `borrowed F16`, or `ffi.Span of F16` — or as the \
+                "pass it by reference — `&F16`, or `ffi.Span[F16]` — or as the \
                  `U16` bit pattern the callee reinterprets",
             ),
         );
@@ -2627,28 +2660,55 @@ impl<'t> Parser<'t> {
 
     // --- generics and bounds ---------------------------------------------
 
-    /// `of T`, `of T: Ord + Clone`, `of (A, B)`, `of (T, const WIDTH: Int)`,
-    /// or nothing at all.
+    /// `[T]`, `[T: Ord + Clone]`, `[A, B]`, `[T, const WIDTH: Int]`, or
+    /// nothing at all.
     ///
-    /// §4.3 explains the parentheses: a single argument cannot contain a
-    /// top-level comma, so the comma that would follow it ends the list
-    /// instead. The same rule reads the parameter list, and for the same
-    /// reason — `def merge of A, B(..)` could not be told from a
-    /// parameter named `B`.
+    /// The bracket is its own delimiter, so — unlike the `of` spelling this
+    /// replaced — there is no separate bare form to keep straight from the
+    /// parenthesised one: `[T]` and `[A, B]` are written the same way whether
+    /// there is one parameter or several. §4.3 used to need the parentheses
+    /// because a *bare* `of A, B` could not be told from `of A` in front of a
+    /// parameter list starting `B(..)`; a closing `]` ends the list on its
+    /// own and asks that question of nothing.
+    ///
+    /// **The old spelling is refused by name.** `of` is still lexable — kept
+    /// only so `def foo of T(..)` reports *"`of T` is now written `[T]`"*
+    /// rather than *"expected `(`, found `of`"* — and it is kept for exactly
+    /// as long as it takes readers to stop writing it, the same trade §4.3
+    /// already made for `borrowed T` against `&T`.
     fn parse_generic_params(&mut self) -> Vec<GenericParam> {
         let mut params = Vec::new();
-        if self.eat(&TokenKind::Of).is_none() {
-            return params;
-        }
 
-        if self.eat(&TokenKind::LParen).is_none() {
-            if let Some(param) = self.parse_generic_param() {
-                params.push(param);
+        if self.at(&TokenKind::Of) {
+            let start = self.span();
+            self.advance();
+            self.error(codes::UNEXPECTED_TOKEN, "`of T` is now written `[T]`", start);
+            // Recovered with the grammar `of` used to have, so a stray `of`
+            // costs this one diagnostic and not a cascade of "undefined
+            // parameter" errors through the rest of the declaration.
+            if self.eat(&TokenKind::LParen).is_none() {
+                if let Some(param) = self.parse_generic_param() {
+                    params.push(param);
+                }
+                return params;
             }
+            while !self.at(&TokenKind::RParen) {
+                match self.parse_generic_param() {
+                    Some(param) => params.push(param),
+                    None => self.recover_in_brackets(),
+                }
+                if self.eat(&TokenKind::Comma).is_none() {
+                    break;
+                }
+            }
+            self.expect(&TokenKind::RParen, "`)`");
             return params;
         }
 
-        while !self.at(&TokenKind::RParen) {
+        if self.eat(&TokenKind::LBracket).is_none() {
+            return params;
+        }
+        while !self.at(&TokenKind::RBracket) {
             match self.parse_generic_param() {
                 Some(param) => params.push(param),
                 None => self.recover_in_brackets(),
@@ -2657,7 +2717,7 @@ impl<'t> Parser<'t> {
                 break;
             }
         }
-        self.expect(&TokenKind::RParen, "`)`");
+        self.expect(&TokenKind::RBracket, "`]`");
         params
     }
 
@@ -2667,7 +2727,7 @@ impl<'t> Parser<'t> {
         // A const parameter (§5.3) is annotated, and a type parameter's `:`
         // introduces bounds instead. The leading `const` is what tells them
         // apart, which is why it is written even though the annotation alone
-        // would be enough to infer it: `of (T, WIDTH: Int)` would read as a
+        // would be enough to infer it: `[T, WIDTH: Int]` would read as a
         // bound on `WIDTH`.
         if self.eat(&TokenKind::Const).is_some() {
             let name = self.expect_ident()?;
@@ -2682,14 +2742,18 @@ impl<'t> Parser<'t> {
 
         let name = self.expect_ident()?;
 
-        // The same two colons the interface head has: `of T: Ord(..)` bounds
-        // parameter, and the `:` of `type Wrapper of T:` opens the body. The
-        // one that bounds is followed by a name, the one that opens a block by
-        // the end of the line — and inside the parenthesised form the lexer
-        // emits no newline at all, so this only ever fires on the bare one.
-        let bounds = if self.at(&TokenKind::Colon)
-            && !matches!(self.peek_ahead(1), TokenKind::Newline)
-        {
+        // `[T: Ord]` bounds the parameter; the interface head's own two
+        // colons (`Doc implements Summarize:` and the `:` of `type
+        // Wrapper[T]:` that opens the body) are a different question this
+        // function never sees, because the block's colon now always falls
+        // *after* the closing `]` and this one is always still inside it.
+        // Brackets closed that gap: the `of T:` spelling this replaced had no
+        // delimiter of its own, so a *bare* single parameter's bound and a
+        // bare single parameter's block-opening colon were one lookahead
+        // token apart, and this function used to have to tell them apart by
+        // whether a `Newline` followed. A colon can only mean one thing here
+        // now.
+        let bounds = if self.at(&TokenKind::Colon) {
             self.advance();
             self.parse_bounds(BoundPosition::Constraint)
         } else {
@@ -2814,10 +2878,11 @@ impl<'t> Parser<'t> {
 
     /// A dotted name and nothing else.
     ///
-    /// Split out from `parse_path` for the one caller that must not read an
-    /// `of`: an implementation head, where `of` declares parameters rather
-    /// than passing arguments, and `Grid of (T, const ROWS: Int) has:`
-    /// would be nonsense read as a type.
+    /// Split out from `parse_path` for the one caller that must not read a
+    /// `[...]`: an implementation head, where the bracket declares parameters
+    /// rather than passing arguments, and `Grid[T, const ROWS: Int] has:`
+    /// would be nonsense read as a type — `parse_impl` reads it with
+    /// `parse_generic_params` instead, right after this returns.
     fn parse_path_segments(&mut self) -> Option<Path> {
         let first = self.expect_ident()?;
         let mut span = first.span;
@@ -2836,15 +2901,36 @@ impl<'t> Parser<'t> {
         Some(Path { segments, span })
     }
 
-    /// A dotted name, with `of` arguments when it has any.
+    /// A dotted name, with `[...]` arguments when it has any.
     ///
     /// The arguments bind to the whole name rather than to a segment —
-    /// §4.3 writes `text.parser.Token of Doc`, never `text.Token of Doc.parser`
+    /// §4.3 writes `text.parser.Token[Doc]`, never `text.Token[Doc].parser`
     /// — so they land on the last segment, which is the one they name.
+    ///
+    /// **The old spelling is refused by name.** `of` is still lexable — kept
+    /// only so `Array of T` reports *"`Array of T` is now written
+    /// `Array[T]`"* rather than leaving the `of` to be reported by whatever
+    /// reads the token after it, which would not name the type at all. It is
+    /// kept for exactly as long as it takes readers to stop writing it.
     fn parse_path(&mut self) -> Option<Path> {
         let mut path = self.parse_path_segments()?;
-        if self.eat(&TokenKind::Of).is_some() {
+        if self.at(&TokenKind::LBracket) {
             let generics = self.parse_generic_args();
+            let end = self.last_text_span();
+            if let Some(last) = path.segments.last_mut() {
+                last.generics = generics;
+                last.span = last.span.merge(end);
+            }
+            path.span = path.span.merge(end);
+        } else if self.at(&TokenKind::Of) {
+            let of_start = self.span();
+            self.advance();
+            self.error(
+                codes::UNEXPECTED_TOKEN,
+                format!("`{} of T` is now written `{}[T]`", path.dotted(), path.dotted()),
+                of_start,
+            );
+            let generics = self.parse_of_style_generic_args();
             let end = self.last_text_span();
             if let Some(last) = path.segments.last_mut() {
                 last.generics = generics;
@@ -2855,11 +2941,70 @@ impl<'t> Parser<'t> {
         Some(path)
     }
 
+    /// The arguments inside `[...]`, with the `[` not yet consumed.
+    ///
+    /// Always bracket-delimited: one argument and several are written the
+    /// same way, `[T]` and `[String, Int]`, because the bracket is its own
+    /// closing delimiter and never needs a second one the way the `of`
+    /// spelling needed parentheses to tell `Array of A, B` from `Array of A`
+    /// in front of whatever followed.
+    /// Whether the brackets at the cursor hold a comma-separated list rather
+    /// than a single subscript.
+    ///
+    /// A scan and not a speculative parse: the question is only whether a
+    /// comma appears before the matching `]`, and nesting is tracked so that
+    /// `xs[f(a, b)]` and `xs[m[i, j]]` are still one subscript. Cheap, and it
+    /// cannot consume tokens the way a backtracking parse would.
+    fn brackets_hold_a_list(&self) -> bool {
+        let mut depth = 0usize;
+        let mut at = 0usize;
+        loop {
+            match self.peek_ahead(at) {
+                TokenKind::LBracket | TokenKind::LParen | TokenKind::LBrace => depth += 1,
+                TokenKind::RParen | TokenKind::RBrace => depth = depth.saturating_sub(1),
+                TokenKind::RBracket => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return false;
+                    }
+                }
+                TokenKind::Comma if depth == 1 => return true,
+                // **`any` cannot begin an expression**, so brackets holding
+                // one hold type arguments. `Array[Box[any Summarize]].new()`
+                // has no comma at depth 1 and is still not an index, and this
+                // is the one token that says so without guessing.
+                TokenKind::Any => return true,
+                TokenKind::Eof => return false,
+                _ => {}
+            }
+            at += 1;
+        }
+    }
+
+    fn parse_generic_args(&mut self) -> Vec<Type> {
+        self.advance(); // `[`
+        let mut args = Vec::new();
+        while !self.at(&TokenKind::RBracket) {
+            args.push(self.parse_generic_arg(ArrowAfter::Argument));
+            if self.eat(&TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RBracket, "`]`");
+        args
+    }
+
     /// The arguments after `of`, with the `of` already consumed.
     ///
+    /// **Kept for the one place `of` still spells generic arguments**: the
+    /// associated-call escape valve [`Self::parse_instantiation`] reads,
+    /// where `[` is already claimed by indexing and cannot replace it — see
+    /// that function's doc comment for the ambiguity this avoids. Everywhere
+    /// else, [`Self::parse_generic_args`] reads `[...]` instead.
+    ///
     /// One argument may be written bare (`Array of Doc`); two or more take
-    /// parentheses, and so may one (§4.3).
-    fn parse_generic_args(&mut self) -> Vec<Type> {
+    /// parentheses, and so may one (§4.3, as it read before `[...]` existed).
+    fn parse_of_style_generic_args(&mut self) -> Vec<Type> {
         if self.eat(&TokenKind::LParen).is_none() {
             // The bare form stops before a `->`: see [`Self::parse_type_no_arrow`]
             // for why the two spellings of a one-argument list have to agree
@@ -2877,11 +3022,12 @@ impl<'t> Parser<'t> {
         args
     }
 
-    /// One argument of an `of` list: a type, or a const generic argument.
+    /// One argument of a generic argument list, bracketed or (in the
+    /// `of`-style escape valve) not: a type, or a const generic argument.
     ///
     /// This is `parse_type` plus exactly one thing — a const generic argument
-    /// here may be negated, and only here. `Quantity of (T, 1, 0, -1, 0, 0,
-    /// 0, 0)` is `scientific-libraries.md` §12.3's velocity, and roughly half
+    /// here may be negated, and only here. `Quantity[T, 1, 0, -1, 0, 0,
+    /// 0, 0]` is `scientific-libraries.md` §12.3's velocity, and roughly half
     /// of every SI dimension vector in that note is negative, so this is not
     /// an edge case; before this existed, none of its nine unit aliases
     /// parsed.
@@ -3116,8 +3262,8 @@ impl<'t> Parser<'t> {
         );
     }
 
-    /// A type expression: `borrowed T`, `mutable borrowed T`, `any Trait`,
-    /// `Array of T`, `(A, B)`, `()`, `Self`, `Self.Item`, a const argument,
+    /// A type expression: `&T`, `&mut T`, `any Trait`,
+    /// `Array[T]`, `(A, B)`, `()`, `Self`, `Self.Item`, a const argument,
     /// and dotted paths.
     ///
     /// Always returns a node. A failure becomes `TypeKind::Error`, so the tree
@@ -3131,7 +3277,7 @@ impl<'t> Parser<'t> {
     /// here would have to explain a type system it cannot see.
     ///
     /// The recursive calls inside [`Self::parse_type_atom`] come back through
-    /// this function, so `borrowed T?` is `borrowed (T?)`: the suffix binds to
+    /// this function, so `&T?` is `&(T?)`: the suffix binds to
     /// the type it follows, not to the whole construction.
     /// `(A) -> B` is read by **one token of lookahead past the closing paren,
     /// with no backtracking.**
@@ -3171,19 +3317,28 @@ impl<'t> Parser<'t> {
 
     /// A type up to but not including a `->`, which is left for the caller.
     ///
-    /// One caller wants this, and it is the one place the greedy reading was
-    /// wrong: the **bare** single generic argument of `Array of T`. §4.3 says
-    /// one argument may be written with parentheses or without, so `Array of T`
-    /// and `Array of (T)` are the same type — but in `Array of (T) -> B` the
-    /// parens close the *argument list*, so the arrow is outside it and the
-    /// closure takes the array. If the bare form parsed its argument greedily
-    /// the same source with two parens removed would be an `Array` of closures
-    /// instead, and two spellings §4.3 calls equal would name different types.
-    /// So the arrow falls outside in both, which is also the ML-family reading
-    /// `collections-and-chains.md` §1.2 appeals to: application binds tighter
-    /// than the arrow. A closure *as* a generic argument writes the parens it
-    /// needs — `Array of ((Int) -> Bool)` — exactly as it does in every other
-    /// position where two readings meet.
+    /// [`Self::parse_type`] calls this for its own, general reason — a `->`
+    /// is right-associative and read by recursing on the return type, so the
+    /// left side of one has to stop before it — but it has a second caller
+    /// left over from before `[...]` existed: `parse_generic_arg`'s
+    /// `ArrowAfter::Enclosing`, for the **bare** single argument of the
+    /// `of`-style escape valve, `Array of T`. §4.3 said one argument could be
+    /// written with parentheses or without, so `Array of T` and `Array of
+    /// (T)` were the same type — but in `Array of (T) -> B` the parens close
+    /// the *argument list*, so the arrow is outside it and the closure takes
+    /// the array. If the bare form parsed its argument greedily the same
+    /// source with two parens removed would be an `Array` of closures
+    /// instead, and two spellings §4.3 called equal would name different
+    /// types. So the arrow fell outside in both, which is also the
+    /// ML-family reading `collections-and-chains.md` §1.2 appeals to:
+    /// application binds tighter than the arrow. A closure *as* a generic
+    /// argument wrote the parens it needed — `Array of ((Int) -> Bool)` —
+    /// exactly as it does in every other position where two readings meet.
+    ///
+    /// `[...]` has no bare form and needs none of this: `Array[T]`'s `]`
+    /// closes the argument list on its own, so `parse_generic_args` always
+    /// passes `ArrowAfter::Argument` and a closure argument's own parens are
+    /// the only parens `Array[(Int) -> Bool]` needs.
     fn parse_type_no_arrow(&mut self) -> Type {
         let start = self.span();
         let mut ty = self.parse_type_atom();
@@ -3201,7 +3356,7 @@ impl<'t> Parser<'t> {
         let start = self.span();
 
         // A const generic argument (§5.3) is a value where a type is expected:
-        // the `4` of `Window of (Int, 4)`. Nothing else in a type position can
+        // the `4` of `Window[Int, 4]`. Nothing else in a type position can
         // be a literal, so there is no ambiguity to resolve.
         //
         // `null` is the exception, and it is excluded rather than accepted and
@@ -3215,22 +3370,45 @@ impl<'t> Parser<'t> {
         }
 
         match self.peek() {
-            TokenKind::Borrowed => {
+            // `&T` and `&mut T`. **The sigil replaced the word**, and the one
+            // thing it does not replace is `mutable` on a binding: `let mutable
+            // total be 0` is unchanged, because a binding says what it *is*
+            // where a borrow says what it *grants*.
+            TokenKind::Amp => {
                 self.advance();
+                let mutable = self.eat(&TokenKind::Mut).is_some();
                 let inner = self.parse_type();
                 Type {
-                    kind: TypeKind::Borrowed { mutable: false, inner: Box::new(inner) },
+                    kind: TypeKind::Borrowed { mutable, inner: Box::new(inner) },
                     span: start.merge(self.last_text_span()),
                 }
             }
-            TokenKind::Mutable => {
+            // **The old spelling is refused by name rather than by accident.**
+            // `borrowed` is still a keyword, so `borrowed Int` would otherwise
+            // fail as *"expected a type, found `borrowed`"* — true and useless.
+            // The word is kept lexable for exactly as long as it takes readers
+            // to stop writing it.
+            TokenKind::Borrowed | TokenKind::Mutable
+                if matches!(self.peek(), TokenKind::Borrowed)
+                    || self.peek_ahead(1) == &TokenKind::Borrowed =>
+            {
+                let mutable = self.at(&TokenKind::Mutable);
                 self.advance();
-                // `mutable` is only ever the first half of `mutable borrowed`
-                // in a type: there is no other kind of mutable type.
-                self.expect(&TokenKind::Borrowed, "`borrowed` after `mutable`");
+                if mutable {
+                    self.advance();
+                }
+                self.error(
+                    codes::UNEXPECTED_TOKEN,
+                    if mutable {
+                        "`mutable borrowed T` is now written `&mut T`"
+                    } else {
+                        "`borrowed T` is now written `&T`"
+                    },
+                    start,
+                );
                 let inner = self.parse_type();
                 Type {
-                    kind: TypeKind::Borrowed { mutable: true, inner: Box::new(inner) },
+                    kind: TypeKind::Borrowed { mutable, inner: Box::new(inner) },
                     span: start.merge(self.last_text_span()),
                 }
             }
@@ -3715,6 +3893,14 @@ impl<'t> Parser<'t> {
                 | Minus
                 | Not
                 | Null
+                // `&x` and `&mut x`. **`&` can begin an expression and can
+                // also continue one**, which is the whole of what makes the
+                // sigil work: this predicate is asked where a *term* is
+                // expected, and `BitAnd`'s row is consulted where an operator
+                // is. `return &found.inner` is the case that found it — the
+                // token list said `return` carried no value, and the `&` was
+                // then reported as an unexpected end of line.
+                | Amp
                 | Borrowed
                 | Mutable
                 | Each
@@ -3932,15 +4118,33 @@ impl<'t> Parser<'t> {
                 let span = start.merge(self.last_text_span());
                 Expr { kind: ExprKind::Unary { op: UnaryOp::Not, operand: Box::new(operand) }, span }
             }
+            // `&x` and `&mut x`. **Prefix only, which is what keeps it apart
+            // from `a & b`.** `&` is also `BitAnd`, and the two never collide:
+            // a borrow is only ever written where a *term* is expected and an
+            // infix `&` only ever where an operator is, so the same token is
+            // read by two rows of the grammar that cannot both be looking.
+            TokenKind::Amp => {
+                self.advance();
+                let mutable = self.eat(&TokenKind::Mut).is_some();
+                let inner = self.parse_unary();
+                let span = start.merge(self.last_text_span());
+                Expr { kind: ExprKind::Borrowed { mutable, expr: Box::new(inner) }, span }
+            }
             TokenKind::Borrowed => {
                 self.advance();
+                self.error(codes::UNEXPECTED_TOKEN, "`borrowed x` is now written `&x`", start);
                 let inner = self.parse_unary();
                 let span = start.merge(self.last_text_span());
                 Expr { kind: ExprKind::Borrowed { mutable: false, expr: Box::new(inner) }, span }
             }
-            TokenKind::Mutable => {
+            TokenKind::Mutable if self.peek_ahead(1) == &TokenKind::Borrowed => {
                 self.advance();
-                self.expect(&TokenKind::Borrowed, "`borrowed` after `mutable`");
+                self.advance();
+                self.error(
+                    codes::UNEXPECTED_TOKEN,
+                    "`mutable borrowed x` is now written `&mut x`",
+                    start,
+                );
                 let inner = self.parse_unary();
                 let span = start.merge(self.last_text_span());
                 Expr { kind: ExprKind::Borrowed { mutable: true, expr: Box::new(inner) }, span }
@@ -4020,6 +4224,55 @@ impl<'t> Parser<'t> {
                 // §6.2: `[` in *postfix* position — immediately after a
                 // complete primary — is an index, and binds with call and
                 // field access so that `a[i].f[j]` is `((a[i]).f)[j]`.
+                //
+                // This is also why the `Of` arm below is still `Of` and not
+                // `LBracket`: `Array[Int]` and `xs[i]` are the same tokens,
+                // and this match already commits to the index reading before
+                // `instantiable_path` could be asked. See
+                // `Self::parse_instantiation`'s doc comment for the full
+                // argument.
+                // **Two or more arguments settle themselves; one cannot.**
+                //
+                // The decision. `Map[String, Int].new()` is read here as a
+                // generic instantiation, because an index takes exactly one
+                // subscript and a comma at this depth means the brackets are
+                // not one. `Array[Int].new()` is left as an
+                // `ExprKind::Index` and `science-resolve` decides, because
+                // deciding it here is not possible.
+                //
+                // The reason. `Array[Int]` and `xs[i]` are the same tokens:
+                // a path, a bracket, a path, a bracket. Nothing in the token
+                // stream separates a type applied to an argument from a value
+                // subscripted by a name — the difference is what `Array` *is*,
+                // and a parser does not know. A rule of thumb would work:
+                // types are `UpperCamel` in every line of this corpus. It is
+                // still a rule of thumb, and making the grammar depend on
+                // capitalisation is a language change smuggled in as a parsing
+                // convenience.
+                //
+                // So the split is by where the information lives. The comma is
+                // a fact about the tokens and is decided here; *"is `Array` a
+                // type"* is a fact about the program's names and is decided by
+                // the phase that has them.
+                //
+                // The cost. An `ExprKind::Index` in the tree no longer always
+                // means an index, and a reader of the AST has to know that
+                // `science-resolve` may turn one into a path. That is the same
+                // shape `ExprKind::Field` already has, two arms up: a field
+                // access whose base is a module is a path, and this arm's
+                // neighbour already rewrites it.
+                TokenKind::LBracket if instantiable_path(&expr) && self.brackets_hold_a_list() => {
+                    let args = self.parse_generic_args();
+                    let end = self.last_text_span();
+                    if let ExprKind::Path(path) = &mut expr.kind {
+                        if let Some(segment) = path.segments.last_mut() {
+                            segment.generics = args;
+                            segment.span = segment.span.merge(end);
+                        }
+                        path.span = path.span.merge(end);
+                    }
+                    expr.span = start.merge(end);
+                }
                 TokenKind::LBracket => {
                     let open = self.span();
                     self.advance();
@@ -4059,11 +4312,36 @@ impl<'t> Parser<'t> {
     /// `Array of Doc .new()` load-bearing, Science reports the ambiguity
     /// (`SC0116`), says which reading it took, and offers the parentheses as a
     /// fix.
+    ///
+    /// **This is the one place the bracket migration left `of` in place, and
+    /// the reason is a genuine grammar conflict rather than an oversight.**
+    /// [`Self::parse_postfix`]'s loop already gives `[` a meaning in exactly
+    /// this position — immediately after a complete primary — and that
+    /// meaning is indexing. The decision the type grammar made everywhere
+    /// else, "a bracket after a bare, not-yet-instantiated path is generic
+    /// arguments," cannot be made here too: `Array[Int]` and `xs[i]` are the
+    /// same three tokens, `instantiable_path` is true of `xs` for exactly the
+    /// same reason it is true of `Array` (neither has taken arguments yet),
+    /// and nothing else in the token stream tells them apart. Reading further
+    /// does not help either — `Array[Int].new()` and `xs[i].new()` (a
+    /// perfectly ordinary indexed method call) diverge only in whether `Array`
+    /// or `xs` names a type, which is a fact name resolution has and the
+    /// parser by design does not (`array_element`'s comment says the same
+    /// thing about a different function: *"the parser has no definitions"*).
+    /// Rust faces this exact conflict and resolves it with a second syntax,
+    /// `::<>`, rather than by deciding it; Science's answer is to keep the one
+    /// syntax that was never ambiguous, `of`, for exactly this position, and
+    /// let `[...]` own every position where indexing does not compete with
+    /// it: types, `def`/`type`/`interface`/`tool` headers, and `has`/
+    /// `implements` heads. The cost is a second spelling of "generic
+    /// arguments" that survives nowhere else, and a reader who reaches this
+    /// function after reading every other one in this file and expects `[`
+    /// has to be told why it is not here.
     fn parse_instantiation(&mut self, mut expr: Expr, start: Span) -> Expr {
         self.advance(); // `of`
 
         let parenthesised = self.at(&TokenKind::LParen);
-        let mut args = self.parse_generic_args();
+        let mut args = self.parse_of_style_generic_args();
 
         // Only the bare single-argument form can be ambiguous: a parenthesised
         // list ends at its own `)`, so any `.` after it has just one reading.
@@ -4090,7 +4368,7 @@ impl<'t> Parser<'t> {
                     .segments
                     .last()
                     .and_then(|segment| segment.generics.first())
-                    .map(type_text)
+                    .map(type_text_of_style)
                     .unwrap_or_default();
                 (path.dotted(), argument)
             }
@@ -5291,8 +5569,8 @@ fn int_literal(expr: &Expr) -> Option<u128> {
 /// The type an implementation head names, rebuilt from the head path and the
 /// parameters declared on it.
 ///
-/// `Grid of (T, const ROWS: Int) has:` declares two parameters and
-/// implements `Grid of (T, ROWS)`. Echoing the names back as arguments keeps
+/// `Grid[T, const ROWS: Int] has:` declares two parameters and
+/// implements `Grid[T, ROWS]`. Echoing the names back as arguments keeps
 /// `self_ty` an ordinary type — a const *parameter* has an annotation and no
 /// type has room for one — while `generics` keeps what was declared.
 fn self_type_of(head: &Path, generics: &[GenericParam]) -> Type {
@@ -5337,7 +5615,7 @@ fn split_trailing_call(args: &mut [Type], next: &TokenKind) -> Option<Ident> {
     Some(method.name)
 }
 
-/// The element type of `Array of T`, written back out, when `ty` is one.
+/// The element type of `Array[T]`, written back out, when `ty` is one.
 ///
 /// Matching on the name is the whole of it: the parser has no definitions, and
 /// `Array` is the F0 library's, not any user's.
@@ -5364,13 +5642,13 @@ fn science_layout_note(name: &str) -> Option<&'static str> {
     Some(match name {
         "String" => {
             "a C string is NUL-terminated and a Science `String` is UTF-8 bytes with a \
-             length; write `ffi.CStr` for one that is borrowed and `ffi.CString` for one \
+             length; write `ffi.CStr` for one that is &and `ffi.CString` for one \
              Science owns, and expect the copy both of them make"
         }
         "Map" => "a `Map` is a Science hash table, and the C side does not know its layout",
         "Box" => {
             "a `Box` owns what it points at under Science's allocator; pass \
-             `ffi.Pointer of T` and say in the binding who frees it"
+             `ffi.Pointer[T]` and say in the binding who frees it"
         }
         "Option" => {
             "an `Option` is a niche, and which niche depends on the payload; the C \
@@ -5385,11 +5663,49 @@ fn science_layout_note(name: &str) -> Option<&'static str> {
     })
 }
 
-/// A type written back out as source, for the fix `SC0116` offers.
+/// A type written back out in the `of` spelling, for the fix `SC0116` offers.
+///
+/// **Deliberately not bracket syntax.** `SC0116` fires only inside
+/// [`Parser::parse_instantiation`], the one escape valve the bracket
+/// migration left spelled `of` because `[` there collides with indexing (see
+/// that function's doc comment); the fix it offers wraps the *user's own*
+/// `of` in parentheses, `Array of Doc` to `(Array of Doc)`, and a suggestion
+/// that handed back `Array[Doc]` would be correcting a spelling the user was
+/// never wrong to use. [`type_text`] is the bracket-spelling counterpart,
+/// used everywhere a type is read back out of type position rather than of
+/// this one expression-only position.
 ///
 /// It handles only what can appear in the ambiguous position — a path, with or
 /// without arguments of its own — because that is the only place it is used,
 /// and a fix that guesses at the text it is replacing is worse than no fix.
+fn type_text_of_style(ty: &Type) -> String {
+    match &ty.kind {
+        TypeKind::Path(path) => {
+            let head = path.dotted();
+            let args: Vec<String> = path
+                .segments
+                .last()
+                .map(|s| s.generics.iter().map(type_text_of_style).collect())
+                .unwrap_or_default();
+            match args.len() {
+                0 => head,
+                1 => format!("{head} of {}", args[0]),
+                _ => format!("{head} of ({})", args.join(", ")),
+            }
+        }
+        TypeKind::SelfType => "Self".to_string(),
+        TypeKind::SelfAssoc(name) => format!("Self.{}", name.name),
+        _ => String::new(),
+    }
+}
+
+/// A type written back out as source, in the bracket spelling every type
+/// position but the `of`-style escape valve uses (see
+/// [`type_text_of_style`]'s doc comment for that one).
+///
+/// It handles only what can appear where it is called from — a path, with or
+/// without arguments of its own — because a fix or a message that guesses at
+/// text it does not fully understand is worse than none.
 fn type_text(ty: &Type) -> String {
     match &ty.kind {
         TypeKind::Path(path) => {
@@ -5399,11 +5715,7 @@ fn type_text(ty: &Type) -> String {
                 .last()
                 .map(|s| s.generics.iter().map(type_text).collect())
                 .unwrap_or_default();
-            match args.len() {
-                0 => head,
-                1 => format!("{head} of {}", args[0]),
-                _ => format!("{head} of ({})", args.join(", ")),
-            }
+            if args.is_empty() { head } else { format!("{head}[{}]", args.join(", ")) }
         }
         TypeKind::SelfType => "Self".to_string(),
         TypeKind::SelfAssoc(name) => format!("Self.{}", name.name),
@@ -5466,7 +5778,7 @@ fn finish_block(mut stmts: Vec<Stmt>, start: Span) -> Block {
 ///
 /// Only two shapes can be promoted: a bare one-segment path, which is a
 /// parameter name, and a const argument already recognised as one. A
-/// `borrowed T` or an `Array of T` followed by `+` is not arithmetic that was
+/// `&T` or an `Array[T]` followed by `+` is not arithmetic that was
 /// mis-parsed; it is an error, and returning `None` leaves it to be reported
 /// as the syntax error it is.
 /// The literal a const term turns out to be, for §2.1's mirrored production.

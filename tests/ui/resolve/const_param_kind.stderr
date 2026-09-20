@@ -1,7 +1,5 @@
-error[SC0220]: a const generic parameter's kind must be `Int` or `Shape`
-  --> tests/ui/resolve/const_param_kind.science:14:25
+error[SC0100]: `of T` is now written `[T]`
+  --> tests/ui/resolve/const_param_kind.science:14:12
    |
 14 | def widest of (const N: Str)(rows: Int) -> Int:
-   |                         ^^^ `Str` is not a const-parameter kind
-   |
-   = note: `const N: K` annotates `N` with a kind, not with a type: `Int` is an integer known at compile time, and `Shape` is a type-level list of them
+   |            ^^ `of T` is now written `[T]`

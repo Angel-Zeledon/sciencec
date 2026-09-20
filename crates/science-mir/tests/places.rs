@@ -63,7 +63,7 @@ fn a_field_of_a_local_is_a_field_projection() {
 /// The first of the two THIR could not express.
 #[test]
 fn an_index_is_a_projection_holding_a_temporary() {
-    let source = "def f(xs: Array of Int, i: Int) -> Int:\n    xs[i]\n";
+    let source = "def f(xs: Array[Int], i: Int) -> Int:\n    xs[i]\n";
     let lowered = lower(source);
     assert!(
         projections(&lowered, "f").contains(&"i".to_string()),
@@ -154,7 +154,7 @@ fn two_different_fields_do_not_overlap() {
 #[test]
 fn index_temporaries_are_assigned_once() {
     let source = concat!(
-        "def f(xs: Array of Int, i: Int) -> Int:\n",
+        "def f(xs: Array[Int], i: Int) -> Int:\n",
         "    let a be xs[i]\n",
         "    let b be xs[i]\n",
         "    a + b\n",
@@ -224,13 +224,13 @@ fn a_method_call_on_a_borrowed_receiver_reborrows_the_referent() {
         assert_eq!(data.place.local, self_local, "the receiver borrow is not of `self`");
         assert!(
             matches!(data.place.projection.as_slice(), [Projection::Deref { .. }]),
-            "`self.size()` borrowed the local holding the reference rather than \
+            "`self.size()` &the local holding the reference rather than \
              its referent: {}",
             science_mir::dump::body(&lowered.krate.defs, body)
         );
         let rendered = lowered.types.render(&lowered.krate.defs, data.destination.ty(body));
         assert_eq!(
-            rendered, "borrowed Table",
+            rendered, "&Table",
             "the receiver reference has the wrong type for the parameter it fills"
         );
     }
@@ -313,7 +313,7 @@ fn a_receiver_with_no_place_of_its_own_is_borrowed_from_its_temporary() {
 /// holding a reference, which nothing between here and LLVM reports.
 #[test]
 fn an_assignment_through_an_exclusive_borrow_names_the_referent() {
-    let source = "def set(counter: mutable borrowed Int):\n    counter be 5\n";
+    let source = "def set(counter: &mut Int):\n    counter be 5\n";
     let lowered = lower(source);
     let body = lowered.body("set");
     let target = body
@@ -336,7 +336,7 @@ fn an_assignment_through_an_exclusive_borrow_names_the_referent() {
 #[test]
 fn a_reference_assigned_a_reference_is_not_dereferenced() {
     let source = concat!(
-        "def f(a: borrowed Int, b: borrowed Int) -> Int:\n",
+        "def f(a: &Int, b: &Int) -> Int:\n",
         "    let mutable r be a\n",
         "    r be b\n",
         "    r\n",
@@ -379,7 +379,7 @@ fn a_match_on_a_borrowed_choice_reads_through_the_borrow() {
         "    Plain\n",
         "    Markdown\n",
         "\n",
-        "def name_of(format: borrowed Format) -> Int:\n",
+        "def name_of(format: &Format) -> Int:\n",
         "    match format:\n",
         "        Plain: 1\n",
         "        Markdown: 2\n",

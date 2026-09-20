@@ -17,7 +17,7 @@ type Doc:
 type Note:
     text: String
 
-type Pair of (A, B):
+type Pair[A, B]:
     first: A
     second: B
 
@@ -27,7 +27,7 @@ type Position:
 
 # §8 gives `String` no `clone`; an owned copy comes out of `String.new()` and
 # `push_str`, which is all §8 offers for building one.
-def copy_of(text: borrowed String) -> String:
+def copy_of(text: &String) -> String:
     let mutable out be String.new()
     out.push_str(text)
     out
@@ -121,7 +121,7 @@ Countdown implements Iterate:
 # A second implementation with a different `Item`, which is the point: the
 # element type belongs to the implementation, not to the interface.
 type Letters:
-    glyphs: Array of Char
+    glyphs: Array[Char]
     cursor: Int
 
 Letters implements Iterate:
@@ -139,8 +139,8 @@ interface Swap:
     type Swapped
     def swapped(self: Self) -> Self.Swapped
 
-Pair of (A, B) implements Swap:
-    type Swapped is Pair of (B, A)
+Pair[A, B] implements Swap:
+    type Swapped is Pair[B, A]
 
     def swapped(self: Self) -> Self.Swapped:
         Pair(first: self.second, second: self.first)
@@ -215,7 +215,7 @@ Doc implements Drop:
     def drop(mutable self):
         print("dropping a doc")
 
-Doc implements From of Note:
+Doc implements From[Note]:
     def from(note: Note) -> Self:
         Doc(title: "untitled", body: note.text)
 

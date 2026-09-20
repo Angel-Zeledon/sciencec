@@ -9,7 +9,7 @@
 # `if err?: return …` the compiler knows the value is good, which is the
 # narrowing that keeps the model from being cast-ridden.
 #
-# There is no `Option of T`, no `Result of (T, E)` and no `try`. The file this
+# There is no `Option[T]`, no `Result[T, E]` and no `try`. The file this
 # one replaced was named after the two types and spent most of its length on
 # the third; it is worth saying what the trade was, because this file is
 # nearly twice as long as that one and the extra length is not an accident:
@@ -70,21 +70,21 @@ StartupError implements Error:
 # The conversion that `try` used to perform without being asked. It is an
 # ordinary associated def now, and the call sites are in `read_config`.
 StartupError has:
-    def from_config(inner: borrowed ConfigError) -> StartupError:
+    def from_config(inner: &ConfigError) -> StartupError:
         StartupError(detail: inner.message())
 
-    def from_io(inner: borrowed IoError) -> StartupError:
+    def from_io(inner: &IoError) -> StartupError:
         StartupError(detail: "the file could not be read")
 
 # `From` is still one of the interfaces §5.4 names; what changed is that
 # nothing calls it for you.
-ConfigError implements From of IoError:
+ConfigError implements From[IoError]:
     def from(inner: IoError) -> Self:
         Io("the file could not be read")
 
 # §8 gives `String` no `clone`, so an owned copy is built from `String.new()`
 # and `push_str`.
-def copy_of(text: borrowed String) -> String:
+def copy_of(text: &String) -> String:
     let mutable out be String.new()
     out.push_str(text)
     out
@@ -93,23 +93,23 @@ def copy_of(text: borrowed String) -> String:
 
 # A def that may have no answer says so in its return type. There is
 # nothing to wrap: the heading *is* the value, and `null` is the other one.
-def heading(text: borrowed String) -> String?:
+def heading(text: &String) -> String?:
     if text.starts_with("# "):
         text.truncate(60)
     else:
         null
 
-# `Map.get` hands back `(borrowed V)?` for the same reason (§8).
+# `Map.get` hands back `(&V)?` for the same reason (§8).
 def lookup(
-    settings: borrowed Map of (String, String),
-    key: borrowed String
-) -> (borrowed String)?:
+    settings: &Map[String, String],
+    key: &String
+) -> (&String)?:
     settings.get(key)
 
 # Two lookups that must both succeed. `try` on an `Option` used to collapse
 # each of these to one line; each is now three, and the shape is the same one
 # failure uses, which is the point of having only one shape.
-def host_of(settings: borrowed Map of (String, String)) -> String?:
+def host_of(settings: &Map[String, String]) -> String?:
     let raw be lookup(settings, "host")
     if not raw?:
         return null
@@ -122,7 +122,7 @@ def host_of(settings: borrowed Map of (String, String)) -> String?:
 
 # Narrowing, written out. Inside `if found?:` the compiler knows `found` is
 # not null, so `found.length()` needs no unwrapping and no cast (§4.5).
-def host_length(settings: borrowed Map of (String, String)) -> Int:
+def host_length(settings: &Map[String, String]) -> Int:
     let found be lookup(settings, "host")
     if found?:
         return found.length()
@@ -136,7 +136,7 @@ type Override:
     host: String?
     port: U16?
 
-def applied(base: Config, over: borrowed Override) -> Config:
+def applied(base: Config, over: &Override) -> Config:
     let mutable result be base
     if over.host?:
         result be Config(host: copy_of(over.host), port: result.port)
@@ -150,14 +150,14 @@ def applied(base: Config, over: borrowed Override) -> Config:
 # what went wrong. A failing return still has to name something for the value
 # slot, and that is deliberate — the caller is expected to test the error
 # before reading the value, and `SC0140` makes forgetting to a compile error.
-def parse_port(text: borrowed String) -> (U16, ConfigError?):
+def parse_port(text: &String) -> (U16, ConfigError?):
     if text.is_empty():
         return (0u16, ConfigError.Malformed("empty input", 1))
     if not text.starts_with("port="):
         return (0u16, ConfigError.NotFound("port"))
     (8080u16, null)
 
-def parse_host(text: borrowed String) -> (String, ConfigError?):
+def parse_host(text: &String) -> (String, ConfigError?):
     if text.starts_with("host="):
         return (text.truncate(64), null)
     (String.new(), ConfigError.NotFound("host"))
@@ -165,7 +165,7 @@ def parse_host(text: borrowed String) -> (String, ConfigError?):
 # The concrete form's payoff: `match` over the error is exhaustive, every
 # variant is named, and adding a fourth to `ConfigError` breaks this function
 # loudly instead of falling through a wildcard (§5.5).
-def explain(error: borrowed ConfigError) -> String:
+def explain(error: &ConfigError) -> String:
     match error:
         NotFound(key): copy_of(key)
         Malformed(detail, line): copy_of(detail)
@@ -173,7 +173,7 @@ def explain(error: borrowed ConfigError) -> String:
 
 # An arm of type `Never`: `panic` does not return, and coerces to whatever the
 # other arms produce (§4.7).
-def must_parse_port(text: borrowed String) -> U16:
+def must_parse_port(text: &String) -> U16:
     let port, err be parse_port(text)
     if err?:
         panic("the configuration has no port")
@@ -191,7 +191,7 @@ def must_parse_port(text: borrowed String) -> U16:
 # callees fail with `IoError` and with `ConfigError`; this function's
 # signature says `Error?`; so each error is turned into a `StartupError` at
 # the `return`, by a call anyone reading the code can see.
-def read_config(path: borrowed String) -> (Config, Error?):
+def read_config(path: &String) -> (Config, Error?):
     let text, io_err be read_file(path)
     if io_err?:
         return (Config.empty(), StartupError.from_io(io_err))
@@ -210,7 +210,7 @@ def read_config(path: borrowed String) -> (Config, Error?):
 # error type is the one its callees already use. Nothing is converted, so
 # nothing is written: the cost of the explicit conversion is only paid where
 # a conversion actually happens.
-def read_config_concrete(path: borrowed String) -> (Config, ConfigError?):
+def read_config_concrete(path: &String) -> (Config, ConfigError?):
     let text, io_err be read_file(path)
     if io_err?:
         return (Config.empty(), ConfigError.from(io_err))
@@ -227,7 +227,7 @@ def read_config_concrete(path: borrowed String) -> (Config, ConfigError?):
 
 # A def with no value to hand back returns the error alone. The pair
 # would have `()` in its first slot and a name bound to it could do nothing.
-def save_config(path: borrowed String, config: borrowed Config) -> Error?:
+def save_config(path: &String, config: &Config) -> Error?:
     let err be write_file(path, config.host)
     if err?:
         return StartupError.from_io(err)
@@ -236,13 +236,13 @@ def save_config(path: borrowed String, config: borrowed Config) -> Error?:
 # The one method the `Error` interface has. A caller holding an `Error?`
 # knows this and nothing else about it, which is exactly the trade the
 # interface form makes: it composes, and it cannot be matched on.
-def report(err: borrowed any Error) -> String:
+def report(err: &any Error) -> String:
     err.message()
 
 # --- Consuming the two forms ------------------------------------------------
 
 # With the concrete error the caller can distinguish cases.
-def describe_failure(path: borrowed String) -> String:
+def describe_failure(path: &String) -> String:
     let config, err be read_config_concrete(path)
     if err?:
         return explain(err)
@@ -250,7 +250,7 @@ def describe_failure(path: borrowed String) -> String:
 
 # With the interface error it can only ask for the message — and that is
 # enough for a top-level report, which is the case the interface form is for.
-def start(path: borrowed String) -> Error?:
+def start(path: &String) -> Error?:
     let config, err be read_config(path)
     if err?:
         print(report(err))
@@ -274,7 +274,7 @@ def main():
     print(describe_failure("science.toml"))
     print(must_parse_port("port=8080"))
 
-    let settings: Map of (String, String) be (Map of (String, String)).new()
+    let settings: Map[String, String] be Map[String, String].new()
     print(host_length(settings))
 
     let host be host_of(settings)

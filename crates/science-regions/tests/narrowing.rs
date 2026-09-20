@@ -19,10 +19,10 @@ const CONFIG: &str = "\
 type Config:
     port: Int?
 
-def write_through(c: mutable borrowed Config):
+def write_through(c: &mut Config):
     c.port be 1
 
-def read_it(c: borrowed Config) -> Bool:
+def read_it(c: &Config) -> Bool:
     true
 ";
 
@@ -45,7 +45,7 @@ fn a_read_through_a_place_held_exclusively_is_refused() {
         "{CONFIG}
 def go():
     let mutable config be Config(port: null)
-    let r be mutable borrowed config
+    let r be &mut config
     if config.port?:
         write_through(r)
         print(config.port)
@@ -68,7 +68,7 @@ fn that_program_contains_exactly_one_borrow() {
         "{CONFIG}
 def go():
     let mutable config be Config(port: null)
-    let r be mutable borrowed config
+    let r be &mut config
     if config.port?:
         write_through(r)
         print(config.port)
@@ -115,7 +115,7 @@ fn a_shared_borrow_does_not_disturb_a_narrowing() {
         "{CONFIG}
 def go():
     let config be Config(port: null)
-    let r be borrowed config
+    let r be &config
     if config.port?:
         print(read_it(r))
         print(config.port)
@@ -191,7 +191,7 @@ def go():
 fn an_exclusive_capture_invalidates_a_narrowing_by_rule_4() {
     let source = format!(
         "{CONFIG}
-def write_it(c: mutable borrowed Config) -> Bool:
+def write_it(c: &mut Config) -> Bool:
     c.port be 1
     true
 
@@ -201,7 +201,7 @@ def sink(f: (Bool) -> Bool) -> Bool:
 def go():
     let mutable config be Config(port: null)
     if config.port?:
-        let f be item giving write_it(mutable borrowed config)
+        let f be item giving write_it(&mut config)
         print(config.port)
         let b be sink(f)
 "

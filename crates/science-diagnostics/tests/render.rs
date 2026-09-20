@@ -200,7 +200,7 @@ fn accented_text_before_the_span_keeps_the_caret_aligned() {
     let f = map.add_file("t.science".into(), text.into());
     let start = text.rfind("café").unwrap() as u32;
     let d = Diagnostic::error(Code(310), "borrow of a moved value")
-        .with_label(Label::primary(Span::new(f, start, start + 5), "borrowed here"));
+        .with_label(Label::primary(Span::new(f, start, start + 5), "&here"));
 
     insta::assert_snapshot!(render(&map, &d));
 }

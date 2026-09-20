@@ -63,7 +63,7 @@ fn a_string_keyed_map_is_built_probed_and_released() {
     assert_eq!(
         prints(
             "strings",
-            "let m be (Map of (String, Int)).new()\n\
+            "let m be Map[String, Int].new()\n\
              let probe be \"uno\"\n\
              let found be m.get(probe)\n\
              print(f\"{m.length()} {m.contains(probe)} {found?}\")\n",
@@ -84,7 +84,7 @@ fn a_string_keyed_map_is_built_probed_and_released() {
 #[test]
 fn an_integer_keyed_map_has_a_hash_and_an_equality() {
     assert_eq!(
-        prints("ints", "let m be (Map of (Int, Int)).new()\nprint(f\"{m.length()} {m.contains(7)}\")\n"),
+        prints("ints", "let m be Map[Int, Int].new()\nprint(f\"{m.length()} {m.contains(7)}\")\n"),
         "0 false\n"
     );
 }
@@ -123,7 +123,7 @@ fn a_map_insert_overwrite_read_and_remove_round_trip() {
     assert_eq!(
         prints(
             "round-trip",
-            "let mutable m be (Map of (String, Int)).new()\n\
+            "let mutable m be Map[String, Int].new()\n\
              let first be m.insert(\"uno\", 1)\n\
              let second be m.insert(\"dos\", 2)\n\
              print(f\"n={m.length()} first={first?} second={second?}\")\n\
@@ -165,7 +165,7 @@ fn a_tagged_option_narrows_to_its_payload() {
 #[test]
 fn a_key_with_no_hash_is_refused_by_name() {
     let lowered = lower(
-        "type Doc:\n    id: Int\n\nlet m be (Map of (Doc, Int)).new()\nprint(f\"{m.length()}\")\n",
+        "type Doc:\n    id: Int\n\nlet m be Map[Doc, Int].new()\nprint(f\"{m.length()}\")\n",
     );
     let dir = scratch("maps", "refused");
     let diagnostics = lowered

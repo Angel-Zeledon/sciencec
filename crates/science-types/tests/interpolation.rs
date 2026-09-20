@@ -148,7 +148,7 @@ def main(value: I64?):
 #[test]
 fn an_array_hole_is_not_reported_and_section_three_four_says_it_should_be() {
     let source = "\
-def main(rows: Array of I64):
+def main(rows: Array[I64]):
     let line be f\"{rows}\"
 ";
     assert_eq!(check(source).codes(), Vec::<u16>::new());

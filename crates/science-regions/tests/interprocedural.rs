@@ -9,13 +9,13 @@ use support::{check, codes};
 #[test]
 fn a_callee_is_summarised_before_its_caller_is_analysed() {
     let source = "\
-def inner(x: borrowed Int) -> borrowed Int:
+def inner(x: &Int) -> &Int:
     x
 
-def middle(x: borrowed Int) -> borrowed Int:
+def middle(x: &Int) -> &Int:
     inner(x)
 
-def outer(x: borrowed Int) -> borrowed Int:
+def outer(x: &Int) -> &Int:
     middle(x)
 ";
     let checked = check(source);
@@ -36,10 +36,10 @@ def outer(x: borrowed Int) -> borrowed Int:
 #[test]
 fn the_relation_is_transitive_and_comes_from_the_summary() {
     let source = "\
-def keep(a: borrowed Int, b: borrowed Int) -> borrowed Int:
+def keep(a: &Int, b: &Int) -> &Int:
     b
 
-def caller(x: borrowed Int, y: borrowed Int) -> borrowed Int:
+def caller(x: &Int, y: &Int) -> &Int:
     keep(x, y)
 ";
     let checked = check(source);
@@ -58,12 +58,12 @@ def caller(x: borrowed Int, y: borrowed Int) -> borrowed Int:
 #[test]
 fn mutual_recursion_reaches_a_fixpoint() {
     let source = "\
-def ping(x: borrowed Int, n: Int) -> borrowed Int:
+def ping(x: &Int, n: Int) -> &Int:
     if n is 0:
         return x
     pong(x, n - 1)
 
-def pong(x: borrowed Int, n: Int) -> borrowed Int:
+def pong(x: &Int, n: Int) -> &Int:
     if n is 0:
         return x
     ping(x, n - 1)
@@ -94,7 +94,7 @@ def pong(x: borrowed Int, n: Int) -> borrowed Int:
 #[test]
 fn self_recursion_is_its_own_component() {
     let source = "\
-def down(x: borrowed Int, n: Int) -> borrowed Int:
+def down(x: &Int, n: Int) -> &Int:
     if n is 0:
         return x
     down(x, n - 1)
@@ -113,7 +113,7 @@ def down(x: borrowed Int, n: Int) -> borrowed Int:
 #[test]
 fn the_fixpoint_does_not_conclude_that_everything_is_borrowed() {
     let source = "\
-def down(x: borrowed Int, other: borrowed Int, n: Int) -> borrowed Int:
+def down(x: &Int, other: &Int, n: Int) -> &Int:
     if n is 0:
         return x
     down(x, other, n - 1)
@@ -133,7 +133,7 @@ def down(x: borrowed Int, other: borrowed Int, n: Int) -> borrowed Int:
 #[test]
 fn a_summary_mentions_no_point_and_no_local() {
     let source = "\
-def first(x: borrowed Int) -> borrowed Int:
+def first(x: &Int) -> &Int:
     x
 ";
     let checked = check(source);
@@ -151,7 +151,7 @@ def first(x: borrowed Int) -> borrowed Int:
 #[test]
 fn a_builtin_callee_with_no_body_does_not_manufacture_an_error() {
     let source = "\
-def go(x: borrowed Int):
+def go(x: &Int):
     print(x)
 ";
     let checked = check(source);

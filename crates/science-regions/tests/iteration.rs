@@ -37,7 +37,7 @@ fn reported(source: &str) -> Vec<u16> {
 #[test]
 fn a_for_over_a_collection_the_body_mutates_is_refused() {
     let source = "\
-def go(xs: mutable borrowed Array of Int):
+def go(xs: &mut Array[Int]):
     for x in xs:
         xs.push(1)
 ";
@@ -59,10 +59,10 @@ def go(xs: mutable borrowed Array of Int):
 #[test]
 fn a_write_from_inside_a_nested_loop_is_refused_by_the_outer_borrow() {
     let source = "\
-def go(rows: mutable borrowed Array of (Array of Int)):
+def go(rows: &mut Array[Array[Int]]):
     for row in rows:
         for cell in row:
-            rows.push((Array of Int).new())
+            rows.push(Array[Int].new())
 ";
     assert_eq!(reported(source), vec![330]);
 }
@@ -77,7 +77,7 @@ def go(rows: mutable borrowed Array of (Array of Int)):
 #[test]
 fn a_for_over_a_collection_the_body_only_reads_is_accepted() {
     let source = "\
-def go(xs: borrowed Array of Int):
+def go(xs: &Array[Int]):
     for x in xs:
         print(xs.length())
 ";
@@ -93,7 +93,7 @@ def go(xs: borrowed Array of Int):
 #[test]
 fn the_subject_is_usable_after_the_loop() {
     let source = "\
-def go(xs: Array of Int) -> Int:
+def go(xs: Array[Int]) -> Int:
     for x in xs:
         print(x)
     xs.length()
@@ -107,7 +107,7 @@ def go(xs: Array of Int) -> Int:
 #[test]
 fn mutating_the_collection_after_the_loop_is_fine() {
     let source = "\
-def go(xs: mutable borrowed Array of Int):
+def go(xs: &mut Array[Int]):
     for x in xs:
         print(x)
     xs.push(1)
@@ -121,7 +121,7 @@ def go(xs: mutable borrowed Array of Int):
 #[test]
 fn writing_to_another_collection_inside_the_loop_is_fine() {
     let source = "\
-def go(a: borrowed Array of Int, b: mutable borrowed Array of Int):
+def go(a: &Array[Int], b: &mut Array[Int]):
     for x in a:
         b.push(1)
 ";
@@ -137,7 +137,7 @@ def go(a: borrowed Array of Int, b: mutable borrowed Array of Int):
 #[test]
 fn the_loans_region_covers_every_point_of_the_loop() {
     let source = "\
-def go(xs: borrowed Array of Int):
+def go(xs: &Array[Int]):
     for x in xs:
         print(x)
 ";
@@ -212,7 +212,7 @@ def go(xs: borrowed Array of Int):
 #[test]
 fn a_body_with_a_for_is_still_excused_from_decision_6() {
     let source = "\
-def go(xs: borrowed Array of Int):
+def go(xs: &Array[Int]):
     for x in xs:
         print(x)
 ";

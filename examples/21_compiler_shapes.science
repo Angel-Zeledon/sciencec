@@ -19,7 +19,7 @@
 #   Scopes / Rib       crates/science-resolve/src/scope.rs
 #   Parser             crates/science-parser/src/parser.rs
 #   Diagnostics        crates/science-diagnostics/src/lib.rs
-#   Node of T          crates/science-resolve/src/dump.rs
+#   Node[T]          crates/science-resolve/src/dump.rs
 #
 # **What this file proves today is only that it lexes, parses and resolves.**
 # There is no type checker and no borrow checker, so nothing here is verified
@@ -68,14 +68,14 @@ type Def:
 
 # The table owns every definition. Nothing else does.
 type DefTable:
-    defs: Array of Def
+    defs: Array[Def]
 
 DefTable has:
     def new() -> DefTable:
-        DefTable(defs: (Array of Def).new())
+        DefTable(defs: Array[Def].new())
 
     # `alloc` takes `mutable self` and hands back an id, never a borrow. This
-    # is the signature that matters: returning `borrowed Def` here would tie
+    # is the signature that matters: returning `&Def` here would tie
     # the borrow to the table and forbid the next `alloc`, which is exactly
     # the pattern that forces `'a` into Rust signatures.
     def alloc(mutable self, kind: DefKind, name: String, parent: DefId?) -> DefId:
@@ -86,7 +86,7 @@ DefTable has:
     # A shared borrow out of the table. One region: the result borrows `self`
     # and nothing else, so there is one relation to infer and no second name
     # to relate it to.
-    def get(self, id: DefId) -> (borrowed Def)?:
+    def get(self, id: DefId) -> (&Def)?:
         self.defs.get(id.index)
 
     # Walking to the parent returns an id, so the walk holds no borrow across
@@ -94,7 +94,7 @@ DefTable has:
     def parent_of(self, id: DefId) -> DefId?:
         # `get` is partial, so the field read is behind a presence test. The
         # narrowing of §4.2 is what makes the second line a field access on a
-        # `borrowed Def` rather than on a `(borrowed Def)?`.
+        # `&Def` rather than on a `(&Def)?`.
         let found be self.get(id)
         if found?: found.parent else: null
 
@@ -121,22 +121,22 @@ type Binding:
 
 type Rib:
     kind: RibKind
-    bindings: Array of Binding
+    bindings: Array[Binding]
 
 type Scopes:
-    ribs: Array of Rib
+    ribs: Array[Rib]
 
 Scopes has:
     def new() -> Scopes:
-        Scopes(ribs: (Array of Rib).new())
+        Scopes(ribs: Array[Rib].new())
 
     def push(mutable self, kind: RibKind):
-        self.ribs.push(Rib(kind: kind, bindings: (Array of Binding).new()))
+        self.ribs.push(Rib(kind: kind, bindings: Array[Binding].new()))
 
     def pop(mutable self):
         self.ribs.pop()
 
-    # Lookup returns `DefId?`, not `borrowed Binding?`. The caller wants the
+    # Lookup returns `DefId?`, not `&Binding?`. The caller wants the
     # id, and handing back an id ends the borrow at the closing brace instead
     # of carrying it into whatever the caller does next.
     #
@@ -144,7 +144,7 @@ Scopes has:
     # borrowing version is what makes a symbol table hard, and the reason to
     # avoid it is not the borrow checker — it is that the borrowing version is
     # wrong anyway, because the caller almost always goes on to mutate.
-    def lookup(self, name: borrowed String) -> DefId?:
+    def lookup(self, name: &String) -> DefId?:
         for rib in self.ribs:
             for binding in rib.bindings:
                 if binding.name is name:
@@ -156,11 +156,11 @@ Scopes has:
 # ---------------------------------------------------------------------------
 #
 # `Parser<'t>` in the real compiler holds `&'t [Token]` for its entire life.
-# This is the first structure here with a borrowed field, and it is the case
+# This is the first structure here with a &field, and it is the case
 # `ffi-c-boundary.md` §2 depends on by name: **a type with an inferred region
 # parameter**, which the core spec's §6.2 never actually says exists.
 #
-# One borrowed field, one source, one region. Nothing to name.
+# One &field, one source, one region. Nothing to name.
 
 type Token:
     kind: Int
@@ -168,14 +168,14 @@ type Token:
     end: Int
 
 type Parser:
-    tokens: borrowed Array of Token
+    tokens: &Array[Token]
     position: Int
 
 Parser has:
-    def new(tokens: borrowed Array of Token) -> Parser:
+    def new(tokens: &Array[Token]) -> Parser:
         Parser(tokens: tokens, position: 0)
 
-    def peek(self) -> (borrowed Token)?:
+    def peek(self) -> (&Token)?:
         self.tokens.get(self.position)
 
     def advance(mutable self):
@@ -202,12 +202,12 @@ Parser has:
 # evidence and not proof: across 17,305 lines it never once needed two
 # distinct regions in one type.
 
-type Node of T:
-    defs: borrowed DefTable
-    value: borrowed T
+type Node[T]:
+    defs: &DefTable
+    value: &T
 
 Node has:
-    def new of T(defs: borrowed DefTable, value: borrowed T) -> Node of T:
+    def new[T](defs: &DefTable, value: &T) -> Node[T]:
         Node(defs: defs, value: value)
 
 # ---------------------------------------------------------------------------
@@ -215,7 +215,7 @@ Node has:
 # ---------------------------------------------------------------------------
 #
 # A bump arena handing out borrows — `fn alloc(&self) -> &T`, where the arena
-# is borrowed shared and the result borrows from it — is the structure
+# is &shared and the result borrows from it — is the structure
 # `rust-interop.md` §3.7.1 says has no Science spelling. It is absent from
 # this file because it is absent from the compiler: the real one uses the flat
 # table of §1 instead.
@@ -243,11 +243,11 @@ type Diagnostic:
     message: String
 
 type Diagnostics:
-    items: Array of Diagnostic
+    items: Array[Diagnostic]
 
 Diagnostics has:
     def new() -> Diagnostics:
-        Diagnostics(items: (Array of Diagnostic).new())
+        Diagnostics(items: Array[Diagnostic].new())
 
     def push(mutable self, code: Int, message: String):
         self.items.push(Diagnostic(code: code, message: message))
@@ -257,7 +257,7 @@ Diagnostics has:
 
 # The walk: a shared borrow of the table, an exclusive borrow of the sink, and
 # they are separate parameters so nothing is aliased.
-def walk(defs: borrowed DefTable, out: mutable borrowed Diagnostics):
+def walk(defs: &DefTable, out: &mut Diagnostics):
     for entry in defs.defs:
         if entry.name is "":
             out.push(200, "a definition with no name")
@@ -292,5 +292,5 @@ def main():
         print("not in scope")
 
     let mutable sink be Diagnostics.new()
-    walk(defs, mutable borrowed sink)
+    walk(defs, &mut sink)
     print(sink.is_empty())

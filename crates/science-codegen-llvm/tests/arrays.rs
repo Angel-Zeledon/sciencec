@@ -98,7 +98,7 @@ fn an_empty_array_and_a_full_one_disagree() {
         prints(
             "is_empty",
             "let xs be [10, 20, 30]
-let ys be (Array of Int).new()
+let ys be Array[Int].new()
 print(f\"{xs.is_empty()} {ys.is_empty()} {ys.length()}\")
 "
         ),
@@ -292,7 +292,7 @@ fn a_counting_loop_over_an_array_adds_up() {
     assert_eq!(
         prints(
             "counting-loop",
-            "let xs: Array of Int be [4, 8, 15, 16, 23, 42]\n\
+            "let xs: Array[Int] be [4, 8, 15, 16, 23, 42]\n\
              let n be xs.length()\n\
              let mutable total be 0\n\
              let mutable i be 0\n\

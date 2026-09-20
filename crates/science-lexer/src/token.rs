@@ -192,6 +192,15 @@ pub enum TokenKind {
     Has,
     Of,
     Borrowed,
+    /// `mut`, the second half of `&mut T`.
+    ///
+    /// **A separate keyword from [`TokenKind::Mutable`], deliberately.**
+    /// `mutable` still binds — `let mutable total be 0` — and `mut` only ever
+    /// follows an `&`. One word could have served both, and two do because the
+    /// two positions read differently: a binding says what it *is*, a borrow
+    /// says what it *grants*, and `let mut total be 0` reads like an
+    /// abbreviation where `let mutable total be 0` reads like English.
+    Mut,
     Any,
     Use,
     Public,
@@ -364,6 +373,7 @@ impl TokenKind {
             "has" => Has,
             "of" => Of,
             "borrowed" => Borrowed,
+            "mut" => Mut,
             "any" => Any,
             "use" => Use,
             "public" => Public,
