@@ -1,4 +1,4 @@
-//! One generic body, at one set of arguments.
+//! One body, with every type it mentions rewritten.
 //!
 //! # What this is for
 //!
@@ -13,9 +13,14 @@
 //! > types needs the substitution applied to every type the body mentions and
 //! > this crate does not apply it yet.
 //!
-//! This is that application. Given a body and a [`Substitution`], it returns a
-//! body in which every [`Ty`] has been substituted and nothing else has
-//! changed.
+//! This is that application. [`instantiate`] takes a body and a
+//! [`Substitution`] and returns a body in which every [`Ty`] has been
+//! substituted and nothing else has changed.
+//!
+//! It is written on top of [`map_types`], which is the walk itself, because a
+//! second caller wants the same eleven positions and a different rewrite:
+//! alias expansion. That function's own comment is the argument for the
+//! split.
 //!
 //! # Decision: substitute the MIR, not the lowering
 //!
@@ -78,55 +83,90 @@ pub fn instantiate(
     subst: &Substitution,
     types: &mut Types,
 ) -> Result<Body, ConstEvalError> {
+    map_types(body, &mut |ty| subst.apply(types, ty))
+}
+
+/// `body`, with `f` applied to every type it mentions.
+///
+/// # Why the walk is separate from what it applies
+///
+/// [`instantiate`] was the first caller and the walk was written inside it.
+/// The second caller wants something else entirely: alias expansion.
+/// `crate::alias`'s §1 keeps an alias's own [`Ty`] in the table and computes
+/// the alias-free form beside it, deliberately, *"against a diagnostic that
+/// cannot say `Embedding`"* — so a `Counter` declared as `type Counter is
+/// I64` reaches a backend still spelled `Counter`, and a backend that has
+/// never heard of aliases refuses it.
+///
+/// Both are the same walk over the same eleven positions and neither is the
+/// other's business, so the walk is the function and what it applies is the
+/// argument. A third caller that has to visit every type in a body — a pass
+/// that normalises, or one that counts — gets it for free and, more to the
+/// point, gets the **exhaustiveness**: every `match` below is written out
+/// with no `..`, so a twelfth type-bearing position breaks this file at
+/// compile time rather than being silently skipped by one caller.
+pub fn map_types<F>(body: &Body, f: &mut F) -> Result<Body, ConstEvalError>
+where
+    F: FnMut(Ty) -> Result<Ty, ConstEvalError>,
+{
     let mut out = body.clone();
     for local in &mut out.locals {
-        instantiate_local(local, subst, types)?;
+        instantiate_local(local, f)?;
     }
     for block in &mut out.blocks {
-        instantiate_block(block, subst, types)?;
+        instantiate_block(block, f)?;
     }
     for borrow in &mut out.borrows {
-        instantiate_borrow(borrow, subst, types)?;
+        instantiate_borrow(borrow, f)?;
     }
     Ok(out)
 }
 
 /// One type. Every other function here is a walk down to a call of this.
-fn ty(target: &mut Ty, subst: &Substitution, types: &mut Types) -> Result<(), ConstEvalError> {
-    *target = subst.apply(types, *target)?;
+fn ty<F>(target: &mut Ty, f: &mut F) -> Result<(), ConstEvalError>
+where
+    F: FnMut(Ty) -> Result<Ty, ConstEvalError>,
+{
+    *target = f(*target)?;
     Ok(())
 }
 
-fn instantiate_local(
+fn instantiate_local<F>(
     local: &mut LocalDecl,
-    subst: &Substitution,
-    types: &mut Types,
-) -> Result<(), ConstEvalError> {
+    f: &mut F,
+) -> Result<(), ConstEvalError>
+where
+    F: FnMut(Ty) -> Result<Ty, ConstEvalError>,
+{
     // `kind` is a `DefId` or nothing and `span` is source text; neither is a
     // type and neither moves when the arguments do.
-    ty(&mut local.ty, subst, types)
+    ty(&mut local.ty, f)
 }
 
-fn instantiate_block(
+fn instantiate_block<F>(
     block: &mut BasicBlock,
-    subst: &Substitution,
-    types: &mut Types,
-) -> Result<(), ConstEvalError> {
+    f: &mut F,
+) -> Result<(), ConstEvalError>
+where
+    F: FnMut(Ty) -> Result<Ty, ConstEvalError>,
+{
     for statement in &mut block.statements {
-        instantiate_statement(statement, subst, types)?;
+        instantiate_statement(statement, f)?;
     }
-    instantiate_terminator(&mut block.terminator, subst, types)
+    instantiate_terminator(&mut block.terminator, f)
 }
 
-fn instantiate_statement(
+fn instantiate_statement<F>(
     statement: &mut Statement,
-    subst: &Substitution,
-    types: &mut Types,
-) -> Result<(), ConstEvalError> {
+    f: &mut F,
+) -> Result<(), ConstEvalError>
+where
+    F: FnMut(Ty) -> Result<Ty, ConstEvalError>,
+{
     match &mut statement.kind {
         StatementKind::Assign { place, rvalue } => {
-            instantiate_place(place, subst, types)?;
-            instantiate_rvalue(rvalue, subst, types)
+            instantiate_place(place, f)?;
+            instantiate_rvalue(rvalue, f)
         }
         // A local index, a drop flag, a borrow id, a nop: no type in any of
         // them. Listed rather than wildcarded so that a statement kind that
@@ -139,22 +179,24 @@ fn instantiate_statement(
     }
 }
 
-fn instantiate_terminator(
+fn instantiate_terminator<F>(
     terminator: &mut Terminator,
-    subst: &Substitution,
-    types: &mut Types,
-) -> Result<(), ConstEvalError> {
+    f: &mut F,
+) -> Result<(), ConstEvalError>
+where
+    F: FnMut(Ty) -> Result<Ty, ConstEvalError>,
+{
     match &mut terminator.kind {
-        TerminatorKind::If { cond, .. } => instantiate_operand(cond, subst, types),
-        TerminatorKind::Switch { discr, .. } => instantiate_operand(discr, subst, types),
+        TerminatorKind::If { cond, .. } => instantiate_operand(cond, f),
+        TerminatorKind::Switch { discr, .. } => instantiate_operand(discr, f),
         TerminatorKind::Call { callee, args, destination, .. } => {
-            instantiate_callee(callee, subst, types)?;
+            instantiate_callee(callee, f)?;
             for arg in args {
-                instantiate_operand(arg, subst, types)?;
+                instantiate_operand(arg, f)?;
             }
-            instantiate_place(destination, subst, types)
+            instantiate_place(destination, f)
         }
-        TerminatorKind::Drop { place, .. } => instantiate_place(place, subst, types),
+        TerminatorKind::Drop { place, .. } => instantiate_place(place, f),
         TerminatorKind::Goto { .. } | TerminatorKind::Return | TerminatorKind::Unreachable => {
             Ok(())
         }
@@ -162,41 +204,47 @@ fn instantiate_terminator(
 }
 
 /// **A [`Callee::Def`] is left alone on purpose**; the module header says why.
-fn instantiate_callee(
+fn instantiate_callee<F>(
     callee: &mut Callee,
-    subst: &Substitution,
-    types: &mut Types,
-) -> Result<(), ConstEvalError> {
+    f: &mut F,
+) -> Result<(), ConstEvalError>
+where
+    F: FnMut(Ty) -> Result<Ty, ConstEvalError>,
+{
     match callee {
-        Callee::Indirect(operand) => instantiate_operand(operand, subst, types),
+        Callee::Indirect(operand) => instantiate_operand(operand, f),
         Callee::Def(_) | Callee::Runtime(_) | Callee::Unresolved(_) => Ok(()),
     }
 }
 
-fn instantiate_place(
+fn instantiate_place<F>(
     place: &mut Place,
-    subst: &Substitution,
-    types: &mut Types,
-) -> Result<(), ConstEvalError> {
+    f: &mut F,
+) -> Result<(), ConstEvalError>
+where
+    F: FnMut(Ty) -> Result<Ty, ConstEvalError>,
+{
     for step in &mut place.projection {
         match step {
             Projection::Deref { ty: t }
             | Projection::Field { ty: t, .. }
             | Projection::TupleField { ty: t, .. }
             | Projection::Index { ty: t, .. }
-            | Projection::Downcast { ty: t, .. } => ty(t, subst, types)?,
+            | Projection::Downcast { ty: t, .. } => ty(t, f)?,
         }
     }
     Ok(())
 }
 
-fn instantiate_operand(
+fn instantiate_operand<F>(
     operand: &mut Operand,
-    subst: &Substitution,
-    types: &mut Types,
-) -> Result<(), ConstEvalError> {
+    f: &mut F,
+) -> Result<(), ConstEvalError>
+where
+    F: FnMut(Ty) -> Result<Ty, ConstEvalError>,
+{
     match operand {
-        Operand::Copy(place) | Operand::Move(place) => instantiate_place(place, subst, types),
+        Operand::Copy(place) | Operand::Move(place) => instantiate_place(place, f),
         // A constant's type is on the statement beside it, which
         // `Constant::Literal`'s own documentation states and this relies on:
         // there is nothing in here to substitute.
@@ -206,56 +254,58 @@ fn instantiate_operand(
     }
 }
 
-fn instantiate_rvalue(
+fn instantiate_rvalue<F>(
     rvalue: &mut Rvalue,
-    subst: &Substitution,
-    types: &mut Types,
-) -> Result<(), ConstEvalError> {
+    f: &mut F,
+) -> Result<(), ConstEvalError>
+where
+    F: FnMut(Ty) -> Result<Ty, ConstEvalError>,
+{
     match rvalue {
         Rvalue::Use(operand) | Rvalue::Unary { operand, .. } | Rvalue::IsPresent(operand) => {
-            instantiate_operand(operand, subst, types)
+            instantiate_operand(operand, f)
         }
         Rvalue::Ref { place, .. } | Rvalue::Discriminant(place) => {
-            instantiate_place(place, subst, types)
+            instantiate_place(place, f)
         }
         Rvalue::Binary { lhs, rhs, .. } => {
-            instantiate_operand(lhs, subst, types)?;
-            instantiate_operand(rhs, subst, types)
+            instantiate_operand(lhs, f)?;
+            instantiate_operand(rhs, f)
         }
         // **Both** types, and `from` is the one a walk writes by hand and
         // forgets: `Rvalue::Cast`'s own documentation says the signedness of
         // the *source* decides `sext` against `zext`, so a `from` left at `T`
         // is a sign extension chosen from a parameter.
         Rvalue::Cast { operand, from, ty: t } => {
-            instantiate_operand(operand, subst, types)?;
-            ty(from, subst, types)?;
-            ty(t, subst, types)
+            instantiate_operand(operand, f)?;
+            ty(from, f)?;
+            ty(t, f)
         }
         Rvalue::Record { fields, .. } => {
             for (_, operand) in fields {
-                instantiate_operand(operand, subst, types)?;
+                instantiate_operand(operand, f)?;
             }
             Ok(())
         }
         Rvalue::Variant { payload: operands, .. } | Rvalue::Tuple(operands) => {
             for operand in operands {
-                instantiate_operand(operand, subst, types)?;
+                instantiate_operand(operand, f)?;
             }
             Ok(())
         }
         Rvalue::Range { start, end, .. } => {
-            instantiate_operand(start, subst, types)?;
-            instantiate_operand(end, subst, types)
+            instantiate_operand(start, f)?;
+            instantiate_operand(end, f)
         }
         Rvalue::Coerce { operand, ty: t, .. } | Rvalue::Narrow { operand, ty: t } => {
-            instantiate_operand(operand, subst, types)?;
-            ty(t, subst, types)
+            instantiate_operand(operand, f)?;
+            ty(t, f)
         }
         Rvalue::Closure { captures, ty: t, .. } => {
             for capture in captures {
-                instantiate_operand(capture, subst, types)?;
+                instantiate_operand(capture, f)?;
             }
-            ty(t, subst, types)
+            ty(t, f)
         }
         Rvalue::Error => Ok(()),
     }
@@ -268,11 +318,13 @@ fn instantiate_rvalue(
 /// assignments are references. Region inference has already run on the generic
 /// body — it is a front-end question and its answer does not depend on the
 /// arguments — so what survives here is the record, not a second analysis.
-fn instantiate_borrow(
+fn instantiate_borrow<F>(
     borrow: &mut BorrowData,
-    subst: &Substitution,
-    types: &mut Types,
-) -> Result<(), ConstEvalError> {
-    instantiate_place(&mut borrow.place, subst, types)?;
-    instantiate_place(&mut borrow.destination, subst, types)
+    f: &mut F,
+) -> Result<(), ConstEvalError>
+where
+    F: FnMut(Ty) -> Result<Ty, ConstEvalError>,
+{
+    instantiate_place(&mut borrow.place, f)?;
+    instantiate_place(&mut borrow.destination, f)
 }

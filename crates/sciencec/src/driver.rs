@@ -1016,6 +1016,52 @@ fn region_check(
         let mut context = science_mir::Context { defs: &krate.defs, decls, types, aliases };
         science_mir::lower_crate(&mut context, thir)
     };
+    // **Aliases are revealed here, once, over every body.**
+    //
+    // The decision. Every `Ty` in every MIR body is replaced by its
+    // alias-free form before anything downstream reads one.
+    //
+    // The reason. `science-types`' `alias`'s §1 keeps an alias's own
+    // `TyKind::Named` in the table and computes the revealed type *beside*
+    // it, deliberately: revealing eagerly in the lowering *"loses the
+    // diagnostic"*, because `Types::render` prints what it is given and a
+    // reader who wrote `Embedding` should not be told about `Array[F32]`.
+    // That is right for the front end and it stops being right the moment a
+    // type reaches a phase that has to know the *representation*. A backend
+    // asked to lay out `Counter` has no diagnostic to protect and no field
+    // list to find; it refuses, which is what `examples/02_bindings.science`
+    // was doing.
+    //
+    // Here rather than in the backend, because §1 also says why revealing
+    // cannot happen there: it *"needs `&mut Types` to intern what it
+    // builds"*, and `BuildInput` hands a backend a `&Types` on purpose. This
+    // is the last place that holds the table mutably, the same reason
+    // `Mono::instantiate` runs in this file.
+    //
+    // Before region checking rather than after, so that one phase does not
+    // see `Counter` while the next sees `I64`. `assign` already takes
+    // revealed types and regions compare types; two spellings of one type
+    // reaching a comparison is exactly the bug §6 of `ty` priced.
+    //
+    // The cost is the one §1 named and accepted in the other direction: past
+    // this line the compiler's vocabulary no longer contains the author's
+    // name for the type, so a *codegen* refusal says `I64` where the source
+    // says `Counter`. Those refusals name a missing backend feature rather
+    // than a mistake in the program, and every diagnostic that quotes a type
+    // the author wrote is produced before this point.
+    let bodies: Vec<science_mir::mir::Body> = bodies
+        .iter()
+        .map(|body| {
+            // An alias whose body did not evaluate is already `Ty::ERROR` in
+            // the table — `Aliases::of` cuts every cycle when it is built —
+            // so a failure here is a const argument that does not evaluate,
+            // and the body is left as it was. `ty`'s §5: an erroneous type
+            // must not manufacture a second error, and the unrevealed body
+            // refuses by name one phase later.
+            science_mir::map_types(body, &mut |ty| aliases.reveal(types, ty))
+                .unwrap_or_else(|_| body.clone())
+        })
+        .collect();
     let graph = science_mir::CallGraph::of(&bodies);
     let mut diagnostics = science_diagnostics::Diagnostics::new();
     let mut context = science_regions::Context { defs: &krate.defs, decls, types, aliases };

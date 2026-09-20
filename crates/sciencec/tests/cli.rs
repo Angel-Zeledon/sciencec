@@ -1590,3 +1590,64 @@ def main():
     );
     assert_eq!(program.status.code(), Some(0));
 }
+
+/// **A type alias reaches the backend as the type it stands for.**
+///
+/// `science-types`' `alias`'s §1 keeps an alias's own `TyKind::Named` in the
+/// type table and computes the alias-free form *beside* it, on purpose:
+/// expanding eagerly in the lowering *"loses the diagnostic"*, because
+/// `Types::render` prints what it is given and a reader who wrote `Counter`
+/// should not be told about `I64`.
+///
+/// That is right for the front end and wrong for a backend, which has no
+/// diagnostic to protect and needs the representation. `layout_of_ty` met
+/// `Counter`, found neither a record nor a `choice` nor a primitive it knew,
+/// and refused with *"a value of type `Counter`"* — which is what
+/// `examples/02_bindings.science` failed on.
+///
+/// So the driver reveals every type in every MIR body, once, after lowering
+/// and before region checking. It is the driver and not the backend because
+/// revealing interns and therefore needs `&mut Types`, and a backend is
+/// handed a `&Types` precisely so that it cannot invent a type.
+///
+/// **This is a `sciencec` test and not a `science-codegen-llvm` one** because
+/// the pass is the driver's: that crate's harness builds its own pipeline and
+/// would not run it, so a test there would pass while the compiler failed.
+///
+/// # What this deliberately does not cover, because it does not work
+///
+/// The pass rewrites the types in a **body**. It does not reach
+/// `science_types::items::Declarations`, whose field lists and signatures are
+/// a separate table, so two shapes are still refused and both reproduce
+/// without this pass:
+///
+/// - `c + 1i64` where `c: Counter` is `SC0525`, *"expected `Counter`, found
+///   `I64`"*, from the checker — the binary operator compares written types
+///   where §1 says every relation compares revealed ones. It reproduces
+///   under `sciencec check` alone.
+/// - a record field declared `ticks: Counter` still refuses at codegen,
+///   because `record_ty` reads the declared field list and nothing revealed
+///   that.
+///
+/// Both are named here rather than pinned as tests, because a test asserting
+/// them would be asserting a bug and would have to be deleted rather than
+/// retired when either is fixed.
+#[cfg(feature = "llvm")]
+#[test]
+fn a_type_alias_is_revealed_before_codegen() {
+    let file = scratch(
+        "alias_revealed.science",
+        b"type Counter is I64\n\
+          \n\
+          def main():\n\
+          \x20   let ticks: Counter be 7i64\n\
+          \x20   print(f\"{ticks}\")\n",
+    );
+    let run = sciencec(&["test", &file]);
+    run.succeeded();
+    assert!(
+        run.stdout.contains('7'),
+        "a value of an alias type must print as the type it stands for:\n{}",
+        run.stdout
+    );
+}
