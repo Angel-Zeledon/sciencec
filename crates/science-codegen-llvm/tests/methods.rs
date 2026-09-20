@@ -751,16 +751,28 @@ def main():
     );
 }
 
-/// A method on a **generic** block is still a refusal, and it names the
-/// parameter rather than the method.
+/// A method on a **generic** block runs.
 ///
-/// `Grid of T has:` gives `Self` the concrete-looking type `Grid of T`, so the
-/// interface-default check passes it through and `layout_of_ty` is what stops
-/// it — with the same message a generic free function gets, which is the right
-/// one: what is missing is the monomorphisation walk and not anything about
-/// methods.
+/// **This replaces `a_method_on_a_generic_block_is_refused_as_a_generic`,
+/// which pinned a refusal that is no longer true.** That test asserted the
+/// message contained *"monomorphised"*, and its reasoning was right for the
+/// compiler it was written against: `Wrapper[T] has:` gives `Self` the
+/// concrete-looking type `Wrapper[T]`, the interface-default check passed it
+/// through, and `layout_of_ty` was what stopped it — because nothing could lay
+/// out a generic aggregate at all.
+///
+/// Something can now. `Lowerer::aggregate_env` binds a generic record's
+/// parameters to the arguments of each use and walks the declared field list
+/// with the binding in hand, so `Wrapper[Int]` has a layout and the method has
+/// a receiver. The refusal had nothing left to refuse.
+///
+/// The receiver is annotated because a bare `Wrapper(inner: 1)` still fails
+/// **earlier**, in the checker, which does not infer a type argument from an
+/// unannotated integer literal. That is a real gap and it is not this file's:
+/// it is `science-types`' `instantiate_call`, and a test that left it in would
+/// be asserting the checker's limit while claiming to be about methods.
 #[test]
-fn a_method_on_a_generic_block_is_refused_as_a_generic() {
+fn a_method_on_a_generic_block_runs() {
     let source = "\
 type Wrapper[T]:
     inner: T
@@ -770,10 +782,10 @@ Wrapper[T] has:
         1
 
 def main():
-    print(Wrapper(inner: 1).get())
+    let w: Wrapper[Int] be Wrapper(inner: 1)
+    print(w.get())
 ";
-    let text = refusal("generic", source);
-    assert!(text.contains("monomorphised"), "{text}");
+    assert_eq!(prints("generic_method", source), "1\n");
 }
 
 // --- shape, where shape is the thing under test ------------------------------

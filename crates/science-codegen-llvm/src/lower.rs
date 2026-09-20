@@ -244,6 +244,18 @@ use science_types::ty::{GenericArg, Ty, TyKind};
 
 use crate::emit::{ConvOp, ExtBlock, ExtBody, ExtInst};
 
+/// A generic aggregate's parameters, bound to the arguments of one use.
+///
+/// **A map and not a `Substitution`.** `science_types::Substitution` is the
+/// real thing and it is what every phase above Decision 42's line uses, but
+/// applying one interns a `Ty` and interning needs `&mut Types`, which this
+/// crate deliberately does not have. What a layout needs is structure, so the
+/// binding is carried down the walk and read at each [`TyKind::Param`].
+/// [`Lowerer::aggregate_env`] is where one is built and states the whole
+/// argument.
+type TyEnv = BTreeMap<DefId, Ty>;
+
+
 /// What the emitted `main` writes to standard error when the script body
 /// returns a non-null error.
 ///
@@ -1106,6 +1118,7 @@ impl<'a> Lowerer<'a> {
     fn emit_choice_glue(
         &mut self,
         def: DefId,
+        args: &[GenericArg],
         name: String,
         symbol: String,
         layout: Layout,
@@ -1118,6 +1131,17 @@ impl<'a> Lowerer<'a> {
                  Decision 18's shape"
             )));
         };
+        // The type's parameters, bound to this use's arguments, so that a
+        // variant declared `Loaded(T)` is released as the `String` or the
+        // `Int` it actually is. `name` already carries the instantiation —
+        // `intern_drop_glue` built the symbol from it — so the glue emitted
+        // here is this instantiation's and no other's.
+        let generics = self
+            .choice_variants(def)
+            .iter()
+            .find_map(|variant| self.declarations().ok()?.variant(*variant).map(|v| v.generics.clone()))
+            .unwrap_or_default();
+        let (_, env) = self.aggregate_env(def, &generics, args, &TyEnv::new())?;
         let variant_defs = self.choice_variants(def);
         if variant_defs.len() != variants.len() {
             return Err(Unlowered::new(format!(
@@ -1152,7 +1176,9 @@ impl<'a> Lowerer<'a> {
                     ))
                 })?
                 .payload
-                .clone();
+                .iter()
+                .map(|ty| self.member_ty(*ty, &env, &name))
+                .collect::<Result<Vec<Ty>, Unlowered>>()?;
             // Whether *this* variant owns anything — not whether the choice
             // does, which `intern_drop_glue` already asked before this
             // function was reached. A payload-free variant's `field_tys` is
@@ -1512,7 +1538,17 @@ impl<'a> Lowerer<'a> {
                 self.types.render(self.defs, ty)
             )));
         };
-        let name = self.defs.get(def).name.clone();
+        // **The name is the instantiated one, and one symbol per
+        // instantiation is the whole of what generics change here.**
+        // `Holder[String]` owns a `String` and `Holder[Int]` owns nothing, so
+        // they need different glue; keyed on the bare `Holder` the first to
+        // arrive would have answered for both, and the one that got the other's
+        // glue would either leak or free an integer.
+        let args: Vec<GenericArg> = match self.types.kind(ty) {
+            TyKind::Named { args, .. } => args.clone(),
+            _ => Vec::new(),
+        };
+        let (name, _) = self.aggregate_members(def, &args)?;
         let symbol = format!("{}.drop", mangle(&MonoKey::plain(&[name.as_str()])));
         if self.glue.contains(&symbol) {
             return Ok(Some(symbol));
@@ -1531,13 +1567,13 @@ impl<'a> Lowerer<'a> {
         // `emit_nullable_glue` and `emit_field_glue` each found half of already.
         if self.defs.get(def).kind == DefKind::Choice {
             let layout = self.layout_of_ty(ty)?;
-            return self.emit_choice_glue(def, name, symbol, layout, depth);
+            return self.emit_choice_glue(def, &args, name, symbol, layout, depth);
         }
-        self.emit_field_glue(ty, &name, symbol, self.record_field_types(def)?, depth)
+        self.emit_field_glue(ty, &name, symbol, self.record_field_types(def, &args)?, depth)
     }
 
     /// A record's field types, in declaration order.
-    fn record_field_types(&self, def: DefId) -> Result<Vec<Ty>, Unlowered> {
+    fn record_field_types(&self, def: DefId, args: &[GenericArg]) -> Result<Vec<Ty>, Unlowered> {
         let name = self.defs.get(def).name.clone();
         let decls = self.declarations()?;
         let record = decls.record(def).ok_or_else(|| {
@@ -1545,7 +1581,114 @@ impl<'a> Lowerer<'a> {
                 "drop glue for `{name}`, which the declaration table has no lowered field list for"
             ))
         })?;
-        Ok(record.fields.iter().map(|(_, ty)| *ty).collect())
+        let (_, env) = self.aggregate_env(def, &record.generics, args, &TyEnv::new())?;
+        record.fields.iter().map(|(_, ty)| self.member_ty(*ty, &env, &name)).collect()
+    }
+
+    /// The name of one use of a record or `choice`, and **every type it
+    /// contains**, with its parameters bound: a record's fields in
+    /// declaration order, or a `choice`'s payloads across every variant.
+    ///
+    /// # Why the two are one function
+    ///
+    /// Everything that asks this asks it structurally — *does anything in
+    /// here need releasing*, *what is the layout of what is inside* — and for
+    /// those questions a record's fields and a `choice`'s payloads are the
+    /// same list. The one caller that needs them kept apart is
+    /// [`Lowerer::emit_choice_glue`], which needs to know which variant each
+    /// payload belongs to so it can put it behind the right `switch` arm, and
+    /// that function reads the variants itself.
+    ///
+    /// # Why it returns a list of `Ty` and not an environment
+    ///
+    /// [`Lowerer::aggregate_env`] carries a binding down a walk without ever
+    /// interning, which is what a *layout* needs. The drop path is different:
+    /// it hands member types to half a dozen functions —
+    /// `intern_drop_glue`, `drop_runs_something`, `emit_field_glue`,
+    /// `emit_choice_glue` — and threading an environment through all of them
+    /// would put the same parameter in every signature to serve two callers.
+    ///
+    /// So the binding is *resolved here instead*, which is possible because a
+    /// member type that is exactly a parameter resolves to a `Ty` that
+    /// already exists. What that cannot do is resolve a member whose type is
+    /// a compound mentioning a parameter — `Array[T]` inside `Holder[T]` —
+    /// because that `Ty` does not exist until something interns it.
+    /// [`Lowerer::member_ty`] refuses that by name rather than laying it out
+    /// wrong, and the cost is stated there.
+    fn aggregate_members(
+        &self,
+        def: DefId,
+        args: &[GenericArg],
+    ) -> Result<(String, Vec<Ty>), Unlowered> {
+        let name = self.defs.get(def).name.clone();
+        let decls = self.declarations()?;
+        match self.defs.get(def).kind {
+            DefKind::Record => {
+                let Some(record) = decls.record(def) else { return Ok((name, Vec::new())) };
+                let (rendered, env) =
+                    self.aggregate_env(def, &record.generics, args, &TyEnv::new())?;
+                let members = record
+                    .fields
+                    .iter()
+                    .map(|(_, ty)| self.member_ty(*ty, &env, &name))
+                    .collect::<Result<Vec<Ty>, Unlowered>>()?;
+                Ok((rendered, members))
+            }
+            _ => {
+                let variants = self.choice_variants(def);
+                let generics = variants
+                    .iter()
+                    .find_map(|variant| decls.variant(*variant).map(|v| v.generics.clone()))
+                    .unwrap_or_default();
+                let (rendered, env) = self.aggregate_env(def, &generics, args, &TyEnv::new())?;
+                let mut members = Vec::new();
+                for variant in variants {
+                    // A variant the declaration table has no entry for is a
+                    // payload nobody lowered, and the caller must not read
+                    // "no payload" out of it — `choice_ty` makes the same
+                    // distinction for the same reason.
+                    let Some(declared) = decls.variant(variant) else {
+                        return Err(Unlowered::new(format!(
+                            "the variant `{name}.{}`, which the declaration table has no lowered \
+                             payload for",
+                            self.defs.get(variant).name
+                        )));
+                    };
+                    for payload in &declared.payload {
+                        members.push(self.member_ty(*payload, &env, &name)?);
+                    }
+                }
+                Ok((rendered, members))
+            }
+        }
+    }
+
+    /// One declared member type, with the aggregate's parameters bound.
+    ///
+    /// Three cases, and the third is the limit. A type mentioning no
+    /// parameter is itself. A type that **is** a parameter is whatever the
+    /// environment bound it to, which is a lookup. A compound mentioning a
+    /// parameter would have to be built, and building a `Ty` is interning,
+    /// and this crate holds a `&Types` precisely so that it cannot — so it is
+    /// refused, by a message that names the type and says where the work
+    /// belongs.
+    fn member_ty(&self, ty: Ty, env: &TyEnv, owner: &str) -> Result<Ty, Unlowered> {
+        if !self.mentions_a_parameter(ty, 0) {
+            return Ok(ty);
+        }
+        if let TyKind::Param { def } = self.types.kind(ty) {
+            if let Some(bound) = env.get(def) {
+                return Ok(*bound);
+            }
+        }
+        Err(Unlowered::new(format!(
+            "a member of `{owner}` whose type is `{}` — a compound mentioning one of the type's \
+             own parameters. Binding it would mean interning a new `Ty`, and this crate is \
+             handed a `&Types` so that it cannot; the substitution belongs above Decision 42's \
+             line, and `science_mir::instantiate` reaches a body's types rather than a \
+             declaration's field list",
+            self.types.render(self.defs, ty)
+        )))
     }
 
     /// Intern Decision 20's descriptor for a type a box allocates for,
@@ -1788,8 +1931,12 @@ impl<'a> Lowerer<'a> {
     /// The [`CgTy`] of a record or choice definition, for a descriptor.
     fn record_or_choice_ty(&self, def: DefId) -> Result<CgTy, Unlowered> {
         match self.defs.get(def).kind {
-            DefKind::Record => self.record_ty(def, 0),
-            DefKind::Choice => self.choice_ty(def, 0),
+            // No arguments and no environment: this reaches a *definition*
+            // from a descriptor, not a use, so there is nothing bound and a
+            // generic one is refused inside — which is the same answer it
+            // gave before generic aggregates had a layout at all.
+            DefKind::Record => self.record_ty(def, &[], 0, &TyEnv::new()),
+            DefKind::Choice => self.choice_ty(def, &[], 0, &TyEnv::new()),
             _ => Err(Unlowered::new(format!(
                 "a box of `{}`, which is neither a record nor a `choice`: a descriptor needs a \
                  size and an alignment, and this crate lays out neither for it",
@@ -1835,6 +1982,12 @@ impl<'a> Lowerer<'a> {
         self.cg_ty_at(ty, 0)
     }
 
+    /// [`Lowerer::cg_ty_at`] with no type parameters bound, which is every
+    /// caller outside the two generic-aggregate arms.
+    fn cg_ty_at(&self, ty: science_types::ty::Ty, depth: u32) -> Result<CgTy, Unlowered> {
+        self.cg_ty_in(ty, depth, &TyEnv::new())
+    }
+
     /// [`Lowerer::cg_ty`], counting how deep the nesting has gone.
     ///
     /// **The depth is a guard against a hang, not against a wrong answer.** A
@@ -1843,7 +1996,12 @@ impl<'a> Lowerer<'a> {
     /// the stack ran out, which is a compiler that dies with no diagnostic. The
     /// bound is far above anything a program writes and the refusal names both
     /// causes, because from here they are indistinguishable.
-    fn cg_ty_at(&self, ty: science_types::ty::Ty, depth: u32) -> Result<CgTy, Unlowered> {
+    fn cg_ty_in(
+        &self,
+        ty: science_types::ty::Ty,
+        depth: u32,
+        env: &TyEnv,
+    ) -> Result<CgTy, Unlowered> {
         if depth > MAX_TYPE_DEPTH {
             return Err(Unlowered::new(format!(
                 "a type nested more than {MAX_TYPE_DEPTH} deep, or a type that contains itself \
@@ -1852,7 +2010,7 @@ impl<'a> Lowerer<'a> {
         }
         match self.types.kind(ty) {
             TyKind::Unit => Ok(CgTy::Unit),
-            TyKind::Nullable(inner) => Ok(CgTy::nullable(self.cg_ty_at(*inner, depth + 1)?)),
+            TyKind::Nullable(inner) => Ok(CgTy::nullable(self.cg_ty_in(*inner, depth + 1, env)?)),
             // `any I` — Decision 13's two-word fat pointer, with the null niche
             // in the data pointer (§3.4).
             TyKind::Object { .. } => Ok(CgTy::Interface),
@@ -1903,35 +2061,16 @@ impl<'a> Lowerer<'a> {
             }
             // §3.2's Decision 17, reached through the *definition* rather than
             // through the name — which the arm below cannot do and says so.
-            TyKind::Named { def, args }
-                if args.is_empty() && self.defs.get(*def).kind == DefKind::Record =>
-            {
-                self.record_ty(*def, depth)
+            TyKind::Named { def, args } if self.defs.get(*def).kind == DefKind::Record => {
+                self.record_ty(*def, args, depth, env)
             }
             // §3.3's Decision 18 and §3.4's Decision 19, both of which
             // `layout_of` already implements: what is needed here is the list
             // of variants in declaration order, because **declaration order is
             // what fixes the discriminant values** and nothing below this
             // function can recover it.
-            TyKind::Named { def, args }
-                if args.is_empty() && self.defs.get(*def).kind == DefKind::Choice =>
-            {
-                self.choice_ty(*def, depth)
-            }
-            // A generic record or choice, named rather than swallowed by the
-            // arm below. Decision 42 puts the monomorphisation walk above this
-            // crate and `science_codegen::mono` is where it will live; until
-            // something runs it, a `Pair of (Int, Int)` reaches here with its
-            // arguments still on it and there is no substituted field list to
-            // lay out.
-            TyKind::Named { def, .. }
-                if matches!(self.defs.get(*def).kind, DefKind::Record | DefKind::Choice) =>
-            {
-                Err(Unlowered::new(format!(
-                    "a value of the generic type `{}`, which nothing has monomorphised: Decision \
-                     42 puts the walk above this crate and no phase runs it yet",
-                    self.defs.get(*def).name
-                )))
+            TyKind::Named { def, args } if self.defs.get(*def).kind == DefKind::Choice => {
+                self.choice_ty(*def, args, depth, env)
             }
             // A **builtin** generic: `Array of Int`, `Map of (K, V)`, `Box of
             // T`. Not the arm above, because these are not records or choices
@@ -2056,6 +2195,15 @@ impl<'a> Lowerer<'a> {
                  each element's type before inference has defaulted it, so `(1, 2)` is a tuple of \
                  two holes and `(1i64, 2i64)` is not",
             )),
+            // **A parameter bound by the aggregate this field belongs to.**
+            // `Pair[A, B]`'s field list is written in `A` and `B`, and
+            // [`Lowerer::record_ty`] binds them to the arguments the use
+            // wrote before walking the fields. So a `Param` reached with an
+            // environment that knows it is not an un-monomorphised type — it
+            // is `Int`, spelled the way the *declaration* spells it.
+            TyKind::Param { def } if env.contains_key(def) => {
+                self.cg_ty_in(env[def], depth + 1, &TyEnv::new())
+            }
             TyKind::Param { .. } | TyKind::SelfType { .. } | TyKind::SelfAssoc { .. } => {
                 Err(Unlowered::new(
                     "a value whose type is still a type parameter, which nothing has \
@@ -2085,22 +2233,148 @@ impl<'a> Lowerer<'a> {
     /// `Doc(body: "b", title: "t")` differently from `Doc(title: "t",
     /// body: "b")` — two layouts for one type, which is `LayoutCache`'s
     /// `SC0404` if anything asked it and silence if nothing does.
-    fn record_ty(&self, def: DefId, depth: u32) -> Result<CgTy, Unlowered> {
-        let name = self.defs.get(def).name.clone();
+    fn record_ty(
+        &self,
+        def: DefId,
+        args: &[GenericArg],
+        depth: u32,
+        env: &TyEnv,
+    ) -> Result<CgTy, Unlowered> {
         let record = self.declarations()?.record(def).ok_or_else(|| {
             Unlowered::new(format!(
-                "a value of type `{name}`, which the declaration table has no lowered field list \
-                 for"
+                "a value of type `{}`, which the declaration table has no lowered field list for",
+                self.defs.get(def).name
             ))
         })?;
+        let (name, inner) = self.aggregate_env(def, &record.generics, args, env)?;
         let mut fields = Vec::with_capacity(record.fields.len());
         for (field, ty) in &record.fields {
             fields.push(CgField::new(
                 self.defs.get(*field).name.clone(),
-                self.cg_ty_at(*ty, depth + 1)?,
+                self.cg_ty_in(*ty, depth + 1, &inner)?,
             ));
         }
         Ok(CgTy::strukt(name, fields))
+    }
+
+    /// The name and the parameter bindings for one use of a record or a
+    /// `choice`.
+    ///
+    /// # The decision
+    ///
+    /// A generic aggregate's layout is computed by walking its **declared**
+    /// field list with its parameters bound to the arguments of this use,
+    /// rather than by substituting the field types into new ones and walking
+    /// those.
+    ///
+    /// # The reason, and it is the same wall Decision 42 draws
+    ///
+    /// Substituting a `Ty` interns a `Ty`, and interning needs `&mut Types`.
+    /// This crate is handed a `&Types` **on purpose** — `BuildInput`'s own
+    /// documentation says a backend must not be able to invent a type — and
+    /// that is exactly why `science_mir::instantiate` runs above the line and
+    /// hands down concrete bodies. But a body's *locals* being concrete does
+    /// not make a generic record's declared field list concrete: `Pair[A, B]`
+    /// is declared once, in `A` and `B`, and no instantiation of a body
+    /// rewrites the declaration.
+    ///
+    /// A layout needs structure and never a `Ty`, so the binding is carried
+    /// down the walk instead of applied to the type table. Nothing is
+    /// interned and the `&Types` holds.
+    ///
+    /// # The name, which is load-bearing
+    ///
+    /// `science_codegen::layout::LayoutCache` is keyed by a struct's name and
+    /// answers `SC0404` when one name gets two layouts, so `Pair[Int, Int]`
+    /// and `Pair[Int, F64]` must not share one. The name is therefore built
+    /// from the arguments, exactly as [`Lowerer::tuple_ty`] builds a tuple's
+    /// from its elements and for the same reason. A use with no arguments
+    /// keeps the bare name it has always had, so no existing layout record
+    /// moves.
+    ///
+    /// # The cost, stated as the refusal it produces
+    ///
+    /// An argument that is itself a compound mentioning an outer parameter —
+    /// a field of type `Inner[Array[A]]` inside `Outer[A]` — cannot be bound,
+    /// because binding it would mean building the `Ty` for `Array[Int]`,
+    /// which is the interning this function exists to avoid. It is refused by
+    /// name rather than laid out wrong. The plain nesting, `Inner[A]` inside
+    /// `Outer[A]`, is bound and works, because the argument *is* a parameter
+    /// and resolving one is a lookup.
+    fn aggregate_env(
+        &self,
+        def: DefId,
+        generics: &[science_resolve::hir::GenericParam],
+        args: &[GenericArg],
+        outer: &TyEnv,
+    ) -> Result<(String, TyEnv), Unlowered> {
+        let name = self.defs.get(def).name.clone();
+        if args.is_empty() {
+            return Ok((name, TyEnv::new()));
+        }
+        let mut inner = TyEnv::new();
+        let mut rendered = Vec::with_capacity(args.len());
+        for (param, arg) in generics.iter().zip(args) {
+            let GenericArg::Type(ty) = arg else { continue };
+            // An argument written as one of the *enclosing* aggregate's
+            // parameters is resolved through the environment that brought us
+            // here; anything else is already concrete and stands.
+            let ty = match self.types.kind(*ty) {
+                TyKind::Param { def } => *outer.get(def).ok_or_else(|| {
+                    Unlowered::new(format!(
+                        "a value of the generic type `{name}`, whose argument `{}` is a type \
+                         parameter nothing bound: a generic aggregate's layout is computed by \
+                         binding its parameters at each use, and this use is inside a body \
+                         nothing monomorphised",
+                        self.defs.get(*def).name
+                    ))
+                })?,
+                _ if self.mentions_a_parameter(*ty, 0) => {
+                    return Err(Unlowered::new(format!(
+                        "a value of the generic type `{name}`, whose argument `{}` is a compound \
+                         type mentioning a parameter: binding it would mean interning a new \
+                         `Ty`, and this crate is handed a `&Types` so that it cannot. The \
+                         substitution belongs above Decision 42's line, in \
+                         `science_mir::instantiate`, which does not reach a *declaration*'s field \
+                         list",
+                        self.types.render(self.defs, *ty)
+                    )));
+                }
+                _ => *ty,
+            };
+            inner.insert(param.def, ty);
+            rendered.push(self.types.render(self.defs, ty));
+        }
+        if rendered.is_empty() {
+            return Ok((name, inner));
+        }
+        Ok((format!("{name}[{}]", rendered.join(", ")), inner))
+    }
+
+    /// Whether `ty` mentions a [`TyKind::Param`] anywhere inside it.
+    ///
+    /// The depth bound is [`Lowerer::cg_ty_at`]'s and for the same reason: a
+    /// self-containing type would otherwise recurse until the stack ran out.
+    /// Answering `false` at the bound is safe here, because the caller's only
+    /// use of a `true` is to produce a refusal, and a type this deep is
+    /// refused by `cg_ty_in` a moment later anyway.
+    fn mentions_a_parameter(&self, ty: Ty, depth: u32) -> bool {
+        if depth > MAX_TYPE_DEPTH {
+            return false;
+        }
+        match self.types.kind(ty) {
+            TyKind::Param { .. } | TyKind::SelfType { .. } | TyKind::SelfAssoc { .. } => true,
+            TyKind::Nullable(inner) => self.mentions_a_parameter(*inner, depth + 1),
+            TyKind::Borrowed { inner, .. } => self.mentions_a_parameter(*inner, depth + 1),
+            TyKind::Named { args, .. } => args.iter().any(|arg| match arg {
+                GenericArg::Type(ty) => self.mentions_a_parameter(*ty, depth + 1),
+                _ => false,
+            }),
+            TyKind::Tuple(elements) => {
+                elements.iter().any(|ty| self.mentions_a_parameter(*ty, depth + 1))
+            }
+            _ => false,
+        }
     }
 
     /// A tuple as [`CgTy::Struct`]: §3.2's C layout, with positions for names.
@@ -2143,9 +2417,26 @@ impl<'a> Lowerer<'a> {
     /// the un-wrapping costs is one case in [`Lowerer::place_address`], where
     /// MIR's `TupleField { index: 0 }` off such a variant is the identity rather
     /// than a field lookup, and that function says so.
-    fn choice_ty(&self, def: DefId, depth: u32) -> Result<CgTy, Unlowered> {
-        let name = self.defs.get(def).name.clone();
+    fn choice_ty(
+        &self,
+        def: DefId,
+        args: &[GenericArg],
+        depth: u32,
+        env: &TyEnv,
+    ) -> Result<CgTy, Unlowered> {
         let decls = self.declarations()?;
+        // A `choice`'s parameters are carried on each of its *variants* —
+        // `items::Variant`'s own comment says why: a use writes `Left(1)` and
+        // never names the type. The list is the same on every variant, so the
+        // first one that has an entry answers for the type, and a `choice`
+        // with no variants is refused just below.
+        let generics: Vec<science_resolve::hir::GenericParam> = self
+            .choice_variants(def)
+            .iter()
+            .find_map(|variant| decls.variant(*variant).map(|v| v.generics.clone()))
+            .unwrap_or_default();
+        let (name, env) = self.aggregate_env(def, &generics, args, env)?;
+        let env = &env;
         let order = self.choice_variants(def);
         if order.is_empty() {
             return Err(Unlowered::new(format!(
@@ -2168,13 +2459,13 @@ impl<'a> Lowerer<'a> {
             })?;
             variants.push(match declared.payload.as_slice() {
                 [] => CgVariant::unit(variant_name),
-                [only] => CgVariant::with(variant_name, self.cg_ty_at(*only, depth + 1)?),
+                [only] => CgVariant::with(variant_name, self.cg_ty_in(*only, depth + 1, env)?),
                 many => {
                     let mut fields = Vec::with_capacity(many.len());
                     for (index, ty) in many.iter().enumerate() {
                         fields.push(CgField::new(
                             index.to_string(),
-                            self.cg_ty_at(*ty, depth + 1)?,
+                            self.cg_ty_in(*ty, depth + 1, env)?,
                         ));
                     }
                     let payload = CgTy::strukt(format!("{name}.{variant_name}"), fields);
@@ -2273,35 +2564,35 @@ impl<'a> Lowerer<'a> {
             TyKind::Object { .. } => Ok(true),
             TyKind::Named { def, args } => {
                 let def = *def;
-                if !args.is_empty() {
-                    return Ok(true);
-                }
+                let args = args.clone();
                 match self.defs.get(def).kind {
-                    DefKind::Record => {
-                        let fields: Vec<Ty> = self
-                            .declarations()?
-                            .record(def)
-                            .map(|record| record.fields.iter().map(|(_, ty)| *ty).collect())
-                            .unwrap_or_default();
-                        for field in fields {
-                            if self.drop_runs_something(field, depth + 1)? {
+                    // **A generic record or `choice` is asked the same
+                    // question as a plain one, with its parameters bound.**
+                    //
+                    // This arm used to answer `true` for any aggregate with
+                    // arguments, which was the conservative reading of *"this
+                    // crate lays out no generic type"*: a `Pair[Int, F64]`
+                    // owns nothing, but nothing could prove it, and claiming
+                    // a value needs no drop when it does is a leak. So it
+                    // claimed the opposite and paid a refusal one step later,
+                    // at glue it could not emit.
+                    //
+                    // Now the parameters can be bound —
+                    // [`Lowerer::aggregate_members`] does it — so the honest
+                    // answer is available: `Pair[Int, F64]` owns nothing and
+                    // `Pair[Int, String]` owns a `String`. The conservative
+                    // answer survives only where a member genuinely cannot be
+                    // bound, where `aggregate_members` refuses rather than
+                    // guessing.
+                    DefKind::Record | DefKind::Choice => {
+                        for member in self.aggregate_members(def, &args)?.1 {
+                            if self.drop_runs_something(member, depth + 1)? {
                                 return Ok(true);
                             }
                         }
                         Ok(false)
                     }
-                    DefKind::Choice => {
-                        let decls = self.declarations()?;
-                        for variant in self.choice_variants(def) {
-                            let Some(declared) = decls.variant(variant) else { return Ok(true) };
-                            for payload in declared.payload.clone() {
-                                if self.drop_runs_something(payload, depth + 1)? {
-                                    return Ok(true);
-                                }
-                            }
-                        }
-                        Ok(false)
-                    }
+                    _ if !args.is_empty() => Ok(true),
                     // A primitive, or a library type. The list is
                     // [`Lowerer::cg_ty`]'s own and is kept the same shape on
                     // purpose: a name that function can lay out as a scalar is

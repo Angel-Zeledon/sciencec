@@ -179,3 +179,155 @@ fn a_generic_calling_a_generic_reaches_the_right_instance() {
         "and each must have reached its own `identity`, not shared one: {symbols:?}"
     );
 }
+
+// --- generic aggregates ------------------------------------------------------
+//
+// A generic *function* is monomorphised above this crate: `science-mir`
+// substitutes its body and what arrives is concrete. A generic *type* is not,
+// and cannot be by the same route — `Pair[A, B]` is **declared** once, in `A`
+// and `B`, and instantiating a body never rewrites a declaration.
+//
+// So its layout is computed by binding its parameters at each use and walking
+// the declared field list with the binding in hand. `Lowerer::aggregate_env`
+// is that, and it carries the binding down the walk rather than substituting,
+// because substituting interns a `Ty` and this crate is handed a `&Types` on
+// purpose. The tests below are what that buys and, in the last one, what it
+// costs.
+
+/// Two argument lists, two layouts, and the second is the one that would
+/// silently share the first's.
+///
+/// `Pair[Int, F64]` is `{i64, double}` and `Pair[Int, Int]` is `{i64, i64}` —
+/// different sizes and a different offset for the second field.
+/// `science_codegen::layout::LayoutCache` is keyed by a struct's **name** and
+/// answers `SC0404` when one name gets two layouts, so the name has to be a
+/// function of the arguments. If it were not, one of these two would be read
+/// at the other's offsets, and `p.second` would print garbage rather than
+/// fail to build.
+#[test]
+fn a_generic_record_at_two_argument_lists_has_two_layouts() {
+    let (out, _) = built(
+        "pair",
+        "type Pair[A, B]:\n\
+         \x20   first: A\n\
+         \x20   second: B\n\
+         \n\
+         def main():\n\
+         \x20   let p: Pair[Int, F64] be Pair(first: 3, second: 4.5)\n\
+         \x20   let q: Pair[Int, Int] be Pair(first: 10, second: 20)\n\
+         \x20   print(f\"{p.first} {p.second} {q.first} {q.second}\")\n",
+    );
+    assert_eq!(out, "3 4.5 10 20\n");
+}
+
+/// **The drop path, which is where a wrong binding leaks or double-frees
+/// rather than printing the wrong number.**
+///
+/// `Holder[String]` owns its field and `Holder[Int]` owns nothing. Both are
+/// the one declaration `Holder[T]`, so a compiler that keyed drop glue on the
+/// bare name would emit one function for both — and whichever arrived second
+/// would get the other's glue: either a `String` never freed, or
+/// `science_string_free` called on the integer `9`.
+///
+/// Running under `O2` with both in one program is the test. A double free
+/// aborts and the exit-status assertion in [`built`] catches it.
+#[test]
+fn a_generic_record_drops_by_its_argument_and_not_by_its_name() {
+    let (out, _) = built(
+        "holder",
+        "type Holder[T]:\n\
+         \x20   value: T\n\
+         \n\
+         def main():\n\
+         \x20   let owns: Holder[String] be Holder(value: \"cadena\")\n\
+         \x20   let plain: Holder[Int] be Holder(value: 9)\n\
+         \x20   print(f\"{owns.value} {plain.value}\")\n",
+    );
+    assert_eq!(out, "cadena 9\n");
+}
+
+/// A generic `choice`, whose parameters live on its **variants** rather than
+/// on the type.
+///
+/// `science_types::items::Variant`'s own comment says why they are there: a
+/// use writes `Just(5)` and never names `Maybe`. So the binding for a
+/// `choice` is read off whichever variant the declaration table has an entry
+/// for, and this is the test that it is read off any of them rather than off
+/// a type-level list that does not exist.
+#[test]
+fn a_generic_choice_carries_its_parameters_on_its_variants() {
+    let (out, _) = built(
+        "maybe",
+        "choice Maybe[T]:\n\
+         \x20   Nothing\n\
+         \x20   Just(T)\n\
+         \n\
+         def main():\n\
+         \x20   let m: Maybe[Int] be Just(5)\n\
+         \x20   let n: Maybe[String] be Just(\"texto\")\n\
+         \x20   print(\"ambos\")\n",
+    );
+    assert_eq!(out, "ambos\n");
+}
+
+/// A method declared on a generic block, called on an instantiated receiver.
+///
+/// `Wrapper[T] has:` gives `Self` the type `Wrapper[T]`, which used to reach
+/// `layout_of_ty` and be refused. `crates/science-codegen-llvm/tests/
+/// methods.rs` carries the positive version of this as
+/// `a_method_on_a_generic_block_runs`, which replaced the refusal it used to
+/// pin; this is here so that the generic story is readable in one file.
+#[test]
+fn a_method_on_a_generic_type_runs() {
+    let (out, _) = built(
+        "method",
+        "type Wrapper[T]:\n\
+         \x20   inner: T\n\
+         \n\
+         Wrapper[T] has:\n\
+         \x20   def get(self) -> Int:\n\
+         \x20       1\n\
+         \n\
+         def main():\n\
+         \x20   let w: Wrapper[Int] be Wrapper(inner: 1)\n\
+         \x20   print(w.get())\n",
+    );
+    assert_eq!(out, "1\n");
+}
+
+/// **The limit, asserted as a refusal rather than left to be discovered.**
+///
+/// `Nest[A]`'s field is `Holder[A]` — a compound mentioning the type's own
+/// parameter. Binding it would mean building the `Ty` for `Holder[Int]`, and
+/// building a `Ty` is interning, and this crate holds a `&Types` precisely so
+/// that it cannot. `Lowerer::member_ty` refuses it by name.
+///
+/// This is a test of the refusal and not an endorsement of it: the repair is
+/// for the substitution to happen above Decision 42's line, where `&mut
+/// Types` lives — but `science_mir::instantiate` reaches a *body's* types and
+/// a declaration's field list is not one. Nothing instantiates a declaration
+/// yet, and this is the test that fails the day something does, which is when
+/// it should be replaced by the program running.
+#[test]
+fn a_generic_field_mentioning_a_parameter_is_refused_by_name() {
+    let source = "type Holder[T]:\n\
+                  \x20   value: T\n\
+                  \n\
+                  type Nest[A]:\n\
+                  \x20   inner: Holder[A]\n\
+                  \n\
+                  def main():\n\
+                  \x20   let deep: Nest[String] be Nest(inner: Holder(value: \"hondo\"))\n\
+                  \x20   print(f\"{deep.inner.value}\")\n";
+    let dir = scratch("generics", "member_param");
+    require_runtime();
+    let Err(refused) = lower(source).try_build(&executable(&dir, "member_param"), OptLevel::O2) else {
+        panic!("a field mentioning a parameter cannot be laid out, but the build succeeded")
+    };
+    let text = refused.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("\n");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        text.contains("compound mentioning one of the type's own parameters"),
+        "the refusal does not name what it cannot do:\n{text}"
+    );
+}
