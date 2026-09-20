@@ -882,25 +882,38 @@ fn a_tuple_of_mixed_widths_is_laid_out_by_the_c_rule() {
     assert_eq!(bytes("tuple-mixed", source), "-7 2.5 true 1000\n");
 }
 
-/// **A tuple with a `String` in it is refused, and the refusal is the drop and
-/// not the layout.**
+/// **A tuple with a `String` in it is built, used, and released.**
 ///
-/// `drop_runs_something` walks a tuple element by element, so a tuple holding a
-/// `String` owns something and its `TerminatorKind::Drop` needs Decision 12's
-/// emitted glue. **A record now gets one** — `Lowerer::intern_drop_glue` emits
-/// it, and `tests/methods.rs` runs a program that owns a `String` and drops it
-/// — and a tuple still does not, for a reason the message now names: glue is
-/// interned by the symbol its type's *definition* mangles to, and a tuple has
-/// no definition to mangle. The *layout* is fine, as the test above this one
-/// shows; it is the destructor that is missing, and the message names the type
-/// rather than saying "a tuple", which is the difference between a refusal a
-/// reader can act on and one that sends them to the wrong file.
+/// This test asserted the refusal, and the refusal's own reason is what
+/// changed. It read: *"glue is interned by the symbol its type's definition
+/// mangles to, and a tuple has no definition to mangle"* — true of the
+/// interning and beside the point about the release. A tuple's layout is
+/// Decision 17's aggregate exactly as a record's is, its elements are all
+/// always present, and dropping it is the same loop in the same order. The
+/// symbol is keyed on the type's *rendering* instead, which `Types::render`
+/// makes injective over the types that reach here.
+///
+/// **This was half a feature until now.** Putting a string literal in a tuple
+/// was made to work earlier; every value eventually goes out of scope, so a
+/// tuple that could be built and never released could not be used in any
+/// program that finishes.
+///
+/// The exit status is the assertion that matters: two strings in a tuple, both
+/// freed once, is the shape whose failure is a double free rather than a wrong
+/// answer.
 #[test]
 fn a_tuple_that_owns_something_is_refused_for_the_drop_and_not_the_layout() {
-    let text = refusal("tuple-owning", "let s be \"hola\"\nlet t be (s, s)\nprint(\"x\")\n");
-    assert!(
-        text.contains("drop glue") && text.contains("(String, String)"),
-        "a tuple holding a `String` should be refused for its drop, by name:\n{text}"
+    assert_eq!(
+        bytes(
+            "tuple-owning",
+            "let a be \"alpha\"\n\
+             let b be \"beta\"\n\
+             let t be (a, b)\n\
+             match t:\n\
+             \x20   (x, y):\n\
+             \x20       print(f\"{x}/{y}\")\n",
+        ),
+        "alpha/beta\n"
     );
 }
 

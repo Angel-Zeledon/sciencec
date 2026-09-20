@@ -3216,6 +3216,30 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// `ScienceString` and a pointer to one, read as a `ScienceString`.
     fn borrow_hole(&mut self, hole: ExprId, block: BlockId, span: Span) -> (Operand, BlockId) {
         let (place, block) = self.borrow_source(hole, block, span);
+        // **A narrowed payload that is not a borrow has no place to borrow.**
+        //
+        // `as_place` sees through `ExprKind::Narrow`, which is exact for a
+        // niched option and false for Decision 18's tagged pair: the place is
+        // the whole `T?`, tag and all, and borrowing it as a `T` hands the
+        // runtime the tag where it expects a pointer. For a `String?` that is
+        // a segmentation fault rather than a wrong answer.
+        //
+        // `value_hole` answers this by evaluating into a temporary, which
+        // lowers the `Rvalue::Narrow` that states the representation change.
+        // That is not available here: this caller wants an **address**, and
+        // copying an owning payload out of the option would make a second
+        // owner of the same buffer — the option still releases it.
+        //
+        // So the hole is a hole, and it is refused one crate down rather than
+        // crashing. The repair is a projection into a nullable's payload, the
+        // way `Projection::Downcast` reaches a `choice`'s, which is a change
+        // to the IR rather than to this function.
+        if self.narrowed_payload_is_not_a_borrow(&place, hole) {
+            let ty = self.thir.expr(hole).ty;
+            let temp = self.temp(ty, span, block);
+            self.assign(block, Place::local(temp), Rvalue::Error, span);
+            return (Operand::Move(Place::local(temp)), block);
+        }
         let place = self.auto_deref(place);
         let place = self.deref_to_hole(place, hole);
         let ty = self.place_ty(&place);

@@ -865,84 +865,164 @@ impl<'a> Lowerer<'a> {
         out
     }
 
-    /// Decision 12's glue for one type, emitted once and interned by symbol.
+    /// The glue for a `T?` whose payload owns something: one test, one branch.
     ///
-    /// **The decision. Glue is an ordinary definition this crate appends to
-    /// the module, not a new kind of thing the backend has to know about.**
-    /// A glue function takes a pointer to the value and releases what the
-    /// value owns, in reverse declaration order; that is a signature and a
-    /// body, which is what [`Lowered::definitions`] already carries and what
-    /// [`Lowerer::lower_c_main`] already builds by hand. Adding a `define_*`
-    /// for it would be a second path to the same emitter.
+    /// **The present arm drops the payload and the absent arm does nothing**,
+    /// which is what Decision 18's tagged layout makes a `T?` mean. The
+    /// payload is released through whatever releases a bare `T` — a runtime
+    /// call for a `String`, another glue function for a record — so this
+    /// function knows nothing about payloads beyond where one sits.
     ///
-    /// **Reverse declaration order, because `science_codegen::descriptor`'s
-    /// `drop_glue` says so** and because it is the order a reader of the
-    /// source would run destructors in if the fields were bindings. Nothing
-    /// in F0 can observe the difference today — a `String`'s release has no
-    /// side effect a program can see — and the order is followed anyway,
-    /// because the first type whose `Drop` implementation prints something
-    /// would observe it and the glue would be wrong in a way no test written
-    /// before that day could catch.
-    ///
-    /// **`None` is an answer and not a failure**: a type that owns nothing
-    /// needs no glue, which is the case Decision 20's `drop_fn: null` exists
-    /// for and the case that keeps this out of the hot path for an
-    /// `Array of F64`.
-    ///
-    /// # What it does not do
-    ///
-    /// **A `choice` whose payload owns something is refused.** Releasing one
-    /// means switching on the discriminant and dropping only the active
-    /// variant's payload, which is a `switch` and one block per arm inside a
-    /// function this builds as a single block. `descriptor::drop_glue` has
-    /// the same hole from the other side — it answers `fields: vec![]` for
-    /// anything that is not `Repr::Aggregate` — so the refusal is named here
-    /// rather than silently dropping nothing, which is the shape that leaks.
-    ///
-    /// **The linkage is external where Decision 12 asks for `internal`.**
-    /// `sys::linkage::INTERNAL` exists and `declare_function` has no way to
-    /// be told, so glue is visible in the symbol table. That costs an
-    /// optimisation and a tidy symbol table; it costs no correctness, and the
-    /// alternative today is a second definition path.
-    fn intern_drop_glue(&mut self, ty: Ty, depth: u32) -> Result<Option<String>, Unlowered> {
-        if depth > MAX_TYPE_DEPTH {
-            return Err(Unlowered::new(
-                "a type nested past this crate's depth bound while building its drop glue",
-            ));
-        }
-        if !self.drop_runs_something(ty, 0)? {
-            return Ok(None);
-        }
-        // The owning types with no glue of their own: a direct runtime call,
-        // which every caller emits inline rather than through a function. The
-        // `Ok(None)` is why every caller has to ask `direct_release` too.
-        if self.direct_release(ty)?.is_some() {
-            return Ok(None);
-        }
-        let Some(def) = self.concrete_head(ty) else {
+    /// The cost: a branch in the hot path of releasing an option, where a
+    /// niched one costs nothing at all. That is Decision 19's whole argument
+    /// for the niche, and it applies to the options this is *not* reached for.
+    fn emit_nullable_glue(
+        &mut self,
+        ty: Ty,
+        payload_ty: Ty,
+        name: String,
+        symbol: String,
+        depth: u32,
+    ) -> Result<Option<String>, Unlowered> {
+        let layout = self.layout_of_ty(ty)?;
+        let Repr::Tagged { tag, payload_offset, variants } = &layout.repr else {
             return Err(Unlowered::new(format!(
-                "drop glue for `{}`, whose concrete type this crate cannot name",
-                self.types.render(self.defs, ty)
+                "drop glue for `{name}`, whose layout is neither Decision 18's tagged pair nor \
+                 Decision 19's niche"
             )));
         };
-        let name = self.defs.get(def).name.clone();
-        if self.defs.get(def).kind != DefKind::Record {
-            return Err(Unlowered::new(format!(
-                "drop glue for `{name}`, which is not a record: releasing a `choice`'s payload \
-                 means switching on the discriminant and dropping only the active variant, which \
-                 is one block per arm where this builds one block"
-            )));
-        }
-        let symbol = format!("{}.drop", mangle(&MonoKey::plain(&[name.as_str()])));
-        if self.glue.contains(&symbol) {
-            return Ok(Some(symbol));
-        }
-        // Recorded *before* the body is built, so a record that reaches
-        // itself through a field asks for a symbol that is already claimed
-        // rather than recursing until the stack runs out. The depth bound
-        // above is the second guard and this is the first.
-        self.glue.insert(symbol.clone());
+        let (tag, payload_offset) = (*tag, *payload_offset);
+        let present = variants
+            .iter()
+            .find(|variant| variant.payload.is_some())
+            .ok_or_else(|| {
+                Unlowered::new(format!(
+                    "drop glue for `{name}`, whose variants all carry nothing: it is not a `T?`"
+                ))
+            })?
+            .discriminant;
 
+        let inner = self.intern_drop_glue(payload_ty, depth + 1)?;
+        let direct = match &inner {
+            Some(_) => None,
+            None => self.direct_release(payload_ty)?,
+        };
+        let (callee, ret) = match (&inner, &direct) {
+            (Some(glue), _) => (Callee::Science(glue.clone()), ReturnClass::Void),
+            (None, Some((runtime, _))) => {
+                (Callee::Runtime(runtime), self.declare(runtime)?.ret.clone())
+            }
+            (None, None) => {
+                return Err(Unlowered::new(format!(
+                    "drop glue for `{name}`: its payload owns something that is neither a \
+                     runtime aggregate nor a type with glue"
+                )));
+            }
+        };
+
+        // **A `switch` and not a comparison**, because the discriminant is
+        // already the value to branch on and `IntOp` has no equality: §3.3
+        // puts the tag at offset 0, so one `LoadAt` of the tag's own width is
+        // the whole test. The `default` arm is the absent case rather than an
+        // `unreachable`, since an option has exactly the two.
+        let tag_layout = layout_of(self.target, &CgTy::Int(tag));
+        let loaded = ValueId(0);
+        let address = ValueId(1);
+        let entry = vec![ExtInst::LoadAt {
+            dest: loaded,
+            address: Operand::Param(0),
+            layout: tag_layout,
+        }];
+        let mut release = vec![ExtInst::FieldAddr {
+            dest: address,
+            base: Operand::Param(0),
+            offset: payload_offset,
+        }];
+        let mut args = vec![Operand::Value(address)];
+        if let Some((_, Some(descriptor))) = &direct {
+            args.push(Operand::GlobalAddr(descriptor.clone()));
+        }
+        release.push(ExtInst::Above(Inst::Call {
+            dest: None,
+            callee,
+            args,
+            ret,
+            sret_slot: None,
+        }));
+
+        let signature = AbiSignature::science(
+            self.target,
+            symbol.clone(),
+            layout_of(self.target, &CgTy::Unit),
+            vec![(
+                "self".to_string(),
+                layout_of(self.target, &CgTy::Ptr(PtrKind::MutBorrow)),
+                ParamAttrs::default(),
+            )],
+        );
+        let body = ExtBody {
+            blocks: vec![
+                ExtBlock {
+                    id: BlockId(0),
+                    label: "entry".to_string(),
+                    insts: entry,
+                    terminator: Terminator::Switch {
+                        value: Operand::Value(loaded),
+                        arms: vec![(present, BlockId(1))],
+                        default: BlockId(2),
+                    },
+                },
+                ExtBlock {
+                    id: BlockId(1),
+                    label: "present".to_string(),
+                    insts: release,
+                    terminator: Terminator::Goto(BlockId(2)),
+                },
+                ExtBlock {
+                    id: BlockId(2),
+                    label: "done".to_string(),
+                    insts: Vec::new(),
+                    terminator: Terminator::Return(None),
+                },
+            ],
+        };
+        self.glue_definitions.push((signature, body));
+        Ok(Some(symbol))
+    }
+
+    /// The glue for a type whose parts are **all always present**: a record's
+    /// fields, or a tuple's elements.
+    ///
+    /// # The decision
+    ///
+    /// One function serves both, because releasing them is the same thing in
+    /// the same order — reverse declaration order, one call per part that owns
+    /// something — and the only difference is where the part *types* come
+    /// from.
+    ///
+    /// # The reason
+    ///
+    /// A tuple had no glue at all, so nothing in the language could let
+    /// `(a, b)` of two strings go out of scope, and the refusal it met spoke
+    /// about a `choice`'s discriminant — a sentence about a different type.
+    /// Its layout is Decision 17's aggregate exactly as a record's is; what it
+    /// lacks is a definition for `concrete_head` to name, which is a fact
+    /// about the symbol and not about the release.
+    ///
+    /// # The cost
+    ///
+    /// The symbol is keyed on the type's **rendering** rather than on a
+    /// mangled path, because a tuple has no path. `Types::render` is injective
+    /// over the types that reach here, which is the same argument
+    /// `intern_element_descriptor` already makes for the same reason.
+    fn emit_field_glue(
+        &mut self,
+        ty: Ty,
+        name: &str,
+        symbol: String,
+        field_tys: Vec<Ty>,
+        depth: u32,
+    ) -> Result<Option<String>, Unlowered> {
         let layout = self.layout_of_ty(ty)?;
         let Repr::Aggregate { fields: places } = &layout.repr else {
             return Err(Unlowered::new(format!(
@@ -950,7 +1030,7 @@ impl<'a> Lowerer<'a> {
             )));
         };
         let places = places.clone();
-        let field_tys = self.record_field_types(def)?;
+        
         if field_tys.len() != places.len() {
             return Err(Unlowered::new(format!(
                 "drop glue for `{name}`: its layout has {} field(s) and its declaration has {}",
@@ -1025,6 +1105,137 @@ impl<'a> Lowerer<'a> {
         };
         self.glue_definitions.push((signature, body));
         Ok(Some(symbol))
+    }
+
+
+    /// Decision 12's glue for one type, emitted once and interned by symbol.
+    ///
+    /// **The decision. Glue is an ordinary definition this crate appends to
+    /// the module, not a new kind of thing the backend has to know about.**
+    /// A glue function takes a pointer to the value and releases what the
+    /// value owns, in reverse declaration order; that is a signature and a
+    /// body, which is what [`Lowered::definitions`] already carries and what
+    /// [`Lowerer::lower_c_main`] already builds by hand. Adding a `define_*`
+    /// for it would be a second path to the same emitter.
+    ///
+    /// **Reverse declaration order, because `science_codegen::descriptor`'s
+    /// `drop_glue` says so** and because it is the order a reader of the
+    /// source would run destructors in if the fields were bindings. Nothing
+    /// in F0 can observe the difference today — a `String`'s release has no
+    /// side effect a program can see — and the order is followed anyway,
+    /// because the first type whose `Drop` implementation prints something
+    /// would observe it and the glue would be wrong in a way no test written
+    /// before that day could catch.
+    ///
+    /// **`None` is an answer and not a failure**: a type that owns nothing
+    /// needs no glue, which is the case Decision 20's `drop_fn: null` exists
+    /// for and the case that keeps this out of the hot path for an
+    /// `Array of F64`.
+    ///
+    /// # What it does not do
+    ///
+    /// **A `choice` whose payload owns something is refused.** Releasing one
+    /// means switching on the discriminant and dropping only the active
+    /// variant's payload, which is a `switch` and one block per arm inside a
+    /// function this builds as a single block. `descriptor::drop_glue` has
+    /// the same hole from the other side — it answers `fields: vec![]` for
+    /// anything that is not `Repr::Aggregate` — so the refusal is named here
+    /// rather than silently dropping nothing, which is the shape that leaks.
+    ///
+    /// **The linkage is external where Decision 12 asks for `internal`.**
+    /// `sys::linkage::INTERNAL` exists and `declare_function` has no way to
+    /// be told, so glue is visible in the symbol table. That costs an
+    /// optimisation and a tidy symbol table; it costs no correctness, and the
+    /// alternative today is a second definition path.
+    fn intern_drop_glue(&mut self, ty: Ty, depth: u32) -> Result<Option<String>, Unlowered> {
+        if depth > MAX_TYPE_DEPTH {
+            return Err(Unlowered::new(
+                "a type nested past this crate's depth bound while building its drop glue",
+            ));
+        }
+        if !self.drop_runs_something(ty, 0)? {
+            return Ok(None);
+        }
+        // The owning types with no glue of their own: a direct runtime call,
+        // which every caller emits inline rather than through a function. The
+        // `Ok(None)` is why every caller has to ask `direct_release` too.
+        if self.direct_release(ty)?.is_some() {
+            return Ok(None);
+        }
+        // **A tuple is a record whose fields have no names**, and that is the
+        // whole of what it needed. Its layout is Decision 17's aggregate, its
+        // elements are all always present, and dropping it is the same loop in
+        // the same order — so the only thing standing between `let t be (a, b)`
+        // and a drop was that `concrete_head` answers `None` for a type with no
+        // definition behind it, and the refusal below spoke about a `choice`.
+        //
+        // Nothing in this language could release a tuple of two strings, which
+        // means nothing could let one go out of scope. `field_value` made
+        // `("alpha", "beta")` constructible earlier today and that was only
+        // half a feature: every value eventually goes out of scope.
+        // **A `T?` whose payload owns something, which is one branch.**
+        //
+        // The decision. The glue tests the discriminant, drops the payload on
+        // the present arm, and joins. A niched option needs none of this: its
+        // payload is a borrow, which owns nothing, so `drop_runs_something`
+        // has already answered `false` and this is never reached for one.
+        //
+        // The reason. §5.3's convention materialises a `V?` for **every**
+        // `Map.insert` and `Map.remove`, so a `Map[String, String]` could not
+        // be inserted into at all — not even an empty one with no previous
+        // value to free, and not even when the result was discarded. The
+        // refusal said the concrete type could not be named, which was true of
+        // `concrete_head` and beside the point: what was missing was the
+        // branch.
+        //
+        // **The branch was always available.** `ExtBody::blocks` is a `Vec`
+        // and `Terminator::Branch` has been there since the CFG was; the
+        // sentence *"one block per arm where this builds one block"* described
+        // how this function was written, not what the emitter can do.
+        if let TyKind::Nullable(payload) = *self.types.kind(ty) {
+            let rendered = self.types.render(self.defs, ty);
+            let symbol = format!("{}.drop", mangle(&MonoKey::plain(&[rendered.as_str()])));
+            if self.glue.contains(&symbol) {
+                return Ok(Some(symbol));
+            }
+            self.glue.insert(symbol.clone());
+            return self.emit_nullable_glue(ty, payload, rendered, symbol, depth);
+        }
+        if let TyKind::Tuple(elements) = self.types.kind(ty) {
+            let elements: Vec<Ty> = elements.clone();
+            let rendered = self.types.render(self.defs, ty);
+            let symbol = format!("{}.drop", mangle(&MonoKey::plain(&[rendered.as_str()])));
+            if self.glue.contains(&symbol) {
+                return Ok(Some(symbol));
+            }
+            self.glue.insert(symbol.clone());
+            return self.emit_field_glue(ty, &rendered, symbol, elements, depth);
+        }
+        let Some(def) = self.concrete_head(ty) else {
+            return Err(Unlowered::new(format!(
+                "drop glue for `{}`, whose concrete type this crate cannot name",
+                self.types.render(self.defs, ty)
+            )));
+        };
+        let name = self.defs.get(def).name.clone();
+        if self.defs.get(def).kind != DefKind::Record {
+            return Err(Unlowered::new(format!(
+                "drop glue for `{name}`, which is not a record: releasing a `choice`'s payload \
+                 means switching on the discriminant and dropping only the active variant, which \
+                 is one block per arm where this builds one block"
+            )));
+        }
+        let symbol = format!("{}.drop", mangle(&MonoKey::plain(&[name.as_str()])));
+        if self.glue.contains(&symbol) {
+            return Ok(Some(symbol));
+        }
+        // Recorded *before* the body is built, so a record that reaches
+        // itself through a field asks for a symbol that is already claimed
+        // rather than recursing until the stack runs out. The depth bound
+        // above is the second guard and this is the first.
+        self.glue.insert(symbol.clone());
+
+        self.emit_field_glue(ty, &name, symbol, self.record_field_types(def)?, depth)
     }
 
     /// A record's field types, in declaration order.
@@ -3075,6 +3286,41 @@ impl<'a> Lowerer<'a> {
                     }
                     Repr::Tagged { payload_offset, .. } => {
                         let offset = *payload_offset;
+                        // **A payload that owns something is refused, because
+                        // reading it here would be a second owner.**
+                        //
+                        // This loads the payload out of the option's slot,
+                        // which for an `I64?` is the whole of the
+                        // representation change and for a `String?` is a copy
+                        // of a `{ ptr, len, cap }` whose buffer the option
+                        // still owns. Both would then be released — the
+                        // narrowed value at its own storage-dead point and the
+                        // option through its glue — and the second free is of
+                        // memory the first returned.
+                        //
+                        // It was unreachable until `emit_nullable_glue` landed,
+                        // because a `String?` could not be dropped at all; the
+                        // glue made the option usable and made this shape
+                        // reachable in the same change, and `Map.insert`'s own
+                        // round trip found it.
+                        //
+                        // The repair is a **place** and not a value: `if old?:`
+                        // has established which variant is live, so the payload
+                        // should be projected and borrowed rather than copied,
+                        // the way `Projection::Downcast` already reaches a
+                        // `choice`'s payload. MIR has no projection for a
+                        // nullable's payload, and inventing one is a change to
+                        // the IR rather than to this arm.
+                        let payload = match *self.types.kind(self.referent(source)) {
+                            TyKind::Nullable(inner) => inner,
+                            _ => Ty::ERROR,
+                        };
+                        if self.drop_runs_something(payload, 0)? {
+                            return Err(Unlowered::new(format!(
+                                "a narrowed read of `{}`, whose payload owns something: reading                                  it out of the option copies an owner, and the option is still                                  the one that releases it — so the value would be freed twice.                                  The payload needs a projection to borrow through, which MIR has                                  for a `choice`'s variant and not for a `T?`",
+                                self.types.render(self.defs, source)
+                            )));
+                        }
                         let place = operand.place().ok_or_else(|| {
                             Unlowered::new(
                                 "a narrowed read of a tagged option that is not a place: the \

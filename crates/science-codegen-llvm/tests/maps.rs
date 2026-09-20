@@ -181,3 +181,52 @@ fn a_key_with_no_hash_is_refused_by_name() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A `Map` whose **value owns memory**, which was the whole feature being
+/// unusable.
+///
+/// # What was wrong
+///
+/// `Map[String, String].new()` followed by one `insert` was refused with
+/// *"drop glue for `String?`, whose concrete type this crate cannot name"* —
+/// on an empty map, with no previous value to free, and even when the result
+/// was discarded. §5.3's convention materialises a `V?` for **every**
+/// `insert` and `remove`, so the gap swallowed the whole method pair whenever
+/// `V` owned anything.
+///
+/// The refusal it met said releasing a `choice`'s payload *"is one block per
+/// arm where this builds one block"*. `ExtBody::blocks` is a `Vec` and
+/// `Terminator::Switch` has been there since the CFG was: that sentence
+/// described how the glue was written, not what the emitter can do.
+///
+/// **The round-trip test that already existed did not catch it**, because it
+/// used `Map[String, Int]` and an `Int?` owns nothing. That is the same blind
+/// spot the array tests had — every one of them read an element through
+/// `print`, the one position that took a different path — and it is worth
+/// naming twice.
+///
+/// # What is still refused, and why it is a refusal and not a crash
+///
+/// Narrowing the returned option — `if old?: print(f"{old}")` — is refused.
+/// Reading an owning payload out of a tagged `T?` copies an owner while the
+/// option is still the one that releases it, so the value would be freed
+/// twice; the first version of this change segfaulted on exactly that, and the
+/// `Map` round trip below is what found it. The repair is a projection into a
+/// nullable's payload, the way `Projection::Downcast` reaches a `choice`'s,
+/// which is a change to the IR. Until then the program is refused rather than
+/// wrong.
+#[test]
+fn a_map_whose_value_owns_memory_can_be_inserted_into() {
+    assert_eq!(
+        prints(
+            "owning-values",
+            "let mutable m be Map[String, String].new()\n\
+             let first be m.insert(\"k\", \"uno\")\n\
+             let second be m.insert(\"k\", \"dos\")\n\
+             let probe be \"k\"\n\
+             let gone be m.remove(probe)\n\
+             print(f\"{m.length()} {first?} {second?} {gone?}\")\n",
+        ),
+        "0 false true true\n"
+    );
+}
