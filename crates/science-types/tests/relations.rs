@@ -335,7 +335,7 @@ fn an_alias_inside_a_type_is_expanded_too() {
     let nested_alias = program.revealed("shapes", "nested_alias");
     let nested_expansion = program.revealed("shapes", "nested_expansion");
     assert_eq!(nested_alias, nested_expansion);
-    assert_eq!(program.render(nested_alias), "Array[Array] of F32");
+    assert_eq!(program.render(nested_alias), "Array[Array[F32]]");
 }
 
 #[test]

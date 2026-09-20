@@ -1,19 +1,19 @@
 ---
 source: crates/science-parser/tests/parse_stmts.rs
-expression: "parse_body(\"def pick(ready: Bool) -> Array of Int:\n    if ready: return [0]\n    loop:\n        break [1, 2]\n\")"
+expression: "parse_body(\"def pick(ready: Bool) -> Array[Int]:\n    if ready: return [0]\n    loop:\n        break [1, 2]\n\")"
 ---
-Block @43..94
-  If @43..63
-    cond: Path `ready` @46..51
-    then: Block @53..63
-      Return @53..63
-        value: ArrayLit @60..63
-          Int 0 @61..62
-  tail: Loop @68..94
-    body: Block @82..94
-      Break @82..94
-        value: ArrayLit @88..94
-          Int 1 @89..90
-          Int 2 @92..93
+Block @41..92
+  If @41..61
+    cond: Path `ready` @44..49
+    then: Block @51..61
+      Return @51..61
+        value: ArrayLit @58..61
+          Int 0 @59..60
+  tail: Loop @66..92
+    body: Block @80..92
+      Break @80..92
+        value: ArrayLit @86..92
+          Int 1 @87..88
+          Int 2 @90..91
 --- diagnostics ---
 (none)

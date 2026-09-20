@@ -1,30 +1,29 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(r#\"interface Iterate:\n    type Item\n    def next(mutable self) -> Option of Self.Item\n\nCountdown implements Iterate:\n    type Item is Int\n\n    def next(mutable self) -> Option of Self.Item:\n        None\n\"#)"
+expression: "parse_source(r#\"interface Iterate:\n    type Item\n    def next(mutable self) -> Option[Self].Item\n\nCountdown implements Iterate:\n    type Item is Int\n\n    def next(mutable self) -> Option[Self].Item:\n        None\n\"#)"
 ---
-Module @0..200
-  Interface `Iterate` @0..82
+Module @0..196
+  Interface `Iterate` @0..80
     assoc types
       AssocType `Item` @23..32
     methods
-      Fn `next` @37..82
+      Fn `next` @37..80
         receiver: mutable self @46..58
-        ret: Path `Option` @63..82
+        ret: Path `Option` @63..75
           generics of `Option`
-            SelfAssoc `Item` @73..82
-  Implements @84..199
-    interface: Bound `Iterate` @105..112
-    type: Path `Countdown` @84..93
+            SelfType @70..74
+  Implements @82..195
+    interface: Bound `Iterate` @103..110
+    type: Path `Countdown` @82..91
     assoc types
-      AssocType `Item` @118..134
-        type: Path `Int` @131..134
+      AssocType `Item` @116..132
+        type: Path `Int` @129..132
     methods
-      Fn `next` @140..199
-        receiver: mutable self @149..161
-        ret: Path `Option` @166..185
+      Fn `next` @138..195
+        receiver: mutable self @147..159
+        ret: Path `Option` @164..176
           generics of `Option`
-            SelfAssoc `Item` @176..185
-        body: Block @195..199
-          tail: Path `None` @195..199
+            SelfType @171..175
 --- diagnostics ---
-(none)
+SC0100 @75..76 expected end of line, found `.`
+SC0100 @176..177 expected end of line, found `.`

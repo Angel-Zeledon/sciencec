@@ -2,12 +2,12 @@
 source: crates/science-parser/tests/parse_items.rs
 expression: spaced
 ---
-Module @0..33
-  Alias `Row` @0..32
-    type: Path `Window` @12..32
+Module @0..29
+  Alias `Row` @0..28
+    type: Path `Window` @12..28
       generics of `Window`
-        Path `Int` @23..26
-        ConstArg Neg @28..31
-          Int 1 @30..31
+        Path `Int` @19..22
+        ConstArg Neg @24..27
+          Int 1 @26..27
 --- diagnostics ---
 (none)

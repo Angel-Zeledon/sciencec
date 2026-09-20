@@ -33,14 +33,14 @@ unsafe extern "C" library "openblas" via pkg-config "openblas":
         transpose_b: CblasTranspose,
         m: BlasInt, n: BlasInt, k: BlasInt,
         alpha: F64,
-        a: ffi.Span of F64, lda: BlasInt,
-        b: ffi.Span of F64, ldb: BlasInt,
+        a: ffi.Span[F64], lda: BlasInt,
+        b: ffi.Span[F64], ldb: BlasInt,
         beta: F64,
-        c: ffi.MutableSpan of F64, ldc: BlasInt,
+        c: ffi.MutableSpan[F64], ldc: BlasInt,
     )
 
 type MatrixView:
-    data: ffi.Span of F64
+    data: ffi.Span[F64]
     rows: Int
     columns: Int
     leading: Int        # the "leading dimension" - stride between columns
@@ -51,9 +51,9 @@ public choice BlasError:
     Overflow
 
 public def gemm(
-        a: borrowed MatrixView,
-        b: borrowed MatrixView,
-        c: mutable borrowed MatrixView,
+        a: &MatrixView,
+        b: &MatrixView,
+        c: &mut MatrixView,
         alpha: F64,
         beta: F64) -> ((), BlasError?):
 
@@ -88,7 +88,7 @@ public def gemm(
             c: c.data, ldc: c.leading as BlasInt)
     ((), null)
 
-def covers(m: borrowed MatrixView, columns: Int) -> ((), BlasError?):
+def covers(m: &MatrixView, columns: Int) -> ((), BlasError?):
     let needed be m.leading * (columns - 1) + m.rows
     if m.leading < m.rows:
         return ((), BlasError.Stride(m.leading, m.rows))

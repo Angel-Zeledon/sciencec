@@ -1,32 +1,32 @@
 ---
 source: crates/science-parser/tests/parse_script.rs
-expression: "parse_source(r#\"type Grid of (T, const ROWS: Int):\n    cells: Array of T\n\nGrid of (T, const ROWS: Int) has:\n    def rows(self) -> Int:\n        ROWS\n\"#)"
+expression: "parse_source(r#\"type Grid[T, const ROWS: Int]:\n    cells: Array[T]\n\nGrid[T, const ROWS: Int] has:\n    def rows(self) -> Int:\n        ROWS\n\"#)"
 ---
-Module @0..132
-  Record `Grid` @0..56
+Module @0..122
+  Record `Grid` @0..50
     generics
-      TypeParam `T` @14..15
-      ConstParam `ROWS` @17..32
-        type: Path `Int` @29..32
+      TypeParam `T` @10..11
+      ConstParam `ROWS` @13..28
+        type: Path `Int` @25..28
     fields
-      Field `cells` @39..56
-        type: Path `Array` @46..56
+      Field `cells` @35..50
+        type: Path `Array` @42..50
           generics of `Array`
-            Path `T` @55..56
-  Has @58..131
+            Path `T` @48..49
+  Has @52..121
     generics
-      TypeParam `T` @67..68
-      ConstParam `ROWS` @70..85
-        type: Path `Int` @82..85
-    type: Path `Grid` @58..62
+      TypeParam `T` @57..58
+      ConstParam `ROWS` @60..75
+        type: Path `Int` @72..75
+    type: Path `Grid` @52..56
       generics of `Grid`
-        Path `T` @67..68
-        Path `ROWS` @76..80
+        Path `T` @57..58
+        Path `ROWS` @66..70
     methods
-      Fn `rows` @96..131
-        receiver: self @105..109
-        ret: Path `Int` @114..117
-        body: Block @127..131
-          tail: Path `ROWS` @127..131
+      Fn `rows` @86..121
+        receiver: self @95..99
+        ret: Path `Int` @104..107
+        body: Block @117..121
+          tail: Path `ROWS` @117..121
 --- diagnostics ---
 (none)

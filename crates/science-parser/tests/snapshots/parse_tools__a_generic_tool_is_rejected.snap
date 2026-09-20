@@ -1,19 +1,18 @@
 ---
 source: crates/science-parser/tests/parse_tools.rs
-expression: "parse_source_allowing_errors(\"## Return the largest of the values.\ntool largest of T(values: Array of T) -> Int:\n    0\n\")"
+expression: "parse_source_allowing_errors(\"## Return the largest of the values.\ntool largest of T(values: Array[T]) -> Int:\n    0\n\")"
 ---
-Module @37..89
-  Tool `largest` @37..88
+Module @37..87
+  Tool `largest` @37..86
     generics
       TypeParam `T` @53..54
     params
-      Param `values` @55..73
-        type: Path `Array` @63..73
+      Param `values` @55..71
+        type: Path `Array` @63..71
           generics of `Array`
-            Path `T` @72..73
-    ret: Path `Int` @78..81
-    body: Block @87..88
-      tail: Int 0 @87..88
+            Path `T` @69..70
+    ret: Path `Int` @76..79
+    body: Block @85..86
+      tail: Int 0 @85..86
 --- diagnostics ---
-SC0191 @50..54 a `tool` is not generic
-  note one tool is one entry in the list its caller is given, with one parameter schema; write one tool per concrete type
+SC0100 @50..52 `of T` is now written `[T]`

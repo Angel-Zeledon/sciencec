@@ -1,36 +1,36 @@
 ---
 source: crates/science-parser/tests/parse_items.rs
-expression: "common::parse_source(concat!(\"type Velocity of T is Quantity of (T, 1, 0, -1, 0, 0, 0, 0)\\n\",\n\"type Pressure of T is Quantity of (T, -1, 1, -2, 0, 0, 0, 0)\\n\",))"
+expression: "common::parse_source(concat!(\"type Velocity[T] is Quantity[T, 1, 0, -1, 0, 0, 0, 0]\\n\",\n\"type Pressure[T] is Quantity[T, -1, 1, -2, 0, 0, 0, 0]\\n\",))"
 ---
-Module @0..121
-  Alias `Velocity` @0..59
+Module @0..109
+  Alias `Velocity` @0..53
     generics
-      TypeParam `T` @17..18
-    type: Path `Quantity` @22..59
+      TypeParam `T` @14..15
+    type: Path `Quantity` @20..53
       generics of `Quantity`
-        Path `T` @35..36
-        ConstArg Int 1 @38..39
-        ConstArg Int 0 @41..42
-        ConstArg Neg @44..46
-          Int 1 @45..46
+        Path `T` @29..30
+        ConstArg Int 1 @32..33
+        ConstArg Int 0 @35..36
+        ConstArg Neg @38..40
+          Int 1 @39..40
+        ConstArg Int 0 @42..43
+        ConstArg Int 0 @45..46
         ConstArg Int 0 @48..49
         ConstArg Int 0 @51..52
-        ConstArg Int 0 @54..55
-        ConstArg Int 0 @57..58
-  Alias `Pressure` @60..120
+  Alias `Pressure` @54..108
     generics
-      TypeParam `T` @77..78
-    type: Path `Quantity` @82..120
+      TypeParam `T` @68..69
+    type: Path `Quantity` @74..108
       generics of `Quantity`
-        Path `T` @95..96
-        ConstArg Neg @98..100
-          Int 1 @99..100
-        ConstArg Int 1 @102..103
-        ConstArg Neg @105..107
-          Int 2 @106..107
-        ConstArg Int 0 @109..110
-        ConstArg Int 0 @112..113
-        ConstArg Int 0 @115..116
-        ConstArg Int 0 @118..119
+        Path `T` @83..84
+        ConstArg Neg @86..88
+          Int 1 @87..88
+        ConstArg Int 1 @90..91
+        ConstArg Neg @93..95
+          Int 2 @94..95
+        ConstArg Int 0 @97..98
+        ConstArg Int 0 @100..101
+        ConstArg Int 0 @103..104
+        ConstArg Int 0 @106..107
 --- diagnostics ---
 (none)

@@ -1,27 +1,27 @@
 ---
 source: crates/science-parser/tests/parse_extern.rs
-expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\" library \"cudnn\":\n    def scale(alpha: F16, out: mutable borrowed F16, buffer: ffi.Span of BF16) -> BF16\n\"#)"
+expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\" library \"cudnn\":\n    def scale(alpha: F16, out: &mut F16, buffer: ffi.Span[BF16]) -> BF16\n\"#)"
 ---
-Module @0..122
-  Extern "C" unsafe @0..121
+Module @0..108
+  Extern "C" unsafe @0..107
     Library "cudnn" @18..33
     items
-      ExternFn `scale` @39..121
+      ExternFn `scale` @39..107
         params
           Param `alpha` @49..59
             type: Path `F16` @56..59
-          Param `out` @61..86
-            type: Borrowed mutable @66..86
-              Path `F16` @83..86
-          Param `buffer` @88..112
-            type: Path `ffi.Span` @96..112
+          Param `out` @61..74
+            type: Borrowed mutable @66..74
+              Path `F16` @71..74
+          Param `buffer` @76..98
+            type: Path `ffi.Span` @84..98
               generics of `Span`
-                Path `BF16` @108..112
-        ret: Path `BF16` @117..121
+                Path `BF16` @93..97
+        ret: Path `BF16` @103..107
 --- diagnostics ---
 SC0431 @56..59 `F16` cannot be passed by value across the C boundary
   note `_Float16` is passed differently by GCC, Clang and MSVC, and CUDA's `__half` is a struct around an `unsigned short`
-  note pass it by reference — `borrowed F16`, or `ffi.Span of F16` — or as the `U16` bit pattern the callee reinterprets
-SC0431 @117..121 `BF16` cannot be passed by value across the C boundary
+  note pass it by reference — `&F16`, or `ffi.Span[F16]` — or as the `U16` bit pattern the callee reinterprets
+SC0431 @103..107 `BF16` cannot be passed by value across the C boundary
   note `_Float16` is passed differently by GCC, Clang and MSVC, and CUDA's `__half` is a struct around an `unsigned short`
-  note pass it by reference — `borrowed F16`, or `ffi.Span of F16` — or as the `U16` bit pattern the callee reinterprets
+  note pass it by reference — `&F16`, or `ffi.Span[F16]` — or as the `U16` bit pattern the callee reinterprets

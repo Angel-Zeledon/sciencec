@@ -1,25 +1,24 @@
 ---
 source: crates/science-parser/tests/parse_closure_types.rs
-assertion_line: 207
-expression: "parse_source(r#\"def run of F(f: F) -> Int where F: Int -> Bool:\n    0\n\"#)"
+expression: "parse_source(r#\"def run[F](f: F) -> Int where F: Int -> Bool:\n    0\n\"#)"
 ---
-Module @0..54
-  Fn `run` @0..53
+Module @0..52
+  Fn `run` @0..51
     generics
-      TypeParam `F` @11..12
+      TypeParam `F` @8..9
     params
-      Param `f` @13..17
-        type: Path `F` @16..17
-    ret: Path `Int` @22..25
+      Param `f` @11..15
+        type: Path `F` @14..15
+    ret: Path `Int` @20..23
     where
-      Predicate @32..46
-        type: Path `F` @32..33
+      Predicate @30..44
+        type: Path `F` @30..31
         bounds
-          ClosureBound @35..46
+          ClosureBound @33..44
             params
-              Path `Int` @35..38
-            ret: Path `Bool` @42..46
-    body: Block @52..53
-      tail: Int 0 @52..53
+              Path `Int` @33..36
+            ret: Path `Bool` @40..44
+    body: Block @50..51
+      tail: Int 0 @50..51
 --- diagnostics ---
 (none)

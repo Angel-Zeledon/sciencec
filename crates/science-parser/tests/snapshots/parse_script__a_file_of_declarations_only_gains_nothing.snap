@@ -1,20 +1,20 @@
 ---
 source: crates/science-parser/tests/parse_script.rs
-expression: "parse_source(r#\"type Doc:\n    title: String\n\ndef render(doc: borrowed Doc) -> String:\n    doc.title\n\"#)"
+expression: "parse_source(r#\"type Doc:\n    title: String\n\ndef render(doc: &Doc) -> String:\n    doc.title\n\"#)"
 ---
-Module @0..84
+Module @0..76
   Record `Doc` @0..27
     fields
       Field `title` @14..27
         type: Path `String` @21..27
-  Fn `render` @29..83
+  Fn `render` @29..75
     params
-      Param `doc` @40..57
-        type: Borrowed @45..57
-          Path `Doc` @54..57
-    ret: Path `String` @62..68
-    body: Block @74..83
-      tail: Field `title` @74..83
-        base: Path `doc` @74..77
+      Param `doc` @40..49
+        type: Borrowed @45..49
+          Path `Doc` @46..49
+    ret: Path `String` @54..60
+    body: Block @66..75
+      tail: Field `title` @66..75
+        base: Path `doc` @66..69
 --- diagnostics ---
 (none)

@@ -19,4 +19,7 @@ Module @0..63
     body: Block @58..63
       tail: Path `items` @58..63
 --- diagnostics ---
-(none)
+SC0100 @15..17 `of T` is now written `[T]`
+SC0100 @29..37 `borrowed T` is now written `&T`
+SC0100 @42..44 `Array of T` is now written `Array[T]`
+SC0100 @48..56 `borrowed T` is now written `&T`

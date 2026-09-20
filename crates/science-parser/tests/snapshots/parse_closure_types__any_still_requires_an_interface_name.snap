@@ -1,6 +1,5 @@
 ---
 source: crates/science-parser/tests/parse_closure_types.rs
-assertion_line: 237
 expression: "parse_source_allowing_errors(r#\"def f(x: any (Int) -> Bool) -> Int:\n    0\n\"#)"
 ---
 Module @0..42

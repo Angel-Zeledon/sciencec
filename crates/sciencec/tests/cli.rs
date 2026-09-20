@@ -1424,3 +1424,163 @@ fn a_failing_assert_with_no_message_reports_the_default() {
         run.stderr
     );
 }
+
+// --- the bracket revision, end to end -------------------------------------
+//
+// `eebf6a8` did the design and the implementation; what it left for this pass
+// was its own tests, and its own commit message asked, in as many words, for
+// these constructs run through the real binary: `Array[T]`, `Map[String,
+// Int]`, `Array[Map[String, Int]]`, `Map[String, Array[Float]]`, `def
+// largest[T](…)`, `def map[T, U](…)`, `&T`, `&mut T`, `Doc implements
+// Summarize:` and `Doc has:`. The negative half — `Array of T`, `Map of
+// (String, Int)`, `def largest of T(…)`, `borrowed T`, `mutable borrowed T`,
+// each reporting the message that names its replacement — lives in
+// `science-parser/tests/migration.rs`, next to the parser that raises them,
+// and in `tests/ui/parse/{generic_tool,borrowed_tool_parameter}.science`,
+// which `sciencec --test ui` already renders through this same binary.
+
+/// Every construct the request named, in one file, checked clean.
+///
+/// This is the whole list — including a generic function called at its call
+/// site (`largest`, `map`) and a container nested inside another
+/// (`Array[Map[String, Int]]`, `Map[String, Array[Float]]`) — because `check`
+/// runs the lexer, the parser, name resolution and the type checker over all
+/// of it. What it does not run is codegen: `a_runnable_subset_of_the_same_
+/// constructs_builds_and_prints_the_right_answer` below is where the parts
+/// this backend can lower are built and executed for real, and its own
+/// comment says which parts of this list are missing and why.
+#[test]
+fn every_construct_the_bracket_revision_added_checks_clean() {
+    let file = scratch(
+        "bracket_revision_checked.science",
+        b"\
+interface Summarize:
+    def summarize(self) -> String
+
+type Doc:
+    title: String
+
+Doc implements Summarize:
+    def summarize(self) -> String:
+        self.title
+
+Doc has:
+    def shout(self) -> String:
+        self.title
+
+def largest[T: Ord](items: &Array[T]) -> (&T)?:
+    let mutable best be items.get(0)
+    for item in items:
+        if best?:
+            if item > best: best be item
+        else:
+            best be item
+    best
+
+def map[T, U](items: &Array[T], f: (&T) -> U) -> Array[U]:
+    let mutable out be Array[U].new()
+    for item in items:
+        out.push(f(item))
+    out
+
+def rename(d: &mut Doc):
+    d.title be \"renamed\"
+
+def main():
+    let xs: Array[Int] be [4, 8, 15, 16, 23, 42]
+    let biggest be largest(&xs)
+    let doubled be map(&xs, n giving n * 2)
+
+    let mutable scores: Map[String, Int] be Map[String, Int].new()
+    scores.insert(\"alice\", 10)
+
+    let mutable grid: Array[Map[String, Int]] be Array[Map[String, Int]].new()
+    let mutable copy be Map[String, Int].new()
+    copy.insert(\"alice\", 10)
+    grid.push(copy)
+
+    let mutable buckets: Map[String, Array[Float]] be Map[String, Array[Float]].new()
+    buckets.insert(\"x\", [1.5, 2.5])
+
+    let mutable doc be Doc(title: \"hello\")
+    rename(&mut doc)
+
+    print(f\"{biggest} {xs.length()} {doubled.length()} {scores.length()} {grid.length()} {buckets.length()} {doc.shout()} {doc.summarize()}\")
+",
+    );
+    let run = sciencec(&["check", &file]);
+    run.succeeded().silent_stderr();
+}
+
+/// The part of the list above this backend can build and run today, actually
+/// built and run — `Array[Int]`, `Map[String, Int]`, `&Doc`, `&mut Doc`,
+/// `Doc implements Summarize:` and `Doc has:` — with the output compared
+/// against the values those constructs mean, and the exit code checked.
+///
+/// **Two items on the full list are not here, and neither is a defect this
+/// migration introduced.** `largest` and `map` are ordinary generic
+/// *functions*, and calling one is `SC0400`: "cannot build a call to the
+/// generic function `largest`, which nothing has monomorphised" —
+/// `check.rs`'s own `Decision 42` note says the walk that would do it "puts
+/// the walk above this crate and no phase runs it yet". `Array[Map[String,
+/// Int]]` and `Map[String, Array[Float]]` are `SC0400` for a second reason:
+/// `Decision 20`'s `drop_fn` releases an element through a one-argument
+/// runtime call, and a container's own element has no such call to be
+/// released with. Both refusals are the backend naming its own edge deliberately
+/// rather than lowering a construct no execution test has ever run, exactly
+/// as its own message says, and both predate the bracket syntax — the
+/// generic-function gap and the nested-container gap are equally unreachable
+/// through `Array of T`. Closing either is out of this migration's scope.
+#[cfg(feature = "llvm")]
+#[test]
+fn a_runnable_subset_of_the_same_constructs_builds_and_prints_the_right_answer() {
+    let file = scratch(
+        "bracket_revision_run.science",
+        b"\
+interface Summarize:
+    def word_count(self) -> Int
+
+type Doc:
+    title: String
+
+Doc implements Summarize:
+    def word_count(self) -> Int:
+        self.title.length()
+
+Doc has:
+    def shout(self) -> Int:
+        self.title.length()
+
+def read_title(d: &Doc) -> Int:
+    d.title.length()
+
+def rename(d: &mut Doc):
+    d.title be \"renamed\"
+
+def main():
+    let xs: Array[Int] be [4, 8, 15, 16, 23, 42]
+
+    let mutable scores: Map[String, Int] be Map[String, Int].new()
+    scores.insert(\"alice\", 10)
+
+    let mutable doc be Doc(title: \"hello\")
+    rename(&mut doc)
+
+    print(f\"{xs.length()} {scores.length()} {doc.shout()} {doc.word_count()} {read_title(&doc)} {doc.title}\")
+",
+    );
+    let run = sciencec(&["build", &file]);
+    run.succeeded().silent_stderr();
+    let executable = Path::new(&file).with_extension(if cfg!(windows) { "exe" } else { "" });
+    assert!(executable.is_file(), "no executable at {}", executable.display());
+    let program = Command::new(&executable).output().expect("the program runs");
+    // `xs` has six elements; `scores` has the one key just inserted;
+    // `shout`, `word_count` and `read_title` each measure "renamed", which
+    // `rename` wrote over the constructor's "hello" through the `&mut Doc`
+    // `rename` took; and `doc.title` reads that same string back out.
+    assert_eq!(
+        String::from_utf8_lossy(&program.stdout).replace("\r\n", "\n"),
+        "6 1 7 7 7 renamed\n"
+    );
+    assert_eq!(program.status.code(), Some(0));
+}

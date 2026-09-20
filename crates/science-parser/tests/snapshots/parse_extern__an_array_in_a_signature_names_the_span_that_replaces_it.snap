@@ -1,34 +1,34 @@
 ---
 source: crates/science-parser/tests/parse_extern.rs
-expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\" library \"openblas\":\n    def takes(a: borrowed Array of F64, b: mutable borrowed Array of F64, c: Array of I32)\n\"#)"
+expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\" library \"openblas\":\n    def takes(a: &Array[F64], b: &mut Array[F64], c: Array[I32])\n\"#)"
 ---
-Module @0..129
-  Extern "C" unsafe @0..128
+Module @0..103
+  Extern "C" unsafe @0..102
     Library "openblas" @18..36
     items
-      ExternFn `takes` @42..128
+      ExternFn `takes` @42..102
         params
-          Param `a` @52..76
-            type: Borrowed @55..76
-              Path `Array` @64..76
+          Param `a` @52..66
+            type: Borrowed @55..66
+              Path `Array` @56..66
                 generics of `Array`
-                  Path `F64` @73..76
-          Param `b` @78..110
-            type: Borrowed mutable @81..110
-              Path `Array` @98..110
+                  Path `F64` @62..65
+          Param `b` @68..86
+            type: Borrowed mutable @71..86
+              Path `Array` @76..86
                 generics of `Array`
-                  Path `F64` @107..110
-          Param `c` @112..127
-            type: Path `Array` @115..127
+                  Path `F64` @82..85
+          Param `c` @88..101
+            type: Path `Array` @91..101
               generics of `Array`
-                Path `I32` @124..127
+                Path `I32` @97..100
 --- diagnostics ---
-SC0421 @55..76 `Array of T` has no C representation
+SC0421 @55..66 `Array[T]` has no C representation
   note the length does not cross the ABI — it exists on the Science side so that the wrapper's bounds check is an expression the compiler checks
-  note a call site still passes the array: `borrowed Array of T` coerces to `ffi.Span of T` there, and `.span()` names the conversion where it has to be written out
-SC0421 @81..110 `Array of T` has no C representation
+  note a call site still passes the array: `&Array[T]` coerces to `ffi.Span[T]` there, and `.span()` names the conversion where it has to be written out
+SC0421 @71..86 `Array[T]` has no C representation
   note the length does not cross the ABI — it exists on the Science side so that the wrapper's bounds check is an expression the compiler checks
-  note a call site still passes the array: `borrowed Array of T` coerces to `ffi.Span of T` there, and `.span()` names the conversion where it has to be written out
-SC0421 @115..127 `Array of T` has no C representation
+  note a call site still passes the array: `&Array[T]` coerces to `ffi.Span[T]` there, and `.span()` names the conversion where it has to be written out
+SC0421 @91..101 `Array[T]` has no C representation
   note the length does not cross the ABI — it exists on the Science side so that the wrapper's bounds check is an expression the compiler checks
-  note a call site still passes the array: `borrowed Array of T` coerces to `ffi.Span of T` there, and `.span()` names the conversion where it has to be written out
+  note a call site still passes the array: `&Array[T]` coerces to `ffi.Span[T]` there, and `.span()` names the conversion where it has to be written out

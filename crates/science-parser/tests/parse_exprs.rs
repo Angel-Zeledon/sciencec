@@ -899,20 +899,26 @@ fn self_is_an_expression() {
 }
 
 /// A name may carry generic arguments before an associated function is called
-/// through it. §4.3 requires the parenthesised form — `(Array of Doc).new()` —
-/// so that the `.` cannot attach to the last type argument instead.
+/// through it. One argument and no `any` is left ambiguous here on purpose —
+/// `Array[Doc].new()` parses as `ExprKind::Index` over `Path Array` and
+/// `Path Doc`, because `Array[Doc]` and `xs[i]` are the same four tokens and
+/// only `science-resolve` knows which `Array` is (see `Self::parse_postfix`'s
+/// `LBracket` arm for the whole argument, and `science-resolve`'s own tests
+/// for the rewrite this receiver gets once it is known to name a type).
 #[test]
 fn a_name_may_be_instantiated_before_an_associated_call() {
     assert_shape(
         "Array[Doc].new()",
         "
         Method `new`
-          receiver: Path `Array`
-            generics of `Array`
-              Path `Doc`
+          receiver: Index
+            base: Path `Array`
+            index: Path `Doc`
         ",
     );
-    // Two or more arguments take parentheses of their own (§4.3).
+    // Two or more arguments settle the question here instead: an index takes
+    // exactly one subscript, so a comma at this depth means the brackets are
+    // generic arguments and not an index, with no name needed to tell (§4.3).
     assert_shape(
         "Map[String, Int].new()",
         "
@@ -937,14 +943,23 @@ fn a_name_may_be_instantiated_before_an_associated_call() {
     );
 }
 
-/// The bare form is the one §4.3 rules on: `.new()` could belong to `Doc` or
-/// to `Array of Doc`, and rather than make a space load-bearing Science
-/// reports the ambiguity (`SC0116`), says which reading it took, and offers
-/// the parentheses as the fix.
+/// The bare `of` form is the one §4.3 rules on: `.new()` could belong to
+/// `Doc` or to `Array of Doc`, and rather than make a space load-bearing
+/// Science reports the ambiguity (`SC0116`), says which reading it took, and
+/// offers the parentheses as the fix.
+///
+/// **This is `of`'s alone, and the bracket revision could not inherit it.**
+/// `Array[Doc].new()` has a `]` that ends the type argument list on its own,
+/// so `.new()` after it has exactly one reading — no ambiguity is left to
+/// report, which is why `a_name_may_be_instantiated_before_an_associated_call`
+/// above parses this same call cleanly, as an `Index` with no diagnostic at
+/// all. `SC0116` still exists because the `of` spelling that needs it still
+/// lexes (§4.6's trade for a helpful migration message), and this is the one
+/// test left that reaches it.
 #[test]
 fn a_bare_generic_before_an_associated_call_is_ambiguous() {
     insta::assert_snapshot!(parse_source_allowing_errors(
-        "def f():\n    let a be Array[Doc].new()\n"
+        "def f():\n    let a be Array of Doc.new()\n"
     ));
 }
 

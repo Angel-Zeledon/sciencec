@@ -1,8 +1,8 @@
 ---
 source: crates/science-parser/tests/parse_stmts.rs
-expression: "parse_body(r#\"def main():\n    let greeting be \"hola\"\n    let mutable count be 0\n    let annotated: Int be 42\n    let mutable typed: mutable borrowed String be mutable borrowed owner\n\"#)"
+expression: "parse_body(r#\"def main():\n    let greeting be \"hola\"\n    let mutable count be 0\n    let annotated: Int be 42\n    let mutable typed: &mut String be &mut owner\n\"#)"
 ---
-Block @16..167
+Block @16..143
   Let `greeting` @16..38
     value: Str "hola" @32..38
   Let `count` mutable @43..65
@@ -10,10 +10,10 @@ Block @16..167
   Let `annotated` @70..94
     type: Path `Int` @85..88
     value: Int 42 @92..94
-  Let `typed` mutable @99..167
-    type: Borrowed mutable @118..141
-      Path `String` @135..141
-    value: Borrowed mutable @145..167
-      Path `owner` @162..167
+  Let `typed` mutable @99..143
+    type: Borrowed mutable @118..129
+      Path `String` @123..129
+    value: Borrowed mutable @133..143
+      Path `owner` @138..143
 --- diagnostics ---
 (none)

@@ -81,8 +81,7 @@ def merge[A, B](left: &A,
     out
 
 # A bound in the parameter list and a `where` clause at once.
-def rank[T: Ord](items: &Array[T], fallback: &T) -> &T
-        where T: Clone:
+def rank[T: Ord](items: &Array[T], fallback: &T) -> &T where T: Clone:
     if items.is_empty(): fallback else: largest(items)
 
 # Several type parameters, each used in a different position. Two or more

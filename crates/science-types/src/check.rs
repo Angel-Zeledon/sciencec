@@ -5607,10 +5607,13 @@ fn unsatisfied_bound(
 ///
 /// **The message names the parameters that are open and offers the spelling**,
 /// because unlike `SC0526` this one has a fix that is always available and
-/// always writable. `examples/07_generics.science` already writes it and says
-/// why the parentheses are required — *"`Wrapper of Int.holding(7)` would not
-/// say whether `.holding` belongs to `Int` or to the whole type"* — so the
-/// second note quotes the corpus rather than inventing a form.
+/// always writable. `examples/07_generics.science` already writes the fixed
+/// form, `Wrapper[Int].holding(7)`, and needs no parentheses around it: a `]`
+/// closes the argument list on its own, which is exactly the ambiguity the
+/// `of`-style bare form used to need parentheses for — *"`Wrapper of
+/// Int.holding(7)` would not say whether `.holding` belongs to `Int` or to
+/// the whole type"* is `parse_postfix`'s own doc comment on why that spelling
+/// still takes them, and this message is one bracket newer than it.
 ///
 /// **No [`Suggestion`] is attached**, although one would be machine-applicable
 /// in shape. The replacement needs the type the author meant, which is exactly
@@ -5643,8 +5646,8 @@ fn uninferable_receiver(
          of this call, and from nowhere else",
     )
     .with_note(format!(
-        "write the instantiation, in parentheses so that the `.` applies to the whole type: \
-         `({ty} of ..).{method}(..)`"
+        "write the instantiation: `{ty}[..].{method}(..)` — a `]` closes the argument list on \
+         its own, so nothing here needs the parentheses `({ty} of ..)` used to"
     ))
 }
 

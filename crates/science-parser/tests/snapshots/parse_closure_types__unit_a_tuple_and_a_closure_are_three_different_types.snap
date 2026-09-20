@@ -1,6 +1,5 @@
 ---
 source: crates/science-parser/tests/parse_closure_types.rs
-assertion_line: 26
 expression: "parse_source(r#\"def f(a: (), b: (Int, Bool), c: (Int) -> Bool) -> Int:\n    0\n\"#)"
 ---
 Module @0..61

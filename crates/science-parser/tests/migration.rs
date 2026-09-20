@@ -1,5 +1,8 @@
 //! The migration diagnostics of syntax revision 2: `SC0138`–`SC0144` from
-//! the parser, and `SC0016`/`SC0017` from the lexer.
+//! the parser, and `SC0016`/`SC0017` from the lexer. Also the bracket
+//! revision's own old spellings — `borrowed T`, `mutable borrowed T`, `T of
+//! U` — which are younger and share `SC0100` rather than a code apiece; see
+//! the section near the end of this file.
 //!
 //! Every word the revision removed is an ordinary identifier now, so code
 //! written before it does not fail where the mistake is — it fails a token or
@@ -12,6 +15,11 @@
 //! render suggestions, so a fix that pointed at the wrong span would otherwise
 //! be invisible. And each pair ends with a second file proving the parser
 //! carries on: one stale word must cost one diagnostic, not a cascade.
+//!
+//! The bracket revision's own diagnostics are one size smaller: `self.error`
+//! reports the code and the message but attaches no `Suggestion`, so their
+//! tests below use `only_message` rather than `only_fix` and do not claim a
+//! fix that does not exist.
 
 mod common;
 
@@ -398,4 +406,135 @@ fn a_bracket_after_a_freed_word_is_read_as_the_migration() {
         ["SC0143"],
         "`is above` is the removed comparison phrase, as it is before a `(`"
     );
+}
+
+// --- `borrowed T`, `mutable borrowed T` and `T of U` (the bracket revision) -
+
+/// The one diagnostic in a source, without insisting on a fix.
+///
+/// `parse_generic_params`, `parse_path`, `parse_type` and `parse_unary` report
+/// these five through the plain `self.error` helper rather than
+/// `Diagnostic::error(..).with_suggestion(..)`, so — unlike every migration
+/// code above — there is no [`Suggestion`] to read the replacement out of.
+/// This checks the same "exactly one diagnostic" property `only_fix` does,
+/// and stops one field short of it.
+#[track_caller]
+fn only_message(source: &str) -> (String, String) {
+    let (tokens, lexical) = science_lexer::lex(common::FILE, source);
+    assert!(lexical.iter().next().is_none(), "the source should lex clean");
+    let (_, diagnostics) = science_parser::parse_module(&tokens, common::FILE);
+    let mut found = diagnostics.iter();
+    let diagnostic = found.next().expect("the stale spelling should have produced a diagnostic");
+    assert!(found.next().is_none(), "one stale spelling is one diagnostic");
+    (diagnostic.code.to_string(), diagnostic.message.clone())
+}
+
+/// `borrowed Int` reports the sigil it was replaced by, in a parameter's type.
+///
+/// `borrowed` stays a lexable keyword for exactly this reason (§4.6, and the
+/// commit that made `&T` the spelling): without it, `def f(x: borrowed Int)`
+/// would fail one token later as "expected a type, found `borrowed`", which
+/// is true and does not teach a reader anything about `&`.
+#[test]
+fn a_borrowed_parameter_type_reports_the_sigil() {
+    let source = "def f(x: borrowed Int) -> Int:\n    x\n";
+    let (code, message) = only_message(source);
+    assert_eq!(code, "SC0100");
+    assert_eq!(message, "`borrowed T` is now written `&T`");
+}
+
+/// `mutable borrowed Int` is the two-word exclusive borrow, and it gets its
+/// own message rather than being folded into the shared-borrow one: the fix
+/// is `&mut T`, not `&T`, and a reader who only sees "is now written `&T`"
+/// would drop the `mut` a caller relies on.
+#[test]
+fn a_mutable_borrowed_parameter_type_names_both_words() {
+    let source = "def f(x: mutable borrowed Int):\n    x\n";
+    let (code, message) = only_message(source);
+    assert_eq!(code, "SC0100");
+    assert_eq!(message, "`mutable borrowed T` is now written `&mut T`");
+}
+
+/// `borrowed x` in an expression is the same message one syntactic position
+/// over: `parse_unary`'s copy of the check, not `parse_type`'s.
+#[test]
+fn a_borrowed_expression_reports_the_sigil() {
+    let source = "def f(x: Int) -> Int:\n    print(borrowed x)\n    x\n";
+    let (code, message) = only_message(source);
+    assert_eq!(code, "SC0100");
+    assert_eq!(message, "`borrowed x` is now written `&x`");
+}
+
+/// `mutable borrowed x` in an expression, the exclusive-borrow twin of the
+/// test above.
+#[test]
+fn a_mutable_borrowed_expression_names_both_words() {
+    let source = "def f(x: Int):\n    print(mutable borrowed x)\n";
+    let (code, message) = only_message(source);
+    assert_eq!(code, "SC0100");
+    assert_eq!(message, "`mutable borrowed x` is now written `&mut x`");
+}
+
+/// `def largest of T(...)` names the bracket the old `of` was replaced by,
+/// rather than failing on the `(` that used to open the bare form's argument
+/// list as "expected `(`, found `of`" — true of the token and silent about
+/// why `of` is there at all.
+#[test]
+fn a_generic_function_written_with_of_reports_the_bracket() {
+    let source = "def largest of T(value: T) -> T:\n    value\n";
+    let (code, message) = only_message(source);
+    assert_eq!(code, "SC0100");
+    assert_eq!(message, "`of T` is now written `[T]`");
+}
+
+/// `Array of T`, a bare one-argument instantiation, names the type it
+/// instantiates: the fix is `Array[T]`, not some other type's brackets, so
+/// the message repeats `Array` rather than saying `T` twice.
+#[test]
+fn a_bare_generic_type_written_with_of_names_itself() {
+    let source = "def f(xs: Array of Int) -> Int:\n    xs.length()\n";
+    let (code, message) = only_message(source);
+    assert_eq!(code, "SC0100");
+    assert_eq!(message, "`Array of T` is now written `Array[T]`");
+}
+
+/// `Map of (String, Int)`, the parenthesised form `of` needed for two or more
+/// arguments (§4.3 before this revision), reports the same shape of message:
+/// the parenthesised list collapses to one bracket, whether it held one
+/// argument or several.
+#[test]
+fn a_parenthesised_generic_type_written_with_of_names_itself() {
+    let source = "def f(m: Map of (String, Int)) -> Int:\n    m.length()\n";
+    let (code, message) = only_message(source);
+    assert_eq!(code, "SC0100");
+    assert_eq!(message, "`Map of T` is now written `Map[T]`");
+}
+
+/// A user-defined generic type reports itself exactly the same way a builtin
+/// one does — the message is built from the path the author wrote, not from
+/// a fixed list of names the parser happens to know.
+#[test]
+fn a_user_defined_generic_type_written_with_of_names_itself() {
+    let source = "def f(m: MatrixBase of Float) -> Float:\n    m.trace()\n";
+    let (code, message) = only_message(source);
+    assert_eq!(code, "SC0100");
+    assert_eq!(message, "`MatrixBase of T` is now written `MatrixBase[T]`");
+}
+
+/// One stale spelling costs one diagnostic and the parser still reads the
+/// rest of the declaration: the body after a `borrowed` parameter, and a
+/// second, correctly-spelled function after it.
+#[test]
+fn a_borrowed_parameter_does_not_derail_the_rest_of_the_file() {
+    let source = "def f(x: borrowed Int) -> Int:\n    x\n\ndef g(y: &Int) -> Int:\n    y\n";
+    assert_eq!(codes(source), ["SC0100"]);
+}
+
+/// Likewise for `of`: the parenthesised argument list still closes, the
+/// return type after it is still read, and the next declaration is untouched.
+#[test]
+fn a_generic_type_written_with_of_does_not_derail_the_rest_of_the_file() {
+    let source =
+        "def f(m: Map of (String, Int)) -> Int:\n    m.length()\n\ndef g(xs: Array[Int]) -> Int:\n    xs.length()\n";
+    assert_eq!(codes(source), ["SC0100"]);
 }

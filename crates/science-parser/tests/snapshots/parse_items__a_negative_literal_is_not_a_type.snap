@@ -1,37 +1,37 @@
 ---
 source: crates/science-parser/tests/parse_items.rs
-expression: "parse_source_allowing_errors(concat!(\"def f(x: -1): x\\n\",\n\"type Bad is Window of (Int, -1.5)\\n\",\n\"type Worse is Window of (Int, -\\\"a\\\")\\n\",\n\"type Worst is Window of (Int, -true)\\n\",))"
+expression: "parse_source_allowing_errors(concat!(\"def f(x: -1): x\\n\",\n\"type Bad is Window[Int, -1.5]\\n\", \"type Worse is Window[Int, -\\\"a\\\"]\\n\",\n\"type Worst is Window[Int, -true]\\n\",))"
 ---
-Module @0..123
+Module @0..111
   Fn `f` @0..15
     params
       Param `x` @6..10
         type: Error @9..10
-  Alias `Bad` @16..49
-    type: Path `Window` @28..45
+  Alias `Bad` @16..45
+    type: Path `Window` @28..41
       generics of `Window`
-        Path `Int` @39..42
-        Error @44..45
-  Alias `Worse` @50..85
-    type: Path `Window` @64..81
+        Path `Int` @35..38
+        Error @40..41
+  Alias `Worse` @46..77
+    type: Path `Window` @60..73
       generics of `Window`
-        Path `Int` @75..78
-        Error @80..81
-  Alias `Worst` @86..122
-    type: Path `Window` @100..117
+        Path `Int` @67..70
+        Error @72..73
+  Alias `Worst` @78..110
+    type: Path `Window` @92..105
       generics of `Window`
-        Path `Int` @111..114
-        Error @116..117
+        Path `Int` @99..102
+        Error @104..105
 --- diagnostics ---
 SC0104 @9..10 expected a type, found `-`
 SC0100 @10..11 expected `)`, found a number literal
 SC0100 @10..11 expected end of line, found a number literal
-SC0104 @44..45 expected a type, found `-`
-SC0100 @45..48 expected `)`, found a number literal
-SC0100 @45..48 expected end of line, found a number literal
-SC0104 @80..81 expected a type, found `-`
-SC0100 @81..84 expected `)`, found a string literal
-SC0100 @81..84 expected end of line, found a string literal
-SC0104 @116..117 expected a type, found `-`
-SC0100 @117..121 expected `)`, found `true`
-SC0100 @117..121 expected end of line, found `true`
+SC0104 @40..41 expected a type, found `-`
+SC0100 @41..44 expected `]`, found a number literal
+SC0100 @41..44 expected end of line, found a number literal
+SC0104 @72..73 expected a type, found `-`
+SC0100 @73..76 expected `]`, found a string literal
+SC0100 @73..76 expected end of line, found a string literal
+SC0104 @104..105 expected a type, found `-`
+SC0100 @105..109 expected `]`, found `true`
+SC0100 @105..109 expected end of line, found `true`

@@ -1,27 +1,27 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(r#\"interface Pretty of T: Summarize + Clone:\n    def pretty(self) -> T\n\ninterface Plain of (T): Summarize + Clone:\n    def plain(self) -> T\n\"#)"
+expression: "parse_source(r#\"interface Pretty[T]: Summarize + Clone:\n    def pretty(self) -> T\n\ninterface Plain[T]: Summarize + Clone:\n    def plain(self) -> T\n\"#)"
 ---
-Module @0..137
-  Interface `Pretty` @0..67
+Module @0..131
+  Interface `Pretty` @0..65
     generics
-      TypeParam `T` @20..40
-        bounds
-          Bound `Summarize` @23..32
-          Bound `Clone` @35..40
-    methods
-      Fn `pretty` @46..67
-        receiver: self @57..61
-        ret: Path `T` @66..67
-  Interface `Plain` @69..136
-    generics
-      TypeParam `T` @89..90
+      TypeParam `T` @17..18
     supers
-      Bound `Summarize` @93..102
-      Bound `Clone` @105..110
+      Bound `Summarize` @21..30
+      Bound `Clone` @33..38
     methods
-      Fn `plain` @116..136
-        receiver: self @126..130
-        ret: Path `T` @135..136
+      Fn `pretty` @44..65
+        receiver: self @55..59
+        ret: Path `T` @64..65
+  Interface `Plain` @67..130
+    generics
+      TypeParam `T` @83..84
+    supers
+      Bound `Summarize` @87..96
+      Bound `Clone` @99..104
+    methods
+      Fn `plain` @110..130
+        receiver: self @120..124
+        ret: Path `T` @129..130
 --- diagnostics ---
 (none)

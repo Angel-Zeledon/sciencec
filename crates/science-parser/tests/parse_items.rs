@@ -1007,7 +1007,7 @@ fn the_nine_unit_aliases_of_scientific_libraries_12_3() {
 
     for (name, exponents) in aliases {
         let vector = exponents.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(", ");
-        let source = format!("type {name} of T is Quantity[T, {vector}]\n");
+        let source = format!("type {name}[T] is Quantity[T, {vector}]\n");
         let module = parse_clean(&source);
 
         let arguments = alias_arguments(&module);

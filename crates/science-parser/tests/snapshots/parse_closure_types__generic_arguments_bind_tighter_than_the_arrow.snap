@@ -1,7 +1,6 @@
 ---
 source: crates/science-parser/tests/parse_closure_types.rs
-assertion_line: 115
-expression: "shape_of_type(\"Array of Int -> Bool\")"
+expression: "shape_of_type(\"Array[Int] -> Bool\")"
 ---
 Closure
   params

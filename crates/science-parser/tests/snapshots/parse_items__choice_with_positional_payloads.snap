@@ -1,18 +1,13 @@
 ---
 source: crates/science-parser/tests/parse_items.rs
-expression: "parse_report(vec![Choice, id(\"Result\"), Of, LParen, id(\"T\"), Comma, id(\"E\"),\nRParen, Colon, Newline, Indent, id(\"Ok\"), LParen, id(\"T\"), RParen, Newline,\nid(\"Err\"), LParen, id(\"E\"), RParen, Newline, Dedent,])"
+expression: "parse_report(vec![Choice, id(\"Result\"), LBracket, id(\"T\"), Comma, id(\"E\"),\nRParen, Colon, Newline, Indent, id(\"Ok\"), LParen, id(\"T\"), RParen, Newline,\nid(\"Err\"), LParen, id(\"E\"), RParen, Newline, Dedent,])"
 ---
-Module @0..31
-  Choice `Result` @0..31
+Module @0..29
+  Choice `Result` @0..16
     generics
-      TypeParam `T` @15..16
-      TypeParam `E` @17..18
-    variants
-      Variant `Ok` @20..25
-        payload
-          Path `T` @23..24
-      Variant `Err` @25..31
-        payload
-          Path `E` @29..30
+      TypeParam `T` @13..14
+      TypeParam `E` @15..16
 --- diagnostics ---
-(none)
+SC0100 @16..17 expected `]`, found `)`
+SC0100 @16..17 expected `:`, found `)`
+SC0101 @16..17 expected a declaration (`def`, `tool`, `type`, `choice`, `interface`, `const`, `use`, or a type followed by `implements` or `has`) or a statement, found `)`

@@ -2,23 +2,23 @@
 source: crates/science-parser/tests/migration.rs
 expression: parse_source_allowing_errors(source)
 ---
-Module @0..77
-  Fn `f` @0..76
+Module @0..67
+  Fn `f` @0..66
     params
-      Param `rows` @6..33
-        type: Borrowed @12..33
-          Path `Array` @21..33
+      Param `rows` @6..23
+        type: Borrowed @12..23
+          Path `Array` @13..23
             generics of `Array`
-              Path `Int` @30..33
-    body: Block @40..76
-      tail: For @40..76
-        pattern: Binding `row` @49..52
-        iter: Path `rows` @56..60
-        body: Block @70..76
-          tail: Call @70..76
-            callee: Path `g` @70..71
+              Path `Int` @19..22
+    body: Block @30..66
+      tail: For @30..66
+        pattern: Binding `row` @39..42
+        iter: Path `rows` @46..50
+        body: Block @60..66
+          tail: Call @60..66
+            callee: Path `g` @60..61
             args
-              Path `row` @72..75
+              Path `row` @62..65
 --- diagnostics ---
-SC0138 @40..48 the loop is written `for x in xs`
+SC0138 @30..38 the loop is written `for x in xs`
   note `each` names the subject of a call, as in `docs.map(each.title)`, and nothing else

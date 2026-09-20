@@ -1,19 +1,8 @@
 ---
 source: crates/science-parser/tests/parse_items.rs
-expression: "parse_report(vec![Type, id(\"Grid\"), Of, LParen, id(\"T\"), Comma, Const,\nid(\"ROWS\"), Colon, id(\"Int\"), Comma, Const, id(\"COLS\"), Colon, id(\"Int\"),\nRParen, Colon, Newline, Indent, id(\"cells\"), Colon, id(\"Array\"), Of, id(\"T\"),\nNewline, Dedent,])"
+expression: "parse_report(vec![Type, id(\"Grid\"), LBracket, id(\"T\"), Comma, Const,\nid(\"ROWS\"), Colon, id(\"Int\"), Comma, Const, id(\"COLS\"), Colon, id(\"Int\"),\nRParen, Colon, Newline, Indent, id(\"cells\"), Colon, id(\"Array\"), Of, id(\"T\"),\nNewline, Dedent,])"
 ---
-Module @0..56
-  Record `Grid` @0..56
-    generics
-      TypeParam `T` @11..12
-      ConstParam `ROWS` @13..26
-        type: Path `Int` @23..26
-      ConstParam `COLS` @27..40
-        type: Path `Int` @37..40
-    fields
-      Field `cells` @42..56
-        type: Path `Array` @48..56
-          generics of `Array`
-            Path `T` @55..56
+Module @0..54
 --- diagnostics ---
-(none)
+SC0100 @38..39 expected `]`, found `)`
+SC0100 @38..39 expected `:` to open the type's fields or `is` to alias it, found `)`

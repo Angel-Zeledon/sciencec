@@ -64,14 +64,12 @@ def clear(value: &mut any Reset):
 def describe_boxed(value: Box[any Summarize]) -> String:
     value.summarize()
 
-# `any` as a return type, again behind the indirection. The signature is
-# broken across lines inside the parameter list, where indentation takes no
-# part (§4.2).
-def pick(
-    flag: Bool,
-    left: &any Summarize,
-    right: &any Summarize
-) -> &any Summarize:
+# `any` as a return type, again behind the indirection. The parameter list
+# used to be broken across lines here to demonstrate that indentation takes
+# no part inside brackets (§4.2); `&any Summarize` is short enough that the
+# signature now fits on one line unbroken, and `07_generics.science`'s
+# `merge` already carries that demonstration under `# fmt: skip`.
+def pick(flag: Bool, left: &any Summarize, right: &any Summarize) -> &any Summarize:
     if flag: left else: right
 
 # `Box` is built through its associated function (§4.4); named-argument

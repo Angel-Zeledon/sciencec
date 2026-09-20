@@ -512,7 +512,7 @@ fn keywords_are_resolved() {
     assert_eq!(bare("return break continue"), vec![Return, Break, Continue]);
     assert_eq!(bare("type choice interface"), vec![Type, Choice, Interface]);
     assert_eq!(bare("implements has"), vec![Implements, Has]);
-    assert_eq!(bare("of &any"), vec![Of, Borrowed, Any]);
+    assert_eq!(bare("of &any"), vec![Of, Amp, Any]);
     assert_eq!(bare("use public const"), vec![Use, Public, Const]);
     assert_eq!(bare("giving null"), vec![Giving, Null]);
     assert_eq!(bare("true false"), vec![True, False]);
@@ -523,20 +523,20 @@ fn keywords_are_resolved() {
 
 #[test]
 fn the_words_the_old_symbol_syntax_used_are_no_longer_keywords() {
-    // `fn`, `mut`, `struct`, `enum`, `impl`, `dyn` and `pub` were replaced by
-    // English words, so they are ordinary identifiers again. Nothing may keep
+    // `fn`, `struct`, `enum`, `impl`, `dyn` and `pub` were replaced by English
+    // words, so they are ordinary identifiers again. Nothing may keep
     // resolving them out of habit.
+    //
+    // `mut` used to be on this list too, but the `&T`/`&mut T` revision gave
+    // it a real job and it is an unconditional keyword again, the same way
+    // every other word here is: the lexer does not look at what came before
+    // it, and only the parser cares that the one place `mut` is legal is
+    // straight after `&` (§4.6). See
+    // `the_multi_word_keywords_are_sequences_and_not_single_tokens` below for
+    // that pairing, which is why `mut` is not asserted an identifier here.
     assert_eq!(
-        bare("fn mut struct enum impl dyn pub"),
-        vec![
-            id("fn"),
-            id("mut"),
-            id("struct"),
-            id("enum"),
-            id("impl"),
-            id("dyn"),
-            id("pub"),
-        ]
+        bare("fn struct enum impl dyn pub"),
+        vec![id("fn"), id("struct"), id("enum"), id("impl"), id("dyn"), id("pub")]
     );
 }
 
@@ -575,12 +575,17 @@ fn the_words_the_first_revision_used_are_no_longer_keywords() {
 
 #[test]
 fn the_multi_word_keywords_are_sequences_and_not_single_tokens() {
-    // §4.3: `let ... be` and `mutable borrowed` are sequences of reserved
-    // words, not new tokens. `for each` and `has methods` were two more until
-    // revision 2 §2.1 and §5 cut each down to one word.
+    // §4.3: `let ... be` and `&mut` are sequences of tokens, not one fused
+    // token apiece. `&mut T` used to be written `mutable borrowed T` — two
+    // whole reserved words — and the revision that shortened it to `&mut`
+    // kept the same shape one level down: `&` is punctuation and `mut` is its
+    // own keyword (see `the_words_the_old_symbol_syntax_used_are_no_longer_
+    // keywords` above for why it is a keyword at all), not a single `&mut`
+    // token the lexer invents. `for each` and `has methods` were two more
+    // until revision 2 §2.1 and §5 cut each down to one word.
     assert_eq!(bare("for x in xs:"), vec![For, id("x"), In, id("xs"), Colon]);
     assert_eq!(bare("let mutable x be 0"), vec![Let, Mutable, id("x"), Be, int(0, Dec, None)]);
-    assert_eq!(bare("&mut Doc"), vec![Mutable, Borrowed, id("Doc")]);
+    assert_eq!(bare("&mut Doc"), vec![Amp, Mut, id("Doc")]);
     assert_eq!(bare("Doc has:"), vec![id("Doc"), Has, Colon]);
 }
 
@@ -1006,25 +1011,34 @@ fn the_inline_block_form_stays_on_one_logical_line() {
 
 #[test]
 fn a_generic_signature_lexes_without_turbofish_ambiguity() {
-    // §4.4's `largest`. Generic arguments are spelled `of T` and borrows
-    // `borrowed T`, so nothing here needs brackets at all.
+    // §4.4's `largest`, now spelled with brackets. `[T]` after `largest` and
+    // `[T]` after `Array` are the same four tokens a subscript would be —
+    // `LBracket ident RBracket` — and the lexer does not try to tell them
+    // apart: eebf6a8's commit message is explicit that the parser and
+    // `science-resolve` settle that later, from the argument count and from
+    // what the bracketed name resolves to. What "without turbofish ambiguity"
+    // means at this layer is narrower and still true: unlike `largest::<T>`,
+    // no separate marker token is needed to lex a generic signature at all,
+    // and `&` before a parameter's type is one punctuation token, not a word.
     assert_eq!(
         bare("def largest[T](items: &Array[T]) -> &T:"),
         vec![
             Function,
             id("largest"),
-            Of,
+            LBracket,
             id("T"),
+            RBracket,
             LParen,
             id("items"),
             Colon,
-            Borrowed,
+            Amp,
             id("Array"),
-            Of,
+            LBracket,
             id("T"),
+            RBracket,
             RParen,
             Arrow,
-            Borrowed,
+            Amp,
             id("T"),
             Colon,
         ]
@@ -1032,10 +1046,15 @@ fn a_generic_signature_lexes_without_turbofish_ambiguity() {
 }
 
 #[test]
-fn several_generic_arguments_are_parenthesised() {
+fn several_generic_arguments_share_one_bracket() {
+    // `Map of (String, Int)` used to need its own parentheses around two or
+    // more generic arguments, because `of` took only one. `Map[String, Int]`
+    // needs none: the brackets `largest[T]` already opens for one argument
+    // hold a comma-separated list just as well, so this is `Ident LBracket
+    // ident Comma ident RBracket` and nothing more.
     assert_eq!(
         bare("Map[String, Int]"),
-        vec![id("Map"), LBracket, id("String"), Comma, id("Int"), RParen]
+        vec![id("Map"), LBracket, id("String"), Comma, id("Int"), RBracket]
     );
 }
 
@@ -1311,8 +1330,8 @@ fn a_line_beginning_with_where_continues_the_signature_above() {
     assert_eq!(
         kinds(src),
         vec![
-            Function, id("best_of"), Of, id("T"),
-            LParen, id("x"), Colon, Borrowed, id("T"), RParen,
+            Function, id("best_of"), LBracket, id("T"), RBracket,
+            LParen, id("x"), Colon, Amp, id("T"), RParen,
             Arrow, id("String"),
             Where, id("T"), Colon, id("Ord"), Colon,
             Newline,

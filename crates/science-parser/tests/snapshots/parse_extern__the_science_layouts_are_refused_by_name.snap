@@ -1,72 +1,72 @@
 ---
 source: crates/science-parser/tests/parse_extern.rs
-expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\" library \"z\":\n    def a(text: borrowed String)\n    def b(table: Map of (String, I32))\n    def c(maybe: Option of I32) -> Result of (I32, I32)\n    def d(pair: (I32, I32))\n    def e(value: any Summarize)\n    type Bad is Array of F64\n    static worse: String\n    const WORST be 1 as Box of I32\n\"#)"
+expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\" library \"z\":\n    def a(text: &String)\n    def b(table: Map[String, I32])\n    def c(maybe: Option[I32]) -> Result[I32, I32]\n    def d(pair: (I32, I32))\n    def e(value: any Summarize)\n    type Bad is Array[F64]\n    static worse: String\n    const WORST be 1 as Box[I32]\n\"#)"
 ---
-Module @0..308
-  Extern "C" unsafe @0..307
+Module @0..286
+  Extern "C" unsafe @0..285
     Library "z" @18..29
     items
-      ExternFn `a` @35..63
+      ExternFn `a` @35..55
         params
-          Param `text` @41..62
-            type: Borrowed @47..62
-              Path `String` @56..62
-      ExternFn `b` @68..102
+          Param `text` @41..54
+            type: Borrowed @47..54
+              Path `String` @48..54
+      ExternFn `b` @60..90
         params
-          Param `table` @74..101
-            type: Path `Map` @81..101
+          Param `table` @66..89
+            type: Path `Map` @73..89
               generics of `Map`
-                Path `String` @89..95
-                Path `I32` @97..100
-      ExternFn `c` @107..158
+                Path `String` @77..83
+                Path `I32` @85..88
+      ExternFn `c` @95..140
         params
-          Param `maybe` @113..133
-            type: Path `Option` @120..133
+          Param `maybe` @101..119
+            type: Path `Option` @108..119
               generics of `Option`
-                Path `I32` @130..133
-        ret: Path `Result` @138..158
+                Path `I32` @115..118
+        ret: Path `Result` @124..140
           generics of `Result`
-            Path `I32` @149..152
-            Path `I32` @154..157
-      ExternFn `d` @163..186
+            Path `I32` @131..134
+            Path `I32` @136..139
+      ExternFn `d` @145..168
         params
-          Param `pair` @169..185
-            type: Tuple @175..185
-              Path `I32` @176..179
-              Path `I32` @181..184
-      ExternFn `e` @191..218
+          Param `pair` @151..167
+            type: Tuple @157..167
+              Path `I32` @158..161
+              Path `I32` @163..166
+      ExternFn `e` @173..200
         params
-          Param `value` @197..217
-            type: Any @204..217
-              Bound `Summarize` @208..217
-      ExternAlias `Bad` @223..247
-        type: Path `Array` @235..247
+          Param `value` @179..199
+            type: Any @186..199
+              Bound `Summarize` @190..199
+      ExternAlias `Bad` @205..227
+        type: Path `Array` @217..227
           generics of `Array`
-            Path `F64` @244..247
-      ExternStatic `worse` @252..272
-        type: Path `String` @266..272
-      ExternConst `WORST` @277..307
+            Path `F64` @223..226
+      ExternStatic `worse` @232..252
+        type: Path `String` @246..252
+      ExternConst `WORST` @257..285
         value: Int 1
-        type: Path `Box` @297..307
+        type: Path `Box` @277..285
           generics of `Box`
-            Path `I32` @304..307
+            Path `I32` @281..284
 --- diagnostics ---
-SC0420 @56..62 `String` cannot cross the C boundary
-  note a C string is NUL-terminated and a Science `String` is UTF-8 bytes with a length; write `ffi.CStr` for one that is borrowed and `ffi.CString` for one Science owns, and expect the copy both of them make
-SC0420 @81..101 `Map` cannot cross the C boundary
+SC0420 @48..54 `String` cannot cross the C boundary
+  note a C string is NUL-terminated and a Science `String` is UTF-8 bytes with a length; write `ffi.CStr` for one that is &and `ffi.CString` for one Science owns, and expect the copy both of them make
+SC0420 @73..89 `Map` cannot cross the C boundary
   note a `Map` is a Science hash table, and the C side does not know its layout
-SC0420 @120..133 `Option` cannot cross the C boundary
+SC0420 @108..119 `Option` cannot cross the C boundary
   note an `Option` is a niche, and which niche depends on the payload; the C spelling of absence is a null `ffi.Pointer`
-SC0420 @138..158 `Result` cannot cross the C boundary
+SC0420 @124..140 `Result` cannot cross the C boundary
   note a `Result` is a Science choice; a C function reports failure with a status the safe wrapper converts
-SC0420 @175..185 a tuple cannot cross the C boundary
+SC0420 @157..167 a tuple cannot cross the C boundary
   note C has no tuple; declare a `type` marked `implements ffi.CLayout` and pass a pointer to it
-SC0420 @204..217 `any Summarize` cannot cross the C boundary
+SC0420 @186..199 `any Summarize` cannot cross the C boundary
   note a dynamically dispatched value is a Science pair of pointers, and C knows neither half
-SC0421 @235..247 `Array of T` has no C representation
+SC0421 @217..227 `Array[T]` has no C representation
   note the length does not cross the ABI — it exists on the Science side so that the wrapper's bounds check is an expression the compiler checks
-  note a call site still passes the array: `borrowed Array of T` coerces to `ffi.Span of T` there, and `.span()` names the conversion where it has to be written out
-SC0420 @266..272 `String` cannot cross the C boundary
-  note a C string is NUL-terminated and a Science `String` is UTF-8 bytes with a length; write `ffi.CStr` for one that is borrowed and `ffi.CString` for one Science owns, and expect the copy both of them make
-SC0420 @297..307 `Box` cannot cross the C boundary
-  note a `Box` owns what it points at under Science's allocator; pass `ffi.Pointer of T` and say in the binding who frees it
+  note a call site still passes the array: `&Array[T]` coerces to `ffi.Span[T]` there, and `.span()` names the conversion where it has to be written out
+SC0420 @246..252 `String` cannot cross the C boundary
+  note a C string is NUL-terminated and a Science `String` is UTF-8 bytes with a length; write `ffi.CStr` for one that is &and `ffi.CString` for one Science owns, and expect the copy both of them make
+SC0420 @277..285 `Box` cannot cross the C boundary
+  note a `Box` owns what it points at under Science's allocator; pass `ffi.Pointer[T]` and say in the binding who frees it

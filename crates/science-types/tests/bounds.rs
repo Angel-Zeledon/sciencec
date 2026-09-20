@@ -193,7 +193,7 @@ def bad(n: I64) -> String:
     // The note names the block the author would have to write.
     assert!(rendered.contains("`I64 implements Summarize:`"), "{rendered}");
     // The secondary label points at the declaration, not at the call.
-    assert!(rendered.contains("def describe of T: Summarize"), "{rendered}");
+    assert!(rendered.contains("def describe[T: Summarize]"), "{rendered}");
 }
 
 // --- the bound is satisfied ----------------------------------------------

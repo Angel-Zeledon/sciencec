@@ -1219,8 +1219,8 @@ def f(e: &E[I64, Bool]) -> I64:
 
 #[test]
 fn a_nested_payload_is_substituted_at_every_depth() {
-    // One substitution applied to the whole declared type, so `Array of T` and
-    // `Pair of (T, T)` are rewritten by the same fold that rewrites a bare `T`.
+    // One substitution applied to the whole declared type, so `Array[T]` and
+    // `Pair[T, T]` are rewritten by the same fold that rewrites a bare `T`.
     let checked = check(
         "\
 type Pair[A, B]:
@@ -1229,7 +1229,7 @@ type Pair[A, B]:
 
 choice Wrap[T]:
     One(Array[T])
-    TwoPair[T, T]
+    Two(Pair[T, T])
 
 def total(w: &Wrap[I64]) -> I64:
     match w:
@@ -1250,7 +1250,7 @@ type Pair[A, B]:
 
 choice Wrap[T]:
     One(Array[T])
-    TwoPair[T, T]
+    Two(Pair[T, T])
 
 def total(w: &Wrap[Bool]) -> I64:
     match w:

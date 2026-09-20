@@ -1,21 +1,21 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(r#\"Array of T has:\n    def new() -> Array of T:\n        empty()\n\"#)"
+expression: "parse_source(r#\"Array[T] has:\n    def new() -> Array[T]:\n        empty()\n\"#)"
 ---
-Module @0..61
-  Has @0..60
+Module @0..57
+  Has @0..56
     generics
-      TypeParam `T` @9..10
+      TypeParam `T` @6..7
     type: Path `Array` @0..5
       generics of `Array`
-        Path `T` @9..10
+        Path `T` @6..7
     methods
-      Fn `new` @20..60
-        ret: Path `Array` @33..43
+      Fn `new` @18..56
+        ret: Path `Array` @31..39
           generics of `Array`
-            Path `T` @42..43
-        body: Block @53..60
-          tail: Call @53..60
-            callee: Path `empty` @53..58
+            Path `T` @37..38
+        body: Block @49..56
+          tail: Call @49..56
+            callee: Path `empty` @49..54
 --- diagnostics ---
 (none)

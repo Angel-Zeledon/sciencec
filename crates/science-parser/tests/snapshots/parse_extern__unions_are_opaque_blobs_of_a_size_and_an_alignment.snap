@@ -1,9 +1,9 @@
 ---
 source: crates/science-parser/tests/parse_extern.rs
-expression: "parse_source(r#\"unsafe extern \"C\" library \"hdf5\":\n    type Hid is I64\n    union H5L_info2_t: size 32 align 8\n    union H5R_ref_t: size 64 align 8\n    def H5Rget_type(reference: borrowed H5R_ref_t) -> I32\n\"#)"
+expression: "parse_source(r#\"unsafe extern \"C\" library \"hdf5\":\n    type Hid is I64\n    union H5L_info2_t: size 32 align 8\n    union H5R_ref_t: size 64 align 8\n    def H5Rget_type(reference: &H5R_ref_t) -> I32\n\"#)"
 ---
-Module @0..188
-  Extern "C" unsafe @0..187
+Module @0..180
+  Extern "C" unsafe @0..179
     Library "hdf5" @18..32
     items
       ExternAlias `Hid` @38..53
@@ -14,11 +14,11 @@ Module @0..188
       ExternUnion `H5R_ref_t` @97..129
         size: 64
         align: 8
-      ExternFn `H5Rget_type` @134..187
+      ExternFn `H5Rget_type` @134..179
         params
-          Param `reference` @150..179
-            type: Borrowed @161..179
-              Path `H5R_ref_t` @170..179
-        ret: Path `I32` @184..187
+          Param `reference` @150..171
+            type: Borrowed @161..171
+              Path `H5R_ref_t` @162..171
+        ret: Path `I32` @176..179
 --- diagnostics ---
 (none)

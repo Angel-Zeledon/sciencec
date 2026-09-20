@@ -128,7 +128,7 @@ fn the_two_spellings_of_one_generic_argument_agree() {
 /// what every other position where two readings meet already asks for.
 #[test]
 fn an_array_of_closures_is_spelled_with_its_own_parentheses() {
-    insta::assert_snapshot!(shape_of_type("Array of ((Int) -> Bool)"));
+    insta::assert_snapshot!(shape_of_type("Array[(Int) -> Bool]"));
 }
 
 // --- the positions a closure type appears in -----------------------------
@@ -179,6 +179,14 @@ fn a_closure_in_a_where_bound() {
 /// at the `(` that opens the parameter list, and a bound that *starts* with
 /// `(` is a closure — the two `(`s are told apart by which side of the bound
 /// they fall on, not by lookahead.
+///
+/// `of` is the spelling the bracket revision replaced (`def keep[P: (Int) ->
+/// Bool](p: P) -> Int:` is the equivalent brackets give no ambiguity to
+/// resolve, because `]` alone ends the list). What this test still checks is
+/// that `parse_generic_params`'s recovery arm — "the grammar `of` used to
+/// have" — has not lost the closure-bound feature along with the spelling: a
+/// file written before the revision gets one `SC0100` and the same tree it
+/// always got, not a second, different reading now that a bound can hold `(`.
 #[test]
 fn a_closure_as_an_inline_generic_bound() {
     insta::assert_snapshot!(parse_source(

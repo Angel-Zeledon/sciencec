@@ -1,31 +1,31 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(r#\"Pair of (A, B) implements Summarize where A: Clone, B: Clone:\n    def summarize(self) -> String:\n        \"pair\"\n\"#)"
+expression: "parse_source(r#\"Pair[A, B] implements Summarize where A: Clone, B: Clone:\n    def summarize(self) -> String:\n        \"pair\"\n\"#)"
 ---
-Module @0..112
-  Implements @0..111
+Module @0..108
+  Implements @0..107
     generics
-      TypeParam `A` @9..10
-      TypeParam `B` @12..13
-    interface: Bound `Summarize` @26..35
+      TypeParam `A` @5..6
+      TypeParam `B` @8..9
+    interface: Bound `Summarize` @22..31
     type: Path `Pair` @0..4
       generics of `Pair`
-        Path `A` @9..10
-        Path `B` @12..13
+        Path `A` @5..6
+        Path `B` @8..9
     where
-      Predicate @42..50
-        type: Path `A` @42..43
+      Predicate @38..46
+        type: Path `A` @38..39
         bounds
-          Bound `Clone` @45..50
-      Predicate @52..60
-        type: Path `B` @52..53
+          Bound `Clone` @41..46
+      Predicate @48..56
+        type: Path `B` @48..49
         bounds
-          Bound `Clone` @55..60
+          Bound `Clone` @51..56
     methods
-      Fn `summarize` @66..111
-        receiver: self @80..84
-        ret: Path `String` @89..95
-        body: Block @105..111
-          tail: Str "pair" @105..111
+      Fn `summarize` @62..107
+        receiver: self @76..80
+        ret: Path `String` @85..91
+        body: Block @101..107
+          tail: Str "pair" @101..107
 --- diagnostics ---
 (none)

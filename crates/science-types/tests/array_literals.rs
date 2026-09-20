@@ -80,16 +80,18 @@ def identity() -> Bool:
 ",
     );
     checked.assert_clean();
-    // **This pins today's rendering and today's rendering is wrong**, which is
-    // worth a sentence rather than a silent expectation. `AGENTS.md` §3 and
-    // `Types::render_args`' own comment say a nested application needs
-    // parentheses — `Array of (Array of F64)` — and `render_args` adds them
-    // only when there is more than one argument, so a single argument that is
-    // itself applied loses them. The defect is `ty`'s and predates this
-    // change; it was invisible because no construct built a nested application
-    // out of a literal. Fixing it is a `render_into` change with its own
-    // snapshot churn and is not this change's.
-    assert_eq!(local_ty(&checked, "identity", "identity"), "Array[Array] of F64");
+    // **This used to pin a known-wrong rendering, and the bracket revision
+    // fixed it as a side effect.** `render_args` used to add parentheses
+    // around a nested application only when there was more than one
+    // argument — `Array of (Array of F64)` needed them and `render_args`
+    // never wrote them for a single argument, so `Array of Array of F64`
+    // came out ambiguous with no bracket of its own to say where the inner
+    // list ended. Brackets close what they open: `Array[Array[F64]]` needs no
+    // parenthesis to tell the outer `]` from the inner one, so
+    // `Types::render_args`'s own comment now reads "one argument and several
+    // are printed the same way" and this is the case that used to be the
+    // exception.
+    assert_eq!(local_ty(&checked, "identity", "identity"), "Array[Array[F64]]");
 }
 
 #[test]

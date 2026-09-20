@@ -1,6 +1,5 @@
 ---
 source: crates/science-parser/tests/parse_closure_types.rs
-assertion_line: 247
 expression: "parse_source_allowing_errors(r#\"Doc implements (Int) -> Bool:\n    def f(self) -> Int:\n        0\n\"#)"
 ---
 Module @0..64

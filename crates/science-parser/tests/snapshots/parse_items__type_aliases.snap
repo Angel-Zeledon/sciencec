@@ -14,4 +14,6 @@ Module @0..52
       generics of `Box`
         Path `T` @51..52
 --- diagnostics ---
-(none)
+SC0100 @20..22 `Array of T` is now written `Array[T]`
+SC0100 @41..43 `of T` is now written `[T]`
+SC0100 @49..51 `Box of T` is now written `Box[T]`

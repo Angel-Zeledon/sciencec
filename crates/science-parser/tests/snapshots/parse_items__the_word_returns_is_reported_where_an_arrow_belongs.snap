@@ -2,15 +2,15 @@
 source: crates/science-parser/tests/parse_items.rs
 expression: parse_source_allowing_errors(source)
 ---
-Module @0..63
-  Fn `longest` @0..62
+Module @0..47
+  Fn `longest` @0..46
     params
-      Param `a` @12..30
-        type: Borrowed @15..30
-          Path `String` @24..30
-    ret: Borrowed @40..55
-      Path `String` @49..55
-    body: Block @61..62
-      tail: Path `a` @61..62
+      Param `a` @12..22
+        type: Borrowed @15..22
+          Path `String` @16..22
+    ret: Borrowed @32..39
+      Path `String` @33..39
+    body: Block @45..46
+      tail: Path `a` @45..46
 --- diagnostics ---
-SC0118 @32..39 the return type is written `->`
+SC0118 @24..31 the return type is written `->`

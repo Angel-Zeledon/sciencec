@@ -1,6 +1,5 @@
 ---
 source: crates/science-parser/tests/parse_closure_types.rs
-assertion_line: 143
 expression: "parse_source(r#\"def keep(p: (Int) -> Bool) -> Int:\n    0\n\ndef adder(n: Int) -> (Int) -> Int:\n    n\n\"#)"
 ---
 Module @0..83

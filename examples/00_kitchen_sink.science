@@ -208,8 +208,7 @@ def describe[T: Summarize](value: &T) -> String:
     value.preview()
 
 # Several bounds joined by `+`, written in a `where` clause.
-def best_of[T](left: &T, right: &T) -> String
-        where T: Summarize + Clone:
+def best_of[T](left: &T, right: &T) -> String where T: Summarize + Clone:
     if left.summarize().length() >= right.summarize().length():
         left.preview()
     else:

@@ -1,32 +1,31 @@
 ---
 source: crates/science-parser/tests/parse_closure_types.rs
-assertion_line: 171
-expression: "parse_source(r#\"def keep of P(items: Array of Int, p: P) -> Array of Int where P: (borrowed Int) -> Bool:\n    items\n\"#)"
+expression: "parse_source(r#\"def keep[P](items: Array[Int], p: P) -> Array[Int] where P: (&Int) -> Bool:\n    items\n\"#)"
 ---
-Module @0..100
-  Fn `keep` @0..99
+Module @0..86
+  Fn `keep` @0..85
     generics
-      TypeParam `P` @12..13
+      TypeParam `P` @9..10
     params
-      Param `items` @14..33
-        type: Path `Array` @21..33
+      Param `items` @12..29
+        type: Path `Array` @19..29
           generics of `Array`
-            Path `Int` @30..33
-      Param `p` @35..39
-        type: Path `P` @38..39
-    ret: Path `Array` @44..56
+            Path `Int` @25..28
+      Param `p` @31..35
+        type: Path `P` @34..35
+    ret: Path `Array` @40..50
       generics of `Array`
-        Path `Int` @53..56
+        Path `Int` @46..49
     where
-      Predicate @63..88
-        type: Path `P` @63..64
+      Predicate @57..74
+        type: Path `P` @57..58
         bounds
-          ClosureBound @66..88
+          ClosureBound @60..74
             params
-              Borrowed @67..79
-                Path `Int` @76..79
-            ret: Path `Bool` @84..88
-    body: Block @94..99
-      tail: Path `items` @94..99
+              Borrowed @61..65
+                Path `Int` @62..65
+            ret: Path `Bool` @70..74
+    body: Block @80..85
+      tail: Path `items` @80..85
 --- diagnostics ---
 (none)

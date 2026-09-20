@@ -1,26 +1,25 @@
 ---
 source: crates/science-parser/tests/parse_closure_types.rs
-assertion_line: 290
-expression: "parse_source_allowing_errors(r#\"def run of F(f: F) -> Int where F: (Int):\n    0\n\"#)"
+expression: "parse_source_allowing_errors(r#\"def run[F](f: F) -> Int where F: (Int):\n    0\n\"#)"
 ---
-Module @0..48
-  Fn `run` @0..47
+Module @0..46
+  Fn `run` @0..45
     generics
-      TypeParam `F` @11..12
+      TypeParam `F` @8..9
     params
-      Param `f` @13..17
-        type: Path `F` @16..17
-    ret: Path `Int` @22..25
+      Param `f` @11..15
+        type: Path `F` @14..15
+    ret: Path `Int` @20..23
     where
-      Predicate @32..40
-        type: Path `F` @32..33
+      Predicate @30..38
+        type: Path `F` @30..31
         bounds
-          ClosureBound @35..40
+          ClosureBound @33..38
             params
-              Path `Int` @36..39
-            ret: Error @36..39
-    body: Block @46..47
-      tail: Int 0 @46..47
+              Path `Int` @34..37
+            ret: Error @34..37
+    body: Block @44..45
+      tail: Int 0 @44..45
 --- diagnostics ---
-SC0119 @36..39 expected `->` after a closure type's parameter list, found `:`
+SC0119 @34..37 expected `->` after a closure type's parameter list, found `:`
   note `collections-and-chains.md` §1.2 spells a closure type `(A) -> B`; a bound that opens with `(` has no other reading, so the arrow is not optional here

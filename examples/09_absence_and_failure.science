@@ -100,10 +100,7 @@ def heading(text: &String) -> String?:
         null
 
 # `Map.get` hands back `(&V)?` for the same reason (§8).
-def lookup(
-    settings: &Map[String, String],
-    key: &String
-) -> (&String)?:
+def lookup(settings: &Map[String, String], key: &String) -> (&String)?:
     settings.get(key)
 
 # Two lookups that must both succeed. `try` on an `Option` used to collapse

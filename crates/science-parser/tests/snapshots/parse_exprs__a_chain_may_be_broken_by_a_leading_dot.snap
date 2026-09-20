@@ -1,23 +1,23 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_body(r#\"def headlines(docs: borrowed Array of Doc) -> Array of String:\n    docs\n        .iterate()\n        .discard(each.is_empty())\n        .map(each.title)\n        .take(5)\n        .collect()\n\"#)"
+expression: "parse_body(r#\"def headlines(docs: &Array[Doc]) -> Array[String]:\n    docs\n        .iterate()\n        .discard(each.is_empty())\n        .map(each.title)\n        .take(5)\n        .collect()\n\"#)"
 ---
-Block @67..185
-  tail: Method `collect` @67..185
-    receiver: Method `take` @67..166
-      receiver: Method `map` @67..149
-        receiver: Method `discard` @67..124
-          receiver: Method `iterate` @67..90
-            receiver: Path `docs` @67..71
+Block @55..173
+  tail: Method `collect` @55..173
+    receiver: Method `take` @55..154
+      receiver: Method `map` @55..137
+        receiver: Method `discard` @55..112
+          receiver: Method `iterate` @55..78
+            receiver: Path `docs` @55..59
           args
-            Closure @108..123
-              body: Method `is_empty` @108..123
-                receiver: Each @108..112
+            Closure @96..111
+              body: Method `is_empty` @96..111
+                receiver: Each @96..100
         args
-          Closure @138..148
-            body: Field `title` @138..148
-              base: Each @138..142
+          Closure @126..136
+            body: Field `title` @126..136
+              base: Each @126..130
       args
-        Int 5 @164..165
+        Int 5 @152..153
 --- diagnostics ---
 (none)

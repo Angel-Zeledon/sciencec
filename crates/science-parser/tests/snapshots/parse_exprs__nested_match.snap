@@ -1,38 +1,38 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_source(r#\"def render(token: borrowed Token, format: borrowed Format) -> String:\n    match token:\n        Number(value):\n            match format:\n                Json: value.json()\n                Plain: value.text()\n        Eof: \"\"\n\"#)"
+expression: "parse_source(r#\"def render(token: &Token, format: &Format) -> String:\n    match token:\n        Number(value):\n            match format:\n                Json: value.json()\n                Plain: value.text()\n        Eof: \"\"\n\"#)"
 ---
-Module @0..223
-  Fn `render` @0..222
+Module @0..207
+  Fn `render` @0..206
     params
-      Param `token` @11..32
-        type: Borrowed @18..32
-          Path `Token` @27..32
-      Param `format` @34..57
-        type: Borrowed @42..57
-          Path `Format` @51..57
-    ret: Path `String` @62..68
-    body: Block @74..222
-      tail: Match @74..222
-        scrutinee: Path `token` @80..85
+      Param `token` @11..24
+        type: Borrowed @18..24
+          Path `Token` @19..24
+      Param `format` @26..41
+        type: Borrowed @34..41
+          Path `Format` @35..41
+    ret: Path `String` @46..52
+    body: Block @58..206
+      tail: Match @58..206
+        scrutinee: Path `token` @64..69
         arms
-          Arm @95..206
-            pattern: Variant `Number` @95..108
-              Binding `value` @102..107
-            body: Block @122..206
-              tail: Match @122..206
-                scrutinee: Path `format` @128..134
+          Arm @79..190
+            pattern: Variant `Number` @79..92
+              Binding `value` @86..91
+            body: Block @106..190
+              tail: Match @106..190
+                scrutinee: Path `format` @112..118
                 arms
-                  Arm @152..170
-                    pattern: Binding `Json` @152..156
-                    body: Method `json` @158..170
-                      receiver: Path `value` @158..163
-                  Arm @187..206
-                    pattern: Binding `Plain` @187..192
-                    body: Method `text` @194..206
-                      receiver: Path `value` @194..199
-          Arm @215..222
-            pattern: Binding `Eof` @215..218
-            body: Str "" @220..222
+                  Arm @136..154
+                    pattern: Binding `Json` @136..140
+                    body: Method `json` @142..154
+                      receiver: Path `value` @142..147
+                  Arm @171..190
+                    pattern: Binding `Plain` @171..176
+                    body: Method `text` @178..190
+                      receiver: Path `value` @178..183
+          Arm @199..206
+            pattern: Binding `Eof` @199..202
+            body: Str "" @204..206
 --- diagnostics ---
 (none)

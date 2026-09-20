@@ -1,17 +1,8 @@
 ---
 source: crates/science-parser/tests/parse_items.rs
-expression: "parse_report(vec![Public, Type, id(\"Pair\"), Of, LParen, id(\"A\"), Comma,\nid(\"B\"), RParen, Colon, Newline, Indent, Public, id(\"first\"), Colon, id(\"A\"),\nNewline, id(\"source\"), Colon, Borrowed, id(\"Doc\"), Newline, Dedent,])"
+expression: "parse_report(vec![Public, Type, id(\"Pair\"), LBracket, id(\"A\"), Comma, id(\"B\"),\nRParen, Colon, Newline, Indent, Public, id(\"first\"), Colon, id(\"A\"), Newline,\nid(\"source\"), Colon, Borrowed, id(\"Doc\"), Newline, Dedent,])"
 ---
-Module @0..53
-  Record `Pair` public @0..53
-    generics
-      TypeParam `A` @17..18
-      TypeParam `B` @19..20
-    fields
-      Field `first` public @22..35
-        type: Path `A` @34..35
-      Field `source` @35..53
-        type: Borrowed @42..53
-          Path `Doc` @50..53
+Module @0..51
 --- diagnostics ---
-(none)
+SC0100 @18..19 expected `]`, found `)`
+SC0100 @18..19 expected `:` to open the type's fields or `is` to alias it, found `)`

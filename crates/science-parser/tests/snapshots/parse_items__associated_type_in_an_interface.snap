@@ -13,4 +13,4 @@ Module @0..69
           generics of `Option`
             SelfAssoc `Item` @60..69
 --- diagnostics ---
-(none)
+SC0100 @58..60 `Option of T` is now written `Option[T]`

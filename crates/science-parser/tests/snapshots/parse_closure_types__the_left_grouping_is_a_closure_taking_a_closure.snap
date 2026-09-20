@@ -1,6 +1,5 @@
 ---
 source: crates/science-parser/tests/parse_closure_types.rs
-assertion_line: 83
 expression: "shape_of_type(\"((Int) -> Bool) -> String\")"
 ---
 Closure

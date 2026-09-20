@@ -124,7 +124,7 @@ fn a_loops_borrow_is_never_two_phase() {
 fn the_borrow_names_the_referent_and_not_the_reference() {
     let lowered = lower("def f(xs: &Array[Int]):\n    for x in xs:\n        print(x)\n");
     let dump = lowered.dump("f");
-    assert!(dump.contains("&(*_1)"), "the loop &the reference itself: {dump}");
+    assert!(dump.contains("borrowed (*_1)"), "the loop borrowed the reference itself: {dump}");
 
     let body = lowered.body("f");
     let [loop_borrow] = loop_borrows(&lowered, body)[..] else { panic!("one loop, one borrow") };

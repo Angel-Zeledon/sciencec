@@ -90,7 +90,7 @@ fn the_acceptance_program_exists_and_names_every_requirement() {
     // requirement that quietly leaves the program fails here and not in a
     // review six months later.
     for (needle, requirement) in [
-        ("of T: Summarize", "generics with bounds"),
+        ("[T: Summarize]", "generics with bounds"),
         ("const ", "const generics"),
         ("type Item is", "associated types"),
         ("&any Summarize", "a trait dispatched dynamically"),

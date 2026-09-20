@@ -1254,7 +1254,7 @@ def read(path: &String) -> (&String)?:
         .find(|def| {
             def.parent
                 .and_then(|block| checked.decls.self_ty(block))
-                .is_some_and(|ty| checked.render(ty).starts_with("Map of"))
+                .is_some_and(|ty| checked.render(ty).starts_with("Map["))
         })
         .expect("the prelude declares `Map.get`")
         .id;

@@ -1,30 +1,15 @@
 ---
 source: crates/science-parser/tests/parse_items.rs
-expression: "parse_report(vec![Function, id(\"f\"), LParen, id(\"a\"), Colon, id(\"Map\"), Of,\nLParen, id(\"String\"), Comma, id(\"Int\"), RParen, Comma, id(\"b\"), Colon,\nid(\"Array\"), Of, LParen, id(\"Map\"), Of, LParen, id(\"String\"), Comma,\nid(\"Int\"), RParen, RParen, Comma, id(\"c\"), Colon, id(\"Window\"), Of, LParen,\nid(\"Int\"), Comma, int(4), RParen, Comma, id(\"d\"), Colon, SelfType, Dot,\nid(\"Item\"), RParen, Colon, id(\"x\"), Newline,])"
+expression: "parse_report(vec![Function, id(\"f\"), LParen, id(\"a\"), Colon, id(\"Map\"),\nLBracket, id(\"String\"), Comma, id(\"Int\"), RParen, Comma, id(\"b\"), Colon,\nid(\"Array\"), LBracket, id(\"Map\"), LBracket, id(\"String\"), Comma, id(\"Int\"),\nRParen, RParen, Comma, id(\"c\"), Colon, id(\"Window\"), LBracket, id(\"Int\"),\nComma, int(4), RParen, Comma, id(\"d\"), Colon, SelfType, Dot, id(\"Item\"),\nRParen, Colon, id(\"x\"), Newline,])"
 ---
-Module @0..91
-  Fn `f` @0..91
+Module @0..83
+  Fn `f` @0..83
     params
-      Param `a` @10..29
-        type: Path `Map` @12..29
+      Param `a` @10..26
+        type: Path `Map` @12..26
           generics of `Map`
-            Path `String` @18..24
-            Path `Int` @25..28
-      Param `b` @30..58
-        type: Path `Array` @32..58
-          generics of `Array`
-            Path `Map` @40..57
-              generics of `Map`
-                Path `String` @46..52
-                Path `Int` @53..56
-      Param `c` @59..76
-        type: Path `Window` @61..76
-          generics of `Window`
-            Path `Int` @70..73
-            ConstArg Int 4 @74..75
-      Param `d` @77..88
-        type: SelfAssoc `Item` @79..88
-    body: Block @90..91
-      tail: Path `x` @90..91
+            Path `String` @16..22
+            Path `Int` @23..26
 --- diagnostics ---
-(none)
+SC0100 @26..27 expected `]`, found `)`
+SC0100 @27..28 expected end of line, found `,`

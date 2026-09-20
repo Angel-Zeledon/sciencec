@@ -66,43 +66,46 @@
 //! limit at or below 97 would break lines their author chose not to break, and
 //! that 100 is therefore "above everything checked in".
 //!
-//! The distribution says otherwise. Per-file maximum code width across the
-//! twenty-two corpus files is:
+//! The distribution said otherwise when it was measured, and the syntax
+//! revision that spells `borrowed T` as `&T` and `Array of T` as `Array[T]`
+//! (see the crate's own `CHANGELOG`-equivalent, the commit that added
+//! brackets) shortened the corpus again: every reference type lost the word
+//! `borrowed`, and every generic type lost the word `of`. Per-file maximum
+//! code width across the twenty-two corpus files is now:
 //!
 //! ```text
-//! 84 71 68 86 65 69 82 82 [97] 76 85 83 79 80 70 61 81 60 71 88 66 82
+//! 84 47 44 86 61 62 82 82 79 69 73 83 75 63 58 25 59 52 51 66 63 82
 //! ```
 //!
-//! **Exactly one line in twenty-two files exceeds 88 columns**, and it is
-//! `examples/08_dyn_dispatch.science:129` — a `let` with no `where`, no chain
-//! and a doubled `Array of (Box of any Summarize)`, which is an outlier with no
-//! good break available anyway. The corpus's real working width is about 86.
+//! **No line in twenty-two files exceeds 88 columns any more.** The old
+//! outlier, `examples/08_dyn_dispatch.science:129` — a `let` whose annotation
+//! repeated its constructor's `Array of (Box of any Summarize)` — is gone
+//! along with the words that made it long: the line is unannotated today (the
+//! comment above it says why) and measures 56. The corpus's working width
+//! dropped to about 86, which 90 still comfortably covers.
 //!
-//! So 100 was not "above everything checked in" in any useful sense: it was
-//! twelve columns above everything but one line, and its first act was to
-//! manufacture lines of 91, 98 and 99 — each wider than the widest line in
-//! twenty-one of the twenty-two files. The old claim that it "changes line
-//! breaking only where the author broke a line that did not need breaking" was
-//! true as stated and wrong in effect: by the corpus's own standard those
-//! lines did need breaking.
+//! So 100 was not "above everything checked in" in any useful sense even
+//! before this revision: it was twelve columns above everything but one line,
+//! and its first act was to manufacture lines of 91, 98 and 99 — each wider
+//! than the widest line in twenty-one of the twenty-two files. The old claim
+//! that it "changes line breaking only where the author broke a line that did
+//! not need breaking" was true as stated and wrong in effect: by the corpus's
+//! own standard those lines did need breaking.
 //!
 //! The 93 in the original argument is also gone. `examples/19_stdlib.science`
 //! measures 88 today, because revision 3 renamed `function` to `def` and took
 //! five columns off every declaration in the language. The width question was
 //! settled against numbers that the language then moved.
 //!
-//! **Cost.** There is still no width that agrees with the corpus, and that is
-//! worth recording rather than hiding. `examples/08_dyn_dispatch.science`
-//! leaves a line at 97 columns unbroken; `examples/00_kitchen_sink.science`
-//! breaks `def best_of …` before its `where` at 95. No single number honours
-//! both. 90 contradicts the first, which is one line and an outlier by the
-//! distribution above; 100 contradicted the second, and two more like it.
-//!
-//! 90 is also close enough to the corpus's working width that the formatter
-//! now breaks lines real code writes flat, which 100 never did. When it gets
-//! that wrong the answer is `# fmt: off` — see [`suppress`] — and not a wider
-//! limit, because a limit wide enough never to be wrong is a limit that does
-//! nothing.
+//! **Cost.** The two examples that used to make this point — `08_dyn_dispatch`
+//! left at 97 unbroken, `00_kitchen_sink`'s `def best_of …` broken before its
+//! `where` at 95 — are both gone: `&T` and `Array[T]` shortened both lines
+//! enough that neither needs breaking at 90, and `best_of` is a fixed point on
+//! one line today. That is a fact about this revision's corpus, not a proof
+//! that 90 now agrees with every line the language can produce; it only takes
+//! one long generic bound to reopen the argument. When 90 gets it wrong the
+//! answer is `# fmt: off` — see [`suppress`] — and not a wider limit, because a
+//! limit wide enough never to be wrong is a limit that does nothing.
 //!
 //! Excluding the trailing comment from the measurement is deliberate: a line
 //! broken into four because someone wrote a long sentence after it is a line

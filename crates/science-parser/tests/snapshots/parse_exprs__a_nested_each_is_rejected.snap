@@ -1,26 +1,26 @@
 ---
 source: crates/science-parser/tests/parse_exprs.rs
-expression: "parse_source_allowing_errors(\"def f(outer: borrowed Array of Doc):\\n    outer.map(each.inner.map(each.x))\\n\")"
+expression: "parse_source_allowing_errors(\"def f(outer: &Array[Doc]):\\n    outer.map(each.inner.map(each.x))\\n\")"
 ---
-Module @0..75
-  Fn `f` @0..74
+Module @0..65
+  Fn `f` @0..64
     params
-      Param `outer` @6..34
-        type: Borrowed @13..34
-          Path `Array` @22..34
+      Param `outer` @6..24
+        type: Borrowed @13..24
+          Path `Array` @14..24
             generics of `Array`
-              Path `Doc` @31..34
-    body: Block @41..74
-      tail: Method `map` @41..74
-        receiver: Path `outer` @41..46
+              Path `Doc` @20..23
+    body: Block @31..64
+      tail: Method `map` @31..64
+        receiver: Path `outer` @31..36
         args
-          Closure @51..73
-            body: Method `map` @51..73
-              receiver: Field `inner` @51..61
-                base: Each @51..55
+          Closure @41..63
+            body: Method `map` @41..63
+              receiver: Field `inner` @41..51
+                base: Each @41..45
               args
-                Field `x` @66..72
-                  base: Each @66..70
+                Field `x` @56..62
+                  base: Each @56..60
 --- diagnostics ---
-SC0115 @66..70 a nested `each` would name a different subject than the `each` around it
+SC0115 @56..60 a nested `each` would name a different subject than the `each` around it
   note name the parameter instead, with the `giving` form: `outer.map(item giving item.inner.map(each.x))`

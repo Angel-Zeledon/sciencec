@@ -1,35 +1,35 @@
 ---
 source: crates/science-parser/tests/parse_traits.rs
-expression: "parse_source(r#\"Pair of (A, B) implements Swap:\n    type Swapped is Pair of (B, A)\n\n    def swapped(self: Self) -> Self.Swapped:\n        Pair(first: self.second, second: self.first)\n\"#)"
+expression: "parse_source(r#\"Pair[A, B] implements Swap:\n    type Swapped is Pair[B, A]\n\n    def swapped(self: Self) -> Self.Swapped:\n        Pair(first: self.second, second: self.first)\n\"#)"
 ---
-Module @0..166
-  Implements @0..165
+Module @0..158
+  Implements @0..157
     generics
-      TypeParam `A` @9..10
-      TypeParam `B` @12..13
-    interface: Bound `Swap` @26..30
+      TypeParam `A` @5..6
+      TypeParam `B` @8..9
+    interface: Bound `Swap` @22..26
     type: Path `Pair` @0..4
       generics of `Pair`
-        Path `A` @9..10
-        Path `B` @12..13
+        Path `A` @5..6
+        Path `B` @8..9
     assoc types
-      AssocType `Swapped` @36..66
-        type: Path `Pair` @52..66
+      AssocType `Swapped` @32..58
+        type: Path `Pair` @48..58
           generics of `Pair`
-            Path `B` @61..62
-            Path `A` @64..65
+            Path `B` @53..54
+            Path `A` @56..57
     methods
-      Fn `swapped` @72..165
-        receiver: self: Self @84..94
-        ret: SelfAssoc `Swapped` @99..111
-        body: Block @121..165
-          tail: StructLit `Pair` @121..165
+      Fn `swapped` @64..157
+        receiver: self: Self @76..86
+        ret: SelfAssoc `Swapped` @91..103
+        body: Block @113..157
+          tail: StructLit `Pair` @113..157
             fields
-              FieldInit `first` @126..144
-                value: Field `second` @133..144
-                  base: Self @133..137
-              FieldInit `second` @146..164
-                value: Field `first` @154..164
-                  base: Self @154..158
+              FieldInit `first` @118..136
+                value: Field `second` @125..136
+                  base: Self @125..129
+              FieldInit `second` @138..156
+                value: Field `first` @146..156
+                  base: Self @146..150
 --- diagnostics ---
 (none)

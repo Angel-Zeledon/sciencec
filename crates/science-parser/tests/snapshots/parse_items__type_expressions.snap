@@ -33,4 +33,8 @@ Module @0..136
     body: Block @135..136
       tail: Path `x` @135..136
 --- diagnostics ---
-(none)
+SC0100 @12..20 `borrowed T` is now written `&T`
+SC0100 @53..60 `mutable borrowed T` is now written `&mut T`
+SC0100 @73..75 `Array of T` is now written `Array[T]`
+SC0100 @84..86 `Box of T` is now written `Box[T]`
+SC0100 @101..109 `borrowed T` is now written `&T`

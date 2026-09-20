@@ -16,4 +16,6 @@ Module @0..68
     body: Block @67..68
       tail: Path `a` @67..68
 --- diagnostics ---
-(none)
+SC0100 @18..26 `borrowed T` is now written `&T`
+SC0100 @35..43 `borrowed T` is now written `&T`
+SC0100 @52..60 `borrowed T` is now written `&T`

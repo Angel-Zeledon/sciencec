@@ -1,8 +1,8 @@
 ---
 source: crates/science-parser/tests/parse_script.rs
-expression: "parse_source(r#\"use data (Record)\n\ntype Reading:\n    temperature: F32\n\nReading implements Record\n\nlet readings be load()\n\nprint(summary(readings))\n\ndef summary(values: borrowed Array of F32) -> String:\n    values.mean().to_string()\n\"#)"
+expression: "parse_source(r#\"use data (Record)\n\ntype Reading:\n    temperature: F32\n\nReading implements Record\n\nlet readings be load()\n\nprint(summary(readings))\n\ndef summary(values: &Array[F32]) -> String:\n    values.mean().to_string()\n\"#)"
 ---
-Module @0..216
+Module @0..206
   Use `data` @0..17
     imports
       Ident `Record` @10..16
@@ -13,18 +13,18 @@ Module @0..216
   Implements @55..80
     interface: Bound `Record` @74..80
     type: Path `Reading` @55..62
-  Fn `summary` @132..215
+  Fn `summary` @132..205
     params
-      Param `values` @144..173
-        type: Borrowed @152..173
-          Path `Array` @161..173
+      Param `values` @144..163
+        type: Borrowed @152..163
+          Path `Array` @153..163
             generics of `Array`
-              Path `F32` @170..173
-    ret: Path `String` @178..184
-    body: Block @190..215
-      tail: Method `to_string` @190..215
-        receiver: Method `mean` @190..203
-          receiver: Path `values` @190..196
+              Path `F32` @159..162
+    ret: Path `String` @168..174
+    body: Block @180..205
+      tail: Method `to_string` @180..205
+        receiver: Method `mean` @180..193
+          receiver: Path `values` @180..186
   Fn `main` @82..130
     ret: Nullable @130..130
       Path `Error` @130..130
