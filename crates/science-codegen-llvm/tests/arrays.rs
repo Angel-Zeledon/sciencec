@@ -306,3 +306,51 @@ fn a_counting_loop_over_an_array_adds_up() {
         "n=6 total=108 mean=18\n"
     );
 }
+
+/// Writing through `get_mutably`, which is the only reason it exists over
+/// `get`.
+///
+/// # What was wrong
+///
+/// `p be 999` after `if p?:` produced *"local is ptr and the value stored into
+/// it is i64"* at the linker. Reading through the identical narrowed pointer
+/// always worked, and so did writing through a plain `&mut Int` parameter — so
+/// the defect was specific to a `(mutable borrowed T)?` that narrowing had
+/// established, which is every use of this method.
+///
+/// `as_place` sees through `ExprKind::Narrow` by design, so the assignment's
+/// target was `p`'s own local — still written `(mutable borrowed Int)?`, a
+/// nullable pointer — while its THIR type was the narrowed `mutable borrowed
+/// Int`. The target-peeling loop matches on the place's *written* type and
+/// peels a literal `Borrowed`; a `Nullable` is not one, so the `Int` was
+/// stored into the pointer slot. Opaque pointers make that legal IR, which is
+/// why neither the type checker nor `LLVMVerifyModule` objected and the
+/// emitter's own sanity check was the first thing to notice.
+///
+/// It is the fourth symptom of one cause: `deref_to_hole` already existed for
+/// the f-string hole, the borrowed hole and the method receiver, and the
+/// assignment target was the caller nobody had added.
+///
+/// # The half this file cannot test
+///
+/// A fix that peeled too eagerly would also make a **shared** borrow writable,
+/// which is the one thing `get_mutably` must not become. `get` returns
+/// `(borrowed T)?`, and writing through it is still `SC0525` — *"expected
+/// `&I64`, found an integer literal"* — by a rule in `science-types` that this
+/// change does not touch. It is not asserted here because this harness
+/// requires its fixture to check cleanly, and that program does not: the
+/// refusal is the type checker's and belongs in its tests.
+#[test]
+fn a_write_through_get_mutably_reaches_the_element() {
+    assert_eq!(
+        prints(
+            "get-mutably-write",
+            "let mutable xs be [10, 20, 30]\n\
+             let p be xs.get_mutably(1)\n\
+             if p?:\n\
+             \x20   p be 999\n\
+             print(f\"{xs[0]} {xs[1]} {xs[2]}\")\n",
+        ),
+        "10 999 30\n"
+    );
+}

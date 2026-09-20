@@ -1743,7 +1743,11 @@ impl LlvmBackend {
             return "an integer of some other width".to_string();
         }
         let kind = self.type_kind_of(ty);
-        if kind == sys::type_kind::FLOAT {
+        if kind == sys::type_kind::HALF {
+            "half".to_string()
+        } else if kind == sys::type_kind::BFLOAT {
+            "bfloat".to_string()
+        } else if kind == sys::type_kind::FLOAT {
             "float".to_string()
         } else if kind == sys::type_kind::DOUBLE {
             "double".to_string()
@@ -1754,6 +1758,14 @@ impl LlvmBackend {
             // `tests/abi_claims.rs` checks each named constant against what
             // LLVM does with it, so a constant added for a message would be a
             // claim nothing verifies.
+            //
+            // **This used to be `half`'s and `bfloat`'s home too**, before
+            // either had a named constant: a `let h: F16 be 1.5` whose stored
+            // value came out `double` (see `type_is_float`'s note) reported
+            // the *local* — a `half` alloca, laid out as a scalar by
+            // `layout.rs` — as *"an aggregate"*, which sent the diagnosis
+            // looking at layout and codegen's aggregate-lowering path when the
+            // fault was a missing type-kind comparison two functions away.
             "an aggregate".to_string()
         }
     }
@@ -1774,10 +1786,25 @@ impl LlvmBackend {
         unsafe { sys::LLVMGetTypeKind(ty) }
     }
 
-    /// Whether a type is `float` or `double`.
+    /// Whether a type is `half`, `bfloat`, `float` or `double`.
+    ///
+    /// **All four, not the two this once named.** `layout.rs`'s `FloatTy` doc
+    /// comment calls `F16`/`BF16` *"a headline type"* with the same run of the
+    /// mill scalar status as `F32`, and `Operand::ConstFloat`'s handling below
+    /// is where that claim was false: `expected.filter(|ty|
+    /// self.type_is_float(*ty))` silently discarded a `half`/`bfloat`
+    /// expectation because this predicate did not recognise either kind, so a
+    /// literal headed for an `F16` slot built itself as a `double` instead —
+    /// no diagnostic, just a store the width check downstream had to catch.
+    /// `describe_type` had the matching half of the bug: without `HALF`/
+    /// `BFLOAT` in its own kind match it fell through to *"an aggregate"*,
+    /// which is why the caught mismatch was reported as one.
     fn type_is_float(&self, ty: sys::LLVMTypeRef) -> bool {
         let kind = self.type_kind_of(ty);
-        kind == sys::type_kind::FLOAT || kind == sys::type_kind::DOUBLE
+        kind == sys::type_kind::HALF
+            || kind == sys::type_kind::BFLOAT
+            || kind == sys::type_kind::FLOAT
+            || kind == sys::type_kind::DOUBLE
     }
 
     /// Whether a value's type is a float, so that [`CmpOp`] picks `fcmp` over

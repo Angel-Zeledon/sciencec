@@ -198,6 +198,38 @@ fn the_float_type_kinds_are_what_the_emitter_compares_against() {
     }
 }
 
+/// `LLVMTypeKind`: `Half` is 1 and `BFloat` is 18, asked of LLVM rather than
+/// of a header.
+///
+/// These are the two constants `type_is_float` and `describe_type` gained
+/// alongside `FLOAT`/`DOUBLE`, once `let h: F16 be 1.5` showed that a `half`
+/// or `bfloat` expectation fell through both: `Operand::ConstFloat` built a
+/// `double` for an `F16` slot because `type_is_float` did not recognise
+/// `half`, and the store-width check that caught the mismatch described the
+/// `half` alloca as *"an aggregate"* because `describe_type` did not either.
+/// `BFloat` is 18 rather than 4 — LLVM's enum runs `Half, Float, Double,
+/// X86_FP80, FP128, PPC_FP128, Label, Integer, Function, Struct, Array,
+/// Pointer, Vector, Metadata, X86_MMX, Token, ScalableVector` before it gets
+/// there — so a guess at "the next float after `Double`" would have been
+/// wrong by fourteen.
+#[test]
+fn the_half_precision_type_kinds_are_what_the_emitter_compares_against() {
+    let scratch = Scratch::new();
+    unsafe {
+        let half = sys::LLVMHalfTypeInContext(scratch.ctx());
+        let bfloat = sys::LLVMBFloatTypeInContext(scratch.ctx());
+        let i16_ty = sys::LLVMIntTypeInContext(scratch.ctx(), 16);
+        assert_eq!(sys::LLVMGetTypeKind(half), sys::type_kind::HALF);
+        assert_eq!(sys::LLVMGetTypeKind(bfloat), sys::type_kind::BFLOAT);
+        // `half` and `bfloat` are both sixteen bits and neither is `i16`, the
+        // narrow-integer confusion `layout.rs`'s `FloatTy` doc comment warns
+        // a merged representation would invite.
+        assert_ne!(sys::type_kind::HALF, sys::type_kind::BFLOAT);
+        assert_ne!(sys::LLVMGetTypeKind(i16_ty), sys::type_kind::HALF);
+        assert_ne!(sys::LLVMGetTypeKind(i16_ty), sys::type_kind::BFLOAT);
+    }
+}
+
 /// `LLVMTypeKind::LLVMPointerTypeKind` is 12, asked of LLVM rather than of a
 /// header.
 ///

@@ -875,6 +875,31 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                         (Place::local(temp), block)
                     }
                 };
+                // `deref_to_hole` is the narrow's half of the same rule, and
+                // this is its fourth caller for its fourth symptom: `p be 999`
+                // where `p` is a `(mutable borrowed Int)?` narrowed by `if p?:`
+                // stored the `Int` into the pointer-or-null slot itself.
+                // `as_place` sees through the `ExprKind::Narrow` wrapping
+                // `target` and hands back that slot's own place, while
+                // `target`'s type is the narrowed `mutable borrowed Int`.
+                // Left alone, `assign_target` below reads the place's
+                // *written* type as `Nullable`, never matches
+                // `TyKind::Borrowed`, and returns it untouched — legal IR
+                // (a `ptr` will hold any bit pattern) and wrong, which is why
+                // the linker's opaque-pointer check is what caught it rather
+                // than the type checker or a verifier.
+                //
+                // `auto_deref` is not run first, unlike those three callers.
+                // It peels every literal `Borrowed` layer, and `assign_target`
+                // below must see the first one itself to decide whether to
+                // stop there (`r be borrowed y`, where `r` is already a
+                // reference, stops without dereferencing). Calling
+                // `deref_to_hole` unconditionally first is still safe for
+                // that case and every other non-narrowed target: its own
+                // guard requires the place's *written* type to still be
+                // `Nullable`, which a literal borrow's is not, so it returns
+                // such a place unchanged.
+                let place = self.deref_to_hole(place, *target);
                 // §4.7's *"borrows auto-dereference for assignment"*, which is
                 // §4's rule on the other side of `be`. See
                 // [`Builder::assign_target`].

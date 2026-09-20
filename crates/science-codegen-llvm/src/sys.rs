@@ -358,17 +358,30 @@ pub mod file_type {
     pub const OBJECT: c_uint = 1;
 }
 
-/// `LLVMTypeKind`, the two members this crate distinguishes.
+/// `LLVMTypeKind`, the members this crate distinguishes.
 ///
 /// Positional, like every other C enum here: `Void` is 0, `Half` is 1, and the
-/// two below follow. Only the float cases are named, because the only question
-/// asked is "is this an `fcmp`".
+/// rest follow — `BFloat` is 18, after the vector and metadata kinds §3.1 has
+/// no other use for. Originally only `Float` and `Double` were named, on the
+/// theory that the only question asked was "is this an `fcmp`" — but `F16`
+/// and `BF16` (`layout.rs`'s doc comment: *"a headline type"*) ask that
+/// question too, through `half` and `bfloat` rather than `float`/`double`, and
+/// a constant added only for the two IEEE widths answered it wrong for the
+/// other two: `type_is_float` and `describe_type` both fell through to their
+/// "not a float" case for a value that plainly was one, the first silently
+/// (a half-precision constant built as a `double`) and the second loudly but
+/// wrongly (a `half` alloca described as *"an aggregate"*). See `emit.rs`'s
+/// `type_is_float` and `describe_type` for where each is used.
 pub mod type_kind {
     use super::c_uint;
+    /// `half`, LLVM's `binary16`.
+    pub const HALF: c_uint = 1;
     /// `float`.
     pub const FLOAT: c_uint = 2;
     /// `double`.
     pub const DOUBLE: c_uint = 3;
+    /// `bfloat`.
+    pub const BFLOAT: c_uint = 18;
     /// `iN`. Asked by [`crate::emit`]'s `switch`, which builds a case constant
     /// with `LLVMConstInt` against the switched value's type: `LLVMConstInt` on
     /// a type that is not an integer is an assertion failure in a debug LLVM and
