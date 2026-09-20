@@ -34,6 +34,8 @@
 //! per call site rather than per distinct argument list would pass every
 //! output assertion here and quietly double the image.
 
+#![cfg(feature = "llvm")]
+
 mod harness;
 
 use harness::{executable, lower, require_runtime, run, scratch};

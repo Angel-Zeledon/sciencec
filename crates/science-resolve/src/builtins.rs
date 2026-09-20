@@ -1560,7 +1560,20 @@ impl Declarer<'_> {
         // type: `DefTable::module_of` walks parents to find the module the
         // orphan rule asks about, and `resolve`'s `is_prelude` already treats
         // that module as one no user file can implement into.
-        let def = self.defs.alloc(DefKind::Impl, "", BUILTIN_SPAN, Some(self.module));
+        //
+        // **Named through `alloc_impl`, the same as a written block, and not
+        // through a bare `alloc` with `""`.** This table gives `Array` an
+        // inherent block and an `Index[Int]` block of its own, two blocks on
+        // one type exactly like a user's `Doc has:` beside `Doc implements
+        // Sized:` — and before this was `alloc_impl`, every such pair (and
+        // every other prelude type's block, all parented to one prelude
+        // module) shared the one empty name `path_of` skips, so `Array.new`
+        // and `Map.new` monomorphised at the same type argument both walked to
+        // the bare path `.new` and mangled to one symbol. That is finding 25
+        // again, on the builtins this crate writes by hand instead of parsing,
+        // and `alloc_impl` is the one place the name is computed, so the
+        // prelude asks it rather than growing a second copy.
+        let def = self.defs.alloc_impl(block.ty, BUILTIN_SPAN, Some(self.module));
         let mut generics = HashMap::new();
         let generic_params: Vec<hir::GenericParam> = block
             .generics

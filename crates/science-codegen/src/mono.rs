@@ -170,18 +170,18 @@
 //!
 //! `codegen-and-linking.md` Decision 4: *"every monomorphised item is emitted in
 //! sorted order of its mangled symbol name"*, because `self-hosting.md` §15
-//! names hash-map iteration order as the unknown source behind Gate J. Four
-//! things carry that here, and the fourth is the one that was nearly missed:
+//! names hash-map iteration order as the unknown source behind Gate J. Three
+//! things carry that here, and the third is the one that was nearly missed:
 //!
 //! 1. **The output is a [`BTreeMap`] keyed by the mangled symbol.**
 //!    [`MonoSet::emission_order`] is its iterator, and no `HashMap`'s iteration
-//!    order reaches it. There are four `HashMap`s in this module — [`Solution`]'s
-//!    two, [`Mono::impl_ordinal`] and [`function_values`]'s — and three of them
-//!    are read by key and never iterated. The fourth is iterated exactly once,
-//!    at the end of [`function_values`], to build **another `HashMap`**, so the
-//!    order it is walked in changes nothing about what comes out. That sentence
-//!    is the kind of claim that goes stale, which is why `tests/mono.rs` runs
-//!    the whole pipeline twice and compares bytes instead of believing it.
+//!    order reaches it. There are three `HashMap`s in this module — [`Solution`]'s
+//!    two and [`function_values`]'s — and two of them are read by key and never
+//!    iterated. The third is iterated exactly once, at the end of
+//!    [`function_values`], to build **another `HashMap`**, so the order it is
+//!    walked in changes nothing about what comes out. That sentence is the kind
+//!    of claim that goes stale, which is why `tests/mono.rs` runs the whole
+//!    pipeline twice and compares bytes instead of believing it.
 //! 2. **The symbol contains no `DefId` and no `Ty`.** Both are allocation
 //!    order. A path component is a name the author wrote; a const argument is
 //!    an integer; a type argument is a structure over names. Nothing in a
@@ -791,9 +791,6 @@ pub struct Mono<'a> {
     decls: &'a Declarations,
     types: &'a mut Types,
     bodies: BTreeMap<DefId, &'a Body>,
-    /// Which of its parent's implementation blocks each `impl` is, among those
-    /// with the same self-type name. See [`Mono::path_of`].
-    impl_ordinal: HashMap<DefId, usize>,
 }
 
 impl<'a> Mono<'a> {
@@ -817,8 +814,7 @@ impl<'a> Mono<'a> {
         for body in bodies {
             index.insert(body.def(), body);
         }
-        let impl_ordinal = impl_ordinals(defs, decls);
-        Mono { defs, decls, types, bodies: index, impl_ordinal }
+        Mono { defs, decls, types, bodies: index }
     }
 
     /// Every item in `set` that this crate has a body for, as a **concrete**
@@ -1661,14 +1657,20 @@ impl<'a> Mono<'a> {
     /// **Names, never numbers**, for `normal.rs` §2's reason: a [`DefId`] is
     /// allocation order and allocation order is command-line order.
     ///
-    /// An implementation block has no name of its own — `hir::Def::name` is
-    /// `""` for one — so its component is the **self type's** name. Two blocks
-    /// on the same type in the same module would then share a path, so the
-    /// second and later get a `#n` suffix in source order. That is the one
-    /// number in a symbol, it is an index within one module rather than across
-    /// files, and it moves only when the author adds an implementation block
-    /// above an existing one — which is the same trade `normal.rs` §2 took when
-    /// it made the atom order depend on names.
+    /// **An implementation block used to have no name of its own**, and this
+    /// function used to carry a special case for it — reading
+    /// `Declarations::self_ty` and appending an ordinal this module computed
+    /// itself, in `impl_component`/`impl_ordinal`/`impl_ordinals`, so that two
+    /// blocks on the same type in the same module did not share a path. That
+    /// was two copies of one rule: `science-resolve`'s `DefTable::alloc_impl`
+    /// writes the identical name — the self type's, with a `#n` for the second
+    /// and later block on that type in that module — onto `hir::Def::name`
+    /// itself, which is finding 25's fix rather than this crate's. Once the
+    /// name is on the `Def`, the special case is dead code with a second
+    /// spelling of a rule the resolver already enforces, which is exactly the
+    /// hazard this codebase warns about everywhere else, so it is deleted
+    /// here in favour of the one line below that reads any other kind's name:
+    /// an `impl`'s `entry.name` already **is** `Doc` or `Doc#1`.
     fn path_of(&self, def: DefId) -> Vec<String> {
         let mut components = Vec::new();
         let mut current = Some(def);
@@ -1681,28 +1683,12 @@ impl<'a> Mono<'a> {
                 // name derived from one is the same hazard. F0 has no `mod`
                 // declaration, so a module has no name the author wrote.
                 DefKind::Module => {}
-                DefKind::Impl => components.push(self.impl_component(id)),
                 _ => components.push(entry.name.clone()),
             }
             current = entry.parent;
         }
         components.reverse();
         components
-    }
-
-    fn impl_component(&self, def: DefId) -> String {
-        let name = self
-            .decls
-            .self_ty(def)
-            .and_then(|ty| match self.types.kind(ty) {
-                TyKind::Named { def, .. } => Some(self.defs.get(*def).name.clone()),
-                _ => None,
-            })
-            .unwrap_or_else(|| "impl".to_string());
-        match self.impl_ordinal.get(&def).copied().unwrap_or(0) {
-            0 => name,
-            n => format!("{name}#{n}"),
-        }
     }
 
     /// How an instance reads in a diagnostic and in a dump. Not a symbol.
@@ -1805,26 +1791,6 @@ fn named_function(operand: &Operand, values: &HashMap<Local, DefId>) -> Option<D
         }
         _ => None,
     }
-}
-
-/// Which of its parent's implementation blocks each `impl` is, among those with
-/// the same self-type name. See [`Mono::path_of`].
-fn impl_ordinals(defs: &DefTable, decls: &Declarations) -> HashMap<DefId, usize> {
-    let mut seen: HashMap<(Option<DefId>, String), usize> = HashMap::new();
-    let mut out = HashMap::new();
-    for entry in defs.iter() {
-        if entry.kind != DefKind::Impl {
-            continue;
-        }
-        let name = decls
-            .self_ty(entry.id)
-            .map(|ty| format!("{ty:?}"))
-            .unwrap_or_else(|| "impl".to_string());
-        let slot = seen.entry((entry.parent, name)).or_insert(0);
-        out.insert(entry.id, *slot);
-        *slot += 1;
-    }
-    out
 }
 
 #[cfg(test)]

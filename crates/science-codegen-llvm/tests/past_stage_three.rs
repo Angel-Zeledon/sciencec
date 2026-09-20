@@ -735,17 +735,13 @@ fn what_is_refused_names_itself() {
             "let xs be [1, 2, 3]\nlet a be xs[0]\nprint(\"x\")\n",
             "",
         ),
-        (
-            // A `choice` whose payload owns something, which is the half of
-            // Decision 12's glue a record no longer needs: dropping one means
-            // switching on the discriminant and releasing only the active
-            // variant, which is one block per arm where `intern_drop_glue`
-            // builds one block. A record that owns a `String` is not in this
-            // list any more — `tests/methods.rs` runs one.
-            "refuse-owning-drop",
-            "choice C:\n    A\n    B(String)\n\nlet c be A\nprint(\"x\")\n",
-            "is not a record",
-        ),
+        // **A `choice` whose payload owns something used to be here** and is
+        // not: `emit_choice_glue` gives `intern_drop_glue` the `switch` its
+        // own doc comment used to say the emitter could not build — one arm
+        // per variant that owns something, joined at a `done` block a
+        // payload-free variant falls into through the `switch`'s `default`.
+        // `choice_owns_a_string_and_a_payload_free_arm_is_free` below is the
+        // program this case used to refuse, run instead of refused.
         // **A tuple and a cast used to be here** and are not: both build now,
         // and `tests/casts.rs` and the tuple section above are the programs
         // that run them. What is left of a cast's refusal is the pairs §5.1
@@ -778,6 +774,113 @@ fn what_is_refused_names_itself() {
             );
         }
     }
+}
+
+// --- a `choice` whose payload owns something, released -------------------
+
+/// **The program `what_is_refused_names_itself` used to refuse, run instead.**
+///
+/// `emit_choice_glue` gives `Outcome`'s glue a `switch` on the discriminant:
+/// the `Loaded` arm releases the `String` it owns, and the `Missing` arm — no
+/// arm at all, since it owns nothing — falls through the `switch`'s `default`
+/// straight to `done`. The IR assertions pin the shape (a `switch`, not a
+/// comparison, and a call to `science_string_free` inside it); the run is
+/// what says the shape is also correct, because a glue that called the free
+/// unconditionally would still produce this IR and would abort on this exact
+/// program's *second* line for a different reason than the first.
+#[test]
+fn a_choice_variant_that_owns_a_string_is_released_through_a_switch() {
+    let source = "choice Outcome:\n    Loaded(String)\n    Missing\n\n\
+                  def main():\n    let a be Loaded(\"cargado\")\n    print(\"built\")\n";
+    assert_eq!(bytes("choice-owns-string", source), "built\n");
+    let text = ir("choice-owns-string-ir", source);
+    assert!(
+        text.contains("@science_string_free("),
+        "the owning variant's payload is never released:\n{text}"
+    );
+    assert!(
+        text.contains("switch i8 "),
+        "the glue does not switch on the discriminant:\n{text}"
+    );
+}
+
+/// **The arm that owns nothing, on its own — and it is the one a wrong
+/// `default` would crash on.**
+///
+/// `Outcome.drop` is the same function `a_choice_variant_that_owns_a_string…`
+/// exercises the other arm of: it still contains the call to
+/// `science_string_free`, because the glue is compiled once for the type and
+/// not once per value. Building only `Missing` and never `Loaded` runs the
+/// `switch`'s `default` arm at runtime, over memory that was never
+/// initialised as a `String`'s `{ ptr, len, cap }` — so a glue that took the
+/// release arm regardless of the discriminant would hand `science_string_free`
+/// a pointer nothing allocated, which is `SC0402`-adjacent evidence's whole
+/// argument: this is a program a wrong `switch` fails to *run*, not one a
+/// wrong `switch` fails to *build*.
+#[test]
+fn a_payload_free_variant_of_an_owning_choice_frees_nothing() {
+    let source = "choice Outcome:\n    Loaded(String)\n    Missing\n\n\
+                  def main():\n    let b be Missing\n    print(\"built\")\n";
+    assert_eq!(bytes("choice-free-arm", source), "built\n");
+}
+
+/// **A variant whose payload has more than one owning field.**
+///
+/// `Loaded(String, String)` is `choice_ty`'s wrapped, multi-field payload —
+/// the same struct a `Rect(I32, I32)` gets, except every field owns
+/// something — so releasing it is `emit_choice_glue`'s nested loop over that
+/// struct's `FieldPlace`s, each offset by the variant's own `payload_offset`.
+/// Two distinct strings, so a lowering that released only the first field
+/// would still produce a program that runs; the IR assertion is what would
+/// catch that, by counting the call rather than trusting the exit code alone.
+#[test]
+fn a_variant_with_two_owning_fields_frees_both() {
+    let source = "choice Outcome:\n    Loaded(String, String)\n    Missing\n\n\
+                  def main():\n    let x be \"uno\"\n    let y be \"dos\"\n\
+                  \x20   let a be Loaded(x, y)\n    print(\"built\")\n";
+    assert_eq!(bytes("choice-two-fields", source), "built\n");
+    let text = ir("choice-two-fields-ir", source);
+    let frees = text.matches("@science_string_free(").count();
+    assert!(frees >= 2, "expected a release of both owning fields, found {frees}:\n{text}");
+}
+
+/// **A `choice` nested inside a record**, so the record's own glue —
+/// `emit_field_glue`'s loop — is what calls `Outcome.drop`, and not `main`
+/// directly.
+///
+/// This is the direction `intern_drop_glue`'s recursion has to hold up in:
+/// `Wrapper`'s field loop asks for `Outcome`'s glue exactly as it would ask
+/// for any other field's, gets back the symbol `emit_choice_glue` interned,
+/// and calls it. A record whose only field needing release were the `choice`
+/// would leave `tag`'s `String` leaked if the two were confused for each
+/// other, so both fields own something and both are distinct literals.
+#[test]
+fn a_choice_nested_in_a_record_is_released_through_the_records_glue() {
+    let source = "choice Outcome:\n    Loaded(String)\n    Missing\n\n\
+                  type Wrapper:\n    tag: String\n    outcome: Outcome\n\n\
+                  def main():\n    let w be Wrapper(tag: \"w\", outcome: Loaded(\"nested\"))\n\
+                  \x20   print(\"built\")\n";
+    assert_eq!(bytes("choice-nested-record", source), "built\n");
+}
+
+/// **A loop that builds and drops many, of both arms.**
+///
+/// Two thousand iterations, each constructing one `Loaded` and one `Missing`
+/// and dropping both at the end of the same iteration — the shape that turns
+/// a single leak or a single double free into a crash or a climbing RSS
+/// rather than a coincidence the first nine hundred and ninety-nine
+/// iterations happened not to disturb. The exit status is the only assertion,
+/// for `a_record_owns_the_string_literals_it_was_built_from`'s reason: a
+/// double free's stdout is already correct by the time the process aborts on
+/// its way out.
+#[test]
+fn a_loop_that_builds_and_drops_many_owning_choices_does_not_crash() {
+    let source = "choice Outcome:\n    Loaded(String)\n    Missing\n\n\
+                  def main():\n    let mutable i be 0\n    loop:\n\
+                  \x20       if i is 2000:\n\x20           break\n\
+                  \x20       let a be Loaded(\"looped\")\n\x20       let b be Missing\n\
+                  \x20       i be i + 1\n    print(\"built\")\n";
+    assert_eq!(bytes("choice-loop-many", source), "built\n");
 }
 
 /// Integer `/` and `%` build now, and the guard that let them is the whole of

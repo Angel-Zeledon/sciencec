@@ -1016,6 +1016,269 @@ impl<'a> Lowerer<'a> {
         Ok(Some(symbol))
     }
 
+    /// One field's release inside a `choice`'s glue: the address at `offset`
+    /// from `Param(0)`, and the call that runs `field_ty`'s glue — or its
+    /// runtime free, for a `String`, an `Array`, a `Map` — over it.
+    ///
+    /// **The same shape `emit_field_glue`'s loop runs for a record's field**,
+    /// pulled out on its own because [`Lowerer::emit_choice_glue`] runs it
+    /// twice over: once per owning variant, and — for a variant whose payload
+    /// has more than one field — once per owning field inside that payload
+    /// too. A free function rather than a second copy of the loop keeps the
+    /// two call sites from drifting the way the two refusals this feature
+    /// replaces already had.
+    fn emit_variant_release(
+        &mut self,
+        name: &str,
+        field_ty: Ty,
+        offset: u64,
+        next_value: &mut u32,
+        depth: u32,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let inner = self.intern_drop_glue(field_ty, depth + 1)?;
+        let direct = match &inner {
+            Some(_) => None,
+            None => self.direct_release(field_ty)?,
+        };
+        let address = ValueId(*next_value);
+        *next_value += 1;
+        insts.push(ExtInst::FieldAddr { dest: address, base: Operand::Param(0), offset });
+        let (callee, ret) = match (&inner, &direct) {
+            (Some(glue), _) => (Callee::Science(glue.clone()), ReturnClass::Void),
+            (None, Some((runtime, _))) => {
+                (Callee::Runtime(runtime), self.declare(runtime)?.ret.clone())
+            }
+            // `drop_runs_something` said this field owns something and
+            // neither path claimed it — a hole in this crate rather than a
+            // program the user wrote, so it is named rather than silently
+            // releasing nothing. `emit_field_glue`'s own arm says the same.
+            (None, None) => {
+                return Err(Unlowered::new(format!(
+                    "drop glue for `{name}`: a variant's payload of type `{}` owns something \
+                     that is neither a runtime aggregate nor a type with glue",
+                    self.types.render(self.defs, field_ty)
+                )));
+            }
+        };
+        let mut args = vec![Operand::Value(address)];
+        if let Some((_, Some(descriptor))) = &direct {
+            args.push(Operand::GlobalAddr(descriptor.clone()));
+        }
+        insts.push(ExtInst::Above(Inst::Call { dest: None, callee, args, ret, sret_slot: None }));
+        Ok(())
+    }
+
+    /// The glue for a `choice` with any number of variants, when at least one
+    /// owns something: switch on the discriminant, and drop only the active
+    /// variant's payload.
+    ///
+    /// # The decision
+    ///
+    /// **One arm per variant that owns something, not one arm per variant.**
+    /// Decision 18's `switch` already has a `default`, and every payload-free
+    /// variant — and every variant whose payload owns nothing, such as
+    /// `Loaded(Int)` beside a `String`-carrying arm — falls through it to
+    /// `done` directly. That is the note this task was given: a variant with
+    /// nothing to release is worth skipping rather than building a block that
+    /// runs no instruction and jumps on. `emit_nullable_glue` is this same
+    /// shape at its smallest — one test, one branch, one `default` — and a
+    /// general `choice` is the same `switch`, sized to however many variants
+    /// turn out to own something.
+    ///
+    /// # The reason
+    ///
+    /// This is the shape the refusal named — *"one block per arm where this
+    /// builds one block"* — and the sentence was wrong about the emitter, not
+    /// about the requirement: `ExtBody::blocks` is a `Vec` and
+    /// `Terminator::Switch` takes an arm list, so the arm count was never
+    /// fixed at one and the refusal outlived the limit it described.
+    ///
+    /// # The cost
+    ///
+    /// **A variant's payload can own more than one field**
+    /// (`Loaded(String, Int)`). §3.3 un-wraps a single-field payload onto
+    /// `payload_offset` directly — [`Lowerer::choice_ty`]'s note is the
+    /// account — but a multi-field payload is `choice_ty`'s own struct, so
+    /// releasing it is a nested loop over that struct's `FieldPlace`s in
+    /// reverse declaration order, the same order [`Lowerer::emit_field_glue`]
+    /// runs for a record, with every offset shifted by `payload_offset`.
+    fn emit_choice_glue(
+        &mut self,
+        def: DefId,
+        name: String,
+        symbol: String,
+        layout: Layout,
+        depth: u32,
+    ) -> Result<Option<String>, Unlowered> {
+        let Repr::Tagged { tag, payload_offset, variants } = layout.repr else {
+            return Err(Unlowered::new(format!(
+                "drop glue for `{name}`, whose layout is neither Decision 18's tagged union nor \
+                 Decision 19's niche: a general `choice`'s glue only knows how to switch on \
+                 Decision 18's shape"
+            )));
+        };
+        let variant_defs = self.choice_variants(def);
+        if variant_defs.len() != variants.len() {
+            return Err(Unlowered::new(format!(
+                "drop glue for `{name}`: its layout has {} variant(s) and its declaration has {}",
+                variants.len(),
+                variant_defs.len()
+            )));
+        }
+        let decls = self.declarations()?;
+
+        // ValueId(0) is the loaded tag; every `FieldAddr` after it, across
+        // every arm, claims the next — `BodyState::values` is one map for the
+        // whole function and not one per block, so numbering has to be too.
+        let mut next_value = 1u32;
+        let tag_layout = layout_of(self.target, &CgTy::Int(tag));
+        let loaded = ValueId(0);
+        let entry_insts =
+            vec![ExtInst::LoadAt { dest: loaded, address: Operand::Param(0), layout: tag_layout }];
+
+        // Built before any `BlockId` exists, because the `done` block's index
+        // depends on how many variants end up with an arm at all — which is
+        // known only after this loop decides which ones own something.
+        let mut arm_bodies: Vec<(u64, Vec<ExtInst>)> = Vec::new();
+        for (place, variant_def) in variants.iter().zip(variant_defs.iter()) {
+            let field_tys = decls
+                .variant(*variant_def)
+                .ok_or_else(|| {
+                    Unlowered::new(format!(
+                        "the variant `{name}.{}`, which the declaration table has no lowered \
+                         payload for",
+                        place.name
+                    ))
+                })?
+                .payload
+                .clone();
+            // Whether *this* variant owns anything — not whether the choice
+            // does, which `intern_drop_glue` already asked before this
+            // function was reached. A payload-free variant's `field_tys` is
+            // empty and this is trivially `false`; a `Loaded(Int)` beside a
+            // `Loaded(String)` is the case that makes the check necessary.
+            let mut owns = false;
+            for field_ty in &field_tys {
+                if self.drop_runs_something(*field_ty, 0)? {
+                    owns = true;
+                    break;
+                }
+            }
+            if !owns {
+                continue;
+            }
+            let mut insts = Vec::new();
+            if field_tys.len() == 1 {
+                // §3.3's un-wrapped payload: the one field sits at
+                // `payload_offset` itself, with nothing of `choice_ty`'s
+                // struct in between.
+                self.emit_variant_release(
+                    &name,
+                    field_tys[0],
+                    payload_offset,
+                    &mut next_value,
+                    depth,
+                    &mut insts,
+                )?;
+            } else {
+                // `choice_ty`'s struct for a multi-field payload: a nested
+                // aggregate whose own `FieldPlace` offsets are relative to
+                // where the payload starts, so the absolute offset is
+                // `payload_offset` plus the field's own.
+                let payload_layout = place.payload.as_ref().ok_or_else(|| {
+                    Unlowered::new(format!(
+                        "drop glue for `{name}.{}`: its declaration has a payload but its \
+                         layout has none",
+                        place.name
+                    ))
+                })?;
+                let Repr::Aggregate { fields: field_places } = &payload_layout.repr else {
+                    return Err(Unlowered::new(format!(
+                        "drop glue for `{name}.{}`, whose payload layout is not Decision 17's \
+                         aggregate one",
+                        place.name
+                    )));
+                };
+                if field_places.len() != field_tys.len() {
+                    return Err(Unlowered::new(format!(
+                        "drop glue for `{name}.{}`: its payload layout has {} field(s) and its \
+                         declaration has {}",
+                        place.name,
+                        field_places.len(),
+                        field_tys.len()
+                    )));
+                }
+                // Reverse declaration order, `emit_field_glue`'s order and
+                // for the same reason: nothing in F0 can observe the
+                // difference today, and the day a `Drop` implementation
+                // prints something is the day this would be wrong if it
+                // were not followed.
+                for (index, field_ty) in field_tys.iter().enumerate().rev() {
+                    if !self.drop_runs_something(*field_ty, 0)? {
+                        continue;
+                    }
+                    let offset = payload_offset + field_places[index].offset;
+                    self.emit_variant_release(
+                        &name,
+                        *field_ty,
+                        offset,
+                        &mut next_value,
+                        depth,
+                        &mut insts,
+                    )?;
+                }
+            }
+            arm_bodies.push((place.discriminant, insts));
+        }
+
+        let done_id = BlockId((arm_bodies.len() + 1) as u32);
+        let mut blocks = Vec::with_capacity(arm_bodies.len() + 2);
+        let mut arms = Vec::with_capacity(arm_bodies.len());
+        for (index, (discriminant, insts)) in arm_bodies.into_iter().enumerate() {
+            let id = BlockId((index + 1) as u32);
+            arms.push((discriminant, id));
+            blocks.push(ExtBlock {
+                id,
+                label: format!("variant{index}"),
+                insts,
+                terminator: Terminator::Goto(done_id),
+            });
+        }
+        blocks.insert(
+            0,
+            ExtBlock {
+                id: BlockId(0),
+                label: "entry".to_string(),
+                insts: entry_insts,
+                terminator: Terminator::Switch {
+                    value: Operand::Value(loaded),
+                    arms,
+                    default: done_id,
+                },
+            },
+        );
+        blocks.push(ExtBlock {
+            id: done_id,
+            label: "done".to_string(),
+            insts: Vec::new(),
+            terminator: Terminator::Return(None),
+        });
+
+        let signature = AbiSignature::science(
+            self.target,
+            symbol.clone(),
+            layout_of(self.target, &CgTy::Unit),
+            vec![(
+                "self".to_string(),
+                layout_of(self.target, &CgTy::Ptr(PtrKind::MutBorrow)),
+                ParamAttrs::default(),
+            )],
+        );
+        self.glue_definitions.push((signature, ExtBody { blocks }));
+        Ok(Some(symbol))
+    }
+
     /// The glue for a type whose parts are **all always present**: a record's
     /// fields, or a tuple's elements.
     ///
@@ -1160,13 +1423,19 @@ impl<'a> Lowerer<'a> {
     ///
     /// # What it does not do
     ///
-    /// **A `choice` whose payload owns something is refused.** Releasing one
-    /// means switching on the discriminant and dropping only the active
-    /// variant's payload, which is a `switch` and one block per arm inside a
-    /// function this builds as a single block. `descriptor::drop_glue` has
-    /// the same hole from the other side — it answers `fields: vec![]` for
-    /// anything that is not `Repr::Aggregate` — so the refusal is named here
-    /// rather than silently dropping nothing, which is the shape that leaks.
+    /// **A `choice` whose payload owns something used to be refused here**,
+    /// with the sentence *"releasing one means switching on the discriminant
+    /// and dropping only the active variant, which is a `switch` and one
+    /// block per arm inside a function this builds as a single block"*. The
+    /// sentence was wrong about this function rather than about `choice`:
+    /// [`Lowerer::emit_choice_glue`] is that `switch`, and this function now
+    /// reaches it for `DefKind::Choice` the same way it reaches
+    /// [`Lowerer::emit_field_glue`] for `DefKind::Record`.
+    /// `science_codegen::descriptor::drop_glue` still answers `fields: vec![]`
+    /// for anything that is not `Repr::Aggregate`, which is a hole in that
+    /// table and not in this one — nothing above the line reads a `choice`'s
+    /// descriptor for its glue today, so nothing yet depends on the answer
+    /// being wrong.
     ///
     /// **The linkage is external where Decision 12 asks for `internal`.**
     /// `sys::linkage::INTERNAL` exists and `declare_function` has no way to
@@ -1244,23 +1513,26 @@ impl<'a> Lowerer<'a> {
             )));
         };
         let name = self.defs.get(def).name.clone();
-        if self.defs.get(def).kind != DefKind::Record {
-            return Err(Unlowered::new(format!(
-                "drop glue for `{name}`, which is not a record: releasing a `choice`'s payload \
-                 means switching on the discriminant and dropping only the active variant, which \
-                 is one block per arm where this builds one block"
-            )));
-        }
         let symbol = format!("{}.drop", mangle(&MonoKey::plain(&[name.as_str()])));
         if self.glue.contains(&symbol) {
             return Ok(Some(symbol));
         }
-        // Recorded *before* the body is built, so a record that reaches
-        // itself through a field asks for a symbol that is already claimed
-        // rather than recursing until the stack runs out. The depth bound
-        // above is the second guard and this is the first.
+        // Recorded *before* the body is built, so a record or a `choice` that
+        // reaches itself through a field or a variant asks for a symbol that
+        // is already claimed rather than recursing until the stack runs out.
+        // The depth bound above is the second guard and this is the first.
         self.glue.insert(symbol.clone());
 
+        // **A `choice` whose payload owns something, which is `emit_choice_glue`'s
+        // `switch` over however many variants own something.** This used to be
+        // the refusal this function's own doc comment quoted — *"one block per
+        // arm where this builds one block"* — and the sentence was wrong about
+        // the emitter rather than the requirement, the same mistake
+        // `emit_nullable_glue` and `emit_field_glue` each found half of already.
+        if self.defs.get(def).kind == DefKind::Choice {
+            let layout = self.layout_of_ty(ty)?;
+            return self.emit_choice_glue(def, name, symbol, layout, depth);
+        }
         self.emit_field_glue(ty, &name, symbol, self.record_field_types(def)?, depth)
     }
 
@@ -2562,65 +2834,49 @@ impl<'a> Lowerer<'a> {
         mangle(&MonoKey::plain(&components))
     }
 
-    /// `DefTable::path_of`'s walk, with an implementation block named after the
-    /// type it was written for.
+    /// `DefTable::path_of`'s walk.
     ///
-    /// **This is finding 25 and it was a symbol collision that ran.**
-    /// `path_of` skips a definition whose name is empty, and `science-resolve`
-    /// gives an implementation block exactly that: *"an `impl` block has none
-    /// and carries `\"\"`"*. So `Left has: def value` and `Right has: def
-    /// value` both have the path `fixture.value`, both mangle to
-    /// `_S7fixture5value`, and the module gets two definitions of one symbol —
-    /// which links, runs, and calls the first of them for both. Two types with
-    /// a method of the same name is the most ordinary program in the language.
+    /// **This used to be finding 25 and a symbol collision that ran**, and this
+    /// function used to carry the fix as a special case: `path_of` skips a
+    /// definition whose name is empty, `science-resolve` gave an implementation
+    /// block exactly that, so `Left has: def value` and `Right has: def value`
+    /// both had the path `fixture.value`, both mangled to `_S7fixture5value`,
+    /// and the module gained two definitions of one symbol — which links, runs,
+    /// and calls the first of them for both.
     ///
-    /// **The type's name is the distinguishing component and it is read from
-    /// `Declarations::self_ty`**, which is the same answer
-    /// [`Lowerer::science_signature`] asks for and the one Decision 16 wants:
-    /// *"deterministic from the source alone"*, with no hash and no `DefId`
-    /// anywhere in it. `Doc has:` contributes `Doc`.
+    /// **The special case is gone because the hole it patched is gone.**
+    /// `DefTable::alloc_impl` now writes a name onto the block's own
+    /// `hir::Def` — the self type's, with a `#n` for the second and later block
+    /// on that type in that module — so `entry.name` is never empty for an
+    /// `impl` and this function is `path_of`'s walk with nothing special about
+    /// any one `DefKind`. `block_type_name`, which read
+    /// `Declarations::self_ty` to reconstruct the same name this crate cannot
+    /// see the resolver already wrote, is deleted rather than kept as a second
+    /// way to ask; two spellings of one rule is the hazard this codebase warns
+    /// about everywhere else, and `science-codegen`'s `Mono::path_of` took the
+    /// same fix for the same reason.
     ///
-    /// **It is not repaired in `path_of`**, although that is where the hole is:
-    /// that function is `science-resolve`'s, its answer is a user-visible path
-    /// that diagnostics print, and a block has no name to print. What codegen
-    /// needs is a *key*, which is a different question with a different right
-    /// answer.
-    ///
-    /// **What it still does not separate**, and [`Lowerer::lower_crate`]'s
-    /// duplicate check is the other half: two blocks for the same type — `Doc
-    /// has:` beside `Doc implements Sized:`, or two `implements` blocks for two
-    /// interfaces — contribute the same component, so two methods of one name
-    /// on one type still collide. Every such program is an ambiguity
-    /// `science-types`' `methods`' §6 reports at the call site, so nothing that
-    /// checks clean can reach it; the duplicate check is there because *"nothing
-    /// can reach it"* is the sentence this finding is about.
+    /// **What separates two blocks on one type now, and what still does not.**
+    /// `Doc has:` beside `Doc implements Sized:` are `Doc` and `Doc#1`, so the
+    /// bug this finding names cannot happen again. Two blocks that are
+    /// ambiguous on their own terms — two `implements` blocks for the same
+    /// interface — still contribute the same component, but that program is an
+    /// ambiguity `science-types`' `methods`' §6 already reports at the call
+    /// site, so nothing that checks clean can reach it; [`Lowerer::lower_crate`]'s
+    /// duplicate check stays as the guard for whatever this walk gets wrong
+    /// rather than for this finding specifically.
     fn path_components(&self, def: DefId) -> Vec<String> {
         let mut parts: Vec<String> = Vec::new();
         let mut cursor = Some(def);
         while let Some(current) = cursor {
             let entry = self.defs.get(current);
-            if entry.kind == DefKind::Impl {
-                if let Some(name) = self.block_type_name(current) {
-                    parts.push(name);
-                }
-            } else if !entry.name.is_empty() {
+            if !entry.name.is_empty() {
                 parts.push(entry.name.clone());
             }
             cursor = entry.parent;
         }
         parts.reverse();
         parts
-    }
-
-    /// The name of the type an implementation block was written for.
-    fn block_type_name(&self, block: DefId) -> Option<String> {
-        let ty = self.decls?.self_ty(block)?;
-        match self.types.kind(ty) {
-            TyKind::Named { def, .. } => Some(self.defs.get(*def).name.clone()),
-            TyKind::Object { interface, .. } => Some(self.defs.get(*interface).name.clone()),
-            TyKind::SelfType { owner } => Some(self.defs.get(*owner).name.clone()),
-            _ => None,
-        }
     }
 
     /// The literals and declarations interned so far, with `definitions`,

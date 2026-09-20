@@ -488,11 +488,28 @@ impl Resolver {
                     .collect(),
             ),
             ast::ItemKind::Impl(block) => {
-                // An implementation has no name, so nothing goes in the name
-                // table; the def exists to parent the methods and the
-                // associated types, and to answer `module_of` for the orphan
-                // rule.
-                ItemDefs::Impl(self.defs.alloc(DefKind::Impl, "", block.span, Some(module)))
+                // An implementation has no name the author wrote, so nothing
+                // goes in the module's name table — `Doc` in `Doc has:` names
+                // the record and must keep naming it. The def exists to parent
+                // the methods and the associated types, to answer `module_of`
+                // for the orphan rule, and to be the component that tells one
+                // block's `from` from another's: `alloc_impl` derives the name
+                // from the self type, and its doc comment is finding 25.
+                //
+                // The name comes from the **syntax**, not from
+                // `Declarations::self_ty`, because nothing is typed yet at
+                // item-collection time. The two agree on every self type F0
+                // can write in a block head, which is a path, `Self`, or one
+                // of those under `&`/`?`; where they could disagree is
+                // an alias, and `Doc has:` beside `Papers has:` for one
+                // `alias Papers is Doc` is `SC0205`-adjacent duplicate
+                // territory that the type checker refuses before a symbol is
+                // ever built.
+                ItemDefs::Impl(self.defs.alloc_impl(
+                    &impl_head_name(&block.self_ty),
+                    block.span,
+                    Some(module),
+                ))
             }
         }
     }
@@ -2709,6 +2726,39 @@ impl Resolver {
             }
         }
         None
+    }
+}
+
+/// The name of the type in a block head, for [`DefTable::alloc_impl`].
+///
+/// The **last segment** of a path and not the whole dotted path: the block is
+/// already parented by its module, so `text.parser.Token has:` would otherwise
+/// repeat `text.parser` inside a path that begins with it. Generic arguments
+/// are dropped — `Pair[A, B] has:` is `Pair` — because a block's parameters
+/// are the block's, not part of which type it is for, and because one block per
+/// type per module is what the ordinal already counts.
+///
+/// A borrow and a `?` are peeled for [`type_owner`]'s reason: they are written
+/// around the type, not part of its name. Everything without a name — a tuple,
+/// `()`, a closure type — falls back to the empty string, which `alloc_impl`
+/// reads as `impl`; none of those can head a block that type-checks, so the
+/// fallback exists so that a program which fails later still gets there.
+fn impl_head_name(ty: &ast::Type) -> String {
+    match &ty.kind {
+        ast::TypeKind::Path(path) => {
+            path.segments.last().map(|s| s.name.name.clone()).unwrap_or_default()
+        }
+        ast::TypeKind::Borrowed { inner, .. } | ast::TypeKind::Nullable(inner) => {
+            impl_head_name(inner)
+        }
+        ast::TypeKind::Any(bound) => bound
+            .path()
+            .and_then(|path| path.segments.last())
+            .map(|s| s.name.name.clone())
+            .unwrap_or_default(),
+        ast::TypeKind::SelfType => "Self".to_string(),
+        ast::TypeKind::SelfAssoc(name) => name.name.clone(),
+        _ => String::new(),
     }
 }
 

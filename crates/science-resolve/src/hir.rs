@@ -199,7 +199,8 @@ pub const BUILTIN_SPAN: Span = Span { file: BUILTIN_FILE, start: 0, end: 0 };
 pub struct Def {
     pub id: DefId,
     pub kind: DefKind,
-    /// The name as written. An `impl` block has none and carries `""`.
+    /// The name as written. An `impl` block has none of its own and carries
+    /// the name [`DefTable::alloc_impl`] derives from the type it implements.
     pub name: String,
     /// Where it was declared: the name's span, not the whole declaration's, so
     /// that "defined here" points at the word the reader is looking for.
@@ -243,6 +244,74 @@ impl DefTable {
         let id = DefId(self.defs.len() as u32);
         self.defs.push(Def { id, kind, name: name.into(), span, parent });
         id
+    }
+
+    /// Records an implementation block, naming it after the type it was
+    /// written for, and hands back its id.
+    ///
+    /// **The decision: a block is named, and its name is the self type's with
+    /// a `#n` for the second and later block on that type in that module.**
+    /// `Doc has:` is `Doc`; a second `Doc implements Sized:` beside it is
+    /// `Doc#1`.
+    ///
+    /// **The reason is finding 25, which was a symbol collision that ran.** A
+    /// block used to carry `""`, [`DefTable::path_of`] skips an empty name, and
+    /// so `LoadError implements From[ParseError]:` and `LoadError implements
+    /// From[IoError]:` both had the path `LoadError.from`. Decision 16 builds
+    /// a mangled symbol out of that path, and a module with two `define`s of
+    /// one name *links*: LLVM renames the second, every call resolves to the
+    /// first, and the program runs and prints one function's answer twice.
+    /// `science-codegen-llvm`'s `lower_crate` refuses that rather than emitting
+    /// it, and the refusal's own text names this function's hole as the cause:
+    /// *"the path of a method runs through a block `science-resolve` leaves
+    /// unnamed"*. This is where it stops being unnamed.
+    ///
+    /// **Names, never numbers, and the ordinal is the one exception** — which
+    /// is `science-codegen`'s `Mono::path_of` word for word, because that is
+    /// where this rule was first written and two spellings of one rule is the
+    /// hazard this codebase warns about everywhere else. A [`DefId`] is
+    /// allocation order and allocation order is command-line order, so no
+    /// `DefId` may appear in a symbol; the ordinal is an index within *one
+    /// module* in source order, which is deterministic from the source alone
+    /// as Decision 16 requires. Now that the name is on the `Def`,
+    /// `science-codegen`'s `Mono::path_of` and `science-codegen-llvm`'s
+    /// `Lowerer::path_components` both read it directly rather than
+    /// recomputing it — `Mono`'s `impl_ordinal`/`impl_component`/
+    /// `impl_ordinals` and `Lowerer`'s `block_type_name` are gone, because a
+    /// second copy of this rule is exactly the hazard the previous paragraph
+    /// names.
+    ///
+    /// **The cost, and it is real.** The ordinal moves when the author inserts
+    /// an implementation block *above* an existing one, which renames a symbol
+    /// that nothing in the source changed — the same trade `normal.rs` §2 took
+    /// when it made atom order depend on names. And `path_of` is user-visible:
+    /// a method in the second block now prints as `LoadError#1.from` in a
+    /// diagnostic, a `#` in a path the reader never wrote. That is accepted
+    /// because the alternative is two definitions the reader cannot tell apart
+    /// either, and because `#` cannot be an identifier character, so the name
+    /// can never collide with one the author could write.
+    pub fn alloc_impl(
+        &mut self,
+        self_ty_name: &str,
+        span: Span,
+        parent: Option<DefId>,
+    ) -> DefId {
+        let base = if self_ty_name.is_empty() { "impl" } else { self_ty_name };
+        let ordinal = self
+            .defs
+            .iter()
+            .filter(|def| {
+                def.kind == DefKind::Impl
+                    && def.parent == parent
+                    && (def.name == base
+                        || def.name.split_once('#').is_some_and(|(head, _)| head == base))
+            })
+            .count();
+        let name = match ordinal {
+            0 => base.to_string(),
+            n => format!("{base}#{n}"),
+        };
+        self.alloc(DefKind::Impl, name, span, parent)
     }
 
     pub fn get(&self, id: DefId) -> &Def {

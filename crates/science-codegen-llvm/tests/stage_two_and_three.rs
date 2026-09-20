@@ -516,20 +516,15 @@ fn the_boundary_is_where_it_says_it_is() {
         // The row is deleted rather than reworded because this list is *"what is
         // past the boundary"* and division no longer is.
         ("shift", "let a be 6\nlet b be a << 2\nprint(\"x\")\n", "shift"),
-        // A value that owns something Decision 12's glue would have to
-        // release. **Three of the four cases are lowered now**: a `br` when
-        // the value owns nothing, `science_string_free` when it is a bare
-        // `String`, and `Lowerer::intern_drop_glue`'s emitted function when it
-        // is a record — `tests/methods.rs` runs a record that owns a `String`
-        // and a record that owns one through a nested record. What is left is
-        // a `choice`: releasing its payload means switching on the
-        // discriminant and dropping only the active variant, which is one
-        // block per arm where the glue builder emits one block.
-        (
-            "drop",
-            "choice C:\n    A\n    B(String)\n\nlet c be A\nprint(\"x\")\n",
-            "is not a record",
-        ),
+        // **`drop` used to be here and is not.** It read *"what is left is a
+        // `choice`: releasing its payload means switching on the discriminant
+        // and dropping only the active variant, which is one block per arm
+        // where the glue builder emits one block"* — and `emit_choice_glue`
+        // is that `switch`, one arm per variant that owns something and a
+        // `default` for the rest. `tests/past_stage_three.rs`'s
+        // `a_choice_variant_that_owns_a_string_is_released_through_a_switch`
+        // and its neighbours are the programs that run it, including the one
+        // this row used to build and refuse.
         // **Still refused, and no longer for the reason this list was written
         // with.** `cg_ty` has the `TyKind::Tuple` arm now and
         // `let t: (Int, Int) be (1, 2)` builds, runs and prints; what is left
