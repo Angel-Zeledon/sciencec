@@ -495,6 +495,7 @@ pub fn check_fn(
         facts: Facts::new(),
         pending: Vec::new(),
         pending_tuples: Vec::new(),
+        pending_named: Vec::new(),
         numeric: Vec::new(),
         self_subst,
         ret,
@@ -619,6 +620,60 @@ struct CallSolve {
     deferred: HashMap<DefId, InferVar>,
 }
 
+/// One generic argument of a record literal or a variant construction, at the
+/// point [`BodyChecker::instantiate_record`] or
+/// [`BodyChecker::instantiate_payload`] finishes with it.
+///
+/// The same two states [`CallSolve::deferred`] distinguishes from a plain
+/// solve, spelled for a slot rather than for a whole substitution: a call has
+/// one parameter that can stand for its own return type, so one variable is
+/// enough, but `Pair[A, B]`'s own `Ty` is `Named { def, args }` over *both* —
+/// a shape, not a class — so every argument keeps its own answer here rather
+/// than being collapsed into one.
+enum PendingArg {
+    /// Solved already: a name's declared type, a suffixed literal, or a
+    /// const parameter, which this crate does not solve here at all (§6's
+    /// `SC0262` is F1's) and which is always [`GenericArg::Error`].
+    Fixed(GenericArg),
+    /// Only an argument whose own class is still open answered this
+    /// parameter — an unsuffixed literal, most often — so this names the
+    /// variable it *is* rather than a type guessed early. [`BodyChecker::
+    /// finish`] reads it once, the same moment it reads every other pending
+    /// variable.
+    Open(InferVar),
+}
+
+/// A record literal or a variant construction recorded at
+/// [`BodyChecker::pending_named`] because at least one of its generic
+/// arguments is a [`PendingArg::Open`].
+///
+/// **Why this cannot use [`BodyChecker::pending`] alone**, for the same
+/// reason [`BodyChecker::pending_tuples`] cannot: the node's type is not one
+/// variable, it is [`TyKind::Named`]'s shape over several, and there is
+/// nothing for inference to bind to `Pair[A, B]` until every argument in
+/// `args` has settled. `var` is that placeholder, and [`BodyChecker::finish`]
+/// binds it once `args` is all [`PendingArg::Fixed`] or resolved.
+///
+/// There is no [`ExprId`] here: the node that carries `var` is already in
+/// [`BodyChecker::pending`], because it was pushed through
+/// [`BodyChecker::push_typed`] like any other node whose type may still be a
+/// variable, and `finish`'s ordinary writeback loop reads `var`'s binding off
+/// that list. This struct exists only to say what `var` is bound *to*.
+struct PendingNamed {
+    /// The variable nothing unifies, standing for the whole composite.
+    var: InferVar,
+    /// The record or choice: `Pair`, `Bound`, ...
+    def: DefId,
+    /// One entry per declared generic parameter, in declaration order.
+    args: Vec<PendingArg>,
+    /// Generic parameter -> the still-open variable answering it, the same
+    /// map `args` was built from. [`BodyChecker::deferred_field`] is why this
+    /// is kept twice: `finish` wants the positional shape and a field read
+    /// wants the one parameter it names, and rebuilding the second from the
+    /// first would be the same zip with `declared` at every call.
+    deferred: HashMap<DefId, InferVar>,
+}
+
 /// The checker for one body. §3: one of these per body, dropped with it.
 /// `SC0304` — a write to a binding that was never declared `mutable`.
 ///
@@ -716,6 +771,11 @@ struct BodyChecker<'a> {
     /// tuple containing it is reached. Nesting needs no second pass and no
     /// fixed point.
     pending_tuples: Vec<(ExprId, InferVar, Vec<InferTy>)>,
+    /// Record literals and variant constructions built while at least one
+    /// generic argument was only an unsuffixed literal's still-open
+    /// variable. See [`PendingNamed`]; insertion order is load-bearing for
+    /// the same nesting reason [`BodyChecker::pending_tuples`] gives.
+    pending_named: Vec<PendingNamed>,
     numeric: Vec<(InferVar, Numeric)>,
     self_subst: Substitution,
     ret: Ty,
@@ -792,9 +852,18 @@ impl<'a> BodyChecker<'a> {
             .iter()
             .map(|(_, var, _)| (self.infer.find(*var), ()))
             .collect();
+        // A deferred record or variant's own variable is the same kind of
+        // shape, for the same reason: `Pair[A, B]`'s placeholder is bound
+        // below from `A` and `B` once they have answers, and it is never a
+        // class of its own to default.
+        let named_vars: HashMap<InferVar, ()> = self
+            .pending_named
+            .iter()
+            .map(|entry| (self.infer.find(entry.var), ()))
+            .collect();
 
         for root in self.infer.unresolved() {
-            if tuple_vars.contains_key(&root) {
+            if tuple_vars.contains_key(&root) || named_vars.contains_key(&root) {
                 continue;
             }
             let default = match kinds.get(&root) {
@@ -838,6 +907,34 @@ impl<'a> BodyChecker<'a> {
             }
             let ty = self.types.tuple(tys);
             let _ = self.infer.bind(self.types, var, ty);
+        }
+
+        // Same rule, for `Pair[A, B]` in place of `(A, B)`: insertion order
+        // so a nested composite is already bound, and a composite left with
+        // an argument that never settled is left alone rather than bound to
+        // a `Named` with a hole inside it — `Ty::ERROR` is already stored on
+        // the node, and that is what a later phase refuses by name.
+        for entry in std::mem::take(&mut self.pending_named) {
+            let arity = entry.args.len();
+            let mut args = Vec::with_capacity(arity);
+            for slot in entry.args {
+                let settled = match slot {
+                    PendingArg::Fixed(arg) => Some(arg),
+                    PendingArg::Open(var) => match self.infer.binding(var) {
+                        Some(ty) if ty != Ty::ERROR => Some(GenericArg::Type(ty)),
+                        _ => None,
+                    },
+                };
+                match settled {
+                    Some(arg) => args.push(arg),
+                    None => break,
+                }
+            }
+            if args.len() != arity {
+                continue;
+            }
+            let ty = self.types.named(entry.def, args);
+            let _ = self.infer.bind(self.types, entry.var, ty);
         }
 
         for (id, var) in std::mem::take(&mut self.pending) {
@@ -1776,8 +1873,95 @@ impl<'a> BodyChecker<'a> {
         Typed { id, ty: InferTy::Known(inner) }
     }
 
+    /// A field read whose base is still a [`PendingNamed`] composite —
+    /// `coords.first` before `finish` has given `coords` a `Ty` at all.
+    ///
+    /// **Only the shallow case.** `first`'s declared type has to be *exactly*
+    /// a generic parameter for this to answer anything, the identical
+    /// restriction `instantiate_record`'s own solve draws around `probe`:
+    /// anything a substitution would need to look inside — `Array of A`, one
+    /// generic type nested in another — is unsupported on both sides of one
+    /// restriction, not two. `None` leaves the caller to read `base`'s type
+    /// as `Ty::ERROR` exactly as it always has, which is silent for the same
+    /// reason [`BodyChecker::unknown_field`] already is: a field this cannot
+    /// answer is a field nobody solved, not a claim about the program.
+    ///
+    /// **Why this can answer at all, where a `match` on a deferred tuple
+    /// cannot.** A pattern needs the scrutinee's whole shape, and a deferred
+    /// composite has none until every argument settles. A field read needs
+    /// exactly *one* argument — the one its declared type names — and that
+    /// argument's variable already exists, in [`PendingNamed::deferred`],
+    /// independently of whether the others have settled yet. So the read is
+    /// deferred in exactly the shape [`BodyChecker::push_typed`] already
+    /// gives an unsuffixed literal, rather than forced or refused.
+    fn deferred_field(
+        &mut self,
+        base: ExprId,
+        var: InferVar,
+        name: &hir::Ident,
+        span: Span,
+    ) -> Option<Typed> {
+        let root = self.infer.find(var);
+        let at =
+            self.pending_named.iter().position(|entry| self.infer.find(entry.var) == root)?;
+        let def = self.pending_named[at].def;
+        let record = self.decls.record(def)?;
+        let (field, field_ty) = record
+            .fields
+            .iter()
+            .find(|(id, _)| self.defs.get(*id).name == name.name)
+            .copied()?;
+        let TyKind::Param { def: param } = *self.types.kind(field_ty) else { return None };
+        let field_var = *self.pending_named[at].deferred.get(&param)?;
+        let id = self.body.push_expr(ExprKind::Field { base, field: Some(field) }, Ty::ERROR, span);
+        self.pending.push((id, field_var));
+        Some(Typed { id, ty: InferTy::Var(field_var) })
+    }
+
     fn field(&mut self, base: &hir::Expr, name: &hir::Ident, span: Span) -> Typed {
+        // `Format.Json`, a qualified variant read as a value with no call
+        // after it: the parser cannot tell this from an ordinary field
+        // access on a value named `Format`, any more than it can tell
+        // `ConfigError.NotFound(port)` from a method call, and
+        // `science-resolve`'s `module_qualified` only turns a dotted name
+        // into a path when its first segment is a *module* — `Format` is a
+        // choice, not a module, so `Format.Json` reaches here as an ordinary
+        // `Field` and would otherwise synthesise `Format` as a value. That is
+        // a type in a value position, which resolves with no diagnostic —
+        // `WRONG_NAMESPACE` is `reject_module_as_value`'s check and it is
+        // module-shaped, not type-shaped — so `path`'s `Named::Other` arm
+        // built `Ty::ERROR` out of it silently: finding 20's shape once more,
+        // now at a receiver rather than at a literal. `variant_receiver` is
+        // the same lookup `method_call` already runs before synthesising a
+        // receiver that is not a value at all, asked here for the same
+        // reason.
+        //
+        // **Built the way `path`'s `Named::Variant` arm builds the
+        // unqualified spelling, and not through `call_variant`.** There is no
+        // call here — `Format.Json` has no parentheses — so a payload-less
+        // variant is exactly the value `Json` alone already is, and a
+        // payload-carrying one read this way is its constructor as a value,
+        // the same closure `Exact` alone would be. Going through
+        // `call_variant` would wrap it in an `ExprKind::Call` with zero
+        // arguments that the unqualified spelling never builds, one MIR
+        // shape for two spellings of the same expression and a mismatch this
+        // backend has never had to lower.
+        if let Some(variant) = self.variant_receiver(base, name) {
+            let ty = self.variant_as_value(variant, &[]);
+            let id = self.body.push_expr(ExprKind::Item(variant), ty, span);
+            return Typed { id, ty: InferTy::Known(ty) };
+        }
         let base = self.synth(base);
+        // `coords.first` in the same statement as `let coords be Pair(first:
+        // 3, second: 4)`: `coords`'s type is a [`PendingNamed`], not a `Ty`
+        // yet, and `known_or_error` below would read the `Ty::ERROR` standing
+        // in for it — finding 20 one level up from a tuple. Answered first,
+        // and only for the shallow case `deferred_field` states in full.
+        if let InferTy::Var(var) = base.ty {
+            if let Some(typed) = self.deferred_field(base.id, var, name, span) {
+                return typed;
+            }
+        }
         let base_ty = self.known_or_error(base.ty);
         let revealed = self.revealed(base_ty, span);
         let (def, args) = match self.types.kind(revealed).clone() {
@@ -1862,12 +2046,21 @@ impl<'a> BodyChecker<'a> {
         // `Wrapper(inner: value)` has to become `Wrapper of T`, not `Wrapper`.
         // The arguments are solved the same root-level way a call's are (§6),
         // out of the field types the declaration gives and the values the
-        // literal supplies — and an unsolved one becomes `Ty::ERROR` so that the
-        // fields are still checked against something that agrees.
-        let (substitution, args) = self.instantiate_record(&generics, &declared, fields);
+        // literal supplies — and an unsolved one that *is* answerable, just
+        // not yet, is deferred rather than guessed: see `instantiate_record`.
+        let (substitution, mut presynthesised, args, deferred) =
+            self.instantiate_record(&generics, &declared, fields);
 
         let mut checked = Vec::with_capacity(fields.len());
-        for init in fields {
+        for (at, init) in fields.iter().enumerate() {
+            // Built already, by `instantiate_record`'s own fallback — see
+            // `instantiate_call`'s identical note on why checking it again
+            // would build a second node for nothing.
+            if let Some(value) = presynthesised.remove(&at) {
+                let field = init.field.def_id().expect("presynthesised only at a real field");
+                checked.push((field, value.id));
+                continue;
+            }
             match declared.iter().find(|(id, _)| Some(*id) == init.field.def_id()).copied() {
                 Some((field, ty)) => {
                     let ty = self.apply(&substitution, ty, init.span);
@@ -1882,9 +2075,27 @@ impl<'a> BodyChecker<'a> {
                 }
             }
         }
-        let ty = self.types.named(def, args);
-        let id = self.body.push_expr(ExprKind::Record { def, fields: checked }, ty, span);
-        Typed { id, ty: InferTy::Known(ty) }
+        // `Pair[A, B]`'s own type is a shape over both, so a literal still
+        // open in `args` cannot be resolved into it yet — `Ty::ERROR` would
+        // reach codegen as a hole nobody reported, finding 20's shape one
+        // level up from a tuple. Deferred through `pending_named` instead,
+        // the way `pending_tuples` already defers a tuple's shape.
+        if args.iter().all(|arg| matches!(arg, PendingArg::Fixed(_))) {
+            let args = args
+                .into_iter()
+                .map(|arg| match arg {
+                    PendingArg::Fixed(arg) => arg,
+                    PendingArg::Open(_) => unreachable!("checked by the `all` above"),
+                })
+                .collect();
+            let ty = self.types.named(def, args);
+            let id = self.body.push_expr(ExprKind::Record { def, fields: checked }, ty, span);
+            return Typed { id, ty: InferTy::Known(ty) };
+        }
+        let var = self.infer.fresh(span);
+        let typed = self.push_typed(ExprKind::Record { def, fields: checked }, InferTy::Var(var), span);
+        self.pending_named.push(PendingNamed { var, def, args, deferred });
+        typed
     }
 
     /// §6's root-level instantiation, for a record literal.
@@ -1896,17 +2107,29 @@ impl<'a> BodyChecker<'a> {
     /// discharge, which is `SC0262` and F1's — so it becomes
     /// [`GenericArg::Error`], which `subst`'s own documentation says is *"the
     /// same as too few arguments"*.
+    ///
+    /// **A third answer, since `instantiate_call` learned one.** `probe`
+    /// answers `None` for an unsuffixed literal — Decision 2 has not
+    /// defaulted its class yet — and guessing that default here would be a
+    /// second, competing answer to whatever `finish` gives it. So a field the
+    /// probe cannot read is synthesised once, and its own variable (if it has
+    /// one) is carried in [`PendingArg::Open`] rather than forced to
+    /// [`Ty::ERROR`]. `null` is excluded by name for §5's reason
+    /// `instantiate_call` states in full: its class has no default at all,
+    /// and `Ty::ERROR` is the answer that already agreed with it.
     fn instantiate_record(
         &mut self,
         generics: &[hir::GenericParam],
         declared: &[(DefId, Ty)],
         fields: &[hir::FieldInit],
-    ) -> (Substitution, Vec<GenericArg>) {
+    ) -> (Substitution, HashMap<usize, Typed>, Vec<PendingArg>, HashMap<DefId, InferVar>) {
         if generics.is_empty() {
-            return (Substitution::new(), Vec::new());
+            return (Substitution::new(), HashMap::new(), Vec::new(), HashMap::new());
         }
         let mut solved: HashMap<DefId, Ty> = HashMap::new();
-        for init in fields {
+        let mut presynthesised: HashMap<usize, Typed> = HashMap::new();
+        let mut deferred: HashMap<DefId, InferVar> = HashMap::new();
+        for (at, init) in fields.iter().enumerate() {
             let Some(field) = init.field.def_id() else { continue };
             let Some((_, field_ty)) = declared.iter().find(|(id, _)| *id == field) else {
                 continue;
@@ -1917,21 +2140,60 @@ impl<'a> BodyChecker<'a> {
             }
             if let Some(ty) = self.probe(&init.value) {
                 solved.insert(def, ty);
+                continue;
             }
+            if matches!(&init.value.kind, hir::ExprKind::Literal(Literal::Null)) {
+                continue;
+            }
+            let typed = self.synth(&init.value);
+            match self.infer.resolve(typed.ty) {
+                InferTy::Known(ty) => {
+                    if let Some(&existing) = deferred.get(&def) {
+                        let _ = self.infer.bind(self.types, existing, ty);
+                    }
+                    solved.insert(def, ty);
+                }
+                InferTy::Var(var) => match deferred.get(&def).copied() {
+                    Some(existing) => {
+                        let _ = self.infer.unify(self.types, InferTy::Var(existing), InferTy::Var(var));
+                    }
+                    None => {
+                        deferred.insert(def, var);
+                    }
+                },
+            }
+            presynthesised.insert(at, typed);
         }
         let mut substitution = Substitution::new();
         let mut args = Vec::with_capacity(generics.len());
         for param in generics {
             match param.kind {
-                hir::GenericParamKind::Type { .. } => {
-                    let ty = solved.get(&param.def).copied().unwrap_or(Ty::ERROR);
-                    substitution = substitution.with_type(param.def, ty);
-                    args.push(GenericArg::Type(ty));
+                hir::GenericParamKind::Type { .. } => match solved.get(&param.def).copied() {
+                    Some(ty) => {
+                        substitution = substitution.with_type(param.def, ty);
+                        args.push(PendingArg::Fixed(GenericArg::Type(ty)));
+                    }
+                    // Left an honest `Ty::ERROR` in the substitution used to
+                    // check every *other* field — `ty`'s §5, agreeing with
+                    // whatever it meets — while `args` keeps the open
+                    // question separately, for `finish` to answer once.
+                    None => match deferred.get(&param.def).copied() {
+                        Some(var) => {
+                            substitution = substitution.with_type(param.def, Ty::ERROR);
+                            args.push(PendingArg::Open(var));
+                        }
+                        None => {
+                            substitution = substitution.with_type(param.def, Ty::ERROR);
+                            args.push(PendingArg::Fixed(GenericArg::Type(Ty::ERROR)));
+                        }
+                    },
+                },
+                hir::GenericParamKind::Const { .. } => {
+                    args.push(PendingArg::Fixed(GenericArg::Error))
                 }
-                hir::GenericParamKind::Const { .. } => args.push(GenericArg::Error),
             }
         }
-        (substitution, args)
+        (substitution, presynthesised, args, deferred)
     }
 
     fn call(&mut self, callee: &hir::Expr, args: &[hir::Arg], span: Span) -> Typed {
@@ -2442,36 +2704,82 @@ impl<'a> BodyChecker<'a> {
             self.diagnostics.push(wrong_argument_count(span, payload.len(), args.len()));
         }
         // `Labelled(2, "width")` fixes the `L` of `Tagged of (T, L)`, by the
-        // same root-level rule a call and a record literal use. §6.
-        let (substitution, generic_args) = self.instantiate_payload(&declared, &payload, args);
+        // same root-level rule a call and a record literal use. §6. An
+        // argument only an unsuffixed literal answered is deferred rather
+        // than guessed — see `instantiate_payload`.
+        let (substitution, mut presynthesised, generic_args) =
+            self.instantiate_payload(&declared, &payload, args);
         let ids = args
             .iter()
             .enumerate()
-            .map(|(at, arg)| match payload.get(at) {
-                Some(ty) => {
-                    let ty = self.apply(&substitution, *ty, arg.span);
-                    let ty = self.instantiate(ty, arg.span);
-                    self.check(&arg.value, ty, Site::Argument)
+            .map(|(at, arg)| {
+                // Built already, by `instantiate_payload`'s own fallback —
+                // `instantiate_call`'s identical note is why checking it
+                // again would build a second node for nothing.
+                if let Some(typed) = presynthesised.remove(&at) {
+                    return typed.id;
                 }
-                None => self.synth(&arg.value).id,
+                match payload.get(at) {
+                    Some(ty) => {
+                        let ty = self.apply(&substitution, *ty, arg.span);
+                        let ty = self.instantiate(ty, arg.span);
+                        self.check(&arg.value, ty, Site::Argument)
+                    }
+                    None => self.synth(&arg.value).id,
+                }
             })
             .collect();
-        let ty = self.types.named(choice, generic_args);
-        let id = self.body.push_expr(ExprKind::Call { callee, args: ids }, ty, span);
-        Typed { id, ty: InferTy::Known(ty) }
+        // `Bound[T]`'s own type is a shape over its arguments exactly as a
+        // record's is, so an argument still open in `generic_args` cannot be
+        // resolved into it yet: see `record_lit`'s identical deferral through
+        // `pending_named`.
+        if generic_args.iter().all(|arg| matches!(arg, PendingArg::Fixed(_))) {
+            let generic_args = generic_args
+                .into_iter()
+                .map(|arg| match arg {
+                    PendingArg::Fixed(arg) => arg,
+                    PendingArg::Open(_) => unreachable!("checked by the `all` above"),
+                })
+                .collect();
+            let ty = self.types.named(choice, generic_args);
+            let id = self.body.push_expr(ExprKind::Call { callee, args: ids }, ty, span);
+            return Typed { id, ty: InferTy::Known(ty) };
+        }
+        let var = self.infer.fresh(span);
+        let typed =
+            self.push_typed(ExprKind::Call { callee, args: ids }, InferTy::Var(var), span);
+        self.pending_named.push(PendingNamed {
+            var,
+            def: choice,
+            args: generic_args,
+            deferred: HashMap::new(),
+        });
+        typed
     }
 
     /// §6's root-level instantiation, for a variant's positional payload.
+    ///
+    /// The third answer `instantiate_call` learned — a probe that answers
+    /// `None` is deferred to the argument's own variable rather than forced
+    /// to `Ty::ERROR` — applies here unchanged; see that function's note and
+    /// `instantiate_record`'s identical restatement. `deferred` is not
+    /// threaded back into the [`PendingNamed`] this produces, unlike a
+    /// record's: nothing in this corpus reads a variant's payload before
+    /// `finish` the way `coords.first` reads a record's field, so
+    /// [`BodyChecker::deferred_field`] has no variant counterpart yet. Adding
+    /// one is the same shape as this function already is, not a new problem.
     fn instantiate_payload(
         &mut self,
         declared: &[hir::GenericParam],
         payload: &[Ty],
         args: &[hir::Arg],
-    ) -> (Substitution, Vec<GenericArg>) {
+    ) -> (Substitution, HashMap<usize, Typed>, Vec<PendingArg>) {
         if declared.is_empty() {
-            return (Substitution::new(), Vec::new());
+            return (Substitution::new(), HashMap::new(), Vec::new());
         }
         let mut solved: HashMap<DefId, Ty> = HashMap::new();
+        let mut presynthesised: HashMap<usize, Typed> = HashMap::new();
+        let mut deferred: HashMap<DefId, InferVar> = HashMap::new();
         for (at, arg) in args.iter().enumerate() {
             let Some(param_ty) = payload.get(at) else { continue };
             let TyKind::Param { def } = *self.types.kind(*param_ty) else { continue };
@@ -2480,21 +2788,56 @@ impl<'a> BodyChecker<'a> {
             }
             if let Some(ty) = self.probe(&arg.value) {
                 solved.insert(def, ty);
+                continue;
             }
+            if matches!(&arg.value.kind, hir::ExprKind::Literal(Literal::Null)) {
+                continue;
+            }
+            let typed = self.synth(&arg.value);
+            match self.infer.resolve(typed.ty) {
+                InferTy::Known(ty) => {
+                    if let Some(&existing) = deferred.get(&def) {
+                        let _ = self.infer.bind(self.types, existing, ty);
+                    }
+                    solved.insert(def, ty);
+                }
+                InferTy::Var(var) => match deferred.get(&def).copied() {
+                    Some(existing) => {
+                        let _ = self.infer.unify(self.types, InferTy::Var(existing), InferTy::Var(var));
+                    }
+                    None => {
+                        deferred.insert(def, var);
+                    }
+                },
+            }
+            presynthesised.insert(at, typed);
         }
         let mut substitution = Substitution::new();
         let mut generic_args = Vec::with_capacity(declared.len());
         for param in declared {
             match param.kind {
-                hir::GenericParamKind::Type { .. } => {
-                    let ty = solved.get(&param.def).copied().unwrap_or(Ty::ERROR);
-                    substitution = substitution.with_type(param.def, ty);
-                    generic_args.push(GenericArg::Type(ty));
+                hir::GenericParamKind::Type { .. } => match solved.get(&param.def).copied() {
+                    Some(ty) => {
+                        substitution = substitution.with_type(param.def, ty);
+                        generic_args.push(PendingArg::Fixed(GenericArg::Type(ty)));
+                    }
+                    None => match deferred.get(&param.def).copied() {
+                        Some(var) => {
+                            substitution = substitution.with_type(param.def, Ty::ERROR);
+                            generic_args.push(PendingArg::Open(var));
+                        }
+                        None => {
+                            substitution = substitution.with_type(param.def, Ty::ERROR);
+                            generic_args.push(PendingArg::Fixed(GenericArg::Type(Ty::ERROR)));
+                        }
+                    },
+                },
+                hir::GenericParamKind::Const { .. } => {
+                    generic_args.push(PendingArg::Fixed(GenericArg::Error))
                 }
-                hir::GenericParamKind::Const { .. } => generic_args.push(GenericArg::Error),
             }
         }
-        (substitution, generic_args)
+        (substitution, presynthesised, generic_args)
     }
 
     // --- Decision 11, at a call ------------------------------------------

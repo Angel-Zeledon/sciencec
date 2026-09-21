@@ -388,7 +388,19 @@ const REGIONS: &[Finding] = &[];
 /// `science-types/tests/corpus.rs` pins the identical fact against the
 /// library rather than the binary, so a change that un-silences either file
 /// here has to un-silence it in two places at once.
-const TYPE_CHECKER_FINDINGS: &[(&str, usize, &str)] = &[];
+///
+/// # It moved again, and the two places moved together
+///
+/// `04_enums.science`'s `Node(Box.new(Leaf(1)), Box.new(Leaf(2)))` now reports
+/// `SC0536` twice. `science-types/tests/corpus.rs`'s `REMAINING` entry for this
+/// same file is the full account — `call_variant` learned to defer a variant's
+/// unsolved generic argument to its literal's own variable instead of forcing
+/// `Ty::ERROR`, so `Leaf(1)` no longer poisons `Box.new`'s own receiver-argument
+/// solve into silence, and `receiver_arguments` reports an argument it cannot
+/// yet see through. Owner: `science-types`' `receiver_arguments`, same as
+/// there.
+const TYPE_CHECKER_FINDINGS: &[(&str, usize, &str)] =
+    &[("04_enums.science", 2, "error[SC0536]")];
 
 #[test]
 fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {

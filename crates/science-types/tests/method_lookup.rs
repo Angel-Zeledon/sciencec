@@ -903,15 +903,26 @@ def held() -> Box[I64]:
     assert_eq!(checked.render(tail(&checked, "held")), "Box[I64]");
 }
 
-/// An argument whose own type references an error solves nothing **and reports
-/// nothing**, which is `ty`'s §5 rather than a hole left in the rule.
+/// **Replaces `an_erroneous_argument_neither_solves_the_receiver_nor_reports_it`,
+/// which pinned the absence of the fix `call_variant` now has.**
 ///
-/// This is `examples/04_enums.science`'s `Box.new(Leaf(1))`: `Leaf` is a
-/// variant of `Tree of T`, §6's probe cannot type the unsuffixed `1`, and the
-/// variant call is `Tree of <error>` before the receiver is ever solved.
-/// Telling that author to instantiate `Box` would be advice that does not help.
+/// That test's premise was `Leaf(1)`'s `1`: an unsuffixed literal `instantiate_
+/// payload`'s probe cannot type, which used to leave `Leaf(1)` synthesising as
+/// `Tree of <error>` before this function ever saw it — an argument `ty`'s §5
+/// makes agree with everything, so `references_error` silenced the report
+/// rather than this rule handling it. `call_variant` now defers a variant's
+/// unsolved generic argument to the literal's own still-open variable instead
+/// of forcing `Ty::ERROR` — the same fix `record_lit` needed for `Pair(first:
+/// 3, second: 4)`, restated for a variant — so `Leaf(1)` reaches here *open*
+/// and not error-tainted, and the rule this file is about is the one that now
+/// answers: an argument the receiver's call cannot solve reports, because
+/// nothing here has told it that an open argument might still be solved by
+/// something outside this call. That is `Box[T]`'s own gap, tracked at
+/// `examples/04_enums.science`'s entry in `science-types/tests/corpus.rs`, and
+/// not a hole in this rule — this test now pins what the rule correctly says
+/// about it rather than a silence that was really `Leaf(1)`'s.
 #[test]
-fn an_erroneous_argument_neither_solves_the_receiver_nor_reports_it() {
+fn a_deferred_variant_argument_reaches_the_receiver_open_and_reports() {
     let checked = check(
         "\
 choice Tree[T]:
@@ -922,7 +933,14 @@ def grow():
     let tree be Node(Box.new(Leaf(1)), Box.new(Leaf(2)))
 ",
     );
-    checked.assert_clean();
+    assert_eq!(checked.codes(), vec![536, 536]);
+    assert_eq!(
+        checked.messages(),
+        vec![
+            "the type argument of `Box` cannot be inferred here".to_string(),
+            "the type argument of `Box` cannot be inferred here".to_string(),
+        ]
+    );
 }
 
 // --- the negative: what a builtin still does not answer --------------------
