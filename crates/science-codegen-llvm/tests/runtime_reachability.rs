@@ -330,6 +330,22 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   let h be Box.new(Holder(label: \"owned\"))\n\
          \x20   print(\"built\")\n",
     ),
+    // `**` in both of its forms, which are two different entry points and
+    // not one generic. §7.3's Decision 37 forbids `llvm.pow` — LLVM
+    // constant-folds a recognised `pow` against the *build host's* libm,
+    // which is a reproducibility hazard — so a float power is
+    // `science_libm_pow`, a plain symbol the optimiser does not recognise.
+    // An integer power has no LLVM instruction at all and Decision 8 forbids
+    // the inlined loop, so it is `science_ipow_i64`.
+    //
+    // Both in one program because a corpus entry per symbol would say the
+    // same thing twice, and `**` is one operator.
+    (
+        "both_powers",
+        "def main():\n\
+         \x20   print(2 ** 10)\n\
+         \x20   print(f\"{2.0 ** 0.5}\")\n",
+    ),
     // `read_file`/`write_file`, in the one syntax the corpus uses for a
     // pair-returning call — `let text, io_err be read_file(path)` —
     // `examples/09_absence_and_failure.science`'s own spelling, which sidesteps

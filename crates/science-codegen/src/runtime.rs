@@ -286,6 +286,12 @@ pub enum RtRet {
     Int,
     /// `u64`.
     U64,
+    /// `f64`. `science_libm_pow` is the first entry point to return one —
+    /// every one of the first fifty-five takes floats, at most, and hands
+    /// back an integer, a bool or an aggregate. It comes back in an SSE
+    /// register on every F0 target, never an integer one; see
+    /// [`RuntimeFn::return_class`].
+    F64,
     /// A raw pointer. For `science_array_get` and friends this pointer **is**
     /// the `(borrowed T)?`, in the niche representation, and codegen uses it
     /// directly with no conversion at all (§5.3).
@@ -408,6 +414,10 @@ impl RuntimeFn {
                 };
                 classify_return(abi, &aggregate.layout(target))
             }
+            // The one register class this catch-all would get wrong: a
+            // `double` comes back in an SSE register on every F0 target, not
+            // the integer one every other direct return uses.
+            RtRet::F64 => ReturnClass::Direct { registers: vec![crate::abi::RegClass::Sse] },
             _ => ReturnClass::Direct { registers: vec![crate::abi::RegClass::Integer] },
         }
     }
@@ -426,12 +436,14 @@ const D: RtParam = RtParam::Descriptor;
 const Z: RtParam = RtParam::Usize;
 const N: RtParam = RtParam::Int;
 
-/// The 55 entry points. §2.6: *"They are the whole list."*
+/// The 57 entry points. §2.6: *"They are the whole list."*
 ///
-/// **It was 47, `format.rs` added seven, and `science_string_with_capacity`
-/// added the fifty-fifth.** The count is asserted in two
-/// places and both had to be edited, which is the point of asserting it: a
-/// table that is *"the whole list"* grows only when somebody says so.
+/// **It was 47, `format.rs` added seven, `science_string_with_capacity`
+/// added the fifty-fifth, and `math.rs`'s two — `science_libm_pow` and
+/// `science_ipow_i64` — added the fifty-sixth and fifty-seventh.** The count
+/// is asserted in two places and all had to be edited, which is the point of
+/// asserting it: a table that is *"the whole list"* grows only when somebody
+/// says so.
 ///
 /// Ordered by module and then as `science-rt` declares them, which is neither
 /// alphabetical nor arbitrary: it is the order a reader comparing this table
@@ -539,6 +551,21 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_string_eq", params: &[P, P], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_string_cmp", params: &[P, P], ret: RtRet::I32 },
     RuntimeFn { symbol: "science_string_hash", params: &[P], ret: RtRet::U64 },
+    // --- math.rs ---
+    //
+    // The fifty-sixth and fifty-seventh, and the first addition since
+    // `science_string_with_capacity` that is not a `String` or `Array` need.
+    // `codegen-and-linking.md` §7.3's Decision 37 forbids lowering `F64 ** F64`
+    // to `llvm.pow` — that intrinsic is not on the whitelist, and LLVM
+    // constant-folds it against the *build host's* libm — and no instruction
+    // computes `Int ** Int` at all. Both need a real function call, which is
+    // exactly Decision 14's carve-out: *"no entry point is added to
+    // `science-rt` to make codegen simpler"* is a rule against convenience, and
+    // neither of these stands in for an inlinable instruction sequence.
+    // `science_codegen_llvm::lower::Lowerer::lower_binary`'s `BinaryOp::Pow`
+    // arm is the one caller.
+    RuntimeFn { symbol: "science_libm_pow", params: &[RtParam::F64, RtParam::F64], ret: RtRet::F64 },
+    RuntimeFn { symbol: "science_ipow_i64", params: &[N, N], ret: RtRet::Int },
 ];
 
 /// Look an entry point up by symbol.
@@ -763,20 +790,29 @@ impl ExitContract {
 mod tests {
     use super::*;
 
-    /// **Was fifty-five, and is fifty-seven.** The two added are
+    /// **Was fifty-seven, and is fifty-nine.** The two before these were
     /// `science_int_hash` and `science_int_eq`, the `hash_fn`/`eq_fn` pair for
     /// an eight-byte integer `Map` key — see [`map_key_support`] for why the
     /// pair is a runtime symbol rather than something codegen emits, and
     /// `science-rt/src/map.rs` for why `String` had a pair all along and `Int`
     /// had none.
     ///
+    /// The two added now are `science_libm_pow` and `science_ipow_i64`, the
+    /// two halves of `**`. §7.3's Decision 37 forbids `llvm.pow` because LLVM
+    /// constant-folds a *recognised* `pow` against the build host's libm, and
+    /// a plain unrecognised symbol is the whole mechanism that stops it; an
+    /// integer power has no LLVM instruction at all and Decision 8 forbids
+    /// lowering it as an inlined loop. Neither stands in for an instruction
+    /// sequence this crate could have emitted instead, which is the one door
+    /// Decision 14's rule leaves open.
+    ///
     /// The number is pinned rather than derived on purpose: §2.6 says of these
     /// symbols *"they are the whole list"*, and a count that moves without
     /// anyone noticing is a list that is no longer whole. The assertion that
     /// changed here changed because the list did.
     #[test]
-    fn there_are_fifty_seven_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 57, "§2.6: \"they are the whole list\"");
+    fn there_are_fifty_nine_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 59, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");

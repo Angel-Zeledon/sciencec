@@ -195,27 +195,35 @@ fn nothing_outside_the_table_is_callable() {
     // make codegen simpler."
     //
     // Forty-five until finding 5 was discharged; forty-seven after it, fifty-four
-    // once `format.rs` could render a number, and fifty-five now. The two that
-    // joined first are the two `codegen-and-linking.md` §13 asks for by name,
-    // and they are not a convenience for codegen — without them §2.3's fourth
-    // row has nothing to lower to at all. The fifty-fifth is
+    // once `format.rs` could render a number, and fifty-five after that. The two
+    // that joined first are the two `codegen-and-linking.md` §13 asks for by
+    // name, and they are not a convenience for codegen — without them §2.3's
+    // fourth row has nothing to lower to at all. The fifty-fifth is
     // `science_string_with_capacity`, and the same test applies to it:
     // `strings-formatting-and-docs.md` §1.7 prescribes *"one allocation"* and
     // fifty-four entry points had no way to express a capacity, so this is a
     // note's requirement arriving rather than codegen being made simpler.
     //
-    // **Fifty-seven now**, and the two that joined pass Decision 14's test for
-    // the same reason the others did. `science_int_hash` and `science_int_eq`
-    // are the `hash_fn`/`eq_fn` pair for an eight-byte `Map` key. They are not
-    // *called* by emitted code at all — their addresses are stored into a
-    // `ScienceMapInfo` global — and codegen could have emitted the two bodies
-    // itself, since they are a load and a compare. `runtime::map_key_support`
-    // records why it does not: `String`'s pair has always been a runtime symbol
+    // **Fifty-nine now**, and the four that joined pass Decision 14's test for
+    // the same reason the others did.
+    //
+    // `science_int_hash` and `science_int_eq` are the `hash_fn`/`eq_fn` pair
+    // for an eight-byte `Map` key. They are not *called* by emitted code at
+    // all — their addresses are stored into a `ScienceMapInfo` global — and
+    // codegen could have emitted the two bodies itself, since they are a load
+    // and a compare. `runtime::map_key_support` records why it does not:
+    // `String`'s pair has always been a runtime symbol
     // (`science_string_hash`, `science_string_eq`), and a key type whose hash
     // and equality live in two different crates depending on the key is a key
-    // type whose hash and equality disagree in two different crates. So this is
-    // one mechanism covering both, not a convenience.
-    assert_eq!(RUNTIME.len(), 57);
+    // type whose hash and equality disagree in two different crates. So this
+    // is one mechanism covering both, not a convenience.
+    //
+    // `science_libm_pow` and `science_ipow_i64` are `**`'s codegen. §7.3's
+    // Decision 37 forbids `llvm.pow`, and no instruction computes an integer
+    // power at all, so neither stands in for an instruction sequence this
+    // crate could have emitted instead — which is the one door this rule
+    // leaves open.
+    assert_eq!(RUNTIME.len(), 59);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

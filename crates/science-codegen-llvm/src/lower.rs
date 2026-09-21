@@ -382,6 +382,7 @@ pub fn runtime_signature(target: Triple, entry: &RuntimeFn) -> AbiSignature {
         RtRet::I32 => CgTy::Int(IntTy::I32),
         RtRet::Int => CgTy::Int(IntTy::I64),
         RtRet::U64 => CgTy::Int(IntTy::U64),
+        RtRet::F64 => CgTy::Float(science_codegen::layout::FloatTy::F64),
         RtRet::Ptr => CgTy::Ptr(PtrKind::Raw),
         RtRet::Aggregate(aggregate) => aggregate.cg_ty(),
     };
@@ -5466,6 +5467,21 @@ impl<'a> Lowerer<'a> {
         let float = matches!(scalar, Scalar::Float(_));
         let left = self.typed_operand(ctx, lhs, &operand_layout, insts)?;
         let right = self.typed_operand(ctx, rhs, &operand_layout, insts)?;
+
+        // **`**` is a call, on both sides of the `float` split, and it has to
+        // be decided before that split rather than inside either arm of it.**
+        // Neither `Inst::FloatBinary` nor `Inst::IntBinary` has a `Pow`
+        // variant to reach for, for two different reasons that land on the
+        // same fix: see [`Lowerer::lower_pow`]. `Bool`, `Char` and a pointer
+        // are left to fall through to the ordinary arms below and their
+        // existing `describe_binary` refusal, unchanged — `Pow` is only ever
+        // legitimately dispatched to a `Scalar::Int` or a `Scalar::Float`,
+        // and a program that reaches this point with anything else is a
+        // checker disagreement this function already knew how to report.
+        if op == BinaryOp::Pow && matches!(scalar, Scalar::Int(_) | Scalar::Float(_)) {
+            return self.lower_pow(ctx, scalar, &operand_layout, left, right, dest, insts);
+        }
+
         let result = ctx.value();
 
         if comparison {
@@ -5556,6 +5572,115 @@ impl<'a> Lowerer<'a> {
             }));
         }
         insts.push(ExtInst::Above(Inst::Store { local: dest, value: Operand::Value(result) }));
+        Ok(())
+    }
+
+    /// `**`, both operands the same width and signedness (`Self.pow(Self) ->
+    /// Self`, §5.4). A call in both cases, and for two different reasons.
+    ///
+    /// **`Float ** Float` has no instruction and no whitelisted intrinsic.**
+    /// `llvm.pow` is not on `intrinsics-math-physics.md` §3.1's table
+    /// `codegen-and-linking.md` §7.3's Decision 37 reads as a constant-folding
+    /// whitelist, so emitting it would let LLVM fold a constant `**` against
+    /// the *build host's* libm — the exact hazard Decision 37 exists to close.
+    /// The fix Decision 37 gives is *"a direct call to `science-libm`'s
+    /// symbol"*; `science-libm` does not exist yet, so the symbol lives in
+    /// `science-rt`'s `math.rs` under the name Decision 37 asks for,
+    /// `science_libm_pow`, until it does.
+    ///
+    /// **`Int ** Int` has no instruction at all.** Exponentiation by squaring
+    /// is a loop, and this crate's Decision 8 makes every MIR basic block
+    /// exactly one LLVM basic block — the same reason `BinaryOp::Div`'s
+    /// zero-guard is refused a few lines up rather than inlined. A call hides
+    /// the loop inside a function this instruction sequence never sees, which
+    /// is `science_ipow_i64`, beside its sibling in the same module.
+    ///
+    /// **Narrower than 64 bits widens, calls, then narrows.** One call exists,
+    /// at the widest case of each kind, and `I8`…`I32` and `F32` reach it
+    /// through the same [`ConvOp`] conversions [`Lowerer::lower_cast`] already
+    /// builds — the shape `science_string_push_i64`'s own note describes:
+    /// *"`I8`…`I64` are sign-extended by codegen before the call"*. Eight
+    /// entry points, one per integer width, would say nothing eight lines here
+    /// do not already say once.
+    fn lower_pow(
+        &mut self,
+        ctx: &mut BodyCtx,
+        scalar: Scalar,
+        operand_layout: &Layout,
+        left: Operand,
+        right: Operand,
+        dest: LocalId,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let (symbol, wide_ty, is_float, signed): (&'static str, CgTy, bool, bool) = match scalar {
+            Scalar::Float(_) => {
+                ("science_libm_pow", CgTy::Float(science_codegen::layout::FloatTy::F64), true, false)
+            }
+            Scalar::Int(int) => ("science_ipow_i64", CgTy::Int(IntTy::I64), false, int.is_signed()),
+            // `matches!(scalar, Scalar::Int(_) | Scalar::Float(_))` at the call
+            // site is exhaustive against the two arms above; nothing else
+            // reaches this function.
+            _ => unreachable!("the caller's guard admits only `Int` and `Float`"),
+        };
+        let wide_layout = layout_of(self.target, &wide_ty);
+        // `Int as Int` and `F64 as F64` both take this path with no
+        // conversion at all — `Int`, the common case in `examples/12_operators.science`,
+        // is already 64 bits wide.
+        let widen_op = if operand_layout.size == wide_layout.size {
+            None
+        } else if is_float {
+            Some(ConvOp::FloatExtend)
+        } else if signed {
+            Some(ConvOp::SignExtend)
+        } else {
+            Some(ConvOp::ZeroExtend)
+        };
+        let narrow_op = if is_float { ConvOp::FloatTrunc } else { ConvOp::Trunc };
+
+        let widen = |ctx: &mut BodyCtx, insts: &mut Vec<ExtInst>, value: Operand| -> Operand {
+            match widen_op {
+                None => value,
+                Some(op) => {
+                    let converted = ctx.value();
+                    insts.push(ExtInst::Convert {
+                        dest: converted,
+                        op,
+                        value,
+                        from: operand_layout.clone(),
+                        to: wide_layout.clone(),
+                    });
+                    Operand::Value(converted)
+                }
+            }
+        };
+        let wide_left = widen(ctx, insts, left);
+        let wide_right = widen(ctx, insts, right);
+
+        let sig = self.declare(symbol)?;
+        let call_result = ctx.value();
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: Some(call_result),
+            callee: Callee::Runtime(symbol),
+            args: vec![wide_left, wide_right],
+            ret: sig.ret.clone(),
+            sret_slot: None,
+        }));
+
+        let value = match widen_op {
+            None => Operand::Value(call_result),
+            Some(_) => {
+                let narrowed = ctx.value();
+                insts.push(ExtInst::Convert {
+                    dest: narrowed,
+                    op: narrow_op,
+                    value: Operand::Value(call_result),
+                    from: wide_layout.clone(),
+                    to: operand_layout.clone(),
+                });
+                Operand::Value(narrowed)
+            }
+        };
+        insts.push(ExtInst::Above(Inst::Store { local: dest, value }));
         Ok(())
     }
 
@@ -6559,7 +6684,36 @@ impl<'a> Lowerer<'a> {
         }
         // `frees` is the decision above, taken here where all three operand
         // shapes are in view rather than at the call that emits it.
-        let (slot, frees) = match args {
+        //
+        // **The place arm takes any projection, not only a bare local.** It
+        // used to require `place.projection.is_empty()`, which is right for
+        // `let s be "hola"` and wrong for `print(b.label)`: a field read is a
+        // `Place` with one more step than a bare local and nothing else about
+        // it — `place_address` already follows `Field`, `TupleField` and
+        // `Downcast` for [`Lowerer::lower_print`]'s own `borrowed String` arm a
+        // few lines up, and a `String` field is exactly as much a `String` as
+        // a `String` local is. The guard that used to be "no projection" is
+        // now "the projected layout is a `String`'s", which is the fact that
+        // was actually load-bearing — `ctx.layout(local)` only ever answered
+        // the *local's* layout, so a field of type `String` inside a `Doc`
+        // reached the `is_empty()` guard, failed it, and fell to the same
+        // `undisplayable` message a record type gets, naming `String` as
+        // though it had no renderer.
+        //
+        // **`f"{b.label}"` never had this bug, and that asymmetry is what
+        // pointed at the fix.** `science-mir`'s `lower_fstring` builds every
+        // hole through an `Rvalue::Ref` — it takes a reference to the place
+        // first, at whatever depth, and hands `print`'s cousin a `borrowed
+        // String` it already knows how to read. `print(b.label)` never goes
+        // through that builder at all: `science-types`' `call` passes the
+        // operand straight through as `unknown argument passing`, MIR reads
+        // print's `borrowed` parameter as a `copy` rather than as a
+        // reference, and the place that copy names kept its full projection —
+        // which this function then discarded down to "empty or refuse". The
+        // fix is not a new capability; it is this function reaching for the
+        // same [`Lowerer::place_address`] its own neighbouring arm and the
+        // `f"…"` path both already use.
+        let (address, frees) = match args {
             [mir::Operand::Const(Constant::Literal(Literal::Str(text)))] => {
                 // A slot for the temporary `String`. It is not a MIR local —
                 // MIR's `print("…")` has the literal as a constant operand,
@@ -6568,17 +6722,16 @@ impl<'a> Lowerer<'a> {
                 // the rest (Decision 8).
                 let slot = self.temp(ctx, string_layout.clone());
                 self.build_string(text, slot, insts)?;
-                (slot, true)
+                let address = ctx.value();
+                insts.push(ExtInst::LocalAddr { dest: address, local: slot });
+                (address, true)
             }
-            [mir::Operand::Move(place) | mir::Operand::Copy(place)]
-                if place.projection.is_empty() =>
-            {
-                let local = LocalId(place.local.index() as u32);
-                let layout = ctx.layout(local)?.clone();
+            [mir::Operand::Move(place) | mir::Operand::Copy(place)] => {
+                let (address, layout) = self.place_address(ctx, place, insts)?;
                 if layout != string_layout {
                     return Err(Unlowered::new(self.undisplayable(body, &args[0])));
                 }
-                (local, matches!(args[0], mir::Operand::Move(_)))
+                (address, matches!(args[0], mir::Operand::Move(_)))
             }
             [operand] => return Err(Unlowered::new(self.undisplayable(body, operand))),
             _ => {
@@ -6589,11 +6742,6 @@ impl<'a> Lowerer<'a> {
                 ));
             }
         };
-
-        // The address of the slot, which is the operand the interface above the
-        // line cannot spell. `crate::emit`'s §2 is the account.
-        let address = ctx.value();
-        insts.push(ExtInst::LocalAddr { dest: address, local: slot });
 
         let print = self.declare("science_print")?;
         insts.push(ExtInst::Above(Inst::Call {
