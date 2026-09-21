@@ -626,17 +626,50 @@ def main():
 // --- 6. the holes are counted, not assumed away ---------------------------
 
 #[test]
-fn a_closure_is_a_hole_and_is_counted() {
-    // §8's largest hole: a closure's body is not lowered, so the function a
-    // backend must emit has no name this pass can give it. Counting it is what
-    // stops the set being quietly incomplete.
+fn a_closure_that_captures_something_is_a_hole_and_is_counted() {
+    // §8's hole, narrowed rather than closed: a *captured* closure's body is
+    // still not lowered, because there is nowhere in `(A) -> B` to record what
+    // it captured (`science-mir`'s `lower.rs` §8.5). Counting it is what stops
+    // the set being quietly incomplete.
+    //
+    // This test used to be `a_closure_is_a_hole_and_is_counted`, over
+    // `x giving x`, which captures nothing. `science-mir` gives that one a
+    // `Body` now, and this walk enqueues it — `a_capture_free_closure_is_no_
+    // longer_a_hole`, below, is what replaced this test's claim for that
+    // fixture. This one keeps the sentence true for the case that is still
+    // true of.
     let source = "\
 def main():
-    let f be x giving x
+    let n be 1
+    let f be x giving x + n
 ";
     let mut lowered = lower(source);
     let set = lowered.mono(RootSet::EntryPoint);
     assert!(set.holes().closures >= 1, "{:?}", set.holes());
+}
+
+#[test]
+fn a_capture_free_closure_is_no_longer_a_hole() {
+    // §8.5's follow-up, the smallest case that exercises it end to end: a
+    // closure with nothing captured now has a `Body` — keyed on its own
+    // `param` — and this walk enqueues it exactly as it enqueues any other
+    // address-taken function. `Holes::closures` stays at zero and the
+    // closure's own symbol is in the set a backend would emit.
+    let source = "\
+def apply(f: (Int) -> Int) -> Int:
+    f(1)
+
+def main():
+    apply(x giving x + 1)
+";
+    let mut lowered = lower(source);
+    let set = lowered.mono(RootSet::EntryPoint);
+    assert_eq!(set.holes().closures, 0, "{:?}", set.holes());
+    assert!(
+        set.symbols().any(|symbol| symbol.contains("closure$")),
+        "the closure's own body must be in the emitted set: {:?}",
+        set.symbols().collect::<Vec<_>>()
+    );
 }
 
 #[test]

@@ -305,17 +305,30 @@
 //! monomorphisation set that is quietly incomplete is a link error at the end
 //! of a long build.
 //!
-//! - **A closure's body is not lowered.** `science-mir`'s §5 says so —
-//!   [`science_mir::Rvalue::Closure`] carries a `thir_body` and not a `DefId`,
-//!   *"because the closure's body has no `DefId` to be a `Body` of"*. A closure
-//!   is a function a backend must emit, and this pass cannot name it. This is
-//!   the largest hole in the module and it closes when `science-mir`'s §8.5
-//!   does.
-//! - **An indirect call has no target.** [`science_mir::Callee::Indirect`]
-//!   holds an operand. The functions it could reach are exactly the
-//!   address-taken ones, which the walk roots anyway, so the *set* is still a
-//!   superset of what is needed — but it is a superset by way of a different
-//!   rule, which is worth knowing when the numbers are read.
+//! - **A closure's body is not lowered — unless nothing is captured, and now
+//!   that half closes.** `science-mir`'s `lower.rs` §8.5 gives a capture-free
+//!   closure a `Body` keyed on the closure's own `param`, since a closure has
+//!   no `DefId` of its own and `param` is already unique per closure. This
+//!   walk's [`Mono::walk_rvalue`] enqueues it exactly as
+//!   [`Mono::note_address_taken`] enqueues any other function whose address is
+//!   taken — `Instance::plain(param)`, no generic arguments, because
+//!   `science-mir` already refused to build a body for one whose type still
+//!   mentions a generic parameter — and `path_of` names it
+//!   `closure$name$id` rather than the plain name every other definition
+//!   gets, because two closures in one module can share a name (`each`, most
+//!   often) and cannot share a symbol. **What is left is a closure that
+//!   captures something**: its aggregate is `{ fn ptr, captures }` and a
+//!   bare arrow type, `(A) -> B`, has no field for the second half
+//!   (`collections-and-chains.md` §1.2), so `science-mir` still gives it no
+//!   body and this is still the counter that says so.
+//! - **An indirect call has no target, and for a closure that is now mostly
+//!   true by construction rather than by omission.** [`science_mir::Callee::Indirect`]
+//!   holds an operand, and the functions it could reach are exactly the
+//!   address-taken ones, which the walk roots anyway — the bullet above is
+//!   why that sentence is no longer aspirational for a capture-free closure.
+//!   The *set* is still a superset of what is needed, because rooting does
+//!   not know which closure value reaches which call site, only that some
+//!   value of that type might.
 //! - **An unresolved callee is Decision 11's hole.**
 //!   [`science_mir::Unresolved`] names which. Every `Array` and `Map` method in
 //!   the corpus is one of these, so on today's examples the walk stops at the
@@ -389,6 +402,7 @@ use science_diagnostics::{Diagnostic, Span};
 use science_mir::mir::{Body, Callee, Constant, Local, Operand, Place, Rvalue, StatementKind};
 use science_mir::TerminatorKind;
 use science_resolve::hir::{self, DefId, DefKind, DefTable, GenericParamKind};
+use science_types::assign::Coercion;
 use science_types::items::Declarations;
 use science_types::matching::match_linear;
 use science_types::ty::{GenericArg, Ty, TyKind, Types};
@@ -585,7 +599,16 @@ pub struct Holes {
     /// Calls to a function declared in an `extern` block. Emitted as a
     /// declaration, never instantiated.
     pub extern_calls: usize,
-    /// [`science_mir::Rvalue::Closure`] — a body that was not lowered.
+    /// [`science_mir::Rvalue::Closure`] whose body is still not lowered: one
+    /// that captures something, or whose parameter or return mentions a
+    /// generic parameter monomorphisation has not resolved yet.
+    ///
+    /// **This used to count every closure**, because `science-mir` gave a
+    /// `Body` to none of them. A closure with nothing captured now has one —
+    /// `science-mir`'s `lower.rs` §8.5 keys it on the closure's own `param` —
+    /// and [`Mono::walk_rvalue`]'s `Rvalue::Closure` arm enqueues it exactly
+    /// as [`Mono::note_address_taken`] enqueues any other function whose
+    /// address is taken, so it no longer reaches this counter at all.
     pub closures: usize,
     /// A callee with no signature at all: a prelude name the declaration table
     /// does not carry.
@@ -689,6 +712,29 @@ pub struct MonoSet {
     /// is about the *order things are emitted in*, and nothing here is
     /// emitted at all.
     aggregate_fields: HashMap<(DefId, Vec<GenericArg>), AggregateLayout>,
+    /// One `(interface, concrete type)` pair's slots, as method symbols in
+    /// the interface's declaration order — Decision 13's own order, the one
+    /// `science_codegen::descriptor::Vtable::methods` is emitted in.
+    ///
+    /// **Filled by the walk, not by the backend, and that is the whole
+    /// repair.** `Lowerer::vtable_pair` used to be the only place that knew a
+    /// coercion into `any I` names a `(interface, concrete)` pair at all, so
+    /// `science-codegen-llvm` computed a vtable's slots on its own, one crate
+    /// below the line Decision 42 draws — and a slot resolving to an
+    /// interface's **default body** had nothing here to bind `Self` to,
+    /// because nothing had told this walk the pair existed. [`Mono::collect`]
+    /// now discovers the same pair from the same coercion, at the point the
+    /// concrete operand type is still in hand, and answers with exactly the
+    /// instance a *static* call to a defaulted method already builds
+    /// (`Instance::self_ty` again) — so the walk and
+    /// [`crate::descriptor::Vtable`]'s builder read one answer instead of
+    /// keeping two.
+    ///
+    /// `Err` names why a slot could not be resolved — an ambiguous or missing
+    /// override, never a defaulted method, which this table always answers
+    /// for — so a backend can report it at the coercion's own span rather
+    /// than at this walk's, which has none worth printing.
+    vtables: BTreeMap<(DefId, DefId), Result<Vec<String>, String>>,
     holes: Holes,
     diagnostics: Vec<Diagnostic>,
 }
@@ -780,6 +826,17 @@ impl MonoSet {
     /// `SC0404`, `SC0407`, `SC0522` — everything the walk reported.
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
+    }
+
+    /// The method symbols one `(interface, concrete)` vtable's slots hold, in
+    /// declaration order, if some reachable coercion built that pair.
+    ///
+    /// `None` when no coercion the walk reached names this pair at all —
+    /// which a backend reads as *this table has nothing to say*, not as *the
+    /// pair is empty*, and falls back to resolving the slots itself for
+    /// exactly the reason [`MonoSet::vtables`]'s own documentation gives.
+    pub fn vtable(&self, interface: DefId, concrete: DefId) -> Option<&Result<Vec<String>, String>> {
+        self.vtables.get(&(interface, concrete))
     }
 
     /// The whole set as one deterministic block of text, for a dump and for the
@@ -1207,6 +1264,18 @@ impl<'a> Mono<'a> {
         for (block_id, block) in body.blocks() {
             for statement in &block.statements {
                 if let StatementKind::Assign { rvalue, .. } = &statement.kind {
+                    if let Rvalue::Coerce { operand, coercion, ty } = rvalue {
+                        self.walk_vtable_coercion(
+                            &caller_subst,
+                            body,
+                            *coercion,
+                            operand,
+                            *ty,
+                            symbol,
+                            queue,
+                            set,
+                        );
+                    }
                     self.walk_rvalue(rvalue, symbol, queue, set, statement.span);
                 }
             }
@@ -1262,7 +1331,30 @@ impl<'a> Mono<'a> {
         _span: Span,
     ) {
         match rvalue {
-            Rvalue::Closure { .. } => set.holes.closures += 1,
+            // A capture-free closure is exactly an address-taken function
+            // with an unusual `DefId`: `science-mir`'s `lower.rs` §8.5 gave
+            // it a `Body` keyed on its `param`, and this walk already has
+            // `self.bodies` to check that against — a captured closure, or
+            // one whose type still mentions a generic parameter, has no
+            // entry there, because that crate refused to build one. Rooting
+            // it here rather than only through a later call is what
+            // `note_address_taken` already does for a named function value,
+            // and for the same reason: a closure created but never called on
+            // *this* path might still be called through one this walk has
+            // not reached, and a monomorphisation set that is quietly
+            // incomplete is a link error at the end of a long build (§8's own
+            // words, one section up).
+            Rvalue::Closure { param, captures, .. } => {
+                if captures.is_empty() && self.bodies.contains_key(param) {
+                    queue.push_back(Task {
+                        instance: Instance::plain(*param),
+                        chain: Vec::new(),
+                        from: Some(symbol.to_string()),
+                    });
+                } else {
+                    set.holes.closures += 1;
+                }
+            }
             Rvalue::Use(operand)
             | Rvalue::Unary { operand, .. }
             | Rvalue::Cast { operand, .. }
@@ -1320,6 +1412,230 @@ impl<'a> Mono<'a> {
             chain: Vec::new(),
             from: Some(symbol.to_string()),
         });
+    }
+
+    /// Decision 13's vtable-building coercions, discovered where they
+    /// happen rather than inferred afterwards.
+    ///
+    /// **This is the half of a vtable [`Mono::redirect_self_call`]'s own
+    /// documentation says lives one crate down, moved here.** A coercion into
+    /// `any I` is the one place the concrete type behind the interface object
+    /// is ever named again after this statement — every later read of the
+    /// value sees only `{ data, vtable }` — so it is the one place this walk
+    /// can answer *which instance a defaulted method's slot needs* rather than
+    /// refuse to build one. [`Mono::vtable_instances`] is the rule; this
+    /// function is what feeds it the pair and enqueues what it returns, the
+    /// same way [`Mono::solve_call`] enqueues an ordinary call's callee.
+    ///
+    /// Silent on every coercion that is not one of the four that builds an
+    /// interface object, on a destination that does not name one, and on a
+    /// source this walk cannot reduce to a single concrete type — a type
+    /// parameter's own vtable is chosen by whichever instantiation reaches
+    /// this coercion, not by this pass, and it will meet this function again
+    /// once substitution has made it concrete.
+    fn walk_vtable_coercion(
+        &mut self,
+        caller_subst: &Substitution,
+        body: &Body,
+        coercion: Coercion,
+        operand: &Operand,
+        ty: Ty,
+        symbol: &str,
+        queue: &mut VecDeque<Task>,
+        set: &mut MonoSet,
+    ) {
+        if !matches!(
+            coercion,
+            Coercion::Box | Coercion::BoxThenWiden | Coercion::Unsize | Coercion::UnsizeInBox
+        ) {
+            return;
+        }
+        let ty = self.apply(caller_subst, ty);
+        let Some(interface) = self.object_interface(ty) else { return };
+        let Some(source) = self.actual_ty(caller_subst, body, operand) else { return };
+        let Some(concrete_ty) = self.concrete_head_ty(source) else { return };
+        let TyKind::Named { def: concrete_def, .. } = self.types.kind(concrete_ty) else { return };
+        let concrete_def = *concrete_def;
+        // Widening an interface object that already exists, not building one:
+        // the coercion still fires, but there is no new pair to resolve.
+        if concrete_def == interface {
+            return;
+        }
+        let key = (interface, concrete_def);
+        if set.vtables.contains_key(&key) {
+            return;
+        }
+        let outcome = match self.vtable_instances(interface, concrete_def, concrete_ty) {
+            Ok(instances) => {
+                let mut symbols = Vec::with_capacity(instances.len());
+                let mut failure = None;
+                for instance in &instances {
+                    match self.symbol_of(instance) {
+                        Ok(sym) => symbols.push(sym),
+                        Err(_) => {
+                            failure = Some(format!(
+                                "a vtable slot for `any {}` over `{}` whose instance is not \
+                                 concrete",
+                                self.defs.get(interface).name,
+                                self.defs.get(concrete_def).name,
+                            ));
+                            break;
+                        }
+                    }
+                }
+                match failure {
+                    Some(message) => Err(message),
+                    None => {
+                        for instance in instances {
+                            queue.push_back(Task {
+                                instance,
+                                chain: Vec::new(),
+                                from: Some(symbol.to_string()),
+                            });
+                        }
+                        Ok(symbols)
+                    }
+                }
+            }
+            Err(message) => Err(message),
+        };
+        set.vtables.insert(key, outcome);
+    }
+
+    /// Decision 13's slot order, as instances rather than as raw
+    /// definitions: every method `interface` declares, in declaration order,
+    /// resolved to the implementation `concrete_def` answers it with.
+    ///
+    /// **A slot inherited unwritten binds `Self`; an overridden slot does
+    /// not,** and both halves are [`Mono::redirect_self_call`]'s own rule,
+    /// read here instead of at a call site. `decls.methods().lookup` is asked
+    /// first and unconditionally — never `Declarations::signature`'s
+    /// `has_body` on its own — because that is the only way to tell the two
+    /// apart: a `has_body` check run before the lookup cannot see that an
+    /// implementor overrode the very method it is about to refuse, which is
+    /// what this function's predecessor in `science-codegen-llvm` did. The
+    /// lookup's own answer already says which case it is: `candidate.method`
+    /// equal to the interface's own declaration is *inherited unwritten*, and
+    /// anything else is an override with its own concrete `Self` already.
+    ///
+    /// `Found::Ambiguous` is narrowed to `interface` before it is given up
+    /// on, for [`Mono::redirect_self_call`]'s own reason: two interfaces
+    /// contributing a method of this name to `concrete_def` is not an
+    /// ambiguity this *pair's* vtable has to answer, because the pair already
+    /// says which interface's slot is being filled.
+    fn vtable_instances(
+        &self,
+        interface: DefId,
+        concrete_def: DefId,
+        concrete_ty: Ty,
+    ) -> Result<Vec<Instance>, String> {
+        let declared: Vec<(String, DefId)> = self
+            .defs
+            .children(interface)
+            .filter(|def| def.kind == DefKind::Fn)
+            .map(|def| (def.name.clone(), def.id))
+            .collect();
+        if declared.is_empty() {
+            return Err(format!(
+                "a value coerced into `any {}`, an interface this compiler declares no methods \
+                 for",
+                self.defs.get(interface).name
+            ));
+        }
+        let mut slots = Vec::with_capacity(declared.len());
+        for (name, declared_def) in &declared {
+            let candidate = match self.decls.methods().lookup(concrete_def, name, Form::Value) {
+                Found::One(candidate) => candidate,
+                Found::Ambiguous(candidates) => {
+                    let mut narrowed = candidates
+                        .into_iter()
+                        .filter(|candidate| candidate.interface() == Some(interface));
+                    match (narrowed.next(), narrowed.next()) {
+                        (Some(candidate), None) => candidate,
+                        _ => {
+                            return Err(format!(
+                                "no single `{name}` on `{}` to fill `any {}`'s slot for it: two \
+                                 interfaces both name it and the pair alone cannot say which one \
+                                 it means",
+                                self.defs.get(concrete_def).name,
+                                self.defs.get(interface).name
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    return Err(format!(
+                        "no single `{name}` on `{}` to fill `any {}`'s slot for it: conformance \
+                         is `science-types`' `conform` to report, and a table filled from an \
+                         unresolved lookup would dispatch to whichever candidate came first",
+                        self.defs.get(concrete_def).name,
+                        self.defs.get(interface).name
+                    ));
+                }
+            };
+            let inherited_unwritten = candidate.method == *declared_def
+                && self.decls.signature(*declared_def).is_some_and(|sig| sig.has_body);
+            slots.push(if inherited_unwritten {
+                Instance { def: *declared_def, args: Vec::new(), self_ty: Some(concrete_ty) }
+            } else {
+                Instance::plain(candidate.method)
+            });
+        }
+        Ok(slots)
+    }
+
+    /// `Box of T`'s element, when `ty` names the prelude's own `Box`.
+    ///
+    /// The head has to be the **prelude's** `Box` and not a user type of the
+    /// same name, for `science-codegen-llvm`'s `Lowerer::box_element`'s own
+    /// reason — this is that function's peer and not its caller, kept
+    /// separate because this pass reads MIR before substitution and that one
+    /// reads it after, at a point this crate cannot see.
+    fn box_element(&self, ty: Ty) -> Option<Ty> {
+        let TyKind::Named { def, args } = self.types.kind(ty) else { return None };
+        if self.defs.get(*def).name != "Box" || args.len() != 1 {
+            return None;
+        }
+        match args[0] {
+            GenericArg::Type(element) => Some(element),
+            _ => None,
+        }
+    }
+
+    /// The interface an `any I` type names, seeing through a `T?` and a
+    /// `Box` — `science-codegen-llvm`'s `Lowerer::object_interface`'s own
+    /// peeling, needed here for the same reason and read from MIR this walk
+    /// already holds rather than from a lowering pass one crate down.
+    fn object_interface(&self, ty: Ty) -> Option<DefId> {
+        if let Some(element) = self.box_element(ty) {
+            return self.object_interface(element);
+        }
+        match self.types.kind(ty) {
+            TyKind::Object { interface, .. } => Some(*interface),
+            TyKind::Nullable(inner) => self.object_interface(*inner),
+            TyKind::Borrowed { inner, .. } => self.object_interface(*inner),
+            TyKind::Named { def, .. } if self.defs.get(*def).kind == DefKind::Interface => {
+                Some(*def)
+            }
+            _ => None,
+        }
+    }
+
+    /// The concrete type headed by `ty`, seeing through a `Box` and a borrow —
+    /// kept as a [`Ty`] rather than reduced to a [`DefId`], unlike
+    /// `science-codegen-llvm`'s `Lowerer::concrete_head`, because
+    /// [`Instance::self_ty`] needs the whole type a defaulted method's `Self`
+    /// is bound to, generic arguments included, and a `DefId` alone has
+    /// already thrown those away.
+    fn concrete_head_ty(&self, ty: Ty) -> Option<Ty> {
+        if let Some(element) = self.box_element(ty) {
+            return self.concrete_head_ty(element);
+        }
+        match self.types.kind(ty) {
+            TyKind::Named { .. } => Some(ty),
+            TyKind::Borrowed { inner, .. } => self.concrete_head_ty(*inner),
+            _ => None,
+        }
     }
 
     /// Decision 18, at the one shape the walk can see. §9.
@@ -1475,6 +1791,32 @@ impl<'a> Mono<'a> {
     ) -> Option<Instance> {
         let (callee, self_ty) = self.redirect_self_call(caller_subst, body, callee, args);
 
+        // **A defaulted method whose receiver `redirect_self_call` could not
+        // resolve is a vtable dispatch, and this pass must name no instance
+        // for it at all.** `redirect_self_call`'s own `none` case means the
+        // receiver is still `any I` or an unbound `Self` — there is no
+        // concrete type here to bind a defaulted method's own `Self` to.
+        // Building `Instance { self_ty: None, .. }` anyway would ask
+        // `science_mir::instantiate` to substitute a body whose `self` is
+        // still `TyKind::SelfType` at nothing, which fails a phase down with
+        // no span to blame — `Lowerer::layout_of_ty`'s refusal, for a call
+        // this pass should never have tried to give a static symbol in the
+        // first place. A **required** method (no body) takes the ordinary
+        // path below unharmed: it has no MIR body, so `defined_here` is
+        // false and nothing is ever substituted — which is what already made
+        // dispatch through a required method work before this pair existed.
+        // `Lowerer::lower_dispatch` is where a call left unresolved here is
+        // actually answered, at run time, off the vtable
+        // `Mono::vtable_instances` already built a symbol for.
+        if self_ty.is_none()
+            && self
+                .decls
+                .signature(callee)
+                .is_some_and(|sig| sig.owner.is_some_and(|owner| self.owner_is_interface(owner)) && sig.has_body)
+        {
+            return None;
+        }
+
         let generics = self.generics_of(callee);
         if generics.is_empty() {
             if self.decls.signature(callee).is_none() {
@@ -1591,23 +1933,30 @@ impl<'a> Mono<'a> {
         let Some(receiver) = args.first() else { return none };
         let Some(actual_self) = self.actual_ty(caller_subst, body, receiver) else { return none };
         let actual_self = self.peel_borrow(actual_self);
-        // **Decision 13's vtables are refused here, not answered wrong.**
-        // `Methods::receiver` answers a *definition* for `any Summarize`
-        // too — the interface's own, which is exactly right for the checker
-        // asking "what can I call on this value" and exactly wrong for this
-        // question, which is "which implementor is this": a receiver still at
-        // `TyKind::Object` or still at `TyKind::SelfType` (an enclosing
-        // instance with no `self_ty` of its own — a caller this walk has not
-        // bound one for) has no single implementor to redirect to, and
-        // treating the interface as if it were one produces an instance whose
-        // own `self.summarize()` cannot be redirected either, one level
-        // further in: a specialisation at nothing, rather than at `Doc`. This
-        // crate does not model a vtable's slots — `lower_crate`'s own comment
-        // says the rule lives one crate down — so this is where that gap
-        // surfaces rather than where it gets papered over: `none` here leaves
-        // `callee` at the interface's own default body with no `self_ty`,
-        // which is exactly the refusal the backend already gives a default
-        // body it cannot specialise.
+        // **Decision 13's vtables are refused here, not answered wrong, and
+        // that is still correct — this function answers a different question
+        // from `Mono::walk_vtable_coercion`'s.** `Methods::receiver` answers
+        // a *definition* for `any Summarize` too — the interface's own,
+        // which is exactly right for the checker asking "what can I call on
+        // this value" and exactly wrong for this question, which is "which
+        // implementor is this": a receiver still at `TyKind::Object` or
+        // still at `TyKind::SelfType` (an enclosing instance with no
+        // `self_ty` of its own — a caller this walk has not bound one for)
+        // has no single implementor to redirect to, and nothing at *this*
+        // call site can invent one — that is what the vtable the value
+        // carries is for, and it is read at run time, not here.
+        //
+        // **The gap this used to name — a defaulted method's slot having no
+        // instance to bind `Self` to at all — is closed, and closed one level
+        // up rather than here.** `Mono::walk_vtable_coercion` meets the same
+        // pair at the coercion that *built* the interface object, where the
+        // concrete type is still a fact this walk can read off the operand,
+        // and enqueues `Instance { self_ty: Some(concrete), .. }` directly —
+        // the same instance this function already builds when a caller's own
+        // `self_ty` is bound (`describe[T: Summarize]` at `T = Doc`, below).
+        // So a call reaching *this* function with an unresolved receiver is
+        // now genuinely a call this pass cannot redirect, rather than a
+        // symptom of a rule this crate does not have.
         if !self.is_concrete_implementor(actual_self) {
             return none;
         }
@@ -2181,6 +2530,21 @@ impl<'a> Mono<'a> {
                 // nameable, and a type's path and a function's path should
                 // not answer it differently.
                 DefKind::Module if entry.is_builtin() => {}
+                // **A closure, named by the `param` `science-mir`'s
+                // `lower.rs` §8.5 reuses as the closure body's `Body::def` —
+                // see [`Mono::walk_rvalue`]'s `Rvalue::Closure` arm, the only
+                // place that ever hands a `DefKind::Param` to this function.**
+                // An ordinary parameter's name is not unique — every
+                // unnamed `giving` in one module mints a `DefId` named
+                // `each` with this same module as its parent — so the plain
+                // `_ => push(name)` row below would give two closures in one
+                // module the same symbol and one would silently replace the
+                // other, which is `path_of`'s own comment about a module
+                // above this one. `id.0` is the table index and therefore
+                // unique by construction, which a name never was.
+                DefKind::Param => {
+                    components.push(format!("closure${}${}", entry.name, id.index()))
+                }
                 _ => components.push(entry.name.clone()),
             }
             current = entry.parent;

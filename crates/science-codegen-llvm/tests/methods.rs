@@ -1299,3 +1299,115 @@ def main():
         "hello\nhello\nhello\n5\n0\n3628800\ntrue\nabc\n10\n"
     );
 }
+
+/// A default body, dispatched through `any I`, on two implementors —
+/// [`a_default_body_runs_and_differs_per_implementor`]'s own case, moved from
+/// a static call to a real one.
+///
+/// **This used to be a link error and not a refusal.** `science_codegen::mono`
+/// did not model Decision 13's vtables at all, so `Lowerer::vtable_slots`
+/// refused a defaulted method's slot outright — *"Decision 15's defaulted
+/// method has to be monomorphised at the implementor's `Self` before it has
+/// an address, and this backend monomorphises nothing"* — the message
+/// `examples/00_kitchen_sink.science` and `examples/08_dyn_dispatch.science`
+/// both hit. `science_codegen::mono::Mono::vtable_instances` is the repair:
+/// the coercion that builds `&any Summarize` is where the concrete type is
+/// still in hand, so that is where the instance a defaulted slot needs is
+/// built and enqueued, the same `Instance::self_ty` axis a static call already
+/// used.
+///
+/// **One call site, two answers, so a shared function is caught.** `dispatch`
+/// is the only place `twice` is called anywhere in this program — there is no
+/// static call to redirect from, which is exactly the shape
+/// `Lowerer::lower_crate`'s own comment names: *"a method reached only through
+/// a vtable is absent from the set, and the symptom is `define_vtable` naming
+/// a symbol nothing defined, and the linker saying so"*. `11 + 11` and
+/// `22 + 22` are chosen so that a table sharing one slot between `Doc` and
+/// `Row`, or a slot resolved by definition alone and not by receiver, prints
+/// `22` twice rather than `22` and `44`.
+#[test]
+fn a_default_body_dispatched_through_any_i_differs_per_implementor() {
+    let source = "\
+interface Summarize:
+    def size(self) -> Int
+
+    def twice(self) -> Int:
+        self.size() + self.size()
+
+type Doc:
+    n: Int
+
+Doc implements Summarize:
+    def size(self) -> Int:
+        self.n
+
+type Row:
+    n: Int
+
+Row implements Summarize:
+    def size(self) -> Int:
+        self.n
+
+def dispatch(it: &any Summarize) -> Int:
+    it.twice()
+
+def main():
+    let doc be Doc(n: 11)
+    let row be Row(n: 22)
+    print(dispatch(doc))
+    print(dispatch(row))
+";
+    assert_eq!(prints("vtable_default", source), "22\n44\n");
+}
+
+/// The same default body, reached **both** statically and through `any I`,
+/// from one program — proving the two paths land on one instance and not
+/// two.
+///
+/// `describe[T: Summarize]` is `a_default_body_runs_and_differs_per_
+/// implementor`'s static path, monomorphised at `T = Doc`;
+/// `dispatch(it: &any Summarize)` is the vtable path, run at `Doc` and at
+/// `Row`. `describe(Doc(n: 11))` and `dispatch(Doc(n: 11))` printing the same
+/// number is the property this pins: if the static call and the vtable slot
+/// disagreed about which symbol `Doc`'s `twice` is, the module would carry two
+/// definitions of it, and `Lowerer::lower_crate`'s own symbol-collision check
+/// — finding 25's guard — would refuse the build rather than let the two
+/// silently pick different addresses.
+#[test]
+fn a_default_body_reached_statically_and_through_any_i_is_one_instance() {
+    let source = "\
+interface Summarize:
+    def size(self) -> Int
+
+    def twice(self) -> Int:
+        self.size() + self.size()
+
+type Doc:
+    n: Int
+
+Doc implements Summarize:
+    def size(self) -> Int:
+        self.n
+
+type Row:
+    n: Int
+
+Row implements Summarize:
+    def size(self) -> Int:
+        self.n
+
+def describe[T: Summarize](value: &T) -> Int:
+    value.twice()
+
+def dispatch(it: &any Summarize) -> Int:
+    it.twice()
+
+def main():
+    let doc be Doc(n: 11)
+    let row be Row(n: 22)
+    print(describe(doc))
+    print(dispatch(doc))
+    print(dispatch(row))
+";
+    assert_eq!(prints("vtable_default_shared", source), "22\n22\n44\n");
+}

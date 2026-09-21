@@ -513,6 +513,75 @@ same from its side — *"calling a `_free` entry point twice, or not at all, is 
 bug this crate will not catch […] a runtime safety net would hide the very
 failures that prove it is working."*
 
+**Two more constructs need the identical shape, for a sharper reason than an
+index does.** `xs[i]` is checked because nothing *proves* `i < xs.len()`
+without it — the value could be in range and the compiler simply does not
+know. Integer `/`, `%`, `<<` and `>>` are different: LLVM's `sdiv`/`srem` are
+**undefined** at a zero divisor and `Int.min / -1`, and `shl`/`lshr`/`ashr` are
+**poison** at or past the operand's bit width — not a wrong value either way,
+*no* value, the kind an optimiser is licensed to reason backward from and
+delete the branch that guarded it. §5.1 of the core spec decides `+`/`-`/`*`'s
+overflow (wraps in release, panics in debug) and `/`'s truncation, and says
+nothing about either edge, not because it was overlooked but because there is
+no *value* on either edge for a numeric policy to choose between.
+
+> **Decision 45. Integer `/` and `%` trap on a zero divisor and on
+> `Int.min / -1`; `<<` and `>>` trap when the amount is at or past the
+> operand's width, or negative for a signed amount. All four are Decision 10's
+> shape — an `icmp`, a branch, a panic block calling `science_panic_bytes` —
+> built in `science-mir`, not in codegen: `division_check` and `shift_check`
+> emit them where `bounds_check` does, in front of the operation that needs
+> them, so `science-codegen-llvm`'s `lower_binary` receives an
+> already-in-range operand and lowers `sdiv`/`shl`/`ashr`/`lshr` exactly as
+> unconditionally as `add`.**
+
+**This was two refusals before it was a decision, and the code still remembers
+the first one.** `science_codegen::backend::IntOp`'s own note on `SDiv` says
+*"division by zero is a panic the caller has already guarded, not a trap the
+backend inserts"* — written when no caller did, so `science-codegen-llvm`
+refused integer `/` and `%` outright, and the two shifts for the identical
+reason once they were tried. Both refusals were honest: emitting `sdiv` or
+`shl` unguarded is not a lowering this crate could make safely, and nothing
+above it had decided whose job the guard was. `division_check` closed that for
+`/` and `%` first; `shift_check` is this note's business and closes it for the
+shifts the same way.
+
+**Two answers for the shift edge were rejected before this one.** Masking the
+amount (`n & (width - 1)`, the rule x86's own `shl` instruction already applies
+in hardware) turns `1i64 << 64` into `1i64 << 0`, which is `1` — and that is
+not a wrapped *value* in §5.1's sense, because nothing about `+`'s
+two's-complement wraparound licenses silently changing *which bit gets set*. A
+wrapped `Int` still answers the question the program asked; a masked shift
+answers a different one. Producing zero unconditionally reads as the
+friendlier "or-else" a reader might guess `<<` falls back to at the boundary,
+and is rejected on the same principle from the other side: §5.1 is where this
+language's numeric behaviour is decided, once, and an operator does not get a
+second, unwritten rule for its edge because a trap felt like the wrong tone.
+
+**Why a shift needed a decision at all, when `add`/`sub`/`mul` did not.**
+LLVM's `add`, `sub` and `mul` are **defined** for every bit pattern — two's
+complement wraps, which is exactly what §5.1's release-mode behaviour asks
+for, so wrapping arithmetic is a language choice layered on an instruction that
+was always going to produce *some* answer. `shl`/`lshr`/`ashr` past the
+operand's width are not layered on anything: the instruction has no answer to
+choose a policy about. That asymmetry is why this decision exists and
+`+`/`-`/`*` needed none — there was never a question of *what* they should do
+at their edges, only of whether to check for it, and §5.1 already answered
+that. A shift's edge asks a different question first, and it has to be
+answered before "trap" or "wrap" or "saturate" can even be considered.
+
+**Cost.** A compare and a branch per shift or per division whose operands are
+not compile-time constants already known to be safe — the same cost Decision
+10 pays per index, paid here per arithmetic operation instead — and, for a
+signed shift amount, a second compare and branch beside it, to catch a
+negative amount the width comparison alone cannot: reading a comparison's
+signedness off the operand's own declared type (`science-codegen-llvm`'s
+`lower_binary`) is what makes the two ordinary tests correct without a cast,
+and is also what makes one unsigned trick — reading a negative amount's bits
+as a huge unsigned one, the way `bounds_check`'s cast-to-`U64` reads a negative
+index — unavailable here: there is no operator in this IR that asks a signed
+operand an unsigned question.
+
 ### 2.5 Aggregates and drops
 
 **Decision 11. A Science `type` lowers to a named LLVM struct with fields in

@@ -213,11 +213,20 @@
 //!
 //! **What is missing, and will bite.**
 //!
-//! - **A closure's *body* is not lowered.** Its captures are ([`lower`]'s §8),
-//!   so nothing crosses the boundary unseen, but a mistake between two of the
-//!   closure's own locals is reported by nothing. §8.5 says what that is
-//!   blocked on and it is a [`science_resolve::hir::DefId`] this crate cannot
-//!   mint.
+//! - **A closure's *body* is not lowered — unless nothing is captured.**
+//!   [`lower`]'s §8.5 gives a capture-free closure a [`mir::Body`] keyed on
+//!   the closure's own `param`, in place of the [`science_resolve::hir::DefId`]
+//!   this crate still cannot mint. A mistake between two of *that* closure's
+//!   own locals is reported by `science-regions` now, because
+//!   [`callgraph::CallGraph::of`] gives every [`mir::Body`] a node whether or
+//!   not anything calls it through a [`mir::Callee::Def`] edge, and a closure
+//!   is only ever called through [`mir::Callee::Indirect`] — so the body
+//!   reaches the region engine as an unreferenced singleton component, and is
+//!   checked exactly as thoroughly as if something did call it. **What is
+//!   still true of a closure that captures something** is this bullet's
+//!   original sentence, verbatim: no body, no [`science_resolve::hir::DefId`]
+//!   to mint one under, and a mistake between its own locals reported by
+//!   nothing.
 //! - **A move out of a capture is invisible.** [`lower`]'s §8.2. The strongest
 //!   thing a borrow discipline can say about it is an exclusive borrow, and
 //!   that is what it says.
@@ -335,6 +344,20 @@
 //!    therefore not borrows MIR can see*. The two are separable. [`lower`]'s §8
 //!    is now the capture discipline — every capture is a borrow, shared unless
 //!    the body writes through the place — and the body is still not lowered.
+//!
+//!    **The body is lowered now, for the half of it the discipline left
+//!    separable.** §8.5 asked one question — *"whoever writes the capture
+//!    discipline has to decide whether a capture becomes a borrow MIR can
+//!    see"* — and answered it without needing a second: a closure with no
+//!    capture list to speak of has nothing this crate cannot already lower on
+//!    its own, and [`lower::Builder::run_closure`] does, keyed on the
+//!    closure's `param` rather than on the [`science_resolve::hir::DefId`]
+//!    §8.5 said did not exist. **A captured closure is exactly where §8.5 left
+//!    it.** Its aggregate is `{ fn ptr, captures }`, and §7 item 6's own
+//!    unresolved contradiction — a closure type with no field for a capture
+//!    set — is what stops this crate from giving one a body: there is nowhere
+//!    to bind the captures to when the body is built, only the borrow that
+//!    already exists in the *enclosing* frame.
 //!
 //!    **What that settles and what it does not.** It settles
 //!    `region-inference.md`'s AMENDMENT 3, which said *"whoever writes the
@@ -683,7 +706,7 @@ pub mod moves;
 pub use callgraph::CallGraph;
 pub use capture::{Capture, Use};
 pub use instantiate::{instantiate, map_types};
-pub use lower::{lower_body, lower_crate, Context};
+pub use lower::{lower_body, lower_body_and_closures, lower_crate, Context};
 pub use mir::{
     BasicBlock, BlockId, Body, BorrowData, BorrowId, BorrowKind, Callee, Local, LocalKind, Operand,
     Place, Point, Projection, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,

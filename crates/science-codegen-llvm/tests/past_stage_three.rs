@@ -766,10 +766,23 @@ fn what_is_refused_names_itself() {
         // an `interface`'s default body, and a call through `any I` — lives in
         // that file, because it is about methods rather than about this file's
         // boundary.
+        //
+        // **`refuse-closure` used to be `sink(item giving item)`, which
+        // captures nothing, and it builds now.** `science-mir`'s `lower.rs`
+        // §8.5 gives that closure's body a `Body`, keyed on its own `param`,
+        // and everything below this file's own line follows it through:
+        // `science_codegen::mono` enqueues it, `cg_ty_in` lays it out as a bare
+        // function pointer, and `Lowerer::lower_indirect_closure_call` calls
+        // through it. `tests/closures.rs` is that program, run rather than
+        // refused. What is left is a closure that captures something — `n`
+        // reaching into `item giving item + n` from outside it — because its
+        // aggregate is `{ fn ptr, captures }` and a closure's type, the bare
+        // arrow `(A) -> B`, has nowhere to say how many captures or of what.
         (
             "refuse-closure",
             "def sink(f: (Int) -> Int) -> Int:\n    1\n\n\
-             let n be sink(item giving item)\nprint(\"x\")\n",
+             def go(n: Int) -> Int:\n    sink(item giving item + n)\n\n\
+             let v be go(1)\nprint(\"x\")\n",
             "closure",
         ),
     ];
@@ -980,6 +993,77 @@ fn integer_division_is_still_refused_for_the_reason_that_is_not_effort() {
         overflow.stderr.contains("overflow"),
         "the panic does not say which guard fired: {}",
         overflow.stderr
+    );
+}
+
+/// `<<` and `>>` trap at or past the operand's width, and nowhere before it —
+/// `shift_check`'s guard, run rather than only read. `codegen-and-linking.md`'s
+/// Decision 45 is the record of why the guard exists at all and why it is two
+/// tests for a signed amount and one for an unsigned one.
+///
+/// **Six programs, for `integer_division_is_still_refused_for_the_reason_
+/// that_is_not_effort`'s reason: a guard that verifies is not a guard that
+/// fires.** The widest width at its last defined amount and at its first
+/// poison one, the narrowest width at the same two points, a negative amount
+/// on a signed operand, and — the case that matters most — a runtime amount.
+///
+/// **Why the runtime case is not redundant with the five literal ones.**
+/// `1i64 << 64` is a constant LLVM can see straight through: the poison is
+/// real even unobserved, but nothing here would tell the two apart from a
+/// check that only ever ran against an amount the optimiser had already
+/// resolved, because the panic fires either way. `a - a + 64`, where `a` is a
+/// runtime-bound local, is `integer_division_is_still_refused_…`'s own trick
+/// for the identical reason: `a - a` reaches `-O2` as a value LLVM has to
+/// compute, not one it can fold before `shift_check`'s branch runs.
+#[test]
+fn shifts_trap_at_and_past_the_operands_width() {
+    // `I64`, the last defined amount: `1i64 << 63` is `Int.min`, one value
+    // and not poison.
+    assert_eq!(bytes("shift-i64-ok", "print(f\"{1i64 << 63}\")\n"), "-9223372036854775808\n");
+
+    // `I64`, the first poison amount.
+    let wide = output("shift-i64-trap", "let x be 1i64 << 64\nprint(f\"{x}\")\n");
+    assert_ne!(wide.status, Some(0), "a shift at the operand's width exited cleanly");
+    assert!(
+        wide.stderr.contains("shift amount out of range"),
+        "the panic does not say which guard fired: {}",
+        wide.stderr
+    );
+
+    // `I8`, the same two points at a narrower boundary — a different width
+    // needs a different bound, and this is the test that the bound is read
+    // off the operand's own type rather than fixed at 64.
+    assert_eq!(bytes("shift-i8-ok", "print(f\"{1i8 << 7}\")\n"), "-128\n");
+    let narrow = output("shift-i8-trap", "let x be 1i8 << 8\nprint(f\"{x}\")\n");
+    assert_ne!(narrow.status, Some(0), "a narrow shift at the operand's width exited cleanly");
+    assert!(
+        narrow.stderr.contains("shift amount out of range"),
+        "the panic does not say which guard fired: {}",
+        narrow.stderr
+    );
+
+    // A negative amount, admitted only because the operand is signed —
+    // `shift_check`'s second test, which an unsigned amount never pays for.
+    let negative =
+        output("shift-negative", "let n be 0i64 - 1\nlet x be 1i64 << n\nprint(f\"{x}\")\n");
+    assert_ne!(negative.status, Some(0), "a negative shift amount exited cleanly");
+    assert!(
+        negative.stderr.contains("shift amount out of range"),
+        "the panic does not say which guard fired: {}",
+        negative.stderr
+    );
+
+    // A runtime amount: not a literal the checker or the optimiser could
+    // fold before the guard runs.
+    let runtime = output(
+        "shift-runtime-trap",
+        "let a be 7\nlet n be a - a + 64\nlet x be 1i64 << n\nprint(f\"{x}\")\n",
+    );
+    assert_ne!(runtime.status, Some(0), "a runtime shift amount exited cleanly");
+    assert!(
+        runtime.stderr.contains("shift amount out of range"),
+        "the panic does not say which guard fired: {}",
+        runtime.stderr
     );
 }
 

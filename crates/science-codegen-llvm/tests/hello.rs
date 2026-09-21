@@ -153,28 +153,47 @@ fn the_module_says_what_stage_one_says_it_should() {
 /// did not survive the same session: an `Instance` carries a `self_ty` now,
 /// so one body is one function per implementor.
 ///
-/// **A closure** takes its place, and it is the most durable choice left in
-/// the language. `science-mir` does not lower a closure's body **at all** —
-/// `Rvalue::Closure` carries a THIR expression id and its captures, and
-/// nothing anywhere turns either into a function. Moving this boundary is a
-/// whole phase's work rather than a backend arm, which is what every previous
-/// occupant of this test turned out to be.
+/// **A closure took its place fifth, and it has moved again — narrower
+/// rather than away.** `science-mir` used to lower a closure's body **not at
+/// all** — `Rvalue::Closure` carried a THIR expression id and its captures,
+/// and nothing anywhere turned either into a function. That crate's
+/// `lower.rs` §8.5 now does, for the half of the construct that turned out to
+/// be separable: a closure with **nothing captured**. Its body gets a `Body`
+/// keyed on the closure's own `param`, `science_codegen::mono` enqueues it
+/// exactly as it enqueues any other address-taken function, `cg_ty_in` gives
+/// every closure value the layout that is honest for that case — a bare
+/// function pointer — and `Lowerer::lower_indirect_closure_call` calls
+/// through it the same way `Lowerer::lower_dispatch` calls through a vtable
+/// slot. `tests/closures.rs` is that program, built and run: `apply(x giving
+/// x + 1)` prints `2` and exits `0`, a hundred thousand times over.
+///
+/// **What moved *here* is one word: `giving x + 1` became `giving x + n`,
+/// closing over a binding from outside itself.** A captured closure's
+/// aggregate is `{ fn ptr, captures }`, and there is nowhere in the closure's
+/// own type, a bare arrow `(A) -> B`, to say how many or of what — the gap
+/// `science-mir`'s `lib.rs` §7 item 5 names and `collections-and-chains.md`
+/// has not closed. So this is still `SC0400`, and the refusal still names the
+/// construct; it is one clause more specific about which closure, because the
+/// other clause no longer needs refusing.
 #[test]
 fn a_program_past_the_boundary_is_refused_by_name() {
-    let lowered = lower("def apply(f: (Int) -> Int) -> Int:
-    f(1)
+    let lowered = lower("def sink(f: (Int) -> Int) -> Int:
+    1
 
-let v be apply(x giving x + 1)
+def go(n: Int) -> Int:
+    sink(item giving item + n)
+
+let v be go(1)
 ");
     let dir = scratch("hello", "refused");
     let diagnostics = lowered
         .try_build(&dir.join("out"), OptLevel::O2)
         .map(|_| ())
-        .expect_err("a closure's body is not lowered");
+        .expect_err("a closure that captures something is not lowered");
     let first = diagnostics.first().expect("a diagnostic");
     assert_eq!(first.code, science_codegen::diagnostics::code::SC0400);
     assert!(
-        first.message.contains("closure"),
+        first.message.contains("closure") && first.message.contains("captures"),
         "the refusal must name the construct, and it said: {}",
         first.message
     );

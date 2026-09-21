@@ -515,7 +515,18 @@ fn the_boundary_is_where_it_says_it_is() {
         // say so: a division, a division by a computed zero, and `Int.min / -1`.
         // The row is deleted rather than reworded because this list is *"what is
         // past the boundary"* and division no longer is.
-        ("shift", "let a be 6\nlet b be a << 2\nprint(\"x\")\n", "shift"),
+        //
+        // **`shift` was a row here too, for `division`'s reason and beside
+        // it, and is retired the same way.** It read *"a shift, whose amount
+        // nothing above this crate bounds"*, and `science-mir`'s
+        // `shift_check` is now that bound: the amount is tested against the
+        // operand's width, and against zero when it is signed, in front of
+        // the shift, exactly where `division_check` tests a divisor.
+        // `codegen-and-linking.md`'s Decision 45 is the record of both
+        // guards together and of why a shift needed a decision `add`/`sub`/
+        // `mul` did not. `tests/past_stage_three.rs`'s
+        // `shifts_trap_at_and_past_the_operands_width` is the program that
+        // runs it.
         // **`drop` used to be here and is not.** It read *"what is left is a
         // `choice`: releasing its payload means switching on the discriminant
         // and dropping only the active variant, which is one block per arm
@@ -611,11 +622,21 @@ fn nothing_past_the_boundary_produces_an_executable() {
         // either — an `Instance` carries a `self_ty` now, so one body is one
         // function per implementor.
         //
-        // A **closure** takes its place, which is `hello.rs`'s choice too and
-        // for the reason that makes it the durable one: `science-mir` does
-        // not lower a closure's body at all, so moving this boundary is a
-        // whole phase rather than a backend arm.
-        "def apply(f: (Int) -> Int) -> Int:\n    f(1)\n\nlet v be apply(x giving x + 1)\n",
+        // A **closure** took its place next, which was `hello.rs`'s choice
+        // too, for the reason that made it the durable one: `science-mir`
+        // did not lower a closure's body at all. It lowers one now — for a
+        // closure with nothing captured, `lower.rs` §8.5 — so
+        // `apply(x giving x + 1)` builds, links and runs; `tests/closures.rs`
+        // is that program, run rather than refused.
+        //
+        // **A closure that captures something takes its place fifth**, and
+        // for the half of the reason that survives: its aggregate is
+        // `{ fn ptr, captures }`, and a closure's type — a bare arrow,
+        // `(A) -> B` — has nowhere to say how many captures or of what
+        // (`collections-and-chains.md` §1.2, `science-mir`'s `lib.rs` §7 item
+        // 5). `n` crossing into `item giving item + n` is what makes this one
+        // a capture rather than the same acceptance case one word narrower.
+        "def sink(f: (Int) -> Int) -> Int:\n    1\n\ndef go(n: Int) -> Int:\n    sink(item giving item + n)\n\nlet v be go(1)\n",
     ] {
         let dir = scratch("stage23", "refused");
         let output = executable(&dir, "refused");

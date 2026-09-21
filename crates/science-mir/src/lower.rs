@@ -466,7 +466,7 @@ use science_resolve::hir::{BinaryOp, DefId, DefKind, DefTable, Literal, SelfKind
 use science_types::alias::Aliases;
 use science_types::items::Declarations;
 use science_types::thir::{self, Arm, ExprId, ExprKind, PatId, PatKind, StmtKind};
-use science_types::ty::{Ty, TyKind, Types};
+use science_types::ty::{GenericArg, Ty, TyKind, Types};
 use science_types::Substitution;
 
 use crate::mir::{
@@ -540,13 +540,24 @@ pub struct Context<'a> {
     pub aliases: &'a mut Aliases,
 }
 
-/// Lowers every checked body, in the order the checker produced them.
+/// Lowers every checked body, in the order the checker produced them, **plus**
+/// every capture-free closure body found lowering them.
 ///
 /// The order is the checker's and not this crate's, deliberately: §10 item 6
 /// wants point identity stable under an edit elsewhere, and a numbering that
-/// depended on how many bodies came first would not be.
+/// depended on how many bodies came first would not be. A closure's body is
+/// appended right after the body it was found in — never interleaved with a
+/// *later* checked body — so that property extends to it: editing a function
+/// after the one a closure lives in still leaves the closure's own points
+/// alone.
 pub fn lower_crate(context: &mut Context<'_>, bodies: &[thir::Body]) -> Vec<Body> {
-    bodies.iter().map(|body| lower_body(context, body)).collect()
+    let mut out = Vec::with_capacity(bodies.len());
+    for thir in bodies {
+        let (body, closures) = lower_body_and_closures(context, thir);
+        out.push(body);
+        out.extend(closures);
+    }
+    out
 }
 
 /// Lowers one body: construction, then drop elaboration, then the borrow index.
@@ -559,7 +570,24 @@ pub fn lower_crate(context: &mut Context<'_>, bodies: &[thir::Body]) -> Vec<Body
 /// The borrow index is built last, after elaboration has finished inserting
 /// statements, because [`BorrowData::reserved`] is a [`Point`] and a point is
 /// only meaningful once the statement numbering has stopped moving.
+///
+/// **A capture-free closure lowered from inside this body is dropped on the
+/// floor here.** Every caller with a use for one — [`lower_crate`], and
+/// `tests/captures.rs` where it matters — reaches
+/// [`lower_body_and_closures`] instead. This wrapper survives because it is
+/// the entry point every existing test and every other crate already calls,
+/// and a body's own shape does not change: adding a second return value would
+/// have moved every one of those call sites for a fact only some of them need.
 pub fn lower_body(context: &mut Context<'_>, thir: &thir::Body) -> Body {
+    lower_body_and_closures(context, thir).0
+}
+
+/// [`lower_body`], plus every capture-free closure lowered along the way.
+///
+/// §8.5's follow-up, kept out of `lower_body` itself: see that function's own
+/// note for why the two are separate entry points rather than one changed
+/// signature.
+pub fn lower_body_and_closures(context: &mut Context<'_>, thir: &thir::Body) -> (Body, Vec<Body>) {
     let flag_ty = context
         .decls
         .prelude()
@@ -567,11 +595,31 @@ pub fn lower_body(context: &mut Context<'_>, thir: &thir::Body) -> Body {
         .unwrap_or(Ty::ERROR);
     let mut builder = Builder::new(context, thir);
     builder.run();
+    let raw_closures = std::mem::take(&mut builder.closures);
     let mut body = builder.finish();
     crate::drops::elaborate(&mut body, flag_ty, context.decls, context.types, context.aliases);
     index_borrows(&mut body);
     body.predecessors = predecessors_of(&body.blocks);
-    body
+
+    let mut closures = Vec::with_capacity(raw_closures.len());
+    for mut closure_body in raw_closures {
+        // The same five arguments the enclosing body's elaboration takes.
+        // A closure's body owns and drops exactly as any other does, so
+        // per-field elaboration has to reach it too — a closure that
+        // partially moves a record would otherwise leak the fields it did
+        // not move, which is the defect `moves.rs` §3 names.
+        crate::drops::elaborate(
+            &mut closure_body,
+            flag_ty,
+            context.decls,
+            context.types,
+            context.aliases,
+        );
+        index_borrows(&mut closure_body);
+        closure_body.predecessors = predecessors_of(&closure_body.blocks);
+        closures.push(closure_body);
+    }
+    (body, closures)
 }
 
 /// Fills in every borrow's reservation and activation point by one scan.
@@ -639,6 +687,18 @@ struct Builder<'a, 'ctx> {
     /// value holds has no Science type at all, and [`Ty::ERROR`] is the honest
     /// answer rather than a `Bool` it is not.
     bool_ty: Ty,
+    /// A closure body lowered while building *this* body, keyed on the
+    /// closure's own `param` (§8.5's follow-up: see [`Builder::run_closure`]).
+    ///
+    /// A closure's body shares this body's THIR arena — [`ExprKind::Closure`]'s
+    /// `body` is an [`ExprId`] into the very [`thir::Body`] this `Builder` is
+    /// already walking — so lowering one costs a second, short-lived `Builder`
+    /// over the same `context` and `thir` rather than a second walk of the
+    /// crate. Collected here rather than returned from `expr_into` because
+    /// nothing on that call chain has a `Vec<Body>` to thread back, and a
+    /// closure can be lowered from inside another closure's body (a nested
+    /// `giving`) before either of theirs is known to be worth keeping.
+    closures: Vec<Body>,
 }
 
 impl<'a, 'ctx> Builder<'a, 'ctx> {
@@ -657,12 +717,20 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             arg_count: 0,
             span,
             bool_ty,
+            closures: Vec::new(),
         }
     }
 
     fn finish(self) -> Body {
+        let def = self.thir.def();
+        self.finish_with(def)
+    }
+
+    /// [`Builder::finish`], for a body with no [`thir::Body::def`] of its
+    /// own — a closure, identified by its `param` (§8.5's follow-up).
+    fn finish_with(self, def: DefId) -> Body {
         Body {
-            def: self.thir.def(),
+            def,
             locals: self.locals,
             blocks: self.blocks,
             borrows: self.borrows,
@@ -709,6 +777,41 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
 
         let root = self.thir.root();
         let block = self.lower_block(Place::local(RETURN_PLACE), root, entry);
+        let block = self.exit_scopes(0, block, span);
+        self.scopes.pop();
+        self.terminate(block, TerminatorKind::Return, span);
+    }
+
+    /// [`Builder::run`], for a closure with nothing captured.
+    ///
+    /// **The one difference from an ordinary body is where the parameter comes
+    /// from.** `run` reads a signature out of [`science_types::items::Declarations`];
+    /// a closure has none — it is not a declared item — so its one parameter is
+    /// `param` itself, and its type is read the same way every other binding's
+    /// is, off [`thir::Body::local_ty`]. Everything after that is `run`
+    /// unchanged: one scope holding the parameter, one expression lowered into
+    /// `_0`, one `Return`.
+    ///
+    /// **The body it lowers is an [`ExprId`], not a [`thir::BlockId`].** A
+    /// `giving` closure's body is a single expression — `collections-and-chains.md`
+    /// §1.2's arrow type takes it as one — so this calls [`Builder::expr_into`]
+    /// directly rather than [`Builder::lower_block`], which is the entry point
+    /// every function body uses because a `def`'s is a block.
+    fn run_closure(&mut self, param: DefId, body: ExprId, ret_ty: Ty) {
+        let span = self.thir.expr(body).span;
+        self.span = span;
+        self.push_local(ret_ty, LocalKind::Return, span);
+        let param_ty = self.thir.local_ty(param).unwrap_or(Ty::ERROR);
+        let param_span = self.context.defs.get(param).span;
+        let local = self.push_local(param_ty, LocalKind::Param(param), param_span);
+        self.bindings.insert(param, local);
+        self.arg_count = 1;
+
+        let entry = self.new_block();
+        debug_assert_eq!(entry, ENTRY_BLOCK);
+        self.scopes.push(Scope { locals: vec![local] });
+
+        let block = self.expr_into(Place::local(RETURN_PLACE), body, entry);
         let block = self.exit_scopes(0, block, span);
         self.scopes.pop();
         self.terminate(block, TerminatorKind::Return, span);
@@ -1238,11 +1341,16 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 let operand_ty = self.thir.ty(*lhs);
                 let (left, block) = self.operand(*lhs, block);
                 let (right, block) = self.operand(*rhs, block);
-                // §4.6's `/` and `%`, which are the only two operators in the
+                // §4.6's `/`, `%`, `<<` and `>>`: the only operators in the
                 // language with an input they are not defined on.
+                // `division_check`'s own note is the shape; `shift_check`'s is
+                // why a shift needs it too and what the guard tests.
                 let (left, right, block) = match op {
                     BinaryOp::Div | BinaryOp::Rem => {
                         self.division_check(left, right, operand_ty, block, span)
+                    }
+                    BinaryOp::Shl | BinaryOp::Shr => {
+                        self.shift_check(left, right, operand_ty, block, span)
                     }
                     _ => (left, right, block),
                 };
@@ -1289,10 +1397,40 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 self.assign(block, dest, Rvalue::Narrow { operand: value, ty }, span);
                 block
             }
-            // §8. The captures are lowered; the body is not.
+            // §8. The captures are lowered, and — new — a capture-free
+            // closure's body now is too.
             ExprKind::Closure { param, body } => {
                 let (param, body) = (*param, *body);
                 let (captures, block) = self.lower_captures(param, body, block);
+                // §8.5's follow-up: a closure with nothing captured has
+                // nothing crossing its boundary that this crate cannot
+                // already lower on its own, so it gets the [`Body`] every
+                // other definition gets — keyed on `param`, since a closure
+                // has no `DefId` of its own to be one of (§8.5's own
+                // sentence) and `param` is already unique per closure
+                // (`science-resolve`'s `resolve_closure` mints one every
+                // time). A closure that captures anything is left exactly as
+                // before: §8.5's hole, unmoved, because its aggregate has a
+                // shape (`{ fn ptr, captures }`) this crate has nowhere to
+                // record — the closure's *type* is `(A) -> B` with no room
+                // for a capture count (`collections-and-chains.md` §1.2) —
+                // and a generic closure is left the same way, because a
+                // `TyKind::Param` anywhere in `ty` means some instantiation
+                // this walk cannot see is still owed a copy (Decision 42's
+                // order: types before mono, and mono is two crates down).
+                let closure_ret = match self.context.types.kind(ty) {
+                    TyKind::Closure { ret, .. } => Some(*ret),
+                    _ => None,
+                };
+                if captures.is_empty() && !ty_mentions_param(self.context.types, ty) {
+                    if let Some(ret) = closure_ret {
+                        let mut nested = Builder::new(self.context, self.thir);
+                        nested.run_closure(param, body, ret);
+                        let mut nested_closures = std::mem::take(&mut nested.closures);
+                        self.closures.push(nested.finish_with(param));
+                        self.closures.append(&mut nested_closures);
+                    }
+                }
                 let rvalue = Rvalue::Closure { param, thir_body: body, captures, ty };
                 self.assign(block, dest, rvalue, span);
                 block
@@ -2879,6 +3017,145 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         )
     }
 
+    /// §4.6's shift guard, emitted as statements before the `<<` or `>>` that
+    /// needs it — [`Builder::division_check`]'s shape, and for the identical
+    /// reason: `science_codegen::backend::IntOp`'s note on `SDiv` is *"a panic
+    /// the caller has already guarded, not a trap the backend inserts"*, and
+    /// `IntOp::Shl`/`AShr`/`LShr` are the same sentence again. LLVM's
+    /// `shl`/`lshr`/`ashr` are poison at or past the operand's bit width —
+    /// not a wrong value, no value — exactly as `sdiv` is undefined at a zero
+    /// divisor, so `science-codegen-llvm` refused both outright until this
+    /// guard existed to be the caller the sentence was written for.
+    ///
+    /// **Two rejected answers, before this one.** Masking the amount
+    /// (`n & (width - 1)`, the rule x86's own `shl` instruction already
+    /// applies in hardware) turns `1i64 << 64` into `1i64 << 0`, which is
+    /// `1` — and that is not a wrapped *value* in §2.1's sense, because
+    /// nothing about `+`'s two's-complement wraparound licenses silently
+    /// changing *which bit gets set*; a wrapped `Int` still answers the
+    /// question the program asked, and a masked shift answers a different
+    /// one. Producing zero unconditionally reads as the friendlier
+    /// "or-else" a reader might guess `<<` falls back to at the boundary,
+    /// and is rejected on the same principle from the other side: this
+    /// language's numeric behaviour is decided once, in §2.1, and an
+    /// operator does not get a second, unwritten rule for its edge because a
+    /// trap felt like the wrong tone. `division_check`'s own note makes the
+    /// general case: checking one edge and not the other, or answering with
+    /// a comfortable guess instead of a panic, is a half-measure and not a
+    /// correct compiler.
+    ///
+    /// **One test, or two, and never three.** A shift has one operand that
+    /// can be out of range — division has two, the divisor and the
+    /// numerator together — so there is no analogue here of `division_check`'s
+    /// `Int.min / -1`. The amount is tested against the width always, and
+    /// against zero only when it is signed: an unsigned amount has no
+    /// negative to catch, and `division_check`'s own reason for skipping its
+    /// second test on unsigned division is this one's reason too.
+    ///
+    /// **Both tests are bit-pattern comparisons at the amount's own
+    /// declared width and signedness, not a cast to a common width.**
+    /// `division_check`'s tests take this shape because `==`/`!=` do not read
+    /// signedness; this one's take it because the amount and the bound being
+    /// compared are already the *same* type — unlike [`Builder::bounds_check`],
+    /// where an index and a length start as two different types and a cast
+    /// to `U64` is what makes one comparison do the work of two. A shift's
+    /// amount is never a different type from the value it shifts (§4.6: no
+    /// operator dispatch, one structural unification), so there is no second
+    /// type here to cast either side to.
+    ///
+    /// **Why an ordering, unsigned, cannot do both this comparison's job and
+    /// negative's in one test the way `bounds_check`'s does.** `bounds_check`
+    /// reads a negative index and an over-long one with a single unsigned
+    /// `<`, because casting the index to `U64` first turns a negative bit
+    /// pattern into a huge one on the *same* side of the comparison it was
+    /// already on. Doing that here would mean comparing the amount's bits as
+    /// unsigned while the language's own comparison operators read
+    /// signedness off the operand's *declared* type — `science-codegen-llvm`'s
+    /// `lower_binary` does exactly that — so asking an `I64` amount an
+    /// unsigned question needs an operator this IR does not have. Two
+    /// ordinary signed comparisons read like every other comparison this
+    /// file emits and need nothing new.
+    fn shift_check(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        ty: Ty,
+        block: BlockId,
+        span: Span,
+    ) -> (Operand, Operand, BlockId) {
+        let ty = self.stripped(ty);
+        let Some((bits, signed)) = self.integer_width(ty) else { return (lhs, rhs, block) };
+        let Some(bool_ty) = self.context.decls.prelude().ty(self.context.types, "Bool") else {
+            return (lhs, rhs, block);
+        };
+
+        // Both operands into temporaries, for `division_check`'s reason: the
+        // amount is read more than once and an `Operand` handed in may be a
+        // `Move` out of a place, readable exactly once.
+        let value = self.temp(ty, span, block);
+        self.assign(block, Place::local(value), Rvalue::Use(lhs), span);
+        let amount = self.temp(ty, span, block);
+        self.assign(block, Place::local(amount), Rvalue::Use(rhs), span);
+
+        let mut block = block;
+        let trap = self.new_block();
+
+        if signed {
+            // `amount < 0`.
+            let negative = self.temp(bool_ty, span, block);
+            self.assign(
+                block,
+                Place::local(negative),
+                Rvalue::Binary {
+                    op: BinaryOp::Lt,
+                    lhs: Operand::Copy(Place::local(amount)),
+                    rhs: Self::bits(0),
+                },
+                span,
+            );
+            let check_width = self.new_block();
+            self.terminate(
+                block,
+                TerminatorKind::If {
+                    cond: Operand::Copy(Place::local(negative)),
+                    then_block: trap,
+                    else_block: check_width,
+                },
+                span,
+            );
+            block = check_width;
+        }
+
+        // `amount >= width`. One shared trap block for both tests: unlike
+        // `division_check`'s two edges, which are two different failures
+        // worth naming separately, a negative amount and an over-width one
+        // are the same fact read off the same bits, and the message says so.
+        let too_wide = self.temp(bool_ty, span, block);
+        self.assign(
+            block,
+            Place::local(too_wide),
+            Rvalue::Binary {
+                op: BinaryOp::Ge,
+                lhs: Operand::Copy(Place::local(amount)),
+                rhs: Self::bits(u128::from(bits)),
+            },
+            span,
+        );
+        let in_range = self.new_block();
+        self.terminate(
+            block,
+            TerminatorKind::If {
+                cond: Operand::Copy(Place::local(too_wide)),
+                then_block: trap,
+                else_block: in_range,
+            },
+            span,
+        );
+        self.panic_with(trap, "shift amount out of range", span);
+
+        (Operand::Copy(Place::local(value)), Operand::Copy(Place::local(amount)), in_range)
+    }
+
     /// An integer constant written as the bits it is, at whatever width the
     /// other operand of the comparison has.
     ///
@@ -4331,5 +4608,32 @@ fn force_copy(operand: Operand) -> Operand {
     match operand {
         Operand::Move(place) => Operand::Copy(place),
         other => other,
+    }
+}
+
+/// Whether `ty` mentions a [`TyKind::Param`] anywhere inside it.
+///
+/// §8's gate on lowering a closure's body: a type built from one of the
+/// *enclosing* function's generic parameters is not concrete, and this crate
+/// runs before monomorphisation (`lib.rs` §2's *"Decision 42's order is types →
+/// THIR analyses → MIR → regions → mono → codegen"*) — so a closure whose
+/// parameter or return mentions one has no single body to lower yet, only one
+/// body per instantiation nobody has computed. Left as §8.5's hole, exactly
+/// like a captured closure, rather than guessed at.
+fn ty_mentions_param(types: &Types, ty: Ty) -> bool {
+    match types.kind(ty) {
+        TyKind::Param { .. } => true,
+        TyKind::Named { args, .. } | TyKind::Object { args, .. } => args.iter().any(|arg| {
+            matches!(arg, GenericArg::Type(inner) if ty_mentions_param(types, *inner))
+        }),
+        TyKind::Borrowed { inner, .. } | TyKind::Nullable(inner) => {
+            ty_mentions_param(types, *inner)
+        }
+        TyKind::Tuple(elements) => elements.iter().any(|element| ty_mentions_param(types, *element)),
+        TyKind::Closure { params, ret } => {
+            params.iter().any(|param| ty_mentions_param(types, *param))
+                || ty_mentions_param(types, *ret)
+        }
+        TyKind::Error | TyKind::Unit | TyKind::SelfType { .. } | TyKind::SelfAssoc { .. } => false,
     }
 }

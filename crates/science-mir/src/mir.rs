@@ -512,7 +512,14 @@ pub enum Rvalue {
     ///
     /// `thir_body` is the one place in this crate where an id from another IR
     /// survives, and it survives because the closure's body has no [`DefId`] to
-    /// be a [`Body`] of. §8's *"what is left"* says whose that is.
+    /// be a [`Body`] of — **when it captures something.** §8's *"what is
+    /// left"* used to say whose that was; when `captures` is empty,
+    /// [`crate::lower::Builder::run_closure`] lowers `thir_body` into a
+    /// [`Body`] of its own anyway, keyed on `param` rather than on a `DefId`
+    /// nothing mints. `thir_body` is left on the rvalue regardless of whether
+    /// that happened, because a consumer with no reason to look one up — every
+    /// consumer but `science_codegen::mono`'s `Rvalue::Closure` arm — should
+    /// not have to ask.
     Closure {
         param: DefId,
         thir_body: science_types::thir::ExprId,

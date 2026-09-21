@@ -106,15 +106,19 @@
 //! the check when anything is added here is not only *"does this still refuse"*
 //! but *"is the reason it gives still the reason"*.
 //!
-//! **Two of the refusals are not about effort.** Integer `/` and `%` and the
-//! two shifts are constructs this crate could emit an instruction for and
-//! *must not*: LLVM's `sdiv` is **undefined** at a zero divisor rather than a
-//! trap, and a shift by at least the operand's width is poison, and the guard
-//! that would stop either is specified nowhere and emitted by nothing above
-//! this crate. `science_codegen::backend::IntOp`'s own note says *"division by
-//! zero is a panic the caller has already guarded"*; no caller guards it.
-//! [`Lowerer::lower_binary`] is the argument in full, including what emitting
-//! the guard here would cost Decision 5.
+//! **Two refusals were not about effort, and neither is a refusal any more.**
+//! Integer `/` and `%` and the two shifts are constructs this crate could
+//! always emit an instruction for and could not do so *unguarded*: LLVM's
+//! `sdiv` is **undefined** at a zero divisor rather than a trap, and a shift
+//! by at least the operand's width is poison — not a wrong value, no value —
+//! and each refusal said the guard was specified nowhere and emitted by
+//! nothing above this crate. `science_codegen::backend::IntOp`'s own note
+//! says *"division by zero is a panic the caller has already guarded"*, and
+//! for a long time no caller did. `science-mir`'s `division_check` and
+//! `shift_check` are that caller now, in that order, both built
+//! `bounds_check`'s shape: the guard is basic blocks and MIR is where basic
+//! blocks are made, so [`Lowerer::lower_binary`] receives an already-proven
+//! operand and lowers it exactly as unconditionally as `add`.
 //!
 //! # Decision 5 holds here, and one block is invented rather than merged
 //!
@@ -813,14 +817,23 @@ impl<'a> Lowerer<'a> {
     /// one interface have to agree about it, and the only thing they share is
     /// the interface's own declaration.
     ///
-    /// **A default body is refused rather than placed in a slot.** Decision 15
-    /// lets an interface write a body, `methods`' §2 makes it callable on the
-    /// implementor, and putting it in a vtable would need the body
-    /// monomorphised at the implementor's `Self` — which is the same
-    /// monomorphisation `tests/methods.rs`'s
-    /// `interface_default_bodies_are_refused` pins as absent. The refusal names
-    /// the method, because *"an interface default body"* with no name is a
-    /// message a reader cannot act on.
+    /// **This is now the fallback and no longer the only path — see
+    /// [`Lowerer::vtable_method_symbols`], its one caller.** A default body
+    /// used to be refused here outright: *"putting it in a vtable would need
+    /// the body monomorphised at the implementor's `Self`, and this backend
+    /// monomorphises nothing"* — true when this function was written and false
+    /// since `science_codegen::mono::Instance::self_ty` gave a defaulted
+    /// method one body per implementor. That repair lives in
+    /// `science_codegen::mono::Mono::vtable_instances`, one crate up, where the
+    /// instance a defaulted slot needs can be *enqueued* as well as named, so
+    /// this function is reached at all only for a pair `mono`'s own walk never
+    /// saw a coercion for — a program with a construct that walk misses for
+    /// some other reason, which `Lowerer::reachable_from`'s own fallback union
+    /// exists to catch. This function's refusal stays exactly as conservative
+    /// as it always was for that residual case, because it has no way to tell
+    /// an inherited default from an override the way `vtable_instances` does —
+    /// it never needed to, until now, and giving it that rule too would be the
+    /// second copy of one this codebase warns against everywhere else.
     fn vtable_slots(&self, interface: DefId, concrete: DefId) -> Result<Vec<DefId>, Unlowered> {
         let Some(decls) = self.decls else {
             return Err(Unlowered::new(
@@ -2441,12 +2454,47 @@ impl<'a> Lowerer<'a> {
         if let Some(existing) = self.vtables.iter().find(|v| v.symbol == symbol) {
             return Ok(existing.clone());
         }
-        let methods =
-            self.vtable_slots(interface, concrete)?.into_iter().map(|m| self.symbol_of(m)).collect();
+        let methods = self.vtable_method_symbols(interface, concrete)?;
         let descriptor = self.intern_descriptor(concrete, source)?;
         let vtable = Vtable { symbol, methods, descriptor };
         self.vtables.push(vtable.clone());
         Ok(vtable)
+    }
+
+    /// The method symbols one `(interface, concrete)` vtable's slots hold, in
+    /// declaration order.
+    ///
+    /// **Read from `science_codegen::mono::MonoSet` when the walk built this
+    /// pair, and resolved the old way — [`Lowerer::vtable_slots`]'s `DefId`s,
+    /// each mapped through [`Lowerer::symbol_of`] — when it did not.**
+    /// `MonoSet::vtable` is `Mono::collect`'s own answer to the *same*
+    /// coercion this function was called for, computed while the concrete
+    /// operand type — and therefore the instance a defaulted method's slot
+    /// needs — was still in reach to enqueue. That is not a convenience: a
+    /// defaulted method reached this way is `Instance { self_ty: Some(_), .. }`,
+    /// one body per implementor, and this crate has no `&mut
+    /// science_types::ty::Types` to build that substitution with — reading the
+    /// mono-computed symbol is the only way this function can name the right
+    /// one rather than refuse it, which is what it did before `MonoSet` carried
+    /// an answer.
+    ///
+    /// The fallback exists for exactly the gap `Lowerer::lower_crate`'s own
+    /// comment still names: a pair `science_codegen::mono`'s walk never saw a
+    /// coercion for, because the body it is in reached this crate through
+    /// `Lowerer::reachable_from`'s union and not through the walk. Every slot
+    /// such a pair can name is a required method — an inherited default would
+    /// already have made `mono` enqueue an instance for it the moment any
+    /// instantiation of that default body exists anywhere in the reachable
+    /// program — so [`Lowerer::vtable_slots`]'s older refusal is still the
+    /// honest answer there and not a second, silently weaker copy of the rule
+    /// `science_codegen::mono::Mono::vtable_instances` now owns.
+    fn vtable_method_symbols(&self, interface: DefId, concrete: DefId) -> Result<Vec<String>, Unlowered> {
+        if let Some(mono) = self.calls {
+            if let Some(result) = mono.vtable(interface, concrete) {
+                return result.clone().map_err(Unlowered::new);
+            }
+        }
+        Ok(self.vtable_slots(interface, concrete)?.into_iter().map(|m| self.symbol_of(m)).collect())
     }
 
     /// A `science_types::Ty` as a [`CgTy`].
@@ -2726,11 +2774,23 @@ impl<'a> Lowerer<'a> {
                      it yet",
                 ))
             }
-            TyKind::Closure { .. } => Err(Unlowered::new(
-                "a closure, whose body `science-mir` does not lower at all — `Rvalue::Closure` \
-                 carries a THIR expression id and its captures, and nothing turns either into a \
-                 function",
-            )),
+            // A closure's *type* says nothing about what it captures —
+            // `collections-and-chains.md` §1.2 makes it a bare arrow,
+            // `(A) -> B` — so this layout cannot depend on which closure
+            // literal produced a given value; it has to be one answer for
+            // every closure of this type. `CgTy::Ptr(PtrKind::Fn)`
+            // unconditionally is exactly right for the only closure this
+            // crate can build a *value* of: one with nothing captured,
+            // `science-mir`'s `Rvalue::Closure` with an empty `captures`
+            // (that crate's `lower.rs` §8.5). A captured closure needs the
+            // aggregate its own doc comment describes, `{ fn ptr, captures }`,
+            // and this type has no room to say how many or of what — the same
+            // gap `science-mir`'s `lib.rs` §7 item 5 names. Nothing builds a
+            // value of a captured closure's type yet, so this layout being
+            // wrong for one is not reachable; [`Lowerer::lower_rvalue`]'s own
+            // `Rvalue::Closure` arm is where a captured closure is refused, by
+            // name, rather than here.
+            TyKind::Closure { .. } => Ok(CgTy::Ptr(PtrKind::Fn)),
             other => Err(Unlowered::new(format!("a value of type `{other:?}`"))),
         }
     }
@@ -3202,8 +3262,21 @@ impl<'a> Lowerer<'a> {
                     )),
                 }
             }
-            // A type parameter, `Self`, an associated type, a closure: nothing
-            // here can see what is behind any of them.
+            // A closure never owns anything under this backend, and this is
+            // the one arm of this match that is not conservative about a type
+            // it cannot see behind — because it does not have to. `cg_ty_in`'s
+            // `TyKind::Closure` arm gives every value of this type the same
+            // layout, a bare function pointer: a closure that captures
+            // something is refused where it would be *built*
+            // (`Lowerer::lower_rvalue`'s `Rvalue::Closure` arm), so nothing of
+            // this type in a place this backend lowers is ever anything else.
+            // A function pointer releases nothing on its own —
+            // `science_codegen::descriptor::needs_drop` already says so of
+            // `CgTy::Ptr(PtrKind::Fn)` — and this is that fact, read off the
+            // Science type before it reaches a layout.
+            TyKind::Closure { .. } => Ok(false),
+            // A type parameter, `Self`, an associated type: nothing here can
+            // see what is behind either.
             _ => Ok(true),
         }
     }
@@ -4809,6 +4882,41 @@ impl<'a> Lowerer<'a> {
                 }));
                 Ok(())
             }
+            // A closure with nothing captured is a bare function pointer —
+            // the value `cg_ty_in`'s `TyKind::Closure` arm now gives a layout
+            // to. `param` is the identity `science-mir`'s `lower.rs` §8.5
+            // minted the closure's body under, and `by_def` — the same table
+            // every direct call's own symbol comes from — names it once
+            // `science_codegen::mono`'s `Mono::walk_rvalue` has walked a use
+            // of this closure and enqueued it. `Operand::GlobalAddr` already
+            // resolves a function as well as a global (its own doc says so:
+            // *"a string literal's bytes, a descriptor, a function"*), which
+            // is what makes this one `Store` and no new backend primitive.
+            Rvalue::Closure { param, captures, .. } if captures.is_empty() => {
+                let symbol = self.by_def.get(param).cloned().ok_or_else(|| {
+                    Unlowered::new(
+                        "a capture-free closure whose body `science_codegen::mono` never \
+                         walked: nothing reachable from `main` created a value of it, so it was \
+                         never enqueued and no function exists to point at",
+                    )
+                })?;
+                insts.push(ExtInst::Above(Inst::Store {
+                    local: dest,
+                    value: Operand::GlobalAddr(symbol),
+                }));
+                Ok(())
+            }
+            // A closure that captures something is still §8.5's hole,
+            // unmoved: its value is `{ fn ptr, captures }`, `cg_ty_in` gives
+            // every closure type the bare pointer that is only true of one
+            // with nothing captured, and there is nowhere here to put the
+            // rest even if there were room for it in the type.
+            Rvalue::Closure { .. } => Err(Unlowered::new(
+                "a closure that captures something: only a capture-free closure has a concrete \
+                 representation today, a bare function pointer, and this one needs the \
+                 `{ fn ptr, captures }` aggregate `science-mir`'s `Rvalue::Closure` documents and \
+                 no phase builds",
+            )),
             other => Err(Unlowered::new(describe_rvalue(other))),
         }
     }
@@ -6083,16 +6191,18 @@ impl<'a> Lowerer<'a> {
                 BinaryOp::Div => IntOp::UDiv,
                 BinaryOp::Rem if signed => IntOp::SRem,
                 BinaryOp::Rem => IntOp::URem,
-                // The same shape: a shift by at least the operand's width is
-                // poison in LLVM, and the mask or the panic that would stop it
-                // is specified nowhere.
-                BinaryOp::Shl | BinaryOp::Shr => {
-                    return Err(Unlowered::new(
-                        "a shift, whose amount nothing above this crate bounds — a shift by at \
-                         least the operand's width is poison in LLVM and neither the mask nor \
-                         the panic that would stop it is specified",
-                    ));
-                }
+                // **The caller guards this one now too.** A shift by at least
+                // the operand's width is poison in LLVM — not a wrong value,
+                // no value — exactly as `sdiv` is undefined at a zero
+                // divisor, and this arm existed because nothing above this
+                // crate bounded the amount. `science-mir`'s `shift_check` is
+                // that caller now, built `division_check`'s own shape: the
+                // guard is emitted where basic blocks are made, in front of
+                // the shift, so Decision 5 survives here exactly as it does
+                // for `/` and `%` a few lines up.
+                BinaryOp::Shl => IntOp::Shl,
+                BinaryOp::Shr if signed => IntOp::AShr,
+                BinaryOp::Shr => IntOp::LShr,
                 other => return Err(Unlowered::new(describe_binary(other))),
             };
             insts.push(ExtInst::Above(Inst::IntBinary {
@@ -6939,11 +7049,34 @@ impl<'a> Lowerer<'a> {
     /// `None` means neither knows the callee, and the arm below treats that
     /// as it always did: a runtime entry point, an `extern` declaration, or
     /// the refusal that names what is missing.
+    /// The symbol this call site's callee names, if one instance answers for
+    /// it unambiguously.
+    ///
+    /// **`by_def` is never consulted for a method `interface` declares, and
+    /// that exclusion is new.** `by_def` maps a raw [`DefId`] to *the last
+    /// symbol [`Lowerer::lower_crate`] inserted for it* — one entry, because
+    /// every definition used to have exactly one instance. A defaulted
+    /// method no longer does: `Summarize.twice[Self=Doc]` and
+    /// `Summarize.twice[Self=Row]` share one `DefId` and insert into `by_def`
+    /// one after the other, so the second silently overwrites the first and
+    /// this fallback would answer *whichever implementor's body happened to
+    /// be emitted last* for every call it does not otherwise know how to
+    /// name — the exact collapse `science_codegen::mono::Instance::self_ty`
+    /// exists to rule out, reintroduced one layer down. `mono.callee_at`
+    /// already carries the right answer for every call site the walk
+    /// resolved, including one redirected to a concrete `Self`; a call
+    /// reaching this function with `mono.callee_at` empty and
+    /// [`Lowerer::declaring_interface`] naming an interface is exactly the
+    /// vtable dispatch [`Lowerer::lower_dispatch`] exists for, and `None`
+    /// here is what sends it there rather than to a wrong direct call.
     fn symbol_for_call(&self, ctx: &BodyCtx, def: DefId) -> Option<String> {
         if let Some(mono) = self.calls {
             if let Some(symbol) = mono.callee_at(&ctx.symbol, ctx.block) {
                 return Some(symbol.to_string());
             }
+        }
+        if self.declaring_interface(def).is_some() {
+            return None;
         }
         self.by_def.get(&def).cloned()
     }
@@ -6960,7 +7093,19 @@ impl<'a> Lowerer<'a> {
     ) -> Result<Terminator, Unlowered> {
         let def = match callee {
             mir::Callee::Def(def) => *def,
-            mir::Callee::Indirect(_) => return Err(Unlowered::new("a call through a closure")),
+            // Half of `science-mir`'s own refusal — *"a call through a
+            // closure"* — closes here. The other half, a call through a
+            // *captured* closure's value, never reaches this arm at all: its
+            // `Rvalue::Closure` was refused three functions up, at
+            // `Lowerer::lower_rvalue`, so there is no register holding one to
+            // read `operand` out of.
+            mir::Callee::Indirect(operand) => {
+                self.lower_indirect_closure_call(body, ctx, operand, args, destination, insts)?;
+                return Ok(match target {
+                    Some(block) => Terminator::Goto(BlockId(block.index() as u32)),
+                    None => Terminator::Unreachable,
+                });
+            }
             // **A call MIR makes to `science-rt` directly**, which
             // `science-mir` calls *"the array-op hole kept open deliberately"*
             // and which nothing produced until `f"…"` did. This used to be an
@@ -7302,6 +7447,98 @@ impl<'a> Lowerer<'a> {
             params.push((param_name, self.layout_of_ty(param.ty)?, ParamAttrs::default()));
         }
         Ok(AbiSignature::science(self.target, description, ret_layout, params))
+    }
+
+    /// A call through a closure value — `science-mir`'s `Callee::Indirect`.
+    ///
+    /// **The shape is `dispatch_signature`'s, minus the vtable.** A `borrowed
+    /// any I` erases its receiver behind a fat pointer and a slot index; a
+    /// closure of nothing captured *is* its function pointer (`cg_ty_in`'s
+    /// `TyKind::Closure` arm), so there is no field to load one out of and no
+    /// receiver to smuggle through the signature — `operand` reads straight
+    /// to the value `Callee::Indirect { function, .. }` calls.
+    ///
+    /// **What this cannot do, named rather than guessed.** A captured closure
+    /// never reaches here: its value was refused where it was built
+    /// (`Lowerer::lower_rvalue`'s `Rvalue::Closure` arm), so there is no
+    /// register for `operand` to name and this function is never asked about
+    /// one.
+    fn lower_indirect_closure_call(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        operand: &mir::Operand,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let closure_ty = self.operand_ty(body, operand).ok_or_else(|| {
+            Unlowered::new(
+                "a call through a closure value that is not a place: there is no declared type \
+                 to read a signature from",
+            )
+        })?;
+        let (params, ret) = match self.types.kind(closure_ty) {
+            TyKind::Closure { params, ret } => (params.clone(), *ret),
+            other => {
+                return Err(Unlowered::new(format!(
+                    "a call through a value of type `{other:?}`, which is not a closure"
+                )))
+            }
+        };
+        let signature = self.closure_signature(&params, ret)?;
+
+        let ptr_layout = layout_of(self.target, &CgTy::Ptr(PtrKind::Fn));
+        let function = match self.lower_operand(ctx, operand, Some(&ptr_layout), insts)? {
+            Operand::Value(value) => value,
+            _ => {
+                return Err(Unlowered::new(
+                    "a call through a closure value that is not a loaded register: every \
+                     closure reaches a call site through a place, and this one did not",
+                ))
+            }
+        };
+
+        if args.len() != signature.params.len() {
+            return Err(Unlowered::new(format!(
+                "a call through a closure declaring {} parameter(s) with {} argument(s)",
+                signature.params.len(),
+                args.len()
+            )));
+        }
+        let mut lowered = Vec::with_capacity(args.len());
+        for (arg, param) in args.iter().zip(&signature.params) {
+            lowered.push(self.typed_operand(ctx, arg, &param.layout, insts)?);
+        }
+
+        let ret_class = signature.ret.clone();
+        self.emit_result(
+            ctx,
+            Callee::Indirect { function, signature: Box::new(signature) },
+            &ret_class,
+            lowered,
+            destination,
+            insts,
+        )
+    }
+
+    /// The ABI signature a call through a closure value calls at: the
+    /// closure's own arrow type, `(A) -> B`, with no receiver.
+    ///
+    /// **`symbol` is a description and not a symbol**, mirroring
+    /// [`Lowerer::dispatch_signature`]'s own note: there is no symbol for a
+    /// call whose callee is a value.
+    fn closure_signature(&self, params: &[Ty], ret: Ty) -> Result<AbiSignature, Unlowered> {
+        let ret_layout = self.layout_of_ty(ret)?;
+        let mut lowered_params = Vec::with_capacity(params.len());
+        for (index, param) in params.iter().enumerate() {
+            lowered_params.push((
+                format!("_{index}"),
+                self.layout_of_ty(*param)?,
+                ParamAttrs::default(),
+            ));
+        }
+        Ok(AbiSignature::science(self.target, "a closure".to_string(), ret_layout, lowered_params))
     }
 
     /// `print` or `write`, of a literal or of a `String` the program holds.

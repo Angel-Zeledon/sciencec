@@ -186,3 +186,41 @@ def go() -> Int:
     assert_eq!(checked.reported(), Vec::<u16>::new(), "{:?}", codes(&checked.regions));
     assert_eq!(checked.body("go").borrows().len(), 1, "one capture of `c`");
 }
+
+/// **The interior, checked — for the first time, and not by this crate's own
+/// rules.** `science-mir`'s `lib.rs` §5 used to say plainly *"a mistake
+/// between two of the closure's own locals is reported by nothing, because
+/// those locals exist in no MIR"*. A capture-free closure now has a `Body` —
+/// `lower.rs` §8.5, keyed on the closure's own `param` — and
+/// `CallGraph::of` gives every `Body` a node whether or not a
+/// [`science_mir::mir::Callee::Def`] edge points at it, so this closure
+/// reaches the region engine as an unreferenced singleton component and is
+/// walked exactly as any other body would be.
+///
+/// Nothing about the check is closure-specific, which is the point being
+/// demonstrated: `consume(s)` moves `s`, and the second `consume(s)` reads it
+/// again, and the ordinary use-after-move rule finds that mistake wherever the
+/// two statements are, including inside a closure nothing outside it can name.
+#[test]
+fn a_use_after_move_inside_a_capture_free_closures_own_body_is_now_found() {
+    let source = "\
+type Wrapper:
+    name: String
+
+def sink(f: (Wrapper) -> Int) -> Int:
+    1
+
+def consume(w: Wrapper) -> Int:
+    1
+
+def go() -> Int:
+    sink(w giving consume(w) + consume(w))
+";
+    let checked = check(source);
+    assert_eq!(
+        checked.reported(),
+        vec![301],
+        "a use-after-move entirely inside the closure's own body must be found: {:?}",
+        codes(&checked.regions)
+    );
+}
