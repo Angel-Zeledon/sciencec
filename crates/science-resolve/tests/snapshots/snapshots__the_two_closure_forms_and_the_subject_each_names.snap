@@ -2,24 +2,24 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![f]))"
 ---
-Module `main` #364 @0..61
-  Fn `f` #365 @0..61
+Module `main` #370 @0..61
+  Fn `f` #371 @0..61
     params
-      Param `docs` #366 @49..59
+      Param `docs` #372 @49..59
         type: Path -> `Array` #18 @49..54
     body: Block @0..61
       MethodCall `map` (unresolved: needs the type) @0..19
-        receiver: Path -> `docs` #366 @11..15
+        receiver: Path -> `docs` #372 @11..15
         args
-          Closure `each` #367 @0..10
+          Closure `each` #373 @0..10
             body: Field `title` (unresolved: needs the type) @0..10
-              Each -> `each` #367 @0..4
+              Each -> `each` #373 @0..4
       tail: MethodCall `sort` (unresolved: needs the type) @20..46
-        receiver: Path -> `docs` #366 @34..38
+        receiver: Path -> `docs` #372 @34..38
         args
           Arg `by` (a label, not a name) @20..41
-            Closure `doc` #368 @20..33
+            Closure `doc` #374 @20..33
               body: Field `title` (unresolved: needs the type) @20..29
-                Path -> `doc` #368 @20..23
+                Path -> `doc` #374 @20..23
 --- diagnostics ---
 (none)

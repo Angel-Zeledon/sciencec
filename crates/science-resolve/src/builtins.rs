@@ -255,6 +255,19 @@ const FFI_TYPES: &[&str] = &[
     // Pointers and views (§1.3). `Span` and `MutableSpan` carry a length that
     // does not cross the ABI; `Pointer` is nullable and of unknown validity;
     // `OpaqueHandle` is non-null and never dereferenced.
+    //
+    // `Span` and `MutableSpan` are the two names in this list [`build`] gives
+    // fields to, rather than declaring bare like the rest: §1.3 states their
+    // shape as `{ borrowed T, Int }` — a pointer that borrows and a length
+    // that does not cross the ABI — and a *bare* declaration hid that shape
+    // from `science_types::ownership::needs_drop`, which cannot tell a view
+    // that owns nothing from a choice type or a foreign union and answers
+    // conservatively where it cannot tell. That false `true` was Decision
+    // 27's field-read widening firing on a `Span` read through a borrow that
+    // never should have widened at all — see `science-types`' `check.rs`
+    // `borrow_ergonomics`. Declaring the fields is not a wider ask than the
+    // rest of this list: §1.3 already commits to the shape, in words; this
+    // only transcribes it.
     "Span",
     "MutableSpan",
     "Pointer",
@@ -1722,6 +1735,59 @@ impl Declarer<'_> {
             span: BUILTIN_SPAN,
         }));
     }
+
+    /// `ffi.Span[T]` and `ffi.MutableSpan[T]`, at the `DefId` `build` already
+    /// allocated as `DefKind::Record`: `{ pointer: &T, len: Int }` for
+    /// `Span`, `{ pointer: &mut T, len: Int }` for `MutableSpan` —
+    /// `ffi-c-boundary.md` §1.3's `{ borrowed T, Int }`, in declaration order.
+    ///
+    /// Not routed through [`Declarer::block`]: that method builds an *impl*
+    /// over an already-named type, and what is missing here is the type's own
+    /// declaration — the record and its generic parameter — which
+    /// [`Declarer::interface`] is the nearer model for, minus the methods.
+    ///
+    /// The field names are not load-bearing. Nothing in the corpus or in this
+    /// file projects `.pointer` or `.len` off a `Span` — the only field a
+    /// program ever reads is `MatrixBase.data`, whose type happens to *be* a
+    /// `Span` — so any two names would type-check identically. They exist at
+    /// all because [`crate::hir::Record`] has no way to say "one borrowed
+    /// field and one `Int`" without naming them.
+    fn ffi_view(&mut self, def: DefId, mutable: bool) {
+        let param = self.defs.alloc(DefKind::TypeParam, "T", BUILTIN_SPAN, Some(def));
+        let mut generics = HashMap::new();
+        generics.insert("T", param);
+        let assocs = HashMap::new();
+        let scope = Scope { generics: &generics, assocs: &assocs };
+        let pointer_ty = if mutable {
+            self.ty(&Ty::MutRef(&Ty::Var("T")), &scope)
+        } else {
+            self.ty(&Ty::Ref(&Ty::Var("T")), &scope)
+        };
+        let len_ty = self.ty(&INT, &scope);
+        let fields = vec![
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "pointer", BUILTIN_SPAN, Some(def)),
+                ty: pointer_ty,
+                span: BUILTIN_SPAN,
+            },
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "len", BUILTIN_SPAN, Some(def)),
+                ty: len_ty,
+                span: BUILTIN_SPAN,
+            },
+        ];
+        self.item(hir::ItemKind::Record(hir::Record {
+            def,
+            generics: vec![hir::GenericParam {
+                def: param,
+                kind: hir::GenericParamKind::Type { bounds: Vec::new() },
+                span: BUILTIN_SPAN,
+            }],
+            where_clause: Vec::new(),
+            fields,
+            span: BUILTIN_SPAN,
+        }));
+    }
 }
 
 /// Allocates the prelude into `defs`.
@@ -1768,10 +1834,30 @@ pub fn build(defs: &mut DefTable) -> Prelude {
     // scope rather than in the prelude's.
     let ffi = declare(defs, DefKind::Module, "ffi", &mut prelude);
     let mut ffi_names = Vec::new();
+    // `Span` and `MutableSpan` are `DefKind::Record`, not `DefKind::Primitive`
+    // like the rest of this list — see `FFI_TYPES`'s comment. Their `DefId`s
+    // are captured here because `build`'s `Declarer` only resolves a name
+    // through `prelude.names`, which `ffi`'s own names never join (the test
+    // `the_ffi_names_are_not_also_bare_prelude_names` is exactly this), so the
+    // fields have to be declared against the `DefId` directly rather than by
+    // a name lookup.
+    let mut span_def = None;
+    let mut mutable_span_def = None;
     for name in FFI_TYPES {
-        let id = defs.alloc(DefKind::Primitive, *name, BUILTIN_SPAN, Some(ffi));
+        let kind = match *name {
+            "Span" | "MutableSpan" => DefKind::Record,
+            _ => DefKind::Primitive,
+        };
+        let id = defs.alloc(kind, *name, BUILTIN_SPAN, Some(ffi));
+        match *name {
+            "Span" => span_def = Some(id),
+            "MutableSpan" => mutable_span_def = Some(id),
+            _ => {}
+        }
         ffi_names.push((name.to_string(), id));
     }
+    let span_def = span_def.expect("`Span` is in `FFI_TYPES`");
+    let mutable_span_def = mutable_span_def.expect("`MutableSpan` is in `FFI_TYPES`");
     for name in FFI_INTERFACES {
         let id = defs.alloc(DefKind::Interface, *name, BUILTIN_SPAN, Some(ffi));
         ffi_names.push((name.to_string(), id));
@@ -1795,6 +1881,10 @@ pub fn build(defs: &mut DefTable) -> Prelude {
         names: prelude.names.iter().cloned().collect(),
         items: Vec::new(),
     };
+    // `ffi.Span` and `ffi.MutableSpan` get their fields before anything below
+    // has a chance to ask `needs_drop` about one.
+    declarer.ffi_view(span_def, false);
+    declarer.ffi_view(mutable_span_def, true);
     for decl in INTERFACE_DECLS {
         declarer.interface(decl);
     }

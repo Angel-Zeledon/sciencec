@@ -2,11 +2,11 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report_crate(vec![(\"main.science\", main), (\"text/mod.science\", text),\n(\"text/parser.science\", parser),])"
 ---
-Module `main` #364 @13..28
-Module `text` #365 @0..6
-  Record `Source` #367 @0..6
-Module `parser` #366 @7..12
-  Fn `lex` #368 @7..12
+Module `main` #370 @13..28
+Module `text` #371 @0..6
+  Record `Source` #373 @0..6
+Module `parser` #372 @7..12
+  Fn `lex` #374 @7..12
     body: Block @11..12
 --- diagnostics ---
 (none)

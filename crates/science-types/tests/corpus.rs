@@ -307,7 +307,7 @@ use std::path::{Path, PathBuf};
 /// owner as `deref_move`'s own §5 gives it: `ffi-c-boundary.md`, giving
 /// `Span`, `MutableSpan`, `Pointer` and `OpaqueHandle` a real `Copy`
 /// declaration `needs_drop` can find.
-const REMAINING: &[(&str, &[u16])] = &[("20_extern.science", &[525, 525, 525])];
+const REMAINING: &[(&str, &[u16])] = &[];
 
 fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("examples")
@@ -672,10 +672,30 @@ fn every_pinned_file_is_in_the_corpus() {
 /// *a type mismatch* — one phase earlier, because the type question is asked
 /// before anything is lowered to move. The entry above `REMAINING` is the
 /// full account and names the fix this test is still waiting for.
+///
+/// # It is 0 again, and `ffi.Span`/`ffi.MutableSpan` got the fields the note
+/// already committed to
+///
+/// `builtins.rs` declared `Span` and `MutableSpan` with no fields at all,
+/// calling that omission *"an ask, not a fact"* — a hedge about whether
+/// `ffi-c-boundary.md` §10.3's request to widen §8's closed library would be
+/// granted, not a claim about what the two types are. But `needs_drop` cannot
+/// tell a hedge from a choice type or a foreign union; it walks a record's
+/// fields or, finding none, answers `true`. The fields were never undecided —
+/// §1.3 already gives the shape in words, `{ borrowed T, Int }` — so the
+/// hedge was costing a correct answer to a question the note had already
+/// settled. `Declarer::ffi_view` transcribes it: `Span[T]` is `{ pointer: &T,
+/// len: Int }`, `MutableSpan[T]` is `{ pointer: &mut T, len: Int }`, and
+/// `needs_drop` now walks both fields, finds a borrow and an `Int`, and
+/// answers `false` — a borrow releases nothing and neither does an `Int`, so
+/// neither does the record they sit in. `gemm`'s three reads through
+/// `&MatrixView` and `&mut MutableMatrixView` no longer widen, and this test
+/// and `crates/sciencec/tests/cli.rs`'s corpus walk both go quiet on this file
+/// for the first time since Decision 27 landed.
 #[test]
 fn the_corpus_reports_only_what_no_program_can_say() {
     let total: usize = REMAINING.iter().map(|(_, codes)| codes.len()).sum();
-    assert_eq!(total, 3);
+    assert_eq!(total, 0);
 }
 
 /// The evidence that a silent `Range` is a checked silence.

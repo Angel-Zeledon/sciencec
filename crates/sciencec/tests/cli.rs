@@ -470,8 +470,21 @@ const REGIONS: &[Finding] = &[];
 /// lines is that disagreement, asked one phase earlier than `deref_move` used
 /// to ask it, and answered the identical way. Owner: `ffi-c-boundary.md`,
 /// unchanged from `REGIONS`' entry.
-const TYPE_CHECKER_FINDINGS: &[(&str, usize, &str)] =
-    &[("20_extern.science", 3, "error[SC0525]")];
+///
+/// # It is empty again, and this time `builtins.rs` is what moved
+///
+/// `needs_drop` could not see `ffi.Span`/`ffi.MutableSpan` were `Copy` because
+/// it never asks whether a type is `Copy` — it walks a record's declared
+/// fields and answers `true` where there is no record to walk, and
+/// `builtins.rs` declared both with none. §1.3 already states the shape,
+/// `{ borrowed T, Int }`, so the fix was not a new decision, only a
+/// transcription: `Declarer::ffi_view` gives `Span` and `MutableSpan` a
+/// `pointer` field and a `len` field, `needs_drop` walks them, finds a borrow
+/// and an `Int`, and answers `false`. `gemm`'s three reads through
+/// `&MatrixView` and `&mut MutableMatrixView` no longer widen. Owner: closed —
+/// `science-resolve`'s `builtins.rs`, same file `REGIONS`' entry and this
+/// one both named.
+const TYPE_CHECKER_FINDINGS: &[(&str, usize, &str)] = &[];
 
 #[test]
 fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
@@ -1538,40 +1551,40 @@ fn a_build_of_a_file_with_no_entry_point_is_sc0403_and_calls_it_a_library() {
 /// refusal that says *library*, and this pins it against the file rather than
 /// against a fixture, because the fixture cannot go stale and the corpus can.
 ///
-/// **Both halves of this test moved twice now, and the second move changed
-/// which phase is doing the refusing rather than what is refused.**
+/// **Both halves of this test moved twice now, and the second move is the
+/// first one closing rather than a new phase reporting the same thing.**
 /// `deref_move` used to report three `SC0303`s against `gemm`'s
 /// `a.data`/`b.data`/`c.data` — false positives, born of `needs_drop` being
 /// unable to see a `Copy` implementation on an opaque FFI view type.
 /// `type-checking-and-mir.md` Decision 27 moved the same question one phase
-/// earlier: a field that owns something, read through a borrow, now types as
-/// a borrow before `science-mir` ever sees a `Move` to ask `deref_move`
-/// about, so the identical `needs_drop` conservatism now surfaces as
-/// `SC0525` — *expected `Span[F64]`, found `&Span[F64]`* twice and *expected
-/// `MutableSpan[F64]`, found `&mut MutableSpan[F64]`* once — from the type
-/// checker instead. A front-end error is a front-end error regardless of
-/// which phase reports it: `Session::build`'s own doc is explicit that *"the
-/// back end is not reached when the front end reported an error"*, so `build`
-/// still stops before ever reaching `SC0403`. The distinction this test used
-/// to pin — *library, not a missing toolchain feature* — is not reachable on
-/// this file until the three false positives close; what is still checked is
-/// that they are exactly the three `TYPE_CHECKER_FINDINGS` names and nothing
-/// else, so a real mistake in `gemm` would still be seen.
+/// earlier and the identical conservatism surfaced as `SC0525` from the type
+/// checker instead — three errors on `check` alone, which meant `build`
+/// stopped there too and never reached `SC0403` at all
+/// (`Session::build`'s own doc: *"the back end is not reached when the front
+/// end reported an error"*). `builtins.rs`'s `Declarer::ffi_view` gives
+/// `ffi.Span`/`ffi.MutableSpan` the fields §1.3 already names —
+/// `{ borrowed T, Int }` — so `needs_drop` now answers `false` on both and
+/// the three `SC0525`s are gone; `TYPE_CHECKER_FINDINGS` (see its own doc)
+/// is empty again. That reopens the distinction this test pins: `check`
+/// succeeds outright on a file with no `main`, and `build` on the identical
+/// file still refuses it, but now for the one true reason — *library, not a
+/// missing toolchain feature* — and not for a front-end error that happened
+/// to arrive first.
 #[test]
 fn the_extern_example_is_refused_as_a_library_and_not_as_a_missing_feature() {
-    for command in ["check", "build"] {
-        let run = sciencec(&[command, "examples/20_extern.science"]);
-        run.failed();
-        let reported = run.stderr.matches("error[SC0525]").count();
-        assert_eq!(
-            reported, 3,
-            "`examples/20_extern.science`'s `{command}` output moved — see `TYPE_CHECKER_FINDINGS`\n{}",
-            run.stderr
-        );
-        for line in run.stderr.lines().filter(|l| l.starts_with("error[SC")) {
-            assert!(line.starts_with("error[SC0525]"), "an unpinned diagnostic appeared: {line}");
-        }
-    }
+    sciencec(&["check", "examples/20_extern.science"]).succeeded().silent_stderr();
+
+    let run = sciencec(&["build", "examples/20_extern.science"]);
+    run.failed()
+        .stderr_contains("SC0403")
+        .stderr_contains("has no entry point")
+        .stderr_contains("`sciencec check` is the command for one");
+    assert!(
+        !run.stderr.contains("SC0400"),
+        "a library was told to upgrade its toolchain:\n{}",
+        run.stderr
+    );
+    assert_eq!(run.summary(), Some("1 error"), "stderr:\n{}", run.stderr);
 }
 
 /// With the backend, the same command produces a program that prints
