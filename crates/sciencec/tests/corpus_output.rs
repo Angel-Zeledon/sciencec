@@ -116,9 +116,34 @@ fn every_example_that_builds_has_its_output_pinned() {
         // either way. That is exactly the class of defect this file exists
         // to catch, found within minutes of it existing.
         //
-        // It is **not** the array loop: `for item in items:` summing an
-        // `&Array[Int]` reduces to five lines and prints `6`, deterministic.
-        // The cause is elsewhere in the file and is not yet located.
+        // It is **not** the array loop, which was the obvious suspect: `for
+        // item in items:` summing an `&Array[Int]` reduces to five lines and
+        // prints `6`, deterministic.
+        //
+        // **It is `value_at`, and it reduces to three lines that `check`
+        // accepts:**
+        //
+        // ```science
+        // def value_at(items: &Array[Int], index: Int) -> Int:
+        //     let cell be items.get(index)
+        //     if cell?: cell else: 0
+        // ```
+        //
+        // `Array.get` returns `(&Int)?` — Decision 19's **niched** option,
+        // whose payload is a borrow. `if cell?:` narrows it to `&Int`, the
+        // signature says `Int`, and the pointer is returned where the value
+        // belongs. `sciencec check` exits 0.
+        //
+        // It was a *verifier* error hours ago — "local `_0` is `i64` and the
+        // value stored into it is `ptr`" — and now passes the verifier and
+        // returns garbage, which is strictly worse.
+        //
+        // Left unfixed **deliberately**: the repair is either the checker
+        // refusing to return a `&Int` as an `Int`, or MIR dereferencing, and
+        // that is the same projection-into-a-nullable's-payload question that
+        // `lower_match` hits on a narrowed scrutinee and that `Rvalue::Narrow`
+        // hits on an owning payload. Three routes, one decision, and it
+        // should be taken once rather than three times.
         //
         // Excluded rather than blessed, because blessing a nondeterministic
         // value would make this test fail at random and be switched off,
