@@ -881,17 +881,15 @@ fn a_crate_of_three_modules_two_levels_deep_builds_and_runs() {
     );
 }
 
-/// **Two modules defining one name are refused, and this test exists because
-/// they used to be miscompiled.**
+/// **Two modules defining one name, and this test exists because they used
+/// to be miscompiled.**
 ///
 /// # What the bug was
 ///
-/// `helper.value` and `deep.inner.value` both mangle to `_S5value`, because
-/// `science_codegen::mono`'s `path_of` leaves a module out of a symbol —
-/// deliberately, so that a file's stem cannot reach one, which
-/// `tests/mono.rs`'s `the_file_id_does_not_reach_a_symbol` pins. `MonoSet`'s
-/// item map is keyed by the symbol, so the second definition **replaced** the
-/// first and both call sites reached whichever survived.
+/// `helper.value` and `deep.inner.value` both mangled to `_S5value`, because
+/// `science_codegen::mono`'s `path_of` left every module out of a symbol.
+/// `MonoSet`'s item map is keyed by the symbol, so the second definition
+/// **replaced** the first and both call sites reached whichever survived.
 ///
 /// The program built, linked, ran, exited 0 and printed the wrong number:
 /// `let x be helper.value()` gave 1 and `let y be deep.inner.value()` gave 1
@@ -902,22 +900,27 @@ fn a_crate_of_three_modules_two_levels_deep_builds_and_runs() {
 /// `Mono::collect` **had already detected it** and pushed `SC0404` onto
 /// `MonoSet::diagnostics`, with a comment calling the check *"free here"*.
 /// Nothing in the compiler ever read that field. The detection was right and
-/// nobody was listening — the same shape as `SC0403`, `science_codegen::mono`
-/// itself, and the other components this repository has found written,
-/// tested and unreachable.
+/// nobody was listening — the same shape as `SC0403`, as
+/// `science_codegen::mono` itself, and as the other components this
+/// repository has found written, tested and unreachable. The driver reports
+/// it now, which is what turned the wrong answer into a refusal.
 ///
-/// # What this does not assert
+/// # And then the refusal was replaced by the program working
 ///
-/// That the refusal is the *right* answer. It is the honest one while a
-/// genuine conflict is open: a symbol must not depend on a file's name
-/// (Decision 16, *"deterministic from the source alone"*) and two same-named
-/// definitions in one crate must be distinguishable, and today a module's
-/// name is its file's stem so those two cannot both hold. Resolving it is a
-/// `codegen-and-linking.md` decision. When it is made, this test should
-/// become the program running and printing `3`.
+/// This test asserted that refusal for exactly one commit, and said so: the
+/// two requirements in tension were that a symbol must not depend on a
+/// file's name (Decision 16, *"deterministic from the source alone"*) and
+/// that two same-named definitions must be distinguishable. They conflict
+/// only while *"a module's name"* means one thing, and it means two — the
+/// entry file's name is not source, and a module named by a `use` is. So the
+/// entry module is left out of a symbol and every other module is kept, and
+/// both requirements hold at once. `mono`'s `path_of` carries the argument.
+///
+/// The assertion is `3` and not merely "it builds", because the failure this
+/// guards against produced a program that built and ran and gave `2`.
 #[cfg(feature = "llvm")]
 #[test]
-fn two_modules_defining_one_name_are_refused_rather_than_miscompiled() {
+fn two_modules_defining_one_name_each_get_their_own_symbol() {
     let entry = scratch_crate(
         "name_clash",
         &[
@@ -933,20 +936,12 @@ fn two_modules_defining_one_name_are_refused_rather_than_miscompiled() {
             ),
         ],
     );
-    let run = sciencec(&["build", &entry]);
-    run.failed();
+    let run = sciencec(&["test", &entry]);
+    run.succeeded();
     assert!(
-        run.stderr.contains("SC0404"),
-        "a symbol collision must be reported, not miscompiled:\n{}",
-        run.stderr
-    );
-    // And the message names *which* two, which it could not before: the
-    // description a `MonoItem` carries leaves the module out on purpose, so
-    // both sides read `value`.
-    assert!(
-        run.stderr.contains("helper.value") && run.stderr.contains("deep.inner.value"),
-        "the collision must name both definitions:\n{}",
-        run.stderr
+        run.stdout.contains('3'),
+        "each module's `value` must be its own function: expected 3, got\n{}",
+        run.stdout
     );
 }
 

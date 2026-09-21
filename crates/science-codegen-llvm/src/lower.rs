@@ -3157,17 +3157,45 @@ impl<'a> Lowerer<'a> {
     /// duplicate check stays as the guard for whatever this walk gets wrong
     /// rather than for this finding specifically.
     fn path_components(&self, def: DefId) -> Vec<String> {
+        let entry_module = self.entry_module();
         let mut parts: Vec<String> = Vec::new();
         let mut cursor = Some(def);
         while let Some(current) = cursor {
             let entry = self.defs.get(current);
-            if !entry.name.is_empty() {
+            // **The entry module's name is left out, and every other
+            // module's is kept.** `science_codegen::mono`'s `path_of` states
+            // the whole argument; the short version is that the entry file's
+            // name is not source — nobody wrote it and renaming it changes
+            // nothing else, which is Decision 16's *"deterministic from the
+            // source alone"* — while a module reached by `use deep.inner` is
+            // named by source that would have to change with it.
+            //
+            // The rule is duplicated here rather than shared because the
+            // dependency runs the wrong way: `science-codegen` cannot call
+            // into this crate. What keeps the two from drifting is
+            // `tests/mono.rs`'s `the_walk_and_the_backend_agree_on_a_plain_
+            // symbol`, which compares them directly and fails the moment
+            // either side moves.
+            let skip = entry.name.is_empty() || Some(current) == entry_module;
+            if !skip {
                 parts.push(entry.name.clone());
             }
             cursor = entry.parent;
         }
         parts.reverse();
         parts
+    }
+
+    /// The module [`Lowerer::entry`] is in, whose name no symbol carries.
+    fn entry_module(&self) -> Option<DefId> {
+        let mut cursor = self.defs.get(self.entry?).parent;
+        while let Some(id) = cursor {
+            if self.defs.get(id).kind == DefKind::Module {
+                return Some(id);
+            }
+            cursor = self.defs.get(id).parent;
+        }
+        None
     }
 
     /// The literals and declarations interned so far, with `definitions`,

@@ -789,6 +789,10 @@ pub struct Mono<'a> {
     decls: &'a Declarations,
     types: &'a mut Types,
     bodies: BTreeMap<DefId, &'a Body>,
+    /// The module the entry point is in, whose name [`Mono::path_of`] leaves
+    /// out. `None` for a crate with no entry — a library build, where every
+    /// module is named by a `use` somewhere and none is privileged.
+    entry_module: Option<DefId>,
 }
 
 impl<'a> Mono<'a> {
@@ -812,7 +816,19 @@ impl<'a> Mono<'a> {
         for body in bodies {
             index.insert(body.def(), body);
         }
-        Mono { defs, decls, types, bodies: index }
+        // Computed once, because `path_of` is called per definition and
+        // per component and this is a walk up the definition tree.
+        let entry_module = entry_point(defs, index.keys().copied()).and_then(|entry| {
+            let mut cursor = defs.get(entry).parent;
+            while let Some(id) = cursor {
+                if defs.get(id).kind == DefKind::Module {
+                    return Some(id);
+                }
+                cursor = defs.get(id).parent;
+            }
+            None
+        });
+        Mono { defs, decls, types, bodies: index, entry_module }
     }
 
     /// Every item in `set` that this crate has a body for, as a **concrete**
@@ -1686,34 +1702,44 @@ impl<'a> Mono<'a> {
         while let Some(id) = current {
             let entry = self.defs.get(id);
             match entry.kind {
-                // **A module contributes nothing, and that is a tension
-                // rather than a settled rule.**
+                // **The entry module contributes nothing; every other
+                // module contributes its name.**
                 //
-                // Skipping it keeps the *file name* out of the symbol, which
-                // Decision 16 requires in its own words — a symbol must be
-                // *"deterministic from the source alone"* — and which
-                // `tests/mono.rs`'s `the_file_id_does_not_reach_a_symbol`
-                // pins by compiling one source as `a.science` and as
-                // `z.science` and demanding the same symbols. F0 has no
-                // `mod` declaration, so a module's name is its file's stem
-                // and nothing the author wrote.
+                // The decision resolves a conflict that looked unresolvable
+                // and was not, because it put two different things under one
+                // word. Both of these are true:
                 //
-                // **What it costs is real and was found by a program that
-                // printed the wrong number.** `helper.value` and
-                // `deep.inner.value` in one crate both mangle to `_S5value`,
-                // `MonoSet`'s map is keyed by the symbol, and one silently
-                // replaced the other. Including the module fixes that and
-                // breaks the reproducibility test above; the two wants are
-                // in genuine conflict and picking between them is a
-                // `codegen-and-linking.md` decision, not a repair.
+                // - A symbol must not depend on a **file's name**. Decision
+                //   16 says *"deterministic from the source alone"*, and
+                //   `tests/mono.rs`'s `the_file_id_does_not_reach_a_symbol`
+                //   compiles one source as `a.science` and as `z.science`
+                //   and demands the same symbols.
+                // - Two same-named definitions in different modules of one
+                //   crate must be distinguishable, or one silently replaces
+                //   the other in a map keyed by the symbol and both call
+                //   sites reach whichever survived. That was a program that
+                //   ran, exited 0 and printed the wrong number.
                 //
-                // Until it is made, the collision is **refused rather than
-                // miscompiled**: `Mono::collect` already detects it and
-                // pushes `SC0404`, and `sciencec`'s driver now reports what
-                // it pushes. A program that cannot be given two distinct
-                // symbols does not build, which is the honest failure while
-                // the naming question is open.
-                DefKind::Module => {}
+                // They conflict only while "a module's name" means one
+                // thing. It means two. The **entry** module is named after
+                // the file on the command line: the author did not write
+                // that name anywhere, renaming the file changes nothing
+                // else, and it is exactly what Decision 16 refuses to let
+                // reach a symbol. Every **other** module is named by the
+                // `use` that reaches it — `use deep.inner` is source the
+                // author wrote, and renaming that file without editing the
+                // `use` does not compile. So the first is excluded and the
+                // second is included, and both requirements hold.
+                //
+                // The cost is that a symbol now depends on which file is the
+                // entry, so compiling `helper.science` directly gives its
+                // definitions different symbols from compiling a
+                // `main.science` that imports it. That is the same fact as a
+                // crate having an entry at all, and
+                // `science-codegen-llvm`'s `path_components` follows the
+                // identical rule so the two manglings cannot drift.
+                DefKind::Module if Some(id) == self.entry_module => {}
+                DefKind::Module if entry.name.is_empty() => {}
                 _ => components.push(entry.name.clone()),
             }
             current = entry.parent;
