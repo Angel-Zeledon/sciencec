@@ -104,13 +104,14 @@ Note implements IntoTitle:
 # --- Associated types -------------------------------------------------------
 
 # An associated type lets an interface name a type it produces rather than
-# take it
-# as a parameter. Without them `Iterate` cannot name its element type and no
-# generic container interface can be written (§5.4).
-interface Iterate:
-    type Item
-    def next(mutable self) -> Self.Item?
-
+# take it as a parameter. `Iterate` (§5.4, and the prelude's — see
+# `examples/19_stdlib.science`) is the one built into every crate: it names
+# its element type as `Item` rather than taking it as a parameter, which is
+# what lets `for` walk any implementor without a generic container interface
+# in sight. It is implemented here, not declared: a second `interface
+# Iterate:` in this file would shadow the prelude's, and `Countdown` would
+# then implement a same-named interface `for` never looks for — `for`
+# resolves by the prelude's own `Iterate` id, not by name.
 type Countdown:
     remaining: Int
 

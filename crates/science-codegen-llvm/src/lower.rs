@@ -7003,8 +7003,19 @@ impl<'a> Lowerer<'a> {
         };
         if self.defs.get(def).kind == DefKind::ExternFn {
             self.lower_foreign_call(ctx, def, args, destination, insts)?;
-        } else if self.defs.get(def).is_builtin() && self.defs.get(def).name == "print" {
-            self.lower_print(body, ctx, args, insts)?;
+        } else if self.defs.get(def).is_builtin()
+            && matches!(self.defs.get(def).name.as_str(), "print" | "write")
+        {
+            // **One function, not two.** `print` and `write` are
+            // `strings-formatting-and-docs.md` §4.2's two names for the same
+            // call — stdout, rendered through `Display`, differing only in
+            // whether a `\n` follows — and `lower_print` below reads which one
+            // it is off `function` rather than being copied for the second
+            // name. Two spellings of one lowering is the shape this file's own
+            // `undisplayable` and the module-level docs elsewhere name as the
+            // recurring defect; this arm is the fix applied to itself.
+            let function = self.defs.get(def).name.clone();
+            self.lower_print(body, ctx, args, insts, &function)?;
         } else if self.defs.get(def).is_builtin()
             && matches!(self.defs.get(def).name.as_str(), "read_file" | "write_file")
             && self.decls.and_then(|d| d.signature(def)).is_some_and(|s| s.owner.is_none())
@@ -7293,7 +7304,17 @@ impl<'a> Lowerer<'a> {
         Ok(AbiSignature::science(self.target, description, ret_layout, params))
     }
 
-    /// `print`, of a literal or of a `String` the program holds.
+    /// `print` or `write`, of a literal or of a `String` the program holds.
+    ///
+    /// **`function` names which one** — `"print"` or `"write"` — and is the
+    /// only thing that varies between them: `strings-formatting-and-docs.md`
+    /// §4.2 gives both the same stream and the same argument shape, and the
+    /// only difference, a trailing `\n`, is `science_print`'s and
+    /// `science_write`'s own business and not this function's — it picks the
+    /// runtime symbol from `function` and otherwise treats the two calls
+    /// identically. A second copy of this function for `write` would be the
+    /// defect `runtime_reachability.rs`'s module doc catalogues six instances
+    /// of, filed a seventh time in the one function best placed to avoid it.
     ///
     /// **The decision. Who frees the buffer is read off the operand, and the
     /// operand is the only thing that can say.** A `Const` is a `String` this
@@ -7309,9 +7330,9 @@ impl<'a> Lowerer<'a> {
     /// prints"*. That sentence described the bug rather than avoiding it: the
     /// free was unconditional, so the only safe operand was a `Move`, so MIR
     /// had to be wrong about `print` for anything to lower at all.
-    /// `science-mir`'s `lower` §5 now reads `print`'s missing signature as
-    /// *"unknown argument passing"* and hands over a `copy`, which is what
-    /// `strings-formatting-and-docs.md` §4.1's
+    /// `science-mir`'s `lower` §5 now reads `print`'s (and `write`'s) missing
+    /// signature as *"unknown argument passing"* and hands over a `copy`,
+    /// which is what `strings-formatting-and-docs.md` §4.1's
     /// `def print(value: borrowed any Display)` means at this level. The
     /// `Move` arm is **kept and is not dead**: an `f"…"` bound to nothing is a
     /// temporary whose last use is the call, and if the front half ever
@@ -7330,9 +7351,15 @@ impl<'a> Lowerer<'a> {
         ctx: &mut BodyCtx,
         args: &[mir::Operand],
         insts: &mut Vec<ExtInst>,
+        function: &str,
     ) -> Result<(), Unlowered> {
+        let symbol = match function {
+            "write" => "science_write",
+            _ => "science_print",
+        };
         let string_layout = layout_of(self.target, &RtAggregate::String.cg_ty());
-        // **A `borrowed String` is already the pointer `science_print` wants**,
+        // **A `borrowed String` is already the pointer `science_print` (or
+        // `science_write`) wants**,
         // and it is the one operand shape that is neither a slot this call site
         // built nor a slot it can take the address of: the local holds the
         // address of somebody else's `ScienceString`, so the value in the slot
@@ -7360,10 +7387,10 @@ impl<'a> Lowerer<'a> {
                     address: Operand::Value(address),
                     layout,
                 });
-                let print = self.declare("science_print")?;
+                let print = self.declare(symbol)?;
                 insts.push(ExtInst::Above(Inst::Call {
                     dest: None,
-                    callee: Callee::Runtime("science_print"),
+                    callee: Callee::Runtime(symbol),
                     args: vec![Operand::Value(pointer)],
                     ret: print.ret.clone(),
                     sret_slot: None,
@@ -7418,24 +7445,24 @@ impl<'a> Lowerer<'a> {
             [mir::Operand::Move(place) | mir::Operand::Copy(place)] => {
                 let (address, layout) = self.place_address(ctx, place, insts)?;
                 if layout != string_layout {
-                    return Err(Unlowered::new(self.undisplayable(body, &args[0])));
+                    return Err(Unlowered::new(self.undisplayable(body, &args[0], function)));
                 }
                 (address, matches!(args[0], mir::Operand::Move(_)))
             }
-            [operand] => return Err(Unlowered::new(self.undisplayable(body, operand))),
+            [operand] => return Err(Unlowered::new(self.undisplayable(body, operand, function))),
             _ => {
-                return Err(Unlowered::new(
-                    "a `print` of something other than one value: §4.1 declares \
-                     `def print(value: &any Display)` and this call has a different \
+                return Err(Unlowered::new(format!(
+                    "a `{function}` of something other than one value: §4.1 declares \
+                     `def {function}(value: &any Display)` and this call has a different \
                      number of arguments",
-                ));
+                )));
             }
         };
 
-        let print = self.declare("science_print")?;
+        let print = self.declare(symbol)?;
         insts.push(ExtInst::Above(Inst::Call {
             dest: None,
-            callee: Callee::Runtime("science_print"),
+            callee: Callee::Runtime(symbol),
             args: vec![Operand::Value(address)],
             ret: print.ret.clone(),
             sret_slot: None,
@@ -7454,8 +7481,8 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    /// A `print` of something the one renderer in this compiler cannot render,
-    /// named by its **type**.
+    /// A `print` or `write` of something the one renderer in this compiler
+    /// cannot render, named by its **type**.
     ///
     /// **The refusal used to name the construct and it named the wrong one.**
     /// It read *"a `print` of a value that is not a `String`"*, which is true
@@ -7465,21 +7492,25 @@ impl<'a> Lowerer<'a> {
     /// `science_string_push_*` entry points, so the useful sentence names the
     /// type that is not on it. This is the same repair and the same wording
     /// `mir::Unresolved::Display`'s arm already carries one call over.
-    fn undisplayable(&self, body: &MirBody, operand: &mir::Operand) -> String {
+    ///
+    /// **`function` names which call this is**, so `write(doc)` is refused as
+    /// a `write` and not reported under the other function's name.
+    fn undisplayable(&self, body: &MirBody, operand: &mir::Operand, function: &str) -> String {
         let named = self.operand_ty(body, operand).map(|ty| self.render_referent(ty));
         match named {
             Some(name) => format!(
-                "a `print` of a value of type `{name}`: §4.1 declares `print` as \
-                 `def print(value: &any Display)` and the only renderer in this compiler \
+                "a `{function}` of a value of type `{name}`: §4.1 declares `{function}` as \
+                 `def {function}(value: &any Display)` and the only renderer in this compiler \
                  is §1.7's builder, whose entry points cover `Int`/`I64`, `U64`, `F64`, `F32`, \
                  `Bool`, `Char` and `String`. §3.1's `Formatter` — which is what a user type \
                  would render through — is specified by no note and declared by no prelude, and \
                  this backend emits no vtable to reach one with"
             ),
-            None => "a `print` of a value whose type this crate cannot name: `print` renders \
-                     through `Display`, the only renderer is §1.7's builder, and its entry \
-                     points cover the prelude's scalars and `String`"
-                .to_string(),
+            None => format!(
+                "a `{function}` of a value whose type this crate cannot name: `{function}` \
+                 renders through `Display`, the only renderer is §1.7's builder, and its entry \
+                 points cover the prelude's scalars and `String`"
+            ),
         }
     }
 

@@ -2056,10 +2056,19 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         self.emit_call(dest, callee, operands, block, span)
     }
 
-    /// Whether `print(x)` has to render `x` before it can print it.
+    /// Whether `print(x)` or `write(x)` has to render `x` before it can print
+    /// it.
     ///
-    /// True for the prelude's `print` called on one argument whose type is not
-    /// a `String` **and which [`Builder::push_of`] has an entry point for**.
+    /// True for the prelude's `print` or `write` called on one argument whose
+    /// type is not a `String` **and which [`Builder::push_of`] has an entry
+    /// point for**. The two are one condition and not two:
+    /// `strings-formatting-and-docs.md` §4.1 gives both the same
+    /// `(value: borrowed any Display)`, so whatever makes `print(42)` need
+    /// rendering makes `write(42)` need it identically, and `science-codegen-
+    /// llvm`'s `lower_print` reads which runtime symbol to call off the
+    /// def's own name — so once that crate lowers a call to `write` at all,
+    /// keeping this condition at `entry.name != "print"` would just move the
+    /// gap from *"no lowering"* to *"no rendering"* for the same call.
     ///
     /// **Both exclusions are load-bearing and the second one was measured.** A
     /// `String` already prints without rendering and the builder would cost it
@@ -2073,14 +2082,9 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// `Int?`; rendering that would have made the fixture stop demonstrating
     /// what it exists for. A rewrite this crate performs must not change the
     /// borrows of a program it cannot lower anyway.
-    ///
-    /// `write` is **not** included either: it is the same shape and
-    /// `science-codegen-llvm` lowers no call to it at all, so routing it
-    /// through the builder would replace one refusal with another that named a
-    /// construct further from the one the author wrote.
     fn prints_by_rendering(&mut self, def: DefId, arg: ExprId) -> bool {
         let entry = self.context.defs.get(def);
-        if !entry.is_builtin() || entry.name != "print" {
+        if !entry.is_builtin() || !matches!(entry.name.as_str(), "print" | "write") {
             return false;
         }
         let ty = self.thir.ty(arg);

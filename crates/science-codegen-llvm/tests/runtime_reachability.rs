@@ -95,10 +95,17 @@
 //!    is the corpus program and the allowlist entry is gone with it.
 //!    `String`'s ordering is refused by name
 //!    (`tests/methods.rs`'s `ordering_two_strings_is_refused` asserts the
-//!    refusal names `science_string_cmp`). `print`/`write` are declared and
-//!    then withdrawn — `builtins.rs`'s own words are *"deliberately left
-//!    undeclared"* — so `science_write` has no caller anywhere in the
-//!    language. **`Array.pop` is the entry worth reading closely, because half
+//!    refusal names `science_string_cmp`). **`science_write` was the eighth
+//!    instance, and it is closed the same way `panic` was.** `science_write`
+//!    sat in `RUNTIME` with `science_print`'s own signature and no caller:
+//!    `Lowerer::lower_call` special-cased `name == "print"` by literal string
+//!    rather than by the condition *"one of §4.1's two unary output
+//!    functions"*, so `write(x)` was `SC0400` even though the symbol it needed
+//!    was already declared. `Lowerer::lower_print` now reads `function` —
+//!    `"print"` or `"write"` — off the def it is lowering and picks
+//!    `science_print`/`science_write` from that, so `write_reaches_stdout`
+//!    below is the program that closes it and no allowlist entry survives.
+//!    **`Array.pop` is the entry worth reading closely, because half
 //!    its old reason has already stopped being true.** `§5.3`'s
 //!    bool-plus-out-parameter convention it needs now exists —
 //!    `Map.insert`/`Map.remove` are built on it, and both are reachable below
@@ -384,6 +391,17 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   let m be \"boom\"\n\
          \x20   panic(m)\n",
     ),
+    // `write`, `science_write`'s only caller anywhere in this crate's tests
+    // before this program: a literal (built the same way `print("…")` builds
+    // one) and a rendered integer, so both of `lower_print`'s non-`String`
+    // and literal arms run for `function == "write"` and not only for
+    // `"print"`.
+    (
+        "write_reaches_stdout",
+        "def main():\n\
+         \x20   write(\"no newline here: \")\n\
+         \x20   write(42)\n",
+    ),
 ];
 
 /// Every symbol in [`RUNTIME`] this compiler's own lowering, run over
@@ -415,12 +433,6 @@ const ALLOWLIST: &[(&str, &str)] = &[
          convention and are reachable below — so the prelude declaration is the only thing left; \
          `Lowerer::owned_nullable_method`'s own doc comment says the reasoning was re-read after \
          that convention landed and still stands",
-    ),
-    (
-        "science_write",
-        "`write` is declared, measured against the corpus and withdrawn — `builtins.rs`'s own \
-         words are \"`print` and `write` are deliberately left undeclared\" — so no program in \
-         this language can name it",
     ),
     ("science_alloc", "runtime-internal: called from `science-rt`'s own Rust, never by codegen"),
     ("science_realloc", "runtime-internal, the same as `science_alloc`"),
