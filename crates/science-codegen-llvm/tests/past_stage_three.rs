@@ -394,20 +394,26 @@ fn an_uncalled_function_this_backend_cannot_lower_does_not_stop_the_build() {
     assert_eq!(bytes("params-unreached", &source), "K");
 }
 
-/// And calling it is refused, by name.
+/// And calling it **runs**, which is what this pinned the absence of.
+///
+/// **This replaces `calling_a_generic_function_is_refused_and_says_what_is_
+/// missing`**, which asserted the refusal named *"monomorphis"*. The phase
+/// it named is there now: `science_codegen::mono` names one instance per
+/// distinct argument list, `science_mir::instantiate` substitutes each body,
+/// and `Lowerer::symbol_for_call` sends each call to its own instance. The
+/// refusal has nothing left to refuse, so the same fixture is asserted to
+/// print instead.
+///
+/// The letter is the observation. `identity(75)` returning anything but 75
+/// puts a different byte on stdout, so an instance lowered at the wrong
+/// argument type is visible here rather than merely absent.
 #[test]
-fn calling_a_generic_function_is_refused_and_says_what_is_missing() {
-    let text = refusal(
-        "params-generic",
-        &format!(
-            "{PUTCHAR}def identity[T](value: T) -> T:\n    value\n\n\
-             let r be unsafe: putchar(identity(75))\n"
-        ),
+fn calling_a_generic_function_runs_the_instance() {
+    let source = format!(
+        "{PUTCHAR}def identity[T](value: T) -> T:\n    value\n\n\
+         let r be unsafe: putchar(identity(75i32))\n"
     );
-    assert!(
-        text.contains("monomorphis"),
-        "the refusal does not name the missing phase:\n{text}"
-    );
+    assert_eq!(bytes("params-generic", &source), "K");
 }
 
 // --- a record -------------------------------------------------------------

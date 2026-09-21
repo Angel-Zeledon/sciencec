@@ -555,13 +555,18 @@ fn the_boundary_is_where_it_says_it_is() {
              let v be p.twice()\nprint(\"x\")\n",
             "monomorphis",
         ),
-        // Nothing monomorphises, so a generic function's parameter reaches here
-        // as a `TyKind::Param` with no layout.
-        (
-            "generic",
-            "def identity[T](value: T) -> T:\n    value\n\nlet v be identity(1)\nprint(\"x\")\n",
-            "monomorphis",
-        ),
+        // **The `generic` row is retired, not relaxed.** It read *"nothing
+        // monomorphises, so a generic function's parameter reaches here as a
+        // `TyKind::Param` with no layout"*, and something monomorphises now:
+        // `science_codegen::mono` names the instances and
+        // `science_mir::instantiate` substitutes each body, so that fixture
+        // builds and runs. `tests/generics.rs` is where it lives as a run,
+        // and `past_stage_three.rs`'s `calling_a_generic_function_runs_the_
+        // instance` is the same program in this file's own style.
+        //
+        // The row above it stays: a method's **default body** on an
+        // `interface` is still one body that needs one copy per implementor,
+        // and nothing makes those copies yet.
     ];
     for (name, source, fragment) in cases {
         let dir = scratch("stage23", name);

@@ -913,15 +913,25 @@ def main():
 }
 
 #[test]
-fn an_unannotated_literal_binding_leaves_nothing_to_read() {
-    // The other half of §2 cost 2, and it is a *characterisation* test rather
-    // than a wish: the checker leaves `let a be identity(1)` at `Ty::ERROR`, so
-    // neither the argument nor the destination says what `T` is. The walk
-    // records an `Unsolved` and emits nothing, which is the honest answer.
+fn an_unannotated_literal_binding_is_solved_too() {
+    // **This replaces `an_unannotated_literal_binding_leaves_nothing_to_read`,
+    // and it was replaced on that test's own instructions.** It asserted that
+    // the walk emitted nothing here, and said of itself: *"if this test starts
+    // failing, that is good news — it means `science-types` now defaults an
+    // unannotated numeric binding, and §2's note about it should be deleted
+    // rather than this test relaxed"*. It does, so the note is deleted and
+    // this is the positive assertion.
     //
-    // **If this test starts failing, that is good news**: it means
-    // `science-types` now defaults an unannotated numeric binding, and §2's
-    // note about it should be deleted rather than this test relaxed.
+    // What changed is upstream and not here: `check`'s `instantiate_call` now
+    // **defers** a parameter whose only evidence is an argument still carrying
+    // an unresolved literal class, binding it to that argument's own inference
+    // variable instead of forcing `Ty::ERROR`. Decision 2's default then
+    // settles the call and the binding in one step, and the destination this
+    // walk reads is no longer a hole.
+    //
+    // `I64` rather than any integer: Decision 2's default for an unsuffixed
+    // integer literal is what decides the instance, so the symbol is the
+    // observation that the default reached all the way here.
     let source = "\
 def identity[T](value: T) -> T:
     value
@@ -931,8 +941,8 @@ def main():
 ";
     let mut lowered = lower(source);
     let set = lowered.mono(RootSet::EntryPoint);
-    assert!(!set.render().contains("identity["), "{}", set.render());
-    assert!(!set.holes().unsolved.is_empty(), "{:?}", set.holes());
+    assert!(set.render().contains("identity[I64]"), "{}", set.render());
+    assert!(set.holes().unsolved.is_empty(), "{:?}", set.holes());
 }
 
 #[test]

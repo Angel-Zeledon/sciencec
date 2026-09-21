@@ -597,6 +597,27 @@ struct Instance {
     params: Vec<(DefId, Ty)>,
 }
 
+/// What [`BodyChecker::instantiate_call`] worked out.
+///
+/// Three parts rather than one, because a parameter can now leave that
+/// function in three states instead of two: solved into `substitution`, left
+/// an honest [`Ty::ERROR`] (absent from every field here), or **deferred** —
+/// its only evidence was an argument whose own type was still open, so
+/// `deferred` names the variable that argument *is* rather than a type it was
+/// forced into. `presynthesised` is the node that variable belongs to, built
+/// while answering the question and handed back so the call's own argument
+/// loop takes it rather than building a second one.
+struct CallSolve {
+    substitution: Substitution,
+    /// Argument index -> the node `instantiate_call` already built for it.
+    /// Only present for a root-level, by-value parameter [`BodyChecker::probe`]
+    /// could not answer without one.
+    presynthesised: HashMap<usize, Typed>,
+    /// Generic parameter -> the still-open variable standing in for it, for a
+    /// parameter this call could reach no other way.
+    deferred: HashMap<DefId, InferVar>,
+}
+
 /// The checker for one body. §3: one of these per body, dropped with it.
 /// `SC0304` — a write to a binding that was never declared `mutable`.
 ///
@@ -1964,11 +1985,20 @@ impl<'a> BodyChecker<'a> {
         // a parameter (`docs.sort(by: f)`), and an unlabelled argument takes
         // the position it is in.
         let order = self.argument_order(&params, args);
-        let substitution = self.instantiate_call(&declared, generics, &params, args, &order, span);
+        let CallSolve { substitution, mut presynthesised, deferred } =
+            self.instantiate_call(&declared, generics, &params, args, &order, None, span);
         self.check_bounds(def, &substitution, span);
 
         let mut ids: Vec<ExprId> = Vec::with_capacity(args.len());
         for (at, arg) in args.iter().enumerate() {
+            // Built already, by `instantiate_call`'s own fallback: the node
+            // exists and checking it again would build a second one for
+            // nothing. §6's note by `BodyChecker::probe` is why this can only
+            // be a *root-level* parameter taken by value.
+            if let Some(typed) = presynthesised.remove(&at) {
+                ids.push(typed.id);
+                continue;
+            }
             match order[at].and_then(|index| params.get(index).copied()) {
                 Some((_, param_ty)) => {
                     let param_ty = self.apply(&substitution, param_ty, arg.span);
@@ -1976,6 +2006,20 @@ impl<'a> BodyChecker<'a> {
                     ids.push(self.check(&arg.value, param_ty, Site::Argument));
                 }
                 None => ids.push(self.synth(&arg.value).id),
+            }
+        }
+        // A return type that is exactly a parameter `instantiate_call` left
+        // *deferred* rather than solved — §6's note by `probe` — is typed by
+        // that argument's own variable, not by `Ty::ERROR`: the call's answer
+        // and the argument's are the same open question, so whatever settles
+        // one settles the other, through `demand` at whatever meets the call
+        // next or through Decision 2's default at `finish` if nothing does.
+        if let Some((param_def, false)) = self.root_param(ret) {
+            if let Some(&var) = deferred.get(&param_def) {
+                let id =
+                    self.body.push_expr(ExprKind::Call { callee, args: ids }, Ty::ERROR, span);
+                self.pending.push((id, var));
+                return Typed { id, ty: InferTy::Var(var) };
             }
         }
         let ret = self.apply(&substitution, ret, span);
@@ -2011,6 +2055,13 @@ impl<'a> BodyChecker<'a> {
     }
 
     /// §6's root-level instantiation of a generic callee.
+    ///
+    /// **`presupplied` is the same fact [`Callee::Found`] already carries**:
+    /// at a call whose arguments were synthesised by method selection before
+    /// this ran, reading their type is free and building a second node for
+    /// one would be the double-synthesis every comment in this function warns
+    /// against — so those arguments are read here exactly as `probe` reads
+    /// anything else, rather than skipped.
     fn instantiate_call(
         &mut self,
         declared: &[hir::GenericParam],
@@ -2018,10 +2069,15 @@ impl<'a> BodyChecker<'a> {
         params: &[(DefId, Ty)],
         args: &[hir::Arg],
         order: &[Option<usize>],
+        presupplied: Option<&[Typed]>,
         span: Span,
-    ) -> Substitution {
+    ) -> CallSolve {
         if declared.is_empty() {
-            return Substitution::new();
+            return CallSolve {
+                substitution: Substitution::new(),
+                presynthesised: HashMap::new(),
+                deferred: HashMap::new(),
+            };
         }
         let mut solved: HashMap<DefId, Ty> = HashMap::new();
         for (param, written) in declared.iter().zip(explicit) {
@@ -2030,6 +2086,8 @@ impl<'a> BodyChecker<'a> {
                 solved.insert(param.def, ty);
             }
         }
+        let mut presynthesised: HashMap<usize, Typed> = HashMap::new();
+        let mut deferred: HashMap<DefId, InferVar> = HashMap::new();
         // A parameter whose type *is* the generic parameter is solved by the
         // argument's synthesised type. Anything deeper is §6's hole.
         for (at, arg) in args.iter().enumerate() {
@@ -2041,8 +2099,8 @@ impl<'a> BodyChecker<'a> {
             }
             // Synthesising the argument here and again at the check below would
             // build the node twice, so the probe is a *type* question only: it
-            // is asked of a literal's default and of a name's declared type,
-            // which is everything a root-level match can use.
+            // is asked of a literal's suffix and of a name's declared type,
+            // which is everything a root-level match can use without one.
             if let Some(ty) = self.probe(&arg.value) {
                 // `borrowed T` against a `borrowed Doc` and against a `Doc`
                 // both solve `T := Doc`: §6.3 is what makes the second spelling
@@ -2050,7 +2108,76 @@ impl<'a> BodyChecker<'a> {
                 // side wrote it.
                 let ty = if borrowed { self.peel_borrow(ty, arg.span) } else { ty };
                 solved.insert(def, ty);
+                continue;
             }
+            // The probe answered `None` — an unsuffixed literal, or a name
+            // still carrying one, is everything Decision 2 has not defaulted
+            // yet, and nothing here should guess its default early: the whole
+            // point is that a destination this call does not know about yet
+            // may still claim it (`let a: F32 be identity(7)`), and a guess
+            // taken now would be a second, competing answer to the one
+            // `demand` gives later. So this builds the node instead of
+            // guessing — once, which is why a `borrowed T` parameter is left
+            // alone: peeling its argument's type needs the *substituted*
+            // parameter type §6.3's auto-borrow reads, which only the check
+            // loop below has, so building the node here would still mean
+            // building it again there.
+            if borrowed {
+                continue;
+            }
+            // **`null` is the one argument that must stay unsolved**, and §5
+            // says why: `T` can be instantiated at a nullable, so `by_value
+            // (null)` against `def by_value[T](value: T)` is the
+            // *unanswerable* case and the note admits it rather than picking
+            // a side.
+            //
+            // Deferring it would not admit it, it would postpone it: `null`'s
+            // class is [`Numeric::Null`], the one class with no default at
+            // all, so a variable carrying it that nothing later constrains is
+            // `SC0526` — a diagnostic on a program §5 says is fine.
+            // `Ty::ERROR` is what agreed with it before and still does, so
+            // this parameter falls through to the `unwrap_or(Ty::ERROR)`
+            // below exactly as it always has.
+            //
+            // Asked of the **syntax** rather than of the synthesised node,
+            // because the node is the thing not to build: every comment in
+            // this function is about not synthesising an argument twice, and
+            // building one here only to discard it would leave an orphan in
+            // the body.
+            if matches!(&arg.value.kind, hir::ExprKind::Literal(Literal::Null)) {
+                continue;
+            }
+            let typed = match presupplied.and_then(|supplied| supplied.get(at)).copied() {
+                Some(typed) => typed,
+                None => self.synth(&arg.value),
+            };
+            match self.infer.resolve(typed.ty) {
+                // Not open after all — a call, a field, anything `probe`
+                // cannot answer without a node — so this is solved exactly as
+                // if `probe` had answered it, and any earlier occurrence of
+                // the same parameter that was only deferred is bound to the
+                // same fact rather than left to disagree with it.
+                InferTy::Known(ty) => {
+                    if let Some(&existing) = deferred.get(&def) {
+                        let _ = self.infer.bind(self.types, existing, ty);
+                    }
+                    solved.insert(def, ty);
+                }
+                // Still open. A second argument at the same unsolved
+                // parameter is unified with the first's variable rather than
+                // replacing it in `deferred` — one variable for one
+                // parameter, so the two cannot quietly settle on different
+                // answers later.
+                InferTy::Var(var) => match deferred.get(&def).copied() {
+                    Some(existing) => {
+                        let _ = self.infer.unify(self.types, InferTy::Var(existing), InferTy::Var(var));
+                    }
+                    None => {
+                        deferred.insert(def, var);
+                    }
+                },
+            }
+            presynthesised.insert(at, typed);
         }
         let mut substitution = Substitution::new();
         for param in declared {
@@ -2059,6 +2186,10 @@ impl<'a> BodyChecker<'a> {
                     // Unsolved becomes `Ty::ERROR`, which agrees with whatever
                     // it meets, so the arguments are still checked against
                     // something and the call reports nothing it cannot justify.
+                    // A *deferred* parameter takes the same `Ty::ERROR` here —
+                    // `deferred` is read separately, by the call's own return
+                    // type, and this substitution is not where that answer
+                    // lives.
                     let ty = solved.get(&param.def).copied().unwrap_or(Ty::ERROR);
                     substitution = substitution.with_type(param.def, ty);
                 }
@@ -2070,7 +2201,7 @@ impl<'a> BodyChecker<'a> {
             }
         }
         let _ = span;
-        substitution
+        CallSolve { substitution, presynthesised, deferred }
     }
 
     /// §8. Every bound the callee declared, held against what this call solved.
@@ -2362,15 +2493,20 @@ impl<'a> BodyChecker<'a> {
         }
 
         let (ids, ret) = self.call_method(&candidate, self_ty, generics, args, supplied, span);
-        let id = self.body.push_expr(
+        // `ret` may still be a variable — §6's note by `probe` — so the node
+        // is pushed the way a literal's is, through `push_typed`, rather than
+        // assumed known the way every other call form's return is.
+        let typed = self.push_typed(
             ExprKind::MethodCall { receiver: recv.id, method: Some(candidate.method), args: ids },
             ret,
             span,
         );
-        if self.decls.prelude().is_never(self.types, ret) {
-            self.diverged = true;
+        if let InferTy::Known(ret) = ret {
+            if self.decls.prelude().is_never(self.types, ret) {
+                self.diverged = true;
+            }
         }
-        Typed { id, ty: InferTy::Known(ret) }
+        typed
     }
 
     /// `DefTable.new()` — a method reached through a type rather than a value.
@@ -2404,11 +2540,15 @@ impl<'a> BodyChecker<'a> {
         let (self_ty, supplied) =
             self.receiver_arguments(revealed, &candidate, args, supplied, span);
         let (ids, ret) = self.call_method(&candidate, self_ty, generics, args, supplied, span);
-        let id = self.body.push_expr(ExprKind::Call { callee, args: ids }, ret, span);
-        if self.decls.prelude().is_never(self.types, ret) {
-            self.diverged = true;
+        // Same deferral `method_call` takes, for the same reason: `ret` may
+        // still be the argument's own open variable.
+        let typed = self.push_typed(ExprKind::Call { callee, args: ids }, ret, span);
+        if let InferTy::Known(ret) = ret {
+            if self.decls.prelude().is_never(self.types, ret) {
+                self.diverged = true;
+            }
         }
-        Typed { id, ty: InferTy::Known(ret) }
+        typed
     }
 
     /// The receiver of an associated call, with the block's own type arguments
@@ -2642,10 +2782,10 @@ impl<'a> BodyChecker<'a> {
         args: &[hir::Arg],
         supplied: Option<Vec<Typed>>,
         span: Span,
-    ) -> (Vec<ExprId>, Ty) {
+    ) -> (Vec<ExprId>, InferTy) {
         let Some(sig) = self.decls.signature(candidate.method) else {
             let ids = self.argument_ids(args, supplied);
-            return (ids, Ty::ERROR);
+            return (ids, InferTy::Known(Ty::ERROR));
         };
         let params: Vec<(DefId, Ty)> =
             sig.params.iter().map(|param| (param.def, param.ty)).collect();
@@ -2658,11 +2798,20 @@ impl<'a> BodyChecker<'a> {
 
         let block = self.block_substitution(candidate, self_ty, span);
         let order = self.argument_order(&params, args);
-        let generic = self.instantiate_call(&declared, generics, &params, args, &order, span);
+        let CallSolve { substitution: generic, mut presynthesised, deferred } = self
+            .instantiate_call(&declared, generics, &params, args, &order, supplied.as_deref(), span);
         self.check_bounds(candidate.method, &generic, span);
 
         let mut ids: Vec<ExprId> = Vec::with_capacity(args.len());
         for (at, arg) in args.iter().enumerate() {
+            // Same shortcut `call_signature` takes, and the same reason: the
+            // node exists, built by `instantiate_call` itself (from
+            // `supplied` when method selection already had it, or freshly
+            // otherwise), so this loop reads it rather than rebuilding it.
+            if let Some(typed) = presynthesised.remove(&at) {
+                ids.push(typed.id);
+                continue;
+            }
             let already = supplied.as_ref().and_then(|supplied| supplied.get(at).copied());
             match order[at].and_then(|index| params.get(index).copied()) {
                 Some((_, param_ty)) => {
@@ -2680,10 +2829,18 @@ impl<'a> BodyChecker<'a> {
                 }),
             }
         }
+        // §6's note by `probe`, read across from `call_signature`: a return
+        // type that is exactly a deferred parameter is typed by that
+        // argument's own variable rather than by `Ty::ERROR`.
+        if let Some((param_def, false)) = self.root_param(ret) {
+            if let Some(&var) = deferred.get(&param_def) {
+                return (ids, InferTy::Var(var));
+            }
+        }
         let ret = self.apply(&block, ret, span);
         let ret = self.apply(&generic, ret, span);
         let ret = self.instantiate(ret, span);
-        (ids, ret)
+        (ids, InferTy::Known(ret))
     }
 
     /// `Self`, the block's associated types, and the block's generics.

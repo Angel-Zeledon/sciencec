@@ -140,29 +140,33 @@ fn the_module_says_what_stage_one_says_it_should() {
 /// the test is *for* survives unchanged: a construct past the boundary is
 /// `SC0400` naming itself, and not an internal error.
 ///
-/// **The construct moved again, and the loop is no longer past the boundary.**
-/// `for i in 0..3:` builds and runs: `collections-and-chains.md`'s
-/// AMENDMENT 14 says a `Range` *"is not a container"* and computes each
-/// element, so `lower_for_over_range` emits the counting loop the note
-/// describes and no `Range[I64]` value is ever built. A **generic function
-/// call** takes its place, which is past the boundary for a reason nothing
-/// here can move: no phase substitutes type arguments into a body.
+/// **The construct has now moved three times, which is the point of the
+/// test.** It was a second function, then a `for` loop, then a generic
+/// function call — and each is now emitted: `lower_for_over_range` builds the
+/// counting loop, and `science_mir::instantiate` substitutes a generic body
+/// so `science_codegen::mono` can name one function per instance.
+///
+/// A **`Box[T]`** takes its place. It is one of §2.6's runtime containers,
+/// reached through a `ScienceTypeInfo` this backend does not emit, so moving
+/// this boundary means a runtime entry point and a descriptor rather than a
+/// backend arm — and when that lands, this test moves a fourth time and the
+/// paragraph above gets another sentence.
 #[test]
 fn a_program_past_the_boundary_is_refused_by_name() {
-    let lowered = lower("def identity[T](value: T) -> T:
-    value
+    let lowered = lower("type Doc:
+    n: Int
 
-let v be identity(1)
+let b be Box[Doc].new(Doc(n: 1))
 ");
     let dir = scratch("hello", "refused");
     let diagnostics = lowered
         .try_build(&dir.join("out"), OptLevel::O2)
         .map(|_| ())
-        .expect_err("a `for` loop is not lowered");
+        .expect_err("a `Box` is not lowered");
     let first = diagnostics.first().expect("a diagnostic");
     assert_eq!(first.code, science_codegen::diagnostics::code::SC0400);
     assert!(
-        first.message.contains("monomorphis"),
+        first.message.contains("Box"),
         "the refusal must name the construct, and it said: {}",
         first.message
     );

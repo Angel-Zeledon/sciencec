@@ -85,17 +85,15 @@
 //!    type is on the statement beside it"*, and the statement is not at the
 //!    call. `let a: Int be identity(1)` is solved, from the destination.
 //!
-//!    **`let a be identity(1)` is not, and the reason is upstream and worth
-//!    recording.** The checker leaves an unannotated numeric binding's type at
-//!    `Ty::ERROR` and reports nothing — `let n be 1` does it on its own, with
-//!    no generic call anywhere near — so the destination this recovery would
-//!    read is a hole. Decision 2's defaulting is written and `check`'s §4 has a
-//!    writeback for it, so this reads like a defect rather than a design
-//!    limit; it is `science-types`' either way and is reported rather than
-//!    worked around. Measured on the corpus it costs nothing, because every
-//!    example annotates. What it costs *here* is that this module's own
-//!    fixtures annotate too, which is a fixture that is less like real code
-//!    than it should be.
+//!    **`let a be identity(1)` used to be unsolved and now is not.** The note
+//!    that stood here called it *"a defect rather than a design limit"* and
+//!    said it was `science-types`' — it was, and `check`'s `instantiate_call`
+//!    has since been given the third state it needed: a parameter whose only
+//!    evidence is an argument still carrying an unresolved literal class is
+//!    **deferred** to that argument's own inference variable rather than
+//!    forced to `Ty::ERROR`, so Decision 2's default settles the call and the
+//!    binding together. Nothing in this module changed; the hole it was
+//!    reading is filled.
 //! 3. **It is work proportional to the signature at every call**, where a
 //!    recorded substitution would have been a clone.
 //!

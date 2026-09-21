@@ -1114,6 +1114,69 @@ def field_of[T](value: T) -> Bool:
     checked.assert_clean();
 }
 
+// --- a generic call's type argument, from an argument not yet resolved ---
+//
+// `BodyChecker::probe`'s Decision 2 default, argued in `check`'s §6.
+
+const IDENTITY: &str = "\
+def identity[T](x: T) -> T:
+    x
+";
+
+#[test]
+fn an_unsuffixed_literal_argument_solves_the_call() {
+    // `identity(7)`, with no annotation anywhere to lean on. `T` used to have
+    // nothing to probe — an unsuffixed literal has no suffix and no declared
+    // type — so the call itself was typed `Ty::ERROR`. `probe` now asks
+    // Decision 2's default for it, `T := I64`, and the call is typed `I64`
+    // rather than `{unknown}`.
+    let checked = check(&format!(
+        "{IDENTITY}
+def main():
+    let a be identity(7)
+"
+    ));
+    checked.assert_clean();
+    let call = checked.find("main", |kind| matches!(kind, ExprKind::Call { .. }));
+    assert_eq!(checked.render(checked.body("main").ty(call)), "I64");
+}
+
+#[test]
+fn a_name_still_carrying_an_unresolved_literal_solves_the_call_too() {
+    // `let n be 7` then `identity(n)`: `n`'s own type is an `InferTy::Var`
+    // until the body's writeback runs, so the old probe answered `None` for it
+    // exactly as it did for the bare literal above, and for the same reason —
+    // there was no `Ty` to hand back yet.
+    let checked = check(&format!(
+        "{IDENTITY}
+def main():
+    let n be 7
+    let a be identity(n)
+"
+    ));
+    checked.assert_clean();
+    let call = checked.find("main", |kind| matches!(kind, ExprKind::Call { .. }));
+    assert_eq!(checked.render(checked.body("main").ty(call)), "I64");
+}
+
+#[test]
+fn an_explicit_annotation_still_solves_the_call_the_old_way() {
+    // The case that already worked, kept as the control: an annotation on the
+    // binding does not drive `T` at all here — `identity`'s destination type
+    // is not the source of truth `instantiate_call` reads, its own argument
+    // is — so this must keep resolving to `I64` exactly as it did before the
+    // two tests above started passing.
+    let checked = check(&format!(
+        "{IDENTITY}
+def main():
+    let a: Int be identity(7)
+"
+    ));
+    checked.assert_clean();
+    let call = checked.find("main", |kind| matches!(kind, ExprKind::Call { .. }));
+    assert_eq!(checked.render(checked.body("main").ty(call)), "I64");
+}
+
 #[test]
 fn every_block_in_the_body_is_reachable_from_the_arena() {
     // `thir`'s `blocks`: a pass that wants all the statements iterates the
