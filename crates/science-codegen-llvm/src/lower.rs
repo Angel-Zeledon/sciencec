@@ -5938,8 +5938,37 @@ impl<'a> Lowerer<'a> {
     ///
     /// A place becomes an `Inst::Load` — **a whole-local load, because
     /// `science_codegen::backend::Inst` has no projection** — and a constant
-    /// becomes a constant. `expected` is the destination's layout and is used
-    /// only to refuse a `null` that is not going into a niche at offset 0.
+    /// becomes a constant. `expected` is the destination's layout, and for
+    /// every literal but `null` it is unused.
+    ///
+    /// **`null` needs `expected` to decide *which* absent value, because the
+    /// two representations disagree about what a value even is.** A niched
+    /// `T?` is its payload and nothing else, so `null` is the payload's own
+    /// null pointer and this function has always built that directly. A
+    /// tagged `T?` — Decision 18's discriminant beside a payload union — is
+    /// not a scalar at all, and this arm used to refuse it outright: *"a
+    /// `null` read as a value of a type whose absent case is not a null
+    /// pointer at offset 0"*, which every `Int?`, `Bool?`, `F64?`, record `?`
+    /// and `String?` hit the moment `null` reached anywhere but
+    /// `Rvalue::Use`'s own destination — a tuple element, a record field, a
+    /// choice payload, a call argument.
+    ///
+    /// **The fix is to build the same bytes [`Lowerer::store_null`] builds,
+    /// in a slot invented for the purpose, and read the whole struct back as
+    /// one value** — exactly the shape [`Lowerer::field_value`] already uses
+    /// for a string literal reaching a field. The tag is
+    /// `store_null`'s, so a `null` built here and one built by `let x be
+    /// null` write the same discriminant by construction, which is what
+    /// keeps this arm from disagreeing with [`Lowerer::lower_is_present`] and
+    /// [`Rvalue::Narrow`]'s Tagged arm about which bit pattern absence is.
+    /// The payload union is left uninitialised, which is Decision 18's own
+    /// rule for the absent case and is never read by either of those two
+    /// consumers.
+    ///
+    /// **Cost.** One `alloca`, one store and one load per tagged `null` that
+    /// is not already a `Rvalue::Use`'s whole destination — the same price
+    /// `field_value` already pays for a string literal, and `mem2reg` turns
+    /// the slot into nothing once optimisation is on.
     fn lower_operand(
         &mut self,
         ctx: &mut BodyCtx,
@@ -5960,6 +5989,16 @@ impl<'a> Lowerer<'a> {
                 Literal::Char(value) => Ok(Operand::ConstInt(*value as i128)),
                 Literal::Null => match expected.map(|layout| &layout.repr) {
                     Some(Repr::Niched { niche, .. }) if niche.offset == 0 => Ok(Operand::Null),
+                    Some(Repr::Tagged { .. }) => {
+                        let layout = expected
+                            .expect("Some(Repr::Tagged) is matched only through Some(layout)")
+                            .clone();
+                        let slot = self.temp(ctx, layout.clone());
+                        self.store_null(slot, &layout, insts)?;
+                        let dest = ctx.value();
+                        insts.push(ExtInst::Above(Inst::Load { dest, local: slot }));
+                        Ok(Operand::Value(dest))
+                    }
                     _ => Err(Unlowered::new(
                         "a `null` read as a value of a type whose absent case is not a null \
                          pointer at offset 0",
