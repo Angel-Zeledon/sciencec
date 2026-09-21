@@ -496,6 +496,7 @@ pub fn check_fn(
         pending: Vec::new(),
         pending_tuples: Vec::new(),
         pending_named: Vec::new(),
+        pending_borrows: Vec::new(),
         numeric: Vec::new(),
         self_subst,
         ret,
@@ -630,6 +631,7 @@ struct CallSolve {
 /// enough, but `Pair[A, B]`'s own `Ty` is `Named { def, args }` over *both* —
 /// a shape, not a class — so every argument keeps its own answer here rather
 /// than being collapsed into one.
+#[derive(Clone)]
 enum PendingArg {
     /// Solved already: a name's declared type, a suffixed literal, or a
     /// const parameter, which this crate does not solve here at all (§6's
@@ -776,6 +778,30 @@ struct BodyChecker<'a> {
     /// variable. See [`PendingNamed`]; insertion order is load-bearing for
     /// the same nesting reason [`BodyChecker::pending_tuples`] gives.
     pending_named: Vec<PendingNamed>,
+    /// An auto-borrow taken over an argument whose own class was still open
+    /// when `instantiate_call` needed to defer the parameter it was
+    /// answering — `duplicate(n)` against `def duplicate[T](value: &T) -> …`
+    /// where `n` is an unsuffixed literal's binding, not yet defaulted.
+    ///
+    /// **Why a borrow cannot simply join [`BodyChecker::pending`].** That list
+    /// says *"this node's type is that variable"*, unchanged; a borrow's type
+    /// is `borrowed` **of** that variable's answer, one layer around it, so
+    /// writing it back needs the wrapping applied at [`BodyChecker::finish`]
+    /// and not before. Unlike [`BodyChecker::pending_tuples`] and
+    /// [`BodyChecker::pending_named`], nothing here mints a placeholder
+    /// variable of its own: a borrow wraps exactly one type, so the operand's
+    /// own variable is answer enough once `finish` has it.
+    ///
+    /// **Why `auto_borrow` cannot build this node instead.** That function
+    /// takes the argument's own type as `source: Ty` — a concrete answer — to
+    /// decide which coercion applies and to name the borrow it takes. A
+    /// parameter solved only by a literal argument has no concrete answer
+    /// yet, so the borrow is taken structurally, unconditionally, exactly as
+    /// every other still-open node is: typed `Ty::ERROR` for now, in the
+    /// entry below rather than in [`BodyChecker::pending`], so `finish` wraps
+    /// the operand's eventual type in `borrowed` rather than assigning it
+    /// straight to a slot that needs the wrapper.
+    pending_borrows: Vec<(ExprId, bool, InferVar)>,
     numeric: Vec<(InferVar, Numeric)>,
     self_subst: Substitution,
     ret: Ty,
@@ -935,6 +961,21 @@ impl<'a> BodyChecker<'a> {
             }
             let ty = self.types.named(entry.def, args);
             let _ = self.infer.bind(self.types, entry.var, ty);
+        }
+
+        // An auto-borrow taken over an argument that was still open: no
+        // placeholder variable of its own, so this is not a class the loop
+        // above defaulted and not a shape the two loops above bound — the
+        // operand's own variable already settled, through the ordinary
+        // numeric-defaulting loop at the top of this function, exactly as it
+        // would have if the argument had never been borrowed at all. Left
+        // unbound, the node's `Ty::ERROR` is what a later phase refuses by
+        // name, the same silence every other entry here falls back to.
+        for (id, mutable, var) in std::mem::take(&mut self.pending_borrows) {
+            if let Some(ty) = self.infer.binding(var) {
+                let borrowed = self.types.borrowed(mutable, ty);
+                self.body.set_ty(id, borrowed);
+            }
         }
 
         for (id, var) in std::mem::take(&mut self.pending) {
@@ -1894,6 +1935,16 @@ impl<'a> BodyChecker<'a> {
     /// independently of whether the others have settled yet. So the read is
     /// deferred in exactly the shape [`BodyChecker::push_typed`] already
     /// gives an unsuffixed literal, rather than forced or refused.
+    ///
+    /// **A field whose argument was already [`PendingArg::Fixed`] answers
+    /// immediately, from [`PendingNamed::args`] rather than from
+    /// [`PendingNamed::deferred`].** `paired(1, "one")`'s `B` solves from
+    /// `"one"` at the call and never enters `deferred` at all — only `A`,
+    /// solved from the unsuffixed `1`, does — so `pair.second` read in the
+    /// same statement is not the open question `pair.first` is, and reading
+    /// it as one would leave it at `Ty::ERROR` until `finish` for a fact
+    /// already in hand. The position is `record.generics`' — the same index
+    /// `args` was built at, one arm up.
     fn deferred_field(
         &mut self,
         base: ExprId,
@@ -1912,10 +1963,20 @@ impl<'a> BodyChecker<'a> {
             .find(|(id, _)| self.defs.get(*id).name == name.name)
             .copied()?;
         let TyKind::Param { def: param } = *self.types.kind(field_ty) else { return None };
-        let field_var = *self.pending_named[at].deferred.get(&param)?;
-        let id = self.body.push_expr(ExprKind::Field { base, field: Some(field) }, Ty::ERROR, span);
-        self.pending.push((id, field_var));
-        Some(Typed { id, ty: InferTy::Var(field_var) })
+        if let Some(&field_var) = self.pending_named[at].deferred.get(&param) {
+            let id =
+                self.body.push_expr(ExprKind::Field { base, field: Some(field) }, Ty::ERROR, span);
+            self.pending.push((id, field_var));
+            return Some(Typed { id, ty: InferTy::Var(field_var) });
+        }
+        let position = record.generics.iter().position(|generic| generic.def == param)?;
+        let PendingArg::Fixed(GenericArg::Type(ty)) =
+            self.pending_named[at].args.get(position)?.clone()
+        else {
+            return None;
+        };
+        let id = self.body.push_expr(ExprKind::Field { base, field: Some(field) }, ty, span);
+        Some(Typed { id, ty: InferTy::Known(ty) })
     }
 
     fn field(&mut self, base: &hir::Expr, name: &hir::Ident, span: Span) -> Typed {
@@ -2362,19 +2423,28 @@ impl<'a> BodyChecker<'a> {
                 None => ids.push(self.synth(&arg.value).id),
             }
         }
-        // A return type that is exactly a parameter `instantiate_call` left
+        // A return type that mentions a parameter `instantiate_call` left
         // *deferred* rather than solved — §6's note by `probe` — is typed by
-        // that argument's own variable, not by `Ty::ERROR`: the call's answer
-        // and the argument's are the same open question, so whatever settles
-        // one settles the other, through `demand` at whatever meets the call
-        // next or through Decision 2's default at `finish` if nothing does.
-        if let Some((param_def, false)) = self.root_param(ret) {
-            if let Some(&var) = deferred.get(&param_def) {
-                let id =
-                    self.body.push_expr(ExprKind::Call { callee, args: ids }, Ty::ERROR, span);
-                self.pending.push((id, var));
-                return Typed { id, ty: InferTy::Var(var) };
-            }
+        // that argument's own variable, or, when the return is a shape over
+        // several such parameters (`Pair[T, T]`, `(T, T)`), by a placeholder
+        // `instantiate_return` binds through `pending_named` or
+        // `pending_tuples` once every part has settled. Either way, not
+        // `Ty::ERROR`: the call's answer and the argument's are the same open
+        // question, so whatever settles one settles the other, through
+        // `demand` at whatever meets the call next or through Decision 2's
+        // default at `finish` if nothing does.
+        if !deferred.is_empty() {
+            let id = self.body.push_expr(ExprKind::Call { callee, args: ids }, Ty::ERROR, span);
+            return match self.instantiate_return(ret, &substitution, &deferred, id, span) {
+                InferTy::Var(var) => {
+                    self.pending.push((id, var));
+                    Typed { id, ty: InferTy::Var(var) }
+                }
+                InferTy::Known(ty) => {
+                    self.body.set_ty(id, ty);
+                    Typed { id, ty: InferTy::Known(ty) }
+                }
+            };
         }
         let ret = self.apply(&substitution, ret, span);
         let ret = self.instantiate(ret, span);
@@ -2386,6 +2456,143 @@ impl<'a> BodyChecker<'a> {
         // back, which is what `SC0140`'s fourth exclusion is written against.
         self.diverged = true;
         Typed { id, ty: InferTy::Known(ret) }
+    }
+
+    /// A call's declared return type, once `instantiate_call` has left at
+    /// least one of the callee's generic parameters **deferred**.
+    ///
+    /// **The bare-parameter case is the same fact `deferred` already
+    /// carries** — `-> T` on its own is one variable, and matching
+    /// [`TyKind::Param`] below against `deferred` *is* that answer, in one
+    /// arm rather than in a fast path of its own.
+    ///
+    /// **This is that answer one level up.** `Pair[T, T]` and `(T, T)` are
+    /// not one variable but a shape over several — exactly
+    /// [`PendingNamed`]'s own point about a record literal, and
+    /// [`BodyChecker::pending_tuples`]'s about a tuple. Both get the
+    /// identical treatment here: an argument of the return type that is
+    /// itself one of the deferred parameters becomes [`PendingArg::Open`], or
+    /// an open tuple element, rather than `Ty::ERROR`, and `finish` binds the
+    /// placeholder once every part has settled — the same writeback a record
+    /// literal's own unsolved generic argument already gets.
+    ///
+    /// **Shallow only**, the identical restriction `instantiate_record`'s own
+    /// solve draws and [`BodyChecker::deferred_field`] states in full: an
+    /// argument of the return type that is itself a *compound* mentioning a
+    /// deferred parameter — `Pair[Array[T], T]` — is substituted to
+    /// `Ty::ERROR` rather than threaded through a second placeholder.
+    /// Nothing downstream reads two levels of [`PendingNamed`], and inventing
+    /// that here would answer a question the corpus does not ask. A const
+    /// argument is carried over unchanged for the same reason: this crate
+    /// solves no const parameter at a call (§6), so one that is not already
+    /// concrete in the declared return type stays exactly as declared.
+    fn instantiate_return(
+        &mut self,
+        ty: Ty,
+        substitution: &Substitution,
+        deferred: &HashMap<DefId, InferVar>,
+        id: ExprId,
+        span: Span,
+    ) -> InferTy {
+        match *self.types.kind(ty) {
+            TyKind::Param { def } => match deferred.get(&def).copied() {
+                Some(var) => InferTy::Var(var),
+                None => {
+                    let applied = self.apply(substitution, ty, span);
+                    InferTy::Known(self.instantiate(applied, span))
+                }
+            },
+            TyKind::Named { def, ref args } => {
+                let args = args.clone();
+                // `PendingNamed::deferred` is read by `BodyChecker::deferred_field`
+                // against the *record's own* generic parameter a field's declared
+                // type names — `Pair`'s `A`, not `duplicate`'s `T` — so the map
+                // built here has to be rekeyed onto `def`'s own declaration and
+                // not carried over from the caller's `deferred` as-is; `record`'s
+                // generics give the position-to-`DefId` correspondence `args`
+                // itself does not carry.
+                let generics = self.decls.record(def).map(|record| record.generics.clone());
+                let mut pending = Vec::with_capacity(args.len());
+                let mut field_deferred: HashMap<DefId, InferVar> = HashMap::new();
+                let mut open = false;
+                for (at, arg) in args.iter().enumerate() {
+                    match arg {
+                        GenericArg::Type(inner) => match *self.types.kind(*inner) {
+                            TyKind::Param { def: param } if deferred.contains_key(&param) => {
+                                open = true;
+                                let var = *deferred.get(&param).expect("checked above");
+                                if let Some(field_param) =
+                                    generics.as_ref().and_then(|generics| generics.get(at))
+                                {
+                                    field_deferred.insert(field_param.def, var);
+                                }
+                                pending.push(PendingArg::Open(var));
+                            }
+                            _ => {
+                                let applied = self.apply(substitution, *inner, span);
+                                let applied = self.instantiate(applied, span);
+                                pending.push(PendingArg::Fixed(GenericArg::Type(applied)));
+                            }
+                        },
+                        other => pending.push(PendingArg::Fixed(other.clone())),
+                    }
+                }
+                if !open {
+                    let args = pending
+                        .into_iter()
+                        .map(|arg| match arg {
+                            PendingArg::Fixed(arg) => arg,
+                            PendingArg::Open(_) => unreachable!("checked by `open` above"),
+                        })
+                        .collect();
+                    return InferTy::Known(self.types.named(def, args));
+                }
+                let var = self.infer.fresh(span);
+                self.pending_named.push(PendingNamed {
+                    var,
+                    def,
+                    args: pending,
+                    deferred: field_deferred,
+                });
+                InferTy::Var(var)
+            }
+            TyKind::Tuple(ref elements) => {
+                let elements = elements.clone();
+                let mut parts = Vec::with_capacity(elements.len());
+                let mut open = false;
+                for element in &elements {
+                    match *self.types.kind(*element) {
+                        TyKind::Param { def: param } if deferred.contains_key(&param) => {
+                            open = true;
+                            let var = *deferred.get(&param).expect("checked above");
+                            parts.push(InferTy::Var(var));
+                        }
+                        _ => {
+                            let applied = self.apply(substitution, *element, span);
+                            let applied = self.instantiate(applied, span);
+                            parts.push(InferTy::Known(applied));
+                        }
+                    }
+                }
+                if !open {
+                    let tys = parts
+                        .into_iter()
+                        .map(|part| match part {
+                            InferTy::Known(ty) => ty,
+                            InferTy::Var(_) => unreachable!("checked by `open` above"),
+                        })
+                        .collect();
+                    return InferTy::Known(self.types.tuple(tys));
+                }
+                let var = self.infer.fresh(span);
+                self.pending_tuples.push((id, var, parts));
+                InferTy::Var(var)
+            }
+            _ => {
+                let applied = self.apply(substitution, ty, span);
+                InferTy::Known(self.instantiate(applied, span))
+            }
+        }
     }
 
     /// Which parameter each argument fills. §6 does not check arity beyond the
@@ -2471,14 +2678,8 @@ impl<'a> BodyChecker<'a> {
             // may still claim it (`let a: F32 be identity(7)`), and a guess
             // taken now would be a second, competing answer to the one
             // `demand` gives later. So this builds the node instead of
-            // guessing — once, which is why a `borrowed T` parameter is left
-            // alone: peeling its argument's type needs the *substituted*
-            // parameter type §6.3's auto-borrow reads, which only the check
-            // loop below has, so building the node here would still mean
-            // building it again there.
-            if borrowed {
-                continue;
-            }
+            // guessing — once.
+            //
             // **`null` is the one argument that must stay unsolved**, and §5
             // says why: `T` can be instantiated at a nullable, so `by_value
             // (null)` against `def by_value[T](value: T)` is the
@@ -2505,6 +2706,63 @@ impl<'a> BodyChecker<'a> {
                 Some(typed) => typed,
                 None => self.synth(&arg.value),
             };
+            // **A borrowed parameter's own node is the auto-borrow, and a
+            // deferred one cannot be handed back through `presynthesised` the
+            // way the by-value case below is** — `call_signature`'s check
+            // loop would reuse the *unborrowed* node verbatim, a value where
+            // `&T` needs a place taken. `auto_borrow` cannot build the borrow
+            // here either: it wants the argument's own concrete type as
+            // `source: Ty` to decide which coercion applies, and a concrete
+            // type is exactly what is still open. So the borrow is taken
+            // structurally, unconditionally, typed `Ty::ERROR` for now
+            // exactly as every other still-open node is, and
+            // `BodyChecker::pending_borrows` gives it the real type once the
+            // operand's settles.
+            if borrowed {
+                let mutable =
+                    matches!(self.types.kind(*param_ty), TyKind::Borrowed { mutable: true, .. });
+                match self.infer.resolve(typed.ty) {
+                    InferTy::Known(ty) => {
+                        // `borrowed T` against a `borrowed Doc` and against a
+                        // `Doc` both solve `T := Doc` — the borrow taken here
+                        // is `T`'s own, so `ty` is already the peeled type
+                        // `probe`'s sibling arm above peels by hand.
+                        if let Some(&existing) = deferred.get(&def) {
+                            let _ = self.infer.bind(self.types, existing, ty);
+                        }
+                        solved.insert(def, ty);
+                        let borrowed_ty = self.types.borrowed(mutable, ty);
+                        let id = self.body.push_expr(
+                            ExprKind::Borrow { mutable, operand: typed.id },
+                            borrowed_ty,
+                            arg.span,
+                        );
+                        presynthesised.insert(at, Typed { id, ty: InferTy::Known(borrowed_ty) });
+                    }
+                    InferTy::Var(var) => {
+                        match deferred.get(&def).copied() {
+                            Some(existing) => {
+                                let _ = self.infer.unify(
+                                    self.types,
+                                    InferTy::Var(existing),
+                                    InferTy::Var(var),
+                                );
+                            }
+                            None => {
+                                deferred.insert(def, var);
+                            }
+                        }
+                        let id = self.body.push_expr(
+                            ExprKind::Borrow { mutable, operand: typed.id },
+                            Ty::ERROR,
+                            arg.span,
+                        );
+                        self.pending_borrows.push((id, mutable, var));
+                        presynthesised.insert(at, Typed { id, ty: InferTy::Var(var) });
+                    }
+                }
+                continue;
+            }
             match self.infer.resolve(typed.ty) {
                 // Not open after all — a call, a field, anything `probe`
                 // cannot answer without a node — so this is solved exactly as
