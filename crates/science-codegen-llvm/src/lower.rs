@@ -6260,7 +6260,7 @@ impl<'a> Lowerer<'a> {
     /// A place becomes an `Inst::Load` — **a whole-local load, because
     /// `science_codegen::backend::Inst` has no projection** — and a constant
     /// becomes a constant. `expected` is the destination's layout, and for
-    /// every literal but `null` it is unused.
+    /// every literal but `null` and a string it is unused.
     ///
     /// **`null` needs `expected` to decide *which* absent value, because the
     /// two representations disagree about what a value even is.** A niched
@@ -6290,6 +6290,21 @@ impl<'a> Lowerer<'a> {
     /// is not already a `Rvalue::Use`'s whole destination — the same price
     /// `field_value` already pays for a string literal, and `mem2reg` turns
     /// the slot into nothing once optimisation is on.
+    ///
+    /// **Finding 30: a string literal has the identical shape and was still
+    /// refused here.** `field_value` already builds one into an invented
+    /// slot for a record field or a single-element `choice` payload; this
+    /// function refused the same literal outright everywhere else, which is
+    /// [`Lowerer::lower_variant`]'s *second and later* payload elements —
+    /// `ConfigError.Malformed("empty input", 1)`'s two-element case calls
+    /// [`Lowerer::typed_operand`] per element and not `field_value` — and any
+    /// `extern "C"` argument that names `lower_operand` directly. The fix is
+    /// the same one `null` already has: `self.temp`, [`Lowerer::build_string`]
+    /// into it, and a load of the whole `String` back out. The cost is the
+    /// same `alloca`/store/load `field_value` already pays, once more per
+    /// site this function is now asked from; `expected` is `None` only at a
+    /// condition or a `match` discriminant, neither of which types as
+    /// `String`, so the refusal that remains is not one any program reaches.
     fn lower_operand(
         &mut self,
         ctx: &mut BodyCtx,
@@ -6325,11 +6340,23 @@ impl<'a> Lowerer<'a> {
                          pointer at offset 0",
                     )),
                 },
-                Literal::Str(_) => Err(Unlowered::new(
-                    "a string literal read as a value rather than bound or printed: Decision 15 \
-                     makes it a `science_string_from_bytes` call, which needs a slot to own the \
-                     result and a `science_string_free` to pair with",
-                )),
+                // Finding 30, this function's own doc comment. The caller
+                // owns the result, exactly as `build_string`'s own doc says.
+                Literal::Str(text) => match expected {
+                    Some(layout) => {
+                        let layout = layout.clone();
+                        let slot = self.temp(ctx, layout);
+                        self.build_string(text, slot, insts)?;
+                        let dest = ctx.value();
+                        insts.push(ExtInst::Above(Inst::Load { dest, local: slot }));
+                        Ok(Operand::Value(dest))
+                    }
+                    None => Err(Unlowered::new(
+                        "a string literal read as a value with no expected layout to build it \
+                         at: every position that owns a `String` has one, so this is a caller \
+                         this crate has not met",
+                    )),
+                },
             },
             mir::Operand::Const(Constant::Unit) => Err(Unlowered::new("a unit value read")),
             // §1.7's capacity, and the one constant in the IR the program does

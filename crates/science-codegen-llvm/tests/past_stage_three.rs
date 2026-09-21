@@ -850,6 +850,48 @@ fn a_variant_with_two_owning_fields_frees_both() {
     assert!(frees >= 2, "expected a release of both owning fields, found {frees}:\n{text}");
 }
 
+/// **The same shape, with the two fields written as literals rather than
+/// `let`-bound locals.**
+///
+/// # What this is measuring
+///
+/// `a_variant_with_two_owning_fields_frees_both` above passes `Loaded(x, y)`
+/// two places, and a place was never the gap: `lower_operand`'s
+/// `mir::Operand::Copy | Move` arm has always loaded one. `Loaded("uno",
+/// "dos")` passes it two `mir::Operand::Const(Constant::Literal(Literal::
+/// Str))`s instead, and `lower_variant`'s multi-element loop asked
+/// `typed_operand` — and so `lower_operand` — for each one directly rather
+/// than through `field_value`, which is where a record field and a
+/// *single*-element payload already went. `lower_operand` refused every
+/// string literal reaching it outside that one caller, so this exact
+/// program — two literals, one `choice` — was refused with a message naming
+/// the literal and not the container, until `lower_operand`'s own
+/// `Literal::Str` arm was given the same repair `null`'s tagged arm already
+/// had: an invented slot, `build_string` into it, a load of the whole
+/// `String` back out.
+///
+/// # Why the assertions are what they are
+///
+/// The same two as the sibling test above, and for the same reasons: the
+/// exit status is `a_record_owns_the_string_literals_it_was_built_from`'s
+/// double-free-is-still-correct-stdout argument, and the free count is
+/// `a_variant_with_two_owning_fields_frees_both`'s own, run once more now
+/// that the two operands are literals and not places. Reading the payload
+/// back through `.length()`, the way that sibling test does, is not done
+/// here: a `match` arm that moves both of a `choice`'s owning fields needs
+/// Decision 26's drop flag on the arms that do not, which is
+/// [`crate::lower::Lowerer`]'s *"a conditionally moved value"* refusal and a
+/// different, already-known gap this test is not about.
+#[test]
+fn a_variant_with_two_string_literal_fields_builds_and_frees_both() {
+    let source = "choice Outcome:\n    Loaded(String, String)\n    Missing\n\n\
+                  def main():\n    let a be Loaded(\"uno\", \"dos\")\n    print(\"built\")\n";
+    assert_eq!(bytes("choice-two-literal-fields", source), "built\n");
+    let text = ir("choice-two-literal-fields-ir", source);
+    let frees = text.matches("@science_string_free(").count();
+    assert!(frees >= 2, "expected a release of both owning fields, found {frees}:\n{text}");
+}
+
 /// **A `choice` nested inside a record**, so the record's own glue —
 /// `emit_field_glue`'s loop — is what calls `Outcome.drop`, and not `main`
 /// directly.

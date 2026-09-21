@@ -666,8 +666,34 @@
 //!     this backend has never seen counts as a success. That is the honest
 //!     reading of every such number in this file.
 //!
+//! 30. **A string literal read as a value was still refused everywhere
+//!     [`lower::Lowerer::field_value`] does not reach it**, which is
+//!     `examples/09_absence_and_failure.science`'s `must_parse_port` —
+//!     `ConfigError.Malformed("empty input", 1)`, a two-element `choice`
+//!     payload — and any `extern "C"` argument narrow enough to name
+//!     [`lower::Lowerer::lower_operand`] directly. [`lower::Lowerer::field_value`]
+//!     already builds a literal into an invented slot for a record field and a
+//!     *single*-element payload; [`lower::Lowerer::lower_variant`]'s
+//!     multi-element loop called [`lower::Lowerer::typed_operand`] instead, one
+//!     construct short of the same repair.
+//!
+//!     **The fix is [`lower::Lowerer::store_null`]'s own shape, carried one
+//!     entry down.** [`lower::Lowerer::lower_operand`]'s `Literal::Str` arm now
+//!     does what its neighbour already did for a tagged `null` — `self.temp`,
+//!     [`lower::Lowerer::build_string`] into it, a load of the whole `String`
+//!     back out — so every caller of `lower_operand` and
+//!     [`lower::Lowerer::typed_operand`] gets the repair `field_value` had
+//!     alone, and `field_value`'s own special case is now one of two paths to
+//!     the same answer rather than the only one. The caller owns the result,
+//!     which is Decision 15's rule stated at every other position a literal
+//!     reaches, and releases it however that position already releases an
+//!     owned `String` — a `choice`'s drop glue over the tag, for this one.
+//!     `expected` is `None` only at a condition or a `match` discriminant,
+//!     neither of which types as `String`, so the refusal that remains is
+//!     one no program reaches.
+//!
 //! **And nine was itself found this way**, which is the point of the list: the
-//! numbering has grown nine times and each entry is something the notes did
+//! numbering has grown ten times now and each entry is something the notes did
 //! not say. Eleven, twelve, thirteen and eighteen were all found by *running* a
 //! program — none of them changes the IR in a way that looks wrong, and twelve
 //! and eighteen both pass the verifier, which is the pair that says opaque
