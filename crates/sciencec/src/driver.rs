@@ -289,6 +289,23 @@ impl Session {
             let instances = walk.instantiate(&mut set);
             (set, instances)
         };
+        // **The walk's own diagnostics, reported.**
+        //
+        // `MonoSet::diagnostics` has always been filled and until now nothing
+        // read it, which is this codebase's recurring failure and this time
+        // it hid a program that ran and printed the wrong answer: two
+        // definitions in two modules of one crate mangled to one symbol,
+        // `Mono::collect` detected it and pushed `SC0404`, `MonoSet`'s map
+        // kept one of the two, and both call sites reached whichever
+        // survived. The detection was right. Nobody was listening.
+        //
+        // Reported here because this is where the walk is run, and as an
+        // error that stops the build rather than a warning: a symbol
+        // collision means the program the user gets is not the program they
+        // wrote, which is the one failure mode worse than not building.
+        if !mono.diagnostics().is_empty() {
+            return Err(mono.diagnostics().to_vec());
+        }
         let request = science_codegen::driver::BuildRequest::new(vec![display_path(path)]);
         // Decision 28 makes the source order of the `library` clauses the link
         // order, so the blocks are collected in source order and handed over as

@@ -881,10 +881,21 @@ impl<'a> Mono<'a> {
                     // free here because the emitted map is keyed by the symbol
                     // — Decision 4's *"a single pass over one symbol table"*
                     // turns out to be no pass at all.
+                    // **`DefTable::path_of` and not `describe`**, and only
+                    // here. A description deliberately leaves the module out,
+                    // because it is compared byte-for-byte by
+                    // `the_file_id_does_not_reach_a_symbol` to prove the
+                    // file's stem reaches neither a symbol nor a dump. That
+                    // makes it exactly the wrong thing to print in *this*
+                    // message, where the two sides differ only by the module
+                    // they are in: it read "one is `value`, the other is
+                    // `value`". The full path is a diagnostic string, it
+                    // reaches no symbol, and it is the only part of the
+                    // message a reader can act on.
                     set.diagnostics.push(symbol_collision(
                         &symbol,
-                        &existing.description,
-                        &self.describe(&task.instance),
+                        &self.defs.path_of(existing.instance.def),
+                        &self.defs.path_of(task.instance.def),
                     ));
                 }
                 continue;
@@ -1675,11 +1686,33 @@ impl<'a> Mono<'a> {
         while let Some(id) = current {
             let entry = self.defs.get(id);
             match entry.kind {
-                // The crate root and the module carry the file, which is a path
-                // and therefore a reproducibility hazard — `package-manager.md`
-                // Decision 7 removes absolute paths from output and a module
-                // name derived from one is the same hazard. F0 has no `mod`
-                // declaration, so a module has no name the author wrote.
+                // **A module contributes nothing, and that is a tension
+                // rather than a settled rule.**
+                //
+                // Skipping it keeps the *file name* out of the symbol, which
+                // Decision 16 requires in its own words — a symbol must be
+                // *"deterministic from the source alone"* — and which
+                // `tests/mono.rs`'s `the_file_id_does_not_reach_a_symbol`
+                // pins by compiling one source as `a.science` and as
+                // `z.science` and demanding the same symbols. F0 has no
+                // `mod` declaration, so a module's name is its file's stem
+                // and nothing the author wrote.
+                //
+                // **What it costs is real and was found by a program that
+                // printed the wrong number.** `helper.value` and
+                // `deep.inner.value` in one crate both mangle to `_S5value`,
+                // `MonoSet`'s map is keyed by the symbol, and one silently
+                // replaced the other. Including the module fixes that and
+                // breaks the reproducibility test above; the two wants are
+                // in genuine conflict and picking between them is a
+                // `codegen-and-linking.md` decision, not a repair.
+                //
+                // Until it is made, the collision is **refused rather than
+                // miscompiled**: `Mono::collect` already detects it and
+                // pushes `SC0404`, and `sciencec`'s driver now reports what
+                // it pushes. A program that cannot be given two distinct
+                // symbols does not build, which is the honest failure while
+                // the naming question is open.
                 DefKind::Module => {}
                 _ => components.push(entry.name.clone()),
             }

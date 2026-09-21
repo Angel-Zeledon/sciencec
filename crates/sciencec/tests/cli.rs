@@ -824,6 +824,132 @@ fn a_module_imported_whole_is_reached_through_its_path() {
     sciencec(&["check", &entry]).succeeded().silent_stderr();
 }
 
+/// **A crate of three modules, two directories deep, built and run.**
+///
+/// # What this adds to the two tests above
+///
+/// They stop at `check`, and they are one level deep. So until this test the
+/// whole multi-file story was verified by the front end alone: nothing
+/// asserted that a definition in another file reaches codegen with a symbol,
+/// gets called, and returns the right answer.
+///
+/// # Why not `examples/17_modules.science`
+///
+/// Because `UNRESOLVED`'s comment above argues, correctly, that writing
+/// `examples/text/parser.science` *"would turn a syntax example into a
+/// fixture and hide the diagnostic this corpus is here to measure"*. That
+/// argument is about the **corpus**, which measures the language; it is not
+/// an argument against a fixture, which is what this is.
+///
+/// # The assertion
+///
+/// One number composed from all three modules, so a module silently not
+/// compiled shows up as a wrong total rather than as a link error. `7` is
+/// `1 + 2 + 4` — distinct powers of two, so any single missing contribution
+/// gives a different sum.
+///
+/// The three definitions have **different names**, and
+/// [`two_modules_defining_one_name_are_refused_rather_than_miscompiled`]
+/// below is why that is a deliberate limit of this test rather than an
+/// oversight.
+#[cfg(feature = "llvm")]
+#[test]
+fn a_crate_of_three_modules_two_levels_deep_builds_and_runs() {
+    let entry = scratch_crate(
+        "deep_crate",
+        &[
+            ("helper.science", "public def one() -> Int:\n    1\n"),
+            ("deep/inner.science", "public def two() -> Int:\n    2\n"),
+            ("deep/other.science", "public def four() -> Int:\n    4\n"),
+            (
+                "main.science",
+                "use helper\n\
+                 use deep.inner\n\
+                 use deep.other (four)\n\
+                 \n\
+                 def main():\n\
+                 \x20   print(helper.one() + deep.inner.two() + four())\n",
+            ),
+        ],
+    );
+    let run = sciencec(&["test", &entry]);
+    run.succeeded();
+    assert!(
+        run.stdout.contains('7'),
+        "three modules must each contribute: expected 7, got\n{}",
+        run.stdout
+    );
+}
+
+/// **Two modules defining one name are refused, and this test exists because
+/// they used to be miscompiled.**
+///
+/// # What the bug was
+///
+/// `helper.value` and `deep.inner.value` both mangle to `_S5value`, because
+/// `science_codegen::mono`'s `path_of` leaves a module out of a symbol —
+/// deliberately, so that a file's stem cannot reach one, which
+/// `tests/mono.rs`'s `the_file_id_does_not_reach_a_symbol` pins. `MonoSet`'s
+/// item map is keyed by the symbol, so the second definition **replaced** the
+/// first and both call sites reached whichever survived.
+///
+/// The program built, linked, ran, exited 0 and printed the wrong number:
+/// `let x be helper.value()` gave 1 and `let y be deep.inner.value()` gave 1
+/// as well. Nothing in the compiler said a word.
+///
+/// # Why it was silent, which is the part worth remembering
+///
+/// `Mono::collect` **had already detected it** and pushed `SC0404` onto
+/// `MonoSet::diagnostics`, with a comment calling the check *"free here"*.
+/// Nothing in the compiler ever read that field. The detection was right and
+/// nobody was listening — the same shape as `SC0403`, `science_codegen::mono`
+/// itself, and the other components this repository has found written,
+/// tested and unreachable.
+///
+/// # What this does not assert
+///
+/// That the refusal is the *right* answer. It is the honest one while a
+/// genuine conflict is open: a symbol must not depend on a file's name
+/// (Decision 16, *"deterministic from the source alone"*) and two same-named
+/// definitions in one crate must be distinguishable, and today a module's
+/// name is its file's stem so those two cannot both hold. Resolving it is a
+/// `codegen-and-linking.md` decision. When it is made, this test should
+/// become the program running and printing `3`.
+#[cfg(feature = "llvm")]
+#[test]
+fn two_modules_defining_one_name_are_refused_rather_than_miscompiled() {
+    let entry = scratch_crate(
+        "name_clash",
+        &[
+            ("helper.science", "public def value() -> Int:\n    1\n"),
+            ("deep/inner.science", "public def value() -> Int:\n    2\n"),
+            (
+                "main.science",
+                "use helper\n\
+                 use deep.inner\n\
+                 \n\
+                 def main():\n\
+                 \x20   print(helper.value() + deep.inner.value())\n",
+            ),
+        ],
+    );
+    let run = sciencec(&["build", &entry]);
+    run.failed();
+    assert!(
+        run.stderr.contains("SC0404"),
+        "a symbol collision must be reported, not miscompiled:\n{}",
+        run.stderr
+    );
+    // And the message names *which* two, which it could not before: the
+    // description a `MonoItem` carries leaves the module out on purpose, so
+    // both sides read `value`.
+    assert!(
+        run.stderr.contains("helper.value") && run.stderr.contains("deep.inner.value"),
+        "the collision must name both definitions:\n{}",
+        run.stderr
+    );
+}
+
 /// `script-mode.md` §4.3, from the binary: the same file, twice, with two
 /// answers.
 ///
