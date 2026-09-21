@@ -3176,7 +3176,13 @@ impl<'a> Lowerer<'a> {
             // `tests/mono.rs`'s `the_walk_and_the_backend_agree_on_a_plain_
             // symbol`, which compares them directly and fails the moment
             // either side moves.
-            let skip = entry.name.is_empty() || Some(current) == entry_module;
+            // The prelude's module is skipped for the same reason the
+            // entry's is: nobody writes `use core`, so its name is not
+            // source. `mono`'s `path_of` carries the argument and the cost
+            // of having got this wrong once.
+            let skip = entry.name.is_empty()
+                || Some(current) == entry_module
+                || (entry.kind == DefKind::Module && entry.is_builtin());
             if !skip {
                 parts.push(entry.name.clone());
             }

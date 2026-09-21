@@ -1740,6 +1740,23 @@ impl<'a> Mono<'a> {
                 // identical rule so the two manglings cannot drift.
                 DefKind::Module if Some(id) == self.entry_module => {}
                 DefKind::Module if entry.name.is_empty() => {}
+                // **The prelude's module contributes nothing either, by the
+                // same test.** The rule above admits a module because the
+                // author named it in a `use`; nobody writes `use core`. It
+                // is synthesised by `science-resolve`'s `builtins.rs`, which
+                // is what `is_builtin` asks.
+                //
+                // Left in, every type argument of every generic symbol grew
+                // a `core.` — `identity[F64]` mangled `EN8core.F640_` rather
+                // than `EN3F640_`, putting a `.` *inside* a length-prefixed
+                // component, which is not the scheme Decision 16 describes.
+                // That was an unintended consequence of admitting modules at
+                // all, found by reading a `nm` dump rather than by a test,
+                // and it is narrowed here rather than special-cased in the
+                // type encoder: it is one rule about which modules are
+                // nameable, and a type's path and a function's path should
+                // not answer it differently.
+                DefKind::Module if entry.is_builtin() => {}
                 _ => components.push(entry.name.clone()),
             }
             current = entry.parent;
