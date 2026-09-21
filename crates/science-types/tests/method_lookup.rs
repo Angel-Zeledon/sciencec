@@ -1079,18 +1079,17 @@ fn a_method_of_a_methodless_prelude_interface_is_silent() {
     .assert_clean();
 }
 
-/// `WHOLLY_OPEN`'s first entry. Nothing in `stdlib-core.md` or
-/// `collections-and-chains.md` says whether a call on a `Box of T` reaches
-/// `T`'s methods, and `examples/08_dyn_dispatch.science` writes three of them.
-/// Reporting would be refusing the corpus's own showcase on the strength of a
-/// note nobody has written.
-///
-/// **This is the test that fails the day the deref rule is decided**, which is
-/// the right outcome either way: if `Box` is transparent the call resolves, and
-/// if it is not this becomes a diagnostic with a real message.
+/// **Replaces `a_method_through_a_box_is_open_because_no_note_says_otherwise`.**
+/// That test's own comment named the day this would happen: *"if `Box` is
+/// transparent the call resolves"*. Decision 28 is that day — a `Box` is
+/// transparent to a method call whose receiver it only ever borrows — and this
+/// asserts the resolution itself rather than mere silence, through both of the
+/// shapes the corpus needs: an owned `Box[Doc]`
+/// (`examples/08_dyn_dispatch.science`'s `describe_boxed`) and a `&Box[Doc]`
+/// (`examples/18_ownership.science`'s pair of the same name).
 #[test]
-fn a_method_through_a_box_is_open_because_no_note_says_otherwise() {
-    check(
+fn a_shared_self_method_resolves_through_an_owned_box_and_a_borrowed_one() {
+    let checked = check(
         "\
 type Doc:
     title: String
@@ -1099,13 +1098,70 @@ Doc has:
     def summarize(self) -> Int:
         1
 
-def read(doc: Doc) -> Bool:
+def owned(doc: Doc) -> Int:
     let boxed be Box.new(doc)
-    let n be boxed.summarize()
+    boxed.summarize()
+
+def through_borrow(value: &Box[Doc]) -> Int:
+    value.summarize()
+",
+    );
+    checked.assert_clean();
+    let summarize = checked.def("summarize", DefKind::Fn);
+    for name in ["owned", "through_borrow"] {
+        let call = checked.find(name, |kind| matches!(kind, ExprKind::MethodCall { .. }));
+        let ExprKind::MethodCall { method, .. } = &checked.body(name).expr(call).kind else {
+            unreachable!("`find` only ever returns a `MethodCall` node here")
+        };
+        assert_eq!(*method, Some(summarize), "`{name}` should resolve to `Doc.summarize`");
+    }
+}
+
+/// Decision 28's boundary: a `mutable self` method through a `Box` is refused,
+/// and the message says the scope is deliberate rather than an oversight.
+#[test]
+fn a_mutable_self_method_through_a_box_is_refused_by_name() {
+    let checked = check(
+        "\
+type Counter:
+    value: Int
+
+Counter has:
+    def bump(mutable self):
+        self.value be self.value + 1
+
+def scratch(counter: Counter) -> Bool:
+    let boxed be Box.new(counter)
+    boxed.bump()
     true
 ",
-    )
-    .assert_clean();
+    );
+    assert_eq!(checked.codes(), vec![543]);
+    assert!(
+        checked.messages()[0].contains("bump"),
+        "the message should name the refused method: {:?}",
+        checked.messages()
+    );
+}
+
+/// The by-value half of the same boundary — `self: Self` through a `Box`.
+#[test]
+fn a_by_value_self_method_through_a_box_is_refused_too() {
+    let checked = check(
+        "\
+type Doc:
+    title: String
+
+Doc has:
+    def into_title(self: Self) -> String:
+        self.title
+
+def scratch(doc: Doc) -> String:
+    let boxed be Box.new(doc)
+    boxed.into_title()
+",
+    );
+    assert_eq!(checked.codes(), vec![543]);
 }
 
 /// The same judgement through a *type* receiver, which is the arm

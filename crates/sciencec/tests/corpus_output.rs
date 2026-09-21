@@ -191,6 +191,36 @@ fn every_example_that_builds_has_its_output_pinned() {
     );
 }
 
+/// **A pinned expectation is not a correct one, and one of them is wrong.**
+///
+/// `examples/18_ownership.stdout` line 13 reads `0` where the program
+/// computes `title.length() + body.length()` over two four-byte strings. It
+/// should read `8`.
+///
+/// Reduced to three lines, and the borrow kind is the whole of it:
+///
+/// ```science
+/// def via_shared(doc: &Doc) -> Int:      // 4, correct
+///     let t be &doc.title
+///     t.length()
+///
+/// def via_mut(doc: &mut Doc) -> Int:     // 0, wrong
+///     let t be &doc.title
+///     t.length()
+/// ```
+///
+/// A **shared** borrow of a field, taken through an **exclusive** borrow of
+/// the record, reads as an empty `String`. Reading the field directly is
+/// correct either way, and one borrow is enough — it is not about two
+/// disjoint ones, which is where it was first noticed.
+///
+/// Pinned rather than excluded, unlike `10_loops.science`'s nondeterministic
+/// address: this value is **stable**, so pinning it catches the next change
+/// to it, and the day it becomes `8` the blessing is the diff that says so.
+/// Excluding it would lose that. What the pin must not do is let a reader
+/// take the file for a record of correct output, which is why this comment
+/// is here and not in a commit message.
+///
 /// An expectation with no example beside it is a file nobody will ever read
 /// again, and it would go on passing forever.
 #[test]

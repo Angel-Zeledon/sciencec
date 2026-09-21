@@ -340,6 +340,100 @@ two crates implement `Display` for `Doc` differently and linking decides which
 runs. This is a package-level rule and `package-manager.md` should know about it;
 it does not.
 
+**Decision 28. A `Box` is transparent to a method call, scoped to a receiver
+the call only ever borrows.** `value.summarize()` resolves through a `Box[Doc]`
+or a `&Box[Doc]` exactly as it would through a `Doc`, and does so only when the
+method it finds takes `self` by shared borrow — never `mutable self`, never
+`self: Self`.
+
+*Reason.* Without it the construct is not merely inconvenient, it is
+**unwritable**: `Box has:` declares exactly one member, the associated function
+`Box.new`, and Science has no dereference operator (`AGENTS.md` §1). There is
+no other spelling in the language that reaches `T`'s methods through a
+`Box[T]`, and the corpus already needs five call sites across three files plus
+`examples/08_dyn_dispatch.science`'s `describe_boxed` and
+`examples/18_ownership.science`'s pair of the same name — an owned `Box[T]`
+parameter in one, a `&Box[T]` one in the other.
+
+**The borrow's transparency does not extend here, and this is a new rule
+rather than a wider reading of the old one.** `methods.rs`'s own account of why
+a borrow is transparent is that it *"has no nominal identity of its own to stop
+at"*; a `Box[T]` is an ordinary `TyKind::Named` with its own `DefId`, ahead
+of `T`'s, so the argument that licenses one does not license the other. Two
+things make the narrower rule sound anyway. First, a method call's `self`
+parameter is never kept past the call — the receiver is borrowed for the
+duration of one call expression and nothing here lets that borrow outlive it,
+so the question a wider transparency would raise (does a `Box` field, an
+`implements` block, or a bound solve see through it too) never has to be asked
+of *this* rule; every other reader of a receiver's head
+(`methods::head`, `Methods::implements`, `Methods::declares`,
+`science_codegen::mono`'s redirect of a default body's `self`) still stops at
+`Box`, unchanged. Second, the scope is drawn at exactly the boundary the corpus
+needs and no further: all five sites call a `self` method, never `mutable
+self`, never by value, so restricting the decision to a shared-borrow receiver
+costs nothing measured and leaves the harder question closed.
+
+**The harder question is moving out of a `Box` through the same transparency,
+and it is not decided here.** `crates/science-regions/src/deref_move.rs`
+refuses every `Move` whose place contains a `Deref`, unconditionally,
+*because* the alternative is a double free it cannot rule out any other way —
+right for a borrow, and a genuinely open question for an owned `Box`, whose
+payload this frame really does have the right to move. `mutable self` and
+`self: Self` through a `Box` are refused for the same reason a move through a
+borrow is refused: not because they are wrong, but because nothing has shown
+them safe, and `SC0543` says so by name rather than reporting the ordinary
+*"no such method"* on a method the index plainly contains.
+
+*Implementation, and what MIR needed.* `science_types::methods::receiver_head`
+peels a `Box` unconditionally when computing a method call's lookup key —
+`Methods::receiver_for_call` is the entry point, and it is used only by
+`check::BodyChecker::lookup`, never by `Methods::receiver`'s other five
+callers. The scope is enforced one step later, once a candidate is in hand:
+`methods::crosses_a_box` answers whether the receiver crossed a `Box` at all,
+and `check::BodyChecker::guard_box_receiver` refuses the call — `SC0543` — when
+it did and the candidate's `self_kind` is not `Shared`. The type level is not
+the whole of it: a receiver reached through a `Box` has to become a real
+address in MIR, and `science_mir::lower::Builder::box_deref` is a second
+`Projection::Deref`, inserted after the ordinary `auto_deref` for a borrow, one
+layer further in. It reuses the existing variant rather than adding one,
+because a `Box[T]` and a `borrowed T` are the same machine value — a bare
+pointer (`science_codegen::layout::CgTy::Ptr` gives `PtrKind::Box`,
+`PtrKind::Borrow` and `PtrKind::MutBorrow` the identical one-word
+representation), so `science-codegen-llvm`'s lowering of `Projection::Deref`,
+which only ever asks whether the base is pointer-shaped and never why, needs no
+change at all. Reusing the variant also means `deref_move.rs`'s blanket
+refusal of a `Move` through any `Deref` reaches a `Box` for free, which is
+exactly the conservative answer the paragraph above asks for and not an
+incidental one.
+
+**Rejected alternative: keep `Box` opaque and add an accessor.** A method —
+`Box.get(self) -> borrowed T`, or a field the corpus does not have a spelling
+for — would reach the payload without a new transparency rule. It was rejected
+because it does not fit the language as declared: `Box has:` is the complete
+member list `stdlib-core.md` gives, adding to it is the note's decision and not
+a type-checker's, and every one of the five corpus call sites would still need
+rewriting to call it — `value.summarize()` becoming `value.get().summarize()`
+at every site, forever, for a value the language already treats as owning
+exactly one `T`. The cost is not a one-time migration; it is a permanent
+second spelling for "call a method" that exists nowhere else a `Box` is used
+and that a reader has to learn is `Box`-specific. Transparency costs one new
+rule, stated once, with a scope narrow enough to defend; an accessor costs a
+standing tax on every call site the corpus already has.
+
+**Cost.** Field access and interface-implementation questions through a `Box`
+stay exactly as undecided as before — `boxed.title` and `Doc: Summarize`
+questions about a `Box[Doc]` are untouched, because `methods::head` (unlike
+`receiver_head`) does not peel a `Box`, and this decision does not ask it to. A
+method that returns a borrow derived from `self` — `def peek(self) -> borrowed
+String: self.title`, called through a `Box` — gets a region-checked borrow
+whose outlives obligation is not tied to the `Box`'s own storage:
+`science-regions`' per-type walk (`regions.rs`'s §1) assigns a region position
+only at a `TyKind::Borrowed`, and a `Box` is `TyKind::Named`, so nothing here
+gives it one. No corpus site returns a borrow through a `Box`, so nothing
+exercises the gap today; closing it is either giving `Box` its own position in
+that walk or narrowing this decision further, to a method whose return type
+does not mention `Self`, and it is named here rather than risked silently.
+
 ### 6.2 `any Error` became common overnight
 
 The error model made boxed trait objects appear in the return position of most

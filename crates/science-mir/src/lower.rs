@@ -464,6 +464,7 @@ use science_diagnostics::Span;
 use science_lexer::IntBase;
 use science_resolve::hir::{BinaryOp, DefId, DefKind, DefTable, Literal, SelfKind};
 use science_types::alias::Aliases;
+use science_types::assign::Coercions;
 use science_types::items::Declarations;
 use science_types::thir::{self, Arm, ExprId, ExprKind, PatId, PatKind, StmtKind};
 use science_types::ty::{GenericArg, Ty, TyKind, Types};
@@ -699,12 +700,20 @@ struct Builder<'a, 'ctx> {
     /// closure can be lowered from inside another closure's body (a nested
     /// `giving`) before either of theirs is known to be worth keeping.
     closures: Vec<Body>,
+    /// The crate's `Box`, found once by [`Coercions::of`] the way
+    /// `science-types`' own `assign.rs` finds it — `None` for a table built by
+    /// hand with no prelude. [`Builder::box_deref`] is the one reader:
+    /// Decision 28's transparency reaches MIR as one more layer to peel off a
+    /// method call's receiver, and this is the id that says which
+    /// [`TyKind::Named`] that layer is.
+    box_type: Option<DefId>,
 }
 
 impl<'a, 'ctx> Builder<'a, 'ctx> {
     fn new(context: &'a mut Context<'ctx>, thir: &'a thir::Body) -> Builder<'a, 'ctx> {
         let span = thir.block(thir.root()).span;
         let bool_ty = context.decls.prelude().ty(context.types, "Bool").unwrap_or(Ty::ERROR);
+        let box_type = Coercions::of(context.defs).box_type();
         Builder {
             context,
             thir,
@@ -718,6 +727,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             span,
             bool_ty,
             closures: Vec::new(),
+            box_type,
         }
     }
 
@@ -2393,6 +2403,13 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 // had to be read off a program's stdout.
                 let place = self.auto_deref(place);
                 let place = self.deref_to_hole(place, receiver);
+                // Decision 28. `science-types`' `check::BodyChecker::lookup`
+                // resolved this call by peeling through a `Box` as well as a
+                // borrow, so the address this receiver borrows is one layer
+                // further in than `auto_deref` — which only ever peels a
+                // `TyKind::Borrowed` — goes on its own. `box_deref` is that one
+                // more step.
+                let place = self.box_deref(place);
                 let ty = self.place_ty(&place);
                 let borrowed = self.context.types.borrowed(mutable, ty);
                 let temp = self.temp(borrowed, span, block);
@@ -4292,6 +4309,75 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             let TyKind::Borrowed { inner, .. } = *self.context.types.kind(ty) else {
                 return place;
             };
+            place = place.project(Projection::Deref { ty: inner });
+        }
+    }
+
+    /// [`Builder::auto_deref`]'s Decision 28 sibling: inserts a `Deref` for
+    /// every `Box` between a place and its payload.
+    ///
+    /// **`lower_method_call`'s Shared/Mutable arm is the one caller**, run
+    /// after [`Builder::auto_deref`] and [`Builder::deref_to_hole`] have taken
+    /// the place as far as *those* peel — which is never through a `Box`,
+    /// because [`TyKind::Named`] is not [`TyKind::Borrowed`] and neither
+    /// function's loop matches it. `science-types`' `check::BodyChecker::lookup`
+    /// already resolved the call by peeling the identical layer at the type
+    /// level (`methods::receiver_head`'s own note), and by the time this runs
+    /// the checker has also refused every receiver this function sees that is
+    /// not a shared-self call (`check::BodyChecker::guard_box_receiver`) — so
+    /// a place reached here is a value nothing downstream may write to or move
+    /// out of, only borrow.
+    ///
+    /// **Why this reuses [`Projection::Deref`] rather than a projection of its
+    /// own.** A `Box[T]` and a `borrowed T`/`mutable borrowed T` are the
+    /// identical machine value — a bare pointer to `T`
+    /// (`science_codegen::layout::CgTy::Ptr` gives `PtrKind::Box`,
+    /// `PtrKind::Borrow` and `PtrKind::MutBorrow` the same one-word
+    /// representation) — so the projection that turns a borrow's pointer into
+    /// its referent's place is representation-correct for a `Box`'s pointer
+    /// too, and `science-codegen-llvm`'s lowering of `Projection::Deref` never
+    /// asks *why* the base is pointer-shaped, only that it is. Reusing the
+    /// variant also means `science-regions`' `deref_move.rs` — which refuses
+    /// every `Move` whose place contains a `Deref`, regardless of what the
+    /// base was — reaches a `Box` for free. That refusal is a second,
+    /// structural line behind the type checker's, not a decision of its own:
+    /// moving a value out of a `Box` through this same transparency is the
+    /// open question Decision 28 leaves exactly where it leaves the identical
+    /// question for a borrow, and reusing `Deref` inherits that answer instead
+    /// of getting a permissive one by omission.
+    ///
+    /// **One payload shape stops the loop rather than taking it: an interface
+    /// object.** `Box[any Summarize]` does not lower to a pointer *to* a
+    /// two-word value the way `Box[Doc]` lowers to a pointer to a record —
+    /// `science_codegen::descriptor::needs_drop`'s own comment says the two
+    /// words plainly: *"`Box of any I` and `borrowed any I` are both
+    /// `CgTy::Interface` — two words, same layout, same ABI class, same
+    /// niche"*. A `Box` around an interface object **is** the fat pointer,
+    /// not a box holding one, so the place this receiver already denotes is
+    /// exactly the `borrowed any Summarize` a shared-self call needs, and
+    /// projecting a `Deref` onto it hands the interface method a load of the
+    /// data pointer's first word in place of the vtable it also carries.
+    /// This was found by the ratchet `corpus_output.rs` exists for: peeling
+    /// unconditionally passed every unit test in this crate — none of them
+    /// builds and runs a `Box` of an interface object end to end — and only
+    /// failed where `examples/08_dyn_dispatch.science` did, with
+    /// `SC0400`'s *"a dereference of a value that is not a pointer"*, which is
+    /// this exact case caught rather than miscompiled.
+    fn box_deref(&mut self, mut place: Place) -> Place {
+        loop {
+            let Some(boxed) = self.box_type else { return place };
+            let written = self.place_ty(&place);
+            let ty = self.revealed(written);
+            let TyKind::Named { def, args } = self.context.types.kind(ty) else { return place };
+            if *def != boxed || args.len() != 1 {
+                return place;
+            }
+            let GenericArg::Type(inner) = &args[0] else { return place };
+            let inner = *inner;
+            let revealed_inner = self.revealed(inner);
+            if matches!(self.context.types.kind(revealed_inner), TyKind::Object { .. }) {
+                return place;
+            }
             place = place.project(Projection::Deref { ty: inner });
         }
     }

@@ -970,6 +970,39 @@ pub mod codes {
     /// [`science_codegen`'s `SC0405`]: ../../science_codegen/diagnostics/fn.not_a_constant.html
     pub const CONST_INITIALISER_NOT_A_LITERAL: Code = Code(542);
 
+    // --- the box receiver, `SC0543` ---------------------------------------
+
+    /// A `mutable self` or by-value method reached through a `Box`.
+    ///
+    /// **Decision 28's boundary, and the diagnostic that keeps it from looking
+    /// like an oversight.** The decision makes a `Box` transparent to a method
+    /// call so that `value.summarize()` through a `Box[Doc]` or a `&Box[Doc]`
+    /// resolves at all — `Box has:` declares one member, `Box.new`, and there
+    /// is no dereference operator to reach `Doc`'s methods any other way — and
+    /// it draws that transparency at a receiver the call only ever borrows.
+    /// `methods::crosses_a_box` is the fact this code is conditioned on, and
+    /// [`crate::methods::Candidate::self_kind`] not being
+    /// [`science_resolve::hir::SelfKind::Shared`] is the other half: together
+    /// they mean the method that resolved would have to write to the box's
+    /// payload or move it out to be called at all.
+    ///
+    /// **Why this is a refusal and not silence.** The lookup that found the
+    /// candidate is the same lookup a `self` method through the identical
+    /// `Box` succeeds at, so a program that writes `mutable self` where the
+    /// receiver is a `Box` is not a name the checker cannot see — it is a
+    /// call this decision has a specific, stated reason to leave unresolved:
+    /// moving a value out of a `Box` through the same transparency is the
+    /// question `crates/science-regions/src/deref_move.rs` leaves open for a
+    /// borrow, and a write has the same shape one degree of freedom over.
+    /// Reporting nothing here would look identical to the day nobody had
+    /// thought about it; this code is the record that somebody had.
+    ///
+    /// **Not [`NO_SUCH_METHOD`]**, although both refuse a call. That code
+    /// means the type has no method of the name; this method exists, is
+    /// found by the same index, and is refused only because of *how* it takes
+    /// its receiver.
+    pub const BOX_RECEIVER_NOT_SHARED: Code = Code(543);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -1005,6 +1038,7 @@ pub mod codes {
         NOT_AN_INTERFACE_METHOD,
         MISMATCHED_IMPLEMENTATION,
         CONST_INITIALISER_NOT_A_LITERAL,
+        BOX_RECEIVER_NOT_SHARED,
     ];
 
     #[cfg(test)]

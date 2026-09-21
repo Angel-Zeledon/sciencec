@@ -327,7 +327,7 @@ use std::collections::HashMap;
 use science_resolve::hir::{self, DefId, DefTable, Res, SelfKind};
 
 use crate::items::Declarations;
-use crate::ty::{Ty, TyKind, Types};
+use crate::ty::{GenericArg, Ty, TyKind, Types};
 
 /// Where a candidate came from — the second half of the ambiguity message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -487,11 +487,47 @@ impl Methods {
     /// has no method `len`"* would be a false positive on every correct program
     /// that calls one. The callers of [`Found::None`] report; the callers of
     /// `None` stay silent.
+    ///
+    /// **Does not see through a `Box`, and that is deliberate.** Decision 28
+    /// gives a `Box` transparency only at a *method call*, and this function
+    /// answers for every other caller of a receiver's head — a field read, an
+    /// operator's implementor, `science_codegen::mono`'s redirect of a default
+    /// body's `self`. [`Methods::receiver_for_call`] is the one this crate's
+    /// own `check::BodyChecker::lookup` uses instead, and the difference
+    /// between the two is the whole of what Decision 28 costs: widening this
+    /// function would let a field access or a bound solve reach a payload the
+    /// decision never reasoned about.
     pub fn receiver(&self, defs: &DefTable, types: &Types, ty: Ty) -> Option<DefId> {
-        let def = receiver_head(types, ty)?;
+        let def = receiver_head(types, ty, None)?;
         // §8: a builtin head is answerable exactly when the prelude declared
         // something on it. `Never`, `ffi.Span` and the C scalars still reach
         // here with nothing behind them, and for those the old answer stands.
+        if defs.get(def).is_builtin() && !self.index.contains_key(&def) {
+            return None;
+        }
+        Some(def)
+    }
+
+    /// [`Methods::receiver`], plus Decision 28's one case: a `Box` a method
+    /// call's own shared borrow crosses. `check::BodyChecker::lookup` is the
+    /// only caller — see [`Methods::receiver`]'s own note for why every other
+    /// caller keeps asking the narrower question.
+    ///
+    /// `box_type` is the crate's `Box`, found once by `assign::Coercions::of`
+    /// and threaded in rather than re-scanned, for [`Coercions`]'s own reason:
+    /// a table built by hand — every test in this crate that does not go
+    /// through the resolver — has no prelude in it, and `None` here answers
+    /// exactly as [`Methods::receiver`] already does for that table.
+    ///
+    /// [`Coercions`]: crate::assign::Coercions
+    pub fn receiver_for_call(
+        &self,
+        defs: &DefTable,
+        types: &Types,
+        ty: Ty,
+        box_type: Option<DefId>,
+    ) -> Option<DefId> {
+        let def = receiver_head(types, ty, box_type)?;
         if defs.get(def).is_builtin() && !self.index.contains_key(&def) {
             return None;
         }
@@ -753,6 +789,15 @@ impl Methods {
 /// **A borrow is transparent** and everything else is not: a tuple, a closure,
 /// a type parameter, `Self.Item`. `None` from here is *"no definition to hang a
 /// method off"*, and each caller decides what that means.
+///
+/// **A `Box` stays opaque here, and Decision 28 does not touch this
+/// function.** This is `Methods::implements`'s and `Methods::declares`'s head
+/// — *"does the crate declare `T implements I:`"* — and a `Box of T`
+/// implementing an interface is not the same fact as `T` implementing one;
+/// nothing has decided that a `Box` inherits its payload's implementations,
+/// and `is_applied` below makes the identical choice for the same reason one
+/// question over. [`receiver_head`] is where a *method call*'s narrower
+/// question is answered differently.
 fn head(types: &Types, ty: Ty) -> Option<DefId> {
     match types.kind(ty) {
         TyKind::Named { def, .. } => Some(*def),
@@ -774,14 +819,83 @@ fn is_applied(types: &Types, ty: Ty) -> bool {
     }
 }
 
-/// [`head`], plus the one case that is a head for a *lookup* and not for the
-/// implements question: inside an interface's own default body, `Self` is
-/// itself and the methods in scope are that interface's.
-fn receiver_head(types: &Types, ty: Ty) -> Option<DefId> {
+/// [`head`], plus two cases that are a head for a *lookup* and not for the
+/// implements question.
+///
+/// **The first is older: inside an interface's own default body, `Self` is
+/// itself** and the methods in scope are that interface's.
+///
+/// **The second is Decision 28. A `Box` a method call's own shared borrow
+/// crosses is transparent, exactly as a borrow already is.** `value.summarize()`
+/// where `value: Box[Doc]` or `value: &Box[Doc]` has no other way to reach
+/// `Doc`'s methods: `Box has:` declares exactly one member, the associated
+/// function `Box.new`, and Science has no dereference operator (`AGENTS.md`
+/// §1) to write instead. Five corpus sites and `examples/08_dyn_dispatch.science`
+/// and `examples/18_ownership.science` call a `self` method this way and had no
+/// other spelling available — the construct is not merely convenient, it is the
+/// only one the language offers.
+///
+/// **This does not extend the borrow's argument, and says so rather than
+/// implying it.** A borrow is transparent because — this file's own words,
+/// above — it *"has no nominal identity of its own to stop at"*. A `Box of T`
+/// is an ordinary [`TyKind::Named`] with its own [`DefId`], ahead of `T`'s, so
+/// this is a new rule and not a wider reading of the old one. The reason it is
+/// taken anyway is narrower than the borrow's: a method call's receiver is
+/// never *kept* past the call in a way that would ask what a `Box` field or an
+/// interface implementation should do — `check::BodyChecker::lookup` is the
+/// only caller of the peeling this function does, and every other question
+/// about a `Box`'s head still goes through [`head`], unchanged.
+///
+/// **Peeling happens whether or not the candidate this eventually finds may
+/// use it.** The scope Decision 28 actually draws — a shared-borrow receiver,
+/// never `mutable self`, never by value — is not a fact about the *type*, it
+/// is a fact about the *method found*, so it cannot be checked here. This
+/// function answers *"what would `T`'s methods be, if reaching them here is
+/// legal at all"*, and [`crosses_a_box`] is the second question
+/// `check::BodyChecker::lookup` asks once a candidate is in hand, to refuse a
+/// `mutable self` or by-value method the transparency does not cover.
+fn receiver_head(types: &Types, ty: Ty, box_type: Option<DefId>) -> Option<DefId> {
     match types.kind(ty) {
         TyKind::SelfType { owner } => Some(*owner),
-        TyKind::Borrowed { inner, .. } => receiver_head(types, *inner),
+        TyKind::Borrowed { inner, .. } => receiver_head(types, *inner, box_type),
+        TyKind::Named { def, args } if Some(*def) == box_type && args.len() == 1 => {
+            match &args[0] {
+                GenericArg::Type(inner) => receiver_head(types, *inner, box_type),
+                // A const or an already-erroneous argument: not a type to peel
+                // into, and `head` below answers `Box` itself rather than
+                // nothing, exactly as it would for any other one-argument
+                // `TyKind::Named` this crate cannot look inside.
+                _ => head(types, ty),
+            }
+        }
         _ => head(types, ty),
+    }
+}
+
+/// Whether reaching `ty`'s head as a method-call receiver crosses a `Box` —
+/// Decision 28's boundary, peeled the same way [`receiver_head`] peels a
+/// borrow and by the same `box_type`.
+///
+/// **Why this is a second function rather than a bit [`receiver_head`]
+/// returns.** The two questions have different callers and different
+/// lifetimes: this crate builds the lookup key once per call and asks this
+/// question once a candidate has been found, and folding the two into one
+/// return value would make every caller of [`receiver_head`] — there is
+/// exactly one, [`Methods::receiver_for_call`] — carry a flag it never reads.
+///
+/// `check::BodyChecker::lookup` is this function's only caller: a candidate
+/// found through a crossed `Box` whose `self_kind` is not
+/// [`SelfKind::Shared`] is refused, with a message that says the scope is
+/// deliberate — `deref_move.rs` refuses every `Move` through a `Deref`
+/// regardless of what the base was, which is right for a borrow and is the
+/// reason a move of a `Box`'s payload through this same transparency is not
+/// decided here either.
+pub fn crosses_a_box(types: &Types, ty: Ty, box_type: Option<DefId>) -> bool {
+    let Some(boxed) = box_type else { return false };
+    match types.kind(ty) {
+        TyKind::Borrowed { inner, .. } => crosses_a_box(types, *inner, Some(boxed)),
+        TyKind::Named { def, args } => *def == boxed && args.len() == 1,
+        _ => false,
     }
 }
 

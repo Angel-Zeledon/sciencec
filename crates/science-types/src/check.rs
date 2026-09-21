@@ -412,7 +412,7 @@ use crate::codes;
 use crate::diagnostics;
 use crate::infer::{InferTy, InferVar, Inference};
 use crate::items::{named, Declarations, Named, ParamBound, Signature};
-use crate::methods::{Candidate, Form, Found};
+use crate::methods::{self, Candidate, Form, Found};
 use crate::narrow::{self, Fact, Facts};
 use crate::normal::AtomOrder;
 use crate::ownership;
@@ -4455,7 +4455,17 @@ impl<'a> BodyChecker<'a> {
         args: &[hir::Arg],
         self_ty: Ty,
     ) -> Callee {
-        let Some(key) = self.decls.methods().receiver(self.defs, self.types, receiver) else {
+        // Decision 28 is a *value* receiver's transparency — `Box.new(x)`'s
+        // own bare-type receiver and `(Box of Doc).new(x)`'s written one are
+        // `Form::Type`, reaching `Box`'s own associated function, and peeling
+        // through to `Doc` here would resolve that call against `Doc`'s
+        // surface instead of `Box`'s. No corpus site writes the instantiated
+        // form, but `Box.new` staying reachable is not something to leave to
+        // that absence.
+        let box_type = if form == Form::Value { self.coercions.box_type() } else { None };
+        let Some(key) =
+            self.decls.methods().receiver_for_call(self.defs, self.types, receiver, box_type)
+        else {
             // `methods`'s §1 has no head for a bare type parameter — there is
             // no definition to hang a method off until monomorphisation picks
             // one. `methods`'s §5 names the piece that was missing to answer
@@ -4473,7 +4483,7 @@ impl<'a> BodyChecker<'a> {
             }
             return Callee::Missing(None);
         };
-        match self.decls.methods().lookup(key, &name.name, form) {
+        let callee = match self.decls.methods().lookup(key, &name.name, form) {
             Found::One(candidate) => Callee::Found(candidate, None),
             Found::Ambiguous(candidates) => {
                 let diagnostic = self.ambiguous(receiver, name, &candidates);
@@ -4505,7 +4515,43 @@ impl<'a> BodyChecker<'a> {
                 }
                 Callee::Missing(None)
             }
+        };
+        self.guard_box_receiver(receiver, name, box_type, callee)
+    }
+
+    /// Decision 28's other half: a candidate [`lookup`](Self::lookup) resolved
+    /// through a crossed `Box`, refused unless it only ever borrows.
+    ///
+    /// **Why this runs after the lookup and not before.** Whether a receiver
+    /// crosses a `Box` is a fact about the *type*
+    /// ([`methods::crosses_a_box`]); whether that is a problem is a fact about
+    /// the *method found* — its `self_kind` — and the two only meet once
+    /// [`Methods::lookup`](crate::methods::Methods::lookup) has answered.
+    /// [`methods::receiver_head`]'s own note says the same thing from the
+    /// producing side: the key is peeled unconditionally, and this is where
+    /// the scope Decision 28 actually draws is enforced.
+    ///
+    /// **The message says the scope is deliberate.** A silent
+    /// [`Callee::Missing`] here would read as the checker not having found
+    /// the method at all, which is not true and is not what happened — the
+    /// method is right there in the index, found by the identical lookup a
+    /// `self` method through the same `Box` succeeds at. `SC0543` names the
+    /// method, names the receiver, and says why the transparency stops here.
+    fn guard_box_receiver(
+        &mut self,
+        receiver: Ty,
+        name: &hir::Ident,
+        box_type: Option<DefId>,
+        callee: Callee,
+    ) -> Callee {
+        let Callee::Found(candidate, supplied) = callee else { return callee };
+        if candidate.self_kind != Some(SelfKind::Shared)
+            && methods::crosses_a_box(self.types, receiver, box_type)
+        {
+            self.diagnostics.push(box_receiver_not_shared(name.span, &name.name, &candidate));
+            return Callee::Missing(supplied);
         }
+        Callee::Found(candidate, supplied)
     }
 
     /// `value.method()` where `value`'s type is a bare `T`, bound in this
@@ -7424,6 +7470,30 @@ fn no_such_method(span: Span, name: &str, ty: &str) -> Diagnostic {
             "method lookup finds the inherent methods of the type and the methods of the \
              interfaces it implements, and neither has this name",
         )
+}
+
+/// `SC0543` — Decision 28's boundary. `check::BodyChecker::guard_box_receiver`
+/// is the only caller.
+fn box_receiver_not_shared(span: Span, name: &str, candidate: &Candidate) -> Diagnostic {
+    let takes = match candidate.self_kind {
+        Some(SelfKind::Mutable) => "takes `mutable self`",
+        Some(SelfKind::Value) => "takes `self` by value",
+        _ => "does not take `self` by a shared borrow",
+    };
+    Diagnostic::error(
+        codes::BOX_RECEIVER_NOT_SHARED,
+        format!("`{name}` cannot be called through a `Box` here"),
+    )
+    .with_label(Label::primary(span, format!("`{name}` {takes}")))
+    .with_note(
+        "a `Box` is transparent to a method call only when the call borrows its receiver — a \
+         `mutable self` or by-value method would have to write to the box's payload or move it \
+         out, and that scope is left open on purpose rather than by oversight",
+    )
+    .with_note(
+        "moving a value out of a borrow through the identical kind of indirection is refused \
+         for the same reason (`SC0303`); call this method on the unboxed value instead",
+    )
 }
 
 /// `SC0531`, the second road to it: implementations of one interface that the

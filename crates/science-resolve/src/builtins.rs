@@ -1293,18 +1293,23 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
 /// is the first and is a list of types, because there is no name to list when
 /// the question itself is unanswered.
 ///
-/// - **`Box`.** Nothing in `stdlib-core.md` or `collections-and-chains.md` says
-///   whether a method call on a `Box[T]` reaches `T`'s methods. Both notes
-///   mention `Box` only as a bare name in a list of Level 1 types; neither
-///   gives it a `has:` block, a `get`, or a dereference rule. The corpus writes
-///   `boxed.summarize()` on a `Box of any Summarize` in three files — including
-///   `08_dyn_dispatch.science`, which exists to demonstrate exactly that — so
-///   the calls are attested and the rule that makes them legal is not written.
-///   Reporting `SC0532` on them would be refusing the corpus's own showcase on
-///   the strength of a note nobody has written; inventing the transparency here
-///   would be taking a language decision in passing, which is what the
-///   methodless-interface comment above refuses one construct over. Silence is
-///   the third answer and the honest one.
+/// - **`Box` is closed, and this is the row that used to hold it open.**
+///   Nothing in `stdlib-core.md` or `collections-and-chains.md` ever said
+///   whether a method call on a `Box[T]` reaches `T`'s methods — both notes
+///   mention `Box` only as a bare name in a list of Level 1 types — and that
+///   was the whole of the silence's justification: not a decision, an absence
+///   of one. `type-checking-and-mir.md`'s Decision 28 is that decision now:
+///   *"a `Box` is transparent to a method call, scoped to a receiver reached
+///   by shared borrow."* `science_types::methods::crosses_a_box` and
+///   `receiver_head`'s peeling are where it is implemented, and a name this
+///   predicate would have excused is now either found — the ordinary case,
+///   `Doc`'s method through `Box[Doc]` — or reported as `Doc`'s own `SC0532`,
+///   because the receiver `name_is_answerable` judges is `Doc`'s head and not
+///   `Box`'s. **`Box` stays a name nothing lists in [`UNWRITTEN`]** — the
+///   predicate this row fed is asked about `Box` at all only when the
+///   decision's own peeling did not run (`Box` reached at `Form::Type`, or
+///   with no prelude to find the definition in), and in both of those a
+///   `Box`-headed call was never Decision 28's to answer either.
 ///
 /// - **`Chars`.** Its whole surface is `Iterate`'s thirty-eight provided
 ///   methods (`collections-and-chains.md` §1.4), and the prelude declares
@@ -1312,11 +1317,11 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
 ///   would be transcribing the vocabulary into the wrong table; the type is
 ///   open until `Iterate` carries them.
 ///
-/// **What it costs is `SC0532` on these two heads**, which is the blanket
-/// silence this whole change is narrowing, surviving in two named places
-/// instead of everywhere. Each closes on its own note, and each has a test in
-/// `science-types/tests/method_lookup.rs` that fails when it does.
-const WHOLLY_OPEN: &[&str] = &["Box", "Chars"];
+/// **What it costs is `SC0532` on this one remaining head**, which is the
+/// blanket silence this whole change is narrowing, surviving in one named
+/// place instead of everywhere. It closes on its own note, and
+/// `science-types/tests/method_lookup.rs` has a test that fails when it does.
+const WHOLLY_OPEN: &[&str] = &["Chars"];
 
 /// Whether *"this prelude type has no method of that name"* is a statement
 /// about the program or about [`BLOCKS`].
