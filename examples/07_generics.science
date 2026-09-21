@@ -94,8 +94,16 @@ def merge[A, B](left: &A,
     out
 
 # A bound in the parameter list and a `where` clause at once.
+#
+# `largest` is honestly `(&T)?` — an empty array has no largest element —
+# so its result is narrowed the same way `largest`'s own body narrows
+# `best`, rather than guarded by `items.is_empty()` and returned as `&T`
+# unchecked: a compiler that cannot see through generics one layer past its
+# own root-level match used to leave `largest(items)` untyped here, and
+# `&T` agreed with whatever that untyped hole turned out to be.
 def rank[T: Ord](items: &Array[T], fallback: &T) -> &T where T: Clone:
-    if items.is_empty(): fallback else: largest(items)
+    let found be largest(items)
+    if found?: found else: fallback
 
 # Several type parameters, each used in a different position. Two or more
 # parameters take parentheses, exactly as two or more arguments do (§4.3).

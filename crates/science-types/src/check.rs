@@ -203,10 +203,20 @@
 //!   against real parameters, and the call has the method's return type. So
 //!   does `text.length()`: `builtins.rs` declares a prelude surface now, and
 //!   `methods`' §8 is what changed. What is left is a **name the prelude has
-//!   not transcribed** — `text.slice(0..4)` — and a **type parameter**, because
-//!   a method reached through a bound is generic in a way monomorphisation has
-//!   to resolve (`methods`'s §5). Both leave `method: None` and [`Ty::ERROR`],
-//!   and neither reports.
+//!   not transcribed** — `text.slice(0..4)`. Both leave `method: None` and
+//!   [`Ty::ERROR`], and neither reports.
+//!
+//!   **A type parameter used to be a third row here and is not any more.**
+//!   `x.summarize()` where `T: Summarize` resolves through
+//!   `BodyChecker::lookup_via_bound`, over the bound interface's own index —
+//!   `methods`'s §5, and `science_codegen::mono`'s `Mono::redirect_self_call`
+//!   is the monomorphiser that was missing, doing per-instantiation for a
+//!   bound exactly what it already did for a default body's `self.other()`.
+//!   **What is still a hole, and for a different reason**: a bound at an
+//!   interface with no declared method — `T: Clone` — has no candidate to
+//!   find anywhere in the crate, `Clone` being one of the fourteen §8's
+//!   `builtins.rs` keeps methodless. That is not this call site's absence to
+//!   close.
 //!
 //!   **One case that used to be here is not any more**, and it is the one
 //!   whose price this list understated: several implementations of one
@@ -236,14 +246,23 @@
 //!   Operators on the prelude's numeric primitives *are* checked structurally,
 //!   because those do not go through an implementation.
 //! - **A generic call's type arguments.** Explicit ones are used. An omitted
-//!   one is solved only where a parameter's type is the generic parameter
-//!   itself or a borrow of it — `BodyChecker::root_param`, which is the
-//!   root-level match `infer`'s §2 admits plus the one indirection §6.3 makes
-//!   invisible at the call. Anything deeper — `xs: Array of T` against an
-//!   `Array of Int` — leaves `T` unsolved, and an unsolved parameter becomes
-//!   [`Ty::ERROR`] so that the arguments are still checked against something
-//!   that agrees. The general answer needs the nested representation `infer`'s
-//!   §2 describes and does not build.
+//!   one is solved where a parameter's type is the generic parameter itself
+//!   or a borrow of it — `BodyChecker::root_param`, the root-level match
+//!   `infer`'s §2 admits plus the one indirection §6.3 makes invisible at the
+//!   call — **and one layer past that**, where the parameter's type is a
+//!   compound mentioning the parameter somewhere inside it: `xs: Array[T]`
+//!   against an `Array[Int]`, or `pair: Pair[A, B]` against a `Pair[Int,
+//!   F64]`. `BodyChecker::structural_solve` is that walk, run only when
+//!   `root_param` finds no root-level match; it nests, so `Pair[Pair[A, B],
+//!   C]` solves in one pass, and it reads a still-open argument's own
+//!   [`PendingNamed`] or tuple shape rather than the nested representation
+//!   `infer`'s §2 describes and does not build — that representation turned
+//!   out not to be needed for this. What is still left is a parameter behind
+//!   a compound whose own argument is *itself* an unrecorded open class — an
+//!   unsuffixed literal nested inside another compound with nothing at this
+//!   call solving the outer shape from the inside out — which leaves `T`
+//!   unsolved, and an unsolved parameter becomes [`Ty::ERROR`] so that the
+//!   arguments are still checked against something that agrees.
 //! - **`Iterate`, and therefore `for`, is narrowed rather than closed.** The
 //!   prelude declares `interface Iterate:` with `type Item` and
 //!   `def next(mutable self) -> Self.Item?`, and `Chars implements Iterate:`
@@ -346,10 +365,21 @@
 //!
 //! - **A parameter this call did not solve.** §6 leaves an unsolved one
 //!   [`Ty::ERROR`], and `ty`'s §5 makes that agree with whatever it meets, so
-//!   the bound is skipped rather than reported against a hole. `largest(items)`
-//!   inside `rank of T: Ord` is the corpus case: the parameter is `items:
-//!   borrowed Array of T`, which is deeper than a root-level match, so `T` is
-//!   unsolved and nothing is claimed about it.
+//!   the bound is skipped rather than reported against a hole.
+//!   `BodyChecker::structural_solve` closed most of this bullet's old
+//!   territory — `deep[T: Summarize](items: &Array[T])` called against an
+//!   `&Array[I64]` now solves `T := I64` one layer past the root, and the
+//!   bound is checked and reported exactly as it would be at a root-level
+//!   parameter. `largest(items)` inside `rank of T: Ord` still reports
+//!   nothing, but no longer for this reason: `T` solves too, to `rank`'s own
+//!   `T` rather than to `Ty::ERROR`, and the bound is skipped because that is
+//!   a type parameter with no head and `Ord` is a builtin interface —
+//!   `Methods::answers_for`'s own refusal (§7), the same one that already
+//!   admits `the_callers_own_bounded_parameter_is_passed_on_without_a_report`.
+//!   What is left of this bullet is a parameter behind a compound whose own
+//!   argument is an *unrecorded* open class — an unsuffixed literal nested
+//!   inside another compound, with nothing solving the outer shape from the
+//!   inside out — which is still `Ty::ERROR` and still unreported.
 //! - **A record literal and a variant's payload.** Both instantiate a *type's*
 //!   generics — `BodyChecker::instantiate_record` and
 //!   `BodyChecker::instantiate_payload` — and neither is checked here, because
@@ -381,7 +411,7 @@ use crate::assign::{assignable, Coercion, Coercions, Site};
 use crate::codes;
 use crate::diagnostics;
 use crate::infer::{InferTy, InferVar, Inference};
-use crate::items::{named, Declarations, Named, Signature};
+use crate::items::{named, Declarations, Named, ParamBound, Signature};
 use crate::methods::{Candidate, Form, Found};
 use crate::narrow::{self, Fact, Facts};
 use crate::normal::AtomOrder;
@@ -479,6 +509,7 @@ pub fn check_fn(
 
     let signature = decls.signature(function.def);
     let ret = signature.map(|sig| sig.ret).unwrap_or(Ty::UNIT);
+    let bounds = signature.map(|sig| sig.bounds.clone()).unwrap_or_default();
 
     let checker = BodyChecker {
         defs: &krate.defs,
@@ -499,6 +530,7 @@ pub fn check_fn(
         pending_named: Vec::new(),
         pending_borrows: Vec::new(),
         numeric: Vec::new(),
+        bounds,
         self_subst,
         ret,
         diverged: false,
@@ -677,6 +709,23 @@ struct PendingNamed {
     deferred: HashMap<DefId, InferVar>,
 }
 
+/// What a still-open [`InferTy::Var`] stands for, read by
+/// [`BodyChecker::open_var`] for [`BodyChecker::structural_solve`] — the same
+/// two tables [`BodyChecker::deferred_field`] already reads to answer a field
+/// one layer early, asked here of any variable rather than only the one a
+/// base expression happens to carry.
+enum OpenVar {
+    /// An open class with no shape recorded underneath it: an unsuffixed
+    /// literal, most often. [`BodyChecker::structural_solve`] cannot see
+    /// inside this one — that is the hole `infer`'s §2 states and does not
+    /// close — so a pattern that is still compound here is left unsolved.
+    Plain,
+    /// The [`PendingNamed`] at this index in [`BodyChecker::pending_named`].
+    Named(usize),
+    /// The tuple recorded at this index in [`BodyChecker::pending_tuples`].
+    Tuple(usize),
+}
+
 /// The checker for one body. §3: one of these per body, dropped with it.
 /// `SC0304` — a write to a binding that was never declared `mutable`.
 ///
@@ -804,6 +853,10 @@ struct BodyChecker<'a> {
     /// straight to a slot that needs the wrapper.
     pending_borrows: Vec<(ExprId, bool, InferVar)>,
     numeric: Vec<(InferVar, Numeric)>,
+    /// What this body's own generic parameters must implement — the callee's
+    /// half of §8's check, read here for a different question: `lookup_via_bound`
+    /// is what a bound *buys* the body rather than what it costs a caller.
+    bounds: Vec<ParamBound>,
     self_subst: Substitution,
     ret: Ty,
     /// Whether control has already left on this path.
@@ -2308,12 +2361,50 @@ impl<'a> BodyChecker<'a> {
         let mut solved: HashMap<DefId, Ty> = HashMap::new();
         let mut presynthesised: HashMap<usize, Typed> = HashMap::new();
         let mut deferred: HashMap<DefId, InferVar> = HashMap::new();
+        let type_params: HashSet<DefId> = generics
+            .iter()
+            .filter(|param| matches!(param.kind, hir::GenericParamKind::Type { .. }))
+            .map(|param| param.def)
+            .collect();
         for (at, init) in fields.iter().enumerate() {
             let Some(field) = init.field.def_id() else { continue };
             let Some((_, field_ty)) = declared.iter().find(|(id, _)| *id == field) else {
                 continue;
             };
-            let TyKind::Param { def } = *self.types.kind(*field_ty) else { continue };
+            let field_ty = *field_ty;
+            // `inner: Wrap[T]` — a compound *field* — is one layer past the
+            // root-level match below; `BodyChecker::structural_solve` is the
+            // same walk `instantiate_call` runs for a compound *parameter*.
+            let def = match *self.types.kind(field_ty) {
+                TyKind::Param { def } => def,
+                _ => {
+                    if self.mentions_generic(field_ty, &type_params) {
+                        let resolved = match self.probe(&init.value) {
+                            Some(ty) => InferTy::Known(ty),
+                            None if matches!(
+                                &init.value.kind,
+                                hir::ExprKind::Literal(Literal::Null)
+                            ) =>
+                            {
+                                continue;
+                            }
+                            None => {
+                                let typed = self.synth(&init.value);
+                                presynthesised.insert(at, typed);
+                                typed.ty
+                            }
+                        };
+                        self.structural_solve(
+                            field_ty,
+                            resolved,
+                            &type_params,
+                            &mut solved,
+                            &mut deferred,
+                        );
+                    }
+                    continue;
+                }
+            };
             if solved.contains_key(&def) || !generics.iter().any(|p| p.def == def) {
                 continue;
             }
@@ -2783,12 +2874,56 @@ impl<'a> BodyChecker<'a> {
         }
         let mut presynthesised: HashMap<usize, Typed> = HashMap::new();
         let mut deferred: HashMap<DefId, InferVar> = HashMap::new();
+        let type_params: HashSet<DefId> = declared
+            .iter()
+            .filter(|param| matches!(param.kind, hir::GenericParamKind::Type { .. }))
+            .map(|param| param.def)
+            .collect();
         // A parameter whose type *is* the generic parameter is solved by the
-        // argument's synthesised type. Anything deeper is §6's hole.
+        // argument's synthesised type, at the root. One compound layer in —
+        // `Pair[A, B]`, `Array[T]` — is `BodyChecker::structural_solve`,
+        // asked only when `root_param` finds no root-level match and the
+        // parameter's declared type mentions one of `declared` somewhere
+        // inside it; anything neither reaches is still §6's hole.
         for (at, arg) in args.iter().enumerate() {
             let Some(index) = order[at] else { continue };
             let Some((_, param_ty)) = params.get(index) else { continue };
-            let Some((def, borrowed)) = self.root_param(*param_ty) else { continue };
+            let (def, borrowed) = match self.root_param(*param_ty) {
+                Some(pair) => pair,
+                None => {
+                    if self.mentions_generic(*param_ty, &type_params) {
+                        let resolved = match self.probe(&arg.value) {
+                            Some(ty) => InferTy::Known(ty),
+                            None if matches!(
+                                &arg.value.kind,
+                                hir::ExprKind::Literal(Literal::Null)
+                            ) =>
+                            {
+                                continue;
+                            }
+                            None => {
+                                let typed = match presupplied
+                                    .and_then(|supplied| supplied.get(at))
+                                    .copied()
+                                {
+                                    Some(typed) => typed,
+                                    None => self.synth(&arg.value),
+                                };
+                                presynthesised.insert(at, typed);
+                                typed.ty
+                            }
+                        };
+                        self.structural_solve(
+                            *param_ty,
+                            resolved,
+                            &type_params,
+                            &mut solved,
+                            &mut deferred,
+                        );
+                    }
+                    continue;
+                }
+            };
             if solved.contains_key(&def) || !declared.iter().any(|p| p.def == def) {
                 continue;
             }
@@ -3021,9 +3156,11 @@ impl<'a> BodyChecker<'a> {
     /// difference is §6.3 rather than a depth: a borrow is the spelling the
     /// language *tells* the author to leave out at the call, so `value:
     /// borrowed T` and `value: T` are one parameter written two ways and an
-    /// argument solves `T` in both. `Array of T` is a different type, and
-    /// solving through it needs the nested representation `infer`'s §2
-    /// describes and does not build.
+    /// argument solves `T` in both. `Array of T` is a different type — a
+    /// compound one layer deeper — and this function still says `None` about
+    /// it; [`BodyChecker::structural_solve`] is where a caller of this one
+    /// goes next, when the parameter's type is not this match but still
+    /// mentions a generic somewhere inside it.
     ///
     /// **What it changes beyond the solve** is what §8's bound check can see.
     /// `def describe of T: Summarize(value: borrowed T)` is how the corpus
@@ -3044,6 +3181,248 @@ impl<'a> BodyChecker<'a> {
                 _ => None,
             },
             _ => None,
+        }
+    }
+
+    /// Whether `ty` mentions any parameter in `generics` anywhere inside it —
+    /// not only at the root [`BodyChecker::root_param`] matches.
+    ///
+    /// The gate in front of [`BodyChecker::structural_solve`]: a parameter
+    /// type that mentions none of this call's or record's own generics needs
+    /// nothing brought forward early, and the ordinary `self.check` against
+    /// the substituted type is exactly as good as it always was.
+    fn mentions_generic(&self, ty: Ty, generics: &HashSet<DefId>) -> bool {
+        match self.types.kind(ty).clone() {
+            TyKind::Param { def } => generics.contains(&def),
+            TyKind::Borrowed { inner, .. } | TyKind::Nullable(inner) => {
+                self.mentions_generic(inner, generics)
+            }
+            TyKind::Named { args, .. } => args.iter().any(|arg| match arg {
+                GenericArg::Type(inner) => self.mentions_generic(*inner, generics),
+                GenericArg::Const(_) | GenericArg::Error => false,
+            }),
+            TyKind::Tuple(elements) => {
+                elements.iter().any(|element| self.mentions_generic(*element, generics))
+            }
+            TyKind::Closure { params, ret } => {
+                params.iter().any(|param| self.mentions_generic(*param, generics))
+                    || self.mentions_generic(ret, generics)
+            }
+            TyKind::Error
+            | TyKind::Unit
+            | TyKind::Object { .. }
+            | TyKind::SelfType { .. }
+            | TyKind::SelfAssoc { .. } => false,
+        }
+    }
+
+    /// Which of [`BodyChecker::pending_named`] or [`BodyChecker::
+    /// pending_tuples`] a still-open variable stands for, compressing
+    /// through [`Inference::find`] the same way [`BodyChecker::
+    /// deferred_field`]'s identical lookup already does — generalised to be
+    /// asked about any variable rather than only the placeholder a base
+    /// expression happens to carry.
+    fn open_var(&mut self, var: InferVar) -> OpenVar {
+        let root = self.infer.find(var);
+        if let Some(at) =
+            self.pending_named.iter().position(|entry| self.infer.find(entry.var) == root)
+        {
+            return OpenVar::Named(at);
+        }
+        if let Some(at) =
+            self.pending_tuples.iter().position(|(_, v, _)| self.infer.find(*v) == root)
+        {
+            return OpenVar::Tuple(at);
+        }
+        OpenVar::Plain
+    }
+
+    /// Solves one generic parameter at a leaf [`TyKind::Param`]
+    /// [`BodyChecker::structural_solve`] reached, exactly the rule
+    /// [`BodyChecker::instantiate_call`] already applies at the root: a known
+    /// type is entered into `solved`, settling anything `deferred` already
+    /// promised for it; a still-open variable joins `deferred`, unified with
+    /// whatever was there before so one parameter never answers to two
+    /// variables that might later disagree.
+    fn solve_leaf(
+        &mut self,
+        def: DefId,
+        resolved: InferTy,
+        solved: &mut HashMap<DefId, Ty>,
+        deferred: &mut HashMap<DefId, InferVar>,
+    ) {
+        let resolved = match resolved {
+            InferTy::Var(var) => self.infer.resolve(InferTy::Var(var)),
+            known => known,
+        };
+        match resolved {
+            InferTy::Known(ty) => {
+                if let Some(&existing) = deferred.get(&def) {
+                    let _ = self.infer.bind(self.types, existing, ty);
+                }
+                solved.entry(def).or_insert(ty);
+            }
+            InferTy::Var(var) => {
+                if solved.contains_key(&def) {
+                    return;
+                }
+                match deferred.get(&def).copied() {
+                    Some(existing) => {
+                        let _ =
+                            self.infer.unify(self.types, InferTy::Var(existing), InferTy::Var(var));
+                    }
+                    None => {
+                        deferred.insert(def, var);
+                    }
+                }
+            }
+        }
+    }
+
+    /// One level past [`BodyChecker::root_param`]: matches `pattern` — a
+    /// parameter's or a field's declared type — against `resolved`, the
+    /// argument's own type, walking [`TyKind::Named`], [`TyKind::Tuple`] and
+    /// [`TyKind::Borrowed`] in lockstep, structurally, the way every other
+    /// equality check in this crate already walks a [`Ty`] — rather than
+    /// stopping at the first layer §6 states as the limit. `Pair[A, B]`
+    /// against `Pair[Int, F64]` solves both `A` and `B` at once, and
+    /// `Pair[Pair[A, B], C]` nests with no second pass, because each
+    /// recursive call is the same match one layer in.
+    ///
+    /// **The nested representation `infer`'s §2 admits and does not build
+    /// turns out not to be needed for this.** A still-open argument is read
+    /// through [`BodyChecker::open_var`] instead, against
+    /// [`BodyChecker::pending_named`] or [`BodyChecker::pending_tuples`] — the
+    /// compound's own shape, already recorded outside [`Inference`] for
+    /// exactly this reason (`PendingNamed`'s own head comment). What the file
+    /// still lacks is a hole *inside* one *un*recorded open class — an
+    /// unsuffixed literal nested inside another compound, with nothing at
+    /// this call solving the outer shape from the inside out — and this
+    /// function does not manufacture one: [`OpenVar::Plain`] leaves the
+    /// parameter under it unsolved, exactly as an ordinary unsolved parameter
+    /// already is.
+    ///
+    /// **Shapes that disagree are left alone, not reported.** A mismatched
+    /// `def` or a different arity means the real argument does not fit the
+    /// parameter at all, and that is `self.check`'s diagnostic once the
+    /// substituted parameter type reaches it — every parameter under the
+    /// mismatch stays out of `solved` and `deferred`, closes to
+    /// [`Ty::ERROR`] the same way an unreachable parameter already does, and
+    /// reporting here as well would be the same mistake reported twice.
+    fn structural_solve(
+        &mut self,
+        pattern: Ty,
+        resolved: InferTy,
+        generics: &HashSet<DefId>,
+        solved: &mut HashMap<DefId, Ty>,
+        deferred: &mut HashMap<DefId, InferVar>,
+    ) {
+        let resolved = match resolved {
+            InferTy::Var(var) => self.infer.resolve(InferTy::Var(var)),
+            known => known,
+        };
+        match self.types.kind(pattern).clone() {
+            TyKind::Param { def } if generics.contains(&def) => {
+                self.solve_leaf(def, resolved, solved, deferred);
+            }
+            TyKind::Named { def: pdef, args: pargs } => match resolved {
+                InferTy::Known(ty) => {
+                    let TyKind::Named { def: cdef, args: cargs } = self.types.kind(ty).clone()
+                    else {
+                        return;
+                    };
+                    if cdef != pdef || cargs.len() != pargs.len() {
+                        return;
+                    }
+                    for (pat_arg, conc_arg) in pargs.iter().zip(cargs.iter()) {
+                        if let (GenericArg::Type(pat_ty), GenericArg::Type(conc_ty)) =
+                            (pat_arg, conc_arg)
+                        {
+                            self.structural_solve(
+                                *pat_ty,
+                                InferTy::Known(*conc_ty),
+                                generics,
+                                solved,
+                                deferred,
+                            );
+                        }
+                    }
+                }
+                InferTy::Var(var) => {
+                    let OpenVar::Named(at) = self.open_var(var) else { return };
+                    let entry = &self.pending_named[at];
+                    if entry.def != pdef || entry.args.len() != pargs.len() {
+                        return;
+                    }
+                    let entries = entry.args.clone();
+                    for (pat_arg, conc_arg) in pargs.iter().zip(entries) {
+                        let GenericArg::Type(pat_ty) = pat_arg else { continue };
+                        let conc_resolved = match conc_arg {
+                            PendingArg::Fixed(GenericArg::Type(t)) => InferTy::Known(t),
+                            PendingArg::Open(v) => InferTy::Var(v),
+                            PendingArg::Fixed(GenericArg::Const(_) | GenericArg::Error) => {
+                                continue
+                            }
+                        };
+                        self.structural_solve(*pat_ty, conc_resolved, generics, solved, deferred);
+                    }
+                }
+            },
+            TyKind::Tuple(pelems) => match resolved {
+                InferTy::Known(ty) => {
+                    let TyKind::Tuple(celems) = self.types.kind(ty).clone() else { return };
+                    if celems.len() != pelems.len() {
+                        return;
+                    }
+                    for (pat_ty, conc_ty) in pelems.iter().zip(celems.iter()) {
+                        self.structural_solve(
+                            *pat_ty,
+                            InferTy::Known(*conc_ty),
+                            generics,
+                            solved,
+                            deferred,
+                        );
+                    }
+                }
+                InferTy::Var(var) => {
+                    let OpenVar::Tuple(at) = self.open_var(var) else { return };
+                    let parts = self.pending_tuples[at].2.clone();
+                    if parts.len() != pelems.len() {
+                        return;
+                    }
+                    for (pat_ty, part) in pelems.iter().zip(parts) {
+                        self.structural_solve(*pat_ty, part, generics, solved, deferred);
+                    }
+                }
+            },
+            TyKind::Borrowed { inner: p_inner, .. } => {
+                // An open var behind a borrow is not attempted: no corpus
+                // site needs it, and peeling a shape that is not a `Ty` yet
+                // would guess at whether the eventual binding takes a borrow,
+                // which is `BodyChecker::auto_borrow`'s question and not
+                // this one's.
+                if let InferTy::Known(ty) = resolved {
+                    match *self.types.kind(ty) {
+                        TyKind::Borrowed { inner: c_inner, .. } => self.structural_solve(
+                            p_inner,
+                            InferTy::Known(c_inner),
+                            generics,
+                            solved,
+                            deferred,
+                        ),
+                        // Not borrowed on the concrete side: the same peel
+                        // §6.3 makes ordinary at the root, one layer in.
+                        _ => self.structural_solve(
+                            p_inner,
+                            InferTy::Known(ty),
+                            generics,
+                            solved,
+                            deferred,
+                        ),
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -3172,9 +3551,46 @@ impl<'a> BodyChecker<'a> {
         let mut solved: HashMap<DefId, Ty> = HashMap::new();
         let mut presynthesised: HashMap<usize, Typed> = HashMap::new();
         let mut deferred: HashMap<DefId, InferVar> = HashMap::new();
+        let type_params: HashSet<DefId> = declared
+            .iter()
+            .filter(|param| matches!(param.kind, hir::GenericParamKind::Type { .. }))
+            .map(|param| param.def)
+            .collect();
         for (at, arg) in args.iter().enumerate() {
-            let Some(param_ty) = payload.get(at) else { continue };
-            let TyKind::Param { def } = *self.types.kind(*param_ty) else { continue };
+            let Some(param_ty) = payload.get(at).copied() else { continue };
+            // `Node(Box[Tree[T]], Box[Tree[T]])` — a compound *payload* — is
+            // the same one-layer-in walk `instantiate_record`'s field loop
+            // just gained.
+            let def = match *self.types.kind(param_ty) {
+                TyKind::Param { def } => def,
+                _ => {
+                    if self.mentions_generic(param_ty, &type_params) {
+                        let resolved = match self.probe(&arg.value) {
+                            Some(ty) => InferTy::Known(ty),
+                            None if matches!(
+                                &arg.value.kind,
+                                hir::ExprKind::Literal(Literal::Null)
+                            ) =>
+                            {
+                                continue;
+                            }
+                            None => {
+                                let typed = self.synth(&arg.value);
+                                presynthesised.insert(at, typed);
+                                typed.ty
+                            }
+                        };
+                        self.structural_solve(
+                            param_ty,
+                            resolved,
+                            &type_params,
+                            &mut solved,
+                            &mut deferred,
+                        );
+                    }
+                    continue;
+                }
+            };
             if solved.contains_key(&def) || !declared.iter().any(|p| p.def == def) {
                 continue;
             }
@@ -4040,6 +4456,21 @@ impl<'a> BodyChecker<'a> {
         self_ty: Ty,
     ) -> Callee {
         let Some(key) = self.decls.methods().receiver(self.defs, self.types, receiver) else {
+            // `methods`'s §1 has no head for a bare type parameter — there is
+            // no definition to hang a method off until monomorphisation picks
+            // one. `methods`'s §5 names the piece that was missing to answer
+            // it anyway: the parameter's own `where T: I` bounds, each naming
+            // an interface whose *own* method index this crate already builds
+            // for a different reason (`Methods::interface`, for a default
+            // body's `self.other()`). `lookup_via_bound` asks that index the
+            // same question this call is asking, and only a type parameter
+            // reaches it, because every other headless receiver — a tuple, a
+            // closure, `Self.Item` — has no bound to have one.
+            if let TyKind::Param { def: param } = *self.types.kind(self_ty) {
+                if let Some(callee) = self.lookup_via_bound(param, name, form) {
+                    return callee;
+                }
+            }
             return Callee::Missing(None);
         };
         match self.decls.methods().lookup(key, &name.name, form) {
@@ -4073,6 +4504,72 @@ impl<'a> BodyChecker<'a> {
                     self.diagnostics.push(no_such_method(name.span, &name.name, &rendered));
                 }
                 Callee::Missing(None)
+            }
+        }
+    }
+
+    /// `value.method()` where `value`'s type is a bare `T`, bound in this
+    /// body's own signature — `describe[T](x: &T) where T: Summarize`, at
+    /// `x.summarize()`.
+    ///
+    /// **Every bound is tried and the results are merged**, because a
+    /// parameter may carry more than one — `T: Summarize + Render` — and the
+    /// name may belong to either. `Methods::interface` already keys each
+    /// interface's own declared methods (required and default alike) on the
+    /// interface's own definition, for the reason a default body's
+    /// `self.other()` needs it: `Self` inside `Summarize` is `Summarize`'s
+    /// own `Self`, resolved once and specialised later. A bound asks the
+    /// identical question from outside the interface rather than from
+    /// within it, and the index does not know the difference — so this reads
+    /// it rather than building a second one.
+    ///
+    /// **`Self` is bound to the parameter, not to a concrete type.**
+    /// `BodyChecker::receiver_self_ty` already returns a bare [`TyKind::Param`]
+    /// unchanged, exactly as it would for any other headless receiver, so the
+    /// candidate's `-> Self` types as `-> T` here and the call carries a real
+    /// [`DefId`] for the first time: `science_codegen::mono`'s
+    /// `Mono::redirect_self_call` is what turns that `DefId` into the
+    /// receiver's *concrete* implementation, one instantiation at a time,
+    /// exactly as it already does for a default body called through `self`.
+    ///
+    /// **Two interfaces naming the same method is Decision 11's ambiguity
+    /// again**, one level removed — neither is chosen by anything at this
+    /// call, so an answer here would be a priority ordering wearing a bound's
+    /// clothes. Untested today: every bound in the corpus contributes a
+    /// disjoint name.
+    ///
+    /// **What this does not close.** A bound interface with no declared
+    /// method at all — `methods.rs`'s own accounting of *"the fourteen stay
+    /// methodless"* in `builtins.rs`, `Clone` among them — has nothing here
+    /// to find, and `value.clone()` under `T: Clone` returns `None` from this
+    /// function exactly as it did before it existed. That is `methods`'s §5
+    /// once more, not a hole this function leaves: there is no candidate
+    /// anywhere in the crate to record, because no note gives `Clone` a
+    /// method signature to transcribe. Closing it is `builtins.rs`'s
+    /// decision to reopen, not this one's to route around.
+    fn lookup_via_bound(&mut self, param: DefId, name: &hir::Ident, form: Form) -> Option<Callee> {
+        let mut found: Vec<Candidate> = Vec::new();
+        for bound in self.bounds.clone() {
+            if bound.param != param {
+                continue;
+            }
+            if let Found::One(candidate) =
+                self.decls.methods().lookup(bound.interface, &name.name, form)
+            {
+                found.push(candidate);
+            }
+        }
+        match found.len() {
+            0 => None,
+            1 => Some(Callee::Found(found.remove(0), None)),
+            _ => {
+                // `self.ambiguous` renders the receiver it is given; the
+                // parameter itself is what there is to show, since no
+                // concrete type is known at this call.
+                let param_ty = self.types.param(param);
+                let diagnostic = self.ambiguous(param_ty, name, &found);
+                self.diagnostics.push(diagnostic);
+                Some(Callee::Missing(None))
             }
         }
     }

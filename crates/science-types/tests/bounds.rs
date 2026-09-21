@@ -261,20 +261,29 @@ def outer[U: Summarize](value: &U) -> String:
 }
 
 #[test]
-fn a_bound_on_a_parameter_this_call_did_not_solve_is_not_reported() {
-    // §6 leaves an unsolved parameter `Ty::ERROR`, which agrees with whatever
-    // it meets; reporting against it would blame a call for a hole the checker
-    // left. `largest(items)` in `examples/07_generics.science` is this case.
-    program(
-        "\
+fn a_bound_on_a_parameter_solved_one_layer_past_the_root_is_reported() {
+    // Retires `a_bound_on_a_parameter_this_call_did_not_solve_is_not_reported`,
+    // which pinned the opposite of this: `items: &Array[T]` used to be
+    // deeper than `BodyChecker::root_param` could reach, so `T` stayed
+    // unsolved and the bound went unchecked from a hole in the checker
+    // rather than from anything true about the program. `BodyChecker::
+    // structural_solve` now walks one layer past the root the same way
+    // `instantiate_return`'s own compound match already does for a return
+    // type, `T` solves to `I64` from `xs`'s declared type, and `I64` does
+    // not implement `Summarize` — the same fact `a_type_that_does_not_
+    // implement_the_interface_is_reported` already pins at the root.
+    assert_eq!(
+        codes(
+            "\
 def deep[T: Summarize](items: &Array[T]) -> I64:
     1
 
 def a(xs: &Array[I64]) -> I64:
     deep(xs)
-",
-    )
-    .assert_clean();
+"
+        ),
+        vec![534]
+    );
 }
 
 // --- the unanswerable half, and its cost ---------------------------------

@@ -102,15 +102,31 @@
 //! one it gives — rename one, or drop one of the implementations. A qualified
 //! call syntax is a language change and belongs to the note, not here.
 //!
-//! **A method on a type parameter.** `def largest of T(a: T) -> T` with `T`
-//! bounded by an interface should be able to call that interface's methods on
-//! `a`. The bound is in `hir::GenericParam` and the machinery is this file's
-//! [`Found`] over the bound's interface instead of over the receiver's head —
-//! but the *substitution* is not: `Self` would have to become the type
-//! parameter and the call is then generic in a way monomorphisation has to
-//! resolve, and there is no monomorphiser. Refused here rather than half-done,
-//! and [`Methods::receiver`] returns `None` for a parameter so that the call
-//! is silent rather than wrong.
+//! **A method on a type parameter — closed, now that there is a
+//! monomorphiser.** `def largest[T](a: T) -> T` with `T` bounded by an
+//! interface can call that interface's methods on `a`: [`Methods::receiver`]
+//! still returns `None` for a parameter, exactly as it always did — this file
+//! keeps to its own §1, *"one map from a head definition"*, and a parameter
+//! has none — but `crate::check`'s `BodyChecker::lookup_via_bound` is the
+//! caller that no longer stops there. It reads the parameter's own bounds off
+//! `Signature::bounds` and asks this file's [`Methods::lookup`] over the
+//! bound *interface's* definition instead of over a receiver's head, which is
+//! the same table [`Methods::interface`] already builds for a default body's
+//! `self.other()`. What was missing was never the table; it was a
+//! monomorphiser able to specialise the answer per instantiation, and
+//! `science_codegen::mono`'s `Mono::redirect_self_call` is that — built for a
+//! default body called through `self`, and asked the identical question from
+//! one call site further out. `Self` becomes the type parameter itself at the
+//! call — [`BodyChecker::receiver_self_ty`] already leaves a bare
+//! [`TyKind::Param`] alone — and becomes the receiver's concrete type once
+//! `redirect_self_call` re-resolves it at each instantiation.
+//!
+//! **What is still refused, and it is a different absence.** A bound at an
+//! interface declared with *no method at all* — `Clone` among the fourteen §8
+//! keeps methodless — has nothing for `lookup_via_bound` to find, because
+//! there is no candidate anywhere in the crate for it to read: `value.clone()`
+//! under `T: Clone` is silent for the reason it always was, and closing it is
+//! `builtins.rs`'s decision about `Clone`'s method, not a gap in this lookup.
 //!
 //! # 6. One interface at several arguments is selection, not overloading
 //!

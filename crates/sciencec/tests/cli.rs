@@ -1711,6 +1711,15 @@ fn a_failing_assert_with_no_message_reports_the_default() {
 /// constructs_builds_and_prints_the_right_answer` below is where the parts
 /// this backend can lower are built and executed for real, and its own
 /// comment says which parts of this list are missing and why.
+///
+/// **`biggest` is printed through `?`, not directly.** `largest`'s
+/// `items: &Array[T]` used to be one layer past `BodyChecker::root_param`'s
+/// reach, so `T` went unsolved and `biggest` type-checked as `Ty::ERROR`
+/// wherever it was used, including bare inside the interpolation below.
+/// `BodyChecker::structural_solve` now solves it honestly to `(&Int)?`, and
+/// Decision 6 says a nullable does not implement `Display` until it is
+/// narrowed — so the presence test this file already writes for `measured`
+/// in `examples/04_enums.science` is what `biggest` needs here too.
 #[test]
 fn every_construct_the_bracket_revision_added_checks_clean() {
     let file = scratch(
@@ -1771,7 +1780,7 @@ def main():
     let mutable doc be Doc(title: \"hello\")
     rename(&mut doc)
 
-    print(f\"{biggest} {xs.length()} {doubled.length()} {scores.length()} {grid.length()} {buckets.length()} {doc.shout()} {doc.summarize()}\")
+    print(f\"{biggest?} {xs.length()} {doubled.length()} {scores.length()} {grid.length()} {buckets.length()} {doc.shout()} {doc.summarize()}\")
 ",
     );
     let run = sciencec(&["check", &file]);
