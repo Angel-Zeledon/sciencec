@@ -532,7 +532,15 @@ fn the_boundary_is_where_it_says_it_is() {
         // because `science-types`' `ExprKind::Tuple` arm reads each element's
         // type before inference has defaulted it. `tests/past_stage_three.rs`
         // is the account and the programs.
-        ("tuple", "let t be (1, 2)\nprint(\"x\")\n", "`TyKind::Error`"),
+        // **The `tuple` row is retired, not relaxed.** It pinned `let t be
+        // (1, 2)` as past the boundary because the checker typed it
+        // `(<error>, <error>)` — finding 20, an element's *stored* type read
+        // before Decision 2 defaulted it. The tuple arm now reads the open
+        // type and defers the whole tuple until its elements settle, so that
+        // program builds and runs; `past_stage_three.rs`'s
+        // `a_tuple_builds_however_its_elements_got_their_type` is where it
+        // lives, with the annotated and suffixed spellings beside it so the
+        // three are asserted to agree.
         // **A cast used to be here.** `Rvalue::Cast` has a lowering and
         // `tests/casts.rs` runs every pair §5.1 defines; the pairs it does not
         // define are refused there.
@@ -597,9 +605,12 @@ fn the_boundary_is_where_it_says_it_is() {
 #[test]
 fn nothing_past_the_boundary_produces_an_executable() {
     for source in [
-        "let t be (1, 2)\nprint(\"x\")\n",
-        // Division left this list with the row above it: it builds, and
-        // `tests/past_stage_three.rs` asserts that it also *runs*.
+        // The tuple left this list the way division did before it: `let t be
+        // (1, 2)` builds now, and `past_stage_three.rs` asserts that it runs.
+        // A `Box` takes its place, which is `hello.rs`'s choice too and for
+        // the same reason — it is one of §2.6's runtime containers, reached
+        // through a `ScienceTypeInfo` this backend does not emit.
+        "type Doc:\n    n: Int\n\nlet b be Box[Doc].new(Doc(n: 1))\n",
     ] {
         let dir = scratch("stage23", "refused");
         let output = executable(&dir, "refused");

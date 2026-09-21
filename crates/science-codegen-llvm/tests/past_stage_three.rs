@@ -1054,26 +1054,43 @@ fn a_tuple_of_five_writes_every_element_at_its_own_offset() {
     assert_eq!(bytes("tuple-five", source), "12345\n");
 }
 
-/// **`let t be (1, 2)` still does not build, and the reason is no longer this
-/// crate's.**
+/// **`let t be (1, 2)` builds now**, and the three spellings agree.
 ///
-/// The program the last pass named as the boundary checks clean, has type
-/// `(<error>, <error>)`, and is refused here — by the only phase that ever asks
-/// what a tuple element's type is. The refusal names the front end rather than
-/// the tuple, because a message saying *"a tuple"* would send a reader to
-/// `cg_ty`, which has the arm.
+/// **This replaces `the_unannotated_tuple_literal_is_a_front_end_hole`, on
+/// that test's own terms.** It pinned the refusal and said why: the program
+/// checked clean, had type `(<error>, <error>)`, and was refused by the only
+/// phase that ever asks what a tuple element's type is. It also said the two
+/// working spellings were asserted beside it *"so that this test fails if the
+/// front-end gap is ever closed, rather than quietly continuing to describe a
+/// fixed bug"*. The gap is closed, so this is the same three programs with
+/// the first one expected to run.
 ///
-/// **Both spellings that do work are asserted beside it**, so that this test
-/// fails if the front-end gap is ever closed, rather than quietly continuing to
-/// describe a fixed bug.
+/// What closed it is finding 20, fixed where it was rather than worked around
+/// here: the tuple arm read each element's **stored** type, which is
+/// `Ty::ERROR` for a literal whose class Decision 2 has not defaulted yet. It
+/// now reads the open type and, when any element is still open, defers the
+/// whole tuple to a variable of its own that `finish` binds once the elements
+/// have settled.
+///
+/// The spellings are kept together because the point is that they agree.
+///
+/// # The limit this deliberately stops at
+///
+/// The inferred tuple is **built and dropped**, not matched. Deferring means
+/// the tuple's type is not known until `finish`, and a `match` needs the
+/// scrutinee's *shape* while checking is still running, to give its pattern's
+/// bindings a type — so `match t:` over an inferred tuple still leaves those
+/// bindings at `Ty::ERROR`.
+///
+/// Closing that is a language decision and not a repair: it means naming the
+/// points at which Decision 2's default is forced early, the way Rust forces
+/// its integer fallback at certain positions. The annotated and suffixed
+/// spellings below both match, so what is missing is the forcing rule and
+/// nothing about tuples.
 #[test]
-fn the_unannotated_tuple_literal_is_a_front_end_hole() {
-    let text = refusal("tuple-untyped", "let t be (1, 2)\nprint(\"x\")\n");
-    assert!(
-        text.contains("`TyKind::Error`") && text.contains("ExprKind::Tuple"),
-        "the refusal should name the phase that left the hole:\n{text}"
-    );
-    // And the two spellings that give the elements a type both build and run.
+fn a_tuple_builds_however_its_elements_got_their_type() {
+    let inferred = "let t be (1, 2)\nprint(\"12\")\n";
+    assert_eq!(bytes("tuple-untyped", inferred), "12\n");
     let annotated =
         "let t: (Int, Int) be (1, 2)\nmatch t:\n\x20   (a, b):\n\x20       print(f\"{a}{b}\")\n";
     assert_eq!(bytes("tuple-annotated", annotated), "12\n");

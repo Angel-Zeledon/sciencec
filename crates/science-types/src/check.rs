@@ -494,6 +494,7 @@ pub fn check_fn(
         assignments: Vec::new(),
         facts: Facts::new(),
         pending: Vec::new(),
+        pending_tuples: Vec::new(),
         numeric: Vec::new(),
         self_subst,
         ret,
@@ -696,6 +697,25 @@ struct BodyChecker<'a> {
     facts: Facts,
     /// Nodes whose type is still a variable. §4.
     pending: Vec<(ExprId, InferVar)>,
+    /// Tuples built while at least one element's class was still open, each
+    /// with the variable standing in for the tuple and the element types it
+    /// will be rebuilt from.
+    ///
+    /// **A tuple cannot use [`BodyChecker::pending`] alone**, because its
+    /// type is not *one* variable — it is a shape over several, and there is
+    /// no variable for inference to bind to `(I64, F64)` until every element
+    /// has settled. So the tuple gets a variable of its own that nothing
+    /// unifies, and [`BodyChecker::finish`] binds it once the elements are
+    /// known. From that point it is an ordinary variable and the two
+    /// writebacks already there — the node's and the local's — carry it the
+    /// rest of the way.
+    ///
+    /// **Insertion order is load-bearing**: `((1, 2), 3)` records the inner
+    /// tuple first, because it is synthesised first, so binding in order
+    /// means an element that is itself a tuple is already bound when the
+    /// tuple containing it is reached. Nesting needs no second pass and no
+    /// fixed point.
+    pending_tuples: Vec<(ExprId, InferVar, Vec<InferTy>)>,
     numeric: Vec<(InferVar, Numeric)>,
     self_subst: Substitution,
     ret: Ty,
@@ -762,7 +782,21 @@ impl<'a> BodyChecker<'a> {
                 .or_insert(kind);
         }
 
+        // A deferred tuple's own variable is **not** a class waiting for a
+        // default and must not be reported as one: it is a shape, and the
+        // loop below binds it from its elements once they have theirs. Left
+        // in, it would reach the `None` arm and produce `SC0526` on a tuple
+        // whose elements were perfectly inferable.
+        let tuple_vars: HashMap<InferVar, ()> = self
+            .pending_tuples
+            .iter()
+            .map(|(_, var, _)| (self.infer.find(*var), ()))
+            .collect();
+
         for root in self.infer.unresolved() {
+            if tuple_vars.contains_key(&root) {
+                continue;
+            }
             let default = match kinds.get(&root) {
                 Some(Numeric::Integer) => self.decls.prelude().default_int(self.types),
                 Some(Numeric::Float) => self.decls.prelude().default_float(self.types),
@@ -777,6 +811,33 @@ impl<'a> BodyChecker<'a> {
                     self.diagnostics.push(cannot_infer(span));
                 }
             }
+        }
+
+        // **In insertion order, which is inner-tuple-first**, so an element
+        // that is itself a deferred tuple is already bound when the tuple
+        // containing it is reached. A tuple whose elements did not all
+        // settle is left alone rather than bound to a shape with a hole in
+        // it: `ty`'s §5 — an erroneous type must not manufacture a second
+        // error — and the `Ty::ERROR` already stored on the node is what a
+        // later phase refuses by name.
+        for (_, var, parts) in std::mem::take(&mut self.pending_tuples) {
+            let arity = parts.len();
+            let mut tys = Vec::with_capacity(arity);
+            for part in parts {
+                let settled = match part {
+                    InferTy::Known(ty) => Some(ty),
+                    InferTy::Var(part) => self.infer.binding(part),
+                };
+                match settled {
+                    Some(ty) if ty != Ty::ERROR => tys.push(ty),
+                    _ => break,
+                }
+            }
+            if tys.len() != arity {
+                continue;
+            }
+            let ty = self.types.tuple(tys);
+            let _ = self.infer.bind(self.types, var, ty);
         }
 
         for (id, var) in std::mem::take(&mut self.pending) {
@@ -1489,15 +1550,38 @@ impl<'a> BodyChecker<'a> {
             hir::ExprKind::StructLit { res, fields } => self.record_lit(*res, fields, span),
             hir::ExprKind::Tuple(elements) => {
                 let mut ids = Vec::with_capacity(elements.len());
-                let mut tys = Vec::with_capacity(elements.len());
+                let mut parts: Vec<InferTy> = Vec::with_capacity(elements.len());
                 for element in elements {
                     let typed = self.synth(element);
                     ids.push(typed.id);
-                    tys.push(self.known_or_error(typed.ty));
+                    // `open_ty` and not `typed.ty`, so that an element which
+                    // is *itself* a deferred tuple is read as its own
+                    // variable rather than as the `Ty::ERROR` standing in for
+                    // it until `finish` runs.
+                    parts.push(self.open_ty(typed.id));
                 }
-                let ty = self.types.tuple(tys);
-                let id = self.body.push_expr(ExprKind::Tuple(ids), ty, span);
-                Typed { id, ty: InferTy::Known(ty) }
+                // **Nothing open: the old path exactly.** `(1i64, 2i64)`
+                // built its type here before finding 20 was understood and
+                // still does, with no variable, no deferral and no entry in
+                // any writeback list. Only the tuple that *would* have been
+                // built out of holes takes the new route.
+                if parts.iter().all(|part| matches!(part, InferTy::Known(_))) {
+                    let tys = parts
+                        .iter()
+                        .map(|part| self.known_or_error(*part))
+                        .collect::<Vec<Ty>>();
+                    let ty = self.types.tuple(tys);
+                    let id = self.body.push_expr(ExprKind::Tuple(ids), ty, span);
+                    return Typed { id, ty: InferTy::Known(ty) };
+                }
+                // A variable of the tuple's own, which nothing unifies and
+                // which `finish` binds once the elements have settled. The
+                // field's comment is the argument for why the tuple cannot
+                // simply borrow one of theirs.
+                let var = self.infer.fresh(span);
+                let typed = self.push_typed(ExprKind::Tuple(ids), InferTy::Var(var), span);
+                self.pending_tuples.push((typed.id, var, parts));
+                typed
             }
             hir::ExprKind::Unit => {
                 let id = self.body.push_expr(ExprKind::Unit, Ty::UNIT, span);
@@ -1549,15 +1633,23 @@ impl<'a> BodyChecker<'a> {
             hir::ExprKind::Unsafe(block) | hir::ExprKind::Block(block) => {
                 let id = self.body.reserve_block(block.span);
                 let filled = self.block(block, None);
-                let ty = filled.tail.map(|tail| self.body.ty(tail)).unwrap_or(Ty::UNIT);
+                // `open_ty`, for finding 20's reason: a block whose tail is
+                // an unsuffixed literal has `Ty::ERROR` stored on that tail
+                // until `finish` writes the default back, and a block that
+                // took the stored type would hand the hole to whatever it is
+                // the value of. `else: 0` is a block, which is why fixing the
+                // `if` alone was not enough.
+                let ty = filled
+                    .tail
+                    .map(|tail| self.open_ty(tail))
+                    .unwrap_or(InferTy::Known(Ty::UNIT));
                 self.body.fill_block(id, filled);
                 let kind = if matches!(expr.kind, hir::ExprKind::Unsafe(_)) {
                     ExprKind::Unsafe(id)
                 } else {
                     ExprKind::Block(id)
                 };
-                let id = self.body.push_expr(kind, ty, span);
-                Typed { id, ty: InferTy::Known(ty) }
+                self.push_typed(kind, ty, span)
             }
             hir::ExprKind::Error => self.error_expr(span),
         }
@@ -4592,7 +4684,14 @@ impl<'a> BodyChecker<'a> {
         self.diverged = false;
         let then_block = self.body.reserve_block(if_expr.then_branch.span);
         let filled = self.block(&if_expr.then_branch, expected);
-        let then_ty = filled.tail.map(|tail| self.body.ty(tail)).unwrap_or(Ty::UNIT);
+        // `open_ty` and not `Body::ty`: a branch whose value is an unsuffixed
+        // literal has `Ty::ERROR` stored on it until `finish` writes the
+        // default back, and reading that is finding 20 — it is what left
+        // `let n be if f: 1 else: 0` with no type at all.
+        let then_ty = filled
+            .tail
+            .map(|tail| self.open_ty(tail))
+            .unwrap_or(InferTy::Known(Ty::UNIT));
         self.body.fill_block(then_block, filled);
         let then_diverges = self.diverged;
         let then_facts = std::mem::take(&mut self.facts);
@@ -4606,13 +4705,13 @@ impl<'a> BodyChecker<'a> {
                     Some((ty, site)) => self.check(otherwise, ty, site),
                     None => self.synth(otherwise).id,
                 };
-                let ty = self.body.ty(id);
+                let ty = self.open_ty(id);
                 (Some(id), ty, self.diverged, std::mem::take(&mut self.facts))
             }
             None => {
                 let mut facts = entry;
                 facts.absorb(&outcome.when_false);
-                (None, Ty::UNIT, false, facts)
+                (None, InferTy::Known(Ty::UNIT), false, facts)
             }
         };
 
@@ -4621,18 +4720,26 @@ impl<'a> BodyChecker<'a> {
         self.facts = Facts::join(then_facts, then_diverges, else_facts, else_diverges);
         self.diverged = then_diverges && else_diverges;
 
+        // **The two branches are unified before either is read as the
+        // answer.** `if f: 1 else: 0` is one class and not two: whatever
+        // settles one arm settles the other, and taking `then_ty` without
+        // saying so would let the two default independently and disagree.
+        // Neither branch is unified when one diverges, because a diverging
+        // branch contributes no value — §4.2's third rule, the same one the
+        // `Facts::join` above follows.
+        if else_branch.is_some() && !then_diverges && !else_diverges {
+            let _ = self.infer.unify(self.types, then_ty, else_ty);
+        }
         let ty = match expected {
-            Some((ty, _)) => ty,
+            Some((ty, _)) => InferTy::Known(ty),
             None if else_branch.is_some() && !then_diverges => then_ty,
             None if else_branch.is_some() => else_ty,
-            None => Ty::UNIT,
+            None => InferTy::Known(Ty::UNIT),
         };
-        let id = self.body.push_expr(
-            ExprKind::If { cond, then_branch: then_block, else_branch },
-            ty,
-            span,
-        );
-        Typed { id, ty: InferTy::Known(ty) }
+        // `push_typed` and not `push_expr`: `ty` may still be a variable, so
+        // the node has to be recorded for `finish`'s writeback the way a bare
+        // literal's is.
+        self.push_typed(ExprKind::If { cond, then_branch: then_block, else_branch }, ty, span)
     }
 
     fn match_expr(
@@ -5386,6 +5493,43 @@ impl<'a> BodyChecker<'a> {
         let id = self.body.push_expr(kind, stored, span);
         self.record_pending(id, ty);
         Typed { id, ty }
+    }
+
+    /// What a node's type **really** is, including a literal class inference
+    /// has not settled yet.
+    ///
+    /// # Why this is not `Body::ty`
+    ///
+    /// [`Body::ty`] is the type *stored* on the node, and for a node whose
+    /// class is still open that is [`Ty::ERROR`] — `push_typed` stores
+    /// `known_or_error` now and writes the real answer back at
+    /// [`BodyChecker::finish`]. That is right for the body, which must hold a
+    /// `Ty` and not an `InferTy`, and it is a trap for any *other* part of
+    /// the checker that reads a node's type while checking is still running:
+    /// it gets a hole, builds something out of it, and the hole is what
+    /// survives the writeback.
+    ///
+    /// That is finding 20, and it is why `(1, 2)` was *"a tuple of two
+    /// holes"* while `(1i64, 2i64)` was not, and why `let n be if f: 1 else:
+    /// 0` had no type. Both read a part's stored type before Decision 2 had
+    /// defaulted it.
+    ///
+    /// # Why the pending list is the source
+    ///
+    /// [`BodyChecker::pending`] is already the record of *"this node's type
+    /// is that variable"* — it exists so `finish` can write the answer back —
+    /// so it is the same fact read in the other direction, rather than a
+    /// second table that could disagree with it. Searched from the end
+    /// because a node re-recorded later is the more recent claim.
+    ///
+    /// The cost is a linear scan of the pending list per call. It is bounded
+    /// by the number of open-class nodes in one body, and the two callers ask
+    /// once per tuple element and once per `if` branch.
+    fn open_ty(&self, id: ExprId) -> InferTy {
+        match self.pending.iter().rev().find(|(pending, _)| *pending == id) {
+            Some((_, var)) => InferTy::Var(*var),
+            None => InferTy::Known(self.body.ty(id)),
+        }
     }
 
     fn record_pending(&mut self, id: ExprId, ty: InferTy) {
