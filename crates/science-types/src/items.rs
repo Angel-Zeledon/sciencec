@@ -464,6 +464,62 @@ impl Declarations {
         self.fns.get(&def)
     }
 
+    /// Replace every field type and every variant payload with its
+    /// alias-free form.
+    ///
+    /// # Why only these two
+    ///
+    /// `crate::alias`'s §1 keeps an alias's own type in the table so that a
+    /// diagnostic can say `Embedding` rather than `Array[F32]`, and a
+    /// *backend* is the one reader with no diagnostic to protect: it needs
+    /// the representation, and `type Counter is I64` in a record's field list
+    /// is a layout it cannot compute. The driver already reveals every type
+    /// in every MIR body; a record's fields and a `choice`'s payloads are not
+    /// in a body, they are here, which is the whole of what this closes.
+    ///
+    /// **A signature is deliberately not revealed.** A backend classifies a
+    /// Science function from its **MIR** and not from this table —
+    /// `science-codegen-llvm`'s `science_signature` says why, at length: the
+    /// body's locals *are* its parameters, already substituted, and reading
+    /// the declaration instead *"would introduce a second source for a fact
+    /// the body carries"*. So a signature's types reach no layout, and
+    /// revealing them would change what a diagnostic quotes for nothing.
+    ///
+    /// **A `Self` type is deliberately not revealed, and that one is not a
+    /// preference.** [`Declarations::methods`] is Decision 11's index and it
+    /// is **built from the self types**, keyed on them. Revealing them after
+    /// the index exists would leave the keys spelled one way and the lookups
+    /// arriving spelled the other, and method resolution would start missing
+    /// — silently, on exactly the types an author gave a name to.
+    ///
+    /// # When to call it
+    ///
+    /// After checking and before MIR lowering. Before, and every `expected …
+    /// found …` in the program quotes a type the author did not write;
+    /// after MIR lowering, and a projection's type disagrees with the type of
+    /// the local it projects from.
+    pub fn reveal_layouts(&mut self, types: &mut Types, aliases: &mut crate::Aliases) {
+        // A type whose revealing fails is left exactly as it was. `ty`'s §5:
+        // an erroneous type must not manufacture a second error, and the
+        // unrevealed one refuses by name a phase later, with a message that
+        // names a type the author can find.
+        let mut reveal = |ty: &mut Ty, types: &mut Types| {
+            if let Ok(revealed) = aliases.reveal(types, *ty) {
+                *ty = revealed;
+            }
+        };
+        for record in self.records.values_mut() {
+            for (_, ty) in &mut record.fields {
+                reveal(ty, types);
+            }
+        }
+        for variant in self.variants.values_mut() {
+            for ty in &mut variant.payload {
+                reveal(ty, types);
+            }
+        }
+    }
+
     pub fn record(&self, def: DefId) -> Option<&Record> {
         self.records.get(&def)
     }

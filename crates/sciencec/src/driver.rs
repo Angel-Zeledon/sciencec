@@ -924,7 +924,7 @@ fn check_and_lower(krate: &Crate) -> Checked {
     let mut types = science_types::Types::new();
     let mut diagnostics = science_diagnostics::Diagnostics::new();
     let mut aliases = science_types::Aliases::of(krate, &mut types, &order, &mut diagnostics);
-    let decls = science_types::Declarations::of(krate, &mut types, &order, &mut diagnostics);
+    let mut decls = science_types::Declarations::of(krate, &mut types, &order, &mut diagnostics);
     let thir = science_types::check_crate(
         krate,
         &decls,
@@ -938,6 +938,16 @@ fn check_and_lower(krate: &Crate) -> Checked {
     if has_error(&all) {
         return Checked { diagnostics: all, types, decls, bodies: Vec::new() };
     }
+    // **Between checking and lowering, which is the only window.** A
+    // record's field types and a `choice`'s payloads live in `Declarations`
+    // rather than in any body, so `region_check`'s pass over the MIR does not
+    // reach them and a field declared `ticks: Counter` has no layout.
+    // `Declarations::reveal_layouts` says at length what it touches and what
+    // it must not; the timing is the half that belongs here. Earlier, and
+    // every `expected … found …` in the program quotes a type the author did
+    // not write. Later, and a projection's type disagrees with the type of
+    // the local it projects from.
+    decls.reveal_layouts(&mut types, &mut aliases);
     let (regions, bodies) = region_check(krate, &decls, &mut types, &mut aliases, &thir);
     all.extend(regions);
     Checked { diagnostics: all, types, decls, bodies }

@@ -1624,14 +1624,17 @@ def main():
 /// - `c + 1i64` where `c: Counter` is `SC0525`, *"expected `Counter`, found
 ///   `I64`"*, from the checker — the binary operator compares written types
 ///   where §1 says every relation compares revealed ones. It reproduces
-///   under `sciencec check` alone.
-/// - a record field declared `ticks: Counter` still refuses at codegen,
-///   because `record_ty` reads the declared field list and nothing revealed
-///   that.
+///   under `sciencec check` alone, so it is upstream of everything this pass
+///   does.
 ///
-/// Both are named here rather than pinned as tests, because a test asserting
-/// them would be asserting a bug and would have to be deleted rather than
-/// retired when either is fixed.
+/// It is named here rather than pinned as a test, because a test asserting
+/// it would be asserting a bug and would have to be deleted rather than
+/// retired when it is fixed.
+///
+/// A record field declared `ticks: Counter` **was** the second item on this
+/// list and is now covered by
+/// [`a_type_alias_in_a_record_field_is_revealed`], because
+/// `Declarations::reveal_layouts` closed it.
 #[cfg(feature = "llvm")]
 #[test]
 fn a_type_alias_is_revealed_before_codegen() {
@@ -1648,6 +1651,46 @@ fn a_type_alias_is_revealed_before_codegen() {
     assert!(
         run.stdout.contains('7'),
         "a value of an alias type must print as the type it stands for:\n{}",
+        run.stdout
+    );
+}
+
+/// The same alias, in a **record's field list**, which is a different table.
+///
+/// The driver's pass over the MIR rewrites the types in a *body*, and a
+/// record's fields are not in a body — they are in
+/// `science_types::items::Declarations`, which `record_ty` reads to compute a
+/// layout. So `ticks: Counter` refused with *"a value of type `Counter`"*
+/// even once every local was revealed.
+///
+/// `Declarations::reveal_layouts` closes it, and its own comment is careful
+/// about what it must **not** touch: a `Self` type, because Decision 11's
+/// method index is built from those and keyed on them, so revealing them
+/// after the index exists would leave the keys spelled one way and the
+/// lookups arriving spelled the other — method resolution missing silently,
+/// on exactly the types an author gave a name to.
+#[cfg(feature = "llvm")]
+#[test]
+fn a_type_alias_in_a_record_field_is_revealed() {
+    let file = scratch(
+        "alias_field.science",
+        b"type Counter is I64\n\
+          \n\
+          type Stats:\n\
+          \x20   ticks: Counter\n\
+          \n\
+          def same(c: Counter) -> Counter:\n\
+          \x20   c\n\
+          \n\
+          def main():\n\
+          \x20   let s be Stats(ticks: 7i64)\n\
+          \x20   print(f\"{same(s.ticks)}\")\n",
+    );
+    let run = sciencec(&["test", &file]);
+    run.succeeded();
+    assert!(
+        run.stdout.contains('7'),
+        "an alias in a field list must be laid out as what it stands for:\n{}",
         run.stdout
     );
 }
