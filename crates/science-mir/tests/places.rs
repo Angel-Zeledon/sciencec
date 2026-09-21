@@ -194,6 +194,38 @@ fn a_narrowed_read_is_the_same_place() {
     );
 }
 
+/// The niched half of the same gap: `Array[T].get`'s `-> (&T)?` narrows to a
+/// *borrow*, not a record. `examples/19_stdlib.science`'s `hits_of` is this
+/// shape (`let first be records.get(0); if first?: return first.hits`), and
+/// it is Decision 19's case and not Decision 18's — `auto_deref` alone stops
+/// on the place's own declared type, `(&Record)?`, which is a `Nullable` and
+/// not itself a `Borrowed`; `deref_to_hole` is the further step keyed on the
+/// narrow's own type instead.
+#[test]
+fn a_field_of_a_niched_narrow_is_a_dereference_then_a_field() {
+    let source = concat!(
+        "type Record:\n",
+        "    hits: Int\n",
+        "\n",
+        "def hits_of(records: &Array[Record]) -> Int?:\n",
+        "    let first be records.get(0)\n",
+        "    if first?:\n",
+        "        return first.hits\n",
+        "    null\n",
+    );
+    let lowered = lower(source);
+    assert!(
+        !lowered.statements("hits_of").iter().any(|s| s == "assign error"),
+        "a field of a niched narrow degraded to a hole: {}",
+        lowered.dump("hits_of")
+    );
+    assert!(
+        projections(&lowered, "hits_of").contains(&"*f".to_string()),
+        "the niched narrow's field was not read through a dereference: {}",
+        lowered.dump("hits_of")
+    );
+}
+
 /// §4's rule at the *receiver of a method call*, which is the one place it was
 /// missed.
 ///
@@ -362,6 +394,80 @@ fn a_reference_assigned_a_reference_is_not_dereferenced() {
             }
         }
     }
+}
+
+/// A call's result has no storage until something gives it some, and
+/// `as_place` used to have no arm for it — every other arm recurses to
+/// storage that already exists. The fallback was `Rvalue::Error`, a hole for
+/// a program `sciencec check` had already accepted, which is
+/// `examples/03_structs.science`'s `print(make_pair().first)`.
+#[test]
+fn a_field_of_a_calls_result_is_read_off_a_temporary() {
+    // `second` is a `String` and not a second `Int`, so the temporary the
+    // call's result is materialised into is not `moves::needs_drop`'s trivial
+    // case — a fixture of two `Int`s would prove the projection and nothing
+    // about ownership, because there would be no drop to elaborate either way.
+    let source = concat!(
+        "type Pair:\n",
+        "    first: Int\n",
+        "    second: String\n",
+        "\n",
+        "def make_pair() -> Pair:\n",
+        "    Pair(first: 1, second: \"two\")\n",
+        "\n",
+        "def f() -> Int:\n",
+        "    make_pair().first\n",
+    );
+    let lowered = lower(source);
+    assert!(
+        !lowered.statements("f").iter().any(|s| s == "assign error"),
+        "a field of a call's result degraded to a hole: {}",
+        lowered.dump("f")
+    );
+    assert!(
+        projections(&lowered, "f").contains(&"f".to_string()),
+        "the call's result was not projected into a field: {}",
+        lowered.dump("f")
+    );
+    // `.first` is read by `Copy`, so the temporary stays wholly initialised —
+    // `drops` elaborates exactly one (unconditional) `Drop` for it, at its own
+    // scope's exit, which releases `second`'s buffer once and not twice.
+    let drops = lowered.terminators("f").iter().filter(|kind| **kind == "drop").count();
+    assert_eq!(
+        drops,
+        1,
+        "the call's temporary must be dropped exactly once: {}",
+        lowered.dump("f")
+    );
+}
+
+/// Presence-narrowing wraps a read as `ExprKind::Narrow(Local(r))`.
+/// `as_place`'s `Narrow` arm sees through to the raw local — correct for
+/// *storage* — but `record_of`/`field_ty` used to read the place's
+/// *declared* type, `Record?`, a `Nullable` and not a `Named`, and degrade to
+/// a hole. `examples/19_stdlib.science`'s `if r?: r.hits` is the shape.
+#[test]
+fn a_field_of_a_narrowed_nullable_reads_the_narrowed_type() {
+    let source = concat!(
+        "type Record:\n",
+        "    hits: Int\n",
+        "\n",
+        "def f(r: Record?) -> Int:\n",
+        "    if r?:\n",
+        "        return r.hits\n",
+        "    0\n",
+    );
+    let lowered = lower(source);
+    assert!(
+        !lowered.statements("f").iter().any(|s| s == "assign error"),
+        "a field of a narrowed nullable degraded to a hole: {}",
+        lowered.dump("f")
+    );
+    assert!(
+        lowered.statements("f").iter().any(|s| s == "assign narrow"),
+        "the narrowed read did not materialise `Rvalue::Narrow`: {}",
+        lowered.dump("f")
+    );
 }
 
 /// §4 again, on a `match` scrutinee: the tag read is the *referent's*.

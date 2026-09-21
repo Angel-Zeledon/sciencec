@@ -277,14 +277,23 @@ fn the_declared_map_get_closed_the_two_false_positives() {
 ///
 /// It is quiet for two reasons and only one of them is the language's.
 /// [`science_regions`]'s §4 is the real one — the answer is a set, so *"from
-/// `x` or `y`"* is not an ambiguity. [`science_regions::check`]'s §6 is the
-/// other: **one** body in this corpus would reach it, down from four when
-/// `Array.get` had no declaration and from two when `19_stdlib.science`'s
-/// `find` still did. Each step down came from a declaration landing, which is
-/// the direction §4's *"what would falsify this"* predicts; the one that
-/// remains is blocked by a lowering hole rather than by a missing declaration,
-/// and [`every_undetermined_signature_is_blocked_by_a_missing_declaration`]
-/// names it.
+/// `x` or `y`"* is not an ambiguity. [`science_regions::check`]'s §6 used to
+/// be the other, and **is not any more**: four bodies would have reached it
+/// when `Array.get` had no declaration, two when `19_stdlib.science`'s `find`
+/// still did, one while `07_generics.science`'s `first_inner` was blocked by
+/// a lowering hole — and now none.
+///
+/// Each step down came from a declaration landing, which is the direction
+/// §4's *"what would falsify this"* predicts. The last one did not: it came
+/// from the hole closing. `first_inner` returns a borrow out of a narrowed
+/// `(&T)?`, Decision 19's niched case, which `as_place` reached through the
+/// declared type rather than the narrowed one; `science-mir`'s `Narrow` arm
+/// now splits the niched case from the tagged one.
+///
+/// So §6's suppression is still there and is holding nothing up.
+/// [`every_undetermined_signature_is_blocked_by_a_missing_declaration`]
+/// asserts the set is empty, which is a stronger claim than the one it used
+/// to make.
 #[test]
 fn sc0340_fires_nowhere_in_the_corpus() {
     for (name, codes) in census() {
@@ -314,9 +323,14 @@ fn every_undetermined_signature_is_blocked_by_a_missing_declaration() {
         }
     }
     undetermined.sort();
+    // **Empty, and it was one.** `07_generics.science:first_inner` was the
+    // last entry and its lowering hole is closed, so nothing in the corpus
+    // now depends on §6's suppression. An entry appearing here again is a
+    // lowering that stopped reaching a place, not a declaration that went
+    // missing — the two are told apart by the `calls_a_hole` assertion above.
     assert_eq!(
         undetermined,
-        vec!["07_generics.science:first_inner"],
+        Vec::<String>::new(),
         "the set of hole-blocked signatures moved"
     );
 }

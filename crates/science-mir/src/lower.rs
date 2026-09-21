@@ -3838,10 +3838,72 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             // it; seeing through a `Coerce` would not, because a coerced value
             // is a new value in a new representation.
             ExprKind::Narrow(operand) => self.as_place(*operand, block),
+            // A call's result has no storage until something gives it some —
+            // every other arm here recurses to storage that already exists,
+            // and a call is the one expression that does not. It is
+            // materialised into a temporary the same way `operand`'s fallback
+            // already does for any place-less expression: `expr_into` lowers
+            // `ExprKind::Call` exactly as it would at the top level, so the
+            // call still runs once and its result becomes the temporary's
+            // whole value. `Builder::temp` registers that temporary and marks
+            // it storage-live the same as any other, so it is dropped exactly
+            // once, at its own scope's exit, by the elaboration `drops`
+            // already does for every local — a call's result asks that
+            // machinery for nothing new.
+            ExprKind::Call { .. } => {
+                let ty = thir.expr(expr).ty;
+                let span = thir.expr(expr).span;
+                let temp = self.temp(ty, span, block);
+                let block = self.expr_into(Place::local(temp), expr, block);
+                Some((Place::local(temp), block))
+            }
             ExprKind::Field { base, field } => {
                 let field = (*field)?;
                 let (place, block) = self.as_place(*base, block)?;
-                let place = self.auto_deref(place);
+                // The arm above sees a narrowed base through to its storage
+                // because that is exact for storage — the same bytes at a
+                // smaller type. `record_of` and `field_ty` below ask a
+                // different question, though: which record owns this field,
+                // and at what type. Reading that off the place's *declared*
+                // type recomputes what Decision 25 already concluded on the
+                // `Narrow` node itself, and for Decision 18's tagged layout it
+                // recomputes it wrong — the place is still the whole `T?`,
+                // and `record_of` finds a `Nullable` where it wants a `Named`.
+                //
+                // `narrowed_payload_is_not_a_borrow` is `value_hole`'s own
+                // test for this, reused rather than restated: a niched narrow
+                // (Decision 19, a borrowed payload — `Array.get`'s `(&T)?` is
+                // the corpus's own example of one) is the same storage at a
+                // smaller type, and `auto_deref` plus `deref_to_hole` is
+                // `value_hole`'s own pair of steps to reach it: the place is
+                // still written `(&T)?`, a `Nullable` and not itself a
+                // `Borrowed`, so `auto_deref` alone stops before it, and
+                // `deref_to_hole` is the one further step keyed on the
+                // *hole's* type rather than the place's.
+                //
+                // A tagged narrow is not the same storage at all, because the
+                // payload sits at an offset inside a `Repr::Tagged` value and
+                // `science-codegen-llvm`'s `place_address` only walks a
+                // `Field` projection over a `Repr::Aggregate` one — there is
+                // no projection for a nullable's payload (`Rvalue::Narrow`'s
+                // own tagged arm says so). So the tagged case is materialised
+                // instead, the same way a call's result is above: `expr_into`
+                // on the `Narrow` node emits the `Rvalue::Narrow` that states
+                // the representation change, into a fresh temporary whose
+                // declared type *is* Decision 25's narrowed conclusion — read
+                // off the node, never recomputed — and the field is
+                // projected from there.
+                let (place, block) = if self.narrowed_payload_is_not_a_borrow(&place, *base) {
+                    let narrowed_ty = thir.expr(*base).ty;
+                    let narrow_span = thir.expr(*base).span;
+                    let temp = self.temp(narrowed_ty, narrow_span, block);
+                    let block = self.expr_into(Place::local(temp), *base, block);
+                    (Place::local(temp), block)
+                } else {
+                    let place = self.auto_deref(place);
+                    let place = self.deref_to_hole(place, *base);
+                    (place, block)
+                };
                 let owner = self.record_of(&place)?;
                 let base_ty = self.place_ty(&place);
                 let ty = self.field_ty(owner, field, base_ty);
