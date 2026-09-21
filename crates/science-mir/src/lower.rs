@@ -568,7 +568,7 @@ pub fn lower_body(context: &mut Context<'_>, thir: &thir::Body) -> Body {
     let mut builder = Builder::new(context, thir);
     builder.run();
     let mut body = builder.finish();
-    crate::drops::elaborate(&mut body, flag_ty);
+    crate::drops::elaborate(&mut body, flag_ty, context.decls, context.types, context.aliases);
     index_borrows(&mut body);
     body.predecessors = predecessors_of(&body.blocks);
     body
