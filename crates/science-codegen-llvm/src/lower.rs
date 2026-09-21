@@ -7701,14 +7701,16 @@ impl<'a> Lowerer<'a> {
     ///
     /// # The cost
     ///
-    /// Two rows. A third — `Array.pop`, `science-rt`'s other user of this
-    /// convention — is not one of them: `science-resolve`'s `builtins.rs`
-    /// leaves `pop` undeclared on purpose, with its own note explaining that
-    /// the choice between `pop(mutable self) -> T?` and `pop(mutable self)`
-    /// is not this crate's to settle by being the first thing that happens to
-    /// need an answer. That reasoning is read and still stands, so this table
-    /// has no `Array` row and `lower_owned_nullable_call` refuses any symbol
-    /// that is not one of `Map`'s two.
+    /// Three rows now, not two. `Array.pop` was the convention's other user
+    /// left out — `science-resolve`'s `builtins.rs` left `pop` undeclared on
+    /// purpose, on the ground that the choice between `pop(mutable self) ->
+    /// T?` and `pop(mutable self)` was not this crate's to settle. That note
+    /// has since settled it, `T?` is the declared signature, and
+    /// `science_array_pop(P, D, P) -> Bool` is §5.3's own shape — the
+    /// descriptor at index 1, same as `Map`'s two — so it is a row here and
+    /// not a fourth table. `array_operand_element`/`intern_element_descriptor`
+    /// build its descriptor in [`Lowerer::lower_owned_nullable_call`], the same
+    /// pair [`Lowerer::lower_runtime_call`] already uses for `push` and `get`.
     fn owned_nullable_method(&self, def: DefId) -> Option<&'static str> {
         /// `(the block's `Self`, the method) -> the entry point`.
         const OWNED_NULLABLE_METHODS: &[(&str, &str, &str)] = &[
@@ -7722,6 +7724,16 @@ impl<'a> Lowerer<'a> {
             // above it is Decision 7's narrowing and a back edge, both of which
             // already existed.
             ("Chars", "next", "science_chars_next"),
+            // **`Array.pop`, the third.** `science_array_pop(array, D, out) ->
+            // Bool` moves the array's last element into `out` and decrements
+            // `len`; it does not run the element's drop glue, so nothing is
+            // released twice when the `T?` this builds is later dropped —
+            // `science_array_pop`'s own doc comment and `science_array_free`'s
+            // both say so. On an empty array `out` is never written and the
+            // `Bool` is `false`, which is `BranchAndMaterialiseNull`'s or
+            // `StoreBoolIntoTag`'s existing empty-case handling and needed
+            // nothing new here.
+            ("Array", "pop", "science_array_pop"),
         ];
         if !self.defs.get(def).is_builtin() {
             return None;
@@ -7764,6 +7776,14 @@ impl<'a> Lowerer<'a> {
     /// ([`Lowerer::pointer_to_operand`]). The descriptor is `Map`'s own
     /// `ScienceMapInfo`, read off the receiver the same way
     /// [`Lowerer::lower_runtime_call`] reads it for `get` and `contains`.
+    ///
+    /// `Array.pop` takes the other branch of the same `if`: its descriptor is
+    /// a plain `ScienceTypeInfo` for the element, built by
+    /// [`Lowerer::array_operand_element`] and [`Lowerer::intern_element_descriptor`]
+    /// — the same pair `lower_runtime_call` already uses for `push` and `get`
+    /// — and not [`Lowerer::map_operand_kv`], which has no `Array` to read a
+    /// key and value off. `pop` takes no further Science argument, so the loop
+    /// below it runs zero times, exactly as it does for `Chars.next`.
     ///
     /// # Building the out-parameter and consuming the `bool`
     ///
@@ -7837,16 +7857,35 @@ impl<'a> Lowerer<'a> {
         // shape that passes a place.
         let mut declared: Vec<Ty> = Vec::new();
         if entry.descriptor_index().is_some() {
-            let (key_ty, value_ty) =
-                self.map_operand_kv(body, args, destination).ok_or_else(|| {
-                    Unlowered::new(format!(
-                        "a call to `{symbol}`, which takes a `ScienceMapInfo`, with no operand \
-                         this crate can read a key and value type off"
-                    ))
-                })?;
-            lowered.push(Operand::GlobalAddr(self.intern_map_descriptor(key_ty, value_ty)?));
-            declared.push(key_ty);
-            declared.push(value_ty);
+            // **`symbol`, not the argument shape, says which descriptor this
+            // call needs** — the same split `lower_runtime_call` makes between
+            // `science_map_*` and everything else, restated here because this
+            // function does not share that one's loop.
+            if symbol.starts_with("science_map_") {
+                let (key_ty, value_ty) =
+                    self.map_operand_kv(body, args, destination).ok_or_else(|| {
+                        Unlowered::new(format!(
+                            "a call to `{symbol}`, which takes a `ScienceMapInfo`, with no \
+                             operand this crate can read a key and value type off"
+                        ))
+                    })?;
+                lowered.push(Operand::GlobalAddr(self.intern_map_descriptor(key_ty, value_ty)?));
+                declared.push(key_ty);
+                declared.push(value_ty);
+            } else {
+                let element =
+                    self.array_operand_element(body, args, destination).ok_or_else(|| {
+                        Unlowered::new(format!(
+                            "a call to `{symbol}`, which takes a `ScienceTypeInfo`, with no \
+                             operand this crate can read an element type off"
+                        ))
+                    })?;
+                lowered.push(Operand::GlobalAddr(self.intern_element_descriptor(element)?));
+                // No `declared` push: `pop` takes no further Science argument,
+                // so the loop below never consults this position. A future
+                // owned-nullable `Array` method that did would need its
+                // parameter type declared here the way `insert`'s value is.
+            }
         }
         // Every remaining Science argument is passed by address: `insert`'s key
         // and value, `remove`'s key, and — for `Chars.next`, which takes only

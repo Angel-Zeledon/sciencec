@@ -354,3 +354,91 @@ fn a_write_through_get_mutably_reaches_the_element() {
         "10 999 30\n"
     );
 }
+
+/// `Array.pop`: §5.3's bool-plus-out-parameter convention, one caller of
+/// [`Lowerer::lower_owned_nullable_call`] and not [`Lowerer::lower_runtime_call`]
+/// — `Map.insert`/`Map.remove`'s shape, one type over, with the descriptor
+/// built by [`Lowerer::array_operand_element`]/[`Lowerer::intern_element_descriptor`]
+/// rather than [`Lowerer::map_operand_kv`].
+///
+/// **Both ends of `len`, in one program.** Three pops come back in LIFO
+/// order — last pushed, first popped — which is the only order that says
+/// `science_array_pop` read the *last* slot and not the first; a fourth pop,
+/// against the array it just emptied, comes back `null` rather than reading
+/// slot `usize::MAX - 1` or crashing, which is `science_array_pop`'s own
+/// `len == 0` guard reaching the compiled program rather than being read only
+/// in its source.
+#[test]
+fn pop_comes_back_in_lifo_order_and_null_once_empty() {
+    assert_eq!(
+        prints(
+            "pop-int",
+            "let mutable xs be [10, 20, 30]\n\
+             let a be xs.pop()\n\
+             let b be xs.pop()\n\
+             let c be xs.pop()\n\
+             let d be xs.pop()\n\
+             if a? and b? and c?:\n\
+             \x20   print(f\"{a} {b} {c} {xs.length()}\")\n\
+             print(f\"{d?}\")\n",
+        ),
+        "30 20 10 0\nfalse\n"
+    );
+}
+
+/// `Array.pop` on an `Array of String`: the element `pop` hands back is
+/// **moved**, not copied, out of the array.
+///
+/// **Presence and the array's own count, not the payload.** Reading an owning
+/// payload out of a narrowed `T?` is `tests/maps.rs`'
+/// `a_map_whose_value_owns_memory_can_be_inserted_into`'s own documented gap —
+/// copying it out for `print` would free it twice, once through the copy and
+/// once through `popped` itself, and that gap is [`Lowerer::lower_owned_nullable_call`]'s
+/// IR limitation and not this call's to repair. So this checks the two things
+/// that gap does not touch: `popped?` is `true` — the move happened — and
+/// `xs.length()` is `1` and not `0` — the array's own count went down by one
+/// element and not by a clear.
+///
+/// This is [`an_array_of_strings_is_built_read_and_released`]'s double free
+/// one call away in the other direction: `science_array_free`'s own doc
+/// comment says an element `science_array_pop` moved out "is no longer the
+/// array's", so this backend must not run the `String` drop glue over it a
+/// second time when the array itself is freed at `main`'s exit, nor when
+/// `popped` is dropped at the end of its own scope. A build that got either
+/// wrong prints the right line and traps on the way out, so the assertion
+/// that catches it is `prints`' own exit status.
+#[test]
+fn pop_moves_a_string_out_and_frees_the_array_once() {
+    assert_eq!(
+        prints(
+            "pop-string",
+            "let mutable xs be [\"alpha\", \"beta\"]\n\
+             let popped be xs.pop()\n\
+             print(f\"{popped?} {xs.length()}\")\n",
+        ),
+        "true 1\n"
+    );
+}
+
+/// `Array.pop` on an empty `Array of String`: `out` must not be written and
+/// nothing must be freed.
+///
+/// An empty `Array[String]` has never allocated (`ScienceArray::empty`'s own
+/// doc: dangling but aligned), so a build that read or dropped `out` on the
+/// `false` path would be reading or freeing whatever an uninitialised
+/// `alloca` happens to hold — which is undefined behaviour a debug build does
+/// not reliably crash on, so the exit status this asserts is the only honest
+/// check available, and the printed line confirms `popped?` narrowed to
+/// `false` rather than to a garbage `String`.
+#[test]
+fn pop_on_an_empty_array_of_strings_writes_nothing() {
+    assert_eq!(
+        prints(
+            "pop-string-empty",
+            "let mutable xs be Array[String].new()\n\
+             let popped be xs.pop()\n\
+             print(f\"{popped?}\")\n",
+        ),
+        "false\n"
+    );
+}
