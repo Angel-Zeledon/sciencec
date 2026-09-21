@@ -7629,6 +7629,20 @@ impl<'a> Lowerer<'a> {
     /// with no diagnostic anywhere. The repair, when a program needs it, is a
     /// copy into an invented slot — which is what a real argument lowering does
     /// and which is not guessed at here.
+    ///
+    /// **`Operand::Const` is not a copy and gets the repair, not the refusal.**
+    /// `Doc.new("scratch")` and `defs.alloc(kind, "main", null)` are both
+    /// ordinary programs — a string literal into a `String` parameter, `null`
+    /// into a `DefId?` one — and `science-mir`'s argument lowering hands each
+    /// straight over as a constant, because it has no place to read for a
+    /// literal and no reason to invent one. A constant is not "something
+    /// else['s]" the way a `Copy` place is: nothing owns it yet, so there is no
+    /// second owner to hand the callee a writable alias of. The fix is the
+    /// scratch slot [`Lowerer::emit_result_maybe_aliased`] already uses for the
+    /// *other* Decision 22 collision — allocate a caller-owned temporary,
+    /// materialise the constant into it exactly as an ordinary `let` binding
+    /// would ([`Lowerer::store_null`], [`Lowerer::build_string`]), and pass its
+    /// address. The callee then owns a slot that never had a second reader.
     fn lower_science_call(
         &mut self,
         ctx: &mut BodyCtx,
@@ -7654,35 +7668,72 @@ impl<'a> Lowerer<'a> {
                     lowered.push(self.typed_operand(ctx, arg, &param.layout, insts)?);
                 }
                 ArgClass::IndirectByPointer => {
-                    let mir::Operand::Move(place) = arg else {
-                        return Err(Unlowered::new(format!(
-                            "an aggregate argument to `{}` that is not a move: Decision 22 passes \
-                             a pointer to the caller's own slot and the callee may write through \
-                             it, so a copy would hand it a slot something else still owns",
-                            sig.symbol
-                        )));
+                    let local = match arg {
+                        mir::Operand::Move(place) => {
+                            if !place.projection.is_empty() {
+                                return Err(Unlowered::new(format!(
+                                    "an aggregate argument to `{}` that is a field rather than a \
+                                     whole local: Decision 22 needs a slot to point at",
+                                    sig.symbol
+                                )));
+                            }
+                            let local = LocalId(place.local.index() as u32);
+                            if ctx.untyped.contains(&local) {
+                                return Err(Unlowered::new(format!(
+                                    "{UNTYPED} (local _{})",
+                                    local.0
+                                )));
+                            }
+                            ctx.layout(local)?;
+                            // **The one place a by-pointer argument and the
+                            // result can be the same memory.** `s be wrap(s)`
+                            // moves `s` into the call by address and asks for
+                            // the result through `sret` into the same slot, so
+                            // the callee builds its answer on top of the
+                            // argument it is still reading. It printed the
+                            // empty string and exited 0.
+                            if place.local == destination.local
+                                && destination.projection.is_empty()
+                            {
+                                aliases_destination = true;
+                            }
+                            local
+                        }
+                        // A constant has no owner to alias — see this
+                        // function's doc comment. Give it one: an invented
+                        // slot nothing else ever reads, filled the same way an
+                        // ordinary `let` binding of the same constant would be.
+                        mir::Operand::Const(constant) => {
+                            let slot = self.temp(ctx, param.layout.clone());
+                            match constant {
+                                Constant::Literal(Literal::Null) => {
+                                    self.store_null(slot, &param.layout, insts)?;
+                                }
+                                Constant::Literal(Literal::Str(text)) => {
+                                    self.build_string(text, slot, insts)?;
+                                }
+                                Constant::Unit => {}
+                                _ => {
+                                    return Err(Unlowered::new(format!(
+                                        "a constant argument to `{}` with no runtime \
+                                         representation to put in a slot: only `null` and a \
+                                         string literal have one",
+                                        sig.symbol
+                                    )));
+                                }
+                            }
+                            slot
+                        }
+                        mir::Operand::Copy(_) => {
+                            return Err(Unlowered::new(format!(
+                                "an aggregate argument to `{}` that is not a move: Decision 22 \
+                                 passes a pointer to the caller's own slot and the callee may \
+                                 write through it, so a copy would hand it a slot something else \
+                                 still owns",
+                                sig.symbol
+                            )));
+                        }
                     };
-                    if !place.projection.is_empty() {
-                        return Err(Unlowered::new(format!(
-                            "an aggregate argument to `{}` that is a field rather than a whole \
-                             local: Decision 22 needs a slot to point at",
-                            sig.symbol
-                        )));
-                    }
-                    let local = LocalId(place.local.index() as u32);
-                    if ctx.untyped.contains(&local) {
-                        return Err(Unlowered::new(format!("{UNTYPED} (local _{})", local.0)));
-                    }
-                    ctx.layout(local)?;
-                    // **The one place a by-pointer argument and the result can
-                    // be the same memory.** `s be wrap(s)` moves `s` into the
-                    // call by address and asks for the result through `sret`
-                    // into the same slot, so the callee builds its answer on
-                    // top of the argument it is still reading. It printed the
-                    // empty string and exited 0.
-                    if place.local == destination.local && destination.projection.is_empty() {
-                        aliases_destination = true;
-                    }
                     let address = ctx.value();
                     insts.push(ExtInst::LocalAddr { dest: address, local });
                     lowered.push(Operand::Value(address));
