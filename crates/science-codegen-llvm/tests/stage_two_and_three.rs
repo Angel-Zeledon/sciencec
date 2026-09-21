@@ -603,10 +603,19 @@ fn nothing_past_the_boundary_produces_an_executable() {
     for source in [
         // The tuple left this list the way division did before it: `let t be
         // (1, 2)` builds now, and `past_stage_three.rs` asserts that it runs.
-        // A `Box` takes its place, which is `hello.rs`'s choice too and for
-        // the same reason — it is one of §2.6's runtime containers, reached
-        // through a `ScienceTypeInfo` this backend does not emit.
-        "type Doc:\n    n: Int\n\nlet b be Box[Doc].new(Doc(n: 1))\n",
+        // `Box` left it the same way: `Box.new` is a `prelude_method` row now,
+        // lowered through the same `lower_runtime_call` `Array.new` already
+        // goes through, with its element's descriptor built by
+        // `Lowerer::intern_element_descriptor`. An interface's default
+        // method body was written here next and did not last the session
+        // either — an `Instance` carries a `self_ty` now, so one body is one
+        // function per implementor.
+        //
+        // A **closure** takes its place, which is `hello.rs`'s choice too and
+        // for the reason that makes it the durable one: `science-mir` does
+        // not lower a closure's body at all, so moving this boundary is a
+        // whole phase rather than a backend arm.
+        "def apply(f: (Int) -> Int) -> Int:\n    f(1)\n\nlet v be apply(x giving x + 1)\n",
     ] {
         let dir = scratch("stage23", "refused");
         let output = executable(&dir, "refused");

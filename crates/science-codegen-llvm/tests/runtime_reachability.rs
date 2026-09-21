@@ -83,11 +83,17 @@
 //!    the prelude's `Chars` — so `science_chars_next` was out of reach too,
 //!    and `for c in text.chars():` did not build. Both symbols are in the
 //!    corpus now, and the two allowlist entries that named them are gone.
-//!    `Box`'s only release path is a vtable slot this backend does not emit —
-//!    `tests/methods.rs`'s
-//!    `a_boxed_error_is_reached_through_its_vtable_and_read_back` says so in
-//!    its own doc comment — so `science_box_free` is never called although
-//!    `science_box_new` is, every run. `String`'s ordering is refused by name
+//!    **`science_box_free` is the same shape a third time.** It read *"`Box`'s
+//!    only release path is a vtable slot this backend does not emit"*, which
+//!    was true of Decision 14's boxed error — `tests/methods.rs`'s
+//!    `a_boxed_error_is_reached_through_its_vtable_and_read_back` still
+//!    documents that gap and still returns the box rather than dropping it —
+//!    and false of §2.6's plain `Box[T]`, which was never behind a vtable at
+//!    all: `Lowerer::direct_release`'s new arm frees it through
+//!    `Lowerer::intern_element_descriptor`, the same descriptor builder
+//!    `Array`'s and `Map`'s elements already used. `boxed_value_owning_a_string`
+//!    is the corpus program and the allowlist entry is gone with it.
+//!    `String`'s ordering is refused by name
 //!    (`tests/methods.rs`'s `ordering_two_strings_is_refused` asserts the
 //!    refusal names `science_string_cmp`). `print`/`write` are declared and
 //!    then withdrawn — `builtins.rs`'s own words are *"deliberately left
@@ -307,6 +313,23 @@ const CORPUS: &[(&str, &str)] = &[
          def main() -> Error?:\n\
          \x20   fail()\n",
     ),
+    // §2.6's plain `Box[T]`, not Decision 14's boxed error above: `Box.new`
+    // (`science_box_new`) and the binding going out of scope unused
+    // (`science_box_free`). `Holder` owns a `String`, so the free also runs
+    // the descriptor's `drop_fn` and reaches `science_string_free` — the same
+    // shape `tests/methods.rs`'s
+    // `a_boxed_value_owning_a_string_is_built_and_freed_ten_thousand_times`
+    // runs, kept here in its reduced form because this file reads
+    // declarations and not stdout.
+    (
+        "boxed_value_owning_a_string",
+        "type Holder:\n\
+         \x20   label: String\n\
+         \n\
+         def main():\n\
+         \x20   let h be Box.new(Holder(label: \"owned\"))\n\
+         \x20   print(\"built\")\n",
+    ),
     // `read_file`/`write_file`, in the one syntax the corpus uses for a
     // pair-returning call — `let text, io_err be read_file(path)` —
     // `examples/09_absence_and_failure.science`'s own spelling, which sidesteps
@@ -350,14 +373,6 @@ const ALLOWLIST: &[(&str, &str)] = &[
          convention and are reachable below — so the prelude declaration is the only thing left; \
          `Lowerer::owned_nullable_method`'s own doc comment says the reasoning was re-read after \
          that convention landed and still stands",
-    ),
-    (
-        "science_box_free",
-        "`science_box_new` runs on every boxed-error program this crate builds; releasing what \
-         it allocated goes through a vtable slot this backend does not emit yet — \
-         `tests/methods.rs`'s `a_boxed_error_is_reached_through_its_vtable_and_read_back` \
-         documents the same gap and its program returns the box rather than dropping it for \
-         exactly this reason",
     ),
     (
         "science_write",

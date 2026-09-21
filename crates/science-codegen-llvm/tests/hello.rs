@@ -140,33 +140,41 @@ fn the_module_says_what_stage_one_says_it_should() {
 /// the test is *for* survives unchanged: a construct past the boundary is
 /// `SC0400` naming itself, and not an internal error.
 ///
-/// **The construct has now moved three times, which is the point of the
+/// **The construct has now moved four times, which is the point of the
 /// test.** It was a second function, then a `for` loop, then a generic
-/// function call — and each is now emitted: `lower_for_over_range` builds the
-/// counting loop, and `science_mir::instantiate` substitutes a generic body
-/// so `science_codegen::mono` can name one function per instance.
+/// function call, then `Box[T]` — and each is now emitted:
+/// `lower_for_over_range` builds the counting loop, `science_mir::instantiate`
+/// substitutes a generic body so `science_codegen::mono` can name one function
+/// per instance, and `Box.new` is a `prelude_method` row like `Array.new`'s,
+/// its element's descriptor built by `Lowerer::intern_element_descriptor` —
+/// the same one `Array`'s and `Map`'s elements already went through.
 ///
-/// A **`Box[T]`** takes its place. It is one of §2.6's runtime containers,
-/// reached through a `ScienceTypeInfo` this backend does not emit, so moving
-/// this boundary means a runtime entry point and a descriptor rather than a
-/// backend arm — and when that lands, this test moves a fourth time and the
-/// paragraph above gets another sentence.
+/// A method's **default body on an `interface`** was written here next and
+/// did not survive the same session: an `Instance` carries a `self_ty` now,
+/// so one body is one function per implementor.
+///
+/// **A closure** takes its place, and it is the most durable choice left in
+/// the language. `science-mir` does not lower a closure's body **at all** —
+/// `Rvalue::Closure` carries a THIR expression id and its captures, and
+/// nothing anywhere turns either into a function. Moving this boundary is a
+/// whole phase's work rather than a backend arm, which is what every previous
+/// occupant of this test turned out to be.
 #[test]
 fn a_program_past_the_boundary_is_refused_by_name() {
-    let lowered = lower("type Doc:
-    n: Int
+    let lowered = lower("def apply(f: (Int) -> Int) -> Int:
+    f(1)
 
-let b be Box[Doc].new(Doc(n: 1))
+let v be apply(x giving x + 1)
 ");
     let dir = scratch("hello", "refused");
     let diagnostics = lowered
         .try_build(&dir.join("out"), OptLevel::O2)
         .map(|_| ())
-        .expect_err("a `Box` is not lowered");
+        .expect_err("a closure's body is not lowered");
     let first = diagnostics.first().expect("a diagnostic");
     assert_eq!(first.code, science_codegen::diagnostics::code::SC0400);
     assert!(
-        first.message.contains("Box"),
+        first.message.contains("closure"),
         "the refusal must name the construct, and it said: {}",
         first.message
     );

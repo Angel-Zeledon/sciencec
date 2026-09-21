@@ -976,10 +976,20 @@ impl<'a> Lowerer<'a> {
             base: Operand::Param(0),
             offset: payload_offset,
         }];
-        let mut args = vec![Operand::Value(address)];
-        if let Some((_, Some(descriptor))) = &direct {
-            args.push(Operand::GlobalAddr(descriptor.clone()));
-        }
+        let mut next_value = 2u32;
+        let args = match &direct {
+            Some(d) => self.release_args(
+                d,
+                address,
+                &mut || {
+                    let id = ValueId(next_value);
+                    next_value += 1;
+                    id
+                },
+                &mut release,
+            ),
+            None => vec![Operand::Value(address)],
+        };
         release.push(ExtInst::Above(Inst::Call {
             dest: None,
             callee,
@@ -1073,10 +1083,19 @@ impl<'a> Lowerer<'a> {
                 )));
             }
         };
-        let mut args = vec![Operand::Value(address)];
-        if let Some((_, Some(descriptor))) = &direct {
-            args.push(Operand::GlobalAddr(descriptor.clone()));
-        }
+        let args = match &direct {
+            Some(d) => self.release_args(
+                d,
+                address,
+                &mut || {
+                    let id = ValueId(*next_value);
+                    *next_value += 1;
+                    id
+                },
+                insts,
+            ),
+            None => vec![Operand::Value(address)],
+        };
         insts.push(ExtInst::Above(Inst::Call { dest: None, callee, args, ret, sret_slot: None }));
         Ok(())
     }
@@ -1391,10 +1410,19 @@ impl<'a> Lowerer<'a> {
                     )));
                 }
             };
-            let mut args = vec![Operand::Value(address)];
-            if let Some((_, Some(descriptor))) = &direct {
-                args.push(Operand::GlobalAddr(descriptor.clone()));
-            }
+            let args = match &direct {
+                Some(d) => self.release_args(
+                    d,
+                    address,
+                    &mut || {
+                        let id = ValueId(next_value);
+                        next_value += 1;
+                        id
+                    },
+                    &mut insts,
+                ),
+                None => vec![Operand::Value(address)],
+            };
             insts.push(ExtInst::Above(Inst::Call {
                 dest: None,
                 callee,
@@ -1691,24 +1719,28 @@ impl<'a> Lowerer<'a> {
         )))
     }
 
-    /// Intern Decision 20's descriptor for a type a box allocates for,
-    /// returning the global every call site must name.
+    /// Intern Decision 20's descriptor for a concrete type boxed into an
+    /// interface object (Decision 14), returning the global every call site
+    /// must name.
     ///
-    /// **`drop_fn` is `None`, and that is a limit rather than an answer.** The
-    /// field tells `science_box_free` what to run over the value before
-    /// releasing the allocation, and this backend emits no glue — Decision
-    /// 12's glue is an emitted `internal` function per monomorphised type and
-    /// `TerminatorKind::Drop` already refuses every type that would need one.
-    /// So `None` is true of every box this backend can build today: the only
-    /// types that reach here own nothing, because a type that owns something
-    /// cannot be dropped and therefore cannot be a local this coercion reads
-    /// from.
+    /// **`drop_fn` is `None`, and that is a limit rather than an answer — but
+    /// only here, for boxing into `any I`.** [`Lowerer::intern_element_descriptor`]
+    /// is the wider descriptor builder §2.6's plain `Box of T` uses instead,
+    /// and Decision 12's glue is no longer missing in general: `emit_field_glue`
+    /// and `emit_choice_glue` are how a record's or a `choice`'s owning fields
+    /// are released today. What is still missing is narrower — releasing a
+    /// value *behind a vtable*, which is Decision 13's slot this backend does
+    /// not emit and `TerminatorKind::Drop`'s own refusal for an interface
+    /// object names by name. Boxing a `C` that owns something into `any I`
+    /// would build a box this crate can allocate and never correctly free, so
+    /// it is refused here, at the one place that still knows `C` is concrete
+    /// and can ask.
     ///
-    /// **What it would become.** When glue lands, this is the one line that
-    /// changes, and the `Option` is already the shape the runtime reads: a
-    /// `None` lets it skip the destructor loop entirely, which
-    /// `science_codegen::descriptor::TypeInfo` calls out as the performance
-    /// reason the field is not a do-nothing function.
+    /// **What it would become.** When a vtable carries a drop slot, this is
+    /// the one line that changes, and the `Option` is already the shape the
+    /// runtime reads: a `None` lets it skip the destructor loop entirely,
+    /// which `science_codegen::descriptor::TypeInfo` calls out as the
+    /// performance reason the field is not a do-nothing function.
     fn intern_descriptor(&mut self, concrete: DefId, source: Ty) -> Result<String, Unlowered> {
         let name = self.defs.get(concrete).name.clone();
         if self.drop_runs_something(source, 0)? {
@@ -1769,6 +1801,19 @@ impl<'a> Lowerer<'a> {
         self.array_element(destination.ty(body))
     }
 
+    /// The element type `science_box_new`'s descriptor should describe.
+    ///
+    /// **The destination and nothing else, unlike
+    /// [`Lowerer::array_operand_element`]'s two-step search.** `Box.new`'s one
+    /// argument is `T` itself and not `Box of T` — that is the entire point of
+    /// an associated function that builds the indirection rather than
+    /// receiving one — so no operand is ever `Box`-shaped for
+    /// [`Lowerer::box_element`] to find. `T` is nowhere but the destination
+    /// Decision 42's checker already solved this call's return type into.
+    fn box_operand_element(&self, body: &MirBody, destination: &mir::Place) -> Option<Ty> {
+        self.box_element(destination.ty(body))
+    }
+
     /// Decision 20's descriptor for an element type, whatever kind it is.
     ///
     /// **Wider than [`Lowerer::intern_descriptor`] on purpose.** That one
@@ -1817,6 +1862,25 @@ impl<'a> Lowerer<'a> {
         let info = science_codegen::descriptor::type_info(self.target, &cg, drop_fn);
         let rendered = self.types.render(self.defs, element);
         Ok(self.descriptors.intern(&MonoKey::plain(&[rendered.as_str()]), info))
+    }
+
+    /// `Box of T`'s element, when the type is one.
+    ///
+    /// [`Lowerer::array_element`]'s reason, one container over: the head has
+    /// to be the **prelude's** `Box`, because a user may declare a type of
+    /// that name, and every builtin generic is none of the kinds a user's
+    /// `Box` could be.
+    fn box_element(&self, ty: Ty) -> Option<Ty> {
+        let TyKind::Named { def, args } = self.types.kind(self.referent(ty)) else {
+            return None;
+        };
+        if self.defs.get(*def).name != "Box" || args.len() != 1 {
+            return None;
+        }
+        match args[0] {
+            GenericArg::Type(element) => Some(element),
+            _ => None,
+        }
     }
 
     /// `Map of (K, V)`'s key and value, when the type is one.
@@ -2105,6 +2169,21 @@ impl<'a> Lowerer<'a> {
                 if args.len() == 2 && self.defs.get(*def).name == "Map" =>
             {
                 Ok(RtAggregate::Map.cg_ty())
+            }
+            // `Box of T` — §2.6's third runtime container, and the one whose
+            // *value* is not an aggregate at all: Decision 19's null niche
+            // makes it one word, `CgTy::Ptr(PtrKind::Box)`, with no
+            // `ScienceTypeInfo` inside the type the way `Array`'s three words
+            // and `Map`'s six carry none either. The descriptor a `Box.new` or
+            // a drop needs is built at the *use* and not read back out of this
+            // arm — `Lowerer::intern_element_descriptor` interns one per
+            // element type, the same table `Array`'s and `Map`'s elements
+            // share, because what a box frees is exactly what an array frees
+            // one element of.
+            TyKind::Named { def, args }
+                if args.len() == 1 && self.defs.get(*def).name == "Box" =>
+            {
+                Ok(CgTy::Ptr(PtrKind::Box))
             }
             TyKind::Named { args, .. } if !args.is_empty() => Err(Unlowered::new(format!(
                 "a value of type `{}`, one of §2.6's runtime containers: its value is a \
@@ -2651,6 +2730,14 @@ impl<'a> Lowerer<'a> {
     /// beside it. `science_string_free` takes none, which is exactly what
     /// separates the two signatures.
     ///
+    /// **`science_box_free` is in this table too, and its call is built
+    /// differently from the other three's.** [`Lowerer::release_args`] is
+    /// where that shows up: every caller of this function builds its call
+    /// through that one function rather than reading the tuple apart itself,
+    /// which is what keeps the four call sites from having to know
+    /// `science_box_free` takes its descriptor first and its pointer by value
+    /// and not by address.
+    ///
     /// `None` means the type is not one of these — either it owns nothing, or
     /// it owns something through fields and wants glue.
     fn direct_release(
@@ -2673,7 +2760,68 @@ impl<'a> Lowerer<'a> {
             let descriptor = self.intern_map_descriptor(key, value)?;
             return Ok(Some(("science_map_free", Some(descriptor))));
         }
+        // A `Box` releases through `science_box_free(D, P)`, whose element is
+        // `Lowerer::intern_element_descriptor`'s general descriptor and not
+        // [`Lowerer::intern_descriptor`]'s narrower one: a boxed value can own
+        // something — Decision 14's boxing into an interface object cannot say
+        // that yet, and §2.6's plain `Box of T` is exactly where it can, since
+        // its `drop_fn` is filled in by [`Lowerer::intern_drop_glue`] the same
+        // way an array's element is.
+        if let Some(element) = self.box_element(ty) {
+            let descriptor = self.intern_element_descriptor(element)?;
+            return Ok(Some(("science_box_free", Some(descriptor))));
+        }
         Ok(None)
+    }
+
+    /// The call [`Lowerer::direct_release`]'s answer becomes, given the
+    /// field's or local's own address.
+    ///
+    /// **Three of the four take `address` itself and `science_box_free` does
+    /// not, and the difference is what `CgTy` each one is.** `String`,
+    /// `Array` and `Map` are aggregates — `{ ptr, len, cap }` and wider — so
+    /// the field's own address is already the pointer a C signature expects.
+    /// `Box of T` lowers to `CgTy::Ptr(PtrKind::Box)`: **the field itself
+    /// holds the heap pointer**, not a struct to point at, so `address` names
+    /// the *slot* and the runtime call wants what is stored in it — one
+    /// `LoadAt` further than the other three need. `science_box_free`'s
+    /// descriptor is the *first* argument and not the second for the same
+    /// reason `science_codegen::descriptor::DropGlue`'s own comment gives:
+    /// `science_box_free(@typeinfo.T, %p)` reads left to right where the
+    /// other three read `(%p, @typeinfo.T)`.
+    ///
+    /// **`fresh` and not a `ValueId` this function invents itself**, because
+    /// every caller already has its own numbering — `BodyCtx::value` in
+    /// [`Lowerer::lower_terminator`], a `u32` counter in
+    /// [`Lowerer::emit_field_glue`] and [`Lowerer::emit_variant_release`], two
+    /// fixed constants in [`Lowerer::emit_nullable_glue`] — and a fifth
+    /// scheme here would be a second counter for exactly one of the values
+    /// those already hand out.
+    fn release_args(
+        &self,
+        direct: &(&'static str, Option<String>),
+        address: ValueId,
+        fresh: &mut dyn FnMut() -> ValueId,
+        insts: &mut Vec<ExtInst>,
+    ) -> Vec<Operand> {
+        let (symbol, descriptor) = direct;
+        if *symbol == "science_box_free" {
+            let descriptor = descriptor
+                .clone()
+                .expect("direct_release always pairs science_box_free with a descriptor");
+            let loaded = fresh();
+            insts.push(ExtInst::LoadAt {
+                dest: loaded,
+                address: Operand::Value(address),
+                layout: layout_of(self.target, &CgTy::Ptr(PtrKind::Box)),
+            });
+            return vec![Operand::GlobalAddr(descriptor), Operand::Value(loaded)];
+        }
+        let mut args = vec![Operand::Value(address)];
+        if let Some(descriptor) = descriptor {
+            args.push(Operand::GlobalAddr(descriptor.clone()));
+        }
+        args
     }
 
     /// Whether a type is the prelude's `String`, exactly.
@@ -4510,6 +4658,19 @@ impl<'a> Lowerer<'a> {
     /// The two coercions differ in where the data word comes from and in
     /// nothing else, which is why they share everything below the allocation.
     ///
+    /// **Not §2.6's plain `Box of T`, and the reason is what produces each.**
+    /// `Coercion::Box` is `assign`'s rule 8, gated on
+    /// `Coercions::is_any_error` — boxing a concrete value into `any Error`
+    /// with no `Box.new` written at all, the one case §5 admits without it.
+    /// An explicit `Box.new(doc)` is never a coercion: `associated_call`
+    /// resolves it to an ordinary call at `builtins.rs`' declared `new`,
+    /// which carries no Science body — so it is a [`Lowerer::prelude_method`]
+    /// row, reached from [`Lowerer::lower_call`] and lowered through the same
+    /// [`Lowerer::lower_runtime_call`] `Array.new` and `Map.new` already go
+    /// through (its element read off the destination by
+    /// [`Lowerer::box_operand_element`], since `Box.new`'s one argument is `T`
+    /// and never `Box of T`), and not a coercion reached from here.
+    ///
     /// **The value needs an address and may not have one.** `science_box_new`
     /// copies *from memory*, so an operand that is a constant — no place, no
     /// slot — is materialised into a temporary first and the temporary's
@@ -5914,11 +6075,14 @@ impl<'a> Lowerer<'a> {
                     // `science_string_free` at the site that made it"* — and a
                     // bound `String` is that same call at the site that drops
                     // it. `science_string_free` takes the address and no
-                    // descriptor; `science_array_free` takes one, and
-                    // `direct_release` is what supplies it — the descriptor is
-                    // a global, so it is interned here and not passed down from
-                    // MIR. Everything else that owns something goes through
-                    // Decision 12's glue, which is emitted on demand.
+                    // descriptor; `science_array_free` and `science_box_free`
+                    // each take one, and `direct_release` is what supplies it
+                    // — the descriptor is a global, so it is interned here and
+                    // not passed down from MIR. `science_box_free`'s call is
+                    // shaped differently again — [`Lowerer::release_args`] is
+                    // where that is built and why. Everything else that owns
+                    // something goes through Decision 12's glue, which is
+                    // emitted on demand.
                     let glue = self.intern_drop_glue(ty, 0)?;
                     let direct = match &glue {
                         Some(_) => None,
@@ -5938,10 +6102,10 @@ impl<'a> Lowerer<'a> {
                             )));
                         }
                     };
-                    let mut args = vec![Operand::Value(address)];
-                    if let Some((_, Some(descriptor))) = &direct {
-                        args.push(Operand::GlobalAddr(descriptor.clone()));
-                    }
+                    let args = match &direct {
+                        Some(d) => self.release_args(d, address, &mut || ctx.value(), insts),
+                        None => vec![Operand::Value(address)],
+                    };
                     insts.push(ExtInst::Above(Inst::Call {
                         dest: None,
                         callee,
@@ -6658,8 +6822,14 @@ impl<'a> Lowerer<'a> {
                     map_kv = Some((key, value));
                     Some(self.intern_map_descriptor(key, value)?)
                 } else {
+                // `science_box_new` tried second and not merged into
+                // `array_operand_element` itself: that function's whole point
+                // is *"whichever operand is the array, and the destination is
+                // the fallback"*, a search `Box.new` has no operand-shaped
+                // half of at all — see `Lowerer::box_operand_element`.
                 let element = self
                     .array_operand_element(body, args, destination)
+                    .or_else(|| self.box_operand_element(body, destination))
                     .ok_or_else(|| {
                         Unlowered::new(format!(
                             "a call to `{symbol}`, which takes a `ScienceTypeInfo`, with no \
@@ -6844,10 +7014,11 @@ impl<'a> Lowerer<'a> {
     /// running a program that prints what the entry point returned, so a row
     /// that names the wrong symbol fails on the number and not on the shape.
     ///
-    /// **Four rows and not thirty.** Every other prelude method either needs
-    /// §2.6's `ScienceTypeInfo` descriptor, which this backend emits none of
-    /// (`Array`, `Map`, `Box`), or has no `RUNTIME` entry point at all. A row
-    /// is added when a program that runs it is added with it.
+    /// Every prelude method not here either has no `RUNTIME` entry point at
+    /// all, or needs more than this table can say in one symbol —
+    /// `Map.insert`/`Map.remove`'s §5.3 convention is
+    /// [`Lowerer::owned_nullable_method`]'s table for that reason. A row is
+    /// added when a program that runs it is added with it.
     fn prelude_method(&self, def: DefId) -> Option<&'static str> {
         /// `(the block's `Self`, the method) -> the entry point`.
         const PRELUDE_METHODS: &[(&str, &str, &str)] = &[
@@ -6932,6 +7103,13 @@ impl<'a> Lowerer<'a> {
             ("Map", "get", "science_map_get"),
             ("Map", "contains", "science_map_contains"),
             ("Map", "length", "science_map_len"),
+            // §2.6's third runtime container. `science_box_new(D, P)` takes a
+            // descriptor exactly as `science_array_new(D)` does, and it is
+            // recovered the same way: `Box.new`'s one argument is `T` and
+            // never `Box of T`, so `lower_runtime_call`'s `array_operand_element`
+            // finds nothing and `Lowerer::box_operand_element` — tried next,
+            // for that stated reason — reads `T` off the destination instead.
+            ("Box", "new", "science_box_new"),
         ];
         if !self.defs.get(def).is_builtin() {
             return None;

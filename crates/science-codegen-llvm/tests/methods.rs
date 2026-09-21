@@ -732,6 +732,51 @@ def main() -> Error?:
     assert_eq!(ran.status, Some(1), "stderr: {}", ran.stderr);
 }
 
+/// §2.6's plain `Box[T]`, not Decision 14's boxed error above: built,
+/// dropped, and run enough times that a wrong size or a wrong drop order
+/// would corrupt the allocator rather than merely disagree with a number.
+///
+/// **Why a loop and not one call.** The boxed error test above reads `409`
+/// back through the vtable and catches a wrong copy that way; a plain
+/// `Box[T]` has no such read-back today — `Lowerer::box_element`'s reason is
+/// the same one method lookup has for not looking through a `Box` at all,
+/// and `crates/science-types/tests/method_lookup.rs`'s
+/// `a_method_through_a_box_is_open_because_no_note_says_otherwise` names the
+/// undecided rule. So this test's evidence is different in kind: `Holder`
+/// owns a `String`, and the box `n` varies with the loop counter rather than
+/// being a compile-time constant, which is what stops the allocator from
+/// ever handing back the same bytes twice by accident. Ten thousand rounds
+/// of allocate-then-free is enough that a wrong `size`, a wrong `align`, or
+/// a `drop_fn` called in the wrong order corrupts the heap and the process
+/// aborts before `print` ever runs — this crate has no leak detector to run
+/// under, so a clean exit and the right stdout is the evidence available to
+/// it, and `/tmp`'s own manual run of the same shape under macOS's `leaks`
+/// during development read *"0 leaks for 0 total leaked bytes"* for the
+/// stronger claim this test cannot make itself.
+#[test]
+fn a_boxed_value_owning_a_string_is_built_and_freed_ten_thousand_times() {
+    let source = "\
+type Holder:
+    n: I64
+    label: String
+
+def make(n: I64) -> Box[Holder]:
+    Box.new(Holder(n: n, label: \"boxed and owned\"))
+
+def main():
+    for i in 0..10000:
+        let h be make(i)
+    print(\"done\")
+";
+    let dir = scratch("methods", "boxed_value");
+    require_runtime();
+    let built = lower(source).build_at(&executable(&dir, "boxed_value"), OptLevel::O2);
+    let ran = run(&built);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(ran.stdout, "done\n", "stderr: {}", ran.stderr);
+    assert_eq!(ran.status, Some(0), "stderr: {}", ran.stderr);
+}
+
 /// The vtable is a `private unnamed_addr`-free constant array of pointers, and
 /// the dispatch loads out of it rather than calling a symbol.
 ///
