@@ -95,7 +95,9 @@ def copy_of(text: &String) -> String:
 # nothing to wrap: the heading *is* the value, and `null` is the other one.
 def heading(text: &String) -> String?:
     if text.starts_with("# "):
-        text.truncate(60)
+        let mutable out be copy_of(text)
+        out.truncate(60)
+        out
     else:
         null
 
@@ -156,7 +158,9 @@ def parse_port(text: &String) -> (U16, ConfigError?):
 
 def parse_host(text: &String) -> (String, ConfigError?):
     if text.starts_with("host="):
-        return (text.truncate(64), null)
+        let mutable out be copy_of(text)
+        out.truncate(64)
+        return (out, null)
     (String.new(), ConfigError.NotFound("host"))
 
 # The concrete form's payoff: `match` over the error is exhaustive, every

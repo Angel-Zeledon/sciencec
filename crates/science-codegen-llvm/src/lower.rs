@@ -7174,6 +7174,12 @@ impl<'a> Lowerer<'a> {
             ("String", "is_empty", "science_string_is_empty"),
             ("String", "new", "science_string_new"),
             ("String", "push_str", "science_string_push_str"),
+            // `truncate` joins on the same terms as the four above it:
+            // `science_string_truncate` was already in `RUNTIME`, takes the
+            // receiver's address and one `Int`, and returns nothing — so the
+            // ordinary `lower_runtime_call` path carries it with no new
+            // shape.
+            ("String", "truncate", "science_string_truncate"),
             // **`starts_with` is a row because both halves already existed.**
             // `RUNTIME` declares `science_string_starts_with(P, P) -> Bool` and
             // `builtins.rs` declares the method; only the sentence saying which

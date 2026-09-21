@@ -682,16 +682,44 @@ const BLOCKS: &[Block] = &[
                 params: &[("index", INT)],
                 ret: Some(Ty::Opt(&Ty::MutRef(&Ty::Var("T")))),
             },
-            // **`pop` is deliberately absent.** §3.2 names it — *"`Array` has
-            // `push` and `pop`"* — and gives it no signature, and the two
-            // candidates differ in what a program may write:
-            // `pop(mutable self) -> T?` hands the element back, and
-            // `pop(mutable self)` makes *"take it out and use it"* two calls.
-            // `examples/21` writes `self.ribs.pop()` as a statement in a `-> ()`
-            // body, which only the second admits. Deciding it here would settle
-            // it by accident, in a file nobody reads, on the evidence of one
-            // call site; `pop` closes none of the conservatisms this pass is
-            // for, so it waits for the note that owns it.
+            // **`pop` returns the element**, and this is the decision the
+            // comment that stood here declined to take.
+            //
+            // §3.2 names `pop` — *"`Array` has `push` and `pop`"* — and gives
+            // it no signature. The two candidates are `pop(mutable self) ->
+            // T?`, which hands the element back, and `pop(mutable self)`,
+            // which makes *"take it out and use it"* two calls. The comment
+            // here refused to choose, on the ground that deciding it *"in a
+            // file nobody reads, on the evidence of one call site"* would
+            // settle it by accident. That was right, and it is why this is
+            // now a decision taken deliberately rather than a default.
+            //
+            // **Reason.** `T?` is what `get` and `get_mutably` already
+            // return, so an empty collection answers the same way whichever
+            // of the three a program asks, and `if xs.pop()?:` is the shape
+            // the language already has for it. The alternative makes the
+            // empty case unobservable: `pop()` with no return either panics
+            // on empty or silently does nothing, and both are worse than a
+            // `T?` the caller must look at.
+            //
+            // **Cost.** `examples/21` wrote `self.ribs.pop()` as a statement
+            // in a `-> ()` body, which this signature does not admit. That
+            // file is corrected. A program that genuinely wants to discard
+            // the element writes the discard, which is the direction §5's
+            // *"a value that is thrown away is thrown away in the source"*
+            // already points.
+            //
+            // `science-rt`'s `science_array_pop` was already written and in
+            // `RUNTIME`. It needs `Array`'s `ScienceTypeInfo` descriptor to
+            // be called, which this backend does not emit yet, so declaring
+            // the name moves the refusal from the front end to codegen —
+            // which is where the remaining work honestly is.
+            Method {
+                name: "pop",
+                recv: Some(SelfKind::Mutable),
+                params: &[],
+                ret: Some(Ty::Opt(&Ty::Var("T"))),
+            },
             // `collections-and-chains.md` §3.1: *"`length()` on a collection is
             // O(1), counting a stream consumes it"*. `Int` and not `U64`
             // because §4.6 of the core spec writes `text.length()` into an
@@ -822,12 +850,10 @@ const BLOCKS: &[Block] = &[
     // that a note declares in full: §6.9's first line is `def new() -> String`,
     // so it is transcription and not a decision.
     //
-    // The six left out, with the reason each is out — and the grouping is
+    // The five left out, with the reason each is out — and the grouping is
     // finer than it was, because two of them were being refused for a reason
     // that is not theirs:
     //
-    // - `truncate` contradicts eighteen corpus call sites, which read it as
-    //   `-> String`; §6.9 makes it `(mutable self, bytes: Int)` with no return.
     // - `slice`, `lines` and `split` return `Range`, `Lines` and `Split` —
     //   Level 1 types §9 lists and the prelude does not have.
     // - `from_bytes` and `bytes` are **expressible today**: `&Array of
@@ -854,6 +880,23 @@ const BLOCKS: &[Block] = &[
                 name: "push_str",
                 recv: Some(SelfKind::Mutable),
                 params: &[("tail", Ty::Ref(&STRING))],
+                ret: None,
+            },
+            // **`truncate` mutates in place and returns nothing**, which is
+            // §6.9's signature and not the one eighteen corpus call sites
+            // read it as. Those sites wrote `self.body.truncate(200)` as an
+            // expression producing a `String`; the note says `(mutable self,
+            // bytes: Int)`. The corpus was wrong and is corrected, which is
+            // the same direction this file took for `Array.get`: a note's
+            // signature is the specification and a call site is a use of it.
+            //
+            // `science-rt`'s `science_string_truncate` was already written
+            // and already in `RUNTIME`, reachable by nothing. Declaring the
+            // name is the whole of what was missing.
+            Method {
+                name: "truncate",
+                recv: Some(SelfKind::Mutable),
+                params: &[("bytes", INT)],
                 ret: None,
             },
             Method {
@@ -1140,14 +1183,14 @@ const BLOCKS: &[Block] = &[
 /// true — so the string comparison is total. It is the lookup the `DefTable`
 /// exists to abolish, performed once per otherwise-unresolved method call.
 const UNWRITTEN: &[(&str, &[&str])] = &[
-    // `String` — the six of `stdlib-core.md` §6.9's nineteen that the `String`
-    // block above leaves out. That block's own comment names all six and gives
-    // the reason for each: `truncate` because §6.9's signature contradicts
-    // eighteen corpus call sites, `slice`/`lines`/`split` because they return
+    // `String` — the five of `stdlib-core.md` §6.9's nineteen that the
+    // `String` block above leaves out. That block's own comment names all
+    // five and gives the reason for each:
+    // `slice`/`lines`/`split` because they return
     // Level 1 types the prelude does not have, and `from_bytes`/`bytes`
     // because no program in `examples/` calls either.
     ("String", &[
-        "truncate", "slice", "lines", "split", "from_bytes", "bytes",
+        "slice", "lines", "split", "from_bytes", "bytes",
         // And the two that come from an *interface* rather than from §6.9's
         // block. §6.9 ends `String implements Clone, Eq, Ord, Add, Display`
         // and [`IMPLEMENTS`] above transcribes it — **with no methods in it**,
@@ -1207,7 +1250,7 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     // declared, and its method name is *"not written down"* by the same
     // argument.
     ("Array", &[
-        "pop", "sort", "reserve", "iterate", "iterate_mutably", "iterate_consuming", "clone",
+        "sort", "reserve", "iterate", "iterate_mutably", "iterate_consuming", "clone",
     ]),
     // `Map` — `keys`, `values` and `values_mutably` are
     // `collections-and-chains.md` §5.4 by name; the three `iterate*` are the

@@ -196,17 +196,21 @@ def counted() -> Bool:
 
 // --- the silence that is left, pinned --------------------------------------
 
-/// The second silence the header names, pinned.
+/// **The silence is gone, and this test flipped exactly as it said it
+/// would.**
 ///
-/// `pop` is in `builtins.rs`' `UNWRITTEN` — `stdlib-core.md` §3.2 gives the
-/// name and no note gives the signature — so the call resolves to nothing,
-/// `slot` has `Ty::ERROR`, and a rule that reads types has nothing to read.
-/// Writing to it is a program `SC0304` would refuse if it could see it.
+/// It read: *"`pop` is in `builtins.rs`' `UNWRITTEN` … so the call resolves
+/// to nothing, `slot` has `Ty::ERROR`, and a rule that reads types has
+/// nothing to read. Writing to it is a program `SC0304` would refuse if it
+/// could see it."* And it promised: *"this test flips the day `Array.pop` is
+/// transcribed, and the entry in `UNWRITTEN` goes with it"*.
 ///
-/// **This test flips the day `Array.pop` is transcribed**, and the entry in
-/// `UNWRITTEN` goes with it, which is the handoff that comment describes.
+/// `Array.pop` is transcribed — `pop(mutable self) -> T?`, the decision and
+/// its argument are in `builtins.rs` — and the entry went with it. So `slot`
+/// has a real type, `SC0304` can see the write, and the same program is now
+/// refused for the reason it always deserved.
 #[test]
-fn a_binding_from_an_untranscribed_prelude_method_has_no_type_to_check() {
+fn a_binding_from_a_now_transcribed_prelude_method_is_checked_like_any_other() {
     let checked = support::check(
         "\
 def take(items: &mut Array[I64]) -> Bool:
@@ -215,7 +219,7 @@ def take(items: &mut Array[I64]) -> Bool:
     true
 ",
     );
-    checked.assert_clean();
+    assert_eq!(checked.codes(), vec![304]);
 }
 
 /// And the half of that pair which is no longer a silence: a name **no** note

@@ -30,14 +30,18 @@ interface Summarize:
     def summarize(self) -> String
 
     def preview(self) -> String:
-        self.summarize().truncate(80)
+        let mutable out be self.summarize()
+        out.truncate(80)
+        out
 
 interface Reset:
     def reset(mutable self)
 
 Doc implements Summarize:
     def summarize(self) -> String:
-        self.body.truncate(200)
+        let mutable out be copy_of(self.body)
+        out.truncate(200)
+        out
 
 Note implements Summarize:
     def summarize(self) -> String:

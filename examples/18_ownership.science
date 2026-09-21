@@ -6,6 +6,15 @@
 # `tests/ui/`. There is no region syntax anywhere; regions are inferred, and
 # the programmer never writes one.
 
+# §6.9 gives `String` no `clone` and makes `truncate` a **mutator**, so a
+# shortened copy is built the long way: `String.new()` then `push_str`. Every
+# file in the corpus that shortens a borrowed field carries this, because
+# there is no prelude name for it to import.
+def copy_of(text: &String) -> String:
+    let mutable out be String.new()
+    out.push_str(text)
+    out
+
 type Doc:
     title: String
     body: String
@@ -36,7 +45,9 @@ interface Summarize:
 
 Doc implements Summarize:
     def summarize(self) -> String:
-        self.body.truncate(200)
+        let mutable out be copy_of(self.body)
+        out.truncate(200)
+        out
 
 Doc implements Drop:
     def drop(mutable self):

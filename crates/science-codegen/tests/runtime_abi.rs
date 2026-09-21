@@ -124,7 +124,7 @@ fn a_diverging_entry_point_is_never_called_for_its_value() {
 }
 
 #[test]
-fn the_ten_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
+fn the_nine_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
     // The derived set, printed as the assertion rather than computed into one,
     // so that a reader comparing this file against `science-rt` §2 sees the
     // difference immediately. §2 listed eight; this was nine, and
@@ -144,7 +144,6 @@ fn the_ten_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
             "science_string_clone",
             "science_string_from_bytes",
             "science_string_new",
-            "science_string_truncate",
             "science_string_with_capacity",
         ]
     );

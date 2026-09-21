@@ -171,9 +171,17 @@ fn the_call_graph_has_no_cycle_in_this_program() {
 /// inference as three loans instead of three unchecked moves. The count below
 /// is unmoved by that, deliberately — a borrow is not a callee.
 ///
-/// The `Method` bound is kept as a bound rather than pinned exactly, for the
-/// reason it was written: it is here to go down. `IterateNext` is pinned at
-/// three because it is one per `for` and the file writes three.
+/// **The `Method` bound reached zero, which is where it was going.** It was
+/// kept as a range rather than an exact number *"for the reason it was
+/// written: it is here to go down"*, and the last two names it was waiting on
+/// were `String.truncate` and `Array.pop` — both named by `stdlib-core.md`,
+/// both with runtime entry points already written, and both left out of
+/// `builtins.rs`' `UNWRITTEN` table until the signatures were settled. They
+/// are settled.
+///
+/// So it is pinned at zero now, and a range would be the wrong shape: there
+/// is nothing left for it to descend to, and the next unresolved method call
+/// in this file would be a regression rather than a known gap.
 #[test]
 fn the_calls_it_cannot_resolve_are_the_container_methods() {
     let lowered = acceptance();
@@ -188,9 +196,9 @@ fn the_calls_it_cannot_resolve_are_the_container_methods() {
         .collect();
     let methods = unresolved.iter().filter(|which| **which == Unresolved::Method).count();
     let iterate = unresolved.iter().filter(|which| **which == Unresolved::IterateNext).count();
-    assert!(
-        (1..=8).contains(&methods),
-        "expected at most eight unresolved method calls, found {methods}; {unresolved:?}"
+    assert_eq!(
+        methods, 0,
+        "an unresolved method call is a regression now, not a known gap; {unresolved:?}"
     );
     // **Zero, and the sentence that pinned three is what changed.** It read
     // *"`IterateNext` is pinned at three because it is one per `for` and the

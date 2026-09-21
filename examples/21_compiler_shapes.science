@@ -133,7 +133,11 @@ Scopes has:
     def push(mutable self, kind: RibKind):
         self.ribs.push(Rib(kind: kind, bindings: Array[Binding].new()))
 
-    def pop(mutable self):
+    # `Array.pop` hands the element back — `stdlib-core.md` §3.2 names the
+    # method and `builtins.rs` records the decision — so a caller that wants
+    # only the side effect says so. `Scopes.pop` is that caller: a scope is
+    # left, and what was in it is no longer anyone's.
+    def pop(mutable self) -> Rib?:
         self.ribs.pop()
 
     # Lookup returns `DefId?`, not `&Binding?`. The caller wants the

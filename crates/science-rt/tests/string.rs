@@ -103,90 +103,120 @@ fn push_str_from_itself_is_not_required_but_aliasing_two_reads_is_safe() {
     }
 }
 
+// --- `truncate`, which used to do something else ----------------------------
+//
+// **Every test in this section was rewritten, and the old ones were not
+// weakened but wrong.** They pinned a `truncate` that took `&self`, returned a
+// **new** `String`, and counted **characters**. `stdlib-core.md` §6.9 writes
+// the signature as `def truncate(mutable self, bytes: Int)` and calls it *"the
+// one `String` mutator"*, and §6.5's decision is in bytes: *"shortens to at
+// most `bytes` bytes, stopping at the last character boundary at or below that
+// offset"*, with the cost *"`truncate(200)` may leave 197 bytes"* spelled out.
+//
+// The old implementation and these old tests agreed with each other and with
+// nothing else. They survived because `science-resolve`'s `builtins.rs` never
+// declared the name, so no Science program could reach this entry point and
+// no test above the runtime could see what it did.
+
+/// The rule in §6.5, at the boundary it exists to protect.
+///
+/// `"áéíóú"` is five two-byte characters. A limit of 3 bytes lands inside the
+/// second one, so the cut backs off to 2 — the last boundary at or below —
+/// leaving `"á"`. A byte count that ignored boundaries would leave invalid
+/// UTF-8, which is the one thing §6.5 says it must never do.
 #[test]
-fn truncate_cuts_on_character_boundaries() {
+fn truncate_backs_off_to_the_last_character_boundary() {
     unsafe {
-        // Each of these characters is two bytes.
-        let v = s("áéíóú");
-        let t = science_string_truncate(&v, 3);
-        assert_eq!(as_str(&t), "áéí");
-        assert_eq!(science_string_len(&t), 6, "three two-byte characters");
-        free(t);
+        let mut v = s("áéíóú");
+        science_string_truncate(&mut v, 3);
+        assert_eq!(as_str(&v), "á");
+        assert_eq!(science_string_len(&v), 2, "the boundary below three");
         free(v);
     }
 }
 
+/// A four-byte character, which is the widest back-off there is: a limit one
+/// byte into it must drop all four.
 #[test]
 fn truncate_handles_four_byte_characters() {
     unsafe {
-        let v = s("a\u{1F600}b\u{1F601}");
-        assert_eq!(science_string_len(&v), 10);
-        let t = science_string_truncate(&v, 2);
-        assert_eq!(as_str(&t), "a\u{1F600}");
-        assert_eq!(science_string_len(&t), 5);
-        free(t);
+        let mut v = s("a\u{1F600}b");
+        assert_eq!(science_string_len(&v), 6);
+        science_string_truncate(&mut v, 2);
+        assert_eq!(as_str(&v), "a", "two bytes lands inside the emoji");
+        science_string_truncate(&mut v, 1);
+        assert_eq!(as_str(&v), "a");
         free(v);
     }
 }
 
+/// **Totality, over every limit.** §6.5's whole argument is that `truncate`
+/// *"cannot fail, cannot panic, and cannot corrupt"*, so the property is
+/// checked at every byte offset from zero past the end rather than at a few
+/// chosen ones. `as_str` would be undefined behaviour on invalid UTF-8, so
+/// reading it back at each step is the assertion.
 #[test]
 fn truncate_never_splits_a_character_at_any_limit() {
-    unsafe {
-        let text = "aá€\u{1F600}b\u{4E2D}";
-        let v = s(text);
-        let count = text.chars().count();
-        for limit in 0..=(count as i64 + 3) {
-            let t = science_string_truncate(&v, limit);
-            let expected: String = text.chars().take(limit as usize).collect();
-            assert_eq!(as_str(&t), expected, "limit {limit}");
-            free(t);
+    let text = "aá€\u{1F600}b\u{4E2D}";
+    for limit in 0..=(text.len() as i64 + 3) {
+        unsafe {
+            let mut v = s(text);
+            science_string_truncate(&mut v, limit);
+            let cut = as_str(&v);
+            assert!(text.starts_with(cut), "limit {limit}: {cut:?} is not a prefix");
+            assert!(cut.len() <= limit.max(0) as usize, "limit {limit}: kept too much");
+            // The next byte, if there is one, must be where a character
+            // starts — otherwise the cut landed inside one.
+            assert!(text.is_char_boundary(cut.len()), "limit {limit}: not a boundary");
+            free(v);
         }
-        free(v);
     }
 }
 
+/// A limit past the end leaves the string alone, and does **not** reallocate.
 #[test]
-fn truncate_beyond_the_end_copies_everything() {
+fn truncate_beyond_the_end_changes_nothing() {
     unsafe {
-        let v = s("hello");
-        let t = science_string_truncate(&v, 1000);
-        assert_eq!(as_str(&t), "hello");
-        free(t);
-        free(v);
-    }
-}
-
-#[test]
-fn truncate_to_zero_is_empty() {
-    unsafe {
-        let v = s("hello");
-        let t = science_string_truncate(&v, 0);
-        assert!(science_string_is_empty(&t));
-        free(t);
-        free(v);
-    }
-}
-
-#[test]
-fn truncate_of_a_negative_limit_is_empty() {
-    unsafe {
-        let v = s("hello");
-        let t = science_string_truncate(&v, -7);
-        assert!(science_string_is_empty(&t));
-        free(t);
-        free(v);
-    }
-}
-
-#[test]
-fn truncate_returns_an_independent_copy() {
-    unsafe {
-        let v = s("hello");
-        let mut t = science_string_truncate(&v, 5);
-        assert_ne!(t.ptr, v.ptr, "truncate returns a fresh allocation");
-        science_string_free(&mut t);
-        // The receiver is untouched: `truncate` takes `&self`.
+        let mut v = s("hello");
+        let before = v.ptr;
+        science_string_truncate(&mut v, 1000);
         assert_eq!(as_str(&v), "hello");
+        assert_eq!(v.ptr, before, "truncate does not reallocate");
+        free(v);
+    }
+}
+
+/// Zero and a negative limit both empty the string, which is the only total
+/// answer for a negative one.
+#[test]
+fn truncate_to_zero_or_below_is_empty() {
+    unsafe {
+        let mut v = s("hello");
+        science_string_truncate(&mut v, 0);
+        assert!(science_string_is_empty(&v));
+        free(v);
+
+        let mut w = s("hello");
+        science_string_truncate(&mut w, -7);
+        assert!(science_string_is_empty(&w));
+        free(w);
+    }
+}
+
+/// **The capacity survives**, which is what makes truncating in place free.
+///
+/// `truncate` shortens `len` and leaves `cap`, so the bytes past the new end
+/// are still owned by the same buffer and are released with it. A `truncate`
+/// that shrank the allocation would have to copy, and one that forgot the
+/// bytes it dropped would leak them.
+#[test]
+fn truncate_keeps_the_buffer_it_had() {
+    unsafe {
+        let mut v = s("hello");
+        let before = (v.ptr, v.cap);
+        science_string_truncate(&mut v, 2);
+        assert_eq!(as_str(&v), "he");
+        assert_eq!((v.ptr, v.cap), before, "the allocation is untouched");
         free(v);
     }
 }
@@ -194,10 +224,9 @@ fn truncate_returns_an_independent_copy() {
 #[test]
 fn truncate_of_empty_is_empty() {
     unsafe {
-        let v = science_string_new();
-        let t = science_string_truncate(&v, 5);
-        assert!(science_string_is_empty(&t));
-        free(t);
+        let mut v = science_string_new();
+        science_string_truncate(&mut v, 5);
+        assert!(science_string_is_empty(&v));
         free(v);
     }
 }

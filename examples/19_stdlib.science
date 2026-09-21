@@ -137,7 +137,9 @@ def strings() -> Int:
     print(owned.length())
     print(view.is_empty())
     print(owned.starts_with("owned"))
-    print(owned.truncate(5))
+    let mutable cut be copy_of(&owned)
+    cut.truncate(5)
+    print(cut)
 
     let mutable built be String.new()
     built.push_str("one ")

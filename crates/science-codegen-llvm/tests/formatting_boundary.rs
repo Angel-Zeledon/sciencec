@@ -114,8 +114,15 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// `science_string_with_capacity` was added and it **did**, because it returns
 /// `ScienceString` — three words, MEMORY on every target. Neither was decided:
 /// both are what `runtime_signature` said about a signature somebody wrote.
+///
+/// **And it reads nine again**, because `science_string_truncate` left the
+/// set: `stdlib-core.md` §6.9 makes it `(mutable self, bytes: Int)` with no
+/// return, and the runtime had been returning a fresh `String` against an
+/// earlier revision. Nothing caught it because `builtins.rs` never declared
+/// the name. The count following is the derivation working, not a
+/// re-baselining.
 #[test]
-fn the_derived_sret_set_is_ten_and_moved_once() {
+fn the_derived_sret_set_is_nine_and_has_moved_twice() {
     let triple = Triple::host().expect("a supported host");
     let indirect = RUNTIME
         .iter()
@@ -123,8 +130,9 @@ fn the_derived_sret_set_is_ten_and_moved_once() {
         .filter(|sig| sig.ret.is_sret())
         .count();
     assert_eq!(
-        indirect, 10,
-        "the derived `sret` set is not the ten `science-rt` §2 and          `science-codegen`'s `runtime.rs` both now name"
+        indirect, 9,
+        "the derived `sret` set is not the nine `science-codegen`'s \
+         `runtime.rs` names"
     );
     assert_eq!(RUNTIME.len(), 59, "§2.6: \"they are the whole list\"");
 }

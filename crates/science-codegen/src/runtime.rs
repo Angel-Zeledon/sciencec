@@ -544,7 +544,13 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_string_push_f32", params: &[P, RtParam::F32], ret: RtRet::Void },
     RuntimeFn { symbol: "science_string_push_bool", params: &[P, RtParam::Bool], ret: RtRet::Void },
     RuntimeFn { symbol: "science_string_push_char", params: &[P, RtParam::Char], ret: RtRet::Void },
-    RuntimeFn { symbol: "science_string_truncate", params: &[P, N], ret: RtRet::Aggregate(RtAggregate::String) },
+    // **Void, and it used to be `Aggregate(String)`.** `stdlib-core.md` §6.9
+    // writes `def truncate(mutable self, bytes: Int)` and §6.5 states the rule
+    // in bytes; `science-rt`'s implementation returned a fresh `String` and
+    // counted characters, against an earlier revision. Nothing caught it
+    // because `builtins.rs` never declared the name, so no program could
+    // reach this entry point. Both are corrected together.
+    RuntimeFn { symbol: "science_string_truncate", params: &[P, N], ret: RtRet::Void },
     RuntimeFn { symbol: "science_string_starts_with", params: &[P, P], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_string_chars", params: &[P], ret: RtRet::Aggregate(RtAggregate::Chars) },
     RuntimeFn { symbol: "science_chars_next", params: &[P, P], ret: RtRet::Bool },
@@ -887,7 +893,7 @@ mod tests {
     }
 
     #[test]
-    fn the_sret_set_is_derived_and_is_ten_not_the_eight_the_page_listed() {
+    fn the_sret_set_is_derived_and_is_nine_after_truncate_left_it() {
         // §9.2's finding 1, and its recurrence. The test derives the set from
         // the signatures rather than reading a list, which is the whole repair,
         // and the derived set is **nine**. `science-rt`'s §2 names eight.
@@ -899,17 +905,25 @@ mod tests {
         //
         // See the module documentation for why this one is worse.
         //
-        // **The tenth is `science_string_with_capacity`**, and it is the first
-        // one this test has ever gained without a list being wrong: it was
+        // **The tenth was `science_string_with_capacity`**, and it was the
+        // first one this test ever gained without a list being wrong: it was
         // written into `RUNTIME` as a signature, classified by the same code
-        // path as the other nine, and the number here changed because the
-        // derivation changed its answer. That is the difference this module
-        // exists to make.
+        // path as the others, and the number changed because the derivation
+        // changed its answer. That is the difference this module exists to
+        // make.
+        //
+        // **And it is nine again, because `science_string_truncate` left.**
+        // It returned a fresh `String` and now returns nothing:
+        // `stdlib-core.md` §6.9 writes `def truncate(mutable self, bytes:
+        // Int)` and calls it *"the one `String` mutator"*, and the runtime
+        // had been written against an earlier revision. Nobody noticed
+        // because `builtins.rs` never declared the name, so no program could
+        // reach it. The number moving in this direction is the same
+        // mechanism working: the set is derived, so it followed.
         let expected = [
             "science_string_new",
             "science_string_with_capacity",
             "science_string_clone",
-            "science_string_truncate",
             "science_string_from_bytes",
             "science_array_new",
             "science_array_with_capacity",

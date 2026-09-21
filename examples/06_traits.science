@@ -38,7 +38,9 @@ interface Summarize:
 
     # The default body may call any other method of the interface.
     def preview(self) -> String:
-        self.summarize().truncate(80)
+        let mutable out be self.summarize()
+        out.truncate(80)
+        out
 
     # Defaults may be several, and may call each other.
     def headline(self) -> String:
@@ -49,7 +51,9 @@ interface Summarize:
 
 Doc implements Summarize:
     def summarize(self) -> String:
-        self.body.truncate(200)
+        let mutable out be copy_of(self.body)
+        out.truncate(200)
+        out
 
 Note implements Summarize:
     # Only the required method: the defaults are inherited as written.
@@ -58,7 +62,9 @@ Note implements Summarize:
 
     # A default may also be overridden.
     def preview(self) -> String:
-        self.text.truncate(20)
+        let mutable out be copy_of(self.text)
+        out.truncate(20)
+        out
 
 # An interface with several required methods and no defaults.
 interface Render:

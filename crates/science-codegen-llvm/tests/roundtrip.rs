@@ -100,7 +100,7 @@ fn llvms_own_parser_accepts_every_declaration_this_backend_writes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The nine `sret` entry points carry the attribute, and the tenth aggregate
+/// The eight `sret` entry points carry the attribute, and the ninth aggregate
 /// does not.
 ///
 /// **§9.2's finding, from the side that can be checked.**
@@ -109,7 +109,11 @@ fn llvms_own_parser_accepts_every_declaration_this_backend_writes() {
 /// derivation survives the trip through [`LlvmBackend::declare_function`] and
 /// into the IR. `science_write_file` is the control: it returns a two-byte
 /// aggregate, which comes back in a register on every convention, and an `sret`
-/// on it would be exactly as wrong as a missing one on the nine.
+/// on it would be exactly as wrong as a missing one on the eight.
+///
+/// `science_string_truncate` was one of them until §6.9's signature —
+/// `(mutable self, bytes: Int)`, no return — was implemented; it had been
+/// returning a fresh `String` against an earlier revision, unreachably.
 #[test]
 fn the_sret_set_reaches_the_ir_and_write_file_is_not_in_it() {
     let backend = declare_everything();
@@ -118,7 +122,6 @@ fn the_sret_set_reaches_the_ir_and_write_file_is_not_in_it() {
         "science_string_new",
         "science_string_from_bytes",
         "science_string_clone",
-        "science_string_truncate",
         "science_string_chars",
         "science_array_new",
         "science_array_with_capacity",

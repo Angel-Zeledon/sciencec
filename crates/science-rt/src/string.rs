@@ -322,40 +322,62 @@ pub unsafe extern "C" fn science_string_push_str(value: *mut ScienceString, othe
     // is a suffix of another's followed by a prefix of a third.
 }
 
-/// `String::truncate(&self, limit: Int) -> String` — **by characters, never
-/// mid-character**, as §8 requires.
+/// `String.truncate(mutable self, bytes: Int)` — shortens **in place**, to at
+/// most `bytes` bytes, stopping at the last character boundary at or below
+/// that offset.
 ///
-/// Takes `&self` and returns a **new** `String`: the receiver is untouched.
-/// That is what §8's signature says, and what the `Summarize::preview` default
-/// method in §4.3 relies on.
+/// # This function used to do something else, and nothing noticed
 ///
-/// `limit` counts Unicode code points, not bytes. A limit at or beyond the
-/// string's character count copies the whole string; a negative limit yields
-/// the empty string.
+/// It took `&self`, returned a **new** `String`, and counted **characters**.
+/// Both are wrong against `stdlib-core.md`: §6.9 writes the signature as
+/// `def truncate(mutable self, bytes: Int)` and calls it *"the one `String`
+/// mutator"*, and §6.5's decision is stated in bytes — *"shortens to at most
+/// `bytes` bytes, stopping at the last character boundary at or below that
+/// offset"*, with the cost *"`truncate(200)` may leave 197 bytes"* written
+/// out. The old doc comment cited a "§8" from an earlier revision.
+///
+/// The disagreement survived because the name was never **declared**:
+/// `science-resolve`'s `builtins.rs` left `truncate` in its `UNWRITTEN`
+/// table, so no Science program could call this and no test could see that
+/// it did the wrong thing. It is the same shape as the other components this
+/// repository has found written, tested and unreachable.
+///
+/// # Why in place is free
+///
+/// Truncating shortens `len` and leaves `cap` alone, so there is no
+/// allocation, no copy and nothing to release — the bytes past the new length
+/// are still owned by the same buffer and are freed with it. §6.5's
+/// totality holds by construction: `floor_char_boundary` never lands inside
+/// a character, so the result is valid UTF-8 whatever `bytes` is.
+///
+/// A negative or zero `bytes` empties the string, which is the same answer
+/// the old implementation gave and the only one that is total.
 ///
 /// # Safety
 ///
 /// `value` must be a non-null, aligned pointer to a live [`ScienceString`].
 #[no_mangle]
-pub unsafe extern "C" fn science_string_truncate(value: *const ScienceString, limit: i64) -> ScienceString {
-    if limit <= 0 {
-        return ScienceString::empty();
-    }
+pub unsafe extern "C" fn science_string_truncate(value: *mut ScienceString, bytes: i64) {
     // SAFETY: the caller guarantees a live `ScienceString`.
-    let value = unsafe { &*value };
-    // SAFETY: as above; the UTF-8 invariant holds.
+    let value = unsafe { &mut *value };
+    if bytes <= 0 {
+        value.len = 0;
+        return;
+    }
+    let bytes = bytes as usize;
+    if bytes >= value.len {
+        return;
+    }
+    // SAFETY: as above; the UTF-8 invariant holds, so `as_str` is valid.
     let text = unsafe { value.as_str() };
-
-    // The byte index just past the `limit`-th character, or the whole string
-    // when there are fewer than `limit` characters. `char_indices` only ever
-    // yields character boundaries, so the cut cannot land inside one.
-    let end = match text.char_indices().nth(limit as usize) {
-        Some((index, _)) => index,
-        None => value.len,
-    };
-
-    // SAFETY: `end` is a character boundary within the string's bytes.
-    unsafe { ScienceString::from_raw_utf8(value.ptr, end) }
+    // The last character boundary at or below `bytes`. `is_char_boundary` is
+    // O(1) and the walk is at most three steps, because no UTF-8 encoding is
+    // longer than four bytes.
+    let mut end = bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.len = end;
 }
 
 /// `String::starts_with(&self, prefix: &String) -> Bool`.
