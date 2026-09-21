@@ -637,6 +637,61 @@ that is unpleasant to read, and no demangler in F0. `sciencec demangle` is in
 §14's not-built list and should be roughly fifty lines whenever somebody wants
 it.
 
+> **AMENDMENT 4: Decision 16 says "path components" and never says whether a
+> module is one.** It was written when a crate was one file, so the question
+> did not arise. When `use` started loading files it arose immediately, and
+> the two obvious answers each break something:
+>
+> - **Include every module.** Then one source compiled as `a.science` and as
+>   `z.science` produces different symbols, because F0 has no `mod`
+>   declaration and a module's name is its file's stem. That is the
+>   reproducibility hazard this decision's own *"deterministic from the source
+>   alone"* exists to refuse.
+> - **Exclude every module.** Then `helper.value` and `deep.inner.value` in one
+>   crate both mangle to `_S5value`. The monomorphisation set is keyed by the
+>   symbol, so one definition silently replaces the other and both call sites
+>   reach whichever survived. This is not hypothetical: it was found by a
+>   program that built, linked, ran, exited 0 and printed `2` where the author
+>   wrote `1 + 2`.
+>
+> **The decision: the entry module contributes no component; every other
+> module contributes its name.**
+>
+> The two answers conflict only while *"a module's name"* means one thing, and
+> it means two. The **entry** module is named after the file given on the
+> command line — nobody wrote that name, renaming the file changes nothing
+> else, and it is precisely what *"from the source alone"* excludes. Every
+> **other** module is named by the `use` that reaches it: `use deep.inner` is
+> source the author wrote, and renaming that file without editing the `use`
+> does not compile. So the first is excluded and the second included, and both
+> requirements hold.
+>
+> **Cost.** A symbol depends on which file is the entry, so compiling
+> `helper.science` directly gives its definitions different symbols from
+> compiling a `main.science` that imports it. That is the same fact as a crate
+> having an entry at all. When F0 gains a `mod` declaration, or a package name
+> the author writes, this amendment should be revisited: both would give the
+> entry module a name from the source and remove the exception.
+>
+> **Where the rule lives.** Twice, unavoidably —
+> `science_codegen::mono::Mono::path_of` and
+> `science_codegen_llvm::Lowerer::path_components` — because the dependency
+> runs the wrong way and `science-codegen` cannot call into the backend. The
+> guard against drift is `science-codegen`'s `tests/mono.rs`, whose
+> `the_walk_and_the_backend_agree_on_a_plain_symbol` compares the two
+> directly; it is what caught the first attempt at this amendment, which had
+> included the entry module.
+>
+> This also settles a gap the backend had documented and declined to fix —
+> *"`hello.science` and a byte-identical copy called `prog.science` produce
+> different symbols for the same source … it is not this crate's to repair"*.
+> It was the same question and this is the answer.
+>
+> **§11's `SC0404` is the trap-door and it is now wired.** `Mono::collect` had
+> always detected a collision and pushed the diagnostic; nothing in the
+> compiler read the field it pushed to, which is why the wrong answer above was
+> silent. `sciencec`'s driver reports it.
+
 ---
 
 ## 3. Data layout
