@@ -2256,7 +2256,8 @@ impl Backend for LlvmBackend {
         Ok(())
     }
 
-    /// Decision 13's vtable: `[N x ptr]`, one method address per slot.
+    /// Decision 13's vtable: `[N+1 x ptr]`, one method address per slot and
+    /// [`Vtable::descriptor`]'s global address in the last one.
     ///
     /// **Every slot is looked up by symbol and a missing one is an error here
     /// rather than a null.** `define_type_info` takes the same line about its
@@ -2265,13 +2266,20 @@ impl Backend for LlvmBackend {
     /// vtable slot is a call through `any I` that jumps to address zero. There
     /// is no reading of a missing method that produces a working program, so
     /// the module is refused while there is still something to say about it.
+    /// The descriptor slot gets the same treatment for the same reason: a null
+    /// there is `science_box_free` reading a `ScienceTypeInfo` at address
+    /// zero the first time anything is released through this table.
     ///
-    /// The lookup is `LLVMGetNamedFunction` and not a declaration: every method
-    /// a vtable names is a function this module defines, and the emission
-    /// driver declares all of them before the first vtable is defined. A
-    /// backend that declared one here would paper over a reachability bug —
-    /// the method would be declared, never defined, and the failure would move
-    /// from this line to the linker.
+    /// The method lookup is `LLVMGetNamedFunction` and not a declaration:
+    /// every method a vtable names is a function this module defines, and the
+    /// emission driver declares all of them before the first vtable is
+    /// defined. A backend that declared one here would paper over a
+    /// reachability bug — the method would be declared, never defined, and
+    /// the failure would move from this line to the linker. The descriptor is
+    /// a global rather than a function, so its lookup is
+    /// `LLVMGetNamedGlobal`, and `emit_and_link`'s ordering comment is what
+    /// guarantees it is already defined: every `ScienceTypeInfo` is emitted
+    /// before the first vtable is.
     fn define_vtable(&mut self, vtable: &Vtable) -> Result<(), BackendError> {
         if vtable.is_empty() {
             return Err(BackendError::Other(format!(
@@ -2281,7 +2289,7 @@ impl Backend for LlvmBackend {
             )));
         }
         let module = self.module_ref()?;
-        let mut slots: Vec<sys::LLVMValueRef> = Vec::with_capacity(vtable.methods.len());
+        let mut slots: Vec<sys::LLVMValueRef> = Vec::with_capacity(vtable.methods.len() + 1);
         for method in &vtable.methods {
             let name = cstr(method);
             let value = unsafe { sys::LLVMGetNamedFunction(module.raw(), name.as_ptr()) };
@@ -2289,6 +2297,22 @@ impl Backend for LlvmBackend {
                 return Err(BackendError::Other(format!(
                     "the vtable `{}` names `{method}`, which the module does not define",
                     vtable.symbol
+                )));
+            }
+            slots.push(value);
+        }
+        // Decision 12's drop slot, appended after every method — a global and
+        // not a function, so it is looked up with `LLVMGetNamedGlobal` rather
+        // than `LLVMGetNamedFunction`. `emit_and_link`'s ordering comment is
+        // why the lookup can never miss: every descriptor is defined before
+        // the first vtable is.
+        {
+            let name = cstr(&vtable.descriptor);
+            let value = unsafe { sys::LLVMGetNamedGlobal(module.raw(), name.as_ptr()) };
+            if value.is_null() {
+                return Err(BackendError::Other(format!(
+                    "the vtable `{}` names the descriptor `{}`, which the module does not define",
+                    vtable.symbol, vtable.descriptor
                 )));
             }
             slots.push(value);

@@ -225,7 +225,7 @@ use science_codegen::backend::{
 use science_codegen::descriptor::{DescriptorTable, StringLiteral, TypeInfo, Vtable};
 use science_codegen::diagnostics::construct_not_lowered;
 use science_codegen::layout::{
-    CgTy, Field as CgField, IntTy, Layout, PtrKind, Repr, Scalar, Triple,
+    CgTy, Field as CgField, IntTy, Layout, Niche, PtrKind, Repr, Scalar, Triple,
     Variant as CgVariant, layout_of,
 };
 use science_codegen::mangle::{MonoKey, mangle};
@@ -924,6 +924,23 @@ impl<'a> Lowerer<'a> {
         depth: u32,
     ) -> Result<Option<String>, Unlowered> {
         let layout = self.layout_of_ty(ty)?;
+        // **A niched `T?` is its payload, with one reserved bit pattern**, so
+        // its glue is a null test and the payload's own release over the same
+        // address — there is no separate payload to project to.
+        //
+        // This arm was the refusal this function's own message named
+        // (*"neither Decision 18's tagged pair nor Decision 19's niche"*), and
+        // until `any I` grew drop glue nothing could reach it: the five
+        // niched payloads are `Box of T`, two borrows, a function pointer and
+        // `any I`, and a borrow releases nothing, a function pointer owns
+        // nothing, and the other two had no glue to call. `Error?` — which is
+        // `(any Error)?` by `syntax-revision-2.md` §3.4 — is the shape that
+        // arrives first, because Decision 14's implicit boxing is the one way
+        // a program can own an interface object today.
+        if let Repr::Niched { niche, niche_variants, .. } = &layout.repr {
+            let (offset, variants) = (niche.offset, niche_variants.clone());
+            return self.emit_niched_glue(payload_ty, name, symbol, offset, &variants, depth);
+        }
         let Repr::Tagged { tag, payload_offset, variants } = &layout.repr else {
             return Err(Unlowered::new(format!(
                 "drop glue for `{name}`, whose layout is neither Decision 18's tagged pair nor \
@@ -1452,6 +1469,260 @@ impl<'a> Lowerer<'a> {
     }
 
 
+    /// The glue for a **niched** `T?`: one null test, one call, same address.
+    ///
+    /// `emit_nullable_glue`'s niche arm carries the argument for when this is
+    /// reached; this is its body.
+    ///
+    /// **The payload's release is given `Param(0)` unchanged**, and that is
+    /// the whole difference from the tagged case. Decision 19 makes a niched
+    /// option *"its payload, which is also the whole type's layout"* — there
+    /// is no tag beside the value and no offset to project past — so the
+    /// present arm releases the very bytes that were tested.
+    fn emit_niched_glue(
+        &mut self,
+        payload_ty: Ty,
+        name: String,
+        symbol: String,
+        niche_offset: u64,
+        niche_variants: &[(usize, u64)],
+        depth: u32,
+    ) -> Result<Option<String>, Unlowered> {
+        // The same two conditions `lower_is_present`'s niche arm states, for
+        // the same reason: F0's niche offers exactly one value and it is the
+        // null pointer, so the test is a comparison against `null` rather
+        // than against an integer. A second value would be a different
+        // instruction, and refusing here keeps the two readers of a niche
+        // agreeing about what one holds.
+        if niche_offset != 0 {
+            return Err(Unlowered::new(format!(
+                "drop glue for `{name}`, whose niche is not at offset 0"
+            )));
+        }
+        if niche_variants.iter().any(|(_, value)| *value != 0) {
+            return Err(Unlowered::new(format!(
+                "drop glue for `{name}`, whose niche encodes a value that is not the null pointer"
+            )));
+        }
+
+        let inner = self.intern_drop_glue(payload_ty, depth + 1)?;
+        let direct = match &inner {
+            Some(_) => None,
+            None => self.direct_release(payload_ty)?,
+        };
+        let (callee, ret) = match (&inner, &direct) {
+            (Some(glue), _) => (Callee::Science(glue.clone()), ReturnClass::Void),
+            (None, Some((runtime, _))) => {
+                (Callee::Runtime(runtime), self.declare(runtime)?.ret.clone())
+            }
+            (None, None) => {
+                return Err(Unlowered::new(format!(
+                    "drop glue for `{name}`: its payload owns something that is neither a \
+                     runtime aggregate nor a type with glue"
+                )));
+            }
+        };
+
+        let pointer = layout_of(self.target, &CgTy::Ptr(PtrKind::Box));
+        let loaded = ValueId(0);
+        let present = ValueId(1);
+        let entry = vec![
+            ExtInst::LoadAt {
+                dest: loaded,
+                address: Operand::Param(0),
+                layout: pointer,
+            },
+            ExtInst::Above(Inst::Cmp {
+                dest: present,
+                op: CmpOp::Ne,
+                signed: false,
+                lhs: Operand::Value(loaded),
+                rhs: Operand::Null,
+            }),
+        ];
+
+        let mut release: Vec<ExtInst> = Vec::new();
+        let mut next_value = 2u32;
+        // `Param(0)` and not a projection: the payload *is* the value.
+        let address = ValueId(next_value);
+        next_value += 1;
+        release.push(ExtInst::FieldAddr {
+            dest: address,
+            base: Operand::Param(0),
+            offset: 0,
+        });
+        let args = match &direct {
+            Some(d) => self.release_args(
+                d,
+                address,
+                &mut || {
+                    let id = ValueId(next_value);
+                    next_value += 1;
+                    id
+                },
+                &mut release,
+            ),
+            None => vec![Operand::Value(address)],
+        };
+        release.push(ExtInst::Above(Inst::Call {
+            dest: None,
+            callee,
+            args,
+            ret,
+            sret_slot: None,
+        }));
+
+        let signature = AbiSignature::science(
+            self.target,
+            symbol.clone(),
+            layout_of(self.target, &CgTy::Unit),
+            vec![(
+                "self".to_string(),
+                layout_of(self.target, &CgTy::Ptr(PtrKind::MutBorrow)),
+                ParamAttrs::default(),
+            )],
+        );
+        self.glue_definitions.push((
+            signature,
+            ExtBody {
+                blocks: vec![
+                    ExtBlock {
+                        id: BlockId(0),
+                        label: "entry".to_string(),
+                        insts: entry,
+                        terminator: Terminator::Branch {
+                            cond: Operand::Value(present),
+                            then_block: BlockId(1),
+                            else_block: BlockId(2),
+                        },
+                    },
+                    ExtBlock {
+                        id: BlockId(1),
+                        label: "present".to_string(),
+                        insts: release,
+                        terminator: Terminator::Goto(BlockId(2)),
+                    },
+                    ExtBlock {
+                        id: BlockId(2),
+                        label: "done".to_string(),
+                        insts: Vec::new(),
+                        terminator: Terminator::Return(None),
+                    },
+                ],
+            },
+        ));
+        Ok(Some(symbol))
+    }
+
+    /// Decision 12's glue for an `any I`: release through the table.
+    ///
+    /// `intern_drop_glue`'s `Object` arm carries the argument; this is the
+    /// four loads and the call it describes.
+    ///
+    /// **Why the data word is loaded rather than passed by address.**
+    /// `science_box_free` takes its pointer **by value** — `release_args`
+    /// already says so for the `Box[T]` case and this is the same entry point
+    /// — so what it wants is the heap pointer the fat pointer's first word
+    /// holds, not the address of that word.
+    fn emit_object_glue(
+        &mut self,
+        interface: DefId,
+        rendered: &str,
+        symbol: String,
+    ) -> Result<Option<String>, Unlowered> {
+        let pointer = layout_of(self.target, &CgTy::Ptr(PtrKind::Box));
+        let word = pointer.size;
+        // Every method the interface declares, which is how long each of its
+        // tables is and therefore where the descriptor sits.
+        let methods = self
+            .defs
+            .children(interface)
+            .filter(|def| def.kind == DefKind::Fn)
+            .count();
+        if methods == 0 {
+            return Err(Unlowered::new(format!(
+                "drop glue for `{rendered}`, an interface this compiler declares no methods for: \
+                 a table with no slots has nowhere to put the descriptor, and `vtable_slots` \
+                 refuses to build one for the same reason"
+            )));
+        }
+
+        let mut insts: Vec<ExtInst> = Vec::new();
+        let mut next = 0u32;
+        let mut fresh = || {
+            let id = ValueId(next);
+            next += 1;
+            id
+        };
+
+        // The table, out of the pair's second word.
+        let table_at = fresh();
+        insts.push(ExtInst::FieldAddr { dest: table_at, base: Operand::Param(0), offset: word });
+        let table = fresh();
+        insts.push(ExtInst::LoadAt {
+            dest: table,
+            address: Operand::Value(table_at),
+            layout: pointer.clone(),
+        });
+
+        // The descriptor, out of the table's slot after the methods.
+        let descriptor_at = fresh();
+        insts.push(ExtInst::FieldAddr {
+            dest: descriptor_at,
+            base: Operand::Value(table),
+            offset: word * methods as u64,
+        });
+        let descriptor = fresh();
+        insts.push(ExtInst::LoadAt {
+            dest: descriptor,
+            address: Operand::Value(descriptor_at),
+            layout: pointer.clone(),
+        });
+
+        // The data pointer, out of the pair's first word.
+        let data_at = fresh();
+        insts.push(ExtInst::FieldAddr { dest: data_at, base: Operand::Param(0), offset: 0 });
+        let data = fresh();
+        insts.push(ExtInst::LoadAt {
+            dest: data,
+            address: Operand::Value(data_at),
+            layout: pointer.clone(),
+        });
+
+        let ret = self.declare("science_box_free")?.ret.clone();
+        let callee = Callee::Runtime("science_box_free");
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: None,
+            callee,
+            args: vec![Operand::Value(descriptor), Operand::Value(data)],
+            ret,
+            sret_slot: None,
+        }));
+
+        let signature = AbiSignature::science(
+            self.target,
+            symbol.clone(),
+            layout_of(self.target, &CgTy::Unit),
+            vec![(
+                "self".to_string(),
+                layout_of(self.target, &CgTy::Ptr(PtrKind::MutBorrow)),
+                ParamAttrs::default(),
+            )],
+        );
+        self.glue_definitions.push((
+            signature,
+            ExtBody {
+                blocks: vec![ExtBlock {
+                    id: BlockId(0),
+                    label: "entry".to_string(),
+                    insts,
+                    terminator: Terminator::Return(None),
+                }],
+            },
+        ));
+        Ok(Some(symbol))
+    }
+
     /// Decision 12's glue for one type, emitted once and interned by symbol.
     ///
     /// **The decision. Glue is an ordinary definition this crate appends to
@@ -1560,6 +1831,43 @@ impl<'a> Lowerer<'a> {
             }
             self.glue.insert(symbol.clone());
             return self.emit_field_glue(ty, &rendered, symbol, elements, depth);
+        }
+        // **An `any I` releases what it holds through its own table**, which
+        // is the one thing a release of an interface object can reach the
+        // concrete type through.
+        //
+        // The decision. Decision 13's fat pointer is `{ data, vtable }`, and
+        // the vtable now carries the concrete type's `ScienceTypeInfo` in a
+        // slot after every method. So the glue loads the table out of the
+        // pair, loads the descriptor out of the table, loads the data
+        // pointer, and makes the same `science_box_free(descriptor, data)`
+        // call an ordinary `Box[T]`'s glue already makes — with the
+        // descriptor read at run time instead of known when the glue was
+        // emitted.
+        //
+        // The reason it is one function per **interface** and not per
+        // concrete type: the concrete type is exactly what this glue does not
+        // know, and the indirection is the point. A glue per implementor
+        // would need the caller to choose between them, which is dispatch
+        // again, one layer down.
+        //
+        // The slot index is the interface's method count, which is a property
+        // of the interface alone — `vtable_slots` derives the order from the
+        // interface's children and every implementor's table is that long —
+        // so it is read here without naming a concrete type. `descriptor.rs`
+        // puts the descriptor *after* the methods for exactly this reason: a
+        // method's own index must not move because this slot exists.
+        //
+        // The cost is one word per vtable, once per (interface, concrete)
+        // pair, whether or not anything ever drops one.
+        if let TyKind::Object { interface, .. } = *self.types.kind(ty) {
+            let rendered = self.types.render(self.defs, ty);
+            let symbol = format!("{}.drop", mangle(&MonoKey::plain(&[rendered.as_str()])));
+            if self.glue.contains(&symbol) {
+                return Ok(Some(symbol));
+            }
+            self.glue.insert(symbol.clone());
+            return self.emit_object_glue(interface, &rendered, symbol);
         }
         let Some(def) = self.concrete_head(ty) else {
             return Err(Unlowered::new(format!(
@@ -1724,36 +2032,37 @@ impl<'a> Lowerer<'a> {
     /// interface object (Decision 14), returning the global every call site
     /// must name.
     ///
-    /// **`drop_fn` is `None`, and that is a limit rather than an answer — but
-    /// only here, for boxing into `any I`.** [`Lowerer::intern_element_descriptor`]
-    /// is the wider descriptor builder §2.6's plain `Box of T` uses instead,
-    /// and Decision 12's glue is no longer missing in general: `emit_field_glue`
-    /// and `emit_choice_glue` are how a record's or a `choice`'s owning fields
-    /// are released today. What is still missing is narrower — releasing a
-    /// value *behind a vtable*, which is Decision 13's slot this backend does
-    /// not emit and `TerminatorKind::Drop`'s own refusal for an interface
-    /// object names by name. Boxing a `C` that owns something into `any I`
-    /// would build a box this crate can allocate and never correctly free, so
-    /// it is refused here, at the one place that still knows `C` is concrete
-    /// and can ask.
+    /// **`drop_fn` is real now, and this is the function that used to refuse
+    /// instead.** It read *"a descriptor claiming there is nothing to drop
+    /// would leak the value every time the box is freed"* — true when nothing
+    /// downstream of this call could reach the concrete type again, which was
+    /// every downstream at the time: `TerminatorKind::Drop` refused an
+    /// interface object outright, and [`Lowerer::intern_vtable`] built a table
+    /// with nowhere to put this descriptor's address even if one existed.
+    /// Both gaps are `Lowerer::emit_interface_drop_glue`'s and
+    /// `science_codegen::descriptor::Vtable::descriptor`'s to close, and
+    /// closing them is what makes the leak this comment warned about
+    /// impossible rather than merely unlikely: the descriptor this function
+    /// builds is the *only* one the vtable's own slot will ever name, so a
+    /// caller that reaches this function twice for one concrete type gets the
+    /// one glue function both times.
     ///
-    /// **What it would become.** When a vtable carries a drop slot, this is
-    /// the one line that changes, and the `Option` is already the shape the
-    /// runtime reads: a `None` lets it skip the destructor loop entirely,
-    /// which `science_codegen::descriptor::TypeInfo` calls out as the
-    /// performance reason the field is not a do-nothing function.
+    /// **`source` is stripped of its one borrow before anything is asked of
+    /// it.** [`Lowerer::lower_unsize`]'s operand is `&C` and
+    /// [`Lowerer::lower_box`]'s is `C` itself; asking
+    /// [`Lowerer::drop_runs_something`] about the former answers `false`
+    /// unconditionally — *"a borrow releases nothing"* — which is correct
+    /// about *this* reference and wrong about what the vtable's descriptor has
+    /// to say about *every* value of the concrete type, including the ones
+    /// nothing here happens to be borrowing. [`Lowerer::referent`] is the one
+    /// borrow `assign`'s coercions ever put around a source this function
+    /// sees, so it is enough.
     fn intern_descriptor(&mut self, concrete: DefId, source: Ty) -> Result<String, Unlowered> {
         let name = self.defs.get(concrete).name.clone();
-        if self.drop_runs_something(source, 0)? {
-            return Err(Unlowered::new(format!(
-                "a `{name}` boxed into an interface object, which owns something a box would \
-                 have to release: Decision 12's glue is an emitted function per monomorphised \
-                 type, this backend emits none, and a descriptor claiming there is nothing to \
-                 drop would leak the value every time the box is freed"
-            )));
-        }
         let cg = self.record_or_choice_ty(concrete)?;
-        let info = science_codegen::descriptor::type_info(self.target, &cg, None);
+        let referent = self.referent(source);
+        let drop_fn = self.intern_drop_glue(referent, 0)?;
+        let info = science_codegen::descriptor::type_info(self.target, &cg, drop_fn);
         Ok(self.descriptors.intern(&MonoKey::plain(&[name.as_str()]), info))
     }
 
@@ -2012,10 +2321,21 @@ impl<'a> Lowerer<'a> {
 
     /// Intern the vtable for `(interface, concrete)`, returning the global
     /// every coercion to that pair must name.
+    ///
+    /// **`source` is the coercion's own operand type**, threaded through to
+    /// [`Lowerer::intern_descriptor`] for the drop slot every table now
+    /// carries. It is not an extra fact about the pair: `concrete` already
+    /// determines it up to a borrow, and `source` is only here because
+    /// stripping that borrow ([`Lowerer::referent`]) is [`Lowerer::intern_descriptor`]'s
+    /// job and not this function's to repeat. A pair interned once from a
+    /// borrowing call site (`Lowerer::lower_unsize`) and never from an owning
+    /// one still gets a real descriptor, because the table is a fact about the
+    /// concrete type and not about which coercion happened to build it first.
     fn intern_vtable(
         &mut self,
         interface: DefId,
         concrete: DefId,
+        source: Ty,
     ) -> Result<Vtable, Unlowered> {
         let symbol = Vtable::symbol_for(
             &MonoKey::plain(&[self.defs.get(interface).name.as_str()]),
@@ -2026,7 +2346,8 @@ impl<'a> Lowerer<'a> {
         }
         let methods =
             self.vtable_slots(interface, concrete)?.into_iter().map(|m| self.symbol_of(m)).collect();
-        let vtable = Vtable { symbol, methods };
+        let descriptor = self.intern_descriptor(concrete, source)?;
+        let vtable = Vtable { symbol, methods, descriptor };
         self.vtables.push(vtable.clone());
         Ok(vtable)
     }
@@ -4713,7 +5034,7 @@ impl<'a> Lowerer<'a> {
                 self.types.render(self.defs, source)
             )));
         };
-        let vtable = self.intern_vtable(interface, concrete)?;
+        let vtable = self.intern_vtable(interface, concrete, source)?;
         let descriptor = self.intern_descriptor(concrete, source)?;
         let value_layout = self.layout_of_ty(source)?;
 
@@ -4865,7 +5186,7 @@ impl<'a> Lowerer<'a> {
                 self.types.render(self.defs, source)
             )));
         };
-        let vtable = self.intern_vtable(interface, concrete)?;
+        let vtable = self.intern_vtable(interface, concrete, source)?;
         // The data word is the operand itself, materialised at the pointer
         // layout the pair's first field has.
         let pointer = layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow));

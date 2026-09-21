@@ -83,6 +83,22 @@ pub struct TypeInfo {
 /// dispatching call site reads it. Both derive the order from the same walk of
 /// the interface's children, which is what keeps them in step; a second
 /// ordering rule anywhere is the defect this comment exists to prevent.
+///
+/// **One slot beyond the methods: `descriptor`, Decision 12's answer to
+/// releasing the value behind the table.** A method's slot is resolved from
+/// the concrete type because dispatch needs an address only the concrete
+/// implementation has; a drop needs no such address — the concrete type's
+/// `ScienceTypeInfo` is already a global, built by
+/// [`crate::descriptor::type_info`] at the same boxing site that built the
+/// table, and the table is the one thing a release of `any I` can reach the
+/// concrete type *through*. So `descriptor` names that global rather than
+/// inventing a second lookup: `science_box_free(descriptor, data)` is the same
+/// call an ordinary `Box[T]`'s glue already makes, with the descriptor read
+/// back out of the table instead of known at the call site. It sits after
+/// every method slot rather than before them so that a method's own index —
+/// its position among the interface's declared methods, which
+/// `Lowerer::lower_dispatch` computes independently of this struct — is
+/// untouched by its presence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Vtable {
     /// The constant's symbol.
@@ -91,6 +107,10 @@ pub struct Vtable {
     /// order. Never empty: an interface with no methods needs no table, and
     /// emitting a zero-length one would be a global nothing can index.
     pub methods: Vec<String>,
+    /// The concrete type's `ScienceTypeInfo` symbol, emitted at slot
+    /// `methods.len()` — after every method, so a method's own slot index is
+    /// never a function of whether this one exists.
+    pub descriptor: String,
 }
 
 impl Vtable {
@@ -104,12 +124,16 @@ impl Vtable {
         format!("{}.vtable.{}", mangle(concrete), mangle(interface))
     }
 
-    /// How many slots the table has.
+    /// How many method slots the table has. The descriptor slot is not one of
+    /// these: it is not indexed by a method's position and no caller asks for
+    /// it by number.
     pub fn len(&self) -> usize {
         self.methods.len()
     }
 
-    /// Whether the table has no slots, which no emitted vtable may be.
+    /// Whether the table has no method slots, which no emitted vtable may be
+    /// — the descriptor slot alone is not a table anything can dispatch
+    /// through.
     pub fn is_empty(&self) -> bool {
         self.methods.is_empty()
     }
