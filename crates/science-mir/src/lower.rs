@@ -798,6 +798,18 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     }
 
     fn emit_scope_exit(&mut self, local: Local, block: BlockId, span: Span) -> BlockId {
+        let block = self.emit_drop_if_needed(local, block, span);
+        self.push_statement(block, StatementKind::StorageDead(local), span);
+        block
+    }
+
+    /// A `Drop` of `local`, if its type owns anything — with no
+    /// `StorageDead`, unlike [`Builder::emit_scope_exit`]. The two callers
+    /// want different halves of the same question: a scope's own locals die
+    /// with the scope, storage and all, but [`Builder::lower_loop`]'s
+    /// discarded tail keeps its storage live across the back edge and only
+    /// needs the *value* released each time the tail overwrites it.
+    fn emit_drop_if_needed(&mut self, local: Local, block: BlockId, span: Span) -> BlockId {
         let ty = self.locals[local.index()].ty;
         let mut block = block;
         // The drop is emitted unconditionally and then *elaborated*:
@@ -819,7 +831,6 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             );
             block = next;
         }
-        self.push_statement(block, StatementKind::StorageDead(local), span);
         block
     }
 
@@ -1387,17 +1398,47 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         block: BlockId,
         span: Span,
     ) -> BlockId {
-        // The discarded destination of the body is allocated *outside* the
-        // loop, so that its `StorageLive` runs once rather than once per
-        // iteration. A temporary whose storage begins inside a loop and ends
-        // outside it is the shape that makes a `StorageDead` run without its
-        // `StorageLive`.
-        let discard = self.temp(Ty::UNIT, span, block);
+        // **The discard's type is the body's tail's, not `Ty::UNIT`.** A
+        // `loop:` is itself `Ty::UNIT` (`check`'s §6) — nobody reads what the
+        // body produces — but the body's *tail* can be anything, including a
+        // `T?` a `science-rt` call builds out of a `bool` and an
+        // out-parameter (§5.3), and that shape has nowhere else to write its
+        // answer. Typing the discard `Ty::UNIT` regardless of the tail's real
+        // type used to reach codegen as a call whose destination disagreed
+        // with its own callee — `Map.insert` inside a loop hits the same
+        // refusal `Array.pop` does, which is what makes this a gap in
+        // discarding a loop tail and not a fact about either method.
+        let tail_ty = match self.thir.block(body).tail {
+            Some(tail) => self.thir.ty(tail),
+            None => Ty::UNIT,
+        };
+        // Still allocated *outside* the loop, so its `StorageLive` runs once
+        // rather than once per iteration — a temporary whose storage began
+        // inside the loop and outlived it would pair a `StorageDead` with no
+        // `StorageLive` on the zero-more-writes path.
+        let discard = self.temp(tail_ty, span, block);
         let head = self.new_block();
         let exit = self.new_block();
         self.terminate(block, TerminatorKind::Goto { target: head }, span);
         self.loops.push(LoopScope { head, exit, depth: self.scopes.len() });
         let after = self.lower_block(Place::local(discard), body, head);
+        // **Dropped every iteration the tail is reached, not just once at the
+        // enclosing scope's exit.** The discard's storage is shared across
+        // every trip around the back edge, so overwriting it on iteration
+        // `n + 1` without first releasing iteration `n`'s answer would leak
+        // whatever it owned — `Array[String].pop()` discarded in a hot loop
+        // is exactly this, `n - 1` times over. `break`/`continue` skip this
+        // block entirely, by construction (§5's terminators leave from
+        // wherever they are written, never falling through to a block's own
+        // tail), so a value is only ever here to drop on the path that just
+        // wrote one. `emit_drop_if_needed` is `crate::moves`' unconditional
+        // half — `Ty::UNIT` and every other `Copy` tail cost nothing — and
+        // the same discipline `emit_scope_exit` uses elsewhere then
+        // elaborates it: the leftover write from whichever iteration last
+        // reached the tail before a `break`, if any, is still live when the
+        // enclosing scope's own exit runs, and that drop is the one built
+        // into `discard` being registered there below, unchanged from before.
+        let after = self.emit_drop_if_needed(discard, after, span);
         self.terminate(after, TerminatorKind::Goto { target: head }, span);
         self.loops.pop();
         // A `loop` is `Ty::UNIT` (`check`'s §6), so the exit stores unit and

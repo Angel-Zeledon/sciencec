@@ -6859,6 +6859,39 @@ impl<'a> Lowerer<'a> {
                 _ => "science_write_file",
             };
             self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;
+        } else if self.defs.get(def).is_builtin()
+            && self.defs.get(def).name == "panic"
+            && self.decls.and_then(|d| d.signature(def)).is_some_and(|s| s.owner.is_none())
+        {
+            // **Decision, mirrored from `science-mir`'s `lower_assert`.** `panic`
+            // is a free builtin (`recv: None` in `builtins.rs`), so it never
+            // reaches [`Lowerer::prelude_method`] — that table is keyed on
+            // `(Self, method)` and a free function has no `Self`. It reaches
+            // here the same way `read_file`/`write_file` do, one arm up.
+            //
+            // **Reason the symbol is chosen from the argument and not fixed.**
+            // `science-rt` exports two entry points for one `Never`-returning
+            // call: `science_panic(*const ScienceString) -> !` for a value,
+            // `science_panic_bytes(*const u8, usize) -> !` for a literal —
+            // `lower_runtime_call`'s own literal-expansion arm only fires when
+            // the parameter list is a pointer followed by a length, and
+            // `science_panic`'s one parameter is not. `assert`'s failing branch
+            // already makes exactly this choice at MIR-build time because it
+            // builds a `Callee::Runtime` directly; an ordinary `panic(msg)` call
+            // reaches MIR as `Callee::Def`, so this crate makes the same choice
+            // here instead of duplicating a MIR-level special case for one
+            // builtin.
+            //
+            // **Cost.** None beyond the match: both entry points are already in
+            // `RUNTIME`, and `RtRet::Never` already builds `Terminator::Unreachable`
+            // for a call with no successor (Decision 6, `call` then
+            // `unreachable`, never `invoke`) — this arm supplies the callee, not
+            // the terminator.
+            let symbol = match args.first() {
+                Some(mir::Operand::Const(Constant::Literal(Literal::Str(_)))) => "science_panic_bytes",
+                _ => "science_panic",
+            };
+            self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;
         } else if let Some(sig) = self.symbol_for_call(ctx, def).and_then(|symbol| self.science.get(&symbol).cloned()) {
             self.lower_science_call(ctx, &sig, args, destination, insts)?;
         } else if let Some(symbol) = self.owned_nullable_method(def) {

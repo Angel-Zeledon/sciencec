@@ -121,20 +121,30 @@
 //! declared, no `prelude_method` row joining them. Every symbol
 //! [`ALLOWLIST`] class 3 names above was probed for exactly that shape by
 //! hand — `chars`, `ends_with`, `contains`, `find`, `replace`, `trim`, `pop`,
-//! `as_ptr`, `reserve`, ordering, `clone`/`owned`, `panic` — and every one of
-//! them either has no `RUNTIME` entry point at all (`ends_with`, `contains`,
+//! `as_ptr`, `reserve`, ordering, `clone`/`owned` — and every one of them
+//! either has no `RUNTIME` entry point at all (`ends_with`, `contains`,
 //! `find`, `replace`, `trim` — `science-rt` exports none of them) or is
 //! blocked one layer below a missing table row (`chars` by `cg_ty`, `pop` by
-//! the prelude declaration, `panic` the free function — declared in
-//! `builtins.rs`, never special-cased in `lower_call`, so `panic("boom")` is
-//! `SC0400` today although `assert`'s `science_panic`/`science_panic_bytes`
-//! both run). `Map.insert`/`Map.remove` were exactly this shape until the
-//! commit that added [`Lowerer::owned_nullable_method`] and the out-parameter
-//! machinery it needs — the table row and the convention landed together, so
-//! they were never observed sitting apart with a symbol waiting. None of what
-//! is left is "declared, backed, and one row away" the way `starts_with` was
-//! — this file's own reachable set is the census, and it found no seventh
-//! instance.
+//! the prelude declaration). `Map.insert`/`Map.remove` were exactly this
+//! shape until the commit that added [`Lowerer::owned_nullable_method`] and
+//! the out-parameter machinery it needs — the table row and the convention
+//! landed together, so they were never observed sitting apart with a symbol
+//! waiting.
+//!
+//! **`panic` was the seventh instance, and it is closed.** It was declared —
+//! `builtins.rs`'s free function, `recv: None` — with both `science_panic`
+//! and `science_panic_bytes` already in `RUNTIME` and already reachable
+//! through `assert`'s failing branch, and never special-cased in
+//! `lower_call`: `panic("boom")` was `SC0400` even though the symbols it
+//! needed were already declared elsewhere. The gap was the same shape as
+//! `starts_with`'s — present on both sides, joined on neither — one level up:
+//! a free builtin has no `Self` for [`Lowerer::prelude_method`]'s table to
+//! key on, so it needed its own arm rather than a row, chosen the way
+//! `science-mir`'s own `lower_assert` chooses between the same two symbols —
+//! from the argument's shape, a literal or not. [`CORPUS`]'s
+//! `panic_literal_message`/`panic_dynamic_message` are the program that
+//! closed it; neither adds an `ALLOWLIST` entry, because the symbols were
+//! never the missing half.
 
 #![cfg(feature = "llvm")]
 
@@ -357,6 +367,22 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   let e be write_file(\"/tmp/science_runtime_reachability_probe.txt\", \"hi\")\n\
          \x20   let text, io_err be read_file(\"/tmp/science_runtime_reachability_probe.txt\")\n\
          \x20   print(f\"{e?} {io_err?} {text}\")\n",
+    ),
+    // `panic`, called directly rather than reached through `assert`'s failing
+    // branch: the module doc above used to read *"`panic("boom")` is
+    // `SC0400` today although `assert`'s `science_panic`/`science_panic_bytes`
+    // both run"* — true when it was written, and false since `lower_call`
+    // gained an arm for the free builtin itself. Both symbols were already
+    // reachable through `assert_literal_message`/`assert_dynamic_message`
+    // above, so this pair does not close an `ALLOWLIST` entry — `panic` was
+    // never on the list, because the symbols it needs were never missing,
+    // only the caller was. What this closes is the doc's own claim.
+    ("panic_literal_message", "def main():\n    panic(\"boom\")\n"),
+    (
+        "panic_dynamic_message",
+        "def main():\n\
+         \x20   let m be \"boom\"\n\
+         \x20   panic(m)\n",
     ),
 ];
 
