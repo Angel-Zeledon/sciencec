@@ -1853,6 +1853,23 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     }
 
     /// Tests a positional sequence of sub-patterns, all of which must match.
+    ///
+    /// **A one-element variant payload is tested directly against `place`,
+    /// with no `TupleField` in between.** `Lowerer::choice_ty` on the codegen
+    /// side never wraps a single payload element in a struct of its own — *"a
+    /// one-element payload is its element"*, `Lowerer::lower_variant`'s words
+    /// for the matching decision on construction — so `place`'s layout,
+    /// post-`Downcast`, already **is** that element's layout. Projecting
+    /// `TupleField { index: 0 }` on top of it asks `place_address` for *field
+    /// 0 of the element*, not the element itself, and every non-scalar
+    /// element (`Ident(String)`, `Circle(Point)`) has a field 0 of its own —
+    /// `String`'s first field is its byte pointer, so `Ident(name)` bound
+    /// `name` to that pointer, typed as though it were the whole `String`,
+    /// which is `emit.rs`'s own store-width check catching a mismatch it
+    /// cannot explain and this crate reports as `SC0402`. A plain tuple has
+    /// no such collapsing — `positional_ty`'s `variant: None` arm is untouched
+    /// and every element still gets its own `TupleField` — so the guard below
+    /// reads `variant.is_some()` and not merely `elements.len() == 1`.
     #[allow(clippy::too_many_arguments)]
     fn test_sequence(
         &mut self,
@@ -1864,6 +1881,10 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         span: Span,
         variant: Option<DefId>,
     ) {
+        if variant.is_some() && elements.len() == 1 {
+            self.test_pattern(place, elements[0], block, success, fail);
+            return;
+        }
         let mut current = block;
         for (index, element) in elements.iter().enumerate() {
             let next = self.new_block();
@@ -1892,6 +1913,13 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 let variant = *variant;
                 let choice_ty = self.variant_payload_ty(variant, None).unwrap_or(pat.ty);
                 let down = place.project(Projection::Downcast { variant, ty: choice_ty });
+                // A one-element payload is bound straight off `down`, with no
+                // `TupleField` — `test_sequence`'s doc comment above gives the
+                // reason, and it is the same rule here: `Ident(name)`'s `name`
+                // is the `String` `down` already names, not field 0 of it.
+                if let [only] = elems.as_slice() {
+                    return self.bind_pattern(&down, *only, block);
+                }
                 for (index, element) in elems.iter().enumerate() {
                     let ty = self.positional_ty(Some(variant), index, *element);
                     let sub = down.project(Projection::TupleField { index: index as u32, ty });
