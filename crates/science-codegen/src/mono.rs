@@ -392,7 +392,7 @@ use science_resolve::hir::{self, DefId, DefKind, DefTable, GenericParamKind};
 use science_types::items::Declarations;
 use science_types::matching::match_linear;
 use science_types::ty::{GenericArg, Ty, TyKind, Types};
-use science_types::{MonoKey, NormalForm, Substitution};
+use science_types::{Form, Found, MonoKey, NormalForm, Substitution};
 
 use crate::diagnostics::{cyclic_instantiation, generic_across_c_boundary, symbol_collision};
 use crate::mangle::{assemble, encode_const};
@@ -419,12 +419,33 @@ pub struct Instance {
     pub def: DefId,
     /// Its arguments, in declaration order.
     pub args: Vec<GenericArg>,
+    /// The concrete type `Self` is bound to, for an instance of a method
+    /// `interface` declares. `None` for every other definition — which
+    /// includes a method on an `implements`/`has` block, where `Self` is
+    /// already the concrete self type the block was written for and no
+    /// second binding is needed.
+    ///
+    /// **Why this is a field beside `args` and not one more [`GenericArg`] in
+    /// it.** `args` is zipped against [`Mono::generics_of`], which lists a
+    /// definition's *declared* parameters — the block's and the method's own
+    /// — and `Self` is not one of those: `interface Summarize:`'s `preview`
+    /// declares zero parameters and is still a different function for every
+    /// implementor, because its `self` is `Self` and Self is not a
+    /// declaration anywhere a `hir::GenericParam` could be minted for it.
+    /// Folding it into `args` would mean inventing one, and every consumer of
+    /// `args` — the zip in [`Mono::generics_of`]'s caller,
+    /// [`Substitution::of_generics`] — would have to special-case position
+    /// zero for exactly one kind of definition. A field beside `args` is a
+    /// second axis of one instance's identity, named for what it is, and
+    /// [`Mono::symbol_of`] and [`Mono::describe`] both read it beside `args`
+    /// rather than inside it for the same reason.
+    pub self_ty: Option<Ty>,
 }
 
 impl Instance {
-    /// An instance with no generic arguments.
+    /// An instance with no generic arguments and no `Self` to bind.
     pub fn plain(def: DefId) -> Instance {
-        Instance { def, args: Vec::new() }
+        Instance { def, args: Vec::new(), self_ty: None }
     }
 
     /// Whether this instance has any arguments at all.
@@ -952,16 +973,29 @@ impl<'a> Mono<'a> {
             RootSet::EveryBody => {
                 let mut out = Vec::new();
                 for def in self.bodies.keys().copied() {
-                    if self.generics_of(def).is_empty() {
-                        out.push(Instance::plain(def));
-                    } else {
+                    if !self.generics_of(def).is_empty() {
                         // A generic body cannot be a root: there is nothing to
                         // instantiate it *at*. It is emitted once some caller
                         // reaches it, and if nothing does it is dead code that
                         // a library build of a language with no exported
                         // generics has no way to hand out.
                         set.holes.unsolved.push(Unsolved::Parameter { def, param: 0 });
+                        continue;
                     }
+                    if self.needs_self_ty(def) {
+                        // The same argument, one axis over: a method
+                        // `interface` declares has nothing to instantiate its
+                        // `Self` at until some caller supplies an implementor,
+                        // and a root set has no implementor to invent one
+                        // from. `Instance::self_ty` is exactly the parameter
+                        // [`hir::GenericParam`] cannot name, so it is counted
+                        // the same way rather than silently rooted at
+                        // whatever `Self` happened to mean when the interface
+                        // was checked.
+                        set.holes.unsolved.push(Unsolved::Parameter { def, param: 0 });
+                        continue;
+                    }
+                    out.push(Instance::plain(def));
                 }
                 out
             }
@@ -1244,6 +1278,15 @@ impl<'a> Mono<'a> {
     // --- solving one call -------------------------------------------------
 
     /// The callee's instantiation, recovered from the call site. §2.
+    ///
+    /// **`Self`-dispatch happens first, and everything after it is unchanged.**
+    /// [`Mono::redirect_self_call`] turns a call to a method `interface`
+    /// declares into the definition the receiver's *concrete* type actually
+    /// answers it with — an implementor's override, or the same interface
+    /// method again when it is inherited unwritten — and returns the `Self`
+    /// this instance is bound at alongside it. The rest of this function reads
+    /// declarations and matches them against arguments exactly as it always
+    /// did, now for whichever definition that was.
     fn solve_call(
         &mut self,
         caller_subst: &Substitution,
@@ -1253,12 +1296,14 @@ impl<'a> Mono<'a> {
         destination: &Place,
         set: &mut MonoSet,
     ) -> Option<Instance> {
+        let (callee, self_ty) = self.redirect_self_call(caller_subst, body, callee, args);
+
         let generics = self.generics_of(callee);
         if generics.is_empty() {
             if self.decls.signature(callee).is_none() {
                 set.holes.undeclared_callees += 1;
             }
-            return Some(Instance::plain(callee));
+            return Some(Instance { def: callee, args: Vec::new(), self_ty });
         }
         let Some(signature) = self.decls.signature(callee) else {
             set.holes.undeclared_callees += 1;
@@ -1305,7 +1350,170 @@ impl<'a> Mono<'a> {
         let declared_ret = self.apply(&self_subst, declared_ret);
         self.match_ty(declared_ret, destination_ty, &unknowns, &mut solution);
 
-        self.assemble_instance(callee, &generics, &solution, set)
+        let instance = self.assemble_instance(callee, &generics, &solution, set)?;
+        Some(Instance { self_ty, ..instance })
+    }
+
+    /// A call to a method `interface` declares, resolved at the receiver's
+    /// concrete type: `(the real definition, the `Self` it is bound at)`.
+    ///
+    /// **`(callee, None)` unchanged is the answer for almost every call**:
+    /// `callee`'s owner is not an interface block, or it is one but has no
+    /// receiver (an associated function takes no `Self` to resolve), or the
+    /// receiver's type could not be read concretely at this call site. Every
+    /// one of those is the ordinary path this function did not used to exist
+    /// to change.
+    ///
+    /// **Why a lookup is run again here, at all.** `interface Summarize:`'s
+    /// `preview` is checked exactly once, with `self`'s type
+    /// `TyKind::SelfType` — *"the block is the owner and there is no concrete
+    /// type to substitute"*, `items.rs`'s own words for why. A call inside
+    /// that body to `self.summarize()` is therefore resolved once, against
+    /// the *interface's own* method index, and the `DefId` MIR records for it
+    /// is fixed at that resolution forever, whichever implementor eventually
+    /// calls `preview`. That is correct for the checker's job and wrong for a
+    /// backend's: `Doc.preview()` and `Row.preview()` must call `Doc.summarize`
+    /// and `Row.summarize` respectively, and nothing between the checker and
+    /// here ever asks that question again. This is the one place a caller's
+    /// concrete `Self` is in hand — [`Mono::actual_ty`] reads it straight off
+    /// the operand, through `caller_subst`, which already carries the
+    /// enclosing instance's own `self_ty` binding — so this is where the
+    /// question gets asked a second time, at a receiver the checker did not
+    /// have.
+    ///
+    /// **`Declarations::methods()` is asked rather than a private index**,
+    /// because it is the same rule `BodyChecker::method_call` used to answer
+    /// this exact question for every *other* receiver, and a second lookup
+    /// built here would be the hazard this codebase names everywhere: wrong
+    /// the day the two disagree about who wins an override.
+    ///
+    /// **`Found::Ambiguous` is narrowed to `owner`'s interface before it is
+    /// given up on.** Two different interfaces contributing a method of the
+    /// same name to one implementor is not an ambiguity `Doc` itself has to
+    /// answer for *this* call: the checker resolved `self.summarize()`
+    /// through `Summarize`'s own index, never through `Doc`'s, so it never
+    /// had to be told which of the two `Doc` meant. Re-running the lookup
+    /// through `Doc`'s index can surface an ambiguity the original call site
+    /// does not have, and filtering to the candidate whose
+    /// [`Candidate::interface`](science_types::Candidate::interface) is the
+    /// one this call already came through recovers exactly the answer the
+    /// checker would have given if asked.
+    fn redirect_self_call(
+        &mut self,
+        caller_subst: &Substitution,
+        body: &Body,
+        callee: DefId,
+        args: &[Operand],
+    ) -> (DefId, Option<Ty>) {
+        let none = (callee, None);
+        let Some(signature) = self.decls.signature(callee) else { return none };
+        let Some(owner) = signature.owner else { return none };
+        if signature.self_param.is_none() || !self.owner_is_interface(owner) {
+            return none;
+        }
+        let Some(receiver) = args.first() else { return none };
+        let Some(actual_self) = self.actual_ty(caller_subst, body, receiver) else { return none };
+        let actual_self = self.peel_borrow(actual_self);
+        // **Decision 13's vtables are refused here, not answered wrong.**
+        // `Methods::receiver` answers a *definition* for `any Summarize`
+        // too — the interface's own, which is exactly right for the checker
+        // asking "what can I call on this value" and exactly wrong for this
+        // question, which is "which implementor is this": a receiver still at
+        // `TyKind::Object` or still at `TyKind::SelfType` (an enclosing
+        // instance with no `self_ty` of its own — a caller this walk has not
+        // bound one for) has no single implementor to redirect to, and
+        // treating the interface as if it were one produces an instance whose
+        // own `self.summarize()` cannot be redirected either, one level
+        // further in: a specialisation at nothing, rather than at `Doc`. This
+        // crate does not model a vtable's slots — `lower_crate`'s own comment
+        // says the rule lives one crate down — so this is where that gap
+        // surfaces rather than where it gets papered over: `none` here leaves
+        // `callee` at the interface's own default body with no `self_ty`,
+        // which is exactly the refusal the backend already gives a default
+        // body it cannot specialise.
+        if !self.is_concrete_implementor(actual_self) {
+            return none;
+        }
+        let Some(head) = self.decls.methods().receiver(self.defs, self.types, actual_self) else {
+            return none;
+        };
+        let name = self.defs.get(callee).name.clone();
+        let candidate = match self.decls.methods().lookup(head, &name, Form::Value) {
+            Found::One(candidate) => candidate,
+            Found::Ambiguous(candidates) => {
+                let mut narrowed =
+                    candidates.into_iter().filter(|candidate| candidate.interface() == Some(owner));
+                match (narrowed.next(), narrowed.next()) {
+                    (Some(candidate), None) => candidate,
+                    _ => return none,
+                }
+            }
+            // Mismatched or absent: the checker already answered this name on
+            // this receiver once, through a different index, and a different
+            // answer here is this pass looking at a type the checker never
+            // saw rather than a program with a new mistake. Left as `none`,
+            // exactly as an unrecoverable ordinary argument is left in §2.
+            Found::Instances(_) | Found::Mismatched | Found::None => return none,
+        };
+        let self_ty = self.owner_is_interface(candidate.owner).then_some(actual_self);
+        (candidate.method, self_ty)
+    }
+
+    /// Whether `owner`'s `Self` is itself — `Declarations::self_ty(owner)` is
+    /// a [`TyKind::SelfType`] rather than a concrete type. True for an
+    /// `interface` block and false for an `implements`/`has` block, which is
+    /// `items.rs`'s own distinction and the one [`Mono::redirect_self_call`]
+    /// and [`Mono::substitution_of`] both read it for.
+    fn owner_is_interface(&self, owner: DefId) -> bool {
+        match self.decls.self_ty(owner) {
+            Some(ty) => matches!(self.types.kind(ty), TyKind::SelfType { .. }),
+            None => false,
+        }
+    }
+
+    /// Whether `def` is a method whose `Self` a root cannot supply: one
+    /// `interface` declares, taking a receiver. [`Mono::roots`]'s
+    /// `RootSet::EveryBody` is this function's one caller.
+    fn needs_self_ty(&self, def: DefId) -> bool {
+        let Some(signature) = self.decls.signature(def) else { return false };
+        signature.self_param.is_some()
+            && signature.owner.is_some_and(|owner| self.owner_is_interface(owner))
+    }
+
+    /// The type under every `Borrowed` layer. `Declarations::self_ty` is
+    /// always bare — an implementation block is written `Doc implements I:`
+    /// and not `&Doc implements I:` — so a `Self` this pass binds has to be
+    /// bare too, or [`Mono::substitution_of`]'s `with_self` would be binding
+    /// `Self` to a type no ordinary implementation block's `self_ty` is ever
+    /// found to be.
+    fn peel_borrow(&self, mut ty: Ty) -> Ty {
+        while let TyKind::Borrowed { inner, .. } = *self.types.kind(ty) {
+            ty = inner;
+        }
+        ty
+    }
+
+    /// Whether `ty` — already borrow-peeled — names one implementor rather
+    /// than the interface itself.
+    ///
+    /// **`TyKind::Object` and `TyKind::SelfType` are the two shapes
+    /// `Methods::receiver` answers *a* definition for that are not this
+    /// one.** Both name the interface, not an implementation of it — an
+    /// `any I` value could be any implementor at run time, which is Decision
+    /// 13's vtable and not a fact this pass can read off a `Ty`, and a
+    /// `SelfType` still standing means the enclosing instance's own `Self`
+    /// was never bound, so there is nothing concrete to hand down either. A
+    /// `TyKind::Named` at an interface's own `def` — `Error?`'s shorthand is
+    /// one — is the same fact spelled the other way and refused for it.
+    fn is_concrete_implementor(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::SelfType { .. } | TyKind::Object { .. } => false,
+            TyKind::Named { def, .. } => self.defs.get(*def).kind != DefKind::Interface,
+            // Every other shape `Methods::receiver` already answers `None`
+            // for through `head`, so there is nothing here for this check to
+            // exclude.
+            _ => true,
+        }
     }
 
     fn assemble_instance(
@@ -1354,7 +1562,11 @@ impl<'a> Mono<'a> {
                 },
             }
         }
-        Some(Instance { def: callee, args })
+        // `self_ty` is `solve_call`'s to fill in, from `redirect_self_call`'s
+        // answer rather than this function's: `assemble_instance` solves the
+        // method's *own* declared generics and knows nothing about the axis
+        // beside them.
+        Some(Instance { def: callee, args, self_ty: None })
     }
 
     /// An operand's type at the call site, in the caller's instantiation.
@@ -1534,12 +1746,30 @@ impl<'a> Mono<'a> {
 
     /// The substitution a body is walked under: `Self`, the block's associated
     /// types, and the instance's own arguments.
+    ///
+    /// **`instance.self_ty` overrides `body_substitution`'s own answer for
+    /// `Self`, and that is the whole of what makes a default body's `Self`
+    /// concrete.** `Declarations::body_substitution`'s own documentation
+    /// records what an interface block's `self_ty` is: *"`Self` inside an
+    /// interface is itself: the block is the owner and there is no concrete
+    /// type to substitute"* — an identity substitution, made when the body was
+    /// checked once for every implementor at once. [`Instance::self_ty`] is
+    /// the implementor this *instance* was reached through, and `with_self`
+    /// replaces the identity with it — `Substitution`'s own `self_ty` field is
+    /// one `(DefId, Ty)` pair, not a map, so the second `with_self` call
+    /// overwrites rather than adds. For every other instance — `self_ty` is
+    /// `None` — `body_substitution`'s own answer stands, because an
+    /// implementation block's `Self` was already concrete and there is
+    /// nothing here to override.
     pub fn substitution_of(&self, instance: &Instance) -> Substitution {
         let owner = self.decls.signature(instance.def).and_then(|signature| signature.owner);
         let mut subst = match owner {
             Some(owner) => self.decls.body_substitution(self.defs, owner),
             None => Substitution::new(),
         };
+        if let (Some(owner), Some(self_ty)) = (owner, instance.self_ty) {
+            subst = subst.with_self(owner, self_ty);
+        }
         for (param, arg) in self.generics_of(instance.def).iter().zip(&instance.args) {
             match arg {
                 GenericArg::Type(ty) => subst = subst.with_type(param.def, *ty),
@@ -1562,9 +1792,26 @@ impl<'a> Mono<'a> {
     }
 
     /// The mangled symbol. §4, §5.
+    ///
+    /// **`self_ty`, when there is one, is encoded first — before every
+    /// declared argument.** It is read the same way an implementation
+    /// block's own generics already are: [`Instance`]'s own documentation puts
+    /// the block's arguments ahead of the method's for the reason a reader
+    /// counts `of` lists left to right, and `Self` is one block further out
+    /// than that — the thing the method is even *reached through* — so it
+    /// goes first of all. Two implementors of one interface calling the same
+    /// default body would otherwise share every encoded argument the method
+    /// itself declares (`preview` declares none) and collide on one symbol,
+    /// which is the failure this axis exists to rule out.
     pub fn symbol_of(&self, instance: &Instance) -> Result<String, Unsolved> {
         let path = self.path_of(instance.def);
-        let mut encoded = Vec::with_capacity(instance.args.len());
+        let mut encoded = Vec::with_capacity(instance.args.len() + 1);
+        if let Some(self_ty) = instance.self_ty {
+            let mut out = String::new();
+            self.encode_ty(self_ty, &mut out)
+                .map_err(|()| Unsolved::Untypeable { def: instance.def, param: 0 })?;
+            encoded.push(out);
+        }
         // The const half goes through `MonoKey`, so the key §8 item 4 specifies
         // is the thing the symbol is built from and not a parallel copy of it.
         let key = instance.key();
@@ -1768,18 +2015,18 @@ impl<'a> Mono<'a> {
     /// How an instance reads in a diagnostic and in a dump. Not a symbol.
     pub fn describe(&self, instance: &Instance) -> String {
         let path = self.path_of(instance.def).join(".");
-        if instance.args.is_empty() {
+        let mut args: Vec<String> = Vec::new();
+        if let Some(self_ty) = instance.self_ty {
+            args.push(format!("Self={}", self.types.render(self.defs, self_ty)));
+        }
+        args.extend(instance.args.iter().map(|arg| match arg {
+            GenericArg::Type(ty) => self.types.render(self.defs, *ty),
+            GenericArg::Const(form) => form.render(self.defs),
+            GenericArg::Error => "?".to_string(),
+        }));
+        if args.is_empty() {
             return path;
         }
-        let args: Vec<String> = instance
-            .args
-            .iter()
-            .map(|arg| match arg {
-                GenericArg::Type(ty) => self.types.render(self.defs, *ty),
-                GenericArg::Const(form) => form.render(self.defs),
-                GenericArg::Error => "?".to_string(),
-            })
-            .collect();
         format!("{path}[{}]", args.join(", "))
     }
 }
@@ -1895,6 +2142,7 @@ mod tests {
         let instance = Instance {
             def: a_def(),
             args: vec![GenericArg::Const(NormalForm::literal(3)), GenericArg::Error],
+            self_ty: None,
         };
         let key = instance.key();
         assert_eq!(key.len(), 1);

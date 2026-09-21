@@ -2972,12 +2972,36 @@ impl<'a> Lowerer<'a> {
     /// declaration instead would introduce a second source for a fact the body
     /// carries, and the two disagreeing is a signature mismatch that links.
     ///
-    /// `Declarations` is still consulted, for the two shapes MIR cannot
-    /// distinguish and this backend cannot emit: a generic function, and the
-    /// **default body** of a method an `interface` declares — which is the one
-    /// method whose receiver really is a `Self` with no concrete type behind
-    /// it. Every other method's receiver arrives here already substituted and
-    /// is lowered as the ordinary parameter it is.
+    /// **`Declarations` is not consulted at all, and it was until this
+    /// function's one refusal closed.** It read *"a call to `{name}`, the
+    /// default body a method declared on `interface {interface}` carries: its
+    /// `self` is `Self`, which is a different concrete type in every
+    /// implementation …"* — true the day it was written, because nothing gave
+    /// that body a second copy per implementor. `science_codegen::mono` does
+    /// now: [`science_codegen::mono::Instance::self_ty`] is the axis, its own
+    /// module documentation is where the decision and its cost are written
+    /// down, and `science_mir::instantiate` substitutes `Self` in each copy
+    /// exactly as it substitutes any other type parameter. What arrives here
+    /// is a [`MirBody`] whose `self` already reads `Doc` or `Row`, never
+    /// `Self` — asking `Declarations` whether the *definition* is a default
+    /// body would be asking the wrong table, for the same reason asking it
+    /// whether the definition is generic would be: both questions are the
+    /// declaration's and this is one of its instances.
+    ///
+    /// **What still catches a body that slipped through unsubstituted** is
+    /// `layout_of_ty`, which refuses a `TyKind::Param` or a `TyKind::SelfType`
+    /// by name. That is the property `science_mir::instantiate`'s header
+    /// relies on: a missed substitution site is a refusal at a boundary
+    /// already built to report one, not a wrong layout that runs. **This is
+    /// also where Decision 13's vtable gap surfaces for a default body reached
+    /// only through one**, rather than through a concrete receiver:
+    /// `science_codegen::mono`'s own documentation says its walk does not
+    /// model a vtable's slots, so a call through `&any Summarize` never learns
+    /// a concrete `Self` to bind, `Instance::self_ty` stays `None`, and the
+    /// body `mono` hands back still has `TyKind::SelfType` where `self` was
+    /// written — caught by the same fallback, with a plainer message than the
+    /// one this replaced, because this boundary no longer knows *why* the
+    /// type survived unsubstituted, only that it did.
     ///
     /// **No parameter attributes are emitted, and that is finding 14 rather
     /// than laziness.** Decision 24 wants `readonly nocapture` on a shared
@@ -2996,71 +3020,6 @@ impl<'a> Lowerer<'a> {
         symbol: &str,
     ) -> Result<AbiSignature, Unlowered> {
         let def = body.def();
-        let name = self.defs.get(def).name.clone();
-        if let Some(decls) = self.decls {
-            if let Some(signature) = decls.signature(def) {
-                // **The refusal that used to be here is gone, and nothing
-                // replaced it.** It read *"a call to the generic function
-                // `{name}`, which nothing has monomorphised: Decision 42 puts
-                // the walk above this crate and no phase runs it yet"*. A
-                // phase runs it now: `science_codegen::mono` names the
-                // instances and `science_mir::instantiate` substitutes each
-                // body, so a `MirBody` arriving here is concrete whatever its
-                // definition's `generics` say. Asking the *declaration*
-                // whether the function is generic would now be asking the
-                // wrong table — the declaration describes the definition and
-                // this is one of its instances.
-                //
-                // What still catches a body that slipped through
-                // unsubstituted is `layout_of_ty`, which refuses a
-                // `TyKind::Param` by name. That is the property
-                // `science_mir::instantiate`'s header relies on: a missed
-                // substitution site is a refusal at a boundary already built
-                // to report one, not a wrong layout that runs.
-                // **A method's receiver is a parameter like any other, and the
-                // one thing that made it not one was a guess.** This used to
-                // refuse every method outright, saying *"its receiver is a
-                // `Self` this crate cannot resolve to a concrete type"*. That
-                // sentence is false for an inherent or implementation method
-                // and was finding 24: MIR's `_1` for `Doc has: def is_empty
-                // (self)` has type `borrowed Doc`, already substituted by
-                // `science-types`' body substitution, so there was never a
-                // `Self` here to resolve.
-                //
-                // **What is left is the one block where `Self` really does
-                // stand**, and `Declarations::self_ty` is how it is asked
-                // rather than guessed: an `interface` block records `Self` as
-                // `TyKind::SelfType` *"as its own meaning … what makes a
-                // default method body check without inventing a receiver"*,
-                // and an implementation block records the type it was written
-                // for. A default body is therefore one body per interface and
-                // needs one *copy* per implementor, which is
-                // monomorphisation and is above Decision 42's line.
-                //
-                // **The cost is that the refusal moved and did not shrink.** A
-                // generic implementation block — `Grid of T has:` — has a
-                // concrete-looking `Self` of `Grid of T` and is caught below,
-                // by `layout_of_ty` refusing `TyKind::Param`, which names the
-                // parameter rather than the method. That is one refusal for
-                // two causes and it is the same one a generic free function
-                // gets.
-                if signature.self_param.is_some() {
-                    let owner_self = signature.owner.and_then(|owner| decls.self_ty(owner));
-                    if matches!(owner_self, Some(ty) if matches!(self.types.kind(ty), TyKind::SelfType { .. }))
-                    {
-                        let owner = signature.owner.expect("`self_ty` answered for it");
-                        let interface = self.defs.get(owner).name.clone();
-                        return Err(Unlowered::new(format!(
-                            "a call to `{name}`, the default body a method declared on \
-                             `interface {interface}` carries: its `self` is `Self`, which is a \
-                             different concrete type in every implementation, so one body has to \
-                             become one function per implementor — which is monomorphisation, \
-                             and Decision 42 puts that walk above this crate"
-                        )));
-                    }
-                }
-            }
-        }
         let ret_layout = self.layout_of_ty(body.local_decl(mir::Local::from_index(0)).ty)?;
         let mut params = Vec::new();
         for local in body.params() {

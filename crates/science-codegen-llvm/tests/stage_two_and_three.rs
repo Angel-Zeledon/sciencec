@@ -551,18 +551,18 @@ fn the_boundary_is_where_it_says_it_is() {
         // `science-types` before THIR exists. Crate §3 finding 24;
         // `tests/methods.rs` is the programs.
         //
-        // What is left of it is the one receiver that really is a `Self`: the
-        // **default body** of a method an `interface` declares, which needs one
-        // copy per implementor and is therefore the same refusal `generic`
-        // below gets.
-        (
-            "interface-default",
-            "interface S:\n    def size(self) -> Int\n\n    def twice(self) -> Int:\n        \
-             self.size() + self.size()\n\ntype P:\n    x: Int\n\nP implements S:\n    \
-             def size(self) -> Int:\n        self.x\n\nlet p be P(x: 1)\n\
-             let v be p.twice()\nprint(\"x\")\n",
-            "monomorphis",
-        ),
+        // **The `interface-default` row is retired, not relaxed.** It read
+        // *"the one receiver that really is a `Self`: the default body of a
+        // method an `interface` declares, which needs one copy per
+        // implementor"* — and copies are what `science_codegen::mono` now
+        // makes: [`science_codegen::mono::Instance::self_ty`] is a second axis
+        // beside a definition's ordinary generic arguments, bound to the
+        // receiver's concrete type by `Mono::redirect_self_call` at the call
+        // site that reaches the default body, so `P.twice()` and a second
+        // implementor's `twice()` are two instances and two symbols rather
+        // than one `Self` nothing substituted. `tests/methods.rs`'s
+        // `a_default_body_runs_and_differs_per_implementor` is where the
+        // fixture above moved, as a run rather than a refusal.
         // **The `generic` row is retired, not relaxed.** It read *"nothing
         // monomorphises, so a generic function's parameter reaches here as a
         // `TyKind::Param` with no layout"*, and something monomorphises now:
@@ -571,10 +571,6 @@ fn the_boundary_is_where_it_says_it_is() {
         // builds and runs. `tests/generics.rs` is where it lives as a run,
         // and `past_stage_three.rs`'s `calling_a_generic_function_runs_the_
         // instance` is the same program in this file's own style.
-        //
-        // The row above it stays: a method's **default body** on an
-        // `interface` is still one body that needs one copy per implementor,
-        // and nothing makes those copies yet.
     ];
     for (name, source, fragment) in cases {
         let dir = scratch("stage23", name);

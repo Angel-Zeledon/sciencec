@@ -20,10 +20,13 @@
 //! the body was lowered against. The refusal was guarding against a shape that
 //! does not arrive. Crate §3 finding 24 is the account.
 //!
-//! What is left of it is one block: the **default body** of a method an
+//! What was left of it was one block: the **default body** of a method an
 //! `interface` declares, whose `self` really is a `Self` and which needs one
 //! copy per implementor. That is monomorphisation, it is above Decision 42's
-//! line, and [`interface_default_bodies_are_refused`] is the refusal.
+//! line, and the walk does it now — an `Instance` carries a `self_ty` beside
+//! its type arguments, so one body becomes one function per implementor.
+//! [`a_default_body_runs_and_differs_per_implementor`] is what replaced the
+//! refusal this paragraph used to point at.
 //!
 //! # Why every test here runs the program
 //!
@@ -456,12 +459,27 @@ def main():
 
 // --- what is still refused, and the refusal names the case -------------------
 
-/// The default body of a method an `interface` declares.
+/// The default body of a method an `interface` declares, run at two
+/// different implementors.
 ///
-/// One body, one `Self`, and one concrete type per implementor: that is a
-/// monomorphisation and Decision 42 puts the walk above this crate.
+/// **This test used to assert the refusal** — *"a call to `twice`, the
+/// default body a method declared on `interface Summarize` carries: its
+/// `self` is `Self`, which is a different concrete type in every
+/// implementation …"* — and the refusal is what
+/// [`science_codegen::mono::Instance::self_ty`] replaced: `Mono::solve_call`
+/// redirects a call to a method `interface` declares to the definition the
+/// receiver's concrete type actually answers with, and binds `Self` to that
+/// receiver as a second axis of the instance's identity, beside its ordinary
+/// generic arguments. One body becomes one function per implementor, which
+/// is the fix the old refusal's own message named.
+///
+/// **Two implementors and not one**, so a compiler that folded both onto one
+/// shared function would print the wrong number for the second: `Doc`'s
+/// `size` is `1` and `Row`'s is `10`, so `twice` — `size() + size()`,
+/// inherited unwritten by both — is `2` for one and `20` for the other only
+/// if each call reaches its *own* `size`.
 #[test]
-fn interface_default_bodies_are_refused() {
+fn a_default_body_runs_and_differs_per_implementor() {
     let source = "\
 interface Summarize:
     def size(self) -> Int
@@ -476,12 +494,18 @@ Doc implements Summarize:
     def size(self) -> Int:
         self.n
 
+type Row:
+    n: Int
+
+Row implements Summarize:
+    def size(self) -> Int:
+        self.n
+
 def main():
     print(Doc(n: 1).twice())
+    print(Row(n: 10).twice())
 ";
-    let text = refusal("default", source);
-    assert!(text.contains("`interface Summarize`"), "{text}");
-    assert!(text.contains("monomorphisation"), "{text}");
+    assert_eq!(prints("interface-default", source), "2\n20\n");
 }
 
 /// Decision 13's dispatch, run: a call through `any I` reaches the

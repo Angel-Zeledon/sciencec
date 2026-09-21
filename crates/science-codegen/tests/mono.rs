@@ -1000,6 +1000,61 @@ def main():
     assert_eq!(gets.len(), 2, "{}", set.render());
 }
 
+/// A default body on `interface`, called through two different implementors
+/// and never overridden by either.
+///
+/// `preview` is one `DefId` — `Summarize`'s own — so a walk that treated
+/// `Self` as anything other than a second axis of an instance's identity
+/// would solve both calls to `Instance::plain(preview_def)` and collapse them
+/// onto one item, whichever receiver got there first. `describe`'s
+/// `Self=Doc` / `Self=Row` is `Instance::self_ty` read back, and it is what
+/// makes the two descriptions differ below.
+#[test]
+fn a_default_body_called_on_two_implementors_is_two_items() {
+    let source = "\
+interface Summarize:
+    def summarize(self) -> String
+
+    def preview(self) -> String:
+        self.summarize()
+
+type Doc:
+    title: String
+
+Doc implements Summarize:
+    def summarize(self) -> String:
+        self.title
+
+type Row:
+    label: String
+
+Row implements Summarize:
+    def summarize(self) -> String:
+        self.label
+
+def main():
+    let d be Doc(title: \"hello\")
+    let r be Row(label: \"world\")
+    let a be d.preview()
+    let b be r.preview()
+";
+    let mut lowered = lower(source);
+    let set = lowered.mono(RootSet::EntryPoint);
+    let mut previews: Vec<&str> = set
+        .emission_order()
+        .filter(|item| item.description.starts_with("Summarize.preview"))
+        .map(|item| item.description.as_str())
+        .collect();
+    previews.sort();
+    assert_eq!(
+        previews,
+        vec!["Summarize.preview[Self=Doc]", "Summarize.preview[Self=Row]"],
+        "{}",
+        set.render()
+    );
+    assert!(set.holes().is_empty(), "{:?}", set.holes());
+}
+
 #[test]
 fn a_callee_with_no_mir_is_marked_as_a_declaration() {
     // `defined_here` is the difference between `define` and `declare`, and a
