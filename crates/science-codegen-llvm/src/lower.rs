@@ -1188,6 +1188,16 @@ impl<'a> Lowerer<'a> {
             )));
         }
         let decls = self.declarations()?;
+        // `science_codegen::mono`'s substituted payloads, when this use is in
+        // its table — [`Lowerer::choice_ty`]'s own doc comment says why a hit
+        // is walked with a fresh `TyEnv` and a miss falls back to the
+        // declared list bound by `env`.
+        let mono_payloads =
+            self.mono_aggregate_fields(def, args).and_then(|layout| match layout {
+                science_codegen::mono::AggregateLayout::Choice(payloads) => Some(payloads),
+                science_codegen::mono::AggregateLayout::Record(_) => None,
+            });
+        let no_binding = TyEnv::new();
 
         // ValueId(0) is the loaded tag; every `FieldAddr` after it, across
         // every arm, claims the next — `BodyState::values` is one map for the
@@ -1202,20 +1212,26 @@ impl<'a> Lowerer<'a> {
         // depends on how many variants end up with an arm at all — which is
         // known only after this loop decides which ones own something.
         let mut arm_bodies: Vec<(u64, Vec<ExtInst>)> = Vec::new();
-        for (place, variant_def) in variants.iter().zip(variant_defs.iter()) {
-            let field_tys = decls
-                .variant(*variant_def)
-                .ok_or_else(|| {
-                    Unlowered::new(format!(
-                        "the variant `{name}.{}`, which the declaration table has no lowered \
-                         payload for",
-                        place.name
-                    ))
-                })?
-                .payload
-                .iter()
-                .map(|ty| self.member_ty(*ty, &env, &name))
-                .collect::<Result<Vec<Ty>, Unlowered>>()?;
+        for (index, (place, variant_def)) in variants.iter().zip(variant_defs.iter()).enumerate() {
+            let field_tys = match mono_payloads.and_then(|p| p.get(index)) {
+                Some(substituted) => substituted
+                    .iter()
+                    .map(|ty| self.member_ty(*ty, &no_binding, &name))
+                    .collect::<Result<Vec<Ty>, Unlowered>>()?,
+                None => decls
+                    .variant(*variant_def)
+                    .ok_or_else(|| {
+                        Unlowered::new(format!(
+                            "the variant `{name}.{}`, which the declaration table has no lowered \
+                             payload for",
+                            place.name
+                        ))
+                    })?
+                    .payload
+                    .iter()
+                    .map(|ty| self.member_ty(*ty, &env, &name))
+                    .collect::<Result<Vec<Ty>, Unlowered>>()?,
+            };
             // Whether *this* variant owns anything — not whether the choice
             // does, which `intern_drop_glue` already asked before this
             // function was reached. A payload-free variant's `field_tys` is
@@ -1910,7 +1926,19 @@ impl<'a> Lowerer<'a> {
     }
 
     /// A record's field types, in declaration order.
+    ///
+    /// `science_codegen::mono`'s table answers this directly when this use is
+    /// in it — [`Lowerer::record_ty`]'s own doc comment says why a hit needs
+    /// no further binding — and the declared list bound by [`member_ty`]
+    /// survives as the fallback.
+    ///
+    /// [`member_ty`]: Lowerer::member_ty
     fn record_field_types(&self, def: DefId, args: &[GenericArg]) -> Result<Vec<Ty>, Unlowered> {
+        if let Some(science_codegen::mono::AggregateLayout::Record(fields)) =
+            self.mono_aggregate_fields(def, args)
+        {
+            return Ok(fields.clone());
+        }
         let name = self.defs.get(def).name.clone();
         let decls = self.declarations()?;
         let record = decls.record(def).ok_or_else(|| {
@@ -1952,6 +1980,15 @@ impl<'a> Lowerer<'a> {
     /// because that `Ty` does not exist until something interns it.
     /// [`Lowerer::member_ty`] refuses that by name rather than laying it out
     /// wrong, and the cost is stated there.
+    ///
+    /// **That refusal is now a fallback and not the last word.** When this use
+    /// is one `science_codegen::mono`'s walk reached,
+    /// [`Lowerer::mono_aggregate_fields`] already has every member
+    /// substituted — interned above Decision 42's line, where `&mut Types`
+    /// still is — and this function returns that list directly, never
+    /// calling [`Lowerer::member_ty`] at all. The declared-list walk through
+    /// `member_ty` survives for a use the walk did not reach, which is the
+    /// same fallback [`Lowerer::record_ty`] keeps and for the same reason.
     fn aggregate_members(
         &self,
         def: DefId,
@@ -1964,6 +2001,11 @@ impl<'a> Lowerer<'a> {
                 let Some(record) = decls.record(def) else { return Ok((name, Vec::new())) };
                 let (rendered, env) =
                     self.aggregate_env(def, &record.generics, args, &TyEnv::new())?;
+                if let Some(science_codegen::mono::AggregateLayout::Record(fields)) =
+                    self.mono_aggregate_fields(def, args)
+                {
+                    return Ok((rendered, fields.clone()));
+                }
                 let members = record
                     .fields
                     .iter()
@@ -1978,6 +2020,12 @@ impl<'a> Lowerer<'a> {
                     .find_map(|variant| decls.variant(*variant).map(|v| v.generics.clone()))
                     .unwrap_or_default();
                 let (rendered, env) = self.aggregate_env(def, &generics, args, &TyEnv::new())?;
+                if let Some(science_codegen::mono::AggregateLayout::Choice(payloads)) =
+                    self.mono_aggregate_fields(def, args)
+                {
+                    let members = payloads.iter().flatten().copied().collect();
+                    return Ok((rendered, members));
+                }
                 let mut members = Vec::new();
                 for variant in variants {
                     // A variant the declaration table has no entry for is a
@@ -2002,13 +2050,19 @@ impl<'a> Lowerer<'a> {
 
     /// One declared member type, with the aggregate's parameters bound.
     ///
-    /// Three cases, and the third is the limit. A type mentioning no
-    /// parameter is itself. A type that **is** a parameter is whatever the
-    /// environment bound it to, which is a lookup. A compound mentioning a
-    /// parameter would have to be built, and building a `Ty` is interning,
-    /// and this crate holds a `&Types` precisely so that it cannot — so it is
-    /// refused, by a message that names the type and says where the work
-    /// belongs.
+    /// **Only ever reached for a use `science_codegen::mono`'s table has no
+    /// entry for** — [`Lowerer::aggregate_members`] and
+    /// [`Lowerer::record_field_types`] both ask
+    /// [`Lowerer::mono_aggregate_fields`] first and return its answer without
+    /// calling this at all when it has one. So a member reaching this
+    /// function is a member of an aggregate the monomorphisation walk never
+    /// instantiated, and the three cases below are what is still true without
+    /// that table: a type mentioning no parameter is itself; a type that
+    /// **is** a parameter is whatever the environment bound it to, which is a
+    /// lookup; a compound mentioning a parameter would have to be built, and
+    /// building a `Ty` is interning, and this crate holds a `&Types`
+    /// precisely so that it cannot — so it is refused, by a message that
+    /// names the type and says where the work belongs.
     fn member_ty(&self, ty: Ty, env: &TyEnv, owner: &str) -> Result<Ty, Unlowered> {
         if !self.mentions_a_parameter(ty, 0) {
             return Ok(ty);
@@ -2634,6 +2688,19 @@ impl<'a> Lowerer<'a> {
     /// `Doc(body: "b", title: "t")` differently from `Doc(title: "t",
     /// body: "b")` — two layouts for one type, which is `LayoutCache`'s
     /// `SC0404` if anything asked it and silence if nothing does.
+    ///
+    /// **A field's type comes from `science_codegen::mono`'s table when this
+    /// use is in it, and from the declared list bound by `env` otherwise.**
+    /// `MonoSet::aggregate_fields` is filled with every generic record's
+    /// members already substituted at `args`, interned above Decision 42's
+    /// line — see its own doc comment — and a field found there needs no
+    /// further binding, which is why it is walked with a fresh, empty
+    /// [`TyEnv`] rather than `inner`. The declared-list path survives as the
+    /// fallback for a use the walk did not reach — a definition emitted only
+    /// through [`Lowerer::lower_crate`]'s reachability union, or a nested
+    /// aggregate whose argument is exactly an *enclosing* parameter, which
+    /// [`Lowerer::aggregate_env`]'s first arm already resolves by lookup and
+    /// which `mono` never had a reason to intern a fresh `Ty` for.
     fn record_ty(
         &self,
         def: DefId,
@@ -2648,14 +2715,44 @@ impl<'a> Lowerer<'a> {
             ))
         })?;
         let (name, inner) = self.aggregate_env(def, &record.generics, args, env)?;
+        let substituted = self.mono_aggregate_fields(def, args).and_then(|layout| match layout {
+            science_codegen::mono::AggregateLayout::Record(fields) => Some(fields),
+            science_codegen::mono::AggregateLayout::Choice(_) => None,
+        });
         let mut fields = Vec::with_capacity(record.fields.len());
-        for (field, ty) in &record.fields {
-            fields.push(CgField::new(
-                self.defs.get(*field).name.clone(),
-                self.cg_ty_in(*ty, depth + 1, &inner)?,
-            ));
+        if let Some(substituted) = substituted {
+            let no_binding = TyEnv::new();
+            for ((field, _), ty) in record.fields.iter().zip(substituted) {
+                fields.push(CgField::new(
+                    self.defs.get(*field).name.clone(),
+                    self.cg_ty_in(*ty, depth + 1, &no_binding)?,
+                ));
+            }
+        } else {
+            for (field, ty) in &record.fields {
+                fields.push(CgField::new(
+                    self.defs.get(*field).name.clone(),
+                    self.cg_ty_in(*ty, depth + 1, &inner)?,
+                ));
+            }
         }
         Ok(CgTy::strukt(name, fields))
+    }
+
+    /// `science_codegen::mono`'s substituted member list for one use of a
+    /// generic record or `choice`, when the monomorphisation walk reached it.
+    ///
+    /// `None` whenever `self.calls` is unset — a caller with no `MonoSet` at
+    /// all, which today is only this crate's own tests that build a
+    /// [`Lowerer`] directly — or when `def`/`args` names a use the walk did
+    /// not enqueue. Either is the same fallback: bind the declared list by
+    /// hand, exactly as every use resolved before this table existed.
+    fn mono_aggregate_fields(
+        &self,
+        def: DefId,
+        args: &[GenericArg],
+    ) -> Option<&'a science_codegen::mono::AggregateLayout> {
+        self.calls.and_then(|mono| mono.aggregate_fields(def, args))
     }
 
     /// The name and the parameter bindings for one use of a record or a
@@ -2845,28 +2942,45 @@ impl<'a> Lowerer<'a> {
                  discriminant to hold one"
             )));
         }
+        // `science_codegen::mono`'s substituted payload list, one per variant
+        // in [`Lowerer::choice_variants`]'s own order — the same order
+        // `Mono::intern_aggregate_fields` walked the `choice`'s variants in,
+        // since both read `DefTable::children` filtered to `DefKind::Variant`.
+        // `record_ty`'s own doc comment says why a hit is walked with a fresh
+        // `TyEnv` and a miss falls back to `declared` bound by `env`.
+        let mono_payloads =
+            self.mono_aggregate_fields(def, args).and_then(|layout| match layout {
+                science_codegen::mono::AggregateLayout::Choice(payloads) => Some(payloads),
+                science_codegen::mono::AggregateLayout::Record(_) => None,
+            });
+        let no_binding = TyEnv::new();
         let mut variants = Vec::with_capacity(order.len());
-        for variant in order {
-            let variant_name = self.defs.get(variant).name.clone();
+        for (index, variant) in order.iter().enumerate() {
+            let variant_name = self.defs.get(*variant).name.clone();
             // Absent is **not** the same as empty: a variant the declaration
             // table has no entry for is a variant whose payload nobody lowered,
             // and treating it as payload-free would put the wrong number of
             // bytes in the union.
-            let declared = decls.variant(variant).ok_or_else(|| {
+            let declared = decls.variant(*variant).ok_or_else(|| {
                 Unlowered::new(format!(
                     "the variant `{name}.{variant_name}`, which the declaration table has no \
                      lowered payload for"
                 ))
             })?;
-            variants.push(match declared.payload.as_slice() {
+            let (payload, use_env): (&[Ty], &TyEnv) = match mono_payloads.and_then(|p| p.get(index))
+            {
+                Some(substituted) => (substituted.as_slice(), &no_binding),
+                None => (declared.payload.as_slice(), env),
+            };
+            variants.push(match payload {
                 [] => CgVariant::unit(variant_name),
-                [only] => CgVariant::with(variant_name, self.cg_ty_in(*only, depth + 1, env)?),
+                [only] => CgVariant::with(variant_name, self.cg_ty_in(*only, depth + 1, use_env)?),
                 many => {
                     let mut fields = Vec::with_capacity(many.len());
                     for (index, ty) in many.iter().enumerate() {
                         fields.push(CgField::new(
                             index.to_string(),
-                            self.cg_ty_in(*ty, depth + 1, env)?,
+                            self.cg_ty_in(*ty, depth + 1, use_env)?,
                         ));
                     }
                     let payload = CgTy::strukt(format!("{name}.{variant_name}"), fields);

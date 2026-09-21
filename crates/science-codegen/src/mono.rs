@@ -647,8 +647,65 @@ pub struct MonoSet {
     /// order as the unknown behind Gate J, so it is closed by construction
     /// before something depends on it.
     calls: BTreeMap<(String, u32), String>,
+    /// A generic record's fields, or a generic `choice`'s payloads, with the
+    /// aggregate's parameters bound to this use's arguments and every member
+    /// substituted to a concrete [`Ty`] — interned here, above Decision 42's
+    /// line, and read back by the backend instead of applied by it.
+    ///
+    /// **The gap this closes.** `science-codegen-llvm`'s `Lowerer` computes a
+    /// generic aggregate's layout by walking its **declared** field list with
+    /// its parameters bound at each use, because substituting a field type
+    /// would intern a `Ty` and that crate is handed a `&Types` on purpose —
+    /// `BuildInput`'s own documentation says a backend must not be able to
+    /// invent a type. That walk is a lookup when a member's declared type
+    /// *is* a parameter and a refusal when it is a **compound** mentioning
+    /// one — `Holder[A]`'s field of type `Array[A]`, or a field whose own
+    /// type is `Inner[Array[A]]` — because building `Array[Int]` to bind into
+    /// the walk's own environment is exactly the interning `&Types` forbids.
+    ///
+    /// This map is the fix, spent where it is affordable: [`Mono`] already
+    /// holds `&mut Types` to substitute a *body*, and every generic aggregate
+    /// a monomorphised body's locals mention is discovered and substituted
+    /// here the same way, by [`Substitution::apply`] on each declared member
+    /// — the same function `Mono::instantiate` already calls on a body, run
+    /// over a field list instead. A member that is itself a new generic
+    /// aggregate (`Holder[Int]`, discovered inside `Nest[Int]`'s own
+    /// substituted fields) is walked in turn, so the table is closed under
+    /// nesting rather than one level deep.
+    ///
+    /// **Keyed by `(DefId, Vec<GenericArg>)` and not by `Ty`.** The concrete
+    /// use this is computed for is the pair a backend already has in hand at
+    /// [`TyKind::Named`](science_types::TyKind::Named)'s `def` and `args`,
+    /// so the lookup costs it nothing it was not already holding; keying by
+    /// the interned `Ty` of the whole aggregate would work too, but would
+    /// make this table one more place a `Ty`'s allocation order could leak
+    /// out, which is the hazard `normal.rs` §2 is about.
+    ///
+    /// **A [`HashMap`] and not a [`BTreeMap`], and that is not Decision 4's
+    /// hazard.** Every other `HashMap` this module was warned off of is one
+    /// whose iteration order could reach emitted output; this one is never
+    /// iterated; it is only ever looked up by a key the caller already holds,
+    /// the same way [`MonoSet::get`] looks up `items` by symbol. Decision 4
+    /// is about the *order things are emitted in*, and nothing here is
+    /// emitted at all.
+    aggregate_fields: HashMap<(DefId, Vec<GenericArg>), AggregateLayout>,
     holes: Holes,
     diagnostics: Vec<Diagnostic>,
+}
+
+/// One generic aggregate's members, substituted at one use. §10.
+///
+/// A record's fields are one list, in declaration order; a `choice`'s
+/// payloads are one list **per variant**, in the `choice`'s own declaration
+/// order, because `science-codegen-llvm`'s `Lowerer::emit_choice_glue` needs
+/// to know which variant each payload belongs to and a flat list would have
+/// thrown that away.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AggregateLayout {
+    /// A record's fields, in declaration order.
+    Record(Vec<Ty>),
+    /// A `choice`'s payloads, one list per variant, in declaration order.
+    Choice(Vec<Vec<Ty>>),
 }
 
 impl MonoSet {
@@ -710,6 +767,14 @@ impl MonoSet {
     /// Every distinct monomorphised type the walk met as an argument, sorted.
     pub fn types_reached(&self) -> impl Iterator<Item = &str> {
         self.types_reached.iter().map(String::as_str)
+    }
+
+    /// A generic record's fields, or a `choice`'s payloads, substituted at
+    /// `args` — `None` when this instantiation is not one [`Mono::instantiate`]
+    /// discovered a monomorphised body use, in which case the caller falls
+    /// back to whatever it did before this table existed.
+    pub fn aggregate_fields(&self, def: DefId, args: &[GenericArg]) -> Option<&AggregateLayout> {
+        self.aggregate_fields.get(&(def, args.to_vec()))
     }
 
     /// `SC0404`, `SC0407`, `SC0522` — everything the walk reported.
@@ -892,7 +957,119 @@ impl<'a> Mono<'a> {
                 }),
             }
         }
+        self.intern_aggregate_fields(&out, set);
         out
+    }
+
+    /// [`MonoSet::aggregate_fields`]'s table, built from every generic
+    /// record or `choice` `out`'s bodies mention.
+    ///
+    /// # The walk
+    ///
+    /// The roots are every distinct `Named { def, args }` reachable from a
+    /// local's declared type in any concrete body `out` carries — concrete
+    /// because `out` is `instantiate`'s own output, built one statement
+    /// above this call. From each root this substitutes the aggregate's
+    /// declared members at `args` with [`Substitution::apply`], the same
+    /// function that substitutes a body, and then walks the **result** for
+    /// more roots: a member that is itself a generic aggregate — `Holder[A]`
+    /// inside `Nest[A]`, substituted to `Holder[Int]` — is not necessarily a
+    /// local's type anywhere in the program, so it would never be found if
+    /// the walk stopped at what a local declares. `seen` closes the walk
+    /// under this nesting and stops it from repeating an aggregate already
+    /// entered.
+    ///
+    /// # What a failed substitution means
+    ///
+    /// [`Substitution::apply`] fails only on the const half's arithmetic
+    /// range (`subst.rs` §4), which a type-only aggregate like `Pair[A, B]`
+    /// never exercises — but a const generic aggregate can, and when it does
+    /// the member is recorded as [`Ty::ERROR`] rather than dropped, so the
+    /// list stays the length the declaration has and the backend's own
+    /// `TyKind::Error` refusal is what a reader sees, with [`Unsolved::Residual`]
+    /// counted on `set.holes` for `ty`'s §5 reason: a hole is a thing a
+    /// consumer can count, and a member that silently vanished would not be.
+    fn intern_aggregate_fields(&mut self, out: &[MonoBody], set: &mut MonoSet) {
+        let mut seen: HashSet<(DefId, Vec<GenericArg>)> = HashSet::new();
+        let mut worklist: Vec<(DefId, Vec<GenericArg>)> = Vec::new();
+        let mut in_ty: HashSet<Ty> = HashSet::new();
+        for body in out {
+            for (_, local) in body.body.locals() {
+                collect_generic_aggregates(self.defs, self.types, local.ty, &mut in_ty, &mut worklist);
+            }
+        }
+        while let Some((def, args)) = worklist.pop() {
+            if !seen.insert((def, args.clone())) {
+                continue;
+            }
+            let layout = match self.defs.get(def).kind {
+                DefKind::Record => {
+                    let Some(record) = self.decls.record(def) else { continue };
+                    let subst = Substitution::of_generics(&record.generics, &args);
+                    let mut fields = Vec::with_capacity(record.fields.len());
+                    for (index, (_, field_ty)) in record.fields.iter().enumerate() {
+                        let substituted = match subst.apply(self.types, *field_ty) {
+                            Ok(ty) => ty,
+                            Err(_) => {
+                                set.holes.unsolved.push(Unsolved::Residual { def, param: index });
+                                Ty::ERROR
+                            }
+                        };
+                        collect_generic_aggregates(
+                            self.defs,
+                            self.types,
+                            substituted,
+                            &mut in_ty,
+                            &mut worklist,
+                        );
+                        fields.push(substituted);
+                    }
+                    AggregateLayout::Record(fields)
+                }
+                DefKind::Choice => {
+                    let variants: Vec<DefId> = self
+                        .defs
+                        .children(def)
+                        .filter(|child| child.kind == DefKind::Variant)
+                        .map(|child| child.id)
+                        .collect();
+                    let generics = variants
+                        .iter()
+                        .find_map(|variant| self.decls.variant(*variant).map(|v| v.generics.clone()))
+                        .unwrap_or_default();
+                    let subst = Substitution::of_generics(&generics, &args);
+                    let mut payloads = Vec::with_capacity(variants.len());
+                    for variant in &variants {
+                        let Some(declared) = self.decls.variant(*variant) else {
+                            payloads.push(Vec::new());
+                            continue;
+                        };
+                        let mut variant_fields = Vec::with_capacity(declared.payload.len());
+                        for (index, field_ty) in declared.payload.iter().enumerate() {
+                            let substituted = match subst.apply(self.types, *field_ty) {
+                                Ok(ty) => ty,
+                                Err(_) => {
+                                    set.holes.unsolved.push(Unsolved::Residual { def, param: index });
+                                    Ty::ERROR
+                                }
+                            };
+                            collect_generic_aggregates(
+                                self.defs,
+                                self.types,
+                                substituted,
+                                &mut in_ty,
+                                &mut worklist,
+                            );
+                            variant_fields.push(substituted);
+                        }
+                        payloads.push(variant_fields);
+                    }
+                    AggregateLayout::Choice(payloads)
+                }
+                _ => continue,
+            };
+            set.aggregate_fields.insert((def, args), layout);
+        }
     }
 
     /// Every instance the program needs, from the given roots. §1.
@@ -2111,6 +2288,73 @@ fn named_function(operand: &Operand, values: &HashMap<Local, DefId>) -> Option<D
             values.get(&place.local).copied()
         }
         _ => None,
+    }
+}
+
+/// Every generic record or `choice` reachable from `ty`, pushed onto `work`.
+///
+/// `ty` itself is pushed when it is `Named { def, args }` at a non-empty
+/// `args` whose `def` is a record or a `choice` — a builtin generic
+/// (`Array`, `Map`, `Box`) has no declared field list for
+/// [`Mono::intern_aggregate_fields`] to substitute and is left out for the
+/// same reason `science-codegen-llvm`'s `cg_ty_in` gives it its own arm
+/// rather than falling into the record and `choice` cases. Either way the
+/// walk continues into every type argument, because `Array[Pair[Int, F64]]`
+/// has to surface `Pair[Int, F64]` even though `Array` itself is not an
+/// aggregate this table describes.
+///
+/// `seen` is a set of whole types rather than of the pairs pushed, so a type
+/// with no aggregate anywhere inside it — `Int`, `String`, `&Doc` — is not
+/// re-walked the next time the same local type is met, which is the common
+/// case for every scalar in a program.
+fn collect_generic_aggregates(
+    defs: &DefTable,
+    types: &Types,
+    ty: Ty,
+    seen: &mut HashSet<Ty>,
+    work: &mut Vec<(DefId, Vec<GenericArg>)>,
+) {
+    if !seen.insert(ty) {
+        return;
+    }
+    match types.kind(ty) {
+        TyKind::Named { def, args } => {
+            let def = *def;
+            if !args.is_empty() && matches!(defs.get(def).kind, DefKind::Record | DefKind::Choice) {
+                work.push((def, args.clone()));
+            }
+            for arg in args.clone() {
+                if let GenericArg::Type(inner) = arg {
+                    collect_generic_aggregates(defs, types, inner, seen, work);
+                }
+            }
+        }
+        TyKind::Object { args, .. } => {
+            for arg in args.clone() {
+                if let GenericArg::Type(inner) = arg {
+                    collect_generic_aggregates(defs, types, inner, seen, work);
+                }
+            }
+        }
+        TyKind::Tuple(elements) => {
+            for element in elements.clone() {
+                collect_generic_aggregates(defs, types, element, seen, work);
+            }
+        }
+        TyKind::Nullable(inner) | TyKind::Borrowed { inner, .. } => {
+            collect_generic_aggregates(defs, types, *inner, seen, work);
+        }
+        TyKind::Closure { params, ret } => {
+            for param in params.clone() {
+                collect_generic_aggregates(defs, types, param, seen, work);
+            }
+            collect_generic_aggregates(defs, types, *ret, seen, work);
+        }
+        TyKind::Unit
+        | TyKind::Error
+        | TyKind::Param { .. }
+        | TyKind::SelfType { .. }
+        | TyKind::SelfAssoc { .. } => {}
     }
 }
 

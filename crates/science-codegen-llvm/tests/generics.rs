@@ -295,39 +295,41 @@ fn a_method_on_a_generic_type_runs() {
     assert_eq!(out, "1\n");
 }
 
-/// **The limit, asserted as a refusal rather than left to be discovered.**
+/// **The limit that used to be a refusal, run as a program instead.**
 ///
 /// `Nest[A]`'s field is `Holder[A]` — a compound mentioning the type's own
-/// parameter. Binding it would mean building the `Ty` for `Holder[Int]`, and
-/// building a `Ty` is interning, and this crate holds a `&Types` precisely so
-/// that it cannot. `Lowerer::member_ty` refuses it by name.
+/// parameter. Binding it at a use means building the `Ty` for `Holder[Int]`
+/// or `Holder[String]`, and building a `Ty` is interning, which
+/// `science-codegen-llvm` cannot do — it is handed a `&Types` precisely so
+/// that it cannot invent one. `Lowerer::member_ty` used to refuse this by
+/// name, under a test — `a_generic_field_mentioning_a_parameter_is_refused_by_name`,
+/// replaced here — whose own comment said what would retire it: *"the repair
+/// is for the substitution to happen above Decision 42's line, where `&mut
+/// Types` lives … this is the test that fails the day something does, which
+/// is when it should be replaced by the program running."*
 ///
-/// This is a test of the refusal and not an endorsement of it: the repair is
-/// for the substitution to happen above Decision 42's line, where `&mut
-/// Types` lives — but `science_mir::instantiate` reaches a *body's* types and
-/// a declaration's field list is not one. Nothing instantiates a declaration
-/// yet, and this is the test that fails the day something does, which is when
-/// it should be replaced by the program running.
+/// The repair is `science_codegen::mono::Mono::intern_aggregate_fields`:
+/// every generic record or `choice` a monomorphised body mentions is
+/// substituted once, above the line, and the backend looks the result up
+/// instead of trying to build it. Two instantiations — `Nest[Int]` and
+/// `Nest[String]` — are asserted here rather than one, because the interning
+/// is keyed by `(DefId, arguments)` and a table that collapsed the two into
+/// one entry would print `9 9` or `hondo hondo` instead of failing to build
+/// at all, which is a worse bug than the refusal this replaces.
 #[test]
-fn a_generic_field_mentioning_a_parameter_is_refused_by_name() {
-    let source = "type Holder[T]:\n\
-                  \x20   value: T\n\
-                  \n\
-                  type Nest[A]:\n\
-                  \x20   inner: Holder[A]\n\
-                  \n\
-                  def main():\n\
-                  \x20   let deep: Nest[String] be Nest(inner: Holder(value: \"hondo\"))\n\
-                  \x20   print(f\"{deep.inner.value}\")\n";
-    let dir = scratch("generics", "member_param");
-    require_runtime();
-    let Err(refused) = lower(source).try_build(&executable(&dir, "member_param"), OptLevel::O2) else {
-        panic!("a field mentioning a parameter cannot be laid out, but the build succeeded")
-    };
-    let text = refused.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("\n");
-    let _ = std::fs::remove_dir_all(&dir);
-    assert!(
-        text.contains("compound mentioning one of the type's own parameters"),
-        "the refusal does not name what it cannot do:\n{text}"
+fn a_generic_field_mentioning_a_parameter_runs() {
+    let (out, _) = built(
+        "member_param",
+        "type Holder[T]:\n\
+         \x20   value: T\n\
+         \n\
+         type Nest[A]:\n\
+         \x20   inner: Holder[A]\n\
+         \n\
+         def main():\n\
+         \x20   let deep: Nest[String] be Nest(inner: Holder(value: \"hondo\"))\n\
+         \x20   let shallow: Nest[Int] be Nest(inner: Holder(value: 9))\n\
+         \x20   print(f\"{deep.inner.value} {shallow.inner.value}\")\n",
     );
+    assert_eq!(out, "hondo 9\n");
 }
