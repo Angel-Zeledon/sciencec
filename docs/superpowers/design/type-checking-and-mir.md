@@ -429,6 +429,155 @@ covers — rather than "not exhaustive".
 Nullable types participate: `match doc:` over a `Doc?` has `null` as a
 constructor, and matching `null` plus the non-null case is exhaustive.
 
+**Decision 27. Reading a place that owns something out of a borrow types the
+binding as a borrow, not as the declared owned type — Rust's match ergonomics,
+and not only at a `match`.** `def take(d: &Doc) -> Int: let t be d.title; t.length()`
+binds `t` at `borrowed String`, not at `String`, and the identical rule applies
+to `Left(n): …` under a `match` over a `borrowed E of (I64, String)`: `n` binds
+at `borrowed String` and would have bound at `I64` unchanged, because `I64` is
+`Copy` and the rule only ever widens an owned type into a borrow, never the
+reverse.
+
+This closes a hole `crates/science-regions/src/deref_move.rs` opened on
+purpose and named as temporary: that module refuses `SC0303`, *"cannot move a
+value out of a borrow"*, on every one of a move's places that projects through
+a `Deref`, and its own §3 says outright that it is *"a safety net and not the
+answer"* — the answer is this decision, stated in a note rather than left in a
+commit message. Before it, `crate::check`'s `field` and `scrutinee_substitution`
+peeled a borrow to reach a field or a payload and handed back the *declared*
+type of what was underneath, so `science-mir`'s lowering — correctly, given
+what it was told — picked `Move` for anything not `Copy`, and the place it
+moved still had the `Deref` the borrow inserted. The result was a value moved
+out from under somebody else's reference with no diagnostic anywhere in front
+of it, caught only by measuring: 20 sites across the corpus took this path,
+and every one of them used the binding exactly as a borrow — compared with
+`is`, passed to a parameter typed `borrowed String`, appended with
+`push_str` — which is the evidence that the rule belongs at the type and not
+at the use.
+
+**The reason this is a type rule and not a wider move-analysis.** The
+alternative considered was to leave `SC0303`'s refusal as the permanent
+answer and require the author to write `&d.title` or `d.title.clone()` at
+every one of those twenty sites. That is what literal Rust does for a bare
+field expression — `let t = d.title;` where `d: &Doc` is `E0507` there too,
+match ergonomics notwithstanding, because Rust's default binding modes are a
+*pattern*-matching rule and a plain field access is not a pattern. Rejected,
+because every site this refuses is a program that already reads as a borrow
+and a language whose own core spec makes borrows automatic at a call site
+(§6.3, AMENDMENT 2 above) has no consistent story for demanding one be
+spelled out by hand at a field. The cost of the wider rule is that "moved"
+stops being a safe guess about a binding's type from its declaration alone —
+reading `d.title`'s field type off `Doc`'s declaration is no longer enough;
+whether `d` was reached through a borrow now matters too — and that cost is
+paid once, in `crate::check`, rather than at every call site in the corpus.
+
+**`Copy` types are unaffected, and the predicate is `needs_drop`, not a new
+one.** `let n be d.count` through a `&Doc` stays an owned `Int`: the rule
+tests [`science_types::ownership::needs_drop`] on the field's *own* type, not
+on the borrow, and a borrow releases nothing so a `Doc` of one `Int` field
+still answers `false`. This is deliberately the identical predicate
+`deref_move.rs` refuses by, stated once — `science-types` cannot depend on
+`science-mir`, so the predicate moved to the crate both callers already stand
+on rather than being written twice, which is `lib.rs` §1's argument against a
+second implementation of one question applied one layer down.
+
+**`&mut` binds by `&mut`.** A field or payload read through a `mutable
+borrowed T` is a `mutable borrowed` binding, propagating the same mutability
+the outer borrow already carried, which is what Rust's default binding modes
+do and the only answer consistent with `mutable borrowed`'s own purpose
+(§6.3's `retitle`, which writes through the referent precisely because the
+parameter is exclusive). Nothing here introduces mixed-mode chains — a shared
+borrow downgrading a later exclusive one, the way Rust's binding modes do when
+a `&` and a `&mut` are nested in one scrutinee — because one field or pattern
+read only ever peels the one borrow immediately around it; a chain of reads
+each re-enters this rule with whatever the previous read produced, so a
+`&mut` reached only after a `&` is never on offer to begin with.
+
+**What this makes obsolete.** `crate::check`'s `scrutinee_substitution` used
+to say, in as many words, that *"match ergonomics are a decision no note has
+taken, and this change is a substitution rather than a new binding mode"* —
+this decision is the one that comment was waiting on, and the comment is
+retired rather than left stale. `deref_move.rs`'s §3 amendment note — *"until
+that decision … is made in a note, this check is the difference between
+refusing a program and silently corrupting its heap"* — is satisfied the same
+way: `SC0303` is unchanged and still refuses a genuine move out of a borrow
+(a `Deref`-rooted place whose type needs a drop *after* this rule has already
+run), it simply has far less to refuse, because most of what used to reach it
+as a `Move` now never leaves `crate::check` as anything but a `Ref`.
+
+> **AMENDMENT 5: the type rule alone miscompiles, and the fix is one layer
+> down too.** The first attempt at Decision 27 changed only what
+> `crate::check` calls the type of a field or a payload, on the ground that
+> `science-mir`'s lowering reads the type off the node and would follow along.
+> It does — for `is_copy`, which now answered `true` for a shared, non-`Copy`
+> field exactly as it always has for a shared borrow — and that is the bug.
+> `Builder::operand`'s ordinary place read asked `is_copy` of the widened
+> type and copied the *place* underneath unchanged: the same `String`'s three
+> words a plain field read always was, now labelled a pointer. Handed to
+> anything that wanted an actual pointer — a parameter, a comparison's other
+> side — the linker's own verifier caught it: *"local is ptr and the value
+> stored into it is an aggregate"*, on the exact reproducer this decision
+> exists to fix, the first time it was tried end to end rather than only
+> through `sciencec check`.
+>
+> **The fix.** `science_mir::lower::Builder::read_ergonomic` compares the
+> node's type against the place's own type (`Builder::place_ty`, which is
+> always the record's true declared field type, never the checker's
+> widening); where they disagree — the type says borrow, the place is the
+> owned storage a field or a payload always was — it builds a real address
+> with `Builder::borrow_place` into a fresh temporary and reads that, instead
+> of the place itself. Where they agree — an ordinary value, or a field the
+> record itself declares `&T` — nothing changes. Both of Decision 27's
+> positions reach this: `Builder::operand`'s catch-all (a field read, in a
+> `let` or an operand) and `Builder::bind_pattern`'s `PatKind::Binding` arm (a
+> match arm's binding).
+>
+> **The cost is named rather than hidden: it is not two-phase.** A written
+> `&expr` at an argument gets `BorrowKind::TwoPhase` from `Builder::argument`'s
+> own first arm; a Decision 27 reborrow reaching `read_ergonomic` has no such
+> node behind it and is always `Shared` or `Exclusive`. `v.push(v.borrowed_field)`
+> on a `&mut` receiver would want the two-phase reservation and does not get
+> it here — no corpus site is this shape, and the day one is, the fix is
+> threading `in_argument` through rather than a new decision.
+>
+> **A second, adjacent bug, found by the same reproducer with the `&` put
+> back in.** `examples/07_generics.science`'s `return &found.inner` and
+> `examples/18_ownership.science`'s `&doc.title` — both explicit, both
+> pre-existing — turned into `&&String` once `found.inner`/`doc.title` were
+> themselves already `&String`. The explicit `&` still has to build a real,
+> separate `ExprKind::Borrow` node — `&mut c` where `c` is *itself* already a
+> `&mut Config` parameter is a fresh reservation of `c`'s own slot, not a
+> no-op, which is what a capture-and-reborrow test in
+> `crates/science-regions/tests/closure_captures.rs` measured the wrong way
+> to fix: collapsing the node away moved `c` instead of reborrowing it, and
+> `SC0334` fired where `SC0330` should have. The right fix only narrows the
+> *type* the fresh node is given — `referent` is the operand's own referent
+> when the mutability already matches its outer `&`, so `&expr` widens once
+> and not twice — and leaves the node, and the reservation, in place.
+>
+> **What is deliberately not covered: `Nullable`.** A presence test narrows
+> *inside* a nullable's own representation, past the discriminant to the
+> payload, and `read_ergonomic` — like `borrow_place` beneath it — can only
+> take the address of a place that exists; there is no projection in this IR
+> for a nullable's payload, the identical gap `Builder::borrow_hole`'s own
+> comment names for a different caller. So `crate::check::BodyChecker::
+> borrow_ergonomics` excludes a `Nullable` field or payload outright, and a
+> `String?` field through a borrow reads exactly as it did before this
+> decision. None of the twenty real sites are this shape.
+>
+> **One construct outside either named position turned out to need the same
+> fix, and is worth naming because it was not designed in.** `Index.index`
+> is declared `-> &Self.Output` (`indexing-and-array-literals.md` §1.1), so
+> `xs[0]` was already typed as a borrow of an owned element for a reason
+> that predates this decision entirely, and `let a be xs[0]` had the identical
+> mismatch `read_ergonomic` now closes as a side effect of fixing it generally
+> rather than only at a field or a pattern.
+> `crates/science-codegen-llvm/tests/past_stage_three.rs`'s `refuse-index` is
+> the record of what that mismatch used to do to the backend, and
+> `crates/science-codegen-llvm/tests/arrays.rs`'s
+> `an_indexed_element_bound_by_a_plain_let_builds_and_runs` is the same
+> program, run.
+
 ---
 
 ## 8. The const-generic commitments this note owes

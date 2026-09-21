@@ -244,6 +244,7 @@ pub mod methods;
 pub mod mono;
 pub mod narrow;
 pub mod normal;
+pub mod ownership;
 pub mod subst;
 pub mod thir;
 pub mod ty;

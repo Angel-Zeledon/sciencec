@@ -736,11 +736,17 @@ fn a_nullable_at_each_alignment_answers_correctly() {
 #[test]
 fn what_is_refused_names_itself() {
     let cases: &[(&str, &str, &str)] = &[
-        (
-            "refuse-index",
-            "let xs be [1, 2, 3]\nlet a be xs[0]\nprint(\"x\")\n",
-            "",
-        ),
+        // **`refuse-index` used to be here** and is not: `let a be xs[0]`
+        // builds, links and runs. `Builder::operand`'s ordinary place read
+        // asked `is_copy` of `Index.index`'s declared `&Int` and copied the
+        // *place* underneath — a plain `Int`, not a pointer — which is the
+        // same mismatch `type-checking-and-mir.md` Decision 27 closes for a
+        // field read through a borrow, met here at an index instead. Fixed
+        // the same way: `Builder::read_ergonomic` builds a real address when
+        // the type and the place disagree like this.
+        // `crates/science-codegen-llvm/tests/arrays.rs`'s
+        // `an_indexed_element_bound_by_a_plain_let_builds_and_runs` is the
+        // program this case used to refuse, run instead of refused.
         // **A `choice` whose payload owns something used to be here** and is
         // not: `emit_choice_glue` gives `intern_drop_glue` the `switch` its
         // own doc comment used to say the emitter could not build — one arm

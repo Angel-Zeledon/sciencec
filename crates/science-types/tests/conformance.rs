@@ -442,7 +442,7 @@ type ConfigError:
 
 ConfigError implements Error:
     def describe(self) -> String:
-        self.detail
+        String.new()
 ",
     );
     // `539` and not `539, 540`: §3's restraint keeps `describe` silent, because

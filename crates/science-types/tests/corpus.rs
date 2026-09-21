@@ -287,7 +287,27 @@ use std::path::{Path, PathBuf};
 /// `an_unsuffixed_literal_cannot_fix_a_receivers_parameter` pins that this did
 /// not soften — only a variable standing for a shape `finish` resolves on its
 /// own, such as `Leaf(1)`'s placeholder, is deferred.
-const REMAINING: &[(&str, &[u16])] = &[];
+/// **`20_extern.science`, three `SC0525`s, all in `gemm`.** `a.data` and
+/// `b.data` are `expected Span[F64], found &Span[F64]`; `c.data` is `expected
+/// MutableSpan[F64], found &mut MutableSpan[F64]`.
+///
+/// **Reopened by `type-checking-and-mir.md` Decision 27**, and this is the
+/// state that decision predicted rather than a regression: reading a field
+/// that owns something through a borrow now types the read as a borrow
+/// (`crate::check::BodyChecker::borrow_ergonomics`), and the predicate for
+/// *"owns something"* is [`science_types::ownership::needs_drop`] — the exact
+/// question `crates/science-regions/src/deref_move.rs`'s §5 already answers
+/// conservatively for these two types, because `ffi.Span`/`ffi.MutableSpan`
+/// are declared in `builtins.rs` as names with no fields, and `needs_drop`
+/// answers `true` wherever it cannot see a declaration to walk. Before
+/// Decision 27, that conservatism produced `SC0303` at `science-regions` —
+/// *cannot move a value out of a borrow* — for the identical reason; Decision
+/// 27 answers the type question one phase earlier, so the same false
+/// positive now surfaces as a type mismatch instead of a move refusal. Same
+/// owner as `deref_move`'s own §5 gives it: `ffi-c-boundary.md`, giving
+/// `Span`, `MutableSpan`, `Pointer` and `OpaqueHandle` a real `Copy`
+/// declaration `needs_drop` can find.
+const REMAINING: &[(&str, &[u16])] = &[("20_extern.science", &[525, 525, 525])];
 
 fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("examples")
@@ -635,10 +655,27 @@ fn every_pinned_file_is_in_the_corpus() {
 /// second kind of finding in this file always has — the checker was right
 /// about a gap in itself, one edit to `science-types` closed it, and no
 /// character of `examples/` moved.
+///
+/// # **It is 3, and this time a real hole closed and a narrower one opened**
+///
+/// `type-checking-and-mir.md` Decision 27 made `crate::check::BodyChecker`
+/// type a field or a match payload that owns something as a borrow when it is
+/// read through one, rather than handing back the declaration's owned type
+/// for `science-mir` to move — the fix `science-regions/src/deref_move.rs`'s
+/// own module comment named as still owed. Twenty genuine `SC0303`s across
+/// the corpus (`crates/science-regions/tests/corpus.rs`'s own census) are
+/// gone as a result, with no line of `examples/` touched. **`20_extern.science`'s
+/// three false positives moved rather than closing**: `ffi.Span` and
+/// `ffi.MutableSpan` have no declared fields for `needs_drop` to walk, so it
+/// answers conservatively `true` exactly as it did for `deref_move`, and the
+/// same false alarm that used to be `SC0303` — *a move* — is now `SC0525` —
+/// *a type mismatch* — one phase earlier, because the type question is asked
+/// before anything is lowered to move. The entry above `REMAINING` is the
+/// full account and names the fix this test is still waiting for.
 #[test]
 fn the_corpus_reports_only_what_no_program_can_say() {
     let total: usize = REMAINING.iter().map(|(_, codes)| codes.len()).sum();
-    assert_eq!(total, 0);
+    assert_eq!(total, 3);
 }
 
 /// The evidence that a silent `Range` is a checked silence.

@@ -29,18 +29,20 @@ use support::{acceptance, codes};
 /// as *"the single most load-bearing signature decision in the file"*, not as
 /// a program known to be safe from this.
 ///
-/// This is the *type-checking* crux `check.rs` names, exercised by the
-/// language's own reference implementation of the thing it is written to
-/// parse — not a contrived fixture. Closed the same way `deref_move`'s
-/// `REGIONS` entries are: `docs/superpowers/design` deciding whether a
-/// non-`Copy` field read through a shared borrow types as a borrow, or the
-/// move is refused some other way before `science-mir` ever sees it.
+/// **Closed.** `type-checking-and-mir.md` Decision 27 is the crux
+/// `check.rs` used to name and not answer: a non-`Copy` field read through a
+/// shared borrow now types as a borrow — `binding.name` and `entry.name`
+/// through `binding`/`entry`'s own borrowed `for`-bindings are `&String`
+/// rather than `String` — so the `is` comparison reads two borrows and moves
+/// neither. Both `SC0303`s are gone with no line of this file touched, which
+/// is the point of exercising the language's own reference implementation of
+/// itself rather than a fixture built to prove one shape.
 #[test]
 fn the_acceptance_case_needs_no_diagnostic_at_all() {
     let checked = acceptance();
     assert_eq!(
         checked.reported(),
-        vec![303, 303],
+        Vec::<u16>::new(),
         "region inference reported: {:?}",
         codes(&checked.regions)
     );

@@ -36,13 +36,23 @@ def takes_embedding(e: Embedding) -> Bool:
 def takes_error(err: Error?) -> Bool:
     true
 
+# Decision 27 (`type-checking-and-mir.md` §7): `self.title`/`self.detail`
+# through an implicit-borrow `self` now types as `&String`, not `String`, so
+# a getter that used to return the field directly needs the same explicit
+# copy `examples/09_absence_and_failure.science`'s `ConfigError.message`
+# already uses — `String` has no `clone`, so this is what one looks like.
+def copy_of(text: &String) -> String:
+    let mutable out be String.new()
+    out.push_str(text)
+    out
+
 Doc has:
     def describe(self) -> String:
-        self.title
+        copy_of(self.title)
 
 MyError implements Error:
     def message(self) -> String:
-        self.detail
+        copy_of(self.detail)
 ";
 
 fn program(body: &str) -> support::Checked {
@@ -748,7 +758,7 @@ interface Reset:
 
 Doc implements Summarize:
     def summarize(self) -> String:
-        self.title
+        copy_of(self.title)
 
 Doc implements Reset:
     def reset(mutable self):
@@ -885,11 +895,11 @@ type Untouched:
 
 Doc implements Summarize:
     def summarize(self) -> String:
-        self.title
+        copy_of(self.title)
 
 Note implements Summarize:
     def summarize(self) -> String:
-        self.text
+        copy_of(self.text)
 
 def describe_boxed(value: Box[any Summarize]) -> String:
     \"\"

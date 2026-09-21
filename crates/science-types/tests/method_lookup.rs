@@ -34,9 +34,14 @@ interface Reset:
 type Doc:
     title: String
 
+def copy_of(text: &String) -> String:
+    let mutable out be String.new()
+    out.push_str(text)
+    out
+
 Doc has:
     def describe(self) -> String:
-        self.title
+        copy_of(self.title)
 
     def retitle(mutable self, title: String):
         self.title be title
@@ -46,7 +51,7 @@ Doc has:
 
 Doc implements Summarize:
     def summarize(self) -> String:
-        self.title
+        copy_of(self.title)
 
 Doc implements Reset:
     def reset(mutable self):
@@ -237,13 +242,19 @@ def rename(doc: &mut Doc) -> Bool:
 fn a_generic_block_solves_its_parameter_from_the_receiver() {
     // `check`'s `block_substitution`: `Wrapper of T has:` writes `-> T`, the
     // receiver is a `Wrapper of I64`, and the call has type `I64`.
+    // Decision 27 (`type-checking-and-mir.md` §7): `T` is a type parameter,
+    // and `needs_drop`'s `TyKind::Param` arm answers `true` — *"could be
+    // anything"* — so `self.value` through `self` is `&T` now, not `T`. `get`
+    // is written to match, and `I64: Copy` is what still lets `unwrap` read
+    // it as the plain `I64` it returns — AMENDMENT 4a's copy-out, exercised
+    // rather than the substitution changing.
     let checked = check(
         "\
 type Wrapper[T]:
     value: T
 
 Wrapper[T] has:
-    def get(self) -> T:
+    def get(self) -> &T:
         self.value
 
 def unwrap(w: Wrapper[I64]) -> I64:
@@ -484,12 +495,17 @@ fn an_argument_that_fits_more_than_one_implementation_is_reported() {
 interface Note:
     def note(self) -> String
 
+def copy_of(text: &String) -> String:
+    let mutable out be String.new()
+    out.push_str(text)
+    out
+
 type IoError:
     detail: String
 
 IoError implements Note:
     def note(self) -> String:
-        self.detail
+        copy_of(self.detail)
 
 type LoadError:
     detail: String

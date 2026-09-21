@@ -216,9 +216,11 @@ def walk(docs: &Array[Doc]):
             _ => None,
         })
         .expect("the body reads a field of the binding");
-    // The *field* is a `String`; what the binding is is read off the borrow
-    // the field was reached through, which `methods`' §1 makes transparent.
-    assert_eq!(checked.render(local), "String");
+    // Decision 27 (`type-checking-and-mir.md` §7): `title` owns a `String`,
+    // and `doc` is a borrow, so the field itself now reads as `&String`
+    // rather than as the declared `String` — the same widening `check.rs`'s
+    // `borrow_ergonomics` gives any field read through a borrow.
+    assert_eq!(checked.render(local), "&String");
     assert_eq!(
         ty_of(&checked, "walk", |kind| matches!(kind, ExprKind::For { .. })),
         "()"

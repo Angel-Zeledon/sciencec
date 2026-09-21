@@ -385,6 +385,7 @@ use crate::items::{named, Declarations, Named, Signature};
 use crate::methods::{Candidate, Form, Found};
 use crate::narrow::{self, Fact, Facts};
 use crate::normal::AtomOrder;
+use crate::ownership;
 use crate::subst::Substitution;
 use crate::thir::{
     self, Block, Body, ExprId, ExprKind, FStringPart, PatId, PatKind, Stmt, StmtKind,
@@ -1744,7 +1745,37 @@ impl<'a> BodyChecker<'a> {
                         self.facts.invalidate(&place);
                     }
                 }
-                let ty = self.types.borrowed(*mutable, inner_ty);
+                // Decision 27. `inner` may already be typed as a borrow of
+                // this exact mutability — `&doc.title` where `doc.title` is
+                // itself `&String` now that a field owning something is
+                // widened at the read, not at an explicit `&` the author
+                // never wrote here. The *type* this node gets must not
+                // double that: `examples/07_generics.science`'s `return
+                // &found.inner` and `examples/18_ownership.science`'s
+                // `&doc.title` both wrote `&field` for the single borrow the
+                // field used to need explicitly and now already is, and
+                // `&&String` is not a type either program asked for.
+                //
+                // **The node is still built, and the borrow is still real.**
+                // `lower_borrow` takes its address off `operand`'s *place*,
+                // never off its type — `&mut c` where `c` is itself a `&mut
+                // Config` parameter is a fresh reservation of `c`'s own slot,
+                // exactly as exclusive-borrowing anything else is, and
+                // collapsing this node away would drop that reservation
+                // along with the doubled type. So this only ever narrows
+                // *what the node is called*: `referent` is `inner`'s own
+                // referent when the mutability already matches, and `inner`
+                // itself otherwise, and either way a fresh `ExprKind::Borrow`
+                // is pushed at `referent`'s single borrow.
+                let referent = match *self.types.kind(inner_ty) {
+                    TyKind::Borrowed { inner: referent, mutable: inner_mutable }
+                        if inner_mutable == *mutable =>
+                    {
+                        referent
+                    }
+                    _ => inner_ty,
+                };
+                let ty = self.types.borrowed(*mutable, referent);
                 let id = self.body.push_expr(
                     ExprKind::Borrow { mutable: *mutable, operand: typed.id },
                     ty,
@@ -1896,6 +1927,19 @@ impl<'a> BodyChecker<'a> {
     ///
     /// This is the only place narrowing changes anything, and it is one node:
     /// `thir`'s §1 says why a narrowed read is not a retyped one.
+    ///
+    /// **Decision 27 deliberately does not reach a `Nullable` field or
+    /// payload**, and this is why: narrowing this function performs is a step
+    /// *inside* the nullable's own representation, past the discriminant to
+    /// the payload, and `crate::check`'s own [`Self::borrow_ergonomics`] would
+    /// have to hand this function a *borrowed* nullable to narrow if it ever
+    /// widened one. There is no such projection in `science-mir`'s IR —
+    /// `Builder::borrow_hole`'s own comment names the identical gap for a
+    /// different caller: *"the repair is a projection into a nullable's
+    /// payload … which is a change to the IR rather than to this function"*.
+    /// So `borrow_ergonomics` excludes `Nullable` outright, this function
+    /// never receives a borrowed nullable to narrow, and what is below is
+    /// exactly what it was before Decision 27.
     fn narrowed(&mut self, id: ExprId, ty: InferTy, span: Span) -> Typed {
         let InferTy::Known(known) = ty else {
             return Typed { id, ty };
@@ -2025,12 +2069,17 @@ impl<'a> BodyChecker<'a> {
         }
         let base_ty = self.known_or_error(base.ty);
         let revealed = self.revealed(base_ty, span);
+        // `via_borrow` remembers which kind of borrow this field was read
+        // through, if any, for Decision 27's rule below — `None` if `base`
+        // was not a borrow at all.
+        let mut via_borrow: Option<bool> = None;
         let (def, args) = match self.types.kind(revealed).clone() {
             TyKind::Named { def, args } => (def, args),
             // A borrow is transparent to a field read: `borrowed Doc` has a
             // `title` because a `Doc` has one, and F0 has no explicit
             // dereference to write instead.
-            TyKind::Borrowed { inner, .. } => {
+            TyKind::Borrowed { inner, mutable } => {
+                via_borrow = Some(mutable);
                 let inner = self.revealed(inner, span);
                 match self.types.kind(inner).clone() {
                     TyKind::Named { def, args } => (def, args),
@@ -2058,9 +2107,43 @@ impl<'a> BodyChecker<'a> {
                 Ty::ERROR
             }
         };
+        // Decision 27 of `type-checking-and-mir.md` §7: a field that owns
+        // something, read through a borrow, is itself a borrow — `d.title`
+        // through a `&Doc` is `borrowed String`, not `String` — because the
+        // owned type would give the field's drop and the referent's owner two
+        // claims on one value. A field this compiler cannot prove owns
+        // nothing (`ownership::needs_drop`) is not widened, `Copy` fields stay
+        // exactly as declared, and this is the only place that decision is
+        // made for a field read.
+        let field_ty = self.borrow_ergonomics(field_ty, via_borrow);
         let id =
             self.body.push_expr(ExprKind::Field { base: base.id, field: Some(field) }, field_ty, span);
         self.narrowed(id, InferTy::Known(field_ty), span)
+    }
+
+    /// Decision 27: widens `ty` into a borrow of itself when `via_borrow` says
+    /// it was read through one and [`ownership::needs_drop`] says there is
+    /// something in it worth not duplicating. Shared by [`Self::field`] and
+    /// the pattern arms of [`Self::pattern`], which are the two places a
+    /// declared type reaches a binding through a scrutinee's own borrow.
+    ///
+    /// **Never widens a `Nullable`.** [`Self::narrowed`]'s own comment is the
+    /// reason: a presence test narrows *inside* a nullable's representation,
+    /// past the discriminant to the payload, and reaching that payload's
+    /// address is a projection `science-mir` does not have. Excluding it here
+    /// means `narrowed` never has to ask, and no corpus site needs it —
+    /// Decision 27's twenty real findings are all a plain field or payload,
+    /// never a `T?` one.
+    fn borrow_ergonomics(&mut self, ty: Ty, via_borrow: Option<bool>) -> Ty {
+        if matches!(self.types.kind(ty), TyKind::Nullable(_)) {
+            return ty;
+        }
+        match via_borrow {
+            Some(mutable) if ownership::needs_drop(self.decls, self.types, self.aliases, ty) => {
+                self.types.intern(TyKind::Borrowed { inner: ty, mutable })
+            }
+            _ => ty,
+        }
     }
 
     fn unknown_field(
@@ -5928,33 +6011,41 @@ impl<'a> BodyChecker<'a> {
     /// mismatch the pattern's own check owns, not this one's, and guessing a
     /// substitution for it would report about a type nobody wrote.
     ///
-    /// **A borrow is peeled and the binding is not re-borrowed.** `match` over
-    /// a `borrowed E of (I64, Bool)` reads its arguments through the borrow,
-    /// because a borrow is transparent to a field read for the same reason
-    /// [`BodyChecker::field`] gives. What it does *not* do is make the binding
-    /// `borrowed I64`: match ergonomics are a decision no note has taken, and
-    /// this change is a substitution rather than a new binding mode.
+    /// **A borrow is peeled to reach the arguments, and Decision 27 says what
+    /// the binding is now.** `match` over a `borrowed E of (I64, Bool)` reads
+    /// its payload through the borrow, because a borrow is transparent to a
+    /// field read for the same reason [`BodyChecker::field`] gives — and the
+    /// binding for a payload element that owns something is now `borrowed`
+    /// itself, exactly as a field read is, rather than the declaration's own
+    /// owned type. `pattern`'s two structural arms apply that widening
+    /// through [`BodyChecker::borrow_ergonomics`] once this function has said
+    /// whether there was a borrow to widen from, and by which mutability.
     fn scrutinee_substitution(
         &mut self,
         scrutinee: Ty,
         owner: Option<DefId>,
         generics: &[hir::GenericParam],
         span: Span,
-    ) -> Substitution {
-        let (Some(owner), false) = (owner, generics.is_empty()) else {
-            return Substitution::new();
-        };
+    ) -> (Substitution, Option<bool>) {
+        // Peeled unconditionally, unlike the substitution below: whether
+        // there was a borrow to bind through matters even when the scrutinee
+        // is not generic over `owner`, which the substitution's own early-out
+        // would otherwise skip past.
         let revealed = self.revealed(scrutinee, span);
-        let revealed = match *self.types.kind(revealed) {
-            TyKind::Borrowed { inner, .. } => self.revealed(inner, span),
-            _ => revealed,
+        let (revealed, via_borrow) = match *self.types.kind(revealed) {
+            TyKind::Borrowed { inner, mutable } => (self.revealed(inner, span), Some(mutable)),
+            _ => (revealed, None),
         };
-        match self.types.kind(revealed).clone() {
-            TyKind::Named { def, args } if def == owner => {
-                Substitution::of_generics(generics, &args)
-            }
+        let substitution = match (owner, generics.is_empty()) {
+            (Some(owner), false) => match self.types.kind(revealed).clone() {
+                TyKind::Named { def, args } if def == owner => {
+                    Substitution::of_generics(generics, &args)
+                }
+                _ => Substitution::new(),
+            },
             _ => Substitution::new(),
-        }
+        };
+        (substitution, via_borrow)
     }
 
     fn pattern(&mut self, pattern: &hir::Pattern, scrutinee: Ty) -> PatId {
@@ -5984,13 +6075,18 @@ impl<'a> BodyChecker<'a> {
                 };
                 // §9. `Left(n)` under a scrutinee of `E of (I64, Bool)` binds
                 // `n` at `I64`, not at the `L` the declaration wrote.
-                let substitution = self.scrutinee_substitution(scrutinee, owner, &generics, span);
+                let (substitution, via_borrow) =
+                    self.scrutinee_substitution(scrutinee, owner, &generics, span);
                 let elems = elems
                     .iter()
                     .enumerate()
                     .map(|(at, elem)| {
                         let ty = payload.get(at).copied().unwrap_or(Ty::ERROR);
                         let ty = self.apply(&substitution, ty, elem.span);
+                        // Decision 27: a payload element that owns something,
+                        // matched under a borrowed scrutinee, binds as a
+                        // borrow.
+                        let ty = self.borrow_ergonomics(ty, via_borrow);
                         self.pattern(elem, ty)
                     })
                     .collect();
@@ -6006,8 +6102,10 @@ impl<'a> BodyChecker<'a> {
                 // §9 again, at the other shape a declaration's parameters reach
                 // a binding through. `BodyChecker::field` already substitutes
                 // for `p.left`; this is the same field read spelled as a
-                // pattern.
-                let substitution = self.scrutinee_substitution(scrutinee, def, &generics, span);
+                // pattern, and Decision 27's widening applies for the same
+                // reason.
+                let (substitution, via_borrow) =
+                    self.scrutinee_substitution(scrutinee, def, &generics, span);
                 let fields = fields
                     .iter()
                     .filter_map(|field| {
@@ -6018,6 +6116,7 @@ impl<'a> BodyChecker<'a> {
                             .map(|(_, ty)| *ty)
                             .unwrap_or(Ty::ERROR);
                         let ty = self.apply(&substitution, ty, field.pattern.span);
+                        let ty = self.borrow_ergonomics(ty, via_borrow);
                         Some((id, self.pattern(&field.pattern, ty)))
                     })
                     .collect();

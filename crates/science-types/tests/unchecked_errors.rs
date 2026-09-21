@@ -392,13 +392,18 @@ fn a_concrete_error_type_is_a_candidate_and_not_only_any_error() {
 type ConfigError:
     detail: String
 
+def copy_of(text: &String) -> String:
+    let mutable out be String.new()
+    out.push_str(text)
+    out
+
 ConfigError implements Error:
     # `message` and not `describe`: `Error` is the one-method interface of
     # revision 2 §3.4, and `conform`'s `SC0539` found this fixture calling it by
     # a name the interface does not declare. The fixture's subject is `SC0140`
     # and it reads the same with the method named correctly.
     def message(self) -> String:
-        self.detail
+        copy_of(self.detail)
 
 def load(key: String) -> (Doc, ConfigError?):
     (Doc(title: key), null)

@@ -48,9 +48,18 @@ interface Summarize:
 type Doc:
     title: String
 
+# Decision 27 (`type-checking-and-mir.md` §7): `self.title` through an
+# implicit-borrow `self` is `&String` now, not `String`, so the getter needs
+# the explicit copy `String`'s missing `clone` already forces elsewhere —
+# `examples/09_absence_and_failure.science`'s `copy_of`.
+def copy_of(text: &String) -> String:
+    let mutable out be String.new()
+    out.push_str(text)
+    out
+
 Doc implements Summarize:
     def preview(self) -> String:
-        self.title
+        copy_of(self.title)
 
 type Plain:
     n: I64

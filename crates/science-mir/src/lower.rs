@@ -1112,7 +1112,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             | ExprKind::Field { .. }
             | ExprKind::Index { .. } => match self.as_place(expr, block) {
                 Some((place, block)) => {
-                    let operand = self.read(place, ty);
+                    let (operand, block) = self.read_ergonomic(place, ty, block, span);
                     self.assign(block, dest, Rvalue::Use(operand), span);
                     block
                 }
@@ -1946,7 +1946,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             PatKind::Binding { def, .. } => {
                 let scope = self.scopes.len().saturating_sub(1);
                 let local = self.declare_binding(*def, block, scope);
-                let operand = self.read(place.clone(), pat.ty);
+                let (operand, block) = self.read_ergonomic(place.clone(), pat.ty, block, span);
                 self.assign(block, Place::local(local), Rvalue::Use(operand), span);
                 block
             }
@@ -4024,6 +4024,68 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         }
     }
 
+    /// [`Self::read`], with `type-checking-and-mir.md` Decision 27 answered.
+    ///
+    /// **The gap this closes.** `science-types`' checker can now type a field
+    /// or a pattern's binding `borrowed T` where the place underneath is the
+    /// same storage a plain `T` field always was — nothing about the record's
+    /// layout changed, only what the type checker calls the value read out of
+    /// it. `read` alone cannot tell: it asks `is_copy` of `ty`, and a *shared*
+    /// borrow answers `true` regardless of what it borrows, so it handed back
+    /// `Operand::Copy(place)` — a bitwise copy of the place's actual bytes,
+    /// which are a `String`'s three words and not a pointer. Passed anywhere a
+    /// pointer was expected, that is `local _2 is ptr and the value stored
+    /// into it is an aggregate` out of the linker, which is how this was
+    /// found: the reproducer in `65ee44c` failed to *link* the first time this
+    /// function's caller was changed to read a borrowed field, rather than
+    /// running the double free `SC0303` used to refuse — the miscompile Decision
+    /// 27 exists to prevent had simply moved one phase down.
+    ///
+    /// **The fix.** When `ty` reveals a borrow and the place's *own* type
+    /// (`place_ty`, which is always the record's true declared type — see
+    /// [`Self::as_place`]'s `ExprKind::Field` arm) does not, this is exactly
+    /// that situation, and what is owed is what an explicit `&d.title` already
+    /// gets: a real address, taken into a temporary with [`Self::borrow_place`]
+    /// and moved out of that. Every other case — `ty` was never a borrow, or
+    /// it was and the place already holds one (a field the record itself
+    /// declares `borrowed`, or a parameter) — falls through to `read`
+    /// unchanged, which is the overwhelming majority of every call this
+    /// replaces.
+    ///
+    /// **Not two-phase.** `in_argument` two-phasing is reserved for a written
+    /// `ExprKind::Borrow` at `Site::Argument`, which `Builder::argument`'s own
+    /// first arm already handles; a Decision 27 reborrow reaching this
+    /// function has no such node; it is an ordinary field or pattern read that
+    /// happens to need an address. `v.push(v.borrowed_field)` on a `&mut`
+    /// receiver would want one and does not get it — named rather than
+    /// silently guessed at, and no corpus site is this shape.
+    ///
+    /// **Never asked to cross a `Nullable`.** `crate::check`'s
+    /// `borrow_ergonomics` excludes one outright, for the reason this
+    /// function would otherwise have to solve: narrowing a borrowed nullable
+    /// needs the address of its *payload*, past the discriminant, and no
+    /// projection here reaches one (`Builder::borrow_hole`'s own comment names
+    /// the identical hole from a different caller).
+    fn read_ergonomic(
+        &mut self,
+        place: Place,
+        ty: Ty,
+        block: BlockId,
+        span: Span,
+    ) -> (Operand, BlockId) {
+        let revealed = self.revealed(ty);
+        if let TyKind::Borrowed { mutable, .. } = *self.context.types.kind(revealed) {
+            let stored = self.revealed(self.place_ty(&place));
+            if !matches!(self.context.types.kind(stored), TyKind::Borrowed { .. }) {
+                let temp = self.temp(revealed, span, block);
+                let block =
+                    self.borrow_place(Place::local(temp), mutable, place, block, span, false);
+                return (Operand::Move(Place::local(temp)), block);
+            }
+        }
+        (self.read(place, ty), block)
+    }
+
     /// An operand in an ordinary, non-argument position.
     fn operand(&mut self, expr: ExprId, block: BlockId) -> (Operand, BlockId) {
         let thir = self.thir;
@@ -4037,8 +4099,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             ExprKind::Unit => (Operand::Const(Constant::Unit), block),
             _ => {
                 if let Some((place, block)) = self.as_place(expr, block) {
-                    let operand = self.read(place, ty);
-                    return (operand, block);
+                    return self.read_ergonomic(place, ty, block, span);
                 }
                 let temp = self.temp(ty, span, block);
                 let block = self.expr_into(Place::local(temp), expr, block);

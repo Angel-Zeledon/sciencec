@@ -307,6 +307,41 @@ fn a_counting_loop_over_an_array_adds_up() {
     );
 }
 
+/// **The third view of the same expression, and the last one that was still
+/// wrong.** `f"{xs[i]}"` reads through `value_hole`, arithmetic reads through
+/// an inserted `Coercion::Copy` — the comment above this section names both —
+/// and a bare `let a be xs[0]` read through neither: it went through
+/// `Builder::operand`'s ordinary place read, which asked `is_copy` of the
+/// *type* `Index.index` declares (`&Int`, always `Copy`) and copied the
+/// *place* `science-mir` had already lowered to the element (a plain `Int`,
+/// not a pointer). `science-codegen-llvm/tests/past_stage_three.rs`'s
+/// `what_is_refused_names_itself` pinned the result as a refusal —
+/// `refuse-index` — because that mismatch reached the linker as *"local is
+/// ptr and the value stored into it is an aggregate"* one type over from this
+/// file's own `i64` version above.
+///
+/// **Closed the same way `type-checking-and-mir.md` Decision 27 closes a
+/// field read through a borrow**, and for the identical reason: `xs[0]`'s
+/// place is the element itself, its type is `&Int`, and `Builder::operand`
+/// now asks `read_ergonomic` rather than `read`, which builds a real `&Int` —
+/// a fresh temporary holding the element's address — when the place and the
+/// type disagree like this, and reads through it unchanged when they do not.
+/// `refuse-index` is gone from that list; this is the program it used to
+/// refuse, run instead.
+#[test]
+fn an_indexed_element_bound_by_a_plain_let_builds_and_runs() {
+    assert_eq!(
+        prints(
+            "index-let",
+            "let xs be [1, 2, 3]
+let a be xs[0]
+print(f\"{a}\")
+"
+        ),
+        "1\n"
+    );
+}
+
 /// Writing through `get_mutably`, which is the only reason it exists over
 /// `get`.
 ///

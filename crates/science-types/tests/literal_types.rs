@@ -42,9 +42,14 @@ choice Colour:
 interface Summarize:
     def preview(self) -> String
 
+def copy_of(text: &String) -> String:
+    let mutable out be String.new()
+    out.push_str(text)
+    out
+
 Doc implements Summarize:
     def preview(self) -> String:
-        self.title
+        copy_of(self.title)
 
 type Celsius is F64
 ";

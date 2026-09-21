@@ -84,11 +84,13 @@
 //! that does nothing rather than a value that is never released, and the false
 //! answers it produces disappear — without a change here — the day the lookup
 //! lands and this function can ask.
-
-use science_types::alias::Aliases;
-use science_types::items::Declarations;
-use science_types::ty::{Ty, TyKind, Types};
-use science_resolve::hir::DefId;
+//!
+//! **It no longer lives here.** `science_types::ownership`'s module doc §1
+//! says why: `science-types`' own checker gained a second question with the
+//! identical answer, and this crate cannot be the one place that question is
+//! implemented without `science-types` depending back on it. What is below is
+//! a re-export, kept at this path so every existing caller — this module's own
+//! `lower.rs`, and `science-regions`' `moved` and `deref_move` — is unchanged.
 
 use crate::mir::{
     reverse_postorder, Body, Local, Operand, Rvalue, StatementKind, TerminatorKind,
@@ -334,72 +336,11 @@ pub fn moved_locals(rvalue: &Rvalue) -> Vec<Local> {
 }
 
 /// Whether dropping a value of this type runs anything. §4.
-pub fn needs_drop(
-    decls: &Declarations,
-    types: &mut Types,
-    aliases: &mut Aliases,
-    ty: Ty,
-) -> bool {
-    let mut visiting = Vec::new();
-    needs_drop_inner(decls, types, aliases, ty, &mut visiting)
-}
-
-fn needs_drop_inner(
-    decls: &Declarations,
-    types: &mut Types,
-    aliases: &mut Aliases,
-    ty: Ty,
-    visiting: &mut Vec<DefId>,
-) -> bool {
-    let ty = aliases.reveal(types, ty).unwrap_or(ty);
-    let kind = types.kind(ty).clone();
-    match kind {
-        // A hole drops nothing. `ty`'s §5: an erroneous type must not
-        // manufacture work any more than it manufactures a diagnostic.
-        TyKind::Error | TyKind::Unit => false,
-        // A borrow releases nothing; releasing the referent is the referent's
-        // own storage-dead point, which is §10 item 3.
-        TyKind::Borrowed { .. } => false,
-        TyKind::Tuple(elements) => elements
-            .iter()
-            .any(|element| needs_drop_inner(decls, types, aliases, *element, visiting)),
-        TyKind::Nullable(inner) => needs_drop_inner(decls, types, aliases, inner, visiting),
-        TyKind::Named { def, .. } => {
-            let prelude = decls.prelude();
-            if prelude.is_numeric(types, ty)
-                || prelude.is_bool(types, ty)
-                || prelude.is(types, ty, "Char")
-                || prelude.is_never(types, ty)
-            {
-                return false;
-            }
-            // A recursive record cannot have a finite layout, so this guard
-            // never fires on a program that will compile. It is here because a
-            // program that will *not* compile still reaches this pass, and a
-            // stack overflow is a worse answer than a conservative `true`.
-            if visiting.contains(&def) {
-                return true;
-            }
-            let Some(record) = decls.record(def) else {
-                // A choice type, `String`, `Array`, a foreign union, an
-                // interface's associated type: §4's *"true where it cannot
-                // tell"*.
-                return true;
-            };
-            let fields: Vec<Ty> = record.fields.iter().map(|(_, ty)| *ty).collect();
-            visiting.push(def);
-            let answer = fields
-                .into_iter()
-                .any(|field| needs_drop_inner(decls, types, aliases, field, visiting));
-            visiting.pop();
-            answer
-        }
-        // A type parameter could be anything; monomorphisation is the phase
-        // that knows, and it runs after this one (§12's order).
-        TyKind::Param { .. }
-        | TyKind::Object { .. }
-        | TyKind::SelfType { .. }
-        | TyKind::SelfAssoc { .. }
-        | TyKind::Closure { .. } => true,
-    }
-}
+///
+/// **Moved to [`science_types::ownership`], and re-exported rather than
+/// implemented here.** Every type this walks is a `science-types` `Ty`, and
+/// [`science_types::check`]'s match-ergonomics rule needs the identical
+/// question — `science_types::ownership`'s own module doc §1 is the argument,
+/// and every caller in this crate still spells it `moves::needs_drop`, which
+/// this re-export keeps true.
+pub use science_types::ownership::needs_drop;

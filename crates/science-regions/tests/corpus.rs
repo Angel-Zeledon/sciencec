@@ -57,6 +57,24 @@
 //! both files resolve and type-check clean and the real binary reaches the
 //! region check on them exactly as this harness always did. Twenty-three
 //! diagnostics, seven files, one count, two ways of arriving at it.
+//!
+//! **The census is empty again, this time by the fix rather than by a second
+//! measurement agreeing with the first.** `type-checking-and-mir.md`
+//! Decision 27 — a non-`Copy` field or match payload read through a borrow
+//! types as a borrow — is the type rule `deref_move`'s own module comment
+//! named as owed, and [`the_corpus_census_is_empty`]'s own doc is the account
+//! of what closed and what changed shape instead of closing.
+//!
+//! **The two censuses no longer agree on `20_extern.science`, and that is not
+//! a disagreement about the pipeline.** This harness still finds nothing
+//! there — [`the_corpus_census_is_empty`]'s doc says why the false positive
+//! disappears from a *region* census without being fixed — but the type
+//! checker now reports `SC0525` three times on the same lines, and
+//! `Session::build`'s ordering rule stops the real driver before region
+//! inference runs on a body the type checker rejected. So
+//! `crates/sciencec/tests/cli.rs`'s `REGIONS` no longer carries an entry for
+//! this file at all; `TYPE_CHECKER_FINDINGS` does, and that is where the same
+//! three lines are pinned from the driver's side.
 
 mod support;
 
@@ -126,18 +144,37 @@ fn census() -> BTreeMap<String, Vec<u16>> {
 /// `303`s that are genuine, plus three more that are not, across seven files.
 /// This file's own header says why that count and
 /// `crates/sciencec/tests/cli.rs`'s `REGIONS` agree exactly.
+/// **Empty again, and this time by the answer rather than by a declaration
+/// landing.** `type-checking-and-mir.md` Decision 27 is the fix `deref_move`'s
+/// own module comment named as still owed: a field or a match payload that
+/// owns something, read through a borrow, now types as a borrow, so
+/// `science-mir`'s lowering never reaches a `Move` whose place has a `Deref`
+/// for the twenty genuine sites below to fire on.
+///
+/// **`20_extern.science`'s three false positives are gone from this census
+/// too, and for a reason worth stating rather than assuming.** `a.data` and
+/// `b.data` are shared `ffi.Span`s: Decision 27 types them `&Span[F64]`, and a
+/// *shared* borrow is `Copy` (`science-mir`'s `is_copy`), so the read is an
+/// `Operand::Copy` and never reaches `deref_move` at all — the same
+/// conservatism that used to produce `SC0303` now produces nothing here,
+/// because there is no `Move` to ask about. `c.data` is the exclusive
+/// `ffi.MutableSpan`, and an exclusive borrow is **not** `Copy` — but
+/// `science_mir::lower::Builder::read_ergonomic` (the fix Decision 27 needed
+/// at the lowering layer, alongside the type) moves a **fresh temporary**
+/// holding a real address, not `c.data`'s own place, so the place `deref_move`
+/// would have to see a `Deref` in is never the one that moves. **This
+/// crate's own harness runs region inference over every body regardless of
+/// what the type checker said about it** (this file's own header), so it is
+/// this test — not `crates/sciencec/tests/cli.rs`'s `REGIONS`, which the type
+/// checker now stops before region inference runs — that is the honest
+/// measurement of what `deref_move` itself still has to say about
+/// `20_extern.science`: nothing. The type checker's own report on the same
+/// three lines is `SC0525`, and `crates/science-types/tests/corpus.rs`'s
+/// `REMAINING` is where that is pinned.
 #[test]
 fn the_corpus_census_is_empty() {
     let found = census();
-    let expected = BTreeMap::from([
-        ("00_kitchen_sink.science".to_string(), vec![303, 303, 303, 303]),
-        ("05_match.science".to_string(), vec![303, 303, 303, 303]),
-        ("06_traits.science".to_string(), vec![303]),
-        ("09_absence_and_failure.science".to_string(), vec![303, 303, 303, 303, 303, 303]),
-        ("19_stdlib.science".to_string(), vec![303, 303, 303]),
-        ("20_extern.science".to_string(), vec![303, 303, 303]),
-        ("21_compiler_shapes.science".to_string(), vec![303, 303]),
-    ]);
+    let expected = BTreeMap::new();
     assert_eq!(found, expected, "the census moved");
 }
 
@@ -170,15 +207,16 @@ fn the_corpus_census_is_empty() {
 /// moves a [`science_mir::mir::LocalKind::Temp`], where before it moved the
 /// user's binding — `doc`, `excerpt`, `loaded`, `opened`. A borrow check that
 /// stopped working could not produce that; only the auto-borrow can.
-/// **Its report is no longer empty, and what refilled it is unrelated to what
-/// this test is about.** `deref_move` now reports four `SC0303`s here —
-/// `LoadError`'s `message` and `explain` each bind a `String` payload out of a
-/// `match` over `borrowed self`/`borrowed error` — which is a real finding of
-/// its own kind and `crates/sciencec/tests/cli.rs`'s `REGIONS` is where it is
-/// pinned and explained. What this test still checks is the *other* thing:
-/// that `describe`'s four calls move the auto-borrow's temporary and not the
-/// user's binding, which is a fact about `SC0334` that the new `SC0303`s do
-/// not touch.
+/// **Its report filled with four `SC0303`s and is empty again, and the second
+/// change is not this test's doing either.** `deref_move` reported four —
+/// `LoadError`'s `message` and `explain` each bound a `String` payload out of a
+/// `match` over `borrowed self`/`borrowed error` — a real finding pinned and
+/// explained where the first one was, `crates/sciencec/tests/cli.rs`'s
+/// `REGIONS`. `type-checking-and-mir.md` Decision 27 is what closed it: the
+/// payload now types as a borrow, so neither bind ever reaches
+/// `science-mir` as a `Move`. What this test still checks is the fact `SC0303`
+/// never touched either way: that `describe`'s four calls move the
+/// auto-borrow's temporary and not the user's binding.
 #[test]
 fn the_kitchen_sink_no_longer_moves_a_value_that_is_still_borrowed() {
     let (_, source) = corpus()
@@ -188,7 +226,7 @@ fn the_kitchen_sink_no_longer_moves_a_value_that_is_still_borrowed() {
     let checked = check(&source);
     assert_eq!(
         checked.reported(),
-        vec![303, 303, 303, 303],
+        Vec::<u16>::new(),
         "the kitchen sink's census moved — see `crates/sciencec/tests/cli.rs`'s `REGIONS`"
     );
 
@@ -247,12 +285,15 @@ fn the_kitchen_sink_no_longer_moves_a_value_that_is_still_borrowed() {
 /// about.
 ///
 /// [`summary`]: science_regions::summary
-/// **The two `SC0333`s stayed closed; six `SC0303`s opened.** `deref_move`
-/// reports here now — `ConfigError`'s `message` and `explain` bind a `String`
-/// payload out of a `match` over `borrowed self`/`borrowed error`, three times
-/// each — and `crates/sciencec/tests/cli.rs`'s `REGIONS` is where that finding
-/// is pinned and explained. It is a different check catching a different
-/// mistake in the same file; `lookup`'s summary, which is what this test was
+/// **The two `SC0333`s stayed closed; six `SC0303`s opened and are now
+/// closed too.** `deref_move` reported six — `ConfigError`'s `message` and
+/// `explain` each bind a `String` payload out of a `match` over `borrowed
+/// self`/`borrowed error`, three times each — a different check catching a
+/// different mistake in the same file, pinned where the first one was in
+/// `crates/sciencec/tests/cli.rs`'s `REGIONS`. `type-checking-and-mir.md`
+/// Decision 27 closes it the same way it closes `00_kitchen_sink.science`'s
+/// four: the payload types as a borrow, so none of the six ever reaches
+/// `science-mir` as a `Move`. `lookup`'s summary, which is what this test was
 /// written to guard, is unaffected and still asserted below.
 #[test]
 fn the_declared_map_get_closed_the_two_false_positives() {
@@ -261,7 +302,7 @@ fn the_declared_map_get_closed_the_two_false_positives() {
         .find(|(name, _)| name == "09_absence_and_failure.science")
         .expect("the absence example");
     let checked = check(&source);
-    assert_eq!(checked.reported(), vec![303, 303, 303, 303, 303, 303]);
+    assert_eq!(checked.reported(), Vec::<u16>::new());
 
     // And the cause, asserted directly: the summary names the map alone.
     let (_, from) = &checked.analysis_of("lookup").summary.returns[0];

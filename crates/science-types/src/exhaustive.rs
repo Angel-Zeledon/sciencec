@@ -676,7 +676,20 @@ impl Checker<'_> {
                 for entry in heads {
                     if let Some(tys) = self.sub_tys(entry, ctor, column) {
                         if tys.len() == arity {
-                            return tys;
+                            // `classify`'s own reason, one level down: Decision
+                            // 27 can now give a payload sub-pattern `borrowed
+                            // Format` where every column below this one still
+                            // expects the alias-free, borrow-free type
+                            // `ctor_set` and `inner_of` match on. Read straight
+                            // off THIR, an unpeeled borrow here is not a
+                            // different scrutinee — the constructor set is
+                            // still `Format`'s — so this classifies each field
+                            // rather than leaving `wildcard` to find no case it
+                            // matches and fall back to `_`.
+                            return tys
+                                .into_iter()
+                                .map(|ty| self.classify(ty).unwrap_or(ty))
+                                .collect();
                         }
                     }
                 }
