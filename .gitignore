@@ -30,6 +30,9 @@ target/
 examples/*
 !examples/*.science
 !examples/*.md
+# What each example prints, pinned by `sciencec`'s `corpus_output` test so a
+# miscompile that still exits 0 changes a tracked file.
+!examples/*.stdout
 !examples/*/
 tests/**/*.exe
 tests/**/*.obj
