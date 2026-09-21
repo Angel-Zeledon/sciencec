@@ -34,10 +34,29 @@
 //! twice: here, over a pipeline this harness builds by hand, and in
 //! `crates/sciencec/tests/cli.rs`'s `REGIONS`, by running the binary. The two
 //! agree, and they have to, because a disagreement would mean the driver runs a
-//! different pipeline than the one this crate tests. `REGIONS` additionally
-//! records the verdict — no real findings, two false — in a form a test can
-//! check, so that a reader of the compiler's output cannot mistake one kind for
-//! the other.
+//! different pipeline than the one this crate tests.
+//!
+//! **The census stopped being empty when [`crate::deref_move`] started
+//! checking a fourth thing.** [`the_corpus_census_is_empty`]'s name is now a
+//! lie its own body corrects — kept because renaming it would erase the
+//! record of what it used to measure. Twenty-three new diagnostics, all
+//! `303`, across seven files: twenty genuine — a `String` payload or field
+//! read out of a shared borrow's `match`, or out of an `is` comparison's
+//! operand, bound where only a borrow was needed — and three false, in
+//! `20_extern.science`, where the moved type is an opaque FFI view this
+//! compiler cannot yet prove `Copy`.
+//!
+//! **This census and `crates/sciencec/tests/cli.rs`'s `REGIONS` agree on all
+//! seven files, for the reason this file's header gives: a disagreement would
+//! mean the driver runs a different pipeline than the one this crate tests.**
+//! `19_stdlib.science` and `21_compiler_shapes.science` used to be reached by
+//! this harness alone — `TYPE_CHECKER_FINDINGS`' `SC0532`s gated them out of
+//! the real driver, which stops at the first phase that reports anything
+//! (`Session::build`'s own doc: *"the back end is not reached when the front
+//! end reported an error"*) — but `TYPE_CHECKER_FINDINGS` is empty now, so
+//! both files resolve and type-check clean and the real binary reaches the
+//! region check on them exactly as this harness always did. Twenty-three
+//! diagnostics, seven files, one count, two ways of arriving at it.
 
 mod support;
 
@@ -93,18 +112,33 @@ fn census() -> BTreeMap<String, Vec<u16>> {
     out
 }
 
-/// **The measurement.** Nothing, out of twenty programs every phase above this
-/// one calls clean.
+/// **The measurement, and it is not empty any more.**
 ///
 /// Held as an exact map rather than a count, because a change that swapped one
 /// finding for another would leave a count alone — and because that is exactly
-/// what happened twice: three in two files until `00_kitchen_sink.science`'s
-/// `SC0334` closed, two in one file until `Map.get` got a declaration, and a
-/// count of findings would have hidden which one went each time.
+/// what happened twice before: three in two files until
+/// `00_kitchen_sink.science`'s `SC0334` closed, two in one file until
+/// `Map.get` got a declaration, and a count of findings would have hidden
+/// which one went each time.
+///
+/// **The third time is [`crate::deref_move`]** — read that module's own
+/// comment for the mechanism — and it is the biggest of the three: twenty
+/// `303`s that are genuine, plus three more that are not, across seven files.
+/// This file's own header says why that count and
+/// `crates/sciencec/tests/cli.rs`'s `REGIONS` agree exactly.
 #[test]
 fn the_corpus_census_is_empty() {
     let found = census();
-    assert_eq!(found, BTreeMap::new(), "the census moved");
+    let expected = BTreeMap::from([
+        ("00_kitchen_sink.science".to_string(), vec![303, 303, 303, 303]),
+        ("05_match.science".to_string(), vec![303, 303, 303, 303]),
+        ("06_traits.science".to_string(), vec![303]),
+        ("09_absence_and_failure.science".to_string(), vec![303, 303, 303, 303, 303, 303]),
+        ("19_stdlib.science".to_string(), vec![303, 303, 303]),
+        ("20_extern.science".to_string(), vec![303, 303, 303]),
+        ("21_compiler_shapes.science".to_string(), vec![303, 303]),
+    ]);
+    assert_eq!(found, expected, "the census moved");
 }
 
 /// **Finding one, closed.** It was the only real one, and this test is what it
@@ -136,6 +170,15 @@ fn the_corpus_census_is_empty() {
 /// moves a [`science_mir::mir::LocalKind::Temp`], where before it moved the
 /// user's binding — `doc`, `excerpt`, `loaded`, `opened`. A borrow check that
 /// stopped working could not produce that; only the auto-borrow can.
+/// **Its report is no longer empty, and what refilled it is unrelated to what
+/// this test is about.** `deref_move` now reports four `SC0303`s here —
+/// `LoadError`'s `message` and `explain` each bind a `String` payload out of a
+/// `match` over `borrowed self`/`borrowed error` — which is a real finding of
+/// its own kind and `crates/sciencec/tests/cli.rs`'s `REGIONS` is where it is
+/// pinned and explained. What this test still checks is the *other* thing:
+/// that `describe`'s four calls move the auto-borrow's temporary and not the
+/// user's binding, which is a fact about `SC0334` that the new `SC0303`s do
+/// not touch.
 #[test]
 fn the_kitchen_sink_no_longer_moves_a_value_that_is_still_borrowed() {
     let (_, source) = corpus()
@@ -143,7 +186,11 @@ fn the_kitchen_sink_no_longer_moves_a_value_that_is_still_borrowed() {
         .find(|(name, _)| name == "00_kitchen_sink.science")
         .expect("the kitchen sink");
     let checked = check(&source);
-    assert!(checked.reported().is_empty(), "the kitchen sink reports {:?}", checked.reported());
+    assert_eq!(
+        checked.reported(),
+        vec![303, 303, 303, 303],
+        "the kitchen sink's census moved — see `crates/sciencec/tests/cli.rs`'s `REGIONS`"
+    );
 
     let body = checked.body("main");
     let mut calls = 0;
@@ -200,6 +247,13 @@ fn the_kitchen_sink_no_longer_moves_a_value_that_is_still_borrowed() {
 /// about.
 ///
 /// [`summary`]: science_regions::summary
+/// **The two `SC0333`s stayed closed; six `SC0303`s opened.** `deref_move`
+/// reports here now — `ConfigError`'s `message` and `explain` bind a `String`
+/// payload out of a `match` over `borrowed self`/`borrowed error`, three times
+/// each — and `crates/sciencec/tests/cli.rs`'s `REGIONS` is where that finding
+/// is pinned and explained. It is a different check catching a different
+/// mistake in the same file; `lookup`'s summary, which is what this test was
+/// written to guard, is unaffected and still asserted below.
 #[test]
 fn the_declared_map_get_closed_the_two_false_positives() {
     let (_, source) = corpus()
@@ -207,7 +261,7 @@ fn the_declared_map_get_closed_the_two_false_positives() {
         .find(|(name, _)| name == "09_absence_and_failure.science")
         .expect("the absence example");
     let checked = check(&source);
-    assert_eq!(checked.reported(), Vec::<u16>::new());
+    assert_eq!(checked.reported(), vec![303, 303, 303, 303, 303, 303]);
 
     // And the cause, asserted directly: the summary names the map alone.
     let (_, from) = &checked.analysis_of("lookup").summary.returns[0];

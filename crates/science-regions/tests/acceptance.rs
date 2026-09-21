@@ -14,13 +14,33 @@ mod support;
 use support::{acceptance, codes};
 
 /// §14's *"cheapest early signal"*: **if it needs `SC0340` anywhere, the bet is
-/// in trouble.**
+/// in trouble.** It never has, and that half of the claim still holds.
+///
+/// **It is no longer *no diagnostic at all*, and the two it now needs are
+/// `SC0303`, not `SC0340`.** [`science_regions::deref_move`] catches
+/// `Scopes.lookup`'s `if binding.name is name:` and `walk`'s `if entry.name is
+/// "":` — each compares a `String` field reached through a `for`'s shared
+/// borrow (`binding`/`entry` are `borrowed Binding`/`borrowed Def`) against
+/// another string, and `is` lowers to a binary operation that reads both
+/// sides as values. Neither comparison needed to own the field; both are the
+/// same soundness hole `deref_move`'s module comment describes, caught here in
+/// its third shape — a binary operand rather than a `let` or a `match` arm —
+/// and both are genuine: the file's own §2 already earmarks `Scopes.lookup`
+/// as *"the single most load-bearing signature decision in the file"*, not as
+/// a program known to be safe from this.
+///
+/// This is the *type-checking* crux `check.rs` names, exercised by the
+/// language's own reference implementation of the thing it is written to
+/// parse — not a contrived fixture. Closed the same way `deref_move`'s
+/// `REGIONS` entries are: `docs/superpowers/design` deciding whether a
+/// non-`Copy` field read through a shared borrow types as a borrow, or the
+/// move is refused some other way before `science-mir` ever sees it.
 #[test]
 fn the_acceptance_case_needs_no_diagnostic_at_all() {
     let checked = acceptance();
     assert_eq!(
         checked.reported(),
-        Vec::<u16>::new(),
+        vec![303, 303],
         "region inference reported: {:?}",
         codes(&checked.regions)
     );

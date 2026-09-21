@@ -291,7 +291,103 @@ struct Finding {
 /// borrow checker that stopped running would produce. What keeps it honest is
 /// that the same corpus is walked by `science-regions`'s own census and by the
 /// test below, so silence has to be silence in two places at once.
-const REGIONS: &[Finding] = &[];
+///
+/// # It is not empty any more, and what refilled it is a checker that started
+///
+/// `science-regions`' `deref_move` closed a soundness hole nothing here had
+/// ever checked: `science-types`' `check.rs` peels a borrow to reach a field
+/// or a match payload and hands back the *owned* field type rather than a
+/// borrowed one — its own comment says outright that match ergonomics are *"a
+/// decision no note has taken"* — and `science-mir`'s `lower` §5 then reads
+/// that type and picks `Move`. Nothing downstream had ever asked whether the
+/// place being moved was reached through a `Deref`, which is exactly the
+/// shape of moving a value out from under a borrow whose owner keeps a
+/// dangling copy: `crates/science-rt`'s contract calls the resulting double
+/// free the one bug it will not catch. `deref_move`'s own module comment is
+/// the account of the check and of the one class of false positive it cannot
+/// resolve on its own.
+///
+/// **Seven entries, twenty diagnostics real, three not.**
+/// `00_kitchen_sink.science`'s `LoadError` (`message`, `explain`),
+/// `05_match.science`'s `describe`/`require_text`/`render`/`shout_level` and
+/// `09_absence_and_failure.science`'s `ConfigError` (`message`, `explain`) all
+/// bind a non-`Copy` payload out of a `match` over a `&`-scrutinee and hand it
+/// to a function or a `push_str` that only needed to borrow it.
+/// `06_traits.science`'s `Note implements Eq`, `19_stdlib.science`'s
+/// `find`/`Record implements Eq` and `21_compiler_shapes.science`'s
+/// `Scopes.lookup`/`walk` all reach the same hole through an `is` comparison
+/// instead of a binding — `self.text is other.text`, `record.key is key`,
+/// `binding.name is name` — each one a field read out of a shared reference
+/// that a comparison only needed to borrow. Every one of these closes the
+/// same way: `docs/superpowers/design` settling `check.rs`'s open crux, either
+/// by typing a non-`Copy` field read through a shared borrow as a borrow
+/// (Rust's match ergonomics), or by deciding the move is illegal and having
+/// the type checker refuse it before `science-mir` ever sees it — either one
+/// removes the `Move` this list is pinned against.
+///
+/// **`20_extern.science`'s three are the false ones**, and `deref_move`'s own
+/// §5 is the long form: `gemm` moves `a.data`, `b.data` and `c.data`, each an
+/// `ffi.Span`/`ffi.MutableSpan` — *"a pointer and a length"* with nothing to
+/// free — but `FFI_TYPES` in `science-resolve`'s `builtins.rs` are names with
+/// no declared fields, so `needs_drop` cannot see that and answers `true`
+/// where it cannot tell. Closed by `ffi-c-boundary.md` giving `Span` and its
+/// siblings a real `Copy` declaration.
+const REGIONS: &[Finding] = &[
+    Finding {
+        file: "00_kitchen_sink.science",
+        codes: &["SC0303", "SC0303", "SC0303", "SC0303"],
+        real: true,
+        closed_by: "`docs/superpowers/design` settling `check.rs`'s match-ergonomics crux, so a \
+                    non-`Copy` field read out of a `&`-scrutinee's payload either types as a \
+                    borrow or is refused before it reaches `science-mir` as a `Move`",
+    },
+    Finding {
+        file: "05_match.science",
+        codes: &["SC0303", "SC0303", "SC0303", "SC0303"],
+        real: true,
+        closed_by: "the same crux as `00_kitchen_sink.science`'s entry — `Ident(name)` bound out \
+                    of a `&Token` is the plainest case of it in the corpus",
+    },
+    Finding {
+        file: "06_traits.science",
+        codes: &["SC0303"],
+        real: true,
+        closed_by: "the same crux again, reached through a binary comparison rather than a \
+                    binding: `Note implements Eq`'s `self.text is other.text` reads two fields \
+                    out of a shared `self` that only needed borrowing",
+    },
+    Finding {
+        file: "09_absence_and_failure.science",
+        codes: &["SC0303", "SC0303", "SC0303", "SC0303", "SC0303", "SC0303"],
+        real: true,
+        closed_by: "the same crux again — `ConfigError`'s `message` and `explain` bind a \
+                    `String` payload out of a `&`-scrutinee exactly as `LoadError`'s do",
+    },
+    Finding {
+        file: "19_stdlib.science",
+        codes: &["SC0303", "SC0303", "SC0303"],
+        real: true,
+        closed_by: "the comparison shape again: `find`'s `record.key is key` and \
+                    `Record implements Eq`'s `self.key is other.key` (two fields, one entry \
+                    each) all read a field out of a `&Record` that `is` only needed to borrow",
+    },
+    Finding {
+        file: "20_extern.science",
+        codes: &["SC0303", "SC0303", "SC0303"],
+        real: false,
+        closed_by: "`ffi-c-boundary.md` giving `Span`, `MutableSpan`, `Pointer` and \
+                    `OpaqueHandle` a real `Copy` declaration `needs_drop` can find, per \
+                    `science-regions`'s `deref_move` §5",
+    },
+    Finding {
+        file: "21_compiler_shapes.science",
+        codes: &["SC0303", "SC0303"],
+        real: true,
+        closed_by: "the comparison shape again: `Scopes.lookup`'s `binding.name is name` and \
+                    `walk`'s `entry.name is \"\"` — the language's own reference implementation \
+                    of itself carries the hole too",
+    },
+];
 
 /// Files the *type* checker reports on, which is a third kind of gap.
 ///
@@ -491,30 +587,38 @@ fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {
     }
 }
 
-/// **The verdict, counted — and it is now zero and zero.**
+/// **The verdict, counted — and it moved from zero and zero to twenty real
+/// and three false.**
 ///
-/// This test used to assert two false positives and no real finding, and said:
-/// *"when `Map.get` acquires a declaration this becomes zero and zero and the
-/// test fails. Somebody then has to come back and say so."* `Map.get` acquired
-/// a declaration. This is somebody coming back to say so.
+/// This test used to assert `(0, 0)` and said exactly what would make it move:
+/// *"a real finding appearing here means the borrow checker has caught
+/// something in the corpus, and that deserves to break a test and be read, not
+/// to be absorbed into a list."* [`deref_move`] is that finding — twenty
+/// places across six files where a non-`Copy` value is moved out of a
+/// borrow — and this is somebody coming back to say so rather than quietly
+/// updating a number.
 ///
-/// The shape that was uncomfortable is gone: every diagnostic the borrow check
-/// adds to `examples/` was about a hole in the compiler rather than about the
-/// program, and it was shipped anyway on the argument that the alternative is a
-/// phase nobody runs. Shipping it *counted* is what made the repair legible —
-/// the entry named what would close it before anyone knew when, and that is
-/// what closed it.
+/// **The real count is not a false step backward.** Every one of the twenty
+/// was accepted silently before `deref_move` existed, which is the finding:
+/// `science-types` typed a field read through a shared borrow — a match
+/// payload or an `is` comparison's operand — as owned, `science-mir` moved it
+/// because that is what the type said, and nothing anywhere asked whether the
+/// place moved was somebody else's to give away. `REGIONS`'s own comment is
+/// the account of which six files are genuinely wrong and which one —
+/// `20_extern.science`, three — is a false positive this check inherits from
+/// `needs_drop`'s inability to see a `Copy` implementation on an opaque FFI
+/// view type.
 ///
-/// It keeps asserting the pair rather than being deleted, because the
-/// interesting number is the **real** one. A real finding appearing here means
-/// the borrow checker has caught something in the corpus, and that deserves to
-/// break a test and be read, not to be absorbed into a list.
+/// It keeps asserting a pair rather than one number, because the two kinds
+/// still mean different things: a real count that grows is the corpus being
+/// caught out, and a false count that grows is this compiler's own gap. Both
+/// deserve to break this test and be read.
 #[test]
 fn the_borrow_check_reports_nothing_in_the_corpus() {
     let real: usize = REGIONS.iter().filter(|it| it.real).map(|it| it.codes.len()).sum();
     let false_positives: usize =
         REGIONS.iter().filter(|it| !it.real).map(|it| it.codes.len()).sum();
-    assert_eq!((real, false_positives), (0, 0));
+    assert_eq!((real, false_positives), (20, 3));
 }
 
 /// The borrow check is reached, and reaching it is not the same as the file
@@ -1460,13 +1564,34 @@ fn a_build_of_a_file_with_no_entry_point_is_sc0403_and_calls_it_a_library() {
 /// says *"nothing in this file is safe to call"*. So the right outcome is a
 /// refusal that says *library*, and this pins it against the file rather than
 /// against a fixture, because the fixture cannot go stale and the corpus can.
+///
+/// **Both halves of this test moved, and both moved the same way.**
+/// `deref_move` reports three `SC0303`s against `gemm`'s
+/// `a.data`/`b.data`/`c.data` — false positives, per `REGIONS`' entry, born of
+/// `needs_drop` being unable to see a `Copy` implementation on an opaque FFI
+/// view type — and a front-end error is a front-end error regardless of which
+/// phase reports it: `Session::build`'s own doc is explicit that *"the back
+/// end is not reached when the front end reported an error"*, so `build` now
+/// stops at the same three `SC0303`s instead of ever reaching `SC0403`. The
+/// distinction this test used to pin — *library, not a missing toolchain
+/// feature* — is not reachable on this file until the three false positives
+/// close; what is still checked is that they are exactly the three `REGIONS`
+/// names and nothing else, so a real mistake in `gemm` would still be seen.
 #[test]
 fn the_extern_example_is_refused_as_a_library_and_not_as_a_missing_feature() {
-    let run = sciencec(&["check", "examples/20_extern.science"]);
-    run.succeeded();
-    let run = sciencec(&["build", "examples/20_extern.science"]);
-    run.failed().stderr_contains("SC0403").stderr_contains("no entry point");
-    assert!(!run.stderr.contains("SC0400"), "{}", run.stderr);
+    for command in ["check", "build"] {
+        let run = sciencec(&[command, "examples/20_extern.science"]);
+        run.failed();
+        let reported = run.stderr.matches("error[SC0303]").count();
+        assert_eq!(
+            reported, 3,
+            "`examples/20_extern.science`'s `{command}` output moved — see `REGIONS`\n{}",
+            run.stderr
+        );
+        for line in run.stderr.lines().filter(|l| l.starts_with("error[SC")) {
+            assert!(line.starts_with("error[SC0303]"), "an unpinned diagnostic appeared: {line}");
+        }
+    }
 }
 
 /// With the backend, the same command produces a program that prints
@@ -1606,11 +1731,15 @@ type Doc:
 
 Doc implements Summarize:
     def summarize(self) -> String:
-        self.title
+        let mutable out be String.new()
+        out.push_str(self.title)
+        out
 
 Doc has:
     def shout(self) -> String:
-        self.title
+        let mutable out be String.new()
+        out.push_str(self.title)
+        out
 
 def largest[T: Ord](items: &Array[T]) -> (&T)?:
     let mutable best be items.get(0)

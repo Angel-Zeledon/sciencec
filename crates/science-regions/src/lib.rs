@@ -30,6 +30,7 @@
 //! | 3 | the worklist fixpoint | [`solve`] |
 //! | 4 | the conflict check, **over accesses and not only borrows** | [`check`] |
 //! | — | §6.1 rule 3, which is not one of §3's five steps | [`moved`] |
+//! | — | whether a move was ever legal, asked structurally and with no dataflow | [`deref_move`] |
 //! | — | what a place's regions are, per Decision 3 | [`regions`] |
 //! | — | what Decision 7 would serialise | [`summary`] |
 //! | — | the per-body record all three consumers read | [`analysis`] |
@@ -41,7 +42,9 @@
 //! `SC0340`, plus `SC0335` which is implemented and has never fired (§5).
 //! [`codes`] says what is *not* allocated and why, and the free block
 //! `SC0300`, `SC0303`–`SC0329`, `SC0399` is as free after this crate as before
-//! it.
+//! it — **with one deliberate exception.** [`deref_move`] spends `SC0303` on a
+//! violation no note has allocated a code for yet; [`codes::MOVE_OUT_OF_BORROW`]
+//! is the account of that trade and why it is made anyway.
 //!
 //! **And one code this crate reports without allocating.** `SC0301` — use
 //! after move, core spec §6.1 rule 3 — was allocated by the core spec, named by
@@ -469,6 +472,7 @@ pub mod analysis;
 pub mod check;
 pub mod codes;
 pub mod constraints;
+pub mod deref_move;
 pub mod dump;
 pub mod generate;
 pub mod liveness;
@@ -656,6 +660,10 @@ pub fn analyse_crate(
             // borrow check, because a body with both mistakes has a borrow the
             // author can see and a move they cannot.
             moved::use_after_move(context, body, one, diagnostics);
+            // A question `moved` does not ask and `check_body` cannot: whether
+            // a move was ever legal to make, independent of whether anything
+            // downstream reads the emptied place. [`deref_move`]'s §3.
+            deref_move::move_out_of_borrow(context, body, one, diagnostics);
         }
     }
 

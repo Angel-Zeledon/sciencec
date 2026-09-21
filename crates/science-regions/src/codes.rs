@@ -7,7 +7,12 @@
 //! Ownership range, and `docs/superpowers/design/README.md`'s table agrees.
 //! Five of those are named in §7.3 and four are implemented here. The block
 //! `SC0300`, `SC0303`–`SC0329`, `SC0399` was free before this crate and is
-//! free after it: **nothing here is allocated outside what §12 claimed.**
+//! free after it, **with one exception this crate now spends itself:**
+//! [`MOVE_OUT_OF_BORROW`] takes `SC0303`, because [`crate::deref_move`] checks
+//! a soundness hole no note has allocated a code for and reporting nothing
+//! until one does is the wrong side of that trade. Everything else in the
+//! free block — `SC0300`, `SC0304`–`SC0329`, `SC0399` — is exactly as free
+//! after this crate as before it.
 //!
 //! # 2. What is not reported from this crate
 //!
@@ -29,10 +34,14 @@
 //!   that does not exist"*; the check exists, it is [`crate::moved`], and
 //!   sharing cost one reader and no change to the lattice.
 //!
-//!   **The ownership block this crate leaves free is unchanged.** `SC0300`,
-//!   `SC0303`–`SC0329` and `SC0399` were free before and are free after:
-//!   reporting a code another document allocated adds nothing to what §12
-//!   claims.
+//!   **The ownership block this crate otherwise leaves free is unchanged.**
+//!   `SC0300`, `SC0304`–`SC0329` and `SC0399` were free before and are free
+//!   after: reporting a code another document allocated adds nothing to what
+//!   §12 claims. `SC0303` is the one code in the block this crate does spend,
+//!   and [`MOVE_OUT_OF_BORROW`]'s own comment is the account of it — a
+//!   different trade from `SC0301`'s, made for the opposite reason: there the
+//!   code existed and no phase checked it, here the violation exists and no
+//!   note has allocated it a code.
 //! - **`SC0302` is not reported from here, and it is not use after move.**
 //!   The allocation record's own gloss for it is
 //!   `ffi-c-boundary.md`'s *"(existing) conflicting borrows — what catches
@@ -61,6 +70,19 @@
 //! - **`SC0380`** is `ffi-c-boundary.md`'s.
 
 use science_diagnostics::Code;
+
+/// A value is moved out of a place reached through a borrow — shared or
+/// exclusive, from a parameter or from a local reborrow.
+///
+/// **Not allocated by any note, and deliberately the first of the free block**
+/// `codes`'s §1 names: `SC0300`, `SC0303`–`SC0329`, `SC0399`. This is a stopgap
+/// against a soundness hole no note has closed yet — see
+/// [`crate::deref_move`]'s §3 — and picking a code out of that free range
+/// rather than reusing `SC0301` or `SC0334` keeps it visibly separate from
+/// both: it is not "used after moved" (rule 3 presupposes the move was legal)
+/// and not "moved while borrowed" (that move is legal and only the order is
+/// wrong; this one is never legal).
+pub const MOVE_OUT_OF_BORROW: Code = Code(303);
 
 /// A value is used after it is moved — §6.1 rule 3.
 ///
