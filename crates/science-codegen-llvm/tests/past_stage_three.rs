@@ -1366,3 +1366,107 @@ def main():
 ";
     assert_eq!(bytes("owned_object", source), "20000\n");
 }
+
+/// **`Box of any I` releases both of what it holds, exactly once each.**
+///
+/// # Why this is not the test above, one indirection over
+///
+/// The test above owns an interface object through Decision 14's *implicit*
+/// boxing — `Error?`'s niche. This one is `assign.rs`'s §4a,
+/// `Coercion::UnsizeInBox`: `Box.new(Doc(..))` allocates once, and pairing
+/// that pointer with a vtable to reach `Box[any Summarize]` allocates a
+/// second time **nothing** — `Lowerer::lower_unsize`'s own account is "pairs
+/// an existing pointer with a vtable and allocates nothing". So there is
+/// exactly one heap allocation per iteration, made by `Box.new` and freed by
+/// `intern_drop_glue`'s `Box`-of-object arm, which is the interface's own
+/// object glue and not a second function: `Box of any Summarize` is
+/// `CgTy::Interface`, the same two words a bare owned `any I` is, and its
+/// release is the same four loads and the same `science_box_free`.
+///
+/// # Why `leaks` and not just this test
+///
+/// Two words releasing the wrong number of times both pass a test that only
+/// reads stdout — a leaked `Doc` or a double free of the vtable's descriptor
+/// neither shows up here. Measured outside `cargo test` before this was
+/// checked in: 200 000 iterations, physical footprint flat at ~1 MB (1056 KB
+/// live, 1072 KB peak), and `leaks --atExit` reporting *"0 leaks for 0 total
+/// leaked bytes"*.
+#[test]
+fn a_boxed_interface_object_frees_its_payload_and_its_box_exactly_once() {
+    let source = "\
+interface Summarize:
+    def size(self) -> Int
+
+type Doc:
+    text: String
+
+Doc implements Summarize:
+    def size(self) -> Int:
+        self.text.length()
+
+def make() -> Box[any Summarize]:
+    let mutable out be String.new()
+    out.push_str(\"x\")
+    Box.new(Doc(text: out))
+
+def main():
+    let mutable seen be 0
+    for n in 0..20000:
+        let boxed be make()
+        seen be seen + 1
+    print(f\"{seen}\")
+";
+    assert_eq!(bytes("boxed_object", source), "20000\n");
+}
+
+/// **`Array of Box[any I]` adds a third layer of ownership over the test
+/// above, and this is the array's own element descriptor exercised end to
+/// end.**
+///
+/// `Lowerer::intern_element_descriptor` used to refuse exactly this case —
+/// *"an `Array of Box[any Summarize]`, whose element is released by a
+/// runtime call that takes a descriptor of its own: Decision 20's `drop_fn`
+/// is called with the element's address and nothing else, and there is no
+/// one-argument symbol to name"* — because `direct_release`'s `Box` arm
+/// treated `Box of any Summarize` exactly like `Box of Doc`, reaching for a
+/// *static* descriptor to hand `science_array_free` as a second argument
+/// `drop_fn` has no slot for. There is no static descriptor for `Box of any
+/// I`: `assign.rs`'s §4a says the one it releases through lives in the
+/// vtable, read at run time. So the element's `drop_fn` is now the
+/// interface's own one-argument object glue — the same function
+/// [`a_boxed_interface_object_frees_its_payload_and_its_box_exactly_once`]
+/// exercises alone, called here once per live slot by `science_array_free`.
+///
+/// Measured outside `cargo test`: 2 000 rounds of 100 pushes each — 200 000
+/// boxed interface objects, built and freed through the array's buffer —
+/// physical footprint flat at ~2.3 MB, and `leaks --atExit` reporting *"0
+/// leaks for 0 total leaked bytes"*.
+#[test]
+fn an_array_of_boxed_interface_objects_frees_every_element_and_the_buffer() {
+    let source = "\
+interface Summarize:
+    def size(self) -> Int
+
+type Doc:
+    text: String
+
+Doc implements Summarize:
+    def size(self) -> Int:
+        self.text.length()
+
+def make() -> Box[any Summarize]:
+    let mutable out be String.new()
+    out.push_str(\"x\")
+    Box.new(Doc(text: out))
+
+def main():
+    let mutable rounds be 0
+    for r in 0..2000:
+        let mutable arr be Array[Box[any Summarize]].new()
+        for i in 0..100:
+            arr.push(make())
+        rounds be rounds + 1
+    print(f\"{rounds}\")
+";
+    assert_eq!(bytes("array_of_boxed_object", source), "2000\n");
+}

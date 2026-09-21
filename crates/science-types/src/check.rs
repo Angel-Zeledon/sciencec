@@ -1652,6 +1652,41 @@ impl<'a> BodyChecker<'a> {
         self.diagnostics.push(not_displayable(span, &rendered));
     }
 
+    /// `SC0275`, a second way in: `print(x)` or `write(x)` where `x` is a
+    /// `T?`, reached with no `f"…"` in sight.
+    ///
+    /// [`Self::requires_display`]'s doc comment names the gap this closes —
+    /// *"the `Display` obligation at a `print` argument, as opposed to at an
+    /// interpolation"* — and also says why only part of that gap closes here.
+    /// `science-resolve`'s `builtins::FUNCTION_SIGNATURES` prices the general
+    /// case — refusing `print` of *any* type without `Display` — as a cost
+    /// this compiler has chosen not to pay: declaring `print`'s parameter
+    /// changes how MIR moves the argument (a `move` becomes a `Borrow` under
+    /// a `Coerce`), and that is measured there to break tests elsewhere. A
+    /// nullable does not carry that cost. §3.4 of
+    /// `strings-formatting-and-docs.md` calls a nullable's absence of
+    /// `Display` *knowable* rather than an unwritten prelude row — `T?` is a
+    /// type this compiler builds, not one a file can declare an
+    /// implementation for — which is the same reasoning
+    /// [`Self::requires_display`]'s own nullable arm already trades on for a
+    /// hole. So only that one case is checked here; every other type is left
+    /// exactly as undecided as it was, and still surfaces at codegen if it
+    /// truly has no `Display`.
+    fn requires_display_when_nullable(&mut self, operand: Typed, span: Span, name: &'static str) {
+        if self.decls.prelude().get("Display").is_none() {
+            return;
+        }
+        let written = self.known_or_error(operand.ty);
+        let revealed = self.revealed(written, span);
+        if self.types.references_error(revealed) {
+            return;
+        }
+        if matches!(self.types.kind(revealed), TyKind::Nullable(_)) {
+            let rendered = self.types.render(self.defs, revealed);
+            self.diagnostics.push(output_argument_not_displayable(span, &rendered, name));
+        }
+    }
+
     fn numeric_name(&self, var: InferVar) -> &'static str {
         match self.literal_kind(var) {
             Some(Numeric::Integer) => "an integer literal",
@@ -2341,12 +2376,19 @@ impl<'a> BodyChecker<'a> {
     }
 
     fn call(&mut self, callee: &hir::Expr, args: &[hir::Arg], span: Span) -> Typed {
+        // Set only for a one-argument call to `print` or `write` — see
+        // `requires_display_when_nullable`'s doc comment for what this closes
+        // and, just as importantly, what it deliberately leaves open.
+        let mut display_check: Option<&'static str> = None;
         if let hir::ExprKind::Path { res, generics } = &callee.kind {
             let resolved = named(self.defs, *res);
             if let Some(Named::Function(def)) = resolved {
                 // §4.1's arity, before anything reads a signature: `print` has
                 // none, so this is the only place the call is looked at at all.
                 self.output_is_unary(def, args, span);
+                if args.len() == 1 {
+                    display_check = self.decls.prelude().unary_output(def);
+                }
             }
             match resolved {
                 // `panic` is a prelude name with no `hir::Fn` behind it, so
@@ -2391,7 +2433,16 @@ impl<'a> BodyChecker<'a> {
             let id = self.body.push_expr(ExprKind::Call { callee: callee.id, args: ids }, ret, span);
             return Typed { id, ty: InferTy::Known(ret) };
         }
-        let ids = args.iter().map(|arg| self.synth(&arg.value).id).collect();
+        let ids = args
+            .iter()
+            .map(|arg| {
+                let typed = self.synth(&arg.value);
+                if let Some(name) = display_check {
+                    self.requires_display_when_nullable(typed, arg.span, name);
+                }
+                typed.id
+            })
+            .collect();
         let id =
             self.body.push_expr(ExprKind::Call { callee: callee.id, args: ids }, Ty::ERROR, span);
         Typed { id, ty: InferTy::Known(Ty::ERROR) }
@@ -5521,20 +5572,37 @@ impl<'a> BodyChecker<'a> {
         self.diverged = then_diverges && else_diverges;
 
         // **The two branches are unified before either is read as the
-        // answer.** `if f: 1 else: 0` is one class and not two: whatever
-        // settles one arm settles the other, and taking `then_ty` without
-        // saying so would let the two default independently and disagree.
-        // Neither branch is unified when one diverges, because a diverging
-        // branch contributes no value — §4.2's third rule, the same one the
-        // `Facts::join` above follows.
-        if else_branch.is_some() && !then_diverges && !else_diverges {
-            let _ = self.infer.unify(self.types, then_ty, else_ty);
-        }
+        // answer, and the unified answer is what gets read.** `if f: 1 else:
+        // 0` is one class and not two: whatever settles one arm settles the
+        // other, and taking `then_ty` on its own would let the two default
+        // independently and disagree. Neither branch is unified when one
+        // diverges, because a diverging branch contributes no value — §4.2's
+        // third rule, the same one the `Facts::join` above follows.
+        //
+        // **Discarding `unify`'s answer and re-picking `then_ty` was the
+        // bug.** `print`'s call is `Ty::ERROR` by declaration — `builtins.rs`
+        // withdrew its signature, and `call`'s closure-fallback types the
+        // node at `Ty::ERROR` with nothing pending to default later — so
+        // `if flag: print("x") else: counter be 1` used to settle its own
+        // type at `then_ty`, which was that same `Ty::ERROR`, permanently:
+        // `Ty::ERROR` is `Known`, not `Var`, so there was no pending entry
+        // for `finish` to fix, and the `if` node reached the backend still
+        // holding it. `agree` already computes the right answer — the known
+        // side wins over the erroneous one, `ty`'s §5 — the call just threw
+        // it away with `let _ =` and read the un-agreed `then_ty` instead.
+        let agreed = if else_branch.is_some() && !then_diverges && !else_diverges {
+            self.infer.unify(self.types, then_ty, else_ty).ok()
+        } else {
+            None
+        };
         let ty = match expected {
             Some((ty, _)) => InferTy::Known(ty),
-            None if else_branch.is_some() && !then_diverges => then_ty,
-            None if else_branch.is_some() => else_ty,
-            None => InferTy::Known(Ty::UNIT),
+            None => match agreed {
+                Some(ty) => ty,
+                None if else_branch.is_some() && !then_diverges => then_ty,
+                None if else_branch.is_some() => else_ty,
+                None => InferTy::Known(Ty::UNIT),
+            },
         };
         // `push_typed` and not `push_expr`: `ty` may still be a variable, so
         // the node has to be recorded for `finish`'s writeback the way a bare
@@ -6590,6 +6658,25 @@ fn print_takes_one_value(span: Span, name: &str, supplied: usize) -> Diagnostic 
     Diagnostic::error(codes::NOT_DISPLAYABLE, format!("`{name}` takes one value"))
         .with_label(Label::primary(span, format!("{supplied} arguments were supplied")))
         .with_note(note)
+}
+
+/// `SC0275` — a nullable handed straight to `print` or `write`, no
+/// interpolation involved. Same code as [`not_displayable`], for the reason
+/// that function's own comment gives: §7's row is one row. Only the sentence
+/// changes, because nothing here was interpolated and the message should not
+/// claim it was.
+fn output_argument_not_displayable(span: Span, ty: &str, name: &str) -> Diagnostic {
+    let action = if name == "print" { "printed" } else { "written" };
+    Diagnostic::error(
+        codes::NOT_DISPLAYABLE,
+        format!("`{ty}` cannot be {action}: it does not implement `Display`"),
+    )
+    .with_label(Label::primary(span, format!("this is `{ty}`")))
+    .with_note(format!(
+        "`{name}` renders its argument through `Display`. A nullable does not implement it \
+         until it is narrowed — `if x?: {name}(x)` — the same rule an f-string hole already \
+         enforces"
+    ))
 }
 
 fn not_displayable(span: Span, ty: &str) -> Diagnostic {

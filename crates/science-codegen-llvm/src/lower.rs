@@ -119,16 +119,17 @@
 //! # Decision 5 holds here, and one block is invented rather than merged
 //!
 //! Decision 5 says *"every MIR basic block becomes exactly one LLVM basic
-//! block"*. Every block of the *user's* `main` does: [`Lowerer::lower_body`]
-//! walks `body.blocks()` and emits one [`ExtBlock`] per MIR block, and nothing
-//! merges or splits. `science-mir`'s §4 item 2 records that a **flagged drop**
-//! breaks the decision by becoming three blocks; a flagged drop is refused
-//! outright — both `StatementKind::SetDropFlag` and a `TerminatorKind::Drop`
-//! carrying a flag are `SC0400` — so this crate has not met the contradiction
-//! yet and the amendment that note asks for is still owed. An **unflagged**
-//! drop is one block, which is why it could be lowered without meeting it: a
-//! drop that runs nothing is a `br`, and a drop of a `String` is one call and a
-//! `br`.
+//! block"*. Every block of the *user's* `main` does, with one named exception:
+//! [`Lowerer::lower_body`] walks `body.blocks()` and emits one [`ExtBlock`] per
+//! MIR block, and nothing merges or splits — except a **flagged drop**, which
+//! [`Lowerer::emit_flagged_drop`] turns into two: the MIR block's own
+//! terminator becomes the test, and the call it used to end in moves to a
+//! block this crate invents. `science-mir`'s §4 item 2 predicted exactly this
+//! — *"a flagged drop breaks the decision by becoming three blocks"*, MIR's
+//! one plus this crate's one plus the existing `target` it reuses as
+//! "continue" — and `codegen-and-linking.md` Decision 5 carries the amendment
+//! that note asked for. An **unflagged** drop is still one block: a drop that
+//! runs nothing is a `br`, and a drop of a `String` is one call and a `br`.
 //!
 //! **What a reader of `Built::ir` sees is not quite one-to-one, and the reason
 //! is not this crate.** That field holds the module *after* Decision 33's
@@ -741,13 +742,23 @@ impl<'a> Lowerer<'a> {
         literal
     }
 
-    /// The interface an `any I` type names, seeing through a `T?`.
+    /// The interface an `any I` type names, seeing through a `T?` and a `Box`.
     ///
     /// `Error?` is `(any Error)?` — the nullable is the outside — so a
     /// `BoxThenWiden` coercion's destination arrives here wrapped and a `Box`
     /// coercion's does not. One function for both, because every caller wants
     /// the same answer and none of them wants to know which spelling it got.
+    ///
+    /// **`Box of any I` is peeled the same way, and for the same reason
+    /// `Coercion::UnsizeInBox`'s destination needs one.** `assign.rs`'s §4a
+    /// makes `Box of any I` a type a signature can name, and
+    /// [`Lowerer::lower_unsize`] is reached with exactly that as `ty` — a
+    /// coercion this function could not name is the whole of the refusal this
+    /// change replaces.
     fn object_interface(&self, ty: Ty) -> Option<DefId> {
+        if let Some(element) = self.box_element(ty) {
+            return self.object_interface(element);
+        }
         match self.types.kind(ty) {
             TyKind::Object { interface, .. } => Some(*interface),
             TyKind::Nullable(inner) => self.object_interface(*inner),
@@ -772,7 +783,19 @@ impl<'a> Lowerer<'a> {
     /// `None` for anything with no single head — a parameter, a tuple, a
     /// closure — which is a coercion this backend cannot build a table for and
     /// which [`Lowerer::vtable_slots`] refuses by name rather than guessing.
+    ///
+    /// **`Box of Doc` is peeled to `Doc` rather than answering the box's own
+    /// `DefId`,** which is what this function's own opening sentence always
+    /// promised and what `Coercion::UnsizeInBox`'s operand — `Box of C`, read
+    /// off [`Lowerer::lower_unsize`]'s `source` — is the first caller to need:
+    /// the vtable is keyed on the concrete type `C`, never on `Box`. `Box of
+    /// any I` peels to `any I`, which has no single head either, so the
+    /// recursion answers `None` for it exactly as it must — a fat pointer's
+    /// vtable is chosen by the coercion that built it, not read back out.
     fn concrete_head(&self, ty: Ty) -> Option<DefId> {
+        if let Some(element) = self.box_element(ty) {
+            return self.concrete_head(element);
+        }
         match self.types.kind(ty) {
             TyKind::Named { def, .. } => Some(*def),
             TyKind::Borrowed { inner, .. } => self.concrete_head(*inner),
@@ -1885,6 +1908,22 @@ impl<'a> Lowerer<'a> {
             self.glue.insert(symbol.clone());
             return self.emit_object_glue(interface, &rendered, symbol);
         }
+        // **`Box of any I` releases through the interface's own glue, not a
+        // glue of its own.** `assign.rs`'s §4a and `science-rt`'s `boxed`
+        // module agree that `Box of any I` is `{ data, vtable }` — the exact
+        // layout [`Lowerer::cg_ty_in`]'s `Box`-of-object arm now gives it —
+        // and not a second heap allocation wrapping that pair: the allocation
+        // is the one `Box.new`'s own call made, and freeing it is
+        // `science_box_free(descriptor, data)` read out of the vtable, which
+        // is precisely what the `Object` arm above already builds. Delegating
+        // rather than emitting a second function is what keeps a program that
+        // drops both a bare owned `any I` (through `Error?`) and a `Box of any
+        // I` from getting two copies of one body.
+        if let Some(element) = self.box_element(ty) {
+            if self.object_interface(element).is_some() {
+                return self.intern_drop_glue(element, depth);
+            }
+        }
         let Some(def) = self.concrete_head(ty) else {
             return Err(Unlowered::new(format!(
                 "drop glue for `{}`, whose concrete type this crate cannot name",
@@ -2101,20 +2140,24 @@ impl<'a> Lowerer<'a> {
     /// caller that reaches this function twice for one concrete type gets the
     /// one glue function both times.
     ///
-    /// **`source` is stripped of its one borrow before anything is asked of
-    /// it.** [`Lowerer::lower_unsize`]'s operand is `&C` and
+    /// **`source` is stripped of its one borrow, or its one `Box`, before
+    /// anything is asked of it.** [`Lowerer::lower_unsize`]'s operand is `&C`
+    /// for `Coercion::Unsize` and `Box of C` for `Coercion::UnsizeInBox`, and
     /// [`Lowerer::lower_box`]'s is `C` itself; asking
-    /// [`Lowerer::drop_runs_something`] about the former answers `false`
-    /// unconditionally — *"a borrow releases nothing"* — which is correct
-    /// about *this* reference and wrong about what the vtable's descriptor has
-    /// to say about *every* value of the concrete type, including the ones
-    /// nothing here happens to be borrowing. [`Lowerer::referent`] is the one
-    /// borrow `assign`'s coercions ever put around a source this function
-    /// sees, so it is enough.
+    /// [`Lowerer::drop_runs_something`] about the borrowed or boxed spelling
+    /// answers a different question from the one this function has to —
+    /// *"does releasing this pointer run something"* rather than *"does every
+    /// value of the concrete type this vtable names"* — and for a borrow it is
+    /// `false` unconditionally, which is correct about the reference and wrong
+    /// about the type. [`Lowerer::box_element`] peels the one `Box`
+    /// `Coercion::UnsizeInBox` ever puts around a source this function sees,
+    /// the same way [`Lowerer::concrete_head`] does for the `DefId` beside it;
+    /// [`Lowerer::referent`] peels the one borrow left when it does not, so
+    /// one or the other is always enough.
     fn intern_descriptor(&mut self, concrete: DefId, source: Ty) -> Result<String, Unlowered> {
         let name = self.defs.get(concrete).name.clone();
         let cg = self.record_or_choice_ty(concrete)?;
-        let referent = self.referent(source);
+        let referent = self.box_element(source).unwrap_or_else(|| self.referent(source));
         let drop_fn = self.intern_drop_glue(referent, 0)?;
         let info = science_codegen::descriptor::type_info(self.target, &cg, drop_fn);
         Ok(self.descriptors.intern(&MonoKey::plain(&[name.as_str()]), info))
@@ -2556,6 +2599,23 @@ impl<'a> Lowerer<'a> {
             // element type, the same table `Array`'s and `Map`'s elements
             // share, because what a box frees is exactly what an array frees
             // one element of.
+            //
+            // **`Box of any I` is the one `Box` this arm must not answer this
+            // way.** `assign.rs`'s §4a and `science-rt`'s `boxed` module both
+            // say `Box of any I` is wider — "a pointer to the value and a
+            // pointer to the vtable" — which is `CgTy::Interface`'s own two
+            // words and not a one-word `Ptr(Box)`. `object_interface` is
+            // already the test the line above it reuses for `borrowed any I`
+            // against a `Named` at the interface itself, and asking it of the
+            // argument rather than of `ty` is what tells a `Box of Doc` from a
+            // `Box of any Summarize` here.
+            TyKind::Named { def, args }
+                if args.len() == 1
+                    && self.defs.get(*def).name == "Box"
+                    && matches!(args[0], GenericArg::Type(inner) if self.object_interface(inner).is_some()) =>
+            {
+                Ok(CgTy::Interface)
+            }
             TyKind::Named { def, args }
                 if args.len() == 1 && self.defs.get(*def).name == "Box" =>
             {
@@ -3203,9 +3263,22 @@ impl<'a> Lowerer<'a> {
         // that yet, and §2.6's plain `Box of T` is exactly where it can, since
         // its `drop_fn` is filled in by [`Lowerer::intern_drop_glue`] the same
         // way an array's element is.
+        //
+        // **Not `Box of any I`, and the reason is the descriptor this branch
+        // would have to name.** `assign.rs`'s §4a: releasing `Box of any
+        // Summarize` reads the descriptor out of the vtable at run time — the
+        // concrete type behind it is exactly what this backend cannot see —
+        // so there is no *static* `ScienceTypeInfo` for this branch to intern
+        // and pass as `D`. `None` here sends `ty` on to
+        // [`Lowerer::intern_drop_glue`], whose own `Box`-of-object arm reaches
+        // the vtable the same four loads [`Lowerer::emit_object_glue`] already
+        // makes for a bare owned `any I` — `Box of any I` is that value's
+        // layout exactly, so it is that value's release too.
         if let Some(element) = self.box_element(ty) {
-            let descriptor = self.intern_element_descriptor(element)?;
-            return Ok(Some(("science_box_free", Some(descriptor))));
+            if self.object_interface(element).is_none() {
+                let descriptor = self.intern_element_descriptor(element)?;
+                return Ok(Some(("science_box_free", Some(descriptor))));
+            }
         }
         Ok(None)
     }
@@ -3846,6 +3919,7 @@ impl<'a> Lowerer<'a> {
             block: mir::BlockId::from_index(0),
             next_value: 0,
             next_temp: body.local_count() as u32,
+            next_block: body.block_count() as u32,
         };
         for (local, decl) in body.locals() {
             let id = LocalId(local.index() as u32);
@@ -3929,14 +4003,24 @@ impl<'a> Lowerer<'a> {
             for statement in &block.statements {
                 self.lower_statement(body, &mut ctx, &statement.kind, &mut insts)?;
             }
-            let terminator =
-                self.lower_terminator(body, &mut ctx, &block.terminator.kind, &mut insts)?;
+            // `extra` is Decision 26's flagged drop and nothing else: every
+            // other terminator lowers to one `Terminator` and leaves it
+            // empty, which is `lower_terminator`'s own §Decision-5 note.
+            let mut extra: Vec<ExtBlock> = Vec::new();
+            let terminator = self.lower_terminator(
+                body,
+                &mut ctx,
+                &block.terminator.kind,
+                &mut insts,
+                &mut extra,
+            )?;
             blocks.push(ExtBlock {
                 id: BlockId(id.index() as u32),
                 label: format!("bb{}", id.index()),
                 insts,
                 terminator,
             });
+            blocks.extend(extra);
         }
         // Every `alloca` in front of the entry block's own instructions, in one
         // place, however late in the walk the slot was invented — and then the
@@ -3963,13 +4047,25 @@ impl<'a> Lowerer<'a> {
         match kind {
             // Not modelled; see `lower_body`.
             StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => Ok(()),
-            // Decision 26's drop flags and two-phase activations are statements
-            // a code generator may ignore only because nothing reachable here
-            // has a drop that is conditional or a two-phase borrow. Refused
-            // rather than ignored, because ignoring a `SetDropFlag` is a double
-            // free.
-            StatementKind::SetDropFlag { .. } => {
-                Err(Unlowered::new("a conditionally moved value, which needs a drop flag"))
+            // Decision 26's drop flag, written: a store of a constant `Bool`
+            // into the flag's own slot, the same `Inst::Store` an ordinary
+            // whole-local `Bool` assignment ends in
+            // ([`Lowerer::lower_rvalue`]'s `Rvalue::Use` arm) — because a
+            // flag *is* an ordinary local, laid out and given an `alloca` by
+            // `lower_body`'s per-local loop like any other
+            // [`science_mir::mir::LocalKind::DropFlag`]. `flag: Option<Local>`
+            // is read back at [`Lowerer::emit_flagged_drop`], the only reader.
+            StatementKind::SetDropFlag { flag, value } => {
+                let local = LocalId(flag.index() as u32);
+                if ctx.untyped.contains(&local) {
+                    return Err(Unlowered::new(format!("{UNTYPED} (local _{})", local.0)));
+                }
+                ctx.layout(local)?;
+                insts.push(ExtInst::Above(Inst::Store {
+                    local,
+                    value: Operand::ConstInt(i128::from(*value)),
+                }));
+                Ok(())
             }
             // **A `Nop`, which is what `science-mir`'s §6 says it is**:
             // *"the cost is one statement per two-phase borrow, which codegen
@@ -6595,6 +6691,7 @@ impl<'a> Lowerer<'a> {
         ctx: &mut BodyCtx,
         kind: &TerminatorKind,
         insts: &mut Vec<ExtInst>,
+        extra: &mut Vec<ExtBlock>,
     ) -> Result<Terminator, Unlowered> {
         match kind {
             // **What `ret` carries is decided by the classification and by
@@ -6679,70 +6776,128 @@ impl<'a> Lowerer<'a> {
                     default: BlockId(otherwise.index() as u32),
                 })
             }
-            // **A drop that has to run nothing is a `br`, and a drop that has
-            // to run something is still refused.** See
+            // **A drop that has to run nothing is a `br`.** See
             // [`Lowerer::drop_runs_something`] for the predicate and for why
-            // `science_codegen::descriptor::needs_drop` is not it.
+            // `science_codegen::descriptor::needs_drop` is not it. **A drop
+            // that has to run something and is unconditional is a call and a
+            // `br`; a drop that has to run something and carries a flag is
+            // the same call, gated.** [`Lowerer::emit_flagged_drop`] is where
+            // the second case is built and why it is a second block rather
+            // than an instruction.
             TerminatorKind::Drop { place, flag, target } => {
-                if flag.is_some() {
-                    return Err(Unlowered::new(
-                        "a conditionally moved value, which needs a drop flag: Decision 26's \
-                         flagged drop is three basic blocks where MIR has one, and no execution \
-                         test has run the shape",
-                    ));
-                }
                 let ty = place.ty(body);
-                if self.drop_runs_something(ty, 0)? {
-                    // Decision 12's `DropGlue::RuntimeCall`, and it is the one
-                    // owning type this backend can release without emitting a
-                    // glue function. `lower`'s own §1 already stated the rule
-                    // for the temporary a `print` makes — *"a `String` does not
-                    // need [glue] — the temporary is freed by a direct
-                    // `science_string_free` at the site that made it"* — and a
-                    // bound `String` is that same call at the site that drops
-                    // it. `science_string_free` takes the address and no
-                    // descriptor; `science_array_free` and `science_box_free`
-                    // each take one, and `direct_release` is what supplies it
-                    // — the descriptor is a global, so it is interned here and
-                    // not passed down from MIR. `science_box_free`'s call is
-                    // shaped differently again — [`Lowerer::release_args`] is
-                    // where that is built and why. Everything else that owns
-                    // something goes through Decision 12's glue, which is
-                    // emitted on demand.
-                    let glue = self.intern_drop_glue(ty, 0)?;
-                    let direct = match &glue {
-                        Some(_) => None,
-                        None => self.direct_release(ty)?,
-                    };
-                    let (address, _) = self.place_address(ctx, place, insts)?;
-                    let (callee, ret) = match (&glue, &direct) {
-                        (Some(symbol), _) => (Callee::Science(symbol.clone()), ReturnClass::Void),
-                        (None, Some((symbol, _))) => {
-                            (Callee::Runtime(symbol), self.declare(symbol)?.ret.clone())
-                        }
-                        (None, None) => {
-                            return Err(Unlowered::new(format!(
-                                "a drop of `{}`, which owns something this crate releases neither \
-                                 by a runtime call nor by Decision 12's glue",
-                                self.types.render(self.defs, ty)
-                            )));
-                        }
-                    };
-                    let args = match &direct {
-                        Some(d) => self.release_args(d, address, &mut || ctx.value(), insts),
-                        None => vec![Operand::Value(address)],
-                    };
-                    insts.push(ExtInst::Above(Inst::Call {
-                        dest: None,
-                        callee,
-                        args,
-                        ret,
-                        sret_slot: None,
-                    }));
+                let target_block = BlockId(target.index() as u32);
+                if !self.drop_runs_something(ty, 0)? {
+                    return Ok(Terminator::Goto(target_block));
                 }
-                Ok(Terminator::Goto(BlockId(target.index() as u32)))
+                match flag {
+                    None => {
+                        self.emit_drop_release(ctx, place, ty, insts)?;
+                        Ok(Terminator::Goto(target_block))
+                    }
+                    Some(flag_local) => {
+                        self.emit_flagged_drop(ctx, place, ty, *flag_local, target_block, insts, extra)
+                    }
+                }
             }
         }
+    }
+
+    /// The address computation and the release call a `Drop` runs, shared
+    /// between the unconditional case — which writes them into the block's
+    /// own instructions — and [`Lowerer::emit_flagged_drop`], which writes
+    /// them into the block it invents. `ty` is already known to own
+    /// something: `lower_terminator`'s `drop_runs_something` guard is what
+    /// makes that true before either caller reaches here.
+    fn emit_drop_release(
+        &mut self,
+        ctx: &mut BodyCtx,
+        place: &mir::Place,
+        ty: Ty,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        // Decision 12's `DropGlue::RuntimeCall`, and it is the one owning
+        // type this backend can release without emitting a glue function.
+        // `lower`'s own §1 already stated the rule for the temporary a
+        // `print` makes — *"a `String` does not need [glue] — the temporary
+        // is freed by a direct `science_string_free` at the site that made
+        // it"* — and a bound `String` is that same call at the site that
+        // drops it. `science_string_free` takes the address and no
+        // descriptor; `science_array_free` and `science_box_free` each take
+        // one, and `direct_release` is what supplies it — the descriptor is
+        // a global, so it is interned here and not passed down from MIR.
+        // `science_box_free`'s call is shaped differently again —
+        // [`Lowerer::release_args`] is where that is built and why.
+        // Everything else that owns something goes through Decision 12's
+        // glue, which is emitted on demand.
+        let glue = self.intern_drop_glue(ty, 0)?;
+        let direct = match &glue {
+            Some(_) => None,
+            None => self.direct_release(ty)?,
+        };
+        let (address, _) = self.place_address(ctx, place, insts)?;
+        let (callee, ret) = match (&glue, &direct) {
+            (Some(symbol), _) => (Callee::Science(symbol.clone()), ReturnClass::Void),
+            (None, Some((symbol, _))) => {
+                (Callee::Runtime(symbol), self.declare(symbol)?.ret.clone())
+            }
+            (None, None) => {
+                return Err(Unlowered::new(format!(
+                    "a drop of `{}`, which owns something this crate releases neither by a \
+                     runtime call nor by Decision 12's glue",
+                    self.types.render(self.defs, ty)
+                )));
+            }
+        };
+        let args = match &direct {
+            Some(d) => self.release_args(d, address, &mut || ctx.value(), insts),
+            None => vec![Operand::Value(address)],
+        };
+        insts.push(ExtInst::Above(Inst::Call { dest: None, callee, args, ret, sret_slot: None }));
+        Ok(())
+    }
+
+    /// Decision 26's flagged drop: *"one byte, set where the value is
+    /// initialised, cleared where it is moved, tested at the drop point"*.
+    /// The byte is read here; `StatementKind::SetDropFlag` is where it is
+    /// written.
+    ///
+    /// **Three basic blocks where MIR has one**, exactly as
+    /// `science-mir`'s §4 item 2 and this file's own module doc both already
+    /// say the amendment costs. [`Lowerer::emit_niched_glue`] is the model —
+    /// test, call, continue — with one difference: that function invents
+    /// every block of a standalone glue function, and this one reuses
+    /// `target` as "continue" because `target` already exists as a MIR
+    /// block. So only one block is invented, not three: the current block
+    /// becomes the test, `ctx.invent_block` gives the call a home, and
+    /// `target` is unchanged either way.
+    ///
+    /// **Why a flag reads as `Operand::Copy`, never `Operand::Move`.**
+    /// Reading the flag's own byte does not consume the value it describes;
+    /// `TerminatorKind::If`'s condition is lowered the identical way, for the
+    /// identical reason, one match arm up.
+    fn emit_flagged_drop(
+        &mut self,
+        ctx: &mut BodyCtx,
+        place: &mir::Place,
+        ty: Ty,
+        flag: mir::Local,
+        target: BlockId,
+        insts: &mut Vec<ExtInst>,
+        extra: &mut Vec<ExtBlock>,
+    ) -> Result<Terminator, Unlowered> {
+        let flag_operand = mir::Operand::Copy(mir::Place::local(flag));
+        let cond = self.lower_operand(ctx, &flag_operand, None, insts)?;
+        let mut release: Vec<ExtInst> = Vec::new();
+        self.emit_drop_release(ctx, place, ty, &mut release)?;
+        let do_drop = ctx.invent_block();
+        extra.push(ExtBlock {
+            id: do_drop,
+            label: format!("bb{}", do_drop.0),
+            insts: release,
+            terminator: Terminator::Goto(target),
+        });
+        Ok(Terminator::Branch { cond, then_block: do_drop, else_block: target })
     }
 
     /// Lower a call.
@@ -8812,6 +8967,13 @@ struct BodyCtx {
     block: mir::BlockId,
     next_value: u32,
     next_temp: u32,
+    /// The next address a block Decision 26's flagged drop invents may use.
+    ///
+    /// Mirrors `next_temp`'s reasoning one field up: MIR's own block indices
+    /// run `0..body.block_count()`, so seeding this counter at that count and
+    /// only ever incrementing it is what keeps an invented block's address
+    /// from colliding with a real one, the same way an invented local's does.
+    next_block: u32,
 }
 
 impl BodyCtx {
@@ -8825,6 +8987,15 @@ impl BodyCtx {
         self.layouts.get(&local.0).ok_or_else(|| {
             Unlowered::new(format!("a use of local _{}, which has no slot", local.0))
         })
+    }
+
+    /// A fresh block address, for the one block Decision 26's flagged drop
+    /// invents. `lower_body`'s §Decision-5 note is the reason there is ever a
+    /// second block for one MIR terminator.
+    fn invent_block(&mut self) -> BlockId {
+        let id = BlockId(self.next_block);
+        self.next_block += 1;
+        id
     }
 }
 

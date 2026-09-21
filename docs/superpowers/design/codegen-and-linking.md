@@ -401,6 +401,20 @@ Terminators map straight through: `Goto` → `br`; `SwitchInt` → `switch`;
 followed by `br` to the success block; a `Drop` terminator → a call to drop
 glue (§2.5) followed by `br`.
 
+> **Amendment, owed since `type-checking-and-mir.md` Decision 26 and now paid.**
+> A **flagged** `Drop` — `flag: Some(_)`, the local was conditionally moved —
+> is the one terminator this section understated: it is a call *guarded* by a
+> load and a branch, not a call followed by a `br`, and it costs a second LLVM
+> block for one MIR block. `science-mir`'s §4 item 2 named the shape in
+> advance — *"a flagged drop breaks the decision by becoming three blocks"* —
+> and `science-codegen-llvm`'s `lower.rs` builds exactly those three: the MIR
+> block's own terminator becomes the test, a block the crate invents holds the
+> release call, and the MIR terminator's own `target` is reused as the third,
+> because it already exists as a block and inventing a second one for
+> "continue" would be the same block with a different name. An **unflagged**
+> `Drop` is unaffected and still the one block this section describes: the
+> local was never conditionally moved, so there is nothing to test.
+
 > **Decision 6. Every Science function is emitted `nounwind`, and codegen never
 > emits `invoke` or `landingpad`.**
 

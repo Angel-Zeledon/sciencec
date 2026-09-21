@@ -257,12 +257,14 @@
 //! the authority and a correction that lives only in code is a correction
 //! nobody reads.
 //!
-//! **Seventeen, and two of them are now closed rather than open.** Items 9 and
-//! 10 were both *"a note prescribes something the ABI below it cannot
+//! **Seventeen, and three of them are now closed rather than open.** Items 9
+//! and 10 were both *"a note prescribes something the ABI below it cannot
 //! express"*, and both were closed by changing the ABI rather than by softening
 //! the note: `science_string_with_capacity` for §1.7's capacity, and an
-//! `Rvalue::Cast` lowering for `science_string_push_i64`'s sign extension. They
-//! are left in the list with their history because the list is a record of what
+//! `Rvalue::Cast` lowering for `science_string_push_i64`'s sign extension. Item
+//! 2 is closed the same way: `science-codegen-llvm` now lowers a flagged
+//! `Drop`, so the amendment it asked for is paid rather than owed. They are
+//! left in the list with their history because the list is a record of what
 //! reading could not establish, not a list of open bugs.
 //!
 //! **Fifteen, sixteen and seventeen were all found the same way and it is worth
@@ -281,10 +283,17 @@
 //!    `codegen-and-linking.md` found by trying to lower against this section"*.
 //!    §10 item 5 should be amended to say elaborated, because a reader who
 //!    implements the item as written builds a MIR that double-frees.
-//! 2. **A flagged drop breaks `codegen-and-linking.md` Decision 5.** That note
-//!    says *"every MIR basic block becomes exactly one LLVM basic block"*. A
-//!    [`mir::TerminatorKind::Drop`] with a flag becomes three. [`drops`]'s §3
-//!    argues the alternative is worse; the note needs the amendment either way.
+//! 2. **Closed.** A flagged drop breaks `codegen-and-linking.md` Decision 5.
+//!    That note says *"every MIR basic block becomes exactly one LLVM basic
+//!    block"*. A [`mir::TerminatorKind::Drop`] with a flag becomes three, and
+//!    it now does, in `science-codegen-llvm`'s `lower.rs`: the MIR block's own
+//!    terminator becomes the test, an invented block holds the release call,
+//!    and the terminator's own `target` is reused as the third rather than
+//!    invented again. [`drops`]'s §3 argued the alternative — refusing rather
+//!    than three blocks — was worse only until something exercised the shape;
+//!    a 100,000-iteration loop with a genuinely dynamic move now does, and
+//!    `codegen-and-linking.md` Decision 5 carries the amendment this item asked
+//!    for.
 //! 3. **§10 item 4's acceptance case works, and it depends on a lookup that
 //!    did not exist when this crate was started.** `v.push(v.len())` needs the
 //!    receiver auto-borrowed, which needs Decision 11's method lookup — which

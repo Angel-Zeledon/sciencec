@@ -4097,6 +4097,23 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 (Operand::Const(Constant::Literal(literal.clone())), block)
             }
             ExprKind::Unit => (Operand::Const(Constant::Unit), block),
+            // A narrow taken straight as an operand — `print(x)` inside
+            // `if x?:`, not `x.field` inside it — needs the same check
+            // [`Self::as_place`]'s own `ExprKind::Field` arm already makes
+            // before trusting its recursion into `ExprKind::Narrow`: seeing
+            // through to the un-narrowed storage is exact for Decision 19's
+            // niche and wrong for Decision 18's tagged pair, whose payload
+            // sits at an offset `as_place` does not know to add. `let y be x`
+            // inside the same `if` never had this bug — `expr_into`'s own
+            // `ExprKind::Narrow` arm always builds the `Rvalue::Narrow` that
+            // states the offset — and this arm is what makes an argument
+            // agree with a `let`, by reaching for the same rvalue rather than
+            // the place shortcut below.
+            ExprKind::Narrow(operand) if self.narrow_needs_materialising(expr, *operand) => {
+                let temp = self.temp(ty, span, block);
+                let block = self.expr_into(Place::local(temp), expr, block);
+                (Operand::Move(Place::local(temp)), block)
+            }
             _ => {
                 if let Some((place, block)) = self.as_place(expr, block) {
                     return self.read_ergonomic(place, ty, block, span);
@@ -4106,6 +4123,29 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 (Operand::Move(Place::local(temp)), block)
             }
         }
+    }
+
+    /// [`Self::narrowed_payload_is_not_a_borrow`], asked off THIR types alone
+    /// rather than off a [`Place`] already in hand.
+    ///
+    /// [`Self::operand`] is the one caller that has not fetched a place yet
+    /// when it needs the answer — fetching one first to ask would mean
+    /// lowering the narrow's operand twice if it is ever anything costlier
+    /// than a bare read, which THIR's own rule (a narrow's operand is always
+    /// a place, never a call or anything with an effect) makes safe today but
+    /// this function declines to lean on. A bare local's own declared type is
+    /// exactly [`Self::place_ty`]'s answer for it, so reading the operand
+    /// expression's type off THIR — before any place is built — is the same
+    /// question asked one step earlier.
+    fn narrow_needs_materialising(&mut self, narrow: ExprId, operand: ExprId) -> bool {
+        let hole_ty = self.revealed(self.thir.expr(narrow).ty);
+        if matches!(self.context.types.kind(hole_ty), TyKind::Borrowed { .. }) {
+            return false;
+        }
+        let written = self.revealed(self.thir.expr(operand).ty);
+        let TyKind::Nullable(payload) = *self.context.types.kind(written) else { return false };
+        let payload = self.revealed(payload);
+        !matches!(self.context.types.kind(payload), TyKind::Borrowed { .. })
     }
 
     /// An operand in argument position, which is the only place §6 makes a
