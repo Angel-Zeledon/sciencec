@@ -2972,9 +2972,18 @@ impl<'a> BodyChecker<'a> {
                 }
             };
         let callee = self.body.push_expr(ExprKind::Item(candidate.method), Ty::ERROR, span);
-        let (self_ty, supplied) =
+        let (self_ty, supplied, deferred) =
             self.receiver_arguments(revealed, &candidate, args, supplied, span);
         let (ids, ret) = self.call_method(&candidate, self_ty, generics, args, supplied, span);
+        // `receiver_arguments`' own note: a return type `call_method` built
+        // *from* the receiver — `-> Self`, or the block's own self type
+        // written out, as `Box.new`'s `-> Box[T]` is — carries the identical
+        // hole, so it is typed by the same placeholder rather than by the
+        // `Ty::ERROR` the substitution had to fill it with.
+        let ret = match (deferred, ret) {
+            (Some(var), InferTy::Known(known)) if known == self_ty => InferTy::Var(var),
+            _ => ret,
+        };
         // Same deferral `method_call` takes, for the same reason: `ret` may
         // still be the argument's own open variable.
         let typed = self.push_typed(ExprKind::Call { callee, args: ids }, ret, span);
@@ -3075,6 +3084,31 @@ impl<'a> BodyChecker<'a> {
     /// would blame the receiver for a hole §6 left at the literal. The silence
     /// there is owned by §6's probe, is older than this function, and is named
     /// rather than inherited.
+    ///
+    /// **Three states, not two — the same upgrade `instantiate_call` and
+    /// `instantiate_payload` already carry.** An argument can *solve* a
+    /// parameter, it can be *poisoned* (already `Ty::ERROR`, so silently
+    /// agreeing with anything would only spread one mistake), or it can be
+    /// *deferred*: its own type is a still-open variable — `Box.new(Leaf(1))`
+    /// once `call_variant` learned to defer `Leaf(1)` itself rather than
+    /// force it to `Ty::ERROR` — and that is not the same fact as a call this
+    /// function cannot solve at all. `deferred` names the variable so
+    /// `finish` can settle it, exactly as `pending_named` already does for a
+    /// record or a variant whose own argument was the open one.
+    ///
+    /// **The immediate `Ty` this returns still fills a deferred slot with
+    /// `Ty::ERROR`**, because `block_substitution` needs a concrete pattern
+    /// *now* to read `Self` and the block's other parameters through, and
+    /// `ty`'s §5 makes that filler agree with whatever it meets in the
+    /// meantime. The placeholder variable this function registers in
+    /// [`BodyChecker::pending_named`] is where the honest answer ends up:
+    /// [`BodyChecker::associated_call`] reads it back once `call_method`'s own
+    /// substitution is done, for the one shape that is common enough to
+    /// name — a return type that is exactly the receiver's own, `-> Self` or
+    /// `Box.new`'s `-> Box[T]` written out. A method whose return type
+    /// mentions the deferred parameter some other way keeps the `Ty::ERROR`
+    /// `call_method` computed, silently, which is the same cost `poisoned`
+    /// already pays and not a new one — nothing in the corpus needs more yet.
     fn receiver_arguments(
         &mut self,
         receiver: Ty,
@@ -3082,12 +3116,12 @@ impl<'a> BodyChecker<'a> {
         args: &[hir::Arg],
         supplied: Option<Vec<Typed>>,
         span: Span,
-    ) -> (Ty, Option<Vec<Typed>>) {
+    ) -> (Ty, Option<Vec<Typed>>, Option<InferVar>) {
         let TyKind::Named { def, args: ref written } = *self.types.kind(receiver) else {
-            return (receiver, supplied);
+            return (receiver, supplied, None);
         };
         if !written.is_empty() {
-            return (receiver, supplied);
+            return (receiver, supplied, None);
         }
         // The block's parameters, and the shape they sit in on its own self
         // type: `Array of T has:` gives `[T]` and `Array of T`. A block on a
@@ -3095,17 +3129,17 @@ impl<'a> BodyChecker<'a> {
         // every `String.new()` and every `Doc.new("scratch")` in the corpus.
         let declared: Vec<hir::GenericParam> = match self.decls.block_generics(candidate.block) {
             Some(generics) if !generics.is_empty() => generics.to_vec(),
-            _ => return (receiver, supplied),
+            _ => return (receiver, supplied, None),
         };
         let Some(block_self) = self.decls.self_ty(candidate.block) else {
-            return (receiver, supplied);
+            return (receiver, supplied, None);
         };
         let TyKind::Named { def: owner, args: pattern } = self.types.kind(block_self).clone()
         else {
-            return (receiver, supplied);
+            return (receiver, supplied, None);
         };
         if owner != def || pattern.is_empty() {
-            return (receiver, supplied);
+            return (receiver, supplied, None);
         }
 
         let supplied: Vec<Typed> = match supplied {
@@ -3118,6 +3152,9 @@ impl<'a> BodyChecker<'a> {
         // type. They are filled with [`Ty::ERROR`] like any other unsolved
         // parameter and are the ones the diagnostic below does *not* claim.
         let mut poisoned: HashSet<DefId> = HashSet::new();
+        // Parameters only a still-open argument variable answers. See this
+        // function's own doc comment.
+        let mut deferred: HashMap<DefId, InferVar> = HashMap::new();
         if let Some(sig) = self.decls.signature(candidate.method) {
             let params: Vec<(DefId, Ty)> =
                 sig.params.iter().map(|param| (param.def, param.ty)).collect();
@@ -3130,45 +3167,108 @@ impl<'a> BodyChecker<'a> {
                     continue;
                 }
                 let Some(typed) = supplied.get(at).copied() else { continue };
-                let InferTy::Known(ty) = self.infer.resolve(typed.ty) else { continue };
-                // An erroneous argument narrows nothing: `ty`'s §5 makes it
-                // agree with everything, and solving a parameter to it would
-                // spread one mistake into the receiver's type.
-                // [`BodyChecker::select`] declines the same argument for the
-                // same reason. It also **silences** the report below, which is
-                // the other half of the same rule: this argument *does* mention
-                // the parameter, so the author has not left it open — the
-                // checker failed to type what they wrote, and `Box.new(Leaf(1))`
-                // must not be told to instantiate its receiver when the
-                // instantiation would not help.
-                if self.types.references_error(ty) {
-                    poisoned.insert(param);
-                    continue;
+                match self.infer.resolve(typed.ty) {
+                    InferTy::Known(ty) => {
+                        // An erroneous argument narrows nothing: `ty`'s §5 makes it
+                        // agree with everything, and solving a parameter to it would
+                        // spread one mistake into the receiver's type.
+                        // [`BodyChecker::select`] declines the same argument for the
+                        // same reason. It also **silences** the report below, which is
+                        // the other half of the same rule: this argument *does* mention
+                        // the parameter, so the author has not left it open — the
+                        // checker failed to type what they wrote, and `Box.new(Leaf(1))`
+                        // must not be told to instantiate its receiver when the
+                        // instantiation would not help.
+                        if self.types.references_error(ty) {
+                            poisoned.insert(param);
+                            continue;
+                        }
+                        let ty = if borrowed { self.peel_borrow(ty, arg.span) } else { ty };
+                        // A parameter two arguments both answer, the second
+                        // time as a `Known` where the first left it
+                        // `deferred`: the variable from the first is bound to
+                        // this argument's answer rather than the map simply
+                        // being overwritten, so the two cannot disagree later.
+                        if let Some(&existing) = deferred.get(&param) {
+                            let _ = self.infer.bind(self.types, existing, ty);
+                        }
+                        solved.insert(param, ty);
+                    }
+                    // Still open. `borrowed` is left alone exactly as
+                    // `instantiate_call` leaves it: peeling needs a concrete
+                    // type, and there is not one yet.
+                    //
+                    // **A bare literal's own variable is not deferred.** This
+                    // function's refusal is older than the third state and
+                    // does not soften because of it: "an argument with no
+                    // type of its own solves nothing" was decided for exactly
+                    // `Wrapper.holding(7)`, and `7`'s variable never becomes
+                    // anything but a literal's — nothing outside this call
+                    // resolves it independently, so leaving it deferred would
+                    // let a bare literal fix a receiver's parameter after
+                    // all, one Decision-2 default later. `Leaf(1)`'s own
+                    // variable is different in kind, not degree: it is
+                    // `call_variant`'s placeholder for a whole composite,
+                    // never entered in `self.numeric`, and `finish` settles
+                    // it from `Leaf`'s own `pending_named` entry whether or
+                    // not this call ever runs. `literal_kind` is exactly the
+                    // question "does anything but this call answer for it".
+                    InferTy::Var(var) => {
+                        if borrowed || self.literal_kind(var).is_some() {
+                            continue;
+                        }
+                        match deferred.get(&param).copied() {
+                            Some(existing) => {
+                                let _ = self.infer.unify(
+                                    self.types,
+                                    InferTy::Var(existing),
+                                    InferTy::Var(var),
+                                );
+                            }
+                            None => {
+                                deferred.insert(param, var);
+                            }
+                        }
+                    }
                 }
-                let ty = if borrowed { self.peel_borrow(ty, arg.span) } else { ty };
-                solved.insert(param, ty);
             }
         }
 
         let mut filled: Vec<GenericArg> = Vec::with_capacity(pattern.len());
+        let mut pending_args: Vec<PendingArg> = Vec::with_capacity(pattern.len());
         let mut unsolved: Vec<String> = Vec::new();
         let mut consts = false;
         for argument in &pattern {
             match argument {
                 GenericArg::Type(ty) => match *self.types.kind(*ty) {
-                    TyKind::Param { def: param } => match solved.get(&param) {
-                        Some(ty) => filled.push(GenericArg::Type(*ty)),
-                        None => {
+                    TyKind::Param { def: param } => {
+                        if let Some(ty) = solved.get(&param) {
+                            filled.push(GenericArg::Type(*ty));
+                            pending_args.push(PendingArg::Fixed(GenericArg::Type(*ty)));
+                        } else if let Some(&var) = deferred.get(&param) {
+                            // The honest `Ty::ERROR` `filled` needs right now,
+                            // and the placeholder that stands for the real
+                            // answer once `var` has one. Neither `unsolved`
+                            // nor a diagnostic: the author left nothing open,
+                            // the checker just has not caught up with the
+                            // argument yet.
+                            filled.push(GenericArg::Type(Ty::ERROR));
+                            pending_args.push(PendingArg::Open(var));
+                        } else {
                             if !poisoned.contains(&param) {
                                 unsolved.push(self.defs.get(param).name.clone());
                             }
                             filled.push(GenericArg::Type(Ty::ERROR));
+                            pending_args.push(PendingArg::Fixed(GenericArg::Type(Ty::ERROR)));
                         }
-                    },
+                    }
                     // Not a bare parameter: the block wrote a concrete type
                     // into its own self type, so there is nothing to solve and
                     // nothing to report.
-                    _ => filled.push(GenericArg::Type(*ty)),
+                    _ => {
+                        filled.push(GenericArg::Type(*ty));
+                        pending_args.push(PendingArg::Fixed(GenericArg::Type(*ty)));
+                    }
                 },
                 // A const parameter of the block. No argument solves one —
                 // `matching`'s one-variable solve wants an obligation to
@@ -3177,11 +3277,15 @@ impl<'a> BodyChecker<'a> {
                 GenericArg::Const(_) => {
                     consts = true;
                     filled.push(GenericArg::Error);
+                    pending_args.push(PendingArg::Fixed(GenericArg::Error));
                 }
                 // Already erroneous before this function ran: `ty`'s §5 again,
                 // and reporting on it would be a second diagnostic for one
                 // mistake.
-                GenericArg::Error => filled.push(GenericArg::Error),
+                GenericArg::Error => {
+                    filled.push(GenericArg::Error);
+                    pending_args.push(PendingArg::Fixed(GenericArg::Error));
+                }
             }
         }
         if !unsolved.is_empty() || consts {
@@ -3189,7 +3293,19 @@ impl<'a> BodyChecker<'a> {
             let method = self.defs.get(candidate.method).name.clone();
             self.diagnostics.push(uninferable_receiver(span, &name, &method, &unsolved, consts));
         }
-        (self.types.named(def, filled), Some(supplied))
+        let self_ty = self.types.named(def, filled);
+        if pending_args.iter().all(|arg| matches!(arg, PendingArg::Fixed(_))) {
+            return (self_ty, Some(supplied), None);
+        }
+        // At least one parameter is only a still-open variable's answer:
+        // registered exactly as `call_variant` registers `Leaf(1)` itself, so
+        // `finish` binds this placeholder once that variable does — in
+        // insertion order, which is why this is pushed after any argument's
+        // own deferral (`Leaf(1)`'s, synthesised above through `supplied`)
+        // rather than before it.
+        let var = self.infer.fresh(span);
+        self.pending_named.push(PendingNamed { var, def, args: pending_args, deferred });
+        (self_ty, Some(supplied), Some(var))
     }
 
     /// The arguments checked against a resolved method's parameters, and the

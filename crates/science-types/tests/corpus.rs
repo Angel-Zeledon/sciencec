@@ -254,35 +254,40 @@ use std::path::{Path, PathBuf};
 /// there was nothing to say. Now it is empty again because the two names were
 /// corpus mistakes rather than a compiler or spec gap, and both are fixed.
 ///
-/// # A hole closing uncovers another, at `04_enums.science`
+/// # A hole closing uncovered another, at `04_enums.science`, and it is closed too
 ///
-/// **`04_enums.science`, `SC0536` ×2** — `Node(Box.new(Leaf(1)), Box.new
-/// (Leaf(2)))`. `Leaf` is a variant of `Tree of T`, and `Leaf(1)`'s `1` is
-/// unsuffixed. `instantiate_payload` used to leave an unsolved parameter
-/// `Ty::ERROR` unconditionally, so `Leaf(1)` synthesised as `Tree of ERROR`
-/// — and `receiver_arguments`' own `references_error` check reads that and
-/// silences `Box`'s report for exactly the reason its doc comment gives:
-/// *"the checker failed to type what they wrote"*, not the author leaving
-/// something open.
+/// **`04_enums.science` briefly reported `SC0536` ×2**, at `Node(Box.new
+/// (Leaf(1)), Box.new(Leaf(2)))`. `Leaf` is a variant of `Tree of T`, and
+/// `Leaf(1)`'s `1` is unsuffixed. `instantiate_payload` used to leave an
+/// unsolved parameter `Ty::ERROR` unconditionally, so `Leaf(1)` synthesised as
+/// `Tree of ERROR` — and `receiver_arguments`' own `references_error` check
+/// read that and silenced `Box`'s report for exactly the reason its doc
+/// comment gives: *"the checker failed to type what they wrote"*, not the
+/// author leaving something open.
 ///
-/// `call_variant` now defers a variant construction the same way `record_lit`
-/// already does — the fix this file's own history is about — so `Leaf(1)`
-/// synthesises as a genuinely open variable instead of `Tree of ERROR`.
-/// **Not a corpus mistake**: Decision 2 defaults `1` to `I64` and
-/// `Box.new(Leaf(1))` is `Box of (Tree of I64)` once it does, exactly as
-/// inferable as `identity(7)` was before `instantiate_call` learned to defer
-/// rather than guess. But `receiver_arguments` predates that fix and asks
-/// `self.infer.resolve` for `InferTy::Known` only, so an argument that is
-/// merely *not yet* answered reads the same as one this call cannot solve at
-/// all, and reports where it used to read past the `Ty::ERROR` in silence.
+/// `call_variant` learned to defer a variant construction the same way
+/// `record_lit` already does, so `Leaf(1)` started synthesising as a
+/// genuinely open variable instead of `Tree of ERROR` — **not a corpus
+/// mistake**: Decision 2 defaults `1` to `I64` and `Box.new(Leaf(1))` is
+/// `Box of (Tree of I64)` once it does, exactly as inferable as `identity(7)`
+/// was before `instantiate_call` learned to defer rather than guess. But
+/// `receiver_arguments` predated that fix and asked `self.infer.resolve` for
+/// `InferTy::Known` only, so an argument that was merely *not yet* answered
+/// read the same as one this call could never solve, and reported where it
+/// used to read past the `Ty::ERROR` in silence.
 ///
-/// Owner: `science-types`' `receiver_arguments`, which needs the same
-/// three-state upgrade — solved, honestly `Ty::ERROR`, or deferred to the
-/// argument's own variable — `instantiate_call` already has. That is
-/// `Box[T]`'s inference gap, already being closed elsewhere; this entry is
-/// its cost showing up here first, one caller's worth, rather than something
-/// this file's own fix should chase into another crate's function.
-const REMAINING: &[(&str, &[u16])] = &[("04_enums.science", &[536, 536])];
+/// **`receiver_arguments` now carries the same three-state upgrade**
+/// `instantiate_call` already had — solved, honestly `Ty::ERROR`, or
+/// **deferred** to the argument's own variable — and registers the receiver's
+/// own type through [`crate::check`]'s `pending_named`, the identical
+/// mechanism `call_variant` already uses for `Leaf(1)` itself, so `finish`
+/// settles `Box.new(Leaf(1))` to `Box[Tree[I64]]` once the literal inside it
+/// defaults. A bare literal handed directly to a receiver's own parameter is
+/// still refused — `crates/science-types/tests/method_lookup.rs`'
+/// `an_unsuffixed_literal_cannot_fix_a_receivers_parameter` pins that this did
+/// not soften — only a variable standing for a shape `finish` resolves on its
+/// own, such as `Leaf(1)`'s placeholder, is deferred.
+const REMAINING: &[(&str, &[u16])] = &[];
 
 fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("examples")
@@ -618,10 +623,22 @@ fn every_pinned_file_is_in_the_corpus() {
 /// error-tainted argument and never learned to *defer* one that is merely
 /// open. So the count is 2 and not 0, and it is 2 for the reason `04_enums`'
 /// entry states — `Box[T]`'s own inference, not this corpus file.
+///
+/// # **It is 0 again, and `Box[T]`'s own inference is what moved**
+///
+/// `receiver_arguments` learned the third state the entry above named:
+/// solved, honestly `Ty::ERROR`, or deferred to the argument's own variable,
+/// registered through the identical `pending_named` placeholder `call_variant`
+/// already uses for the argument itself. `Box.new(Leaf(1))` now settles to
+/// `Box[Tree[I64]]` once `finish` defaults the literal inside `Leaf(1)`, and
+/// `04_enums.science` reports nothing again. The entry closed the way the
+/// second kind of finding in this file always has — the checker was right
+/// about a gap in itself, one edit to `science-types` closed it, and no
+/// character of `examples/` moved.
 #[test]
 fn the_corpus_reports_only_what_no_program_can_say() {
     let total: usize = REMAINING.iter().map(|(_, codes)| codes.len()).sum();
-    assert_eq!(total, 2);
+    assert_eq!(total, 0);
 }
 
 /// The evidence that a silent `Range` is a checked silence.

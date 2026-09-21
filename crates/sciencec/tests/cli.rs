@@ -389,18 +389,23 @@ const REGIONS: &[Finding] = &[];
 /// library rather than the binary, so a change that un-silences either file
 /// here has to un-silence it in two places at once.
 ///
-/// # It moved again, and the two places moved together
+/// # It moved again, and then moved back, and the two places moved together
+/// both times
 ///
-/// `04_enums.science`'s `Node(Box.new(Leaf(1)), Box.new(Leaf(2)))` now reports
-/// `SC0536` twice. `science-types/tests/corpus.rs`'s `REMAINING` entry for this
-/// same file is the full account — `call_variant` learned to defer a variant's
-/// unsolved generic argument to its literal's own variable instead of forcing
-/// `Ty::ERROR`, so `Leaf(1)` no longer poisons `Box.new`'s own receiver-argument
-/// solve into silence, and `receiver_arguments` reports an argument it cannot
-/// yet see through. Owner: `science-types`' `receiver_arguments`, same as
-/// there.
-const TYPE_CHECKER_FINDINGS: &[(&str, usize, &str)] =
-    &[("04_enums.science", 2, "error[SC0536]")];
+/// `04_enums.science`'s `Node(Box.new(Leaf(1)), Box.new(Leaf(2)))` briefly
+/// reported `SC0536` twice. `science-types/tests/corpus.rs`'s `REMAINING` entry
+/// for this same file was the full account — `call_variant` learned to defer a
+/// variant's unsolved generic argument to its literal's own variable instead of
+/// forcing `Ty::ERROR`, so `Leaf(1)` no longer poisoned `Box.new`'s own
+/// receiver-argument solve into silence, and `receiver_arguments` reported an
+/// argument it could not yet see through.
+///
+/// `receiver_arguments` now carries the same three-state solve
+/// `instantiate_call` already had, so it defers rather than reports the
+/// argument it used to see through incompletely, and `04_enums.science` is
+/// clean again. Owner: `science-types`' `receiver_arguments`, same as there —
+/// the list is empty and the test still walks every file.
+const TYPE_CHECKER_FINDINGS: &[(&str, usize, &str)] = &[];
 
 #[test]
 fn every_example_is_clean_through_the_whole_front_half_except_the_known_gaps() {

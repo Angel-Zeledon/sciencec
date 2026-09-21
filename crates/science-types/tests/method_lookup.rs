@@ -921,8 +921,30 @@ def held() -> Box[I64]:
 /// `examples/04_enums.science`'s entry in `science-types/tests/corpus.rs`, and
 /// not a hole in this rule — this test now pins what the rule correctly says
 /// about it rather than a silence that was really `Leaf(1)`'s.
+/// **Replaces `a_deferred_variant_argument_reaches_the_receiver_open_and_reports`,
+/// which pinned `SC0536` ×2 as this rule's own answer rather than a gap in it.**
+///
+/// That test's premise was right about `Leaf(1)`'s `1` and wrong about what
+/// `receiver_arguments` owed it: `call_variant`'s fix left `Leaf(1)` open
+/// rather than error-tainted, but `receiver_arguments` still asked
+/// `self.infer.resolve` for `InferTy::Known` only, so an argument that was
+/// merely *not yet* answered read the same as one this call could never
+/// solve, and reported. `receiver_arguments` now carries the third state
+/// `instantiate_call` already had — solved, honestly `Ty::ERROR`, or
+/// **deferred** to the argument's own variable — and registers the same
+/// `pending_named` placeholder `call_variant` already uses for `Leaf(1)`
+/// itself, so `Box.new(Leaf(1))` settles to `Box[Tree[Int]]` once Decision 2
+/// defaults the `1` inside it, instead of reporting a call that was always
+/// answerable from its own argument.
+///
+/// **The distinction that stops this from swallowing
+/// `an_unsuffixed_literal_cannot_fix_a_receivers_parameter` too**: a bare
+/// literal's own variable is never deferred, only a variable that is itself a
+/// placeholder for a shape `finish` settles independently of this call —
+/// `receiver_arguments`' own doc comment states the line and why it still
+/// holds.
 #[test]
-fn a_deferred_variant_argument_reaches_the_receiver_open_and_reports() {
+fn a_deferred_variant_argument_now_resolves_through_the_receiver() {
     let checked = check(
         "\
 choice Tree[T]:
@@ -933,14 +955,14 @@ def grow():
     let tree be Node(Box.new(Leaf(1)), Box.new(Leaf(2)))
 ",
     );
-    assert_eq!(checked.codes(), vec![536, 536]);
-    assert_eq!(
-        checked.messages(),
-        vec![
-            "the type argument of `Box` cannot be inferred here".to_string(),
-            "the type argument of `Box` cannot be inferred here".to_string(),
-        ]
-    );
+    checked.assert_clean();
+    let boxes: Vec<String> = checked
+        .nodes("grow")
+        .into_iter()
+        .filter(|(kind, ty)| kind == "call" && ty.starts_with("Box"))
+        .map(|(_, ty)| ty)
+        .collect();
+    assert_eq!(boxes, vec!["Box[Tree[I64]]".to_string(), "Box[Tree[I64]]".to_string()]);
 }
 
 // --- the negative: what a builtin still does not answer --------------------
