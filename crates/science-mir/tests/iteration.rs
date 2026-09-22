@@ -333,3 +333,51 @@ fn the_shape_is_lowered_whether_or_not_the_callee_is() {
     assert!(body.check_predecessors());
     assert!(body.index_temps_are_single_assignment());
 }
+
+/// The same seam as [`the_callee_is_still_the_hole_thir_did_not_fill`], closed
+/// for a subject none of the tests above exercise: a *user's own*
+/// `implements Iterate` block, not the prelude's `Chars`.
+///
+/// `owner_is_a_type` cannot tell "the prelude wrote this `next`" from "the
+/// author did" — both are just `Declarations::signature(def).owner`, checked
+/// against `DefKind::Interface` — so every test above proving the seam closed
+/// for `Chars` is silent on whether it closes for `Countdown`
+/// (`examples/06_traits.science`'s subject) too. This is that proof: a `for`
+/// over a fresh value of a type the *program* declares `implements Iterate:`
+/// for, with its own `next` body, must reach MIR as a `Callee::Def` naming
+/// that `next` — not `Unresolved::IterateNext`.
+#[test]
+fn a_user_defined_iterate_implementor_resolves_its_own_next() {
+    let source = "\
+type Countdown:
+    remaining: Int
+
+Countdown implements Iterate:
+    type Item is Int
+
+    def next(mutable self) -> Self.Item?:
+        if self.remaining <= 0:
+            null
+        else:
+            self.remaining be self.remaining - 1
+            self.remaining
+
+def f():
+    for value in Countdown(remaining: 3):
+        print(value)
+";
+    let lowered = lower(source);
+    assert_eq!(
+        lowered.unresolved("f"),
+        Vec::<Unresolved>::new(),
+        "`Countdown` declares its own `next`, so this loop's callee should resolve \
+         exactly the way `Chars`'s does"
+    );
+    let body = lowered.body("f");
+    let resolved = body.blocks().any(|(_, block)| {
+        matches!(&block.terminator.kind,
+            TerminatorKind::Call { callee: Callee::Def(def), .. }
+                if lowered.krate.defs.get(*def).name == "next")
+    });
+    assert!(resolved, "the loop's `next` call should be a `Callee::Def` naming `Countdown::next`");
+}
