@@ -198,3 +198,35 @@ now; they are listed because the fix was a decision, not a typo correction.
 - **§4.4 wrote `(Array of Doc).new()()`**, one call too many, and
   `self.body.len()` where §4.6 writes `.length()`. Both corrected in the spec;
   the corpus uses `.length()` at every one of its call sites.
+
+## `future/` — the library corpus, which does not build
+
+[`future/`](future/) holds programs written against the libraries in
+[`docs/DREAM.md`](../docs/DREAM.md) Part IV — `tensor`, `linalg`, `nn`,
+`dataframe`, `http`, the agent loop — **none of which exist**. They are design
+arguments about what those APIs should read like, written in today's syntax so
+the shape is argued about before it is built rather than after.
+
+They are **not** held to this file's opening claim. Nothing in `future/`
+resolves or type-checks, and that is not a bug in the compiler.
+
+Two guards still reach them, because both recurse and both are worth keeping:
+`science-lexer`'s corpus requires them to **lex clean and end in a dedent to
+column zero**, and `science-testkit`'s requires them to **contain no tab** and
+to be listed here. Everything else — the parser, types, MIR, mono, `fmt` and
+the output pins — reads only the top level of `examples/` and never sees them.
+
+| File | DREAM | Libraries |
+|---|---|---|
+| `01_collections_and_chains.science` | §13.3, §13.4 | `string`, `collections`, the chain vocabulary |
+| `02_math_and_stats.science` | §14 | `math`, `random`, `stats` |
+| `03_tensor_and_linalg.science` | §15, §16 | `tensor`, broadcasting, `linalg` |
+| `04_machine_learning.science` | §18 | `autograd`, `nn`, `optim`, `model` |
+| `05_data_and_io.science` | §19, §21 | `dataframe`, `csv`, `json`, `fs`, `path` |
+| `06_system_net_and_concurrency.science` | §17.4, §21, §22 | `os`, `time`, `http`, `thread`, `sync`, `parallel` |
+| `07_interop.science` | §23 | `c-ffi` — the one half that works today — and `python-ffi` |
+| `08_agents_and_web.science` | §26, §27 | `llm`, `tools`, `agents`, `http-server`, `router` |
+| `09_testing_and_plotting.science` | §20, §25 | `test`, `bench`, `plot` |
+
+When a library lands, its file there is deleted and a real example takes its
+place up here, with its output pinned byte for byte.

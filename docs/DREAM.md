@@ -52,9 +52,19 @@ cuarenta y ocho notas de diseño a la vez.
 
 **[Parte IV — El catálogo de librerías](#parte-iv--el-catálogo-de-librerías)** · 12 Índice · 13–27 las quince familias
 
+> **Convención de los listados de la Parte IV.** Los bloques que enumeran
+> firmas dentro de un `X has:` son **catálogos de API**: métodos declarados sin
+> cuerpo, para leerlos de corrido. Eso no compila tal cual — un `has:` exige
+> cuerpo, a diferencia de una `interface`. Los bloques que muestran funciones
+> completas sí están en sintaxis vigente, y las formas que usan
+> (`let a, b, err be …`, `continue`, `if not x?:`, `each`, `nombre giving …`,
+> argumentos etiquetados) se verificaron contra `sciencec check`. Lo que no se
+> puede verificar todavía son los **nombres**: ninguna de estas librerías
+> existe.
+
 **[Parte V — Toolchain](#parte-v--toolchain)** · 28 Package manager · 29 Logging y observabilidad · 30 Tooling · 31 Documentación · 32 Testing · 33 Diagnósticos · 34 Formatter · 35 Compatibilidad
 
-**[Parte VI — Roadmap](#parte-vi--roadmap)** · 36 Prioridades · 37 Las trece fases
+**[Parte VI — Roadmap](#parte-vi--roadmap)** · 35bis Dónde estamos hoy, medido · 36 Prioridades · 37 Las trece fases
 
 **[Parte VII — Acuerdo de trabajo](#parte-vii--acuerdo-de-trabajo)** · 38 Reglas · 39 Lo que no hay que hacer · 40 Definition of Done
 
@@ -731,38 +741,290 @@ Debe evitar imports excesivos para operaciones fundamentales.
 
 ### 13.3 `string`
 
-Responsabilidades:
+Responsabilidades: `String`, UTF-8, slicing, búsqueda, concatenación, formateo,
+parsing textual.
 
-- String
-- UTF-8
-- slicing
-- búsqueda
-- concatenación
-- formateo
-- parsing textual
+> **Decisión pendiente que bloquea la mitad de esto.** Hoy no hay concatenación
+> de `String`: `"a" + "b"` reporta `SC0535` honestamente porque `Add` está
+> declarada sin métodos a propósito — la aritmética numérica depende de que
+> siga así para saltarse el despacho por método. Declarar `Add.add` sin
+> resolver eso rompe el `+` de los números. Ver `STDLIB-DECISIONS.md`.
+
+**UTF-8 es la decisión que ordena la API.** `length` devuelve **bytes**, no
+caracteres, y eso tiene que estar en el nombre o en la nota de cada método que
+lo toque; una API que finge que un `String` es una secuencia de caracteres es
+la que produce el bug que aparece recién cuando alguien escribe en árabe.
+Indexar por byte puede caer en medio de un punto de código: por eso el slicing
+devuelve `(String)?` y no `String`.
+
+```science
+String has:
+    def new() -> String
+    def from_bytes(bytes: &Array[U8]) -> (String, Error?)
+
+    # Medidas. Tres, porque son tres preguntas distintas.
+    def length(self) -> Int                      # bytes
+    def chars_count(self) -> Int                 # puntos de código — O(n)
+    def is_empty(self) -> Bool
+
+    # Construcción.
+    def push_str(mutable self, other: &String)
+    def push_char(mutable self, c: Char)
+    def truncate(mutable self, bytes: Int)
+    def clear(mutable self)
+    def concat(self, other: &String) -> String
+
+    # Búsqueda.
+    def contains(self, needle: &String) -> Bool
+    def starts_with(self, prefix: &String) -> Bool
+    def ends_with(self, suffix: &String) -> Bool
+    def find(self, needle: &String) -> Int?      # offset en bytes
+    def rfind(self, needle: &String) -> Int?
+
+    # Slicing. `null` si un extremo cae dentro de un punto de código.
+    def slice(self, from: Int, to: Int) -> (String)?
+
+    # Transformación.
+    def trim(self) -> String
+    def trim_start(self) -> String
+    def trim_end(self) -> String
+    def to_upper(self) -> String
+    def to_lower(self) -> String
+    def replace(self, from: &String, to: &String) -> String
+    def repeat(self, times: Int) -> String
+
+    # Partición.
+    def split(self, sep: &String) -> Array[String]
+    def lines(self) -> Array[String]
+    def chars(self) -> Array[Char]
+    def bytes(self) -> Array[U8]
+
+    # Parsing. Par falible: el texto del usuario no es de fiar.
+    def parse_int(self) -> (Int, Error?)
+    def parse_float(self) -> (F64, Error?)
+    def parse_bool(self) -> (Bool, Error?)
+```
+
+`join` no es método de `String` sino de `Array[String]`, porque el receptor
+natural es la colección: `partes.join(", ")`.
+
+**En código real** — parsear un archivo de configuración `clave = valor`:
+
+```science
+def parse_config(text: &String) -> (Map[String, String], Error?):
+    let mutable out be Map.new()
+
+    for line in text.lines():
+        let trimmed be line.trim()
+
+        # Comentarios y líneas en blanco.
+        if trimmed.is_empty() or trimmed.starts_with("#"):
+            continue
+
+        let at be trimmed.find("=")
+        if not at?:
+            return (out, ParseError("línea sin `=`"))
+
+        let key be trimmed.slice(0, at)
+        let value be trimmed.slice(at + 1, trimmed.length())
+        if not key? or not value?:
+            return (out, ParseError("límite de carácter inválido"))
+
+        out.insert(key.trim(), value.trim())
+
+    (out, null)
+```
+
+Dos cosas que este ejemplo muestra a propósito: `find` devuelve `Int?` y hay
+que probarlo, y `slice` devuelve `(String)?` porque un extremo puede caer en
+medio de un punto de código UTF-8. Nada de eso es ceremonia — es el error que
+aparece recién cuando alguien pone un acento en la clave.
 
 ---
 
 ### 13.4 `collections`
 
-Debe proporcionar, como mínimo:
-
-- Array
-- Map
-- Set
-- Queue
-- List
-- estructuras genéricas adicionales cuando sean necesarias
-
-Debe soportar una API consistente con el sistema de tipos de Science.
-
-Ejemplos:
+Mínimo: `Array`, `Map`, `Set`, `Queue`, `List`, y estructuras genéricas
+adicionales cuando hagan falta. API consistente con el sistema de tipos.
 
 ```science
 Array[Int]
-Map[String, Float]
+Map[String, F64]
 Set[String]
 ```
+
+**El acceso devuelve `T?` y no `T`.** Es la decisión que más se nota al
+escribir: `get` fuera de rango no entra en pánico, devuelve `null`, y el
+lenguaje ya tiene `if x?:` para eso. El índice `a[i]` sí entra en pánico,
+porque es la forma que dice "yo sé que está".
+
+```science
+Array[T] has:
+    def new() -> Array[T]
+    def with_capacity(n: Int) -> Array[T]
+    def filled(value: T, n: Int) -> Array[T] where T: Clone
+
+    def length(self) -> Int
+    def is_empty(self) -> Bool
+    def capacity(self) -> Int
+
+    def get(self, i: Int) -> (&T)?
+    def get_mut(mutable self, i: Int) -> (&mut T)?
+    def first(self) -> (&T)?
+    def last(self) -> (&T)?
+
+    def push(mutable self, value: T)
+    def pop(mutable self) -> T?
+    def insert(mutable self, i: Int, value: T) -> Error?
+    def remove(mutable self, i: Int) -> T?
+    def clear(mutable self)
+    def truncate(mutable self, n: Int)
+    def extend(mutable self, other: Array[T])
+
+    def contains(self, value: &T) -> Bool where T: Eq
+    def index_of(self, value: &T) -> Int? where T: Eq
+    def sort(mutable self) where T: Ord
+    def sort_by(mutable self, less: (&T, &T) -> Bool)
+    def reverse(mutable self)
+
+    def slice(self, from: Int, to: Int) -> (&Array[T])?
+    def concat(self, other: &Array[T]) -> Array[T] where T: Clone
+
+    # La puerta a las cadenas. `Array` NO lleva `map`/`filter` propios:
+    # esa vocabulario vive en la cadena. Ver abajo.
+    def iterate(self) -> Iterate[Item = &T]
+
+Array[String] has:
+    def join(self, sep: &String) -> String
+```
+
+#### El vocabulario de cadenas, que es cerrado
+
+`collections-and-chains.md` §1.4 manda sobre esto y **el conjunto es cerrado a
+propósito**. Los nombres no son los de Rust ni los de Python, y las diferencias
+son decisiones, no descuidos:
+
+| En vez de | Science usa | Por qué |
+|---|---|---|
+| `filter(p)` | `keep(p)` **y** `discard(p)` | Un predicado negado es la verruga de legibilidad más común al filtrar |
+| `filter_map` | `map` + `keep_some()` | Dos palabras honestas en vez de un combinador |
+| `fold` | `reduce(inicial, f)` | Siempre con valor inicial: la variante sin él devuelve un nullable que nadie maneja |
+| `min`/`max` | `minimum()`/`maximum()` | Sin abreviaturas (§4.3) |
+| `step_by` | `every(n)` | Nombrado por lo que el usuario hace: un frame de cada diez |
+| `dedup` | `unique()` / `unique(by:)` | — |
+| `len()` sobre un stream | `count()` | `length()` es O(1); contar un stream lo consume. Dos nombres mantienen la diferencia visible |
+| `chain` | `followed_by(other)` | — |
+| `enumerate` | `numbered()` | — |
+| `flat_map` | `expand(f)` | Fusionado, porque el intermedio nunca se quiere |
+
+**Dos closures, y ninguna lleva flecha.** `each` nombra el sujeto sin
+declararlo; `nombre giving expresión` lo declara cuando `each` no alcanza:
+
+```science
+def titulares(docs: &Array[Doc]) -> Array[String]:
+    docs
+        .iterate()
+        .discard(each.is_empty())
+        .map(each.title)
+        .take(5)
+        .collect()
+
+def por_longitud(docs: &Array[Doc]) -> Array[String]:
+    docs
+        .iterate()
+        .map(doc giving doc.summarize())
+        .sorted(by: line giving line.length())
+        .collect()
+```
+
+**Adaptadores propios del trabajo científico**, que justifican que el conjunto
+cerrado los incluya en vez de dejarlos a una librería:
+
+```science
+# Minibatching: piezas disjuntas.
+let lotes be muestras.iterate().batches(32).collect()
+
+# Ventanas solapadas: medias móviles, lags, frames de espectrograma.
+let medias be serie
+    .iterate()
+    .windows(20)
+    .map(w giving w.iterate().sum() / 20.0)
+    .collect()
+
+# Top-k.
+let mejores be candidatos
+    .iterate()
+    .sorted(by: each.score)
+    .reverse()
+    .take(10)
+    .collect()
+
+# Features junto a labels, y numeradas para reportar progreso.
+let pares be x.iterate().zip(y.iterate()).numbered().collect()
+```
+
+**Las tres políticas de error tienen nombre en el sitio de la llamada**, que es
+donde se decide qué hacer con una fila mala:
+
+```science
+let buenas be filas.iterate().keep_ok().collect()            # descartar
+let todas, err be filas.iterate().collect_or_error()         # parar en la 1ª
+let resultado be filas.iterate().partition_results()         # las dos mitades
+```
+
+**Laziness:** los adaptadores no hacen trabajo; los terminales corren la
+cadena. `sorted()` y `reverse()` son barreras que bufferean, y están
+documentadas como tales.
+
+```science
+Map[K, V] has:
+    def new() -> Map[K, V]
+
+    def length(self) -> Int
+    def is_empty(self) -> Bool
+
+    def get(self, key: &K) -> (&V)?
+    def get_mut(mutable self, key: &K) -> (&mut V)?
+    def contains_key(self, key: &K) -> Bool
+
+    def insert(mutable self, key: K, value: V) -> V?   # el anterior, si había
+    def remove(mutable self, key: &K) -> V?
+    def clear(mutable self)
+
+    # `or_insert` es el que evita el doble lookup del patrón
+    # "si no está, ponelo". Sin él, todo el mundo escribe dos búsquedas.
+    def or_insert(mutable self, key: K, default: V) -> &mut V
+
+    def keys(self) -> Array[&K]
+    def values(self) -> Array[&V]
+    def entries(self) -> Array[(&K, &V)]
+
+Set[T] has:
+    def new() -> Set[T]
+    def length(self) -> Int
+    def is_empty(self) -> Bool
+    def contains(self, value: &T) -> Bool
+    def insert(mutable self, value: T) -> Bool     # true si no estaba
+    def remove(mutable self, value: &T) -> Bool
+    def union(self, other: &Set[T]) -> Set[T]
+    def intersection(self, other: &Set[T]) -> Set[T]
+    def difference(self, other: &Set[T]) -> Set[T]
+    def is_subset_of(self, other: &Set[T]) -> Bool
+
+Queue[T] has:
+    def new() -> Queue[T]
+    def length(self) -> Int
+    def is_empty(self) -> Bool
+    def push_back(mutable self, value: T)
+    def push_front(mutable self, value: T)
+    def pop_front(mutable self) -> T?
+    def pop_back(mutable self) -> T?
+    def peek_front(self) -> (&T)?
+    def peek_back(self) -> (&T)?
+```
+
+**`Map` y `Set` necesitan `Hash` antes que nada de esto compile**, y `Hash` es
+una de las trece interfaces del preludio que hoy son nombres sin métodos.
 
 ---
 
@@ -785,36 +1047,100 @@ No exponer primitivas peligrosas si pueden mantenerse encapsuladas.
 
 ### 14.1 `math`
 
-Debe incluir:
+```science
+math has:
+    # Trigonometría.
+    def sin(x: F64) -> F64
+    def cos(x: F64) -> F64
+    def tan(x: F64) -> F64
+    def asin(x: F64) -> F64
+    def acos(x: F64) -> F64
+    def atan(x: F64) -> F64
+    def atan2(y: F64, x: F64) -> F64
+    def sinh(x: F64) -> F64
+    def cosh(x: F64) -> F64
+    def tanh(x: F64) -> F64
 
-- sin
-- cos
-- tan
-- asin
-- acos
-- atan
-- atan2
-- sinh
-- cosh
-- tanh
-- exp
-- log
-- log10
-- sqrt
-- pow
-- abs
-- floor
-- ceil
-- round
-- constantes matemáticas
-- funciones especiales cuando sea razonable
+    # Exponencial y logaritmo.
+    def exp(x: F64) -> F64
+    def exp2(x: F64) -> F64
+    def expm1(x: F64) -> F64            # exp(x)-1 preciso cerca de 0
+    def log(x: F64) -> F64
+    def log2(x: F64) -> F64
+    def log10(x: F64) -> F64
+    def log1p(x: F64) -> F64            # log(1+x) preciso cerca de 0
+    def pow(x: F64, y: F64) -> F64
+    def sqrt(x: F64) -> F64
+    def cbrt(x: F64) -> F64
+    def hypot(x: F64, y: F64) -> F64    # sin overflow intermedio
 
-Funciones especiales deseadas:
+    # Redondeo y signo.
+    def abs(x: F64) -> F64
+    def floor(x: F64) -> F64
+    def ceil(x: F64) -> F64
+    def round(x: F64) -> F64
+    def trunc(x: F64) -> F64
+    def sign(x: F64) -> F64
+    def copysign(x: F64, y: F64) -> F64
 
-- gamma
-- bessel
-- erf
-- etc.
+    # Clasificación. Un lenguaje científico las necesita explícitas.
+    def is_nan(x: F64) -> Bool
+    def is_infinite(x: F64) -> Bool
+    def is_finite(x: F64) -> Bool
+
+    # Especiales.
+    def gamma(x: F64) -> F64
+    def lgamma(x: F64) -> F64
+    def erf(x: F64) -> F64
+    def erfc(x: F64) -> F64
+    def bessel_j(n: Int, x: F64) -> F64
+    def bessel_y(n: Int, x: F64) -> F64
+```
+
+Constantes: `PI`, `TAU`, `E`, `SQRT_2`, `LN_2`, `LN_10`, `INFINITY`, `NAN`,
+`EPSILON`.
+
+**Las cuatro que la gente olvida y son la razón de tener una `math` propia.**
+`expm1`, `log1p`, `hypot` y `cbrt` no son adornos: son las versiones
+numéricamente estables de cosas que uno escribiría a mano y mal. `log(1+x)`
+con `x = 1e-16` da `0`; `log1p(1e-16)` da `1e-16`. Un lenguaje que se presenta
+como científico y obliga a su usuario a saber eso ya perdió el argumento.
+
+**`atan2` es la primera prueba de la Decisión 2.3 sobre préstamos** —
+`STDLIB-DECISIONS.md` la cita como el único precedente existente sobre si
+`other` va prestado.
+
+**En código real** — log-verosimilitud gaussiana, que es donde se ven las
+cuatro funciones estables de arriba:
+
+```science
+def log_likelihood(x: &Array[F64], mu: F64, sigma: F64) -> F64:
+    let n be x.length()
+    let term be -0.5 * math.log(2.0 * math.PI) - math.log(sigma)
+
+    let mutable total be 0.0
+    for value in x:
+        let z be (value - mu) / sigma
+        total be total + term - 0.5 * z * z
+
+    total
+
+# Estable cerca de cero, que es donde importa.
+def log_sum_exp(values: &Array[F64]) -> F64:
+    let peak be values.iterate().maximum()
+    if not peak?:
+        return math.NEG_INFINITY
+
+    let mutable acc be 0.0
+    for v in values:
+        acc be acc + math.exp(v - peak)
+
+    peak + math.log(acc)
+```
+
+`log_sum_exp` es el patrón que justifica la librería entera: escrito
+ingenuamente como `log(sum(exp(v)))` desborda con valores perfectamente
+normales, y todo el mundo lo escribe ingenuamente la primera vez.
 
 ---
 
@@ -888,35 +1214,144 @@ No asumir que todo algoritmo estadístico debe formar parte de `core`.
 
 ### 15.1 `tensor`
 
-Esta debe ser una de las piezas centrales del ecosistema.
+Una de las piezas centrales del ecosistema, y **la que bloquea la
+interoperabilidad con Python** (ver [23.2](#232-python-ffi)).
 
-Debe soportar:
-
-- tensores N-dimensionales
-- shape
-- dtype
-- strides
-- indexing
-- slicing
-- reshape
-- transpose
-- broadcast
-- reduce
-- concatenate
-- stack
-- split
-- gather/scatter cuando sea viable
-- device
-- CPU/GPU backends
-
-Ejemplos:
+> **Dos requisitos no negociables**, de `python-interop.md` §2. Son baratos si
+> se respetan desde el primer commit y carísimos de retrofitear:
+>
+> 1. La cabecera de runtime de un tensor es **campo por campo** un `DLTensor`:
+>    puntero a datos, tipo e id de dispositivo, rango, dtype, forma, strides,
+>    offset en bytes.
+> 2. Las variables de forma que no sean constantes de compilación son
+>    **recuperables en runtime** desde esa cabecera.
+>
+> Diseñar el tensor sin mirar esto es garantizar que el día que se quiera
+> hablar con NumPy haya que copiar cada array.
 
 ```science
-let x be tensor.ones([32, 784])
-let y be tensor.randn([784, 256])
+Tensor[T, S] has:
+    # Construcción.
+    def zeros(shape: &Array[Int]) -> Tensor[T, S]
+    def ones(shape: &Array[Int]) -> Tensor[T, S]
+    def full(shape: &Array[Int], value: T) -> Tensor[T, S]
+    def empty() -> Tensor[T, S]
+    def from_array(data: Array[T], shape: &Array[Int]) -> (Tensor[T, S], Error?)
+    def arange(start: T, stop: T, step: T) -> Tensor[T, S]
+    def linspace(start: T, stop: T, n: Int) -> Tensor[T, S]
+    def eye(n: Int) -> Tensor[T, S]
 
+    # Metadatos — los que la membrana de Python lee de la cabecera.
+    def shape(self) -> Array[Int]
+    def strides(self) -> Array[Int]
+    def rank(self) -> Int
+    def size(self) -> Int
+    def dtype(self) -> DType
+    def device(self) -> Device
+    def is_contiguous(self) -> Bool
+
+    # Forma. Vistas donde se puede, copia sólo donde hay que.
+    def reshape(self, shape: &Array[Int]) -> (Tensor[T, S], Error?)
+    def transpose(self, axes: &Array[Int]) -> (Tensor[T, S], Error?)
+    def permute(self, axes: &Array[Int]) -> (Tensor[T, S], Error?)
+    def squeeze(self, axis: Int?) -> Tensor[T, S]
+    def unsqueeze(self, axis: Int) -> Tensor[T, S]
+    def broadcast_to(self, shape: &Array[Int]) -> (Tensor[T, S], Error?)
+    def contiguous(self) -> Tensor[T, S]
+
+    # Indexado y selección.
+    def get(self, index: &Array[Int]) -> T?
+    def slice(self, ranges: &Array[Range]) -> (Tensor[T, S], Error?)
+    def gather(self, axis: Int, index: &Tensor[I64, S]) -> (Tensor[T, S], Error?)
+    def scatter(mutable self, axis: Int, index: &Tensor[I64, S],
+                src: &Tensor[T, S]) -> Error?
+    def masked_select(self, mask: &Tensor[Bool, S]) -> Tensor[T, S]
+
+    # Combinación.
+    def concat(parts: &Array[Tensor[T, S]], axis: Int) -> (Tensor[T, S], Error?)
+    def stack(parts: &Array[Tensor[T, S]], axis: Int) -> (Tensor[T, S], Error?)
+    def split(self, sizes: &Array[Int], axis: Int) -> (Array[Tensor[T, S]], Error?)
+
+    # Reducciones. `axis: null` reduce todo.
+    def sum(self, axis: Int?, keep_dims: Bool) -> Tensor[T, S]
+    def mean(self, axis: Int?, keep_dims: Bool) -> Tensor[T, S]
+    def prod(self, axis: Int?, keep_dims: Bool) -> Tensor[T, S]
+    def min(self, axis: Int?, keep_dims: Bool) -> Tensor[T, S]
+    def max(self, axis: Int?, keep_dims: Bool) -> Tensor[T, S]
+    def argmin(self, axis: Int?) -> Tensor[I64, S]
+    def argmax(self, axis: Int?) -> Tensor[I64, S]
+    def cumsum(self, axis: Int) -> Tensor[T, S]
+
+    # Elemento a elemento.
+    def map(self, f: (T) -> T) -> Tensor[T, S]
+    def clamp(self, low: T, high: T) -> Tensor[T, S]
+    def where(cond: &Tensor[Bool, S], a: &Tensor[T, S],
+              b: &Tensor[T, S]) -> (Tensor[T, S], Error?)
+
+    # Dispositivo.
+    def to_device(self, device: Device) -> (Tensor[T, S], Error?)
+    def to_dtype[U](self) -> Tensor[U, S]
+
+    # El borde con Python — §4 de `python-interop.md`.
+    def to_dlpack(self) -> PyObject
+    def from_dlpack(capsule: &PyObject) -> (Tensor[T, S], Error?)
+```
+
+```science
+let x be Tensor.ones([32, 784])
+let y be Tensor.randn([784, 256])
 let z be x @ y
 ```
+
+**`@` es el producto matricial y es una interfaz de operador** (`MatMul`), no
+una función. Hoy el backend lo rechaza por nombre: *"es una operación sobre
+arrays enteros y la Decisión 5 la vuelve una llamada de runtime que no
+existe"*.
+
+**Por qué las reducciones llevan `keep_dims` y no dos métodos.** Es el
+parámetro que decide si el resultado sigue siendo difundible contra el
+original. NumPy lo tiene por la misma razón, y las librerías que lo omitieron
+terminaron agregándolo con otro nombre.
+
+**En código real** — normalización por columna y una pasada hacia adelante:
+
+```science
+use tensor (Tensor)
+
+# Media y desvío por característica. `keep_dims: true` es lo que deja el
+# resultado difundible contra `x` en la línea siguiente.
+def standardize(x: &Tensor[F32, (n, d)]) -> (Tensor[F32, (n, d)], Error?):
+    let mu be x.mean(axis: 0, keep_dims: true)
+    let centered, err be x.sub(mu)
+    if err?:
+        return (Tensor.empty(), err)
+
+    let var be centered.mul(centered).mean(axis: 0, keep_dims: true)
+    let sd be var.add_scalar(1e-8).sqrt()
+
+    centered.div(sd)
+
+def forward(x: &Tensor[F32, (n, 784)],
+            w1: &Tensor[F32, (784, 256)],
+            b1: &Tensor[F32, (256)]) -> (Tensor[F32, (n, 256)], Error?):
+    let z, err be linalg.matmul(x, w1)
+    if err?:
+        return (Tensor.empty(), err)
+
+    # `b1` es (256,) y `z` es (n, 256): el broadcasting lo resuelve.
+    let biased, err be z.add(b1)
+    if err?:
+        return (Tensor.empty(), err)
+
+    (biased.clamp(0.0, math.INFINITY), null)   # ReLU
+```
+
+**Lo que muestra el ejemplo y no se ve en las firmas:** las formas están en el
+tipo — `Tensor[F32, (n, 784)]` — así que `matmul` contra un `(784, 256)` es un
+error de **compilación**, no un `ValueError` a los veinte minutos de
+entrenamiento. Ese es el argumento entero del lenguaje aplicado a una capa
+densa, y es lo que la membrana de Python convierte en **un** chequeo de
+dimensión en la puerta.
 
 ---
 
@@ -966,29 +1401,111 @@ let y be x + bias
 
 ### 16.1 `linalg`
 
-Debe incluir:
+No reimplementar desde cero algoritmos que puedan delegarse a BLAS/LAPACK u
+otros backends maduros.
 
-- matmul
-- dot
-- norm
-- inverse
-- solve
-- determinant
-- rank
-- transpose
-- QR
-- SVD
-- eigenvalues
-- eigenvectors
-- decomposiciones importantes
-
-Ejemplo:
+**Toda descomposición devuelve un par falible.** No es ceremonia: una matriz
+singular, una no cuadrada o una que no converge son entradas *normales* en
+trabajo científico, y una API que entra en pánico obliga a validar a mano antes
+de cada llamada — que es exactamente el chequeo que la librería ya hizo.
 
 ```science
-let U, S, Vt be linalg.svd(A)
+linalg has:
+    # Productos.
+    def matmul(a: &Tensor[T, S], b: &Tensor[T, S]) -> (Tensor[T, S], Error?)
+    def dot(a: &Tensor[T, S], b: &Tensor[T, S]) -> (T, Error?)
+    def outer(a: &Tensor[T, S], b: &Tensor[T, S]) -> Tensor[T, S]
+    def cross(a: &Tensor[T, S], b: &Tensor[T, S]) -> (Tensor[T, S], Error?)
+    def kron(a: &Tensor[T, S], b: &Tensor[T, S]) -> Tensor[T, S]
+
+    # Normas y medidas.
+    def norm(a: &Tensor[T, S], ord: Norm) -> F64
+    def trace(a: &Tensor[T, S]) -> (T, Error?)
+    def det(a: &Tensor[T, S]) -> (T, Error?)
+    def slogdet(a: &Tensor[T, S]) -> (T, T, Error?)   # signo y log|det|
+    def rank(a: &Tensor[T, S], tol: F64?) -> (Int, Error?)
+    def cond(a: &Tensor[T, S]) -> (F64, Error?)
+
+    # Resolución. `solve` antes que `inv`, y a propósito.
+    def solve(a: &Tensor[T, S], b: &Tensor[T, S]) -> (Tensor[T, S], Error?)
+    def lstsq(a: &Tensor[T, S], b: &Tensor[T, S]) -> (Tensor[T, S], Error?)
+    def inv(a: &Tensor[T, S]) -> (Tensor[T, S], Error?)
+    def pinv(a: &Tensor[T, S]) -> (Tensor[T, S], Error?)
+
+    # Descomposiciones.
+    def qr(a: &Tensor[T, S]) -> (Tensor[T, S], Tensor[T, S], Error?)
+    def svd(a: &Tensor[T, S]) -> (Tensor[T, S], Tensor[T, S], Tensor[T, S], Error?)
+    def lu(a: &Tensor[T, S]) -> (Tensor[T, S], Tensor[T, S], Tensor[T, S], Error?)
+    def cholesky(a: &Tensor[T, S]) -> (Tensor[T, S], Error?)
+    def eig(a: &Tensor[T, S]) -> (Tensor[T, S], Tensor[T, S], Error?)
+    def eigh(a: &Tensor[T, S]) -> (Tensor[T, S], Tensor[T, S], Error?)
+
+choice Norm:
+    Frobenius
+    Nuclear
+    L1
+    L2
+    LInf
+    P(F64)
 ```
 
-No reimplementar desde cero algoritmos que puedan delegarse a BLAS/LAPACK u otros backends maduros.
+```science
+let U, S, Vt, err be linalg.svd(A)
+if err?:
+    return (Tensor.empty(), err)
+```
+
+**`solve` existe para que nadie escriba `inv(A) @ b`.** Es más lento, es menos
+preciso, y es lo primero que hace todo el que viene de la notación matemática.
+Que `solve` esté antes en la lista y que `inv` lleve una nota diciéndolo es
+diseño de API, no documentación.
+
+**`slogdet` acompaña a `det` por la misma razón que `log1p` acompaña a `log`:**
+el determinante de una matriz grande desborda un `F64` mucho antes de que su
+logaritmo moleste a nadie, y la verosimilitud gaussiana —que es donde aparece—
+siempre quiere el logaritmo.
+
+**`eigh` no es una optimización de `eig`.** Para matrices simétricas garantiza
+autovalores reales y ordenados; `eig` sobre la misma matriz devuelve complejos
+con error de redondeo y sin orden. Elegir mal es un bug silencioso.
+
+**En código real** — PCA, que usa tres de las decisiones de arriba a la vez:
+
+```science
+use linalg
+use tensor (Tensor)
+
+def pca(x: &Tensor[F32, (n, d)], k: Int) -> (Tensor[F32, (n, k)], Error?):
+    let centered, err be standardize(x)
+    if err?:
+        return (Tensor.empty(), err)
+
+    # `eigh` y no `eig`: la covarianza es simétrica por construcción, y
+    # sólo `eigh` garantiza autovalores reales y ordenados.
+    let cov, err be linalg.matmul(centered.transpose([1, 0]), centered)
+    if err?:
+        return (Tensor.empty(), err)
+
+    let values, vectors, err be linalg.eigh(cov.div_scalar(n - 1))
+    if err?:
+        return (Tensor.empty(), err)
+
+    let top, err be vectors.slice([Range.all(), Range.to(k)])
+    if err?:
+        return (Tensor.empty(), err)
+
+    linalg.matmul(centered, top)
+
+# Ajuste por mínimos cuadrados. `lstsq`, no `inv`.
+def fit(a: &Tensor[F64, (n, d)], b: &Tensor[F64, (n)]) -> (Tensor[F64, (d)], Error?):
+    linalg.lstsq(a, b)
+```
+
+**Lo que este ejemplo evita, y es el punto:** nadie escribió `inv(A) @ b`, y
+nadie llamó a `eig` sobre una matriz simétrica. Las dos son las trampas que
+todo el que llega desde la notación matemática pisa la primera vez, y las dos
+se evitan porque la API puso el nombre correcto más a mano que el incorrecto.
+Eso es diseño de API, no documentación.
 
 ---
 
@@ -1416,21 +1933,282 @@ No reimplementar desde cero librerías maduras si pueden ser consumidas mediante
 
 ### 23.2 `python-ffi`
 
-Objetivo estratégico:
+> **Estado.** Diseñado en detalle y **no empezado**. Las notas
+> `python-interop.md` (1453 líneas) y `python-from-science.md` (1405) deciden
+> esto entero; el compilador hoy no tiene `SC0455`, no reserva la palabra
+> `python`, y no existe `Tensor` ni nada de DLPack. Lo que sigue resume esas
+> notas y **manda sobre este documento** cuando difieran.
 
-permitir interoperar con:
+#### Por qué esta librería decide la adopción
 
-- NumPy
-- SciPy
-- scikit-learn
-- ecosistema Python
-- otras librerías científicas
+La tesis está en `python-interop.md` §1 y conviene no suavizarla:
 
-Esto puede acelerar mucho la adopción inicial del lenguaje.
+> *Nadie adopta un lenguaje científico entero. Lo adoptan una función caliente
+> por vez, desde adentro del programa Python que ya tienen.*
 
-La arquitectura debe evitar convertir Science en un wrapper de Python.
+De ahí sale el criterio de éxito, que es medible: **una persona con un programa
+NumPy que funciona reemplaza una función por una de Science en una tarde, deja
+todo lo demás igual, y obtiene la velocidad sin una copia.**
 
-La interoperabilidad debe ser una puerta de entrada, no el núcleo del diseño.
+Eso implica que la dirección principal **no** es la que primero se le ocurre a
+uno. Son dos, y tienen prioridades distintas:
+
+| | Dirección | Para qué | Prioridad |
+|---|---|---|---|
+| **A** | Science llamado **desde** Python | Adopción. Reemplazar una función caliente | **Primera** |
+| **B** | Python llamado **desde** Science | Alcance. Llegar a pandas, sklearn, astropy | Segunda |
+
+La arquitectura debe evitar convertir Science en un wrapper de Python: la
+interoperabilidad es una puerta de entrada, no el núcleo del diseño.
+
+#### El principio que gobierna el borde
+
+> **El límite es donde cada garantía estática se convierte en exactamente una
+> verificación dinámica.**
+
+Adentro de la función Science no se re-verifica nada que el compilador ya
+probó; afuera rigen las reglas de Python. La membrana es fina, es generada, y
+el usuario no la escribe.
+
+| Garantía del lado Science | En qué se convierte en el borde |
+|---|---|
+| Tipos estáticos en la firma | Una conversión por argumento; `TypeError` al fallar |
+| Formas estáticas | Un chequeo de dimensión por variable de forma; `ValueError` |
+| `Error?` final en retorno múltiple | Devuelve `T`, o lanza una excepción generada |
+| `T?` | Devuelve `T`, o `None` |
+| Propiedad de un buffer | Un *deleter* DLPack que libera por el dueño correcto |
+| Región de un préstamo | Una referencia fuerte al objeto Python que la enraíza |
+| `&mut T` | Un contador de exportación verificado en la membrana |
+| "Esta función no toca Python" | Suelta el GIL durante la llamada |
+| `panic` | Desenrolla hasta el shim y lanza `SciencePanic` |
+
+#### Dirección A — Science desde Python
+
+Se marca una función como exportada y el build produce un módulo de extensión
+de CPython importable. Los arrays cruzan **sin copia**, por DLPack y el
+protocolo de buffers, en las dos direcciones.
+
+```python
+import mimodulo, numpy as np
+
+puntos = np.random.rand(100_000, 128).astype(np.float32)
+salida = mimodulo.reducir(puntos)     # sin copia; el GIL se suelta adentro
+```
+
+#### Dirección B — Python desde Science
+
+Es la que alcanza las librerías **sin API de C**, que son casi todo el Python
+científico por encima de la capa de arrays: pandas, scikit-learn, astropy,
+matplotlib.
+
+```science
+use python "numpy" as numpy
+use python "sklearn.decomposition" (PCA)
+
+def reducir(puntos: &Tensor[F32, (n, d)]) -> (Tensor[F32, (n, 8)], Error?):
+    let modelo, err be PCA(n_components: 8)
+    if err?:
+        return (Tensor.empty(), err)
+
+    let ajustado, err be modelo.fit_transform(puntos)
+    if err?:
+        return (Tensor.empty(), err)
+
+    return (ajustado.into_tensor(), null)
+```
+
+El diseño es deliberadamente mínimo, y cada punto es una decisión:
+
+- **Un solo tipo opaco, `PyObject`**, con las interfaces `FromPython` y
+  `ToPython` para convertir. **No se intenta tipar Python.**
+- **Toda llamada falible devuelve un par** `-> (PyObject, PyError?)`, y quien
+  llama prueba el error donde ocurre.
+- **`PyError implements Error`.** Una función declarada `-> (T, Error?)` acepta
+  una falla de Python sin conversión escrita en el retorno. Una función que
+  puede fallar en Python y en Science tiene **un solo tipo de error y un solo
+  chequeo**.
+- El acceso a atributos y las llamadas van por el protocolo dinámico.
+
+**Métodos del tipo `PyObject`:**
+
+```science
+PyObject has:
+    def attr(self, name: &String) -> (PyObject, PyError?)
+    def set_attr(mutable self, name: &String, value: &PyObject) -> PyError?
+    def call(self, args: &Array[PyObject]) -> (PyObject, PyError?)
+    def call_kw(self, args: &Array[PyObject],
+                kw: &Map[String, PyObject]) -> (PyObject, PyError?)
+    def index(self, key: &PyObject) -> (PyObject, PyError?)
+    def len(self) -> (Int, PyError?)
+    def iter(self) -> (PyIter, PyError?)
+    def is_none(self) -> Bool
+    def type_name(self) -> String
+
+interface FromPython:
+    def from_python(value: &PyObject) -> (Self, PyError?)
+
+interface ToPython:
+    def to_python(self) -> (PyObject, PyError?)
+```
+
+#### El fallo de esta dirección, dicho antes que sus virtudes
+
+`python-interop.md` §6.1 los enumera y ninguno es menor:
+
+- **Un binario Science que embebe Python deja de ser autocontenido.** Necesita
+  un intérprete, de versión compatible, con los paquetes correctos,
+  encontrable en tiempo de ejecución. *La historia de despliegue pasa a ser la
+  de Python, que es justo de lo que los usuarios vienen huyendo.*
+- **Todo lo que viene de Python es dinámico.** Un `PyObject` es `any`. Cada
+  llamada a Python es un agujero en la historia de verificación, que es
+  exactamente la apuesta del lenguaje.
+- **El GIL se sostiene durante toda la llamada.** Una llamada a Python en un
+  bucle caliente serializa el programa.
+- **Los errores también se vuelven dinámicos**: un `PyError` con nombre de tipo
+  y mensaje, no un `choice` contra el que el compilador pueda verificar un
+  `match`.
+
+#### Hosted y standalone, que no reciben la misma respuesta
+
+- **Hosted** — el código Science se compiló a un módulo de extensión y corre
+  dentro de un proceso Python que ya existe. Todos los costos de arriba salvo
+  los dinámicos **se evaporan**: el intérprete ya está inicializado, los
+  paquetes ya están instalados, el despliegue ya es el de Python. Llamar a
+  Python acá es ordinario y está permitido.
+- **Standalone** — un binario AOT que arranca su propio intérprete. Permitido
+  **sólo con opt-in explícito**.
+
+> **Decisión 10** (`python-from-science.md` §4.5). `use python` se permite en
+> un build standalone detrás de un opt-in por programa, y el binario declara
+> que no es autocontenido. Es propiedad del paquete **raíz** únicamente: una
+> dependencia no puede meter a un programa en embeber un intérprete.
+>
+> **`SC0455` se redefinió**: ya no significa *"`use python` en standalone"*,
+> una prohibición, sino *"`use python` en standalone sin tabla `[python]`"*,
+> una declaración faltante.
+
+```toml
+[python]
+embed    = true
+version  = ">= 3.11, < 3.14"
+isolated = true
+
+[python.requires]
+numpy        = ">= 1.26"
+scikit-learn = ">= 1.4, < 2"
+```
+
+El veto original se revisó por un argumento que vale la pena conservar: tres de
+sus cuatro razones las terminó pagando otra nota para otro propósito, y *una
+prohibición cuyas razones declaradas ya fueron pagadas por otro debería
+revisarse*.
+
+**Los bloques `python { … }` en línea son esta misma decisión con otra grafía**
+y se responden en `syntax-revision-2.md` §8.3–§8.5, que además objeta algo que
+esta sección no: código extranjero dentro de un `.science` es invisible para
+`black`, `mypy` y `pytest`, y obliga al formateador y al servidor de lenguaje
+de Science a entender tres lenguajes o a rendirse dentro de esas regiones. La
+conclusión de allá es un directorio `foreign/*.py`, con la forma en línea como
+azúcar si alguna vez se quiere.
+
+#### La cadena de dependencias — qué tiene que existir antes
+
+Esto es lo que convierte la sección en un plan y no en un deseo. `use python
+"numpy"` no se puede empezar hasta que exista lo de abajo, **en este orden**:
+
+| # | Pieza | Por qué la bloquea | Estado |
+|---|---|---|---|
+| 1 | Backend completo de F0 | Hoy no se puede ni imprimir un tipo de usuario | 15/20 ejemplos |
+| 2 | `Formatter` / `Display` | Sin esto no hay mensaje de error legible en la membrana | Decidido, sin implementar |
+| 3 | ABI de C exportable | **El shim de Python se escribe contra él**, no contra el backend | `extern "C"` anda |
+| 4 | `Tensor` con cabecera DLPack | Requisito 1 de `python-interop.md` §2 | No existe |
+| 5 | Variables de forma recuperables en runtime | Requisito 2: la membrana chequea la forma una vez | No existe |
+| 6 | Sistema de efectos | Decide **dónde se suelta el GIL** (§5.2) | No existe |
+| 7 | Gestor de paquetes | `[python.requires]` no significa nada sin él | Diseñado |
+| 8 | Dirección A — módulo de extensión | Es la que justifica todo el resto | — |
+| 9 | Dirección B — `use python` hosted | Casi gratis una vez que A existe | — |
+| 10 | Dirección B — standalone + Decisión 10 | Descubrimiento de intérprete, venvs, empaquetado | — |
+
+Los dos requisitos que la nota le pone al tipo `Tensor` son exactos y conviene
+tenerlos a la vista al diseñarlo, porque son baratos si se respetan desde el
+principio y carísimos de retrofitear:
+
+1. La cabecera de runtime de un tensor es **campo por campo** un `DLTensor`:
+   puntero a datos, tipo y id de dispositivo, rango, dtype, forma, strides,
+   offset en bytes.
+2. Las variables de forma que no sean constantes de compilación son
+   **recuperables en runtime** desde esa cabecera.
+
+#### Las dos direcciones, en un programa completo
+
+Este es el caso de adopción entero: un programa NumPy que existe, una función
+caliente reemplazada, y una llamada de vuelta a scikit-learn desde adentro.
+
+**El lado Science** (`acelerado.science`):
+
+```science
+use python "sklearn.decomposition" (PCA)
+use tensor (Tensor)
+use linalg
+
+# `export` marca lo que sale al módulo de extensión.
+export def distancias(puntos: &Tensor[F32, (n, d)],
+                      centro: &Tensor[F32, (d)]) -> (Tensor[F32, (n)], Error?):
+    let delta, err be puntos.sub(centro)
+    if err?:
+        return (Tensor.empty(), err)
+
+    (delta.mul(delta).sum(axis: 1, keep_dims: false).sqrt(), null)
+
+# Esta llama a Python desde Science: sólo legal en hosted, o con
+# `[python] embed = true` en `science.toml`.
+export def reducir(puntos: &Tensor[F32, (n, d)]) -> (Tensor[F32, (n, 8)], Error?):
+    let modelo, err be PCA(n_components: 8)
+    if err?:
+        return (Tensor.empty(), err)
+
+    let ajustado, err be modelo.fit_transform(puntos)
+    if err?:
+        return (Tensor.empty(), err)
+
+    ajustado.into_tensor()
+```
+
+**El lado Python**, que es el programa que ya existía:
+
+```python
+import numpy as np
+import acelerado                      # el módulo compilado desde .science
+
+puntos = np.random.rand(1_000_000, 128).astype(np.float32)
+centro = puntos.mean(axis=0)
+
+d = acelerado.distancias(puntos, centro)   # sin copia; suelta el GIL
+print(d.shape, d.dtype)                    # (1000000,) float32
+
+try:
+    z = acelerado.reducir(puntos)
+except ValueError as e:                    # la forma no cuadró en la puerta
+    print("forma inválida:", e)
+```
+
+**Qué pasó en cada línea del borde, que es todo el diseño en un párrafo.**
+`puntos` entró por DLPack sin copiarse; su forma `(1_000_000, 128)` se
+verificó **una vez** contra `(n, d)` y ligó `n` y `d`; adentro de `distancias`
+no se verificó nada más porque el compilador ya lo probó; el GIL se soltó
+porque esa función no toca Python; el `Error?` del retorno se convirtió en la
+excepción que el `except` atrapa; y el array que volvió comparte el buffer, con
+un *deleter* que libera por el dueño correcto.
+
+`reducir` es distinta en una sola cosa: lleva el efecto `python`, así que **no**
+suelta el GIL y no puede ir en una región paralela.
+
+---
+
+**Fuera de alcance, y dicho para que nadie lo asuma:** R, Julia, MATLAB y la
+JVM. Y el tipo tensor en sí, el sistema de efectos, los targets de GPU y el
+gestor de paquetes son de notas hermanas; esta sección declara lo que necesita
+de ellas y lo marca como dependencia en vez de diseñarlo.
 
 ---
 
@@ -2114,6 +2892,89 @@ Sin embargo, una vez establecida una versión de lenguaje:
 > El original tenía las prioridades (§34) y las fases (§33) como dos secciones
 > separadas que decían lo mismo en dos formatos. Aquí la lista de prioridades va
 > primero, como resumen, y las fases después, como el detalle de esa misma lista.
+
+## 35bis. Dónde estamos hoy, medido
+
+> **Por qué esta sección está en un documento de destino.** Todo lo de arriba
+> es catálogo: métodos que ninguna máquina ha ejecutado. Esta sección es lo
+> único aquí que se midió corriendo el compilador, y existe para que nadie
+> lea la Parte IV y crea que falta poco. Fecha de la medición: **2026-09-22**.
+
+### El número honesto
+
+**15 de 20 ejemplos** compilan, enlazan, corren y tienen su salida fijada byte
+por byte. El denominador es 20 y no 22 porque dos nunca van a construir, y eso
+está decidido: `17_modules` importa módulos que la biblioteca F0 no tiene, y
+`20_extern` es una biblioteca sin `main` a propósito, que `SC0403` existe para
+rechazar.
+
+Suite: **2223 tests en verde**. Correrla con paralelismo acotado
+(`-- --test-threads=4`): a carga completa el directorio de scratch compartido
+compite consigo mismo y falla un puñado distinto de tests en cada corrida, con
+conjuntos disjuntos. Se lee igual que una regresión y no lo es.
+
+### Los cinco que faltan, con el bloqueo real
+
+Cada uno está bisecado hasta la línea. Los mensajes de error del compilador
+**no** son de fiar para esto: tres de los cinco culpaban a la fase equivocada.
+
+| Ejemplo | Bloqueo real | Dónde |
+|---|---|---|
+| `07_generics` | `Clone::clone` sobre escalares (`Int`, `F64`, `Bool`, `Char`) no tiene camino de lowering | `science-codegen-llvm`, `science-codegen` |
+| `04_enums` | Una comparación de `String` se deletrea como `move` en vez de `copy` | `science-mir` |
+| `03_structs` | Const generics sustituidos en el cuerpo — el front end ya sale limpio | mono |
+| `06_traits` | `print` de un tipo de usuario: necesita `Display`/`Formatter` | decisión + 4 crates |
+| `00_kitchen_sink` | Cierres con capturas, `for` sobre `Iterate`, interfaces de operador, boxes | varios |
+
+**`07` es el más engañoso y conviene dejarlo escrito.** Su error dice *"nada ha
+monomorfizado"*. Es falso: la monomorfización funciona y está cableada desde
+commits anteriores. Verificado con la misma función genérica bajo el mismo
+bound — con `T := String` compila, enlaza, corre e imprime; con `T := Int`
+falla. Clonar un escalar `Copy` es una copia de valor, sin llamada ni vtable, y
+eso no está codificado en ninguna parte: `PRELUDE_METHODS` tiene fila para
+`("String","clone")` y ninguna para `Int`, así que cae a despacho dinámico por
+vtable y explota.
+
+### Las decisiones que bloquean, y que no son código
+
+Ninguna de estas se resuelve programando. Están en `STDLIB-DECISIONS.md`.
+
+1. **`Display`.** El spec decidió `display(self, into: mutable &Formatter)`, con
+   `Formatter` completamente especificado en `strings-formatting-and-docs.md`
+   §3.1. El corpus escribe `def display(self) -> String`. Uno de los dos está
+   mal. Bloquea `06`, y bloquea cualquier mensaje de error legible en la
+   membrana de Python.
+2. **`Eq`/`Ord`.** Si `other` va prestado. Aquí **no** hay contradicción de
+   spec — ninguna nota lo especifica —, es el corpus peleándose consigo mismo.
+3. **`Add` y las cadenas.** `"a" + "b"` no existe porque `Add` está sin métodos
+   a propósito: la aritmética numérica depende de eso para saltarse el despacho.
+
+### El orden que yo tomaría
+
+Las tres primeras son independientes entre sí y tocan crates distintos, así que
+se pueden hacer en paralelo sin colisiones:
+
+1. `Clone::clone` sobre escalares → **16/20**. Trabajo completamente
+   especificado, incertidumbre cero.
+2. `String` move-vs-copy en MIR → **17/20**.
+3. Const generics a través de la mono → **18/20**.
+4. Decidir `Display`, después implementarlo → **19/20**. La decisión primero.
+5. `00_kitchen_sink` → **20/20**. Es el último por construcción.
+
+Y una de infraestructura que no mueve el contador y ahorra horas: **el scratch
+compartido de los tests**. Hoy cuesta dos corridas y un rato descartar que un
+fallo sea propio.
+
+### La distancia hasta la Parte IV
+
+El catálogo de librerías empieza a ser escribible cuando el backend cierre F0.
+Hoy el compilador **no puede imprimir un tipo de usuario**, así que `tensor`,
+`linalg` y `python-ffi` están a varias capas. El orden de dependencias para
+Python está en [23.2](#232-python-ffi); el resumen es que la pieza que hay que
+diseñar bien *desde el principio* es la cabecera DLPack del tensor, porque es
+la única de la lista que es barata ahora y carísima después.
+
+---
 
 ## 36. Prioridades
 

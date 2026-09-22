@@ -1,0 +1,70 @@
+# future/06 - `os`, `time`, `net`, `http`, `thread`, `sync`, `parallel`
+# DREAM: §17.4, §21, §22.
+#
+# NOT BUILDABLE.
+
+use os
+use time
+use http
+use thread
+use sync
+use parallel
+
+# --- system -----------------------------------------------------------------
+
+def environment(name: &String) -> String?:
+    os.env(name)
+
+def elapsed_of[T](work: () -> T) -> (T, time.Duration):
+    let started be time.Instant.now()
+    let value be work()
+    (value, started.elapsed())
+
+# --- http -------------------------------------------------------------------
+
+# A request is built and then sent: the builder cannot forget a field, and
+# the send is the only fallible step.
+def fetch(url: &String) -> (String, Error?):
+    let response, err be http.Request
+        .get(url)
+        .header("accept", "application/json")
+        .timeout(time.Duration.seconds(30))
+        .send()
+    if err?:
+        return (String.new(), err)
+
+    if not response.status().is_success():
+        return (String.new(), HttpError(f"status {response.status().code()}"))
+
+    response.text()
+
+# --- parallelism ------------------------------------------------------------
+
+# `.parallel()` is a chain adapter, not a separate API. The closed set marks
+# every adapter safe, ordered, sequential or barrier, and `.parallel()`
+# refuses a chain containing a sequential one — so a parallel chain that
+# compiles computes the same value the serial one does.
+def sum_of_squares(xs: &Array[F64]) -> F64:
+    xs
+        .iterate()
+        .parallel()
+        .map(each * each)
+        .sum()
+
+# Explicit threads, for the cases a chain does not fit.
+def in_background[T](work: () -> T) -> thread.Handle[T]:
+    thread.spawn(work)
+
+# Shared mutable state is behind a lock and the lock owns the data, so there
+# is no way to read it without holding the lock.
+def counted(items: &Array[String]) -> Int:
+    let counter be sync.Mutex.new(0)
+
+    items
+        .iterate()
+        .parallel()
+        .for_each(item giving
+            counter.with(mutable total giving
+                total be total + item.length()))
+
+    counter.into_inner()

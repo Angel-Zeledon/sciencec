@@ -1,0 +1,103 @@
+# future/08 - `llm`, `tools`, `agent-loop`, `http-server`, `router`
+# DREAM: §26, §27.
+#
+# NOT BUILDABLE.
+
+use llm
+use tools
+use agents
+use http_server
+use router
+
+# --- tools ------------------------------------------------------------------
+
+# A tool is an ordinary function plus a schema, and the schema is derived
+# from the signature rather than written twice. `sciencec tools --json`
+# already does exactly this for `tool`-marked functions today, which is the
+# one piece of this file with a working ancestor.
+tool def search_papers(query: String, limit: Int) -> (Array[Paper], Error?):
+    ## Search the archive for papers matching a query.
+    ##
+    ## query: free text, matched against title and abstract
+    ## limit: how many results to return, at most 50
+    archive.search(query, limit.clamp(1, 50))
+
+type Paper:
+    title: String
+    year: Int
+    doi: String
+
+# --- a model call -----------------------------------------------------------
+
+def summarise(text: &String) -> (String, Error?):
+    let reply, err be llm.Chat
+        .model("claude-opus-5")
+        .system("You summarise abstracts in two sentences.")
+        .user(text)
+        .temperature(0.0)
+        .send()
+    if err?:
+        return (String.new(), err)
+
+    (reply.text(), null)
+
+# --- an agent loop ----------------------------------------------------------
+
+# The loop is a value with a bound on its steps. An agent that can run
+# forever is a bug the type system should be able to refuse to express.
+def research(question: &String) -> (String, Error?):
+    let mutable agent be agents.Loop
+        .model("claude-opus-5")
+        .tools([search_papers, summarise])
+        .max_steps(12)
+        .budget(tokens: 200_000)
+
+    let outcome, err be agent.run(question)
+    if err?:
+        return (String.new(), err)
+
+    match outcome:
+        Finished(answer): (answer, null)
+        StepsExhausted: (String.new(), AgentError("ran out of steps"))
+        BudgetExhausted: (String.new(), AgentError("ran out of budget"))
+
+# --- an HTTP service --------------------------------------------------------
+
+def serve(port: Int) -> Error?:
+    let routes be router.Router
+        .new()
+        .get("/health", handler giving handler.text("ok"))
+        .post("/summarise", summarise_handler)
+        .get("/papers/:doi", paper_handler)
+
+    http_server.Server
+        .bind(f"0.0.0.0:{port}")
+        .router(routes)
+        .middleware([
+            http_server.logging(),
+            http_server.request_id(),
+            http_server.timeout(seconds: 30),
+        ])
+        .listen()
+
+def summarise_handler(request: &http_server.Request) -> http_server.Response:
+    let body, err be request.json_field("text")
+    if err?:
+        return http_server.Response.bad_request(err.message())
+
+    let summary, err be summarise(body)
+    if err?:
+        return http_server.Response.server_error(err.message())
+
+    http_server.Response.json(summary)
+
+def paper_handler(request: &http_server.Request) -> http_server.Response:
+    let doi be request.path_parameter("doi")
+    if not doi?:
+        return http_server.Response.bad_request("missing doi")
+
+    let paper, err be archive.by_doi(doi)
+    if err?:
+        return http_server.Response.not_found(err.message())
+
+    http_server.Response.json(paper)

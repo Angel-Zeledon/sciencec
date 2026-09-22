@@ -1,0 +1,90 @@
+# future/04 - `autograd`, `nn`, `optim`, `model`
+# DREAM: §18.
+#
+# NOT BUILDABLE. None of these exist, and they sit on `tensor`, which also
+# does not.
+
+use tensor (Tensor)
+use nn
+use optim
+use autograd
+use model
+
+# A model is a record with a method, not a magic callable. `forward` is
+# spelled out because a reader should be able to find where the computation
+# happens without knowing a framework convention.
+type Classifier:
+    l1: nn.Linear
+    l2: nn.Linear
+
+Classifier has:
+    def new(inputs: Int, hidden: Int, classes: Int) -> Classifier:
+        Classifier(
+            l1: nn.Linear.new(inputs, hidden),
+            l2: nn.Linear.new(hidden, classes),
+        )
+
+    def forward(self, x: &Tensor[F32, (n, inputs)]) -> (Tensor[F32, (n, classes)], Error?):
+        let h, err be self.l1.forward(x)
+        if err?:
+            return (Tensor.empty(), err)
+
+        let a be nn.relu(h)
+        self.l2.forward(a)
+
+    def parameters(self) -> Array[autograd.Parameter]:
+        self.l1.parameters().concat(self.l2.parameters())
+
+# The training loop is written out. There is no `.fit()` that hides the four
+# lines that matter, because those four lines are what a scientist changes.
+def train(mutable net: Classifier,
+          x: &Tensor[F32, (n, inputs)],
+          y: &Tensor[I64, (n)],
+          epochs: Int) -> (Array[F32], Error?):
+    let mutable opt be optim.Adam.new(net.parameters(), lr: 0.001)
+    let mutable history be Array.with_capacity(epochs)
+
+    for epoch in 0..epochs:
+        let prediction, err be net.forward(x)
+        if err?:
+            return (history, err)
+
+        let loss, err be nn.cross_entropy(prediction, y)
+        if err?:
+            return (history, err)
+
+        opt.zero_gradients()
+        let err2 be autograd.backward(&loss)
+        if err2?:
+            return (history, err2)
+
+        opt.step()
+
+        history.push(loss.scalar())
+        print(f"epoch {epoch}: loss {loss.scalar()}")
+
+    (history, null)
+
+# Gradients are explicit and scoped. Outside a `recording` block nothing is
+# taped, so inference costs nothing and nobody has to remember a flag.
+def evaluate(net: &Classifier,
+             x: &Tensor[F32, (n, inputs)],
+             y: &Tensor[I64, (n)]) -> (F32, Error?):
+    let prediction, err be net.forward(x)
+    if err?:
+        return (0.0, err)
+
+    let guessed be prediction.argmax(axis: 1)
+    let correct be guessed
+        .iterate()
+        .zip(y.iterate())
+        .keep(pair giving pair.left is pair.right)
+        .count()
+
+    (correct.to_f32() / y.size().to_f32(), null)
+
+def save_and_load(net: &Classifier, path: &String) -> (Classifier, Error?):
+    let err be model.save(net, path)
+    if err?:
+        return (Classifier.new(0, 0, 0), err)
+    model.load(path)

@@ -1,0 +1,65 @@
+# future/07 - `c-ffi` and `python-ffi`
+# DREAM: §23. Authority: `ffi-c-boundary.md`, `python-interop.md`.
+#
+# The `extern "C"` half is the ONLY part of this file whose shape the
+# compiler already accepts today; see `examples/20_extern.science`. The
+# `use python` half is designed and unimplemented.
+
+use python "numpy" as numpy
+use python "sklearn.decomposition" (PCA)
+use tensor (Tensor)
+
+# --- C, which works today ---------------------------------------------------
+
+extern "C":
+    def cblas_ddot(n: I32, x: &F64, incx: I32, y: &F64, incy: I32) -> F64
+
+def dot(a: &Array[F64], b: &Array[F64]) -> (F64, Error?):
+    if a.length() is not b.length():
+        return (0.0, ShapeError("operands differ in length"))
+    (cblas_ddot(a.length().to_i32(), a.as_ptr(), 1, b.as_ptr(), 1), null)
+
+# --- Science called FROM Python ---------------------------------------------
+
+# `export` puts this in the generated extension module. At the membrane each
+# static guarantee becomes exactly one dynamic check: the shape is verified
+# once at the door, and nothing inside is re-checked.
+export def distances(points: &Tensor[F32, (n, d)],
+                     centre: &Tensor[F32, (d)]) -> (Tensor[F32, (n)], Error?):
+    let delta, err be points.sub(centre)
+    if err?:
+        return (Tensor.empty(), err)
+
+    (delta.mul(delta).sum(axis: 1, keep_dims: false).sqrt(), null)
+
+# --- Python called FROM Science ---------------------------------------------
+
+# Legal in hosted mode; in a standalone build it needs `[python] embed = true`
+# in `science.toml`, or it is SC0455 — a missing declaration, not a ban.
+#
+# This function carries the `python` effect, so the GIL is NOT released around
+# it and it cannot appear in a parallel region.
+export def reduce_dimensions(points: &Tensor[F32, (n, d)]) -> (Tensor[F32, (n, 8)], Error?):
+    let model, err be PCA(n_components: 8)
+    if err?:
+        return (Tensor.empty(), err)
+
+    let fitted, err be model.fit_transform(points)
+    if err?:
+        return (Tensor.empty(), err)
+
+    fitted.into_tensor()
+
+# `PyError implements Error`, so a function declared `-> (T, Error?)` accepts
+# a Python failure with no conversion written at the return. One error type,
+# one check, whether the failure came from Python or from Science.
+def mean_via_numpy(points: &Tensor[F32, (n, d)]) -> (Tensor[F32, (d)], Error?):
+    let array, err be points.to_python()
+    if err?:
+        return (Tensor.empty(), err)
+
+    let result, err be numpy.mean(array, axis: 0)
+    if err?:
+        return (Tensor.empty(), err)
+
+    Tensor.from_python(result)

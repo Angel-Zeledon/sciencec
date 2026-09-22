@@ -1,0 +1,62 @@
+# future/05 - `dataframe`, `csv`, `json`, `fs`, `path`
+# DREAM: §19, §21.
+#
+# NOT BUILDABLE.
+
+use dataframe (DataFrame)
+use csv
+use json
+use fs
+use path
+
+# Reading anything off a disk is fallible, so every one of these answers a
+# pair. There is no variant that panics on a missing file.
+def load(file: &String) -> (DataFrame, Error?):
+    let full be path.join("data", file)
+    if not fs.exists(full):
+        return (DataFrame.empty(), IoError(f"no such file: {full}"))
+
+    csv.read(full, options: csv.Options(header: true, separator: ","))
+
+# Column selection is by name and is checked at runtime, because a CSV's
+# columns are not known until it is open. The failure says which name.
+def clean(frame: &DataFrame) -> (DataFrame, Error?):
+    let selected, err be frame.select(["id", "temperature", "site"])
+    if err?:
+        return (DataFrame.empty(), err)
+
+    let filtered be selected
+        .keep(row giving row.number("temperature").is_finite())
+        .sorted(by: row giving row.number("temperature"))
+
+    (filtered, null)
+
+def summarise_by_site(frame: &DataFrame) -> (DataFrame, Error?):
+    frame
+        .group_by(["site"])
+        .aggregate([
+            dataframe.mean("temperature", as: "mean_temp"),
+            dataframe.count(as: "readings"),
+        ])
+
+# JSON goes through the same shape: parse is fallible, and the error names
+# the position rather than saying "invalid".
+def read_settings(file: &String) -> (Settings, Error?):
+    let text, err be fs.read_to_string(file)
+    if err?:
+        return (Settings.defaults(), err)
+    json.decode(text)
+
+type Settings:
+    site: String
+    threshold: F64
+
+Settings has:
+    def defaults() -> Settings:
+        Settings(site: "unknown", threshold: 0.0)
+
+def write_report(frame: &DataFrame, out: &String) -> Error?:
+    let err be fs.create_directory_all(path.parent(out))
+    if err?:
+        return err
+    csv.write(frame, out)

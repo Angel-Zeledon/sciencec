@@ -1,0 +1,65 @@
+# future/09 - `test`, `bench`, `plot`
+# DREAM: §20, §25.
+#
+# NOT BUILDABLE.
+
+use test
+use bench
+use plot
+use stats
+
+# --- tests ------------------------------------------------------------------
+
+# A test is a marked function, so the runner needs no registry and no macro.
+test def a_mean_of_one_value_is_that_value():
+    test.assert_equal(stats.mean(&[4.0]), 4.0)
+
+test def an_empty_mean_has_no_answer():
+    test.assert_null(mean_ignoring_nan(&[]))
+
+# Property tests get a seed, and the seed is reported on failure so the case
+# can be replayed exactly. A property test that cannot be replayed is a flake
+# generator.
+property def a_sorted_array_is_a_permutation(xs: Array[Int]):
+    let sorted be xs.iterate().sorted().collect()
+    test.assert_equal(sorted.length(), xs.length())
+    for value in xs:
+        test.assert(sorted.contains(&value))
+
+# Floating point gets a tolerance and the tolerance is written, never
+# defaulted silently.
+test def log_sum_exp_matches_the_naive_form_on_small_inputs():
+    let xs be [0.1, 0.2, 0.3]
+    test.assert_close(log_sum_exp(&xs), 1.3089, tolerance: 1e-4)
+
+# --- benchmarks -------------------------------------------------------------
+
+bench def dot_product_of_a_million():
+    let a be sample_normal(1, 1_000_000)
+    let b be sample_normal(2, 1_000_000)
+    bench.measure(giving dot(&a, &b))
+
+# --- plotting ---------------------------------------------------------------
+
+# A plot is a value that is built and then written. Nothing is drawn to a
+# hidden global figure, so two plots cannot interfere.
+def training_curve(history: &Array[F32], out: &String) -> Error?:
+    plot.Line
+        .new()
+        .series("loss", history)
+        .x_label("epoch")
+        .y_label("cross entropy")
+        .title("Training")
+        .save(out)
+
+def scatter_with_fit(x: &Array[F64], y: &Array[F64], out: &String) -> Error?:
+    let slope, intercept, err be stats.linear_fit(x, y)
+    if err?:
+        return err
+
+    plot.Figure
+        .new()
+        .add(plot.Scatter.of(x, y).label("observations"))
+        .add(plot.Line.from_function(f giving slope * f + intercept).label("fit"))
+        .legend(plot.Position.TopLeft)
+        .save(out)

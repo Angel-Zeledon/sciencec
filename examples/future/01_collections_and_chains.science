@@ -1,0 +1,115 @@
+# future/01 - `string`, `collections` and the chain vocabulary
+# DREAM: §13.3, §13.4. Authority: `collections-and-chains.md` §1.4.
+#
+# NOT BUILDABLE. `Map`, `Set` and the chain adapters do not exist yet; `Map`
+# and `Set` need `Hash`, which is one of the prelude interfaces that is still
+# a name with no methods. This file is what the API should read like.
+
+type Doc:
+    title: String
+    body: String
+    score: F64
+
+# --- string -----------------------------------------------------------------
+
+# `find` answers `Int?` and `slice` answers `(String)?`: an offset is in bytes
+# and a byte boundary can fall inside a code point. Neither is ceremony.
+def parse_config(text: &String) -> (Map[String, String], Error?):
+    let mutable out be Map.new()
+
+    for line in text.lines():
+        let trimmed be line.trim()
+        if trimmed.is_empty() or trimmed.starts_with("#"):
+            continue
+
+        let at be trimmed.find("=")
+        if not at?:
+            return (out, ConfigError("a line with no `=`"))
+
+        let key be trimmed.slice(0, at)
+        let value be trimmed.slice(at + 1, trimmed.length())
+        if not key? or not value?:
+            return (out, ConfigError("split fell inside a code point"))
+
+        out.insert(key.trim(), value.trim())
+
+    (out, null)
+
+# Three measures, because they are three questions. `length` is bytes.
+def describe_text(text: &String) -> String:
+    f"{text.length()} bytes, {text.chars_count()} code points"
+
+# --- collections ------------------------------------------------------------
+
+# `get` answers `(&T)?`; `a[i]` panics. The second is the form that says "I
+# know it is there".
+def first_title(docs: &Array[Doc]) -> String:
+    let head be docs.get(0)
+    if not head?:
+        return String.new()
+    copy_of(head.title)
+
+# `or_insert` is what removes the double lookup from "if absent, put it".
+def tally(words: &Array[String]) -> Map[String, Int]:
+    let mutable counts be Map.new()
+    for word in words:
+        let slot be counts.or_insert(copy_of(word), 0)
+        slot be slot + 1
+    counts
+
+# --- the chain vocabulary ---------------------------------------------------
+
+# `each` names the subject without declaring it; `name giving expression`
+# declares it where `each` will not do. Neither spelling uses an arrow.
+def headlines(docs: &Array[Doc]) -> Array[String]:
+    docs
+        .iterate()
+        .discard(each.title.is_empty())
+        .map(each.title)
+        .take(5)
+        .collect()
+
+# `keep` and `discard` both exist: a negated predicate is the commonest
+# readability wart in filtering code.
+def promising(docs: &Array[Doc]) -> Array[String]:
+    docs
+        .iterate()
+        .keep(each.score > 0.8)
+        .sorted(by: doc giving doc.score)
+        .reverse()
+        .take(10)
+        .map(each.title)
+        .collect()
+
+# `batches` is disjoint, `windows` overlaps. They are separate for that
+# reason alone, and both earn a place in a closed set because minibatching
+# and rolling means are what this language is for.
+def minibatches(samples: &Array[F64], size: Int) -> Array[Array[F64]]:
+    samples.iterate().batches(size).collect()
+
+def rolling_mean(series: &Array[F64], width: Int) -> Array[F64]:
+    series
+        .iterate()
+        .windows(width)
+        .map(w giving w.iterate().sum() / width.to_f64())
+        .collect()
+
+# `map` then `keep_some` is `filter_map` in two honest words.
+def parsed_numbers(lines: &Array[String]) -> Array[Int]:
+    lines
+        .iterate()
+        .map(line giving line.parse_int_or_null())
+        .keep_some()
+        .collect()
+
+# `count` and not `length`: `length()` on a collection is O(1), counting a
+# stream consumes it, and two names keep the difference visible.
+def how_many_long(docs: &Array[Doc]) -> Int:
+    docs.iterate().keep(each.title.length() > 40).count()
+
+# The three error policies, each named where the call is.
+def load_all(rows: &Array[String]) -> (Array[Doc], Error?):
+    rows.iterate().map(each.parse_doc()).collect_or_error()
+
+def load_good_ones(rows: &Array[String]) -> Array[Doc]:
+    rows.iterate().map(each.parse_doc()).keep_ok().collect()

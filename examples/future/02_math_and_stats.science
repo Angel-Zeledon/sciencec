@@ -1,0 +1,94 @@
+# future/02 - `math`, `random`, `stats`, `complex`
+# DREAM: §14.1 to §14.4.
+#
+# NOT BUILDABLE. None of these modules exist.
+
+use math
+use random
+use stats
+
+# --- math -------------------------------------------------------------------
+
+# The four numerically stable forms are the reason to ship a `math` at all.
+# `log(1.0 + x)` with x = 1e-16 answers 0.0; `log1p` answers 1e-16.
+def relative_growth(before: F64, after: F64) -> F64:
+    math.log1p((after - before) / before)
+
+# `hypot` and not `sqrt(x*x + y*y)`: the second overflows for large operands
+# while the answer is perfectly representable.
+def distance(x1: F64, y1: F64, x2: F64, y2: F64) -> F64:
+    math.hypot(x2 - x1, y2 - y1)
+
+# Gaussian log-likelihood, which is where `lgamma` and `log` earn their keep.
+def log_likelihood(xs: &Array[F64], mu: F64, sigma: F64) -> F64:
+    let term be -0.5 * math.log(2.0 * math.PI) - math.log(sigma)
+    let mutable total be 0.0
+    for value in xs:
+        let z be (value - mu) / sigma
+        total be total + term - 0.5 * z * z
+    total
+
+# The pattern that justifies the library: written as `log(sum(exp(v)))` it
+# overflows on ordinary inputs, and everybody writes it that way first.
+def log_sum_exp(values: &Array[F64]) -> F64:
+    let peak be values.iterate().maximum()
+    if not peak?:
+        return math.NEG_INFINITY
+
+    let mutable acc be 0.0
+    for v in values:
+        acc be acc + math.exp(v - peak)
+
+    peak + math.log(acc)
+
+# Classification is explicit, because in scientific work NaN is a value that
+# arrives rather than a mistake that is impossible.
+def mean_ignoring_nan(xs: &Array[F64]) -> F64?:
+    let good be xs.iterate().keep(each.is_finite()).collect()
+    if good.is_empty():
+        return null
+    good.iterate().sum() / good.length().to_f64()
+
+# --- random -----------------------------------------------------------------
+
+# A seed is an argument and never global state: `reproducibility.md` is the
+# whole reason. Two runs of one program with one seed agree, always.
+def sample_normal(seed: U64, n: Int) -> Array[F64]:
+    let mutable rng be random.Generator.seeded(seed)
+    let mutable out be Array.with_capacity(n)
+    for _ in 0..n:
+        out.push(rng.normal(mean: 0.0, sd: 1.0))
+    out
+
+def shuffled(seed: U64, items: &Array[Int]) -> Array[Int]:
+    let mutable rng be random.Generator.seeded(seed)
+    let mutable copy be items.clone()
+    rng.shuffle(&mut copy)
+    copy
+
+# --- stats ------------------------------------------------------------------
+
+def summarise(xs: &Array[F64]) -> Summary:
+    Summary(
+        mean: stats.mean(xs),
+        median: stats.median(xs),
+        sd: stats.standard_deviation(xs),
+        q1: stats.quantile(xs, 0.25),
+        q3: stats.quantile(xs, 0.75),
+    )
+
+type Summary:
+    mean: F64
+    median: F64
+    sd: F64
+    q1: F64
+    q3: F64
+
+# A test returns its statistic and its p-value together, and the caller reads
+# both. A function that answers only "significant: true" is the API that
+# produced a decade of misused p-values.
+def differs(a: &Array[F64], b: &Array[F64]) -> (F64, F64, Error?):
+    stats.welch_t_test(a, b)
+
+def correlation(a: &Array[F64], b: &Array[F64]) -> (F64, Error?):
+    stats.pearson(a, b)

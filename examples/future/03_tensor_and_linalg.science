@@ -1,0 +1,87 @@
+# future/03 - `tensor`, broadcasting, `linalg`
+# DREAM: §15, §16. Authority on the runtime header: `python-interop.md` §2.
+#
+# NOT BUILDABLE. `Tensor` does not exist. Its header must be field-for-field a
+# DLPack `DLTensor`, or zero-copy exchange with NumPy is impossible later.
+
+use tensor (Tensor)
+use linalg
+use math
+
+# Shapes live in the type. `(n, d)` are shape variables, so a matmul against
+# the wrong operand is a compile error rather than a ValueError twenty
+# minutes into training.
+def standardize(x: &Tensor[F32, (n, d)]) -> (Tensor[F32, (n, d)], Error?):
+    # `keep_dims: true` is what leaves the result broadcastable against `x`.
+    let mu be x.mean(axis: 0, keep_dims: true)
+    let centered, err be x.sub(mu)
+    if err?:
+        return (Tensor.empty(), err)
+
+    let var be centered.mul(centered).mean(axis: 0, keep_dims: true)
+    let sd be var.add_scalar(1e-8).sqrt()
+    centered.div(sd)
+
+# A dense layer. `b` is (units,) and `z` is (n, units): broadcasting resolves
+# the difference, and the shapes say so in the signature.
+def dense(x: &Tensor[F32, (n, inp)],
+          w: &Tensor[F32, (inp, units)],
+          b: &Tensor[F32, (units)]) -> (Tensor[F32, (n, units)], Error?):
+    let z, err be linalg.matmul(x, w)
+    if err?:
+        return (Tensor.empty(), err)
+
+    let biased, err be z.add(b)
+    if err?:
+        return (Tensor.empty(), err)
+
+    (biased.clamp(0.0, math.INFINITY), null)
+
+# `@` is the matrix product and is an operator interface, not a function.
+def quick(x: &Tensor[F32, (n, d)], w: &Tensor[F32, (d, k)]) -> Tensor[F32, (n, k)]:
+    x @ w
+
+# Views where possible, copies only where they are needed.
+def flatten_batch(x: &Tensor[F32, (n, h, w)]) -> (Tensor[F32, (n, hw)], Error?):
+    x.reshape([x.shape().get(0), -1])
+
+# Every decomposition answers a fallible pair. A singular matrix is an
+# ordinary input in scientific work, and an API that panics makes the caller
+# re-validate by hand what the library already checked.
+def pca(x: &Tensor[F32, (n, d)], k: Int) -> (Tensor[F32, (n, k)], Error?):
+    let centered, err be standardize(x)
+    if err?:
+        return (Tensor.empty(), err)
+
+    let cov, err be linalg.matmul(centered.transpose([1, 0]), centered)
+    if err?:
+        return (Tensor.empty(), err)
+
+    # `eigh` and not `eig`: a covariance is symmetric by construction, and
+    # only `eigh` promises real, ordered eigenvalues. Choosing wrong here is
+    # a silent bug.
+    let values, vectors, err be linalg.eigh(cov.div_scalar((n - 1).to_f32()))
+    if err?:
+        return (Tensor.empty(), err)
+
+    let top, err be vectors.slice([Range.all(), Range.to(k)])
+    if err?:
+        return (Tensor.empty(), err)
+
+    linalg.matmul(centered, top)
+
+# `lstsq`, never `inv(a) @ b`: slower, less accurate, and the first thing
+# everyone arriving from the mathematical notation writes.
+def fit(a: &Tensor[F64, (n, d)], b: &Tensor[F64, (n)]) -> (Tensor[F64, (d)], Error?):
+    linalg.lstsq(a, b)
+
+# `slogdet` accompanies `det` for the reason `log1p` accompanies `log`: the
+# determinant of a large matrix overflows an F64 long before its logarithm
+# troubles anyone, and the Gaussian likelihood always wants the logarithm.
+def gaussian_log_norm(cov: &Tensor[F64, (d, d)]) -> (F64, Error?):
+    let sign, logdet, err be linalg.slogdet(cov)
+    if err?:
+        return (0.0, err)
+    if sign <= 0.0:
+        return (0.0, LinalgError("covariance is not positive definite"))
+    (-0.5 * logdet, null)
