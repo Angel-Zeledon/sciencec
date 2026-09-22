@@ -68,17 +68,26 @@
   /* The page. A neutral grey ramp: --paper is the ground, --surface is a
    * card, --sunk is an inline code chip, --rule is a hairline.
    *
-   * **The page and the listing traded places.** The ground was a slate navy,
-   * then a violet charcoal; it is a near-black grey now, and the violet it
-   * used to be is the *listing's* ground, taken back toward blue. So the violet did not leave the
-   * page so much as move behind the code, which is where the argument for
-   * choosing it applies most: the syntax palette's three loudest hues are a
-   * pink, a purple and a cyan, and they sit on a violet as one decision where
-   * on a neutral ground they sit as an accident.
+   * **The page and the listing traded places, and then the page took a
+   * little of it back.** The ground was a slate navy, then a violet charcoal,
+   * then a near-black neutral grey; it is that same near-black with the
+   * violet put back as a *tint* — hue 260, about 14% saturation, which is far
+   * enough from grey to read as a decision on a large field and not far
+   * enough to compete with anything. The listing's ground stays where it went,
+   * a blue-violet, which is where the argument for saturating that hue
+   * applies most: the syntax palette's three loudest hues are a pink, a
+   * purple and a cyan, and they sit on a violet as one decision where on a
+   * neutral ground they sit as an accident. The page now agrees with the
+   * listing quietly instead of ignoring it.
    *
-   * On --paper: --ink 15.73:1, --muted 10.11:1, --faint 8.05:1, --accent
-   * 8.74:1, --old 9.21:1. Every one is higher than it was, because the ground
-   * went nearly to black and none of the foregrounds moved.
+   * Every foreground moved with the ground rather than staying neutral on a
+   * tinted field, which is what would have read as a mismatch: --ink, --muted
+   * and --faint carry the same hue at a few percent.
+   *
+   * On --paper: --ink 16.13:1, --muted 10.35:1, --faint 8.21:1, --accent
+   * 10.18:1, --old 9.47:1 — each within 0.07 of what it was on the neutral
+   * ground, which is the point: the tint is a hue change and not a luminance
+   * one, and none of the pairings this file is checked on moved.
    *
    * **--accent is a green, and the constraint it has to clear is the syntax
    * palette rather than the page.** The listing's ground is a blue-violet, so
@@ -110,14 +119,14 @@
    * The tightest foreground that carries navigation is --faint on --paper at
    * 7.01:1 — the sidebar's group headings, checked rather than assumed
    * because it is the pairing that failed the last time this palette moved. */
-  --paper:#141416; --surface:#212125; --sunk:#2a2a2f; --ink:#f0f0f3;
-  --muted:#c2c2ca; --faint:#adadb8; --rule:#37373e;
+  --paper:#15131c; --surface:#232030; --sunk:#2c283a; --ink:#f1eff6;
+  --muted:#c4c0d2; --faint:#b0aac2; --rule:#3a3450;
   --accent:#6fd684; --accent-soft:#1b2a20; --old:#e7ad96; --old-soft:#3a2b24;
   /* Reserved, and read by nothing today. These three have never been read by
    * a rule in this file; they are re-toned with the rest rather than left as
    * the old teal, so that a future rule reaching for one gets a colour that
    * belongs to this palette. */
-  --deep:#0e0e10; --deep-ink:#f0f0f3; --deep-rule:#141416;
+  --deep:#100d17; --deep-ink:#f1eff6; --deep-rule:#15131c;
   /* Syntax — "Science Neon". Declared once and never redefined, because
    * every code surface on this site is dark whatever the page does. That is
    * the decision that makes the palette possible: a neon hue survives on
