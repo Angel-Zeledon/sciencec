@@ -347,6 +347,51 @@ def sized() -> Bool:
 }
 
 #[test]
+fn a_deferred_receiver_parameter_does_not_poison_the_argument_that_would_solve_it() {
+    // `Box.new(Leaf(1))` nested inside another generic constructor —
+    // `04_enums.science`'s `Node(Box.new(Leaf(1)), Box.new(Leaf(2)))`, reduced
+    // to one argument. `Leaf(1)` defers its own `T` to `1`'s placeholder
+    // (`call_variant`), so `Leaf(1)`'s own type is a `pending_named`
+    // placeholder rather than a known `Ty`. `Box.new`'s receiver has no
+    // argument of its own to solve its `T` from except this one, so
+    // `receiver_arguments` defers `Box`'s `T` to the *same* placeholder — and
+    // `call_method` then substitutes `Box.new`'s declared parameter type
+    // (`T`) with `Ty::ERROR`, for lack of anything else to put there, and
+    // demands `Leaf(1)` agree with it. Demanding used to bind the
+    // placeholder to `Ty::ERROR` right there, before `finish` ever ran,
+    // which is `Ty::ERROR` reaching a value with no diagnostic beside it —
+    // `science-codegen-llvm`'s `SC0400` for a `TyKind::Error` with nothing
+    // reported. `Node`'s own generic argument reads the same placeholder
+    // through `structural_solve`, so the corruption reached `tree`'s type
+    // too, one call further out.
+    let checked = program(
+        "
+choice Tree[T]:
+    Leaf(T)
+    Node(Box[Tree[T]])
+
+def build() -> Bool:
+    let tree be Node(Box.new(Leaf(1)))
+    true
+",
+    );
+    checked.assert_clean();
+    // Every node except the two `Item` callees (`Node`, `Box.new`'s own
+    // `new`, `Leaf`) has a real type — those are pushed at `Ty::ERROR` by
+    // design (`check`'s `call`/`call_variant`/`associated_call`: a callee is
+    // not itself a value), so they are excluded here rather than asserted on.
+    for (kind, ty) in checked.nodes("build") {
+        if kind == "item" {
+            continue;
+        }
+        assert_ne!(ty, "{unknown}", "the `{kind}` node has no type");
+    }
+    let body = checked.body("build");
+    let (_, ty) = body.locals().next().expect("the body binds `tree`");
+    assert_eq!(checked.render(ty), "Tree[I64]");
+}
+
+#[test]
 fn an_integer_literal_is_admitted_at_a_floating_type() {
     // `check`'s §5: *"`let x: F64 be 1` is what a scientific program writes"*.
     let checked = program(

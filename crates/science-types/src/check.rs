@@ -1385,6 +1385,36 @@ impl<'a> BodyChecker<'a> {
                     self.diagnostics.push(mismatched_types(span, &expected, found));
                     return typed.id;
                 }
+                // **A `pending_named`/`pending_tuples` placeholder must not be
+                // bound to a type that is only `Ty::ERROR` because this call
+                // had nothing else to put there.** `var` here can stand for a
+                // whole composite — `call_variant`'s and `record_lit`'s own
+                // placeholder, not a literal's class — and `finish` already
+                // excludes exactly these from Decision 2's defaulting loop
+                // because it means to settle them from their own recorded
+                // parts instead (`finish`'s own comment: *"a deferred tuple's
+                // own variable is not a class waiting for a default... it is a
+                // shape"*). Binding one to `payload` here reaches the same
+                // variable a phase earlier, permanently, and forecloses that
+                // resolution before `finish` ever runs — and every sibling
+                // `structural_solve` that reads the placeholder through
+                // `open_var` inherits the same hole afterwards.
+                //
+                // `Node(Box.new(Leaf(1)))` is the reduction:
+                // `receiver_arguments` defers `Box.new`'s own `T` to
+                // `Leaf(1)`'s placeholder because nothing else solves it, and
+                // `call_method`'s own substitution then has nothing to put in
+                // `T`'s slot but `Ty::ERROR` — so the very argument that
+                // *would* have solved `T` was demanded to agree with the hole
+                // its own deferral left. `ty`'s §5 already makes `Ty::ERROR`
+                // agree with anything without a bind; a plain literal's own
+                // variable still binds below exactly as before; only a
+                // placeholder is left open here, for `finish` to settle.
+                if self.types.references_error(payload)
+                    && !matches!(self.open_var(var), OpenVar::Plain)
+                {
+                    return typed.id;
+                }
                 match self.infer.bind(self.types, var, payload) {
                     Ok(_) => {}
                     Err(_) => {
