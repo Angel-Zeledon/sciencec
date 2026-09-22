@@ -40,7 +40,7 @@
 
 <div class="status">
   <span><span class="dot dot-on"></span>Compiler <b>sciencec</b> 0.0.1</span>
-  <span><span class="dot dot-on"></span><b>1,910</b> tests, fourteen crates</span>
+  <span><span class="dot dot-on"></span><b>2,173</b> tests, fourteen crates</span>
   <span><span class="dot dot-on"></span><code>check</code> runs <b>seven phases</b>, through region inference</span>
   <span><span class="dot dot-wip"></span><code>build</code> emits a binary for a <b>bounded subset</b></span>
   <span>Files <b>.science</b></span>
@@ -273,34 +273,48 @@ channels 1 and 2 hold 6080 counts</code></pre>
     <table>
       <thead><tr><th>Emitted and run</th><th>Refused, with <code>SC0400</code></th></tr></thead>
       <tbody>
-        <tr><td class="what">A script body; <code>print</code> of a <code>String</code>; <code>f"…"</code> whose holes are <code>Int</code>/<code>I64</code>, <code>U64</code>, <code>F64</code>, <code>F32</code>, <code>Bool</code>, <code>Char</code> or <code>String</code></td><td class="what">A hole the runtime cannot render. There are seven <code>science_string_push_*</code> entry points and no <code>Formatter</code>, so <code>f"{()}"</code> is refused here and a record is refused earlier, by <code>SC0275</code>. <code>print</code> of anything but a <code>String</code>.</td></tr>
-        <tr><td class="what">The control-flow graph: <code>if</code>/<code>else</code> as statement and as expression, <code>loop</code>, <code>break</code>, <code>continue</code>, <code>return</code></td><td class="what"><strong>Every <code>for</code> loop in the language</strong>, including <code>for i in 0..10:</code>. Its <code>next</code> call reaches MIR unresolved, because the THIR node has no field for the callee the checker found.</td></tr>
-        <tr><td class="what">Scalar arithmetic and comparison; <code>and</code>, <code>or</code>, <code>not</code></td><td class="what">Integer <code>/</code> and <code>%</code>, whose divide-by-zero check nothing above the backend emits; shifts, whose amount nothing bounds; <code>**</code>, which needs an intrinsic whitelist; <code>@</code>, which is a runtime call that does not exist.</td></tr>
-        <tr><td class="what">Functions with parameters and returns, and calls to them</td><td class="what">Generic functions and generic values, which nothing has monomorphised; method calls, whose receiver the tree does not record; closures, which MIR does not lower at all.</td></tr>
-        <tr><td class="what">Records: construction, field access, passing and returning</td><td class="what">A string literal read as a <em>value</em> rather than bound or printed &mdash; so a record field initialised from a literal is refused, and <code>let mutable s: String? be null</code> followed by a literal is too.</td></tr>
-        <tr><td class="what"><code>choice</code> and <code>match</code>, including payloads and the offset a payload's alignment forces; <code>as</code> casts between scalars</td><td class="what">Tuples, arrays and indexing, <code>Box</code>, and any unsizing into an interface object &mdash; this backend emits no vtables.</td></tr>
-        <tr><td class="what"><code>T?</code>, <code>null</code>, the <code>?</code> presence test, and drops of values that own nothing</td><td class="what">Drop glue for a value that owns something; a conditionally moved value, which needs a drop flag; a <code>Copy</code> read out of a borrow.</td></tr>
+        <tr><td class="what">A script body; <code>print</code> of a <code>String</code>; <code>f"…"</code> whose holes are <code>Int</code>/<code>I64</code>, <code>U64</code>, <code>F64</code>, <code>F32</code>, <code>Bool</code>, <code>Char</code> or <code>String</code></td><td class="what">A hole the runtime cannot render. There are seven <code>science_string_push_*</code> entry points and no <code>Formatter</code>, so <code>f"{()}"</code> is refused here and a record is refused earlier, by <code>SC0275</code>. <code>print</code> of anything but a <code>String</code> &mdash; including a tuple, which has none.</td></tr>
+        <tr><td class="what">The control-flow graph: <code>if</code>/<code>else</code> as statement and as expression, <code>loop</code>, <code>break</code>, <code>continue</code>, <code>return</code>, and <strong><code>for</code> over an array or a range</strong></td><td class="what"><code>for</code> over a user type's own <code>Iterate</code> implementation, which reaches the same method-lookup gap named below.</td></tr>
+        <tr><td class="what">Scalar arithmetic and comparison, including <code>/</code>, <code>%</code>, <code>**</code>, and an operator interface such as <code>Add</code> or <code>MatMul</code> on a concrete type; <code>and</code>, <code>or</code>, <code>not</code></td><td class="what">A shift by an amount nothing bounds &mdash; neither the mask nor the panic that would stop a shift at or past the operand's width is specified, and <code>examples/12_operators.science</code> fails <code>build</code> on exactly this.</td></tr>
+        <tr><td class="what">Functions with parameters and returns, calls to them, and an ordinary generic function monomorphised at each instantiation &mdash; two call sites of <code>identity[T]</code> at different types produce two distinct linked symbols</td><td class="what"><strong>A method call resolved through an interface bound, a generic parameter, or dynamic dispatch</strong> &mdash; "Decision 11's method lookup does not put what it found in the tree" is the compiler's own description, and it is what actually stops four of the twenty-two examples (<code>06</code>, <code>07</code>, <code>08</code>, <code>18</code>). Closures, whose body <code>science-mir</code> does not lower into a function at all.</td></tr>
+        <tr><td class="what">Records: construction, field access, passing and returning; a tuple returned and destructured, which is how every fallible signature's <code>-&gt; (T, Error?)</code> is built and consumed</td><td class="what">A string literal read as a <em>value</em> rather than bound or printed &mdash; so a record field initialised from a literal is refused, and <code>let mutable s: String? be null</code> followed by a literal is too.</td></tr>
+        <tr><td class="what"><code>choice</code> and <code>match</code>, including payloads and the offset a payload's alignment forces; <code>as</code> casts between scalars; a one-dimensional array of a scalar element type, construction, indexing, <code>push</code> and <code>pop</code>; <code>Box[T]</code> allocation, ownership and release</td><td class="what">An array of arrays &mdash; releasing the outer array has to call a per-element drop that takes a descriptor, and there is no such call yet. Reading a field or method back out through a plain <code>Box[T]</code> beyond the allocate/own/free pattern. Any unsizing into an interface object &mdash; this backend emits no vtables, so a default method reached through one is refused even where the same default already builds when called directly on its implementor.</td></tr>
+        <tr><td class="what"><code>T?</code>, <code>null</code>, the <code>?</code> presence test, and drops of values that own nothing</td><td class="what">Drop glue for a value that owns something; a conditionally moved value, which needs a drop flag; a <code>Copy</code> read out of a borrow; narrowing a <code>T?</code> whose payload itself owns something, which risks a double free until MIR has a projection for it.</td></tr>
         <tr><td class="what"><code>extern "C"</code> blocks and the calls to them, through a real linker</td><td class="what">By-value aggregates and <code>F16</code>/<code>BF16</code> across the boundary; variadic C functions.</td></tr>
       </tbody>
     </table>
   </div>
 
   <p class="note">
-    <strong>Two refusals in that list are worth reading twice, because they
-    are smaller than they look and they bite in ordinary code.</strong> The
-    first is <code>for</code>: the counting loop is the most-written
-    construct in the language and no program containing one can be built today.
-    The second is <code>n be n + 1</code> &mdash; an assignment whose
-    right-hand side reads a local &mdash; which <code>check</code> accepts and
-    the back end refuses, because the value arrives untyped. <code>let m be n +
-    1</code> builds; the assignment does not. Neither is a design decision;
-    both are gaps, and they are named here rather than left for a reader to
-    find with a program that ought to work.
+    <strong>Two things in that list are worth reading twice, because they are
+    each one gap wearing several examples' clothing.</strong> The method-lookup
+    gap is the single most common reason a program in this corpus fails to
+    build: it is not "generics don't work" &mdash; an ordinary generic
+    <em>function</em> monomorphises and runs &mdash; it is specifically a
+    method call whose implementation the front end resolves through a bound, a
+    generic parameter, or <code>any</code>, which the tree does not yet carry
+    far enough for MIR to find again. The other is <code>n be n + 1</code>
+    &mdash; an assignment whose right-hand side reads a local &mdash; which
+    <code>check</code> accepts and the back end can still refuse, because the
+    value arrives untyped in some shapes of that expression. <code>let m be n +
+    1</code> builds; the assignment does not always. Neither is a design
+    decision; both are gaps, and they are named here rather than left for a
+    reader to find with a program that ought to work.
     <span class="cite wip">changing</span>
   </p>
 
-<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build a value the front end left untyped: its `Ty` is `TyKind::Error` and no diagnostic was reported for it. The three this compiler has met are a call to `print` or `write`, whose signatures `science-resolve`'s `builtins.rs` withdrew; a `for` loop's range and iterator temporaries; and a discriminant temporary, which is handled rather than refused
-  = note: this `sciencec` implements &sect;10's stages 0 to 3 of `codegen-and-linking.md` and some of what comes after &mdash; a script body, string literals and `print`, `extern "C"` declarations and the calls to them, the CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, `T?`, and drops of values that own nothing &mdash; and refuses everything else rather than lowering a construct no execution test has ever run</code></pre>
+<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build a closure, whose body `science-mir` does not lower at all — `Rvalue::Closure` carries a THIR expression id and its captures, and nothing turns either into a function
+  = note: this `sciencec` implements &sect;10's stages 0 to 3 of `codegen-and-linking.md` and some of what comes after &mdash; a script body, string literals and `print` of anything the `f"…"` builder renders, `extern "C"` declarations and the calls to them, the CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, `T?`, methods and associated functions on a concrete type, the prelude's `String` methods, and drops of values that own nothing &mdash; and refuses everything else rather than lowering a construct no execution test has ever run</code></pre>
+
+  <p class="note">
+    That is the compiler's own current wording, pasted verbatim rather than
+    paraphrased, because a hand description of "everything this backend
+    emits" drifts the moment a gap closes and this one is the compiler
+    checking its own work. It is also intentionally not exhaustive: it does
+    not name arrays or tuples, both of which build in the scalar case above,
+    because the sentence is a summary a diagnostic prints on every refusal and
+    not a changelog.
+  </p>
 
   <p class="note">
     <strong>The backend is a build feature, and without it
@@ -317,10 +331,12 @@ channels 1 and 2 hold 6080 counts</code></pre>
 
   <p class="note">
     <strong>What is measured, and what is not.</strong> The fourteen crates
-    hold <strong>1,910</strong> <code>#[test]</code> functions at the commit
+    hold <strong>2,173</strong> <code>#[test]</code> functions at the commit
     this page was written against; a plain <code>cargo test --workspace</code>
-    runs <strong>1,796</strong> of them, because a hundred and fourteen sit
-    behind the <code>llvm</code> feature and that feature is off by default. There is <strong>no performance number
+    runs <strong>1,955</strong> of them, because two hundred and eighteen sit
+    behind the <code>llvm</code> feature and that feature is off by default.
+    <code>cargo test --workspace --features llvm</code> runs all 2,173, and
+    none fail. There is <strong>no performance number
     anywhere on this page</strong>, because nothing has been benchmarked: the
     first performance target the project has written down lives in a design
     note and has never been run.
@@ -856,10 +872,10 @@ print(f"{count}")</pre>
 
   <p class="note">
     <strong>The rule stops at the first borrow, and that is the half worth
-    stating.</strong> <code>def bump(counter: mutable borrowed I64)</code>
+    stating.</strong> <code>def bump(counter: &amp;mut I64)</code>
     writing <code>counter be counter + 1</code> is not reassigning
     <code>counter</code>; it is writing the referent, which is what
-    <code>mutable borrowed</code> exists to permit. So the walk from the target
+    <code>&amp;mut</code> exists to permit. So the walk from the target
     toward its root stops as soon as it crosses a borrow, and from there the
     borrow rules govern rather than this one &mdash; including when the
     reference is reached through a binding that is itself immutable, because
@@ -985,24 +1001,26 @@ print(f"{greeting} {letter} {flag} {missing?}")
   </p>
 
 <pre data-science>const WIDTH be 768                  # a compile-time constant
-type Embedding is Array of F32      # a type alias
+type Embedding is Array[F32]        # a type alias
 
 let escaped be "a\tb\nc \u{1F600}"  # the whole escape list, plus \r \\ \" \' \0
 let raw be r"C:\runs\2026\peaks.csv"
 let sized be 42i32
 let nothing be ()                   # the empty tuple: a value, not an absence
-let vector: Embedding be (Array of F32).new()
+let vector: Embedding be Array[F32].new()
 
-print(escaped)</pre>
+print(escaped)
+# a	b
+# c 😀</pre>
 
   <p class="note">
-    <strong>This block checks and does not build,</strong> and the two reasons
-    are worth knowing: a <code>const</code> read as a value has no lowering
-    &mdash; it reaches the back end untyped and is refused with the
-    <code>SC0400</code> above &mdash; and neither has an <code>Array</code>. It
-    is here because the forms are the language's and the reader needs them; the
-    output is absent because inventing it would be the one thing this page must
-    not do.
+    <strong>This block builds and runs.</strong> A <code>const</code> read as
+    a value used to reach the back end untyped and be refused with the
+    <code>SC0400</code> above, and <code>Array</code> construction used to be
+    refused as well; neither refusal reaches this program any more, and the
+    output above is <code>sciencec build</code>'s binary run and its bytes
+    pasted back, the same as any other listing on this page that claims
+    output.
   </p>
 
   <p class="note">
@@ -1145,7 +1163,7 @@ print(f"{u + 1u8}")
     does not exist yet, and the error arrives in binding position.</strong>
     <code>shape</code>, <code>model</code>, <code>tensor</code>,
     <code>union</code>, <code>mod</code>, <code>yield</code>,
-    <code>kernel</code>, <code>import</code>, <code>assert</code>,
+    <code>kernel</code>, <code>import</code>,
     <code>with</code>, <code>move</code>, <code>on</code>, <code>static</code>,
     <code>pure</code>, <code>parallel</code>, <code>macro</code>,
     <code>extern</code> and <code>unsafe</code> are the list, and
@@ -1155,7 +1173,13 @@ print(f"{u + 1u8}")
     <code>device</code>, <code>dtype</code>, <code>unit</code>,
     <code>alias</code> &mdash; and <code>function</code>, which left the
     keyword list when <code>def</code> arrived and is an ordinary identifier
-    now.
+    now. <code>assert</code> used to sit in the reserved-for-later list too,
+    and no longer does: <code>assert(cond)</code> and
+    <code>assert(cond, message)</code> are a real statement today, lowered to
+    one <code>if</code> and a runtime call, aborting with
+    <code>"assertion failed"</code> or the message given when the condition is
+    false. It keeps its reserved status, but for the ordinary reason every
+    other keyword has one, not because a later phase owns it.
   </p>
 
 <pre class="err"><code><span class="e-code">error[SC0102]</span>: expected an identifier, found `model`, which is reserved for a later phase
@@ -1597,14 +1621,14 @@ code       := 'f' | 'e' | 'E' | 'g' | 'G' | '%' | 'd' | 'x' | 'X' | 'o' | 'b' | 
   </p>
 
 <pre class="foreign">interface Display:
-    def display(self, into: mutable borrowed Formatter)
+    def display(self, into: &amp;mut Formatter)
 
 interface Inspect:
-    def inspect(self, into: mutable borrowed Formatter)
+    def inspect(self, into: &amp;mut Formatter)
 
 Formatter has:
-    def text(mutable self, value: borrowed String)    # pads, per the spec
-    def raw(mutable self, value: borrowed String)     # does not pad
+    def text(mutable self, value: &amp;String)         # pads, per the spec
+    def raw(mutable self, value: &amp;String)          # does not pad
     def number(mutable self, value: F64)
     def integer(mutable self, value: I64)
     def spec(self) -&gt; FormatSpec</pre>
@@ -1734,7 +1758,7 @@ Formatter has:
 
   <p class="note">
     <strong><code>print</code>'s <em>argument type</em> is declared
-    nowhere.</strong> The design gives it <code>borrowed any Display</code>;
+    nowhere.</strong> The design gives it <code>&amp;any Display</code>;
     writing that signature was measured and withdrawn, because it turns every
     <code>print(x)</code> into a borrow-and-unsize into an interface object,
     and this back end emits no vtables &mdash; so declaring it correctly makes
@@ -1921,8 +1945,8 @@ choice LoadError:
   <h2>Types<a class="anchor" href="#types" aria-label="Link to this section">#</a></h2>
   <p class="lede">
     A record is a <code>type</code>. A sum type is a <code>choice</code>. Both
-    take generic parameters with <code>of</code>, and a generic parameter may
-    be a type <em>or</em> a constant.
+    take generic parameters in brackets, <code>[T, U]</code>, and a generic
+    parameter may be a type <em>or</em> a constant.
   </p>
 
 <pre data-science>type Reading:
@@ -1962,8 +1986,8 @@ print(f"{label(Json)} {r.channel} {width_of(Range(3, 11))}")
       <thead><tr><th>Form</th><th>What it declares</th></tr></thead>
       <tbody>
         <tr><td class="mono">type N:</td><td class="what">A record. Indented <code>name: Type</code> lines are its fields</td></tr>
-        <tr><td class="mono">type N of (T, U):</td><td class="what">A generic record</td></tr>
-        <tr><td class="mono">type N of (T, const K: Int):</td><td class="what">A record generic over a type and a compile-time integer</td></tr>
+        <tr><td class="mono">type N[T, U]:</td><td class="what">A generic record</td></tr>
+        <tr><td class="mono">type N[T, const K: Int]:</td><td class="what">A record generic over a type and a compile-time integer</td></tr>
         <tr><td class="mono">type N is T</td><td class="what">An alias. Not a new type &mdash; it unifies with <code>T</code></td></tr>
         <tr><td class="mono">choice N:</td><td class="what">A closed sum. Variants are indented lines</td></tr>
         <tr><td class="mono">&nbsp;&nbsp;&nbsp;&nbsp;Plain</td><td class="what">A variant with no payload</td></tr>
@@ -2067,13 +2091,11 @@ print(f"{label(Json)} {r.channel} {width_of(Range(3, 11))}")
     NotFound(String)
 
 # No `implements Error` line, and the position test catches it anyway.
-def load(path: borrowed String) -&gt; (Int, LoadError?):
+def load(path: &amp;String) -&gt; (Int, LoadError?):
     (0, LoadError.NotFound("x"))
 
 def read() -&gt; Int:
     let value, err be load("a.toml")
-    if err?:
-        return 0
     value</pre>
 <pre class="err" style="margin-top:0.6rem"><code><span class="e-code">error[SC0140]</span>: `err` is never checked for an error
  <span class="e-hi">--&gt;</span> load.science:8:16
@@ -2115,7 +2137,7 @@ def read() -&gt; Int:
   <h3>Recursion, <code>Box</code>, and the check that is missing</h3>
 
   <p class="note">
-    <code>Box of T</code> is a heap indirection, and it is why a
+    <code>Box[T]</code> is a heap indirection, and it is why a
     <code>choice</code> can name itself. A recursive record with no indirection
     has no finite size, and Science asks you to write the box rather than
     inserting one, because where the indirection sits is a performance decision
@@ -2124,7 +2146,7 @@ def read() -&gt; Int:
 
 <pre data-science>choice Tree:
     Leaf(Int)
-    Node(Box of Tree, Box of Tree)</pre>
+    Node(Box[Tree], Box[Tree])</pre>
 
   <p class="note">
     <strong>Nothing enforces it.</strong> A <code>choice</code> whose variant
@@ -2144,64 +2166,49 @@ def read() -&gt; Int:
 type Node:                      # so does this
     next: Node</pre>
 
-  <h3>Generic arguments, and where the parentheses go</h3>
+  <h3>Generic arguments, in brackets</h3>
 
 <pre data-science>type Doc:
     title: String
 
-def one(items: Array of Doc) -&gt; Int:            # one argument needs no parentheses
+def one(items: Array[Doc]) -&gt; Int:              # one argument
     items.length()
 
-def two(index: Map of (String, Int)) -&gt; Int:    # two or more do
+def two(index: Map[String, Int]) -&gt; Int:        # two or more, same brackets
     index.length()
 
-def nested(groups: Array of (Map of (String, Int))) -&gt; Int:
+def nested(groups: Array[Map[String, Int]]) -&gt; Int:
     groups.length()
 
-def build() -&gt; Array of Doc:
-    (Array of Doc).new()                        # an associated call needs its own parens</pre>
+def build() -&gt; Array[Doc]:
+    Array[Doc].new()                            # an associated call needs no parens</pre>
 
   <p class="note">
-    This is not a style rule; it is the grammar. <code>Array of Doc</code>
-    parses because a single type argument cannot contain a top-level comma, so
-    the next comma ends it. <code>Map of String, Int</code> in a parameter list
-    genuinely <em>cannot</em> be parsed &mdash; that <code>Int</code> could be
-    <code>Map</code>'s second argument or the function's second parameter, and
-    no amount of lookahead decides which, because both readings are
-    well-formed. So several arguments take parentheses, and nesting follows the
-    same rule for the same reason. What you get is the parser running out of
-    parameter list:
+    Brackets are self-delimiting, which is the whole reason this needs no
+    parenthesization rule at all. <code>[</code> opens an argument list and the
+    matching <code>]</code> closes it, so <code>Map[String, Int]</code> is
+    unambiguous with two arguments in a parameter list, and so is a nested
+    instantiation such as <code>Array[Map[String, Int]]</code>: there is no
+    point at which a comma or a following <code>.</code> could belong to two
+    different things, because the bracket already says where the list ends.
+    <code>Array[Doc].new()</code> needs no parentheses before the
+    <code>.new()</code> for the same reason &mdash; the earlier <code>of</code>
+    spelling had exactly this ambiguity, because <code>of</code> opened a type
+    argument with nothing marking where it closed, and that is the defect the
+    bracket migration removed. Writing the old spelling today is a parse error
+    with its own fix-it:
   </p>
 
-<pre class="err"><code><span class="e-code">error[SC0100]</span>: expected `:`, found `)`
- <span class="e-hi">--&gt;</span> index.science:1:34
+<pre class="err"><code><span class="e-code">error[SC0100]</span>: `Array of T` is now written `Array[T]`
+ <span class="e-hi">--&gt;</span> old.science:1:22
   |
-1 | def two(index: Map of String, Int) -&gt; Int:
-  |                                  <span class="e-hi">^</span> expected `:`, found `)`</code></pre>
-
-  <p class="note">
-    <code>Array of Doc.new()</code> is ambiguous in the same family: does
-    <code>.new()</code> attach to <code>Doc</code> or to the whole generic
-    type? Science requires <code>(Array of Doc).new()</code>. The alternative
-    considered was making the space in <code>Array of Doc .new()</code>
-    significant, which would make whitespace load-bearing in a way nothing else
-    in the language is. The form is ugly and it is rare, and the compiler names
-    it rather than producing a confusing downstream error:
-  </p>
-
-<pre class="err"><code><span class="e-code">error[SC0116]</span>: `.new()` could belong to `Doc` or to `Array of Doc`
- <span class="e-hi">--&gt;</span> build.science:5:5
-  |
-5 |     Array of Doc.new()
-  |     <span class="e-hi">^^^^^^^^^^^^^^^^</span> this associated function call is ambiguous
-  |
-  = note: Science reads it as `(Array of Doc).new()`, the whole generic type
-  = <span class="e-help">help</span>: write the parentheses to say so: `(Array of Doc)`</code></pre>
+1 | def one(items: Array of Doc) -&gt; Int:
+  |                      <span class="e-hi">^^</span> `Array of T` is now written `Array[T]`</code></pre>
 
   <p class="note">
     <strong>Generic <em>arity</em> is not checked.</strong>
-    <code>Pair of Int</code> where <code>Pair</code> takes two parameters, and
-    <code>Doc of Int</code> where <code>Doc</code> takes none, both pass
+    <code>Pair[Int]</code> where <code>Pair</code> takes two parameters, and
+    <code>Doc[Int]</code> where <code>Doc</code> takes none, both pass
     <code>check</code> in silence. The resolver admits a const parameter in a
     type position because there is no way to tell the two apart without the
     declared arity of the thing being applied, and the arity check that would
@@ -2211,19 +2218,19 @@ def build() -&gt; Array of Doc:
 
   <h3>Const generics, and the arithmetic they admit</h3>
 
-<pre data-science>type Grid of (T, const ROWS: Int, const COLS: Int):
-    cells: Array of T
+<pre data-science>type Grid[T, const ROWS: Int, const COLS: Int]:
+    cells: Array[T]
 
-type Padded of (T, const N: Int):
-    cells: Array of T
-    grown: Padded of (T, N + 1)
-    shrunk: Padded of (T, N - 1)
-    tripled: Padded of (T, N * 3)
-    doubled: Padded of (T, 2 * N)</pre>
+type Padded[T, const N: Int]:
+    cells: Array[T]
+    grown: Padded[T, N + 1]
+    shrunk: Padded[T, N - 1]
+    tripled: Padded[T, N * 3]
+    doubled: Padded[T, 2 * N]</pre>
 
   <p class="note">
     <strong>Const generics are in the core because tensor shapes are built out
-    of them.</strong> <code>Tensor of (F32, (batch, 768))</code> carries
+    of them.</strong> <code>Tensor[F32, (batch, 768)]</code> carries
     <code>768</code> as a generic argument, and <code>768</code> is not a type.
     Retrofitting that later means reopening the parser, the resolver and every
     snapshot, so it is here in F0 even though tensors are not.
@@ -2250,8 +2257,8 @@ type Padded of (T, const N: Int):
 <pre class="err"><code><span class="e-code">error[SC0157]</span>: a const expression multiplies only by a literal
  <span class="e-hi">--&gt;</span> grid.science:3:26
   |
-3 |     bad: Padded of (T, N * N)
-  |                          <span class="e-hi">^</span> one side of this needs an integer literal
+3 |     bad: Padded[T, N * N]
+  |                      <span class="e-hi">^</span> one side of this needs an integer literal
   |
   = note: `const-expression-arithmetic.md` &sect;2.1 keeps const arithmetic linear by grammar: two parameters may be added or subtracted, never multiplied or divided by each other</code></pre>
 
@@ -2267,8 +2274,8 @@ type Padded of (T, const N: Int):
 <pre class="err"><code><span class="e-code">error[SC0260]</span>: a const expression cannot divide yet
  <span class="e-hi">--&gt;</span> grid.science:3:31
   |
-3 |     halved: Padded of (T, N / 2)
-  |                               <span class="e-hi">^</span> division in a const expression is F1
+3 |     halved: Padded[T, N / 2]
+  |                           <span class="e-hi">^</span> division in a const expression is F1
   |
   = note: `const-expression-arithmetic.md` &sect;4 specifies the quotient atom; F0 is the quotient-free fragment, and multiplying by a literal is what F0 offers instead</code></pre>
 
@@ -2288,8 +2295,8 @@ type Padded of (T, const N: Int):
 <pre class="err"><code><span class="e-code">error[SC0220]</span>: a const generic parameter's kind must be `Int` or `Shape`
  <span class="e-hi">--&gt;</span> flags.science:1:30
   |
-1 | type Flagged of (T, const F: Bool):
-  |                              <span class="e-hi">^^^^</span> `Bool` is not a const-parameter kind
+1 | type Flagged[T, const F: Bool]:
+  |                          <span class="e-hi">^^^^</span> `Bool` is not a const-parameter kind
   |
   = note: `const N: K` annotates `N` with a kind, not with a type: `Int` is an integer known at compile time, and `Shape` is a type-level list of them</code></pre>
 
@@ -2305,10 +2312,10 @@ type Padded of (T, const N: Int):
     non-termination, because no production in the grammar grows an expression.
   </p>
 
-<pre data-science>type Buf of (const N: Int):
+<pre data-science>type Buf[const N: Int]:
     x: Int
 
-def same of (const A: Int, const B: Int)(p: Buf of (A + B)) -&gt; Buf of (B + A):
+def same[const A: Int, const B: Int](p: Buf[A + B]) -&gt; Buf[B + A]:
     p</pre>
 
   <p class="note">
@@ -2319,15 +2326,15 @@ def same of (const A: Int, const B: Int)(p: Buf of (A + B)) -&gt; Buf of (B + A)
     can tell at a glance that the ordering is not the problem.
   </p>
 
-<pre class="err"><code><span class="e-code">error[SC0525]</span>: expected `Buf of 2*A`, found `Buf of A + B`
+<pre class="err"><code><span class="e-code">error[SC0525]</span>: expected `Buf[2*A]`, found `Buf[A + B]`
  <span class="e-hi">--&gt;</span> buf.science:5:5
   |
 5 |     p
-  |     <span class="e-hi">^</span> this is `Buf of A + B`</code></pre>
+  |     <span class="e-hi">^</span> this is `Buf[A + B]`</code></pre>
 
   <p class="note">
     <strong>Why refuse the general case at all?</strong> Because type equality
-    on <code>Grid of (T, ROWS, COLS)</code> <em>is</em> const equality, and
+    on <code>Grid[T, ROWS, COLS]</code> <em>is</em> const equality, and
     four separate things have to agree about it &mdash; type equality, shape
     equality, index bounds, and the key that decides whether two
     monomorphisations are the same function. Four implementations of "are these
@@ -2420,7 +2427,7 @@ def same of (const A: Int, const B: Int)(p: Buf of (A + B)) -&gt; Buf of (B + A)
 
   <p class="note">
     <strong>What it costs in memory.</strong> A pointer-like <code>T</code>
-    uses the null niche, so <code>(borrowed T)?</code> is one word. A
+    uses the null niche, so <code>(&amp;T)?</code> is one word. A
     <code>T</code> with no niche gets a discriminant byte, which is why an
     <code>Int?</code> occupies two words. An <code>(any I)?</code> is a
     nullable fat pointer with the niche in the <em>data</em> pointer, so it is
@@ -2451,7 +2458,7 @@ def same of (const A: Int, const B: Int)(p: Buf of (A + B)) -&gt; Buf of (B + A)
 # so a nullable closure needs its own parentheses.
 type Pipeline:
     step: ((Int) -&gt; Bool)?
-    stages: Array of ((Int) -&gt; Bool)
+    stages: Array[(Int) -&gt; Bool]
     curried: (Int) -&gt; (Int) -&gt; Bool
 
 def twice(f: (Int) -&gt; Int, x: Int) -&gt; Int where Int: Eq:
@@ -2488,27 +2495,33 @@ def twice(f: (Int) -&gt; Int, x: Int) -&gt; Int where Int: Eq:
     reading. <strong><code>?</code> binds tighter than
     <code>-&gt;</code></strong>, so <code>(A) -&gt; B?</code> is a closure
     returning a nullable and a nullable closure is <code>((A) -&gt; B)?</code>.
-    And <strong>as a generic argument it needs its own parentheses</strong>
-    &mdash; <code>Array of ((Int) -&gt; Bool)</code> &mdash; for exactly the
-    reason <code>Map of (String, Int)</code> does.
+    And <strong>as a generic argument it needs no extra parentheses beyond the
+    closure type's own</strong> &mdash; <code>Array[(Int) -&gt; Bool]</code>
+    &mdash; because the bracket is self-delimiting: this is the one place the
+    bracket migration removed a parenthesization rule the earlier <code>of</code>
+    spelling needed, for the same reason <code>Map[String, Int]</code> needs
+    none either.
   </p>
 
   <p class="note">
-    <strong>That last one does not fail; it means something else.</strong>
-    <code>Array of (Int) -&gt; Bool</code> parses cleanly, because the peek
-    after <code>(Int)</code> finds an arrow and builds a closure type out of
-    everything to its left. The field's type is
-    <code>(Array of Int) -&gt; Bool</code>: a closure that takes an array of
-    integers. No diagnostic, no warning, and a type error somewhere downstream
-    that names a type nobody wrote. It is the one silent misreading in the type
-    grammar, and the only defence is the parentheses.
+    <strong>The silent misreading survives the bracket migration, in a
+    slightly different shape.</strong>
+    <code>Array[Int] -&gt; Bool</code>, written with no parentheses around
+    <code>Int</code>, parses cleanly, because the peek after <code>Int</code>
+    inside the bracket sees a plain identifier and closes the generic argument
+    list normally, and then the peek <em>after</em> the closing <code>]</code>
+    finds an arrow and builds a closure type out of everything to its left.
+    The field's type is <code>(Array[Int]) -&gt; Bool</code>: a closure that
+    takes an array of integers. No diagnostic, no warning, and a type error
+    somewhere downstream that names a type nobody wrote. It is the one silent
+    misreading in the type grammar, and the only defence is the parentheses.
   </p>
 
-<pre class="err"><code><span class="e-code">error[SC0525]</span>: expected `Int`, found `(Array of Int) -&gt; Bool`
+<pre class="err"><code><span class="e-code">error[SC0525]</span>: expected `I64`, found `(Array[I64]) -&gt; Bool`
  <span class="e-hi">--&gt;</span> pipeline.science:5:5
   |
 5 |     p.stages
-  |     <span class="e-hi">^^^^^^^^</span> this is `(Array of Int) -&gt; Bool</code></pre>
+  |     <span class="e-hi">^^^^^^^^</span> this is `(Array[I64]) -&gt; Bool</code></pre>
 
   <p class="note">
     <strong>The one thing that cannot be spelled.</strong> <code>(T)</code>
@@ -2527,7 +2540,7 @@ def twice(f: (Int) -&gt; Int, x: Int) -&gt; Int where Int: Eq:
     <p>
       <code>type</code> is <code>struct</code>, <code>choice</code> is
       <code>enum</code>, <code>of</code> is the angle brackets, and
-      <code>Box of T</code> is <code>Box&lt;T&gt;</code> doing the same job for
+      <code>Box[T]</code> is <code>Box&lt;T&gt;</code> doing the same job for
       the same reason. What differs:
       <strong>there is no tuple struct and no positional constructor</strong>
       &mdash; a record's fields are always named at construction, and a
@@ -2557,26 +2570,35 @@ def twice(f: (Int) -&gt; Int, x: Int) -&gt; Int where Int: Eq:
   <h2>Arrays and indexing<a class="anchor" href="#arrays" aria-label="Link to this section">#</a></h2>
   <p class="lede">
     <code>[1, 2, 3]</code> is a literal and <code>a[i]</code> is an index, with
-    the bracket's role decided by parser position and nothing else. Indices are
-    zero-based. <code>m[i, j]</code> is specified as a single index of arity
-    two, and not <code>m[i][j]</code> &mdash; and it does not parse yet.
+    the bracket's role decided by parser position and nothing else &mdash; the
+    same bracket that opens a generic argument list in a type position.
+    Indices are zero-based. <code>m[i, j]</code> is specified as a single
+    index of arity two, and not <code>m[i][j]</code>; the parser now accepts
+    the comma, but nothing beyond the parser gives it a meaning yet, so it
+    type-checks as a plain mismatch rather than as a rank-2 index.
   </p>
 
 <pre data-science>let primes be [2, 3, 5, 7, 11]
-let identity be [[1.0, 0.0], [0.0, 1.0]]
 let mutable counts be [0, 0, 0]
 
 counts[1] be 9
 
-print(f"{primes[0]} {identity[1][1]} {counts[1]}")
-print(f"{primes.length()}")</pre>
+print(f"{primes[0]} {counts[1]}")
+print(f"{primes.length()}")
+# 2 9
+# 5</pre>
 
   <p class="note">
-    <strong>That block checks and does not build.</strong> Arrays reach the
-    back end as a value type it has no lowering for, and an index is a bounds
-    check followed by an address computation of which neither half is emitted.
-    Nothing in this section can be run yet, which is why nothing in it claims
-    an output. <span class="cite wip">changing</span>
+    <strong>That block builds and runs.</strong> A one-dimensional array of a
+    scalar element type builds, indexing lowers to a bounds check and an
+    address computation, and a failed check panics rather than being silently
+    wrong. <strong>An array of arrays does not build yet</strong>: releasing
+    the outer array has to release each inner one through a runtime call that
+    takes only the element's address, and there is no such call for an element
+    that needs its own descriptor to be freed &mdash; so
+    <code>let identity be [[1.0, 0.0], [0.0, 1.0]]</code> checks clean and
+    fails at <code>build</code> with <code>SC0400</code>, naming exactly that
+    gap. <span class="cite wip">changing</span>
   </p>
 
   <div class="callout">
@@ -2591,19 +2613,19 @@ print(f"{primes.length()}")</pre>
       typed.
     </p>
 <pre class="err" style="margin-top:0.6rem"><code><span class="e-code">error[SC0525]</span>: expected `String`, found `an integer literal`
- <span class="e-hi">--&gt;</span> counts.science:1:33
+ <span class="e-hi">--&gt;</span> counts.science:1:31
   |
-1 | let counts: Array of String be [1, 2, 3]
-  |                                 <span class="e-hi">^</span> this is `an integer literal`
+1 | let counts: Array[String] be [1, 2]
+  |                               <span class="e-hi">^</span> this is `an integer literal`
 
 <span class="e-code">error[SC0525]</span>: expected `String`, found `an integer literal`
- <span class="e-hi">--&gt;</span> counts.science:1:36
+ <span class="e-hi">--&gt;</span> counts.science:1:34
   |
-1 | let counts: Array of String be [1, 2, 3]
-  |                                    <span class="e-hi">^</span> this is `an integer literal`</code></pre>
+1 | let counts: Array[String] be [1, 2]
+  |                                  <span class="e-hi">^</span> this is `an integer literal`</code></pre>
     <p style="margin-top:0.6rem">
       With no annotation, the elements unify and the binding gets the answer
-      &mdash; <code>[1, 2, 3]</code> is an <code>Array of I64</code>, because
+      &mdash; <code>[1, 2, 3]</code> is an <code>Array[I64]</code>, because
       an unsuffixed integer literal defaults to <code>Int</code> when nothing
       constrains it. <strong>This is recent, and it matters more than the
       missing check it replaced.</strong> An unchecked literal used to leave
@@ -2625,14 +2647,14 @@ print(f"{primes.length()}")</pre>
   |            - this is an integer literal
   |               <span class="e-hi">^^^</span> this is a floating-point literal
   |
-  = note: an array literal is an `Array of T` where `T` is the unification of its elements (&sect;3.1), and there is no implicit numeric conversion (&sect;5.1): write the suffix, the `as`, or the literal you meant</code></pre>
+  = note: an array literal is an `Array[T]` where `T` is the unification of its elements (&sect;3.1), and there is no implicit numeric conversion (&sect;5.1): write the suffix, the `as`, or the literal you meant</code></pre>
     <p style="margin-top:0.6rem">
       And <code>[]</code> takes its element type from the expected type at its
       position &mdash; an annotation, or a parameter type &mdash; and has none
       of its own. That is a bounded amount of bidirectional checking, an
       expected type pushed into one expression form, and it is worth naming as
       a cost because inference elsewhere is unification. The alternative was
-      requiring <code>(Array of F64).new()</code> everywhere, which is
+      requiring <code>Array[F64].new()</code> everywhere, which is
       pedantry; so the empty literal exists and says so when it is homeless:
     </p>
 <pre class="err" style="margin-top:0.6rem"><code><span class="e-code">error[SC0282]</span>: this empty array literal has no element type
@@ -2641,12 +2663,13 @@ print(f"{primes.length()}")</pre>
 1 | let xs be []
   |           <span class="e-hi">^^</span> nothing here says what `[]` holds
   |
-  = note: an empty literal takes its element type from the expected type at its position (&sect;3.3), and there is none here: annotate the binding &mdash; `let xs: Array of F64 be []`</code></pre>
-<pre data-science style="margin-top:0.6rem">let xs: Array of F64 be []          # the annotation supplies the element type
-let ys be [1, 2, 3]                 # Array of I64, by defaulting
-let zs: Array of F32 be [1.0f32, 2.0f32]
+  = note: an empty literal takes its element type from the expected type at its position (&sect;3.3), and there is none here: annotate the binding &mdash; `let xs: Array[F64] be []`</code></pre>
+<pre data-science style="margin-top:0.6rem">let xs: Array[F64] be []            # the annotation supplies the element type
+let ys be [1, 2, 3]                 # Array[I64], by defaulting
+let zs: Array[F32] be [1.0f32, 2.0f32]
 
-print(f"{ys[0]}")</pre>
+print(f"{ys[0]}")
+# 1</pre>
   </div>
 
   <h3>The bracket, and the rule that decides which one it is</h3>
@@ -2675,56 +2698,72 @@ print(f"{ys[0]}")</pre>
 
   <p class="note">
     <strong>Whitespace is not load-bearing</strong>, so <code>a [1]</code> is
-    an index exactly as <code>a[1]</code> is &mdash; forced by consistency with
-    the decision not to make the space in <code>Array of Doc .new()</code>
-    significant. A postfix bracket binds as tightly as a call and a field
-    access and associates left, so <code>a[i].field[j]</code> groups as
-    <code>((a[i]).field)[j]</code>. A <code>[</code> at the start of a line
-    cannot attach to the previous line's expression, because outside brackets
-    only a leading <code>.</code> or <code>where</code> continues a line; and
-    inside brackets newlines are ignored, so the only reading available is the
-    sensible one. JavaScript's equivalent hazard comes from automatic semicolon
-    insertion, which Science does not have.
+    an index exactly as <code>a[1]</code> is. A postfix bracket binds as
+    tightly as a call and a field access and associates left, so
+    <code>a[i].field[j]</code> groups as <code>((a[i]).field)[j]</code>. A
+    <code>[</code> at the start of a line cannot attach to the previous line's
+    expression, because outside brackets only a leading <code>.</code> or
+    <code>where</code> continues a line; and inside brackets newlines are
+    ignored, so the only reading available is the sensible one. JavaScript's
+    equivalent hazard comes from automatic semicolon insertion, which Science
+    does not have.
   </p>
 
   <p class="note">
-    The earlier design spelled generic arguments <code>Array[Doc]</code>, which
-    would have made <code>Name[</code> a choice between instantiation and index
-    &mdash; a resolution question inside the parser, which is where languages
-    with this problem end up needing a turbofish. <code>of</code> took that job
-    and the bracket was freed for this one.
+    <strong>The same bracket also opens a generic argument list, and that is a
+    real conflict rather than a solved one.</strong> <code>Array[Int]</code>
+    and <code>xs[i]</code> are the identical three tokens &mdash; a path, a
+    bracket, a path, a bracket &mdash; and nothing in the token stream says
+    whether the name before the bracket is a type or a value. The parser
+    splits the question on what it can decide and defers the rest: two or more
+    comma-separated items at bracket depth zero settle themselves, because an
+    index takes exactly one subscript, so <code>Map[String, Int]</code> is
+    always read as generic arguments. A single item does not settle itself,
+    so <code>Array[Int]</code> and <code>xs[i]</code> both parse as an index
+    expression provisionally, and <strong><code>science-resolve</code>
+    decides afterwards</strong>, rewriting the node into a generic
+    instantiation once it finds that the base name is a type rather than a
+    local. Rust meets this exact conflict and answers it with a second syntax,
+    <code>::&lt;&gt;</code>; Science answers it by giving the one syntax to
+    both jobs and deciding late, in the phase that has the definitions the
+    parser does not.
   </p>
 
   <p class="note">
     <strong><code>a[i][j]</code> and <code>a[i, j]</code> are different
     programs and stay different.</strong> The first is two index operations,
-    which is right for an <code>Array of (Array of T)</code>. The second is one
-    index operation of arity two, which is what a tensor or a matrix wants, and
-    the comma inside the brackets is grammar rather than a tuple constructor:
-    <code>a[t]</code> where <code>t</code> is a pair does not index a rank-2
-    thing. Aliasing the two was considered and refused &mdash; on a tensor,
-    <code>m[i][j]</code> would have to synthesise a row view for every element
-    access in an inner loop, and the reader could not see which they wrote.
+    which is right for an <code>Array[Array[T]]</code>. The second is meant as
+    one index operation of arity two, which is what a tensor or a matrix
+    wants, with the comma inside the brackets read as grammar rather than a
+    tuple constructor: <code>a[t]</code> where <code>t</code> is a pair does
+    not index a rank-2 thing. Aliasing the two was considered and refused
+    &mdash; on a tensor, <code>m[i][j]</code> would have to synthesise a row
+    view for every element access in an inner loop, and the reader could not
+    see which they wrote.
   </p>
 
   <p class="note">
-    <strong>The arity-two form is not in the grammar today.</strong> An index
-    bracket holds exactly one index position, and a comma inside one is a parse
-    error. The design asks that the parser and AST carry index arity from the
-    first commit so that F1 adds a type rule rather than a syntax revision;
-    that has not happened, so the revision is still owed.
-    <span class="cite wip">changing</span>
+    <strong>The arity-two form now parses, and nothing past the parser gives
+    it a meaning yet.</strong> Because a comma at bracket depth zero is read as
+    generic arguments regardless of what the base name turns out to be,
+    <code>xs[1, 2]</code> on an ordinary array parses the same shape a real
+    rank-2 index would, and the type checker then does the only thing it can
+    with two arguments applied to a value that is not generic: it reports the
+    whole expression as a plain type mismatch, naming the array's own type
+    rather than an element type. There is no rank-2 <code>Index</code>
+    implementation behind it yet, so the diagnostic is a symptom of the gap
+    rather than a rule about it. <span class="cite wip">changing</span>
   </p>
 
-<pre class="err"><code><span class="e-code">error[SC0100]</span>: expected `]`, found `,`
- <span class="e-hi">--&gt;</span> matrix.science:2:9
+<pre class="err"><code><span class="e-code">error[SC0525]</span>: expected `I64`, found `&amp;Array[I64]`
+ <span class="e-hi">--&gt;</span> matrix.science:2:5
   |
 2 |     xs[1, 2]
-  |         <span class="e-hi">^</span> expected `]`, found `,`</code></pre>
+  |     <span class="e-hi">^^^^^^^^</span> this is `&amp;Array[I64]`</code></pre>
 
   <p class="note">
     <strong>A literal is always an <code>Array</code>.</strong> Its type is
-    <code>Array of T</code> for the unification of its element types, and it is
+    <code>Array[T]</code> for the unification of its element types, and it is
     never inference-directed into some other collection &mdash; a literal whose
     type depends on where you put it is a literal you cannot read locally.
     Other collections go through <code>From</code> over a chain:
@@ -2753,18 +2792,23 @@ print(f"{ys[0]}")</pre>
 
   <p class="note">
     Every <code>a[i]</code> raises an obligation &mdash;
-    <code>0 &le; i</code> and <code>i &lt; extent(a)</code> &mdash; which the
-    compiler tries to discharge from a <strong>closed list of four rules,
-    deliberately not a solver</strong>. Discharged means the compiled code
-    contains <em>no check</em> and the expression cannot fail. Undischarged
-    means a runtime check that panics &mdash; and a diagnostic,
-    <code>SC0286</code>, saying so, a warning by default and an error under a
-    verified profile.
+    <code>0 &le; i</code> and <code>i &lt; extent(a)</code> &mdash; that the
+    design asks the compiler to discharge from a <strong>closed list of four
+    rules, deliberately not a solver</strong>. Discharged would mean the
+    compiled code contains <em>no check</em> and the expression cannot fail;
+    undischarged would mean a runtime check that panics, plus a diagnostic,
+    <code>SC0286</code>, saying so &mdash; a warning by default and an error
+    under a verified profile. <strong>None of that discharging exists
+    today</strong>: every <code>a[i]</code> compiles to the same unconditional
+    runtime check regardless of which of the four rows below it would match,
+    and <code>SC0286</code> is not emitted. The table is the specification the
+    implementation has not yet met.
+    <span class="cite wip">changing</span>
   </p>
 
   <div class="scroller">
     <table>
-      <thead><tr><th>Rule</th><th>Discharges</th><th>Phase</th></tr></thead>
+      <thead><tr><th>Rule (specified, not yet built)</th><th>Would discharge</th><th>Phase</th></tr></thead>
       <tbody>
         <tr><td class="what">Constant</td><td class="mono">a[3]</td><td class="what">F1 &mdash; needs a statically known extent</td></tr>
         <tr><td class="what">Loop range</td><td class="mono">a[i] in for i in 0..a.length():</td><td class="what">F0, over an array nothing resizes</td></tr>
@@ -2775,25 +2819,28 @@ print(f"{ys[0]}")</pre>
   </div>
 
   <p class="note">
-    Everything else is undischarged, and the named non-examples are
-    <code>a[compute(x)]</code>, <strong><code>a[i - 1]</code></strong>, and
-    <code>a[i]</code> where <code>i</code> came off a CSV. Rust and C++ make
-    the same choice <em>silently</em>: you cannot tell by reading
-    <code>a[i]</code> whether it compiled to a load or to a load with a branch,
-    and you certainly cannot tell whether it can abort a six-hour run at hour
-    five. The whole difference here is the diagnostic, and its message quality
-    is the feature rather than a polish item &mdash; a message that only said
-    "bounds check inserted" would be turned off within a week.
+    Once discharging exists, everything outside that list would stay
+    undischarged, and the named non-examples are <code>a[compute(x)]</code>,
+    <strong><code>a[i - 1]</code></strong>, and <code>a[i]</code> where
+    <code>i</code> came off a CSV. Rust and C++ make the same choice
+    <em>silently</em>: you cannot tell by reading <code>a[i]</code> whether it
+    compiled to a load or to a load with a branch, and you certainly cannot
+    tell whether it can abort a six-hour run at hour five. The design's whole
+    difference here is meant to be the diagnostic, and its message quality is
+    meant to be the feature rather than a polish item &mdash; a message that
+    only said "bounds check inserted" would be turned off within a week. None
+    of that is testable yet, because the check it would annotate is not yet
+    conditional on anything.
   </p>
 
   <p class="note">
-    <strong>The fallback panics and it is not a type error</strong>, which is
-    the honest half of the decision: making <code>a[i]</code> return a nullable
-    would put a test on the hot path of every inner loop in the language, and
-    the code that wants the test already has one. <code>get</code> is that
-    spelling &mdash; <code>def get(self, at: Int) -&gt; (borrowed T)?</code>,
-    with the parentheses required because <code>borrowed T?</code> would read
-    as <code>borrowed (T?)</code> &mdash; and it is what the genuinely dynamic
+    <strong>Today the check always runs and it is not a type error</strong>,
+    which is the honest half of the decision: making <code>a[i]</code> return a
+    nullable would put a test on the hot path of every inner loop in the
+    language, and the code that wants the test already has one. <code>get</code>
+    is that spelling &mdash; <code>def get(self, at: Int) -&gt; (&amp;T)?</code>,
+    with the parentheses required because <code>&amp;T?</code> would read
+    as <code>&amp;(T?)</code> &mdash; and it is what the genuinely dynamic
     case uses.
   </p>
 
@@ -2894,12 +2941,12 @@ print(f"{ys[0]}")</pre>
   <h3>Slices borrow</h3>
 
   <p class="note">
-    <code>samples[1..5]</code> has type <code>Slice of T</code>, which is
-    <code>{ borrowed T, Int }</code> &mdash; a pointer and a length &mdash; and
+    <code>samples[1..5]</code> has type <code>Slice[T]</code>, which is
+    <code>{ &amp;T, Int }</code> &mdash; a pointer and a length &mdash; and
     it <strong>does not copy</strong>. Copying is not a close call: a column of
     a ten-gigabyte frame is pitched as the actual contiguous buffer, and a
     copying slice would mean taking half of it costs five gigabytes and a
-    memcpy. The mutable form is <code>MutableSlice of T</code> and is produced
+    memcpy. The mutable form is <code>MutableSlice[T]</code> and is produced
     through <code>IndexMutably</code>. The rank rule is NumPy's on purpose: an
     index position that is an integer <em>drops</em> its axis, and one that is
     a range or a bare <code>..</code> <em>keeps</em> it. In F0 a slice is
@@ -2926,7 +2973,7 @@ print(f"{ys[0]}")</pre>
     <h3><code>xs[1..3]</code> is refused, because the type it would produce does not exist</h3>
     <p>
       A range in an index bracket parses, and then there is nothing for it to
-      evaluate to: <code>Slice of T</code> is specified and the compiler
+      evaluate to: <code>Slice[T]</code> is specified and the compiler
       declares no such type. The refusal is explicit, and it is worth reading
       for what it does <em>not</em> do &mdash; it does not silently hand back
       something of the wrong shape.
@@ -2935,17 +2982,17 @@ print(f"{ys[0]}")</pre>
  <span class="e-hi">--&gt;</span> window.science:2:5
   |
 2 |     xs[1..3]
-  |     <span class="e-hi">^^^^^^^^</span> slicing a `Array of Int` is not implemented
+  |     <span class="e-hi">^^^^^^^^</span> slicing a `&amp;Array[I64]` is not implemented
   |
-  = note: `a[1..5]` is specified as a `Slice of T` &mdash; a borrow and a length, which does not copy (&sect;2.3) &mdash; and this compiler declares no such type. Index one element at a time, or iterate: `xs.iterate().skip(1).take(2)`</code></pre>
+  = note: `a[1..5]` is specified as a `Slice[T]` &mdash; a borrow and a length, which does not copy (&sect;2.3) &mdash; and this compiler declares no such type. Index one element at a time, or iterate: `xs.iterate().skip(1).take(2)`</code></pre>
     <p style="margin-top:0.6rem">
       <strong>The alternative it replaced is the reason this is a callout
       rather than a line.</strong> Before the refusal, the expression
       type-checked and its type was <em>one element</em>: a range expression
       carries no type of its own, the index interface's <code>Idx</code> is
       <code>Int</code>, and the two agreed by cancelling, so
-      <code>xs[1..3]</code> on an <code>Array of Int</code> produced a
-      <code>borrowed Int</code>. Nothing was reported. A program whose author
+      <code>xs[1..3]</code> on an <code>Array[Int]</code> produced a
+      <code>&amp;Int</code>. Nothing was reported. A program whose author
       wrote a window and got an element compiled, and the mistake was invisible
       on the happy path, because a window of the right length and an element
       are both plausible inputs to whatever came next.
@@ -2959,7 +3006,7 @@ print(f"{ys[0]}")</pre>
       <code>.iterate().skip(a).take(b - a)</code> costs nothing, composes, and
       is what the design's own refusal of a slice type for the chain API
       already recommended. What it cannot do is produce an addressable buffer,
-      which is why <code>Slice of T</code> is still owed.
+      which is why <code>Slice[T]</code> is still owed.
       <span class="cite wip">changing</span>
     </p>
   </div>
@@ -3004,27 +3051,27 @@ print(f"{ys[0]}")</pre>
 
 <pre data-science>type Row:
     label: String
-    values: Array of F64
+    values: Array[F64]
 
-Row implements Index of Int:
+Row implements Index[Int]:
     type Output is F64
 
-    def index(self, at: Int) -&gt; borrowed F64:
+    def index(self, at: Int) -&gt; &amp;F64:
         self.values[at]
 
-def first_value(row: borrowed Row) -&gt; F64:
+def first_value(row: &amp;Row) -&gt; F64:
     row[0]</pre>
 
   <p class="note">
-    The two interfaces are <code>Index of Idx</code>, with
-    <code>def index(self, at: Idx) -&gt; borrowed Self.Output</code>, and
-    <code>IndexMutably of Idx</code>, with
-    <code>def index_mutably(mutable self, at: Idx) -&gt; mutable borrowed
+    The two interfaces are <code>Index[Idx]</code>, with
+    <code>def index(self, at: Idx) -&gt; &amp;Self.Output</code>, and
+    <code>IndexMutably[Idx]</code>, with
+    <code>def index_mutably(mutable self, at: Idx) -&gt; &amp;mut
     Self.Output</code>. <code>a[i]</code> on the right of a <code>be</code>
     requires the first; <code>a[i] be v</code> requires the second. Both are
     declared in the prelude with their associated <code>Output</code>, which is
     a correction: a design note recorded, accurately at the time, that
-    <code>Doc implements Index of Int:</code> could not be written at all,
+    <code>Doc implements Index[Int]:</code> could not be written at all,
     because the prelude's <code>Index</code> was a bare name with no parameter,
     no associated type and no method. It can now, and the listing above is the
     evidence.
@@ -3046,7 +3093,7 @@ def first_value(row: borrowed Row) -&gt; F64:
 
   <p class="note">
     <code>IndexMutably</code> is declared and is <em>not yet writable</em>, for
-    a narrow reason: its body has to produce a <code>mutable borrowed
+    a narrow reason: its body has to produce a <code>&amp;mut
     Self.Output</code>, and indexing yields a shared borrow, so there is no
     expression in the language today that satisfies the signature. So the
     diagnostic above names a repair that cannot currently be carried out.
@@ -3125,7 +3172,7 @@ def first_value(row: borrowed Row) -&gt; F64:
     <p style="margin-top:0.6rem">
       The one that will surprise you most is not in the brackets at all:
       <code>[[1.0, 0.0], [0.0, 1.0]]</code> is an
-      <code>Array of (Array of F64)</code> &mdash; <strong>one allocation per
+      <code>Array[Array[F64]]</code> &mdash; <strong>one allocation per
       row</strong> &mdash; and not a matrix. A matrix is that literal handed to
       <code>Tensor.from</code>, which reads its shape off the syntax. Until the
       back end special-cases that call, the ergonomic path to a matrix is also
@@ -3139,7 +3186,7 @@ def first_value(row: borrowed Row) -&gt; F64:
   <h2>Functions<a class="anchor" href="#functions" aria-label="Link to this section">#</a></h2>
   <p class="lede">
     <code>def</code> declares every function form there is. Generic parameters
-    follow the name with <code>of</code>; bounds go inline or in a
+    follow the name in brackets, <code>[T]</code>; bounds go inline or in a
     <code>where</code> clause, and several join with <code>+</code>.
   </p>
 
@@ -3152,24 +3199,24 @@ type Doc:
     title: String
     body: String
 
-type Pair of (A, B):
+type Pair[A, B]:
     first: A
     second: B
 
-def summary_length(doc: borrowed Doc) -&gt; Int:
+def summary_length(doc: &amp;Doc) -&gt; Int:
     doc.body.length()
 
-def duplicate of T: Clone + Eq(value: borrowed T) -&gt; Pair of (T, T):
+def duplicate[T: Clone + Eq](value: &amp;T) -&gt; Pair[T, T]:
     Pair(first: value.clone(), second: value.clone())
 
-def longer_of of T(left: borrowed T, right: borrowed T) -&gt; String
+def longer_of[T](left: &amp;T, right: &amp;T) -&gt; String
         where T: Summarize + Clone:
     if left.summarize().length() &gt;= right.summarize().length():
         left.preview()
     else:
         right.preview()
 
-def paired of (A, B)(first: A, second: B) -&gt; (A, B):
+def paired[A, B](first: A, second: B) -&gt; (A, B):
     (first, second)</pre>
 
   <div class="scroller">
@@ -3178,10 +3225,10 @@ def paired of (A, B)(first: A, second: B) -&gt; (A, B):
       <tbody>
         <tr><td class="mono">def f(x: T) -&gt; U:</td><td class="what">A free function</td></tr>
         <tr><td class="mono">def f(x: T):</td><td class="what">A free function returning <code>()</code></td></tr>
-        <tr><td class="mono">def f of T(…)</td><td class="what">One generic parameter, no parentheses needed</td></tr>
-        <tr><td class="mono">def f of (A, B)(…)</td><td class="what">Two or more, parenthesised &mdash; the same rule as a type's</td></tr>
-        <tr><td class="mono">def f of T: Bound(…)</td><td class="what">The bound inline, on the parameter</td></tr>
-        <tr><td class="mono">def f of T(…) where T: A + B:</td><td class="what">The bounds in a clause, joined with <code>+</code></td></tr>
+        <tr><td class="mono">def f[T](…)</td><td class="what">One generic parameter</td></tr>
+        <tr><td class="mono">def f[A, B](…)</td><td class="what">Two or more, in the same bracket pair</td></tr>
+        <tr><td class="mono">def f[T: Bound](…)</td><td class="what">The bound inline, on the parameter</td></tr>
+        <tr><td class="mono">def f[T](…) where T: A + B:</td><td class="what">The bounds in a clause, joined with <code>+</code></td></tr>
         <tr><td class="mono">def f(self, …)</td><td class="what">A method &mdash; inside a <code>has:</code>, <code>interface</code> or <code>implements</code> block</td></tr>
         <tr><td class="mono">def f(…) -&gt; T:</td><td class="what">With no <code>self</code>, an associated function, called <code>Type.f(…)</code></td></tr>
       </tbody>
@@ -3189,12 +3236,19 @@ def paired of (A, B)(first: A, second: B) -&gt; (A, B):
   </div>
 
   <p class="note">
-    <strong>Generic functions check and do not build.</strong> Nothing
-    monomorphises them: the walk that would turn <code>duplicate of T</code>
-    into one emitted function per concrete <code>T</code> sits above the back
-    end and no phase runs it, so a call to one is <code>SC0400</code>. Tuples
-    are refused for a different reason &mdash; there is simply no arm mapping a
-    tuple type to a layout. <span class="cite wip">changing</span>
+    <strong>An ordinary generic function builds and runs, as long as its body
+    calls no method through the generic parameter.</strong> Monomorphisation
+    is real for that narrower shape: two call sites of a one-parameter
+    <code>identity[T](value: T) -&gt; T: value</code> at different types
+    produce two distinct linked symbols and print both answers. <code>duplicate</code>
+    above is <em>not</em> that shape &mdash; its body calls <code>value.clone()</code>,
+    a method reached through the bound <code>T: Clone</code>, and that call is
+    exactly the gap the rest of this page calls out repeatedly: <strong>a
+    method call resolved through a generic bound, an interface, or
+    <code>any</code></strong> does not build yet, so <code>duplicate</code>
+    checks clean and refuses at <code>build</code>. <a href="#state">What
+    works today</a> has the exact wording the compiler reports for it.
+    <span class="cite wip">changing</span>
   </p>
 
   <p class="note">
@@ -3245,7 +3299,7 @@ def paired of (A, B)(first: A, second: B) -&gt; (A, B):
 
   <p class="note">
     <strong>Local inference variables still exist</strong>, because
-    <code>let xs be (Array of Int).new()</code> has to get its element type
+    <code>let xs be Array[Int].new()</code> has to get its element type
     from a later <code>push</code>. So there is a small unification engine
     inside one body; it is bounded by the body and discarded when the body is
     done. Numeric literals go through it: an unsuffixed literal is
@@ -3258,7 +3312,7 @@ def paired of (A, B)(first: A, second: B) -&gt; (A, B):
   <p class="note">
     <strong>The auto-borrow is not in the type relation, and the measurement
     that forced the distinction is worth quoting.</strong> A parameter declared
-    <code>borrowed T</code> is called with a <code>T</code>: the caller does
+    <code>&amp;T</code> is called with a <code>T</code>: the caller does
     not write the borrow and the checker inserts it. That is an
     <em>elaboration</em>, not a coercion &mdash; the value is unchanged and
     what the checker writes down is a <code>Borrow</code> node the author did
@@ -3339,9 +3393,9 @@ def paired of (A, B)(first: A, second: B) -&gt; (A, B):
     closure's argument, and <code>giving</code> otherwise.
   </p>
 
-<pre data-science>def shortlist(xs: Array of Int) -&gt; Int:
-    xs.keep(each &gt; 5)                       # implicit subject, mentioned once
-    xs.keep(x giving x &gt; 5 and x &lt; 50)      # named, because it is mentioned twice
+<pre data-science>def shortlist(xs: Array[Int]) -&gt; Int:
+    xs.iterate().keep(each &gt; 5)                       # implicit subject, mentioned once
+    xs.iterate().keep(x giving x &gt; 5 and x &lt; 50)      # named, because it is mentioned twice
     0</pre>
 
 <pre class="err"><code><span class="e-code">error[SC0115]</span>: a nested `each` would name a different subject than the `each` around it
@@ -3419,7 +3473,7 @@ def paired of (A, B)(first: A, second: B) -&gt; (A, B):
     method. One consequence is fixed in advance for a reason unrelated to
     ergonomics: <strong>a closure must be typed by its captures rather than
     erased</strong>, from F0, because a future <code>.parallel()</code> has to
-    reject a closure that captures something <code>mutable borrowed</code>, and
+    reject a closure that captures something <code>&amp;mut</code>, and
     nothing in F0 reads that information &mdash; which makes it the requirement
     most likely to be quietly missed.
   </p>
@@ -3615,8 +3669,8 @@ Doc implements Summarize:           # and again, for the same type
 <pre class="err" style="margin-top:0.6rem"><code><span class="e-code">error[SC0534]</span>: `Doc` does not implement `Summarize`
   <span class="e-hi">--&gt;</span> show.science:11:5
    |
- 7 | def show of T(x: borrowed T) -&gt; String where T: Summarize:
-   |                                                 --------- `T` was declared `Summarize`
+ 6 | def show[T](x: &amp;T) -&gt; String where T: Summarize:
+   |                                       --------- `T` was declared `Summarize`
 ...
 11 |     show(d)
    |     <span class="e-hi">^^^^^^^</span> `T` is `Doc` here
@@ -3639,7 +3693,7 @@ Doc implements Summarize:           # and again, for the same type
     body: String
 
 Doc has:
-    def summarize(self) -&gt; borrowed String: # shared borrow of the receiver
+    def summarize(self) -&gt; &amp;String:        # shared borrow of the receiver
         self.body.trim()
 
     def reset(mutable self):                # exclusive borrow
@@ -3672,7 +3726,7 @@ print(doc.summarize())</pre>
     is what makes a builder's final <code>build()</code> or a handle's
     <code>close()</code> impossible to call twice. Note that
     <strong><code>self</code> is <em>already</em> the shared borrow</strong>
-    &mdash; there is no <code>borrowed self</code>, and writing one is a parse
+    &mdash; there is no <code>&amp;self</code>, and writing one is a parse
     error, because the bare receiver is the borrowing one and a second spelling
     would mean nothing new. That fact is also where the interpolation guarantee
     comes from: <code>Display</code>'s method takes <code>self</code>, so
@@ -3715,7 +3769,7 @@ print(doc.summarize())</pre>
     call site. Both failures name what was searched:
   </p>
 
-<pre class="err"><code><span class="e-code">error[SC0532]</span>: `borrowed Doc` has no method `no_such_method`
+<pre class="err"><code><span class="e-code">error[SC0532]</span>: `&amp;Doc` has no method `no_such_method`
  <span class="e-hi">--&gt;</span> doc.science:5:7
   |
 5 |     d.no_such_method()
@@ -3723,16 +3777,16 @@ print(doc.summarize())</pre>
   |
   = note: method lookup finds the inherent methods of the type and the methods of the interfaces it implements, and neither has this name</code></pre>
 
-<pre class="err"><code><span class="e-code">error[SC0528]</span>: `borrowed Doc` has no field `no_such_field`
+<pre class="err"><code><span class="e-code">error[SC0528]</span>: `&amp;Doc` has no field `no_such_field`
  <span class="e-hi">--&gt;</span> doc.science:5:7
   |
 5 |     d.no_such_field
   |       <span class="e-hi">^^^^^^^^^^^^^</span> no such field</code></pre>
 
   <p class="note">
-    Both messages print the receiver as <code>borrowed Doc</code> rather than
+    Both messages print the receiver as <code>&amp;Doc</code> rather than
     <code>Doc</code>, which is accurate and is the auto-borrow becoming visible:
-    the parameter was declared <code>borrowed Doc</code> and the lookup happens
+    the parameter was declared <code>&amp;Doc</code> and the lookup happens
     on that type. It is a small thing and it is the kind of small thing that
     makes a reader think the borrow is the problem when it is not.
   </p>
@@ -3767,7 +3821,7 @@ Countdown implements Iterate:
     <code>type Item is Int</code> in the implementation, projected as
     <code>Self.Item</code> with a dot, and constrained in a <code>where</code>
     clause with <code>is</code>:
-    <code>where Self.Item is borrowed T, T: Clone</code>.
+    <code>where Self.Item is &amp;T, T: Clone</code>.
   </p>
 
   <p class="note">
@@ -3802,7 +3856,7 @@ Vector2 implements Add:
         Vector2(x: self.x + other.x, y: self.y + other.y)
 
 Vector2 implements Eq:
-    def eq(self, other: borrowed Vector2) -&gt; Bool:
+    def eq(self, other: Vector2) -&gt; Bool:
         self.x is other.x and self.y is other.y
 
 let sum be Vector2(x: 1.0, y: 2.0) + Vector2(x: 3.0, y: 4.0)
@@ -3845,7 +3899,7 @@ print(f"{sum.x is 4.0}")</pre>
     asks about a borrowed implementation. That is better than the amendment,
     because it is one rule rather than a table of ten operators over a dozen
     numeric types &mdash; and it is also narrower, because it does not reach a
-    non-<code>Copy</code> type: <code>borrowed String + borrowed String</code>
+    non-<code>Copy</code> type: <code>&amp;String + &amp;String</code>
     does not work, where the amendment as written implies it would.
   </p>
 
@@ -3867,10 +3921,10 @@ print(f"{sum.x is 4.0}")</pre>
   <p class="note">
     <code>any I</code> is the interface object: one function in the binary
     rather than one per type. There are four spellings and they cost different
-    things. <code>borrowed any I</code> is a pointer paired with a vtable known
+    things. <code>&amp;any I</code> is a pointer paired with a vtable known
     at the site and <strong>emits no code at all</strong> &mdash; it is
     unsizing, and it is implicit. <code>any I</code> and
-    <code>Box of any I</code> own the value, which means it moves to the heap,
+    <code>Box[any I]</code> own the value, which means it moves to the heap,
     <strong>which allocates</strong>, and those two are written out rather than
     inserted. And <code>(any I)?</code> is a nullable fat pointer whose niche
     lives in the data pointer, so it is two words and not three.
@@ -3886,8 +3940,8 @@ print(f"{sum.x is 4.0}")</pre>
     the implementation carries <strong>seven</strong> coercion variants:
     <code>T</code> into <code>T?</code>; a concrete error into
     <code>any Error</code> at a <code>return</code> and at an argument;
-    <code>borrowed C</code> into <code>borrowed any I</code> for any interface;
-    and <code>borrowed T</code> into <code>T</code> when <code>T: Copy</code>,
+    <code>&amp;C</code> into <code>&amp;any I</code> for any interface;
+    and <code>&amp;T</code> into <code>T</code> when <code>T: Copy</code>,
     in three shapes. A reader counting variants and concluding the note is
     stale is reading the right number and the wrong question.
   </p>
@@ -3905,12 +3959,12 @@ print(f"{sum.x is 4.0}")</pre>
 
   <p class="note">
     <strong>A shared borrow of a <code>Copy</code> type is assignable to the
-    type itself.</strong> <code>borrowed Int</code> where an <code>Int</code>
+    type itself.</strong> <code>&amp;Int</code> where an <code>Int</code>
     is wanted reads the value out, because the whole content of <code>Copy</code>
     is that a copy of the value <em>is</em> the value: no allocation, no drop,
     no observable second thing. Three conditions, each refusing something
     different &mdash; the borrow must be <em>shared</em>, so that
-    <code>mutable borrowed T</code> does not become usable wherever
+    <code>&amp;mut T</code> does not become usable wherever
     <code>T</code> is; the referent must be exactly the target, so the rule
     takes one borrow off and composes with nothing else; and the referent must
     actually declare <code>Copy</code>, which a bare <code>T: Copy</code> bound
@@ -3920,10 +3974,10 @@ print(f"{sum.x is 4.0}")</pre>
   <p class="note">
     <strong>It is in the language because the alternative was an expressive
     dead end.</strong> Science has no dereference operator, by design, and
-    <code>Array.get</code> returns <code>(borrowed T)?</code> &mdash; so before
+    <code>Array.get</code> returns <code>(&amp;T)?</code> &mdash; so before
     this rule there was no spelling that read a <code>Char</code> out of a
     container. It is also what makes the most-written loop in the language
-    legal: <code>Array of T</code> iterates at <code>borrowed T</code>, so
+    legal: <code>Array[T]</code> iterates at <code>&amp;T</code>, so
     <code>for n in numbers:</code> binds <code>n</code> as a borrow and every
     arithmetic operator in every loop body meets one. Without the rule,
     <code>total be total + n</code> is a type error.
@@ -3934,9 +3988,11 @@ print(f"{sum.x is 4.0}")</pre>
     conversions in the language: unsizing a borrow into an interface object
     emits no code at all, and this one emits a copy, so "the same value" is
     doing work that "no work happens" did before. It earns the weaker defence
-    by the dead end, not by convenience &mdash; and the back end refuses it
-    today, so the loop it exists to permit type-checks and does not yet build.
-    <span class="cite wip">changing</span>
+    by the dead end, not by convenience. <strong>The loop it exists to permit
+    now builds</strong>: <code>examples/10_loops.science</code>'s
+    <code>total</code> sums an <code>Array[Int]</code> with exactly
+    <code>sum be sum + item</code> in its body, and that program is one of the
+    ten examples this build links and runs.
   </p>
 
   <div class="callout">
@@ -4029,24 +4085,26 @@ print(f"{sum.x is 4.0}")</pre>
     body: String
 
 type View:
-    source: borrowed Doc           # a record may hold a borrow; the region is inferred
+    source: &amp;Doc                  # a record may hold a borrow; the region is inferred
 
-def retitle(doc: mutable borrowed Doc, title: String):
+def retitle(doc: &amp;mut Doc, title: String):
     doc.title be title
 
-def compare(left: borrowed Doc, right: borrowed Doc) -&gt; Bool:
+def compare(left: &amp;Doc, right: &amp;Doc) -&gt; Bool:
     left.title is right.title
 
 let mutable doc be Doc(title: "a", body: "")
 
-# A parameter declared `borrowed` is borrowed automatically, so the call
+# A parameter declared `&` is borrowed automatically, so the call
 # site is bare. The signature still carries the information.
 retitle(doc, "renamed")
 print(f"{compare(doc, doc)}")
 
 # Write the borrow out where the position is not a call site.
-let view be View(source: borrowed doc)
-print(view.source.title)</pre>
+let view be View(source: &amp;doc)
+print(view.source.title)
+# true
+# renamed</pre>
 
   <p class="note">
     <strong>The rules, in full, are six lines.</strong> Every value has one
@@ -4129,50 +4187,56 @@ print(view.source.title)</pre>
 
   <div class="scroller">
     <table>
-      <thead><tr><th>Position</th><th><code>borrowed T</code></th><th><code>mutable borrowed T</code></th></tr></thead>
+      <thead><tr><th>Position</th><th><code>&amp;T</code></th><th><code>&amp;mut T</code></th></tr></thead>
       <tbody>
         <tr><td class="what">A parameter</td><td class="what">yes, and auto-borrowed at the call</td><td class="what">yes, and auto-borrowed at the call</td></tr>
         <tr><td class="what">A return type</td><td class="what">yes &mdash; subject to <code>SC0340</code></td><td class="what">yes &mdash; subject to <code>SC0340</code></td></tr>
         <tr><td class="what">A record field</td><td class="what">yes; the region is inferred per value</td><td class="what">yes</td></tr>
-        <tr><td class="what">A <code>let</code> annotation</td><td class="what">yes, but auto-borrow does not apply &mdash; write the word</td><td class="what">same</td></tr>
-        <tr><td class="what">An expression</td><td class="what"><code>borrowed doc</code>, a prefix operator</td><td class="what"><code>mutable borrowed doc</code></td></tr>
-        <tr><td class="what">A receiver</td><td class="what">spelled <code>self</code>; there is no <code>borrowed self</code></td><td class="what">spelled <code>mutable self</code></td></tr>
+        <tr><td class="what">A <code>let</code> annotation</td><td class="what">yes, but auto-borrow does not apply &mdash; write the sigil</td><td class="what">same</td></tr>
+        <tr><td class="what">An expression</td><td class="what"><code>&amp;doc</code>, a prefix operator</td><td class="what"><code>&amp;mut doc</code></td></tr>
+        <tr><td class="what">A receiver</td><td class="what">spelled <code>self</code>; there is no <code>&amp;self</code></td><td class="what">spelled <code>mutable self</code></td></tr>
         <tr><td class="what">A <code>tool</code> parameter</td><td class="what">no &mdash; <code>SC0192</code></td><td class="what">no &mdash; <code>SC0192</code></td></tr>
       </tbody>
     </table>
   </div>
 
   <p class="note">
-    <strong>The spelling is exactly <code>mutable borrowed</code>, in that
-    order, and <code>mutable</code> in a type never means anything else.</strong>
-    There is no third kind of borrow and no unique/owned qualifier. Two
-    English words where Rust has <code>&amp;</code> and <code>&amp;mut</code>
-    is the whole of the trade: it is longer to type and it is the thing a
-    reader who has never seen the language can still read.
+    <strong>The spelling is exactly <code>&amp;mut</code>, and <code>mutable</code>
+    on a binding never means anything else.</strong>
+    There is no third kind of borrow and no unique/owned qualifier. Science
+    writes the same two sigils Rust does for a borrow, <code>&amp;</code> and
+    <code>&amp;mut</code>, and reserves the word <code>mutable</code> for a
+    binding's own reassignability.
   </p>
 
   <p class="note">
     <strong><code>mutable</code> on a <em>binding</em> is a different word
     doing a different job.</strong> <code>let mutable x be 0</code> says the
-    name may be assigned again; <code>mutable borrowed T</code> says the
+    name may be assigned again; <code>&amp;mut T</code> says the
     borrow may write through. They share a keyword and nothing else, and the
-    one place they meet is that taking a <code>mutable borrowed</code> of a
-    binding requires the binding to be <code>mutable</code>. The language
-    specifies that requirement; the diagnostic for it is <code>SC0304</code>,
-    <em><code>x</code> is not mutable</em>, whose suggested fix is written
-    four ways &mdash; declare it <code>let mutable x</code>, bind it
-    <code>mutable x</code> in the pattern, take the receiver as
-    <code>mutable self</code>, or, for a parameter, bind a local, because a
-    parameter cannot be declared mutable. <span class="cite wip">changing</span>
+    design specifies one place they meet: taking a <code>&amp;mut</code>
+    borrow of a binding should require the binding to be <code>mutable</code>.
+    <strong>Only half of that is wired in today.</strong> <code>SC0304</code>,
+    <em><code>x</code> is not mutable</em>, is real and fires for a direct
+    assignment through <code>be</code> to a binding never declared
+    <code>mutable</code>; its suggested fix is written four ways &mdash;
+    declare it <code>let mutable x</code>, bind it <code>mutable x</code> in
+    the pattern, take the receiver as <code>mutable self</code>, or, for a
+    parameter, bind a local, because a parameter cannot be declared mutable.
+    But taking <code>&amp;mut</code> of a binding that was never declared
+    <code>mutable</code> is not refused yet &mdash; it <code>check</code>s
+    clean, which is the same gap <a href="#interfaces">Interfaces</a> names for
+    <code>mutable self</code>: the mutability half of the borrow rules is not
+    wired in. <span class="cite wip">changing</span>
   </p>
 
   <h3>Auto-borrow at call sites, and the one rule it obeys</h3>
 
   <p class="note">
-    <strong>If a parameter is declared <code>borrowed T</code>, the caller
+    <strong>If a parameter is declared <code>&amp;T</code>, the caller
     writes <code>compare(a, b)</code> and not
-    <code>compare(borrowed a, borrowed b)</code>.</strong> The signature still
-    says <code>borrowed</code>, so a reader keeps the information; only the
+    <code>compare(&amp;a, &amp;b)</code>.</strong> The signature still
+    says <code>&amp;</code>, so a reader keeps the information; only the
     noise at the call site goes. Rust rejected this and Mojo adopted it, and
     for this audience Mojo is right &mdash; a scientist reading
     <code>gemm(&amp;a, &amp;b, &amp;mut c)</code> is reading three sigils that
@@ -4181,7 +4245,7 @@ print(view.source.title)</pre>
 
   <p class="note">
     <strong>It applies at an argument and nowhere else.</strong>
-    <code>let x: borrowed String be s</code> is not a call site, so no borrow
+    <code>let x: &amp;String be s</code> is not a call site, so no borrow
     is inserted there and the word has to be written; admitting it would be a
     language change made by a type checker. What the checker does is exactly
     what the author was allowed to leave out &mdash; it writes down an
@@ -4195,7 +4259,7 @@ print(view.source.title)</pre>
   <p class="note">
     <strong>And it stops at a branch.</strong> In
     <code>show(if flag: "yes" else: "no")</code> the call site is the
-    argument, not the two arms, so a <code>borrowed String</code> expectation
+    argument, not the two arms, so a <code>&amp;String</code> expectation
     is not pushed inward. Pushing it in made each arm borrow its own
     temporary, whose storage ends inside the arm, and the region checker then
     reported <code>SC0333</code> on a correct program &mdash; right about the
@@ -4216,8 +4280,8 @@ print(view.source.title)</pre>
 
   <p class="note">
     <strong>It also concealed a real bug for a while, which is the honest
-    other half.</strong> Auto-borrow fired for <code>borrowed any
-    Summarize</code> and not for <code>borrowed T</code> where <code>T</code>
+    other half.</strong> Auto-borrow fired for <code>&amp;any
+    Summarize</code> and not for <code>&amp;T</code> where <code>T</code>
     was generic, so <code>describe(doc)</code> silently <em>moved</em>
     <code>doc</code>; the corpus's largest example then moved a value that
     another value was still borrowing and used it twice more. The region
@@ -4238,7 +4302,7 @@ Buffer has:
     def push(mutable self, value: Int):
         self.total be self.total + value
 
-def grow(buffer: mutable borrowed Buffer):
+def grow(buffer: &amp;mut Buffer):
     # The exclusive borrow of `buffer` is RESERVED here and ACTIVATED after
     # the argument has been evaluated, so the shared borrow inside the
     # argument does not overlap it.
@@ -4247,7 +4311,7 @@ def grow(buffer: mutable borrowed Buffer):
   <p class="note">
     <strong>An exclusive borrow taken in argument position is two-phase;
     every other exclusive borrow is single-phase.</strong> A borrow bound to a
-    name &mdash; <code>let r be mutable borrowed x</code> &mdash; is used an
+    name &mdash; <code>let r be &amp;mut x</code> &mdash; is used an
     unknown number of times, and two-phasing that would be unsound. The
     distinction is carried all the way down: the mid-level IR has a
     <em>reserve</em> borrow kind and an explicit <em>activate</em> statement
@@ -4274,7 +4338,7 @@ def grow(buffer: mutable borrowed Buffer):
     reserved, exclusive &mdash; where it was written as a two-state one, and
     the implementation answered it by splitting the access: the reservation is
     not an exclusive access and the activation is. That split is what makes
-    <code>let s be borrowed v</code> followed by <code>v.push(s.length())</code>
+    <code>let s be &amp;v</code> followed by <code>v.push(s.length())</code>
     compile.
   </p>
 
@@ -4487,8 +4551,8 @@ print(f"{apply(x giving x + offset, 2)}")</pre>
 5 |     let local be Doc(title: "a")
   |     <span class="e-hi">^^^^^^^^^^^^^^^^^^^^^^^^^^^^</span> ...and the borrow is still needed here, after the value is gone (continues to line 6)
   |         ----- `local` is declared here
-6 |     borrowed local
-  |     -------------- `local` is borrowed here
+6 |     &amp;local
+  |     ------ `local` is borrowed here
   |
   = note: a borrow may not outlive what it points at (&sect;6.1 rule 5); the value's storage ends at the close of the scope it was declared in
   = note: there is no lifetime syntax to widen: the fix is to return an owned value or an index, which is what `examples/21_compiler_shapes.science` &sect;1 does</code></pre>
@@ -4535,10 +4599,10 @@ print(f"{apply(x giving x + offset, 2)}")</pre>
     def preview(self) -&gt; String:
         self.summarize()
 
-def describe_any(value: borrowed any Summarize) -&gt; String:
+def describe_any(value: &any Summarize) -&gt; String:
     value.preview()
 
-def describe_each of T(value: borrowed T) -&gt; String where T: Summarize:
+def describe_each[T](value: &amp;T) -&gt; String where T: Summarize:
     value.preview()</pre>
 
   <p class="note">
@@ -4584,7 +4648,7 @@ def describe_each of T(value: borrowed T) -&gt; String where T: Summarize:
       in the lowering than in the type system, deliberately, so that a
       <code>Move</code> is never mistaken for a <code>Copy</code>. Note the
       direction: <code>String</code> is <em>not</em> <code>Copy</code> here
-      either, and <code>mutable borrowed T</code> is never assignable to
+      either, and <code>&amp;mut T</code> is never assignable to
       <code>T</code> even when <code>T</code> is.
     </p>
   </div>
@@ -4607,7 +4671,7 @@ def describe_each of T(value: borrowed T) -&gt; String where T: Summarize:
 <pre data-science>type State:
     residual: F64
 
-def converged(state: borrowed State) -&gt; Bool:
+def converged(state: &amp;State) -&gt; Bool:
     state.residual &lt;= 1.0e-6
 
 def refine(state: State) -&gt; State:
@@ -4785,7 +4849,7 @@ print(f"{value}")</pre>
 
   <h3><code>for</code>, its ranges, and what the loop variable owns</h3>
 
-<pre data-science>def total_of(xs: borrowed Array of Int) -&gt; Int:
+<pre data-science>def total_of(xs: &amp;Array[Int]) -&gt; Int:
     let mutable total be 0
 
     # The binder is a pattern, so a tuple element can be taken apart here.
@@ -4794,13 +4858,13 @@ print(f"{value}")</pre>
 
     total
 
-def pairs_of(ps: borrowed Array of (Int, Int)) -&gt; Int:
+def pairs_of(ps: &amp;Array[(Int, Int)]) -&gt; Int:
     let mutable total be 0
     for (left, right) in ps:
         total be total + left * right
     total
 
-def characters(text: borrowed String) -&gt; Int:
+def characters(text: &amp;String) -&gt; Int:
     let mutable n be 0
     for _ in text.chars():         # `_` in a binder discards the item
         n be n + 1
@@ -4823,8 +4887,8 @@ def characters(text: borrowed String) -&gt; Int:
     <code>iterate_consuming()</code>. This is a deliberate correction of the
     single most-reported wart in Rust's collection API, where <code>for x in
     v</code> silently moves and burns every beginner once. The prelude keeps
-    the promise: <code>Array of T implements Iterate</code> with
-    <code>Item is borrowed T</code>, so the loop variable is a borrow, and
+    the promise: <code>Array[T] implements Iterate</code> with
+    <code>Item is &amp;T</code>, so the loop variable is a borrow, and
     <a href="#interfaces">the <code>Copy</code> rule</a> is what makes
     arithmetic on it legal.
   </p>
@@ -4944,7 +5008,7 @@ interface Titled:
 
 # One bound per clause, comma-separated; `where` never introduces a guard,
 # a loop condition or a pattern test.
-def describe of T(value: borrowed T) -&gt; String where T: Summarize, T: Titled:
+def describe[T](value: &amp;T) -&gt; String where T: Summarize, T: Titled:
     value.title()</pre>
 
   <p class="note">
@@ -5142,13 +5206,13 @@ choice Token:
     Symbol(Char)
     Word(String)
 
-def name_of(format: borrowed Format) -&gt; String:
+def name_of(format: &amp;Format) -&gt; String:
     match format:
         Plain: "plain"
         Markdown: "markdown"
         Json: "json"
 
-def qualified(format: borrowed Format) -&gt; String:
+def qualified(format: &amp;Format) -&gt; String:
     match format:                      # qualified variants mean the same thing
         Format.Plain: "plain"
         Format.Markdown: "markdown"
@@ -5160,12 +5224,12 @@ def size_of(digit: Int) -&gt; String:
         3 | 4 | 5 | 6: "medium"
         _: "large"
 
-def is_separator(token: borrowed Token) -&gt; Bool:
+def is_separator(token: &amp;Token) -&gt; Bool:
     match token:
         Symbol(',') | Symbol(';') | Symbol('.'): true
         _: false
 
-def where_is(point: borrowed Point) -&gt; String:
+def where_is(point: &amp;Point) -&gt; String:
     match point:
         Point(x: 0, y: 0): "origin"
         Point(x: 0, y: y): "on the Y axis"
@@ -5229,7 +5293,7 @@ def where_is(point: borrowed Point) -&gt; String:
     celsius: Int
     flagged: Bool
 
-def describe(r: borrowed Reading) -&gt; String:
+def describe(r: &amp;Reading) -&gt; String:
     match r:
         # `flagged` is not named, so it is not asked about.
         Reading(sensor: 0, celsius: c): "sensor zero"
@@ -5302,7 +5366,7 @@ choice Format:
     Plain
     Json
 
-def name_or(format: borrowed Format?) -&gt; String:
+def name_or(format: &amp;Format?) -&gt; String:
     match format:
         null: "none"
         Plain: "plain"
@@ -5374,8 +5438,8 @@ def name_or(format: borrowed Format?) -&gt; String:
     &mdash; <code>Point(x: _, y: _)</code>, with the field names, in the shape
     the reader can paste into a new arm &mdash; in the declaration order of
     the <code>choice</code>. Borrows are peeled first, so a
-    <code>borrowed Format</code> scrutinee names <code>Markdown</code> and not
-    <code>borrowed Markdown</code>. The type is printed as the alias you
+    <code>&amp;Format</code> scrutinee names <code>Markdown</code> and not
+    <code>&amp;Markdown</code>. The type is printed as the alias you
     wrote, not as its expansion.
   </p>
 
@@ -5393,7 +5457,7 @@ def name_or(format: borrowed Format?) -&gt; String:
         <tr><td class="mono">()</td><td class="what">one</td><td class="what"><code>()</code></td></tr>
         <tr><td class="mono">Never</td><td class="what">none at all</td><td class="what">vacuously exhaustive: no arms needed</td></tr>
         <tr><td class="mono">Int, Float, Char, String</td><td class="what">treated as infinite</td><td class="what"><code>_</code>: a catch-all is always required</td></tr>
-        <tr><td class="mono">a type parameter, any I, Array of T</td><td class="what">unknown</td><td class="what"><code>_</code>: a catch-all is always required</td></tr>
+        <tr><td class="mono">a type parameter, any I, Array[T]</td><td class="what">unknown</td><td class="what"><code>_</code>: a catch-all is always required</td></tr>
       </tbody>
     </table>
   </div>
@@ -5618,7 +5682,7 @@ def name_or(format: borrowed Format?) -&gt; String:
       One difference goes the other way. Rust's <code>match</code> on a
       reference makes you think about binding modes; Science peels the borrow
       before the check and has no binding modes at all, so
-      <code>match format:</code> over a <code>borrowed Format</code> is
+      <code>match format:</code> over a <code>&amp;Format</code> is
       written exactly like a <code>match</code> over an owned one, and the
       witness names <code>Markdown</code> rather than a reference to it.
     </p>
@@ -5691,18 +5755,18 @@ ConfigError implements Error:
             NotFound(key): copy_of(key)
             Malformed(detail, line): copy_of(detail)
 
-def copy_of(text: borrowed String) -&gt; String:
+def copy_of(text: &amp;String) -&gt; String:
     let mutable out be String.new()
     out.push_str(text)
     out
 
-def parse(text: borrowed String) -&gt; (Config, ConfigError?):
+def parse(text: &amp;String) -&gt; (Config, ConfigError?):
     if text.is_empty():
         return (Config.empty(), ConfigError.Malformed("empty input", 1))
     (Config(host: copy_of(text), port: 8080u16), null)
 
 # The pair: what the function produced, and what went wrong.
-def read_config(path: borrowed String) -&gt; (Config, ConfigError?):
+def read_config(path: &amp;String) -&gt; (Config, ConfigError?):
     let text, err be read_file(path)
     if err?:
         return (Config.empty(), ConfigError.NotFound(copy_of(path)))
@@ -5758,13 +5822,13 @@ def read_config(path: borrowed String) -&gt; (Config, ConfigError?):
     host: String?
     port: U16?
 
-def heading(text: borrowed String) -&gt; String?:
+def heading(text: &amp;String) -&gt; String?:
     if text.starts_with("# "):
         text.replace("# ", "")
     else:
         null
 
-def host_length(settings: borrowed Map of (String, String)) -&gt; Int:
+def host_length(settings: &amp;Map[String, String]) -&gt; Int:
     let found be settings.get("host")
     # Inside `if found?:` the compiler knows `found` is not null.
     if found?:
@@ -5883,22 +5947,22 @@ StartupError implements Error:
 StartupError has:
     # The conversion the removed `try` used to perform invisibly. It is an
     # ordinary associated function now, and the caller writes the call.
-    def from_config(inner: borrowed ConfigError) -&gt; StartupError:
+    def from_config(inner: &amp;ConfigError) -&gt; StartupError:
         StartupError(detail: inner.message())
 
-def read_concrete(path: borrowed String) -&gt; (Config, ConfigError?):
+def read_concrete(path: &amp;String) -&gt; (Config, ConfigError?):
     (Config.empty(), null)
 
 # `Error?` is shorthand for `(any Error)?`: it composes across a library
 # boundary, and it boxes, which the concrete form does not.
-def start(path: borrowed String) -&gt; (Config, Error?):
+def start(path: &amp;String) -&gt; (Config, Error?):
     let config, err be read_concrete(path)
     if err?:
         return (Config.empty(), StartupError.from_config(err))
     (config, null)
 
 # A function with nothing to hand back returns the error alone.
-def save(path: borrowed String, text: borrowed String) -&gt; Error?:
+def save(path: &amp;String, text: &amp;String) -&gt; Error?:
     let err be write_file(path, text)
     if err?:
         return StartupError(detail: "the file could not be written")
@@ -6055,19 +6119,19 @@ LoadError implements Error:
     def message(self) -&gt; String:
         "not found"
 
-def load(path: borrowed String) -&gt; (Int, LoadError?):
+def load(path: &amp;String) -&gt; (Int, LoadError?):
     (0, null)
 
 def handle(err: LoadError?) -&gt; Int:
     0
 
 # 1. Returned: the obligation goes to the caller.
-def passed_up(path: borrowed String) -&gt; (Int, LoadError?):
+def passed_up(path: &amp;String) -&gt; (Int, LoadError?):
     let value, err be load(path)
     (value, err)
 
 # 2. Passed to a parameter of error type.
-def handed_on(path: borrowed String) -&gt; Int:
+def handed_on(path: &amp;String) -&gt; Int:
     let value, err be load(path)
     handle(err)
 
@@ -6077,12 +6141,12 @@ def nothing_to_test() -&gt; Int:
     0
 
 # 4. A body that cannot return.
-def gives_up(path: borrowed String) -&gt; Never:
+def gives_up(path: &amp;String) -&gt; Never:
     let value, err be load(path)
     panic("stop")
 
 # And the opt-out, which is one character.
-def deliberate(path: borrowed String) -&gt; Int:
+def deliberate(path: &amp;String) -&gt; Int:
     let value, _err be load(path)
     value</pre>
 
@@ -6270,7 +6334,7 @@ Doc implements Summarize:
     def summarize(self) -&gt; String:
         self.body.replace("\n", " ")
 
-def headlines(docs: borrowed Array of Doc) -&gt; Array of String:
+def headlines(docs: &amp;Array[Doc]) -&gt; Array[String]:
     docs
         .iterate()
         .discard(each.title.is_empty())
@@ -6278,7 +6342,7 @@ def headlines(docs: borrowed Array of Doc) -&gt; Array of String:
         .take(5)
         .collect()
 
-def by_length(docs: borrowed Array of Doc) -&gt; Array of String:
+def by_length(docs: &amp;Array[Doc]) -&gt; Array[String]:
     docs
         .iterate()
         .map(doc giving doc.summarize())
@@ -6405,7 +6469,7 @@ def call_two(f: (Int, Int) -&gt; Int) -&gt; Int:
 
 # A closure is also a bound: `where F: (Int) -&gt; Int` is the generic form,
 # which monomorphises where the `any`-free arrow parameter above does not.
-def apply_generic of F(f: F, n: Int) -&gt; Int where F: (Int) -&gt; Int:
+def apply_generic[F](f: F, n: Int) -&gt; Int where F: (Int) -&gt; Int:
     f(n)
 
 def increment() -&gt; (Int) -&gt; Int:
@@ -6517,19 +6581,19 @@ print(f"{apply(doubled, 21)}")</pre>
   <p class="note">
     <strong>Items that were borrowed stay borrowed all the way into
     <code>collect()</code>,</strong> and the printed type tells you:
-    <code>Array of borrowed Doc</code> is a set of views into something else,
-    <code>Array of Doc</code> is yours. The rule that makes this bearable is
+    <code>Array[&amp;Doc]</code> is a set of views into something else,
+    <code>Array[Doc]</code> is yours. The rule that makes this bearable is
     the copy-out rule &mdash; a place expression returned from a closure yields
     the <em>value</em> when its type is <code>Copy</code> and a <em>borrow</em>
     otherwise &mdash; so <code>.map(each.weight)</code> on an <code>F32</code>
     field gives <code>F32</code> and <code>.map(each.title)</code> on a
-    <code>String</code> field gives <code>borrowed String</code>. The escape is
+    <code>String</code> field gives <code>&amp;String</code>. The escape is
     one link: <code>.owned()</code>.
   </p>
 
   <p class="note">
     <strong>In F0 a chain cannot cross a function boundary.</strong> Writing
-    <code>-&gt; MapOver of (Keep of (ArrayIterate of Doc, …), …)</code> in a
+    <code>-&gt; MapOver[Keep[ArrayIterate[Doc], …], …]</code> in a
     signature is not a language anyone should ship, so a function returns a
     collection and materialises with <code>.collect()</code>. That costs one
     allocation per boundary, and the boundary is where a pipeline wants
@@ -6553,7 +6617,7 @@ print(f"{apply(doubled, 21)}")</pre>
     <strong>The <code>Iterate</code> interface exists; the chain vocabulary
     does not.</strong> The prelude declares <code>Iterate</code> with its
     <code>Item</code> and <code>next</code>, and implements it for
-    <code>Array of T</code> at <code>Item is borrowed T</code> and for
+    <code>Array[T]</code> at <code>Item is &amp;T</code> and for
     <code>Chars</code> at <code>Item is Char</code>. What it does not declare
     is a single adapter: no <code>iterate()</code>, no <code>keep</code>, no
     <code>discard</code>, no <code>collect</code>, no <code>Set</code>. The
@@ -6579,17 +6643,17 @@ print(f"{apply(doubled, 21)}")</pre>
 
   <p class="note">
     What <em>is</em> written down is small and worth knowing, because it is
-    what a program can call today. <code>Array of T</code> has
+    what a program can call today. <code>Array[T]</code> has
     <code>new</code>, <code>push</code>, <code>get</code>, <code>length</code>
     and <code>is_empty</code> &mdash; and <code>get</code> returns
-    <code>(borrowed T)?</code>, so the index that might miss is the one that
-    hands back a nullable. <code>Map of (K, V)</code> has <code>new</code>,
+    <code>(&amp;T)?</code>, so the index that might miss is the one that
+    hands back a nullable. <code>Map[K, V]</code> has <code>new</code>,
     <code>insert</code>, <code>get</code>, <code>contains</code>,
     <code>remove</code>, <code>length</code> and <code>is_empty</code>
     &mdash; <code>contains</code> rather than <code>has</code>, because
     <code>has</code> is a keyword. <code>String</code> has thirteen of the
     nineteen its design gives it, <code>Chars</code> has none at all, and
-    <code>Box of T</code> has <code>new</code> and nothing else. There is no
+    <code>Box[T]</code> has <code>new</code> and nothing else. There is no
     <code>Set</code>, no <code>Range</code>, no <code>Lines</code> and no
     <code>Split</code> &mdash; which is <em>why</em> six of
     <code>String</code>'s nineteen are missing: three of them return a type
@@ -6613,8 +6677,8 @@ print(f"{apply(doubled, 21)}")</pre>
     <strong>Four free functions and one that has no signature.</strong> The
     prelude exports <code>print</code>, <code>write</code>,
     <code>panic</code>, <code>read_file</code> and <code>write_file</code>.
-    The last three have signatures &mdash; <code>panic(message: borrowed
-    String) -&gt; Never</code>, <code>read_file(path) -&gt; (String,
+    The last three have signatures &mdash; <code>panic(message: &amp;String)
+    -&gt; Never</code>, <code>read_file(path) -&gt; (String,
     IoError?)</code>, <code>write_file(path, text) -&gt; IoError?</code>.
     <code>print</code> and <code>write</code> have names and no signature at
     all, so the <em>arity</em> is checked and the argument's type is not: that
@@ -6626,8 +6690,8 @@ print(f"{apply(doubled, 21)}")</pre>
   <p class="note">
     <strong><code>Map</code> deliberately implements neither
     <code>Iterate</code> nor <code>Index</code>,</strong> and the reason is a
-    good example of the discipline: <code>Map of (K, V) implements Index of
-    K</code> would be an indexing operation that panics on a key that is not
+    good example of the discipline: <code>Map[K, V] implements Index[K]</code>
+    would be an indexing operation that panics on a key that is not
     there, and declaring it would be deciding what <code>m[k]</code> does on a
     miss in a file nobody reads. Walking a map today goes through an
     <code>Array</code> of its keys.
@@ -6780,7 +6844,7 @@ unsafe extern "C" library "openblas" via pkg-config "openblas":
         n: BlasInt,
         k: BlasInt,
         alpha: F64,
-        a: ffi.Span of F64,
+        a: ffi.Span[F64],
         lda: BlasInt,
     ) symbol "cblas_dgemm"
 
@@ -6877,11 +6941,11 @@ unsafe extern "C" library "cudnn" when available:
 <pre data-science>type Matrix:
     rows: Int
     columns: Int
-    data: Array of F64
+    data: Array[F64]
 
 Matrix has:
     def empty() -&gt; Matrix:
-        Matrix(rows: 0, columns: 0, data: (Array of F64).new())
+        Matrix(rows: 0, columns: 0, data: (Array[F64]).new())
 
 choice BlasError:
     Shape(Int, Int)
@@ -6894,11 +6958,11 @@ unsafe extern "C" library "openblas" via pkg-config "openblas":
     type CblasLayout is CInt
     type BlasInt is I32
     const CBLAS_COL_MAJOR be 102 as CblasLayout
-    def cblas_dgemm(layout: CblasLayout, m: BlasInt, a: ffi.Span of F64) symbol "cblas_dgemm"
+    def cblas_dgemm(layout: CblasLayout, m: BlasInt, a: ffi.Span[F64]) symbol "cblas_dgemm"
 
 # The declaration is not the interface. This is: a check a human wrote, then
 # the smallest possible `unsafe` block, and no `ffi` type in the signature.
-def multiply(a: borrowed Matrix, b: borrowed Matrix) -&gt; (Matrix, BlasError?):
+def multiply(a: &amp;Matrix, b: &amp;Matrix) -&gt; (Matrix, BlasError?):
     if a.columns is not b.rows:
         return (Matrix.empty(), BlasError.Shape(a.columns, b.rows))
 
@@ -6945,7 +7009,7 @@ def multiply(a: borrowed Matrix, b: borrowed Matrix) -&gt; (Matrix, BlasError?):
   </p>
 
   <p class="note">
-    <code>ffi.Span of T</code> is a pointer and a length. <strong>At the ABI
+    <code>ffi.Span[T]</code> is a pointer and a length. <strong>At the ABI
     only the pointer crosses</strong>; the length exists on the Science side
     alone, for one reason &mdash; so that the wrapper's precondition, that
     <code>lda * n</code> does not exceed the buffer, is an expression the
@@ -6973,7 +7037,7 @@ def multiply(a: borrowed Matrix, b: borrowed Matrix) -&gt; (Matrix, BlasError?):
     Written as a list so that a reader can see whether their problem is on it.
     <strong>Retention</strong> &mdash; that the callee does not keep a borrowed
     pointer past the call &mdash; is unstatable and unverifiable, and the
-    <code>borrowed</code> keyword in an extern declaration is the assertion.
+    <code>&amp;</code> sigil in an extern declaration is the assertion.
     <strong>Bounds</strong> &mdash; that <code>m, n, k, lda</code> are
     consistent with the buffer &mdash; is the single largest unverified surface
     in the design. <strong>Internal aliasing</strong>, because
@@ -7020,8 +7084,8 @@ def multiply(a: borrowed Matrix, b: borrowed Matrix) -&gt; (Matrix, BlasError?):
     <code>symbol "dgemm_"</code>. There is a genuine prize there: Fortran
     declarations carry <code>INTENT(IN)</code>, <code>INTENT(OUT)</code> and
     <code>INTENT(INOUT)</code>, which is precisely the
-    <code>borrowed</code>&thinsp;/&thinsp;out-parameter&thinsp;/&thinsp;<code>mutable
-    borrowed</code> distinction C headers lack, and LAPACK's doc comments state
+    <code>&amp;</code>&thinsp;/&thinsp;out-parameter&thinsp;/&thinsp;<code>&amp;mut</code>
+    distinction C headers lack, and LAPACK's doc comments state
     each array argument's dimension in a fixed machine-parseable format for
     1,700 routines. That is the span length, in the source, for 1,700 routines
     &mdash; available only because somebody wrote the annotations down thirty
@@ -7076,7 +7140,7 @@ tool fit_peaks(
     0
 
 ## Expose the same computation to a human caller.
-def helper(run: borrowed String) -&gt; Int:
+def helper(run: &amp;String) -&gt; Int:
     run.length()</pre>
 
   <p class="note">
@@ -7115,13 +7179,13 @@ def helper(run: borrowed String) -&gt; Int:
   </p>
 
 <pre class="err"><code><span class="e-code">error[SC0192]</span>: a `tool` owns its arguments
- <span class="e-hi">--&gt;</span> tools.science:1:23
+ <span class="e-hi">--&gt;</span> tools.science:2:23
   |
-1 | tool count_rows(rows: borrowed Array of Int) -&gt; Int:
-  |                       <span class="e-hi">^^^^^^^^</span> there is nothing here to borrow from
+2 | tool count_rows(rows: &amp;Array[Int]) -&gt; Int:
+  |                       <span class="e-hi">^</span> there is nothing here to borrow from
   |
   = note: a tool's arguments are built from what the caller sent, so the tool is the only owner there is
-  = <span class="e-help">help</span>: take the value: delete `borrowed`</code></pre>
+  = <span class="e-help">help</span>: take the value: delete `&amp;`</code></pre>
 
   <h3>The description is mandatory, and only here</h3>
 
@@ -7438,7 +7502,7 @@ def main2():
 
   <ol class="ladder">
     <li><span class="rung">01</span><span class="ops">call · index · field access · ?</span><span class="gloss">postfix, left to right</span></li>
-    <li><span class="rung">02</span><span class="ops">- not borrowed</span><span class="gloss">unary</span></li>
+    <li><span class="rung">02</span><span class="ops">- not &amp;</span><span class="gloss">unary</span></li>
     <li><span class="rung">03</span><span class="ops">as</span></li>
     <li><span class="rung">04</span><span class="ops">**</span><span class="gloss">power, right-associative</span></li>
     <li><span class="rung">05</span><span class="ops">* / % @</span><span class="gloss">@ is matrix multiply</span></li>
@@ -7469,7 +7533,7 @@ def main2():
 <pre data-science>type Doc:
     title: String
 
-def names_of(docs: borrowed Array of Doc) -&gt; Array of String:
+def names_of(docs: &amp;Array[Doc]) -&gt; Array[String]:
     # A line continues when the next line begins with `.`,
     # which is how a chain is broken.
     docs
@@ -7478,14 +7542,14 @@ def names_of(docs: borrowed Array of Doc) -&gt; Array of String:
         .collect()
 
 # ...and when it begins with `where`, before a signature's bounds.
-def largest of T(items: borrowed Array of T) -&gt; (borrowed T)?
+def largest[T](items: &amp;Array[T]) -&gt; (&amp;T)?
         where T: Ord:
     items.get(0)
 
 # A line ending inside an unclosed bracket continues too, which is what
 # makes an argument list breakable.
 def widest(
-    docs: borrowed Array of Doc,
+    docs: &amp;Array[Doc],
     limit: Int,
 ) -&gt; Int:
     limit</pre>
@@ -7517,7 +7581,7 @@ use text.parser (Token, lex)
 public type Doc:
     title: String
 
-public def title_of(doc: borrowed Doc) -&gt; borrowed String:
+public def title_of(doc: &amp;Doc) -&gt; &String:
     doc.title</pre>
 
   <p class="note">

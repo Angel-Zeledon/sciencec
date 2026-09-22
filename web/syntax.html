@@ -41,24 +41,24 @@
 </header>
 
 <div class="status">
-  <span><span class="dot dot-on"></span>Words the lexer knows <b>68</b> &mdash; 40 live, 28 held</span>
-  <span><span class="dot dot-on"></span>Science listings <b>38</b> &mdash; 36 clean, 1 a deliberate error, 1 removed syntax</span>
+  <span><span class="dot dot-on"></span>Words the lexer knows <b>69</b> &mdash; 42 live, 27 held</span>
+  <span><span class="dot dot-on"></span>Science listings <b>37</b> &mdash; 35 clean, 1 a deliberate error, 1 removed syntax</span>
   <span><span class="dot dot-on"></span>Of those, built and run <b>10</b>, output matched</span>
-  <span><span class="dot dot-wip"></span>Parses and unbuilt <b>6</b> constructs</span>
+  <span><span class="dot dot-wip"></span>Parses and unbuilt <b>5</b> constructs</span>
   <span>Compiler <b>sciencec</b> 0.0.1</span>
 </div>
 
 <div class="revision">
   <h2>How every listing here was verified, and what the verdict means</h2>
   <p>
-    <strong>Thirty-seven Science listings below were extracted from this
+    <strong>Thirty-six Science listings below were extracted from this
     file's own source, written to scratch files and run through
-    <code>sciencec check</code>. Thirty-six report nothing.</strong> The
-    thirty-seventh is the <code>IndexMutably</code> block in
+    <code>sciencec check</code>. Thirty-five report nothing.</strong> The
+    thirty-sixth is the <code>IndexMutably</code> block in
     <a href="#notyet">Parses, and is not built</a>, which is on this page in
     order to fail and whose diagnostic is printed beneath it. One further block
     shows <strong>removed syntax</strong>, carries a grey rail and a caption,
-    and is not valid Science, so it is not one of the thirty-seven. One listing
+    and is not valid Science, so it is not one of the thirty-six. One listing
     &mdash; <a href="#modules">modules</a> &mdash; needs a sibling file beside
     it, which is written out under the block, and it checks clean with that file
     in place.
@@ -91,14 +91,19 @@
   </p>
   <p style="margin-top:0.7rem">
     <strong>That list shrinks, and when it does the entry says so rather than
-    vanishing.</strong> Two of the six moved while this page was being extended.
-    The array literal, which used to parse and never be type checked, is checked
-    now: <code>SC0281</code> and <code>SC0282</code> exist, both of its listings
-    stopped checking clean, and what was item 3 is a note inside its replacement.
-    A range index, which used to check clean and quietly hand back one element,
-    is now <code>SC0538</code> and says what it means. A reference that deleted
-    those two paragraphs would leave a reader no way to judge how stale the other
-    four are.
+    vanishing.</strong> Three of an original six moved while this page was being
+    extended. The array literal, which used to parse and never be type checked,
+    is checked now: <code>SC0281</code> and <code>SC0282</code> exist, both of
+    its listings stopped checking clean, and what was item 3 is a note inside its
+    replacement. A range index, which used to check clean and quietly hand back
+    one element, is now <code>SC0538</code> and says what it means. And
+    interpolating a narrowed <code>T?</code>, which used to reach the backend and
+    fail LLVM's own verifier, now checks, builds, links and runs: <code>let
+    mutable maybe: Int? be null</code>, then <code>maybe be 7</code>, then
+    <code>if maybe?: print(f"{maybe}")</code> prints <code>7</code>, verified
+    with <code>sciencec build</code> and <code>sciencec test</code> rather than
+    <code>check</code> alone. A reference that deleted those three paragraphs
+    would leave a reader no way to judge how stale the remaining five are.
   </p>
 </div>
 
@@ -249,8 +254,8 @@ lift-off</code></pre>
         <tr><td class="mono">Str</td><td class="mono">"hola" &nbsp; r"C:\runs"</td><td class="what">Escapes already resolved. A raw literal carries <em>no</em> marker into the stream: nothing after the lexer needs to know how a <code>String</code> was spelled.</td></tr>
         <tr><td class="mono">Char</td><td class="mono">'a'</td><td class="what">Exactly one Unicode scalar value.</td></tr>
         <tr><td class="mono">FStrStart, FStrText, InterpStart, InterpEnd, FStrEnd</td><td class="mono">f"a{x}b"</td><td class="what">An <code>f"&hellip;"</code> is <strong>five kinds of token, not one</strong>, and a hole's interior is ordinary tokens in the same stream. See <a href="#literals">Literals</a>.</td></tr>
-        <tr><td class="mono">Ident</td><td class="mono">samples &nbsp; dia &nbsp; n2</td><td class="what">Anything word-shaped that is not one of the 68 words.</td></tr>
-        <tr><td class="mono">keyword</td><td class="what">68 distinct words</td><td class="what">46 live, 22 held, plus 13 contextual words that are not reserved at all. The list is in <a href="#words">Every reserved word</a>.</td></tr>
+        <tr><td class="mono">Ident</td><td class="mono">samples &nbsp; dia &nbsp; n2</td><td class="what">Anything word-shaped that is not one of the 69 words.</td></tr>
+        <tr><td class="mono">keyword</td><td class="what">69 distinct words</td><td class="what">42 live, 27 held, plus 13 contextual words that are not reserved at all. The list is in <a href="#words">Every reserved word</a>.</td></tr>
         <tr><td class="mono">punctuation</td><td class="mono">( ) [ ] { } , : ; . .. ..= -&gt; =&gt; _ @ ?</td><td class="what">Longest match wins: <code>..=</code> before <code>..</code> before <code>.</code>, and <code>-&gt;</code> before <code>-</code>.</td></tr>
         <tr><td class="mono">operator</td><td class="mono">+ - * ** / % &amp; | ^ &lt;&lt; &gt;&gt; = == != &lt; &gt; &lt;= &gt;=</td><td class="what">Rungs and associativity are in <a href="#operators">Operators and precedence</a>.</td></tr>
         <tr><td class="mono">Unknown</td><td class="what">anything else</td><td class="what">Emitted rather than aborting, which is what lets the parser report more than one error per pass.</td></tr>
@@ -422,7 +427,7 @@ print(f"{tally(1)}")</pre>
 ##
 ## The first line is the summary. The whole run is the description, summary
 ## included, and `sciencec tools --json` emits it verbatim.
-tool count_above(samples: Array of F64, floor: U16) -&gt; Int:
+tool count_above(samples: Array[F64], floor: U16) -&gt; Int:
     samples.length()
 
 ## A run attaches to the next token that has text of its own, so the newline
@@ -731,21 +736,21 @@ def sign(n: Int) -&gt; Int:
     retries: U8
 
 def connect(
-    host: borrowed String,
+    host: &String,
     port: U16,
     retries: U8,
 ) -&gt; Bool:
     retries &gt; 0
 
-def hosts(configs: borrowed Array of Config) -&gt; Array of String:
+def hosts(configs: &Array[Config]) -&gt; Array[String]:
     configs
         .iterate()
         # a comment-only line takes no part, and the chain survives it
         .map(each.host)
         .collect()
 
-def described of T(
-    value: borrowed T,
+def described[T](
+    value: &T,
 ) -&gt; String
         where T: Display:
     f"{value}"
@@ -820,7 +825,7 @@ print(f"{connect(config.host, config.port, config.retries)}")</pre>
 <pre data-science>def area(width: Int, height: Int) -&gt; Int:
     width * height
 
-def greet(name: borrowed String):
+def greet(name: &String):
     print(f"hola, {name}")
 
 def clamp(value: Int, low: Int, high: Int) -&gt; Int:
@@ -913,7 +918,7 @@ choice LoadError:
     NotFound(String)
     Malformed(String, Int)
 
-type Embedding is Array of F32
+type Embedding is Array[F32]
 type Counter is I64
 
 let first be Reading(channel: 1, counts: 4_900)
@@ -964,7 +969,9 @@ print(f"channels {a.channel} and {b.channel} hold {total(a, b)} counts")
     def summarize(self) -&gt; String
 
     def preview(self) -&gt; String:
-        self.summarize().truncate(80)
+        let mutable text be self.summarize()
+        text.truncate(80)
+        text
 
 type Doc:
     title: String
@@ -972,7 +979,9 @@ type Doc:
 
 Doc implements Summarize:
     def summarize(self) -&gt; String:
-        self.body.truncate(200)
+        let mutable text be self.body.clone()
+        text.truncate(200)
+        text
 
 Doc has:
     def new(title: String) -&gt; Doc:
@@ -1038,10 +1047,10 @@ public type Document:
     title: String
     body: String
 
-public def parse(source: borrowed String) -&gt; Array of Token:
+public def parse(source: &String) -&gt; Array[Token]:
     lex(source)
 
-def helper(document: borrowed Document) -&gt; Int:
+def helper(document: &Document) -&gt; Int:
     document.body.length()
 
 public def main():
@@ -1054,8 +1063,8 @@ public def main():
     listing on this page that is not self-contained. The
     <code>text/parser.science</code> it was checked against is four lines:
     <code>public type Token:</code> with a <code>text: String</code> field, and
-    <code>public def lex(source: borrowed String) -&gt; Array of Token</code>
-    returning <code>(Array of Token).new()</code>. <code>check</code> treats the
+    <code>public def lex(source: &String) -&gt; Array[Token]</code>
+    returning <code>Array[Token].new()</code>. <code>check</code> treats the
     file's own directory as the crate root and compiles every module the
     <code>use</code> declarations name.
   </p>
@@ -1106,8 +1115,8 @@ unsafe extern "C" library "openblas" via pkg-config "openblas":
 
     def cblas_ddot(
         n: BlasInt,
-        x: ffi.Span of F64, incx: BlasInt,
-        y: ffi.Span of F64, incy: BlasInt,
+        x: ffi.Span[F64], incx: BlasInt,
+        y: ffi.Span[F64], incy: BlasInt,
     ) -&gt; F64 symbol "cblas_ddot"
 
 def magnitude(value: F64) -&gt; F64:
@@ -1175,9 +1184,9 @@ let mutable count be 0
 count be count + 1
 count be count * 2
 
-let view: borrowed String be borrowed greeting
+let view: &String be &greeting
 let mutable owner be "mutable text"
-let exclusive: mutable borrowed String be mutable borrowed owner
+let exclusive: &mut String be &mut owner
 
 print(count)
 print(annotated)</pre>
@@ -1194,7 +1203,7 @@ print(annotated)</pre>
     Empty
     Unsupported(String)
 
-def parse_port(text: borrowed String) -&gt; (Int, ParseError?):
+def parse_port(text: &String) -&gt; (Int, ParseError?):
     if text.is_empty():
         return (0, ParseError.Empty)
     (8080, null)
@@ -1390,8 +1399,8 @@ let alias_float: Float be 9.5
 
 let maybe: String? be null
 let pair: (Int, String) be (1, "one")
-let items: Array of Int be (Array of Int).new()
-let table: Map of (String, Int) be (Map of (String, Int)).new()
+let items: Array[Int] be Array[Int].new()
+let table: Map[String, Int] be Map[String, Int].new()
 
 print(alias_int)
 print(maybe?)</pre>
@@ -1429,13 +1438,13 @@ print(maybe?)</pre>
         <tr><td class="mono">T?</td><td class="what">A <code>T</code>, or <code>null</code>.</td><td class="what">Not a wrapper. There is nothing to unwrap and no <code>Option</code> to import.</td></tr>
         <tr><td class="mono">(A, B)</td><td class="what">A tuple.</td><td class="what">Read by destructuring or by a tuple pattern. There is no <code>t.0</code>.</td></tr>
         <tr><td class="mono">()</td><td class="what">The empty tuple.</td><td class="what">The return type of a function with no <code>-&gt;</code>.</td></tr>
-        <tr><td class="mono">Array of T</td><td class="what">A growable sequence.</td><td class="what">Built with <code>(Array of T).new()</code>.</td></tr>
-        <tr><td class="mono">Map of (K, V)</td><td class="what">A hash map.</td><td class="what">Read with <code>.get(k)</code>, which returns <code>(borrowed V)?</code>.</td></tr>
-        <tr><td class="mono">Box of T</td><td class="what">An owning indirection.</td><td class="what">Built with <code>Box.new(v)</code>, never with named arguments.</td></tr>
-        <tr><td class="mono">borrowed T</td><td class="what">A shared borrow.</td><td class="what">Many at once, none of them writing.</td></tr>
-        <tr><td class="mono">mutable borrowed T</td><td class="what">An exclusive borrow.</td><td class="what">One at a time. Both words, in that order.</td></tr>
-        <tr><td class="mono">any I</td><td class="what">Dynamic dispatch over an interface.</td><td class="what">Only behind an indirection: <code>borrowed any I</code> or <code>Box of any I</code>.</td></tr>
-        <tr><td class="mono">T of A</td><td class="what">A generic instantiation.</td><td class="what">One argument bare, several in parentheses: <code>Pair of (A, B)</code>.</td></tr>
+        <tr><td class="mono">Array[T]</td><td class="what">A growable sequence.</td><td class="what">Built with <code>Array[T].new()</code>.</td></tr>
+        <tr><td class="mono">Map[K, V]</td><td class="what">A hash map.</td><td class="what">Read with <code>.get(k)</code>, which returns <code>(&amp;V)?</code>.</td></tr>
+        <tr><td class="mono">Box[T]</td><td class="what">An owning indirection.</td><td class="what">Built with <code>Box.new(v)</code>, never with named arguments.</td></tr>
+        <tr><td class="mono">&amp;T</td><td class="what">A shared borrow.</td><td class="what">Many at once, none of them writing.</td></tr>
+        <tr><td class="mono">&amp;mut T</td><td class="what">An exclusive borrow.</td><td class="what">One at a time. <code>mut</code> follows <code>&amp;</code>, never stands alone.</td></tr>
+        <tr><td class="mono">any I</td><td class="what">Dynamic dispatch over an interface.</td><td class="what">Only behind an indirection: <code>&amp;any I</code> or <code>Box[any I]</code>.</td></tr>
+        <tr><td class="mono">T[A]</td><td class="what">A generic instantiation.</td><td class="what">One argument or several, always in brackets: <code>Pair[A, B]</code>. See <a href="#generics">Generics</a> for the one place <code>of</code> still spells this, in expression position.</td></tr>
       </tbody>
     </table>
   </div>
@@ -1453,8 +1462,8 @@ print(maybe?)</pre>
 <section id="generics">
   <h2>Generics<a class="anchor" href="#generics" aria-label="Link to this section">#</a></h2>
   <p class="lede">
-    <code>of</code> is the one word for a type argument, in a declaration and at
-    a use site. A parameter may be a value as well as a type &mdash;
+    <code>[&hellip;]</code> is the spelling for a type argument, in a declaration
+    and in a type. A parameter may be a value as well as a type &mdash;
     <code>const WIDTH: Int</code> &mdash; which is what the tensor shapes of a
     later phase are built out of, and which makes a generic parameter an
     ordinary value inside the body.
@@ -1468,62 +1477,66 @@ type Doc:
 
 Doc implements Summarize:
     def summarize(self) -&gt; String:
-        self.title.truncate(80)
+        let mutable text be self.title.clone()
+        text.truncate(80)
+        text
 
 Doc implements Clone:
     def clone(self) -&gt; Doc:
-        Doc(title: self.title.truncate(80))
+        let mutable text be self.title.clone()
+        text.truncate(80)
+        Doc(title: text)
 
-type Pair of (A, B):
+type Pair[A, B]:
     first: A
     second: B
 
-type Window of (T, const WIDTH: Int):
-    items: Array of T
+type Window[T, const WIDTH: Int]:
+    items: Array[T]
 
-Window of (T, const WIDTH: Int) has:
-    def empty() -&gt; Window of (T, WIDTH):
-        Window(items: (Array of T).new())
+Window[T, const WIDTH: Int] has:
+    def empty() -&gt; Window[T, WIDTH]:
+        Window(items: Array[T].new())
 
     def capacity(self) -&gt; Int:
         WIDTH
 
-def describe of T: Summarize(value: borrowed T) -&gt; String:
+def describe[T: Summarize](value: &T) -&gt; String:
     value.summarize()
 
-def best_of of T(left: borrowed T, right: borrowed T) -&gt; String
+def best_of[T](left: &T, right: &T) -&gt; String
         where T: Summarize + Clone:
     if left.summarize().length() &gt;= right.summarize().length():
         left.summarize()
     else:
         right.summarize()
 
-def paired of (A, B)(first: A, second: B) -&gt; Pair of (A, B):
+def paired[A, B](first: A, second: B) -&gt; Pair[A, B]:
     Pair(first: first, second: second)
 
-def describe_any(value: borrowed any Summarize) -&gt; String:
+def describe_any(value: &any Summarize) -&gt; String:
     value.summarize()
 
-def describe_boxed(value: Box of any Summarize) -&gt; String:
+def describe_boxed(value: Box[any Summarize]) -&gt; String:
     value.summarize()
 
 let doc be Doc(title: "Regions")
 print(describe(doc))
 print(describe_any(doc))
 print(describe_boxed(Box.new(Doc(title: "boxed"))))
-print((Window of (Int, 4)).empty().capacity())
+print(Window[Int, 4].empty().capacity())
 print(paired(1, "one").second)</pre>
 
   <div class="scroller">
     <table>
       <thead><tr><th>Written</th><th>Means</th></tr></thead>
       <tbody>
-        <tr><td class="mono">def f of T(&hellip;)</td><td class="what">One type parameter.</td></tr>
-        <tr><td class="mono">def f of (A, B)(&hellip;)</td><td class="what">Several.</td></tr>
-        <tr><td class="mono">def f of T: I(&hellip;)</td><td class="what">A bound, written inline.</td></tr>
+        <tr><td class="mono">def f[T](&hellip;)</td><td class="what">One type parameter.</td></tr>
+        <tr><td class="mono">def f[A, B](&hellip;)</td><td class="what">Several.</td></tr>
+        <tr><td class="mono">def f[T: I](&hellip;)</td><td class="what">A bound, written inline.</td></tr>
         <tr><td class="mono">&hellip; where T: I + J</td><td class="what">Several bounds, written after the return type.</td></tr>
-        <tr><td class="mono">type W of (T, const N: Int):</td><td class="what">A const generic. <code>N</code> is an ordinary value in the body.</td></tr>
-        <tr><td class="mono">(Window of (Int, 4)).empty()</td><td class="what">An associated function on a generic type. <strong>The parentheses are required</strong> &mdash; the bare form cannot say whether <code>.empty()</code> belongs to <code>4</code> or to the whole type, and Science reports the ambiguity (<code>SC0116</code>) rather than making the space load-bearing.</td></tr>
+        <tr><td class="mono">type W[T, const N: Int]:</td><td class="what">A const generic. <code>N</code> is an ordinary value in the body.</td></tr>
+        <tr><td class="mono">Window[Int, 4].empty()</td><td class="what">An associated function on a generic type, reached without parentheses. Bracket syntax is never ambiguous with a trailing <code>.</code> call &mdash; not even with one argument &mdash; because a matched <code>]</code> ends the type unconditionally. See below for the one spelling that still needs them.</td></tr>
       </tbody>
     </table>
   </div>
@@ -1535,10 +1548,48 @@ print(paired(1, "one").second)</pre>
     the same interface.
   </p>
 
+  <h3>The one place <code>of</code> still spells a generic argument</h3>
+  <p>
+    Bracket syntax replaced <code>of</code> everywhere except one spot: an
+    explicit instantiation in <em>expression</em> position, written bare, with
+    exactly one argument, immediately before a <code>.</code> call. There
+    <code>[</code> is already claimed &mdash; <code>xs[i]</code> is indexing,
+    and nothing in the token stream tells <code>Wrapper[Int]</code> apart from
+    it before a name resolves. That is not the same conflict it looks like,
+    though: bracket instantiation still reaches an associated function fine,
+    with no parentheses, even with one bare argument &mdash; a later pass
+    reinterprets an index over a name that turns out to be a type as generic
+    arguments instead, so <code>Wrapper[Int].holding(7)</code>,
+    <code>Array[Wrapper[Int]].new()</code> and <code>Window[Int, 4].empty()</code>
+    (all three above) need nothing extra. Only the bare <code>of</code> spelling
+    keeps the old conflict, because its argument list has no bracket to end it
+    at &mdash; a <code>.</code> right after could belong to the argument or to
+    the whole instantiation, and unlike the bracket case there is no index
+    reading to fall back to while a name resolves.
+  </p>
+
+<pre class="err"><code><span class="e-code">error[SC0116]</span>: `.holding()` could belong to `Int` or to `Wrapper of Int`
+ --&gt; wrapper.science:8:10
+  |
+8 | let w be Wrapper of Int.holding(7)
+  |          <span class="e-hi">^^^^^^^^^^^^^^^^^^^^^^</span> this associated function call is ambiguous
+  |
+  = note: Science reads it as `(Wrapper of Int).holding()`, the whole generic type
+  = <span class="e-help">help: write the parentheses to say so: `(Wrapper of Int)`</span>
+1 error</code></pre>
+
+  <p class="note">
+    Write <code>(Wrapper of Int).holding(7)</code> and it checks clean &mdash;
+    the parentheses are what the diagnostic asks for, not a rewrite to
+    brackets. Writing <code>Wrapper[Int].holding(7)</code> instead sidesteps the
+    question entirely, which is why nothing above this note ever reaches for
+    <code>of</code>.
+  </p>
+
   <h3>The <code>where</code> clause</h3>
   <p>
     A bound may be written in two places and they mean the same thing. Inline
-    &mdash; <code>def f of T: Summarize(&hellip;)</code> &mdash; puts the
+    &mdash; <code>def f[T: Summarize](&hellip;)</code> &mdash; puts the
     constraint where the parameter is introduced, which reads well when there is
     one of each. A <code>where</code> clause puts every constraint after the
     signature instead, which is the only form that stays readable when a
@@ -1554,17 +1605,17 @@ print(paired(1, "one").second)</pre>
 interface Clone:
     def clone(self) -&gt; Self
 
-def inline of T: Summarize(value: borrowed T) -&gt; String:
+def inline[T: Summarize](value: &T) -&gt; String:
     value.summarize()
 
-def clause of T(value: borrowed T) -&gt; String where T: Summarize:
+def clause[T](value: &T) -&gt; String where T: Summarize:
     value.summarize()
 
-def several of (A, B)(left: borrowed A, right: borrowed B) -&gt; String
+def several[A, B](left: &A, right: &B) -&gt; String
         where A: Summarize, B: Summarize + Clone:
     right.clone().summarize()
 
-def both of T: Summarize(value: borrowed T) -&gt; String where T: Clone:
+def both[T: Summarize](value: &T) -&gt; String where T: Clone:
     value.clone().summarize()</pre>
 
   <p class="note">
@@ -1583,40 +1634,40 @@ def both of T: Summarize(value: borrowed T) -&gt; String where T: Clone:
     <table>
       <thead><tr><th>Declaration</th><th>Written</th></tr></thead>
       <tbody>
-        <tr><td class="mono">def</td><td class="mono">def f of T(&hellip;) -&gt; R where T: I:</td></tr>
-        <tr><td class="mono">type</td><td class="mono">type Sorted of T where T: Ord:</td></tr>
-        <tr><td class="mono">choice</td><td class="mono">choice Tagged of T where T: Ord:</td></tr>
-        <tr><td class="mono">interface</td><td class="mono">interface Keyed of T where T: Ord:</td></tr>
-        <tr><td class="mono">implements</td><td class="mono">Sorted of T implements Keyed of T where T: Ord:</td></tr>
-        <tr><td class="mono">has</td><td class="mono">Sorted of T has where T: Ord:</td></tr>
+        <tr><td class="mono">def</td><td class="mono">def f[T](&hellip;) -&gt; R where T: I:</td></tr>
+        <tr><td class="mono">type</td><td class="mono">type Sorted[T] where T: Ord:</td></tr>
+        <tr><td class="mono">choice</td><td class="mono">choice Tagged[T] where T: Ord:</td></tr>
+        <tr><td class="mono">interface</td><td class="mono">interface Keyed[T] where T: Ord:</td></tr>
+        <tr><td class="mono">implements</td><td class="mono">Sorted[T] implements Keyed[T] where T: Ord:</td></tr>
+        <tr><td class="mono">has</td><td class="mono">Sorted[T] has where T: Ord:</td></tr>
       </tbody>
     </table>
   </div>
 
 <pre data-science>interface Ord:
-    def cmp(self, other: borrowed Self) -&gt; Int
+    def cmp(self, other: &Self) -&gt; Int
 
-type Sorted of T where T: Ord:
-    items: Array of T
+type Sorted[T] where T: Ord:
+    items: Array[T]
 
-choice Tagged of T where T: Ord:
+choice Tagged[T] where T: Ord:
     Present(T)
     Absent
 
-interface Keyed of T where T: Ord:
+interface Keyed[T] where T: Ord:
     def key(self) -&gt; Int
 
-Sorted of T implements Keyed of T where T: Ord:
+Sorted[T] implements Keyed[T] where T: Ord:
     def key(self) -&gt; Int:
         self.items.length()
 
-Sorted of T has where T: Ord:
+Sorted[T] has where T: Ord:
     def count(self) -&gt; Int:
         self.items.length()</pre>
 
   <p class="note">
     It goes on the six forms above and nowhere else. A <code>where</code> after a
-    <strong>type alias</strong> (<code>type E is Array of F32 where &hellip;</code>),
+    <strong>type alias</strong> (<code>type E is Array[F32] where &hellip;</code>),
     after a <code>const</code>, or after a <code>use</code> is <code>SC0100</code>,
     "expected end of line, found <code>where</code>" &mdash; those declarations
     have no generic parameters for a predicate to constrain. It also parses on a
@@ -1643,11 +1694,11 @@ Sorted of T has where T: Ord:
 
   <p class="note">
     <strong>The subject parses as any type and only one shape is honoured.</strong>
-    <code>where Array of T: Ord</code>, <code>where borrowed T: Ord</code> and
+    <code>where Array[T]: Ord</code>, <code>where &amp;T: Ord</code> and
     <code>where Int: Ord</code> all parse, and the checker keeps a predicate only
     when its subject is a bare, argument-free name that resolves to a generic
     parameter the declaration itself introduced. Everything else is
-    <em>silently discarded</em>, and that is one of the six holes this page
+    <em>silently discarded</em>, and that is one of the five holes this page
     records: it is item 3 of <a href="#notyet">Parses, and is not built</a>,
     with the program that demonstrates it.
   </p>
@@ -1812,7 +1863,7 @@ print("a tab\there, a quote \"there\"")
 
   <h3>The array literal</h3>
   <p>
-    <code>[a, b, c]</code> is an <code>Array of T</code> where <code>T</code> is
+    <code>[a, b, c]</code> is an <code>Array[T]</code> where <code>T</code> is
     the unification of its elements. A <code>[</code> in <em>prefix</em> position
     is what tells the literal from an index, which is a postfix <code>[</code>,
     and a trailing comma is allowed like everywhere else. An empty literal takes
@@ -1821,15 +1872,15 @@ print("a tab\there, a quote \"there\"")
   </p>
 
 <pre data-science>let counts be [1, 2, 3]
-let empty: Array of Int be []
-let widths: Array of U8 be [1u8, 2u8,]
+let empty: Array[Int] be []
+let widths: Array[U8] be [1u8, 2u8,]
 print(f"{counts.length()} {empty.length()} {widths.length()}")</pre>
 
   <div class="scroller">
     <table>
       <thead><tr><th>Written</th><th>Means</th></tr></thead>
       <tbody>
-        <tr><td class="mono">[1, 2, 3]</td><td class="what">An <code>Array of I64</code> &mdash; the elements are unconstrained integer literals, so the fallback applies.</td></tr>
+        <tr><td class="mono">[1, 2, 3]</td><td class="what">An <code>Array[I64]</code> &mdash; the elements are unconstrained integer literals, so the fallback applies.</td></tr>
         <tr><td class="mono">[1, "two"]</td><td class="what"><code>SC0281</code>, once per element that disagrees, with the element that set the type underlined as well. There is no implicit numeric conversion, so <code>[1, 3.5]</code> is the same error.</td></tr>
         <tr><td class="mono">[]</td><td class="what"><code>SC0282</code> unless the position says what it holds. Annotate the binding.</td></tr>
         <tr><td class="mono">[x for x in xs]</td><td class="what"><code>SC0153</code>. Science has no comprehensions; the chain does the same thing, lazily and in reading order.</td></tr>
@@ -1844,7 +1895,7 @@ print(f"{counts.length()} {empty.length()} {widths.length()}")</pre>
   |               - this is an integer literal
   |                  <span class="e-hi">^^^^^</span> this is `String`
   |
-  = note: an array literal is an `Array of T` where `T` is the unification of its elements (§3.1), and there is no implicit numeric conversion (§5.1): write the suffix, the `as`, or the literal you meant
+  = note: an array literal is an `Array[T]` where `T` is the unification of its elements (§3.1), and there is no implicit numeric conversion (§5.1): write the suffix, the `as`, or the literal you meant
 1 error</code></pre>
 
   <p class="note">
@@ -1874,7 +1925,7 @@ print(f"{counts.length()} {empty.length()} {widths.length()}")</pre>
       <thead><tr><th>Binds</th><th>Operators</th><th>Associates</th><th>Where it lives</th></tr></thead>
       <tbody>
         <tr><td class="mono">tightest</td><td class="mono">f(x) &nbsp; a[i] &nbsp; a.b &nbsp; a.b(x) &nbsp; e?</td><td class="what">left to right</td><td class="what">the descent &mdash; postfix</td></tr>
-        <tr><td class="mono">&uarr;</td><td class="mono">- &nbsp; not &nbsp; borrowed &nbsp; mutable borrowed</td><td class="what">prefix</td><td class="what">the descent &mdash; unary</td></tr>
+        <tr><td class="mono">&uarr;</td><td class="mono">- &nbsp; not &nbsp; &amp; &nbsp; &amp;mut</td><td class="what">prefix</td><td class="what">the descent &mdash; unary</td></tr>
         <tr><td class="mono">&uarr;</td><td class="mono">as</td><td class="what">left</td><td class="what">the descent &mdash; cast</td></tr>
         <tr><td class="mono">10</td><td class="mono">**</td><td class="what"><strong>right</strong></td><td class="what">infix table</td></tr>
         <tr><td class="mono">9</td><td class="mono">* &nbsp; / &nbsp; % &nbsp; @</td><td class="what">left</td><td class="what">infix table</td></tr>
@@ -1987,7 +2038,7 @@ Doc has:
     def is_empty(self) -&gt; Bool:
         self.body.is_empty()
 
-def headlines(docs: borrowed Array of Doc) -&gt; Array of String:
+def headlines(docs: &Array[Doc]) -&gt; Array[String]:
     docs
         .iterate()
         .discard(each.is_empty())
@@ -1995,14 +2046,14 @@ def headlines(docs: borrowed Array of Doc) -&gt; Array of String:
         .take(5)
         .collect()
 
-def by_length(docs: borrowed Array of Doc) -&gt; Array of String:
+def by_length(docs: &Array[Doc]) -&gt; Array[String]:
     docs
         .iterate()
         .map(doc giving doc.title)
         .sort(by: line giving line.length())
         .collect()
 
-let docs be (Array of Doc).new()
+let docs be Array[Doc].new()
 print(headlines(docs).length())
 print(by_length(docs).length())</pre>
 
@@ -2013,7 +2064,7 @@ print(by_length(docs).length())</pre>
         <tr><td class="mono">each.field</td><td class="what">A closure over the enclosing call's element, with no parameter declared. Cannot nest &mdash; a nested <code>each</code> is <code>SC0115</code> rather than a rule nobody would remember.</td></tr>
         <tr><td class="mono">x giving e</td><td class="what">A closure that names its parameter. Takes the whole expression to its right.</td></tr>
         <tr><td class="mono">f(label: v)</td><td class="what">A labelled argument. On a path this is a record construction instead; resolution tells them apart, because only it knows whether the path is a module.</td></tr>
-        <tr><td class="mono">a.m(x)</td><td class="what">A method call. A <code>borrowed</code> parameter is borrowed at the call site with nothing written for it.</td></tr>
+        <tr><td class="mono">a.m(x)</td><td class="what">A method call. A parameter declared <code>&amp;T</code> is borrowed at the call site with nothing written for it.</td></tr>
         <tr><td class="mono">a[i]</td><td class="what">An index &mdash; <code>[</code> in <em>postfix</em> position, binding with call and field access.</td></tr>
         <tr><td class="mono">[a, b]</td><td class="what">An array literal &mdash; <code>[</code> in <em>prefix</em> position. The rule is parser position and nothing else. <strong>See <a href="#notyet">below</a>: this parses and is not type-checked.</strong></td></tr>
         <tr><td class="mono">unsafe:</td><td class="what">A block expression. Its value is its body's value.</td></tr>
@@ -2039,7 +2090,7 @@ print(by_length(docs).length())</pre>
     <em>first statement of its body</em> once it is written honestly.
   </p>
 
-<pre data-science>def longest(a: borrowed String, b: borrowed String) -&gt; borrowed String:
+<pre data-science>def longest(a: &String, b: &String) -&gt; &String:
     if a.length() &gt; b.length(): a else: b
 
 def bucket(n: Int) -&gt; String:
@@ -2118,7 +2169,7 @@ def first_multiple(limit: Int, factor: Int) -&gt; Int?:
         return i
     null
 
-def count_spaces(text: borrowed String) -&gt; Int:
+def count_spaces(text: &String) -&gt; Int:
     let mutable spaces be 0
     for c in text.chars():
         if c is ' ':
@@ -2262,18 +2313,18 @@ type Point:
     x: Int
     y: Int
 
-def copy_of(text: borrowed String) -&gt; String:
+def copy_of(text: &String) -&gt; String:
     let mutable out be String.new()
     out.push_str(text)
     out
 
-def name_of(format: borrowed Format) -&gt; String:
+def name_of(format: &Format) -&gt; String:
     match format:
         Plain: "plain"
         Markdown: "markdown"
         Json: "json"
 
-def qualified(format: borrowed Format) -&gt; String:
+def qualified(format: &Format) -&gt; String:
     match format:
         Format.Plain: "plain"
         Format.Markdown: "markdown"
@@ -2298,13 +2349,13 @@ def quadrant(point: (Int, Int)) -&gt; String:
         (0, y): "on the Y axis"
         (_, _): "somewhere else"
 
-def classify(point: borrowed Point) -&gt; String:
+def classify(point: &Point) -&gt; String:
     match point:
         Point(x: 0, y: 0): "origin"
         Point(x: 0, y: y): "on the Y axis"
         Point(x: x, y: _): "general"
 
-def payload(token: borrowed Token) -&gt; String:
+def payload(token: &Token) -&gt; String:
     match token:
         Ident(name): copy_of(name)
         Number(value): digit_name(value)
@@ -2359,11 +2410,11 @@ print(passthrough(9))</pre>
     guess.
   </p>
 
-<pre class="err"><code><span class="e-code">error[SC0250]</span>: `borrowed Format` has a value no arm of this `match` covers: `Json`
+<pre class="err"><code><span class="e-code">error[SC0250]</span>: `&amp;Format` has a value no arm of this `match` covers: `Json`
  --&gt; exhaustive.science:7:11
   |
 7 |     match format:
-  |           <span class="e-hi">^^^^^^</span> this is `borrowed Format`
+  |           <span class="e-hi">^^^^^^</span> this is `&amp;Format`
   |
   = note: a `match` answers for every value or the program has no answer for the rest (&sect;4.5); write an arm for `Json` — or a `_` arm, which covers everything the arms above leave
 1 error</code></pre>
@@ -2475,31 +2526,33 @@ ConfigError implements Error:
             NotFound(key): copy_of(key)
             Malformed(detail, line): copy_of(detail)
 
-def copy_of(text: borrowed String) -&gt; String:
+def copy_of(text: &String) -&gt; String:
     let mutable out be String.new()
     out.push_str(text)
     out
 
-def heading(text: borrowed String) -&gt; String?:
+def heading(text: &String) -&gt; String?:
     if text.starts_with("# "):
-        text.truncate(60)
+        let mutable copy be text.clone()
+        copy.truncate(60)
+        copy
     else:
         null
 
-def parse_port(text: borrowed String) -&gt; (U16, ConfigError?):
+def parse_port(text: &String) -&gt; (U16, ConfigError?):
     if text.is_empty():
         return (0u16, ConfigError.Malformed("empty input", 1))
     if not text.starts_with("port="):
         return (0u16, ConfigError.NotFound("port"))
     (8080u16, null)
 
-def read_config(path: borrowed String) -&gt; (Config, Error?):
+def read_config(path: &String) -&gt; (Config, Error?):
     let port, err be parse_port(path)
     if err?:
         return (Config.empty(), err)
     (Config(host: copy_of(path), port: port), null)
 
-def save(path: borrowed String) -&gt; Error?:
+def save(path: &String) -&gt; Error?:
     let config, err be read_config(path)
     if err?:
         return err
@@ -2601,9 +2654,9 @@ else:
   <h2>Every reserved word<a class="anchor" href="#words" aria-label="Link to this section">#</a></h2>
   <p class="lede">
     The lexer's <code>from_word</code> in
-    <code>crates/science-lexer/src/token.rs</code> maps <strong>68 words</strong>
-    to something other than an identifier. <strong>Forty-six are live</strong>
-    &mdash; they mean something today. <strong>Twenty-two are held</strong>
+    <code>crates/science-lexer/src/token.rs</code> maps <strong>69 words</strong>
+    to something other than an identifier. <strong>Forty-two are live</strong>
+    &mdash; they mean something today. <strong>Twenty-seven are held</strong>
     &mdash; reserved for a later phase, an error to use, and never an
     identifier. Both tables below are that function, read out.
   </p>
@@ -2617,7 +2670,7 @@ else:
     them would answer the lexer's question rather than yours.
   </p>
 
-  <h3>Live &mdash; 46 words</h3>
+  <h3>Live &mdash; 42 words</h3>
   <div class="scroller">
     <table>
       <thead><tr><th>Word</th><th>Means</th></tr></thead>
@@ -2629,7 +2682,7 @@ else:
         <tr><td class="mono">interface</td><td class="what">Required methods, defaults and associated types.</td></tr>
         <tr><td class="mono">implements</td><td class="what"><code>T implements I:</code> &mdash; supplies an interface.</td></tr>
         <tr><td class="mono">has</td><td class="what"><code>T has:</code> &mdash; methods from no interface.</td></tr>
-        <tr><td class="mono">of</td><td class="what">A generic argument, in a declaration and at a use site.</td></tr>
+        <tr><td class="mono">of</td><td class="what">A generic argument, but only in one surviving spot: a bare single argument, in expression position, right before a <code>.</code> call &mdash; see <a href="#generics">Generics</a>. Every other use is <code>SC0116</code>'s neighbour, an error naming <code>[&hellip;]</code> as the fix.</td></tr>
         <tr><td class="mono">where</td><td class="what">A bounds clause after a return type.</td></tr>
         <tr><td class="mono">const</td><td class="what">A compile-time constant, and a const generic parameter.</td></tr>
         <tr><td class="mono">public</td><td class="what">Exports an item from its module.</td></tr>
@@ -2638,8 +2691,9 @@ else:
         <tr><td class="mono">unsafe</td><td class="what">On an <code>extern</code> block, and as a block expression.</td></tr>
         <tr><td class="mono">let</td><td class="what">Introduces a binding.</td></tr>
         <tr><td class="mono">be</td><td class="what">Binds, and reassigns. One word for both.</td></tr>
-        <tr><td class="mono">mutable</td><td class="what">On a binding, on <code>self</code>, and before <code>borrowed</code>.</td></tr>
-        <tr><td class="mono">borrowed</td><td class="what">A shared borrow, in a type and as a unary operator.</td></tr>
+        <tr><td class="mono">mutable</td><td class="what">On a binding (<code>let mutable x</code>), and on a method's receiver (<code>def m(mutable self)</code>).</td></tr>
+        <tr><td class="mono">borrowed</td><td class="what">Recognised and immediately rejected: <code>borrowed T</code> and <code>borrowed x</code> each report a fix-it to <code>&amp;T</code> / <code>&amp;x</code>, and <code>mutable borrowed</code> one to <code>&amp;mut</code>. Never valid by itself.</td></tr>
+        <tr><td class="mono">mut</td><td class="what">The second half of <code>&amp;mut</code>, in a type (<code>&amp;mut T</code>) and as a unary operator (<code>&amp;mut x</code>). Always right after <code>&amp;</code>; never stands alone.</td></tr>
         <tr><td class="mono">any</td><td class="what">Dynamic dispatch: <code>any I</code>.</td></tr>
         <tr><td class="mono">as</td><td class="what">The cast. Always written; there is no implicit conversion.</td></tr>
         <tr><td class="mono">if</td><td class="what">A branch, and an expression.</td></tr>
@@ -2663,11 +2717,6 @@ else:
         <tr><td class="mono">false</td><td class="what">A <code>Bool</code> literal.</td></tr>
         <tr><td class="mono">null</td><td class="what">The other value of a <code>T?</code>. A literal, not a prelude value.</td></tr>
         <tr><td class="mono">assert</td><td class="what">A verification construct, not a library call. The compiler tries to discharge the condition; when it cannot it emits a check, and either way it records the fact for the bounds-check and region machinery downstream. <a href="guide.html#contracts">Guide &sect;2</a>.</td></tr>
-        <tr><td class="mono">pure</td><td class="what"><code>pure def</code> &mdash; a compiler-checked assertion that a function's inferred effect set is empty. The one effect declaration in the language; there is no syntax for declaring a non-empty set.</td></tr>
-        <tr><td class="mono">with</td><td class="what">A block head carrying two kinds of clause: a shape clause, which binds const dimension parameters from a runtime shape, and a policy clause, which fixes the seed, device, precision or check level. <a href="guide.html#with">Guide &sect;6</a>.</td></tr>
-        <tr><td class="mono">durable</td><td class="what"><code>durable def</code> &mdash; the result is cached against a key covering the arguments <em>and the compiled body</em>, so editing the function invalidates the cache by itself. <a href="guide.html#durable">Guide &sect;5</a>.</td></tr>
-        <tr><td class="mono">checkpoint</td><td class="what"><code>checkpoint every n binder</code> inside a <code>durable</code> head: saves the loop's live state at that cadence so a killed run restarts near where it stopped.</td></tr>
-        <tr><td class="mono">resume</td><td class="what">Restores the latest matching checkpoint. Automatic on a cache hit against a partial entry; written explicitly only for <code>sciencec run --resume</code>.</td></tr>
       </tbody>
     </table>
   </div>
@@ -2682,10 +2731,16 @@ else:
     item and remain ordinary identifiers everywhere else.
   </p>
 
-  <h3>Held &mdash; 22 words</h3>
+  <h3>Held &mdash; 27 words</h3>
   <p>
     Each of these lexes to a reserved token. Using one as a name is an error
     today and will not be a breaking change when the phase that wants it lands.
+    Five of them &mdash; <code>durable</code>, <code>checkpoint</code>,
+    <code>resume</code>, <code>pure</code> and <code>with</code> &mdash; now
+    have a design note that spells out what they will mean, and they are
+    listed here rather than above because this table is
+    <code>token.rs</code> read out and <code>token.rs</code> still reserves
+    them. They move up the day the lexer does.
   </p>
 
   <div class="scroller">
@@ -2714,6 +2769,11 @@ else:
         <tr><td class="mono">union</td><td class="what">Live inside an <code>extern</code> block; held at the top level. <strong>The audit asks to free it there</strong>, for set algebra.</td></tr>
         <tr><td class="mono">static</td><td class="what">Live inside an <code>extern</code> block; held at the top level, where there are no mutable globals to declare.</td></tr>
         <tr><td class="mono">macro</td><td class="what">A macro form, checked against the reserved list by the self-hosting design.</td></tr>
+        <tr><td class="mono">durable</td><td class="what"><code>durable def</code> &mdash; the result is cached against a key covering the arguments <em>and the compiled body</em>, so editing the function invalidates the cache by itself. <a href="guide.html#durable">Guide &sect;5</a>.</td></tr>
+        <tr><td class="mono">checkpoint</td><td class="what"><code>checkpoint every n binder</code> inside a <code>durable</code> head: saves the loop's live state at that cadence so a killed run restarts near where it stopped.</td></tr>
+        <tr><td class="mono">resume</td><td class="what">Restores the latest matching checkpoint. Automatic on a cache hit against a partial entry; written explicitly only for <code>sciencec run --resume</code>.</td></tr>
+        <tr><td class="mono">pure</td><td class="what"><code>pure def</code> &mdash; a compiler-checked assertion that a function's inferred effect set is empty. The one effect declaration in the language; there is no syntax for declaring a non-empty set.</td></tr>
+        <tr><td class="mono">with</td><td class="what">A block head carrying two kinds of clause: a shape clause, which binds const dimension parameters from a runtime shape, and a policy clause, which fixes the seed, device, precision or check level. <a href="guide.html#with">Guide &sect;6</a>.</td></tr>
       </tbody>
     </table>
   </div>
@@ -3158,7 +3218,7 @@ print(f"{y.shape()}")
     total
 
 durable def fit(
-        data: borrowed Frame,
+        data: &amp;Frame,
         epochs: Int,
         tag: String) -&gt; Model
     keyed by (data.digest(), epochs, ignoring tag)
@@ -3309,47 +3369,50 @@ def main():
 <section id="notyet">
   <h2>Parses, and is not built<a class="anchor" href="#notyet" aria-label="Link to this section">#</a></h2>
   <p class="lede">
-    Six constructs get through the parser and stop somewhere after it. A page
+    Five constructs get through the parser and stop somewhere after it. A page
     that listed them beside the working forms would be worse than one that
     omitted them, so they are here, each with the diagnostic it produces today
     &mdash; or, in two cases, with the fact that it produces <em>none</em>, which
-    is the more expensive kind.
+    is the more expensive kind. A sixth used to belong here &mdash;
+    interpolating a narrowed <code>T?</code> reached the backend and failed
+    LLVM's own verifier &mdash; and now checks, builds and runs; see the
+    revision notes at the top of the page.
   </p>
 
   <h3>1. <code>a[i] be v</code> reaches an interface you cannot supply</h3>
   <p>
     Indexing is two interfaces: <code>Index</code> reads and yields
-    <code>borrowed Output</code>; <code>IndexMutably</code> writes and yields
-    <code>mutable borrowed Output</code>. <code>a[i] be v</code> parses,
+    <code>&amp;Output</code>; <code>IndexMutably</code> writes and yields
+    <code>&amp;mut Output</code>. <code>a[i] be v</code> parses,
     dispatches to <code>IndexMutably</code>, and works for the built-in
     <code>Array</code>. Writing your own is where it stops: the obvious
     implementation reads through the backing <code>Array</code>, an index read
-    yields <code>borrowed T</code>, and <strong>nothing in the language turns
-    that into a <code>mutable borrowed T</code></strong>.
+    yields <code>&amp;T</code>, and <strong>nothing in the language turns
+    that into a <code>&amp;mut T</code></strong>.
   </p>
 
 <pre data-science>type Grid:
-    cells: Array of Int
+    cells: Array[Int]
 
-Grid implements IndexMutably of Int:
+Grid implements IndexMutably[Int]:
     type Output is Int
 
-    def index_mutably(mutable self, at: Int) -&gt; mutable borrowed Self.Output:
+    def index_mutably(mutable self, at: Int) -&gt; &amp;mut Self.Output:
         self.cells[at]
 
-let mutable grid be Grid(cells: (Array of Int).new())
+let mutable grid be Grid(cells: Array[Int].new())
 grid[0] be 9</pre>
 
-<pre class="err"><code><span class="e-code">error[SC0525]</span>: expected `mutable borrowed Int`, found `borrowed Int`
+<pre class="err"><code><span class="e-code">error[SC0525]</span>: expected `&amp;mut I64`, found `&amp;I64`
  --&gt; writing.science:8:9
   |
 8 |         self.cells[at]
-  |         <span class="e-hi">^^^^^^^^^^^^^^</span> this is `borrowed Int`
+  |         <span class="e-hi">^^^^^^^^^^^^^^</span> this is `&amp;I64`
 1 error</code></pre>
 
   <p class="note">
-    Writing <code>mutable borrowed self.cells[at]</code> does not rescue it
-    &mdash; that is <code>mutable borrowed borrowed Int</code>. What
+    Writing <code>&amp;mut self.cells[at]</code> does not rescue it
+    &mdash; that is <code>&amp;mut &amp;Int</code>. What
     <em>does</em> check is an <code>IndexMutably</code> whose output is reached
     through a <strong>field</strong> rather than through an index, so the
     interface is implementable and the container it is wanted for is not.
@@ -3359,7 +3422,7 @@ grid[0] be 9</pre>
   <p>
     <code>a[1..5]</code>, <code>a[2..]</code>, <code>a[..5]</code> and
     <code>a[..]</code> are all specified as index-bracket forms, and a range
-    index is specified to produce a <code>Slice of T</code> &mdash; a borrow and
+    index is specified to produce a <code>Slice[T]</code> &mdash; a borrow and
     a length, which does not copy. <strong>None of the four works, and the two
     halves fail at different stages.</strong>
   </p>
@@ -3380,7 +3443,7 @@ grid[0] be 9</pre>
   <p>
     The <strong>closed form parses and is refused by the type checker</strong>,
     which is the better of the two failures and was not always the case: this
-    used to check clean and hand back <code>borrowed Int</code> &mdash; one
+    used to check clean and hand back <code>&amp;I64</code> &mdash; one
     element rather than a slice &mdash; because the untyped range and the
     <code>Int</code> the <code>Index</code> implementation wanted agreed by
     cancelling instead of by matching. It now says what it means.
@@ -3390,20 +3453,20 @@ grid[0] be 9</pre>
  --&gt; slice.science:2:5
   |
 2 |     xs[1..3]
-  |     <span class="e-hi">^^^^^^^^</span> slicing a `borrowed Array of Int` is not implemented
+  |     <span class="e-hi">^^^^^^^^</span> slicing a `&amp;Array[I64]` is not implemented
   |
-  = note: `a[1..5]` is specified as a `Slice of T` — a borrow and a length, which does not copy (§2.3) — and this compiler declares no such type. Index one element at a time, or iterate: `xs.iterate().skip(1).take(2)`
+  = note: `a[1..5]` is specified as a `Slice[T]` — a borrow and a length, which does not copy (§2.3) — and this compiler declares no such type. Index one element at a time, or iterate: `xs.iterate().skip(1).take(2)`
 1 error</code></pre>
 
   <p class="note">
     There is no <code>Slice</code> in the prelude to name either:
-    <code>Slice of Int</code> in a signature is <code>SC0200</code>, "cannot find
+    <code>Slice[Int]</code> in a signature is <code>SC0200</code>, "cannot find
     <code>Slice</code>". Index one element at a time, or iterate.
   </p>
   <h3>3. A <code>where</code> predicate on anything but a bare parameter is discarded</h3>
   <p>
     A clause's subject is read by the full type grammar, so
-    <code>where Array of T: Ord</code>, <code>where borrowed T: Ord</code> and
+    <code>where Array[T]: Ord</code>, <code>where &amp;T: Ord</code> and
     <code>where Int: Ord</code> all parse. The checker then keeps a predicate
     <strong>only</strong> when its subject is a bare, argument-free name
     resolving to a generic parameter the declaration itself introduced, and drops
@@ -3412,18 +3475,18 @@ grid[0] be 9</pre>
   </p>
 
 <pre data-science>interface Ord:
-    def cmp(self, other: borrowed Self) -&gt; Int
+    def cmp(self, other: &Self) -&gt; Int
 
 type D:
     v: Int
 
-def held of T(x: borrowed T) -&gt; Int where Array of T: Ord, borrowed T: Ord, Int: Ord:
+def held[T](x: &T) -&gt; Int where Array[T]: Ord, &T: Ord, Int: Ord:
     0
 
-def calls(d: borrowed D) -&gt; Int:
+def calls(d: &D) -&gt; Int:
     held(d)
 
-print(f"{calls(borrowed D(v: 1))}")</pre>
+print(f"{calls(&D(v: 1))}")</pre>
 
   <p class="note">
     The bare form is checked properly, and the difference is the measurement:
@@ -3439,7 +3502,7 @@ print(f"{calls(borrowed D(v: 1))}")</pre>
     <h3>What used to be here, and is not any more</h3>
     <p>
       This slot held <strong>the array literal, which parsed and was not type
-      checked at all</strong>: <code>let counts: Array of String be [1, 2,
+      checked at all</strong>: <code>let counts: Array[String] be [1, 2,
       3]</code> checked clean, and <code>let counts be [1, 2, 3]</code> left its
       binding at the error type with no diagnostic, so every check downstream of
       it was vacuous. <code>SC0281</code> &mdash; the code the design allocated
@@ -3480,32 +3543,6 @@ print(f"{calls(borrowed D(v: 1))}")</pre>
     never run.
   </p>
 
-  <h3>6. Interpolating a narrowed <code>T?</code> emits an invalid module</h3>
-  <p>
-    Four lines, checking clean, that the backend miscompiles. The nullable's
-    two-word representation is handed to a runtime entry point that takes one
-    word, and LLVM's own verifier catches it before the linker is reached.
-  </p>
-
-<pre data-science>let mutable maybe: Int? be null
-maybe be 7
-if maybe?:
-    print(f"{maybe}")</pre>
-
-<pre class="err"><code><span class="e-code">error[SC0402]</span>: the linker failed
-  = note: the command was: (the backend, before the linker)
-  = note: what follows is the linker's own output, verbatim:
-  = note: the module failed verification in `&lt;module&gt;`: Call parameter type does not match function signature!
-  %v10 = load [2 x i64], ptr %l1, align 8
- i64  call void @science_string_push_i64(ptr %v9, [2 x i64] %v10)</code></pre>
-
-  <p class="note">
-    That is the good failure: the backend verifies what it emits and stops
-    rather than linking a binary that would read the wrong word. Narrowing works
-    everywhere <code>check</code> can see it; it is the lowering that has not
-    caught up.
-  </p>
-
 </section>
 
 <!-- ==================================================================== -->
@@ -3528,8 +3565,9 @@ if maybe?:
         <tr><td class="mono">a if c else b</td><td class="mono">if c: a else: b</td><td class="what">a grammar error</td></tr>
         <tr><td class="mono">try / catch</td><td class="mono">let v, err be f() &nbsp; if err?:</td><td class="what">a grammar error</td></tr>
         <tr><td class="mono">try f()</td><td class="mono">the same three lines</td><td class="mono">SC0155</td></tr>
-        <tr><td class="mono">Result of (T, E)</td><td class="mono">-&gt; (T, E?)</td><td class="mono">SC0200</td></tr>
-        <tr><td class="mono">Option of T, Some, None</td><td class="mono">T? and null</td><td class="mono">SC0200</td></tr>
+        <tr><td class="mono">Result of (T, E)</td><td class="mono">-&gt; (T, E?)</td><td class="mono">SC0100</td></tr>
+        <tr><td class="mono">Option of T</td><td class="mono">T?</td><td class="mono">SC0100</td></tr>
+        <tr><td class="mono">Some, None, Ok, Err</td><td class="what">Ordinary undeclared names now &mdash; write <code>null</code>, or the value and error a fallible return already hands back as a pair.</td><td class="mono">SC0200</td></tr>
         <tr><td class="mono">&lt;'a&gt; lifetimes</td><td class="what">nothing &mdash; regions are inferred</td><td class="what">a grammar error</td></tr>
         <tr><td class="mono">[x * 2 for x in xs]</td><td class="mono">xs.iterate().map(each * 2).collect()</td><td class="mono">SC0153</td></tr>
         <tr><td class="mono">t.0</td><td class="mono">let a, b be t</td><td class="mono">SC0102</td></tr>
@@ -3672,16 +3710,16 @@ def load(p: String) -&gt; <span class="rm">Result</span> of (Doc, Error):
     <a href="#shape">Top of page</a>
   </div>
   The reserved-word tables on this page are <code>from_word</code> in
-  <code>crates/science-lexer/src/token.rs</code>, read out: 68 words, 40 live
-  and 28 held. The precedence table is <code>binary_op</code> and the expression
+  <code>crates/science-lexer/src/token.rs</code>, read out: 69 words, 42 live
+  and 27 held. The precedence table is <code>binary_op</code> and the expression
   descent in <code>crates/science-parser/src/parser.rs</code>, which carries a
-  unit test asserting the ten infix rungs against those numbers. Twenty-eight
+  unit test asserting the ten infix rungs against those numbers. Thirty-seven
   Science listings here were extracted from this file and run through
-  <code>sciencec check</code>: twenty-seven clean, and one that fails on
-  purpose, in <a href="#notyet">Parses, and is not built</a>, with its
-  diagnostic under it. Seven were built with
-  <code>sciencec build</code> and executed, and their trailing <code>#</code>
-  comment is that program's real stdout. Every diagnostic reproduced is the
+  <code>sciencec check</code>: thirty-five clean, one that fails on purpose, in
+  <a href="#notyet">Parses, and is not built</a>, with its diagnostic under it,
+  and one that shows removed syntax and is not valid Science at all. Ten were
+  built with <code>sciencec build</code> and executed, and their trailing
+  <code>#</code> comment is that program's real stdout. Every diagnostic reproduced is the
   compiler's own stderr. Where a construct is specified and not built it is in
   <a href="#notyet">Parses, and is not built</a> with the error it produces
   today, and in no section above.

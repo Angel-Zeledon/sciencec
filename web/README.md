@@ -125,15 +125,18 @@ data-legacy>` is kept for comparison only. It gets a grey rail instead of the
 neon one, no glow, and a line through every word in `REMOVED` in
 `assets/highlight.js`. Three markings, because a reader skimming will miss any
 one of them, and mistaking a removed form for a live one is the expensive
-mistake this site can make. There is exactly one such block today, in the Errors
-section; the attribute is what keeps the strike from hitting `Result` or `Some`
-if a future sample uses either as an ordinary name.
+mistake this site can make. There are five such blocks today — three in
+`rationale.html`, one each in `syntax.html` and `reference.html` — up from one
+when this paragraph was first written, because the bracket-and-`&` migration
+gave the site a second thing worth showing a removed spelling of; the
+attribute is what keeps the strike from hitting `Result` or `Some` if a future
+sample uses either as an ordinary name.
 
 **The highlighter is the keyword list.** `assets/highlight.js` holds the
 keywords and the reserved words, and they must move when
-`crates/science-lexer/src/token.rs` moves. It is forty lines because no
-off-the-shelf highlighter knows this language and teaching one costs more than
-writing this did.
+`crates/science-lexer/src/token.rs` moves. It is under three hundred lines
+because no off-the-shelf highlighter knows this language and teaching one
+costs more than writing this did.
 
 It also feeds the three word banks at the bottom of `reference.html`, through a
 `data-words` attribute — `keywords`, `reserved`, `never`. A bank without that

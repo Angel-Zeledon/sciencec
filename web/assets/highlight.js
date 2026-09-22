@@ -40,7 +40,7 @@
   // property-testing.md §2, contracts.md §2, named-axes.md §2.1 and
   // durable-computation.md §6.
   var DECLARE = ("def tool type choice interface implements has of borrowed any use " +
-    "public const extern unsafe let be mutable where giving " +
+    "public const extern unsafe let be mutable mut where giving " +
     "test property axis durable pure requires ensures invariant " +
     "keyed by every ignoring").split(" ");
 

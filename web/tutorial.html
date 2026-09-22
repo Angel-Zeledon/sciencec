@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tutorial &middot; Science</title>
-<meta name="description" content="Learn Science from nothing: install the compiler, run a program, and work up through bindings, control flow, functions, your own types, match, ownership, errors, interfaces and generics, and calling C. Every example is real source that was checked, and fifteen of them were built, run, and had their output pasted in.">
+<meta name="description" content="Learn Science from nothing: install the compiler, run a program, and work up through bindings, control flow, functions, your own types, match, ownership, errors, interfaces and generics, and calling C. Every example is real source that was checked, and twenty-one of them were built, run, and had their output pasted in.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -44,8 +44,8 @@
 <div class="status">
   <span><span class="dot dot-on"></span>Chapters <b>11</b></span>
   <span><span class="dot dot-on"></span>Science listings <b>29</b> &mdash; 21 clean, 8 deliberate errors</span>
-  <span><span class="dot dot-on"></span>Of the 21, built and run <b>15</b>, output pasted</span>
-  <span><span class="dot dot-wip"></span>Check clean, refuse to build <b>6</b>, each said so in its chapter</span>
+  <span><span class="dot dot-on"></span>Of the 21, built and run <b>21</b>, output pasted</span>
+  <span><span class="dot dot-on"></span>Check clean, refuse to build <b>0</b> &mdash; the last one closed since this page was first written</span>
   <span>Compiler <b>sciencec</b> 0.0.1</span>
 </div>
 
@@ -60,23 +60,30 @@
     this page in order to fail, each beside the diagnostic it produces.
   </p>
   <p style="margin-top:0.7rem">
-    <strong>Fifteen of the twenty-one were then compiled with
-    <code>sciencec build</code>, linked, executed, and their real stdout pasted
-    underneath as a trailing comment.</strong> Nothing in an output comment was
-    typed by hand.
-  </p>
-  <p style="margin-top:0.7rem">
-    <strong>Six check clean and the backend refuses them</strong>, and each is
-    marked in the chapter that teaches it rather than left for you to discover:
-    the declared <code>main</code> in <a href="#install">chapter 1</a>, the
-    counting loop in <a href="#control">chapter 3</a>, the method block in
+    <strong>All twenty-one were then compiled with <code>sciencec build</code>,
+    linked, executed, and their real stdout pasted underneath as a trailing
+    comment.</strong> Nothing in an output comment was typed by hand. Six of
+    them &mdash; the declared <code>main</code> in
+    <a href="#install">chapter 1</a>, the counting loop in
+    <a href="#control">chapter 3</a>, the method block in
     <a href="#types">chapter 5</a>, the error pair in
     <a href="#errors">chapter 8</a>, and both the interface and the generic in
-    <a href="#interfaces">chapter 9</a>. This is the most important thing to
-    understand about the compiler's current state, and
-    <a href="#install">chapter 1</a> states it before you write a line:
-    <code>check</code> runs the whole front end and accepts a great deal more
-    of this language than <code>build</code> can emit.
+    <a href="#interfaces">chapter 9</a> &mdash; used to check clean and get
+    refused by <code>build</code> with an <code>SC0400</code>; each is marked,
+    in place, with what it used to say and what it does today, because that
+    boundary moving is itself worth showing rather than quietly editing away.
+  </p>
+  <p style="margin-top:0.7rem">
+    <strong>None of the twenty-nine listings on this page hit the
+    <code>check</code>/<code>build</code> boundary today</strong>, which is not
+    the same claim as "the boundary is gone": printing a value of a type you
+    declared yourself still checks clean and refuses to build, for instance,
+    which is why this page still interpolates through <code>f"&hellip;"</code>
+    rather than switching every listing to a bare <code>print</code>. What
+    moved is real, and <a href="#install">chapter 1</a> says so before you
+    write a line: <code>check</code> runs the whole front end and still
+    accepts more of this language than <code>build</code> can emit, just by a
+    smaller margin than it used to.
   </p>
   <p style="margin-top:0.7rem">
     <strong>Every error message reproduced here is the compiler's own
@@ -258,46 +265,49 @@ hello, world
   <h3>Write the script form, not <code>main</code></h3>
   <p>
     A file may have top-level statements <em>or</em> a <code>main</code>, never
-    both &mdash; two answers to "what runs first" is an error. Both are
-    legitimate Science, and <strong>this tutorial writes every program in the
-    script form</strong>, for one blunt reason:
+    both &mdash; two answers to "what runs first" is an error. Both build
+    today. <strong>This tutorial still writes every program in the script
+    form</strong>, because it is shorter, and every listing on this page is
+    small enough that the <code>def main():</code> wrapper would be pure
+    overhead:
   </p>
 
 <pre data-science>def main():
-    print("hello, world")</pre>
-
-<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build an entry point whose `Error?` does not come back through `sret`; stage 1 only knows the two-word interface object
-  = note: this `sciencec` implements &#167;10's stages 0 to 3 of `codegen-and-linking.md` and some of what comes after &mdash; a script body, string literals and `print`, `extern "C"` declarations and the calls to them, the CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, `T?`, and drops of values that own nothing &mdash; and refuses everything else rather than lowering a construct no execution test has ever run
-1 error</code></pre>
+    print("hello, world")
+# hello, world</pre>
 
   <p>
-    That program <em>checks</em> clean and exits 0. It does not build, today,
-    because the backend's entry-point lowering has not caught up with the
-    declared <code>main</code> form. The script form has no such gap, so it is
-    the one every listing here uses &mdash; and it is also the shorter, better
-    thing to write for a program of this size.
+    That program checks, builds, links and runs exactly like the script form
+    above it, and prints the same line. Reach for the declared
+    <code>main</code> once a program is big enough that a named entry point
+    earns its keep; nothing in this tutorial is.
   </p>
 
   <div class="callout">
-    <h3>Read this before chapter 2: <code>check</code> and <code>build</code> are far apart</h3>
+    <h3>Read this before chapter 2: <code>check</code> and <code>build</code> are not the same promise</h3>
     <p>
       <code>sciencec check</code> runs the entire front end &mdash; lexing,
       parsing, name resolution, type checking, and the borrow checker. It is
       complete enough that every listing on this page passes it.
-      <code>sciencec build</code> emits a <strong>real but bounded
+      <code>sciencec build</code> emits a <strong>real but still bounded
       subset</strong>: the backend admits a construct only once a program using
       it has been built, linked, run and checked against its expected output,
       and refuses everything else rather than emitting something nobody has
       executed.
     </p>
     <p style="margin-top:0.7rem">
-      That rule was not free advice. Five silent miscompiles have been caught by
-      running the output rather than reading it. So a program can exit 0 from
-      <code>check</code> and be refused by <code>build</code> with an
-      <code>SC0400</code> that names exactly what it could not lower. Six
-      listings on this page are in that state, each flagged where it appears.
-      When you hit one of your own, the compiler's message is more current than
-      anything written here.
+      That rule was not free advice. Several silent miscompiles have been
+      caught by running the output rather than reading it, not by reading the
+      code. So a program can exit 0 from <code>check</code> and still be
+      refused by <code>build</code> with an <code>SC0400</code> that names
+      exactly what it could not lower &mdash; printing a value of a type you
+      declared yourself, for instance, still refuses to build today, because
+      the backend emits no vtable for it. None of the listings on this page
+      hit that wall any more; the boundary has moved a great deal since this
+      page was first written, and every listing below was re-run against the
+      compiler on this exact checkout to find out how far. When you hit the
+      wall yourself, the compiler's message is more current than anything
+      written here.
     </p>
   </div>
 </section>
@@ -342,30 +352,31 @@ print(f"{samples} samples")
   </p>
 
   <div class="callout">
-    <h3>Three things this chapter has to tell you, because you meet all three today</h3>
+    <h3>Two things this chapter has to tell you, because you meet both today</h3>
     <p>
-      <strong>Print through <code>f"&hellip;"</code>, always.</strong>
-      <code>print(x)</code> where <code>x</code> is not already a
-      <code>String</code> checks clean and does not build: <code>print</code>
-      takes <code>borrowed any Display</code>, and the backend emits no vtables
-      yet. <code>print(f"{x}")</code> goes through the interpolation builder
-      instead and works for every type on this page. It is why you will not see
-      a bare <code>print(n)</code> in any listing here.
+      <strong><code>mutable</code> is enforced.</strong>
+      <code>let n be 0</code> followed by <code>n be 3</code> is
+      <code>SC0304</code>, <code>`n` is not mutable</code>, at both
+      <code>check</code> and <code>build</code> &mdash; the note tells you to
+      declare it <code>let mutable n</code>. There is no grace period: write
+      <code>mutable</code> the moment you intend to reassign, or the compiler
+      stops you the first time you try.
     </p>
     <p style="margin-top:0.7rem">
-      <strong><code>mutable</code> is not enforced yet.</strong>
-      <code>let n be 0</code> followed by <code>n be 3</code> checks, builds,
-      and prints <code>3</code>. The keyword records your intent and a reader can
-      rely on it; the compiler does not yet. Write it correctly anyway &mdash;
-      the check is coming, and code written without it will not survive it.
-    </p>
-    <p style="margin-top:0.7rem">
-      <strong>Annotate a mutable number you intend to do arithmetic on.</strong>
-      <code>let mutable n be 3</code> then <code>n be n - 1</code> checks clean
-      and then fails to <em>build</em>: the literal's type is left unresolved
-      and the backend refuses a value whose type it does not have.
-      <code>let mutable n: Int be 3</code> builds. That is why every counter on
-      this page carries its type.
+      <strong>Print through <code>f"&hellip;"</code> for a type you declared
+      yourself.</strong> <code>print(x)</code> builds directly for the handful
+      of types its interpolation builder already renders &mdash;
+      <code>Int</code>/<code>I64</code>, the other numeric types,
+      <code>Bool</code>, <code>Char</code> and <code>String</code> all print
+      bare, with no <code>f"&hellip;"</code> needed. A <code>Reading</code> or a
+      <code>Station</code> does not: <code>print</code> takes
+      <code>&amp;any Display</code>, and the backend emits no vtable yet to
+      reach a user type's formatter, so <code>print(reading)</code> checks
+      clean and refuses to build with <code>SC0400</code>.
+      <code>print(f"{reading.celsius}")</code> reaches the field instead and
+      works for everything, which is why every <code>print</code> on this page
+      still goes through <code>f"&hellip;"</code> even where a bare call would
+      now build.
     </p>
   </div>
 
@@ -660,29 +671,18 @@ while i &lt; 3:
 <pre data-science>let mutable total: Int be 0
 for i in 0..5:
     total be total + i
-print(f"{total}")</pre>
-
-  <div class="callout">
-    <h3>That listing checks and does not build &mdash; the second of six on this page</h3>
-    <p>
-      <code>sciencec check</code> exits 0 on it. <code>sciencec build</code>
-      refuses it, because the front end leaves the loop's range and iterator
-      temporaries untyped and the backend will not emit a value whose type it
-      does not have. Verbatim:
-    </p>
-  </div>
-
-<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build a value the front end left untyped: its `Ty` is `TyKind::Error` and no diagnostic was reported for it. The three this compiler has met are a call to `print` or `write`, whose signatures `science-resolve`'s `builtins.rs` withdrew; a `for` loop's range and iterator temporaries; and a discriminant temporary, which is handled rather than refused
-  = note: this `sciencec` implements &#167;10's stages 0 to 3 of `codegen-and-linking.md` and some of what comes after &mdash; a script body, string literals and `print`, `extern "C"` declarations and the calls to them, the CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, `T?`, and drops of values that own nothing &mdash; and refuses everything else rather than lowering a construct no execution test has ever run
-1 error</code></pre>
+print(f"{total}")
+# 10</pre>
 
   <p>
-    That note is worth reading once, slowly. It is the boundary this whole page
-    is written against, and it is the compiler's own list rather than somebody's
-    summary of one. <strong>Until the range temporaries are typed, write a
-    counting loop as a <code>loop</code> with an annotated counter</strong>
-    &mdash; which is what the listing above it does, and that one builds and
-    runs.
+    The loop's range and iterator temporaries used to come out of the front end
+    untyped, which is a value the backend refused to emit &mdash; this listing
+    used to check clean and refuse to build with <code>SC0400</code>. That gap
+    has closed: <code>sciencec build</code> now lowers it, and the program
+    above links and runs, printing <code>10</code>. The <code>loop</code> form
+    a few paragraphs up still works exactly as shown, and is still the one to
+    reach for if you want an annotated counter you can see mutate; <code>for
+    &hellip; in</code> is now the shorter way to write a plain count.
   </p>
 
   <p class="note">
@@ -708,14 +708,14 @@ print(f"{total}")</pre>
     parameters with their types, what comes back, and &mdash; from
     <a href="#ownership">chapter 7</a> onwards &mdash; whether each parameter is
     taken or borrowed. That last piece is what makes a Science signature carry
-    more than most, and it is why <code>borrowed</code> appears below before it
+    more than most, and it is why <code>&amp;</code> appears below before it
     has been explained.
   </p>
 
 <pre data-science>def kelvin(celsius: F64) -&gt; F64:
     celsius + 273.15
 
-def announce(label: borrowed String):
+def announce(label: &String):
     print(f"--- {label} ---")
 
 def safe_band(celsius: F64) -&gt; I64:
@@ -842,7 +842,7 @@ choice Station:
     Balloon(F64)
     Buoy(F64, F64)
 
-def kelvin(r: borrowed Reading) -&gt; F64:
+def kelvin(r: &Reading) -&gt; F64:
     r.celsius + 273.15
 
 def altitude(station: Station) -&gt; F64:
@@ -885,36 +885,30 @@ Reading has:
         self.celsius + 273.15
 
 let r be Reading.at(1i64, 21.5)
-print(f"{r.kelvin()}")</pre>
-
-  <div class="callout">
-    <h3>That listing checks and does not build &mdash; the third of six</h3>
-    <p>
-      Methods are the construct being worked on right now, and today the
-      backend cannot resolve the receiver. <code>check</code> exits 0 &mdash;
-      the method is found, the receiver is typed, the borrow checker runs
-      &mdash; and <code>build</code> stops here:
-    </p>
-  </div>
-
-<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build a call to the method `kelvin`: its receiver is a `Self` this crate cannot resolve to a concrete type, and Decision 11's method lookup does not put what it found in the tree
-  = note: this `sciencec` implements &#167;10's stages 0 to 3 of `codegen-and-linking.md` and some of what comes after &mdash; a script body, string literals and `print`, `extern "C"` declarations and the calls to them, the CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, `T?`, and drops of values that own nothing &mdash; and refuses everything else rather than lowering a construct no execution test has ever run
-1 error</code></pre>
+print(f"{r.kelvin()}")
+# 294.65</pre>
 
   <p>
-    <strong>Write methods anyway</strong> &mdash; they are the right way to
-    organise a type and they type-check today. But if you want a program that
-    runs this week, a free function taking <code>borrowed Reading</code> does
-    the same job and builds, which is why the listing above it is written that
-    way.
+    Method calls on a concrete type used to be exactly where the backend
+    stopped &mdash; the receiver's <code>Self</code> could not be resolved to a
+    concrete type, and <code>build</code> refused with <code>SC0400</code> even
+    though <code>check</code> passed. That has since been built out: the
+    associated function <code>Reading.at</code> and the method
+    <code>r.kelvin()</code> both lower today, and the program above builds,
+    links and prints <code>294.65</code>. The free-function style from the
+    listing before it (<code>kelvin(r: &amp;Reading)</code>) still builds too
+    and is a fine way to write the same thing; neither is now required over the
+    other on grounds of what builds.
   </p>
 
   <p class="note">
-    <strong>A record whose fields are numbers builds and runs; one with a
-    <code>String</code> field does not.</strong> Storing a string into a record
-    needs an owned allocation the backend has no slot for yet. It
-    <em>checks</em> clean. Every record on this page is numeric for that reason,
-    not because records are meant to be.
+    <strong>A record with a <code>String</code> field builds and runs too.</strong>
+    Storing a string into a record used to need an owned allocation the backend
+    had no slot for; it now does, so a <code>type Doc: title: String</code>
+    constructed and printed through its field builds like any other record.
+    Every record on this page still happens to be numeric, because none of them
+    needed a string field to make its point &mdash; not because a string one
+    would fail.
   </p>
 
   <div class="scroller">
@@ -927,7 +921,7 @@ print(f"{r.kelvin()}")</pre>
         <tr><td class="mono">Reading(sample: 1i64, celsius: 21.5)</td><td class="what">Construction. Named, mandatory, any order.</td></tr>
         <tr><td class="mono">Balloon(1200.0)</td><td class="what">A variant with a payload. Positional, because a variant's payload is.</td></tr>
         <tr><td class="mono">Reading has:</td><td class="what">Inherent functions. A <code>self</code> first parameter makes it a method.</td></tr>
-        <tr><td class="mono">type Pair of (A, B):</td><td class="what">Generic parameters. Two or more take parentheses; see <a href="#interfaces">chapter 9</a>.</td></tr>
+        <tr><td class="mono">type Pair[A, B]:</td><td class="what">Generic parameters, in brackets; see <a href="#interfaces">chapter 9</a>.</td></tr>
       </tbody>
     </table>
   </div>
@@ -986,11 +980,11 @@ print(f"{band(4i64)} {band(9i64)}")
 
   <p class="note">
     Both <code>altitude</code> functions on this page take <code>Station</code>
-    by value rather than <code>borrowed Station</code>, and that is the
-    backend's constraint rather than the language's: a <code>match</code> on a
-    borrowed choice checks clean and does not build, because reading the
-    discriminant through a borrow is a lowering the backend has not run. Take
-    the choice by value until it does.
+    by value rather than <code>&amp;Station</code>, mostly because neither
+    function needed to hold onto the caller's copy. Matching a
+    <code>&amp;Station</code> works today too &mdash; reading the discriminant
+    through a borrow builds and runs like any other match &mdash; so taking the
+    choice by value here is a style choice, not a workaround.
   </p>
 
   <h3>What the compiler says when an arm is missing</h3>
@@ -1129,7 +1123,7 @@ announce(label)</pre>
     it. Say so in the signature.
   </p>
 
-<pre data-science>def announce(label: borrowed String):
+<pre data-science>def announce(label: &String):
     print(f"--- {label} ---")
 
 let label be "station-7"
@@ -1141,32 +1135,32 @@ announce(label)
   <p>
     One word changed, in one place, and it is in the <em>signature</em> rather
     than at either call site. That is the second half of the design:
-    <strong>a parameter declared <code>borrowed</code> is borrowed for you at
-    the call site.</strong> You write <code>announce(label)</code>, not
-    <code>announce(borrowed label)</code>. The signature still says which it is,
+    <strong>a parameter declared <code>&amp;T</code> is borrowed for you at the
+    call site.</strong> You write <code>announce(label)</code>, not
+    <code>announce(&amp;label)</code>. The signature still says which it is,
     so a reader keeps the information and only the noise goes. You write
-    <code>borrowed</code> yourself where the position is not a call site &mdash;
+    <code>&amp;</code> yourself where the position is not a call site &mdash;
     constructing a record that holds a borrow, for instance, or binding one
     directly.
   </p>
 
   <h3>Shared and exclusive</h3>
   <p>
-    <code>borrowed T</code> is a shared borrow: read-only, and any number may
-    coexist. <code>mutable borrowed T</code> is exclusive: it may write, and
-    while it is alive nothing else may touch the value at all. Assignment
-    through a borrow is written plainly, because Science has no dereference
-    operator &mdash; <code>r.celsius be r.celsius + 1i64</code> reads and writes
-    through the borrow with nothing written for it.
+    <code>&amp;T</code> is a shared borrow: read-only, and any number may
+    coexist. <code>&amp;mut T</code> is exclusive: it may write, and while it
+    is alive nothing else may touch the value at all. Assignment through a
+    borrow is written plainly, because Science has no dereference operator
+    &mdash; <code>r.celsius be r.celsius + 1i64</code> reads and writes through
+    the borrow with nothing written for it.
   </p>
 
 <pre data-science>type Reading:
     celsius: I64
 
-def warm(r: mutable borrowed Reading):
+def warm(r: &mut Reading):
     r.celsius be r.celsius + 1i64
 
-def report(r: borrowed Reading) -&gt; I64:
+def report(r: &Reading) -&gt; I64:
     r.celsius
 
 let mutable r be Reading(celsius: 21i64)
@@ -1187,15 +1181,15 @@ print(f"{report(r)}")
     celsius: I64
 
 let mutable r be Reading(celsius: 21i64)
-let snapshot be borrowed r
+let snapshot be &r
 r.celsius be 22i64
 print(f"{snapshot.celsius}")</pre>
 
 <pre class="err"><code><span class="e-code">error[SC0330]</span>: `r` is borrowed here and modified before the borrow ends
  --&gt; overlap.science:6:14
   |
-5 | let snapshot be borrowed r
-  |                 <span class="e-hi">----------</span> `r` is borrowed here, shared
+5 | let snapshot be &r
+  |                 <span class="e-hi">--</span> `r` is borrowed here, shared
 6 | r.celsius be 22i64
   |              <span class="e-hi">^^^^^</span> ...and modified here, which needs it exclusively
 7 | print(f"{snapshot.celsius}")
@@ -1239,7 +1233,7 @@ print(f"{snapshot.celsius}")</pre>
     celsius: I64
 
 let mutable r be Reading(celsius: 21i64)
-let snapshot be borrowed r
+let snapshot be &r
 print(f"{snapshot.celsius}")
 r.celsius be 22i64
 print(f"{r.celsius}")
@@ -1250,8 +1244,8 @@ print(f"{r.celsius}")
     <strong>Now count the annotations in everything above: there are
     none.</strong> No <code>'a</code>, no <code>&lt;'a, 'b&gt;</code>, no
     <code>where 'b: 'a</code>. Three spans across three lines, a rule citation
-    and a mechanical fix &mdash; and the only thing you wrote was the word
-    <code>borrowed</code> in a signature. That is the claim the language is
+    and a mechanical fix &mdash; and the only thing you wrote was one
+    <code>&amp;</code> in a signature. That is the claim the language is
     built on, and this diagnostic is where you can check it rather than take it.
   </p>
 
@@ -1267,7 +1261,7 @@ print(snapshot.celsius)
     </div>
     <div>
       <h3>Science</h3>
-<pre class="foreign">let snapshot be borrowed r
+<pre class="foreign">let snapshot be &r
 r.celsius be 22i64
 print(f"{snapshot.celsius}")
 # SC0330. Reorder, or copy.
@@ -1277,7 +1271,7 @@ print(f"{snapshot.celsius}")
   <p>
     <strong>A garbage collector is the better answer for most programs, and this
     page will not pretend otherwise.</strong> You never write
-    <code>borrowed</code>, never reorder two lines to satisfy a checker, never
+    <code>&amp;</code>, never reorder two lines to satisfy a checker, never
     read <code>SC0330</code>, and nothing you write can use memory after it is
     freed. The cost is a pause you cannot schedule and a heap you cannot
     predict, and for an enormous amount of software neither of those costs
@@ -1341,7 +1335,7 @@ print(f"{measured?}")
     Missing
     NotANumber(Int)
 
-def parse_port(text: borrowed String) -&gt; (Int, PortError?):
+def parse_port(text: &String) -&gt; (Int, PortError?):
     if text.is_empty():
         return (0, PortError.Missing)
     if text is not "8080":
@@ -1357,18 +1351,16 @@ let port, err be parse_port("")
 if err?:
     print(explain(err))
 else:
-    print(f"{port}")</pre>
+    print(f"{port}")
+# no port was given</pre>
 
-  <div class="callout">
-    <h3>That listing checks and does not build &mdash; the fourth of six</h3>
-    <p>
-      It exits 0 from <code>check</code>, exhaustiveness test and narrowing and
-      all. <code>build</code> stops at the first <code>String</code> method:
-      <em>"cannot build a call to <code>is_empty</code>, which this crate was
-      given no MIR body for"</em>. Write error handling this way; you cannot run
-      it yet.
-    </p>
-  </div>
+  <p>
+    <code>String</code>'s methods used to check clean and stop at the first
+    call to <code>is_empty</code> or <code>length</code>, because the crate had
+    no MIR body to build one from. Both build today, and so does this whole
+    function: <code>build</code> links it, and running it on an empty string
+    takes the first branch and prints <code>no port was given</code>.
+  </p>
 
   <p>
     Three things happen in the last four lines and all three are worth naming.
@@ -1393,7 +1385,7 @@ else:
     Missing
     NotANumber(Int)
 
-def parse_port(text: borrowed String) -&gt; (Int, PortError?):
+def parse_port(text: &String) -&gt; (Int, PortError?):
     if text.is_empty():
         return (0, PortError.Missing)
     (8080, null)
@@ -1480,8 +1472,8 @@ if raw?:
     provides them in a separate block, written
     <code>Type implements Interface:</code> &mdash; the reverse of Rust's
     <code>impl Trait for Type</code>, and it reads as a sentence about the type.
-    A generic function takes a type parameter with <code>of</code> and
-    constrains it with an interface.
+    A generic function takes a type parameter in brackets and constrains it
+    with an interface.
   </p>
 
   <h3><code>interface</code> and <code>implements</code></h3>
@@ -1510,14 +1502,16 @@ Drum implements Volume:
 
 let f be Flask(millilitres: 250.0)
 let d be Drum(litres_held: 200.0)
-print(f"{f.litres()} {d.litres()}")</pre>
+print(f"{f.litres()} {d.litres()}")
+# 0.25 200.0</pre>
 
   <p class="note">
-    <strong>That listing checks and does not build &mdash; the fifth of
-    six</strong>, and for the same reason the method block in
-    <a href="#types">chapter 5</a> does not: the call is a method call, and the
-    backend cannot yet resolve the receiver. The declarations, the two
-    implementations and the coherence checking all pass <code>check</code>.
+    That call to <code>f.litres()</code> and <code>d.litres()</code> used to be
+    exactly where the method block in <a href="#types">chapter 5</a> stopped
+    too: a method call the backend could not resolve a receiver for. It
+    resolves one today, so the declarations, the two implementations, the
+    coherence checking and the two calls all build, and the program above
+    links and prints <code>0.25 200.0</code>.
   </p>
 
   <p class="note">
@@ -1530,14 +1524,14 @@ print(f"{f.litres()} {d.litres()}")</pre>
     &mdash; which is how a user type takes part in arithmetic.
   </p>
 
-  <h3>Generics: <code>of T</code>, bounds, and <code>where</code></h3>
+  <h3>Generics: <code>[T]</code>, bounds, and <code>where</code></h3>
   <p>
-    <code>def name of T(&hellip;)</code> declares a function generic over
+    <code>def name[T](&hellip;)</code> declares a function generic over
     <code>T</code>. A bound goes after the parameter with a colon, or in a
-    <code>where</code> clause at the end when the signature gets long. Two or
-    more type parameters take parentheses, because the comma would otherwise be
-    ambiguous inside a parameter list:
-    <code>def swap of (A, B)(&hellip;)</code>.
+    <code>where</code> clause at the end when the signature gets long. Several
+    bounds join with <code>+</code>. Two or more type parameters are just two or
+    more names in the same brackets, the same as any other list:
+    <code>def swap[A, B](&hellip;)</code>.
   </p>
 
 <pre data-science>interface Volume:
@@ -1550,41 +1544,44 @@ Flask implements Volume:
     def litres(self) -&gt; F64:
         self.millilitres / 1000.0
 
-def fuller of T: Volume(a: borrowed T, b: borrowed T) -&gt; F64:
+def fuller[T: Volume](a: &T, b: &T) -&gt; F64:
     if a.litres() &gt; b.litres(): a.litres() else: b.litres()
 
-def total of T(a: borrowed T, b: borrowed T) -&gt; F64 where T: Volume:
+def total[T](a: &T, b: &T) -&gt; F64 where T: Volume:
     a.litres() + b.litres()
 
 let small be Flask(millilitres: 250.0)
 let large be Flask(millilitres: 750.0)
-print(f"{fuller(small, large)} {total(small, large)}")</pre>
-
-  <div class="callout">
-    <h3>That listing checks and does not build &mdash; the last of six</h3>
-    <p>
-      Generics are monomorphised: one specialised copy of the function for each
-      set of type arguments it is called with. Nothing runs that walk yet, so a
-      call to a generic function is refused &mdash; <em>"cannot build a call to
-      the generic function <code>fuller</code>, which nothing has
-      monomorphised"</em>. The same applies to an interface's <em>default</em>
-      method body, whose <code>self</code> is a different concrete type in every
-      implementation.
-    </p>
-  </div>
+print(f"{fuller(small, large)} {total(small, large)}")
+# 0.75 1.0</pre>
 
   <p class="note">
-    <code>of</code> is also how a generic type is written: <code>Array of
-    Doc</code>, <code>Map of (String, Int)</code>, <code>Array of (Map of
-    (String, Int))</code>. One argument needs no parentheses and two or more do,
-    and nesting follows the same rule. Naming a generic type before a
-    <code>.</code> needs its own parentheses too &mdash;
-    <code>(Array of Doc).new()</code>, never <code>Array of Doc.new()</code>,
-    because the second does not say whether <code>.new</code> belongs to
-    <code>Doc</code> or to the whole type.
+    Generics are monomorphised: one specialised copy of the function for each
+    set of type arguments it is called with, and that walk now runs for both
+    calls above, including the method calls each does through its bound.
+    <code>fuller</code> and <code>total</code> build, link and print
+    <code>0.75 1.0</code>. Ordinary generic functions have had this for a
+    while; what is new is that a call through an interface bound &mdash; the
+    method call inside the generic body, not just the function around it
+    &mdash; now monomorphises too.
   </p>
 
-  <h3>Where Java and TypeScript are better: <code>&lt;T&gt;</code> never needs parentheses</h3>
+  <p class="note">
+    Brackets are also how a generic type is written: <code>Array[Doc]</code>,
+    <code>Map[String, Int]</code>, <code>Array[Map[String, Int]]</code>. Two or
+    more arguments are just a longer list in the same brackets, and nesting
+    needs no extra parentheses either &mdash; the closing bracket ends the
+    argument list unambiguously, which is the one thing <code>of</code> could
+    not do. Naming a generic type before a <code>.</code> needs none either any
+    more: <code>Array[Doc].new()</code> and <code>Wrapper[Int].holding(7)</code>
+    both build exactly as written, because the brackets that instantiate a type
+    and the brackets that index a value are the same token but do not open at
+    the same place in the grammar &mdash; the parser sees the comma, or leaves
+    a single argument for name resolution to settle once it knows whether the
+    name in front is a type or a value.
+  </p>
+
+  <h3>Where Java and TypeScript are better: <code>&lt;T&gt;</code> can never also be an index</h3>
   <div class="two">
     <div>
       <h3>TypeScript</h3>
@@ -1594,26 +1591,34 @@ type Grid = Map&lt;string, Array&lt;number&gt;&gt;;</pre>
     </div>
     <div>
       <h3>Science</h3>
-<pre class="foreign">def swap of (A, B)(p: Pair of (A, B)) -&gt; Pair of (B, A)
+<pre class="foreign">def swap[A, B](p: Pair[A, B]) -&gt; Pair[B, A]
 
-type Grid is Map of (String, Array of F64)</pre>
+type Grid is Map[String, Array[F64]]</pre>
     </div>
   </div>
   <p>
-    <strong>Angle brackets are self-delimiting and <code>of</code> is not.</strong>
-    <code>&lt;A, B&gt;</code> is unambiguous with one argument or six, at any
-    nesting depth, and anyone who has written Java, C#, TypeScript or Rust
-    already reads it without thinking. <code>of</code> needs parentheses the
-    moment there are two arguments, and again the moment you nest, and that is a
-    rule you have to remember rather than a shape you can see. For this one
-    construct the familiar notation is simply better.
+    <strong><code>&lt;A, B&gt;</code> can only ever be a type argument list,
+    and <code>[A, B]</code> can also be an index.</strong> Brackets read
+    cleanly above because nesting needs no extra parentheses, which is real
+    and was not true of the notation this page used to show here &mdash;
+    but brackets are also how you index a value, <code>a[i]</code>, and
+    <code>Array[Doc]</code> and <code>xs[i]</code> are the same four kinds of
+    token in the same order. With two or more arguments a comma settles it at
+    parse time, because an index takes exactly one subscript; with exactly one,
+    the parser leaves it undecided and name resolution asks whether the thing
+    in front is a type or a value before the tree is final. Java, C#,
+    TypeScript and Rust never face that question, because their angle brackets
+    are not also their index operator. For this one construct the familiar
+    notation still settles a reader's question sooner.
   </p>
   <p>
-    What <code>of</code> buys is elsewhere in the grammar: <code>&lt;</code> and
-    <code>&gt;</code> stay unambiguously comparison operators, so the parser
-    never needs the disambiguation pass that C++ and Java both carry. That is a
-    real benefit to the compiler and a mild cost to you, and which side you land
-    on probably depends on how often you write six-parameter generics.
+    What the shared token buys Science is a smaller grammar: no fourth
+    bracket-shaped construct earns its keep for one job, and the one case that
+    is genuinely ambiguous &mdash; a single argument, where <code>Array[Int]</code>
+    could be an instantiation or <code>xs[i]</code> an index &mdash; is settled
+    by the same name resolution that already has to run before either reading
+    means anything. The reader waits one phase later than a Java reader would;
+    the grammar itself does not grow to avoid it.
   </p>
 </section>
 
@@ -1686,7 +1691,7 @@ print(f"{straight}")
   </p>
 
   <p class="note">
-    The vocabulary for the harder cases &mdash; <code>ffi.Span of F64</code> for
+    The vocabulary for the harder cases &mdash; <code>ffi.Span[F64]</code> for
     a pointer and a length, <code>ffi.CStr</code>, <code>ffi.Complex64</code>,
     <code>ffi.OpaqueHandle</code>, <code>symbol "…"</code> to decouple the
     Science name from the linker name, <code>via pkg-config</code>,
@@ -1754,7 +1759,7 @@ choice Station:
     Balloon(F64)
     Buoy(F64, F64)
 
-def kelvin(r: borrowed Reading) -&gt; F64:
+def kelvin(r: &Reading) -&gt; F64:
     r.celsius + 273.15
 
 def altitude(station: Station) -&gt; F64:
@@ -1763,7 +1768,7 @@ def altitude(station: Station) -&gt; F64:
         Balloon(metres): metres
         Buoy(latitude, longitude): 0.0
 
-def spread(low: borrowed Reading, high: borrowed Reading) -&gt; F64:
+def spread(low: &Reading, high: &Reading) -&gt; F64:
     let difference be high.celsius - low.celsius
     unsafe:
         sqrt(difference * difference)
@@ -1859,12 +1864,12 @@ print(f"{label_for(Balloon(1200.0))} at {altitude(Balloon(1200.0))} m")
     Take the program at the end of <a href="#foreign">chapter 10</a> and extend
     it. Add a <code>Sonde(F64, F64)</code> variant to <code>Station</code> and
     let the compiler tell you every <code>match</code> that now has a hole. Add
-    a <code>warmer_than(a: borrowed Reading, b: borrowed Reading) -&gt;
+    a <code>warmer_than(a: &Reading, b: &Reading) -&gt;
     Bool</code>. Give <code>spread</code> a <code>PortError</code>-style pair
     return for the case where the two readings are from different stations, and
     watch <code>SC0140</code> catch you the first time you forget to check it.
-    The first two still build and run; the third checks and does not, and it is
-    the one that teaches you the most.
+    The first two build and run; the third is a compile error the moment you
+    forget the check, and it is the one that teaches you the most.
   </p>
 </section>
 
@@ -1882,18 +1887,17 @@ print(f"{label_for(Balloon(1200.0))} at {altitude(Balloon(1200.0))} m")
   Twenty-nine Science listings on this page were extracted from this file and
   run through <code>sciencec check</code> with the exit code read: twenty-one
   exit 0, and eight are here in order to fail, each beside its own diagnostic.
-  Fifteen of the twenty-one were then built with <code>sciencec build</code>,
-  linked and executed, and the trailing <code>#</code> comment on each is that
-  program's real stdout &mdash; all fifteen matched. The other six check clean
-  and the backend refuses them, and each says so in its own chapter rather than
-  leaving a reader to discover it: the declared <code>main</code> in
-  <a href="#install">chapter 1</a>, the counting loop in
+  All twenty-one were then built with <code>sciencec build</code>, linked and
+  executed, and the trailing <code>#</code> comment on each is that program's
+  real stdout &mdash; all twenty-one matched. Six of them &mdash; the declared
+  <code>main</code> in <a href="#install">chapter 1</a>, the counting loop in
   <a href="#control">chapter 3</a>, the method block in
   <a href="#types">chapter 5</a>, the error pair in
   <a href="#errors">chapter 8</a>, and the interface and the generic call in
-  <a href="#interfaces">chapter 9</a>. Every diagnostic reproduced here is the
-  compiler's own stderr, produced by writing that exact program to disk and
-  running it.
+  <a href="#interfaces">chapter 9</a> &mdash; used to check clean and get
+  refused by the backend; each chapter says what changed rather than leaving a
+  reader to discover it. Every diagnostic reproduced here is the compiler's own
+  stderr, produced by writing that exact program to disk and running it.
 </footer>
 
 </div>

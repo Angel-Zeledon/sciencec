@@ -43,7 +43,7 @@
 <div class="status">
   <span><span class="dot dot-on"></span>Design notes <b>40</b></span>
   <span><span class="dot dot-on"></span>Complete Science listings <b>15</b> &mdash; 14 clean, 1 a deliberate error</span>
-  <span><span class="dot dot-on"></span>Of those, built and run <b>6</b>, output matched</span>
+  <span><span class="dot dot-on"></span>Of those, built and run <b>8</b>, output matched</span>
   <span><span class="dot dot-wip"></span>LLVM backend <b>stages 0&ndash;3</b></span>
   <span>Compiler <b>sciencec</b> 0.0.1</span>
 </div>
@@ -56,9 +56,9 @@
     through <code>sciencec check</code>: fourteen report nothing, and the
     fifteenth is the deliberate borrow error in
     <a href="#diagnostics">Diagnostics</a>, which reports exactly the message
-    printed beneath it. <strong>Six were also compiled with
+    printed beneath it. <strong>Eight were also compiled with
     <code>sciencec build</code> and executed</strong>, and the trailing
-    <code>#</code> comment on those six was compared against their real stdout
+    <code>#</code> comment on those eight was compared against their real stdout
     and matches it. Four more blocks are <strong>excerpts</strong> of a module
     printed elsewhere on the page or in <code>examples/</code>, and say so in
     their heading. Three show <strong>removed syntax</strong> on purpose, carry
@@ -70,16 +70,20 @@
     stated underneath it instead. One block &mdash; the error model &mdash;
     carries an output comment that was <em>derived</em> rather than run, and the
     paragraph beneath it says which branch produces it and why the block cannot
-    be executed yet. The reason is worth one sentence of its own: the LLVM
+    be executed yet. Most of the time the reason is one sentence: the LLVM
     backend implements the first four lowering stages and <strong>refuses
     everything else rather than lowering a construct no execution test has ever
-    run</strong>. That refusal is a design decision, and this is what it says
-    when you hit it.
+    run</strong>, and that refusal is a design decision that names itself when
+    you hit it. The error model's block is the one exception on the page: it
+    builds with no error at all and the resulting binary segfaults before
+    printing anything, which is a live miscompile rather than a documented
+    refusal, and the paragraph under that block says so plainly rather than
+    filing it under the same explanation as the rest.
   </p>
 </div>
 
-<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build a tuple, which has no `Ty -&gt; CgTy` arm: §3.2's C layout applies to one unchanged and the arm is simply not written
-  = note: this `sciencec` implements §10's stages 0 to 3 of `codegen-and-linking.md` and some of what comes after — a script body, string literals and `print`, `extern "C"` declarations and the calls to them, the CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, `T?`, and drops of values that own nothing — and refuses everything else rather than lowering a construct no execution test has ever run</code></pre>
+<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build a closure, whose body `science-mir` does not lower at all: `Rvalue::Closure` carries a THIR expression id and its captures, and nothing turns either into a function
+  = note: this `sciencec` implements §10's stages 0 to 3 of `codegen-and-linking.md` and some of what comes after — a script body, string literals and `print` of anything the `f"…"` builder renders, `extern "C"` declarations and the calls to them, the CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, `T?`, methods and associated functions on a concrete type, the prelude's `String` methods, and drops of values that own nothing — and refuses everything else rather than lowering a construct no execution test has ever run</code></pre>
 
 <div class="docs">
 <aside class="sidebar">
@@ -340,7 +344,7 @@ print(f"{clamp(12, 200)}")
 <pre data-science>type GslFunction:
     function: Int
 
-def call_it(f: borrowed GslFunction) -&gt; Int:
+def call_it(f: &amp;GslFunction) -&gt; Int:
     let function be f.function
     function</pre>
   <p class="note">
@@ -649,7 +653,7 @@ self.text is other.text   # String, so words</pre>
     The note then priced what <code>shape</code>, <code>model</code> and
     <code>tensor</code> are protecting and found it is a <em>hypothesis</em>:
     neither F1 nor F4 has specified any syntax using those words in lowercase.
-    Types are capitalised &mdash; <code>Tensor of (F32, (batch, 768))</code>
+    Types are capitalised &mdash; <code>Tensor[F32, (batch, 768)]</code>
     &mdash; so the types were never at risk; only the lowercase words were, and
     the lowercase words are wanted by users. <code>broadcasting.md</code> §11.7
     has since answered the open question outright: a shape is a type-level list
@@ -769,7 +773,13 @@ print(f"{band(1)}")
     the word changed.
   </p>
 
-<pre data-science>type Doc:
+<pre data-science># String has no `clone`; an owned copy comes from `String.new()` and `push_str`.
+def copy_of(text: &amp;String) -&gt; String:
+    let mutable out be String.new()
+    out.push_str(text)
+    out
+
+type Doc:
     title: String
     body: String
 
@@ -777,21 +787,31 @@ interface Summarize:
     def summarize(self) -&gt; String
 
     def preview(self) -&gt; String:
-        self.summarize().truncate(80)
+        let mutable out be self.summarize()
+        out.truncate(80)
+        out
 
 Doc implements Summarize:
     def summarize(self) -&gt; String:
-        self.body.truncate(200)
+        let mutable out be copy_of(self.body)
+        out.truncate(200)
+        out
 
 Doc has:
     def new(title: String) -&gt; Doc:
         Doc(title: title, body: String.new())
 
-def show(item: borrowed any Summarize) -&gt; String:
+def show(item: &amp;any Summarize) -&gt; String:
     item.preview()</pre>
   <p class="note">
-    <code>sciencec check</code>, 0 errors. Not built: the backend does not yet
-    lower <code>String</code> fields in a record construction.
+    <code>sciencec check</code>, 0 errors. Not built through <code>show</code>:
+    reaching <code>preview</code>'s default body through the <code>&amp;any
+    Summarize</code> vtable fails with <code>SC0400</code> &mdash;
+    <code>this sciencec cannot build preview's default body in a vtable slot
+    for Doc: Decision 15's defaulted method has to be monomorphised at the
+    implementor's Self before it has an address, and this backend
+    monomorphises nothing</code>. Calling <code>Doc</code>'s methods directly,
+    with no dynamic dispatch involved, does build and run.
   </p>
 
   <h3>Why not <code>class</code>, which is the familiar word</h3>
@@ -866,7 +886,9 @@ impl Summarize for Doc {
 # interface.
 Doc implements Summarize:
     def summarize(self) -&gt; String:
-        self.body.truncate(200)</pre>
+        let mutable out be copy_of(self.body)
+        out.truncate(200)
+        out</pre>
     </div>
   </div>
   <p>
@@ -920,17 +942,17 @@ ConfigError implements Error:
             Missing(key): copy_of(key)
             Malformed(detail, line): copy_of(detail)
 
-def copy_of(text: borrowed String) -&gt; String:
+def copy_of(text: &amp;String) -&gt; String:
     let mutable out be String.new()
     out.push_str(text)
     out
 
-def parse(text: borrowed String) -&gt; (Config, ConfigError?):
+def parse(text: &amp;String) -&gt; (Config, ConfigError?):
     if text.is_empty():
         return (Config.empty(), ConfigError.Malformed("empty input", 1))
     (Config(host: copy_of(text), port: 8080u16), null)
 
-def read_config(path: borrowed String) -&gt; (Config, ConfigError?):
+def read_config(path: &amp;String) -&gt; (Config, ConfigError?):
     let text, io_err be read_file(path)
     if io_err?:
         return (Config.empty(), ConfigError.Missing("the file could not be read"))
@@ -949,10 +971,17 @@ def main():
         print(config.host)
     # empty input</pre>
   <p class="note">
-    <code>sciencec check</code>, 0 errors. <strong>Not built</strong>: the
-    backend has no lowering arm for a tuple return, so the trailing comment here
-    is <em>derived and not executed</em> &mdash; the one such comment on this
-    page. It is derivable: <code>parse("")</code> takes the
+    <code>sciencec check</code>, 0 errors. <strong>Not built</strong>, and not
+    for the reason a graceful-refusal error would suggest: tuple returns lower
+    fine on their own, and so does a bare narrowed <code>choice</code>. But this
+    exact combination &mdash; a nullable <code>choice</code> with a
+    <code>String</code> payload, narrowed with <code>err?</code>, then read with
+    a <code>match</code> that extracts that payload &mdash; compiles and links
+    with <code>sciencec build</code> reporting no error at all, and the
+    resulting binary <strong>segfaults before printing anything</strong>. That
+    is a live miscompile, not a documented limitation, so the trailing comment
+    here is <em>derived and not executed</em> &mdash; the one such comment on
+    this page. The derivation itself is simple: <code>parse("")</code> takes the
     <code>Malformed</code> branch, <code>err?</code> is therefore true, and
     <code>message</code>'s <code>match</code> hands back the detail string.
   </p>
@@ -1162,13 +1191,12 @@ fn read_config(path: &amp;str) -&gt; Result&lt;Config, ConfigError&gt; {
     </div>
     <div>
       <h3>Science &mdash; excerpt</h3>
-<pre data-science>type Node of T:
-    defs: borrowed DefTable
-    value: borrowed T
+<pre data-science>type Node[T]:
+    defs: &amp;DefTable
+    value: &amp;T
 
 Node has:
-    def new of T(defs: borrowed DefTable,
-                 value: borrowed T) -&gt; Node of T:
+    def new[T](defs: &amp;DefTable, value: &amp;T) -&gt; Node[T]:
         Node(defs: defs, value: value)</pre>
     </div>
   </div>
@@ -1187,9 +1215,9 @@ Node has:
     <code>examples/21_compiler_shapes.science</code> encodes the real
     compiler's structures &mdash; <code>DefTable</code> and <code>DefId</code>,
     the <code>Rib</code> scope stack, a <code>Parser</code> holding a borrowed
-    token slice, the two-borrow <code>Node of T</code>, a diagnostics
+    token slice, the two-borrow <code>Node[T]</code>, a diagnostics
     accumulator &mdash; and <strong>passes with no region written
-    anywhere</strong>. Its <code>Node of T</code> gets two region variables and
+    anywhere</strong>. Its <code>Node[T]</code> gets two region variables and
     no constraint anywhere relates them. Nobody is asked whether they are the
     same. A test asserts the <em>absence</em> of the constraint rather than the
     outcome, because the outcome would also hold under a rule that compared them
@@ -1340,32 +1368,57 @@ Node has:
 <!-- ==================================================================== -->
 <section id="borrowed">
   <h2><code>borrowed</code> and <code>mutable</code> as words<a class="anchor" href="#borrowed" aria-label="Link to this section">#</a></h2>
+  <div class="callout">
+    <h3>Amendment: this decision was reversed, and no note records why</h3>
+    <p>
+      Everything below argues for spelling borrows as words. That argument no
+      longer describes the syntax. <code>sciencec</code>'s parser now hard-errors
+      on both <code>borrowed T</code> and <code>borrowed x</code>, with a fix-it
+      that says, verbatim, <em>&ldquo;<code>borrowed T</code> is now written
+      <code>&amp;T</code>&rdquo;</em> and <em>&ldquo;<code>borrowed x</code> is
+      now written <code>&amp;x</code>&rdquo;</em> &mdash; and the same for the
+      <code>mutable</code> forms, to <code>&amp;mut T</code> and
+      <code>&amp;mut x</code>. Science now spells both borrows exactly the way
+      Rust does. What survives untouched is the <em>rule</em>, not the spelling:
+      the auto-borrow-at-the-call-site behaviour described below is unchanged
+      &mdash; <code>bump(hits)</code> still needs no borrow written at the call
+      site, and an explicit <code>&amp;mut readings</code> is still legal where
+      it clarifies. No design note in <code>docs/superpowers/design/</code>
+      records the reversal or argues for it, which makes this the second
+      decision on this page with a paper trail this thin (see
+      <a href="#be"><code>be</code></a>). The prose below is kept as the
+      argument that was actually made, with the spelling in its code corrected
+      to what <code>sciencec</code> accepts today.
+    </p>
+  </div>
   <p class="lede">
-    A shared borrow is <code>borrowed T</code>. An exclusive one is
-    <code>mutable borrowed T</code>. Rust spells them <code>&amp;T</code> and
-    <code>&amp;mut T</code>.
+    A shared borrow is <code>&amp;T</code>. An exclusive one is
+    <code>&amp;mut T</code>. They were spelled <code>borrowed T</code> and
+    <code>mutable borrowed T</code> when the argument below was made, and the
+    words are still lexed &mdash; only so that the compiler can name the fix.
   </p>
 
 <pre data-science>type Reading:
     value: Int
 
-def largest(items: borrowed Array of Reading) -&gt; Int:
+def largest(items: &amp;Array[Reading]) -&gt; Int:
     let mutable best be 0
     for item in items:
         if item.value &gt; best:
             best be item.value
     best
 
-def bump(counter: mutable borrowed Array of Reading):
+def bump(counter: &amp;mut Array[Reading]):
     counter.push(Reading(value: 1))
 
 def main():
-    let mutable readings be (Array of Reading).new()
-    bump(mutable borrowed readings)
-    print(largest(readings))</pre>
+    let mutable readings be Array[Reading].new()
+    bump(&amp;mut readings)
+    print(largest(readings))
+# 1</pre>
   <p class="note">
-    <code>sciencec check</code>, 0 errors. Not built: the backend does not yet
-    lower a <code>for</code> loop's iterator temporaries.
+    <code>sciencec check</code>, 0 errors. <strong>Built and run</strong>: the
+    binary prints <code>1</code>, matching the comment.
   </p>
 
   <h3>The trade, in one line each</h3>
@@ -1380,38 +1433,44 @@ largest(&amp;readings);</pre>
     </div>
     <div>
       <h3>Science &mdash; signatures from the block above</h3>
-<pre data-science>def largest(items: borrowed Array of Reading) -&gt; Int
-def bump(counter: mutable borrowed Array of Reading)
+<pre data-science>def largest(items: &amp;Array[Reading]) -&gt; Int
+def bump(counter: &amp;mut Array[Reading])
 
-bump(mutable borrowed readings)
+bump(&amp;mut readings)
 largest(readings)</pre>
     </div>
   </div>
   <p>
-    <strong>Rust is shorter and the gap is not close</strong>:
-    <code>&amp;mut Vec&lt;Reading&gt;</code> is 17 characters against
-    <code>mutable borrowed Array of Reading</code> at 33, and
-    <code>&amp;[Reading]</code> is 10 against 25. <code>&amp;</code> is
-    also genuinely universal &mdash; it is C's address-of, and no reader of
-    systems code has to look it up. The English form buys one thing:
-    <strong>a reader who has never written Rust can read the signature.</strong>
-    For an audience of physicists and statisticians that is the property the
-    project is optimising, and it is why the same audience test that refused
-    <code>fn</code> keeps <code>borrowed</code>.
+    <strong>The gap this paragraph originally reported has essentially
+    closed.</strong> <code>&amp;mut Vec&lt;Reading&gt;</code> is 17 characters
+    against <code>&amp;mut Array[Reading]</code> at 19, and
+    <code>&amp;[Reading]</code> is 10 against <code>&amp;Array[Reading]</code>
+    at 15. When this section still spelled these words instead of symbols the
+    gap was real &mdash; 33 against 17, 25 against 10 &mdash; and that gap was
+    the entire argument for choosing an English phrase over C's punctuation.
+    Now that the parameter position is <code>&amp;</code>/<code>&amp;mut</code>
+    here too, the remaining difference is one word, <code>Array</code>, where
+    Rust's collection name happens to be shorter, and an audience-readability
+    argument does not hang on a difference that small. The reversal recorded in
+    the amendment above did not just change the spelling; it removed the
+    reason this subsection gave for the spelling.
   </p>
 
   <h3>The call site, where Science follows Mojo rather than Rust</h3>
   <p>
     Note <code>largest(readings)</code> above: no borrow written. If a parameter
-    is declared <code>borrowed T</code>, the caller writes
+    is declared <code>&amp;T</code>, the caller writes
     <code>compare(a, b)</code>, not
-    <code>compare(borrowed a, borrowed b)</code>. The signature still says
-    <code>borrowed</code>, so a reader keeps the information; only the noise at
+    <code>compare(&amp;a, &amp;b)</code>. The signature still says
+    <code>&amp;</code>, so a reader keeps the information; only the noise at
     the call site goes. The core spec's decision table names the precedent
     directly: <em>Rust rejected this; Mojo adopted it; for this audience Mojo is
     right.</em> An explicit borrow stays legal where it clarifies, and
-    <code>bump(mutable borrowed readings)</code> above is that case &mdash; a
-    call that can write through its argument is worth marking.
+    <code>bump(&amp;mut readings)</code> above is that case &mdash; a
+    call that can write through its argument is worth marking. This rule is the
+    one part of the section the reversal left standing: it governs the call
+    site regardless of whether the parameter position spells a borrow in words
+    or in <code>&amp;</code>.
   </p>
   <div class="callout">
     <h3>What forgetting this rule cost, measured</h3>
@@ -1429,7 +1488,7 @@ largest(readings)</pre>
     The same omission repeated one layer down. <code>is</code> dispatches to
     <code>Eq</code>, whose method takes <code>self</code> &mdash; the bare
     receiver <em>is</em> the shared borrow. So <code>name is ""</code> has a
-    <code>borrowed String</code> and a <code>String</code> in the source text
+    <code>&amp;String</code> and a <code>String</code> in the source text
     and two <code>String</code>s in the call. Demanding that the written types
     agree would report on exactly the borrow the auto-borrow rule exists to
     remove, so comparisons are checked through borrows. The cost is two places
@@ -1463,7 +1522,7 @@ largest(readings)</pre>
     title: String
     body: String
 
-def headlines(docs: borrowed Array of Doc) -&gt; Array of borrowed String:
+def headlines(docs: &amp;Array[Doc]) -&gt; Array[&amp;String]:
     docs
         .iterate()
         .discard(each.body.is_empty())
@@ -1471,8 +1530,13 @@ def headlines(docs: borrowed Array of Doc) -&gt; Array of borrowed String:
         .take(5)
         .collect()</pre>
   <p class="note">
-    <code>sciencec check</code>, 0 errors. Not built: the chain vocabulary is
-    resolved but not yet lowered.
+    <code>sciencec check</code>, 0 errors. Not built: <code>each</code>
+    desugars to a closure, and the backend refuses every closure outright
+    &mdash; <code>SC0400</code>, <em>this sciencec cannot build a closure,
+    whose body science-mir does not lower at all: Rvalue::Closure carries a
+    THIR expression id and its captures, and nothing turns either into a
+    function</em>. It is not the chain vocabulary itself that is missing; it is
+    closures underneath it.
   </p>
 
   <h3>Closures: two forms, and there is no third</h3>
@@ -1640,15 +1704,27 @@ print(f"{ridge(lambda, 1)}")</pre>
     says so</strong>.
   </p>
 
-<pre data-science>def scale(values: mutable borrowed Array of Int, factor: Int):
-    for i in 0..values.len():
-        values[i] be values[i] * factor</pre>
+<pre data-science>def scale(values: &amp;mut Array[Int], factor: Int):
+    for i in 0..values.length():
+        values[i] be values[i] * factor
+
+def main():
+    let mutable xs be Array[Int].new()
+    xs.push(1)
+    xs.push(2)
+    scale(&amp;mut xs, 3)
+    print(xs[0])
+    print(xs[1])
+# 3
+# 6</pre>
   <p class="note">
-    <code>sciencec check</code>, 0 errors. Not built. This is also the syntax
-    §6.5 of the core spec promised and never supplied &mdash; that section
-    defends ownership by pointing out that Futhark needed uniqueness types
-    <em>solely to let a pure language write <code>x[i] = v</code> in place
-    safely</em>, and the spec was selling a feature it could not spell.
+    <code>sciencec check</code>, 0 errors. <strong>Built and run</strong>, and
+    the output matches. This is also the syntax §6.5 of the core spec promised
+    and once could not supply &mdash; that section defends ownership by
+    pointing out that Futhark needed uniqueness types <em>solely to let a pure
+    language write <code>x[i] = v</code> in place safely</em>. The backend now
+    lowers indexed assignment and the <code>for</code> loop around it, so the
+    spec is no longer selling a feature it cannot spell.
   </p>
 
   <h3>The decision that is actually distinctive</h3>
@@ -1955,7 +2031,7 @@ def fit_peaks(run: str,
     <tbody>
       <tr><td class="what">Every parameter type survives a round trip through JSON Schema</td><td class="what">A <code>def</code> may take a closure, a trait object, a borrowed slice; a <code>tool</code> may take none of them</td></tr>
       <tr><td class="what">It may not be generic</td><td class="what"><code>tools/list</code> is a flat list of concrete tools with one schema each</td></tr>
-      <tr><td class="what">No parameter may be <code>borrowed</code></td><td class="what">There is no caller to borrow from &mdash; every argument was deserialized a moment ago</td></tr>
+      <tr><td class="what">No parameter type may be <code>&amp;T</code> or <code>&amp;mut T</code></td><td class="what">There is no caller to borrow from &mdash; every argument was deserialized a moment ago</td></tr>
       <tr><td class="what">It must carry a doc comment</td><td class="what">The description is not documentation; it is an input to the caller's dispatch decision</td></tr>
       <tr><td class="what">Its return type is constrained</td><td class="what">Content, a record that can produce an output schema, or an <code>Error?</code> alone</td></tr>
     </tbody>
@@ -2025,10 +2101,10 @@ def fit_peaks(run: str,
       channel.</strong> A human learning Science reads a tutorial. A model
       learning Science reads the error it just got, in a loop, and the quality
       of that error is the entire bandwidth of the teaching. A compiler that
-      says <em>expected an identifier, found <code>&amp;</code></em> has told a
-      model nothing it can act on; a compiler that says <em>a shared borrow is
-      written <code>borrowed T</code>, not <code>&amp;T</code></em> has closed
-      the loop in one round trip.
+      says <em>expected a type, found <code>borrowed</code></em> has told a
+      model nothing it can act on; a compiler that says
+      <em><code>borrowed T</code> is now written <code>&amp;T</code></em> has
+      closed the loop in one round trip.
     </p>
     <p style="margin-top:0.7rem">
       A second consequence, less obvious and at least as important:
@@ -2057,7 +2133,7 @@ def fit_peaks(run: str,
 <pre class="err"><code><span class="e-code">error[SC0156]</span>: the declaration is written `def`
  <span class="e-hi">--&gt;</span> d1.science:1:1
   |
-1 | function summarize(text: borrowed String) -&gt; String:
+1 | function summarize(text: &amp;String) -&gt; String:
   | <span class="e-hi">^^^^^^^^</span> `function` is not a keyword in Science
   |
   = note: `def` declares every function, method and interface member
@@ -2086,13 +2162,13 @@ def fit_peaks(run: str,
   </p>
 
 <pre data-science>type Table:
-    names: Array of String
+    names: Array[String]
 
 Table has:
     def new() -&gt; Table:
-        Table(names: (Array of String).new())
+        Table(names: Array[String].new())
 
-    def get(self, at: Int) -&gt; (borrowed String)?:
+    def get(self, at: Int) -&gt; (&amp;String)?:
         self.names.get(at)
 
     def add(mutable self, name: String):
@@ -2157,35 +2233,50 @@ def main():
   <p>
     The note asks for a block of fifteen migration diagnostics,
     <code>SC0120</code>&ndash;<code>SC0134</code>, to close it.
-    <strong>That block is not implemented.</strong> Here is what a Rust habit
-    still costs today &mdash; one mistake, three messages, and the word
-    <code>borrowed</code> nowhere in any of them:
+    <strong>That block is not implemented.</strong> One entry on the note's own
+    list has since closed itself a different way: <code>&amp;Doc</code> in a
+    parameter's type position used to need one of these fifteen messages, and
+    now needs none, because <a href="#borrowed">the reversal</a> made
+    <code>&amp;</code> the actual syntax rather than a habit to migrate away
+    from. What a Rust habit still costs today is one level further in, at the
+    receiver: Science kept <code>self</code> bare rather than adopting Rust's
+    <code>&amp;self</code>, and the parser has no idea that is what a model
+    just tried to write:
   </p>
 
-<pre class="err"><code><span class="e-code">error[SC0104]</span>: expected a type, found `&amp;`
- <span class="e-hi">--&gt;</span> d2.science:1:10
+<pre class="err"><code><span class="e-code">error[SC0102]</span>: expected an identifier, found `&amp;`
+ <span class="e-hi">--&gt;</span> d2.science:5:19
   |
-1 | def f(x: &amp;Doc) -&gt; Int:
-  |          <span class="e-hi">^</span> expected a type, found `&amp;`
-
-<span class="e-code">error[SC0100]</span>: expected `)`, found `Doc`
-<span class="e-code">error[SC0100]</span>: expected end of line, found `Doc`
-3 errors</code></pre>
+5 |     def summarize(&amp;self) -&gt; String:
+  |                   <span class="e-hi">^</span> expected an identifier, found `&amp;`
+1 error</code></pre>
+  <p class="note">
+    No cascade here, but no help either: the message is generic where it could
+    name the exact habit &mdash; a receiver is written <code>self</code>, never
+    <code>&amp;self</code> or <code>&amp;mut self</code> &mdash; and does not.
+    It is exactly the failure mode the opening of this section warns about,
+    still uncaught.
+  </p>
 
   <p>
     And a Rust binding habit, which the note files under <em>actively
     misleading</em> because the compiler's guess is confidently wrong:
   </p>
 
-<pre class="err"><code><span class="e-code">error[SC0100]</span>: expected `be`, found `x`
- <span class="e-hi">--&gt;</span> d3.science:2:13
+<pre class="err"><code><span class="e-code">error[SC0102]</span>: expected an identifier, found `?`
+ <span class="e-hi">--&gt;</span> d3.science:2:9
   |
 2 |     let mut x be 1
-  |             <span class="e-hi">^</span> expected `be`, found `x`</code></pre>
+  |         <span class="e-hi">^^^</span> expected an identifier, found `?`</code></pre>
   <p class="note">
-    <code>mut</code> was read as the bound name. The compiler thinks the binding
-    is called <code>mut</code> &mdash; and a model reading that message will
-    believe it.
+    This got worse rather than better since <code>mut</code> stopped being an
+    ordinary identifier: it is now tokenised, because <code>&amp;mut T</code>
+    needs it to be, so the parser correctly refuses it as a binding name. But
+    the table the diagnostic renderer uses to spell a fixed keyword back to the
+    reader has no entry for it, so it falls through to a literal
+    <code>"?"</code>. A model reading this message is told a question mark was
+    found where none appears anywhere in the source &mdash; actively
+    misleading in a new way the note never anticipated.
   </p>
 
   <h3>Where it already works, because somebody wrote the message</h3>
@@ -2268,9 +2359,9 @@ def main():
   <table>
     <thead><tr><th>What</th><th>What happens today instead</th></tr></thead>
     <tbody>
-      <tr><td class="what">The migration block <code>SC0120</code>&ndash;<code>SC0134</code> &mdash; <code>&amp;T</code>, <code>&amp;mut T</code>, <code>dyn</code>, <code>fn</code>, <code>struct</code>, <code>enum</code>, <code>impl</code>, <code>pub</code>, <code>mut</code></td><td class="what">The cascades the inventory recorded, unchanged. <code>&amp;Doc</code> is still three errors</td></tr>
+      <tr><td class="what">The migration block <code>SC0120</code>&ndash;<code>SC0134</code> &mdash; <code>dyn</code>, <code>fn</code>, <code>struct</code>, <code>enum</code>, <code>impl</code>, <code>pub</code>, <code>mut</code> (originally also <code>&amp;T</code> and <code>&amp;mut T</code>, closed a different way &mdash; see the amendment in <a href="#borrowed">Ownership</a>)</td><td class="what">The remaining cascades are unchanged: <code>fn area(...)</code> is still one uninformative error, not a taught one. <code>&amp;Doc</code> now compiles with none, because <code>&amp;</code> stopped being a habit to migrate away from and became the syntax. <code>mut</code> as a binding name is worse than the inventory recorded &mdash; see the diagnostic above it</td></tr>
       <tr><td class="what">The <b>dot rule</b> &mdash; accept any word as a member name after <code>.</code></td><td class="what"><code>x.shape</code> is <code>SC0102</code> plus a cascade. Eight reserved words the audit asked to free are still reserved</td></tr>
-      <tr><td class="what"><code>SC0135</code> &mdash; recognising the <code>lambda</code> closure <em>shape</em> without reserving the word</td><td class="what">A generic two-error parse failure. The word itself is correctly free</td></tr>
+      <tr><td class="what"><code>SC0135</code> &mdash; recognising the <code>lambda</code> closure <em>shape</em> without reserving the word</td><td class="what">A generic one-error parse failure &mdash; <code>expected end of line, found x</code>, naming neither <code>lambda</code> nor a closure. The word itself is correctly free</td></tr>
       <tr><td class="what"><code>SC0212</code> &mdash; naming a script binding inside a function body</td><td class="what"><code>SC0200</code>, <em>cannot find <code>threshold</code> in this scope</em>. The rule is enforced by construction; only the message is missing</td></tr>
       <tr><td class="what"><code>SC0286</code> &mdash; the index obligation the compiler could not discharge</td><td class="what">Nothing. The checker's own source says so: <em>no index obligation is discharged and <code>SC0286</code> is not emitted</em></td></tr>
       <tr><td class="what">Bare <code>return</code> as sugar for <code>return null</code> at the top level</td><td class="what"><code>SC0525</code>, <em>expected <code>any Error?</code>, found <code>()</code></em>. Of the three spellings the note gives an exit code of 0, only <code>return null</code> compiles</td></tr>
@@ -2343,8 +2434,8 @@ def main():
     <tbody>
       <tr><td class="what"><code>examples/21_compiler_shapes.science</code> §4</td><td class="what">Still says of two-borrow inference that <em>nobody knows yet, because there is no inference</em>. There is: <code>region-inference.md</code>'s headline is that this file's §4 passes with no diagnostic</td></tr>
       <tr><td class="what"><code>type-checking-and-mir.md</code> status line</td><td class="what">Reads <em>Design. Nothing below is built. <code>crates/science-types</code> does not exist.</em> It exists, and the note's own amendments quote the finished checker's first run</td></tr>
-      <tr><td class="what"><code>indexing-and-array-literals.md</code> §1.1 amendment</td><td class="what">Says the prelude's <code>Index</code> takes no parameter and <code>IndexMutably</code> does not exist. Both are declared now, with an <code>of Idx</code> parameter</td></tr>
-      <tr><td class="what"><code>String.truncate</code></td><td class="what">A live contradiction between the corpus and the library note: eighteen call sites read it as <code>-&gt; String</code>, and §6.9 declares it <code>(mutable self, bytes: Int)</code> with no return. Nothing on this page asserts its output</td></tr>
+      <tr><td class="what"><code>indexing-and-array-literals.md</code> §1.1 amendment</td><td class="what">Says the prelude's <code>Index</code> takes no parameter and <code>IndexMutably</code> does not exist. Both are declared now, as <code>Index[Idx]</code> and <code>IndexMutably[Idx]</code> &mdash; the note still spells the parameter <code>of Idx</code>, which is itself stale against the syntax reversal in <a href="#borrowed">Ownership</a></td></tr>
+      <tr><td class="what"><code>String.truncate</code></td><td class="what">Resolved since this table was drafted: every call site in <code>examples/</code> now reads it as <code>(mutable self, bytes: Int)</code> with no return, matching §6.5's decision that it mutates in place and is total. The compiler agrees &mdash; <code>s.truncate(n)</code> as a function's tail expression is a type error, <code>expected String, found ()</code> &mdash; and this page's own listings use the <code>copy_of</code>-then-<code>truncate</code> shape throughout rather than treating it as a copy</td></tr>
       <tr><td class="what"><code>reserved-words.md</code> §3 versus the lexer</td><td class="what">The note recommends freeing eight words <em>in full</em> and §6 removes the hypothesis they were protecting. All eight are still in <code>from_word</code></td></tr>
       <tr><td class="what"><code>collections-and-chains.md</code> §1.4, <code>sum()</code></td><td class="what">Its signature is a bound on an associated type's equality. The prelude's operator interfaces have no associated types, so the bound has nothing to attach to and <code>sum()</code> is not declared</td></tr>
     </tbody>
@@ -2403,7 +2494,7 @@ def main():
   <code>docs/superpowers/design/</code>, which state their decisions with the
   alternatives they rejected and price what each asks of the others. Fifteen
   Science listings here are complete modules, written to scratch files and run
-  through <code>sciencec check</code>; six of those were also compiled with
+  through <code>sciencec check</code>; eight of those were also compiled with
   <code>sciencec build</code> and executed, and their trailing comment is real
   stdout. Four more are excerpts and say so; three show <strong>removed
   syntax</strong> and say so. Every diagnostic reproduced here is the compiler's

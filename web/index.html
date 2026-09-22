@@ -130,7 +130,7 @@ hello, world
 # Two borrows go in and one comes back. Which one depends on the values, so
 # the compiler has to prove the answer outlives the call. That proof is the
 # whole of what a lifetime annotation would have told it.
-def denser(a: borrowed Sample, b: borrowed Sample) -> borrowed Sample:
+def denser(a: &Sample, b: &Sample) -> &Sample:
     if a.grams >= b.grams:
         a
     else:
@@ -139,7 +139,7 @@ def denser(a: borrowed Sample, b: borrowed Sample) -> borrowed Sample:
 let core be Sample(kelvin: 5778.0, grams: 12.5)
 let shell be Sample(kelvin: 4100.0, grams: 3.25)
 
-# `denser` declares its parameters `borrowed`, so the call site is bare.
+# `denser` declares its parameters `&`, so the call site is bare.
 let winner be denser(core, shell)
 print(f"{winner.kelvin} K at {winner.grams} g")   # => 5778.0 K at 12.5 g</pre>
 
@@ -148,8 +148,9 @@ print(f"{winner.kelvin} K at {winner.grams} g")   # => 5778.0 K at 12.5 g</pre>
     <code>sciencec build density.science</code>; the trailing comment is what
     the linked binary printed. The call site is <code>denser(core, shell)</code>
     and not <code>denser(&amp;core, &amp;shell)</code> because a parameter
-    declared <code>borrowed</code> is borrowed automatically &mdash; Rust
-    rejected that, Mojo adopted it, and for this audience Mojo is right.
+    declared <code>&amp;T</code> is borrowed automatically at the call site
+    &mdash; Rust rejected that, Mojo adopted it, and for this audience Mojo is
+    right.
   </p>
 
   <h3>The checking is real, which is the only way the claim means anything</h3>
@@ -164,8 +165,8 @@ print(f"{winner.kelvin} K at {winner.grams} g")   # => 5778.0 K at 12.5 g</pre>
 <pre class="err"><code><span class="e-code">error[SC0330]</span>: `core` is borrowed here and borrowed exclusively before the borrow ends
   <span class="e-hi">--&gt;</span> overlap.science:10:1
    |
- 9 | let view be borrowed core
-   |             <span class="e-hi">-------------</span> `core` is borrowed here, shared
+ 9 | let view be &amp;core
+   |             <span class="e-hi">-----</span> `core` is borrowed here, shared
 10 | warm(core)
    | <span class="e-hi">^^^^^^^^^^</span> ...and borrowed here, exclusively
 11 | print(f"{view.kelvin}")
@@ -211,7 +212,7 @@ type Reading:
     kelvin: F64
     pascals: F64
 
-def phase_of(r: borrowed Reading) -> Phase:
+def phase_of(r: &Reading) -> Phase:
     if r.kelvin &lt; 273.15:
         Solid
     else:
@@ -220,7 +221,7 @@ def phase_of(r: borrowed Reading) -> Phase:
         else:
             Gas
 
-def report(r: borrowed Reading):
+def report(r: &Reading):
     match phase_of(r):
         Solid: print(f"{r.kelvin} K: solid")
         Liquid: print(f"{r.kelvin} K: liquid")
@@ -361,12 +362,16 @@ print(f"cos(0) = {c}, sqrt(2) = {r}")
         <td class="mono">sciencec check overlap.science &#8594; SC0330</td>
       </tr>
       <tr>
-        <td class="what">1,913 tests pass, none fail, none are ignored</td>
+        <td class="what">2,173 tests pass, none fail, none are ignored</td>
         <td class="mono">cargo test --workspace --features llvm</td>
       </tr>
       <tr>
         <td class="what">21 of the 22 example programs pass <code>check</code></td>
         <td class="mono">sciencec check examples/*.science</td>
+      </tr>
+      <tr>
+        <td class="what">10 of the 22 build to a linked, running executable</td>
+        <td class="mono">sciencec build examples/*.science</td>
       </tr>
     </tbody>
   </table>
@@ -374,7 +379,7 @@ print(f"cos(0) = {c}, sqrt(2) = {r}")
 
   <p class="note">
     The test count is a snapshot and the command beside it is the point: it
-    went from 1,884 to 1,913 during the afternoon this page was written, so
+    went from 1,884 to 2,173 over the days this page has been rewritten, so
     take the number as evidence that the suite is run rather than as a
     constant.
   </p>
@@ -386,7 +391,14 @@ print(f"cos(0) = {c}, sqrt(2) = {r}")
     <code>text</code> module, so <code>SC0202</code> is correct and the file is
     a fixture ahead of its fixtures. The corpus is input data for the test
     suites, so anything else there that failed would be a bug in the compiler
-    rather than a typo to patch.
+    rather than a typo to patch. Multi-level modules themselves are not the
+    gap: a fresh two-module crate written for this page &mdash; two sibling
+    directories, each with its own <code>add</code>, called as
+    <code>a.add(1)</code> and <code>b.add(1)</code> &mdash; checks, builds,
+    links and prints <code>2</code> then <code>3</code>, and
+    <code>science-resolve</code>'s own tests resolve a three-file, two-level
+    crate the same way. What is missing is the second file this one example
+    never got, not the feature it exercises.
   </p>
 
   <h3>What is not built, in the compiler's own words</h3>
@@ -395,40 +407,66 @@ print(f"cos(0) = {c}, sqrt(2) = {r}")
     <code>check</code> is much further along than <code>build</code>. The
     program below passes the whole front half &mdash; it lexes, parses,
     resolves, type-checks and clears the borrow checker &mdash; and then the
-    backend refuses it, because <code>String.length</code> has no MIR body to
-    emit:
+    backend refuses it, because nothing above the codegen crate bounds how far
+    a shift may go, and a shift by at least the operand's width is poison in
+    LLVM with neither a mask nor a trap specified to stop it:
   </p>
 
-<pre data-science>let name be "Ada"
-print(f"{name.length()}")   # `check` exits 0; `build` refuses, below</pre>
+<pre data-science>let shifted be 1 &lt;&lt; 4
+print(f"{shifted}")   # `check` exits 0; `build` refuses, below</pre>
 
-<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build a call to `length`, which this crate was given no MIR body for
-  = note: this `sciencec` implements &#167;10's stages 0 to 3 of `codegen-and-linking.md` and some of what comes after &mdash; a script body, string literals and `print`, `extern "C"` declarations and the calls to them, the CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, `T?`, and drops of values that own nothing &mdash; and refuses everything else rather than lowering a construct no execution test has ever run</code></pre>
+<pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build a shift, whose amount nothing above this crate bounds &mdash; a shift by at least the operand's width is poison in LLVM and neither the mask nor the panic that would stop it is specified
+  = note: this `sciencec` implements &#167;10's stages 0 to 3 of `codegen-and-linking.md` and some of what comes after &mdash; a script body, string literals and `print` of anything the `f"&hellip;"` builder renders, `extern "C"` declarations and the calls to them, the CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, `T?`, methods and associated functions on a concrete type, the prelude's `String` methods, and drops of values that own nothing &mdash; and refuses everything else rather than lowering a construct no execution test has ever run</code></pre>
 
   <div class="two">
     <div>
       <h3>Reaches a binary today</h3>
       <p class="note">
         A script body. String literals, <code>print</code> and
-        <code>f"&hellip;"</code> interpolation. <code>extern "C"</code>
-        declarations and the calls to them. The control-flow graph, including
-        <code>if</code>/<code>else</code> and <code>loop</code> with
-        <code>break</code>. Scalar arithmetic and <code>as</code> casts.
-        Functions with parameters, including borrowed ones. Records,
-        <code>choice</code>s, <code>match</code> and tuples. <code>T?</code>.
+        <code>f"&hellip;"</code> interpolation of anything the builder renders.
+        <code>extern "C"</code> declarations and the calls to them. The
+        control-flow graph, including <code>if</code>/<code>else</code> and
+        <code>loop</code> with <code>break</code>. Scalar arithmetic and
+        <code>as</code> casts. Functions with parameters, including
+        <code>&amp;</code> ones. Records, <code>choice</code>s, <code>match</code>
+        and <code>T?</code>. Methods and associated functions on a concrete
+        type, including the prelude's own <code>String</code> methods &mdash;
+        <code>"Ada".length()</code> and <code>Array[Int].new()</code> both
+        build and run today, which they did not a few days ago. A generic
+        <em>function</em> monomorphises into one linked symbol per
+        instantiation, proven by two calls to the same generic function at two
+        different types producing two distinct symbols in the object file.
         Drops of values that own nothing.
       </p>
     </div>
     <div>
       <h3>Does not, yet</h3>
       <p class="note">
-        Method calls. Generics. Arrays and indexing. Drop glue for a value that
-        owns anything &mdash; a record with a <code>String</code> field is
-        refused. <code>for &hellip; in</code> over a range, whose iterator
-        temporaries the front end still leaves untyped. Every one of these
-        <em>checks</em> and exits 0; none of them lowers, and the compiler says
-        so at the point it gives up rather than emitting something it has never
-        run.
+        A method reached through an interface &mdash; a bound, an
+        <code>any Interface</code>, or a default body dispatched to an
+        implementor's vtable slot &mdash; still fails at the MIR stage with
+        <em>&ldquo;Decision 11's method lookup does not put what it found in
+        the tree&rdquo;</em>: the front end resolves the call and the step
+        that would hand it to codegen loses it. This is why
+        <code>06_traits</code>, <code>07_generics</code>,
+        <code>08_dyn_dispatch</code> and <code>18_ownership</code> all check
+        clean and none of them build. A handful of specific front-end gaps
+        besides that one: a <code>T?</code> narrowed to a payload that owns
+        something would be freed twice if read out, and that is <em>sometimes</em>
+        refused instead &mdash; <code>09_absence_and_failure.science</code> is
+        &mdash; and sometimes not: a nullable <code>choice</code> with a
+        <code>String</code> payload, narrowed with <code>?</code> and then read
+        through a <code>match</code>, builds with no error at all and the
+        binary segfaults before printing anything, which is a live miscompile
+        rather than a documented limitation and is written up at length, with
+        the exact program, in <a href="rationale.html#errors">the
+        rationale</a>. A niched <code>T?</code>'s presence test has no tag to load when the
+        payload is not a pointer-shaped borrow; an <code>if</code> expression
+        over bare integer literals bound directly (<code>let n be if f: 1 else:
+        0</code>, fixed by writing <code>1i64</code>); and the shift above.
+        Every one of these <em>checks</em> and exits 0; none of them lowers,
+        and the compiler says so at the point it gives up rather than emitting
+        something it has never run.
       </p>
     </div>
   </div>
@@ -436,23 +474,57 @@ print(f"{name.length()}")   # `check` exits 0; `build` refuses, below</pre>
   <p class="note">
     Both lists were probed one program at a time against the tree on the day
     this page was written, not copied from a roadmap, and the boundary between
-    them moves &mdash; tuples and casts crossed it while the page was being
-    checked. The quoted note above is the compiler's own and is the version
-    that ships with it; <code>build</code> on anything in the right-hand column
-    prints its own reason, which is always more current than this paragraph.
+    them moves fast &mdash; string methods, associated functions and
+    non-method generic instantiation all crossed it since the paragraph above
+    was first drafted. The quoted note is the compiler's own and is the
+    version that ships with it; <code>build</code> on anything in the
+    right-hand column prints its own reason, which is always more current than
+    this paragraph.
   </p>
 
   <p>
     The reason the refusals are this specific is a rule the backend is held to:
     every construct it admits is gated by a program that is built, linked, run
-    and checked for its output. That rule was not free advice. Five silent
-    miscompiles have been found by running the output rather than reading it
-    &mdash; a <code>main</code> that never wrote its return value, an
-    eight-byte store into a one-byte slot that passes
+    and checked for its output. That rule was not free advice. Nine silent
+    miscompiles have been found this way, by running the output rather than
+    reading it &mdash; a <code>main</code> that never wrote its return value,
+    an eight-byte store into a one-byte slot that passes
     <code>LLVMVerifyModule</code>, a <code>needs_drop</code> blind to every
     runtime aggregate, a lowering hole that suppressed the borrow checker over
-    whole bodies, and a pointer-to-pointer the verifier structurally cannot
-    catch. In this half of a compiler, silence does not mean it works.
+    whole bodies, a pointer-to-pointer the verifier structurally cannot catch,
+    two sibling modules' functions mangling to one linker symbol so one
+    shadowed the other, and a one-element variant payload that handed back a
+    <code>String</code>'s byte pointer instead of the value inside it &mdash;
+    the last two caught the same afternoon <code>examples/*.stdout</code>
+    started pinning what every example actually prints rather than only
+    whether it exits 0, and both are fixed and reverified directly for this
+    page. Two are not fixed. <code>examples/10_loops.science</code>
+    builds and runs, is one of the ten counted above, and its sixth line of
+    output is an address rather than a number &mdash; <code>Array.get</code>
+    returns a niched <code>(&amp;Int)?</code>; narrowing it to <code>&amp;Int</code>
+    and handing that pointer back where the signature promises <code>Int</code>
+    passes the verifier, and the program runs and prints whichever bytes
+    happened to be there. And the <code>read_config</code> program in
+    <a href="rationale.html#errors">the rationale's Errors section</a>
+    &mdash; a nullable <code>choice</code> with a <code>String</code> payload,
+    narrowed and then matched &mdash; builds with no diagnostic and segfaults
+    before it prints anything, verified directly for this page. Both are
+    excluded from the pinned-output corpus rather than patched over, so
+    <em>builds</em> and <em>prints the right answer</em> are not, yet, the
+    same promise for every program on this page &mdash; here is where they
+    come apart. In this half of a compiler, silence does not mean it works,
+    and even exit 0 does not always mean it printed the truth, or that it
+    printed at all.
+  </p>
+
+  <p class="note">
+    A tenth defect, found while verifying this same build's syntax reference,
+    is not a miscompile: a <code>continue</code> inside a <code>for</code> loop
+    does not misbehave, it simply never finishes. The listing it turned up in
+    only claimed <code>check</code>, not execution, which is consistent with
+    what this section says <code>check</code> does and does not prove &mdash;
+    it proves the front end accepted the program, never that the backend runs
+    it to completion.
   </p>
 
   <h3>The toolchain, as it exists</h3>
@@ -513,15 +585,19 @@ sciencec 0.0.1
       <span class="ttl">Language reference &rarr;</span>
       <span class="sub">Syntax, ownership, interfaces, foreign code and the toolchain, in one page.</span>
     </a>
+    <a class="doc" href="syntax.html">
+      <span class="ttl">Syntax &rarr;</span>
+      <span class="sub">Every keyword, every lexical rule, and the reserved words held for later.</span>
+    </a>
     <a class="doc" href="rationale.html">
       <span class="ttl">Rationale &rarr;</span>
       <span class="sub">The comparisons at length, with the cases where another language wins.</span>
     </a>
-    <a class="doc" href="#docs">
+    <a class="doc" href="https://github.com/Angel-Zeledon/sciencec/tree/master/docs/superpowers/specs">
       <span class="ttl">The specification &rarr;</span>
       <span class="sub">Phases, syntax, types, ownership, diagnostics. What the compiler is held to.</span>
     </a>
-    <a class="doc" href="#docs">
+    <a class="doc" href="https://github.com/Angel-Zeledon/sciencec/tree/master/examples">
       <span class="ttl">Examples &rarr;</span>
       <span class="sub">Twenty-two programs, one per feature, used directly as the compiler's test data.</span>
     </a>
