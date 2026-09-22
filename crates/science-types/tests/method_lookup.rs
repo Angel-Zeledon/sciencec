@@ -1054,29 +1054,45 @@ def uses(text: &mut String, items: &mut Array[I64]) -> Bool:
     .assert_clean();
 }
 
-/// The two names that come from a methodless prelude *interface* rather than
-/// from a type's own block.
+/// **Replaces `a_method_of_a_methodless_prelude_interface_is_silent`.** That
+/// test asserted `text.clone()` merely failed to complain, which was the
+/// right claim while `Clone` was methodless and is a weaker claim than the
+/// program now deserves: `builtins.rs`' `INTERFACE_DECLS` declares
+/// `Clone.clone`, on the reasoning that entry's comment gives, so
+/// `text.clone()` should *resolve* — this test asserts the call actually
+/// reaches `Clone.clone` and gets `String`'s own type back, not only that
+/// nothing was reported.
+///
+/// `text.owned()` is untouched by that change and is still silent, for its
+/// own reason: `owned()` is `collections-and-chains.md` §1.4's chain
+/// terminal into an `Owned of Self`, a Level 1 type this prelude does not
+/// declare, and no interface method fixes that.
 ///
 /// `stdlib-core.md` §6.9 ends `String implements Clone, Eq, Ord, Add, Display`
-/// and §6.2 writes *"`.owned()` and `.clone()` are both written"*, but
-/// `builtins.rs` declares those fourteen interfaces as names with **no
-/// methods** — deliberately, because `Ord`'s would need an `Ordering` — so
-/// `text.clone()` resolves to nothing.
-///
-/// **These were the only two false positives closing §8a produced**, and they
-/// were found by reading the method names the `web/` listings call rather than
-/// by reasoning about the table. They are in `UNWRITTEN` with the citation, and
-/// they retire on the day a note gives `Clone` a method.
+/// and §6.2 writes *"`.owned()` and `.clone()` are both written"*, and the
+/// fourteen interfaces `builtins.rs` still declares with **no methods** are
+/// deliberately so — `Ord`'s would need an `Ordering`, for one — but `Clone`
+/// no longer needs one invented: its own comment says why `(self) -> Self`
+/// was never a guess.
 #[test]
-fn a_method_of_a_methodless_prelude_interface_is_silent() {
-    check(
+fn clone_resolves_and_owned_is_still_silent() {
+    let checked = check(
         "def copies(text: &String) -> Bool:
     let a be text.clone()
     let b be text.owned()
     true
 ",
-    )
-    .assert_clean();
+    );
+    checked.assert_clean();
+    let clone = checked.def("clone", DefKind::Fn);
+    let body = checked.body("copies");
+    let (id, call) = body
+        .exprs()
+        .find(|(_, expr)| matches!(expr.kind, ExprKind::MethodCall { .. }))
+        .expect("the body has a method call");
+    let ExprKind::MethodCall { method, .. } = call.kind else { unreachable!() };
+    assert_eq!(method, Some(clone), "`text.clone()` should resolve to `Clone.clone`");
+    assert_eq!(checked.render(body.ty(id)), "String");
 }
 
 /// **Replaces `a_method_through_a_box_is_open_because_no_note_says_otherwise`.**

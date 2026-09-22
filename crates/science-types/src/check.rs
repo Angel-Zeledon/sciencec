@@ -5123,7 +5123,39 @@ impl<'a> BodyChecker<'a> {
                 };
                 let ty = match ty {
                     InferTy::Known(known) if self.is_operand_type(known) => InferTy::Known(known),
-                    InferTy::Known(_) => InferTy::Known(Ty::ERROR),
+                    // `is_operand_type` failing here means the two sides
+                    // unified to one real, non-numeric prelude type and
+                    // `operator` above already declined to speak — `methods`'
+                    // §8: a builtin head's surface is never "closed", so a
+                    // missing `Add.add` is silence there, not a diagnostic.
+                    // `"a" + "b"` is exactly this: `String implements Add`
+                    // (§5.4) and `Add` declares no method — `INTERFACE_DECLS`'
+                    // own comment says why — so nothing upstream of this line
+                    // ever names the interface. Left unreported this used to
+                    // become `Ty::ERROR` with no diagnostic at all, which is
+                    // `sciencec check` exiting 0 on `"a" + "b"` and the build
+                    // failing later with a generic `SC0400`.
+                    //
+                    // Reported only for the seven operators `binary_operator`
+                    // names an interface for. The bitwise five (`& ^ | << >>`)
+                    // have no interface in the prelude to name at all —
+                    // `stdlib-shape-and-packages.md` §4.5 calls that its own,
+                    // separate gap in the core spec — so inventing a message
+                    // for them here would be answering a question that note
+                    // asks someone else. They keep the old silence until one
+                    // exists.
+                    InferTy::Known(known) => {
+                        if let Some((interface, _)) = binary_operator(op) {
+                            let rendered = self.types.render(self.defs, known);
+                            self.diagnostics.push(no_operator_implementation(
+                                span,
+                                op.as_str(),
+                                &rendered,
+                                interface,
+                            ));
+                        }
+                        InferTy::Known(Ty::ERROR)
+                    }
                     InferTy::Var(var) => InferTy::Var(var),
                 };
                 self.push_typed(ExprKind::Binary { op, lhs: left.id, rhs: right.id }, ty, span)

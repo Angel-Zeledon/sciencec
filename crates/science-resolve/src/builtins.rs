@@ -336,6 +336,22 @@ enum Ty {
     Opt(&'static Ty),
     /// A pair, which is what `-> (T, Error?)` is.
     Pair(&'static Ty, &'static Ty),
+    /// `Self`, standing for the block's own implementing type. §5.4's
+    /// [`hir::TypeKind::SelfType`] one level down.
+    ///
+    /// **Not used by [`Block`].** Every inherent and `implements` block below
+    /// writes its own concrete type out — `Array.new() -> Array of T`, not
+    /// `-> Self` — for the reason [`Scope`]'s own comment gives: the written
+    /// form is checkable against the note it transcribes without the reader
+    /// holding a substitution in their head. `Self` earns its keep exactly
+    /// once, for [`INTERFACE_DECLS`]' `Clone.clone`, where the block that
+    /// resolves it is not this file's to write — it is whichever type an
+    /// `implements Clone:` names, which by definition this file does not know
+    /// yet. `subst`'s `TyKind::SelfType` is built for precisely this: it
+    /// carries the block, and `check`'s `block_substitution` rewrites it with
+    /// the receiver's own type at the call, the same way it already does for
+    /// `Self.Item` and `Self.Output`.
+    SelfTy,
 }
 
 const INT: Ty = Ty::Name("Int");
@@ -387,7 +403,7 @@ struct InterfaceDecl {
     methods: &'static [Method],
 }
 
-/// The interfaces that get a method, and why only four do.
+/// The interfaces that get a method, and why only five do.
 ///
 /// **Decision. An interface is declared with its methods only where a note
 /// gives the method's name and its types.** `Error.message` is
@@ -395,7 +411,9 @@ struct InterfaceDecl {
 /// `collections-and-chains.md` builds its chain vocabulary on; `Index.index`
 /// and `IndexMutably.index_mutably` are `indexing-and-array-literals.md`
 /// §1.1's Decision 2, written out in Science in that note and transcribed
-/// below. The other fourteen — `Add`, `Ord`, `Eq`, `Display` and the rest —
+/// below; `Clone.clone` is the fifth, and its own comment below says why it
+/// passes the same test although no note writes its signature in Science
+/// syntax. The other fourteen — `Add`, `Ord`, `Eq`, `Display` and the rest —
 /// are declared as **names with implementations and no methods**, which is the
 /// whole of what the bound check needs: `methods`' §7 asks *"does `I64`
 /// implement `Ord`"* and never *"what is `Ord`'s method called"*.
@@ -504,6 +522,73 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
             recv: Some(SelfKind::Mutable),
             params: &[("at", Ty::Var("Idx"))],
             ret: Some(Ty::MutRef(&Ty::Assoc("Output"))),
+        }],
+    },
+    // --- `Clone`, `stdlib-core.md` §6.2 -----------------------------------
+    //
+    // **The fifth interface to get a method, and the first where no note
+    // writes the signature in Science syntax.** The rule above holds a note
+    // to giving *"the method's name and its types"*, and what §6.2 gives is
+    // prose: *"`.owned()` and `.clone()` are both written"*, plus
+    // `collections-and-chains.md` §1.4's `where Self.Item is borrowed T,
+    // T: Clone`, which fixes the *bound* and not the method it requires.
+    // Nowhere is there a line reading `def clone(self) -> Self`.
+    //
+    // **Declared anyway, and the reason is not "it is convenient" — it is
+    // that no second candidate exists to invent.** This is the distinction
+    // `print`'s decision (above) draws and `Box.new`'s draws again: a
+    // signature is a decision taken here only when the alternatives are real.
+    // `clone` has none. `Clone` is a marker with no parameter and no
+    // associated type (§5.4 lists it bare), so its one method takes no
+    // argument beyond the receiver; a duplicate cannot come back narrower or
+    // wider than what it duplicates, so the return is the receiver's own
+    // type and nothing else; and the receiver reads rather than consumes,
+    // which every one of the corpus's three call sites already assumes —
+    // `examples/07_generics.science`'s `value.clone()` is called twice on
+    // one `borrowed T` and a second call after a moving receiver would be a
+    // use-after-move the corpus does not have. `def clone(self) -> Self` is
+    // therefore not a choice among signatures; it is the only shape left
+    // once "no argument" and "does not consume" are read off the language
+    // `Clone` already has to be. `stdlib-shape-and-packages.md` §4.5's
+    // Decision 4c — an operator trait's method takes the trait's own name in
+    // lowercase when that name is free — is the same reasoning this file
+    // already leans on for `Add.add` and `Index.index`, and `clone` is free.
+    //
+    // **`Self` and not a written-out type**, unlike every other block in this
+    // file. [`Ty::SelfTy`]'s own comment says why: the type that answers
+    // `Self` here is whichever one writes `implements Clone:`, which this
+    // declaration cannot name — `String` today, a user's own record
+    // tomorrow — so the block that resolves it has to be read off the
+    // *call*, through `TyKind::SelfType`, the same mechanism a user's own
+    // `interface Summarize: def duplicate(self) -> Self` would use.
+    //
+    // **The runtime side is checked, not assumed, against the trap this
+    // repository has already been bitten by once.** `science_string_clone`
+    // exists in `science-rt/src/string.rs`, is documented there as
+    // `` `Clone::clone` for `String` ``, and its signature —
+    // `(value: *const ScienceString) -> ScienceString` — is exactly a shared
+    // receiver in and the same type out: no width, no mutability and no unit
+    // (bytes vs. characters) is left for this declaration to guess at, which
+    // is what made `science_string_truncate` wrong. `lower.rs`'s
+    // `PRELUDE_METHODS` table gains the row that reaches it.
+    //
+    // **What is not settled by this:** a `value.clone()` on a *bounded type
+    // parameter* — `examples/07_generics.science`'s own call, `T: Clone` —
+    // stays silent. `methods`' §5 says why: `Methods::receiver` returns
+    // `None` for a `TyKind::Param` on purpose, so that call was silent
+    // before this declaration and is silent after it, for a reason this
+    // file does not own. What this declaration closes is `"hi".clone()` on a
+    // receiver whose type is concrete and known — `methods`' own running
+    // example.
+    InterfaceDecl {
+        name: "Clone",
+        generics: &[],
+        assoc: &[],
+        methods: &[Method {
+            name: "clone",
+            recv: Some(SelfKind::Shared),
+            params: &[],
+            ret: Some(Ty::SelfTy),
         }],
     },
 ];
@@ -1204,22 +1289,13 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     // because no program in `examples/` calls either.
     ("String", &[
         "slice", "lines", "split", "from_bytes", "bytes",
-        // And the two that come from an *interface* rather than from §6.9's
-        // block. §6.9 ends `String implements Clone, Eq, Ord, Add, Display`
-        // and [`IMPLEMENTS`] above transcribes it — **with no methods in it**,
-        // because the fourteen methodless interfaces are methodless on
-        // purpose. So `Clone` declares no `clone`, and `text.clone()` resolves
-        // to nothing although §6.2 writes it in as many words: *"`.owned()`
-        // and `.clone()` are both written"*. Measured before it was listed:
-        // `text.clone()` and `text.owned()` were the only two false positives
-        // this whole change produced.
-        //
-        // **This is the methodless-interface decision arriving at a third
-        // place.** `IMPLEMENTS`' own comment prices it for a bound, `conform`'s
-        // §3 prices it for an implementation block, and these two lines are the
-        // same cost at a call. All three retire together, on the day a note
-        // gives `Clone` a method.
-        "clone", "owned",
+        // `clone` retired from this list the day `INTERFACE_DECLS` gained
+        // `Clone.clone`: §6.2's *"`.owned()` and `.clone()` are both written"*
+        // is now true of the first half. `owned()` stays — it is
+        // `collections-and-chains.md` §1.4's chain terminal, returning an
+        // `Owned of Self`, and `Owned` is a Level 1 type this prelude does
+        // not have, which is `slice`'s case and not `clone`'s.
+        "owned",
     ]),
     // `Array` — every name either note gives it that the block above does not
     // have. None of these has a full signature in a note, which is the reason
@@ -1317,11 +1393,33 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
 ///   would be transcribing the vocabulary into the wrong table; the type is
 ///   open until `Iterate` carries them.
 ///
-/// **What it costs is `SC0532` on this one remaining head**, which is the
-/// blanket silence this whole change is narrowing, surviving in one named
-/// place instead of everywhere. It closes on its own note, and
+/// - **Every numeric primitive, plus `Bool` and `Char`.** Found while landing
+///   `Clone.clone`, and it is the same finding one layer down: `Methods`'
+///   `receiver` treats a builtin head as *answerable* the moment
+///   [`Methods::index`](crate::methods::Methods) holds one entry for it, and
+///   an entry is exactly what `IMPLEMENTS`' `NUMERIC` row started producing —
+///   `I64 implements Clone:` has no methods of its own, so `impl_block`
+///   contributes `Clone`'s own `clone`, and that one contribution is enough
+///   to flip `I64.new()` from silent to `SC0532`. No note anywhere gives `I64`
+///   — or `Int`, `F64`, `Bool`, `Char` — a *named* method at all; every one of
+///   these types is known only through the operator interfaces, which
+///   `check`'s `binary`/`implements_operand` dispatch on structurally and
+///   never through this index. So a numeric surface is exactly `Box`'s case:
+///   the question of what `.foo()` on an `I64` could mean is unanswered, not
+///   merely untranscribed, and `Clone.clone` landing is what first gave these
+///   heads an index entry to be judged by at all.
+///
+/// **What it costs is `SC0532` on these heads**, which is the blanket silence
+/// this whole change is narrowing, surviving in named places instead of
+/// everywhere. Each closes on its own note, and
 /// `science-types/tests/method_lookup.rs` has a test that fails when it does.
-const WHOLLY_OPEN: &[&str] = &["Chars"];
+const WHOLLY_OPEN: &[&str] = &[
+    "Chars",
+    // The numeric primitives, `Bool` and `Char`, which `Clone.clone` gave an
+    // index entry and therefore a closed surface they have no note for.
+    "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64", "F16", "BF16", "F32", "F64", "Int",
+    "Float", "Bool", "Char",
+];
 
 /// Whether *"this prelude type has no method of that name"* is a statement
 /// about the program or about [`BLOCKS`].
@@ -1484,6 +1582,12 @@ struct Declarer<'a> {
 struct Scope<'a> {
     generics: &'a HashMap<&'static str, DefId>,
     assocs: &'a HashMap<&'static str, DefId>,
+    /// The block `Ty::SelfTy` stands for: the interface or implementation
+    /// being declared. `None` inside [`Declarer::free`], where there is no
+    /// enclosing block and nothing should ever ask for `Self` — a lookup
+    /// there is a bug in this file, not in a program, so it panics rather
+    /// than silently naming the wrong block.
+    owner: Option<DefId>,
 }
 
 impl Declarer<'_> {
@@ -1533,6 +1637,12 @@ impl Declarer<'_> {
             Ty::Opt(inner) => hir::TypeKind::Nullable(Box::new(self.ty(inner, scope))),
             Ty::Pair(left, right) => {
                 hir::TypeKind::Tuple(vec![self.ty(left, scope), self.ty(right, scope)])
+            }
+            Ty::SelfTy => {
+                let owner = scope
+                    .owner
+                    .unwrap_or_else(|| panic!("`Self` has no enclosing block in this declaration"));
+                hir::TypeKind::SelfType(Res::SelfTy(owner))
             }
         };
         hir::Type { kind, span: BUILTIN_SPAN }
@@ -1602,7 +1712,7 @@ impl Declarer<'_> {
                 }
             })
             .collect();
-        let scope = Scope { generics: &generics, assocs: &assocs };
+        let scope = Scope { generics: &generics, assocs: &assocs, owner: Some(def) };
         let methods: Vec<hir::Fn> =
             decl.methods.iter().map(|method| self.function(method, def, &scope)).collect();
         self.item(hir::ItemKind::Interface(hir::Interface {
@@ -1676,7 +1786,7 @@ impl Declarer<'_> {
             assocs.insert(*name, id);
         }
         {
-            let scope = Scope { generics: &generics, assocs: &assocs };
+            let scope = Scope { generics: &generics, assocs: &assocs, owner: Some(def) };
             for (name, ty) in block.assoc {
                 assoc_types.push(hir::AssocType {
                     def: assocs[name],
@@ -1686,7 +1796,7 @@ impl Declarer<'_> {
             }
         }
 
-        let scope = Scope { generics: &generics, assocs: &assocs };
+        let scope = Scope { generics: &generics, assocs: &assocs, owner: Some(def) };
         let methods: Vec<hir::Fn> =
             block.methods.iter().map(|method| self.function(method, def, &scope)).collect();
         let interface = block.interface.map(|(name, args)| self.bound(name, args, &scope));
@@ -1718,7 +1828,7 @@ impl Declarer<'_> {
         let def = self.named(method.name);
         let generics = HashMap::new();
         let assocs = HashMap::new();
-        let scope = Scope { generics: &generics, assocs: &assocs };
+        let scope = Scope { generics: &generics, assocs: &assocs, owner: None };
         let params = method
             .params
             .iter()
@@ -1762,7 +1872,7 @@ impl Declarer<'_> {
         let mut generics = HashMap::new();
         generics.insert("T", param);
         let assocs = HashMap::new();
-        let scope = Scope { generics: &generics, assocs: &assocs };
+        let scope = Scope { generics: &generics, assocs: &assocs, owner: Some(def) };
         let pointer_ty = if mutable {
             self.ty(&Ty::MutRef(&Ty::Var("T")), &scope)
         } else {

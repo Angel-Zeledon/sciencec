@@ -285,6 +285,34 @@ def main():
     assert_eq!(prints("string", source), "6\nfalse\ntrue\n");
 }
 
+/// `Clone.clone()` on a `String`: `builtins.rs`'s `INTERFACE_DECLS` declares
+/// `Clone.clone(self) -> Self`, `String implements Clone:` writes no `clone`
+/// of its own, so the call resolves to the interface's contributed method —
+/// and `lower.rs`'s `prelude_method` has to read the concrete receiver off
+/// the call rather than off that contributed method's `owner`, which is
+/// `Clone` and has no `Self` of its own to ask. Before that fix this refused
+/// at codegen with *"a call to the method `clone` through `any Clone`"*, a
+/// vtable message about a program that never wrote a trait object.
+///
+/// The mutation after cloning is the assertion: if `clone` had handed back
+/// the same buffer, `original`'s `push_str` would be visible through `copy`
+/// too, and it is not — `science_string_clone` is documented as *"a fresh,
+/// independent copy"* and this is what tests that rather than merely that a
+/// call resolved.
+#[test]
+fn a_string_clone_is_an_independent_copy() {
+    let source = "\
+def main():
+    let mutable original be String.new()
+    original.push_str(\"hi\")
+    let copy be original.clone()
+    original.push_str(\" there\")
+    print(copy)
+    print(original)
+";
+    assert_eq!(prints("clone", source), "hi\nhi there\n");
+}
+
 /// `String.new()` and `String.push_str(…)`: an associated function that
 /// returns an aggregate through `sret`, and a method with an exclusive
 /// receiver and a `borrowed String` argument.

@@ -7287,7 +7287,9 @@ impl<'a> Lowerer<'a> {
             self.lower_science_call(ctx, &sig, args, destination, insts)?;
         } else if let Some(symbol) = self.owned_nullable_method(def) {
             self.lower_owned_nullable_call(body, ctx, symbol, args, destination, insts)?;
-        } else if let Some(symbol) = self.prelude_method(def) {
+        } else if let Some(symbol) =
+            self.prelude_method(def, args.first().and_then(|op| self.operand_ty(body, op)))
+        {
             self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;
         } else {
             let name = self.defs.get(def).name.clone();
@@ -8204,13 +8206,38 @@ impl<'a> Lowerer<'a> {
     /// `Map.insert`/`Map.remove`'s §5.3 convention is
     /// [`Lowerer::owned_nullable_method`]'s table for that reason. A row is
     /// added when a program that runs it is added with it.
-    fn prelude_method(&self, def: DefId) -> Option<&'static str> {
-        /// `(the block's `Self`, the method) -> the entry point`.
+    ///
+    /// **Two shapes reach here, and only one of them has a `Self` on
+    /// `owner`.** `String has: def length(self) -> Int` is `owner` pointing
+    /// at the `impl` block itself, and [`Declarations::self_ty`] answers for
+    /// it exactly as the original comment below describes. `Clone.clone` is
+    /// the other shape: `String implements Clone:` writes no `clone` of its
+    /// own, so `methods`' §2 contributes the *interface's* declaration, and
+    /// `Signature::owner` for that contributed method is `Clone` itself —
+    /// which has no concrete `Self` to answer `self_ty` with, because an
+    /// interface is implemented by every type that names it and not by one.
+    /// The concrete type is only at the call, in the receiver argument, so
+    /// `receiver_ty` is what this reads instead whenever `owner` is an
+    /// interface rather than a block — the same fact
+    /// `Lowerer::declaring_interface`'s refusal, one arm down, already
+    /// states in its own message: *"the receiver is the only thing that
+    /// says which"*.
+    ///
+    /// Measured: without this, `"hi".clone()` on a concrete `String` refused
+    /// with *"a call to the method `clone` through `any Clone`"* — a vtable
+    /// message about a program that never wrote a trait object. A call
+    /// through an actual `any Clone` still falls through correctly: its
+    /// `receiver_ty` is a [`TyKind::Object`], the `TyKind::Named` match below
+    /// fails, this returns `None`, and `declaring_interface` reports as
+    /// before.
+    fn prelude_method(&self, def: DefId, receiver_ty: Option<Ty>) -> Option<&'static str> {
+        /// `(the receiver's `Self`, the method) -> the entry point`.
         const PRELUDE_METHODS: &[(&str, &str, &str)] = &[
             ("String", "length", "science_string_len"),
             ("String", "is_empty", "science_string_is_empty"),
             ("String", "new", "science_string_new"),
             ("String", "push_str", "science_string_push_str"),
+            ("String", "clone", "science_string_clone"),
             // `truncate` joins on the same terms as the four above it:
             // `science_string_truncate` was already in `RUNTIME`, takes the
             // receiver's address and one `Int`, and returns nothing — so the
@@ -8306,7 +8333,11 @@ impl<'a> Lowerer<'a> {
             return None;
         }
         let owner = self.decls?.signature(def)?.owner?;
-        let self_ty = self.decls?.self_ty(owner)?;
+        let self_ty = if self.defs.get(owner).kind == DefKind::Interface {
+            self.referent(receiver_ty?)
+        } else {
+            self.decls?.self_ty(owner)?
+        };
         let TyKind::Named { def: receiver, args } = self.types.kind(self_ty) else {
             return None;
         };
