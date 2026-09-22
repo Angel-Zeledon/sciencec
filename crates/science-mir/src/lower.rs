@@ -661,8 +661,23 @@ struct Scope {
 
 /// One enclosing loop, for `break` and `continue`.
 struct LoopScope {
-    /// Where `continue` goes.
+    /// Where the loop's test lives, and where a body that falls off the end
+    /// goes back to.
     head: BlockId,
+    /// Where `continue` goes, which is **not always the head**.
+    ///
+    /// A `loop:` has nothing between the end of its body and its test, so the
+    /// two are the same block. A `for` has an increment: the cursor of
+    /// `lower_for_over_range`, the index of `lower_for_over_array`. That
+    /// increment sits after the body, so a `continue` that jumped to the head
+    /// would skip it and the loop would never advance — `for i in 0..5:` with
+    /// a `continue` in it hung forever, and both `for` forms did.
+    ///
+    /// So a `for` puts its increment in a block of its own and points this at
+    /// it. The body's fall-through and every `continue` both reach it, which
+    /// is the property that was missing: there was only ever one way out of
+    /// the body and the increment was on it.
+    continue_to: BlockId,
     /// Where `break` goes.
     exit: BlockId,
     /// How deep the scope stack was when the loop was entered: a `break` leaves
@@ -1076,7 +1091,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 let Some(target) = self.loops.last() else {
                     return self.pop_scope(block, span);
                 };
-                let (head, depth) = (target.head, target.depth);
+                let (head, depth) = (target.continue_to, target.depth);
                 let block = self.pop_scope(block, span);
                 let block = self.exit_scopes(depth, block, span);
                 self.terminate(block, TerminatorKind::Goto { target: head }, span);
@@ -1568,7 +1583,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         let head = self.new_block();
         let exit = self.new_block();
         self.terminate(block, TerminatorKind::Goto { target: head }, span);
-        self.loops.push(LoopScope { head, exit, depth: self.scopes.len() });
+        self.loops.push(LoopScope { head, continue_to: head, exit, depth: self.scopes.len() });
         let after = self.lower_block(Place::local(discard), body, head);
         // **Dropped every iteration the tail is reached, not just once at the
         // enclosing scope's exit.** The discard's storage is shared across
@@ -1862,7 +1877,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             span,
         );
 
-        self.loops.push(LoopScope { head, exit, depth: self.scopes.len() });
+        self.loops.push(LoopScope { head, continue_to: head, exit, depth: self.scopes.len() });
         self.push_scope();
         // Decision 7's narrowing, as a statement: the `If` above established
         // that the `Item?` holds a value and this is the read of it. Same shape
@@ -3317,7 +3332,10 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             span,
         );
 
-        self.loops.push(LoopScope { head, exit, depth: self.scopes.len() });
+        // The increment's own block, so that the body's fall-through and every
+        // `continue` both reach it. See `LoopScope::continue_to`.
+        let step = self.new_block();
+        self.loops.push(LoopScope { head, continue_to: step, exit, depth: self.scopes.len() });
         self.push_scope();
         // The binding is a fresh local holding the cursor's *value*, not the
         // cursor: §4.1's `Item is T`, and a body that shadows or rebinds it
@@ -3333,21 +3351,22 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         let discard = self.temp(Ty::UNIT, span, after);
         after = self.lower_block(Place::local(discard), body, after);
         after = self.pop_scope(after, span);
-        let stepped = self.temp(element_ty, span, after);
+        self.terminate(after, TerminatorKind::Goto { target: step }, span);
+        let stepped = self.temp(element_ty, span, step);
         let one = Self::bits(1);
         self.assign(
-            after,
+            step,
             Place::local(stepped),
             Rvalue::Binary { op: BinaryOp::Add, lhs: Operand::Copy(Place::local(cursor)), rhs: one },
             span,
         );
         self.assign(
-            after,
+            step,
             Place::local(cursor),
             Rvalue::Use(Operand::Copy(Place::local(stepped))),
             span,
         );
-        self.terminate(after, TerminatorKind::Goto { target: head }, span);
+        self.terminate(step, TerminatorKind::Goto { target: head }, span);
         self.loops.pop();
 
         self.assign(exit, dest, Rvalue::Use(Operand::Const(Constant::Unit)), span);
@@ -3475,7 +3494,9 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             span,
         );
 
-        self.loops.push(LoopScope { head, exit, depth: self.scopes.len() });
+        // The increment's own block, for `LoopScope::continue_to`'s reason.
+        let step = self.new_block();
+        self.loops.push(LoopScope { head, continue_to: step, exit, depth: self.scopes.len() });
         self.push_scope();
         // **The projection's index is a body-local temporary, not the
         // cursor.** `Projection::Index`'s own note says the temporary is
@@ -3515,21 +3536,22 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         let discard = self.temp(Ty::UNIT, span, after);
         after = self.lower_block(Place::local(discard), body, after);
         after = self.pop_scope(after, span);
-        let stepped = self.temp(int_ty, span, after);
+        self.terminate(after, TerminatorKind::Goto { target: step }, span);
+        let stepped = self.temp(int_ty, span, step);
         let one = Self::bits(1);
         self.assign(
-            after,
+            step,
             Place::local(stepped),
             Rvalue::Binary { op: BinaryOp::Add, lhs: Operand::Copy(Place::local(cursor)), rhs: one },
             span,
         );
         self.assign(
-            after,
+            step,
             Place::local(cursor),
             Rvalue::Use(Operand::Copy(Place::local(stepped))),
             span,
         );
-        self.terminate(after, TerminatorKind::Goto { target: head }, span);
+        self.terminate(step, TerminatorKind::Goto { target: head }, span);
         self.loops.pop();
 
         self.assign(exit, dest, Rvalue::Use(Operand::Const(Constant::Unit)), span);

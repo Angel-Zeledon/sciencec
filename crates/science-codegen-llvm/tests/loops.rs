@@ -238,3 +238,55 @@ fn a_counting_loop_over_a_range_adds_up() {
         "10 15 0 60\n"
     );
 }
+
+/// **`continue` advances the loop**, which it did not, in either `for`.
+///
+/// # The bug, and why nothing caught it
+///
+/// `LoopScope` had one block for both *"where the test is"* and *"where
+/// `continue` goes"*, which is true of a `loop:` — nothing sits between the
+/// end of its body and its test — and false of a `for`. A `for` has an
+/// increment: `lower_for_over_range`'s cursor, `lower_for_over_array`'s
+/// index. That increment was emitted at the **end of the body**, so a
+/// `continue` jumped over it and the loop ran forever.
+///
+/// Both `for` forms hung. `loop:` with a `continue` was fine, and `for` with
+/// a `break` was fine, which is why it took a program that used the one
+/// combination to find it — and why the whole test suite passed with an
+/// infinite loop in the language's most-written construct.
+///
+/// The repair is that the increment gets a block of its own, which both the
+/// body's fall-through and every `continue` reach. There was only ever one
+/// way out of the body and the increment was on it; now there are two and it
+/// is on both.
+///
+/// # Why this is an execution test and could not be anything else
+///
+/// A hang is not a wrong value or a refusal. It has no stdout to compare and
+/// no diagnostic to match — every structural assertion about the MIR passed
+/// while the program never terminated. Running it is the only thing that
+/// distinguishes a loop that advances from one that does not.
+#[test]
+fn continue_advances_both_kinds_of_for_loop() {
+    assert_eq!(
+        prints(
+            "continue",
+            "let mutable over_range be 0\n\
+             for i in 0..5:\n\
+             \x20   if i is 2:\n\
+             \x20       continue\n\
+             \x20   over_range be over_range + 1\n\
+             let mutable xs be Array[Int].new()\n\
+             xs.push(1)\n\
+             xs.push(2)\n\
+             xs.push(3)\n\
+             let mutable over_array be 0\n\
+             for v in xs:\n\
+             \x20   if v is 2:\n\
+             \x20       continue\n\
+             \x20   over_array be over_array + 1\n\
+             print(f\"{over_range} {over_array}\")\n",
+        ),
+        "4 2\n"
+    );
+}
