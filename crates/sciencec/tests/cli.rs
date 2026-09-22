@@ -1963,3 +1963,42 @@ fn a_type_alias_in_a_record_field_is_revealed() {
         run.stdout
     );
 }
+
+/// **`sciencec test hello.science` could not run what it had just built.**
+///
+/// `executable_path` strips the extension, so the program beside
+/// `hello.science` is `hello` — a relative path with no separator in it — and
+/// `Command::new` resolves exactly those through `PATH` rather than against
+/// the working directory. The build succeeded, the file was written, and the
+/// run reported *"cannot run `hello`: no such file"*, which reads like the
+/// backend emitted nothing.
+///
+/// **Why no existing test caught it.** Every path the corpus passes has a
+/// directory in front of it: `examples/01_functions` contains a separator and
+/// is therefore already a path, not a lookup. `sciencec()` above also always
+/// runs from the repository root. So the only spelling that broke was the one
+/// a person types, and the harness never typed it — which is why this test
+/// sets `current_dir` to the file's own directory and passes a bare name,
+/// rather than reusing the helper.
+#[test]
+fn test_runs_a_program_named_without_any_directory_in_front_of_it() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bare_name");
+    std::fs::create_dir_all(&dir).expect("the target directory is writable");
+    std::fs::write(dir.join("bare.science"), b"def main():\n    print(\"ran\")\n")
+        .expect("the scratch file is writable");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_sciencec"))
+        .current_dir(&dir)
+        .args(["test", "bare.science"])
+        .output()
+        .expect("the sciencec binary must be runnable");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("test bare.science ... ok"),
+        "a bare filename must run, not be looked up on PATH.\nstdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("ran"), "the program's own output should reach the terminal");
+    assert_eq!(output.status.code(), Some(0));
+}

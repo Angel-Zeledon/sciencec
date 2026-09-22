@@ -393,7 +393,7 @@ impl Session {
     /// Bounded by [`RUN_BUDGET`] rather than `Command::status`'s unconditional
     /// wait — see [`run_bounded`] for why.
     fn run_test(&mut self, path: &Path) {
-        let exe = executable_path(path);
+        let exe = spawnable(&executable_path(path));
         let name = display_path(path);
         match run_bounded(&exe, RUN_BUDGET) {
             Ok(RunOutcome::Exited(status)) if status.success() => {
@@ -1060,6 +1060,33 @@ fn lower_to_mir(krate: &Crate) -> Option<Checked> {
 /// extension. See [`Session::build`] for why it is not the working directory.
 fn executable_path(source: &Path) -> PathBuf {
     if cfg!(windows) { source.with_extension("exe") } else { source.with_extension("") }
+}
+
+/// The same path, in a form [`std::process::Command`] will treat as a file
+/// rather than as a command to look up.
+///
+/// **`sciencec test hello.science` could not run what it had just built.**
+/// [`executable_path`] strips the extension, so the program beside
+/// `hello.science` is `hello` — a relative path with **no separator in it** —
+/// and `Command::new` resolves exactly those through `PATH` instead of
+/// against the working directory. The build succeeded, the file was written,
+/// and the run failed with *"cannot run `hello`: no such file"*, which reads
+/// like the compiler emitted nothing.
+///
+/// It was invisible from inside the repository because every path the corpus
+/// passes has a directory in front of it — `examples/01_functions` contains a
+/// separator and is therefore already a path, not a lookup. So the one form
+/// that broke is the one a person types and the harness never does.
+///
+/// A leading `./` is enough to make it a path, and is preferred here over
+/// [`std::fs::canonicalize`]: canonicalising resolves symlinks and would make
+/// the spawn fail with a different message on a path that is perfectly
+/// runnable, for a property no caller needs.
+fn spawnable(exe: &Path) -> PathBuf {
+    if exe.parent().is_some_and(|parent| !parent.as_os_str().is_empty()) {
+        return exe.to_path_buf();
+    }
+    Path::new(".").join(exe)
 }
 
 /// Lowers a checked crate to MIR and runs the borrow check over it.
