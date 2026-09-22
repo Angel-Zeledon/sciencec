@@ -1833,16 +1833,33 @@ impl<'a> BodyChecker<'a> {
                         self.facts.invalidate(&place);
                     }
                 }
-                // Decision 27. `inner` may already be typed as a borrow of
-                // this exact mutability — `&doc.title` where `doc.title` is
-                // itself `&String` now that a field owning something is
-                // widened at the read, not at an explicit `&` the author
-                // never wrote here. The *type* this node gets must not
-                // double that: `examples/07_generics.science`'s `return
-                // &found.inner` and `examples/18_ownership.science`'s
-                // `&doc.title` both wrote `&field` for the single borrow the
-                // field used to need explicitly and now already is, and
-                // `&&String` is not a type either program asked for.
+                // Decision 27. `inner` may already be typed as a borrow —
+                // `&doc.title` where `doc.title` is itself `&String` or
+                // `&mut String` now that a field owning something is widened
+                // at the read, not at an explicit `&` the author never wrote
+                // here. The *type* this node gets must not double that:
+                // `examples/07_generics.science`'s `return &found.inner` and
+                // `examples/18_ownership.science`'s `&doc.title` both wrote
+                // `&field` for the single borrow the field used to need
+                // explicitly and now already is, and `&&String` is not a type
+                // either program asked for.
+                //
+                // **A shared `&` always collapses.** Reborrowing a field that
+                // ergonomics already widened to `&mut String` (a `title` read
+                // through a `&mut Doc`) as plain `&doc.title` asks for less
+                // than the field already grants, which is always legal —
+                // `science-codegen-llvm`'s `methods.rs`
+                // `a_shared_borrow_of_a_field_through_an_exclusive_record_borrow_reads_the_real_value`
+                // is exactly this shape, and the bug this comment used to
+                // describe (matching mutability strictly) left it typed
+                // `&(&mut String)`, a double borrow that made
+                // `science-mir`'s method-call auto-deref peel one layer too
+                // many and read past the field into whatever followed it.
+                // Requesting `&mut` where the field is only ergonomically
+                // `&String` is the one direction left unresolved here — it
+                // falls through to the `_` arm below and keeps its prior,
+                // separately-tracked behaviour, because escalating a shared
+                // reborrow into an exclusive one is not this bug.
                 //
                 // **The node is still built, and the borrow is still real.**
                 // `lower_borrow` takes its address off `operand`'s *place*,
@@ -1852,12 +1869,14 @@ impl<'a> BodyChecker<'a> {
                 // collapsing this node away would drop that reservation
                 // along with the doubled type. So this only ever narrows
                 // *what the node is called*: `referent` is `inner`'s own
-                // referent when the mutability already matches, and `inner`
-                // itself otherwise, and either way a fresh `ExprKind::Borrow`
-                // is pushed at `referent`'s single borrow.
+                // referent whenever taking `inner`'s referent instead of
+                // `inner` itself cannot ask for more than `inner` already
+                // holds, and `inner` itself otherwise — and either way a
+                // fresh `ExprKind::Borrow` is pushed at `referent`'s single
+                // borrow.
                 let referent = match *self.types.kind(inner_ty) {
                     TyKind::Borrowed { inner: referent, mutable: inner_mutable }
-                        if inner_mutable == *mutable =>
+                        if !*mutable || inner_mutable == *mutable =>
                     {
                         referent
                     }

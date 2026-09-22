@@ -163,35 +163,51 @@ fn every_example_that_builds_has_its_output_pinned() {
     );
 }
 
-/// **A pinned expectation is not a correct one, and one of them is wrong.**
+/// **A pinned expectation was wrong here once, and the pin is why that is
+/// fixed rather than merely fixed-looking.**
 ///
-/// `examples/18_ownership.stdout` line 13 reads `0` where the program
-/// computes `title.length() + body.length()` over two four-byte strings. It
-/// should read `8`.
-///
-/// Reduced to three lines, and the borrow kind is the whole of it:
+/// `examples/18_ownership.stdout` line 13 used to read `0` where the program
+/// computes `title.length() + body.length()` over two four-byte strings and
+/// should read `8`. Reduced to three lines, the borrow kind was the whole of
+/// it:
 ///
 /// ```science
 /// def via_shared(doc: &Doc) -> Int:      // 4, correct
 ///     let t be &doc.title
 ///     t.length()
 ///
-/// def via_mut(doc: &mut Doc) -> Int:     // 0, wrong
+/// def via_mut(doc: &mut Doc) -> Int:     // used to print 0
 ///     let t be &doc.title
 ///     t.length()
 /// ```
 ///
 /// A **shared** borrow of a field, taken through an **exclusive** borrow of
-/// the record, reads as an empty `String`. Reading the field directly is
-/// correct either way, and one borrow is enough — it is not about two
-/// disjoint ones, which is where it was first noticed.
+/// the record, read as an empty `String`. Reading the field directly was
+/// correct either way, and one borrow was enough to show it — it was never
+/// about two disjoint ones, which is where it was first noticed.
+///
+/// **Cause.** `check.rs`'s `ExprKind::Borrowed` arm collapses `&place` into a
+/// reborrow of `place`'s own referent when `place` is already ergonomically a
+/// borrow (Decision 27), but only did so when the two mutabilities matched
+/// exactly. `&doc.title` through a `&mut Doc` widens `doc.title` itself to
+/// `&mut String` before the explicit `&` is even applied, so a *shared* `&`
+/// over that mismatched and fell to the `_` arm, which kept the whole
+/// `&mut String` as the referent — typing `t` as `&(&mut String)` instead of
+/// `&String`. `science-mir`'s method-call auto-deref trusted that type and
+/// peeled two layers of `Deref` off `t` for `t.length()` where one was
+/// correct, reading past the field into whatever followed it in memory.
+/// Fixed by collapsing whenever the explicit borrow is shared — asking for
+/// less than a field's own ergonomic borrow already grants is always sound —
+/// and leaving the reverse direction (`&mut` requested through a field only
+/// ergonomically `&`) on its prior, separately-tracked path.
 ///
 /// Pinned rather than excluded, unlike `10_loops.science`'s nondeterministic
-/// address: this value is **stable**, so pinning it catches the next change
-/// to it, and the day it becomes `8` the blessing is the diff that says so.
-/// Excluding it would lose that. What the pin must not do is let a reader
-/// take the file for a record of correct output, which is why this comment
-/// is here and not in a commit message.
+/// address: this value was **stable**, so pinning it caught the fix as a
+/// diff rather than losing the moment silently. Kept pinned now that it
+/// reads `8`, for the same reason every other line is: a pinned expectation
+/// is not a promise the value is correct, only a promise that a change to it
+/// will be noticed, and this test's own name is that promise's other half —
+/// no expectation here is ever paired with nothing.
 ///
 /// An expectation with no example beside it is a file nobody will ever read
 /// again, and it would go on passing forever.

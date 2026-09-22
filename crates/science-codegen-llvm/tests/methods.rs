@@ -1482,3 +1482,106 @@ def main():
 ";
     assert_eq!(prints("narrowed-choice-receiver", source), "orbit\nempty\n");
 }
+
+/// **The silent miscompile the output ratchet found in
+/// `examples/18_ownership.science`'s `disjoint_fields`, reduced to one
+/// field.** `via_shared` and `direct` always printed the field's real
+/// length; `via_mut` printed `0` — the same field, read the same way,
+/// differing only in whether the record itself arrived by `&Doc` or
+/// `&mut Doc`.
+///
+/// **Cause, traced to the type checker.** `crate::check`'s
+/// `ExprKind::Borrowed` arm collapses an explicit `&place` into a reborrow of
+/// `place`'s own referent when `place` is already ergonomically a borrow —
+/// Decision 27 widens `doc.title` itself to `&mut String` before the
+/// explicit `&` is even applied, when `doc` is `&mut Doc`. The collapse used
+/// to fire only when the two mutabilities matched exactly, so a *shared* `&`
+/// over an ergonomically-`&mut` field fell to the `_` arm and kept the whole
+/// `&mut String` as the referent, typing `t` as `&(&mut String)` — a double
+/// borrow neither `let t be &doc.title` nor any type in this program asked
+/// for. `science-mir`'s method-call auto-deref trusted that type and peeled
+/// two layers of `Deref` for `t.length()` where one was correct, reading past
+/// the field into whatever followed it in memory — which is why it read as
+/// an empty `String` rather than refusing to build.
+///
+/// Fixed by collapsing whenever the explicit borrow is shared, regardless of
+/// what the field's own ergonomic mutability is: asking for less than a
+/// field already grants is always sound.
+#[test]
+fn a_shared_borrow_of_a_field_through_an_exclusive_record_borrow_reads_the_real_value() {
+    let source = "\
+type Doc:
+    title: String
+
+def via_shared(doc: &Doc) -> Int:
+    let t be &doc.title
+    t.length()
+
+def via_mut(doc: &mut Doc) -> Int:
+    let t be &doc.title
+    t.length()
+
+def direct(doc: &Doc) -> Int:
+    doc.title.length()
+
+def main():
+    let mutable doc be Doc(title: \"abcd\")
+    print(via_shared(doc))
+    print(via_mut(doc))
+    print(direct(doc))
+";
+    assert_eq!(prints("shared-field-through-mut-record", source), "4\n4\n4\n");
+}
+
+/// The same collapse, one field type over: an `Array` field rather than a
+/// `String`, so the fix is not a `String`-specific accident of
+/// `needs_drop`'s own table.
+#[test]
+fn a_shared_borrow_of_an_array_field_through_an_exclusive_record_borrow_reads_the_real_value() {
+    let source = "\
+type Bag:
+    items: Array[Int]
+
+def via_shared(bag: &Bag) -> Int:
+    let items be &bag.items
+    items.length()
+
+def via_mut(bag: &mut Bag) -> Int:
+    let items be &bag.items
+    items.length()
+
+def direct(bag: &Bag) -> Int:
+    bag.items.length()
+
+def main():
+    let mutable bag be Bag(items: [1, 2, 3, 4, 5])
+    print(via_shared(bag))
+    print(via_mut(bag))
+    print(direct(bag))
+";
+    assert_eq!(prints("shared-array-field-through-mut-record", source), "5\n5\n5\n");
+}
+
+/// **The other direction, to show the fix did not make an exclusive borrow
+/// read-only by accident.** `&mut doc.title`'s reborrow collapses through the
+/// identical `ExprKind::Borrowed` arm — `inner_mutable == *mutable` still
+/// matches when both are exclusive — and a write through the result must
+/// still reach the record `doc` itself points at, not a copy.
+#[test]
+fn an_exclusive_borrow_of_a_field_through_an_exclusive_record_borrow_still_writes_through() {
+    let source = "\
+type Doc:
+    title: String
+
+def clear_via_mut(doc: &mut Doc) -> Int:
+    let mutable t be &mut doc.title
+    t.truncate(0)
+    t.length()
+
+def main():
+    let mutable doc be Doc(title: \"abcd\")
+    print(clear_via_mut(doc))
+    print(doc.title.length())
+";
+    assert_eq!(prints("write-through-mut-field-reborrow", source), "0\n0\n");
+}
