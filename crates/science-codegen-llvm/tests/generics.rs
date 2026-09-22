@@ -333,3 +333,43 @@ fn a_generic_field_mentioning_a_parameter_runs() {
     );
     assert_eq!(out, "hondo 9\n");
 }
+
+/// **`T.clone()` at a builtin scalar, which `examples/07_generics.science`
+/// calls and which used to refuse.**
+///
+/// `duplicate[T: Clone + Eq](value: &T)` calls `value.clone()` twice.
+/// Monomorphised at `T = Int`, `Clone::clone`'s receiver is a concrete `Int`
+/// — `Lowerer::declaring_interface` says the call is through `Clone`, and
+/// `Lowerer::prelude_method`'s table has a row for `("String", "clone", ...)`
+/// and none for `Int`, because `science-rt` has no `science_int_clone` and
+/// never will: an `Int` owns nothing for a runtime call to duplicate. Lacking
+/// a row, the call used to fall to `Lowerer::declaring_interface`'s dispatch
+/// arm, which needs a vtable slot nothing here builds — `duplicate(5i64)`
+/// refused with *"a value whose type is still a type parameter, which
+/// nothing has monomorphised"*, a message about monomorphisation for a
+/// program monomorphisation had already finished with. This is the case
+/// `Lowerer::trivial_scalar_clone` closes: a bitwise copy of the receiver,
+/// with no call and no vtable.
+///
+/// Run at both `Int` and `String` in the one program, so that a fix which
+/// only widened the `Int` case rather than genuinely falling through to
+/// `prelude_method` first would still be caught: `String`'s `.clone()` must
+/// keep going through `science_string_clone` and not through this new path.
+#[test]
+fn clone_on_a_bounded_type_parameter_runs_at_a_builtin_scalar() {
+    let (out, _) = built(
+        "duplicate",
+        "type Pair[A, B]:\n\
+         \x20   first: A\n\
+         \x20   second: B\n\
+         \n\
+         def duplicate[T: Clone + Eq](value: &T) -> Pair[T, T]:\n\
+         \x20   Pair(first: value.clone(), second: value.clone())\n\
+         \n\
+         def main():\n\
+         \x20   let by_int be duplicate(5i64)\n\
+         \x20   let by_string be duplicate(\"hi\")\n\
+         \x20   print(f\"{by_int.first} {by_int.second} {by_string.first} {by_string.second}\")\n",
+    );
+    assert_eq!(out, "5 5 hi hi\n");
+}

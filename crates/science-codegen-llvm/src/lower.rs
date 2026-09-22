@@ -7510,6 +7510,9 @@ impl<'a> Lowerer<'a> {
             self.prelude_method(def, args.first().and_then(|op| self.operand_ty(body, op)))
         {
             self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;
+        } else if self.trivial_scalar_clone(def, args.first().and_then(|op| self.operand_ty(body, op)))
+        {
+            self.lower_trivial_scalar_clone(ctx, args, destination, insts)?;
         } else {
             let name = self.defs.get(def).name.clone();
             // **Decision 13's vtable, named as itself.** A method the lookup
@@ -8579,6 +8582,114 @@ impl<'a> Lowerer<'a> {
             .iter()
             .find(|(ty, name, _)| *ty == receiver && *name == method)
             .map(|(_, _, symbol)| *symbol)
+    }
+
+    /// Whether `def` is `Clone::clone` reached on a builtin scalar — `Int`
+    /// and its sized siblings, `Float`/`F16`/`BF16`/`F32`/`F64`, `Bool`,
+    /// `Char` — for which "clone" is not a `science-rt` call at all.
+    ///
+    /// # The decision
+    ///
+    /// [`Lowerer::PRELUDE_METHODS`] has a row for `("String", "clone", ...)`
+    /// and none for `Int`, and it never will: `science_string_clone` exists
+    /// because a `String` owns a heap allocation that a bitwise copy would
+    /// alias, and `builtins.rs`'s own `NUMERIC`/`Bool`/`Char` rows declare
+    /// `implements Clone` for exactly the types that own nothing. Duplicating
+    /// one of those is `*value` read back out and stored again — the same
+    /// instruction [`Lowerer::lower_operand`] already builds for an ordinary
+    /// `Rvalue::Use(Operand::Copy(place))` — and it is a fact about the
+    /// *type*, not about `science-rt`, so it belongs beside `prelude_method`
+    /// rather than in its table.
+    ///
+    /// # The reason this is not folded into `prelude_method`
+    ///
+    /// That table maps a `(Self, method)` pair to one `RUNTIME` symbol and
+    /// [`Lowerer::lower_runtime_call`] to a `call` instruction; a scalar clone
+    /// emits no call at all, so it cannot be a row without inventing a symbol
+    /// that names no function. Kept as its own predicate and its own
+    /// lowering, the way [`Lowerer::owned_nullable_method`] already keeps
+    /// §5.3's convention out of the same table for the parallel reason.
+    ///
+    /// # What this is not answering
+    ///
+    /// A `String.clone()` still resolves through `prelude_method`, checked
+    /// first in [`Lowerer::lower_call`]'s `else if` chain — this predicate is
+    /// reached only once that lookup has already failed, so a builtin with a
+    /// real `RUNTIME` entry point never reaches it. A user's own record
+    /// `implements Clone:` with a written body is lowered as an ordinary
+    /// call before either of these runs, through `symbol_for_call`.
+    fn trivial_scalar_clone(&self, def: DefId, receiver_ty: Option<Ty>) -> bool {
+        if self.defs.get(def).name.as_str() != "clone" {
+            return false;
+        }
+        if self.declaring_interface(def).as_deref() != Some("Clone") {
+            return false;
+        }
+        let Some(receiver_ty) = receiver_ty else { return false };
+        let self_ty = self.referent(receiver_ty);
+        let TyKind::Named { def: receiver, args } = self.types.kind(self_ty) else {
+            return false;
+        };
+        if !args.is_empty() || !self.defs.get(*receiver).is_builtin() {
+            return false;
+        }
+        matches!(
+            self.defs.get(*receiver).name.as_str(),
+            "Int" | "I8"
+                | "I16"
+                | "I32"
+                | "I64"
+                | "U8"
+                | "U16"
+                | "U32"
+                | "U64"
+                | "F16"
+                | "BF16"
+                | "F32"
+                | "F64"
+                | "Float"
+                | "Bool"
+                | "Char"
+        )
+    }
+
+    /// The lowering [`Lowerer::trivial_scalar_clone`] names: read the
+    /// receiver's pointee and store it straight into the destination, with no
+    /// `Inst::Call` anywhere.
+    ///
+    /// **The receiver is already a pointer.** `Clone.clone`'s `self` is
+    /// `SelfKind::Shared` — `builtins.rs`'s own comment on the interface says
+    /// so — so the call's first argument is a `borrowed T`, and
+    /// [`Lowerer::lower_operand`]'s `Copy`/`Move` arm on an unprojected place
+    /// already answers that with `Inst::Load` of the local holding the
+    /// pointer, not with an address of its own. What is missing beyond that
+    /// load is reading *through* it, which is exactly
+    /// [`ExtInst::LoadAt`]'s job — the destination's own layout is the
+    /// pointee's, since cloning changes no type — and storing the result into
+    /// the destination local the way [`Lowerer::emit_result`]'s non-`sret`
+    /// arm does for an ordinary call's return value.
+    fn lower_trivial_scalar_clone(
+        &mut self,
+        ctx: &mut BodyCtx,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        if !destination.projection.is_empty() {
+            return Err(Unlowered::new(
+                "a `clone()` of a builtin scalar whose result goes through a field",
+            ));
+        }
+        let receiver = args.first().ok_or_else(|| {
+            Unlowered::new("a `clone()` call lowered with no receiver argument")
+        })?;
+        let dest_local = LocalId(destination.local.index() as u32);
+        let layout = ctx.layout(dest_local)?.clone();
+        let address = self.lower_operand(ctx, receiver, None, insts)?;
+        let value = ctx.value();
+        insts.push(ExtInst::LoadAt { dest: value, address, layout });
+        insts.push(ExtInst::Above(Inst::Store { local: dest_local, value: Operand::Value(value) }));
+        Ok(())
     }
 
     /// The `science-rt` entry point a method reaches through §5.3's

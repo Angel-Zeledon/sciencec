@@ -95,6 +95,21 @@
 //! this rule to reverse, because reversing it would move the cost back onto
 //! drop elaboration, where the direction above is right.
 //!
+//! **A second exception: the six comparison operators never move.**
+//! `ExprKind::Binary`'s arm for `Eq`, `Ne`, `Lt`, `Gt`, `Le` and `Ge` runs
+//! [`force_copy`] over both operands `self.operand` already read, the same
+//! correction [`ExprKind::Present`] takes for the same reason — a comparison
+//! produces a fresh `Bool` and leaves both inputs exactly where they were.
+//! Without it, `s is ""` on an owned `String` arrives at
+//! `science-codegen-llvm` as a whole-value `Move`: `crate::moves` reads that
+//! as consuming `s`, `crate::drops` deletes the binding's `Drop`, and nothing
+//! downstream frees the buffer — a leak, not the double free rule 3 usually
+//! answers, because a comparison never writes the moved-from place back. The
+//! fix is this one after-the-fact correction rather than teaching `read` that
+//! `String` is `Copy`: every *other* caller of `read` — an assignment, a call
+//! that takes ownership, a `return` — is asking the type's real answer, and
+//! `is_copy` still has to give it to them.
+//!
 //! **The exception, and it is deliberate.** Every argument of a call **whose
 //! signature this crate cannot see** is `Copy`, whatever its type. A call whose
 //! signature is unknown has unknown argument passing, and marking the arguments
@@ -1377,6 +1392,25 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                     BinaryOp::Shl | BinaryOp::Shr => {
                         self.shift_check(left, right, operand_ty, block, span)
                     }
+                    // §5's exception, the same one `ExprKind::Present` above
+                    // already takes. `Eq`/`Ord`'s six operators (`check.rs`'s
+                    // `binary` groups all six behind one dispatch) each read
+                    // both operands and produce a fresh `Bool`; neither
+                    // operand is consumed, so `x is y` on two `String`s must
+                    // not be the whole-value `Move` `self.operand`'s `read`
+                    // hands back for anything `is_copy` refuses. `read` has no
+                    // way to know the *operator* rather than the *type* is
+                    // what decides this here, so the decision is corrected
+                    // after the fact with `force_copy` rather than taught to
+                    // `read` itself, which every other caller still needs to
+                    // answer off the type alone (an assignment, a call that
+                    // takes ownership, or a `return` really do consume).
+                    // Leaving drop elaboration a live `Drop` at the binding's
+                    // scope exit — rather than deleting it, the way a real
+                    // `Move` would — is exactly what keeps a `String` compared
+                    // in a loop freed once per iteration and not zero times.
+                    BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le
+                    | BinaryOp::Ge => (force_copy(left), force_copy(right), block),
                     _ => (left, right, block),
                 };
                 self.assign(block, dest, Rvalue::Binary { op: *op, lhs: left, rhs: right }, span);

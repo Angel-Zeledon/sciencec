@@ -121,4 +121,20 @@ def main():
         Eof: false
 
     print(punctuation)
-    print(number)
+
+    # `print(number)` was here and was a true positive: `print` takes
+    # `&any Display`, `Token` implements nothing, and this backend emits no
+    # vtable to reach a renderer through even where one is declared.
+    # `science-resolve`'s `builtins.rs` names this exact line and says the
+    # fix is the corpus's — "by a `Token implements Display:` block or by
+    # interpolating". The first is not available until the backend can
+    # dispatch one, so this is the second, and it says what the token *is*
+    # rather than reducing it to a number that four of the five variants
+    # do not have.
+    let rendered be match number:
+        Number(value): f"number {value}"
+        Ident(name): f"ident {name}"
+        Symbol(c): f"symbol {c}"
+        Eof: "eof"
+
+    print(rendered)
