@@ -934,3 +934,77 @@ nav a:hover::before, nav a[aria-current="true"]::before { transform: scaleY(1); 
     scroll-behavior: auto !important;
   }
 }
+
+/* ==========================================================================
+   Knowing where you are, and where to go next
+   ==========================================================================
+   Six pages, and until now each one carried a different masthead: a
+   different set of links, in a different order, and only two of the six
+   marked the page the reader was actually on. A reader who arrived on
+   `reference.html` from a search could not tell from the page what the other
+   pages were, that there were six of them, or which one they were reading.
+   Three rules answer that, and they are deliberately small: this site's
+   argument is that nothing outside a code block is decorated, and finding
+   your way is not a reason to break it.
+
+   1. `.top nav a.here` — the current page, in the ink colour rather than the
+      muted one, with the accent bar the sidebar's current entry already uses
+      (`nav a[aria-current]::before`, which now matches `page` as well as the
+      `true` the sidebars write). One idiom for "you are here", used in both
+      places a reader meets it.
+   2. `.subnav` — the on-page anchors, where a page has them in its masthead
+      and they would otherwise compete with the six site links. Only
+      `index.html` needs it today; it is written generally because the moment
+      a second page needs one, the alternative is a second idiom.
+   3. `.pager` — the page in the sequence, at the foot of every page. The
+      order is the reading order: Home, Tutorial, Guide, Reference, Syntax,
+      Rationale, from "what is this" to "why is it like this". Each card
+      carries the next page's *role* and not only its name, because "Syntax"
+      alone does not tell a reader who wants a construct's meaning that they
+      want the Reference instead. The first and last page get a plain
+      statement in the empty slot rather than a dead link: a reader at the
+      end should be told they are at the end. */
+.top nav a.here { color: var(--ink); }
+nav a[aria-current]::before { transform: scaleY(1); }
+
+.subnav { display: flex; align-items: baseline; gap: 1.1rem; flex-wrap: wrap;
+  padding-block: 0.85rem 1.1rem; border-bottom: 1px solid var(--rule); }
+.subnav .label { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--faint); }
+.subnav a { font-family: var(--mono); font-size: 0.76rem; color: var(--muted);
+  text-decoration: none; }
+.subnav a:hover, .subnav a:focus-visible { color: var(--accent); }
+
+.pager { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;
+  margin-block: 3.5rem 0; }
+.pager > * { display: flex; flex-direction: column; gap: 0.3rem;
+  padding: 1.1rem 1.25rem; border: 1px solid var(--rule); border-radius: 6px;
+  background: var(--surface); text-decoration: none; }
+.pager .next { text-align: right; }
+.pager .dir { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--faint); }
+.pager .ttl { font-family: var(--sans); font-size: 1.05rem; font-weight: 600; color: var(--ink); }
+.pager .sub { font-family: var(--serif); font-size: 0.88rem; color: var(--muted); }
+.pager .edge { background: none; border-style: dashed; }
+/* The whole card is the target, so it gets the hover rather than the text
+ * inside it: the accent moves to the border and the title, and nothing
+ * moves position — a card that lifts would be the only thing on this site
+ * that does. */
+.pager a:hover, .pager a:focus-visible { border-color: var(--accent); }
+.pager a:hover .ttl, .pager a:focus-visible .ttl { color: var(--accent); }
+
+/* A section boundary the eye can find while scrolling. `h2` carried weight
+ * and size and nothing else, so on a long page — `reference.html` is 7700
+ * lines — one section ran into the next and a reader scrolling past four of
+ * them could not say how many they had passed. The rule is above the
+ * heading and the space is asymmetric, twice as much before as after, which
+ * is what attaches a heading to the text it introduces rather than leaving
+ * it floating between two blocks. */
+.reference section > h2 { padding-top: 2.2rem; margin-top: 2.6rem;
+  border-top: 1px solid var(--rule); }
+.reference section:first-of-type > h2 { border-top: none; margin-top: 0; padding-top: 0; }
+
+@media (max-width: 720px) {
+  .pager { grid-template-columns: 1fr; }
+  .pager .next { text-align: left; }
+}
