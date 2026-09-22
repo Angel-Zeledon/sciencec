@@ -2902,38 +2902,55 @@ Sin embargo, una vez establecida una versión de lenguaje:
 
 ### El número honesto
 
-**15 de 20 ejemplos** compilan, enlazan, corren y tienen su salida fijada byte
+**17 de 20 ejemplos** compilan, enlazan, corren y tienen su salida fijada byte
 por byte. El denominador es 20 y no 22 porque dos nunca van a construir, y eso
 está decidido: `17_modules` importa módulos que la biblioteca F0 no tiene, y
 `20_extern` es una biblioteca sin `main` a propósito, que `SC0403` existe para
 rechazar.
 
-Suite: **2223 tests en verde**. Correrla con paralelismo acotado
+Suite: **2229 tests en verde**. Correrla con paralelismo acotado
 (`-- --test-threads=4`): a carga completa el directorio de scratch compartido
 compite consigo mismo y falla un puñado distinto de tests en cada corrida, con
 conjuntos disjuntos. Se lee igual que una regresión y no lo es.
 
-### Los cinco que faltan, con el bloqueo real
+### Los tres que faltan, con el bloqueo real
 
-Cada uno está bisecado hasta la línea. Los mensajes de error del compilador
-**no** son de fiar para esto: tres de los cinco culpaban a la fase equivocada.
+Cada uno está bisecado hasta la línea. **Los mensajes de error del compilador
+no son de fiar para esto**, y esa es la lección más cara de la sesión: de cinco
+bloqueos investigados, **cinco** culpaban a la fase equivocada o describían un
+agujero ya cerrado.
 
 | Ejemplo | Bloqueo real | Dónde |
 |---|---|---|
-| `07_generics` | `Clone::clone` sobre escalares (`Int`, `F64`, `Bool`, `Char`) no tiene camino de lowering | `science-codegen-llvm`, `science-codegen` |
-| `04_enums` | Una comparación de `String` se deletrea como `move` en vez de `copy` | `science-mir` |
-| `03_structs` | Const generics sustituidos en el cuerpo — el front end ya sale limpio | mono |
-| `06_traits` | `print` de un tipo de usuario: necesita `Display`/`Formatter` | decisión + 4 crates |
-| `00_kitchen_sink` | Cierres con capturas, `for` sobre `Iterate`, interfaces de operador, boxes | varios |
+| `03_structs` | const generics sustituidos en el cuerpo — el front end ya sale limpio | mono |
+| `06_traits` | `print` de un tipo de usuario: necesita `Display`/`Formatter` | 4 crates |
+| `00_kitchen_sink` | cierres con capturas, interfaces de operador, boxes | varios |
 
-**`07` es el más engañoso y conviene dejarlo escrito.** Su error dice *"nada ha
-monomorfizado"*. Es falso: la monomorfización funciona y está cableada desde
-commits anteriores. Verificado con la misma función genérica bajo el mismo
-bound — con `T := String` compila, enlaza, corre e imprime; con `T := Int`
-falla. Clonar un escalar `Copy` es una copia de valor, sin llamada ni vtable, y
-eso no está codificado en ninguna parte: `PRELUDE_METHODS` tiene fila para
-`("String","clone")` y ninguna para `Int`, así que cae a despacho dinámico por
-vtable y explota.
+### Lo que resultó no estar roto
+
+Tres cosas que este documento, o un mensaje del compilador, daban por
+pendientes y **ya funcionaban**. Se verificaron corriendo programas, no
+leyendo código:
+
+- **La monomorfización.** Su mensaje decía *"nada ha monomorfizado: la
+  Decisión 42 pone el walk por encima de este crate y ninguna fase lo corre"*.
+  Funcionaba desde commits anteriores. La misma función genérica bajo el mismo
+  bound compila y corre con `T := String` y fallaba sólo con `T := Int` —
+  porque clonar un escalar `Copy` es una copia de valor y eso no estaba
+  codificado en ninguna parte.
+- **`for` sobre un `Iterate` propio.** Su mensaje decía *"todo `for` del
+  lenguaje se detiene acá, incluido `for i in 0..10:"`*. Cerrado en `757aa5d`.
+  Y la frase es doblemente falsa: un rango nunca pasa por ese camino, tiene su
+  propio lowering aritmético.
+- **`Formatter`.** Un comentario en `builtins.rs` afirmaba que ninguna nota lo
+  especifica. `strings-formatting-and-docs.md` §3.1 lo especifica entero, con
+  una `Decision` y un conjunto cerrado de cinco métodos.
+
+**El patrón, porque cuesta horas cada vez:** un mensaje de rechazo envejece
+peor que el código que lo rodea. Nadie lo vuelve a leer cuando arregla la cosa
+que describe, y el siguiente lector lo trata como diagnóstico actual. Antes de
+perseguir cualquiera de los tres que quedan, **reproducí el bloqueo en un
+programa mínimo** y creele a lo que imprime, no a lo que dice el mensaje.
 
 ### Las decisiones que bloquean, y que no son código
 
@@ -2951,19 +2968,28 @@ Ninguna de estas se resuelve programando. Están en `STDLIB-DECISIONS.md`.
 
 ### El orden que yo tomaría
 
-Las tres primeras son independientes entre sí y tocan crates distintos, así que
-se pueden hacer en paralelo sin colisiones:
-
-1. `Clone::clone` sobre escalares → **16/20**. Trabajo completamente
-   especificado, incertidumbre cero.
-2. `String` move-vs-copy en MIR → **17/20**.
-3. Const generics a través de la mono → **18/20**.
-4. Decidir `Display`, después implementarlo → **19/20**. La decisión primero.
-5. `00_kitchen_sink` → **20/20**. Es el último por construcción.
+1. **Const generics a través de la mono → 18/20.** El front end ya sale
+   limpio, así que es sólo sustitución: reemplazar `ROWS` y `COLS` por sus
+   argumentos const en el cuerpo instanciado. Acotado y sin decisiones.
+2. **`Display`/`Formatter` → 19/20.** La decisión está tomada: gana el spec.
+   Hay que aterrizar `Formatter`, `FormatSpec` y cuatro `choice` en
+   `builtins.rs`, los puntos de entrada del runtime, y una vtable que el
+   backend hoy no emite. Cuatro crates, y el corpus escribe la firma vieja en
+   dos ejemplos.
+   **Riesgo real:** declarar métodos en una interfaz del preludio que hasta
+   ahora no tenía ya rompió este corpus una vez, con `Clone.clone`. Si pasa,
+   revertir la declaración y decir por qué — no arreglar el ejemplo.
+3. **`00_kitchen_sink` → 20/20.** Cierres con capturas, interfaces de operador
+   y boxes. Es el último por construcción, no por descuido.
 
 Y una de infraestructura que no mueve el contador y ahorra horas: **el scratch
-compartido de los tests**. Hoy cuesta dos corridas y un rato descartar que un
-fallo sea propio.
+compartido de los tests**. Cuesta dos corridas y un rato descartar que un fallo
+sea propio, y va a engañar a la próxima persona que toque el repo.
+
+**Cómo repartirlos.** No por ejemplo, por *feature*: `00` no es una tarea, es
+la unión de tres. Y el reparto tiene que ser por crate, porque varias de estas
+convergen en `science-codegen-llvm` y dos agentes editando ese archivo a la vez
+se pisan.
 
 ### La distancia hasta la Parte IV
 
