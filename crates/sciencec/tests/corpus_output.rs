@@ -129,12 +129,37 @@ enum Verdict {
 /// [`every_example_that_builds_has_its_output_pinned`]'s own `continue`. So the
 /// message is matched here, and a hang is its own outcome — the exact shape of
 /// `7674487`, caught by an assertion instead of a suite that never finishes.
+/// # Why it runs in an empty directory and not in the repository
+///
+/// A program in this corpus may **read the filesystem**, and one does:
+/// `09_absence_and_failure.science` calls `read_config("science.toml")`.
+/// Run from the repository root, what it printed depended on whether a
+/// `science.toml` happened to be sitting there — an untracked file, present
+/// in the checkout it was first blessed in and absent from a fresh clone.
+/// Four of its eleven lines changed with it (`host` against `the file could
+/// not be read`), so the pin was measuring the state of somebody's working
+/// directory as much as the compiler.
+///
+/// The fix is to give every example the same surroundings: an empty
+/// directory nobody else writes to. A file the corpus does not ship is a
+/// file the corpus must not see. The example paths are absolute — [`examples`]
+/// builds them from [`repo_root`] — so nothing needs the old working
+/// directory, and an example that one day *wants* a file beside it should be
+/// given one here, deliberately and by name, rather than inheriting whatever
+/// the checkout has lying around.
 fn ran(example: &Path) -> Verdict {
+    let empty = std::env::temp_dir().join(format!(
+        "science-corpus-{}-{}",
+        std::process::id(),
+        example.file_stem().expect("a name").to_string_lossy()
+    ));
+    std::fs::create_dir_all(&empty).expect("a scratch directory to run in");
     let output = Command::new(env!("CARGO_BIN_EXE_sciencec"))
-        .current_dir(repo_root())
+        .current_dir(&empty)
         .args(["test", example.to_str().expect("a utf-8 path")])
         .output()
         .expect("the sciencec binary must be runnable");
+    let _ = std::fs::remove_dir_all(&empty);
     let text = String::from_utf8_lossy(&output.stdout).into_owned();
     if text.contains("did not exit within") {
         return Verdict::Hung;
