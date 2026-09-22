@@ -5088,10 +5088,23 @@ impl<'a> Lowerer<'a> {
     /// construction rather than by matching numbers.
     ///
     /// **§3.4's rule holds here too.** The niched read is
-    /// [`ExtInst::LoadNiche`] and not `Inst::Load`, because for `(any I)?` the
-    /// whole type is two words and *"the vtable slot of a null trait object is
-    /// undefined and codegen must never load it — including on the path that
-    /// tests for null"*. That path is this one.
+    /// [`ExtInst::LoadNiche`] (or, through a projection, [`ExtInst::LoadAt`]
+    /// at the niche's own scalar layout) and not `Inst::Load`, because for
+    /// `(any I)?` the whole type is two words and *"the vtable slot of a null
+    /// trait object is undefined and codegen must never load it — including
+    /// on the path that tests for null"*. That path is this one.
+    ///
+    /// **A field's `?` is the same question asked of a computed address.**
+    /// [`Lowerer::lower_discriminant`] found this first for `match`: a tagged
+    /// discriminant is always at offset 0, so `place_address`'s computed
+    /// pointer plus [`ExtInst::LoadAt`] at the tag's own width reads it with
+    /// no new instruction. The niche is at offset 0 too — Decision 19 puts it
+    /// there — so the same trick reads the niche's pointer-sized scalar
+    /// through the pointer `place_address` already knows how to build for
+    /// `over.host`, `Projection::Payload`'s neighbouring arm and all. Only a
+    /// bare local, with no projection, still uses [`ExtInst::LoadTag`] /
+    /// [`ExtInst::LoadNiche`], because reading its own address needs no
+    /// `place_address` walk at all.
     fn lower_is_present(
         &mut self,
         body: &MirBody,
@@ -5106,24 +5119,13 @@ impl<'a> Lowerer<'a> {
                  a slot to read it from",
             )
         })?;
-        if !place.projection.is_empty() {
-            return Err(Unlowered::new(
-                "a `?` on a field: the tag and the niche are read from a local's own address and \
-                 this instruction set has no typed load from a computed one",
-            ));
-        }
         let ty = self
             .operand_ty(body, operand)
             .ok_or_else(|| Unlowered::new("a `?` on a value with no type"))?;
         let layout = self.layout_of_ty(ty)?;
-        let local = LocalId(place.local.index() as u32);
-        if ctx.untyped.contains(&local) {
-            return Err(Unlowered::new(format!("{UNTYPED} (local _{})", local.0)));
-        }
-        ctx.layout(local)?;
         let result = ctx.value();
         match &layout.repr {
-            Repr::Tagged { variants, .. } => {
+            Repr::Tagged { variants, tag, .. } => {
                 let null = variants
                     .iter()
                     .find(|variant| variant.payload.is_none())
@@ -5131,13 +5133,34 @@ impl<'a> Lowerer<'a> {
                         Unlowered::new("a `?` on a tagged type with no payload-free variant")
                     })?
                     .discriminant;
-                let tag = ctx.value();
-                insts.push(ExtInst::LoadTag { dest: tag, local });
+                let value = ctx.value();
+                if place.projection.is_empty() {
+                    let local = LocalId(place.local.index() as u32);
+                    if ctx.untyped.contains(&local) {
+                        return Err(Unlowered::new(format!("{UNTYPED} (local _{})", local.0)));
+                    }
+                    ctx.layout(local)?;
+                    insts.push(ExtInst::LoadTag { dest: value, local });
+                } else {
+                    let (address, at) = self.place_address(ctx, place, insts)?;
+                    if !matches!(at.repr, Repr::Tagged { .. }) {
+                        return Err(Unlowered::new(
+                            "a `?` read through a projection whose layout is not Decision 18's \
+                             tagged one",
+                        ));
+                    }
+                    let tag_layout = layout_of(self.target, &CgTy::Int(*tag));
+                    insts.push(ExtInst::LoadAt {
+                        dest: value,
+                        address: Operand::Value(address),
+                        layout: tag_layout,
+                    });
+                }
                 insts.push(ExtInst::Above(Inst::Cmp {
                     dest: result,
                     op: CmpOp::Ne,
                     signed: false,
-                    lhs: Operand::Value(tag),
+                    lhs: Operand::Value(value),
                     rhs: Operand::ConstInt(null as i128),
                 }));
             }
@@ -5156,13 +5179,44 @@ impl<'a> Lowerer<'a> {
                         "a `?` on a niche encoding a value that is not the null pointer",
                     ));
                 }
-                let data = ctx.value();
-                insts.push(ExtInst::LoadNiche { dest: data, local });
+                let value = ctx.value();
+                if place.projection.is_empty() {
+                    let local = LocalId(place.local.index() as u32);
+                    if ctx.untyped.contains(&local) {
+                        return Err(Unlowered::new(format!("{UNTYPED} (local _{})", local.0)));
+                    }
+                    ctx.layout(local)?;
+                    insts.push(ExtInst::LoadNiche { dest: value, local });
+                } else {
+                    let (address, at) = self.place_address(ctx, place, insts)?;
+                    let Repr::Niched { niche: at_niche, .. } = &at.repr else {
+                        return Err(Unlowered::new(
+                            "a `?` read through a projection whose layout is not Decision 19's \
+                             niched one",
+                        ));
+                    };
+                    if at_niche.offset != 0 {
+                        return Err(Unlowered::new(
+                            "a `?` on a nullable whose niche is not at offset 0",
+                        ));
+                    }
+                    // The niche's own scalar type, and not the payload's whole
+                    // layout: every niche this crate lays out is a pointer at
+                    // offset 0 (`CgTy::niche`'s doc), the same fact
+                    // `owned_nullable_return`'s `BranchAndMaterialiseNull` arm
+                    // already relies on to build `niche_layout` this way.
+                    let niche_layout = layout_of(self.target, &CgTy::Ptr(PtrKind::Raw));
+                    insts.push(ExtInst::LoadAt {
+                        dest: value,
+                        address: Operand::Value(address),
+                        layout: niche_layout,
+                    });
+                }
                 insts.push(ExtInst::Above(Inst::Cmp {
                     dest: result,
                     op: CmpOp::Ne,
                     signed: false,
-                    lhs: Operand::Value(data),
+                    lhs: Operand::Value(value),
                     rhs: Operand::Null,
                 }));
             }
@@ -8775,15 +8829,42 @@ impl<'a> Lowerer<'a> {
                     lowered.push(self.typed_operand(ctx, arg, &param.layout, insts)?);
                 }
                 ArgClass::IndirectByPointer => {
-                    let local = match arg {
-                        mir::Operand::Move(place) => {
-                            if !place.projection.is_empty() {
+                    // **A move out of a field passes the field's own address.**
+                    // Decision 22 wants a caller-owned slot the callee may write
+                    // through, and a field of a local the caller still owns is
+                    // one: the move is what says nothing else reads it again,
+                    // and `science-mir`'s per-field move tracking is what makes
+                    // that true of the drop as well — the caller drops the
+                    // fields it did not give away and not this one. Inventing a
+                    // slot and copying the field into it would be a second
+                    // owner of the same bytes for as long as the call lasts,
+                    // which is the shape `Operand::Copy` is refused for below.
+                    //
+                    // `take(o.inner.a)` was refused outright before this, and a
+                    // field of a field is an ordinary thing to pass.
+                    if let mir::Operand::Move(place) = arg {
+                        if !place.projection.is_empty() {
+                            let local = LocalId(place.local.index() as u32);
+                            if ctx.untyped.contains(&local) {
                                 return Err(Unlowered::new(format!(
-                                    "an aggregate argument to `{}` that is a field rather than a \
-                                     whole local: Decision 22 needs a slot to point at",
-                                    sig.symbol
+                                    "{UNTYPED} (local _{})",
+                                    local.0
                                 )));
                             }
+                            // The callee writes through this pointer, so the
+                            // result may not land in the same memory — the same
+                            // collision `emit_result_maybe_aliased` documents,
+                            // asked of a projected argument.
+                            if place.local == destination.local {
+                                aliases_destination = true;
+                            }
+                            let (address, _) = self.place_address(ctx, place, insts)?;
+                            lowered.push(Operand::Value(address));
+                            continue;
+                        }
+                    }
+                    let local = match arg {
+                        mir::Operand::Move(place) => {
                             let local = LocalId(place.local.index() as u32);
                             if ctx.untyped.contains(&local) {
                                 return Err(Unlowered::new(format!(

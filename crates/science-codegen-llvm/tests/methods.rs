@@ -1613,3 +1613,43 @@ def main():
 ";
     assert_eq!(prints("write-through-mut-field-reborrow", source), "0\n0\n");
 }
+
+/// **An aggregate argument that is a field, and a field of a field.**
+///
+/// Decision 22 passes an aggregate by pointer to a caller-owned slot, and
+/// `lower_science_call` used to insist that the slot be a whole local: a
+/// `Move` with any projection on it was refused outright, so `take(o.inner.a)`
+/// — an ordinary thing to write — could not be built at all. A field the
+/// caller owns *is* a caller-owned slot, and the move is what says nothing
+/// else will read it again.
+///
+/// Both depths are here because they take the same path for different
+/// reasons: one `Field` step is the shape `science-mir`'s move analysis
+/// tracks exactly, and two is the shape it rounds off (see `moves.rs`'
+/// `move_event`). The value that arrives must be right either way, and the
+/// number is the whole test — a wrong address here hands the callee a
+/// neighbouring field and exits 0.
+#[test]
+fn a_field_and_a_field_of_a_field_can_be_moved_into_a_call() {
+    let source = "\
+type Inner:
+    a: String
+    b: String
+
+type Outer:
+    inner: Inner
+    tag: String
+
+def take(s: String) -> Int:
+    s.length()
+
+def main():
+    let flat be Inner(a: \"hello\", b: \"wo\")
+    print(take(flat.a))
+    let nested be Outer(inner: Inner(a: \"hello\", b: \"wo\"), tag: \"t\")
+    print(take(nested.inner.a))
+    let other be Outer(inner: Inner(a: \"hello\", b: \"wo\"), tag: \"t\")
+    print(take(other.inner.b))
+";
+    assert_eq!(prints("move-a-field-into-a-call", source), "5\n5\n2\n");
+}
