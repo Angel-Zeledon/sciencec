@@ -1,0 +1,252 @@
+{
+  "Function": {
+    "prefix": "def",
+    "body": [
+      "def ${1:function_name}(${2:params}) -> ${3:ReturnType}:",
+      "\t$0"
+    ],
+    "description": "Create a Science function"
+  },
+
+  "Generic Function": {
+    "prefix": "deft",
+    "body": [
+      "def ${1:function_name}[${2:T}](${3:value}: ${2:T}) -> ${2:T}:",
+      "\t$0"
+    ],
+    "description": "Create a generic Science function"
+  },
+
+  "Type": {
+    "prefix": "type",
+    "body": [
+      "type ${1:TypeName}:",
+      "\t${2:field}: ${3:Type}",
+      "\t$0"
+    ],
+    "description": "Create a Science type"
+  },
+
+  "Interface": {
+    "prefix": "interface",
+    "body": [
+      "interface ${1:InterfaceName}:",
+      "\tdef ${2:method}(self${3:, value: Type}) -> ${4:ReturnType}",
+      "\t$0"
+    ],
+    "description": "Create a Science interface"
+  },
+
+  "Implements": {
+    "prefix": "impl",
+    "body": [
+      "${1:TypeName} implements ${2:InterfaceName}:",
+      "\tdef ${3:method}(self${4:, value: Type}) -> ${5:ReturnType}:",
+      "\t\t$0"
+    ],
+    "description": "Implement an interface"
+  },
+
+  "Has": {
+    "prefix": "has",
+    "body": [
+      "${1:TypeName} has:",
+      "\tdef ${2:method}(self${3:, value: Type}) -> ${4:ReturnType}:",
+      "\t\t$0"
+    ],
+    "description": "Add methods to a Science type"
+  },
+
+  "If": {
+    "prefix": "if",
+    "body": [
+      "if ${1:condition}:",
+      "\t$0"
+    ],
+    "description": "Create an if statement"
+  },
+
+  "If Else": {
+    "prefix": "ife",
+    "body": [
+      "if ${1:condition}:",
+      "\t$2",
+      "else:",
+      "\t$0"
+    ],
+    "description": "Create an if/else statement"
+  },
+
+  "For": {
+    "prefix": "for",
+    "body": [
+      "for ${1:item} in ${2:items}:",
+      "\t$0"
+    ],
+    "description": "Create a for loop"
+  },
+
+  "While": {
+    "prefix": "while",
+    "body": [
+      "while ${1:condition}:",
+      "\t$0"
+    ],
+    "description": "Create a while loop"
+  },
+
+  "Match": {
+    "prefix": "match",
+    "body": [
+      "match ${1:value}:",
+      "\t${2:Pattern}:",
+      "\t\t$0"
+    ],
+    "description": "Create a match expression"
+  },
+
+  "Let": {
+    "prefix": "let",
+    "body": [
+      "let ${1:name} be ${2:value}"
+    ],
+    "description": "Create a variable"
+  },
+
+  "Mutable Let": {
+    "prefix": "letmut",
+    "body": [
+      "let mut ${1:name} be ${2:value}"
+    ],
+    "description": "Create a mutable variable"
+  },
+
+  "Reference": {
+    "prefix": "ref",
+    "body": [
+      "&${1:Type}"
+    ],
+    "description": "Science immutable reference type"
+  },
+
+  "Mutable Reference": {
+    "prefix": "mutref",
+    "body": [
+      "&mut ${1:Type}"
+    ],
+    "description": "Science mutable reference type"
+  },
+
+  "Array": {
+    "prefix": "array",
+    "body": [
+      "Array[${1:T}]"
+    ],
+    "description": "Science generic Array type"
+  },
+
+  "Map": {
+    "prefix": "map",
+    "body": [
+      "Map[${1:Key}, ${2:Value}]"
+    ],
+    "description": "Science generic Map type"
+  },
+
+  "Result": {
+    "prefix": "result",
+    "body": [
+      "Result[${1:T}, ${2:E}]"
+    ],
+    "description": "Science Result type"
+  },
+
+  "Option": {
+    "prefix": "option",
+    "body": [
+      "${1:T}?"
+    ],
+    "description": "Science optional type"
+  },
+
+  "Tensor": {
+    "prefix": "tensor",
+    "body": [
+      "tensor.randn([${1:10}, ${2:10}])"
+    ],
+    "description": "Create a random Tensor"
+  },
+
+  "Tensor Zeros": {
+    "prefix": "zeros",
+    "body": [
+      "tensor.zeros([${1:10}, ${2:10}])"
+    ],
+    "description": "Create a zero Tensor"
+  },
+
+  "Tensor Ones": {
+    "prefix": "ones",
+    "body": [
+      "tensor.ones([${1:10}, ${2:10}])"
+    ],
+    "description": "Create a ones Tensor"
+  },
+
+  "Linear Layer": {
+    "prefix": "linear",
+    "body": [
+      "nn.Linear(${1:input_size}, ${2:output_size})"
+    ],
+    "description": "Create a neural network Linear layer"
+  },
+
+  "Sequential": {
+    "prefix": "seq",
+    "body": [
+      "nn.Sequential([",
+      "\tnn.Linear(${1:input_size}, ${2:hidden_size}),",
+      "\tnn.ReLU(),",
+      "\tnn.Linear(${3:hidden_size}, ${4:output_size})",
+      "])"
+    ],
+    "description": "Create a neural network Sequential model"
+  },
+
+  "Adam": {
+    "prefix": "adam",
+    "body": [
+      "optim.Adam(",
+      "\tmodel.parameters(),",
+      "\tlr: ${1:0.001}",
+      ")"
+    ],
+    "description": "Create an Adam optimizer"
+  },
+
+  "Test": {
+    "prefix": "test",
+    "body": [
+      "test \"${1:test_name}\":",
+      "\t$0"
+    ],
+    "description": "Create a Science test"
+  },
+
+  "Benchmark": {
+    "prefix": "bench",
+    "body": [
+      "bench \"${1:benchmark_name}\":",
+      "\t$0"
+    ],
+    "description": "Create a Science benchmark"
+  },
+
+  "Import": {
+    "prefix": "imp",
+    "body": [
+      "import ${1:module}"
+    ],
+    "description": "Import a Science module"
+  }
+}

@@ -2,67 +2,121 @@
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "Science",
   "scopeName": "source.science",
-  "fileTypes": ["science"],
+  "fileTypes": [
+    "science"
+  ],
   "patterns": [
-    { "include": "#extern-block" },
-    { "include": "#code" }
+    {
+      "include": "#extern-block"
+    },
+    {
+      "include": "#code"
+    }
   ],
   "repository": {
     "code": {
       "patterns": [
-        { "include": "#comment" },
-        { "include": "#string" },
-        { "include": "#character" },
-        { "include": "#unit-literal" },
-        { "include": "#number" },
-        { "include": "#keyword-declaration" },
-        { "include": "#keyword-control" },
-        { "include": "#keyword-reserved" },
-        { "include": "#function-call" },
-        { "include": "#type-name" },
-        { "include": "#label" },
-        { "include": "#removed-operator" },
-        { "include": "#operator" },
-        { "include": "#punctuation" }
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#character"
+        },
+        {
+          "include": "#unit-literal"
+        },
+        {
+          "include": "#number"
+        },
+        {
+          "include": "#keyword-declaration"
+        },
+        {
+          "include": "#constant-language"
+        },
+        {
+          "include": "#variable-self"
+        },
+        {
+          "include": "#keyword-control"
+        },
+        {
+          "include": "#keyword-reserved"
+        },
+        {
+          "include": "#function-call"
+        },
+        {
+          "include": "#type-name"
+        },
+        {
+          "include": "#label"
+        },
+        {
+          "include": "#removed-operator"
+        },
+        {
+          "include": "#operator"
+        },
+        {
+          "include": "#punctuation"
+        }
       ]
     },
-
     "comment": {
       "comment": "`#` to end of line. The lexer has no block comment form.",
       "match": "(#).*$",
       "name": "comment.line.number-sign.science",
       "captures": {
-        "1": { "name": "punctuation.definition.comment.science" }
+        "1": {
+          "name": "punctuation.definition.comment.science"
+        }
       }
     },
-
     "string": {
       "comment": "A string never spans a line break (lexer.rs `fn string`), so `$` is an end alternative and an unterminated literal cannot run away.",
       "begin": "\"",
       "end": "\"|$",
       "name": "string.quoted.double.science",
       "beginCaptures": {
-        "0": { "name": "punctuation.definition.string.begin.science" }
+        "0": {
+          "name": "punctuation.definition.string.begin.science"
+        }
       },
       "endCaptures": {
-        "0": { "name": "punctuation.definition.string.end.science" }
+        "0": {
+          "name": "punctuation.definition.string.end.science"
+        }
       },
-      "patterns": [{ "include": "#escape" }]
+      "patterns": [
+        {
+          "include": "#escape"
+        }
+      ]
     },
-
     "character": {
       "begin": "'",
       "end": "'|$",
       "name": "string.quoted.single.science",
       "beginCaptures": {
-        "0": { "name": "punctuation.definition.string.begin.science" }
+        "0": {
+          "name": "punctuation.definition.string.begin.science"
+        }
       },
       "endCaptures": {
-        "0": { "name": "punctuation.definition.string.end.science" }
+        "0": {
+          "name": "punctuation.definition.string.end.science"
+        }
       },
-      "patterns": [{ "include": "#escape" }]
+      "patterns": [
+        {
+          "include": "#escape"
+        }
+      ]
     },
-
     "escape": {
       "patterns": [
         {
@@ -82,18 +136,24 @@
         }
       ]
     },
-
     "unit-literal": {
       "comment": "`9.8<m/s^2>`, per unit-literals.md. Anchored to a digit with no whitespace anywhere, so `a < b`, `1 << 4` and `0 <= n` are untouched.",
       "match": "(\\b[0-9][0-9_]*(?:\\.[0-9][0-9_]*)?(?:[eE][+-]?[0-9][0-9_]*)?)(<)([A-Za-z][A-Za-z0-9_]*(?:[*/^][A-Za-z0-9_^]*)*)(>)",
       "captures": {
-        "1": { "name": "constant.numeric.science" },
-        "2": { "name": "punctuation.definition.unit.begin.science" },
-        "3": { "name": "entity.name.type.unit.science" },
-        "4": { "name": "punctuation.definition.unit.end.science" }
+        "1": {
+          "name": "constant.numeric.science"
+        },
+        "2": {
+          "name": "punctuation.definition.unit.begin.science"
+        },
+        "3": {
+          "name": "entity.name.type.unit.science"
+        },
+        "4": {
+          "name": "punctuation.definition.unit.end.science"
+        }
       }
     },
-
     "number": {
       "patterns": [
         {
@@ -128,55 +188,46 @@
         }
       ]
     },
-
     "keyword-declaration": {
       "comment": "The words that introduce something. Same split as web/assets/highlight.js DECLARE.",
       "match": "\\b(def|type|choice|interface|implements|has|of|borrowed|any|use|public|const|extern|unsafe|let|be|mutable|where|giving)\\b",
       "name": "keyword.declaration.science"
     },
-
     "keyword-control": {
-      "comment": "Control flow plus the operators and values spelled as words. Same split as highlight.js CONTROL.",
-      "match": "\\b(if|else|match|for|each|in|loop|return|break|continue|and|or|not|is|as|self|Self|true|false|null)\\b",
+      "comment": "Control flow and the operators spelled as words. `true`, `false`, `null`, `self` and `Self` left this rule for #constant-language and #variable-self.",
+      "match": "\\b(if|else|match|for|each|in|loop|return|break|continue|and|or|not|is|as)\\b",
       "name": "keyword.control.science"
     },
-
     "keyword-reserved": {
       "comment": "Reserved for F1-F4 by TokenKind::from_word. Never an identifier, not usable today.",
       "match": "\\b(agent|tool|prompt|spawn|send|receive|durable|checkpoint|resume|supervise|async|await|tensor|shape|model|equation|mod|pure|parallel|on|with|yield|assert|move|static|macro|union|kernel|import)\\b",
       "name": "invalid.deprecated.reserved.science"
     },
-
     "function-call": {
       "comment": "A name followed by `(`, looking past spaces so `map (x)` and `map(x)` read alike.",
       "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\b(?=[ \\t]*\\()",
       "name": "entity.name.function.science"
     },
-
     "type-name": {
       "comment": "A capitalised word is a type. Checked before the label rule so `type Doc:` is a type and not a field.",
       "match": "\\b[A-Z][A-Za-z0-9_]*\\b",
       "name": "entity.name.type.science"
     },
-
     "label": {
       "comment": "A lowercase name followed by `:` is a named argument, a field, a parameter or a match binding.",
       "match": "\\b([a-z_][A-Za-z0-9_]*)\\b(?=[ \\t]*:)",
       "name": "variable.parameter.science"
     },
-
     "removed-operator": {
       "comment": "`==` and `!=` were removed by syntax-revision-2 §1 and `!` begins nothing. Each is a lexer error (SC0016, SC0017, SC0001).",
       "match": "==|!=|!",
       "name": "invalid.illegal.operator.science"
     },
-
     "operator": {
       "comment": "Longest match first, exactly as lexer.rs `fn operator` does it. `?` is here because a reader arriving from Rust writes it; it is an error, but colouring it as an operator is what makes its squiggle legible.",
       "match": "\\.\\.=|\\.\\.|->|=>|\\*\\*|>=|<=|<<|>>|[+\\-*/%@<>&|^=?]",
       "name": "keyword.operator.science"
     },
-
     "punctuation": {
       "patterns": [
         {
@@ -193,28 +244,50 @@
         }
       ]
     },
-
     "extern-block": {
       "comment": "`unsafe extern \"C\" library ...:` and its indented body. The `while` keeps the block open for every line indented past the header, which is how an indentation-delimited block is expressed in TextMate.",
       "begin": "^([ \\t]*)(?:(unsafe)[ \\t]+)?(extern)\\b",
       "while": "^(?=\\1[ \\t]|[ \\t]*$)",
       "beginCaptures": {
-        "2": { "name": "keyword.declaration.science" },
-        "3": { "name": "keyword.declaration.science" }
+        "2": {
+          "name": "keyword.declaration.science"
+        },
+        "3": {
+          "name": "keyword.declaration.science"
+        }
       },
       "patterns": [
-        { "include": "#comment" },
-        { "include": "#string" },
-        { "include": "#character" },
-        { "include": "#extern-clause" },
-        { "include": "#code" }
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#character"
+        },
+        {
+          "include": "#extern-clause"
+        },
+        {
+          "include": "#code"
+        }
       ]
     },
-
     "extern-clause": {
       "comment": "Words that are keywords only inside an extern block: the header clauses of ffi-c-boundary.md §5.1-§5.2, and the `static`/`union`/`symbol`/`size`/`align` items of §1.2 and §1.4. Listed before #code so `static` and `union` are not coloured as phase-reserved words here, where they mean something.",
       "match": "\\b(library|via|pkg-config|kind|when|available|symbol|size|align|static|union)\\b",
       "name": "keyword.other.extern.science"
+    },
+    "constant-language": {
+      "comment": "`true`, `false` and `null` are values, not control flow. Split out of keyword-control so a theme can colour a literal as a literal — the grammar has to make the distinction before a theme can paint it.",
+      "match": "\\b(true|false|null)\\b",
+      "name": "constant.language.science"
+    },
+    "variable-self": {
+      "comment": "`self` and `Self` name the receiver and the implementing type. Also split out of keyword-control: they are names, and reading them as keywords made every method body one colour.",
+      "match": "\\b(self|Self)\\b",
+      "name": "variable.language.self.science"
     }
   }
 }

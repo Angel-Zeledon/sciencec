@@ -55,6 +55,12 @@
         "path": "./themes/science-light.json"
       }
     ],
+    "snippets": [
+      {
+        "language": "science",
+        "path": "./snippets/science.json"
+      }
+    ],
     "configurationDefaults": {
       "[science]": {
         "editor.insertSpaces": true,

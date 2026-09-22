@@ -5,7 +5,11 @@ Static HTML. No build step, no package manager, no `node_modules`.
 ```
 web/
   index.html         the landing page
+  tutorial.html      learn the language from nothing, in order
+  guide.html         six features, one chapter each, in prose
   reference.html     the language reference
+  syntax.html        the inventory of everything that can be written
+  rationale.html     the arguments, including the ones that lost
   assets/
     science.css      every page's styles
     highlight.js     syntax highlighting for `<pre data-science>` blocks
@@ -24,6 +28,13 @@ page, so a change to either is a change in every file. That is affordable at two
 pages. **It stops being affordable at about six**, and the honest trigger for
 adopting a generator is the day someone edits the same nav three times in one
 sitting — not a page count decided in advance.
+
+**That day has arrived and the trigger should be honoured.** Adding
+`guide.html` meant editing the same `<nav>` in six files, which is the exact
+condition written above, and it was done with a script rather than by hand —
+which is the tell. The next page should not be added until the nav is generated
+from one list. This paragraph is here so that the decision is not quietly
+relitigated by whoever adds the seventh page.
 
 ## Running it
 
@@ -61,10 +72,40 @@ hue survives on `#0b0f1a` and dies on white, and a palette asked to do both
 ends up doing neither. A reader in light mode gets a light page and a dark
 listing, which is also what their editor gives them.
 
-**Code samples are real.** Every Science block on these pages is taken from
-`examples/` or checked with `sciencec` before being pasted. A documentation site
-for a compiler is the last place to print syntax the compiler would reject, and
-the corpus exists precisely so that nobody has to invent any.
+**Code samples are real, on four of the five pages.** Every Science block on
+`index`, `tutorial`, `reference` and `syntax` is taken from `examples/` or
+checked with `sciencec` before being pasted. A documentation site for a compiler
+is the last place to print syntax the compiler would reject, and the corpus
+exists precisely so that nobody has to invent any.
+
+**`guide.html` is the exception, and it is a deliberate one that needs stating
+in full.** That page teaches six features that are *designed and not yet
+implemented* — `property`, `requires`/`ensures`/`invariant`, the missing-data
+reduction policies, named axes, `durable`, and the policy clauses of `with` —
+and it teaches them in the present tense, as though the compiler accepted them.
+Each chapter compresses one note in `docs/superpowers/design/`, which is the
+authority for what it says.
+
+This is a real departure from the rule above and the reason is that a design
+corpus nobody can read is a corpus nobody reviews: the six notes are forty
+thousand words of argument aimed at compiler authors, and the guide is the
+version a scientist can be handed. The cost is that a reader who types a
+chapter's example into `sciencec` today gets a parse error.
+
+**So the honest thing is not to hide the exception but to make it cheap to
+retire.** Two obligations follow, and whoever implements one of these features
+owes both:
+
+1. When a feature lands, its chapter moves under the same checking the other
+   four pages get, and its examples go into `examples/`.
+2. Until then, `guide.html` is the *only* page allowed to print unimplemented
+   syntax, and it says so in its own footer and in its "where to go next"
+   section, which points at the notes as the primary sources.
+
+A site that prints a future syntax without saying so is the failure this
+project's own `reference.html` was careful to avoid with its `changing` markers.
+A site that refuses to describe its design until the compiler catches up is a
+different failure, and a slower one.
 
 **With one exception, and the exception is labelled.** The error model of syntax
 revision 2 §3 — `-> (Config, Error?)`, `T?`, postfix `?`, `null` — now parses:
@@ -98,7 +139,22 @@ It also feeds the three word banks at the bottom of `reference.html`, through a
 `data-words` attribute — `keywords`, `reserved`, `never`. A bank without that
 attribute renders empty, silently.
 
-The lists and `token.rs` agree word for word today. Two entries were knowingly
+**The lists are now ahead of the lexer by design, in one direction.** Six words
+left `RESERVED` when the notes above landed — `durable`, `checkpoint`, `resume`,
+`with`, `assert` and `pure` — and thirteen joined `DECLARE` and `CONTROL`:
+`test`, `property`, `axis`, `requires`, `ensures`, `invariant`, `keyed`, `by`,
+`every`, `ignoring`, and the policy names `seed`, `device` and `precision`. Per
+the rule in the paragraph below, this is recorded as a decision rather than left
+to be found as a bug: **the list is ahead of `token.rs`, deliberately, because
+`guide.html` needs those words coloured.** Every one of the thirteen is
+*contextual* in its note's grammar, so none of them is a reservation and
+`let axis be 0` must keep compiling when the lexer catches up.
+
+`axis` and `device` also left the `never` bank, and that bank's promise is
+unchanged: both words are still free as identifiers. The bank now lists the
+words that are free *and* uninvolved in any construct.
+
+The lists and `token.rs` otherwise agree word for word today. Two entries were knowingly
 **ahead** of the lexer for a while — `try` left `CONTROL` and `null` joined it,
 per revision 2 §3 and §7, before `from_word` had either — and the lexer has
 since caught up with both, as it has with revision 3's rename of `function` to
@@ -112,3 +168,13 @@ Copy the `<head>` of `reference.html`, keep the two stylesheet links and the
 script at the end, and write the body inside `<div class="wrap">`. Use
 `<pre data-science>` for Science, `<pre class="shell">` for a terminal and
 `<pre class="err">` for a diagnostic.
+
+**On `<pre class="err">`, and how much of it to use.** The reference and the
+tutorial lean on diagnostics heavily and correctly — teaching a language through
+its error messages is this project's stated principle, and those two pages exist
+to be precise. A page written to be *read*, rather than consulted, needs the
+opposite ratio: `guide.html` has one error block in six chapters, placed in the
+one spot where reading the message is itself the lesson. Alternating a code
+block and an error box teaches the reader what the compiler rejects before they
+have understood what it accepts. Prefer prose that explains the rule, and spend
+an error box only where the message says something the prose cannot.

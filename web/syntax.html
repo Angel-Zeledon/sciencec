@@ -15,7 +15,7 @@
 
 <div class="wrap wide"><div class="top">
   <div class="mark"><span class="glyph">&#8730;</span><span class="name"><a href="index.html" style="color:inherit;text-decoration:none">Science</a></span></div>
-  <nav><a href="index.html">Home</a><a href="tutorial.html">Tutorial</a><a href="reference.html">Reference</a><a href="rationale.html">Rationale</a><a href="index.html#status">Status</a></nav>
+  <nav><a href="index.html">Home</a><a href="tutorial.html">Tutorial</a><a href="guide.html">Guide</a><a href="reference.html">Reference</a><a href="rationale.html">Rationale</a><a href="index.html#status">Status</a></nav>
 </div></div>
 
 <div class="wrap wide reference">
@@ -145,6 +145,7 @@
     <h2>The words</h2>
     <ul>
       <li><a href="#words">Every reserved word</a></li>
+      <li><a href="#inuse">Each new word, in code</a></li>
     </ul>
     <h2>The edges</h2>
     <ul>
@@ -249,7 +250,7 @@ lift-off</code></pre>
         <tr><td class="mono">Char</td><td class="mono">'a'</td><td class="what">Exactly one Unicode scalar value.</td></tr>
         <tr><td class="mono">FStrStart, FStrText, InterpStart, InterpEnd, FStrEnd</td><td class="mono">f"a{x}b"</td><td class="what">An <code>f"&hellip;"</code> is <strong>five kinds of token, not one</strong>, and a hole's interior is ordinary tokens in the same stream. See <a href="#literals">Literals</a>.</td></tr>
         <tr><td class="mono">Ident</td><td class="mono">samples &nbsp; dia &nbsp; n2</td><td class="what">Anything word-shaped that is not one of the 68 words.</td></tr>
-        <tr><td class="mono">keyword</td><td class="what">68 distinct words</td><td class="what">40 live, 28 held. The list is in <a href="#words">Every reserved word</a>.</td></tr>
+        <tr><td class="mono">keyword</td><td class="what">68 distinct words</td><td class="what">46 live, 22 held, plus 13 contextual words that are not reserved at all. The list is in <a href="#words">Every reserved word</a>.</td></tr>
         <tr><td class="mono">punctuation</td><td class="mono">( ) [ ] { } , : ; . .. ..= -&gt; =&gt; _ @ ?</td><td class="what">Longest match wins: <code>..=</code> before <code>..</code> before <code>.</code>, and <code>-&gt;</code> before <code>-</code>.</td></tr>
         <tr><td class="mono">operator</td><td class="mono">+ - * ** / % &amp; | ^ &lt;&lt; &gt;&gt; = == != &lt; &gt; &lt;= &gt;=</td><td class="what">Rungs and associativity are in <a href="#operators">Operators and precedence</a>.</td></tr>
         <tr><td class="mono">Unknown</td><td class="what">anything else</td><td class="what">Emitted rather than aborting, which is what lets the parser report more than one error per pass.</td></tr>
@@ -2601,13 +2602,22 @@ else:
   <p class="lede">
     The lexer's <code>from_word</code> in
     <code>crates/science-lexer/src/token.rs</code> maps <strong>68 words</strong>
-    to something other than an identifier. <strong>Forty are live</strong> &mdash;
-    they mean something today. <strong>Twenty-eight are held</strong> &mdash;
-    reserved for a later phase, an error to use, and never an identifier. Both
-    tables below are that function, read out.
+    to something other than an identifier. <strong>Forty-six are live</strong>
+    &mdash; they mean something today. <strong>Twenty-two are held</strong>
+    &mdash; reserved for a later phase, an error to use, and never an
+    identifier. Both tables below are that function, read out.
+  </p>
+  <p class="lede" style="margin-top:1rem">
+    A third table follows them, and it is the one most likely to be what you
+    came here for. <strong>Thirteen more words mean something</strong> &mdash;
+    <code>property</code>, <code>requires</code>, <code>axis</code> and ten
+    others &mdash; and <strong>none of them is in that function at all</strong>.
+    They are <em>contextual</em>: recognised in one position and an ordinary
+    identifier everywhere else. A page called "every reserved word" that omitted
+    them would answer the lexer's question rather than yours.
   </p>
 
-  <h3>Live &mdash; 40 words</h3>
+  <h3>Live &mdash; 46 words</h3>
   <div class="scroller">
     <table>
       <thead><tr><th>Word</th><th>Means</th></tr></thead>
@@ -2652,6 +2662,12 @@ else:
         <tr><td class="mono">true</td><td class="what">A <code>Bool</code> literal.</td></tr>
         <tr><td class="mono">false</td><td class="what">A <code>Bool</code> literal.</td></tr>
         <tr><td class="mono">null</td><td class="what">The other value of a <code>T?</code>. A literal, not a prelude value.</td></tr>
+        <tr><td class="mono">assert</td><td class="what">A verification construct, not a library call. The compiler tries to discharge the condition; when it cannot it emits a check, and either way it records the fact for the bounds-check and region machinery downstream. <a href="guide.html#contracts">Guide &sect;2</a>.</td></tr>
+        <tr><td class="mono">pure</td><td class="what"><code>pure def</code> &mdash; a compiler-checked assertion that a function's inferred effect set is empty. The one effect declaration in the language; there is no syntax for declaring a non-empty set.</td></tr>
+        <tr><td class="mono">with</td><td class="what">A block head carrying two kinds of clause: a shape clause, which binds const dimension parameters from a runtime shape, and a policy clause, which fixes the seed, device, precision or check level. <a href="guide.html#with">Guide &sect;6</a>.</td></tr>
+        <tr><td class="mono">durable</td><td class="what"><code>durable def</code> &mdash; the result is cached against a key covering the arguments <em>and the compiled body</em>, so editing the function invalidates the cache by itself. <a href="guide.html#durable">Guide &sect;5</a>.</td></tr>
+        <tr><td class="mono">checkpoint</td><td class="what"><code>checkpoint every n binder</code> inside a <code>durable</code> head: saves the loop's live state at that cadence so a killed run restarts near where it stopped.</td></tr>
+        <tr><td class="mono">resume</td><td class="what">Restores the latest matching checkpoint. Automatic on a cache hit against a partial entry; written explicitly only for <code>sciencec run --resume</code>.</td></tr>
       </tbody>
     </table>
   </div>
@@ -2666,7 +2682,7 @@ else:
     item and remain ordinary identifiers everywhere else.
   </p>
 
-  <h3>Held &mdash; 28 words</h3>
+  <h3>Held &mdash; 22 words</h3>
   <p>
     Each of these lexes to a reserved token. Using one as a name is an error
     today and will not be a breaking change when the phase that wants it lands.
@@ -2685,17 +2701,11 @@ else:
         <tr><td class="mono">supervise</td><td class="what">F3 &mdash; supervision trees.</td></tr>
         <tr><td class="mono">async</td><td class="what">Concurrency. The concurrency note declines the model and keeps the word.</td></tr>
         <tr><td class="mono">await</td><td class="what">The same decision, the same note.</td></tr>
-        <tr><td class="mono">durable</td><td class="what">F5 &mdash; durability.</td></tr>
-        <tr><td class="mono">checkpoint</td><td class="what">F5. Collides with a training checkpoint in binding position.</td></tr>
-        <tr><td class="mono">resume</td><td class="what">F5 &mdash; resuming a lowered state machine.</td></tr>
         <tr><td class="mono">tensor</td><td class="what">F1, hypothetically. <strong>The audit asks to free it</strong>; the type <code>Tensor</code> is capitalised and was never at risk.</td></tr>
         <tr><td class="mono">shape</td><td class="what">F1, hypothetically. <strong>The audit asks to free it</strong>, and the broadcasting note has since confirmed F1 wants no <code>shape</code> declaration at all.</td></tr>
         <tr><td class="mono">parallel</td><td class="what">F2 &mdash; a parallel chain link, where the word on the screen is the point.</td></tr>
         <tr><td class="mono">kernel</td><td class="what">F2 &mdash; a GPU kernel. <strong>The audit asks to free it</strong>: it is also a KDE kernel, an NMR window and a nullspace.</td></tr>
         <tr><td class="mono">equation</td><td class="what">An equation as a construct: dimensionally checked at compile time and rendered to the paper from the same definition that ran. <code>formula</code> was rejected because <code>chem</code> already spells a chemical formula that way.</td></tr>
-        <tr><td class="mono">pure</td><td class="what">A purity marker on a declaration, with its own diagnostic in the effects design.</td></tr>
-        <tr><td class="mono">assert</td><td class="what">A verification construct, not a library function &mdash; a place where the compiler can sometimes discharge the condition statically. <strong>Kept deliberately, and unbuilt.</strong></td></tr>
-        <tr><td class="mono">with</td><td class="what">A block binding const dimension parameters, in the broadcasting design.</td></tr>
         <tr><td class="mono">on</td><td class="what">A parameter label &mdash; <code>train(net, on: data)</code>.</td></tr>
         <tr><td class="mono">move</td><td class="what">An explicit move, at a C boundary.</td></tr>
         <tr><td class="mono">yield</td><td class="what">A generator form no phase asks for. <strong>The audit asks to free it</strong>: it is the <em>result</em> in chemistry, agronomy and finance.</td></tr>
@@ -2708,14 +2718,90 @@ else:
     </table>
   </div>
 
+  <h3>Contextual &mdash; 13 words, and none of them is reserved</h3>
+  <p>
+    Each of these means something in exactly one position and is an ordinary
+    identifier in every other. <code>let axis be 0</code> compiles.
+    <code>let property be sample.density</code> compiles. That is the whole
+    point of the category, and it is why the six design notes that introduced
+    these words could add thirteen constructs without spending a single entry on
+    the held list above.
+  </p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Word</th><th>Means</th><th>Recognised only</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">test</td><td class="what">An item holding one worked case. Its name is a sentence in quotes, not an identifier, and it never enters a release binary.</td><td class="what">At item position, before a string literal</td></tr>
+        <tr><td class="mono">property</td><td class="what">An item stating something true of <em>every</em> input, checked against generated data with the failing case shrunk to its smallest form. <a href="guide.html#property">Guide &sect;1</a>.</td><td class="what">At item position, before a string literal</td></tr>
+        <tr><td class="mono">requires</td><td class="what">A precondition. Checked at the <em>call site</em>, so a violation is the caller's bug and is reported there.</td><td class="what">In a signature, after the return type</td></tr>
+        <tr><td class="mono">ensures</td><td class="what">A postcondition, checked at every return. The name <code>result</code> inside it is the returned value &mdash; and is an ordinary identifier anywhere else, including in the body of the same function.</td><td class="what">In a signature, after the return type</td></tr>
+        <tr><td class="mono">invariant</td><td class="what">A condition true of every value of a type, checked after construction and after any <code>mutable self</code> method. Only ownership makes that last rule affordable.</td><td class="what">In a <code>type</code> body, after the fields</td></tr>
+        <tr><td class="mono">axis</td><td class="what">Declares an axis name, so that two dimensions of equal length and different meaning stop being interchangeable. Declared rather than conjured on first use, because otherwise a typo silently becomes a new axis. <a href="guide.html#axes">Guide &sect;4</a>.</td><td class="what">At item position, before an identifier</td></tr>
+        <tr><td class="mono">keyed</td><td class="what">Opens the clause naming what identifies a <code>durable</code> call. Arguments are never hashed automatically &mdash; a forty-gigabyte frame would cost more to hash than to recompute.</td><td class="what">In a <code>durable</code> head</td></tr>
+        <tr><td class="mono">by</td><td class="what">The second half of <code>keyed by</code>.</td><td class="what">In a <code>durable</code> head</td></tr>
+        <tr><td class="mono">every</td><td class="what">The cadence in <code>checkpoint every 10 epochs</code>.</td><td class="what">In a <code>durable</code> head</td></tr>
+        <tr><td class="mono">ignoring</td><td class="what">Marks a parameter as irrelevant to the cache key. You may decide a parameter does not matter; you may not forget one, which is the point of making the clause exhaustive.</td><td class="what">In a <code>keyed by</code> clause</td></tr>
+        <tr><td class="mono">seed</td><td class="what">Binds a <code>Key</code> for the block. It does <em>not</em> redirect what callees read &mdash; that would be ambient state with better syntax. It binds a value the block can pass.</td><td class="what">In a <code>with</code> head</td></tr>
+        <tr><td class="mono">device</td><td class="what">Binds where tensors in the block are allocated. Device allocation is deliberately not an effect, so no bit is added by this.</td><td class="what">In a <code>with</code> head</td></tr>
+        <tr><td class="mono">precision</td><td class="what">Decides what an unannotated float literal becomes and what an unconstrained type defaults to. It never narrows a value computed outside the block, and the compiler refuses a block whose precision would.</td><td class="what">In a <code>with</code> head</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <p class="note">
-    Eight names are <strong>deliberately not reserved</strong>, because each is a
-    common variable name in the code of the people this language is for:
+    <code>unchecked</code> is the fourth policy name and takes no value;
+    <code>skipping</code>, <code>propagating</code> and <code>pairwise</code> are
+    not keywords in any position at all &mdash; they are ordinary
+    <strong>argument labels</strong>, the same kind of thing as
+    <code>tolerance:</code> or <code>axis:</code>, and they appear in
+    <code>heights.mean(skipping null)</code> for readability rather than for the
+    grammar. So does <code>over:</code> and <code>along:</code> on a reduction.
+    <a href="guide.html#missing">Guide &sect;3</a> is where the pair
+    <code>skipping</code>/<code>propagating</code> is explained, and it matters
+    more than its grammatical status suggests: it is the difference between an
+    average over 340 rows and one over 998.
+  </p>
+
+  <div class="callout">
+    <p>
+      <strong>Why thirteen contextual words and not thirteen reservations.</strong>
+      The reserved-word audit treats the held list as a budget, and the argument
+      is about who pays. A reservation is paid by every scientist who ever wanted
+      to write <code>let axis be 0</code> or <code>let property be
+      material.property</code>; a contextual word is paid once, by whoever writes
+      the one extra match arm in the parser. <code>property</code> is the clearest
+      case &mdash; it is <em>the</em> word in materials science and optics &mdash;
+      and the rule that saves it is small: a keyword only before a string
+      literal, which no other item form is followed by.
+    </p>
+    <p style="margin-top:0.8rem">
+      The cost is real and is stated rather than waved away: thirteen words now
+      need a position to be understood, so "is this a keyword?" no longer has a
+      single-list answer, and this table exists because of that. A reader who
+      wants the lexer's answer reads the two tables above; a reader who wants the
+      language's answer reads all three.
+    </p>
+  </div>
+
+  <p class="note">
+    Six names are <strong>deliberately not reserved and are used by nothing</strong>,
+    because each is a common variable name in the code of the people this
+    language is for:
   </p>
   <ul class="bank never">
-    <li>grad</li><li>dim</li><li>dims</li><li>axis</li>
-    <li>device</li><li>dtype</li><li>unit</li><li>alias</li>
+    <li>grad</li><li>dim</li><li>dims</li>
+    <li>dtype</li><li>unit</li><li>alias</li>
   </ul>
+  <p class="note">
+    This bank held eight names until <code>axis</code> and <code>device</code>
+    were taken by the named-axis and policy-block designs. <strong>Neither became
+    reserved</strong>, which is the thing worth noticing: both are in the
+    contextual table above precisely so that the promise this bank makes &mdash;
+    a scientist may name a variable <code>axis</code> or <code>device</code>
+    &mdash; survives the feature that uses the word. The bank now lists the words
+    that are free <em>and</em> uninvolved; those two are free and involved.
+  </p>
   <p class="note">
     <code>function</code> is free too, and that is a decision rather than an
     omission: it was the declaration keyword until syntax revision 3 and is now
@@ -2781,6 +2867,442 @@ else:
       "reserved, not yet used", and the lexer makes all three live keywords.
     </p>
   </div>
+</section>
+
+<!-- ==================================================================== -->
+<section id="inuse">
+  <h2>Each new word, in code<a class="anchor" href="#inuse" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    The three tables above say what each word <em>means</em>. This section shows
+    each one <strong>being used</strong>, in a program you can read top to
+    bottom, with the output written underneath as a comment. Nineteen words plus
+    six argument labels appear below and every one of them is exercised at least
+    once &mdash; the count is checked against the tables, not remembered.
+  </p>
+
+  <div class="callout">
+    <p>
+      <strong>These six features are designed and not yet built, and the
+      listings below are written in the present tense anyway.</strong> That is a
+      departure from the rest of this page, where every block was put through
+      <code>sciencec check</code> and every output comment is pasted from a real
+      run. Here the code is the syntax the design notes specify and the output
+      comments are what those notes say the program produces. Type one into the
+      compiler today and you will get a parse error.
+    </p>
+    <p style="margin-top:0.8rem">
+      It is said here rather than left to be discovered, and it is said once
+      rather than on every block. The authority for each subsection is the note
+      named in its heading, in <code>docs/superpowers/design/</code>. The
+      <a href="guide.html">guide</a> explains the same six features slowly and
+      in prose; this section is the compressed version, arranged by word.
+    </p>
+  </div>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h3><code>test</code> and <code>property</code> &mdash; <span class="mono">property-testing.md</span></h3>
+
+  <p class="note">
+    Both are item forms and both take <strong>a sentence in quotes rather than an
+    identifier</strong>, which is what makes a failure report readable. A
+    <code>test</code> states one case. A <code>property</code> states something
+    true of every input and the runner generates the inputs.
+  </p>
+
+<pre data-science>def mean(xs: borrowed (Array of F64)) -&gt; F64:
+    let mutable total be 0.0
+    for x in xs:
+        total be total + x
+    total / (xs.length() as F64)
+
+test "mean of three numbers":
+    testing.check_close(mean(borrowed [1.0, 2.0, 3.0]), 2.0, tolerance: 1e-12)
+
+property "mean lies between the smallest and largest value"
+        for xs: Array of F64 where xs.length() &gt; 0:
+    let m be mean(borrowed xs)
+    testing.check(m &gt;= xs.min() and m &lt;= xs.max())</pre>
+
+<pre class="shell"><code><span class="p">$</span> sciencec test analysis.science
+<span class="c">ok</span>       mean of three numbers
+<span class="c">ok</span>       mean lies between the smallest and largest value   (200 cases)
+
+2 passed, 0 failed</code></pre>
+
+  <p class="note">
+    <strong><code>for xs: Array of F64</code></strong> declares what to generate
+    and its type. <strong><code>where</code></strong> filters the generated
+    inputs &mdash; the same word a generic bound uses, doing the analogous job.
+    A filter that rejects more than nine tenths of what is generated is refused
+    rather than run quietly, because a property that silently tests four inputs
+    is worse than no property.
+  </p>
+
+  <p class="note">
+    When a property fails, the input is <strong>shrunk</strong> to the smallest
+    one that still fails, and two things are written down that no library can
+    write: the seed, and a regression file. Remove the <code>where</code> clause
+    above and the empty array gets through:
+  </p>
+
+<pre class="shell"><code><span class="p">$</span> sciencec test analysis.science
+<span class="e-code">failed</span>   mean lies between the smallest and largest value
+  shrunk to: xs = []
+  seed:      k:7f3a1c04e7b2   size 0
+  wrote:     tests/regressions/mean_lies_between.science
+
+1 passed, 1 failed</code></pre>
+
+  <p class="note">
+    The regression file is <strong>ordinary Science source</strong>, not a cache
+    blob &mdash; so it is reviewed in a pull request, it survives the deletion of
+    the property that produced it, and it is committed rather than living in a
+    directory that is usually in <code>.gitignore</code>:
+  </p>
+
+<pre data-science># Generated by `sciencec test` on a failing property. Seed k:7f3a1c04e7b2.
+test "mean lies between min and max — regression":
+    let xs: Array of F64 be []
+    let m be mean(borrowed xs)
+    testing.check(m &gt;= xs.min() and m &lt;= xs.max())</pre>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h3><code>requires</code>, <code>ensures</code>, <code>invariant</code>, <code>assert</code> &mdash; <span class="mono">contracts.md</span></h3>
+
+  <p class="note">
+    <code>requires</code> and <code>ensures</code> go in the signature, after
+    the return type and before the <code>:</code> that opens the body, one per
+    line and as many as you like. <code>invariant</code> goes in a
+    <code>type</code> body after the fields.
+  </p>
+
+<pre data-science>type Probability:
+    value: F64
+    invariant value &gt;= 0.0 and value &lt;= 1.0
+
+def clamp01(x: F64) -&gt; Probability
+    requires x.is_finite()
+    ensures result.value &gt;= 0.0 and result.value &lt;= 1.0:
+    Probability(value: x.min(1.0).max(0.0))
+
+let p be clamp01(0.75)
+print(f"p is {p.value}")
+# p is 0.75</pre>
+
+  <p class="note">
+    <strong><code>result</code> is not a reserved word.</strong> It means the
+    returned value inside an <code>ensures</code> clause and is an ordinary
+    identifier everywhere else, including in the body of the same function. This
+    is the pattern the whole contextual table is built on: a word means something
+    in one position and is yours in all the others.
+  </p>
+
+  <p class="note">
+    Every contract lands on one of three rungs and which one is not a setting.
+    <strong>Proved</strong> emits no code at all. <strong>Checked</strong> emits
+    a branch. <strong>Assumed</strong> emits nothing and warns, because a
+    contract that is neither proved nor checked is a comment with syntax. One
+    command tells you which, and without it the ladder would be invisible:
+  </p>
+
+<pre class="shell"><code><span class="p">$</span> sciencec contracts ./src
+src/prob.science:6   requires x.is_finite()               checked
+src/prob.science:7   ensures  result.value &gt;= 0.0 and ...  checked
+src/prob.science:3   invariant value &gt;= 0.0 and ...        checked
+src/bisect.science:9 requires tolerance &gt; 0.0             proved   (callers: 3/3)</code></pre>
+
+  <p class="note">
+    There is a fourth outcome and it is the best one. Sometimes a
+    <code>requires</code> can be <em>disproved</em> at a call site &mdash; that
+    is not a failed proof, it is a bug caught before the program ever runs:
+  </p>
+
+<pre data-science>def bisect(f: (F64) -&gt; F64, lo: F64, hi: F64) -&gt; F64
+    requires lo &lt; hi:
+    ...
+
+let root be bisect(sine, 10.0, 2.0)   # error: `10.0 &lt; 2.0` is false here</pre>
+
+  <p class="note">
+    <code>assert</code> keeps the spelling and the runtime behaviour it always
+    had &mdash; it aborts on failure &mdash; and joins the same ladder. So it now
+    does something besides checking: it <strong>teaches the compiler a fact</strong>
+    that later code can rely on.
+  </p>
+
+<pre data-science>def take_first(xs: borrowed (Array of F64), n: Int) -&gt; Slice of F64:
+    assert(n &lt;= xs.length())
+    xs[0..n]                 # no bounds check emitted: the assert discharged it
+
+let head be take_first(borrowed [1.0, 2.0, 3.0, 4.0], 2)
+print(f"{head.length()} elements")
+# 2 elements</pre>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h3><code>skipping</code>, <code>propagating</code>, <code>pairwise</code> &mdash; <span class="mono">missing-data.md</span></h3>
+
+  <p class="note">
+    These three are <strong>not keywords in any position</strong>. They are
+    ordinary argument labels, the same kind of thing as <code>tolerance:</code>,
+    and they are listed here because the rule around them is a language rule: a
+    reduction over a collection that can contain <code>null</code> does not
+    compile until it is told what absence means.
+  </p>
+
+<pre data-science>let heights: Array of F64? be [1.72, null, 1.81]
+
+print(f"{heights.mean(skipping null)}")
+# 1.765
+
+print(f"{heights.mean(propagating null)}")
+# null
+
+print(f"{heights.length()}")
+# 3</pre>
+
+  <p class="note">
+    <code>skipping null</code> drops the absent values and divides by how many
+    were left. <code>propagating null</code> gives <code>null</code> the moment
+    any value is absent. <code>length()</code> counts <em>slots</em> and needs no
+    policy &mdash; it always did. <code>count()</code> counts present values and
+    does need one, and SQL's famous <code>COUNT(col)</code> versus
+    <code>COUNT(*)</code> divergence is what happens when one word does both
+    jobs.
+  </p>
+
+  <p class="note">
+    The obligation is attached to the <strong>element type</strong>, so an
+    <code>Array of F64</code> reduces exactly as it always did and almost no
+    code is affected. Deal with the absence once and the type stops being
+    nullable:
+  </p>
+
+<pre data-science>let clean be heights.drop_missing()    # Array of F64 — no longer nullable
+print(f"{clean.mean()}")               # no policy needed, and none accepted
+# 1.765</pre>
+
+  <p class="note">
+    For two aligned collections, plain <code>skipping null</code> is refused and
+    <code>pairwise</code> is required, because skipping each column
+    independently would leave two lists of different lengths whose entries no
+    longer correspond &mdash; one person's height against another's weight:
+  </p>
+
+<pre data-science>let r be correlation(height, weight, skipping null pairwise)
+print(f"r = {r}")
+# r = 0.83</pre>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h3><code>axis</code>, <code>over:</code>, <code>along:</code> &mdash; <span class="mono">named-axes.md</span></h3>
+
+  <p class="note">
+    <code>axis</code> is an item and declares a name. Names are declared rather
+    than conjured on first use, so that <code>wavelenght</code> is an error
+    rather than silently a different axis from <code>wavelength</code>.
+  </p>
+
+<pre data-science>axis sample
+axis wavelength
+
+type Spectrum is Tensor of (F32, [wavelength: 2048, sample: 96])
+
+# readings: [sample: 96, wavelength: 2048]
+# baseline: [wavelength: 2048]
+let centred be readings .- baseline     # aligns on `wavelength` by name
+
+let mean_spectrum be readings.mean(over: sample)
+print(f"{mean_spectrum.shape()}")
+# [wavelength: 2048]
+
+for row in readings.along(sample):
+    ...</pre>
+
+  <p class="note">
+    <strong><code>over:</code> consumes an axis</strong> &mdash; the result no
+    longer has it. <strong><code>along:</code> walks one</strong> &mdash; each
+    element still has all the others. Two words because they are two operations;
+    one word for both is how <code>apply_along_axis</code> came to need a
+    paragraph of documentation.
+  </p>
+
+  <p class="note">
+    The old unnamed spelling still works and means what it always meant, so
+    nothing in the corpus needs rewriting. What naming buys is that
+    <code>@</code> contracts on the shared name, which makes the operation state
+    its own meaning and turns the classic square-transpose bug into an error:
+  </p>
+
+<pre data-science>axis feature
+axis output
+
+# x: [sample: n, feature: 768]
+# w: [feature: 768, output: 10]
+let y be x @ w
+print(f"{y.shape()}")
+# [sample: n, output: 10]</pre>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h3><code>durable</code>, <code>keyed by</code>, <code>ignoring</code>, <code>checkpoint every</code>, <code>resume</code>, <code>pure</code> &mdash; <span class="mono">durable-computation.md</span></h3>
+
+  <p class="note">
+    <code>pure def</code> is a compiler-checked assertion that a function's
+    inferred effect set is empty. <code>durable def</code> is the same condition
+    plus a cache, so writing both is redundant.
+  </p>
+
+<pre data-science>pure def log_likelihood(data: borrowed (Array of F64), mu: F64, sigma: F64) -&gt; F64:
+    let mutable total be 0.0
+    for x in data:
+        let z be (x - mu) / sigma
+        total be total - 0.5 * z * z
+    total
+
+durable def fit(
+        data: borrowed Frame,
+        epochs: Int,
+        tag: String) -&gt; Model
+    keyed by (data.digest(), epochs, ignoring tag)
+    checkpoint every 10 epochs:
+    let mutable model be Model.initial()
+    for epoch in 0..epochs:
+        model be step(model, data)
+    model</pre>
+
+<pre class="shell"><code><span class="p">$</span> sciencec run pipeline.science
+fitting 200 epochs                       <span class="c"># 4m 41s</span>
+<span class="p">$</span> sciencec run pipeline.science
+fitting 200 epochs                       <span class="c"># 0.004s — cache hit dk:9f3a1c04e7b2</span>
+<span class="p">$</span> <span class="c"># edit one line inside `step`, then:</span>
+<span class="p">$</span> sciencec run pipeline.science
+fitting 200 epochs                       <span class="c"># 4m 39s — the body hash changed</span></code></pre>
+
+  <p class="note">
+    That third run is the whole feature. The cache key covers the arguments
+    <em>and</em> a hash of the compiled body of <code>fit</code> and everything
+    it calls, so editing <code>step</code> invalidates the cache with no
+    discipline required from you. A hand-rolled cache keyed on a parameter
+    string cannot do this, and that is the bug every hand-rolled cache has.
+  </p>
+
+  <p class="note">
+    <strong><code>keyed by</code></strong> is explicit because the compiler
+    cannot know what identifies your dataset and hashing a forty-gigabyte frame
+    would cost more than the fit. <strong><code>ignoring</code></strong> marks a
+    parameter as irrelevant &mdash; <code>tag</code> above names the run and does
+    not change the answer. Every parameter must appear in one list or the other,
+    so you can decide a parameter does not matter but you cannot forget one.
+  </p>
+
+  <p class="note">
+    <strong><code>checkpoint every</code></strong> names a cadence and a loop
+    binder, and <strong><code>resume</code></strong> is what happens on a cache
+    hit against a partial entry. It is automatic; you spell it only to pick one
+    run out of several:
+  </p>
+
+<pre class="shell"><code><span class="p">$</span> sciencec run pipeline.science
+fitting 200 epochs
+<span class="e-code">killed</span> at epoch 83                     <span class="c"># the scheduler preempted the job</span>
+<span class="p">$</span> sciencec run pipeline.science
+resuming dk:9f3a1c04e7b2 from epoch 80   <span class="c"># automatic: a partial entry matched</span>
+<span class="p">$</span> sciencec run pipeline.science --resume dk:4c1e88a0b3f7
+resuming dk:4c1e88a0b3f7 from epoch 150  <span class="c"># or name one run out of several</span></code></pre>
+
+  <p class="note">
+    A function that reads the world cannot be durable, because a cached answer
+    would not notice the file changing. The compiler declines and shows the chain
+    &mdash; which call, inside which function, reaches the filesystem &mdash;
+    because the effect is inferred rather than written and you would otherwise
+    have to guess. The fix is nearly always a better program:
+  </p>
+
+<pre data-science># Read the world in the caller; make the part that computes durable.
+def main():
+    let raw, err be read_csv("measurements.csv")
+    if err?:
+        print("could not read the measurements")
+        return
+    let model be fit(borrowed raw, epochs: 200, tag: "nightly")
+    print(f"fitted {model.name()}")
+    # fitted gaussian-mixture-4</pre>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h3><code>with</code>, <code>seed</code>, <code>device</code>, <code>precision</code>, <code>unchecked</code> &mdash; <span class="mono">with-policy-blocks.md</span></h3>
+
+  <p class="note">
+    One <code>with</code> head carries two kinds of clause. A <strong>shape
+    clause</strong> binds const dimension parameters from a runtime shape. A
+    <strong>policy clause</strong> fixes the seed, the device, the float
+    precision, or the check level. They mix freely, separated by commas, because
+    both say the same thing: <em>this is fixed here, and everything inside may
+    rely on it</em>.
+  </p>
+
+<pre data-science>with seed 42, device gpu:0, precision f32:
+    let a be bootstrap(borrowed data, 1000)                   # `key` filled from the block
+    let b be bootstrap(borrowed data, 1000, key: other_key)   # written out, and wins
+    print(f"{a.mean()} {b.mean()}")
+    # 0.4871 0.5023</pre>
+
+  <p class="note">
+    <strong>A policy is a binding, not a global.</strong> <code>with seed 42</code>
+    does not reach inside the functions you call and change what they read; it
+    binds a <code>Key</code> named <code>seed</code> in the block, and a function
+    that needs randomness declares a parameter for it as it always had to. The
+    one concession is that an argument whose name and type match a policy binding
+    may be <strong>omitted</strong>, and is filled from the block &mdash; which is
+    the first line above. <code>sciencec fmt --explicit</code> writes every
+    omission back out.
+  </p>
+
+  <p class="note">
+    A policy nobody consumes is an <strong>error</strong>, not a warning. Unused
+    bindings are warnings everywhere else in this language; this one is an error
+    because of what the mistake costs. The author believes the fit is seeded. It
+    is not, and the artefact would faithfully record a seed that did nothing:
+  </p>
+
+<pre data-science>with seed 42:
+    let m be fit_unseeded(borrowed data)   # error: nothing here takes a key</pre>
+
+  <p class="note">
+    <code>unchecked</code> is the fourth policy and takes no value. It scopes
+    the release profile's third level to a block, so one hot loop can drop its
+    contract checks without the whole binary doing so &mdash; lexical,
+    greppable, and recorded in the artefact. It does <strong>not</strong> enable
+    <code>unsafe</code>, which is a different word with a closed list of powers.
+  </p>
+
+<pre data-science>with table.shape as [sample: rows, feature: 768], seed 42, precision f32:
+    let z be (table .- table.mean(over: sample)) ./ table.deviation(over: sample)
+    with unchecked:
+        let s be inner_product(z, z)     # contracts off for this block only
+    print(f"standardised {rows} rows")
+    # standardised 4096 rows</pre>
+
+  <p class="note">
+    Every policy block that encloses a computation is written into the provenance
+    record stamped onto your outputs, so "what seed, what device, what precision,
+    were the checks on?" is answered by the figure rather than by your memory.
+    That is the point of the construct; not retyping the seed is a side effect.
+  </p>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h3>The count, checked</h3>
+  <p class="note">
+    Nineteen words and six labels, each used at least once above. Against the
+    tables in <a href="#words">Every reserved word</a>: the six that moved from
+    held to live are <code>assert</code>, <code>pure</code>, <code>with</code>,
+    <code>durable</code>, <code>checkpoint</code> and <code>resume</code>; the
+    thirteen contextual ones are <code>test</code>, <code>property</code>,
+    <code>requires</code>, <code>ensures</code>, <code>invariant</code>,
+    <code>axis</code>, <code>keyed</code>, <code>by</code>, <code>every</code>,
+    <code>ignoring</code>, <code>seed</code>, <code>device</code> and
+    <code>precision</code>; and the six argument labels, which are not keywords
+    at all, are <code>unchecked</code>, <code>skipping</code>,
+    <code>propagating</code>, <code>pairwise</code>, <code>over:</code> and
+    <code>along:</code>.
+  </p>
 </section>
 
 <!-- ==================================================================== -->

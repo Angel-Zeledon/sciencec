@@ -131,9 +131,33 @@
    * them. Every value below is measured against --code-bg and clears 4.5:1
    * there; the tightest is --c-com at 4.84. */
   --code-bg:#1f2540; --code-ink:#dfe4f2; --code-frame:#3f4670;
-  --c-key:#e85aa8; --c-ctl:#e85aa8; --c-type:#4de8ff; --c-fn:#3dfca0;
-  --c-str:#f6ff6b; --c-num:#c77dff; --c-par:#ffa23c; --c-op:#e85aa8;
+  --c-key:#e85aa8; --c-ctl:#ff8fb0; --c-type:#4de8ff; --c-fn:#9fe0c0;
+  --c-str:#f6ff6b; --c-num:#c77dff; --c-par:#ffa23c; --c-op:#9aa7d0;
   --c-com:#8d98ba; --c-res:#ff6e6e; --c-pun:#9ba6c4;
+  /* Three of these moved on 2026-09-18, to follow the editor themes rather
+   * than the other way round — the rule is that a sample here and the same
+   * file in editors/vscode/ are coloured alike, so the theme is the source.
+   *
+   * --c-fn went from #3dfca0 to #9fe0c0: same hue family (151 deg to 150), and
+   * the change is saturation 97% -> 51% and lightness 61% -> 75%. The brief
+   * was a lighter, less neon green and those are the two numbers that carry
+   * it. It is 9.95:1 on --code-bg.
+   *
+   * --c-ctl and --c-op were both #e85aa8, the same value as --c-key, so the
+   * .k/.kc/.o class split in highlight.js existed and painted nothing. Control
+   * flow is now a lighter rose and the symbolic operators a muted blue-grey,
+   * which is the split the VS Code grammar always had and neither the theme
+   * nor this file had ever spent. 7.02:1 and 6.31:1.
+   *
+   * **The --accent collision below is now closer and is still clear.** That
+   * paragraph separates the link green from the function green on two axes,
+   * 19 deg of hue and 41pp of saturation. After the move it is 18 deg of hue
+   * and 12pp of lightness: the saturation axis is spent, because desaturating
+   * the function green is the whole point of the change. Two axes remain and
+   * the hue distance is essentially unchanged, which is the one that was
+   * doing the work. If --accent ever moves toward 150 deg, this is the
+   * pairing that breaks first and the test is still the same one: prose that
+   * names a function, with a link within a line of it. */
   /* The block rail, kept separate from the syntax palette above on purpose:
    * these five paint a flat 3px tab on the left of a `pre`, never a gradient,
    * so the block kinds stay tellable apart without competing with the tokens

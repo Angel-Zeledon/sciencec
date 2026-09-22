@@ -1,0 +1,1188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Guide &middot; Science</title>
+<meta name="description" content="Six features of Science, explained slowly: property testing, contracts, missing data, durable computation, named axes, and policy blocks. Each chapter starts with the bug it exists to prevent, then builds the construct one line at a time.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;1,400&display=swap">
+<link rel="stylesheet" href="assets/science.css">
+</head>
+<body>
+
+<div class="wrap wide"><div class="top">
+  <div class="mark"><span class="glyph">&#8730;</span><span class="name"><a href="index.html" style="color:inherit;text-decoration:none">Science</a></span></div>
+  <nav><a href="index.html">Home</a><a href="tutorial.html">Tutorial</a><a href="guide.html" aria-current="true">Guide</a><a href="reference.html">Reference</a><a href="syntax.html">Syntax</a><a href="rationale.html">Rationale</a></nav>
+</div></div>
+
+<div class="wrap wide reference">
+
+<header class="masthead">
+  <p class="eyebrow">Guide &middot; six features, one chapter each</p>
+  <h1>The six things Science does that <em>your other language does not</em></h1>
+  <p class="standfirst">
+    The <a href="tutorial.html">tutorial</a> teaches the language: bindings,
+    functions, types, ownership. This page assumes you have read it and teaches
+    the six features that are the actual reason to choose Science for
+    scientific work. <strong>Each chapter starts with a bug</strong> &mdash; a
+    real one, the kind that reaches a published figure &mdash; and then builds
+    the construct that makes that bug impossible, one line at a time.
+  </p>
+  <p class="standfirst" style="margin-top:1rem">
+    Read at whatever pace you like; the chapters do not depend on each other.
+    But read each one <em>in order inside itself</em>. Every chapter is written
+    to be understood without skipping, and none of them assumes you already
+    know why the feature is a good idea. If a paragraph seems slow, it is slow
+    on purpose: these are the six places where a reader who half-understands
+    will write something that compiles and is wrong.
+  </p>
+</header>
+
+<div class="docs">
+<aside class="sidebar">
+  <div class="groups">
+    <h2>Before you start</h2>
+    <ul>
+      <li><a href="#how">How to read this page</a></li>
+    </ul>
+    <h2>Being sure your code is right</h2>
+    <ul>
+      <li><a href="#property">1 &middot; <code>property</code></a></li>
+      <li><a href="#contracts">2 &middot; <code>requires</code> and <code>ensures</code></a></li>
+    </ul>
+    <h2>Being sure your data is right</h2>
+    <ul>
+      <li><a href="#missing">3 &middot; Missing data</a></li>
+      <li><a href="#axes">4 &middot; Named axes</a></li>
+    </ul>
+    <h2>Being sure your run is right</h2>
+    <ul>
+      <li><a href="#durable">5 &middot; <code>durable</code></a></li>
+      <li><a href="#with">6 &middot; <code>with</code> blocks</a></li>
+    </ul>
+    <h2>After</h2>
+    <ul>
+      <li><a href="#together">Putting it together</a></li>
+      <li><a href="#next">Where to go next</a></li>
+    </ul>
+  </div>
+</aside>
+
+<main>
+
+<!-- ==================================================================== -->
+<section id="how">
+  <h2>How to read this page<a class="anchor" href="#how" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    A short orientation, and one honest warning about what these six features
+    have in common.
+  </p>
+
+  <p class="note">
+    <strong>Every chapter has the same four parts, in the same order.</strong>
+    First, <em>the bug</em> &mdash; a program that looks correct and is not.
+    Second, <em>the idea</em> &mdash; in one sentence, before any syntax.
+    Third, <em>the construct</em>, built up a line at a time with nothing
+    introduced silently. Fourth, <em>the cost</em>, because every one of these
+    features asks you to type something you did not type before, and a guide
+    that hides the bill is selling rather than teaching.
+  </p>
+
+  <p class="note">
+    <strong>What the six have in common is the shape of the bug they catch.</strong>
+    None of these features catches a crash. A program that crashes tells you it
+    is broken, and you fix it that afternoon. Every bug on this page is one
+    where the program <em>finishes</em>, prints a number, and the number is
+    wrong &mdash; the average over a sample that quietly shrank, the matrix that
+    was transposed and happened to be square, the cached result from code you
+    edited an hour ago. These are the expensive bugs in scientific computing
+    because nothing tells you they happened.
+  </p>
+
+  <div class="callout">
+    <p>
+      <strong>A note on the code blocks.</strong> Science on this page is
+      coloured by the same highlighter the rest of the site uses, so a keyword
+      here looks like a keyword everywhere. Where a chapter shows a compiler
+      message it is shown once, in the one place where reading the message
+      <em>is</em> the lesson. There is deliberately not a diagnostic beside
+      every example: this is a guide, not the
+      <a href="reference.html">reference</a>, and a page that alternates code
+      and error boxes teaches the errors rather than the language.
+    </p>
+  </div>
+</section>
+
+<!-- ==================================================================== -->
+<section id="property">
+  <h2>1 &middot; <code>property</code> &mdash; testing the cases you did not think of<a class="anchor" href="#property" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    You already know how to write a <code>test</code>. This chapter is about the
+    fact that a test only ever checks the input its author imagined, and about
+    the construct that checks the ones they did not.
+  </p>
+
+  <h3>The bug</h3>
+  <p class="note">
+    Here is a function that computes the mean of a list, and a test for it. Both
+    look fine. Read them and decide whether you would approve this in a review.
+  </p>
+
+<pre data-science>def mean(xs: borrowed (Array of F64)) -&gt; F64:
+    let mutable total be 0.0
+    for x in xs:
+        total be total + x
+    total / (xs.length() as F64)
+
+test "mean of three numbers":
+    testing.check_close(mean(borrowed [1.0, 2.0, 3.0]), 2.0, tolerance: 1e-12)</pre>
+
+  <p class="note">
+    The test passes. The function divides by zero on an empty list and returns
+    <code>NaN</code>, and that <code>NaN</code> will flow through every
+    subtraction and comparison downstream of it without stopping anything. The
+    author did not think of the empty list, so the test does not contain it, and
+    <strong>no amount of care fixes this in general</strong> &mdash; the whole
+    problem is that you cannot write a test for the case you did not think of.
+  </p>
+
+  <h3>The idea</h3>
+  <p class="note">
+    Instead of writing down <em>an input and its answer</em>, write down
+    <em>something that must be true of every input</em>, and let the compiler's
+    test runner generate the inputs. A statement that holds for all inputs is
+    called a <strong>property</strong>, and it is spelled with that word.
+  </p>
+
+  <h3>The construct</h3>
+  <p class="note">
+    Start with the simplest possible one. It reads almost like English: for any
+    array of integers you like, sorting it does not change how many elements it
+    has.
+  </p>
+
+<pre data-science>property "sorting preserves length" for xs: Array of Int:
+    testing.check_equal(sorted(xs).length(), xs.length())</pre>
+
+  <p class="note">
+    Three parts, and each is worth naming. <code>property</code> is the item
+    keyword, and like <code>test</code> it takes <strong>a sentence in quotes
+    rather than an identifier</strong>, because the name is what you read in a
+    failure report and a sentence reads better than
+    <code>test_sorting_preserves_length</code>. The <code>for xs: Array of
+    Int</code> clause declares what to generate and its type. The body is an
+    ordinary block using the same <code>testing.check*</code> functions a
+    <code>test</code> uses &mdash; nothing new to learn there.
+  </p>
+
+  <p class="note">
+    When you run <code>sciencec test</code>, the runner calls that body a few
+    hundred times with different arrays: empty ones, single-element ones, long
+    ones, ones full of duplicates, ones containing the largest representable
+    integer. You wrote one line and got the empty-list case for free, which is
+    exactly the case the <code>test</code> above was missing.
+  </p>
+
+  <h3>Narrowing what gets generated</h3>
+  <p class="note">
+    Often a property only holds for some inputs. The mean of an empty list is
+    not a number, so a property about it has to exclude the empty list. You do
+    that with <code>where</code>, the same word a generic bound uses:
+  </p>
+
+<pre data-science>property "mean lies between the smallest and largest value"
+        for xs: Array of F64 where xs.length() &gt; 0:
+    let m be mean(borrowed xs)
+    testing.check(m &gt;= xs.min() and m &lt;= xs.max())</pre>
+
+  <p class="note">
+    A <code>where</code> clause <em>discards</em> generated inputs that do not
+    satisfy it. That is simple to understand and it has one trap, so the
+    language checks for it: if your condition throws away almost everything, the
+    property silently ends up testing three inputs instead of three hundred and
+    you would never know. Science refuses to run a property whose filter rejects
+    more than nine tenths of what is generated, and tells you to generate the
+    narrower thing directly instead &mdash; <code>x: Positive of F64</code>
+    generates only positive numbers and discards nothing.
+  </p>
+
+  <h3>Shrinking, which is the part that makes it usable</h3>
+  <p class="note">
+    Suppose the property above fails. The input that broke it is whatever the
+    generator happened to produce &mdash; realistically an array of forty
+    numbers like <code>-3.27e11</code>, which tells you nothing at all. A
+    counterexample you cannot read is barely better than no counterexample.
+  </p>
+
+  <p class="note">
+    So before reporting a failure, the runner <strong>shrinks</strong> it: it
+    repeatedly tries smaller, simpler versions of the failing input &mdash;
+    fewer elements, values closer to zero &mdash; and keeps any that still fail.
+    What it finally shows you is the smallest input it could find that still
+    breaks the property, which is usually so small that the bug is obvious from
+    looking at it.
+  </p>
+
+  <p class="note">
+    This is why, in Science, shrinking is <strong>required</strong> rather than
+    optional. A type you want to generate must implement
+    <code>Arbitrary</code>, and that interface has two methods, not one:
+  </p>
+
+<pre data-science>interface Arbitrary:
+    def generate(key: borrowed Key, size: Int) -&gt; Self
+    def shrink(self) -&gt; Array of Self</pre>
+
+  <p class="note">
+    Most languages make <code>shrink</code> optional and the result is that half
+    the types in a codebase have it and half do not, so half your failures are
+    readable and half are not. Requiring it costs a few lines when you write a
+    generator for your own type, and it means every failure on every type is
+    readable. For an atom &mdash; a type with nothing smaller to try &mdash;
+    <code>shrink</code> returns an empty array and you are done.
+  </p>
+
+  <h3>The failure, and why it always reproduces</h3>
+  <p class="note">
+    Here is the one compiler-adjacent output in this chapter, because reading it
+    <em>is</em> the lesson:
+  </p>
+
+<pre class="err"><code><span class="e-code">failed</span>: mean lies between the smallest and largest value
+  shrunk to: xs = [0.0, 0.0]
+  seed:      k:7f3a1c04e7b2   size 13
+  wrote:     tests/regressions/mean_lies_between.science</code></pre>
+
+  <p class="note">
+    Look at the last two lines, because they are where Science differs from
+    every property-testing library you may have used. <strong>The seed is
+    printed, and a regression file is written.</strong>
+  </p>
+
+  <p class="note">
+    The seed matters because a property that fails once and then cannot be made
+    to fail again is not a test result &mdash; it is a rumour, and you cannot
+    debug it. Science's random generator is seeded rather than ambient, so
+    <code>sciencec test --seed k:7f3a1c04e7b2</code> reproduces the entire run
+    exactly, on any machine, today or in four years. The seed also goes into the
+    provenance record that <a href="#with">chapter 6</a> describes, so a failing
+    run is reproducible from the artefact and not only from your terminal
+    scrollback.
+  </p>
+
+  <p class="note">
+    The regression file matters for a different reason. It is not a cache
+    file &mdash; it is <strong>ordinary Science source</strong>, a
+    <code>test</code> item with the shrunk input written out as a literal:
+  </p>
+
+<pre data-science># Generated by `sciencec test` on a failing property.
+test "mean lies between min and max — regression":
+    let xs be [0.0, 0.0]
+    let m be mean(borrowed xs)
+    testing.check(m &gt;= xs.min() and m &lt;= xs.max())</pre>
+
+  <p class="note">
+    Because it is source, it shows up in a pull request where somebody reviews
+    it, it keeps working after you delete the property that produced it, and it
+    is committed to the repository instead of living in a cache directory that
+    is nearly always in <code>.gitignore</code>. The bug found on your machine
+    on a Tuesday is still being tested on the build server next year.
+  </p>
+
+  <h3>What it costs</h3>
+  <p class="note">
+    Two things, and both are real. <strong>Thinking of a property is harder than
+    thinking of a test case</strong> &mdash; "what is true of every input?" is a
+    genuinely different and more demanding question than "what does this return
+    for 3?", and it is a skill that takes a week or two to develop. And
+    <strong>a property run is slower than a test</strong>, because it runs
+    hundreds of times instead of once. The usual arrangement is properties for
+    the handful of functions at the core of your analysis and ordinary
+    <code>test</code> items for everything else, and the two live side by side
+    in the same file with the same runner.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="contracts">
+  <h2>2 &middot; <code>requires</code> and <code>ensures</code> &mdash; what a function promises<a class="anchor" href="#contracts" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    Every function has rules about what you may pass it. Usually those rules
+    live in a comment, or in the author's head. This chapter is about writing
+    them where the compiler can read them.
+  </p>
+
+  <h3>The bug</h3>
+<pre data-science># Find a root of `f` between `lo` and `hi` by bisection.
+# Requires f(lo) and f(hi) to have opposite signs, and lo &lt; hi.
+def bisect(f: (F64) -&gt; F64, lo: F64, hi: F64, tolerance: F64) -&gt; F64:
+    ...</pre>
+
+  <p class="note">
+    That comment is doing real work and it has no power whatsoever. Call
+    <code>bisect(f, 10.0, 2.0, 1e-9)</code> with the bounds the wrong way round
+    and you get a number back. Not an error &mdash; a number, plausible-looking,
+    wrong. The comment was right and nobody read it, which is the normal fate of
+    comments.
+  </p>
+
+  <h3>The idea</h3>
+  <p class="note">
+    Move the comment into the signature, where it becomes a
+    <strong>contract</strong>: a statement the compiler is obliged to do
+    something about. Not merely to record &mdash; to act on.
+  </p>
+
+  <h3>The construct</h3>
+<pre data-science>def bisect(f: (F64) -&gt; F64, lo: F64, hi: F64, tolerance: F64) -&gt; F64
+    requires lo &lt; hi
+    requires tolerance &gt; 0.0
+    ensures result &gt;= lo and result &lt;= hi:
+    ...</pre>
+
+  <p class="note">
+    <code>requires</code> states what must be true <em>before</em> the function
+    runs &mdash; a condition on the arguments, which is the caller's
+    responsibility. <code>ensures</code> states what will be true
+    <em>after</em>, and inside it the name <code>result</code> refers to the
+    value being returned. Both sit after the return type and before the
+    <code>:</code> that opens the body, and you may write as many of each as
+    you like, one per line.
+  </p>
+
+  <p class="note">
+    <strong><code>result</code> is not a reserved word.</strong> It means the
+    returned value only inside an <code>ensures</code> clause; anywhere else,
+    including inside the function body, <code>let result be …</code> is an
+    ordinary binding and keeps working. This is a deliberate pattern in the
+    language &mdash; a word means something special in exactly one position and
+    is yours everywhere else &mdash; and you will see it again in chapters 4
+    and 6.
+  </p>
+
+  <h3>The three rungs, which is the whole design</h3>
+  <p class="note">
+    Now the important part, and the part that is different from the contract
+    systems you may have met. When the compiler reads a contract, one of three
+    things happens to it. Which one is not up to you and is not a setting.
+  </p>
+
+  <p class="note">
+    <strong>Proved.</strong> The compiler works out that the condition is
+    always true and <em>emits no code at all</em>. If you call
+    <code>bisect(f, 0.0, 10.0, 1e-9)</code> with those literals, the compiler
+    can see that <code>0.0 &lt; 10.0</code> and that <code>1e-9 &gt; 0.0</code>,
+    so both <code>requires</code> clauses cost nothing at runtime. The contract
+    was free.
+  </p>
+
+  <p class="note">
+    <strong>Checked.</strong> The compiler cannot work it out &mdash; the bounds
+    came from a file, say &mdash; so it emits a check. If the condition is false
+    when the program runs, the program stops with a message naming the contract
+    and the call site. You pay one comparison, which is nothing next to a
+    bisection.
+  </p>
+
+  <p class="note">
+    <strong>Assumed.</strong> The compiler cannot prove it and cannot check it
+    either, because the condition says something no runtime test can settle.
+    Then the contract is recorded as an assumption and <strong>you get a
+    warning</strong>, because a contract that is neither proved nor checked is a
+    comment that happens to have syntax, and you deserve to know which of your
+    contracts are doing nothing.
+  </p>
+
+  <p class="note">
+    You can see which rung each of your contracts landed on. This is the
+    command that makes the whole feature honest, because without it the ladder
+    would be invisible:
+  </p>
+
+<pre class="shell"><code><span class="p">$</span> sciencec contracts ./src
+src/bisect.science:9   requires lo &lt; hi                     checked
+src/bisect.science:10  requires tolerance &gt; 0.0             proved   (callers: 3/3)
+src/bisect.science:11  ensures  result &gt;= lo and ...        checked
+src/stats.science:44   invariant value &gt;= 0.0 and ...       assumed</code></pre>
+
+  <h3>The fourth outcome, which is the best one</h3>
+  <p class="note">
+    There is one more thing that can happen and it is not a rung. Sometimes the
+    compiler can prove a <code>requires</code> is <em>false</em>:
+  </p>
+
+<pre data-science>let root be bisect(f, 10.0, 2.0, 1e-9)   # the bug from the top of the chapter</pre>
+
+  <p class="note">
+    <code>10.0 &lt; 2.0</code> is false, and the compiler can see it. That is not
+    a failed proof and not a runtime check &mdash; it is <strong>a bug caught at
+    compile time</strong>, reported at the call site, before the program has
+    ever run. This is the best thing contracts produce and it is worth writing a
+    contract for even if every other one you write lands on "checked".
+  </p>
+
+  <h3>Invariants on your own types</h3>
+  <p class="note">
+    The same idea applies to a type. A probability is a number between zero and
+    one; saying so in the type means no probability anywhere in your program can
+    ever be outside that range:
+  </p>
+
+<pre data-science>type Probability:
+    value: F64
+    invariant value &gt;= 0.0 and value &lt;= 1.0</pre>
+
+  <p class="note">
+    The invariant is checked after the value is constructed, and after any
+    method that takes <code>mutable self</code> finishes. That second rule is
+    only possible because of ownership: while such a method runs, Science's
+    ownership rules guarantee nobody else holds a reference to the value, so
+    checking once at the end is enough. In a language where anything can alias
+    anything, this construct needs an entire theory; here it falls out of a rule
+    you already learned in the tutorial.
+  </p>
+
+  <h3><code>assert</code> teaches the compiler</h3>
+  <p class="note">
+    You have met <code>assert</code> already as a runtime check that stops the
+    program. It still does that. What is worth knowing is that it is on the same
+    ladder, which means an <code>assert</code> now does something for you
+    besides checking:
+  </p>
+
+<pre data-science>def take_first(xs: borrowed (Array of F64), n: Int) -&gt; Slice of F64:
+    assert(n &lt;= xs.length())
+    xs[0..n]</pre>
+
+  <p class="note">
+    Ordinarily <code>xs[0..n]</code> compiles to a bounds check on every access.
+    Here the <code>assert</code> has already established the fact the bounds
+    check would test, so the compiler removes the check. You wrote a line for
+    documentation and got a faster loop. This is the practical answer to "why
+    would I bother with contracts if I do not care about verification": they
+    make your hot loop faster, from lines you wanted to write anyway.
+  </p>
+
+  <h3>What it costs</h3>
+  <p class="note">
+    <strong>The "proved" rung is narrower than you will expect, and floats are
+    never on it.</strong> The compiler proves things about linear arithmetic on
+    integers &mdash; comparisons, addition, multiplication by a constant &mdash;
+    and nothing else. A condition involving a floating-point value is never
+    proved, only checked, because rounding, <code>NaN</code> and signed zero
+    make almost every intuitive claim about floats false in some corner. Write
+    ten contracts in ordinary numerical code and you should expect most of them
+    to come back "checked". That is still worth having &mdash; a checked
+    contract stops a wrong answer from propagating &mdash; but if you were
+    hoping the compiler would prove your numerical method correct, it will not,
+    and no compiler will.
+  </p>
+
+  <p class="note">
+    <strong>In a release build, <code>ensures</code> clauses are stripped and
+    <code>requires</code> clauses are not.</strong> The reasoning: a
+    <code>requires</code> catches your caller's bug and is usually one
+    comparison, so removing it is how a library ships a hole; an
+    <code>ensures</code> is you checking your own work, it is often the
+    expensive one, and by release time your tests and properties have exercised
+    it thousands of times.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="missing">
+  <h2>3 &middot; Missing data &mdash; the average that quietly changed its denominator<a class="anchor" href="#missing" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    Real measurements have holes in them. This chapter is about the single line
+    of code where those holes turn into a wrong number, and about why Science
+    refuses to write that line for you.
+  </p>
+
+  <h3>The bug</h3>
+<pre data-science>let heights be frame.column("height")     # some rows were never measured
+let average be heights.mean()</pre>
+
+  <p class="note">
+    Ask five languages what that average is and you get three different answers.
+    pandas skips the missing values and divides by however many were left.
+    NumPy with <code>NaN</code> propagates, so the answer is
+    <code>NaN</code> &mdash; and the usual response to that is to add a
+    <code>nan_to_num</code> upstream, which replaces "we did not measure this
+    person" with "this person is zero metres tall". R propagates and makes you
+    say <code>na.rm = TRUE</code>, which is the closest to right.
+  </p>
+
+  <p class="note">
+    The harm is not the arithmetic. Skipping is a perfectly defensible thing to
+    do. The harm is that <strong>you compared two columns of different
+    completeness as though they were the same sample</strong> and nothing told
+    you. A mean over 340 of 1,000 rows and a mean over 998 of 1,000 rows are
+    different claims about the world, and they print identically.
+  </p>
+
+  <h3>The idea</h3>
+  <p class="note">
+    There is no correct default here, because both answers are right in
+    different studies. So Science does not pick one. It makes you say which you
+    meant, and only in the places where there is actually something to decide.
+  </p>
+
+  <h3>The construct</h3>
+  <p class="note">
+    First, how absence is written. You already know this from the tutorial and
+    there is nothing new: a value that might be absent has type
+    <code>T?</code>, and the absent value is <code>null</code>.
+    <strong>Science deliberately has no second kind of absence</strong> &mdash;
+    no <code>NA</code> beside <code>null</code>, no
+    <code>NaN</code>-as-missing. One idea, one spelling.
+  </p>
+
+<pre data-science>let heights: Array of F64? be [1.72, null, 1.81]</pre>
+
+  <p class="note">
+    Now the rule. A <strong>reduction</strong> &mdash; an operation that
+    collapses a whole collection into one value, like
+    <code>mean</code>, <code>sum</code> or <code>max</code> &mdash; over a
+    collection that <em>can</em> contain <code>null</code> does not compile
+    until you say what absence means:
+  </p>
+
+<pre data-science>let m be heights.mean(skipping null)        # 1.765, the average of the 2 present values
+let m be heights.mean(propagating null)     # null, because one value is absent</pre>
+
+  <p class="note">
+    <code>skipping null</code> drops the absent values and divides by how many
+    were left. <code>propagating null</code> gives <code>null</code> the moment
+    any value is absent. Two words, each readable at the call site without
+    looking up a signature &mdash; which is why they are these words rather than
+    <code>mean(x, true)</code>, a line nobody can check in a review.
+  </p>
+
+  <h3>Why this does not make your code noisy</h3>
+  <p class="note">
+    This is the part people worry about, so it is worth being clear:
+    <strong>the requirement is attached to the element type, not to the
+    operation.</strong> An <code>Array of F64</code> cannot contain absence, so
+    <code>xs.mean()</code> works exactly as it always did. Only an
+    <code>Array of F64?</code> asks you anything.
+  </p>
+
+  <p class="note">
+    That means the vast majority of your code is untouched, and it means the fix
+    for a noisy pipeline is a real fix rather than an annotation. Deal with the
+    absence once, near the top, and the type stops being nullable:
+  </p>
+
+<pre data-science>let clean be heights.drop_missing()   # Array of F64 — no longer nullable
+let m be clean.mean()                 # and no policy is needed, or accepted</pre>
+
+  <h3>The count travels with the answer</h3>
+  <p class="note">
+    When you reduce with <code>skipping null</code>, Science records how many
+    values it skipped, and that count goes into the run record described in
+    <a href="#with">chapter 6</a>. So the fact that your average was over 340 of
+    1,000 rows is written down in the artefact, where a reviewer can find it,
+    rather than existing only as something you would have had to check.
+    This is the part of the feature that outlives your own session.
+  </p>
+
+  <h3>Two columns at once need a third word</h3>
+  <p class="note">
+    Correlating two columns is where this gets genuinely subtle, and it is worth
+    slowing down for. Suppose <code>height</code> is missing in rows 3 and 7,
+    and <code>weight</code> is missing in rows 5 and 9. If you simply skip the
+    absent values in each column independently, you end up with two lists of
+    different lengths whose entries no longer line up &mdash; you would be
+    correlating one person's height with another person's weight.
+  </p>
+
+  <p class="note">
+    So for an operation over two aligned collections, plain
+    <code>skipping null</code> is refused, and you write:
+  </p>
+
+<pre data-science>let r be correlation(height, weight, skipping null pairwise)</pre>
+
+  <p class="note">
+    <code>pairwise</code> drops row <em>i</em> from <strong>both</strong>
+    columns when either one is absent, so the pairing survives. That is almost
+    always what you meant, and the reason you have to type the word is that the
+    version without it is a bug you would never have seen in the output.
+  </p>
+
+  <h3>What it costs</h3>
+  <p class="note">
+    <strong>More typing, on a line you write constantly.</strong> That is the
+    whole bill and it lands on exactly the people this feature is for. The
+    defence is that the alternative is a default, and a default here is a
+    decision made on your behalf that changes your published number. The risk
+    the language accepts in exchange: if you respond by typing
+    <code>.drop_missing()</code> at the top of every pipeline out of reflex, you
+    have made a stronger assumption than the one you were avoiding &mdash; at
+    least it is visible in your source, where the silent version was not.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="axes">
+  <h2>4 &middot; Named axes &mdash; the transpose that happened to be square<a class="anchor" href="#axes" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    Array programming's great strength is that one line of code does a million
+    operations. Its great weakness is that a line which mixes up two dimensions
+    is still one perfectly valid line. This chapter closes that.
+  </p>
+
+  <h3>The bug</h3>
+<pre data-science>let error be predict(weights, features) .- labels</pre>
+
+  <p class="note">
+    Nothing in that line says which dimension is samples and which is features.
+    Usually a mistake here produces a shape mismatch and you find out
+    immediately. But when the two dimensions happen to be the same length
+    &mdash; and in machine learning they are square constantly: a 768&times;768
+    covariance matrix, a batch of 768 samples with 768 features &mdash;
+    transposing one of them is <em>not</em> a shape mismatch. It is a valid
+    computation, it produces numbers of the right size, and the numbers are
+    wrong.
+  </p>
+
+  <h3>The idea</h3>
+  <p class="note">
+    Give the dimension a name. Then two dimensions that are both 768 long but
+    mean different things are <strong>different types</strong>, and mixing them
+    up is a compile error instead of a plausible number.
+  </p>
+
+  <p class="note">
+    Science can do this where Python cannot, and the reason is worth
+    understanding: the shape of a tensor is already part of its type here. A
+    <code>Tensor of (F32, (96, 2048))</code> carries those numbers in its type
+    and the compiler already checks them. Adding a name to each dimension is one
+    more field in a structure that exists, and it turns a runtime convention
+    into a compile-time check.
+  </p>
+
+  <h3>The construct</h3>
+  <p class="note">
+    Axis names are declared, with the <code>axis</code> item. You declare them
+    once, usually near the top of a module:
+  </p>
+
+<pre data-science>axis sample
+axis wavelength</pre>
+
+  <p class="note">
+    They are <em>declared</em> rather than conjured out of thin air on first
+    use, and that is deliberate. If any identifier in a shape position created
+    an axis, then <code>wavelenght</code> would silently be a different axis
+    from <code>wavelength</code>, and a typo would reintroduce exactly the class
+    of bug the feature exists to remove. Declaring them also means they are
+    ordinary names: they live in your module, you export them with
+    <code>public</code>, and two libraries agree on <code>sample</code> only
+    when they mean the same thing by it.
+  </p>
+
+  <p class="note">
+    Now use them in a shape, with <code>name: length</code> in square brackets:
+  </p>
+
+<pre data-science>type Spectrum is Tensor of (F32, [wavelength: 2048, sample: 96])</pre>
+
+  <p class="note">
+    <strong>The old unnamed spelling still works and means the same thing it
+    always did.</strong> <code>Tensor of (F32, (96, 2048))</code> is a tensor
+    whose axes are anonymous, every existing program keeps compiling, and naming
+    is something you opt into. You can even mix them &mdash;
+    <code>[batch: n, 3, 3]</code> is a named batch of anonymous 3&times;3
+    matrices, which is exactly how you would describe it out loud.
+  </p>
+
+  <h3>What the name actually does</h3>
+  <p class="note">
+    Once axes have names, <strong>operations line them up by name and ignore
+    their position entirely</strong>. That one sentence is the whole semantics.
+    Everything below follows from it.
+  </p>
+
+<pre data-science># readings: Tensor of (F32, [sample: 96, wavelength: 2048])
+# baseline: Tensor of (F32, [wavelength: 2048])
+let centred be readings .- baseline</pre>
+
+  <p class="note">
+    The <code>wavelength</code> axes match by name and are subtracted
+    element-wise; <code>sample</code> exists on the left and not on the right,
+    so the baseline is reused for every sample. You did not have to know which
+    axis was first, and if you later reorder the type nothing here breaks.
+  </p>
+
+  <h3>Reducing along an axis you can name</h3>
+  <p class="note">
+    You have probably written <code>axis: 0</code> a thousand times. It has
+    three problems: you cannot check it without reconstructing the whole
+    pipeline in your head, any operation that reorders axes silently
+    invalidates it, and it is a number rather than a meaning. So:
+  </p>
+
+<pre data-science>let mean_spectrum be spectra.mean(over: sample)
+for row in table.along(sample):
+    ...</pre>
+
+  <p class="note">
+    Two words rather than one, because these are two different operations.
+    <code>over</code> <strong>consumes</strong> an axis &mdash; you average away
+    the samples, and the result no longer has a sample axis.
+    <code>along</code> <strong>walks</strong> an axis &mdash; you iterate over
+    the samples, and each one still has all its other dimensions. English
+    already makes this distinction and reusing one word for both is how
+    NumPy's <code>apply_along_axis</code> ended up needing a paragraph of
+    documentation.
+  </p>
+
+  <h3>Matrix multiplication states its own meaning</h3>
+  <p class="note">
+    This is the chapter's best moment. When both operands have named axes,
+    <code>@</code> contracts over the axis name they share:
+  </p>
+
+<pre data-science># x: Tensor of (F32, [sample: n, feature: 768])
+# w: Tensor of (F32, [feature: 768, output: 10])
+let y be x @ w              # [sample: n, output: 10]</pre>
+
+  <p class="note">
+    Both operands name <code>feature</code>, so that is what gets summed over.
+    The result has the axes that were left. Notice what this buys: the operation
+    says what it means, <code>x @ w</code> and <code>w @ x</code> are now the
+    same computation, and the classic bug &mdash; a weight matrix that needed
+    transposing and happened to be square &mdash; is a compile error, because
+    the axis names would not line up. Most of the transposes in your code stop
+    being necessary at all.
+  </p>
+
+  <h3>What it costs</h3>
+  <p class="note">
+    <strong>Two libraries will define different <code>sample</code> axes and you
+    will have to convert between them.</strong> This is the same tax any
+    strongly-typed wrapper charges, and the mitigation is convention: standard
+    axis names should come from one place rather than being invented per
+    package.
+  </p>
+
+  <p class="note">
+    <strong>Positional indexing into a named tensor is refused, not
+    warned.</strong> Once a tensor has named axes, <code>t[3, 7]</code> is an
+    error and you write <code>t[sample: 3]</code>. This is strict on purpose: a
+    positional index is the thing that goes stale when axes are reordered, and
+    leaving it available in code that opted into naming would leave the bug
+    alive in exactly the place someone was trying to eliminate it.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="durable">
+  <h2>5 &middot; <code>durable</code> &mdash; the six-hour run that fell over at hour five<a class="anchor" href="#durable" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    Everybody who computes for a living has written a caching layer by hand, and
+    everybody's has the same bug. This chapter is about putting it in the
+    compiler, where the bug is fixable.
+  </p>
+
+  <h3>The bug</h3>
+  <p class="note">
+    You know this code because you have written it:
+  </p>
+
+<pre data-science># The hand-rolled version, in any language. Delete the cache if you change
+# anything in `fit` — and remember to, every time, forever.
+let cache_path be f"cache/fit_{dataset_name}_{epochs}.bin"</pre>
+
+  <p class="note">
+    The key describes the <em>inputs</em>. It does not describe the
+    <em>code</em>. So you edit the body of <code>fit</code>, rerun, and get the
+    old answer back in four milliseconds &mdash; and it looks exactly like a
+    fast, correct run. You believe it. This is not a mistake careful people
+    avoid; it is a mistake careful people make on a Friday afternoon, because
+    nothing about the situation looks wrong.
+  </p>
+
+  <h3>The idea</h3>
+  <p class="note">
+    The compiler knows what the code is. So let the compiler build the key, and
+    put the compiled body into it. Then editing the function invalidates the
+    cache by itself, with no discipline required from you.
+  </p>
+
+  <h3>The construct</h3>
+<pre data-science>durable def fit(data: borrowed Frame, epochs: Int) -&gt; Model
+    keyed by (data.digest(), epochs)
+    checkpoint every 10 epochs:
+    let mutable model be Model.initial()
+    for epoch in 0..epochs:
+        model be step(model, data)
+    model</pre>
+
+  <p class="note">
+    Take it one clause at a time.
+  </p>
+
+  <p class="note">
+    <strong><code>durable</code></strong> in front of <code>def</code> says the
+    result should be cached. The cache lives in <code>.science/cache/</code>,
+    entries are named by their key and never modified once written, and there is
+    a size limit so your disk does not fill.
+  </p>
+
+  <p class="note">
+    <strong><code>keyed by (…)</code></strong> is you saying what identifies a
+    call. Notice that the arguments are <em>not</em> hashed automatically, and
+    that is a considered decision rather than an oversight: your
+    <code>Frame</code> may be forty gigabytes, and hashing it would take longer
+    than the fit it was meant to save. You know what identifies your
+    dataset &mdash; a content digest, a DOI, a run identifier &mdash; and the
+    compiler does not. Every parameter must either appear in this clause or be
+    listed as <code>ignoring</code>, so you can decide a parameter is irrelevant
+    but you cannot forget one.
+  </p>
+
+  <p class="note">
+    <strong>And the part the clause does not mention:</strong> in addition to
+    what you wrote, the key automatically includes a hash of the compiled body
+    of <code>fit</code> and of everything it calls, plus the build environment.
+    Change one line inside <code>step</code> and the key changes, so the cache
+    misses and the work is redone. That is the bug from the top of the chapter,
+    fixed by the one participant that has the information.
+  </p>
+
+  <p class="note">
+    <strong><code>checkpoint every 10 epochs</code></strong> saves the loop's
+    state every ten iterations. If the job is killed at epoch 83, the next run
+    starts from epoch 80 instead of from zero. This is where the six lost hours
+    come back.
+  </p>
+
+  <h3>Why the compiler insists the function be pure</h3>
+  <p class="note">
+    Caching means replacing a call with a remembered answer. That is only sound
+    if the call had no other reason to happen. A function that reads a file, or
+    the clock, or the network, does have another reason, and caching it gives
+    you a stale answer that nothing detects.
+  </p>
+
+  <p class="note">
+    Science already tracks this. Every function has an inferred effect set, and
+    <code>durable</code> requires it to be empty &mdash; which is the same
+    condition <code>pure def</code> asserts, so <code>durable</code> implies
+    <code>pure</code> and writing both is redundant. If you try to make a
+    file-reading function durable, the compiler declines and, importantly,
+    <em>shows you the chain</em> &mdash; which call inside which function
+    reaches the filesystem &mdash; because <code>external</code> is inferred
+    rather than written and you would otherwise have to guess.
+  </p>
+
+  <p class="note">
+    The fix is nearly always the same and it is a better program: read the file
+    in the caller, pass the data in, and make the pure part durable.
+  </p>
+
+<pre data-science># Not durable: it reads the world, and a cached answer would not notice the
+# file changing. Read here, and hand the data to the function that computes.
+def main():
+    let data, err be read_csv("measurements.csv")
+    if err?:
+        return
+    let model be fit(borrowed data, epochs: 200)</pre>
+
+  <h3>What it costs</h3>
+  <p class="note">
+    <strong>A wrong <code>keyed by</code> is a wrong answer, and the language
+    says so rather than pretending otherwise.</strong> If you key a fit on a
+    dataset name while the file behind that name changes, you will get the old
+    model. This is the one genuinely unsound thing in the chapter. It is unsound
+    in exactly the direction your hand-written cache already was &mdash; so the
+    feature is strictly better than the status quo, and it is not safe. For
+    peace of mind, <code>sciencec test --verify-cache</code> recomputes durable
+    functions and reports any disagreement with the cache; it is slow, and it
+    belongs in a nightly build rather than in your edit-run loop.
+  </p>
+
+  <p class="note">
+    <strong>Checkpointing writes real bytes.</strong> Saving a model every ten
+    epochs is not free, which is why the default when you omit
+    <code>checkpoint every</code> is to cache only the final result and write
+    nothing in between. Caching the boundary is the cheap win; checkpointing is
+    the expensive one, and you ask for it when the run is long enough to
+    deserve it.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="with">
+  <h2>6 &middot; <code>with</code> blocks &mdash; saying the seed once<a class="anchor" href="#with" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    Four things get configured once at the top of an analysis and used
+    everywhere in it: the random seed, the device, the float precision, and
+    whether expensive checks run. This chapter is about setting them in a way
+    that ends up in your paper's artefact instead of in your shell history.
+  </p>
+
+  <h3>The bug</h3>
+  <p class="note">
+    You pass the seed through eleven functions by hand and one of them takes a
+    different one. Or you set a global at the top and a library caches it, and
+    now half your program is seeded and half is not. Or &mdash; most commonly
+    &mdash; a reviewer asks what seed produced figure 3 and the honest answer is
+    that nobody wrote it down.
+  </p>
+
+  <h3>The idea</h3>
+  <p class="note">
+    A block that fixes a policy for everything inside it. Python's
+    <code>with</code> statement has the right shape and Science borrows the
+    shape. What it does not borrow is the mechanism, and the difference is the
+    whole chapter.
+  </p>
+
+  <h3>The construct</h3>
+<pre data-science>with seed 42, device gpu:0, precision f32:
+    let model be fit(borrowed data, epochs: 200)</pre>
+
+  <p class="note">
+    Four policies exist and the list is closed: <code>seed</code> fixes the
+    random key, <code>device</code> fixes where tensors are allocated,
+    <code>precision</code> fixes what an unannotated float literal becomes, and
+    <code>unchecked</code> turns off contract checking for a hot block. You may
+    give several in one head, separated by commas.
+  </p>
+
+  <h3>The important part: a policy is a value, not a global</h3>
+  <p class="note">
+    Read this paragraph twice, because the obvious reading of the example above
+    is the wrong one. <code>with seed 42</code> does <strong>not</strong> reach
+    inside the functions you call and change what they read. There is no hidden
+    global being set and unset.
+  </p>
+
+  <p class="note">
+    What actually happens is much simpler: <code>seed 42</code>
+    <strong>binds a value</strong>, named <code>seed</code>, in that block. A
+    function that needs randomness declares a parameter for it, exactly as it
+    would have to anyway. Nothing about any function changes; what changes is
+    what is in scope to hand it.
+  </p>
+
+  <p class="note">
+    The reason for this strictness is that Science tracks which functions read
+    machine-supplied state &mdash; the clock, the entropy pool, the environment
+    &mdash; and refuses to let that happen invisibly. A <code>with</code> block
+    that silently redirected what a callee read would be exactly that hidden
+    state, with nicer syntax. Python's context managers work the way they do
+    because Python has no way to check; Science does, so it does not need to.
+  </p>
+
+  <p class="note">
+    There is one concession, because threading <code>key</code> through eleven
+    call sites is the tedium this construct exists to remove. Inside the block,
+    an argument whose name and type match a policy binding may be
+    <strong>left out</strong>, and it is filled in from the block:
+  </p>
+
+<pre data-science>with seed 42:
+    let a be bootstrap(borrowed data, 1000)                   # `key` filled from the block
+    let b be bootstrap(borrowed data, 1000, key: other_key)   # written explicitly, and wins</pre>
+
+  <p class="note">
+    This is decided when the program is type-checked, it is visible in the
+    function's signature &mdash; <code>bootstrap</code> still declares
+    <code>key: borrowed Key</code> and still receives it &mdash; and
+    <code>sciencec fmt --explicit</code> will write every omission back out if
+    you would rather read them. It is the one place in the language where a
+    value on a line did not come from that line, and it is bounded: the source
+    is always a <code>with</code> head lexically above, in the same function.
+  </p>
+
+  <h3>A policy nobody uses is an error</h3>
+  <p class="note">
+    This rule looks harsh and it is the most useful one in the chapter:
+  </p>
+
+<pre data-science>with seed 42:
+    let m be fit(borrowed data)   # error: `fit` takes no key — nothing here is seeded</pre>
+
+  <p class="note">
+    Unused variables are warnings everywhere else in Science. This one is an
+    error because of what the mistake costs. The author of that block believes
+    their fit is seeded. It is not. The run is irreproducible in the particular
+    way that <em>looks</em> reproducible &mdash; the artefact would faithfully
+    record a seed that did nothing at all.
+  </p>
+
+  <h3>Where it ends up</h3>
+  <p class="note">
+    Every policy block that encloses a computation is written into the
+    provenance record that Science stamps onto your outputs. So the question
+    "what seed, what device, what precision, were the checks on?" is answered by
+    the figure itself rather than by your memory. That is the point of the
+    construct; the convenience of not retyping the seed is a side effect.
+  </p>
+
+  <p class="note">
+    It composes with the shape-binding form of <code>with</code> you may have
+    met, because they are clauses in the same head:
+  </p>
+
+<pre data-science>with table.shape as [sample: rows, feature: 768], seed 42, precision f32:
+    let z be (table .- table.mean(over: sample)) ./ table.deviation(over: sample)</pre>
+
+  <h3>What it costs</h3>
+  <p class="note">
+    <strong>The filled-in argument is the contestable part.</strong> It trades a
+    little locality &mdash; you cannot see where <code>key</code> came from by
+    reading that one line &mdash; for the feature being worth using at all. The
+    trade is bounded by scope and reversible by a formatter flag, and it is
+    worth knowing that it is a trade.
+  </p>
+
+  <p class="note">
+    <strong><code>precision</code> is the one to be careful with.</strong> It
+    decides what an unannotated literal becomes and what an unconstrained type
+    defaults to. It does <em>not</em> reach out and narrow values that were
+    computed outside the block &mdash; an <code>F64</code> that flows in stays
+    an <code>F64</code> &mdash; and the compiler stops you if a block's
+    precision would change the type of something bound outside it. A policy that
+    silently changed the width of your data would be the worst feature in the
+    language.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="together">
+  <h2>Putting it together<a class="anchor" href="#together" aria-label="Link to this section">#</a></h2>
+  <p class="lede">
+    One program using all six, so you can see what they look like in the same
+    file rather than one chapter at a time.
+  </p>
+
+<pre data-science>use testing (check, check_close)
+
+axis sample
+axis feature
+
+## The fraction of variance the model explains. Never above 1, never below 0
+## for a model that includes an intercept.
+type RSquared:
+    value: F64
+    invariant value &gt;= 0.0 and value &lt;= 1.0
+
+## Standardise each feature: subtract its mean, divide by its deviation.
+## Pure, so it can be cached; the contract says what it promises.
+pure def standardise(
+        table: borrowed (Tensor of (F32, [sample: n, feature: d])))
+        -&gt; Tensor of (F32, [sample: n, feature: d])
+    requires n &gt; 1
+    ensures result.shape() is table.shape():
+    let centre be table.mean(over: sample)
+    let spread be table.deviation(over: sample)
+    (table .- centre) ./ spread
+
+## Expensive. Cached against the data, the settings, and this function's own
+## compiled body — so editing the line below invalidates the cache by itself.
+durable def fit(
+        table: borrowed Frame,
+        epochs: Int,
+        key: borrowed Key) -&gt; Model
+    keyed by (table.digest(), epochs)
+    checkpoint every 10 epochs:
+    ...
+
+def main():
+    let raw, err be read_csv("measurements.csv")
+    if err?:
+        print("could not read the measurements")
+        return
+
+    # The heights column has holes in it. Say what that means, once, here —
+    # and the count of skipped rows goes into the run record with the answer.
+    let mean_height be raw.column("height").mean(skipping null)
+    print(f"mean height {mean_height} over the rows that have one")
+
+    # One place fixes the seed, the device and the precision for everything
+    # below, and all three are stamped into the output's provenance.
+    with seed 42, device gpu:0, precision f32:
+        let model be fit(borrowed raw, epochs: 200)
+        print(f"fitted {model.name()}")
+
+test "standardising twice is the same as standardising once":
+    let once be standardise(borrowed sample_table())
+    check_close(standardise(borrowed once), once, tolerance: 1e-6)
+
+property "standardising never changes the shape" for t: Tensor of (F32, [sample: 8, feature: 3]):
+    check(standardise(borrowed t).shape() is t.shape())</pre>
+
+  <p class="note">
+    Read it once more and notice what is <em>absent</em>. There is no comment
+    saying "delete the cache if you change this". There is no note saying "seed
+    is set at the top". There is nothing explaining which axis is which. Each of
+    those comments has become something the compiler reads &mdash; and a thing
+    the compiler reads cannot drift away from the code the way a comment does.
+  </p>
+</section>
+
+<!-- ==================================================================== -->
+<section id="next">
+  <h2>Where to go next<a class="anchor" href="#next" aria-label="Link to this section">#</a></h2>
+
+  <p class="note">
+    <strong>If you have not read the <a href="tutorial.html">tutorial</a>, read
+    it.</strong> This page assumed ownership, <code>type</code> and
+    <code>choice</code>, the error pair, and interfaces. The tutorial teaches
+    all four from nothing and in order.
+  </p>
+
+  <p class="note">
+    <strong>The <a href="reference.html">reference</a> is what to open when you
+    want the rule rather than the reason.</strong> It states each construct
+    precisely, lists every diagnostic, and does not argue. This guide argues and
+    does not aim to be complete.
+  </p>
+
+  <p class="note">
+    <strong>The <a href="rationale.html">rationale</a> is where the arguments
+    live.</strong> If a decision on this page struck you as wrong &mdash; and
+    the strict ones on this page are the likeliest candidates &mdash; the
+    rationale is where the case against it is written down alongside the case
+    for, usually by the person who lost.
+  </p>
+
+  <p class="note">
+    <strong>The design notes are the primary sources.</strong> Each chapter here
+    compresses one note in <code>docs/superpowers/design/</code>, in order:
+    <code>property-testing.md</code>, <code>contracts.md</code>,
+    <code>missing-data.md</code>, <code>named-axes.md</code>,
+    <code>durable-computation.md</code> and
+    <code>with-policy-blocks.md</code>. Each one states what it rejected and
+    what it costs the rest of the language, which is the part a guide has no
+    room for.
+  </p>
+</section>
+
+</main>
+</div>
+
+<footer>
+  This page is a guide and is written to be read in prose. The
+  <a href="reference.html">reference</a> is the authority on what each construct
+  means, the <a href="syntax.html">syntax</a> page is the complete inventory of
+  what can be written, and the design notes in
+  <code>docs/superpowers/design/</code> are the primary sources behind all six
+  chapters &mdash; each records the alternatives it rejected and what its
+  decisions cost the other notes.
+</footer>
+
+</div>
+
+<script src="assets/highlight.js"></script>
+</body>
+</html>

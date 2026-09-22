@@ -27,8 +27,22 @@
   // does not — no generics, no borrowed parameter, no receiver, a required
   // `##` description, a body — and a marker that changes nothing would have
   // stayed a reservation.
+  //
+  // Six design notes landed together on 2026-09-18 and each spends words at
+  // declaration position. They are listed here as keywords because that is how
+  // a reader meets them, and every one of them is *contextual* in the grammar:
+  // `property` is only a keyword before a string literal, `axis` only at item
+  // position before an identifier, `requires` / `ensures` only in a signature,
+  // `invariant` only in a `type` body, and `keyed` / `by` / `every` /
+  // `ignoring` only inside a `durable` head. So `let axis be 0` and
+  // `let property be m.density` keep compiling, which is the whole reason the
+  // notes chose contextual over reserved. See `docs/superpowers/design/`:
+  // property-testing.md §2, contracts.md §2, named-axes.md §2.1 and
+  // durable-computation.md §6.
   var DECLARE = ("def tool type choice interface implements has of borrowed any use " +
-    "public const extern unsafe let be mutable where giving").split(" ");
+    "public const extern unsafe let be mutable where giving " +
+    "test property axis durable pure requires ensures invariant " +
+    "keyed by every ignoring").split(" ");
 
   // Control flow, the operators spelled as words, and the literals.
   //
@@ -39,19 +53,41 @@
   // `from_word` agree word for word. `try` is an ordinary identifier now, and
   // using it as the old prefix is SC0155 — a migration diagnostic with no fix,
   // because the new model has no one expression to swap in.
+  //
+  // `with` arrived from RESERVED with two clause kinds in one head — a shape
+  // clause (broadcasting.md §6.2) and a policy clause (with-policy-blocks.md).
+  // `seed`, `device`, `precision` and `unchecked` are the four policy names and
+  // are contextual inside that head only; `skipping`, `propagating` and
+  // `pairwise` are the absence policies of missing-data.md §3, which are
+  // argument labels rather than keywords and are coloured here because a reader
+  // meeting `mean(skipping null)` should see that the two words go together.
   var CONTROL = ("if else match for each in loop return break continue and or not " +
-    "is as self Self true false null").split(" ");
+    "is as self Self true false null " +
+    "with assert checkpoint resume " +
+    "seed device precision unchecked skipping propagating pairwise").split(" ");
 
   // §13's "reserved, not yet used". Coloured differently on purpose: a reader
   // who meets one in a sample should see that it is not an ordinary name.
-  var RESERVED = ("agent prompt spawn send receive durable checkpoint resume supervise " +
-    "async await tensor shape model equation mod pure parallel on with yield assert move " +
+  // Six words left this list on 2026-09-18, which is the largest single move it
+  // has had: `durable`, `checkpoint` and `resume` to durable-computation.md,
+  // `with` to with-policy-blocks.md, `assert` to contracts.md — which is the
+  // note reserved-words.md §4.2 asked for by name — and `pure` to effects.md,
+  // whose `pure def` is now the one effect declaration in the language. A word
+  // that has a note is not reserved any more; it is spelled.
+  var RESERVED = ("agent prompt spawn send receive supervise " +
+    "async await tensor shape model equation mod parallel on yield move " +
     "static macro union kernel import").split(" ");
 
   // §13's third list: free on purpose, because each is a common variable name
   // in the code of the people Science is for. Listed here only to fill the bank
   // on the reference page; it takes no part in highlighting.
-  var NEVER = "grad dim dims axis device dtype unit alias".split(" ");
+  // `axis` and `device` left this bank when named-axes.md and
+  // with-policy-blocks.md took them, and the thing worth noticing is that they
+  // did NOT become reserved: both notes chose a contextual keyword precisely so
+  // that the promise this bank makes — a scientist may name a variable `axis`
+  // or `device` — survives the feature that uses the word. The bank lists the
+  // words that are free *and* uninvolved; those two are free and involved.
+  var NEVER = "grad dim dims dtype unit alias".split(" ");
 
   // Spellings that have been REMOVED from the language. They are struck through
   // rather than coloured, and only inside a block marked `data-legacy`, which
