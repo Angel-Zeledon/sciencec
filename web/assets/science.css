@@ -1008,3 +1008,33 @@ nav a[aria-current]::before { transform: scaleY(1); }
   .pager { grid-template-columns: 1fr; }
   .pager .next { text-align: left; }
 }
+
+/* The page chooser on the home page.
+ *
+ * The six pages overlap on purpose — a tutorial, a guide and a reference can
+ * all answer "what does `be` do", at three different lengths — and a reader
+ * who does not already know which of the three they want is the reader this
+ * site was losing. The card grid below it says what each page *is*; this
+ * table says what each page is *for*, phrased as the sentence a reader would
+ * say about themselves rather than as a description of the page. It is a
+ * table and not a list because the two halves are a question and an answer
+ * and should line up as columns.
+ *
+ * The rows are in the same order as the masthead, which is the reading
+ * order, so the table is also a picture of the sequence. */
+.chooser { width: 100%; border-collapse: collapse; margin: 1.5rem 0 2.5rem; }
+.chooser caption { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--faint); text-align: left;
+  padding-bottom: 0.9rem; }
+.chooser th, .chooser td { text-align: left; vertical-align: top;
+  padding: 0.85rem 1rem 0.85rem 0; border-top: 1px solid var(--rule); }
+.chooser th { font-family: var(--serif); font-weight: 400; font-style: italic;
+  color: var(--ink); width: 44%; padding-right: 1.75rem; }
+.chooser td { font-family: var(--serif); color: var(--muted); }
+.chooser a { color: var(--accent); text-decoration: none; font-family: var(--sans);
+  font-weight: 600; font-style: normal; }
+.chooser a:hover, .chooser a:focus-visible { text-decoration: underline; }
+@media (max-width: 640px) {
+  .chooser th, .chooser td { display: block; width: auto; padding-right: 0; }
+  .chooser td { border-top: none; padding-top: 0.35rem; }
+}
