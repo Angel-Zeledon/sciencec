@@ -140,7 +140,7 @@ def main():
     let doc be Doc(title: "Monomorphization", body: "One copy per instantiation.")
     print(describe(doc))
 
-    # A parameter declared `borrowed` is &at the call site without the
+    # A parameter declared `&T` is borrowed at the call site without the
     # caller writing anything (§6.3).
     let pair be Pair(first: 1, second: "one")
     let flipped be swap(pair)

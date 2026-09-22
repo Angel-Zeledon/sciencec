@@ -101,7 +101,7 @@ def main():
     )
 
     # A deeply nested call: the indentation inside is free-form. A parameter
-    # declared `borrowed` is &at the call site without the caller
+    # declared `&T` is borrowed at the call site without the caller
     # writing anything (§6.3), so `config.host` is passed plainly.
     #
     # The free-form indentation is the demonstration, so it is held against

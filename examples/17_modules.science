@@ -76,7 +76,7 @@ Document implements Report:
 public def main():
     let source be "def main(): print(\"hi\")"
 
-    # A parameter declared `borrowed` is &at the call site with
+    # A parameter declared `&T` is borrowed at the call site with
     # nothing written for it (§6.3).
     let tokens be parse(source)
     print(tokens.length())

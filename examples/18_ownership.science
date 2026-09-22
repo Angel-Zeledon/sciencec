@@ -78,7 +78,7 @@ def compare(a: &Doc, b: &Doc) -> Bool:
 def many_shared():
     let doc be produce()
 
-    # `borrowed` is the unary operator that makes a borrow, and it is what a
+    # `&` is the unary operator that makes a borrow, and it is what a
     # binding needs: there is no call here to borrow on the programmer's
     # behalf (§4.6).
     let one be &doc
@@ -88,7 +88,7 @@ def many_shared():
     print(three.summarize())
 
     # At a call site nothing is written at all: `compare` declares both
-    # parameters `borrowed`, so both arguments are &automatically
+    # parameters `&String`, so both arguments are borrowed automatically
     # (§6.3). The signature still says which it is, so the reader keeps the
     # information and only the noise goes.
     print(compare(doc, doc))

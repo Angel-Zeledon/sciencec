@@ -103,7 +103,7 @@ def main():
     let doc be Doc(title: "Dispatch", body: "Static unless you ask otherwise.")
     let mutable note be Note(text: "erased")
 
-    # A parameter declared `borrowed` or `mutable borrowed` is &at the
+    # A parameter declared `&T` or `&mut T` is borrowed at the
     # call site without the caller writing anything (§6.3). The same call is
     # dispatched statically first and dynamically after.
     print(describe_static(doc))
@@ -119,7 +119,7 @@ def main():
     print(chosen.summarize())
 
     # A field is not a parameter, so the borrow is written out with the unary
-    # `borrowed` operator (§4.6).
+    # `&` operator (§4.6).
     let renderer be Renderer(target: &doc)
     print(renderer.target.preview())
 

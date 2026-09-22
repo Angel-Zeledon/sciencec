@@ -24,9 +24,9 @@
 # when `e` is not `null` — and it is a total operator, so unlike `try` it can
 # only produce a value and never return from the def around it.
 #
-# The unary `&` and `&mut` are the words `borrowed` and `mutable borrowed`,
-# which sit at the unary level and are the same words a borrow is written
-# with in a type (§4.3).
+# The unary `&` and `&mut` sit at the unary level, and are the same two
+# spellings a borrow is written with in a type (§4.3). They were the words
+# `borrowed` and `mutable borrowed` before the parser took the sigils.
 
 type Point:
     x: Int
@@ -199,9 +199,9 @@ def main():
     a be if flag: 1 else: 2
     a be b * 2 + 1
 
-    # --- `borrowed`, at the unary level with `-` and `not` ------------------
+    # --- `&`, at the unary level with `-` and `not` -------------------------
     #
-    # A parameter declared &is &at the call site with nothing
+    # A parameter declared `&T` is borrowed at the call site with nothing
     # written for it (§6.3), so the operator is only wanted where a borrow is
     # made outside a call. Being unary it binds looser than field access, so
     # `&point.x` borrows the field and not the record.

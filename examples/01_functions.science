@@ -25,7 +25,7 @@ def clamp_low(value: Int, floor: Int) -> Int:
         return floor
     value
 
-# Several parameters, all borrowed. `&T` is what `&T` was.
+# Several parameters, all borrowed. `&T` is what `borrowed T` was.
 def longest(a: &String, b: &String) -> &String:
     if a.length() > b.length(): a else: b
 
@@ -62,7 +62,7 @@ def main():
     print(factorial(10))
     print(has_name("Kepler"))
 
-    # A parameter declared `borrowed` or `mutable borrowed` is &at
+    # A parameter declared `&T` or `&mut T` is borrowed at
     # the call site without the caller writing anything (§6.3). The signature
     # still says which it is, so nothing is lost to the reader.
     let mutable hits be 0

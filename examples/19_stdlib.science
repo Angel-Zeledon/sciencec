@@ -53,7 +53,7 @@ def hits_of(records: &Array[Record]) -> Int?:
     null
 
 def absence_surface(records: &Array[Record]) -> Int:
-    # A parameter declared `borrowed` is &at the call site without
+    # A parameter declared `&T` is borrowed at the call site without
     # the caller writing anything (§6.3).
     #
     # `found.is_some()` was a method call; `found?` is the operator that

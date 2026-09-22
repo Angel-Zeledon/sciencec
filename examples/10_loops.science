@@ -229,7 +229,7 @@ def main():
     numbers.push(0)
     numbers.push(7)
 
-    # A parameter declared `borrowed` or `mutable borrowed` is &at
+    # A parameter declared `&T` or `&mut T` is borrowed at
     # the call site with nothing written for it (§6.3).
     print(total(numbers))
     print(count_until_zero(numbers))

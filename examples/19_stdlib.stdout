@@ -1,0 +1,36 @@
+no newlinewith newline
+true
+3
+1
+9
+true
+1
+2
+1
+12
+false
+true
+owned
+14
+no records
+0
+loaded
+[package]
+name        = "sciencec"
+version     = "0.0.1"
+language    = "0.1"
+description = "The Science compiler."
+license     = "MIT OR Apache-2.0"
+
+[package]
+name        = "sciencec"
+version     = "0.0.1"
+language    = "0.1"
+description = "The Science compiler."
+license     = "MIT OR Apache-2.0"
+
+2
+1
+0
+written
+149

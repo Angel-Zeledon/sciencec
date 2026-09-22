@@ -63,7 +63,7 @@ def main():
     let truncated be alias_float as Int
 
     # A borrow is a binding like any other. The type is `&T`, and
-    # `borrowed` is also the unary operator that makes one (§4.6).
+    # `&` is also the unary operator that makes one (§4.6).
     let view: &String be &greeting
     let mutable owner be "mutable text"
     let exclusive: &mut String be &mut owner
