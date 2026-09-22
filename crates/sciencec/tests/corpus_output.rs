@@ -176,6 +176,25 @@ fn every_example_that_builds_has_its_output_pinned() {
         // both sides of the boundary. `lower_match`'s scrutinee and
         // `Rvalue::Narrow`'s owning payload were the same question from two
         // more routes, closed the same day by `Projection::Payload`.
+        //
+        // **`20_extern.science` is never in this loop's `Printed` arm, and
+        // that is by design, not a regression.** It builds a `Verdict::NotBuilt`
+        // every time: `crates/sciencec/src/driver.rs`'s `emit_executable`,
+        // at its `SC0403` call site, names this exact file — *"extern blocks,
+        // a handle type and three wrapper functions, and deliberately no
+        // `main`"* — a library, in `script-mode.md`'s sense, and `sciencec
+        // build`/`test` refuse a library on purpose (§11's `SC0403`; *"a file
+        // with neither is a library; `sciencec check` is the command for
+        // one"*). The file's own header says the same thing from the other
+        // side: *"nothing in this file is safe to call... the interface a
+        // program is meant to use is the hand-written wrapper"* — there is no
+        // program here to run. So this `continue` is correct for it and
+        // `a_pure_declarations_file_has_no_entry_point_by_design`, below, is
+        // the assertion that keeps it correct on purpose: it pins that
+        // `sciencec test` refuses this file with `SC0403` and that `sciencec
+        // check` — the command §11 names for a library — accepts the very
+        // same file cleanly. If that test starts failing, the fix is almost
+        // certainly `main.rs`'s help text or a doc, not this file.
         let actual = match ran(&example) {
             Verdict::NotBuilt => {
                 // It does not build. Its expectation, if any, is stale — but
@@ -231,6 +250,70 @@ fn every_example_that_builds_has_its_output_pinned() {
         "these examples build and then never exit — `sciencec test` killed them after its own \
          budget rather than hang this suite, which is the fix, but a build that no longer \
          terminates is still a regression and not a pass: {hung:?}"
+    );
+}
+
+/// **`examples/20_extern.science` failing `sciencec test` is not the corpus
+/// measuring a broken example — it would be the corpus measuring the wrong
+/// thing if it treated this file the way it treats every other one.**
+///
+/// The loop above's `Verdict::NotBuilt` arm is silent by design: for every
+/// *other* file, a build failure is a regression and "the other tests'
+/// business" to report. This file is the one the corpus carries specifically
+/// to show that rule has an exception, and the exception needs its own
+/// assertion rather than a comment nobody runs.
+///
+/// `20_extern.science`'s own header says why a build can never succeed here:
+/// *"Nothing in this file is safe to call. That is the point of §0 of the
+/// design note: the declaration records a claim the compiler will never
+/// check, the `unsafe` marks it as such, and the interface a program is
+/// meant to use is the hand-written wrapper at the bottom."* It is `extern`
+/// declarations, a handle type and three wrapper functions, and deliberately
+/// no `main` — `crates/sciencec/src/driver.rs`'s `emit_executable` names this
+/// exact file at its own `SC0403` call site as the reason that refusal has a
+/// caller at all. `script-mode.md` §4.2 rule 3 makes a file with neither
+/// top-level statements nor `def main` a *library*, and §11 gives `SC0403`
+/// exactly so `sciencec build`/`test` can refuse one instead of asking a user
+/// to "upgrade their toolchain" for a program that was never going to exist.
+///
+/// So there are two correct facts about this file, not one, and this test
+/// pins both: `sciencec test` refuses it, by `SC0403` and nothing else, and
+/// `sciencec check` — the command §11's own note names for a library —
+/// accepts the same file cleanly. A regression here is not "this file broke";
+/// it is either a stray entry point that crept into a declarations-only
+/// showcase, or `SC0403` no longer firing where it must.
+#[test]
+fn a_pure_declarations_file_has_no_entry_point_by_design() {
+    let example = repo_root().join("examples").join("20_extern.science");
+    assert!(example.is_file(), "examples/20_extern.science must exist");
+    let path = example.to_str().expect("a utf-8 path");
+
+    let test_run = Command::new(env!("CARGO_BIN_EXE_sciencec"))
+        .current_dir(repo_root())
+        .args(["test", path])
+        .output()
+        .expect("the sciencec binary must be runnable");
+    assert!(
+        !test_run.status.success(),
+        "20_extern.science has deliberately no `main`; `sciencec test` building it would mean \
+         either a stray entry point crept in or SC0403 stopped firing"
+    );
+    let stderr = String::from_utf8_lossy(&test_run.stderr);
+    assert!(
+        stderr.contains("SC0403"),
+        "expected the no-entry-point refusal (SC0403) and nothing else, got:\n{stderr}"
+    );
+
+    let check_run = Command::new(env!("CARGO_BIN_EXE_sciencec"))
+        .current_dir(repo_root())
+        .args(["check", path])
+        .output()
+        .expect("the sciencec binary must be runnable");
+    assert!(
+        check_run.status.success(),
+        "`sciencec check` is the command §11 names for a library and should accept a pure \
+         declarations file cleanly:\n{}",
+        String::from_utf8_lossy(&check_run.stderr)
     );
 }
 

@@ -1653,3 +1653,76 @@ def main():
 ";
     assert_eq!(prints("move-a-field-into-a-call", source), "5\n5\n2\n");
 }
+
+/// **`?` on a field, Decision 18's tagged representation.**
+///
+/// `lower_is_present` used to insist on an empty projection and refuse
+/// everything else — `over.host?` where `over` is a record and `host` is a
+/// `String?` — with SC0400's *"the tag and the niche are read from a local's
+/// own address and this instruction set has no typed load from a computed
+/// one"*. `String?` is a `choice` with no niche (Decision 19 has none for
+/// `String`), so its layout is Decision 18's tagged pair, and the fix reads
+/// [`Lowerer::lower_discriminant`]'s own trick — the tag sits at offset 0
+/// always, so `place_address`'s computed pointer plus `ExtInst::LoadAt` at the
+/// tag's own width reads it with no new instruction.
+///
+/// **The value is asserted, not just the exit code.** A presence test that
+/// answers `true` for an absent field still exits 0 and prints something —
+/// the bug this test would have caught is a `?` that always reads whatever
+/// garbage sits at the local's *own* address instead of the field's, which
+/// looks fine until the field is compared against a sibling that also has
+/// one. So this builds one record with the field present and a second with
+/// it null, and both branches of the `if` are exercised.
+#[test]
+fn a_tagged_options_field_answers_its_own_presence_test() {
+    let source = "\
+type Rec:
+    host: String?
+
+def main():
+    let r be Rec(host: \"yes\")
+    if r.host?:
+        print(\"present\")
+    else:
+        print(\"absent\")
+    let n be Rec(host: null)
+    if n.host?:
+        print(\"present\")
+    else:
+        print(\"absent\")
+";
+    assert_eq!(prints("tagged-field-presence", source), "present\nabsent\n");
+}
+
+/// **`?` on a field, Decision 19's niched representation.**
+///
+/// The same refusal, the other of Decision 6's two representations: `(&T)?`
+/// has no discriminant at all, so a niched field's `?` is a comparison of the
+/// niche's own pointer-sized scalar against `null`, read at a computed
+/// address the same way — `owned_nullable_return`'s `BranchAndMaterialiseNull`
+/// arm already builds the same scalar layout
+/// (`layout_of(self.target, &CgTy::Ptr(PtrKind::Raw))`) for the same reason.
+/// Fixing only the tagged path and leaving this one refused would have been
+/// half the bug: the two representations take different branches inside
+/// `lower_is_present` and one compiling is no evidence the other does.
+#[test]
+fn a_niched_options_field_answers_its_own_presence_test() {
+    let source = "\
+type Rec:
+    reference: (&Int)?
+
+def main():
+    let x be 5
+    let r be Rec(reference: &x)
+    if r.reference?:
+        print(\"present\")
+    else:
+        print(\"absent\")
+    let n be Rec(reference: null)
+    if n.reference?:
+        print(\"present\")
+    else:
+        print(\"absent\")
+";
+    assert_eq!(prints("niched-field-presence", source), "present\nabsent\n");
+}
