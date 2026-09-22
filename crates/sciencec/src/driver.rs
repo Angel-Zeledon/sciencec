@@ -354,6 +354,13 @@ impl Session {
     /// A file that does not build is reported the same way `build` reports
     /// one, and is never run — a program that is not there has no exit code to
     /// judge.
+    ///
+    /// **A program that never returns is judged too, within [`RUN_BUDGET`].**
+    /// `7674487` is why: a `for` loop whose `continue` skipped its own
+    /// increment ran forever, in the language's most-written construct, and
+    /// the whole suite passed — a hang has no exit code to compare and no
+    /// diagnostic to match, so nothing before this asked the one question
+    /// that would have caught it. [`run_bounded`] asks it.
     pub fn test(&mut self, paths: &[PathBuf]) {
         let mut entries: Vec<(PathBuf, FileId)> = Vec::with_capacity(paths.len());
         for path in paths {
@@ -382,13 +389,26 @@ impl Session {
     /// Runs the executable [`Session::emit_executable`] already produced
     /// beside `path`, and prints the one-line verdict `cargo test`'s own
     /// format is borrowed from, since it is a format readers already know.
+    ///
+    /// Bounded by [`RUN_BUDGET`] rather than `Command::status`'s unconditional
+    /// wait — see [`run_bounded`] for why.
     fn run_test(&mut self, path: &Path) {
         let exe = executable_path(path);
         let name = display_path(path);
-        match std::process::Command::new(&exe).status() {
-            Ok(status) if status.success() => print(&format!("test {name} ... ok\n")),
-            Ok(status) => {
+        match run_bounded(&exe, RUN_BUDGET) {
+            Ok(RunOutcome::Exited(status)) if status.success() => {
+                print(&format!("test {name} ... ok\n"))
+            }
+            Ok(RunOutcome::Exited(status)) => {
                 print(&format!("test {name} ... FAILED ({})\n", exit_reason(&status)));
+                self.tally.error();
+            }
+            Ok(RunOutcome::TimedOut) => {
+                print(&format!(
+                    "test {name} ... FAILED: did not exit within {}s and was killed — a hang, \
+                     not a wrong answer\n",
+                    RUN_BUDGET.as_secs()
+                ));
                 self.tally.error();
             }
             Err(error) => {
@@ -766,6 +786,61 @@ fn read_source(path: &Path, name: &str) -> Result<String, String> {
         let at = e.utf8_error().valid_up_to();
         format!("`{name}` is not valid UTF-8: the byte at offset {at} does not begin a character")
     })
+}
+
+/// How long [`Session::run_test`] waits for the executable before concluding
+/// it will never exit, killing it, and reporting that as its own kind of
+/// failure.
+///
+/// Ten seconds against a program this driver just built itself and expects to
+/// finish close to instantly. Measured, not guessed: every execution test in
+/// this workspace that builds, links and runs a program — including
+/// `crates/science-codegen-llvm/tests/methods.rs`'s
+/// `a_boxed_value_owning_a_string_is_built_and_freed_ten_thousand_times`, the
+/// heaviest one, a real loop run ten thousand times — does all three in under
+/// half a second end to end on this machine. Twenty times that leaves room for
+/// a slow or loaded machine without leaving room for a program that is
+/// actually stuck, which is what a false positive here would have to mean.
+const RUN_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// What [`run_bounded`] found when the wait ended.
+enum RunOutcome {
+    /// The child exited on its own, within the budget.
+    Exited(std::process::ExitStatus),
+    /// The deadline passed first. The child has already been killed and
+    /// reaped — there is no zombie left behind — and it is the caller's job
+    /// to decide what to say about it.
+    TimedOut,
+}
+
+/// Runs `exe` and waits for it, but not forever.
+///
+/// `Command::status` blocks on `waitpid` with no way to give up, which is
+/// exactly the shape of the defect `7674487` shipped: a `for` loop whose
+/// `continue` jumped over its own increment ran forever, and the unconditional
+/// wait this replaces is what would have turned that program into a suite
+/// that never finishes, the day `test` was pointed at it instead of an
+/// execution test with its own budget. Polling
+/// [`std::process::Child::try_wait`] against a deadline, rather than blocking
+/// on [`std::process::Child::wait`], is what turns a hang into a *reported*
+/// failure instead of this call blocking too.
+fn run_bounded(exe: &Path, budget: std::time::Duration) -> std::io::Result<RunOutcome> {
+    let mut child = std::process::Command::new(exe).spawn()?;
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(RunOutcome::Exited(status));
+        }
+        if std::time::Instant::now() >= deadline {
+            // Best-effort: the process is already misbehaving, and a kill or a
+            // reap failing here is not this function's failure to report —
+            // `TimedOut` is the true answer regardless.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(RunOutcome::TimedOut);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
 }
 
 /// A platform-independent phrase for the errors a driver actually meets.

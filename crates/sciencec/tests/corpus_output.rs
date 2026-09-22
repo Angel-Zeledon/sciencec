@@ -44,6 +44,27 @@
 //! recorded fact too: [`every_example_that_builds_has_its_output_pinned`]
 //! fails when a file starts building and nobody blessed its output, so the
 //! corpus cannot silently grow an unmeasured program.
+//!
+//! # A third way to fail: never printing anything at all
+//!
+//! `7674487` is a bug this file's own machinery could not have caught before
+//! `Session::run_test` learned to give up. `for i in 0..5:` with a `continue`
+//! in it hung forever — the language's most-written construct — and every
+//! example in this corpus that builds is run once by
+//! [`every_example_that_builds_has_its_output_pinned`], with nothing between
+//! it and `cargo test` but `Command::output`'s unconditional wait. A hanging
+//! example would have hung this file, and through it the whole suite, rather
+//! than failing it: no wrong bytes to pin, because there are no bytes.
+//!
+//! It is fixed at the source and not here: `Session::run_test`
+//! (`crates/sciencec/src/driver.rs`) now kills a program that outlives its own
+//! `RUN_BUDGET` and reports that as a `FAILED` distinct from a wrong exit
+//! code, so `sciencec test` — the command this file measures and the one a
+//! user runs — never blocks forever on any input, not just the ones in this
+//! corpus. What [`ran`] adds is narrower: it reads that message back out
+//! rather than folding a killed program into "does not build", which would
+//! have hidden the regression this file exists to catch behind the one
+//! `continue` already fixed above the assertion's reach.
 
 #![cfg(feature = "llvm")]
 
@@ -76,23 +97,54 @@ fn expectation(example: &Path) -> PathBuf {
     example.with_extension("stdout")
 }
 
-/// Build and run one example, or `None` if it does not build.
+/// What running one example through `sciencec test` found.
+enum Verdict {
+    /// It does not build.
+    NotBuilt,
+    /// It built and `sciencec test` killed it rather than wait forever — see
+    /// [`ran`].
+    Hung,
+    /// It built, ran, and exited; this is what it printed.
+    Printed(String),
+}
+
+/// Build and run one example.
 ///
 /// `sciencec test` and not `build` then execute, because that is the command
 /// a user runs and the one whose behaviour this corpus is a measurement of.
 /// Its own trailing `test … ok` line is dropped: it is the harness talking,
 /// not the program.
-fn ran(example: &Path) -> Option<String> {
+///
+/// # Why a hang is not folded into "does not build"
+///
+/// This function used to return `Option<String>`, `None` meaning only "did
+/// not build" — a nonzero exit with no further question asked. `Session::
+/// run_test` (`crates/sciencec/src/driver.rs`) no longer blocks forever on a
+/// program that never exits: past its own `RUN_BUDGET` it kills the child and
+/// prints `"... FAILED: did not exit within {n}s and was killed"` rather than
+/// hanging `sciencec test` itself. That message is also a nonzero exit, and
+/// folding it into `None` would have swapped one failure to catch this file's
+/// module doc opens with for another exactly as bad: the one example that
+/// hangs would be silently treated as one that never compiled, forever, by
+/// [`every_example_that_builds_has_its_output_pinned`]'s own `continue`. So the
+/// message is matched here, and a hang is its own outcome — the exact shape of
+/// `7674487`, caught by an assertion instead of a suite that never finishes.
+fn ran(example: &Path) -> Verdict {
     let output = Command::new(env!("CARGO_BIN_EXE_sciencec"))
         .current_dir(repo_root())
         .args(["test", example.to_str().expect("a utf-8 path")])
         .output()
         .expect("the sciencec binary must be runnable");
-    if !output.status.success() {
-        return None;
-    }
     let text = String::from_utf8_lossy(&output.stdout).into_owned();
-    Some(text.lines().filter(|line| !line.starts_with("test ")).collect::<Vec<_>>().join("\n"))
+    if text.contains("did not exit within") {
+        return Verdict::Hung;
+    }
+    if !output.status.success() {
+        return Verdict::NotBuilt;
+    }
+    Verdict::Printed(
+        text.lines().filter(|line| !line.starts_with("test ")).collect::<Vec<_>>().join("\n"),
+    )
 }
 
 fn blessing() -> bool {
@@ -104,6 +156,7 @@ fn blessing() -> bool {
 fn every_example_that_builds_has_its_output_pinned() {
     let mut unpinned = Vec::new();
     let mut wrong = Vec::new();
+    let mut hung = Vec::new();
 
     for example in examples() {
         let name = example.file_name().expect("a name").to_string_lossy().into_owned();
@@ -123,12 +176,24 @@ fn every_example_that_builds_has_its_output_pinned() {
         // both sides of the boundary. `lower_match`'s scrutinee and
         // `Rvalue::Narrow`'s owning payload were the same question from two
         // more routes, closed the same day by `Projection::Payload`.
-        let Some(actual) = ran(&example) else {
-            // It does not build. Its expectation, if any, is stale — but
-            // removing it here would make a regression look like a blessing,
-            // so it is left alone and the build failure is the other tests'
-            // business.
-            continue;
+        let actual = match ran(&example) {
+            Verdict::NotBuilt => {
+                // It does not build. Its expectation, if any, is stale — but
+                // removing it here would make a regression look like a
+                // blessing, so it is left alone and the build failure is the
+                // other tests' business.
+                continue;
+            }
+            Verdict::Hung => {
+                // It builds and does not exit. `wrong`/`unpinned` are about
+                // what a program prints; a hang has nothing to compare, which
+                // is `7674487`'s whole lesson, so it gets its own bucket and
+                // its own assertion below rather than being silently read as
+                // "does not build".
+                hung.push(name);
+                continue;
+            }
+            Verdict::Printed(text) => text,
         };
         let path = expectation(&example);
         if blessing() {
@@ -160,6 +225,12 @@ fn every_example_that_builds_has_its_output_pinned() {
         "an example's output changed. If the change is intended, bless it; if it is not, this \
          is the miscompile this file exists to catch:\n{}",
         wrong.join("\n")
+    );
+    assert!(
+        hung.is_empty(),
+        "these examples build and then never exit — `sciencec test` killed them after its own \
+         budget rather than hang this suite, which is the fix, but a build that no longer \
+         terminates is still a regression and not a pass: {hung:?}"
     );
 }
 

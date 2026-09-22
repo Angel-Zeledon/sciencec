@@ -149,7 +149,30 @@ pub struct Ran {
     pub status: Option<i32>,
 }
 
-/// Run a built program and collect all three.
+/// How long [`run`] waits for the program before concluding it will never
+/// exit, killing it, and reporting that rather than blocking forever.
+///
+/// Ten seconds against programs this crate's own tests build and run on
+/// purpose to finish near-instantly. Measured, not guessed:
+/// `a_boxed_value_owning_a_string_is_built_and_freed_ten_thousand_times` in
+/// `methods.rs` — the heaviest execution test in this crate, a real loop run
+/// ten thousand times — builds, links and runs in under half a second end to
+/// end. Twenty times that leaves room for a slow or loaded machine without
+/// leaving room for a program that is actually stuck, which is what a false
+/// positive here would have to mean.
+const RUN_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Run a built program and collect all three, but do not wait past
+/// [`RUN_BUDGET`] for it.
+///
+/// `Command::output` blocks on `waitpid` with no way to give up, and that is
+/// exactly the shape of the defect `7674487` shipped: `for i in 0..5:` with a
+/// `continue` in it hung forever, in the language's most-written construct,
+/// and the whole suite passed, because a hang has no exit code to compare and
+/// no diagnostic to match — nothing before that fix ever asked the one
+/// question that would have caught it. A test that reaches a genuinely
+/// nonterminating program now gets a `status: None` and a `stderr` that says
+/// why, instead of a `cargo test` run that has to be killed by hand.
 ///
 /// `\r\n` is normalised to `\n` because `science_print` writes `\n` on every
 /// platform — that is its own decision, *"Science text is UTF-8 and its
@@ -158,12 +181,64 @@ pub struct Ran {
 /// failing about the wrong thing.
 pub fn run(built: &Built) -> Ran {
     assert!(built.executable.is_file(), "no executable at {}", built.executable.display());
-    let output =
-        std::process::Command::new(&built.executable).output().expect("the program runs");
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let mut child = std::process::Command::new(&built.executable)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the program spawns");
+
+    // Read stdout and stderr on their own threads so a program that fills one
+    // pipe's buffer while nobody is waiting on the other cannot deadlock this
+    // harness against its own subject.
+    let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
+    let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
+    let stdout_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout_pipe.read_to_end(&mut buf);
+        buf
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut buf);
+        buf
+    });
+
+    let deadline = std::time::Instant::now() + RUN_BUDGET;
+    let status = loop {
+        match child.try_wait().expect("polling the child") {
+            Some(status) => break Some(status),
+            None if std::time::Instant::now() >= deadline => break None,
+            None => std::thread::sleep(std::time::Duration::from_millis(20)),
+        }
+    };
+
+    let timed_out = status.is_none();
+    if timed_out {
+        // The pipe readers above are still blocked in `read_to_end` until the
+        // child's ends close, which a kill (rather than a plain drop) does.
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    let stdout = stdout_reader.join().expect("the stdout reader thread");
+    let mut stderr = stderr_reader.join().expect("the stderr reader thread");
+    if timed_out {
+        stderr.extend_from_slice(
+            format!(
+                "\n[harness] killed after not exiting within {:?} — see harness::RUN_BUDGET",
+                RUN_BUDGET
+            )
+            .as_bytes(),
+        );
+    }
+
     Ran {
-        stdout: String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
-        stderr: String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
-        status: output.status.code(),
+        stdout: String::from_utf8_lossy(&stdout).replace("\r\n", "\n"),
+        stderr: String::from_utf8_lossy(&stderr).replace("\r\n", "\n"),
+        status: status.and_then(|s| s.code()),
     }
 }
 

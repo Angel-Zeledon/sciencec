@@ -290,3 +290,212 @@ fn continue_advances_both_kinds_of_for_loop() {
         "4 2\n"
     );
 }
+
+// --- The rest of `7674487`'s class -----------------------------------------
+//
+// The regression test above is the two forms the bug actually shipped in.
+// Everything below is the neighbourhood: the other loop forms `continue` and
+// `break` reach, the shapes that put a `continue` somewhere other than the
+// body's own top level, and the size of body that makes the increment the
+// *whole* question rather than one statement among several.
+//
+// **`examples/10_loops.science` already writes several of these shapes —
+// `consume`'s `match` arm with `continue`, `grid_sum`'s and
+// `deeply_nested`'s nesting — and none of it would have caught the bug or
+// would catch a return of it.** `consume`, `grid_sum`, `deeply_nested`,
+// `first_even`, `first_multiple`, `read_until_blank` and `advance` are never
+// called from that file's own `main`, so `science_codegen::mono`'s walk never
+// reaches them and no backend ever lowers them — the example demonstrates the
+// syntax and `corpus_output.rs` pins the bytes `main` prints, and both are
+// silent about a function nothing calls. A hanging `consume` would not have
+// failed a single test in this repository. These do call what they exercise.
+
+/// `break` in every `for` form, not only the two
+/// [`continue_advances_both_kinds_of_for_loop`] covers.
+///
+/// This is the output half of the pair the module doc's last section asks
+/// for: a `break` that fired on the wrong iteration, or that fired and then
+/// let the loop run once more anyway, produces a wrong count rather than a
+/// hang, and only an execution test sees it.
+#[test]
+fn break_stops_each_kind_of_for_loop() {
+    assert_eq!(
+        prints(
+            "break-range",
+            "let mutable n be 0\n\
+             for i in 0..1000:\n\
+             \x20   if i is 3:\n\
+             \x20       break\n\
+             \x20   n be n + 1\n\
+             print(f\"{n}\")\n",
+        ),
+        "3\n"
+    );
+    assert_eq!(
+        prints(
+            "break-array",
+            "let xs be [10, 20, 30, 40, 50]\n\
+             let mutable n be 0\n\
+             for x in xs:\n\
+             \x20   if x is 30:\n\
+             \x20       break\n\
+             \x20   n be n + 1\n\
+             print(f\"{n}\")\n",
+        ),
+        "2\n"
+    );
+    assert_eq!(
+        prints(
+            "break-chars",
+            "let mutable n be 0\n\
+             for c in \"abcdef\".chars():\n\
+             \x20   if c is 'd':\n\
+             \x20       break\n\
+             \x20   n be n + 1\n\
+             print(f\"{n}\")\n",
+        ),
+        "3\n"
+    );
+}
+
+/// `continue` over `Chars`, the one `for` form `7674487`'s fix did not touch.
+///
+/// A `for` over `Chars` advances by calling `next()` again, and the loop
+/// head *is* that call — there is no separate increment block for a
+/// `continue` to jump over, which is exactly why this form was never broken.
+/// Nothing had run it either, and "was never broken" and "is tested" are
+/// different claims; this closes the second one.
+#[test]
+fn continue_advances_a_for_over_chars_too() {
+    assert_eq!(
+        prints(
+            "continue-chars",
+            "let mutable kept be 0\n\
+             for c in \"abcbdb\".chars():\n\
+             \x20   if c is 'b':\n\
+             \x20       continue\n\
+             \x20   kept be kept + 1\n\
+             print(f\"{kept}\")\n",
+        ),
+        "3\n"
+    );
+}
+
+/// `continue` and `break` together in a bare `loop:`.
+///
+/// `7674487`'s own fix notes *"`loop:` with a `continue` was fine"* — true,
+/// because `loop:` has nothing between the end of its body and its test, so
+/// `head` and `continue_to` were always the same block for this form. Nothing
+/// in this crate had actually run that combination before this test: the only
+/// `loop:` execution tests are `stage_two_and_three.rs`'s, and none of them
+/// uses `continue`. A claim in a commit message is not a test.
+#[test]
+fn continue_and_break_together_in_a_bare_loop() {
+    assert_eq!(
+        prints(
+            "loop-continue-break",
+            "let mutable i be 0\n\
+             let mutable odds be 0\n\
+             loop:\n\
+             \x20   i be i + 1\n\
+             \x20   if i > 10:\n\
+             \x20       break\n\
+             \x20   if i % 2 is 0:\n\
+             \x20       continue\n\
+             \x20   odds be odds + 1\n\
+             print(f\"{odds}\")\n",
+        ),
+        "5\n"
+    );
+}
+
+/// `continue` and `break` in two nested `for` loops at once, each acting on
+/// its own loop and not the other's.
+///
+/// This is `a_for_over_an_array_walks_it`'s nested case with both jumps added:
+/// a `continue` in the inner loop must not advance or exit the outer one, and
+/// a `break` in the outer loop must stop it without the inner loop's own
+/// state leaking an extra iteration in. Each loop keeps its own `LoopScope` on
+/// a stack for exactly this reason, and this is the test that would notice a
+/// `continue` or `break` resolving to the wrong frame.
+#[test]
+fn continue_and_break_in_nested_for_loops() {
+    assert_eq!(
+        prints(
+            "nested-continue-break",
+            "let mutable total be 0\n\
+             for a in [1, 2, 3, 4, 5]:\n\
+             \x20   if a is 4:\n\
+             \x20       break\n\
+             \x20   for b in [10, 20, 30]:\n\
+             \x20       if b is 20:\n\
+             \x20           continue\n\
+             \x20       total be total + a * b\n\
+             print(f\"{total}\")\n",
+        ),
+        "240\n"
+    );
+}
+
+/// `continue` written inside a `match` arm inside a `for` loop —
+/// `examples/10_loops.science`'s `consume` function's own shape, actually
+/// called this time.
+///
+/// The `continue` here is not a direct statement in the loop body; it is an
+/// inline arm of a `match` the loop body contains. `Builder::loops` is a
+/// stack independent of `match`'s own lowering, so this asks whether a
+/// `continue` still finds the right frame — and, since the subject is a
+/// `for` over an array, the right frame's `continue_to` is the index
+/// increment block and not the loop head, one level of nesting further from
+/// the jump than the regression test's `if` puts it.
+#[test]
+fn continue_inside_a_match_arm_inside_a_for_loop() {
+    assert_eq!(
+        prints(
+            "match-continue",
+            "let tokens be [5, 0, 3, 0, 2]\n\
+             let mutable kept be 0\n\
+             for value in tokens:\n\
+             \x20   match value:\n\
+             \x20       0: continue\n\
+             \x20       other: kept be kept + other\n\
+             print(f\"{kept}\")\n",
+        ),
+        "10\n"
+    );
+}
+
+/// A loop whose body is `continue` and nothing else, over both `for` forms
+/// the bug lived in.
+///
+/// The regression test's body has an `if` around the `continue` and a
+/// statement after it; the increment still has to run when the `continue` is
+/// unconditional and there is nothing else in the body for a reader to
+/// mistake for "the increment must be in here somewhere". If the increment
+/// were still reachable only through the body's fall-through, this would be
+/// the shortest program that never reaches the `print` after it.
+#[test]
+fn a_loop_whose_entire_body_is_continue_still_terminates() {
+    assert_eq!(
+        prints(
+            "empty-body-range",
+            "for i in 0..50:\n\
+             \x20   continue\n\
+             print(\"done\")\n",
+        ),
+        "done\n"
+    );
+    assert_eq!(
+        prints(
+            "empty-body-array",
+            "let mutable xs be Array[Int].new()\n\
+             xs.push(1)\n\
+             xs.push(2)\n\
+             xs.push(3)\n\
+             for x in xs:\n\
+             \x20   continue\n\
+             print(\"done\")\n",
+        ),
+        "done\n"
+    );
+}
