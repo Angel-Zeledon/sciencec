@@ -189,6 +189,34 @@ pub fn linker_failed(command: &str, output: &str) -> Diagnostic {
         .with_note(output.to_string())
 }
 
+/// `SC0402` again, for a failure **before** the linker ran.
+///
+/// A backend error used to be reported through [`linker_failed`] with the
+/// command given as the string `"(the backend, before the linker)"`, which
+/// left a reader a headline saying *the linker failed*, a note promising
+/// *the linker's own output, verbatim*, and underneath it a sentence the
+/// linker never wrote — `examples/09_absence_and_failure.science` rendered as
+/// "the linker failed … unsupported: a constant of a type this backend cannot
+/// build at an aggregate". The parenthesis was doing the work of saying "this
+/// is not really the linker", and a parenthesis in the middle of a note is
+/// not where a reader looks for that.
+///
+/// **The code is still `SC0402` and that is deliberate.** §11 defines it for
+/// something below the compiler failing in a way codegen cannot attribute,
+/// and a backend refusal is exactly that shape; the band has no free code,
+/// and `SC0407`-`SC0409` are reserved for the ABI classifier — spending one
+/// here to split a code whose *definition* already covers the case would cost
+/// a reserved number to buy nothing. What was wrong was the prose, and the
+/// prose is what this changes: the same obligation §5.5 states — print the
+/// other program's output verbatim, **and say whose it is** — honoured for
+/// the program it actually came from.
+pub fn backend_failed(output: &str) -> Diagnostic {
+    Diagnostic::error(code::SC0402, "the backend failed before the linker ran")
+        .with_note("no object file was produced, so the linker was never invoked")
+        .with_note("what follows is the backend's own message, verbatim:")
+        .with_note(output.to_string())
+}
+
 /// `SC0403`: `build` was given a file with no entry point.
 ///
 /// §11 names the gap this fills: *"`script-mode.md` §4.2 rule 3 defines this

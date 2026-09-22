@@ -1204,10 +1204,15 @@ fn object_path(output: &std::path::Path) -> PathBuf {
 /// compiler failed and the honest thing is to hand over what it said. Decision
 /// 34 makes a verifier failure *"an internal compiler error that prints the
 /// offending function's IR"*, and that is what this carries.
+///
+/// It renders through [`science_codegen::diagnostics::backend_failed`] and no
+/// longer through `linker_failed` with a parenthesised command: the code is
+/// the same and the prose is not, because a reader met a headline saying the
+/// linker failed above a message the linker never wrote.
 #[cfg(feature = "llvm")]
 fn internal_error(error: &science_codegen::backend::BackendError) -> science_diagnostics::Diagnostic
 {
-    science_codegen::diagnostics::linker_failed("(the backend, before the linker)", &error.to_string())
+    science_codegen::diagnostics::backend_failed(&error.to_string())
 }
 
 /// The default optimisation level, re-exported so `sciencec` does not have to
