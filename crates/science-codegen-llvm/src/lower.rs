@@ -6777,8 +6777,50 @@ impl<'a> Lowerer<'a> {
                 Literal::Float { value, .. } => Ok(Operand::ConstFloat(*value)),
                 Literal::Bool(value) => Ok(Operand::ConstInt(i128::from(*value))),
                 Literal::Char(value) => Ok(Operand::ConstInt(*value as i128)),
+                // **A niched `T?` is `Operand::Null` only when the whole value
+                // *is* the pointer.** `crate::emit`'s `ExtInst::Const` builds a
+                // register by asking `operand()` for a value of the
+                // destination's own LLVM type, and the width the niche allows
+                // to disagree with the slot's — the `niche_ty` escape hatch
+                // `Inst::Store`'s width check has — has no counterpart for a
+                // value that is *built* rather than *written*: there is no
+                // narrower store to make legal, only a struct-typed register
+                // to produce, and `LLVMConstPointerNull` produces a pointer.
+                // `(any Error)?` is the case this finds: the niche sits in the
+                // data word at offset 0, but the payload is two words — data
+                // and vtable — so `Error?`'s own LLVM type is a two-word
+                // struct and a bare null pointer is the wrong width for it,
+                // exactly the mismatch `ExtInst::Const` is required to refuse
+                // rather than let the verifier or the linker discover.
+                //
+                // A payload that is nothing but a pointer (`(&T)?`, `Ptr?`) is
+                // the cheap, common case and keeps the direct answer: the
+                // niched type's LLVM type *is* `ptr`, so `Operand::Null` is
+                // already the right width and needs no slot. Anything wider —
+                // Decision 17's aggregate, another niche, a nested tag — takes
+                // the same slot/`store_null`/load this arm already used for
+                // `Repr::Tagged`, because `store_null`'s own `Niched` arm
+                // writes through `Inst::Store`, where the escape hatch above
+                // *does* apply, and the load back out reads the whole
+                // struct-typed value `ExtInst::Const` needed in the first
+                // place.
                 Literal::Null => match expected.map(|layout| &layout.repr) {
-                    Some(Repr::Niched { niche, .. }) if niche.offset == 0 => Ok(Operand::Null),
+                    Some(Repr::Niched { niche, payload, .. })
+                        if niche.offset == 0
+                            && matches!(payload.repr, Repr::Scalar(Scalar::Pointer(_))) =>
+                    {
+                        Ok(Operand::Null)
+                    }
+                    Some(Repr::Niched { niche, .. }) if niche.offset == 0 => {
+                        let layout = expected
+                            .expect("Some(Repr::Niched) is matched only through Some(layout)")
+                            .clone();
+                        let slot = self.temp(ctx, layout.clone());
+                        self.store_null(slot, &layout, insts)?;
+                        let dest = ctx.value();
+                        insts.push(ExtInst::Above(Inst::Load { dest, local: slot }));
+                        Ok(Operand::Value(dest))
+                    }
                     Some(Repr::Tagged { .. }) => {
                         let layout = expected
                             .expect("Some(Repr::Tagged) is matched only through Some(layout)")
