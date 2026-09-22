@@ -1,0 +1,83 @@
+# future/15 - absent data, and the statistical mistakes the language refuses
+# Notes: `missing-data.md`, `statistical-validity.md`, `data-leakage.md`,
+#        `reproducibility.md`.
+#
+# NOT BUILDABLE.
+#
+# This file is the one that most justifies a language built for science
+# rather than a library on top of a general one: every rule here is a
+# mistake a working scientist makes, made unrepresentable.
+
+use stats
+use dataframe (Frame)
+
+# --- absence has no default ------------------------------------------------
+
+# There is NO default policy for a reduction over data that has holes. Every
+# language in the audience's hands picks one, and each picks differently:
+# NumPy propagates, pandas skips, R makes you ask. Silence is the bug, so
+# the call does not compile until the author says which they meant.
+def average(heights: &Array[F64?]) -> F64?:
+    heights.mean()                       # SC0610: say which policy
+
+def average_of_present(heights: &Array[F64?]) -> F64:
+    heights.mean(skipping null)          # over however many are there
+
+def average_or_nothing(heights: &Array[F64?]) -> F64?:
+    heights.mean(propagating null)       # null if any is absent
+
+# Over two aligned collections, `pairwise` is a third policy and not a
+# nicety: plain skipping would drop row i from one column and row j from the
+# other, and then compare values that never belonged to the same sample.
+def relate(height: &Array[F64?], weight: &Array[F64?]) -> (F64, Error?):
+    stats.correlation(height, weight, skipping null pairwise)
+
+# --- multiple comparisons ---------------------------------------------------
+
+# A p-value that came out of a loop is not a p-value. The count of tests is
+# data-dependent — note the `continue` — so no static analysis recovers it,
+# and the type is what carries the obligation instead: a `PValue` cannot be
+# reported, only adjusted into an `AdjustedPValue` that can.
+def screen(frame: &Frame, control: &Frame) -> (Array[AdjustedPValue], Error?):
+    let mutable raw be Array.new()
+    for column in frame.columns():
+        let result, err be stats.t_test_two_sample(
+            control.column(column), frame.column(column), stats.TwoSided)
+        if err?:
+            continue
+        raw.push(result.p_value)
+
+    (stats.holm(&raw), null)
+
+# --- leakage ----------------------------------------------------------------
+
+# Fitting on the data you then score against is the commonest invalid result
+# in applied work, and it is visible to a type system because it is FLOW: the
+# fit and the score share a provenance the checker can follow through loops
+# and helper functions.
+def leaks(design: &Frame, response: &Array[F64]) -> (F64, Error?):
+    let fit, err be stats.least_squares(design, response)
+    if err?:
+        return (0.0, err)
+    # SC-leakage: `r_squared` scores the fit against the rows it was fitted
+    # on. The witness is the path from `design` to both calls.
+    (stats.r_squared(&fit, design, response), null)
+
+def honest(design: &Frame, response: &Array[F64], seed: U64) -> (F64, Error?):
+    let train, test, err be stats.split(design, response, fraction: 0.8, seed: seed)
+    if err?:
+        return (0.0, err)
+
+    let fit, err be stats.least_squares(&train.design, &train.response)
+    if err?:
+        return (0.0, err)
+
+    (stats.r_squared(&fit, &test.design, &test.response), null)
+
+# Reusing one held-out set across many models is the same mistake wearing a
+# disguise, and it is the variant people do not recognise. The held-out set
+# is consumed by scoring, so a second score against it is a use of a moved
+# value — the ownership rules the language already has, pointed at a
+# statistical error.
+def compares_badly(models: &Array[Model], test: HeldOut) -> Array[F64]:
+    models.iterate().map(m giving stats.score(m, test)).collect()   # SC-moved

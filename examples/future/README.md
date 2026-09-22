@@ -36,6 +36,21 @@ it is checked on every run rather than promised in a comment.
 | `08_agents_and_web.science` | §26, §27 | `llm`, `tools`, `agents`, `http-server`, `router` |
 | `09_testing_and_plotting.science` | §20, §25 | `test`, `bench`, `plot` |
 
+Those nine are libraries. These nine are **language** features — things the
+compiler grows rather than things a package provides:
+
+| File | Note | Covers |
+|---|---|---|
+| `10_units_and_uncertainty.science` | `unit-literals.md`, `uncertainty.md` | unit literals, uncertainty in the literal, dimensional errors |
+| `11_contracts.science` | `contracts.md` | `requires`, `ensures`, `invariant`, and the three rungs |
+| `12_equations.science` | `equations.md` | `equation` items: a law that is callable *and* data |
+| `13_axes_and_shapes.science` | `named-axes.md`, `broadcasting.md`, `with-policy-blocks.md` | `axis` items, named shapes, `with` bindings |
+| `14_effects_and_concurrency.science` | `effects.md`, `concurrency-and-cancellation.md` | inferred effects, `scope`, cancellation, deadlines |
+| `15_missing_data_and_validity.science` | `missing-data.md`, `statistical-validity.md`, `data-leakage.md` | absence policies, multiple comparisons, leakage |
+| `16_durable_and_reproducible.science` | `durable-computation.md`, `reproducibility.md` | `durable def`, `keyed by`, provenance |
+| `17_models_tools_and_agents.science` | `models-and-inference.md`, `mcp-servers.md` | inference bundles, `tool` (real today), `server` |
+| `18_capstone.science` | all of them | one honest analysis, end to end |
+
 ## The rules these files follow
 
 They are design arguments, so they are held to the same standard as the notes:

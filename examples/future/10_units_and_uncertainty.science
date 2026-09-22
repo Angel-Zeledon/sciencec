@@ -1,0 +1,73 @@
+# future/10 - unit literals and uncertainty, which are LANGUAGE features
+# Notes: `unit-literals.md`, `uncertainty.md`.
+#
+# NOT BUILDABLE. The lexer does not read `<m/s^2>` or `(15)` today.
+#
+# These are in the language and not in a library on purpose: a library can
+# offer a `Quantity` type, but only the language can make `9.8<m/s^2>` a
+# literal, and only a literal gets checked everywhere a number is written.
+
+use physics.constants (GAS_CONSTANT, SPEED_OF_LIGHT)
+
+# --- unit literals ----------------------------------------------------------
+
+# The unit is part of the literal, not a constructor call. `70<kg>` is one
+# token sequence the lexer knows, so it costs nothing at run time: the value
+# is an F64 and the unit is in the type.
+def terminal_velocity(mass: Mass[F64], area: Area[F64]) -> Speed[F64]:
+    let g be 9.8<m/s^2>
+    let rho be 1.225<kg/m^3>
+    let drag be 0.47
+    ((2.0 * mass * g) / (rho * area * drag)).sqrt()
+
+# The dimensional error is a COMPILE error, not a wrong answer. This is the
+# whole argument for putting units in the language: the Mars Climate Orbiter
+# failure was a type error nobody could express.
+def wrong() -> Length[F64]:
+    let distance be 100<m>
+    let time be 9.58<s>
+    distance + time          # SC-dimension: `m` and `s` do not add
+
+# Prefixes are part of the grammar, so `MHz` is not a separate constant.
+def clock_period(rate: Frequency[F64]) -> Time[F64]:
+    1.0 / rate
+
+def example_clock() -> Time[F64]:
+    clock_period(16<MHz>)
+
+# Celsius is affine and kelvin is linear, and the two are different types
+# because a difference of temperatures is not a temperature.
+def arrhenius_rate(a: F64, activation: MolarEnergy[F64],
+                   temperature: AbsoluteTemperature[F64]) -> F64:
+    a * math.exp(-activation / (GAS_CONSTANT * temperature))
+
+# --- uncertainty ------------------------------------------------------------
+
+# `9.80665(15)` is a nominal value and a standard uncertainty in one literal:
+# the `(15)` applies to the last digits shown. `100(1%)` is the relative form.
+def measured_constants() -> Array[Uncertain[F64]]:
+    [
+        9.80665(15)<m/s^2>,
+        6.67430(15)e-11<m^3/kg/s^2>,
+        9.1093837015(28)e-31<kg>,
+    ]
+
+# Uncertainty propagates through arithmetic because `Uncertain[T]` carries a
+# gradient and not just a sigma. That is what makes correlation come out
+# right: `x - x` is exactly zero, where a naive sigma-only design answers
+# `sigma * sqrt(2)`.
+def resistance_check() -> Uncertain[F64]:
+    let r be 100(1%)<ohm>
+    let i be 0.050(2)<A>
+    r * i * i                # power, with uncertainty carried through
+
+# The case every naive design gets wrong, kept here as the test of the
+# design: a value minus itself is zero with zero uncertainty.
+def correlated_difference() -> Uncertain[F64]:
+    let x be 21.30(15)<K>
+    x - x                    # 0.00(0) K, not 0.00(21) K
+
+# Uncertainty is a SCALAR feature by decision. A tensor of uncertain values
+# is not this; that is an error bar per element and a different design.
+def report(value: Uncertain[F64]) -> String:
+    f"{value.nominal()} ± {value.uncertainty()}"

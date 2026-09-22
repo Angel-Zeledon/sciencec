@@ -1,0 +1,69 @@
+# future/16 - `durable`, reproducibility and publishable output
+# Notes: `durable-computation.md`, `reproducibility.md`,
+#        `publishable-output.md`.
+#
+# NOT BUILDABLE.
+#
+# A four-day fit that dies on hour ninety and starts over is the daily
+# reality this is aimed at. Checkpointing is in the language because the
+# thing that has to be hashed — the inputs, the code, the seed — is exactly
+# what the compiler knows and a library does not.
+
+use dataframe (Frame)
+
+# `keyed by` is the identity of the computation: change the data or the
+# epochs and it is a different run. Change nothing and a restart resumes.
+durable def fit(data: &Frame, epochs: Int) -> Model
+    keyed by (data.digest(), epochs)
+    checkpoint every 10 epochs:
+    let mutable model be Model.initial()
+    for epoch in 0..epochs:
+        model be step(model, data)
+    model
+
+# The key includes the compiled code by construction, so editing the body
+# invalidates the checkpoints rather than silently resuming a run that no
+# longer matches the source that produced it. That is the failure mode a
+# library-level cache cannot close.
+durable def sweep(data: &Frame, seeds: &Array[U64]) -> Array[Model]
+    keyed by (data.digest(), seeds.digest())
+    checkpoint every 1 iterations:
+    let mutable out be Array.new()
+    for seed in seeds:
+        out.push(fit_with(data, seed))
+    out
+
+# --- reproducibility --------------------------------------------------------
+
+# A seed is always an argument and never ambient state. Two runs of one
+# program with one seed agree, on one machine and across machines, and the
+# `with` block scopes it so nothing downstream inherits it by accident.
+def replicate(data: &Frame, seed: U64) -> Model:
+    with seed seed, precision f32:
+        fit_with(data, seed)
+
+# Summation order is a published-results question, so the library owes it a
+# defined answer rather than whatever the parallel scheduler happened to do.
+# `sum()` is named separately from `reduce` for exactly this reason.
+def stable_total(xs: &Array[F64]) -> F64:
+    xs.iterate().sum()
+
+# --- publishable output -----------------------------------------------------
+
+# A figure or a table carries its provenance: which code, which data, which
+# seed, which version of which dependency. A result you cannot trace is a
+# result you cannot defend, and reconstructing that by hand months later is
+# how honest people end up unable to answer a reviewer.
+def publish(model: &Model, data: &Frame, out: &String) -> Error?:
+    let figure be plot.Line
+        .new()
+        .series("loss", model.history())
+        .provenance(provenance.current())
+        .caption("Training loss over ten epochs")
+
+    figure.save(out)
+
+def method_section(model: &Model) -> String:
+    # The equation records, the seed, the versions — assembled from what the
+    # compiler already knows rather than typed a second time into a paper.
+    provenance.current().to_methods_paragraph(model.equations())

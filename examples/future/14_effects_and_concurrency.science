@@ -1,0 +1,79 @@
+# future/14 - the effect system and structured concurrency
+# Notes: `effects.md`, `concurrency-and-cancellation.md`.
+#
+# NOT BUILDABLE.
+#
+# An effect is three bits from a CLOSED set, attached to a function's DefId
+# and inferred rather than written. Every bit carries a witness: the shortest
+# call chain from the function to the thing that caused it, so a diagnostic
+# can say WHY rather than just that.
+
+use fs
+use random
+
+# Nothing is annotated here. `pure_transform` is pure because everything it
+# calls is, and the compiler works that out. A language that made you write
+# the annotation would get it written wrong, or not at all.
+def pure_transform(xs: &Array[F64]) -> Array[F64]:
+    xs.iterate().map(each * 2.0).collect()
+
+# This one reads a file, so it carries the `io` bit, and so does everything
+# that calls it. The witness is the chain that reaches `fs.read_to_string`.
+def load_series(path: &String) -> (Array[F64], Error?):
+    let text, err be fs.read_to_string(path)
+    if err?:
+        return (Array.new(), err)
+    parse_series(text)
+
+# This one draws from a generator, so it carries `random`. A seed passed as
+# an argument does NOT make it pure — the result still depends on it — but
+# it does make it reproducible, and those are different properties.
+def jitter(xs: &Array[F64], seed: U64) -> Array[F64]:
+    let mutable rng be random.Generator.seeded(seed)
+    xs.iterate().map(x giving x + rng.normal(mean: 0.0, sd: 0.01)).collect()
+
+# The payoff: `.parallel()` can refuse a chain whose body is not safe to run
+# out of order, and refuse it at COMPILE time with the witness in the
+# message. That is what an effect system buys a scientific language — not
+# purity for its own sake.
+def safe_in_parallel(xs: &Array[F64]) -> F64:
+    xs.iterate().parallel().map(each * each).sum()
+
+def will_be_refused(xs: &Array[F64], seed: U64) -> Array[F64]:
+    # SC-effect: `jitter` carries `random`; a parallel region needs the
+    # result to be independent of the order the elements are visited.
+    xs.iterate().parallel().map(x giving jitter(&[x], seed)).collect()
+
+# --- structured concurrency -------------------------------------------------
+
+# A `scope` block joins every thread it started before it exits. Not by
+# convention — by construction. A thread cannot outlive the function that
+# started it, which is the trade against Go: you lose fire-and-forget and you
+# gain the guarantee that there is no thread you forgot about.
+def fit_all(runs: &Array[Run]) -> Array[Fit]:
+    let mutable out be Array.new()
+    scope:
+        for run in runs:
+            scope.start(giving: fit_one(run))
+    # every thread has finished here
+    out
+
+# Cancellation is cooperative and scoped: cancelling the scope cancels every
+# thread under it, and the block still does not exit until they have stopped.
+def first_to_converge(seeds: &Array[U64], data: &Frame) -> Fit?:
+    let mutable answer be null
+    scope:
+        for seed in seeds:
+            scope.start(giving: attempt(data, seed))
+        let found be scope.first_result()
+        if found?:
+            answer be found
+            scope.cancel()
+    answer
+
+# A deadline is a property of the scope, not of each call, so a timeout
+# cannot be forgotten on one branch out of five.
+def bounded(data: &Frame) -> (Fit, Error?):
+    scope with deadline time.Duration.minutes(10):
+        scope.start(giving: fit_one_frame(data))
+        scope.join_one()

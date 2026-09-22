@@ -1,0 +1,80 @@
+# future/17 - model inference, `tool` declarations and MCP servers
+# Notes: `models-and-inference.md`, `mcp-servers.md`, `llm-ergonomics.md`.
+#
+# PARTLY REAL. `tool` and `sciencec tools --json` exist today — that command
+# derives a JSON Schema from a function's signature and is the one construct
+# in this directory with a working implementation. Everything else here is
+# designed and unbuilt.
+
+use inference.onnx
+use inference (Bundle, Device)
+use tensor (Tensor)
+
+# --- running a trained model ------------------------------------------------
+
+# Loading is fallible, the device is explicit, and the bundle is named
+# rather than positional — an ONNX graph's inputs have names and matching
+# them by position is how the wrong tensor reaches the wrong port.
+def classify(pixels: &Tensor[F32, [batch: n, 3, 224, 224]]) -> (Array[Int], Error?):
+    let net, err be onnx.open("resnet50.onnx", device: Device.cpu())
+    if err?:
+        return (Array.new(), err)
+
+    let mutable inputs be Bundle.new()
+    inputs.set("pixels", pixels)
+
+    let outputs, err be net.run(&inputs)
+    if err?:
+        return (Array.new(), err)
+
+    let logits, err be outputs.tensor("logits")
+    if err?:
+        return (Array.new(), err)
+
+    (logits.argmax(axis: 1).to_array(), null)
+
+# --- tools, which already work ----------------------------------------------
+
+# A `tool` function's schema comes from its SIGNATURE, so it cannot drift
+# from the thing it describes. Every other ecosystem makes you write the
+# schema beside the function and keep the two in step by hand; the reason
+# Science does not is that it has the types already.
+tool def search_archive(query: String, limit: Int, since_year: Int?) -> (Array[Paper], Error?):
+    ## Search the paper archive.
+    ##
+    ## query: free text, matched against title and abstract
+    ## limit: how many to return, at most 50
+    ## since_year: restrict to papers at or after this year
+    archive.search(query, limit.clamp(1, 50), since_year)
+
+type Paper:
+    title: String
+    year: Int
+    doi: String
+
+# The nullable parameter becomes an optional field in the schema, because
+# `Int?` already says so. The doc comment becomes the description. Nothing
+# about the tool is written twice.
+
+# --- an MCP server ----------------------------------------------------------
+
+# A module of `tool` functions is a server. The transport, the handshake and
+# the schema generation are the toolchain's; what the author writes is the
+# functions and nothing else.
+server archive_server:
+    name "science-archive"
+    version "0.1.0"
+    tools [search_archive, fetch_paper, cite]
+
+tool def fetch_paper(doi: String) -> (Paper, Error?):
+    ## Fetch one paper by DOI.
+    archive.by_doi(doi)
+
+tool def cite(doi: String, style: CitationStyle) -> (String, Error?):
+    ## Render a citation for a paper.
+    archive.cite(doi, style)
+
+choice CitationStyle:
+    Apa
+    Bibtex
+    Nature

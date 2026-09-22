@@ -1,0 +1,71 @@
+# future/11 - contracts: `requires`, `ensures`, `invariant`
+# Note: `contracts.md`.
+#
+# NOT BUILDABLE. The three words are contextual keywords the parser does not
+# know yet.
+#
+# The three rungs matter and are not the same promise: a contract is PROVED
+# where the const evaluator can decide it, CHECKED at run time where it
+# cannot, and DOCUMENTED where it mentions a float.
+
+# `requires` and `ensures` sit in the signature, after the return type and
+# interleaved freely with `where`. `result` names the returned value and is
+# bound only inside an `ensures`.
+def bisect(f: (F64) -> F64, lo: F64, hi: F64, tolerance: F64) -> F64
+    requires lo < hi
+    requires tolerance > 0.0
+    ensures result >= lo and result <= hi:
+    let mutable low be lo
+    let mutable high be hi
+    while high - low > tolerance:
+        let mid be low + (high - low) / 2.0
+        if f(mid) * f(low) < 0.0:
+            high be mid
+        else:
+            low be mid
+    low + (high - low) / 2.0
+
+# An `invariant` goes in a `type` body, after the fields. It holds at every
+# point an outside observer can see the value, which is what makes it worth
+# more than a check in one constructor.
+type Probability:
+    value: F64
+    invariant value >= 0.0 and value <= 1.0
+
+type Simplex:
+    weights: Array[F64]
+    invariant weights.iterate().sum() is 1.0
+    invariant weights.iterate().all(each >= 0.0)
+
+# A contract over integers reaches the PROVED rung, because the prover is the
+# const evaluator and it decides linear integer arithmetic.
+def split_at[T](items: &Array[T], at: Int) -> (&Array[T], &Array[T])
+    requires at >= 0
+    requires at <= items.length()
+    ensures result.left.length() + result.right.length() is items.length():
+    (items.slice(0, at), items.slice(at, items.length()))
+
+# A contract mentioning a float is never proved and is documented or checked,
+# never silently believed. `contracts.md` is explicit: a proposition over
+# floating point is not decidable by the normal form, and pretending
+# otherwise would make the whole mechanism untrustworthy.
+def normalise(xs: &Array[F64]) -> Array[F64]
+    requires not xs.is_empty()
+    ensures result.length() is xs.length():
+    let total be xs.iterate().sum()
+    if total is 0.0:
+        return xs.clone()
+    xs.iterate().map(each / total).collect()
+
+# A precondition is the caller's obligation and a postcondition is the
+# callee's. That asymmetry is the reason both words exist rather than one
+# `assert`, which would say who is wrong only by accident.
+def sample_index(weights: &Simplex, u: F64) -> Int
+    requires u >= 0.0 and u < 1.0
+    ensures result >= 0 and result < weights.weights.length():
+    let mutable acc be 0.0
+    for index in 0..weights.weights.length():
+        acc be acc + weights.weights[index]
+        if u < acc:
+            return index
+    weights.weights.length() - 1

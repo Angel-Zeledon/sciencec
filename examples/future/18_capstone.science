@@ -1,0 +1,121 @@
+# future/18 - everything at once: one honest analysis, end to end
+# The acceptance program for the finished language, the way
+# `examples/00_kitchen_sink.science` is the acceptance program for F0.
+#
+# NOT BUILDABLE. Nearly every line needs something that does not exist.
+#
+# Read this one as the argument for the whole project. Every construct here
+# exists to make a specific mistake — a real one, made by working
+# scientists — either impossible or loud.
+
+use dataframe (Frame)
+use tensor (Tensor)
+use stats
+use plot
+use fs
+
+axis sample
+axis feature
+
+## The Beer-Lambert relation between absorbance and concentration.
+equation beer_lambert:
+    A:       Absorbance[F64]          as "A"
+    epsilon: MolarAbsorptivity[F64]   as "\\varepsilon"
+    l:       Length[F64]              as "\\ell"
+    c:       Concentration[F64]       as "c"
+
+    A = epsilon * l * c
+
+type Calibration:
+    slope: Uncertain[F64]
+    intercept: Uncertain[F64]
+    r_squared: F64
+    invariant r_squared >= 0.0 and r_squared <= 1.0
+
+# The measurement carries its uncertainty in the literal, and the path
+# length carries its unit. Neither is a comment anybody has to keep true.
+def standards() -> Array[(Concentration[F64], Absorbance[F64])]:
+    [
+        (0.010(2)<mol/L>, 0.112(3)),
+        (0.025(2)<mol/L>, 0.281(4)),
+        (0.050(2)<mol/L>, 0.559(5)),
+        (0.100(2)<mol/L>, 1.118(9)),
+    ]
+
+# A four-day fit that dies on hour ninety resumes rather than restarting,
+# and the key makes "the same run" mean something precise.
+durable def calibrate(points: &Array[(Concentration[F64], Absorbance[F64])],
+                      path_length: Length[F64]) -> (Calibration, Error?)
+    keyed by (points.digest(), path_length)
+    checkpoint every 100 iterations
+    requires not points.is_empty()
+    requires path_length > 0.0<m>:
+    let fit, err be stats.weighted_least_squares(points)
+    if err?:
+        return (Calibration.empty(), err)
+
+    (Calibration(
+        slope: fit.slope,
+        intercept: fit.intercept,
+        r_squared: fit.r_squared,
+    ), null)
+
+# The unknown's concentration comes back WITH its uncertainty, propagated
+# through the fit rather than quoted from the last significant digit.
+def concentration_of(cal: &Calibration,
+                     reading: Absorbance[F64],
+                     path_length: Length[F64]) -> Concentration[F64]:
+    (reading - cal.intercept) / (cal.slope * path_length)
+
+# Holes in a plate reading are ordinary. The policy is named at the call,
+# because there is no answer that is right for everybody.
+def plate_mean(wells: &Array[F64?]) -> F64:
+    wells.mean(skipping null)
+
+def main() -> ((), Error?):
+    # One seed, one precision, scoped to the block. Two runs agree.
+    with seed 20260922, precision f64:
+        let cal, err be calibrate(&standards(), 1.0<cm>)
+        if err?:
+            return ((), err)
+
+        print(f"slope {cal.slope} r² {cal.r_squared}")
+
+        let samples, err be load_plate("plate.csv")
+        if err?:
+            return ((), err)
+
+        # The shape becomes a checked fact for the block, and the axes are
+        # named, so a 96-long well axis cannot be multiplied by a 96-long
+        # replicate axis by accident.
+        with samples.shape as [sample: wells, feature: reads]:
+            let absorbance be samples.to_tensor().mean(axis: feature, keep_dims: false)
+
+            let concentrations be absorbance
+                .iterate()
+                .map(a giving concentration_of(&cal, a, 1.0<cm>))
+                .collect()
+
+            # Every well is one test. Reporting the smallest p-value out of
+            # ninety-six without adjusting is the commonest way an honest
+            # person publishes a false positive, and the type refuses it.
+            let raw be concentrations
+                .iterate()
+                .map(c giving stats.test_against(c, 0.0<mol/L>))
+                .collect()
+
+            let adjusted be stats.holm(&raw)
+
+            let figure be plot.Scatter
+                .of_uncertain(concentrations)
+                .y_label("concentration (mol/L)")
+                .caption(beer_lambert.latex())
+                .provenance(provenance.current())
+
+            let err be figure.save("calibration.png")
+            if err?:
+                return ((), err)
+
+            print(f"{adjusted.iterate().keep(each.below(0.05)).count()} wells above background")
+
+    ((), null)

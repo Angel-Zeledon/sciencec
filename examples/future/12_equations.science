@@ -1,0 +1,63 @@
+# future/12 - `equation`: a declaration that is a law, not a function
+# Note: `equations.md`.
+#
+# NOT BUILDABLE.
+#
+# An `equation` is one item that resolves two ways: in call position to the
+# generated function, and in value position to an `EquationRecord`. That
+# second half is the point — a law you can print, typeset, cross-reference
+# and rearrange is not something a function can be.
+
+use physics.constants (GAS_CONSTANT, BOLTZMANN, PLANCK)
+
+## The Arrhenius temperature dependence of a rate constant.
+equation arrhenius:
+    k:  FirstOrderRate[F64]      as "k"    ## the rate constant
+    A:  FirstOrderRate[F64]      as "A"    ## the pre-exponential factor
+    Ea: MolarEnergy[F64]         as "E_a"  ## the molar activation energy
+    T:  AbsoluteTemperature[F64]           ## on the kelvin scale, never Celsius
+
+    k = A * exp(-Ea / (GAS_CONSTANT * T))
+
+## The ideal gas law.
+equation ideal_gas:
+    P: Pressure[F64]              as "P"
+    V: Volume[F64]                as "V"
+    n: AmountOfSubstance[F64]     as "n"
+    T: AbsoluteTemperature[F64]   as "T"
+
+    P = (n * GAS_CONSTANT * T) / V
+
+## Planck's law for spectral radiance.
+equation planck_radiance:
+    B:      SpectralRadiance[F64]     as "B_\\lambda"
+    lambda: Length[F64]               as "\\lambda"
+    T:      AbsoluteTemperature[F64]  as "T"
+
+    B = (2.0 * PLANCK * SPEED_OF_LIGHT ** 2 / lambda ** 5)
+        / (exp(PLANCK * SPEED_OF_LIGHT / (lambda * BOLTZMANN * T)) - 1.0)
+
+# Call position: the generated function takes the declared variables other
+# than the result, by name, in declaration order.
+def rate_at(a: FirstOrderRate[F64], activation: MolarEnergy[F64]) -> FirstOrderRate[F64]:
+    arrhenius(A: a, Ea: activation, T: 310.15<K>)
+
+def pressure_of(moles: AmountOfSubstance[F64]) -> Pressure[F64]:
+    ideal_gas(n: moles, V: 22.4<L>, T: 273.15<K>)
+
+# Value position: the record. This is what a library cannot give you — the
+# equation as data, with its symbols, its units and its provenance intact.
+def document() -> String:
+    let mutable out be String.new()
+    out.push_str(arrhenius.latex())
+    out.push_str("\n")
+    out.push_str(arrhenius.variable("Ea").symbol())
+    out
+
+# The dimensional check is not what the language contributes — a library
+# could do that. What it contributes is that the check, the callable, the
+# typeset form and the documentation all come from ONE declaration, so they
+# cannot drift apart. A paper whose method section disagrees with its code
+# is the failure this is aimed at.
+def cross_reference() -> Array[String]:
+    [arrhenius.name(), ideal_gas.name(), planck_radiance.name()]

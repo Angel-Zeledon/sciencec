@@ -1,0 +1,58 @@
+# future/13 - named axes, broadcasting and `with` shape bindings
+# Notes: `named-axes.md`, `broadcasting.md`, `with-policy-blocks.md`.
+#
+# NOT BUILDABLE.
+#
+# An axis name is an ITEM, declared with `axis` and resolved by the resolver
+# — not a string. A typo is then an unresolved name rather than a new axis
+# that silently fails to align, which is the exact bug class this kills.
+
+use tensor (Tensor)
+
+axis sample
+axis feature
+axis wavelength
+axis batch
+
+# A named shape uses brackets; the unnamed spelling stays valid and means a
+# shape whose every axis is anonymous. Named axes are opt-in.
+def spectra_mean(
+        x: &Tensor[F32, [sample: n, wavelength: w]]) -> Tensor[F32, [wavelength: w]]:
+    x.mean(axis: sample, keep_dims: false)
+
+# Two dimensions of the same LENGTH but different NAMES do not align. This is
+# the point of the feature: a 768-long embedding axis and a 768-long batch
+# are not the same axis, and today nothing stops you multiplying them.
+def will_not_align(a: &Tensor[F32, [sample: n, feature: 768]],
+                   b: &Tensor[F32, [batch: n, feature: 768]]) -> Tensor[F32, [sample: n]]:
+    a.mul(b).sum(axis: feature, keep_dims: false)   # SC-axis: sample vs batch
+
+# Reduction names the axis rather than counting it, so inserting a dimension
+# upstream does not silently change what gets reduced.
+def normalise(
+        x: &Tensor[F32, [sample: n, feature: d]]) -> (Tensor[F32, [sample: n, feature: d]], Error?):
+    let mu be x.mean(axis: sample, keep_dims: true)
+    x.sub(mu)
+
+# --- `with`: binding a runtime shape into a rigid, checked fact -------------
+
+# The head takes a comma-separated list. A shape clause turns something known
+# only at run time into a fact the block can rely on, checked once at entry.
+def train(table: &Frame) -> (Model, Error?):
+    with table.shape as [sample: rows, feature: 768], seed 42, precision f32:
+        let x be table.to_tensor()
+        fit(x)
+
+# Policy clauses are the same idea applied to a choice the caller makes:
+# a seed, a device, a precision. Scoped to the block, so nothing leaks into
+# the next computation and nothing is set globally.
+def reproducible_run(data: &Tensor[F32, [sample: n, feature: d]]) -> Model:
+    with seed 42, device gpu:0, precision f32:
+        fit(data)
+
+# A repeated binder is a runtime equality check, which is the whole reason
+# the head takes a list rather than one clause: `rows` appearing twice means
+# the two shapes must agree, and the check says so where it fails.
+def paired(a: &Frame, b: &Frame) -> (Tensor[F32, [sample: n]], Error?):
+    with a.shape as [sample: rows, feature: p], b.shape as [sample: rows, feature: q]:
+        correlate(a.to_tensor(), b.to_tensor())

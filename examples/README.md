@@ -228,5 +228,21 @@ the output pins — reads only the top level of `examples/` and never sees them.
 | `08_agents_and_web.science` | §26, §27 | `llm`, `tools`, `agents`, `http-server`, `router` |
 | `09_testing_and_plotting.science` | §20, §25 | `test`, `bench`, `plot` |
 
+The nine above are libraries. The nine below are **language** features —
+constructs the compiler itself would have to grow, each with a design note
+behind it:
+
+| File | Note | Covers |
+|---|---|---|
+| `10_units_and_uncertainty.science` | `unit-literals.md`, `uncertainty.md` | unit literals, uncertainty in the literal, dimensional errors |
+| `11_contracts.science` | `contracts.md` | `requires`, `ensures`, `invariant`, and the three rungs |
+| `12_equations.science` | `equations.md` | `equation` items: a law that is callable *and* data |
+| `13_axes_and_shapes.science` | `named-axes.md`, `broadcasting.md`, `with-policy-blocks.md` | `axis` items, named shapes, `with` bindings |
+| `14_effects_and_concurrency.science` | `effects.md`, `concurrency-and-cancellation.md` | inferred effects, `scope`, cancellation, deadlines |
+| `15_missing_data_and_validity.science` | `missing-data.md`, `statistical-validity.md`, `data-leakage.md` | absence policies, multiple comparisons, leakage |
+| `16_durable_and_reproducible.science` | `durable-computation.md`, `reproducibility.md` | `durable def`, `keyed by`, provenance |
+| `17_models_tools_and_agents.science` | `models-and-inference.md`, `mcp-servers.md` | inference bundles, `tool` (real today), `server` |
+| `18_capstone.science` | all of them | one honest analysis, end to end |
+
 When a library lands, its file there is deleted and a real example takes its
 place up here, with its output pinned byte for byte.
