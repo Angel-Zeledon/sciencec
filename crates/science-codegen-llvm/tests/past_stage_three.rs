@@ -1554,3 +1554,220 @@ def main():
 ";
     assert_eq!(bytes("array_of_boxed_object", source), "2000\n");
 }
+
+/// **A move two fields deep, out of a nested record — `science-mir`'s
+/// `moves.rs` §3, followed past the one level it used to stop at.**
+///
+/// # The leak this is the regression test for
+///
+/// `take(o.inner.a)` moves `o.inner.a` and nothing else: `o.inner.b` and
+/// `o.tag` are never given away and are still there when `o` goes out of
+/// scope. Before `science-mir`'s move analysis tracked a *path* rather than
+/// one field, a move through two projections collapsed to "the whole local
+/// is gone" — so `o`'s scope-exit `Drop` was deleted outright, and
+/// `o.inner.b` and `o.tag`, never moved, leaked with it every iteration.
+///
+/// # Measured outside `cargo test`, `/usr/bin/time -l`'s maximum resident set
+/// size, this exact program at three sizes
+///
+/// | iterations | before this fix | after |
+/// |---|---|---|
+/// | 20 000 | 2 375 680 bytes (~2.3 MB) | 1 720 320 bytes (~1.7 MB) |
+/// | 200 000 | 8 159 232 bytes (~7.8 MB) | 1 720 320 bytes (~1.7 MB) |
+/// | 2 000 000 | 65 994 752 bytes (~63 MB) | 1 720 320 bytes (~1.7 MB) |
+///
+/// The number that matters is the third column not moving: `o.tag` and
+/// `o.inner.b` are dropped every iteration regardless of how many there are,
+/// so the resident set is flat rather than climbing with the loop count.
+/// stdout is the same before and after — `5 * n` — because the leak was
+/// never a wrong answer, only a wrong release.
+#[test]
+fn a_move_two_fields_deep_leaves_its_siblings_to_drop_on_their_own() {
+    let source = "\
+type Inner:
+    a: String
+    b: String
+type Outer:
+    inner: Inner
+    tag: String
+
+def take(s: String) -> Int:
+    s.length()
+
+def main():
+    let mutable n be 0
+    for i in 0..20000:
+        let o be Outer(inner: Inner(a: \"hello\", b: \"world\"), tag: \"t\")
+        n be n + take(o.inner.a)
+    print(f\"{n}\")
+";
+    assert_eq!(bytes("move-two-fields-deep", source), "100000\n");
+}
+
+/// **A move out of a tuple element that is itself a field.**
+///
+/// `o.pair.0` — this crate declines to build a state for `.0`, per
+/// `moves.rs`'s §3: the walk stops at the first projection that is not a
+/// field, and the whole of `pair` goes `Gone`. `o.tag`, a sibling field that
+/// was never touched, must not go with it — before path tracking, a move
+/// through any second projection (a `TupleField` included) collapsed all the
+/// way to *the whole local*, `Whole` and not `pair`'s own path alone, and
+/// `o.tag` leaked right along with `o.pair`'s already-moved elements.
+///
+/// Both elements of `pair` are matched and moved, so `pair` really is fully
+/// consumed — this is the case where collapsing to "`pair` is gone" is the
+/// **right** answer, and the regression is `o.tag` surviving that collapse
+/// rather than being swept up in it.
+///
+/// Measured outside `cargo test`: 20 000 iterations, maximum resident set
+/// size 2 080 768 bytes before this fix (`tag` leaking, one per iteration)
+/// and 1 736 704 bytes after, flat again at 200 000 iterations (4 947 968
+/// bytes before, 1 736 704 after).
+#[test]
+fn a_move_out_of_a_tuple_element_of_a_field_leaves_its_sibling_field_alone() {
+    let source = "\
+type Outer:
+    pair: (String, String)
+    tag: String
+
+def take(s: String) -> Int:
+    s.length()
+
+def main():
+    let mutable n be 0
+    for i in 0..20000:
+        let o be Outer(pair: (\"hi\", \"bye\"), tag: \"sibling\")
+        match o.pair:
+            (x, y):
+                n be n + take(x) + take(y)
+    print(f\"{n}\")
+";
+    assert_eq!(bytes("tuple-element-of-field", source), "100000\n");
+}
+
+/// **A move of a whole field that itself has sub-fields, and the two ways
+/// that can go wrong.**
+///
+/// `take_inner(o.inner)` moves all of `inner` — `Decision 22`'s
+/// `IndirectByPointer` passes `o.inner`'s own address, and the callee is now
+/// the owner of both `inner.a` and `inner.b`. Two failures are possible and
+/// this is the one test that rules out both at once: `o.tag`, a sibling of
+/// `inner` and never moved, has to keep being dropped every iteration (the
+/// leak this crate already fixed at one field of nesting), and `inner`
+/// itself must not *also* get a `Drop` of its own — `inner` is gone as a
+/// whole, so the per-field chain this pass builds for `Outer` has to skip it
+/// outright rather than recursing into `a` and `b` as though `inner` were
+/// still there to answer for.
+///
+/// Measured outside `cargo test`: flat at 1 753 088 bytes at both 20 000 and
+/// 200 000 iterations. This program does not distinguish the fix from its
+/// absence — a whole-field move was already the one-level case
+/// `science-mir` handled before path tracking — so the flat numbers are
+/// regression coverage for the recursive rewrite of that case, not evidence
+/// of what changed. Its failure mode if the recursion were wrong is not a
+/// slow leak but an abort: dropping `inner.a` twice.
+#[test]
+fn a_move_of_a_whole_field_with_its_own_subfields_does_not_double_drop_it() {
+    let source = "\
+type Inner:
+    a: String
+    b: String
+type Outer:
+    inner: Inner
+    tag: String
+
+def take_inner(x: Inner) -> Int:
+    x.a.length() + x.b.length()
+
+def main():
+    let mutable n be 0
+    for i in 0..20000:
+        let o be Outer(inner: Inner(a: \"hi\", b: \"bye\"), tag: \"sibling\")
+        n be n + take_inner(o.inner)
+    print(f\"{n}\")
+";
+    assert_eq!(bytes("whole-field-with-subfields", source), "100000\n");
+}
+
+/// **A move on one arm of an `if` and not the other, of a path two fields
+/// deep — a drop flag has to exist for that exact path, not for the whole
+/// local and not for `inner` as a whole.**
+///
+/// On an even `i`, `o.inner.a` is moved; on an odd one it is not, so
+/// `o.inner.a`'s own state is `Maybe` at `o`'s scope exit and gets its own
+/// flag — `o.inner.b` and `o.tag`, moved on no path, stay unconditional.
+/// Getting this wrong in either direction is visible here: too coarse a flag
+/// (one for the whole of `inner`, or of `o`) drops live data on the branch
+/// that did not move anything, which is a double free the moment that data
+/// is a `String`; too eager to skip leaks `o.inner.a`'s string on every odd
+/// iteration instead.
+///
+/// Measured outside `cargo test`: flat at 1 720 320 bytes at 20 000
+/// iterations and 1 736 704 bytes at 200 000 — before this fix, 2 048 000 and
+/// 4 947 968 respectively, climbing for the identical reason the two-fields-
+/// deep test above did: the conditional move collapsed to `Whole` and put
+/// both `o.tag` and `o.inner.b` behind a flag that was wrong on the branch
+/// that never touched them.
+#[test]
+fn a_move_on_one_branch_of_an_if_gets_its_own_flag_at_its_own_path() {
+    let source = "\
+type Inner:
+    a: String
+    b: String
+type Outer:
+    inner: Inner
+    tag: String
+
+def take(s: String) -> Int:
+    s.length()
+
+def main():
+    let mutable n be 0
+    for i in 0..20000:
+        let o be Outer(inner: Inner(a: \"hi\", b: \"bye\"), tag: \"sibling\")
+        if i % 2 is 0:
+            n be n + take(o.inner.a)
+    print(f\"{n}\")
+";
+    assert_eq!(bytes("if-branch-move-at-path", source), "20000\n");
+}
+
+/// **The same per-path flag, reset on every trip around a loop's back edge.**
+///
+/// `x` is declared fresh each time through the `loop`, but the block that
+/// tests `x.a`'s flag and drops it is the *same* MIR block on every
+/// iteration — `crate::drops`'s §2 note about a loop's back edge reaching a
+/// flagged `Drop` again before the value is reinitialised is exactly this
+/// program. A flag that is not cleared at `StorageLive` (or set again at the
+/// next construction) would read stale on the iteration after the one that
+/// moved `x.a`, and either leak `x.a` forever after or double free it.
+///
+/// Measured outside `cargo test`: flat at 1 753 088 bytes at both 20 000 and
+/// 200 000 iterations, matching the baseline before this fix as well — a
+/// direct field of a standalone local was already the one-level case this
+/// crate tracked correctly, so this is the loop-back-edge regression check
+/// for the recursive rewrite and not new ground on its own.
+#[test]
+fn a_move_inside_a_loop_resets_its_flag_on_the_back_edge() {
+    let source = "\
+type Inner:
+    a: String
+    b: String
+
+def take(s: String) -> Int:
+    s.length()
+
+def main():
+    let mutable n be 0
+    let mutable i be 0
+    loop:
+        if i is 20000:
+            break
+        let x be Inner(a: \"hi\", b: \"bye\")
+        if i % 2 is 0:
+            n be n + take(x.a)
+        i be i + 1
+    print(f\"{n}\")
+";
+    assert_eq!(bytes("loop-conditional-move-at-path", source), "20000\n");
+}

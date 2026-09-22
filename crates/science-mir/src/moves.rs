@@ -71,35 +71,56 @@
 //! the entry that closes both is move paths — the thing this section declined
 //! to build, now with a second reason to.
 //!
-//! **The amendment: one field deep, for a record, and only for the leak.**
-//! [`analyse_fields`] tracks each direct field of a record-typed local as its
-//! own path, joined with the identical [`State::join`] §2 already has — not a
-//! tree of move paths, one level of it. A move of `doc.title` now marks
-//! `title`'s own path `Gone` and leaves `doc.body`'s alone; a move of
-//! `doc.title.chars` (a path this still declines to build) collapses to
-//! `title`'s path going `Gone` whole, which is this section's own direction
-//! read one level down rather than a new one invented for the occasion.
+//! **The amendment, now a path and not a first field.** [`analyse_fields`]
+//! tracks every field *path* reachable from a record-typed local by walking
+//! [`record_fields`] recursively — `doc.title`, and if `title`'s own type is
+//! itself a record with fields, `doc.title.first` and `doc.title.last` too,
+//! down to whatever field first is not itself a further record — joined with
+//! the identical [`State::join`] §2 already has. A move of `outer.inner.a`
+//! now marks `a`'s own path `Gone`, leaves `outer.inner.b` and `outer.tag`
+//! alone, and does not have to round anything off to get there: the sentence
+//! this replaces used to end at one level and call `doc.title.chars` a path
+//! declined to build. It no longer is one.
+//!
+//! **What still collapses, and why the direction is unchanged.** The walk
+//! stops, the same way it always did, at the first projection that is not a
+//! [`Projection::Field`] — `Deref`, `TupleField`, `Index`, `Downcast` — and at
+//! a field whose own type [`record_fields`] does not resolve to a
+//! non-empty record (a `String`, an `Array`, a choice, a type parameter, a
+//! `Box`). [`move_event`] answers with the longest field-only prefix it
+//! walked, and that prefix's whole subtree goes `Gone` — `outer.pair.0.a`, a
+//! tuple element of a field, collapses to `pair` going `Gone` whole, not to a
+//! state for `.0` this crate does not track and not to the whole of `outer`.
+//! **One more guard, for a type this crate cannot prove finite by
+//! inspection alone.** `decompose` gives up after 64 levels and treats
+//! whatever it reached as a leaf rather than recursing forever — a bound no
+//! well-typed record needs, since a value type cannot contain itself without
+//! indirection, but a bound this pass can afford to state rather than trust.
 //!
 //! **Why a second, parallel analysis and not a wider [`State`] table.** §2's
 //! bound is that the *values* [`State`] holds cannot grow past the
 //! three-way decision without inventing a join for a fourth question; it says
 //! nothing against asking the same three-way question about more things.
 //! [`FieldMoves`] is exactly that: the same lattice, the same join, a
-//! different index — one path per tracked field instead of one path per
+//! different index — one path per tracked leaf field instead of one path per
 //! local — computed by [`apply_statement_fields`] and
 //! [`apply_terminator_fields`], which are [`apply_statement`] and
-//! [`apply_terminator`] re-read at field granularity and not two new rules.
+//! [`apply_terminator`] re-read at path granularity and not two new rules.
 //! [`crate::drops`] is the only reader; [`analyse`] and everything that
 //! already consumes it — `science-regions`' `moved` chief among them — is
 //! unchanged, so this local's own false-negative (§3 item 3, above) is not
 //! narrower today than it was before this paragraph.
 //!
+//! **What is pruned, not tracked.** A field this pass never enters —
+//! because [`needs_drop`] says dropping it runs nothing — gets no path and
+//! no state, at any depth: `Coordinates(x: Int, y: Int)` nested inside a
+//! tracked record contributes nothing to track, the same answer
+//! `crate::drops` would reach anyway by never emitting a `Drop` for it.
+//!
 //! **What it does not do.** A local whose type is not a record — a `String`,
 //! an `Array`, a choice, a type parameter — gets no fields at all
 //! ([`record_fields`] answers `None`), and drop elaboration reads that as
-//! "stay whole", the same answer it always got. A deeper path collapses to
-//! its containing field going `Gone`, never to a guess about what is inside
-//! it: the direction is still leak-over-double-free, one level down.
+//! "stay whole", the same answer it always got.
 //!
 //! # 4. `needs_drop`, and what it cannot know
 //!
@@ -393,8 +414,8 @@ pub fn moved_locals(rvalue: &Rvalue) -> Vec<Local> {
 
 // --- the field amendment, §3 ------------------------------------------------
 
-/// What moving or writing through `place` does to its local's fields: every
-/// field together, or one field by name.
+/// What moving or writing through `place` does to a local: every tracked
+/// path together, or one path by its chain of field names.
 ///
 /// Shared between [`analyse_fields`]'s own dataflow and `crate::drops`' flag
 /// writer, so the two answer the same question about the same statement by
@@ -402,78 +423,114 @@ pub fn moved_locals(rvalue: &Rvalue) -> Vec<Local> {
 /// whole-local flags and it applies here without a word changed: *"one list,
 /// derived from the CFG the flag will be read on, cannot disagree with
 /// itself."*
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldEvent {
-    /// The whole local: every tracked field is caught up in one event.
+    /// The whole local: every tracked path is caught up in one event.
     Whole,
-    /// One field, named, projected directly off the local.
-    Field(DefId),
+    /// One path, projected off the local field by field — `outer.inner.a` is
+    /// `[inner, a]`. Firing this at any path reaches that path **and**
+    /// everything nested under it: moving `outer.inner` whole takes
+    /// `outer.inner.a` and `outer.inner.b` with it, the identical thing
+    /// [`FieldEvent::Whole`] does one level up.
+    Field(Vec<DefId>),
+}
+
+/// Walks `place`'s projection while it is a chain of [`Projection::Field`]
+/// steps and returns how far it got, as a path from the local. Shared by
+/// [`move_event`] and [`assign_event`], which differ only in what an
+/// interrupted walk means.
+fn field_path(place: &Place) -> Vec<DefId> {
+    let mut path = Vec::new();
+    for projection in &place.projection {
+        match projection {
+            Projection::Field { field, .. } => path.push(*field),
+            _ => break,
+        }
+    }
+    path
 }
 
 /// The event a move (or a move-shaped read — `TerminatorKind::If`'s
 /// condition among them) through `place` fires.
 ///
-/// Anything past one field step, or a first step that is not a field at all
-/// (`Deref`, `TupleField`, `Index`, `Downcast`), collapses to
-/// [`FieldEvent::Whole`] — §3's declined-to-build direction, read one level
-/// down: the alternative is inventing a state for a path this crate does not
-/// track, and the guess that cannot double-free is "all of it moved".
+/// The walk stops at the first projection that is not a field —  `Deref`,
+/// `TupleField`, `Index`, `Downcast` — or at the end of `place`'s own
+/// projection, whichever comes first, and the path built so far *is* the
+/// event: empty means the walk never left the local
+/// ([`FieldEvent::Whole`]), and one field or ten means that whole path is
+/// gone. **The direction is unchanged from when this rounded down to one
+/// field.** Past the last field step this function understands, the guess
+/// that cannot double-free is "all of it moved" — `outer.pair.0.a`, a tuple
+/// element of a field, collapses to `pair` going wholly [`State::Gone`], not
+/// to a state for `.0` this crate does not track and not to the whole of
+/// `outer`.
 pub fn move_event(place: &Place) -> FieldEvent {
-    match place.projection.as_slice() {
-        [] => FieldEvent::Whole,
-        [Projection::Field { field, .. }] => FieldEvent::Field(*field),
-        _ => FieldEvent::Whole,
+    let path = field_path(place);
+    if path.is_empty() {
+        FieldEvent::Whole
+    } else {
+        FieldEvent::Field(path)
     }
 }
 
-/// The event a write through `place` fires, or `None` when the write is
-/// through a projection this analysis does not track — deeper than one
-/// field, or not a field. A write initialises only the exact storage it
-/// touches, so unlike [`move_event`] there is no direction to guess in:
-/// claiming a field is whole when only part of it was written is simply
-/// wrong, not conservative.
+/// The event a write through `place` fires, or `None` when the write leaves
+/// the chain of field steps this analysis walks — through a projection that
+/// is not a field, at any depth. A write initialises only the exact storage
+/// it touches, so unlike [`move_event`] there is no direction to guess in:
+/// claiming a path is whole when only part of it was written is simply
+/// wrong, not conservative, at one field or at ten.
 pub fn assign_event(place: &Place) -> Option<FieldEvent> {
-    match place.projection.as_slice() {
-        [] => Some(FieldEvent::Whole),
-        [Projection::Field { field, .. }] => Some(FieldEvent::Field(*field)),
-        _ => None,
+    for projection in &place.projection {
+        if !matches!(projection, Projection::Field { .. }) {
+            return None;
+        }
     }
+    let path = field_path(place);
+    Some(if path.is_empty() { FieldEvent::Whole } else { FieldEvent::Field(path) })
 }
 
-/// Applies one field event to a local's field-state slice.
-fn apply_event(event: FieldEvent, fields: &[(DefId, Ty)], states: &mut [State], value: State) {
+/// Applies one field event to a local's leaf-state slice, `leaves[i]` being
+/// the path [`decompose`] gave state `states[i]`.
+///
+/// **The cascade.** [`FieldEvent::Field`] sets every leaf whose path starts
+/// with the event's, not only an exact match — moving `outer.inner` whole
+/// reaches `outer.inner.a` and `outer.inner.b` this way, with no case that
+/// asks "does this path have children" first. A path that matches no leaf at
+/// all is a field [`decompose`] never entered because nothing under it
+/// [`needs_drop`], which is not a reason to touch anything else: the
+/// surrounding paths' states are already right, and there is no direction to
+/// guess in for a path this analysis was never asked to track.
+fn apply_event(event: FieldEvent, leaves: &[Vec<DefId>], states: &mut [State], value: State) {
     match event {
         FieldEvent::Whole => states.iter_mut().for_each(|slot| *slot = value),
-        FieldEvent::Field(field) => match fields.iter().position(|(known, _)| *known == field) {
-            Some(index) => states[index] = value,
-            // A field the record does not declare cannot happen for a
-            // well-typed body. The fallback still keeps §3's direction — a
-            // local that might leak rather than one that might double-free —
-            // instead of panicking on what would be a bug upstream of here.
-            None if value == State::Gone => states.iter_mut().for_each(|slot| *slot = value),
-            None => {}
-        },
+        FieldEvent::Field(path) => {
+            for (slot, leaf) in states.iter_mut().zip(leaves) {
+                if leaf.starts_with(path.as_slice()) {
+                    *slot = value;
+                }
+            }
+        }
     }
 }
 
-/// A local's field state after one statement, mirroring [`apply_statement`]
-/// at field granularity.
+/// A local's leaf state after one statement, mirroring [`apply_statement`]
+/// at path granularity.
 fn apply_statement_fields(
     kind: &StatementKind,
     local: Local,
-    fields: &[(DefId, Ty)],
+    leaves: &[Vec<DefId>],
     states: &mut [State],
 ) {
     match kind {
         StatementKind::Assign { place, rvalue } => {
             for moved in moved_places(rvalue) {
                 if moved.local == local {
-                    apply_event(move_event(moved), fields, states, State::Gone);
+                    apply_event(move_event(moved), leaves, states, State::Gone);
                 }
             }
             if place.local == local {
                 if let Some(event) = assign_event(place) {
-                    apply_event(event, fields, states, State::Init);
+                    apply_event(event, leaves, states, State::Init);
                 }
             }
         }
@@ -488,13 +545,13 @@ fn apply_statement_fields(
     }
 }
 
-/// A local's field state after a terminator, on the edge to `successor`,
-/// mirroring [`apply_terminator`] at field granularity.
+/// A local's leaf state after a terminator, on the edge to `successor`,
+/// mirroring [`apply_terminator`] at path granularity.
 fn apply_terminator_fields(
     kind: &TerminatorKind,
     successor: BlockId,
     local: Local,
-    fields: &[(DefId, Ty)],
+    leaves: &[Vec<DefId>],
     states: &mut [State],
 ) {
     match kind {
@@ -502,13 +559,13 @@ fn apply_terminator_fields(
             for arg in args {
                 if let Some(place) = arg.moved_place() {
                     if place.local == local {
-                        apply_event(move_event(place), fields, states, State::Gone);
+                        apply_event(move_event(place), leaves, states, State::Gone);
                     }
                 }
             }
             if *target == Some(successor) && destination.local == local {
                 if let Some(event) = assign_event(destination) {
-                    apply_event(event, fields, states, State::Init);
+                    apply_event(event, leaves, states, State::Init);
                 }
             }
         }
@@ -524,14 +581,14 @@ fn apply_terminator_fields(
         TerminatorKind::If { cond, .. } => {
             if let Some(place) = cond.moved_place() {
                 if place.local == local {
-                    apply_event(move_event(place), fields, states, State::Gone);
+                    apply_event(move_event(place), leaves, states, State::Gone);
                 }
             }
         }
         TerminatorKind::Switch { discr, .. } => {
             if let Some(place) = discr.moved_place() {
                 if place.local == local {
-                    apply_event(move_event(place), fields, states, State::Gone);
+                    apply_event(move_event(place), leaves, states, State::Gone);
                 }
             }
         }
@@ -541,7 +598,11 @@ fn apply_terminator_fields(
 
 /// A local's direct fields, if its type resolves to a record with at least
 /// one — `None` for everything else, which is every non-record type and a
-/// record declared with no fields.
+/// record declared with no fields. The one step [`decompose`] repeats to
+/// walk arbitrarily deep, and `crate::drops`' own recursion's primitive too,
+/// which is why this is `pub(crate)` and not private: the two have to agree
+/// about where a path stops being a field of something and start from the
+/// same declaration to do it.
 ///
 /// **Substituted, not declared.** A generic `Pair of (T, U)` field is
 /// `Ty::Param` in the declaration; `local`'s own type carries the concrete
@@ -550,7 +611,7 @@ fn apply_terminator_fields(
 /// real read — a different substitution here would make this analysis's
 /// field type and a genuine field projection's type disagree about the same
 /// field.
-fn record_fields(
+pub(crate) fn record_fields(
     decls: &Declarations,
     types: &mut Types,
     aliases: &mut Aliases,
@@ -578,36 +639,85 @@ fn record_fields(
     )
 }
 
-/// The per-field states this crate tracks, for the locals it tracks them for.
+/// No well-typed record needs more than this many field steps — a value type
+/// cannot contain itself without an indirection ([`record_fields`] never
+/// enters a `Box`, which is not itself declared as a record) — but
+/// [`decompose`] states the bound rather than trusting the argument, so a gap
+/// in it costs a stack that stops growing instead of one that does not.
+pub(crate) const MAX_PATH_DEPTH: usize = 64;
+
+/// Walks `ty` recursively, pushing one leaf path onto `out` per field this
+/// crate will ever ask a state for — every field [`needs_drop`] admits, all
+/// the way down to the first one along each path whose own type is not
+/// itself a further record, or to [`MAX_PATH_DEPTH`], whichever comes first.
+/// `prefix` is `out`'s next leaf's path so far, and is restored before this
+/// returns: the recursion borrows it rather than allocating a fresh path
+/// per field.
+///
+/// **Why the recursion is gated by `needs_drop` and not left to run to every
+/// field.** A field this pass never enters is a field `crate::drops` was
+/// never going to emit a `Drop` for either — [`needs_drop`] is exactly the
+/// question `crate::lower`'s own decision to emit a `Drop` at all is gated
+/// on — so a state for it would be tracked, joined, and never read. Pruning
+/// it here is the one place that cost is paid once instead of at every
+/// point of the dataflow below.
+fn decompose(
+    decls: &Declarations,
+    types: &mut Types,
+    aliases: &mut Aliases,
+    prefix: &mut Vec<DefId>,
+    ty: Ty,
+    out: &mut Vec<Vec<DefId>>,
+) {
+    if prefix.len() < MAX_PATH_DEPTH {
+        if let Some(direct) = record_fields(decls, types, aliases, ty) {
+            for (field, field_ty) in direct {
+                if !needs_drop(decls, types, aliases, field_ty) {
+                    continue;
+                }
+                prefix.push(field);
+                decompose(decls, types, aliases, prefix, field_ty, out);
+                prefix.pop();
+            }
+            return;
+        }
+    }
+    out.push(prefix.clone());
+}
+
+/// The per-path states this crate tracks, for the locals it tracks them for.
 /// §3's amendment: a second analysis, parallel to and reusing [`analyse`]'s
-/// own [`State`] and join, indexed by field instead of by local.
+/// own [`State`] and join, indexed by field *path* instead of by local.
 ///
 /// **Read by [`crate::drops`] alone.** [`analyse`] is unchanged, so every
 /// existing reader of it — `science-regions`' `moved` chief among them — sees
 /// exactly what it saw before this type existed.
 pub struct FieldMoves {
-    fields: HashMap<Local, Vec<(DefId, Ty)>>,
+    fields: HashMap<Local, Vec<Vec<DefId>>>,
     entry: HashMap<Local, Vec<Vec<State>>>,
 }
 
 impl FieldMoves {
-    /// The fields tracked for `local`, in declaration order — `None` when
-    /// `local` is not decomposed and its drop stays whole, exactly as it was
-    /// before this analysis existed.
-    pub fn fields_of(&self, local: Local) -> Option<&[(DefId, Ty)]> {
+    /// The leaf paths tracked for `local`, in the order [`decompose`] found
+    /// them — `None` when `local` is not decomposed and its drop stays
+    /// whole, exactly as it was before this analysis existed. `Some(&[])` is
+    /// the other edge: `local`'s type has fields but none of them
+    /// [`needs_drop`], so there is nothing to chain and `crate::drops`
+    /// reaches the same `Goto` a whole-local `Gone` would have given it.
+    pub fn fields_of(&self, local: Local) -> Option<&[Vec<DefId>]> {
         self.fields.get(&local).map(Vec::as_slice)
     }
 
-    /// The per-field states just before `block`'s terminator, replayed from
+    /// The per-path states just before `block`'s terminator, replayed from
     /// the block's entry exactly as [`Moves::before_terminator`] replays the
     /// whole-local table — the two cannot disagree about what a statement
     /// does, because both are one function call away from the same
     /// per-statement rule.
     pub fn before_terminator(&self, body: &Body, block: BlockId, local: Local) -> Option<Vec<State>> {
-        let fields = self.fields.get(&local)?;
+        let leaves = self.fields.get(&local)?;
         let mut states = self.entry.get(&local)?[block.index()].clone();
         for statement in &body.block(block).statements {
-            apply_statement_fields(&statement.kind, local, fields, &mut states);
+            apply_statement_fields(&statement.kind, local, leaves, &mut states);
         }
         Some(states)
     }
@@ -618,8 +728,8 @@ impl FieldMoves {
 /// **One small fixed point per decomposed local, not one combined one.** A
 /// body with no record locals — most of them — builds an empty [`FieldMoves`]
 /// and runs no dataflow at all; a body with one pays for one small lattice
-/// over that local's own field count rather than one large lattice over every
-/// local's fields at once. The bodies this crate lowers are shallow (§1), so
+/// over that local's own leaf count rather than one large lattice over every
+/// local's paths at once. The bodies this crate lowers are shallow (§1), so
 /// the repeated CFG walk this costs is the same trade [`analyse`]'s own
 /// worklist already makes.
 pub fn analyse_fields(
@@ -628,18 +738,26 @@ pub fn analyse_fields(
     types: &mut Types,
     aliases: &mut Aliases,
 ) -> FieldMoves {
-    let mut fields: HashMap<Local, Vec<(DefId, Ty)>> = HashMap::new();
+    let mut fields: HashMap<Local, Vec<Vec<DefId>>> = HashMap::new();
     for (local, decl) in body.locals() {
-        if let Some(decl_fields) = record_fields(decls, types, aliases, decl.ty) {
-            fields.insert(local, decl_fields);
+        if let Some(direct) = record_fields(decls, types, aliases, decl.ty) {
+            let mut leaves = Vec::new();
+            for (field, field_ty) in direct {
+                if !needs_drop(decls, types, aliases, field_ty) {
+                    continue;
+                }
+                let mut prefix = vec![field];
+                decompose(decls, types, aliases, &mut prefix, field_ty, &mut leaves);
+            }
+            fields.insert(local, leaves);
         }
     }
 
     let order = reverse_postorder(body);
     let params: Vec<Local> = body.params().collect();
     let mut entry: HashMap<Local, Vec<Vec<State>>> = HashMap::new();
-    for (&local, decl_fields) in &fields {
-        let count = decl_fields.len();
+    for (&local, leaves) in &fields {
+        let count = leaves.len();
         let mut local_entry = vec![vec![State::Unreached; count]; body.block_count()];
         let initial = if params.contains(&local) { State::Init } else { State::Gone };
         for slot in local_entry[ENTRY_BLOCK.index()].iter_mut() {
@@ -652,13 +770,13 @@ pub fn analyse_fields(
             for block in &order {
                 let mut states = local_entry[block.index()].clone();
                 for statement in &body.block(*block).statements {
-                    apply_statement_fields(&statement.kind, local, decl_fields, &mut states);
+                    apply_statement_fields(&statement.kind, local, leaves, &mut states);
                 }
                 let terminator = &body.block(*block).terminator.kind;
                 for successor in terminator.successors() {
                     let mut outgoing = states.clone();
                     apply_terminator_fields(
-                        terminator, successor, local, decl_fields, &mut outgoing,
+                        terminator, successor, local, leaves, &mut outgoing,
                     );
                     let target = &mut local_entry[successor.index()];
                     for (slot, incoming) in target.iter_mut().zip(outgoing) {
