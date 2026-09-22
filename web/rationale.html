@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Rationale &middot; Science</title>
 <meta name="description" content="Why Science looks the way it does: every syntax decision with the alternatives it rejected, what it cost, and the same program written in Python, JavaScript, Java, Rust and Go beside it.">
+<meta name="author" content="Angel Zeledon">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -38,7 +39,7 @@
     the most convincing thing in the archive and hiding them would be the one
     way to make the rest unbelievable.
   </p>
-</header>
+
 
 <div class="status">
   <span><span class="dot dot-on"></span>Design notes <b>40</b></span>
@@ -85,45 +86,47 @@
 <pre class="err"><code><span class="e-code">error[SC0400]</span>: this `sciencec` cannot build a closure, whose body `science-mir` does not lower at all: `Rvalue::Closure` carries a THIR expression id and its captures, and nothing turns either into a function
   = note: this `sciencec` implements §10's stages 0 to 3 of `codegen-and-linking.md` and some of what comes after — a script body, string literals and `print` of anything the `f"…"` builder renders, `extern "C"` declarations and the calls to them, the CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, `T?`, methods and associated functions on a concrete type, the prelude's `String` methods, and drops of values that own nothing — and refuses everything else rather than lowering a construct no execution test has ever run</code></pre>
 
+</header>
+
 <div class="docs">
-<aside class="sidebar">
+<nav class="sidebar" aria-label="Sections">
   <div class="groups">
-    <h2>Before you start</h2>
-    <ul>
+    <p class="group" id="rationale-before-you-start">Before you start</p>
+    <ul aria-labelledby="rationale-before-you-start">
       <li><a href="#how">How this page argues</a></li>
     </ul>
-    <h2>Words</h2>
-    <ul>
+    <p class="group" id="rationale-words">Words</p>
+    <ul aria-labelledby="rationale-words">
       <li><a href="#def"><code>def</code>, and the argument that lost</a></li>
       <li><a href="#be"><code>be</code> for binding</a></li>
       <li><a href="#arrow"><code>-&gt;</code> for returns</a></li>
       <li><a href="#words">Words, and where symbols stayed</a></li>
       <li><a href="#blocks">Indentation blocks</a></li>
     </ul>
-    <h2>Shapes</h2>
-    <ul>
+    <p class="group" id="rationale-shapes">Shapes</p>
+    <ul aria-labelledby="rationale-shapes">
       <li><a href="#interface"><code>interface</code>, not <code>trait</code></a></li>
       <li><a href="#errors">The error model</a></li>
       <li><a href="#chains">Chains, closures, comprehensions</a></li>
       <li><a href="#indexing">Indexing</a></li>
     </ul>
-    <h2>Ownership</h2>
-    <ul>
+    <p class="group" id="rationale-ownership">Ownership</p>
+    <ul aria-labelledby="rationale-ownership">
       <li><a href="#ownership">No lifetime syntax</a></li>
       <li><a href="#borrowed"><code>borrowed</code> and <code>mutable</code></a></li>
     </ul>
-    <h2>Programs</h2>
-    <ul>
+    <p class="group" id="rationale-programs">Programs</p>
+    <ul aria-labelledby="rationale-programs">
       <li><a href="#script">Script mode</a></li>
       <li><a href="#tool"><code>tool</code> as a declaration</a></li>
     </ul>
-    <h2>The record</h2>
-    <ul>
+    <p class="group" id="rationale-the-record">The record</p>
+    <ul aria-labelledby="rationale-the-record">
       <li><a href="#diagnostics">Diagnostics as design</a></li>
       <li><a href="#open">Still open, and found wrong</a></li>
     </ul>
   </div>
-</aside>
+</nav>
 
 <main>
 
@@ -2507,6 +2510,15 @@ def main():
   JavaScript, Java, Rust and Go were not run; they are written to be defensible,
   and where one of them is better than the Science beside it, the paragraph
   under it says so.
+
+  <address class="colophon">
+    <span class="by">Science is designed and built by <b>Angel Zeledon</b>.</span>
+    <span class="who">
+      <a href="https://angelzeledon.netlify.app" rel="author external">Portfolio</a>
+      <a href="https://github.com/Angel-Zeledon" rel="author external">GitHub</a>
+      <a href="https://github.com/Angel-Zeledon/sciencec">Repository</a>
+    </span>
+  </address>
 </footer>
 
 </div>

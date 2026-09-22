@@ -117,7 +117,7 @@
    * so it reads from both sides.
    *
    * The tightest foreground that carries navigation is --faint on --paper at
-   * 7.01:1 — the sidebar's group headings, checked rather than assumed
+   * 7.01:1 — the sidebar’s group labels, checked rather than assumed
    * because it is the pairing that failed the last time this palette moved. */
   --paper:#15131c; --surface:#232030; --sunk:#2c283a; --ink:#f1eff6;
   --muted:#c4c0d2; --faint:#b0aac2; --rule:#3a3450;
@@ -544,6 +544,47 @@ footer { padding-block: 2.5rem 4rem; font-family: var(--serif);
 footer code { font-size: 0.82em; }
 footer .links { display: flex; gap: 1.4rem; flex-wrap: wrap; margin-bottom: 1rem; }
 footer .links a { font-family: var(--mono); font-size: 0.78rem; color: var(--accent); text-decoration: none; }
+footer .links a:hover, footer .links a:focus-visible { text-decoration: underline;
+  text-underline-offset: 3px; }
+
+/* ---- the colophon ----
+ *
+ * Who wrote this, on every page rather than on the landing page only. A
+ * reader arriving from a search engine lands in the middle of the reference
+ * as often as on the index, and a site that names its author in one place a
+ * deep-linked reader never sees has not really named them.
+ *
+ * It sits *below* each page's provenance note, not above it: the note is
+ * about the listings on that particular page and is the more specific claim,
+ * so it keeps the position directly under the prose it qualifies. The rule
+ * above the colophon is what separates the two without adding a heading for
+ * a block that is three lines long.
+ *
+ * `align-items: baseline` and not `center`, because the name renders in the
+ * serif at 0.95rem and the two links in the mono at 0.78rem; centred, the
+ * two sizes sit visibly off each other's baseline, which is the detail that
+ * reads as unfinished on an otherwise typeset page. */
+.colophon { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--rule);
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 1.4rem;
+  font-style: normal; }
+.colophon .by { font-family: var(--serif); font-size: 0.95rem; color: var(--muted); }
+.colophon .by b { color: var(--ink); font-weight: 500; }
+.colophon .who { display: flex; flex-wrap: wrap; gap: 0.5rem 1.4rem; margin-left: auto; }
+.colophon .who a { font-family: var(--mono); font-size: 0.78rem; color: var(--accent);
+  text-decoration: none; }
+.colophon .who a:hover, .colophon .who a:focus-visible { text-decoration: underline;
+  text-underline-offset: 3px; }
+
+/* On a phone the `margin-left: auto` that pushes the links to the right edge
+ * would strand them on their own line against the far margin, reading as a
+ * mistake rather than as alignment. Below the breakpoint the block is simply
+ * stacked left. */
+@media (max-width: 34rem) {
+  .colophon { display: block; }
+  .colophon .who { margin-left: 0; margin-top: 0.6rem; }
+  /* The links become touch targets once they are no longer beside prose. */
+  .colophon .who a { display: inline-block; padding-block: 0.35rem; }
+}
 
 /* The considered `prefers-reduced-motion` block is at the foot of this file.
  * A blanket `animation: none` used to sit here, which contradicted it: that
@@ -623,10 +664,27 @@ footer .links a { font-family: var(--mono); font-size: 0.78rem; color: var(--acc
   max-height: calc(100vh - var(--top-h) - 2.5rem);
   overflow-y: auto; overscroll-behavior: contain;
   padding-block: 0.5rem 2rem; }
-.sidebar h2 { font-family: var(--mono); font-size: 0.68rem; font-weight: 600;
+/* **A label, not a heading, and that is the point.** These four-to-eight
+ * strings — "Start here", "The language", "Semantics" — were `<h2>`, which
+ * put them in the document outline at the same level as the page's real
+ * sections. A screen reader's heading list therefore read "Start here, The
+ * language, Semantics, Beyond it, Getting started, What works today, …":
+ * twenty-nine navigation labels interleaved with the content they point at,
+ * on five pages. They are now `<p class="group">`, and the grouping they
+ * carried is expressed where it belongs — each `<ul>` is `aria-labelledby`
+ * its own label, so the structure survives without a heading standing in for
+ * it.
+ *
+ * It also retires a specificity collision this file documents further down:
+ * `.sidebar h2` tied with `.reference h2` at (0,1,1) and lost to it on file
+ * order, which is why that rule had to be narrowed to `section > h2` and why
+ * `.revision h2` carried a `display: block` cancelling a rule it never
+ * wanted. A class cannot tie with a bare element selector, so the ambiguity
+ * is gone rather than worked around. */
+.sidebar .group { font-family: var(--mono); font-size: 0.68rem; font-weight: 600;
   letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint);
   margin: 1.75rem 0 0.6rem; }
-.sidebar h2:first-child { margin-top: 0; }
+.sidebar .group:first-child { margin-top: 0; }
 .sidebar ul { list-style: none; margin: 0; padding: 0; }
 .sidebar a { display: block; font-size: 0.87rem; color: var(--muted);
   text-decoration: none; padding: 0.3rem 0 0.3rem 0.85rem; line-height: 1.35;
@@ -643,14 +701,20 @@ footer .links a { font-family: var(--mono); font-size: 0.78rem; color: var(--acc
 /* **Scoped to a section's own heading, and it has to be.** This was
  * `.reference h2`, and `.reference` is on the wrapper around *everything* on
  * a documentation page — the sidebar and the revision note included. At
- * (0,1,1) it ties with `.sidebar h2` and `.revision h2` and, being further
+ * (0,1,1) it tied with `.sidebar h2` and `.revision h2` and, being further
  * down the file, won both: the sidebar's group labels were rendering at 24px
  * as flex containers instead of at 0.68rem as micro-labels, which is most of
  * why the sidebar was three screenfuls tall on a phone, and the revision
  * note's heading was doing the same. `.revision h2` already carried an
  * explicit `display: block` — a cancellation of this rule, written without
  * the cause being found. Every section on every page carries its h2 as a
- * direct child, so this selector reaches exactly what the rule was for. */
+ * direct child, so this selector reaches exactly what the rule was for.
+ *
+ * **Half of that collision no longer exists.** The sidebar's labels are
+ * `<p class="group">` now and cannot tie with a bare element selector at
+ * all, so `.sidebar` is out of this argument for good. `.revision h2` is
+ * still a real `<h2>` and still in it, which is why this selector stays
+ * scoped rather than being widened back to `.reference h2`. */
 .reference section > h2 { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; font-size: 1.5rem; }
 
 /* An anchor beside every section heading, the way every docs site does it:
@@ -730,9 +794,9 @@ footer .links a { font-family: var(--mono); font-size: 0.78rem; color: var(--acc
     grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr));
     gap: 0 1.5rem; }
   /* `:first-child` counts elements, and `::before` is not one, so the first
-   * group heading still matches the `margin-top: 0` rule above and would sit
+   * group label still matches the `margin-top: 0` rule above and would sit
    * flush against the label. */
-  .sidebar h2:first-child { margin-top: 0.9rem; }
+  .sidebar .group:first-child { margin-top: 0.9rem; }
 
   /* A 0.87rem link with 0.3rem of padding is a 28px target. These are the
    * densest links on the site and the only way through a 120-section

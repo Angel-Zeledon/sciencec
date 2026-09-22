@@ -2016,9 +2016,73 @@ impl<'a> BodyChecker<'a> {
                 let id = self.body.push_expr(ExprKind::Item(def), ty, span);
                 Typed { id, ty: InferTy::Known(ty) }
             }
+            // §5.3: a const generic parameter stands for a **value**, so
+            // reading one is what it is for. Its type is its declared *kind*
+            // — `const ROWS: Int` reads as the prelude's `Int` — and the kind
+            // is a closed enum rather than a type, so the mapping is a match
+            // and not a lowering.
+            Some(Named::ConstParam(def)) => {
+                let ty = self.const_param_ty(def);
+                let id = self.body.push_expr(ExprKind::Item(def), ty, span);
+                Typed { id, ty: InferTy::Known(ty) }
+            }
             // A type in a value position, or a name that did not resolve.
             // Both are already reported, by `SC0211` and `SC0200`.
             Some(Named::Other) | None => self.error_expr(span),
+        }
+    }
+
+    /// The type a const generic parameter reads as, from its declared kind.
+    ///
+    /// **A kind is not a type, so this is a match and not a lowering.**
+    /// `ConstParamKind` is closed at `Int`, `Shape` and `Error` precisely so
+    /// that `Shape` cannot arrive as a fake primitive in the prelude, and the
+    /// translation to a `Ty` therefore belongs at the one place a const
+    /// parameter is read as a value rather than inside `lowering`.
+    ///
+    /// **`Shape` is `Ty::ERROR` and says nothing.** §6.1 makes a `Shape`
+    /// parameter a type-level *list* with no values and no representation, so
+    /// there is no type to read it as; `const-expression-arithmetic.md` puts
+    /// the whole shape layer in F1, and inventing a type here would be a
+    /// value where the note says there is none. The silence is the same one
+    /// `ConstParamKind::Error` gets, which is already reported.
+    ///
+    /// The parameter is found through its **parent**: a const parameter is
+    /// declared in the generics of the item that owns it, and that list is
+    /// the only place its kind is written.
+    fn const_param_ty(&mut self, def: DefId) -> Ty {
+        let Some(parent) = self.defs.get(def).parent else { return Ty::ERROR };
+        // Three places a const parameter can be declared, and an `impl`
+        // block is the one `examples/03_structs.science` uses: `Grid[T,
+        // const ROWS: Int, const COLS: Int] has:` re-declares the type's
+        // parameters on the block, so `area`'s own signature does not carry
+        // them and the record's list is a *different* set of `DefId`s.
+        // `block_generics` is the table that answers for a block.
+        let generics = match self.decls.signature(parent) {
+            Some(signature) => signature.generics.as_slice(),
+            None => match self.decls.record(parent) {
+                Some(record) => record.generics.as_slice(),
+                None => match self.decls.block_generics(parent) {
+                    Some(generics) => generics,
+                    None => return Ty::ERROR,
+                },
+            },
+        };
+        let Some(param) = generics.iter().find(|generic| generic.def == def) else {
+            return Ty::ERROR;
+        };
+        let hir::GenericParamKind::Const { kind, .. } = param.kind else { return Ty::ERROR };
+        match kind {
+            // `Int` is a *kind* name and not a prelude one — `Prelude::get`
+            // knows `I64` and has never known `Int` — so this goes through
+            // Decision 2's `default_int`, which is where the language already
+            // says which width `Int` is. Asking the prelude for `"Int"`
+            // returns `None` and would put back the silent `Ty::ERROR` this
+            // arm exists to remove.
+            hir::ConstParamKind::Int => {
+                self.decls.prelude().default_int(self.types).unwrap_or(Ty::ERROR)
+            }
+            hir::ConstParamKind::Shape | hir::ConstParamKind::Error => Ty::ERROR,
         }
     }
 
@@ -2158,6 +2222,69 @@ impl<'a> BodyChecker<'a> {
         };
         let id = self.body.push_expr(ExprKind::Field { base, field: Some(field) }, ty, span);
         Some(Typed { id, ty: InferTy::Known(ty) })
+    }
+
+    /// Bind a deferred composite receiver *now*, defaulting whatever is still
+    /// only a numeric class, so a method lookup one statement later has a head
+    /// to ask its question of.
+    ///
+    /// **This is [`Self::finish`]'s `pending_named` loop with one rule
+    /// changed.** That loop leaves an entry alone when an argument never
+    /// settled, because at the end of a body an unsettled argument means the
+    /// program did not say enough and `Ty::ERROR` is the honest answer. Here
+    /// the body has *not* ended: an argument that is still open is an
+    /// unsuffixed literal whose class Decision 2 already knows how to close,
+    /// and closing it is what `let pair: Pair[I64, String]` would have done.
+    /// So an open argument with a numeric class is defaulted rather than
+    /// skipped; an open argument with no class at all is still skipped, and
+    /// the receiver stays `Ty::ERROR` for `finish` to report.
+    ///
+    /// **Nothing is bound unless everything can be.** The defaults are
+    /// computed first and applied only once every argument has an answer, so
+    /// a composite this cannot settle leaves inference exactly as it found it
+    /// rather than half-committed to a shape it never built.
+    ///
+    /// **The entry stays in `pending_named`.** `finish` will rebuild the same
+    /// `Ty` from the arguments this bound and unify it with the binding made
+    /// here, which succeeds because it is the same type; removing the entry
+    /// would be a second place that has to agree about when it is safe to.
+    fn settle_receiver(&mut self, ty: InferTy) -> Option<Ty> {
+        let InferTy::Var(var) = self.infer.resolve(ty) else { return None };
+        let root = self.infer.find(var);
+        let at = self.pending_named.iter().position(|entry| self.infer.find(entry.var) == root)?;
+        let arity = self.pending_named[at].args.len();
+        let mut args = Vec::with_capacity(arity);
+        let mut defaults = Vec::new();
+        for slot in self.pending_named[at].args.clone() {
+            let arg = match slot {
+                PendingArg::Fixed(arg) => arg,
+                PendingArg::Open(open) => match self.infer.binding(open) {
+                    Some(ty) if ty != Ty::ERROR => GenericArg::Type(ty),
+                    Some(_) => return None,
+                    None => {
+                        let default = match self.literal_kind(open)? {
+                            Numeric::Integer => self.decls.prelude().default_int(self.types)?,
+                            Numeric::Float => self.decls.prelude().default_float(self.types)?,
+                            // `null`'s class names no default: Decision 2
+                            // closes the numeric literals and not this one.
+                            Numeric::Null => return None,
+                        };
+                        defaults.push((open, default));
+                        GenericArg::Type(default)
+                    }
+                },
+            };
+            args.push(arg);
+        }
+        if args.len() != arity {
+            return None;
+        }
+        for (open, default) in defaults {
+            self.infer.bind(self.types, open, default).ok()?;
+        }
+        let settled = self.types.named(self.pending_named[at].def, args);
+        self.infer.bind(self.types, root, settled).ok()?;
+        Some(settled)
     }
 
     fn field(&mut self, base: &hir::Expr, name: &hir::Ident, span: Span) -> Typed {
@@ -3745,6 +3872,16 @@ impl<'a> BodyChecker<'a> {
         }
 
         let recv = self.synth(receiver);
+        // Decision 2's default, taken at a *receiver* for the same reason
+        // `literal_unsizes` takes it at a slot: the lookup below needs a head
+        // now, and `finish` runs when the body ends. `Pair(first: 1, second:
+        // "one")` defers its whole shape through `pending_named` because `A`
+        // is answered only by an unsuffixed literal, so `pair.swapped()` read
+        // in the next statement asked its question of a variable with no head
+        // and got `Callee::Missing` — silently, because a receiver that never
+        // settled is not a name the lookup can report as unknown. Settling it
+        // here is the same commitment `let pair: Pair[I64, String]` makes.
+        self.settle_receiver(recv.ty);
         let recv_ty = self.known_or_error(recv.ty);
         let revealed = self.revealed(recv_ty, span);
         let self_ty = self.receiver_self_ty(revealed, span);

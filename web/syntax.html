@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Syntax &middot; Science</title>
 <meta name="description" content="Every construct Science has and every word it reserves: the lexical rules, indentation and line continuation, comments and the formatter's pragmas, scope and shadowing, where clauses, every control form, a checked example of each, the precedence table read off the parser, what parses but is not built, and what the language deliberately does not have.">
+<meta name="author" content="Angel Zeledon">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -38,7 +39,7 @@
     argues for the spelling against the ones it beat. This page is the
     inventory: shorter on argument, complete on coverage.
   </p>
-</header>
+
 
 <div class="status">
   <span><span class="dot dot-on"></span>Words the lexer knows <b>69</b> &mdash; 42 live, 27 held</span>
@@ -107,58 +108,60 @@
   </p>
 </div>
 
+</header>
+
 <div class="docs">
-<aside class="sidebar">
+<nav class="sidebar" aria-label="Sections">
   <div class="groups">
-    <h2>Start here</h2>
-    <ul>
+    <p class="group" id="syntax-start-here">Start here</p>
+    <ul aria-labelledby="syntax-start-here">
       <li><a href="#shape">The shape of a file</a></li>
     </ul>
-    <h2>Lexical</h2>
-    <ul>
+    <p class="group" id="syntax-lexical">Lexical</p>
+    <ul aria-labelledby="syntax-lexical">
       <li><a href="#lexical">Tokens, identifiers, whitespace</a></li>
       <li><a href="#comments">Comments, documentation, pragmas</a></li>
       <li><a href="#layout">Indentation, newlines, continuation</a></li>
     </ul>
-    <h2>Declarations</h2>
-    <ul>
+    <p class="group" id="syntax-declarations">Declarations</p>
+    <ul aria-labelledby="syntax-declarations">
       <li><a href="#functions"><code>def</code> and <code>tool</code></a></li>
       <li><a href="#records"><code>type</code> and <code>choice</code></a></li>
       <li><a href="#interfaces">Interfaces and methods</a></li>
       <li><a href="#modules">Modules and visibility</a></li>
       <li><a href="#foreign"><code>extern</code> and <code>unsafe</code></a></li>
     </ul>
-    <h2>Bindings and types</h2>
-    <ul>
+    <p class="group" id="syntax-bindings-and-types">Bindings and types</p>
+    <ul aria-labelledby="syntax-bindings-and-types">
       <li><a href="#bindings">Bindings</a></li>
       <li><a href="#scope">Scope and shadowing</a></li>
       <li><a href="#types">The type vocabulary</a></li>
       <li><a href="#generics">Generics</a></li>
     </ul>
-    <h2>Expressions</h2>
-    <ul>
+    <p class="group" id="syntax-expressions">Expressions</p>
+    <ul aria-labelledby="syntax-expressions">
       <li><a href="#literals">Literals</a></li>
       <li><a href="#operators">Operators and precedence</a></li>
       <li><a href="#chains">Calls, chains, closures</a></li>
     </ul>
-    <h2>Control flow</h2>
-    <ul>
+    <p class="group" id="syntax-control-flow">Control flow</p>
+    <ul aria-labelledby="syntax-control-flow">
       <li><a href="#control">Branches and loops</a></li>
       <li><a href="#patterns"><code>match</code> and patterns</a></li>
       <li><a href="#errors">Absence and failure</a></li>
     </ul>
-    <h2>The words</h2>
-    <ul>
+    <p class="group" id="syntax-the-words">The words</p>
+    <ul aria-labelledby="syntax-the-words">
       <li><a href="#words">Every reserved word</a></li>
       <li><a href="#inuse">Each new word, in code</a></li>
     </ul>
-    <h2>The edges</h2>
-    <ul>
+    <p class="group" id="syntax-the-edges">The edges</p>
+    <ul aria-labelledby="syntax-the-edges">
       <li><a href="#notyet">Parses, and is not built</a></li>
       <li><a href="#absent">What there is instead</a></li>
     </ul>
   </div>
-</aside>
+</nav>
 
 <main>
 
@@ -3728,6 +3731,15 @@ def load(p: String) -&gt; <span class="rm">Result</span> of (Doc, Error):
   compiler's own stderr. Where a construct is specified and not built it is in
   <a href="#notyet">Parses, and is not built</a> with the error it produces
   today, and in no section above.
+
+  <address class="colophon">
+    <span class="by">Science is designed and built by <b>Angel Zeledon</b>.</span>
+    <span class="who">
+      <a href="https://angelzeledon.netlify.app" rel="author external">Portfolio</a>
+      <a href="https://github.com/Angel-Zeledon" rel="author external">GitHub</a>
+      <a href="https://github.com/Angel-Zeledon/sciencec">Repository</a>
+    </span>
+  </address>
 </footer>
 
 </div>

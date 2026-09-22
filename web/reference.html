@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Reference &middot; Science</title>
 <meta name="description" content="The Science language reference: what each construct means, why the language has it, how it behaves at the edges, what it costs, and exactly how much of it the compiler does today.">
+<meta name="author" content="Angel Zeledon">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2213%22 font-size=%2213%22>&#8730;</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -46,7 +47,7 @@
     has it</em>, how it behaves at the edges, and what it costs &mdash; because
     a syntax sample shows you the first of those and none of the other three.
   </p>
-</header>
+
 
 <div class="status">
   <span><span class="dot dot-on"></span>Compiler <b>sciencec</b> 0.0.1</span>
@@ -91,16 +92,18 @@
   </p>
 </div>
 
+</header>
+
 <div class="docs">
-<aside class="sidebar">
+<nav class="sidebar" aria-label="Sections">
   <div class="groups">
-    <h2>Start here</h2>
-    <ul>
+    <p class="group" id="reference-start-here">Start here</p>
+    <ul aria-labelledby="reference-start-here">
       <li><a href="#start">Getting started</a></li>
       <li><a href="#state">What works today</a></li>
     </ul>
-    <h2>The language</h2>
-    <ul>
+    <p class="group" id="reference-the-language">The language</p>
+    <ul aria-labelledby="reference-the-language">
       <li><a href="#scripts">Scripts and programs</a></li>
       <li><a href="#bindings">Bindings and literals</a></li>
       <li><a href="#strings">Strings and formatting</a></li>
@@ -109,23 +112,23 @@
       <li><a href="#functions">Functions</a></li>
       <li><a href="#interfaces">Interfaces</a></li>
     </ul>
-    <h2>Semantics</h2>
-    <ul>
+    <p class="group" id="reference-semantics">Semantics</p>
+    <ul aria-labelledby="reference-semantics">
       <li><a href="#ownership">Ownership and borrows</a></li>
       <li><a href="#control">Control flow</a></li>
       <li><a href="#patterns">Patterns</a></li>
       <li><a href="#errors">Errors</a></li>
       <li><a href="#chains">Chains and closures</a></li>
     </ul>
-    <h2>Beyond it</h2>
-    <ul>
+    <p class="group" id="reference-beyond-it">Beyond it</p>
+    <ul aria-labelledby="reference-beyond-it">
       <li><a href="#foreign">Foreign code</a></li>
       <li><a href="#tools">Tools and schemas</a></li>
       <li><a href="#toolchain">Toolchain</a></li>
       <li><a href="#reference">Reference tables</a></li>
     </ul>
   </div>
-</aside>
+</nav>
 
 <main>
 
@@ -7715,6 +7718,13 @@ public def title_of(doc: &amp;Doc) -&gt; &String:
 </nav>
 
 <footer>
+  <div class="links">
+    <a href="index.html">Home</a>
+    <a href="tutorial.html">Tutorial</a>
+    <a href="syntax.html">Syntax</a>
+    <a href="rationale.html">Rationale</a>
+    <a href="#start">Top of page</a>
+  </div>
   Twenty-two worked programs live in <code>examples/</code>; they are input
   data for the compiler's own test suites, so anything there that fails to
   lex, parse, resolve, type-check or borrow-check is a bug in the compiler
@@ -7725,6 +7735,15 @@ public def title_of(doc: &amp;Doc) -&gt; &String:
   block that shows output was built with <code>sciencec build</code> and run,
   and the bytes above are that program's. The one fragment and the one
   removed-syntax block are labelled where they stand.
+
+  <address class="colophon">
+    <span class="by">Science is designed and built by <b>Angel Zeledon</b>.</span>
+    <span class="who">
+      <a href="https://angelzeledon.netlify.app" rel="author external">Portfolio</a>
+      <a href="https://github.com/Angel-Zeledon" rel="author external">GitHub</a>
+      <a href="https://github.com/Angel-Zeledon/sciencec">Repository</a>
+    </span>
+  </address>
 </footer>
 
 </div>

@@ -243,6 +243,82 @@ fn a_payload_starts_at_the_offset_its_alignment_requires() {
     assert_eq!(bytes("choice-align", &source), "YNN");
 }
 
+// --- Decision 19's niche, for a user's own `choice` -----------------------
+
+/// A user-declared `choice` — not `T?` — whose layout Decision 19 niches: one
+/// variant (`Filled`) carries a payload with a niche (`&String`, a pointer),
+/// the other (`Empty`) carries none. `lower_variant` used to refuse both
+/// outright — *"constructing a `Slot.Filled` value ... means writing the
+/// payload or the niche value, and not a discriminant field"* — because every
+/// niched value this crate had built before came from `T?`'s own widening or
+/// its `null`, and a `choice` variant literal went through the one path that
+/// still assumed Decision 18's tag unconditionally.
+///
+/// **The assertions are the two halves of the same rule `store_null`'s niched
+/// arm and `lower_widen`'s niched arm already follow for `T?`.** `Filled(&x)`
+/// writes the pointer itself at the niche's offset and nothing else;
+/// `Slot.Empty` writes the null pointer and nothing else. Neither is preceded
+/// by a byte written to a discriminant, because Decision 19 gives this
+/// `choice` no discriminant to write — so `store i8` does not appear anywhere
+/// in a function that constructs both.
+#[test]
+fn a_niched_choices_variant_is_built_with_no_discriminant_store() {
+    let text = ir(
+        "niched-choice-ir",
+        "choice Slot:
+    Filled(&String)
+    Empty
+
+def main():
+    let text be \"borrowed\"
+    let filled be Filled(&text)
+    let empty be Slot.Empty
+",
+    );
+    assert!(
+        !text.contains("store i8"),
+        "a niched `choice` variant was constructed with a discriminant byte, which Decision \
+         19 says it does not have:\n{text}"
+    );
+    assert!(
+        text.contains("store ptr null"),
+        "`Slot.Empty`'s niche value — the null pointer — was not written:\n{text}"
+    );
+}
+
+/// The same shape, run rather than read: `Filled`'s payload is a `Box[Int]`,
+/// which owns a heap allocation, and `Empty` owns nothing. Nothing in this
+/// crate can read a niched general `choice`'s payload back yet —
+/// `Projection::Downcast` and `Rvalue::Discriminant` both refuse a niched
+/// layout by name, so `match` cannot ask which variant a `Slot` holds — which
+/// leaves the drop this scope runs on every iteration as the only witness
+/// that a construction wrote the *correct* bits and not merely *some* bits.
+///
+/// A `Filled` built with garbage where the pointer belongs frees an address
+/// that was never allocated; an `Empty` built with anything but the null
+/// pointer frees an address that was never a `Box` at all. Either is a
+/// `Box.new` and a free that disagree, and glibc does not stay quiet through
+/// 10 000 of them. `seen` reaching `10000` with a clean exit and empty
+/// stderr is what says they agreed every time.
+#[test]
+fn a_niched_choices_variants_construct_and_drop_correctly_many_times() {
+    let source = "\
+choice Slot:
+    Filled(Box[Int])
+    Empty
+
+def main():
+    let mutable seen be 0
+    for n in 0..10000:
+        let mutable slot be Empty
+        if n < 5000:
+            slot be Filled(Box.new(n))
+        seen be seen + 1
+    print(f\"{seen}\")
+";
+    assert_eq!(bytes("niched-choice-loop", source), "10000\n");
+}
+
 // --- a second function, with parameters -----------------------------------
 
 /// **The second thing the last pass measured.** A function that takes arguments

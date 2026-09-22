@@ -1197,18 +1197,17 @@ impl<'a> Lowerer<'a> {
         layout: Layout,
         depth: u32,
     ) -> Result<Option<String>, Unlowered> {
-        let Repr::Tagged { tag, payload_offset, variants } = layout.repr else {
-            return Err(Unlowered::new(format!(
-                "drop glue for `{name}`, whose layout is neither Decision 18's tagged union nor \
-                 Decision 19's niche: a general `choice`'s glue only knows how to switch on \
-                 Decision 18's shape"
-            )));
-        };
         // The type's parameters, bound to this use's arguments, so that a
         // variant declared `Loaded(T)` is released as the `String` or the
         // `Int` it actually is. `name` already carries the instantiation —
         // `intern_drop_glue` built the symbol from it — so the glue emitted
         // here is this instantiation's and no other's.
+        //
+        // Computed before the layout is even asked which of Decision 18's or
+        // Decision 19's shape it has: neither `variant_defs` nor
+        // `mono_payloads` reads the layout at all, only `def` and `args`, and
+        // both branches below need the same answer to the same question —
+        // which `Ty` a variant's payload field is.
         let generics = self
             .choice_variants(def)
             .iter()
@@ -1216,13 +1215,6 @@ impl<'a> Lowerer<'a> {
             .unwrap_or_default();
         let (_, env) = self.aggregate_env(def, &generics, args, &TyEnv::new())?;
         let variant_defs = self.choice_variants(def);
-        if variant_defs.len() != variants.len() {
-            return Err(Unlowered::new(format!(
-                "drop glue for `{name}`: its layout has {} variant(s) and its declaration has {}",
-                variants.len(),
-                variant_defs.len()
-            )));
-        }
         let decls = self.declarations()?;
         // `science_codegen::mono`'s substituted payloads, when this use is in
         // its table — [`Lowerer::choice_ty`]'s own doc comment says why a hit
@@ -1234,6 +1226,80 @@ impl<'a> Lowerer<'a> {
                 science_codegen::mono::AggregateLayout::Record(_) => None,
             });
         let no_binding = TyEnv::new();
+
+        // **Decision 19: the enum is its payload, and its glue is
+        // `emit_niched_glue`'s — the one test, one branch shape
+        // `emit_nullable_glue` already reaches for `T?`.** A user's own
+        // `choice` niches under exactly the same condition `layout_niched`
+        // states for `T?`'s desugaring: one variant carries a payload with a
+        // niche and every other variant carries none, so there is no
+        // discriminant here either, and the switch this function builds for
+        // Decision 18 below would have nothing to switch on.
+        //
+        // The payload has to be a single field: `emit_niched_glue` releases
+        // one `Ty` at the value's own address, and a payload of more than
+        // one field is `choice_ty`'s struct, which is a shape nothing in F0
+        // niches — `layout_niched` only ever offers the niche condition to a
+        // payload type with a niche of its own, and a multi-field struct's
+        // niche (if any) belongs to one of its fields, not to the struct
+        // felt as a whole value the way this glue would need to release it.
+        if let Repr::Niched { payload_variant, niche, niche_variants, .. } = &layout.repr {
+            let index = *payload_variant;
+            let variant_def = *variant_defs.get(index).ok_or_else(|| {
+                Unlowered::new(format!(
+                    "drop glue for `{name}`: its niched payload variant is index {index}, which \
+                     its declaration does not have"
+                ))
+            })?;
+            let field_tys = match mono_payloads.and_then(|p| p.get(index)) {
+                Some(substituted) => substituted
+                    .iter()
+                    .map(|ty| self.member_ty(*ty, &no_binding, &name))
+                    .collect::<Result<Vec<Ty>, Unlowered>>()?,
+                None => decls
+                    .variant(variant_def)
+                    .ok_or_else(|| {
+                        Unlowered::new(format!(
+                            "the variant `{name}`'s niched payload, which the declaration table \
+                             has no lowered payload for"
+                        ))
+                    })?
+                    .payload
+                    .iter()
+                    .map(|ty| self.member_ty(*ty, &env, &name))
+                    .collect::<Result<Vec<Ty>, Unlowered>>()?,
+            };
+            if field_tys.len() != 1 {
+                return Err(Unlowered::new(format!(
+                    "drop glue for `{name}`'s niched variant, whose payload has {} field(s): \
+                     this backend's niched glue builds only the shape a payload of one field has",
+                    field_tys.len()
+                )));
+            }
+            return self.emit_niched_glue(
+                field_tys[0],
+                name,
+                symbol,
+                niche.offset,
+                niche_variants,
+                depth,
+            );
+        }
+
+        let Repr::Tagged { tag, payload_offset, variants } = layout.repr else {
+            return Err(Unlowered::new(format!(
+                "drop glue for `{name}`, whose layout is neither Decision 18's tagged union nor \
+                 Decision 19's niche: a general `choice`'s glue only knows how to switch on \
+                 Decision 18's shape"
+            )));
+        };
+        if variant_defs.len() != variants.len() {
+            return Err(Unlowered::new(format!(
+                "drop glue for `{name}`: its layout has {} variant(s) and its declaration has {}",
+                variants.len(),
+                variant_defs.len()
+            )));
+        }
 
         // ValueId(0) is the loaded tag; every `FieldAddr` after it, across
         // every arm, claims the next — `BodyState::values` is one map for the
@@ -6025,17 +6091,74 @@ impl<'a> Lowerer<'a> {
         insts: &mut Vec<ExtInst>,
     ) -> Result<(), Unlowered> {
         let (index, choice) = self.variant_index(variant)?;
-        let Repr::Tagged { payload_offset, variants, .. } = &layout.repr else {
-            return Err(Unlowered::new(format!(
-                "a `{}.{}` value whose layout is Decision 19's niched one: constructing it means \
-                 writing the payload or the niche value, and not a discriminant field",
-                self.defs.get(choice).name,
-                self.defs.get(variant).name
-            )));
+        // **Decision 18's discriminant, or Decision 19's niche — never both.**
+        // A tagged variant's payload sits behind its tag at `payload_offset`;
+        // a niched one *is* the payload, at offset 0, with no tag at all.
+        // Working out which applies, and at what offset, is the only
+        // difference between the two: everything from here down writes a
+        // payload the same way regardless of which repr chose the offset.
+        let (payload_offset, declared) = match &layout.repr {
+            Repr::Tagged { payload_offset, variants, .. } => {
+                (*payload_offset, variants.get(index).and_then(|place| place.payload.clone()))
+            }
+            // **The enum *is* its payload (Decision 19).** The payload-carrying
+            // variant is written at offset 0 — the same offset
+            // `Projection::Payload`'s niched arm reads back — and falls through
+            // to the payload-writing code below with no tag to store first. A
+            // payload-free variant instead writes the niche value
+            // `layout_niched` assigned it and returns immediately: there is no
+            // payload to write and no tag field to skip past.
+            //
+            // `store_null`'s niched arm already takes this exact path for
+            // `T?`'s `null`; this is that same write, reached from a variant
+            // name instead of from a `Literal::Null`, and checked against the
+            // same two facts — the niche is at offset 0, and the value it
+            // encodes is the null pointer — because §3.4 states both as
+            // general rules and F0 has never needed a niche that breaks them.
+            Repr::Niched { payload_variant, payload: payload_layout, niche, niche_variants } => {
+                if niche.offset != 0 {
+                    return Err(Unlowered::new(format!(
+                        "a `{}.{}` value whose niche is not at offset 0",
+                        self.defs.get(choice).name,
+                        self.defs.get(variant).name
+                    )));
+                }
+                if index != *payload_variant {
+                    let niche_value = niche_variants
+                        .iter()
+                        .find(|(found, _)| *found == index)
+                        .map(|(_, value)| *value)
+                        .ok_or_else(|| {
+                            Unlowered::new(format!(
+                                "a `{}.{}` value whose variant the niche has no value for",
+                                self.defs.get(choice).name,
+                                self.defs.get(variant).name
+                            ))
+                        })?;
+                    if niche_value != 0 {
+                        return Err(Unlowered::new(
+                            "a `choice` variant whose niche value is not the null pointer: this \
+                             backend encodes only the null pointer, the one value \
+                             `layout_niched` assigns today",
+                        ));
+                    }
+                    insts.push(ExtInst::Above(Inst::Store { local: dest, value: Operand::Null }));
+                    return Ok(());
+                }
+                (0, Some((**payload_layout).clone()))
+            }
+            _ => {
+                return Err(Unlowered::new(format!(
+                    "a `{}.{}` value whose layout is neither Decision 18's tagged pair nor \
+                     Decision 19's niched one",
+                    self.defs.get(choice).name,
+                    self.defs.get(variant).name
+                )));
+            }
         };
-        let payload_offset = *payload_offset;
-        let declared = variants.get(index).and_then(|place| place.payload.clone());
-        insts.push(ExtInst::StoreTag { local: dest, discriminant: index as u64 });
+        if matches!(layout.repr, Repr::Tagged { .. }) {
+            insts.push(ExtInst::StoreTag { local: dest, discriminant: index as u64 });
+        }
         if payload.is_empty() {
             return Ok(());
         }

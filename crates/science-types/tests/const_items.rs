@@ -101,3 +101,46 @@ fn a_literal_that_disagrees_with_its_annotation_does_not_substitute() {
     assert_eq!(checked.render(checked.decls.const_ty(def).unwrap()), "F64");
     assert!(checked.decls.const_value(def).is_none());
 }
+
+/// **A const generic parameter read as a value types as its declared kind,
+/// and reading one is not an error.**
+///
+/// §5.3 says a const parameter *stands for a value*, so `ROWS * COLS` in a
+/// body is the construct working as specified. `items::named` nevertheless
+/// folded `DefKind::ConstParam` into `Named::Other`, whose contract is
+/// *"either the resolver already reported it, or this phase does not answer
+/// it"* — and neither was true here. `check`'s `path` therefore took the
+/// `error_expr` arm and produced a `Ty::ERROR` **with no diagnostic beside
+/// it**: §3's finding 20 again, and the single reason
+/// `examples/03_structs.science` stopped at its last line while every other
+/// line of it ran.
+///
+/// The kind is the type: `const ROWS: Int` reads as `Int`. `ConstParamKind`
+/// is closed rather than a `Type` so that F1's `Shape` cannot arrive as a
+/// fake primitive, which is why `const_param_ty` is a match.
+///
+/// **This pins the front end only.** Substituting `3` for `ROWS` at
+/// `Grid[Int, 3, 3].area()` is monomorphisation and is a separate phase;
+/// `assert_clean` here is the claim that the checker no longer invents a
+/// silent hole, not that the example links.
+#[test]
+fn a_const_generic_parameter_reads_as_its_declared_kind() {
+    let checked = check(
+        "\
+type Grid[T, const ROWS: Int, const COLS: Int]:
+    cells: Array[T]
+
+Grid[T, const ROWS: Int, const COLS: Int] has:
+    def area() -> Int:
+        ROWS * COLS
+",
+    );
+    checked.assert_clean();
+    let reads: Vec<String> = checked
+        .nodes("area")
+        .into_iter()
+        .filter(|(kind, _)| kind == "item")
+        .map(|(_, ty)| ty)
+        .collect();
+    assert_eq!(reads, vec!["I64".to_string(), "I64".to_string()]);
+}

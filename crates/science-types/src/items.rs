@@ -1004,6 +1004,23 @@ pub enum Named {
     Variant(DefId),
     /// A module-level constant.
     Const(DefId),
+    /// A const generic parameter, read as the value it stands for: the `ROWS`
+    /// of `def area() -> Int: ROWS * COLS`.
+    ///
+    /// **This is not [`Named::Other`], and the difference is a diagnostic
+    /// nobody was writing.** `Other`'s contract is *"either the resolver
+    /// already reported it, or this phase does not answer it"*, and a const
+    /// parameter in a value position is neither: §5.3 says it stands for a
+    /// value, so reading one is exactly what it is *for*. Folded into `Other`
+    /// it reached `check`'s `error_expr` and became a `Ty::ERROR` with no
+    /// diagnostic beside it — §3's finding 20 once more, and the reason
+    /// `examples/03_structs.science` stopped at its last line.
+    ///
+    /// `lowering.rs`' `DefKind::ConstParam` arm is the mirror of this one and
+    /// stays as it is: a const parameter in a *type* position is `SC0261` and
+    /// is reported there. The two positions are different questions and only
+    /// one of them is a mistake.
+    ConstParam(DefId),
     /// A type used where a value is expected, or anything else. The checker
     /// says nothing about it: either the resolver already did, or the
     /// construct is one this phase does not answer.
@@ -1021,6 +1038,7 @@ pub fn named(defs: &DefTable, res: Res) -> Option<Named> {
         DefKind::Fn | DefKind::ExternFn => Named::Function(def),
         DefKind::Variant => Named::Variant(def),
         DefKind::Const => Named::Const(def),
+        DefKind::ConstParam => Named::ConstParam(def),
         _ => Named::Other,
     })
 }

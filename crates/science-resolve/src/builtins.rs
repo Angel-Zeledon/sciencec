@@ -421,13 +421,23 @@ struct InterfaceDecl {
 /// **The cost, stated: two operators still do not dispatch.** `check`'s §6
 /// wants *"a rule anywhere saying which method name each operator dispatches
 /// to"*, and for `< > <= >=` and for `print` there is none. Writing
-/// `Ord.compare -> Ordering` or `Display.display(Formatter)` here would invent
-/// `Ordering` and `Formatter` — two Level 1 types no note has specified,
-/// arriving as a side effect of a bound check — and `Ord` would need a third
-/// thing besides: a rule for how four operators sit over one `compare`,
-/// including what `F64`'s NaN does to a total order. A signature invented in
-/// passing is how a language acquires a design nobody argued for, so the
-/// fourteen stay methodless.
+/// `Ord.compare -> Ordering` here would invent `Ordering` — a Level 1 type no
+/// note specifies — and `Ord` would need a third thing besides: a rule for how
+/// four operators sit over one `compare`, including what `F64`'s NaN does to a
+/// total order. `Display.display` is not in the same position: unlike
+/// `Ordering`, `Formatter` **is** specified, completely, by
+/// `strings-formatting-and-docs.md` §3.1 (`Formatter has: def text/raw/number/
+/// integer/spec`, plus `FormatSpec` and its four `choice` fields) — writing it
+/// here would not be inventing a signature, it would be transcribing one, the
+/// same move this file already made for `Clone.clone`. It stays undeclared
+/// anyway, because `Formatter`'s own type, `FormatSpec` and its four `choice`
+/// types (`Align`, `Sign`, `Code`, `Grouping`) would all have to land in this
+/// file first, and the runtime and `science-codegen-llvm` sides do not exist
+/// (`STDLIB-DECISIONS.md` §1 has the full account). A signature invented in
+/// passing is how a language acquires a design nobody argued for; `Ord`'s
+/// really would be invented, `Display`'s would not be, and both stay
+/// methodless here for now regardless — one for that reason, one because the
+/// dependency chain behind it is bigger than this file.
 ///
 /// **What the fourteen do buy, now that the implementations are declared**, is
 /// the *requirement*: `check`'s `implements_operand` refuses `a < b` on a type

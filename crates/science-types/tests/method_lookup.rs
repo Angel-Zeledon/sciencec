@@ -1401,3 +1401,55 @@ def read(path: &String) -> (&String)?:
     let read = checked.def("read", DefKind::Fn);
     assert_eq!(checked.decls.borrow_sources(&checked.types, read), None);
 }
+
+/// **A method call on a receiver whose shape is still deferred resolves,
+/// because Decision 2's default is taken at the receiver rather than at the
+/// end of the body.**
+///
+/// `Pair(first: 1, second: "one")` answers `B` from `"one"` and `A` only from
+/// an unsuffixed literal, so its whole type is a `pending_named` placeholder
+/// until `finish`. `pair.swapped()` in the next statement therefore asked its
+/// question of a variable with no head, and `lookup` returned
+/// `Callee::Missing` — **silently**, because an unsettled receiver is not a
+/// name the lookup can report as unknown. The call reached MIR with
+/// `MethodCall::method` at `None` and the backend refused it as *"Decision
+/// 11's method lookup does not put what it found in the tree"*, which named
+/// the wrong phase: the lookup had nothing to find, not something it dropped.
+///
+/// `settle_receiver` closes the class here, the way `literal_unsizes` already
+/// closes one at a slot, so the head exists when the question is asked. The
+/// assertion is on the *type of the call*: `Pair[String, I64]` is the swap of
+/// a receiver that settled, and `{unknown}` is what a receiver that did not
+/// leaves behind.
+#[test]
+fn a_method_resolves_on_a_receiver_whose_shape_is_still_deferred() {
+    let checked = check(
+        "\
+type Pair[A, B]:
+    first: A
+    second: B
+
+interface Swap:
+    type Swapped
+    def swapped(self: Self) -> Self.Swapped
+
+Pair[A, B] implements Swap:
+    type Swapped is Pair[B, A]
+
+    def swapped(self: Self) -> Self.Swapped:
+        Pair(first: self.second, second: self.first)
+
+def flip():
+    let pair be Pair(first: 1, second: \"one\")
+    let flipped be pair.swapped()
+",
+    );
+    checked.assert_clean();
+    let calls: Vec<String> = checked
+        .nodes("flip")
+        .into_iter()
+        .filter(|(kind, _)| kind == "method")
+        .map(|(_, ty)| ty)
+        .collect();
+    assert_eq!(calls, vec!["Pair[String, I64]".to_string()]);
+}
