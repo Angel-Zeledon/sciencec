@@ -4270,6 +4270,26 @@ impl<'a> Lowerer<'a> {
                     })?;
                     (found.offset, found.layout.clone())
                 }
+                // `Projection::Payload`: a `T?`'s payload, at whatever offset
+                // *this* option's layout puts it — the fact `science-mir` was
+                // written not to know. Decision 19's niche has no discriminant
+                // and no separate storage for its payload: the payload *is*
+                // the whole value, so the offset is zero and its layout is the
+                // whole layout. Decision 18's tagged pair keeps the payload at
+                // `payload_offset`, behind the discriminant, exactly where
+                // `Projection::Downcast` above already reads a `choice`'s.
+                mir::Projection::Payload { ty } => match &layout.repr {
+                    Repr::Niched { payload, .. } => (0, (**payload).clone()),
+                    Repr::Tagged { payload_offset, .. } => {
+                        (*payload_offset, self.layout_of_ty(*ty)?)
+                    }
+                    _ => {
+                        return Err(Unlowered::new(
+                            "a payload projection of a value whose layout is neither Decision \
+                             18's tagged pair nor Decision 19's niche",
+                        ));
+                    }
+                },
                 mir::Projection::Downcast { variant, .. } => {
                     let (index, choice) = self.variant_index(*variant)?;
                     let Repr::Tagged { payload_offset, variants, .. } = &layout.repr else {
@@ -4705,38 +4725,60 @@ impl<'a> Lowerer<'a> {
                     }
                     Repr::Tagged { payload_offset, .. } => {
                         let offset = *payload_offset;
-                        // **A payload that owns something is refused, because
-                        // reading it here would be a second owner.**
+                        // **A *copied* payload that owns something is refused,
+                        // because reading it here would be a second owner —
+                        // and a *moved* one is not, because there is only
+                        // ever one.**
                         //
                         // This loads the payload out of the option's slot,
                         // which for an `I64?` is the whole of the
-                        // representation change and for a `String?` is a copy
-                        // of a `{ ptr, len, cap }` whose buffer the option
-                        // still owns. Both would then be released — the
-                        // narrowed value at its own storage-dead point and the
-                        // option through its glue — and the second free is of
-                        // memory the first returned.
+                        // representation change and for a `String?` is a byte
+                        // copy of a `{ ptr, len, cap }`. Whether that second
+                        // triple is a second *owner* is exactly what
+                        // `Operand::Copy` versus `Operand::Move` already
+                        // states: a copy leaves the option alive to release
+                        // its payload later, so the narrowed value's own
+                        // release is a second free of memory the first
+                        // returned; a move is `science-mir`'s own drop
+                        // elaboration answering *"only one of these two now
+                        // owns it"* before this arm ever runs — the flag that
+                        // guards the option's drop is already false on every
+                        // path this narrow reaches. Refusing the move too
+                        // would be refusing a program this crate can already
+                        // prove sound, on the grounds that a *different*
+                        // program (the copy) is not.
                         //
-                        // It was unreachable until `emit_nullable_glue` landed,
-                        // because a `String?` could not be dropped at all; the
-                        // glue made the option usable and made this shape
-                        // reachable in the same change, and `Map.insert`'s own
-                        // round trip found it.
+                        // `print(s)` inside `if s?:` is the program that found
+                        // this: `s`'s call-site argument is a plain value and
+                        // not a borrow — a `String` prints without needing
+                        // `any Display`, `Builder::prints_by_rendering`'s own
+                        // note — so `science-mir` narrows it with exactly one
+                        // use ahead and moves. Borrowing it instead —
+                        // `h.describe()` inside `if h?:`, a method receiver —
+                        // is the *other* half of the same bug, and is
+                        // `science-mir`'s to fix rather than this crate's:
+                        // `Builder::borrow_source` projects
+                        // `Projection::Payload` onto the option so the borrow
+                        // is of the payload's own storage and never reaches
+                        // this arm as a narrow at all.
                         //
-                        // The repair is a **place** and not a value: `if old?:`
-                        // has established which variant is live, so the payload
-                        // should be projected and borrowed rather than copied,
-                        // the way `Projection::Downcast` already reaches a
-                        // `choice`'s payload. MIR has no projection for a
-                        // nullable's payload, and inventing one is a change to
-                        // the IR rather than to this arm.
+                        // It was unreachable until `emit_nullable_glue`
+                        // landed, because a `String?` could not be dropped at
+                        // all; the glue made the option usable and made this
+                        // shape reachable in the same change, and
+                        // `Map.insert`'s own round trip found it.
                         let payload = match *self.types.kind(self.referent(source)) {
                             TyKind::Nullable(inner) => inner,
                             _ => Ty::ERROR,
                         };
-                        if self.drop_runs_something(payload, 0)? {
+                        if operand.moved_place().is_none() && self.drop_runs_something(payload, 0)?
+                        {
                             return Err(Unlowered::new(format!(
-                                "a narrowed read of `{}`, whose payload owns something: reading                                  it out of the option copies an owner, and the option is still                                  the one that releases it — so the value would be freed twice.                                  The payload needs a projection to borrow through, which MIR has                                  for a `choice`'s variant and not for a `T?`",
+                                "a narrowed read of `{}`, whose payload owns something: reading it \
+                                 out of the option copies an owner, and the option is still the \
+                                 one that releases it — so the value would be freed twice. Move \
+                                 the narrowed value instead of reading it twice, or borrow its \
+                                 payload rather than reading it by value",
                                 self.types.render(self.defs, source)
                             )));
                         }
@@ -5226,10 +5268,21 @@ impl<'a> Lowerer<'a> {
                 // `total be total + xs[i]` — which is worth saying because
                 // `print(f"{xs[i]}")` worked the whole time: an f-string hole
                 // reads through `value_hole`, which never asks for a coercion.
+                //
+                // **`TyKind::Nullable(Borrowed(_))` is not this arm's "already
+                // the value" case, and looked exactly like one.** `let cell be
+                // items.get(index)` types `cell` as `(&Int)?`, and inside `if
+                // cell?:` the narrowed `cell` still is not `TyKind::Borrowed`
+                // at the top — Decision 19 wraps it in `Nullable` up to the
+                // moment codegen picks a layout for it. Reading `!matches!(…,
+                // Borrowed)` alone took this for `xs[i]`'s shape and stored the
+                // niched pointer where the referent belongs: `local _0 is i64
+                // and the value stored into it is ptr`, silent because the two
+                // are the same width. `borrowed_referent` answers the one
+                // question that tells them apart — is there a pointer to load
+                // through at all — for both spellings of "there is one".
                 let operand_ty = self.operand_ty(body, operand);
-                if operand_ty
-                    .is_some_and(|ty| !matches!(self.types.kind(ty), TyKind::Borrowed { .. }))
-                {
+                if operand_ty.is_some_and(|ty| self.borrowed_referent(ty).is_none()) {
                     let value = self.typed_operand(ctx, operand, layout, insts)?;
                     insts.push(ExtInst::Above(Inst::Store { local: dest, value }));
                     return Ok(());
@@ -5655,18 +5708,23 @@ impl<'a> Lowerer<'a> {
                  there is nothing here to read it from",
             )
         })?;
-        let referent = match self.types.kind(source) {
-            TyKind::Borrowed { inner, .. } => *inner,
-            _ => {
-                return Err(Unlowered::new(format!(
-                    "a `Copy` out of `{}`, which is not a borrow: §7's rule reads through a \
-                     pointer and this operand is not one",
-                    self.types.render(self.defs, source)
-                )));
-            }
-        };
+        let referent = self.borrowed_referent(source).ok_or_else(|| {
+            Unlowered::new(format!(
+                "a `Copy` out of `{}`, which is not a borrow: §7's rule reads through a pointer \
+                 and this operand is not one",
+                self.types.render(self.defs, source)
+            ))
+        })?;
         let borrow = self.layout_of_ty(source)?;
-        if !matches!(borrow.repr, Repr::Scalar(Scalar::Pointer(_))) {
+        // A niched `(borrowed T)?`'s own repr is `Niched`, not `Scalar` — its
+        // *payload* is the pointer-shaped layout the guard below is checking
+        // for, the same distinction `place_address`'s `Deref` arm already
+        // draws for the identical reason.
+        let pointer_repr = match &borrow.repr {
+            Repr::Niched { payload, .. } => &payload.repr,
+            other => other,
+        };
+        if !matches!(pointer_repr, Repr::Scalar(Scalar::Pointer(_))) {
             return Err(Unlowered::new(
                 "a `Copy` out of a borrow whose representation is not a pointer",
             ));
@@ -6361,6 +6419,28 @@ impl<'a> Lowerer<'a> {
         match self.types.kind(ty) {
             TyKind::Borrowed { inner, .. } => *inner,
             _ => ty,
+        }
+    }
+
+    /// The type behind a pointer `ty`'s own bytes actually are, whether `ty`
+    /// says so as a plain `borrowed T` or as a niched `(borrowed T)?`.
+    ///
+    /// **Why both spellings answer the same question.** Decision 19 gives
+    /// `(borrowed T)?` no discriminant of its own — the niche is the null
+    /// pointer, so the whole value *is* its payload, and a narrowed read of it
+    /// (`science-mir`'s `as_place` seeing straight through the narrow) hands
+    /// back exactly the bytes a plain `borrowed T` would have. `None` is every
+    /// other shape, including `T?` where `T` is not itself a borrow — that one
+    /// is Decision 18's tagged pair, a different offset and a different
+    /// question, and [`Rvalue::Narrow`]'s own arm is where that is answered.
+    fn borrowed_referent(&self, ty: Ty) -> Option<Ty> {
+        match self.types.kind(ty) {
+            TyKind::Borrowed { inner, .. } => Some(*inner),
+            TyKind::Nullable(payload) => match self.types.kind(*payload) {
+                TyKind::Borrowed { inner, .. } => Some(*inner),
+                _ => None,
+            },
+            _ => None,
         }
     }
 

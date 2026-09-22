@@ -48,6 +48,7 @@ fn describe(place: &Place) -> String {
             Projection::TupleField { .. } => 't',
             Projection::Index { .. } => 'i',
             Projection::Downcast { .. } => 'd',
+            Projection::Payload { .. } => '?',
         });
     }
     out

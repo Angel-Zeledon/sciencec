@@ -84,6 +84,7 @@ fn printed(defs: &science_resolve::hir::DefTable, place: &Place) -> String {
             Projection::Downcast { variant, .. } => {
                 out = format!("{out} as {}", defs.get(*variant).name)
             }
+            Projection::Payload { .. } => out = format!("{out}?"),
         }
     }
     out

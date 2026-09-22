@@ -230,7 +230,8 @@ where
             | Projection::Field { ty: t, .. }
             | Projection::TupleField { ty: t, .. }
             | Projection::Index { ty: t, .. }
-            | Projection::Downcast { ty: t, .. } => ty(t, f)?,
+            | Projection::Downcast { ty: t, .. }
+            | Projection::Payload { ty: t } => ty(t, f)?,
         }
     }
     Ok(())

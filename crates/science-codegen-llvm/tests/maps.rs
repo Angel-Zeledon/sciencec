@@ -205,16 +205,23 @@ fn a_key_with_no_hash_is_refused_by_name() {
 /// `print`, the one position that took a different path — and it is worth
 /// naming twice.
 ///
-/// # What is still refused, and why it is a refusal and not a crash
+/// # What was still refused here, and is not any more
 ///
-/// Narrowing the returned option — `if old?: print(f"{old}")` — is refused.
-/// Reading an owning payload out of a tagged `T?` copies an owner while the
-/// option is still the one that releases it, so the value would be freed
-/// twice; the first version of this change segfaulted on exactly that, and the
-/// `Map` round trip below is what found it. The repair is a projection into a
-/// nullable's payload, the way `Projection::Downcast` reaches a `choice`'s,
-/// which is a change to the IR. Until then the program is refused rather than
-/// wrong.
+/// Narrowing the returned option and *reading* it — `if old?: print(f"{old}")`
+/// — used to be refused, because reading an owning payload out of a tagged
+/// `T?` by value copies an owner while the option is still the one that
+/// releases it: the value would be freed twice, and the first version of this
+/// change segfaulted on exactly that. That copy is still refused, and still
+/// should be — `f"{old}"` renders through `value_hole`, which reads a value
+/// and has no way to avoid the copy.
+///
+/// A **borrow** of the same narrowed payload never had that problem — a
+/// borrow makes no second owner — and is what `a_narrowed_map_value_that_owns_
+/// memory_is_borrowed_not_copied` below exercises: `print(old)`, not
+/// `print(f"{old}")`. `science-mir`'s `borrow_source` projects
+/// `Projection::Payload` onto the option and `science-codegen`'s
+/// `place_address` reads the tagged pair at `payload_offset`, the way
+/// `Projection::Downcast` already read a `choice`'s.
 #[test]
 fn a_map_whose_value_owns_memory_can_be_inserted_into() {
     assert_eq!(
@@ -229,4 +236,65 @@ fn a_map_whose_value_owns_memory_can_be_inserted_into() {
         ),
         "0 false true true\n"
     );
+}
+
+/// The headline case this file's own history refused: a narrowed owning
+/// `V?` is **borrowed**, not copied, and `print` reads it in its own storage
+/// rather than at the option's.
+///
+/// The first `insert` has nothing to evict, so `old?` is false and nothing
+/// prints for it. The second evicts `"uno"`; the `remove` at the end evicts
+/// `"dos"`. Both are printed by narrowing and passing the narrowed value to
+/// `print` directly — `AGENTS.md` §4's automatic call-site borrow — and not
+/// through `f"{}"`, which is `value_hole`'s path and still copies.
+#[test]
+fn a_narrowed_map_value_that_owns_memory_is_borrowed_not_copied() {
+    assert_eq!(
+        prints(
+            "narrowed-owning-value",
+            "let mutable m be Map[String, String].new()\n\
+             let first be m.insert(\"k\", \"uno\")\n\
+             if first?:\n\
+             \x20   print(first)\n\
+             let second be m.insert(\"k\", \"dos\")\n\
+             if second?:\n\
+             \x20   print(second)\n\
+             let gone be m.remove(\"k\")\n\
+             if gone?:\n\
+             \x20   print(gone)\n",
+        ),
+        "uno\ndos\n"
+    );
+}
+
+/// A hundred thousand rounds of insert-narrow-borrow-release, for the same
+/// reason `tests/methods.rs`'s
+/// `a_boxed_value_owning_a_string_is_built_and_freed_ten_thousand_times` runs
+/// ten thousand: a double free corrupts the allocator's own bookkeeping and
+/// the process aborts once enough of the heap has been walked over, which is
+/// not necessarily the round that caused it. Every round after the first
+/// evicts the previous value, borrows it long enough to read its length, and
+/// then lets it drop — one allocation and one release per round, and a flat
+/// heap is the claim this test cannot make by itself; a manual run of the
+/// same program under macOS's `leaks --atExit` during development read *"0
+/// leaks for 0 total leaked bytes"*.
+#[test]
+fn a_narrowed_owning_map_value_is_borrowed_a_hundred_thousand_times() {
+    let source = "\
+def main():
+    let mutable m be Map[String, String].new()
+    let mutable total be 0
+    for i in 0..100000:
+        let old be m.insert(\"k\", \"value\")
+        if old?:
+            total be total + old.length()
+    print(f\"{total}\")
+";
+    let dir = scratch("maps", "narrowed_owning_loop");
+    require_runtime();
+    let built = lower(source).build_at(&executable(&dir, "narrowed_owning_loop"), OptLevel::O2);
+    let ran = run(&built);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(ran.stdout, "499995\n", "stderr: {}", ran.stderr);
+    assert_eq!(ran.status, Some(0), "stderr: {}", ran.stderr);
 }

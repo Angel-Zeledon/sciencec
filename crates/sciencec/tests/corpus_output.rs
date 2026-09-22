@@ -107,50 +107,22 @@ fn every_example_that_builds_has_its_output_pinned() {
 
     for example in examples() {
         let name = example.file_name().expect("a name").to_string_lossy().into_owned();
-        // **One exclusion, with its reason, and it is a bug this file found.**
+        // **`10_loops.science` was excluded here, and is not any more.**
         //
-        // `10_loops.science` prints a value that **differs between runs** —
-        // `90219483912`, then `8688778024` — at the sixth line of its output.
-        // A number that changes per run is an address, so something is
-        // printing a pointer where a value belongs, and the program exits 0
-        // either way. That is exactly the class of defect this file exists
-        // to catch, found within minutes of it existing.
-        //
-        // It is **not** the array loop, which was the obvious suspect: `for
-        // item in items:` summing an `&Array[Int]` reduces to five lines and
-        // prints `6`, deterministic.
-        //
-        // **It is `value_at`, and it reduces to three lines that `check`
-        // accepts:**
-        //
-        // ```science
-        // def value_at(items: &Array[Int], index: Int) -> Int:
-        //     let cell be items.get(index)
-        //     if cell?: cell else: 0
-        // ```
-        //
-        // `Array.get` returns `(&Int)?` — Decision 19's **niched** option,
-        // whose payload is a borrow. `if cell?:` narrows it to `&Int`, the
-        // signature says `Int`, and the pointer is returned where the value
-        // belongs. `sciencec check` exits 0.
-        //
-        // It was a *verifier* error hours ago — "local `_0` is `i64` and the
-        // value stored into it is `ptr`" — and now passes the verifier and
-        // returns garbage, which is strictly worse.
-        //
-        // Left unfixed **deliberately**: the repair is either the checker
-        // refusing to return a `&Int` as an `Int`, or MIR dereferencing, and
-        // that is the same projection-into-a-nullable's-payload question that
-        // `lower_match` hits on a narrowed scrutinee and that `Rvalue::Narrow`
-        // hits on an owning payload. Three routes, one decision, and it
-        // should be taken once rather than three times.
-        //
-        // Excluded rather than blessed, because blessing a nondeterministic
-        // value would make this test fail at random and be switched off,
-        // which is how a ratchet dies. The entry goes when the bug does.
-        if name == "10_loops.science" {
-            continue;
-        }
+        // It printed a value that differed between runs — `90219483912`, then
+        // `8688778024` — at the sixth line of its output, traced to
+        // `value_at`'s `if cell?: cell else: 0` over `Array.get`'s niched
+        // `(&Int)?`: the pointer came back where the value belonged, because
+        // reading a narrowed niched borrow as a plain value took the *address*
+        // of its own storage instead of the bytes already sitting there.
+        // `science-mir`'s `read_ergonomic` and `science-codegen`'s
+        // `Coercion::Copy` both trusted `TyKind::Borrowed` alone to mean
+        // "there is a pointer here", and `(borrowed T)?` narrowed to
+        // `borrowed T` is one without saying so at that level; the fix is
+        // `Lowerer::borrowed_referent`, asked instead of the bare match, on
+        // both sides of the boundary. `lower_match`'s scrutinee and
+        // `Rvalue::Narrow`'s owning payload were the same question from two
+        // more routes, closed the same day by `Projection::Payload`.
         let Some(actual) = ran(&example) else {
             // It does not build. Its expectation, if any, is stale — but
             // removing it here would make a regression look like a blessing,

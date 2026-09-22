@@ -174,6 +174,29 @@ pub enum Step {
     /// §5 below is why the type not carrying them is a decision rather than a
     /// gap, and why this is the right place to recover them.
     Capture(u32),
+    /// A [`science_mir::mir::Projection::Payload`], on the **place** side
+    /// only — §1's *type*-side walk still treats `T?` as invisible, and this
+    /// is the asymmetry, argued rather than left implicit.
+    ///
+    /// The type-side walk cannot push a step here: `own_reference` reads a
+    /// niched `(&T)?` local's empty-path position to know the whole local
+    /// *is* a reference (`examples/07_generics.science`'s `first_inner`), and
+    /// a niched narrow's place never carries a `Payload` projection either —
+    /// `as_place` still sees straight through it, same bytes, same place. So
+    /// there is nothing on the type side for this step to agree with, and
+    /// making one up would be the layout fact this crate must not learn.
+    ///
+    /// A **tagged** narrow's place does carry one, from `borrow_hole`'s way
+    /// into an owning payload without copying it. Filing that place's prefix
+    /// under this step rather than under the empty one keeps it from matching
+    /// the option's *own* positions — computed for `T?` transparently, empty
+    /// prefix included — which would hand the payload's borrow the option's
+    /// regions under its own name. The cost is precision and not soundness:
+    /// nothing here has filed a position under `Payload`, so a tagged
+    /// payload's own interior references come back empty, the same
+    /// conservative answer [`projection_path`] already gives a
+    /// [`science_mir::mir::Projection::Index`].
+    Payload,
 }
 
 /// Where in a type a `borrowed` sits: the path of fields to reach it.
@@ -247,10 +270,17 @@ impl Context<'_> {
                 self.walk(inner, path, seen, depth + 1, out);
                 path.pop();
             }
-            // `T?` is not a step: a `borrowed T?` and a `borrowed T` are
-            // reached by the same projection and must produce the same path,
-            // or §10 item 2's *"equal expressions give equal places"* fails one
-            // level up.
+            // `T?` is not a step **on this, the type-side, walk**: a `borrowed
+            // T?` and a `borrowed T` are reached by the same projection and
+            // must produce the same path, or §10 item 2's *"equal expressions
+            // give equal places"* fails one level up — `own_reference`'s
+            // empty-path test, right below `Step::Payload`'s own doc, is the
+            // load-bearing reader of that fact for a niched `(&T)?`.
+            //
+            // [`Projection::Payload`] on the **place** side is real precisely
+            // because a niched narrow never emits one — `as_place` still sees
+            // through it unchanged, so the two walks agree without this one
+            // needing to know which layout it is describing.
             TyKind::Nullable(inner) => self.walk(inner, path, seen, depth, out),
             TyKind::Tuple(elements) => {
                 for (at, element) in elements.into_iter().enumerate() {
@@ -548,6 +578,7 @@ pub fn projection_path(place: &Place) -> Option<Path> {
             },
             // §2 item 1: there is no position for an element.
             Projection::Index { .. } => return None,
+            Projection::Payload { .. } => path.push(Step::Payload),
         }
     }
     Some(path)
@@ -579,7 +610,7 @@ pub fn describe_path(defs: &DefTable, path: &Path) -> String {
     }
     let mut out = String::new();
     for step in path {
-        if *step == Step::Deref {
+        if *step == Step::Deref || *step == Step::Payload {
             continue;
         }
         out.push('.');
@@ -599,6 +630,9 @@ pub fn describe_path(defs: &DefTable, path: &Path) -> String {
                 out.pop();
                 out.push_str(&format!("capture {at}"));
             }
+            // Filtered out above, with `Deref`: no name in the source, the
+            // same way a `Downcast` has none.
+            Step::Payload => {}
         }
     }
     out

@@ -204,6 +204,23 @@ pub enum Projection {
     /// `base as Variant` — narrowing a choice value to one variant so its
     /// payload can be projected. Emitted only by `match` lowering.
     Downcast { variant: DefId, ty: Ty },
+    /// The payload of a `T?`, however this particular option is laid out.
+    ///
+    /// **Not a `Downcast` at a synthesised variant.** Decision 19's niche has
+    /// no discriminant to name — `(&T)?` *is* its payload with a reserved bit
+    /// pattern standing in for the absent case, so there is no `DefId` for the
+    /// present case to be a downcast to. A `choice`'s payload is reached by
+    /// naming which variant; a `T?`'s payload is reached by naming nothing at
+    /// all, which is what makes this its own step rather than a reuse of one.
+    ///
+    /// Emitted only where a narrow needs a **place** and not a copied value —
+    /// `borrow_hole`'s way into an owning payload without making the option's
+    /// storage a second owner. A narrow read into a temporary still goes
+    /// through `Rvalue::Narrow`, which states the representation change as a
+    /// statement rather than a place; the two are complementary; see
+    /// `science_codegen_llvm::lower`'s `Rvalue::Narrow` arm and `place_address`
+    /// for where each is lowered.
+    Payload { ty: Ty },
 }
 
 impl Projection {
@@ -214,7 +231,8 @@ impl Projection {
             | Projection::Field { ty, .. }
             | Projection::TupleField { ty, .. }
             | Projection::Index { ty, .. }
-            | Projection::Downcast { ty, .. } => ty,
+            | Projection::Downcast { ty, .. }
+            | Projection::Payload { ty } => ty,
         }
     }
 }

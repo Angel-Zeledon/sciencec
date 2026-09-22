@@ -143,6 +143,10 @@ fn place(defs: &DefTable, place: &Place) -> String {
             Projection::Downcast { variant, .. } => {
                 let _ = write!(out, " as {}", defs.get(*variant).name);
             }
+            // The payload of a `T?`, however it is laid out — there is no
+            // discriminant name to print, the way a `Downcast` has one, so
+            // this is the one step whose whole rendering is the mark itself.
+            Projection::Payload { .. } => out.push('?'),
         }
     }
     out

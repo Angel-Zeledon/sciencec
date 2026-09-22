@@ -1910,7 +1910,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         span: Span,
     ) -> BlockId {
         let (place, mut block) = match self.as_place(scrutinee, block) {
-            Some(found) => found,
+            Some((place, block)) => (self.narrowed_place(place, scrutinee), block),
             None => {
                 let ty = self.thir.ty(scrutinee);
                 let temp = self.temp(ty, span, block);
@@ -3770,31 +3770,12 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// slot. That is not a spelling difference — it is the difference between a
     /// `ScienceString` and a pointer to one, read as a `ScienceString`.
     fn borrow_hole(&mut self, hole: ExprId, block: BlockId, span: Span) -> (Operand, BlockId) {
+        // `borrow_source` already answers §1.6's own hazard — a narrowed
+        // payload that is not a borrow has no place to borrow without one
+        // more step — for every one of its callers and not just this one; see
+        // its own doc for the argument. What is left here is §9's ordinary
+        // reborrow, unchanged.
         let (place, block) = self.borrow_source(hole, block, span);
-        // **A narrowed payload that is not a borrow has no place to borrow.**
-        //
-        // `as_place` sees through `ExprKind::Narrow`, which is exact for a
-        // niched option and false for Decision 18's tagged pair: the place is
-        // the whole `T?`, tag and all, and borrowing it as a `T` hands the
-        // runtime the tag where it expects a pointer. For a `String?` that is
-        // a segmentation fault rather than a wrong answer.
-        //
-        // `value_hole` answers this by evaluating into a temporary, which
-        // lowers the `Rvalue::Narrow` that states the representation change.
-        // That is not available here: this caller wants an **address**, and
-        // copying an owning payload out of the option would make a second
-        // owner of the same buffer — the option still releases it.
-        //
-        // So the hole is a hole, and it is refused one crate down rather than
-        // crashing. The repair is a projection into a nullable's payload, the
-        // way `Projection::Downcast` reaches a `choice`'s, which is a change
-        // to the IR rather than to this function.
-        if self.narrowed_payload_is_not_a_borrow(&place, hole) {
-            let ty = self.thir.expr(hole).ty;
-            let temp = self.temp(ty, span, block);
-            self.assign(block, Place::local(temp), Rvalue::Error, span);
-            return (Operand::Move(Place::local(temp)), block);
-        }
         let place = self.auto_deref(place);
         let place = self.deref_to_hole(place, hole);
         let ty = self.place_ty(&place);
@@ -4086,9 +4067,33 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     ///
     /// Split out of [`Builder::lower_borrow`] because §9's receiver reborrow
     /// needs the place before the borrow is taken, to project through it.
+    ///
+    /// **Every caller wants a place to borrow, and a narrowed owning payload
+    /// has none without one more step.** `as_place` sees through
+    /// `ExprKind::Narrow` on the ground that a narrowed read is the same
+    /// storage seen at a smaller type — exact for Decision 19's niche, where
+    /// the option and its payload are the same word, and false for Decision
+    /// 18's tagged pair, where the payload sits behind a discriminant at its
+    /// own offset. Handing that place to `borrow_place` unchanged borrows the
+    /// option's own bytes — tag included — and reads them back as the
+    /// payload's, which is `print(s)`'s segfault inside `if s?:` for a
+    /// `String?` and a silent wrong answer for anything the verifier does not
+    /// happen to catch by width.
+    ///
+    /// [`Projection::Payload`] is the repair, and it belongs in
+    /// [`Builder::narrowed_place`] rather than in each caller: `lower_borrow`'s
+    /// ordinary `&expr` — which is what `print(s)`'s call-site auto-borrow
+    /// lowers to, `AGENTS.md` §4's "borrows are automatic at call sites" — a
+    /// method receiver (line ~2241), `borrow_hole`'s f-string hole, and
+    /// [`Builder::lower_match`]'s scrutinee all reach a narrowed option
+    /// through a place, and the bug is one bug wherever a place is what a
+    /// caller ends up with. `science-codegen`'s `place_address` is where the
+    /// offset actually lives — zero for the niche, `payload_offset` for the
+    /// tagged pair — the way it already was for `Projection::Downcast`; this
+    /// crate only names the step.
     fn borrow_source(&mut self, operand: ExprId, block: BlockId, span: Span) -> (Place, BlockId) {
         match self.as_place(operand, block) {
-            Some(found) => found,
+            Some((place, block)) => (self.narrowed_place(place, operand), block),
             // `borrowed f()` — a borrow of a value with no place. The value
             // goes into a temporary, which is then the referent, and the
             // temporary dies at the end of the statement: rule 5 gets a real
@@ -4100,6 +4105,31 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 let next = self.expr_into(Place::local(temp), operand, block);
                 (Place::local(temp), next)
             }
+        }
+    }
+
+    /// [`Projection::Payload`], projected onto a place already in hand,
+    /// whenever `narrow`'s narrowing is Decision 18's tagged pair rather than
+    /// Decision 19's niche.
+    ///
+    /// **Every caller that wants a place to *address* — rather than a value
+    /// to copy — needs this**, and there turned out to be three of them
+    /// reached by three different routes: a `print(s)` argument's call-site
+    /// auto-borrow, a method receiver, and — the third, found after this
+    /// function's first two callers already existed — [`Builder::lower_match`]'s
+    /// scrutinee. Before this, `match err:` inside `if err?:` read
+    /// `Rvalue::Discriminant` off the *option's* own tag, which is always
+    /// "present" from that point on and never the payload's own discriminant,
+    /// so every arm but one was unreachable regardless of which variant `err`
+    /// actually held. One bug, three call sites, and the reason this is a
+    /// function of its own rather than three copies of `borrow_source`'s
+    /// former body.
+    fn narrowed_place(&mut self, place: Place, narrow: ExprId) -> Place {
+        if self.narrowed_payload_is_not_a_borrow(&place, narrow) {
+            let payload_ty = self.revealed(self.thir.expr(narrow).ty);
+            place.project(Projection::Payload { ty: payload_ty })
+        } else {
+            place
         }
     }
 
@@ -4449,12 +4479,29 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// receiver would want one and does not get it — named rather than
     /// silently guessed at, and no corpus site is this shape.
     ///
-    /// **Never asked to cross a `Nullable`.** `crate::check`'s
-    /// `borrow_ergonomics` excludes one outright, for the reason this
-    /// function would otherwise have to solve: narrowing a borrowed nullable
-    /// needs the address of its *payload*, past the discriminant, and no
-    /// projection here reaches one (`Builder::borrow_hole`'s own comment names
-    /// the identical hole from a different caller).
+    /// **Was believed never to cross a `Nullable`, and does.** `crate::check`'s
+    /// `borrow_ergonomics` excludes a field behind one from Decision 27's
+    /// ergonomic marking, and that is real — but a **niched narrow** reaches
+    /// here by an entirely different door: `let cell be items.get(index)`
+    /// followed by `if cell?: cell else: 0` types `cell` as `&Int` inside the
+    /// `if`, `Coercion::Copy` needs that `&Int` as its operand, and
+    /// `Builder::operand`'s default arm hands this function a *place* — `as_
+    /// place` sees straight through `ExprKind::Narrow` — whose own `place_ty`
+    /// is `(&Int)?` and not `&Int`. That is not a field record declared
+    /// `borrowed`; it is Decision 19's niche, and the two look identical to
+    /// the test below: `ty` reveals a borrow, the place's own type does not.
+    ///
+    /// **Handled first, and separately, because the repair is the opposite of
+    /// Decision 27's.** A field genuinely needs a *new* address taken — the
+    /// record's storage holds a `T`, not a pointer, so `&d.title` is the only
+    /// way to a `&T`. A niched narrow's storage already *is* the pointer —
+    /// that is what makes it niched — so taking `&cell` borrows the slot and
+    /// hands back the address of the pointer, one indirection too many; the
+    /// verifier does not catch it because both are `ptr`, and the result is
+    /// `value_at`'s own finding, a different number printed on every run.
+    /// What is owed here is `Builder::read`'s plain copy of the eight bytes
+    /// already sitting in `cell`'s storage — no borrow, because there is
+    /// nothing left to address that a fresh one would reach any better.
     fn read_ergonomic(
         &mut self,
         place: Place,
@@ -4465,6 +4512,12 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         let revealed = self.revealed(ty);
         if let TyKind::Borrowed { mutable, .. } = *self.context.types.kind(revealed) {
             let stored = self.revealed(self.place_ty(&place));
+            if let TyKind::Nullable(payload) = *self.context.types.kind(stored) {
+                let payload = self.revealed(payload);
+                if matches!(self.context.types.kind(payload), TyKind::Borrowed { .. }) {
+                    return (self.read(place, ty), block);
+                }
+            }
             if !matches!(self.context.types.kind(stored), TyKind::Borrowed { .. }) {
                 let temp = self.temp(revealed, span, block);
                 let block =

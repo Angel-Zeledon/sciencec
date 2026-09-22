@@ -1411,3 +1411,74 @@ def main():
 ";
     assert_eq!(prints("vtable_default_shared", source), "22\n22\n44\n");
 }
+
+// --- a receiver behind a narrowed, owning `T?` -----------------------------
+
+/// A method receiver reached through a narrowed `Record?`, where the record
+/// owns a `String`.
+///
+/// `h.describe()` inside `if h?:` is `lower_method_call`'s §9 receiver path —
+/// the same `borrow_source` a plain `&expr` and `print(x)`'s call-site
+/// auto-borrow use — and `h`'s declared type is `Holder?`, laid out as
+/// Decision 18's discriminant and payload because `Holder` is not a borrow.
+/// Before `Projection::Payload`, borrowing `h` unchanged handed `describe`'s
+/// `self` the *option's* address — tag and all — read as a `Holder`, which
+/// is `title`'s field offset landing on whatever bytes follow the
+/// discriminant. Wrong output or a crash is what a wrong offset looks like
+/// here; the exact string is what says the offset is now right.
+#[test]
+fn a_narrowed_record_that_owns_a_string_is_borrowed_by_its_method() {
+    let source = "\
+type Holder:
+    title: String
+
+Holder has:
+    def describe(self) -> String:
+        copy_of(self.title)
+
+def copy_of(text: &String) -> String:
+    let mutable out be String.new()
+    out.push_str(text)
+    out
+
+def use_it(h: Holder?):
+    if h?:
+        print(h.describe())
+
+def main():
+    use_it(Holder(title: \"kepler\"))
+";
+    assert_eq!(prints("narrowed-record-receiver", source), "kepler\n");
+}
+
+/// The same shape one level indirect: the narrowed option's payload is a
+/// `choice`, and the `choice`'s own variant owns the `String` — two
+/// projections deep, `Payload` and then `Downcast`, over the one borrow.
+#[test]
+fn a_narrowed_choice_that_owns_a_string_is_borrowed_by_its_method() {
+    let source = "\
+choice Boxed:
+    Has(String)
+    Empty
+
+Boxed has:
+    def describe(self) -> String:
+        match self:
+            Has(text): copy_of(text)
+            Empty: \"empty\"
+
+def copy_of(text: &String) -> String:
+    let mutable out be String.new()
+    out.push_str(text)
+    out
+
+def use_it(b: Boxed?):
+    if b?:
+        print(b.describe())
+
+def main():
+    use_it(Has(\"orbit\"))
+    use_it(Empty)
+";
+    assert_eq!(prints("narrowed-choice-receiver", source), "orbit\nempty\n");
+}

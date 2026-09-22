@@ -537,7 +537,11 @@ pub fn name_of(defs: &DefTable, body: &Body, place: &Place) -> String {
             // Science has no dereference operator, so a `Deref` is printed as
             // nothing: `(*self).tokens` is what the author wrote as
             // `self.tokens`.
-            Projection::Deref { .. } | Projection::Downcast { .. } => {}
+            // A `T?`'s payload has no name either, for the same reason a
+            // `Downcast` has none: the author wrote `found`, not `found?`, and
+            // the narrowing that makes this projection legal is `if found?:`
+            // above, not a token at this use.
+            Projection::Deref { .. } | Projection::Downcast { .. } | Projection::Payload { .. } => {}
             Projection::Field { field, .. } => {
                 out.push('.');
                 out.push_str(&defs.get(*field).name);
