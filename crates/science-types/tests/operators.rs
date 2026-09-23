@@ -525,9 +525,14 @@ def at(grid: &Grid) -> F64:
 ///
 /// `examples/06_traits.science` writes `Vector2 implements Eq: def eq(self,
 /// other: Vector2) -> Bool`, so `eq` is a method name and a signature the
-/// corpus already contains; requiring it invents nothing. The node stays a
-/// `Binary` because `is not` has no method of its own — see
-/// `BodyChecker::implements_operand`.
+/// corpus already contains; requiring it invents nothing.
+///
+/// **The node is a `MethodCall` now, and the assertion below used to say
+/// `Binary`.** It was pinning a bug: `check` accepted `a is b` on a user `Eq`,
+/// `science-mir` passed the operator through, and `science-codegen-llvm`'s
+/// `scalar_of` refused the record with `SC0400` — so the program the assertion
+/// certified could not be built. See `is_on_a_user_eq_is_a_call_to_eq` below
+/// for the running version.
 #[test]
 fn is_requires_eq() {
     let checked = support::check(
@@ -551,8 +556,79 @@ def also(a: Held, b: Held) -> Bool:
     );
     assert_eq!(checked.codes(), vec![535]);
     assert_eq!(checked.messages(), vec!["`Held` does not implement `Eq`"]);
-    // `is` is still one node: nothing here desugars.
-    assert_eq!(ty_of(&checked, "same", |kind| matches!(kind, ExprKind::Binary { .. })), "Bool");
+    // `is` is the call, and it is a `Bool`.
+    assert_eq!(ty_of(&checked, "same", |kind| matches!(kind, ExprKind::MethodCall { .. })), "Bool");
+}
+
+/// `a is b` on a user `Eq` is `a.eq(b)`, and `a is not b` is `not (a.eq(b))`.
+///
+/// **This is the regression test for the hole the assertion above used to
+/// pin.** §5.4 — *"`Eq` and `Ord` are what §4.6's comparisons dispatch to"* —
+/// and Decision 4c, which gives the method the interface's free lowercase name.
+/// The `is not` half is two nodes where the author wrote one, and this phase is
+/// the only one that can write it: `science-mir` has no method lookup to find
+/// `eq` with.
+#[test]
+fn is_on_a_user_eq_is_a_call_to_eq() {
+    let checked = support::check(
+        "\
+type Counts:
+    reads: I64
+
+Counts implements Eq:
+    def eq(self, other: Counts) -> Bool:
+        self.reads is other.reads
+
+Counts implements Copy
+
+def same(a: Counts, b: Counts) -> Bool:
+    a is b
+
+def different(a: Counts, b: Counts) -> Bool:
+    a is not b
+",
+    );
+    checked.assert_clean();
+    // The receiver's own `self.reads is other.reads` is two `I64`s, which is
+    // the structural comparison and stays a `Binary` — the dispatch is for the
+    // heads this index can speak for and no others.
+    assert_eq!(ty_of(&checked, "eq", |kind| matches!(kind, ExprKind::Binary { .. })), "Bool");
+    assert_eq!(ty_of(&checked, "same", |kind| matches!(kind, ExprKind::MethodCall { .. })), "Bool");
+    assert!(
+        checked
+            .body("same")
+            .exprs()
+            .all(|(_, expr)| !matches!(expr.kind, ExprKind::Binary { .. })),
+        "`a is b` left a `Binary` behind"
+    );
+    // `is not` is the same call under a `not`.
+    assert_eq!(
+        ty_of(&checked, "different", |kind| matches!(kind, ExprKind::MethodCall { .. })),
+        "Bool"
+    );
+    assert_eq!(
+        ty_of(&checked, "different", |kind| matches!(kind, ExprKind::Unary { .. })),
+        "Bool"
+    );
+}
+
+/// And a prelude operand still compares structurally: nothing declares
+/// `I64.eq` or `String.eq`, so the lookup declines to speak and `1 is 2` is the
+/// one instruction it has always been.
+#[test]
+fn is_on_a_prelude_type_stays_one_node() {
+    let checked = support::check(
+        "\
+def numbers(a: I64, b: I64) -> Bool:
+    a is b
+
+def words(a: String, b: String) -> Bool:
+    a is not b
+",
+    );
+    checked.assert_clean();
+    assert_eq!(ty_of(&checked, "numbers", |kind| matches!(kind, ExprKind::Binary { .. })), "Bool");
+    assert_eq!(ty_of(&checked, "words", |kind| matches!(kind, ExprKind::Binary { .. })), "Bool");
 }
 
 /// `<` requires `Ord`, by the same implementation check `is` uses for `Eq`.

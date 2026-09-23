@@ -5264,16 +5264,51 @@ impl<'a> BodyChecker<'a> {
                 // the most ordinary loop a type error.
                 let left = self.read_value(left, lhs.span);
                 let right = self.read_value(right, rhs.span);
-                // §6: `is` and `is not` require `Eq`, and `< > <= >=`
-                // require `Ord`. Both are the *implementation* check and
-                // neither is a dispatch — `implements_operand` says what that
-                // buys and what it still leaves open.
-                let interface = match op {
-                    BinaryOp::Eq | BinaryOp::Ne => "Eq",
-                    _ => "Ord",
+                // §6: `is` and `is not` dispatch to `Eq.eq`, and `< > <= >=`
+                // require `Ord` without dispatching to anything.
+                //
+                // **`Eq` is a dispatch now.** The three obstacles
+                // `binary_operator`'s note lists for `Ord` — no method name, no
+                // return type, four operators over one method — are all `Ord`'s
+                // and none of them is `Eq`'s. Decision 4c of
+                // `stdlib-shape-and-packages.md` gives the name (`eq` is free),
+                // §5.4 gives the return type (`Bool`), and there are two
+                // operators over one method rather than four, related by a
+                // negation the THIR already spells. So the arm calls, exactly
+                // as the arithmetic arm below does.
+                //
+                // `None` is the same *fall through to the structural answer*
+                // `operator` documents, and it is what keeps `1 is 2` and
+                // `"a" is "b"` the [`ExprKind::Binary`] the backend compares
+                // with one instruction: a prelude head's surface is not closed,
+                // so the lookup declines to speak and the implementation check
+                // below runs in its place.
+                let dispatched = if matches!(op, BinaryOp::Eq | BinaryOp::Ne) {
+                    self.operator(op.as_str(), "Eq", "eq", left, Some((right, rhs.span)), span)
+                } else {
+                    None
                 };
-                self.implements_operand(op.as_str(), interface, left, span);
+                // The requirement check is what a *fall-through* still gets:
+                // once `operator` has spoken it has either made the call or
+                // reported the missing block, and asking a second time would be
+                // the same sentence twice.
+                if dispatched.is_none() {
+                    let interface = match op {
+                        BinaryOp::Eq | BinaryOp::Ne => "Eq",
+                        _ => "Ord",
+                    };
+                    self.implements_operand(op.as_str(), interface, left, span);
+                }
+                // **Run whether or not the call was made.** *"These two are not
+                // the same type"* is a different mistake from *"this type
+                // implements no `Eq`"* — `checking`'s
+                // `a_comparison_of_two_different_types_is_still_reported` pins
+                // both on one line — and the dispatch checks the operand
+                // against the *signature*, which is a third thing again.
                 self.compare(left, right, span);
+                if let Some(dispatched) = dispatched {
+                    return self.equality(op, dispatched, span);
+                }
                 let ty = self.bool_ty().unwrap_or(Ty::ERROR);
                 let id = self
                     .body
@@ -5546,15 +5581,55 @@ impl<'a> BodyChecker<'a> {
         Some(Typed { id, ty: InferTy::Known(ret) })
     }
 
-    /// The implementation check with no call made: `is`, `is not`, and the
-    /// four order comparisons.
+    /// What a dispatched `a is b` evaluates to, and what `a is not b` wraps it
+    /// in.
     ///
-    /// **Decision. `a is b` requires `Eq` and stays an [`ExprKind::Binary`].**
-    /// The requirement is real — `examples/06_traits.science` writes
-    /// `Vector2 implements Eq: def eq(self, other: Vector2) -> Bool`, so the
-    /// name and the signature are both in the corpus and neither is invented —
-    /// and closing it is what `BodyChecker::compare` said it was waiting for:
-    /// *"what is missing is a code and the decision behind it"*.
+    /// **Decision. A comparison is a `Bool` whatever the implementation's `eq`
+    /// returns, and `a is not b` is `not (a.eq(b))`.** §5.4 makes `is` and
+    /// `is not` one operator over one method, and the second direction is the
+    /// negation of the first — there is no `ne` to look up and inventing one
+    /// would be a method name no note gives. Two THIR nodes where the author
+    /// wrote one is what a desugaring *is*, and [`thir::ExprKind::Unary`] with
+    /// [`UnaryOp::Not`] is the node it goes in; `science-mir` has a
+    /// `Rvalue::Not` waiting for it and no method lookup to find `eq` with, so
+    /// this is the only phase that can write it.
+    ///
+    /// **The result is demanded at `Bool`** rather than taken from the
+    /// signature. Nothing holds an `implements Eq:` block to a declared shape —
+    /// `builtins.rs` declares the interface with no methods, for the reason
+    /// [`BodyChecker::operator`] states — so a `def eq(self, other: Self) ->
+    /// I64` is reachable, and letting `a is b` be an `I64` would make a
+    /// comparison's type depend on a signature nobody checked. `SC0525` at the
+    /// comparison is the honest answer and it names both types.
+    fn equality(&mut self, op: BinaryOp, dispatched: Typed, span: Span) -> Typed {
+        let Some(bool_ty) = self.bool_ty() else { return dispatched };
+        // `ty`'s §5: an erroneous result agrees with whatever it meets, and
+        // `operator` has already reported whatever made it one.
+        let found = self.known_or_error(dispatched.ty);
+        let value = if self.types.references_error(found) {
+            dispatched.id
+        } else {
+            self.demand(dispatched, bool_ty, Site::Elsewhere, span)
+        };
+        if op == BinaryOp::Eq {
+            return Typed { id: value, ty: InferTy::Known(bool_ty) };
+        }
+        let id = self.body.push_expr(
+            ExprKind::Unary { op: UnaryOp::Not, operand: value },
+            bool_ty,
+            span,
+        );
+        Typed { id, ty: InferTy::Known(bool_ty) }
+    }
+
+    /// The implementation check with no call made: the four order comparisons.
+    ///
+    /// **`Eq` no longer comes through here, and the paragraphs below that say
+    /// it does are corrected at the end.** `a is b` on a type whose surface
+    /// this index can speak for is [`BodyChecker::operator`]'s call now; this
+    /// function is reached for `Eq` only on the fall-through — a prelude head,
+    /// a type parameter, an erroneous operand — where `operator` declines to
+    /// speak and the *requirement* is still worth asking about.
     ///
     /// # `a < b` requires `Ord`, and that is not the refusal being reversed
     ///
@@ -5579,11 +5654,9 @@ impl<'a> BodyChecker<'a> {
     /// total order. `binary_operator` has no `Ord` row and this change does not
     /// add one. Nothing here reads `Ord`'s methods, because `Ord` has none.
     ///
-    /// **The distinction is the one this function already embodied.** It is
-    /// named *the implementation check with no call made*; `Eq` has been using
-    /// it since `is` closed, and `Eq`'s *method* is likewise never consulted by
-    /// it. Requiring `Ord` is the same question asked about a second interface,
-    /// not a decision about a third thing.
+    /// **The distinction is the one this function embodies.** It is named *the
+    /// implementation check with no call made*, and `Ord` is the whole of what
+    /// it is still for on a type this index can speak for.
     ///
     /// **What it costs, first half.** A type that supports an ordering and has
     /// not written `implements Ord:` now fails to compile where it used to
@@ -5599,11 +5672,11 @@ impl<'a> BodyChecker<'a> {
     /// The diagnostic tells the author to write `Held implements Ord:`, and an
     /// `implements` block **may not be empty** — the parser wants an indented
     /// body, `SC0100` — so the author has to put a method in it and the
-    /// language has not said which. `Eq` has the same hole and hides it,
-    /// because `examples/06_traits.science` supplies a spelling (`def eq(self,
-    /// other: Vector2) -> Bool`) that nothing verifies either; `Ord` has no
-    /// such attestation, so the author picks a name and the compiler accepts
-    /// whatever it is.
+    /// language has not said which. `Eq` used to have the same hole and hide
+    /// it; it no longer does, because the dispatch *names* `eq` and an
+    /// `implements Eq:` block without one is now `SC0535` at the comparison.
+    /// `Ord` has no such attestation, so the author picks a name and the
+    /// compiler accepts whatever it is.
     ///
     /// That is not a reason to keep accepting `p < p` on a record that
     /// implements nothing — a refusal an author can act on beats silence about
@@ -5611,17 +5684,20 @@ impl<'a> BodyChecker<'a> {
     /// should start from: **the ask is one method signature, and an empty
     /// `implements` block is the other half of it.**
     ///
-    /// **The node stays a `Binary` because `is not` has no method.** §5.4 makes
-    /// `is` and `is not` one operator dispatching to `Eq`, and `Eq` declares
-    /// one direction of it; turning `a is not b` into a call would mean
-    /// emitting `not (a.eq(b))`, which is a *desugaring* — two THIR nodes where
-    /// the author wrote one — and desugaring belongs to the lowering that has
-    /// a `Rvalue::Not` to put it in. So this arm reports and types, and
-    /// `science-mir` still receives the operator it received before.
+    /// # Correction: `is not` *does* desugar, and this function no longer types
+    /// it
     ///
-    /// That is the one asymmetry in §6's dispatch and it is deliberate: `+`
-    /// becomes `a.add(b)` because `add` *is* the operation, and `is not` does
-    /// not because `eq` is only half of it.
+    /// This block used to end by deciding that `a is b` stays an
+    /// [`ExprKind::Binary`] because *"desugaring belongs to the lowering that
+    /// has a `Rvalue::Not` to put it in"*, pointing at `science-mir`. That was
+    /// wrong in the one way that mattered: **`science-mir` has no method lookup
+    /// at all** — its own module docs call that Decision 11's absent method
+    /// lookup — so it cannot find `eq` to desugar *to*, and the node it
+    /// received unchanged reached `science-codegen-llvm`'s `scalar_of`, which
+    /// refused it with `SC0400`. `sciencec check` exited 0 on a program that
+    /// could not be built. [`BodyChecker::equality`] is the desugaring, in the
+    /// phase that has the lookup, and `Not` goes in a
+    /// [`thir::ExprKind::Unary`] that already existed.
     fn implements_operand(
         &mut self,
         symbol: &str,
@@ -7379,8 +7455,18 @@ pub(crate) fn suffix_name(suffix: NumSuffix) -> &'static str {
 /// including what `F64`'s NaN does to a total order — nothing has written down.
 /// The *implementation* is required all the same, by
 /// [`BodyChecker::implements_operand`], which is where the line between the two
-/// is argued. `Eq` is off this table for the same reason and through the same
-/// function.
+/// is argued.
+///
+/// **`Eq` used to be off this table "for the same reason", and it was not the
+/// same reason.** None of `Ord`'s three obstacles is `Eq`'s: Decision 4c gives
+/// the name, because `eq` is a free one; §5.4 gives the return type, `Bool`;
+/// and `is`/`is not` are two operators over one method related by a negation,
+/// not four over an `Ordering`. `docs/.../2026-09-16-science-f0-core-design.md`
+/// §5.4 says it outright — *"`Eq` and `Ord` are what §4.6's comparisons
+/// dispatch to"*. It is still off *this* table, but only because the comparison
+/// arm of [`BodyChecker::binary`] calls [`BodyChecker::operator`] itself: the
+/// `Ne` half needs the negation wrapped round the call, which a `(interface,
+/// method)` row has nowhere to say.
 fn binary_operator(op: BinaryOp) -> Option<(&'static str, &'static str)> {
     match op {
         BinaryOp::Add => Some(("Add", "add")),

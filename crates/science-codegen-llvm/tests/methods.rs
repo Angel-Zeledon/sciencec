@@ -265,6 +265,45 @@ def main():
     assert_eq!(prints("implements", source), "42\n");
 }
 
+/// `a is b` and `a is not b` on a user `Eq`, **run**.
+///
+/// **This is the one that could not be built.** §5.4 makes `Eq` what `is`
+/// dispatches to, and `science-types` used to leave the node a
+/// `thir::ExprKind::Binary`; `science-mir` passed the `BinaryOp` through
+/// unchanged — it has no method lookup with which to find `eq` — and
+/// [`crate::lower`]'s `scalar_of` refused the record with *"an operator on a
+/// value that is not a scalar"*. `sciencec check` exited 0 the whole time, so
+/// the only thing that ever caught it was building the program, which is what
+/// this file does.
+///
+/// **`is not` is the half with no method of its own**, so it is `not
+/// (a.eq(b))` — two nodes where the author wrote one — and both halves are
+/// asserted here because a negation dropped or doubled prints the same shape
+/// of output as one applied.
+#[test]
+fn is_and_is_not_dispatch_to_a_user_eq() {
+    let source = "\
+type Counts:
+    reads: Int
+
+Counts implements Eq:
+    def eq(self, other: Counts) -> Bool:
+        self.reads is other.reads
+
+Counts implements Copy
+
+def main():
+    let one be Counts(reads: 3)
+    let two be Counts(reads: 4)
+    let three be Counts(reads: 3)
+    print(one is two)
+    print(one is not two)
+    print(one is three)
+    print(one is not three)
+";
+    assert_eq!(prints("user_eq", source), "false\ntrue\ntrue\nfalse\n");
+}
+
 // --- the prelude's own methods ----------------------------------------------
 
 /// `String.length()` and `String.is_empty()`: prelude declarations with no
