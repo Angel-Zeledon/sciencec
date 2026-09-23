@@ -286,6 +286,95 @@ def walk(settings: &Map[String, String]):
     checked.assert_clean();
 }
 
+/// `for` over a type implementing the author's **own** `interface Iterate:`
+/// binds that block's `Item`.
+///
+/// **The `DefId` identity test used to refuse this, silently.**
+/// `check`'s `iterate_item` asked whether the interface the `implements` block
+/// named was the *prelude's* `Iterate`, and a program that declares its own —
+/// `examples/00_kitchen_sink.science` does, to demonstrate associated types —
+/// answered no. `for_expr` then bound the loop variable at `Ty::ERROR` with no
+/// diagnostic, `sciencec check` exited 0, and the backend refused the program
+/// with a message about a tuple.
+///
+/// `next` being resolved is the assertion, because that is the half
+/// `science-mir` reads: a `For` with `next: None` is a loop with nothing to
+/// call.
+#[test]
+fn a_for_over_a_user_redeclared_iterate_binds_its_item() {
+    let checked = support::check(
+        "\
+interface Iterate:
+    type Item
+    def next(mutable self) -> Self.Item?
+
+type Countdown:
+    remaining: Int
+
+Countdown implements Iterate:
+    type Item is Int
+
+    def next(mutable self) -> Self.Item?:
+        if self.remaining <= 0:
+            null
+        else:
+            self.remaining be self.remaining - 1
+            self.remaining
+
+def walk():
+    for value in Countdown(remaining: 3):
+        print(value)
+",
+    );
+    checked.assert_clean();
+    let resolved = checked
+        .body("walk")
+        .exprs()
+        .any(|(_, expr)| matches!(expr.kind, ExprKind::For { next: Some(_), .. }));
+    assert!(resolved, "the loop read no `next` off the implementation");
+}
+
+/// And the negative, which is the diagnostic that did not exist: a user type
+/// with no `Iterate` at all.
+///
+/// **`SC0544` is the sentence `for_expr` used to leave unsaid.** The binding at
+/// `Ty::ERROR` was the whole of what happened, and a front end that rejects a
+/// program by leaving a hole and saying nothing hands the report to a phase
+/// that can only describe its own limits.
+#[test]
+fn a_for_over_a_user_type_with_no_iterate_is_reported() {
+    let checked = support::check(
+        "\
+type Bag:
+    n: Int
+
+def walk():
+    for value in Bag(n: 3):
+        print(value)
+",
+    );
+    assert_eq!(checked.codes(), vec![544]);
+    assert_eq!(checked.messages(), vec!["`Bag` cannot be walked by `for`"]);
+}
+
+/// The restraint the code is under, at the head that most needs it: a type
+/// *parameter* is silent.
+///
+/// `Methods::receiver` cannot speak for a `TyKind::Param`, so *"`T` implements
+/// no `Iterate`"* would be a claim about an instantiation nobody has made —
+/// the same restraint `SC0532` and `SC0535` are under.
+#[test]
+fn a_for_over_a_type_parameter_is_still_silent() {
+    let checked = support::check(
+        "\
+def walk[T](subject: T):
+    for value in subject:
+        let held be value
+",
+    );
+    checked.assert_clean();
+}
+
 /// The regression guard for the declaration that was already there: `Chars`
 /// answers `Item` with `Char` and not with a borrow of one.
 #[test]

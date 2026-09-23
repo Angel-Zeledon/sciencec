@@ -239,6 +239,60 @@ fn a_counting_loop_over_a_range_adds_up() {
     );
 }
 
+/// A `for` over a user type that implements the author's **own** `interface
+/// Iterate:`, **built, linked, run**.
+///
+/// # What was wrong, and why only running it says so
+///
+/// `science-types`' `iterate_item` asked whether the interface the `implements`
+/// block named was the *prelude's* `Iterate`, by `DefId`. A program that
+/// declares its own — `examples/00_kitchen_sink.science` does, four lines, to
+/// demonstrate associated types — answered no, so `for_expr` bound the loop
+/// variable at `Ty::ERROR` **and reported nothing**. `sciencec check` exited 0
+/// and silent; the first phase to object was this one, with `SC0400`'s *"a
+/// value whose type the front end left as `TyKind::Error` with no diagnostic
+/// beside it"* — a sentence about a tuple, in a program containing no tuple.
+///
+/// Deleting the four-line declaration made the identical loop print `2 1 0`,
+/// which is how the identity test was located and is why the fixture below
+/// keeps the declaration: without it this test passes against the bug.
+///
+/// The counts are asserted as well as the values, because a loop whose `next`
+/// never resolved is a loop that does not run at all, and an empty stdout is
+/// what both a missing element type and a mis-lowered cursor produce.
+#[test]
+fn a_for_over_a_user_redeclared_iterate_walks_it() {
+    assert_eq!(
+        prints(
+            "user-iterate",
+            "interface Iterate:\n\
+             \x20   type Item\n\
+             \x20   def next(mutable self) -> Self.Item?\n\
+             \n\
+             type Countdown:\n\
+             \x20   remaining: Int\n\
+             \n\
+             Countdown implements Iterate:\n\
+             \x20   type Item is Int\n\
+             \n\
+             \x20   def next(mutable self) -> Self.Item?:\n\
+             \x20       if self.remaining <= 0:\n\
+             \x20           null\n\
+             \x20       else:\n\
+             \x20           self.remaining be self.remaining - 1\n\
+             \x20           self.remaining\n\
+             \n\
+             def main():\n\
+             \x20   let mutable seen be 0\n\
+             \x20   for value in Countdown(remaining: 3):\n\
+             \x20       print(value)\n\
+             \x20       seen be seen + 1\n\
+             \x20   print(f\"seen {seen}\")\n",
+        ),
+        "2\n1\n0\nseen 3\n"
+    );
+}
+
 /// **`continue` advances the loop**, which it did not, in either `for`.
 ///
 /// # The bug, and why nothing caught it

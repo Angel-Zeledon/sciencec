@@ -1003,6 +1003,47 @@ pub mod codes {
     /// its receiver.
     pub const BOX_RECEIVER_NOT_SHARED: Code = Code(543);
 
+    // --- the `for` subject, `SC0544` --------------------------------------
+
+    /// A `for` over a value whose type this crate can speak for and which has
+    /// no usable `Iterate`.
+    ///
+    /// **What this replaces is nothing at all, and that is the whole reason it
+    /// exists.** [`crate::check`]'s `for_expr` read the element type off the
+    /// subject's `Iterate` and, when it could not, bound the loop variable at
+    /// [`crate::Ty::ERROR`] **with no diagnostic beside it**. `sciencec check`
+    /// then exited 0 on a program whose loop variable had no type, and the
+    /// first thing to say so was `science-codegen-llvm`, with `SC0400`'s
+    /// *"cannot build a value whose type the front end left as `TyKind::Error`
+    /// with no diagnostic beside it"* — a message about the backend's own
+    /// limits, naming a tuple, on a program that contains no tuple. A front end
+    /// that rejects a program by leaving a hole and saying nothing is the one
+    /// failure mode this compiler has lost the most time to.
+    ///
+    /// **Reported only where the question is answerable**, which is the
+    /// restraint [`NO_OPERATOR_IMPLEMENTATION`] and [`NO_SUCH_METHOD`] are
+    /// under and for the same reason. Three silences survive and each is a
+    /// silence about the *prelude* rather than about the program:
+    ///
+    /// - A head [`crate::methods::Methods::receiver`] cannot speak for — a type
+    ///   parameter, a tuple. `for x in xs:` under a `where T: Iterate` is a
+    ///   claim about an instantiation nobody has made.
+    /// - A builtin head whose surface is not closed. §8 does not say `Map`
+    ///   implements `Iterate` and `examples/10_loops.science` walks a map
+    ///   through an `Array` of its keys because of it; a `false` from the
+    ///   index about a prelude type is the `IMPLEMENTS` table's
+    ///   incompleteness, not a fact about the loop.
+    /// - A compilation with no prelude, which is every fixture in this crate
+    ///   that does not go through the resolver.
+    ///
+    /// **Not [`NO_OPERATOR_IMPLEMENTATION`]**, although both say *"this type
+    /// implements nothing this construct can dispatch to"*. `SC0535` is an
+    /// operator's message and names the symbol the author typed; `for` is not
+    /// an operator, its subject is not an operand, and the block the author has
+    /// to write has a shape — an associated `Item` and a `next` returning
+    /// `Self.Item?` — that `SC0535`'s note has nowhere to put.
+    pub const NOT_ITERABLE: Code = Code(544);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -1039,6 +1080,7 @@ pub mod codes {
         MISMATCHED_IMPLEMENTATION,
         CONST_INITIALISER_NOT_A_LITERAL,
         BOX_RECEIVER_NOT_SHARED,
+        NOT_ITERABLE,
     ];
 
     #[cfg(test)]

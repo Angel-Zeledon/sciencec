@@ -6551,16 +6551,29 @@ impl<'a> BodyChecker<'a> {
             self.facts.invalidate_root(root);
         }
         let entry = self.facts.clone();
-        // §6, narrowed: the prelude now declares `Iterate` with `Item` and
-        // `next`, so a loop over something that implements it binds at a real
-        // type. `Array of T`, `Chars` and — since `Range of T implements
-        // Iterate:` landed — `0..n` all arrive here with an `Item` to read.
-        // Over anything else — a `Map`, a user type with no
-        // `implements Iterate:` — there is still nothing to read and the
-        // binding is [`Ty::ERROR`].
+        // §6, narrowed: the prelude declares `Iterate` with `Item` and `next`,
+        // so a loop over something that implements it binds at a real type.
+        // `Array of T`, `Chars` and — since `Range of T implements Iterate:`
+        // landed — `0..n` all arrive here with an `Item` to read.
+        //
+        // **Over anything else the binding is [`Ty::ERROR`], and it is now
+        // reported.** The comment this replaces described the failing case as
+        // *"a user type with **no** `implements Iterate:`"*, which was wrong
+        // twice over. It was wrong about *which* programs land here — a user
+        // type **with** an `implements Iterate:` block landed here too,
+        // whenever the `Iterate` it named was the author's own redeclaration
+        // rather than the prelude's, which is [`BodyChecker::iterate_item`]'s
+        // subject — and it was wrong to describe the outcome as a binding at
+        // all. Nothing was said to the author: `sciencec check` exited 0 and
+        // the loop variable had no type, so the first phase to speak was the
+        // backend, about a tuple, in a program with no tuple in it.
+        // [`codes::NOT_ITERABLE`] is the sentence that belonged here.
         let (element, next) = match self.iterate_item(iter, span) {
             Some((element, next)) => (element, Some(next)),
-            None => (Ty::ERROR, None),
+            None => {
+                self.not_iterable(iter, span);
+                (Ty::ERROR, None)
+            }
         };
         let pattern = self.pattern(pattern, element);
         self.breaks.push(false);
@@ -6577,7 +6590,7 @@ impl<'a> BodyChecker<'a> {
     }
 
     /// The element type a `for` binds, read off the subject's implementation
-    /// of the prelude's `Iterate`.
+    /// of `Iterate`.
     ///
     /// **Decision. The element type is `Iterate.next`'s return with its `?`
     /// removed, and nothing else is consulted.** `next` is declared
@@ -6593,9 +6606,8 @@ impl<'a> BodyChecker<'a> {
     /// (`Array` and `Map` are the ones the corpus writes — see the report),
     /// the subject is a type parameter or a tuple, and the candidate named
     /// `next` came from somewhere other than `Iterate`. Each leaves the binding
-    /// at [`Ty::ERROR`], which is where every `for` in the language used to be.
+    /// at [`Ty::ERROR`] — and, since [`codes::NOT_ITERABLE`], says so.
     fn iterate_item(&mut self, iter: ExprId, span: Span) -> Option<(Ty, DefId)> {
-        let iterate = self.decls.prelude().get("Iterate")?;
         let ty = self.body.ty(iter);
         let revealed = self.revealed(ty, span);
         let self_ty = self.receiver_self_ty(revealed, span);
@@ -6603,7 +6615,7 @@ impl<'a> BodyChecker<'a> {
         let Found::One(candidate) = self.decls.methods().lookup(key, "next", Form::Value) else {
             return None;
         };
-        if candidate.interface() != Some(iterate) {
+        if !candidate.interface().is_some_and(|interface| self.is_iterate(interface)) {
             return None;
         }
         let ret = self.decls.signature(candidate.method)?.ret;
@@ -6616,6 +6628,116 @@ impl<'a> BodyChecker<'a> {
             TyKind::Nullable(inner) => Some((inner, candidate.method)),
             _ => None,
         }
+    }
+
+    /// Whether the interface an `implements` block named is `Iterate` — the
+    /// prelude's, or the author's own redeclaration of the name.
+    ///
+    /// # Decision. The identity test is relaxed, and redeclaring a prelude interface stays legal
+    ///
+    /// This used to be `candidate.interface() == self.decls.prelude()
+    /// .get("Iterate")`, a `DefId` comparison, and `items`' `WANTED` list holds
+    /// the prelude's id for exactly that comparison: *"the question **is this
+    /// the prelude's `Iterate` and not a user interface of the same name** has
+    /// no other way to be asked"*. The question was askable; the answer was
+    /// being put to the wrong use. A program that writes
+    ///
+    /// ```text
+    /// interface Iterate:
+    ///     type Item
+    ///     def next(mutable self) -> Self.Item?
+    /// ```
+    ///
+    /// above its `Countdown implements Iterate:` — which is
+    /// `examples/00_kitchen_sink.science` verbatim, where the redeclaration is
+    /// there to *demonstrate* associated types — bound the block to its own
+    /// `Iterate`, failed the test, and got a loop variable at [`Ty::ERROR`]
+    /// with nothing said. The author's two halves agreed with each other about
+    /// what `Iterate` meant and only the compiler disagreed with both.
+    ///
+    /// ## Why not refuse the redeclaration instead
+    ///
+    /// **Blast radius, measured rather than assumed.** Redeclaring a prelude
+    /// interface is legal today and *works*: a program that writes `interface
+    /// Clone:` with a `def clone(self) -> Self`, implements it on its own type
+    /// and calls `p.clone()` builds, links and prints. A resolver refusal would
+    /// be a new restriction on every one of the prelude's twenty-odd interface
+    /// names in order to fix one loop; it would break that program as well as
+    /// `00_kitchen_sink`; and no F0 note reserves the prelude's names.
+    /// Relaxing the test moves one construct — `for` — and nothing else.
+    ///
+    /// ## Why `Iterate` and not `Add`, which is refused three screens up
+    ///
+    /// [`BodyChecker::operator`] deliberately does **not** do this:
+    /// `tests/operators.rs`' `an_operator_reaches_a_prelude_interface_only_
+    /// when_it_is_the_prelude_s` pins a user `interface Add:` as *not* §5.4's,
+    /// so `a + b` on a type implementing it is `SC0535`. The asymmetry is not a
+    /// preference, it is `builtins.rs`' own division:
+    ///
+    /// - `INTERFACE_DECLS` declares **five** interfaces *with their methods* —
+    ///   `Error`, `Iterate`, `Index`, `IndexMutably`, `Clone` — under the rule
+    ///   *"an interface is declared with its methods only where a note gives
+    ///   the method's name **and its types**"*. `Iterate` is one of them:
+    ///   `assoc: ["Item"]`, `next(mutable self) -> Item?`. So there is a
+    ///   written contract in the prelude, and the four lines above are that
+    ///   contract transcribed — the same associated type, the same method, the
+    ///   same signature.
+    /// - `Add`, `Eq`, `Ord`, `Display` and the other fourteen are declared as
+    ///   **names with no methods at all**, because no note writes their types
+    ///   down. A user's `interface Add: def add(self, other: Self) -> Self` is
+    ///   therefore not a transcription of anything; it invents a signature the
+    ///   prelude has explicitly declined to commit to, and two programs
+    ///   spelling it differently would both be `Add`. Refusing it is right.
+    ///
+    /// So the name is only allowed to stand in for the prelude's id where the
+    /// prelude has said what the name *means*, which is the condition below.
+    ///
+    /// **And the shape is still checked, as it always was.** The candidate has
+    /// to be a `next` reachable through a value receiver, and its return after
+    /// substitution has to be a [`TyKind::Nullable`], or the caller answers
+    /// `None` regardless. An `implements` block answering a `type Item` its
+    /// interface never declared is `conform`'s finding and not this one's.
+    ///
+    /// **What it costs.** An interface named `Iterate` that declares a `next`
+    /// returning a nullable and means something unrelated by it is now walked
+    /// by `for`. That is the whole of the exposure, and a type answering
+    /// `next() -> T?` is what `for` walks by definition.
+    fn is_iterate(&self, interface: DefId) -> bool {
+        let Some(prelude) = self.decls.prelude().get("Iterate") else {
+            // No prelude means no contract for the name to stand in for, and
+            // no `Iterate` for a declaration to be shadowing.
+            return false;
+        };
+        prelude == interface || self.defs.get(interface).name == "Iterate"
+    }
+
+    /// [`codes::NOT_ITERABLE`], under the restraint the code documents.
+    ///
+    /// The three silences are the prelude's and not the program's: a head
+    /// [`Methods::receiver`](crate::methods::Methods::receiver) cannot speak
+    /// for, a builtin head whose surface is not closed — `Map`, which §8 does
+    /// not give an `Iterate` and `examples/10_loops.science` walks through an
+    /// `Array` of its keys — and a compilation with no prelude at all.
+    fn not_iterable(&mut self, iter: ExprId, span: Span) {
+        if !self.decls.prelude().is_available() {
+            return;
+        }
+        let ty = self.body.ty(iter);
+        let revealed = self.revealed(ty, span);
+        // `ty`'s §5: an erroneous subject agrees with whatever it meets, and
+        // whatever made it one has already been reported.
+        if self.types.references_error(revealed) {
+            return;
+        }
+        let Some(head) = self.decls.methods().receiver(self.defs, self.types, revealed) else {
+            return;
+        };
+        if !self.decls.methods().surface_is_closed(self.defs, head) {
+            return;
+        }
+        let self_ty = self.receiver_self_ty(revealed, span);
+        let rendered = self.types.render(self.defs, self_ty);
+        self.diagnostics.push(not_iterable(span, &rendered));
     }
 
     fn block(&mut self, block: &hir::Block, expected: Option<(Ty, Site)>) -> Block {
@@ -7501,6 +7623,25 @@ fn no_operator_implementation(
     .with_note(format!(
         "every operator is an interface method (§5.4): the block \n         `{ty} implements {interface}:` is what gives `{ty}` this operator"
     ))
+}
+
+/// `SC0544` — a `for` whose subject has no usable `Iterate`.
+///
+/// **The note spells the block out in full**, which the operators' note does
+/// not have to. `Add` is one method with a name the operator already implies;
+/// `Iterate` is an associated type *and* a method whose return has to be
+/// nullable, and an author told only *"write `implements Iterate:`"* would
+/// write a block that fails this same check a second time. The `?` is the part
+/// that is easiest to leave off and the part the element type is read through.
+fn not_iterable(span: Span, ty: &str) -> Diagnostic {
+    Diagnostic::error(codes::NOT_ITERABLE, format!("`{ty}` cannot be walked by `for`"))
+        .with_label(Label::primary(
+            span,
+            format!("`for` needs `Iterate` and `{ty}` has no implementation of it"),
+        ))
+        .with_note(format!(
+            "`for` walks whatever implements `Iterate` (§5.4): the block \n         `{ty} implements Iterate:` is what gives `{ty}` a `for`, and it \n         needs a `type Item is …` and a `def next(mutable self) -> \n         Self.Item?` that answers `null` at the end"
+        ))
 }
 
 /// `SC0275` — a value interpolated into an `f"…"` that cannot be rendered.
