@@ -52,9 +52,32 @@ y lo descarta**: el nodo del callee se empuja en `Ty::ERROR` y nunca se
 actualiza, y `mir::Callee::Def(DefId)` no lleva argumentos.
 
 La mitad de sustitución **ya está hecha** (`d0ebda1`): `Instance::const_arg` y
-la consulta al `MonoSet` en `lower_operand`. Lo que falta es que
-`science-types` conserve los argumentos del receptor y probablemente que
-`science-mir` le dé a `Callee` dónde ponerlos. **Es un cambio de front end.**
+la consulta al `MonoSet` en `lower_operand`. Lo que falta es el canal por donde
+viajen los argumentos del receptor.
+
+**Tamaño del cambio, medido.** `Callee::Def(DefId)` es una variante de tupla sin
+espacio para nada más, y hay **50 sitios** que la construyen o la consumen, en
+diez archivos y cinco crates (`science-mir` 15 en `lower.rs`, `science-codegen-llvm`
+6, `science-codegen` 2, más `sciencec`, `science-regions` y los tests). Pasarla a
+variante de struct con un `self_ty: Option<Ty>` los toca a todos. Es mecánico,
+pero no es chico, y conviene hacerlo en un commit propio y no de paso.
+
+**Tres canales más baratos, descartados con su razón** — no los vuelvas a
+evaluar sin información nueva:
+
+1. *Tipar el nodo del callee con el tipo del receptor.* Es mentira: el item es
+   una función, no un `Grid`.
+2. *Tipar el callee con la firma instanciada.* `area() -> Int` instanciada
+   sigue siendo `() -> Int`. Los argumentos const no aparecen en ninguna parte
+   de la firma, que es justamente por qué `solve_call` no puede unificarlos.
+3. *Una tabla lateral en `check` indexada por `ExprId`.* Evita tocar el enum
+   pero necesita exactamente el mismo cableado hasta MIR, así que no ahorra el
+   trabajo: sólo lo esconde.
+
+El precedente a seguir está dos veces en este repo: `MethodCall::method` y
+`For::next` son el mismo movimiento — el front end encontró algo, no tenía
+dónde ponerlo, y la respuesta fue darle un campo. **Es un cambio de front
+end**, no de backend.
 
 ### `06_traits` — `Display` necesita `Formatter`
 
