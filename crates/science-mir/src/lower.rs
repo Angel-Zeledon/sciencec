@@ -230,14 +230,17 @@
 //!
 //! ## 7.2 The callee, which is not
 //!
-//! **Decision. The element-producing call keeps [`Unresolved::IterateNext`],
-//! and the reason has changed.** It used to be that there was no `next` to
-//! name. There is one, and `science-types`'s `check` already finds it:
-//! `iterate_item` runs `Methods::lookup(key, "next", Form::Value)`, checks the
-//! candidate came from `Iterate`, and reads the loop's binding out of the
-//! candidate's return type. It then **discards the candidate and keeps only the
-//! type**, so `thir::ExprKind::For` arrives here as `{ pattern, iter, body }`
-//! with no callee in it.
+//! **Closed. `thir::ExprKind::For` carries `next: Option<DefId>` and this
+//! crate reads it.** What follows is the argument that produced the field,
+//! kept because it is still the reason the field is where it is rather than
+//! a lookup repeated here.
+//!
+//! `science-types`'s `check` finds the callee: `iterate_item` runs
+//! `Methods::lookup(key, "next", Form::Value)`, checks the candidate came
+//! from `Iterate`, and reads the loop's binding out of the candidate's return
+//! type. It used to then **discard the candidate and keep only the type**, so
+//! `ExprKind::For` arrived here as `{ pattern, iter, body }` with no callee
+//! in it. It now keeps both.
 //!
 //! *Deciding which `next` a `for` calls is method lookup*, and method lookup is
 //! `science-types`'s: it needs the receiver key, the candidate set, the
@@ -246,16 +249,16 @@
 //! Decision 11 living in the wrong crate, and the first one to drift would be
 //! the one nobody ran.
 //!
-//! **The seam, precisely.** `thir::ExprKind::For` needs a fourth field,
-//! `next: Option<DefId>`, filled from the `candidate.method` that
-//! `check::iterate_item` already has in hand at the point it reads
-//! `signature(candidate.method)?.ret`. `None` keeps exactly the cases that
-//! function already returns `None` for — no `Iterate` implementation in the
-//! index (`Map`, today), a type parameter or a tuple subject, a `next` from
-//! somewhere other than `Iterate` — and those stay [`Unresolved::IterateNext`],
-//! which is what the variant is for. With the field, the callee is
-//! `Callee::Def(def)` at one line of `lower_for` and the hole closes for every
-//! `for` over an `Array` or a `Chars` at once.
+//! **The seam, as built.** The fourth field is filled from the
+//! `candidate.method` that `check::iterate_item` already has in hand at the
+//! point it reads `signature(candidate.method)?.ret`. `None` keeps exactly
+//! the cases that function already returns `None` for — no `Iterate`
+//! implementation in the index (`Map`, and `Array`, which has no `iterate`
+//! yet), a type parameter or a tuple subject, a `next` from somewhere other
+//! than `Iterate` — and those stay [`Unresolved::IterateNext`], which is what
+//! the variant is still for. The callee is `Callee::Def(def)` at one line of
+//! `lower_for`, and `owner_is_a_type` is the filter that decides between the
+//! two.
 //!
 //! *Why the shape is still lowered rather than refused.* The original reason
 //! holds and is now smaller: refusing would mean

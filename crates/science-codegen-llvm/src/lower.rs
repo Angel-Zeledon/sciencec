@@ -9769,10 +9769,7 @@ fn describe_unresolved(unresolved: mir::Unresolved) -> &'static str {
             "a method call the front end could not resolve: Decision 11's method lookup does not              put what it found in the tree"
         }
         mir::Unresolved::IterateNext => {
-            "a `for` loop: its `next` call reaches MIR unresolved, because              `science_types::thir::ExprKind::For` has no field for the callee the checker's              `iterate_item` found. Every `for` in the language stops here, including              `for i in 0..10:`"
-        }
-        mir::Unresolved::Operator => {
-            "an operator or an index on a user type, which is Decision 11's method lookup again"
+            "a `for` whose subject has no `Iterate` implementation this compiler can name — a              `Map`, a type parameter, a tuple. A subject that has one resolves: `thir::ExprKind::For`              carries the `next` the checker found, and `for c in text.chars():` and a user's own              `implements Iterate:` both lower to a real call. A range never reaches here at all"
         }
         // The typed spelling is at the call site, which has the argument this
         // one does not. This is what is left when the operand names no place.

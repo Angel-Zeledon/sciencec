@@ -642,23 +642,24 @@ pub enum Unresolved {
     Method,
     /// The `next()` of a `for` loop.
     ///
-    /// **The reason has changed and the variant has not.** It used to be that
-    /// `Iterate` did not exist. It does — `science-resolve`'s `builtins` gives
-    /// it `def next(mutable self) -> Self.Item?` and `Array of T` an
-    /// implementation — and `science-types`'s `check`'s `iterate_item` *finds*
-    /// the candidate, which is how a loop over an `Array` binds its pattern at
-    /// `borrowed T`. What it does not do is put it in the tree:
-    /// `thir::ExprKind::For` has no field for a callee, so this crate cannot
-    /// name what that lookup found without redoing the lookup, and method
-    /// lookup is Decision 11's and lives one level up.
+    /// **The reason has changed twice, and the variant has survived both.**
+    /// It used to be that `Iterate` did not exist. Then it existed and
+    /// `thir::ExprKind::For` had nowhere to put the `next` that
+    /// `check::iterate_item` had found, so *every* loop arrived here with a
+    /// hole. **Neither is true now.** `ExprKind::For` carries
+    /// `next: Option<DefId>`, `lower_for` reads it, and a subject with a
+    /// reachable implementation lowers to a `Callee::Def` — `text.chars()`
+    /// and a user's own `implements Iterate:` alike.
     ///
-    /// [`crate::lower`]'s §7.2 states the seam — `ExprKind::For` needs
-    /// `next: Option<DefId>` — and §7.1 is what the loop *does* carry in the
-    /// meantime: a shared borrow of its subject, which is the half of a `for`
-    /// that this crate owns and the half rule 4 needs.
+    /// What is left is the honest remainder, and it is what `iterate_item`
+    /// itself answers `None` for: a subject with no `Iterate` implementation
+    /// in the index (`Map`, and `Array`, which has no `iterate` yet), a type
+    /// parameter, a tuple, or a `next` that came from somewhere other than
+    /// `Iterate`. Those are real holes and this is still their name.
+    ///
+    /// §7.1 is the half of a `for` this crate owns either way: a shared
+    /// borrow of the subject, which is what rule 4 needs.
     IterateNext,
-    /// An operator or an index on a user type, which is Decision 11 again.
-    Operator,
     /// An `f"…"` hole whose type `science-rt` has no
     /// `science_string_push_*` for.
     ///
@@ -666,8 +667,11 @@ pub enum Unresolved {
     /// of what the variant records. `strings-formatting-and-docs.md` §3.1
     /// respecifies `Display` as `def display(self, into: mutable borrowed
     /// Formatter)`; `science-resolve`'s `builtins` declares the interface with
-    /// **no methods**, because naming that one would invent a `Formatter` no
-    /// note specifies. So `science-types`'s `check` asks only the *relation* —
+    /// **no methods**. The reason is not that `Formatter` is unspecified —
+    /// §3.1 specifies it completely, with a closed five-method set — but that
+    /// `Formatter`, `FormatSpec` and its four `choice` types would all have to
+    /// land in the prelude first, and the runtime and backend sides with them.
+    /// So `science-types`'s `check` asks only the *relation* —
     /// *"does this type implement `Display`"* — which every prelude type and
     /// every user type with an `implements Display:` block answers yes to, and
     /// records in its own words that *"the interpolation of a user type is
