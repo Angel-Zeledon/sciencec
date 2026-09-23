@@ -1151,7 +1151,35 @@ fn scratch_crate(name: &str, files: &[(&str, &str)]) -> String {
 /// Writes a file under the target directory and returns its path, relative to
 /// the repository root so that it is what the `-->` header shows.
 fn scratch(name: &str, bytes: &[u8]) -> String {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("sciencec");
+    // **One directory per file, not one directory for all of them.**
+    //
+    // Every scratch file used to land in `…/sciencec/`, and `sciencec build`
+    // writes its executable *beside the source* — so thirty-three tests, run
+    // on as many threads as the machine has, were building and linking into
+    // one directory at once. Under `cargo test --workspace` at full
+    // parallelism that produced a different handful of failures on every run,
+    // with disjoint sets between runs: `a_failing_assert_is_reported_failed`
+    // reporting `1 error` where it expected the assertion's own message, and
+    // several others. Each passed alone, and the whole suite passed at
+    // `--test-threads=4`, which is the signature of contention rather than of
+    // a regression — and which cost this session two full runs to tell apart
+    // from one, twice.
+    //
+    // The subdirectory is named after the file rather than after the process
+    // or a random number, so the artefact is still exactly where a reader
+    // would look for it after a failure. `create_dir_all` is idempotent, so a
+    // test that writes two files under one name still works.
+    //
+    // **The `case-` prefix is load-bearing.** A build puts its executable at
+    // `<stem>` with no extension, and the flat layout this replaces left
+    // those lying in `…/sciencec/`. A directory named plainly `<stem>` would
+    // therefore collide with one of them on any tree that had run the old
+    // tests — `create_dir_all` answers `AlreadyExists` against a *file* — so
+    // the directory takes a name no executable can have.
+    let stem = Path::new(name).file_stem().unwrap_or(name.as_ref());
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("sciencec")
+        .join(format!("case-{}", stem.to_string_lossy()));
     std::fs::create_dir_all(&dir).expect("the target directory is writable");
     let path = dir.join(name);
     std::fs::write(&path, bytes).expect("the scratch file is writable");
