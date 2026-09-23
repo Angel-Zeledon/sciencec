@@ -184,11 +184,26 @@ Vector2 implements Copy
 
 # `Display` is what `print` requires, and it is the same interface F1's notebook
 # rendering will extend (§5.4).
+#
+# The signature is `strings-formatting-and-docs.md` §3.1's, which writes it
+# `def display(self, into: mutable borrowed Formatter)` in that note's older
+# borrow spelling — `&mut Formatter` here, the syntax the parser accepts. This
+# file used to write `def display(self) -> String`, which no note ever
+# specified and which nothing could call: an interface with no declared method
+# has nothing for an implementation to conform to, so that body was dead code.
+#
+# `Formatter` has five methods and §3.1 calls the set closed: `text` pads to
+# the spec's width, `raw` appends a fragment unpadded, `number` and `integer`
+# render a scalar under the spec, and `spec` hands the spec back. This renders
+# through `raw` and `number`, so `print(a + b)` writes the vector's own
+# components rather than a fixed string.
 Vector2 implements Display:
-    def display(self) -> String:
-        let mutable out be String.new()
-        out.push_str("a vector")
-        out
+    def display(self, into: &mut Formatter):
+        into.raw("(")
+        into.number(self.x)
+        into.raw(", ")
+        into.number(self.y)
+        into.raw(")")
 
 # --- Inherent methods -------------------------------------------------------
 

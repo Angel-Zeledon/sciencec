@@ -121,8 +121,16 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// earlier revision. Nothing caught it because `builtins.rs` never declared
 /// the name. The count following is the derivation working, not a
 /// re-baselining.
+///
+/// **And it reads eleven**, because §3.1's `Formatter` added seven entry
+/// points of which two return a `ScienceFormatSpec` by value —
+/// `science_formatter_spec` and `science_format_spec_default`. That record is
+/// six words, so it is MEMORY on every target and the classifier said so; the
+/// other five return `()`, and `science_formatter_init` returns `()` because
+/// it takes an out-pointer rather than because it happened to. Same
+/// derivation, third movement.
 #[test]
-fn the_derived_sret_set_is_nine_and_has_moved_twice() {
+fn the_derived_sret_set_is_eleven_and_has_moved_three_times() {
     let triple = Triple::host().expect("a supported host");
     let indirect = RUNTIME
         .iter()
@@ -130,11 +138,11 @@ fn the_derived_sret_set_is_nine_and_has_moved_twice() {
         .filter(|sig| sig.ret.is_sret())
         .count();
     assert_eq!(
-        indirect, 9,
-        "the derived `sret` set is not the nine `science-codegen`'s \
+        indirect, 11,
+        "the derived `sret` set is not the eleven `science-codegen`'s \
          `runtime.rs` names"
     );
-    assert_eq!(RUNTIME.len(), 59, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 66, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

@@ -133,11 +133,34 @@ pub enum RtAggregate {
     /// `{ value: ScienceString, error: ScienceNullableIoError }` — the pair of
     /// §5.4.
     StringAndIoError,
+    /// `strings-formatting-and-docs.md` §3.1's `FormatSpec`: `{ fill: Char,
+    /// align: Align?, sign: Sign?, width: Int?, precision: Int?, code: Code?,
+    /// alternate: Bool, grouping: Grouping? }`, in that field order.
+    ///
+    /// **A row here *and* a record `science-resolve` declares, which no other
+    /// entry in this list is.** Every aggregate above is the runtime's alone —
+    /// a program cannot name a `ScienceString`'s three fields. `FormatSpec` is
+    /// a type a Science program writes down and reads fields off, so the
+    /// compiler lays it out from the prelude's own field list, and
+    /// `science-rt` lays it out from `#[repr(C)]`. **Two layouts for one
+    /// type is exactly §9.2's failure mode**, which is why it is modelled
+    /// here: `tests/layout.rs` runs this row against `size_of::<
+    /// ScienceFormatSpec>()`, so the two cannot drift silently.
+    FormatSpec,
+    /// §3.1's `Formatter`: `{ sink: *mut ScienceString, spec: FormatSpec }`.
+    ///
+    /// Unlike [`RtAggregate::FormatSpec`] this has no fields a program can
+    /// name — §3.1 gives `Formatter` five methods and no fields — so the
+    /// representation is `science-rt`'s alone and this row is the only place
+    /// a compiler learns its size. `science-codegen-llvm`'s `cg_ty` answers
+    /// with it for the prelude name `Formatter`, which is what gives
+    /// `science-mir`'s `Formatter` temporary a stack slot to live in.
+    Formatter,
 }
 
 impl RtAggregate {
-    /// All nine, in a fixed order.
-    pub const ALL: [RtAggregate; 9] = [
+    /// All eleven, in a fixed order.
+    pub const ALL: [RtAggregate; 11] = [
         RtAggregate::String,
         RtAggregate::Chars,
         RtAggregate::Array,
@@ -147,6 +170,8 @@ impl RtAggregate {
         RtAggregate::IoError,
         RtAggregate::NullableIoError,
         RtAggregate::StringAndIoError,
+        RtAggregate::FormatSpec,
+        RtAggregate::Formatter,
     ];
 
     /// The C name, as it appears in `science-rt`.
@@ -161,6 +186,8 @@ impl RtAggregate {
             RtAggregate::IoError => "ScienceIoError",
             RtAggregate::NullableIoError => "ScienceNullableIoError",
             RtAggregate::StringAndIoError => "ScienceStringAndIoError",
+            RtAggregate::FormatSpec => "ScienceFormatSpec",
+            RtAggregate::Formatter => "ScienceFormatter",
         }
     }
 
@@ -258,6 +285,88 @@ impl RtAggregate {
                 vec![
                     Field::new("value", RtAggregate::String.cg_ty()),
                     Field::new("error", RtAggregate::NullableIoError.cg_ty()),
+                ],
+            ),
+            // §3.1's eight fields in §3.1's order. The four `choice` fields
+            // are modelled as the choices they are — payload-free variants,
+            // so Decision 18 gives each the discriminant byte and the
+            // nullable wrapper a second one, `ScienceIoError`'s shape twice
+            // over — rather than as the `u8` each happens to be, for
+            // `RtAggregate::IoError`'s own stated reason: a second copy of a
+            // variant list is a second place for the numbering to drift.
+            //
+            // **The variant names are lower-cased Science identifiers**,
+            // matching the `IoError` row above; only the count and the order
+            // are load-bearing here, because a payload-free choice's layout
+            // is its variant count and its discriminant values are its order.
+            RtAggregate::FormatSpec => CgTy::strukt(
+                "ScienceFormatSpec",
+                vec![
+                    Field::new("fill", CgTy::Char),
+                    Field::new(
+                        "align",
+                        CgTy::nullable(CgTy::choice(
+                            "ScienceAlign",
+                            vec![
+                                Variant::unit("left"),
+                                Variant::unit("right"),
+                                Variant::unit("center"),
+                            ],
+                        )),
+                    ),
+                    Field::new(
+                        "sign",
+                        CgTy::nullable(CgTy::choice(
+                            "ScienceSign",
+                            vec![
+                                Variant::unit("plus"),
+                                Variant::unit("minus"),
+                                Variant::unit("space"),
+                            ],
+                        )),
+                    ),
+                    Field::new("width", CgTy::nullable(CgTy::Int(IntTy::I64))),
+                    Field::new("precision", CgTy::nullable(CgTy::Int(IntTy::I64))),
+                    Field::new(
+                        "code",
+                        CgTy::nullable(CgTy::choice(
+                            "ScienceCode",
+                            vec![
+                                Variant::unit("fixed"),
+                                Variant::unit("exp"),
+                                Variant::unit("exp_upper"),
+                                Variant::unit("general"),
+                                Variant::unit("general_upper"),
+                                Variant::unit("percent"),
+                                Variant::unit("decimal"),
+                                Variant::unit("hex"),
+                                Variant::unit("hex_upper"),
+                                Variant::unit("octal"),
+                                Variant::unit("binary"),
+                                Variant::unit("str"),
+                            ],
+                        )),
+                    ),
+                    Field::new("alternate", CgTy::Bool),
+                    Field::new(
+                        "grouping",
+                        CgTy::nullable(CgTy::choice(
+                            "ScienceGrouping",
+                            vec![Variant::unit("comma"), Variant::unit("underscore")],
+                        )),
+                    ),
+                ],
+            ),
+            // The sink is a raw pointer and not a [`RtAggregate::String`] by
+            // value: §3.1's `Formatter` *borrows* the accumulator for the
+            // duration of one `display`, and a copy of the three words would
+            // be a second `ScienceString` header writing into the first one's
+            // buffer.
+            RtAggregate::Formatter => CgTy::strukt(
+                "ScienceFormatter",
+                vec![
+                    Field::new("sink", CgTy::Ptr(PtrKind::MutBorrow)),
+                    Field::new("spec", RtAggregate::FormatSpec.cg_ty()),
                 ],
             ),
         }
@@ -557,6 +666,29 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_string_eq", params: &[P, P], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_string_cmp", params: &[P, P], ret: RtRet::I32 },
     RuntimeFn { symbol: "science_string_hash", params: &[P], ret: RtRet::U64 },
+    // --- format.rs, the `Formatter` half ---
+    //
+    // **The seven `strings-formatting-and-docs.md` §3.1 asks for**, and the
+    // first entry points in this table that a *user's own method body* calls:
+    // `into.text(…)` inside a `Display.display` lowers to
+    // `science_formatter_text`, through `science-codegen-llvm`'s
+    // `PRELUDE_METHODS`, exactly as `s.push_str(…)` lowers to
+    // `science_string_push_str`.
+    //
+    // **`init` is an out-pointer and that is what keeps five of the seven off
+    // the `sret` list.** A `Formatter` is `{ sink, spec }` and the spec alone
+    // is six words, so a constructor returning one by value would be MEMORY on
+    // both conventions — for a value the caller already has a stack slot for,
+    // because `science-mir` builds it as an ordinary local. The two that do
+    // join the list hand back a `ScienceFormatSpec` and have nowhere else to
+    // put it.
+    RuntimeFn { symbol: "science_formatter_init", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_formatter_text", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_formatter_raw", params: &[P, P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_formatter_number", params: &[P, RtParam::F64], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_formatter_integer", params: &[P, N], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_formatter_spec", params: &[P], ret: RtRet::Aggregate(RtAggregate::FormatSpec) },
+    RuntimeFn { symbol: "science_format_spec_default", params: &[], ret: RtRet::Aggregate(RtAggregate::FormatSpec) },
     // --- math.rs ---
     //
     // The fifty-sixth and fifty-seventh, and the first addition since
@@ -712,23 +844,27 @@ pub fn owned_nullable_return(payload: &CgTy) -> OwnedNullableReturn {
 /// §2.3's table rather than aborting on its fourth row.
 ///
 /// **What is still short is the rendering, and
-/// [`ExitContract::display_is_renderable`] is the record of it.** §2.3 asks for
-/// `error: ` followed by *the `Display` of the error*. `Display` is declared in
-/// the prelude as an interface **with no methods**, because — in
-/// `science-resolve`'s `builtins.rs`, which made the call — writing
-/// `Display.display(Formatter)` would invent `Formatter`, a Level 1 type no
-/// note specifies, as a side effect of a bound check. So there is no method to
-/// call, no vtable slot to call it through, and nothing for codegen to emit but
-/// a fixed message.
+/// [`ExitContract::display_is_renderable`] is the record of it — but the
+/// reason changed and this paragraph used to give the old one.** §2.3 asks for
+/// `error: ` followed by *the `Display` of the error*. The old reason was that
+/// *"`Display` is declared in the prelude as an interface with no methods,
+/// because writing `Display.display(Formatter)` would invent `Formatter`, a
+/// Level 1 type no note specifies"*. Both halves of that have stopped being
+/// true: `strings-formatting-and-docs.md` §3.1 specifies `Formatter`
+/// completely, and `science-resolve`'s `builtins.rs` now declares
+/// `Display.display(self, into: &mut Formatter)` from it. A user type's
+/// `display` is called, by `science-mir`'s f-string lowering, and
+/// `examples/06_traits.science` runs one.
 ///
-/// That is the honest state and it is deliberately not repaired here. Inventing
-/// a `Formatter` to satisfy a table in a design note would be `assign.rs` §3's
-/// named failure — a signature invented in passing is how a language acquires a
-/// design nobody argued for — and it would be invented by the *backend*, which
-/// is the component with the least standing to decide it. Printing something
-/// true and less than promised costs a user the error's identity on a path they
-/// can still see, diagnose and exit from; inventing the type costs the language
-/// a decision.
+/// **What is missing is the `any Error` half, which is a different mechanism.**
+/// The failing `main` holds an `Error?` — a two-word fat pointer, Decision 13 —
+/// and rendering it means finding `display` in that value's *vtable*, not
+/// resolving it against a concrete type the way an f-string hole does. §3.2's
+/// `Inspect` is not implemented either, and §2.3 asks for `Display`. So the
+/// field stays `false`: the flag is about what the emitted `main` can do, and
+/// the emitted `main` still writes a fixed message. It flips when a dynamic
+/// `display` through a vtable slot is emitted, and the test asserting it is
+/// `false` is the tripwire that will say so.
 pub const EXIT_CONTRACT: ExitContract = ExitContract {
     required_status: 1,
     required_prefix: "error: ",
@@ -816,9 +952,19 @@ mod tests {
     /// symbols *"they are the whole list"*, and a count that moves without
     /// anyone noticing is a list that is no longer whole. The assertion that
     /// changed here changed because the list did.
+    ///
+    /// **Fifty-nine became sixty-six**, and the seven are §3.1's `Formatter`:
+    /// `init`, `text`, `raw`, `number`, `integer`, `spec` and
+    /// `science_format_spec_default`. Decision 14's rule — *"no entry point is
+    /// added to `science-rt` to make codegen simpler"* — is satisfied the same
+    /// way `science_libm_pow` satisfies it: none of the seven stands in for an
+    /// instruction sequence this crate could have emitted instead. Padding a
+    /// string to a width with a fill character, grouping digits in threes and
+    /// choosing between fixed and exponential form at a significant-figure
+    /// count are library work, not a handful of instructions.
     #[test]
-    fn there_are_fifty_nine_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 59, "§2.6: \"they are the whole list\"");
+    fn there_are_sixty_six_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 66, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");
@@ -893,7 +1039,7 @@ mod tests {
     }
 
     #[test]
-    fn the_sret_set_is_derived_and_is_nine_after_truncate_left_it() {
+    fn the_sret_set_is_derived_and_is_eleven_after_the_formatter_joined() {
         // §9.2's finding 1, and its recurrence. The test derives the set from
         // the signatures rather than reading a list, which is the whole repair,
         // and the derived set is **nine**. `science-rt`'s §2 names eight.
@@ -920,6 +1066,17 @@ mod tests {
         // because `builtins.rs` never declared the name, so no program could
         // reach it. The number moving in this direction is the same
         // mechanism working: the set is derived, so it followed.
+        //
+        // **Nine became eleven when §3.1's `Formatter` landed**, and the two
+        // that joined are the two that hand back a `ScienceFormatSpec`:
+        // `science_formatter_spec` and `science_format_spec_default`. That
+        // record is six words, so it is MEMORY on all three conventions, and
+        // nobody added a name here — the derivation answered, the same way it
+        // answered for `science_string_with_capacity`. The other five
+        // `Formatter` entry points return `()`; `science_formatter_init`
+        // returns `()` *because* it takes an out-pointer, which is the one
+        // place a signature was shaped by this list rather than merely
+        // measured against it, and its own doc comment says so.
         let expected = [
             "science_string_new",
             "science_string_with_capacity",
@@ -930,6 +1087,8 @@ mod tests {
             "science_map_new",
             "science_string_chars",
             "science_read_file",
+            "science_formatter_spec",
+            "science_format_spec_default",
         ];
         for abi in [CAbi::SystemVAmd64, CAbi::Aapcs64, CAbi::Win64] {
             let mut derived: Vec<&str> =

@@ -261,18 +261,32 @@ fn the_sequence_in_the_ir_is_one_accumulator_and_one_call_per_fragment() {
 /// anything — and it now reaches `science_string_push_i64` through a cast;
 /// [`a_narrow_integer_hole_renders_its_own_value`] is the program.
 ///
-/// What is left is the refusal no cast can close: a user record is §3.1's
-/// `Formatter`, which no note specifies and no prelude declares.
+/// **And it used to be a user record, which now renders.** The case read
+/// `type Punto: … Punto implements Display`, and the comment beneath it read
+/// *"a user record is §3.1's `Formatter`, which no note specifies and no
+/// prelude declares"*. Both halves have stopped being true:
+/// `strings-formatting-and-docs.md` §3.1 specifies `Formatter` in full, the
+/// prelude declares it, and a record whose `implements Display:` block writes
+/// `def display(self, into: &mut Formatter)` reaches the runtime through it —
+/// [`crate::…`]-adjacent `tests/formatter.rs` runs one and
+/// `examples/06_traits.science` prints a `Vector2`. The old source does not
+/// even reach this crate any more: an empty `Punto implements Display` is
+/// `SC0539` at the front end now, because the interface has a required method,
+/// and the diagnostic names the signature to write.
 ///
-/// **It checks clean**, which is the point of refusing here rather than
-/// guessing: `science-types`'s own note says *"the interpolation of a user type
-/// is therefore accepted here and refused by codegen, which is a worse place to
-/// find out"*, and the least this crate can do about that is say which type.
+/// **`F16` is what is left, and it is a width and not a design hole.** §2.3
+/// makes the default rendering *"the shortest decimal string that
+/// round-trips"*, which is a property of the width; there is no Rust primitive
+/// to render an `F16` through, no note saying what its shortest spelling is,
+/// and `science_string_push_f32` explicitly declines to widen — *"the width
+/// has to reach the formatter"*. The prelude's `F16 implements Display` block
+/// declares no `display` of its own, so `Builder::display_of` finds nothing
+/// either, and both renderings decline. That is the refusal this test is for
+/// and the type it names.
 #[test]
 fn a_hole_with_no_renderer_is_refused_and_the_type_is_named() {
-    let (name, ty) = ("record", "Punto");
-    let source = "type Punto:\n\x20   x: Int\n\nPunto implements Display\n\n\
-                  let p be Punto(x: 1)\nprint(f\"p={p}\")\n";
+    let (name, ty) = ("half", "F16");
+    let source = "let h: F16 be 1.5\nprint(f\"h={h}\")\n";
     let dir = scratch("interp", name);
     let refused = lower(source)
         .try_build(&executable(&dir, name), OptLevel::O0)

@@ -1,0 +1,18 @@
+A region is a set of program points.
+A region is a set of program points.
+# A region is a set of program points.
+Regions
+7
+inferred, never written
+inferred, never writ
+true
+one
+(1.5, 2.5)
+(0.5, 1.5)
+(2.0, 4.0)
+(-1.0, -2.0)
+false
+true
+2
+1
+0

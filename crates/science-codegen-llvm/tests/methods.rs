@@ -448,27 +448,63 @@ def main():
     assert_eq!(prints("borrowed", source), "hola\nhola\nhola\n4\n");
 }
 
-/// `print` of a value the builder has no entry point for names the **type**.
+/// `print` of a user type calls the `display` that type wrote —
+/// `strings-formatting-and-docs.md` §3.1, end to end.
 ///
-/// The refusal used to be *"a `print` of a value that is not a `String`"*,
-/// which names the construct and not the cause. A user type that implements
-/// `Display` is accepted by the checker — `science-types`' `check` records
-/// that it is *"accepted here and refused by codegen, which is a worse place
-/// to find out"* — so the least this crate owes is the name of the type.
+/// **This test was the refusal and is now the program.** It read
+/// `Doc implements Display` with no method and asserted that the build failed
+/// naming `Doc` and `Formatter`, because *"a user type that implements
+/// `Display` is accepted by the checker and refused by codegen"*. Both ends of
+/// that changed: `Display` has a declared method now, so the methodless block
+/// is `SC0539` at the front end with the signature to write in the message,
+/// and a block that writes it reaches `science_formatter_*` through
+/// `science-mir`'s f-string lowering.
+///
+/// **Three of `Formatter`'s four wired methods are exercised and the fourth is
+/// `text`**, which `tests/formatter.rs` covers with a width. `1` rather than
+/// `1.0` from `integer`, and `0.5` from `number`, is the whole check that the
+/// two entry points are not one: an `integer` routed through
+/// `science_formatter_number` would print `1.0`.
 #[test]
-fn print_of_a_user_type_names_the_type() {
+fn print_of_a_user_type_renders_through_its_own_display() {
     let source = "\
 type Doc:
     n: Int
+    weight: F64
 
-Doc implements Display
+Doc implements Display:
+    def display(self, into: &mut Formatter):
+        into.raw(\"Doc#\")
+        into.integer(self.n)
+        into.raw(\" @ \")
+        into.number(self.weight)
 
 def main():
-    print(Doc(n: 1))
+    print(Doc(n: 1, weight: 0.5))
 ";
-    let text = refusal("display", source);
-    assert!(text.contains("`Doc`"), "the refusal must name the type: {text}");
-    assert!(text.contains("Formatter"), "and what a user type would render through: {text}");
+    assert_eq!(prints("display", source), "Doc#1 @ 0.5\n");
+}
+
+/// `print` of a value **neither** rendering reaches still names the type.
+///
+/// The sibling of the test above, kept because the refusal it pins is the one
+/// that is left rather than the one that was closed. `F16` has no
+/// `science_string_push_*` — §2.3's shortest-round-trip rendering is a
+/// property of the width and `science_string_push_f32` declines to widen — and
+/// the prelude's `F16 implements Display` block declares no `display`, so
+/// `Builder::display_of` finds nothing either. The message has to say which
+/// type, and it now also has to say which of the two renderings the author can
+/// reach for, because for a record there is one.
+#[test]
+fn print_of_a_value_with_no_rendering_names_the_type() {
+    let source = "\
+def main():
+    let h: F16 be 1.5
+    print(h)
+";
+    let text = refusal("halfprint", source);
+    assert!(text.contains("`F16`"), "the refusal must name the type: {text}");
+    assert!(text.contains("Formatter"), "and the rendering a user type would reach for: {text}");
 }
 
 // --- the entry point --------------------------------------------------------

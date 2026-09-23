@@ -170,18 +170,38 @@ def main(s: Station):
     assert!(checked.messages()[0].contains("Station"), "{:?}", checked.messages());
 }
 
-/// **The cost `fstring`'s own documentation states, pinned.** A user type that
-/// *does* implement `Display` passes this check, and nothing can render it:
-/// `Display` has no method, because naming one would invent a `Formatter`. The
-/// refusal therefore lands in codegen and not here. This test exists so that
-/// the day `Display` gains a method, it fails and somebody reads the note.
+/// **A user type that implements `Display` passes this check, and now it
+/// renders too.**
+///
+/// This test used to pin a cost: *"`Display` has no method, because naming one
+/// would invent a `Formatter`. The refusal therefore lands in codegen and not
+/// here. This test exists so that the day `Display` gains a method, it fails
+/// and somebody reads the note."* That day came —
+/// `strings-formatting-and-docs.md` §3.1 specifies `Formatter` in full, so the
+/// signature was transcribed rather than invented — and the note has been
+/// read. Two things changed about this file:
+///
+/// - The source has to write the method. `Station implements Display` with an
+///   empty body is `SC0539` now, because the interface has a required method,
+///   and the diagnostic names the signature.
+/// - The clean check is no longer the front half of a backend refusal.
+///   `science-mir` lowers the hole to a `science_formatter_init` and a call to
+///   this `display`; `science-codegen-llvm`'s `tests/methods.rs` runs the
+///   program and reads what it printed.
+///
+/// What this file still pins is what it always pinned: that the hole checks
+/// clean. It is the *sibling* of `a_record_that_implements_nothing_is_sc0275`
+/// above, and the pair is the whole of §3.4's rule at this layer — implement
+/// `Display` and the interpolation is legal, do not and it is `SC0275`.
 #[test]
-fn a_record_that_implements_display_passes_the_check_and_cannot_be_rendered() {
+fn a_record_that_implements_display_passes_the_check_and_now_renders() {
     let source = "\
 type Station:
     id: String
 
-Station implements Display
+Station implements Display:
+    def display(self, into: &mut Formatter):
+        into.text(self.id)
 
 def main(s: Station):
     let line be f\"{s}\"

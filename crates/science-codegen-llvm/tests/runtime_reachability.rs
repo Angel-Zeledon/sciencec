@@ -402,6 +402,31 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   write(\"no newline here: \")\n\
          \x20   write(42)\n",
     ),
+    // §3.1's `Formatter`, reached the only way a program can reach it: a
+    // `print` of a type whose `implements Display:` block writes `display`.
+    // `science-mir`'s `Builder::render_through_display` emits the
+    // `science_formatter_init` over the accumulator, and each `into.…` inside
+    // the body is a `PRELUDE_METHODS` row — so one program declares four of
+    // the seven `format.rs` entry points this list would otherwise have to
+    // excuse. The fifth and sixth are on `ALLOWLIST`; `science_formatter_spec`
+    // has no `PRELUDE_METHODS` row to reach it through, and
+    // `science_format_spec_default` is called from inside `science-rt`.
+    (
+        "display_through_a_formatter",
+        "type Doc:\n\
+         \x20   n: Int\n\
+         \x20   weight: F64\n\
+         \n\
+         Doc implements Display:\n\
+         \x20   def display(self, into: &mut Formatter):\n\
+         \x20       into.text(\"Doc#\")\n\
+         \x20       into.integer(self.n)\n\
+         \x20       into.raw(\" @ \")\n\
+         \x20       into.number(self.weight)\n\
+         \n\
+         def main():\n\
+         \x20   print(Doc(n: 1, weight: 0.5))\n",
+    ),
 ];
 
 /// Every symbol in [`RUNTIME`] this compiler's own lowering, run over
@@ -433,6 +458,22 @@ const ALLOWLIST: &[(&str, &str)] = &[
          convention and are reachable below — so the prelude declaration is the only thing left; \
          `Lowerer::owned_nullable_method`'s own doc comment says the reasoning was re-read after \
          that convention landed and still stands",
+    ),
+    (
+        "science_formatter_spec",
+        "`Formatter.spec` is declared in `builtins.rs` and has no `PRELUDE_METHODS` row, which \
+         is that table's own documented arrangement — \"a row is added when a program that runs \
+         it is added with it\". §3.1 gives the method for \"an implementation that needs to \
+         branch on\" the spec, and nothing can branch on one while §2's mini-language has no \
+         lexer and every spec a program can build is the default. `into.spec()` refuses by name \
+         until then; the other four `Formatter` methods are reached by \
+         `display_through_a_formatter` in `CORPUS`",
+    ),
+    (
+        "science_format_spec_default",
+        "runtime-internal: `science_formatter_init` calls it to fill the `Formatter` it writes, \
+         from inside `science-rt`. It is `#[no_mangle]` — so `tests/symbols.rs` requires it in \
+         `RUNTIME` — and no backend names it, for `science_alloc`'s reason exactly",
     ),
     ("science_alloc", "runtime-internal: called from `science-rt`'s own Rust, never by codegen"),
     ("science_realloc", "runtime-internal, the same as `science_alloc`"),

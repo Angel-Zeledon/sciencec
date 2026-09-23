@@ -508,14 +508,29 @@ Doc has:
 
 // --- the silences, pinned -------------------------------------------------
 
-/// `conform`'s §3. The fourteen methodless prelude interfaces are methodless
-/// *deliberately* — `builtins.rs` refuses to invent `Ord.compare` or
-/// `Display.display` — so a `clone` in a `Clone` block is not an extra method,
-/// it is the method nobody has written the declaration for.
+/// `conform`'s §3. A methodless prelude interface is methodless
+/// *deliberately* — `builtins.rs` refuses to invent `Ord.compare`, because
+/// the only return type it could have is an `Ordering` no note specifies — so
+/// whatever a block writes under one is not an extra method, it is the method
+/// nobody has written the declaration for.
 ///
-/// **This is the test that must fail the day `Clone.clone` is declared**, and
-/// failing is the right outcome: the entry goes into `builtins.rs` and this
-/// block becomes conformant rather than silent.
+/// **This is the test that must fail the day one of them is declared**, and
+/// failing is the right outcome: the entry goes into `builtins.rs` and the
+/// block becomes conformant rather than silent. It has now failed twice and
+/// been narrowed twice.
+///
+/// - It wrote `Doc implements Clone: def clone(…)` until `Clone.clone` was
+///   declared.
+/// - It wrote `Doc implements Display: def whatever_this_is(self) -> Int`
+///   until `Display.display` was — `strings-formatting-and-docs.md` §3.1
+///   specifies `Formatter` completely, so the signature was transcribed and
+///   not invented. A block writing `whatever_this_is` under `Display` is
+///   `SC0539` now, and the diagnostic names the signature to write instead.
+///
+/// `Ord` is what is left and it is the honest example: `Ordering` really is
+/// specified by no note, `binary_operator` has no `Ord` row, and
+/// `implements_operand`'s doc argues at length for why the requirement is
+/// checkable and the dispatch is not.
 #[test]
 fn a_methodless_prelude_interface_admits_any_method() {
     support::check(
@@ -523,11 +538,7 @@ fn a_methodless_prelude_interface_admits_any_method() {
 type Doc:
     title: String
 
-Doc implements Clone:
-    def clone(self) -> Doc:
-        Doc(title: String.new())
-
-Doc implements Display:
+Doc implements Ord:
     def whatever_this_is(self) -> Int:
         1
 ",

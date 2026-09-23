@@ -196,25 +196,29 @@
 //! emitted is [`ERROR_MESSAGE`]: the required prefix, then a fixed phrase, then
 //! a newline. The error's identity is not in it.
 //!
-//! **The reason is that `Display` is not reachable, not that rendering it is
-//! hard.** `science-resolve`'s `builtins.rs` declares `Display` as an interface
-//! **with no methods**, and says why: naming `Display.display(Formatter)` would
-//! invent `Formatter`, a Level 1 type no note specifies, as a side effect of a
-//! bound check. There is therefore no method name, no vtable slot, and nothing
-//! for a `call` here to go through. `Error.message(shared self) -> String` *is*
-//! declared — it is `stdlib-core.md` §7.5 verbatim — and is no better off: no
-//! implementation of it exists anywhere in `science-rt`, this backend emits no
-//! vtables at all, and calling through a slot nothing fills is a jump to
-//! whatever the second word of the fat pointer holds.
+//! **The reason used to be that `Display` had no method, and it is not that
+//! any more.** This paragraph read: *"`science-resolve`'s `builtins.rs`
+//! declares `Display` as an interface with no methods, and says why: naming
+//! `Display.display(Formatter)` would invent `Formatter`, a Level 1 type no
+//! note specifies."* `strings-formatting-and-docs.md` §3.1 specifies
+//! `Formatter` completely, `builtins.rs` now declares
+//! `Display.display(self, into: &mut Formatter)` from it, and a `print` of a
+//! concrete type that implements `Display` calls the user's own method —
+//! `examples/06_traits.science` runs one.
+//!
+//! **What remains is the dispatch, and the dispatch alone.** The failing
+//! `main` holds an `Error?`, which is Decision 13's two-word fat pointer; its
+//! `display` lives in a vtable slot, and this backend emits vtables for a
+//! coercion the program wrote but has no slot to *call* one through here.
+//! `Error.message(shared self) -> String` is in the same position and has been
+//! all along — `stdlib-core.md` §7.5 declares it, and no implementation of it
+//! exists anywhere in `science-rt`.
 //!
 //! **The cost, stated plainly: a user is told that something failed and is not
-//! told what.** That is a real loss and it is the smaller one. The alternative
-//! is for a code generator to invent `Formatter` — to pick a signature for a
-//! type two design notes decline to specify — which is the failure
-//! `science-types`'s `assign.rs` §3 names: a decision nobody argued for,
-//! arriving as a side effect of something else, and arriving from the component
-//! with the least standing to make it. The placeholder is deleted the day
-//! `Display` has a method; `EXIT_CONTRACT.display_is_renderable` is `false`
+//! told what.** That is a real loss and it is now a smaller and much more
+//! ordinary one than it was: the missing piece is a `call` through a vtable
+//! slot, not a decision nobody has taken. [`ERROR_MESSAGE`] is deleted the day
+//! that call is emitted; `EXIT_CONTRACT.display_is_renderable` is `false`
 //! until then and a test asserts it, so the deletion is prompted rather than
 //! remembered.
 
@@ -2785,6 +2789,15 @@ impl<'a> Lowerer<'a> {
                     // makes it the one runtime aggregate that is an ordinary
                     // value here.
                     "Chars" => Ok(RtAggregate::Chars.cg_ty()),
+                    // §3.1's `Formatter`: `{ sink, spec }`. Like `Chars` it
+                    // borrows rather than owns, so it needs no descriptor and
+                    // no `drop_fn`; unlike `Chars` a *user's* method body
+                    // holds one, as `display`'s `into` parameter, which is
+                    // what makes this row reachable at all. The fields have no
+                    // Science names — §3.1 gives `Formatter` five methods and
+                    // no fields — so nothing below this arm ever projects
+                    // into it.
+                    "Formatter" => Ok(RtAggregate::Formatter.cg_ty()),
                     "IoError" => Ok(RtAggregate::IoError.cg_ty()),
                     other => Err(Unlowered::new(format!("a value of type `{other}`"))),
                 }
@@ -3325,6 +3338,18 @@ impl<'a> Lowerer<'a> {
                             // `Map` three lines up, which are on the other side
                             // of this list for exactly that difference.
                             | "Chars"
+                            // **`Formatter` owns nothing either, and for
+                            // `Chars`' reason exactly.** §3.1's `Formatter` is
+                            // `{ sink, spec }` where `sink` *borrows* the
+                            // accumulator for the duration of one `display`
+                            // and `spec` is eight scalar fields. Nothing in it
+                            // was allocated by the `science_formatter_init`
+                            // that built it, so nothing in it is freed when it
+                            // goes out of scope. Leaving it off this list
+                            // would have made every `print` of a user type
+                            // refuse at the drop of the temporary the print
+                            // itself created.
+                            | "Formatter"
                     )),
                 }
             }
@@ -7455,12 +7480,23 @@ impl<'a> Lowerer<'a> {
                     .and_then(|operand| self.operand_ty(body, operand))
                     .map(|ty| self.render_referent(ty));
                 return Err(Unlowered::new(match named {
+                    // The `Formatter` half of this used to read *"§3.1's
+                    // `Formatter` … is specified by no note and declared by no
+                    // prelude"*, which was false about the note the moment it
+                    // was written and is now false about the prelude too. A
+                    // hole still reaches here, but only when *both* renderings
+                    // decline: no `science_string_push_*` for the type, and no
+                    // `display` for `science-mir`'s `Builder::display_of` to
+                    // find.
                     Some(name) => format!(
-                        "an `f\"…\"` hole of type `{name}`, which `science-rt` has no \
-                         `science_string_push_*` entry point for: the seven that exist render \
-                         `Int`/`I64`, `U64`, `F64`, `F32`, `Bool`, `Char` and `String`, and \
-                         §3.1's `Formatter` — which is what a user type would render through — \
-                         is specified by no note and declared by no prelude"
+                        "an `f\"…\"` hole of type `{name}`, which neither rendering reaches. \
+                         `science-rt`'s seven `science_string_push_*` entry points render \
+                         `Int`/`I64`, `U64`, `F64`, `F32`, `Bool`, `Char` and `String`; §3.1's \
+                         `Formatter` renders any type whose `implements Display:` block writes \
+                         `def display(self, into: &mut Formatter)`, and `{name}` has no such \
+                         block this compiler can resolve — a bare `any Display`, a type \
+                         parameter, or a type that implements `Display` and declares no method \
+                         of its own"
                     ),
                     None => describe_unresolved(mir::Unresolved::Display).to_string(),
                 }));
@@ -8060,21 +8096,41 @@ impl<'a> Lowerer<'a> {
     ///
     /// **`function` names which call this is**, so `write(doc)` is refused as
     /// a `write` and not reported under the other function's name.
+    ///
+    /// # The message was out of date, and half of it was never true
+    ///
+    /// It used to end: *"§3.1's `Formatter` — which is what a user type would
+    /// render through — is specified by no note and declared by no prelude,
+    /// and this backend emits no vtable to reach one with."* The first clause
+    /// was **wrong when it was written** —
+    /// `strings-formatting-and-docs.md` §3.1 specifies `Formatter` in full,
+    /// with a `Decision`, five methods and a `FormatSpec` — and the second is
+    /// now wrong too: `science-resolve` declares the type and the interface,
+    /// and `science-mir` emits the call. A type with an `implements Display:`
+    /// block that writes `def display(self, into: &mut Formatter)` prints.
+    ///
+    /// What is left is what this message now says: a type with **no**
+    /// `display` to call, and `any Display`, which needs the vtable slot this
+    /// backend still does not emit.
     fn undisplayable(&self, body: &MirBody, operand: &mir::Operand, function: &str) -> String {
         let named = self.operand_ty(body, operand).map(|ty| self.render_referent(ty));
         match named {
             Some(name) => format!(
                 "a `{function}` of a value of type `{name}`: §4.1 declares `{function}` as \
-                 `def {function}(value: &any Display)` and the only renderer in this compiler \
-                 is §1.7's builder, whose entry points cover `Int`/`I64`, `U64`, `F64`, `F32`, \
-                 `Bool`, `Char` and `String`. §3.1's `Formatter` — which is what a user type \
-                 would render through — is specified by no note and declared by no prelude, and \
-                 this backend emits no vtable to reach one with"
+                 `def {function}(value: &any Display)`, and `{name}` has no `display` this \
+                 compiler can call. Two renderings exist and neither reaches it. §1.7's builder \
+                 covers `Int`/`I64`, `U64`, `F64`, `F32`, `Bool`, `Char` and `String`; §3.1's \
+                 `Formatter` covers any type whose `implements Display:` block writes \
+                 `def display(self, into: &mut Formatter)`, which is the fix for a record or a \
+                 `choice`. What is left over is `any Display` — whose `display` is in a vtable \
+                 slot this backend does not emit — and a type parameter, whose implementation is \
+                 not chosen until monomorphisation"
             ),
             None => format!(
                 "a `{function}` of a value whose type this crate cannot name: `{function}` \
-                 renders through `Display`, the only renderer is §1.7's builder, and its entry \
-                 points cover the prelude's scalars and `String`"
+                 renders through `Display`, and the two renderings are §1.7's builder over the \
+                 prelude's scalars and `String`, and §3.1's `Formatter` over a type that writes \
+                 its own `display`"
             ),
         }
     }
@@ -8574,6 +8630,34 @@ impl<'a> Lowerer<'a> {
             // finds nothing and `Lowerer::box_operand_element` — tried next,
             // for that stated reason — reads `T` off the destination instead.
             ("Box", "new", "science_box_new"),
+            // `Formatter`'s four wired methods, `strings-formatting-and-docs.md`
+            // §3.1. **The first rows in this table a user's own method body
+            // reaches**: every row above is called from a program's ordinary
+            // expression, and these are called from inside a
+            // `Display.display`, which `science-mir` is what arranges a call
+            // to. The shape is the ordinary one all the same — receiver's
+            // address, then the argument — so `lower_runtime_call` carries
+            // them with nothing new.
+            //
+            // `text` and `raw` take `&String`, which is a pointer at this
+            // boundary exactly as `String.push_str`'s second parameter is;
+            // `number` and `integer` take their scalar in a register, which is
+            // `science_string_push_f64`'s shape one screen up.
+            ("Formatter", "text", "science_formatter_text"),
+            ("Formatter", "raw", "science_formatter_raw"),
+            ("Formatter", "number", "science_formatter_number"),
+            ("Formatter", "integer", "science_formatter_integer"),
+            // **`spec` is the fifth and is deliberately not a row.** It
+            // returns a `FormatSpec` by value — the `sret` convention, which
+            // `science_string_new` above shows this path does carry — but
+            // §3.1's reason for the method is *"an implementation that needs
+            // to branch on it"*, and nothing can branch on a spec while §2's
+            // mini-language has no lexer and the only spec any program can
+            // build is the default one. The rule this table states is *"a row
+            // is added when a program that runs it is added with it"*, so the
+            // row waits for the program. Until then `into.spec()` refuses by
+            // name, which is this table's documented failure mode and not a
+            // wrong answer.
         ];
         if !self.defs.get(def).is_builtin() {
             return None;
@@ -9798,7 +9882,7 @@ fn describe_unresolved(unresolved: mir::Unresolved) -> &'static str {
         // The typed spelling is at the call site, which has the argument this
         // one does not. This is what is left when the operand names no place.
         mir::Unresolved::Display => {
-            "an `f\"…\"` hole whose type `science-rt` has no `science_string_push_*` entry point for"
+            "an `f\"…\"` hole whose type neither `science-rt`'s `science_string_push_*` entry points nor a `Display.display` of its own can render"
         }
     }
 }

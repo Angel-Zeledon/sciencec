@@ -26,8 +26,9 @@ use std::mem::{align_of, offset_of, size_of};
 use science_codegen::layout::{Repr, Triple, layout_of};
 use science_codegen::runtime::RtAggregate;
 use science_rt::{
-    SCIENCE_NULLABLE_NULL, SCIENCE_NULLABLE_PRESENT, ScienceArray, ScienceChars, ScienceMap,
-    ScienceMapInfo, ScienceNullableIoError, ScienceString, ScienceStringAndIoError, ScienceTypeInfo,
+    SCIENCE_NULLABLE_NULL, SCIENCE_NULLABLE_PRESENT, ScienceArray, ScienceChars, ScienceFormatSpec,
+    ScienceFormatter, ScienceMap, ScienceMapInfo, ScienceNullableIoError, ScienceString,
+    ScienceStringAndIoError, ScienceTypeInfo,
 };
 
 /// The host triple. These comparisons are only meaningful against the target
@@ -65,6 +66,14 @@ fn every_runtime_aggregate_has_the_size_and_alignment_rustc_gives_it() {
     agrees!(RtAggregate::MapInfo, ScienceMapInfo);
     agrees!(RtAggregate::NullableIoError, ScienceNullableIoError);
     agrees!(RtAggregate::StringAndIoError, ScienceStringAndIoError);
+    // §3.1's two. `FormatSpec` is the one row in `RtAggregate` that is also a
+    // record a *Science program* declares fields on, so it has three layouts
+    // to agree rather than two — `science-codegen`'s, `rustc`'s, and the one
+    // `science-resolve`'s prelude field list produces. This pins the first
+    // pair; `science-codegen-llvm`'s `tests/formatter.rs` runs a program that
+    // would read the wrong bytes if the third disagreed.
+    agrees!(RtAggregate::FormatSpec, ScienceFormatSpec);
+    agrees!(RtAggregate::Formatter, ScienceFormatter);
 }
 
 #[test]

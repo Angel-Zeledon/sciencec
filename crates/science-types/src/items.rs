@@ -211,12 +211,25 @@ const WANTED: &[&str] = &[
     // `Add` through a token; an interpolation reaches `Display` through a
     // literal, so the name has to be looked up by itself.
     //
-    // It buys the *relation* and not a method. `builtins.rs` declares `Display`
-    // with no methods, three times over, because writing
-    // `display(Formatter)` would invent a `Formatter` no note specifies; that
-    // refusal is untouched by this line, which asks only whether a type has an
-    // `implements Display:` block.
+    // It used to buy the *relation* and not a method, and this comment used to
+    // say why: *"`builtins.rs` declares `Display` with no methods, three times
+    // over, because writing `display(Formatter)` would invent a `Formatter` no
+    // note specifies."* **That reason was wrong** —
+    // `strings-formatting-and-docs.md` §3.1 specifies `Formatter` completely —
+    // and `builtins.rs` now declares `Display.display(self, into: &mut
+    // Formatter)`. This line is unchanged by that: what it buys is still the
+    // id, and what the id is for has grown from *"does this type have an
+    // `implements Display:` block"* to that plus `science-mir`'s
+    // `Builder::display_of`, which asks whether a candidate `display` was
+    // reached **through this interface** rather than through a `has:` block
+    // that happens to use the name.
     "Display",
+    // `Formatter`, §3.1's sink. It is here for `Array`'s reason and not for
+    // `Display`'s: `science-mir`'s f-string lowering has to *name* the type to
+    // give the `Formatter` it builds a local to live in, and a hand-assembled
+    // definition table with no prelude answers `None` here, which is the case
+    // that lowering falls back to `Unresolved::Display` for.
+    "Formatter",
     // `print` and `write`, which `check`'s `call` refuses to give more than one
     // argument. They are here for `panic`'s reason and not for `Display`'s: the
     // question is *"is this call the prelude's `print`"*, and a user is free to

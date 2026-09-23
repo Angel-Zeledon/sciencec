@@ -484,6 +484,7 @@ use science_resolve::hir::{BinaryOp, DefId, DefKind, DefTable, Literal, SelfKind
 use science_types::alias::Aliases;
 use science_types::assign::Coercions;
 use science_types::items::Declarations;
+use science_types::methods::{Form, Found};
 use science_types::thir::{self, Arm, ExprId, ExprKind, PatId, PatKind, StmtKind};
 use science_types::ty::{GenericArg, Ty, TyKind, Types};
 use science_types::Substitution;
@@ -521,6 +522,12 @@ const ARRAY_PUSH: &str = "science_array_push";
 const ARRAY_LEN: &str = "science_array_len";
 const PANIC_BYTES: &str = "science_panic_bytes";
 const PUSH_STR: &str = "science_string_push_str";
+/// `strings-formatting-and-docs.md` §3.1's `Formatter`, built over the
+/// accumulator: `science_formatter_init(&mut formatter, &mut accumulator)`.
+/// It takes an out-pointer rather than returning, which is `science-rt`'s
+/// decision and its own doc comment's reason; what it buys *here* is that the
+/// `Formatter` is an ordinary local this file can borrow twice.
+const FORMATTER_INIT: &str = "science_formatter_init";
 
 /// How one interpolation hole reaches its entry point.
 ///
@@ -2300,7 +2307,29 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         if self.context.decls.prelude().is(self.context.types, stripped, "String") {
             return false;
         }
-        !matches!(self.push_of(ty), Push::Missing)
+        if !matches!(self.push_of(ty), Push::Missing) {
+            return true;
+        }
+        // **And a type the builder cannot render but the *program* can**,
+        // which is the exclusion above with its second half restored.
+        // [`Builder::lower_fstring`] now has two answers for a
+        // [`Push::Missing`] hole — §3.1's `display`, or
+        // [`Unresolved::Display`] — so *"a type the builder cannot render
+        // would be rewritten into a call sequence that ends in an
+        // `Unresolved::Display`"* is only still true of the second. A type
+        // with a `display` reaches an executable through the rewrite and
+        // nothing else, so refusing to rewrite it would be refusing the whole
+        // feature.
+        //
+        // The cost the exclusion was protecting against is paid exactly where
+        // it was described and nowhere new: §1.6 makes a hole a borrow, so
+        // `print(v)` on a type that implements `Display` acquires a shared
+        // loan of `v` the author did not write. That is the loan `display`'s
+        // own `self` parameter would have taken had the author written
+        // `v.display(into)` by hand, and `science-regions`' `tests/narrowing.rs`
+        // — the fixture whose whole point is that its body contains one borrow
+        // — prints an `Int?`, which has no `display` and is unaffected.
+        self.display_of(ty).is_some()
     }
 
     /// `print(x)` where `x` is not a `String`, as `print(f"{x}")`.
@@ -2708,6 +2737,22 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                     let hole = *hole;
                     let hole_ty = self.thir.ty(hole);
                     let push = self.push_of(hole_ty);
+                    // §3.1's own answer to a hole the builder has no entry
+                    // point for, tried before [`Unresolved::Display`] is
+                    // reached for: the user wrote a `display`, so call it.
+                    if push == Push::Missing {
+                        if let Some(display) = self.display_of(hole_ty) {
+                            block = self.render_through_display(
+                                &dest,
+                                &discard,
+                                hole,
+                                display,
+                                block,
+                                span,
+                            );
+                            continue;
+                        }
+                    }
                     let (accumulator, next) = self.accumulator_ref(&dest, block, span);
                     block = next;
                     let (value, next) = match push {
@@ -2753,11 +2798,171 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// reference built from the node's type would be a second `Ty` for one
     /// place.
     fn accumulator_ref(&mut self, dest: &Place, block: BlockId, span: Span) -> (Operand, BlockId) {
-        let ty = self.place_ty(dest);
+        self.exclusive_ref(dest, block, span)
+    }
+
+    /// `mutable borrowed T` into a fresh temporary, for a place of any type.
+    ///
+    /// [`Builder::accumulator_ref`] was this function under a name that said
+    /// which place it was for; [`Builder::render_through_display`] needs the
+    /// same three statements for a `Formatter` local, twice, so the shape is
+    /// named once rather than written three times. The reference's type is
+    /// read off the *place* for §9's reason, unchanged.
+    fn exclusive_ref(&mut self, place: &Place, block: BlockId, span: Span) -> (Operand, BlockId) {
+        let ty = self.place_ty(place);
         let borrowed = self.context.types.borrowed(true, ty);
         let temp = self.temp(borrowed, span, block);
-        let block = self.borrow_place(Place::local(temp), true, dest.clone(), block, span, true);
+        let block = self.borrow_place(Place::local(temp), true, place.clone(), block, span, true);
         (Operand::Move(Place::local(temp)), block)
+    }
+
+    /// The `Display.display` a hole of this type would render through, when
+    /// the program wrote one with a body.
+    ///
+    /// # The decision
+    ///
+    /// A hole [`Builder::push_of`] has no entry point for is looked up in
+    /// [`science_types::methods::Methods`] for a `display` reached **through
+    /// the prelude's `Display`**, and only a candidate whose owner is a *type*
+    /// is answered with.
+    ///
+    /// # The reason
+    ///
+    /// `strings-formatting-and-docs.md` §4.1 makes `print` take `&any
+    /// Display`, and §3.1 says what `Display` is:
+    /// `def display(self, into: mutable borrowed Formatter)`. Until that
+    /// signature was declared there was no method to call and every such hole
+    /// was [`Unresolved::Display`]; it is declared now, in
+    /// `science-resolve`'s `builtins.rs`, so the honest answer for a type that
+    /// implements it is the call and not the refusal.
+    ///
+    /// **Three filters, each load-bearing.**
+    ///
+    /// *Through `Display` and not by name.* A type may have a `display` of its
+    /// own in a `has:` block that has nothing to do with the interface, and
+    /// calling it would be `print` dispatching on a name. [`Candidate::
+    /// interface`] is what tells the two apart, and it is compared against the
+    /// prelude's own `DefId` — `for` resolves `Iterate` the same way, and
+    /// `examples/06_traits.science`'s own comment explains why a name would
+    /// not do.
+    ///
+    /// *Exactly one candidate.* [`Found::Ambiguous`] and [`Found::Instances`]
+    /// are the checker's to resolve at a call site the author wrote; this is
+    /// not one, so there is nothing here to disambiguate with and the refusal
+    /// is the honest answer.
+    ///
+    /// *Owner is a type.* [`Builder::owner_is_a_type`]'s question, for
+    /// `lower_for`'s reason: a `display` whose owner is the `interface` is a
+    /// declaration with no body, or a default that needs monomorphising
+    /// against each implementor before it is a callee anything can emit.
+    /// `Display` declares no default, so today this filter only ever excludes
+    /// the bare declaration — which is what a `T: Display` bound inside a
+    /// generic body would find.
+    ///
+    /// # The cost
+    ///
+    /// **`any Display` is still [`Unresolved::Display`].** An interface object
+    /// has no head type for [`Methods::receiver`] to answer with; its
+    /// `display` is in a vtable slot, and reaching it is Decision 13's
+    /// dispatch rather than this lookup. So `print` of a `&any Display`
+    /// refuses where `print` of the concrete type behind it succeeds, and the
+    /// refusal names the construct.
+    fn display_of(&mut self, ty: Ty) -> Option<DefId> {
+        let ty = self.stripped(ty);
+        let interface = self.context.decls.prelude().get("Display")?;
+        let methods = self.context.decls.methods();
+        let head = methods.receiver(self.context.defs, self.context.types, ty)?;
+        let Found::One(candidate) = methods.lookup(head, "display", Form::Value) else {
+            return None;
+        };
+        if candidate.interface() != Some(interface) {
+            return None;
+        }
+        self.owner_is_a_type(candidate.method).then_some(candidate.method)
+    }
+
+    /// One hole, rendered by the user's own `display`: §3.1's three statements.
+    ///
+    /// ```text
+    /// _f = Formatter                       // a local, laid out by the backend
+    /// science_formatter_init(&mut _f, &mut accumulator)
+    /// Vector2::display(&hole, &mut _f)
+    /// ```
+    ///
+    /// **The `Formatter` is a local of this frame and not a value that
+    /// travels.** §2.6 of the note puts *"a `Formatter` the user can pass
+    /// around as a value in F0"* in the deliberately-absent column — it exists
+    /// as a parameter to `display` and nowhere else — so the shortest thing
+    /// that satisfies §3.1 is a temporary borrowed twice: once to be
+    /// initialised, once to be handed to `display`. Two borrows and not one
+    /// because the first ends with the `init` call; a single long-lived loan
+    /// would make the second a reborrow of a loan `science-regions` has no
+    /// reason to keep alive.
+    ///
+    /// **The accumulator is borrowed exclusively, which the `init` call then
+    /// stores.** That is the one place this lowering hands a borrow to
+    /// something that outlives the call: `science_formatter_init` writes the
+    /// pointer into the `Formatter`, and every `into.text(…)` inside `display`
+    /// writes through it. The loan is live for exactly as long as the
+    /// `Formatter` is, and both die at the end of this hole's statements,
+    /// which is what makes it sound without a region annotation nothing here
+    /// could express.
+    ///
+    /// **The receiver is a *shared* borrow**, because §3.1 writes bare `self`
+    /// and not `mutable self`: rendering a value does not change it. That is
+    /// [`Builder::borrow_hole`] unchanged — the same call the `Push::Pointer`
+    /// path makes for a `String` hole — so a `Copy` record and a borrowed one
+    /// reach `display` the same way.
+    fn render_through_display(
+        &mut self,
+        dest: &Place,
+        discard: &Place,
+        hole: ExprId,
+        display: DefId,
+        block: BlockId,
+        span: Span,
+    ) -> BlockId {
+        let Some(formatter_ty) = self.context.decls.prelude().ty(self.context.types, "Formatter")
+        else {
+            // No prelude means no `Formatter` to build, which is every
+            // hand-assembled definition table in this crate's own tests. There
+            // is no call to emit, so the hole falls back to the refusal it had
+            // before this function existed — reached by the caller, because
+            // `display_of` cannot have answered `Some` without a prelude
+            // either.
+            let (accumulator, block) = self.accumulator_ref(dest, block, span);
+            let (value, block) = self.borrow_hole(hole, block, span);
+            return self.emit_call(
+                discard.clone(),
+                Callee::Unresolved(Unresolved::Display),
+                vec![accumulator, value],
+                block,
+                span,
+            );
+        };
+        let formatter = Place::local(self.temp(formatter_ty, span, block));
+        let (accumulator, block) = self.accumulator_ref(dest, block, span);
+        let (sink, block) = self.exclusive_ref(&formatter, block, span);
+        let block = self.emit_call(
+            discard.clone(),
+            Callee::Runtime(FORMATTER_INIT),
+            vec![sink, accumulator],
+            block,
+            span,
+        );
+        let (value, block) = self.borrow_hole(hole, block, span);
+        let (into, block) = self.exclusive_ref(&formatter, block, span);
+        // `self_ty: None`, for the reason [`Callee::Def`]'s own doc gives: the
+        // receiver is `args[0]` and its type is readable from the operand.
+        // `display` takes a `self`, so this is a method call and not the
+        // associated-call shape that field exists for.
+        self.emit_call(
+            discard.clone(),
+            Callee::Def { def: display, self_ty: None },
+            vec![value, into],
+            block,
+            span,
+        )
     }
 
     /// §2.4's bounds check, emitted as statements before the place that needs

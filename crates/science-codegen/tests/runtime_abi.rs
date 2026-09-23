@@ -124,12 +124,19 @@ fn a_diverging_entry_point_is_never_called_for_its_value() {
 }
 
 #[test]
-fn the_nine_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
+fn the_eleven_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
     // The derived set, printed as the assertion rather than computed into one,
     // so that a reader comparing this file against `science-rt` §2 sees the
     // difference immediately. §2 listed eight; this was nine, and
     // `science_string_with_capacity` made it ten — read off its signature, not
     // added to a list.
+    //
+    // **Eleven now**, and the two that joined are §3.1's two `FormatSpec`
+    // returns: `science_formatter_spec` and `science_format_spec_default`.
+    // Neither was added to any list — a six-word record is MEMORY on every
+    // convention, so the classifier said so. The other five `Formatter` entry
+    // points return `()`, and `science_formatter_init` does so by taking an
+    // out-pointer rather than by luck.
     let mut derived: Vec<&str> =
         RUNTIME.iter().filter(|f| f.needs_sret(CAbi::SystemVAmd64)).map(|f| f.symbol).collect();
     derived.sort_unstable();
@@ -138,6 +145,8 @@ fn the_nine_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
         [
             "science_array_new",
             "science_array_with_capacity",
+            "science_format_spec_default",
+            "science_formatter_spec",
             "science_map_new",
             "science_read_file",
             "science_string_chars",
@@ -222,7 +231,16 @@ fn nothing_outside_the_table_is_callable() {
     // power at all, so neither stands in for an instruction sequence this
     // crate could have emitted instead — which is the one door this rule
     // leaves open.
-    assert_eq!(RUNTIME.len(), 59);
+    //
+    // **Sixty-six now**, and the seven that joined are §3.1's `Formatter`:
+    // `init`, `text`, `raw`, `number`, `integer`, `spec` and
+    // `science_format_spec_default`. They pass Decision 14's test the same way
+    // `**`'s two did — none of them stands in for an instruction sequence this
+    // crate could have emitted instead. Padding to a width with a fill
+    // character, grouping digits in threes and choosing between fixed and
+    // exponential form at a significant-figure count are a library, and §3.1
+    // asks for them by name and by signature.
+    assert_eq!(RUNTIME.len(), 66);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [
