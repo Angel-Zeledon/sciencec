@@ -307,14 +307,24 @@ def main():
 
     let records: Array[Record] be Array[Record].new()
     print(absence_surface(records))
-    print(failure_surface("science.toml"))
-    print(required("science.toml"))
 
-    let held be boxed(Record.new("alpha"))
-
-    for value in Countdown(remaining: 3):
-        print(value)
-
+    # **The file the three reads below need is one this program writes.**
+    # They used to name `science.toml`, which is this repository's own
+    # manifest and is not a file the corpus ships: in the checkout where this
+    # example's output was first recorded it happened to be sitting in the
+    # working directory, and in a fresh clone — or from any directory but that
+    # one — `read_file` failed and `required` panicked, which is a `panic` this
+    # example is not demonstrating. `write_file` is on §8's list of free
+    # functions anyway, so making the input costs the example nothing it was
+    # not already showing, and an example that reads only what it wrote reads
+    # the same bytes everywhere.
+    #
+    # Committing a `science.toml` to feed it was the other way, and it is
+    # worse than it looks: `package-manager.md`'s Decision 12 reserves that
+    # exact name for the manifest `sciencec` will parse, at the package root,
+    # and the package root *is* the directory holding it. An example's input
+    # must not be a file that one day configures the compiler reading it.
+    #
     # `store` returns the error alone, so there is one name to bind and one
     # question to ask.
     let write_err be store("out.txt", "contents")
@@ -323,9 +333,17 @@ def main():
     else:
         print("written")
 
+    print(failure_surface("out.txt"))
+    print(required("out.txt"))
+
+    let held be boxed(Record.new("alpha"))
+
+    for value in Countdown(remaining: 3):
+        print(value)
+
     # `load_record` returns the pair, and the value is known good once the
     # error has been tested and the def has not returned (§4.5).
-    let record, err be load_record("science.toml")
+    let record, err be load_record("out.txt")
     if err?:
         match err:
             Missing(path): print(path)

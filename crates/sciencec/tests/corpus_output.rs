@@ -104,7 +104,11 @@ enum Verdict {
     /// It built and `sciencec test` killed it rather than wait forever — see
     /// [`ran`].
     Hung,
-    /// It built, ran, and exited; this is what it printed.
+    /// It built and ran, and the **program** exited nonzero — a panic, a
+    /// failed `assert`, or a runtime abort. See [`ran`] for why this is not
+    /// [`Verdict::NotBuilt`].
+    Failed(String),
+    /// It built, ran, and exited 0; this is what it printed.
     Printed(String),
 }
 
@@ -147,6 +151,28 @@ enum Verdict {
 /// directory, and an example that one day *wants* a file beside it should be
 /// given one here, deliberately and by name, rather than inheriting whatever
 /// the checkout has lying around.
+///
+/// # Why a program that *aborts* is not folded into "does not build" either
+///
+/// The paragraph above fixed where an example runs and left a hole behind it
+/// that hid the same class of bug for as long as the fix has existed.
+/// `19_stdlib.science` called `required("science.toml")`, which `panic`s when
+/// the read fails, so in the empty directory this function hands it the
+/// program **aborted** — `SIGABRT`, exit nonzero. Nonzero was the whole of the
+/// question asked here, so the abort was read as `Verdict::NotBuilt`, the
+/// caller's `continue` skipped it in silence, and
+/// `examples/19_stdlib.stdout` — thirty-six lines pinning output that
+/// included the contents of an untracked manifest — went uncompared for as
+/// long. A stale pin that is never read passes forever, which is the one
+/// thing this file exists not to do.
+///
+/// A build failure and an abort look identical in the exit code and are
+/// nothing alike: one is an example the compiler cannot yet handle, which
+/// four files in this corpus are on purpose and other tests own, and the other
+/// is a program that this compiler built, ran, and got a wrong answer out of.
+/// They are told apart by the line `Session::run_test` prints: it reports a
+/// verdict — `test … ok` or `test … FAILED (…)` — only for a program it
+/// actually launched, and a file that never linked has no such line at all.
 fn ran(example: &Path) -> Verdict {
     let empty = std::env::temp_dir().join(format!(
         "science-corpus-{}-{}",
@@ -165,7 +191,12 @@ fn ran(example: &Path) -> Verdict {
         return Verdict::Hung;
     }
     if !output.status.success() {
-        return Verdict::NotBuilt;
+        let verdict =
+            text.lines().find(|line| line.starts_with("test ") && line.contains("FAILED"));
+        return match verdict {
+            Some(line) => Verdict::Failed(line.trim().to_owned()),
+            None => Verdict::NotBuilt,
+        };
     }
     Verdict::Printed(
         text.lines().filter(|line| !line.starts_with("test ")).collect::<Vec<_>>().join("\n"),
@@ -182,6 +213,7 @@ fn every_example_that_builds_has_its_output_pinned() {
     let mut unpinned = Vec::new();
     let mut wrong = Vec::new();
     let mut hung = Vec::new();
+    let mut aborted = Vec::new();
 
     for example in examples() {
         let name = example.file_name().expect("a name").to_string_lossy().into_owned();
@@ -237,6 +269,15 @@ fn every_example_that_builds_has_its_output_pinned() {
                 hung.push(name);
                 continue;
             }
+            Verdict::Failed(verdict) => {
+                // It builds, runs, and the program itself exits nonzero. Its
+                // output is a prefix of the run that was meant to happen, so
+                // comparing it against the pin would report a diff whose first
+                // line is true and whose cause is somewhere else; the abort is
+                // the finding. Same reasoning as the arm above, same shape.
+                aborted.push(format!("{name}\n  {verdict}"));
+                continue;
+            }
             Verdict::Printed(text) => text,
         };
         let path = expectation(&example);
@@ -275,6 +316,16 @@ fn every_example_that_builds_has_its_output_pinned() {
         "these examples build and then never exit — `sciencec test` killed them after its own \
          budget rather than hang this suite, which is the fix, but a build that no longer \
          terminates is still a regression and not a pass: {hung:?}"
+    );
+    assert!(
+        aborted.is_empty(),
+        "these examples build and run and the program exits nonzero. That is not `does not \
+         build` — the compiler produced this program — and it is not a wrong pin either, \
+         because a run that ends early has no full output to compare, so the pin beside it \
+         stops being read at all. Either the example depends on something this empty \
+         directory does not have, in which case the example must make what it reads rather \
+         than expect a checkout to have it, or the compiler got a wrong answer:\n{}",
+        aborted.join("\n")
     );
 }
 

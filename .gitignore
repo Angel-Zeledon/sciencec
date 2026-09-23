@@ -37,6 +37,12 @@ examples/*
 tests/**/*.exe
 tests/**/*.obj
 tests/**/*.o
+# `examples/19_stdlib.science` demonstrates `write_file` by writing `out.txt`
+# into the working directory, and now reads back what it wrote rather than a
+# file it hoped somebody's checkout had. Run from the repository root — which
+# is where a reader trying the corpus runs it — that lands here. Anchored, so
+# only the one this corpus produces is ignored.
+/out.txt
 
 # --- Agent worktrees -----------------------------------------------------
 # `.claude/worktrees/` holds git worktrees a background agent works in. Each
