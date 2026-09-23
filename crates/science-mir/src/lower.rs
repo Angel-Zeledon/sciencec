@@ -4241,16 +4241,30 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             ExprKind::Narrow(operand) => self.as_place(*operand, block),
             // A call's result has no storage until something gives it some —
             // every other arm here recurses to storage that already exists,
-            // and a call is the one expression that does not. It is
-            // materialised into a temporary the same way `operand`'s fallback
-            // already does for any place-less expression: `expr_into` lowers
-            // `ExprKind::Call` exactly as it would at the top level, so the
-            // call still runs once and its result becomes the temporary's
-            // whole value. `Builder::temp` registers that temporary and marks
-            // it storage-live the same as any other, so it is dropped exactly
-            // once, at its own scope's exit, by the elaboration `drops`
-            // already does for every local — a call's result asks that
-            // machinery for nothing new.
+            // and a call does not. It is materialised into a temporary the
+            // same way `operand`'s fallback already does for any place-less
+            // expression: `expr_into` lowers `ExprKind::Call` exactly as it
+            // would at the top level, so the call still runs once and its
+            // result becomes the temporary's whole value. `Builder::temp`
+            // registers that temporary and marks it storage-live the same as
+            // any other, so it is dropped exactly once, at its own scope's
+            // exit, by the elaboration `drops` already does for every local —
+            // a call's result asks that machinery for nothing new.
+            //
+            // **This arm is deliberately not widened to
+            // `ExprKind::MethodCall`, and `text.chars()` is why.** A `None`
+            // from here is not only "there is no place"; `borrow_source` reads
+            // it as *"this value is the loop's own, so give it a temporary
+            // with a storage-dead point"*, and §4.4's shared borrow of a `for`
+            // subject is taken only down the place path. Answering `Some` for
+            // a method call routes `for c in text.chars():` down that path and
+            // the `Chars` temporary the chain produced is then borrowed
+            // *shared* — for a `def next(mutable self)`. `iteration.rs`'s
+            // `a_subject_with_no_place_is_borrowed_through_a_temporary` and
+            // `the_next_call_reads_through_the_loops_reference` both fail on
+            // exactly that `Shared`/`Exclusive` swap, and they are right to.
+            // A base that genuinely needs storage asks for it where it needs
+            // it — see the `Field` arm below.
             ExprKind::Call { .. } => {
                 let ty = thir.expr(expr).ty;
                 let span = thir.expr(expr).span;
@@ -4260,10 +4274,39 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             }
             ExprKind::Field { base, field } => {
                 let field = (*field)?;
-                let (place, block) = self.as_place(*base, block)?;
-                // The arm above sees a narrowed base through to its storage
-                // because that is exact for storage — the same bytes at a
-                // smaller type. `record_of` and `field_ty` below ask a
+                // **A field projection needs storage for its base, so a base
+                // that has none of its own is given some here.** The arm above
+                // says why a call's result is materialised; `a.scaled(2.0).x`
+                // is the same sentence about a *method* call, and `V2(x: 1.0,
+                // y: 2.0).x`, `(if c: p else: q).x` and every other
+                // place-less base are the same sentence again. Materialising
+                // in this arm rather than widening the arm above is what keeps
+                // the answer local: `as_place` still says `None` for a method
+                // call to every other caller, so `borrow_source` still reads
+                // that `None` the way `for c in text.chars():` needs it read.
+                //
+                // **This cannot regress a program that compiles today**,
+                // because every route out of the `?` this replaces ends in a
+                // refusal and not in a behaviour: `expr_into`'s
+                // `Local | SelfValue | Field | Index` arm emits
+                // `Rvalue::Error`, `value_hole` and `borrow_source` fall back
+                // to lowering the same `Field` node and reach that same
+                // `Rvalue::Error`, and `SC0400` is what the author sees. The
+                // only programs this arm can change are the ones the backend
+                // refuses.
+                let (place, block) = match self.as_place(*base, block) {
+                    Some(found) => found,
+                    None => {
+                        let base_ty = thir.expr(*base).ty;
+                        let base_span = thir.expr(*base).span;
+                        let temp = self.temp(base_ty, base_span, block);
+                        let block = self.expr_into(Place::local(temp), *base, block);
+                        (Place::local(temp), block)
+                    }
+                };
+                // The `Narrow` arm above sees a narrowed base through to its
+                // storage because that is exact for storage — the same bytes
+                // at a smaller type. `record_of` and `field_ty` below ask a
                 // different question, though: which record owns this field,
                 // and at what type. Reading that off the place's *declared*
                 // type recomputes what Decision 25 already concluded on the

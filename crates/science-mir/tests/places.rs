@@ -442,6 +442,67 @@ fn a_field_of_a_calls_result_is_read_off_a_temporary() {
     );
 }
 
+/// The same sentence about a **method** call, which had no arm at all.
+///
+/// `a.scaled(2.0).x` passed `sciencec check` and reached the backend as
+/// `Rvalue::Error`: `as_place`'s materialising arm names `ExprKind::Call` and
+/// the `Field` arm's `as_place(base)` therefore answered `None` for an
+/// `ExprKind::MethodCall` base. Binding the result first worked, and a free
+/// function's result worked, which is what made the shape exactly this one.
+///
+/// **The arm above is not widened to `ExprKind::MethodCall`, and this test
+/// exists partly to say so.** A `None` from `as_place` is also how
+/// `borrow_source` learns that a `for` subject is a value the loop owns;
+/// answering `Some` for a method call turns `for c in text.chars():` into a
+/// *shared* borrow of the `Chars` temporary it then calls
+/// `def next(mutable self)` through — `iteration.rs`'s
+/// `a_subject_with_no_place_is_borrowed_through_a_temporary` and
+/// `the_next_call_reads_through_the_loops_reference` are that invariant, and
+/// they fail on exactly that swap. The storage is given in the `Field` arm,
+/// where it is needed, and nowhere else.
+#[test]
+fn a_field_of_a_method_calls_result_is_read_off_a_temporary() {
+    // `second: String` for the reason the test above gives: a fixture of two
+    // `Int`s would prove the projection and nothing about ownership, because
+    // there would be no drop to elaborate either way.
+    let source = concat!(
+        "type Pair:\n",
+        "    first: Int\n",
+        "    second: String\n",
+        "\n",
+        "Pair has:\n",
+        "    def again(self) -> Pair:\n",
+        "        Pair(first: self.first, second: \"two\")\n",
+        "\n",
+        "def f(p: Pair) -> Int:\n",
+        "    p.again().first\n",
+    );
+    let lowered = lower(source);
+    assert!(
+        !lowered.statements("f").iter().any(|s| s == "assign error"),
+        "a field of a method call's result degraded to a hole: {}",
+        lowered.dump("f")
+    );
+    assert!(
+        projections(&lowered, "f").contains(&"f".to_string()),
+        "the method call's result was not projected into a field: {}",
+        lowered.dump("f")
+    );
+    // Two owners and so two drops: `p`, the parameter this body owns, and the
+    // temporary `again()`'s result was materialised into. `.first` is read by
+    // `Copy`, so the temporary stays wholly initialised and its drop is
+    // unconditional — it releases the `String` its `second` holds once, and
+    // the count is what says the materialisation did not invent a second
+    // owner of the same buffer.
+    let drops = lowered.terminators("f").iter().filter(|kind| **kind == "drop").count();
+    assert_eq!(
+        drops,
+        2,
+        "the receiver and the method call's temporary are dropped once each: {}",
+        lowered.dump("f")
+    );
+}
+
 /// Presence-narrowing wraps a read as `ExprKind::Narrow(Local(r))`.
 /// `as_place`'s `Narrow` arm sees through to the raw local — correct for
 /// *storage* — but `record_of`/`field_ty` used to read the place's
