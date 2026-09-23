@@ -27,7 +27,8 @@ use science_diagnostics::{Diagnostics, FileId};
 use science_mir::mir::Body;
 use science_resolve::hir;
 use science_types::items::Declarations;
-use science_types::{check_crate, thir, Aliases, AtomOrder, Types};
+use science_types::ty::GenericArg;
+use science_types::{check_crate, thir, Aliases, AtomOrder, NormalForm, Types};
 
 // --- the harness ----------------------------------------------------------
 
@@ -1161,5 +1162,107 @@ def main():
              `{name}`: connecting the two is a symbol migration, not a rewiring"
         );
     }
+}
+
+/// [`Instance::const_arg`] recovers the const argument a const generic
+/// parameter is bound to.
+///
+/// # Why this is the boundary this test holds, and not the whole example
+///
+/// `examples/03_structs.science`'s `Grid[Int, 3, 3].area()` reads two const
+/// parameters — `ROWS`, `COLS` — as *values*, which `science-mir`'s
+/// `lower.rs` lowers to `mir::Constant::Item(param_def)` because neither is a
+/// `const` declaration (`Declarations::const_value` answers `None` for a
+/// const *parameter*) and neither is a `Ty` `science_mir::instantiate` could
+/// rewrite. `Instance::const_arg` is the lookup a backend needs to resolve
+/// that read once it knows which instance it is lowering — this test is
+/// where that lookup is asserted directly, against the two `DefId`s the real
+/// checker assigns `ROWS` and `COLS`, with an `Instance` built by hand.
+///
+/// **This is deliberately not an end-to-end build of the example.** The
+/// walk that would have to *discover* `Instance { def: area, args: [Int, 3,
+/// 3] }` from `main`'s call — [`Mono::collect`]'s `solve_call` — recovers a
+/// callee's arguments by unifying its **declared parameter and return
+/// types** against the call's actual ones (`crates/science-codegen/src/mono.rs`,
+/// `solve_call`'s own documentation: *"The callee's instantiation, recovered
+/// from the call site"*). `area`'s signature is `() -> Int`: no parameter to
+/// unify and a return type that names none of `T`, `ROWS`, `COLS`. Nothing
+/// in the call's MIR (`mir::Callee::Def(DefId)` carries no arguments at all —
+/// `science-mir`'s `instantiate.rs` module doc says so explicitly) says the
+/// receiver was written as `Grid[Int, 3, 3]` rather than any other
+/// instantiation, and nothing in `science-types`'s checker (`check.rs`'s
+/// `associated_call`, whose callee node is pushed at `Ty::ERROR` and never
+/// updated) keeps that fact either. Recovering it needs a change in one of
+/// those two crates — carrying the receiver's concrete type or arguments
+/// through the call — and both are out of this crate's reach. This test
+/// covers what *is* in reach: once an `Instance` names the right arguments,
+/// by whatever means, `const_arg` reads a const parameter's value out of it
+/// correctly.
+#[test]
+fn const_arg_recovers_a_bound_const_parameter() {
+    let source = "\
+type Grid[T, const ROWS: Int, const COLS: Int]:
+    cells: Array[T]
+
+Grid[T, const ROWS: Int, const COLS: Int] has:
+    def area() -> Int:
+        ROWS * COLS
+
+def main():
+    print(Grid[Int, 3, 3].area())
+";
+    let lowered = lower(source);
+
+    let area = lowered
+        .krate
+        .defs
+        .iter()
+        .find(|def| def.kind == hir::DefKind::Fn && def.name == "area")
+        .expect("`area` is declared")
+        .id;
+    // `ROWS` and `COLS` are declared twice over: once on `type Grid[..]:`
+    // and again on `Grid[..] has:`, which restates the record's parameters
+    // as its own `DefId`s (`check.rs`'s `const_param_ty` says so: "an `impl`
+    // block re-declares the type's parameters on the block ... the record's
+    // list is a *different* set of `DefId`s"). `area` reads the block's own
+    // copy, found through `block_generics` the same way
+    // `science_codegen::mono::generics_of` reads it.
+    let owner = lowered.decls.signature(area).and_then(|signature| signature.owner).expect("area has an owner block");
+    let block_generics = lowered.decls.block_generics(owner).expect("the block declares generics");
+    let rows = block_generics
+        .iter()
+        .find(|param| lowered.krate.defs.get(param.def).name == "ROWS")
+        .expect("`ROWS` is one of the block's generics")
+        .def;
+    let cols = block_generics
+        .iter()
+        .find(|param| lowered.krate.defs.get(param.def).name == "COLS")
+        .expect("`COLS` is one of the block's generics")
+        .def;
+    let instance = Instance {
+        def: area,
+        args: vec![
+            GenericArg::Error, // `T`: irrelevant to this test, so left unsolved rather than guessed.
+            GenericArg::Const(NormalForm::literal(3)),
+            GenericArg::Const(NormalForm::literal(3)),
+        ],
+        self_ty: None,
+    };
+
+    assert_eq!(
+        instance.const_arg(&lowered.decls, rows).and_then(|form| form.as_constant()),
+        Some(3),
+        "`ROWS` should read as the const argument bound in `instance.args`"
+    );
+    assert_eq!(
+        instance.const_arg(&lowered.decls, cols).and_then(|form| form.as_constant()),
+        Some(3),
+        "`COLS` should read as the const argument bound in `instance.args`"
+    );
+    assert_eq!(
+        instance.const_arg(&lowered.decls, area),
+        None,
+        "a definition that is not one of `area`'s own generic parameters binds nothing"
+    );
 }
 

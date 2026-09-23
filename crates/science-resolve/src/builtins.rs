@@ -143,8 +143,19 @@ const C_SCALARS: &[&str] = &[
 /// `Ty::ERROR` — so the loop variable of the most-written loop in the language
 /// had no type either, and `ty`'s §5 absorption made a range agree with
 /// everything it met anywhere else it was written.
+/// `Formatter` joins them for `strings-formatting-and-docs.md` §3.1:
+/// `Display.display(self, into: &mut Formatter)` needs a name for `into`'s
+/// type, and §3.1 gives `Formatter` a complete, closed method set — `text`,
+/// `raw`, `number`, `integer`, `spec` — which [`BLOCKS`] below transcribes.
+/// `Formatter` has no fields a program can name (its own representation is
+/// `science-rt`'s to pick, and `format.rs` there now does), so it is declared
+/// bare here exactly like `Array`, `Map` and `Box` beside it. `FormatSpec` —
+/// the record `spec()` returns — is *not* in this list: it has fields a
+/// program *can* name (§3.1's `fill`, `align`, `sign`, …), so it needs
+/// `DefKind::Record` and its own field declaration, which [`build`]'s
+/// `format_spec` gives it the way `ffi_view` already gives `Span` its two.
 const LIBRARY_TYPES: &[&str] =
-    &["Array", "Map", "Box", "Chars", "Range", "IoError", "TextError"];
+    &["Array", "Map", "Box", "Chars", "Range", "IoError", "TextError", "Formatter"];
 
 /// The interfaces the compiler knows about (§5.4).
 /// §5.4 lists seventeen, and the operator ones are load-bearing: "a scientific
@@ -290,12 +301,45 @@ const FFI_INTERFACES: &[&str] = &["CLayout"];
 
 /// `(choice type name, [(variant name, payload arity)])`.
 ///
-/// Empty since revision 2 §3. `Option[T]` became `T?` and `Result[T, E]`
-/// became the pair `-> (T, E?)`, which took `Some`, `None`, `Ok` and `Err`
-/// with them. The table stays because the prelude will have a choice type
-/// again and the machinery below is the part worth keeping; an empty table is
-/// also the honest record that these four names are *free*, not merely unused.
-const CHOICES: &[(&str, &[(&str, usize)])] = &[];
+/// Empty from revision 2 §3 until `strings-formatting-and-docs.md` §3.1 gave
+/// the prelude a reason to have one again: `Align`, `Sign`, `Code` and
+/// `Grouping` are `FormatSpec`'s four `choice` fields, and §3.1 names all
+/// four by name — *"with `Align`, `Sign`, `Code` and `Grouping` as `choice`
+/// types"* — although it gives their variants only as the characters of
+/// §2.1's grammar, not as Science identifiers. Every variant below is one of
+/// those characters, spelled out and in the grammar's own declaration order,
+/// which is not a second decision this file is taking: §2.1's `code`
+/// production already lists `f e E g G % d x X o b s` in exactly this order,
+/// so `Code`'s eight-to-twelfth variants are that order transcribed, the same
+/// move [`INTERFACE_DECLS`]' `Clone` entry makes for a signature no note
+/// spells in Science syntax. Every variant is payload-free — `<` needs no
+/// argument to be `<` — so every arity below is `0`.
+const CHOICES: &[(&str, &[(&str, usize)])] = &[
+    // `<` `>` `^`, §2.1's `align` production.
+    ("Align", &[("Left", 0), ("Right", 0), ("Center", 0)]),
+    // `+` `-` `' '`, §2.1's `sign` production.
+    ("Sign", &[("Plus", 0), ("Minus", 0), ("Space", 0)]),
+    // `f e E g G % d x X o b s`, §2.1's `code` production, in that order.
+    (
+        "Code",
+        &[
+            ("Fixed", 0),
+            ("Exp", 0),
+            ("ExpUpper", 0),
+            ("General", 0),
+            ("GeneralUpper", 0),
+            ("Percent", 0),
+            ("Decimal", 0),
+            ("Hex", 0),
+            ("HexUpper", 0),
+            ("Octal", 0),
+            ("Binary", 0),
+            ("Str", 0),
+        ],
+    ),
+    // `,` `_`, §2.1's `grouping` production.
+    ("Grouping", &[("Comma", 0), ("Underscore", 0)]),
+];
 
 // --- the declared surface -------------------------------------------------
 //
@@ -403,7 +447,7 @@ struct InterfaceDecl {
     methods: &'static [Method],
 }
 
-/// The interfaces that get a method, and why only five do.
+/// The interfaces that get a method, and why only six do.
 ///
 /// **Decision. An interface is declared with its methods only where a note
 /// gives the method's name and its types.** `Error.message` is
@@ -413,36 +457,54 @@ struct InterfaceDecl {
 /// §1.1's Decision 2, written out in Science in that note and transcribed
 /// below; `Clone.clone` is the fifth, and its own comment below says why it
 /// passes the same test although no note writes its signature in Science
-/// syntax. The other fourteen — `Add`, `Ord`, `Eq`, `Display` and the rest —
-/// are declared as **names with implementations and no methods**, which is the
+/// syntax. The other thirteen — `Add`, `Ord`, `Eq` and the rest — are
+/// declared as **names with implementations and no methods**, which is the
 /// whole of what the bound check needs: `methods`' §7 asks *"does `I64`
 /// implement `Ord`"* and never *"what is `Ord`'s method called"*.
 ///
-/// **The cost, stated: two operators still do not dispatch.** `check`'s §6
-/// wants *"a rule anywhere saying which method name each operator dispatches
-/// to"*, and for `< > <= >=` and for `print` there is none. Writing
-/// `Ord.compare -> Ordering` here would invent `Ordering` — a Level 1 type no
-/// note specifies — and `Ord` would need a third thing besides: a rule for how
-/// four operators sit over one `compare`, including what `F64`'s NaN does to a
-/// total order. `Display.display` is not in the same position: unlike
-/// `Ordering`, `Formatter` **is** specified, completely, by
-/// `strings-formatting-and-docs.md` §3.1 (`Formatter has: def text/raw/number/
-/// integer/spec`, plus `FormatSpec` and its four `choice` fields) — writing it
-/// here would not be inventing a signature, it would be transcribing one, the
-/// same move this file already made for `Clone.clone`. It stays undeclared
-/// anyway, because `Formatter`'s own type, `FormatSpec` and its four `choice`
-/// types (`Align`, `Sign`, `Code`, `Grouping`) would all have to land in this
-/// file first, and the runtime and `science-codegen-llvm` sides do not exist
-/// (`STDLIB-DECISIONS.md` §1 has the full account). A signature invented in
-/// passing is how a language acquires a design nobody argued for; `Ord`'s
-/// really would be invented, `Display`'s would not be, and both stay
-/// methodless here for now regardless — one for that reason, one because the
-/// dependency chain behind it is bigger than this file.
+/// **`Display.display` is the sixth, and it stood refused for three prior
+/// commits on a premise this file itself got wrong.** The refusal read
+/// *"writing `Display.display(Formatter)` would invent `Formatter`, a Level 1
+/// type no note specifies"* — but `strings-formatting-and-docs.md` §3.1 does
+/// specify it, completely: `Formatter has: def text/raw/number/integer/spec`,
+/// plus `FormatSpec` and its four `choice` fields, `Align`, `Sign`, `Code`,
+/// `Grouping`. `STDLIB-DECISIONS.md` §1 traces the error to its root — the
+/// comment conflated `Formatter` with `Ordering`, which really is
+/// unspecified — and recommends adopting §3.1 verbatim. That recommendation
+/// is now taken: `Formatter`, `FormatSpec` and the four `choice` types are
+/// declared above ([`LIBRARY_TYPES`], [`CHOICES`], [`Declarer::format_spec`]),
+/// so `Display.display`'s signature is transcribed rather than invented, the
+/// same move already made for `Clone.clone`.
 ///
-/// **What the fourteen do buy, now that the implementations are declared**, is
-/// the *requirement*: `check`'s `implements_operand` refuses `a < b` on a type
-/// that has no `implements Ord:` block without ever naming `Ord`'s method. The
-/// hole that is left is the dispatch and only the dispatch.
+/// **What this file's declaration does not reach.** `print`'s own lowering
+/// in `science-codegen-llvm` has no call site for a user `Display`
+/// implementation — `lower.rs`'s `lower_print` still special-cases the
+/// primitives it already knew about — and `science-types`' bound check is a
+/// different crate's to re-audit for the `WHOLLY_OPEN` question the next
+/// paragraph answers. Both are read, not touched, by this commit; see the
+/// session's own report for the measured account of what each would need.
+///
+/// **The `WHOLLY_OPEN` regression `Clone.clone` had to patch does not recur
+/// here, and that is checked rather than assumed.** Giving `Display` a
+/// method flips `Methods::surface_is_closed` for every type
+/// [`IMPLEMENTS`] lists against it — every numeric primitive, `Bool`,
+/// `Char`, `String`, `IoError`, `TextError` — the same mechanism that made
+/// `Clone.clone` add sixteen names to [`WHOLLY_OPEN`]. Every one of those
+/// `Display` implementors already implements `Clone` too (compare
+/// [`NUMERIC`] and the `Bool`/`Char`/`String`/`IoError`/`TextError` rows of
+/// [`IMPLEMENTS`]), so `Clone.clone` already closed all of them; `Display`'s
+/// method finds each surface already closed and changes nothing further.
+/// [`WHOLLY_OPEN`] is therefore unchanged by this declaration, and the full
+/// corpus run this session's report cites is what confirms it rather than a
+/// second table audit.
+///
+/// **What the thirteen still buy, now that the implementations are
+/// declared**, is the *requirement*: `check`'s `implements_operand` refuses
+/// `a < b` on a type that has no `implements Ord:` block without ever naming
+/// `Ord`'s method. `Ordering` is still unspecified, so `Ord`'s dispatch is
+/// still left open, and so is `<`'s. `check`'s §6 wants *"a rule anywhere
+/// saying which method name each operator dispatches to"*, and for `< > <=
+/// >=` there is still none.
 const INTERFACE_DECLS: &[InterfaceDecl] = &[
     InterfaceDecl {
         name: "Error",
@@ -599,6 +661,29 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
             recv: Some(SelfKind::Shared),
             params: &[],
             ret: Some(Ty::SelfTy),
+        }],
+    },
+    // --- `Display`, `strings-formatting-and-docs.md` §3.1 ----------------
+    //
+    // **The sixth interface to get a method, and the first whose signature
+    // this file once refused on a premise that was wrong.** §3.1 writes
+    // `interface Display: def display(self, into: mutable borrowed
+    // Formatter)` verbatim; `mutable borrowed Formatter` is the note's own
+    // pre-revision-2 spelling and `&mut Formatter` is `STDLIB-DECISIONS.md`
+    // §1.4's translation of it into the syntax this parser accepts today —
+    // the same translation [`Ty::MutRef`] performs for `IndexMutably.
+    // index_mutably` above. Nothing about the receiver or the argument is
+    // invented: `self` is shared (the note writes bare `self`, not `mutable
+    // self`), and `Formatter` is [`LIBRARY_TYPES`]'s new entry.
+    InterfaceDecl {
+        name: "Display",
+        generics: &[],
+        assoc: &[],
+        methods: &[Method {
+            name: "display",
+            recv: Some(SelfKind::Shared),
+            params: &[("into", Ty::MutRef(&Ty::Name("Formatter")))],
+            ret: None,
         }],
     },
 ];
@@ -1913,6 +1998,83 @@ impl Declarer<'_> {
             span: BUILTIN_SPAN,
         }));
     }
+
+    /// `FormatSpec`, at the `DefId` `build` already allocated as
+    /// `DefKind::Record`: `{ fill: Char, align: Align?, sign: Sign?, width:
+    /// Int?, precision: Int?, code: Code?, alternate: Bool, grouping:
+    /// Grouping? }`, in that field order — `strings-formatting-and-docs.md`
+    /// §3.1, transcribed rather than decided. §3.1's own words for the
+    /// eight: *"a plain record of nullable fields — `fill: Char, align:
+    /// Align?, sign: Sign?, width: Int?, precision: Int?, code: Code?,
+    /// alternate: Bool, grouping: Grouping?`"*.
+    ///
+    /// Not routed through [`Declarer::block`], for [`Declarer::ffi_view`]'s
+    /// own reason one level up: what is missing is the type's own field
+    /// declaration, and `FormatSpec` has no generic parameter to give
+    /// [`Declarer::interface`]'s shape a reason either — it is `ffi_view`
+    /// minus the one thing `ffi_view` is generic *for*.
+    fn format_spec(&mut self, def: DefId) {
+        let generics = HashMap::new();
+        let assocs = HashMap::new();
+        let scope = Scope { generics: &generics, assocs: &assocs, owner: Some(def) };
+        let fill_ty = self.ty(&CHAR, &scope);
+        let align_ty = self.ty(&Ty::Opt(&Ty::Name("Align")), &scope);
+        let sign_ty = self.ty(&Ty::Opt(&Ty::Name("Sign")), &scope);
+        let width_ty = self.ty(&Ty::Opt(&INT), &scope);
+        let precision_ty = self.ty(&Ty::Opt(&INT), &scope);
+        let code_ty = self.ty(&Ty::Opt(&Ty::Name("Code")), &scope);
+        let alternate_ty = self.ty(&BOOL, &scope);
+        let grouping_ty = self.ty(&Ty::Opt(&Ty::Name("Grouping")), &scope);
+        let fields = vec![
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "fill", BUILTIN_SPAN, Some(def)),
+                ty: fill_ty,
+                span: BUILTIN_SPAN,
+            },
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "align", BUILTIN_SPAN, Some(def)),
+                ty: align_ty,
+                span: BUILTIN_SPAN,
+            },
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "sign", BUILTIN_SPAN, Some(def)),
+                ty: sign_ty,
+                span: BUILTIN_SPAN,
+            },
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "width", BUILTIN_SPAN, Some(def)),
+                ty: width_ty,
+                span: BUILTIN_SPAN,
+            },
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "precision", BUILTIN_SPAN, Some(def)),
+                ty: precision_ty,
+                span: BUILTIN_SPAN,
+            },
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "code", BUILTIN_SPAN, Some(def)),
+                ty: code_ty,
+                span: BUILTIN_SPAN,
+            },
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "alternate", BUILTIN_SPAN, Some(def)),
+                ty: alternate_ty,
+                span: BUILTIN_SPAN,
+            },
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "grouping", BUILTIN_SPAN, Some(def)),
+                ty: grouping_ty,
+                span: BUILTIN_SPAN,
+            },
+        ];
+        self.item(hir::ItemKind::Record(hir::Record {
+            def,
+            generics: Vec::new(),
+            where_clause: Vec::new(),
+            fields,
+            span: BUILTIN_SPAN,
+        }));
+    }
 }
 
 /// Allocates the prelude into `defs`.
@@ -1936,6 +2098,14 @@ pub fn build(defs: &mut DefTable) -> Prelude {
     for name in PRIMITIVES.iter().chain(LIBRARY_TYPES).chain(C_SCALARS) {
         declare(defs, DefKind::Primitive, name, &mut prelude);
     }
+    // `FormatSpec` is `DefKind::Record`, not `DefKind::Primitive` like the
+    // rest of the list above — it has fields a program can name (§3.1's
+    // `fill`, `align`, …) — but it is a bare top-level prelude name unlike
+    // `Span`/`MutableSpan`, which live under `ffi.` alone. Declared here,
+    // before `Declarer` is built, the same way every other name above is;
+    // given its fields below, once `Align`, `Sign`, `Code` and `Grouping`
+    // exist for [`Declarer::format_spec`] to name.
+    let format_spec_def = declare(defs, DefKind::Record, "FormatSpec", &mut prelude);
     // The second spelling of a primitive that has two. No `alloc`: the whole
     // point is that `Int` and `I64` are one `DefId` and therefore one `Ty`,
     // which is what makes them unify. Pushing a name is all a second spelling
@@ -2010,6 +2180,10 @@ pub fn build(defs: &mut DefTable) -> Prelude {
     // has a chance to ask `needs_drop` about one.
     declarer.ffi_view(span_def, false);
     declarer.ffi_view(mutable_span_def, true);
+    // `FormatSpec` gets its fields the same way, once `Align`, `Sign`,
+    // `Code` and `Grouping` — named by [`CHOICES`], processed above — exist
+    // for it to name.
+    declarer.format_spec(format_spec_def);
     for decl in INTERFACE_DECLS {
         declarer.interface(decl);
     }

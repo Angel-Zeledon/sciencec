@@ -481,6 +481,61 @@ impl Instance {
             _ => None,
         }))
     }
+
+    /// The normal form this instance binds its const parameter `param` to,
+    /// if `param` is one of `self.def`'s declared const generic parameters
+    /// and this instance supplies a const argument for it.
+    ///
+    /// # Why this exists, here
+    ///
+    /// `science_mir::instantiate` substitutes every [`Ty`] a body mentions,
+    /// but a const generic parameter read as a *value* — `ROWS * COLS` inside
+    /// `Grid[T, const ROWS: Int, const COLS: Int]`'s `area` — lowers to
+    /// `mir::Constant::Item(param_def)` (`science-mir`'s `lower.rs`, the
+    /// `ExprKind::Item` arm: a const parameter is not a `const` declaration,
+    /// so `Declarations::const_value` answers `None` for it and the fallback
+    /// spelling — a def named as a value — is what survives into the body).
+    /// No [`Ty`] sits at that site for `instantiate` to rewrite, so the read
+    /// is still there, naming `param_def`, in the instantiated body.
+    ///
+    /// **This cannot be resolved inside `science-mir` from here.** This
+    /// crate does not own that one — `science-mir::Body`'s fields are
+    /// `pub(crate)` and it exposes no way to rewrite an `Operand` from
+    /// outside itself, only [`science_mir::map_types`]'s walk over `Ty`. The
+    /// backend is where a `Constant::Item` naming a value is finally read
+    /// ([`science-codegen-llvm`]'s `lower_operand`), and it already knows
+    /// which [`Instance`] it is lowering (by mangled symbol, through
+    /// [`MonoSet::get`]) — so it is handed this lookup instead of the map
+    /// [`Substitution`] keeps private, and asks it exactly where the old
+    /// refusal was: *"a const parameter named as a value, with no literal to
+    /// read it as."*
+    pub fn const_arg(&self, decls: &Declarations, param: DefId) -> Option<NormalForm> {
+        generics_of(decls, self.def).into_iter().zip(&self.args).find_map(|(generic, arg)| {
+            if generic.def != param {
+                return None;
+            }
+            match arg {
+                GenericArg::Const(form) => Some(form.clone()),
+                _ => None,
+            }
+        })
+    }
+}
+
+/// The generic parameters of a definition, block first: the enclosing
+/// `has`/`implements` block's, then the definition's own. See [`Instance`]'s
+/// own documentation for the order and [`Mono::generics_of`] for the method
+/// this is factored out of — [`Instance::const_arg`] needs the same list and
+/// has no [`Mono`] to ask.
+fn generics_of(decls: &Declarations, def: DefId) -> Vec<hir::GenericParam> {
+    let Some(signature) = decls.signature(def) else { return Vec::new() };
+    let mut out: Vec<hir::GenericParam> = signature
+        .owner
+        .and_then(|owner| decls.block_generics(owner))
+        .map(<[hir::GenericParam]>::to_vec)
+        .unwrap_or_default();
+    out.extend(signature.generics.iter().cloned());
+    out
 }
 
 /// Why an instance could not be turned into a symbol.
@@ -2260,14 +2315,7 @@ impl<'a> Mono<'a> {
 
     /// The generic parameters of a definition, block first. See [`Instance`].
     fn generics_of(&self, def: DefId) -> Vec<hir::GenericParam> {
-        let Some(signature) = self.decls.signature(def) else { return Vec::new() };
-        let mut out: Vec<hir::GenericParam> = signature
-            .owner
-            .and_then(|owner| self.decls.block_generics(owner))
-            .map(<[hir::GenericParam]>::to_vec)
-            .unwrap_or_default();
-        out.extend(signature.generics.iter().cloned());
-        out
+        generics_of(self.decls, def)
     }
 
     /// The substitution a body is walked under: `Self`, the block's associated
