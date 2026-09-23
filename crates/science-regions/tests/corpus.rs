@@ -237,7 +237,7 @@ fn the_kitchen_sink_no_longer_moves_a_value_that_is_still_borrowed() {
         else {
             continue;
         };
-        if !matches!(callee, science_mir::mir::Callee::Def(def)
+        if !matches!(callee, science_mir::mir::Callee::Def { def, .. }
             if checked.krate.defs.get(*def).name == "describe")
         {
             continue;

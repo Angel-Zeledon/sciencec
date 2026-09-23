@@ -1346,7 +1346,7 @@ impl<'a> Mono<'a> {
                 Callee::Indirect(_) => set.holes.indirect_calls += 1,
                 Callee::Unresolved(_) => set.holes.unresolved_callees += 1,
                 Callee::Runtime(_) => set.holes.runtime_calls += 1,
-                Callee::Def(def) => {
+                Callee::Def { def, .. } => {
                     if self.defs.get(*def).kind == DefKind::ExternFn {
                         set.holes.extern_calls += 1;
                         self.check_c_boundary(*def, args, &function_values, span, set);

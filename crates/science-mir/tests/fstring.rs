@@ -52,7 +52,7 @@ fn calls(body: &Body) -> Vec<String> {
                     }
                     _ => (*symbol).to_string(),
                 },
-                Callee::Def(_) => "call".to_string(),
+                Callee::Def { .. } => "call".to_string(),
                 Callee::Indirect(_) => "indirect".to_string(),
                 Callee::Unresolved(which) => format!("unresolved {which:?}"),
             }),

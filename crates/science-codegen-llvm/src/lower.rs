@@ -7415,7 +7415,7 @@ impl<'a> Lowerer<'a> {
         insts: &mut Vec<ExtInst>,
     ) -> Result<Terminator, Unlowered> {
         let def = match callee {
-            mir::Callee::Def(def) => *def,
+            mir::Callee::Def { def, .. } => *def,
             // Half of `science-mir`'s own refusal — *"a call through a
             // closure"* — closes here. The other half, a call through a
             // *captured* closure's value, never reaches this arm at all: its

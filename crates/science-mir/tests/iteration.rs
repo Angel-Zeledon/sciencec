@@ -34,7 +34,7 @@ use support::lower;
 fn is_next(lowered: &support::Lowered, callee: &Callee) -> bool {
     match callee {
         Callee::Unresolved(Unresolved::IterateNext) => true,
-        Callee::Def(def) => lowered.krate.defs.get(*def).name == "next",
+        Callee::Def { def, .. } => lowered.krate.defs.get(*def).name == "next",
         _ => false,
     }
 }
@@ -376,7 +376,7 @@ def f():
     let body = lowered.body("f");
     let resolved = body.blocks().any(|(_, block)| {
         matches!(&block.terminator.kind,
-            TerminatorKind::Call { callee: Callee::Def(def), .. }
+            TerminatorKind::Call { callee: Callee::Def { def, .. }, .. }
                 if lowered.krate.defs.get(*def).name == "next")
     });
     assert!(resolved, "the loop's `next` call should be a `Callee::Def` naming `Countdown::next`");

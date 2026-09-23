@@ -318,7 +318,7 @@ fn call(
     span: Span,
 ) {
     let def = match callee {
-        Callee::Def(def) => Some(*def),
+        Callee::Def { def, .. } => Some(*def),
         Callee::Indirect(_) | Callee::Runtime(_) | Callee::Unresolved(_) => None,
     };
     match def.and_then(|def| summaries.lookup(def)) {

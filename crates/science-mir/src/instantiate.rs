@@ -51,15 +51,26 @@
 //!
 //! # What is deliberately *not* rewritten
 //!
-//! A [`Callee::Def`] still names a definition and carries no arguments, and
-//! that is not an omission. `science_codegen::mono`'s `solve_call` recovers a
-//! callee's instantiation by unifying its declared signature against the
-//! **actual** types of the arguments at the call — and after this function has
-//! run, those actual types are concrete. So the instance a call needs is
-//! recoverable from the instantiated body by the inference that already
-//! exists, and adding arguments to [`Callee`] would be a second spelling of a
-//! fact the body already carries. `science-mir`'s own §10 item 2 is the same
-//! rule one level down.
+//! A [`Callee::Def`] still names a definition and carries no *generic
+//! arguments*, and that is not an omission. `science_codegen::mono`'s
+//! `solve_call` recovers a callee's instantiation by unifying its declared
+//! signature against the **actual** types of the arguments at the call — and
+//! after this function has run, those actual types are concrete. So the
+//! instance a call needs is recoverable from the instantiated body by the
+//! inference that already exists, and adding an argument *list* to [`Callee`]
+//! would be a second spelling of a fact the body already carries.
+//! `science-mir`'s own §10 item 2 is the same rule one level down.
+//!
+//! **The one fact the body does not carry is [`Callee::Def`]'s `self_ty`, and
+//! that one *is* rewritten.** `Grid[Int, 3, 3].area()` unifies against
+//! nothing — `area` takes no `self` and its `() -> Int` mentions none of the
+//! block's parameters — so the receiver's type is the only evidence there is,
+//! and the checker puts it in the callee. Inside a generic body that type can
+//! still name the body's own parameters (`Grid[T, N, M].area()` written in a
+//! generic `def`), which is exactly the shape this function exists to
+//! substitute, so it goes through `f` like every other [`Ty`] here. Leaving it
+//! alone would hand `solve_call` a `TyKind::Param` where a concrete type is
+//! the whole point.
 //!
 //! [`Callee`]: crate::mir::Callee
 //! [`Callee::Def`]: crate::mir::Callee::Def
@@ -203,7 +214,8 @@ where
     }
 }
 
-/// **A [`Callee::Def`] is left alone on purpose**; the module header says why.
+/// **A [`Callee::Def`]'s generic arguments are left alone on purpose and its
+/// `self_ty` is not**; the module header says why.
 fn instantiate_callee<F>(
     callee: &mut Callee,
     f: &mut F,
@@ -213,7 +225,11 @@ where
 {
     match callee {
         Callee::Indirect(operand) => instantiate_operand(operand, f),
-        Callee::Def(_) | Callee::Runtime(_) | Callee::Unresolved(_) => Ok(()),
+        Callee::Def { self_ty: Some(self_ty), .. } => {
+            *self_ty = f(*self_ty)?;
+            Ok(())
+        }
+        Callee::Def { self_ty: None, .. } | Callee::Runtime(_) | Callee::Unresolved(_) => Ok(()),
     }
 }
 

@@ -103,7 +103,11 @@ fn terminator(defs: &DefTable, kind: &TerminatorKind) -> String {
         TerminatorKind::Call { callee, args, destination, target } => {
             let args: Vec<String> = args.iter().map(|arg| operand(defs, arg)).collect();
             let name = match callee {
-                Callee::Def(def) => defs.get(*def).name.to_string(),
+                // The `self_ty` beside the definition is not printed: this
+                // dump has a `DefTable` and no `Types`, so a `Ty` here could
+                // only be shown as the opaque index it is, and the name is
+                // what a reader of a call is checking.
+                Callee::Def { def, .. } => defs.get(*def).name.to_string(),
                 Callee::Indirect(operand) => format!("({})", self::operand(defs, operand)),
                 Callee::Runtime(name) => format!("runtime {name}"),
                 Callee::Unresolved(which) => format!("<unresolved {which:?}>"),

@@ -1884,7 +1884,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         // `iterate` and the *iterator* is what the loop advances. `Array` has
         // no `iterate` yet, which is why it is still on the unresolved side.
         let callee = match next_method.filter(|def| self.owner_is_a_type(*def)) {
-            Some(def) => Callee::Def(def),
+            Some(def) => Callee::Def { def, self_ty: None },
             None => Callee::Unresolved(Unresolved::IterateNext),
         };
         self.terminate(
@@ -2228,7 +2228,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             }
         }
         let callee = match self.thir.expr(callee).kind {
-            ExprKind::Item(def) => Callee::Def(def),
+            ExprKind::Item(def) => Callee::Def { def, self_ty: None },
             _ => {
                 let (operand, next) = self.operand(callee, block);
                 block = next;
@@ -2237,7 +2237,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         };
         // §10's builder again, for the one call in the language that renders
         // its argument. See [`Builder::lower_print_rendered`].
-        if let Callee::Def(def) = callee {
+        if let Callee::Def { def, .. } = callee {
             if let [only] = args {
                 if self.prints_by_rendering(def, *only) {
                     return self.lower_print_rendered(dest, def, *only, block, span);
@@ -2353,14 +2353,20 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             // carries, which is the same answer as before this function
             // existed.
             let (operand, next) = self.operand(arg, block);
-            return self.emit_call(dest, Callee::Def(print), vec![force_copy(operand)], next, span);
+            return self.emit_call(
+                dest,
+                Callee::Def { def: print, self_ty: None },
+                vec![force_copy(operand)],
+                next,
+                span,
+            );
         };
         let rendered = self.temp(string, span, block);
         let parts = [thir::FStringPart::Hole(arg)];
         let block = self.lower_fstring(Place::local(rendered), &parts, block, span);
         self.emit_call(
             dest,
-            Callee::Def(print),
+            Callee::Def { def: print, self_ty: None },
             vec![Operand::Copy(Place::local(rendered))],
             block,
             span,
@@ -2395,7 +2401,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// use-after-free a user finds.
     fn has_no_signature(&self, callee: &Callee) -> bool {
         match callee {
-            Callee::Def(def) => self.context.decls.signature(*def).is_none(),
+            Callee::Def { def, .. } => self.context.decls.signature(*def).is_none(),
             // A closure's type *is* its signature — `collections-and-chains.md`
             // §1.2 makes it `(A) -> B` — so `borrowed T` in it is a declared
             // parameter like any other and there is nothing unknown to be
@@ -2420,7 +2426,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         span: Span,
     ) -> BlockId {
         let callee = match method {
-            Some(def) => Callee::Def(def),
+            Some(def) => Callee::Def { def, self_ty: None },
             // Decision 11's lookup. `Unresolved::Method` is the price, and §5's
             // exception is why every operand below is a copy.
             None => Callee::Unresolved(Unresolved::Method),
@@ -2514,7 +2520,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         }
 
         let diverges = match &callee {
-            Callee::Def(def) => {
+            Callee::Def { def, .. } => {
                 let signature = self.context.decls.signature(*def);
                 match signature {
                     Some(signature) => {

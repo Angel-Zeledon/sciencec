@@ -592,7 +592,33 @@ pub struct Terminator {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Callee {
     /// A function or a method, resolved to its definition.
-    Def(DefId),
+    ///
+    /// `self_ty` is the type the call was *reached through*, when it was
+    /// reached through one: `Grid[Int, 3, 3].area()` names `area` and carries
+    /// `Grid[Int, 3, 3]` beside it. `None` is every call that names a function
+    /// directly — `make_doc()` — and every method call, where the receiver is
+    /// `args[0]` and its type is already readable from the operand.
+    ///
+    /// **Why the variant has a field rather than the call site having a side
+    /// table.** An associated function of a generic type takes no `self` and
+    /// its signature need mention none of the block's parameters: `area`'s is
+    /// `() -> Int`, so `science_codegen::mono`'s `solve_call` — which recovers
+    /// a callee's arguments by unifying declared types against actual ones —
+    /// has nothing to unify and leaves `T`, `ROWS` and `COLS` unsolved. The
+    /// receiver's concrete type is the only evidence at that call site, the
+    /// checker computes it (`check`'s `associated_call`), and before this
+    /// field there was nowhere between the two to put it. It is the move
+    /// [`thir::ExprKind::MethodCall`]'s `method` and [`thir::ExprKind::For`]'s
+    /// `next` already are, one IR down.
+    ///
+    /// [`thir::ExprKind::MethodCall`]: science_types::thir::ExprKind::MethodCall
+    /// [`thir::ExprKind::For`]: science_types::thir::ExprKind::For
+    Def {
+        /// The definition called.
+        def: DefId,
+        /// The concrete receiver type, at an associated call. See above.
+        self_ty: Option<Ty>,
+    },
     /// A value of closure type, called.
     Indirect(Operand),
     /// Decision 5's runtime entry point: *"in F0, a whole-array operation
@@ -950,7 +976,9 @@ impl Body {
     pub fn callees(&self) -> Vec<DefId> {
         let mut out = Vec::new();
         for (_, block) in self.blocks() {
-            if let TerminatorKind::Call { callee: Callee::Def(def), .. } = block.terminator.kind {
+            if let TerminatorKind::Call { callee: Callee::Def { def, .. }, .. } =
+                block.terminator.kind
+            {
                 out.push(def);
             }
         }
