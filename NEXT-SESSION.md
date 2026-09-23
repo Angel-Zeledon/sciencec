@@ -95,24 +95,29 @@ taparlo.
 
 Es el último por construcción. No es una tarea: es la unión de tres.
 
-## Un bug de corrección, aparte de los ejemplos
+## Un bug de corrección, aparte de los ejemplos — **cerrado**
 
-**`BUG-field-of-method-result.md`** en la raíz. `a.scaled(2.0).x` —leer un campo
-del resultado de una llamada a **método**— pasa `check` y el backend lo rechaza.
-Ligarlo a un nombre primero funciona; con una **función libre** también funciona.
+**`BUG-field-of-method-result.md`** en la raíz. `a.scaled(2.0).x` y
+`h.items()[0]` —leer un campo o un índice del resultado de una llamada a
+**método**— pasaban `check` y el backend los rechazaba con `SC0400`. Los dos
+arms de `as_place` que lo necesitaban (`Field` e `Index`) materializan hoy una
+base sin lugar propio en un temporal.
 
-Está localizado exacto: `as_place` en `science-mir` materializa el resultado de
-un `ExprKind::Call` en un temporal y **no tiene arm para `MethodCall`**.
+El documento se conserva porque dos de las tres cosas que se aprendieron ahí son
+**callejones sin salida**, y borrarlo es invitar a recorrerlos otra vez:
 
-**Dos arreglos probados y ambos fallaron**, con su evidencia en el documento.
-No los repitas sin información nueva:
-
-1. Ampliar el arm a ambos tipos → rompe `for c in text.chars():`, que *depende*
-   de que un método no tenga lugar.
-2. Materializar sólo en el arm de `Field` → deja `science-mir` en 130/0 y
-   **cuelga los tests de arrays**.
-
-El cuelgue de (2) es lo que hay que entender antes de intentar un tercero.
+1. §3: ampliar el arm de `ExprKind::Call` a `MethodCall` rompe
+   `for c in text.chars():`, que *depende* de que un método no tenga lugar. Es
+   un invariante real, no un snapshot por actualizar.
+2. §4: el "cuelgue de los tests de arrays" **no existía**. Era el daemon de
+   verificación de macOS serializando el primer arranque de cada binario recién
+   enlazado, contra el presupuesto de diez segundos de `harness::RUN_BUDGET`.
+   Si volvés a ver un timeout en un solo test de ejecución, volcá el MIR con y
+   sin el cambio y comparalo antes de creerle.
+3. §5.1: lo único que el arreglo de `Index` **sí** cambia en un programa que hoy
+   compila es `h.items()[0] be 5` — un destino de asignación que `check` acepta
+   y que antes se descartaba en silencio. Sigue sin efecto, pero ahora el índice
+   se verifica. Que el front end acepte ese destino queda abierto.
 
 ## Reglas que esta sesión pagó caro por aprender
 

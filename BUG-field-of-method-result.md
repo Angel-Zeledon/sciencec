@@ -1,10 +1,11 @@
 # A field read off a method call's result does not lower
 
-**Status: FIXED.** `crates/science-mir/src/lower.rs`, `Builder::as_place`, the
-`ExprKind::Field` arm. Regression test:
-`a_field_of_a_method_calls_result_is_read_off_a_temporary` in
+**Status: FIXED**, and so is §5's `ExprKind::Index` half, which was left open
+when the rest of this was written. `crates/science-mir/src/lower.rs`,
+`Builder::as_place`, the `ExprKind::Field` and `ExprKind::Index` arms.
+Regression test: `a_field_of_a_method_calls_result_is_read_off_a_temporary` in
 `crates/science-mir/tests/places.rs`, beside the free-function sibling it was
-named after.
+named after, and three more for the index — see §5.
 
 Kept rather than deleted, because two of the three things learned here are
 about *dead ends*, and a deleted document is an invitation to walk them again.
@@ -30,10 +31,10 @@ def main():
 `sciencec check` exited 0; `sciencec build` refused with `SC0400` — *"its MIR is
 `Rvalue::Error`"*. It now builds, runs, prints `2.0` and exits 0.
 
-`cargo test -p science-mir` is 130/0, `cargo test -p science-codegen-llvm
---features llvm --test arrays` is 15/15, and `cargo test --workspace --features
-llvm` is **2232 passed, 0 failed** — the 2231 baseline plus the one test added
-below.
+`cargo test -p science-mir` was 130/0, `cargo test -p science-codegen-llvm
+--features llvm --test arrays` 15/15, and `cargo test --workspace --features
+llvm` **2232 passed, 0 failed** — the 2231 baseline plus the one test added
+below. Those are that commit's numbers; §5 re-measures after the index half.
 
 ## 1. What it was
 
@@ -163,12 +164,12 @@ for the same `arrays` suite varied 6.1 s to 9.8 s across consecutive runs here.
 unchanged, suspect the queue before the compiler.** The cheap discriminator is
 measurement 2 above: dump the MIR with and without the change and diff it.
 
-## 5. Left open: the same gap in the `Index` arm
+## 5. The same gap in the `Index` arm — **closed**
 
-`as_place`'s `ExprKind::Index` arm still calls `self.as_place(*base, block)?`,
-so an index whose *base* is a method call is the same bug, unfixed.
-**Reproduced, not inferred** — this program exits 0 from `sciencec check` and is
-refused by `sciencec build` with the same `SC0400`:
+`as_place`'s `ExprKind::Index` arm called `self.as_place(*base, block)?` too, so
+an index whose *base* had no place of its own was the same bug. The program that
+reproduced it exited 0 from `sciencec check` and was refused by `sciencec build`
+with the same `SC0400`:
 
 ```science
 type Holder:
@@ -183,10 +184,115 @@ def main():
     print(f"{h.items()[0]}")
 ```
 
-The same fallback would fix it and §2's argument would carry over unchanged.
-It is named rather than done because indexing is where the bounds check and the
-element borrow live, it wants its own test in `places.rs` and its own execution
-test, and none of that was in this bug's scope.
+It now builds, prints `1` and exits 0. The arm takes §2's fallback verbatim.
+
+`cargo test -p science-mir` is **133/0** (130 plus the three below),
+`cargo test -p science-codegen-llvm --features llvm --test arrays` is **17/17**
+(15 plus the two below), and `cargo test --workspace --features llvm` is **2241
+passed, 0 failed** — 2236 measured on this tree with the change reverted, plus
+the five tests added.
+
+### 5.1 §2's second property does **not** carry over unchanged
+
+§2 claims the `Field` arm *"cannot regress a program that compiles today"*,
+because every route out of the `?` it replaced ended in a refusal. That was
+checked again for `Index` rather than assumed, and it is **not** true. There are
+seven callers of `as_place`; six of them turn a `None` on an `ExprKind::Index`
+into `expr_into`'s `Rvalue::Error` and an `SC0400`, directly or through one
+hop — `expr_into` itself, `operand`'s fallback, `value_hole` (which delegates to
+`operand`), `borrow_source`, `lower_match`'s scrutinee, and `lower_for`'s
+subject, which reaches `borrow_source`. The seventh does not.
+
+`StmtKind::Assign`'s target takes `None` to mean *"the resolver and the checker
+both already reported this"* and **drops the target on the floor**, evaluating
+only the value into a discarded temporary. But `sciencec check` accepts
+`h.items()[0] be 5`, so nothing reported it. Measured, before the change:
+
+```
+$ sciencec check assign.science  → 0
+$ sciencec build assign.science  → 0
+$ ./assign                       → "done", exit 0
+```
+
+A program that builds, runs, and silently does nothing. After the change the
+target is a real place — the element of the temporary the base was materialised
+into — so the base is evaluated, `bounds_check` runs over it, and the write
+lands in storage that dies at the end of the statement. Still no lasting effect,
+because a method's returned array *is* a temporary and there is nothing else the
+sentence could mean, and `./assign` still prints `done` and exits 0. The one
+observable difference is that an out-of-range index in that position now panics
+where it used to be discarded:
+
+```
+$ ./assign_oob   # h.items()[i] be 5, i = 99
+panic: index out of bounds       (was: "done", exit 0)
+```
+
+**That is the right way round** — an index that is evaluated is bounds-checked,
+everywhere — but it is a behaviour change on a program that compiles today, and
+§2's *"the only programs this arm can change are the ones the backend refuses"*
+is a sentence about the `Field` arm and not about this one. Whether the front
+end should accept an index into a temporary as an assignment target at all is a
+separate question, and is left open.
+
+### 5.2 What the bounds check and the element borrow actually do here
+
+This was split out on the ground that indexing is where those two live. They
+were measured, not assumed. The MIR of `def f(h: Holder) -> Int: h.items()[1]`:
+
+```
+    borrow 1: shared of _2,      reserved bb1[3]     # the length borrow
+    borrow 2: shared of _2[_4],  reserved bb3[1]     # the element borrow
+  bb0:  _2 = items(move _3) -> bb1                   # the materialised base
+  bb1:  _6 = runtime science_array_len(move _5) -> bb2
+  bb2:  if copy _9 then bb3 else bb4
+  bb3:  _11 = borrowed _2[_4] (borrow 2)  …  drop _2 -> bb5
+  bb4:  _10 = runtime science_panic_bytes("index out of bounds") -> diverges
+```
+
+Both name `_2`, the temporary the call's result went into, and both sit inside
+its storage-live range. `bounds_check`'s `is_array` is asked of that place and
+answers yes, so the guard is emitted for this path exactly as for `xs[i]`; it
+fires at runtime at both ends, which `arrays.rs` runs.
+
+**One consequence worth stating, because it looks like a new refusal and is
+not.** Reading an element goes through `read_ergonomic`, which builds a real
+`&Int` at the element's address — so `let one be h.items()[1]` binds a reference
+into an array that dies at the close of the statement that built it, and
+`science-regions` now reports `SC0333`, *"this expression is borrowed for longer
+than this expression exists"*. Before the change the same line was `SC0400`.
+Both are refusals; the new one is rule 5 telling the truth about the lowering
+rather than the backend reporting a hole. `print(f"{h.items()[1]}")`,
+`h.items()[0] + h.items()[2]` and `h.names()[0].length()` all read the element
+within the statement and all run.
+
+### 5.3 The tests
+
+`crates/science-mir/tests/places.rs`, beside the `Field` pair:
+
+- `an_index_of_a_method_calls_result_is_read_off_a_temporary`
+- `an_index_of_a_method_calls_result_is_bounds_checked`
+- `the_element_borrow_of_an_indexed_method_call_names_the_temporary`
+
+All three were run against the unfixed arm and all three fail on it, with the
+hole itself as the message:
+
+```
+assertion `left == right` failed: expected one element borrow: fn f:
+  bb0:
+    StorageLive(_2)
+    _2 = {error}
+```
+
+`crates/science-codegen-llvm/tests/arrays.rs`, which builds, links and runs:
+
+- `an_index_of_a_method_calls_result_builds_and_runs` — three ascending indices,
+  a `String` element, and an arithmetic use, all off a method call's result
+- `an_index_out_of_bounds_panics_on_a_method_calls_result` — both ends
+
+§3's invariant is untouched and stays untouched: the storage is still given in
+the two arms that need it and the `ExprKind::Call` arm is still not widened, so
+`iteration.rs`'s two loop-borrow tests are green without being looked at.
 
 Two things the fix does now handle, checked by running them: a record literal's
 field (`V2(x: 3.0, y: 4.0).x` prints `3.0`) and a chain

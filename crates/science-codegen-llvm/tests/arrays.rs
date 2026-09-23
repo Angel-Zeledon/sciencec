@@ -477,3 +477,84 @@ fn pop_on_an_empty_array_of_strings_writes_nothing() {
         "false\n"
     );
 }
+
+/// An index whose **base has no place of its own**: `h.items()[0]`.
+///
+/// §5 of `BUG-field-of-method-result.md` left this reproduced and unfixed —
+/// `sciencec check` exited 0 and `sciencec build` refused with `SC0400`,
+/// because `as_place`'s `ExprKind::Index` arm gave up on a place-less base
+/// exactly as its `Field` arm used to. The MIR half is
+/// `science-mir/tests/places.rs`'s three `an_index_of_a_method_call…` tests;
+/// this is the half that runs.
+///
+/// Three ascending indices, for `an_index_reads_and_writes_the_element_it_names`'s
+/// reason one screen up: a base that was materialised at the wrong moment, or
+/// twice, shifts every element by the same amount, and a test that read one
+/// index would agree with it. The `String` array is the composition that says
+/// the temporary is dropped once — a second owner of the same buffer traps on
+/// the way out, which `prints` catches as an exit status and not as a line.
+#[test]
+fn an_index_of_a_method_calls_result_builds_and_runs() {
+    assert_eq!(
+        prints(
+            "index-method-result",
+            "type Holder:\n\
+             \x20   n: Int\n\
+             \n\
+             Holder has:\n\
+             \x20   def items(self) -> Array[Int]:\n\
+             \x20       [10, 20, 30]\n\
+             \n\
+             \x20   def names(self) -> Array[String]:\n\
+             \x20       [\"alpha\", \"beta\"]\n\
+             \n\
+             def main():\n\
+             \x20   let h be Holder(n: 0)\n\
+             \x20   print(f\"{h.items()[0]} {h.items()[1]} {h.items()[2]}\")\n\
+             \x20   print(f\"{h.names()[1]} {h.names()[0].length()}\")\n\
+             \x20   print(f\"{h.items()[0] + h.items()[2]}\")\n",
+        ),
+        "10 20 30\nbeta 5\n40\n"
+    );
+}
+
+/// §2.4's bounds check fires over the temporary too, at both ends.
+///
+/// This is the reason the `Index` arm was split out of the `Field` one rather
+/// than assumed to follow from it: a field projection needs no guard and an
+/// index does. `bounds_check` reads the length through a borrow of whatever
+/// place it is handed, so a base materialised after the check — or a check
+/// skipped because `is_array` was asked of the wrong place — would print the
+/// right answer for every in-range index and index behind the buffer for the
+/// rest. Both ends, for `an_index_out_of_bounds_panics_at_either_end`'s reason:
+/// only the negative one says the comparison is unsigned.
+#[test]
+fn an_index_out_of_bounds_panics_on_a_method_calls_result() {
+    for index in ["3", "-1"] {
+        let source = format!(
+            "type Holder:\n\
+             \x20   n: Int\n\
+             \n\
+             Holder has:\n\
+             \x20   def items(self) -> Array[Int]:\n\
+             \x20       [10, 20, 30]\n\
+             \n\
+             def main():\n\
+             \x20   let h be Holder(n: 0)\n\
+             \x20   let i be {index}\n\
+             \x20   print(f\"{{h.items()[i]}}\")\n",
+        );
+        let dir = scratch("arrays", "bounds-method-result");
+        require_runtime();
+        let built = lower(&source).build_at(&executable(&dir, "bounds-method-result"), OptLevel::O2);
+        let ran = run(&built);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_ne!(ran.status, Some(0), "index {index} did not fail");
+        assert!(
+            ran.stderr.contains("index out of bounds"),
+            "index {index} failed without saying which check fired: {}",
+            ran.stderr
+        );
+        assert_eq!(ran.stdout, "", "nothing was printed before the panic");
+    }
+}

@@ -7,7 +7,11 @@
 
 mod support;
 
-use science_mir::mir::{Local, Place, Projection, Rvalue, StatementKind};
+use science_mir::mir::{
+    Callee, Constant, Local, LocalKind, Operand, Place, Projection, Rvalue, StatementKind,
+    TerminatorKind,
+};
+use science_resolve::hir::Literal;
 use science_types::ty::Ty;
 use support::lower;
 
@@ -499,6 +503,223 @@ fn a_field_of_a_method_calls_result_is_read_off_a_temporary() {
         drops,
         2,
         "the receiver and the method call's temporary are dropped once each: {}",
+        lowered.dump("f")
+    );
+}
+
+/// One fixture for the three tests below, because they are three assertions
+/// about one lowering and a second copy of the program would be a second thing
+/// to keep in step.
+///
+/// `label: String` on the receiver for the reason the two tests above give — a
+/// record of scalars would prove the projection and nothing about ownership —
+/// and `Array of Int` for the same reason on the other side: the temporary the
+/// method's result is materialised into owns a heap buffer, so its drop is a
+/// real one and a count can tell a second owner from none.
+const INDEX_OF_A_METHOD_CALL: &str = concat!(
+    "type Holder:\n",
+    "    n: Int\n",
+    "    label: String\n",
+    "\n",
+    "Holder has:\n",
+    "    def items(self) -> Array[Int]:\n",
+    "        [1, 2, 3]\n",
+    "\n",
+    "def f(h: Holder) -> Int:\n",
+    "    h.items()[1]\n",
+);
+
+/// Every message a body hands to `science_panic_bytes`, in block order.
+/// `division.rs`'s own helper, for the other guard that reports through it.
+fn panics(lowered: &support::Lowered, name: &str) -> Vec<String> {
+    lowered
+        .body(name)
+        .blocks()
+        .filter_map(|(_, block)| match &block.terminator.kind {
+            TerminatorKind::Call { callee: Callee::Runtime("science_panic_bytes"), args, .. } => {
+                match args.first() {
+                    Some(Operand::Const(Constant::Literal(Literal::Str(text)))) => {
+                        Some(text.clone())
+                    }
+                    _ => Some(String::from("<not a literal>")),
+                }
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The local a [`Callee::Def`] call's result was written into — the storage the
+/// base had to be given, named by the one thing that can name it.
+fn call_destination(lowered: &support::Lowered, name: &str) -> Local {
+    let mut found = lowered.body(name).blocks().filter_map(|(_, block)| {
+        match &block.terminator.kind {
+            TerminatorKind::Call { callee: Callee::Def { .. }, destination, .. } => {
+                Some(destination.local)
+            }
+            _ => None,
+        }
+    });
+    let one = found.next().expect("the fixture calls exactly one Science function");
+    assert!(found.next().is_none(), "the fixture calls exactly one Science function");
+    one
+}
+
+/// Every `Rvalue::Ref` whose referent ends in an index — the element borrow.
+fn element_borrows(lowered: &support::Lowered, name: &str) -> Vec<Place> {
+    let mut out = Vec::new();
+    for (_, block) in lowered.body(name).blocks() {
+        for statement in &block.statements {
+            let StatementKind::Assign { rvalue: Rvalue::Ref { place, .. }, .. } = &statement.kind
+            else {
+                continue;
+            };
+            if matches!(place.projection.last(), Some(Projection::Index { .. })) {
+                out.push(place.clone());
+            }
+        }
+    }
+    out
+}
+
+/// The `Field` arm's sentence about an **index**, which is where `as_place`'s
+/// last `?` on a place-less base was.
+///
+/// `h.items()[0]` passed `sciencec check` and reached the backend as
+/// `Rvalue::Error` — §5 of `BUG-field-of-method-result.md` reproduced it and
+/// left it — because `as_place`'s `ExprKind::Index` arm gave up on a base with
+/// no place of its own exactly as the `Field` arm used to.
+///
+/// **The arm above is still not widened to `ExprKind::MethodCall`**, for the
+/// reason the test above states and `iteration.rs`'s two loop-borrow tests
+/// enforce: a `None` from `as_place` is also how `borrow_source` learns a `for`
+/// subject is the loop's own. The storage is given where it is needed and
+/// nowhere else, which is now two arms rather than one.
+#[test]
+fn an_index_of_a_method_calls_result_is_read_off_a_temporary() {
+    let lowered = lower(INDEX_OF_A_METHOD_CALL);
+    assert!(
+        !lowered.statements("f").iter().any(|s| s == "assign error"),
+        "an index of a method call's result degraded to a hole: {}",
+        lowered.dump("f")
+    );
+    assert!(
+        projections(&lowered, "f").contains(&"i".to_string()),
+        "the method call's result was not projected into an index: {}",
+        lowered.dump("f")
+    );
+    // Two owners, two drops: `h`, whose `label` is a `String`, and the
+    // `Array of Int` the call's result was materialised into. The element is
+    // read by `Copy`, so the array stays wholly initialised and its drop is
+    // unconditional — it releases the buffer once, and the count is what says
+    // the materialisation did not invent a second owner of it.
+    let drops = lowered.terminators("f").iter().filter(|kind| **kind == "drop").count();
+    assert_eq!(
+        drops,
+        2,
+        "the receiver and the method call's temporary are dropped once each: {}",
+        lowered.dump("f")
+    );
+}
+
+/// §2.4's bounds check is emitted over the *temporary*, which is the half of
+/// this that `Field` could not have carried over.
+///
+/// A field projection needs no guard; an index does, and `bounds_check` reads
+/// the length through a borrow of the place it is given. If the base were
+/// materialised anywhere but in front of the check — or if the check were
+/// skipped because `is_array` was asked of the wrong place — this body would
+/// still have its index projection and still print the right answer for every
+/// index that happens to be in range.
+#[test]
+fn an_index_of_a_method_calls_result_is_bounds_checked() {
+    let lowered = lower(INDEX_OF_A_METHOD_CALL);
+    let body = lowered.body("f");
+    assert_eq!(
+        panics(&lowered, "f"),
+        vec!["index out of bounds"],
+        "the guard was not emitted for a place-less base: {}",
+        lowered.dump("f")
+    );
+
+    // The length is read through a borrow of the materialised temporary, and
+    // not of the receiver or of anything else in scope. `science_array_len`'s
+    // argument is the reference; the reference's own referent is the array.
+    let base = call_destination(&lowered, "f");
+    let reference = body
+        .blocks()
+        .find_map(|(_, block)| match &block.terminator.kind {
+            TerminatorKind::Call { callee: Callee::Runtime("science_array_len"), args, .. } => {
+                args.first().and_then(|arg| arg.place()).map(|place| place.local)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no length call: {}", lowered.dump("f")));
+    let referent = body
+        .blocks()
+        .flat_map(|(_, block)| &block.statements)
+        .find_map(|statement| match &statement.kind {
+            StatementKind::Assign { place, rvalue: Rvalue::Ref { place: referent, .. } }
+                if place.local == reference =>
+            {
+                Some(referent.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the length call's argument is not a borrow"));
+    assert_eq!(
+        referent,
+        Place::local(base),
+        "the length was read off something other than the call's own temporary: {}",
+        lowered.dump("f")
+    );
+}
+
+/// The element borrow names the temporary the call's result went into.
+///
+/// This is the other half `Field` could not have carried: reading `xs[i]` goes
+/// through `read_ergonomic`, which builds a real `&Int` at the element's
+/// address, so an index of a place-less base produces a reference *into* the
+/// materialised storage. Rooting it anywhere else — a second temporary holding
+/// a copy, say — would be a reference to a value nothing else owns, and every
+/// in-range read would still print the right number.
+///
+/// **It is also why `let one be h.items()[1]` is now `SC0333` rather than
+/// `SC0400`.** The reference outlives the array it points into; the array dies
+/// at the close of the statement that built it. That diagnostic is rule 5
+/// telling the truth about this lowering, and the borrow this test names is
+/// the loan it is about.
+#[test]
+fn the_element_borrow_of_an_indexed_method_call_names_the_temporary() {
+    let lowered = lower(INDEX_OF_A_METHOD_CALL);
+    let body = lowered.body("f");
+    let borrows = element_borrows(&lowered, "f");
+    assert_eq!(borrows.len(), 1, "expected one element borrow: {}", lowered.dump("f"));
+    let borrow = &borrows[0];
+
+    let base = call_destination(&lowered, "f");
+    assert_eq!(
+        borrow.local,
+        base,
+        "the element was borrowed out of something other than the call's own \
+         temporary: {}",
+        lowered.dump("f")
+    );
+    assert_eq!(
+        body.local_decl(base).kind,
+        LocalKind::Temp,
+        "the base must be storage this lowering introduced, which the author \
+         cannot name: {}",
+        lowered.dump("f")
+    );
+    assert_eq!(borrow.projection.len(), 1, "no step belongs above the index: {}", lowered.dump("f"));
+    // The invariant `index_temporaries_are_assigned_once` states, asked again
+    // on the path that builds the base as well as the index: `Projection::Index`
+    // equality is *the same temporary means the same element*, and a base that
+    // is itself materialised is the shape most likely to reuse a slot.
+    assert!(
+        body.index_temps_are_single_assignment(),
+        "an index temporary was written twice: {}",
         lowered.dump("f")
     );
 }

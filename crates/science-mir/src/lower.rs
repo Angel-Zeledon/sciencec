@@ -4469,7 +4469,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             // `the_next_call_reads_through_the_loops_reference` both fail on
             // exactly that `Shared`/`Exclusive` swap, and they are right to.
             // A base that genuinely needs storage asks for it where it needs
-            // it — see the `Field` arm below.
+            // it — see the `Field` and `Index` arms below.
             ExprKind::Call { .. } => {
                 let ty = thir.expr(expr).ty;
                 let span = thir.expr(expr).span;
@@ -4560,7 +4560,46 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             }
             ExprKind::Index { base, index } => {
                 let index = *index;
-                let (place, block) = self.as_place(*base, block)?;
+                // **An index needs storage for its base too, for the `Field`
+                // arm's reason and by the `Field` arm's means.** `h.items()[0]`
+                // was the same `Rvalue::Error` as `a.scaled(2.0).x`, because
+                // this arm's `?` gave up on a base with no place of its own.
+                // Materialising here rather than widening the `ExprKind::Call`
+                // arm above keeps the same locality: `as_place` still answers
+                // `None` for a method call to every *other* caller, so
+                // `for c in text.chars():` still reads that `None` the way
+                // `borrow_source` needs it read.
+                //
+                // **Unlike the `Field` arm, this one is not free**, and the
+                // difference is worth stating where it lives. Every route out
+                // of the `Field` arm's `?` ended in a refusal; one route out of
+                // this one does not. `h.items()[0] be 5` — an assignment whose
+                // *target* is an index into a place-less base — passes
+                // `sciencec check` and reaches `StmtKind::Assign`'s `None`
+                // branch, which evaluates the value into a discarded temporary
+                // and drops the target on the floor: it builds, it runs, and it
+                // does nothing, silently. With this fallback the target becomes
+                // a real place — the element of the temporary the base was
+                // materialised into — so the base is evaluated, `bounds_check`
+                // runs over it, and the write lands in storage that dies at the
+                // end of the statement. Still no lasting effect, because a
+                // method's returned array *is* a temporary and there is nothing
+                // else for it to mean, but now the index is checked, so an
+                // out-of-range one panics where it used to be discarded. That
+                // is a behaviour change on a program that compiles today, and
+                // it is the right way round: an index that is evaluated is
+                // bounds-checked, everywhere, and the front end accepting such
+                // a target at all is the separate question.
+                let (place, block) = match self.as_place(*base, block) {
+                    Some(found) => found,
+                    None => {
+                        let base_ty = thir.expr(*base).ty;
+                        let base_span = thir.expr(*base).span;
+                        let temp = self.temp(base_ty, base_span, block);
+                        let block = self.expr_into(Place::local(temp), *base, block);
+                        (Place::local(temp), block)
+                    }
+                };
                 let place = self.auto_deref(place);
                 let index_ty = thir.ty(index);
                 let span = thir.expr(index).span;
