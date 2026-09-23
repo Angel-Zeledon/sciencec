@@ -388,7 +388,7 @@ fn read_anywhere(
             ExprKind::Present(operand) => mentions(body, *operand, &wanted),
             // Exclusion 2, and the two refusals to guess: a method call has no
             // parameter type to compare against, so any argument to one counts.
-            ExprKind::Call { callee, args } => {
+            ExprKind::Call { callee, args, .. } => {
                 args.iter().enumerate().any(|(at, arg)| {
                     mentions(body, *arg, &wanted)
                         && argument_takes_error(body, decls, types, coercions, *callee, at)

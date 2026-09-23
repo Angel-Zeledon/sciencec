@@ -1179,25 +1179,24 @@ def main():
 /// where that lookup is asserted directly, against the two `DefId`s the real
 /// checker assigns `ROWS` and `COLS`, with an `Instance` built by hand.
 ///
-/// **This is deliberately not an end-to-end build of the example.** The
-/// walk that would have to *discover* `Instance { def: area, args: [Int, 3,
-/// 3] }` from `main`'s call — [`Mono::collect`]'s `solve_call` — recovers a
-/// callee's arguments by unifying its **declared parameter and return
-/// types** against the call's actual ones (`crates/science-codegen/src/mono.rs`,
-/// `solve_call`'s own documentation: *"The callee's instantiation, recovered
-/// from the call site"*). `area`'s signature is `() -> Int`: no parameter to
-/// unify and a return type that names none of `T`, `ROWS`, `COLS`. Nothing
-/// in the call's MIR (`mir::Callee::Def(DefId)` carries no arguments at all —
-/// `science-mir`'s `instantiate.rs` module doc says so explicitly) says the
-/// receiver was written as `Grid[Int, 3, 3]` rather than any other
-/// instantiation, and nothing in `science-types`'s checker (`check.rs`'s
-/// `associated_call`, whose callee node is pushed at `Ty::ERROR` and never
-/// updated) keeps that fact either. Recovering it needs a change in one of
-/// those two crates — carrying the receiver's concrete type or arguments
-/// through the call — and both are out of this crate's reach. This test
-/// covers what *is* in reach: once an `Instance` names the right arguments,
-/// by whatever means, `const_arg` reads a const parameter's value out of it
-/// correctly.
+/// **The instance is built by hand here, and that is still the right scope
+/// for this test.** It asserts one lookup — given arguments, read a const
+/// parameter's value — and it should keep passing whatever the walk that
+/// *discovers* those arguments does. That the walk now discovers them is the
+/// test below this one,
+/// [`an_associated_call_on_a_generic_type_is_solved_from_its_receiver`], and
+/// the two are deliberately separate: this one would go on being true if the
+/// discovery broke, which is exactly what makes it useful when it does.
+///
+/// **What used to stand here, and why it is gone.** This note read *"this is
+/// deliberately not an end-to-end build of the example"*, because
+/// `mir::Callee::Def(DefId)` carried nothing beside the definition and
+/// `check`'s `associated_call` computed the receiver's concrete type and
+/// threw it away — so no evidence that `Grid[Int, 3, 3]` rather than any
+/// other instantiation was written ever reached this crate, and `area`'s
+/// `() -> Int` gave `solve_call` nothing to unify. `Callee::Def` now carries
+/// a `self_ty` and `thir::ExprKind::Call` now carries the one the checker
+/// computed, so the recovery this note called out of reach is in reach.
 #[test]
 fn const_arg_recovers_a_bound_const_parameter() {
     let source = "\
@@ -1265,5 +1264,78 @@ def main():
         None,
         "a definition that is not one of `area`'s own generic parameters binds nothing"
     );
+}
+
+/// The walk **discovers** `area[Int, 3, 3]` from `Grid[Int, 3, 3].area()`.
+///
+/// # The evidence this depends on, and where it comes from
+///
+/// `area` takes no `self` and its signature is `() -> Int`. The call lowers
+/// to `_n = area()`: no arguments, no receiver, and a destination whose type
+/// is `Int`. Every source [`Mono::solve_call`] reads — declared parameters
+/// against actual operands, declared return against the destination — is
+/// therefore empty or uninformative, and `T`, `ROWS` and `COLS` all came out
+/// of `assemble_instance` as [`Unsolved::Parameter`].
+///
+/// The one fact that decides them is the receiver the author wrote, and
+/// nothing derives it: `mir::Callee::Def`'s `self_ty` carries it, fed by
+/// `thir::ExprKind::Call`'s field of the same name, which `check`'s
+/// `associated_call` fills from the lookup it already had to do. Matching the
+/// block's declared self type `Grid[T, ROWS, COLS]` against it solves all
+/// three at once — the same match the `has_receiver` branch makes against
+/// `args[0]`, for a call that has no `args[0]`.
+///
+/// **So this test fails the moment that channel is cut anywhere along it**,
+/// which is the property worth pinning: the field is invisible in the MIR
+/// dump and nothing else in this repository would notice it going to `None`.
+#[test]
+fn an_associated_call_on_a_generic_type_is_solved_from_its_receiver() {
+    let source = "\
+type Grid[T, const ROWS: Int, const COLS: Int]:
+    cells: Array[T]
+
+Grid[T, const ROWS: Int, const COLS: Int] has:
+    def area() -> Int:
+        ROWS * COLS
+
+def main():
+    print(Grid[Int, 3, 3].area())
+";
+    let mut lowered = lower(source);
+    let set = lowered.mono(RootSet::EntryPoint);
+
+    let areas: Vec<&str> = set
+        .emission_order()
+        .filter(|item| item.instance.def == area_of(&lowered))
+        .map(|item| item.description.as_str())
+        .collect();
+    assert_eq!(areas.len(), 1, "one call, one instance: {}", set.render());
+    let description = areas[0];
+    assert!(description.contains('3'), "the const arguments should be `3`: {description}");
+    assert!(
+        description.contains("I64"),
+        "the type argument should be the `Int` the receiver wrote: {description}"
+    );
+
+    // The same fact from the other side: no parameter of `area` was left for
+    // `assemble_instance` to give up on.
+    let unsolved: Vec<&Unsolved> = set
+        .holes()
+        .unsolved
+        .iter()
+        .filter(|hole| matches!(hole, Unsolved::Parameter { def, .. } if *def == area_of(&lowered)))
+        .collect();
+    assert!(unsolved.is_empty(), "{unsolved:?}\n{}", set.render());
+}
+
+/// `area`'s definition in the fixture above.
+fn area_of(lowered: &Lowered) -> hir::DefId {
+    lowered
+        .krate
+        .defs
+        .iter()
+        .find(|def| def.kind == hir::DefKind::Fn && def.name == "area")
+        .expect("`area` is declared")
+        .id
 }
 

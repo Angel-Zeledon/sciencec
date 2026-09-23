@@ -100,9 +100,22 @@
 //! **The fix is one field**, and it is named here rather than worked around
 //! quietly: `ExprKind::Call` and `ExprKind::MethodCall` should carry the
 //! `Vec<GenericArg>` the checker solved, and [`science_mir::TerminatorKind::Call`]
-//! should carry it down. That crate is not this one's to edit. Until then the
-//! recovery is the whole of what this pass knows, and every hole it leaves is
-//! counted in [`Holes`] rather than assumed away.
+//! should carry it down. Until then the recovery is the whole of what this
+//! pass knows, and every hole it leaves is counted in [`Holes`] rather than
+//! assumed away.
+//!
+//! **One field of that shape now exists, and it is not the whole of it.**
+//! `thir::ExprKind::Call` and `science_mir::mir::Callee::Def` carry a
+//! `self_ty: Option<Ty>` — the type an *associated* call was reached through,
+//! and nothing else. It was added for the one call the recovery above cannot
+//! reach at all rather than merely reach expensively:
+//! `Grid[Int, 3, 3].area()`, where `area` takes no `self` and its `() -> Int`
+//! mentions none of the block's parameters, so there is no argument, no
+//! receiver and no return type to unify and every parameter came out
+//! [`Unsolved::Parameter`]. [`Mono::solve_call`] matches the block's declared
+//! self type against it, first, and the other three costs above are unchanged:
+//! this is evidence the unification did not have, not a replacement for the
+//! unification.
 //!
 //! # 3. The key is `MonoKey`, and the type-argument half beside it
 //!
@@ -1346,14 +1359,21 @@ impl<'a> Mono<'a> {
                 Callee::Indirect(_) => set.holes.indirect_calls += 1,
                 Callee::Unresolved(_) => set.holes.unresolved_callees += 1,
                 Callee::Runtime(_) => set.holes.runtime_calls += 1,
-                Callee::Def { def, .. } => {
+                Callee::Def { def, self_ty } => {
                     if self.defs.get(*def).kind == DefKind::ExternFn {
                         set.holes.extern_calls += 1;
                         self.check_c_boundary(*def, args, &function_values, span, set);
                         continue;
                     }
-                    let solved =
-                        self.solve_call(&caller_subst, body, *def, args, destination, set);
+                    let solved = self.solve_call(
+                        &caller_subst,
+                        body,
+                        *def,
+                        args,
+                        *self_ty,
+                        destination,
+                        set,
+                    );
                     let Some(instance) = solved else { continue };
                     // **The map is written here and not at the pop**, because
                     // this is the only point that knows *which call site* the
@@ -1835,12 +1855,32 @@ impl<'a> Mono<'a> {
     /// this instance is bound at alongside it. The rest of this function reads
     /// declarations and matches them against arguments exactly as it always
     /// did, now for whichever definition that was.
+    ///
+    /// **`reached_through` is [`science_mir::Callee::Def`]'s `self_ty`: the
+    /// receiver of an *associated* call, as the checker wrote it down.** It is
+    /// the evidence §2's recovery does not otherwise have. An associated
+    /// function of a generic type takes no `self` and may mention none of the
+    /// block's parameters in its signature — `Grid[T, const ROWS: Int, const
+    /// COLS: Int] has:`'s `area` is `() -> Int` — so the loops below have no
+    /// argument, no receiver and no informative return type to unify, and
+    /// every one of `T`, `ROWS`, `COLS` came out of `assemble_instance` as
+    /// [`Unsolved::Parameter`]. Matching the block's own self type against
+    /// this one recovers all three at once, and it is the *same* match the
+    /// `has_receiver` branch already makes against `args[0]` — the difference
+    /// is only that there is no operand to read the type off, so the checker
+    /// carried it instead.
+    ///
+    /// It is matched **first**, before the parameters and the destination, for
+    /// the reason [`Solution::bind_type`]'s "first binding wins" exists: at
+    /// `(Array[Int]).new()` the author *wrote* the block's argument, and a
+    /// written argument outranks one inferred from a later position.
     fn solve_call(
         &mut self,
         caller_subst: &Substitution,
         body: &Body,
         callee: DefId,
         args: &[Operand],
+        reached_through: Option<Ty>,
         destination: &Place,
         set: &mut MonoSet,
     ) -> Option<Instance> {
@@ -1899,6 +1939,16 @@ impl<'a> Mono<'a> {
 
         let unknowns: HashSet<DefId> = generics.iter().map(|param| param.def).collect();
         let mut solution = Solution::default();
+
+        // The receiver of an associated call, which has no operand: the type
+        // the checker recorded on the callee. See this function's own note.
+        // `caller_subst` applies because the receiver may have been written in
+        // the caller's parameters — `Grid[T, N, M].area()` inside a generic
+        // `def` — and by here the caller is already monomorphised.
+        if let (Some(declared_self), Some(written)) = (receiver_ty, reached_through) {
+            let written = self.apply(caller_subst, written);
+            self.match_ty(declared_self, written, &unknowns, &mut solution);
+        }
 
         // The receiver, when there is one: MIR puts it at `args[0]`.
         let mut offset = 0;

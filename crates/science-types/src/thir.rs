@@ -232,6 +232,38 @@ pub enum ExprKind {
     Call {
         callee: ExprId,
         args: Vec<ExprId>,
+        /// The type an *associated* call was reached through, concrete:
+        /// `Grid[Int, 3, 3]` at `Grid[Int, 3, 3].area()`.
+        ///
+        /// **`None` is every call written as a call** — `make_doc()`,
+        /// `twice(2)`, a variant constructor — where there is no receiver to
+        /// have a type. It is also the failed lookup below
+        /// [`super::check`]'s `associated_call`, for [`ExprKind::Field`]'s
+        /// reason: a type standing for *"there is no answer"* is a lie a
+        /// later pass can dereference.
+        ///
+        /// **Why the node carries it, when the callee is already an
+        /// [`ExprKind::Item`] naming the method.** An associated function of
+        /// a generic type need mention none of the block's parameters:
+        /// `Grid[T, const ROWS: Int, const COLS: Int] has:`'s `area` is
+        /// `() -> Int`, taking no `self`, so a consumer downstream has no
+        /// argument, no receiver and no return type to read `T`, `ROWS` or
+        /// `COLS` off — `science_codegen::mono`'s `solve_call` recovers a
+        /// callee's arguments by unifying declared types against actual ones
+        /// and there is nothing here to unify. The checker computed
+        /// `Grid[Int, 3, 3]` to do the lookup at all and used to throw it
+        /// away. This is the field that keeps it, and it is the move
+        /// [`ExprKind::MethodCall`]'s `method` and [`ExprKind::For`]'s `next`
+        /// already are: the front end found something, had nowhere to put it,
+        /// and the answer was a field rather than a second lookup one level
+        /// down.
+        ///
+        /// **Not the callee node's own [`Expr::ty`].** That node is the
+        /// function, and typing a function as a `Grid` is a lie every later
+        /// pass would have to know not to believe. Not the *instantiated
+        /// signature* either: `area`'s instantiated is still `() -> Int`,
+        /// which is the whole problem.
+        self_ty: Option<Ty>,
     },
     /// `receiver.method(args)`.
     ///

@@ -1511,7 +1511,9 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             ExprKind::Match { scrutinee, arms } => {
                 self.lower_match(dest, *scrutinee, arms, block, span)
             }
-            ExprKind::Call { callee, args } => self.lower_call(dest, *callee, args, block, span),
+            ExprKind::Call { callee, args, self_ty } => {
+                self.lower_call(dest, *callee, args, *self_ty, block, span)
+            }
             ExprKind::MethodCall { receiver, method, args } => {
                 self.lower_method_call(dest, *receiver, *method, args, block, span)
             }
@@ -2205,11 +2207,17 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
 
     // --- calls ------------------------------------------------------------
 
+    /// `self_ty` is [`thir::ExprKind::Call`]'s own field: the type an
+    /// associated call was reached through, and `None` for every other call.
+    /// It is carried onto [`Callee::Def`] unchanged — this crate does not
+    /// compute it and does not check it, because the only thing it could
+    /// check it against is the lookup that produced it.
     fn lower_call(
         &mut self,
         dest: Place,
         callee: ExprId,
         args: &[ExprId],
+        self_ty: Option<Ty>,
         mut block: BlockId,
         span: Span,
     ) -> BlockId {
@@ -2228,7 +2236,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             }
         }
         let callee = match self.thir.expr(callee).kind {
-            ExprKind::Item(def) => Callee::Def { def, self_ty: None },
+            ExprKind::Item(def) => Callee::Def { def, self_ty },
             _ => {
                 let (operand, next) = self.operand(callee, block);
                 block = next;

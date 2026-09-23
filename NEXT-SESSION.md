@@ -29,55 +29,41 @@ fallos *distintos* entre corridas, es una carrera nueva, no esta.
 
 ## El número
 
-**17 de 20 ejemplos** compilan, enlazan, corren y tienen su salida fijada byte
+**18 de 20 ejemplos** compilan, enlazan, corren y tienen su salida fijada byte
 por byte. El denominador es 20: `17_modules` importa módulos que la biblioteca
 F0 no tiene y `20_extern` es una biblioteca sin `main` a propósito, las dos
 cerradas por decisión documentada.
 
-Suite: **2231 en verde**.
+Suite: **2232 en verde**.
 
-## Los tres ejemplos que faltan
+> **Ojo con `19_stdlib` cuando lo corras a mano.** Lee `science.toml` del
+> directorio actual, así que desde una copia limpia falla con `panic: the file
+> is missing`. El `cargo test` no se ve afectado: `corpus_output.rs` corre cada
+> ejemplo en un directorio vacío a propósito.
+
+## Los dos ejemplos que faltan
 
 Cada bloqueo está bisecado y verificado corriendo programas.
 
-### `03_structs` — el front end tira los argumentos del receptor
+### ~~`03_structs`~~ — cerrado
 
-`Grid[Int, 3, 3].area()` baja a MIR como `_4 = area()`: **sin argumentos y sin
-receptor**. `area` no toma `self` y su firma `() -> Int` no menciona `T`,
-`ROWS` ni `COLS`, así que `Mono::solve_call` —que recupera genéricos unificando
-tipos declarados contra reales— no tiene nada contra qué unificar.
+`Grid[Int, 3, 3].area()` imprime `9`. El canal que faltaba se construyó en dos
+commits: `mir::Callee::Def` pasó a variante de struct con un
+`self_ty: Option<Ty>`, y `thir::ExprKind::Call` ganó el campo del mismo nombre
+que `check`'s `associated_call` llena con el tipo concreto del receptor que ya
+calculaba y tiraba. `Mono::solve_call` lo unifica contra el self type declarado
+del bloque —la misma unificación que ya hacía contra `args[0]`, para una
+llamada que no tiene `args[0]`— y resuelve `T`, `ROWS` y `COLS` de una vez.
 
-Más arriba, `check`'s `associated_call` **calcula el tipo concreto del receptor
-y lo descarta**: el nodo del callee se empuja en `Ty::ERROR` y nunca se
-actualiza, y `mir::Callee::Def(DefId)` no lleva argumentos.
+El cambio fue **más chico que lo presupuestado**: 50 sitios era el conteo de
+`Callee` entero, y `science_codegen::backend::Callee` es un enum **distinto**
+(`Runtime`/`Science`/`Foreign`/`Intrinsic`/`Indirect`) que no se tocó. Los
+sitios reales de `mir::Callee::Def` eran ~17 en siete archivos.
 
-La mitad de sustitución **ya está hecha** (`d0ebda1`): `Instance::const_arg` y
-la consulta al `MonoSet` en `lower_operand`. Lo que falta es el canal por donde
-viajen los argumentos del receptor.
-
-**Tamaño del cambio, medido.** `Callee::Def(DefId)` es una variante de tupla sin
-espacio para nada más, y hay **50 sitios** que la construyen o la consumen, en
-diez archivos y cinco crates (`science-mir` 15 en `lower.rs`, `science-codegen-llvm`
-6, `science-codegen` 2, más `sciencec`, `science-regions` y los tests). Pasarla a
-variante de struct con un `self_ty: Option<Ty>` los toca a todos. Es mecánico,
-pero no es chico, y conviene hacerlo en un commit propio y no de paso.
-
-**Tres canales más baratos, descartados con su razón** — no los vuelvas a
-evaluar sin información nueva:
-
-1. *Tipar el nodo del callee con el tipo del receptor.* Es mentira: el item es
-   una función, no un `Grid`.
-2. *Tipar el callee con la firma instanciada.* `area() -> Int` instanciada
-   sigue siendo `() -> Int`. Los argumentos const no aparecen en ninguna parte
-   de la firma, que es justamente por qué `solve_call` no puede unificarlos.
-3. *Una tabla lateral en `check` indexada por `ExprId`.* Evita tocar el enum
-   pero necesita exactamente el mismo cableado hasta MIR, así que no ahorra el
-   trabajo: sólo lo esconde.
-
-El precedente a seguir está dos veces en este repo: `MethodCall::method` y
-`For::next` son el mismo movimiento — el front end encontró algo, no tenía
-dónde ponerlo, y la respuesta fue darle un campo. **Es un cambio de front
-end**, no de backend.
+Pinchado por `an_associated_call_on_a_generic_type_is_solved_from_its_receiver`
+(`crates/science-codegen/tests/mono.rs`), que falla si el campo vuelve a `None`
+en cualquier punto del recorrido — el dump de MIR no lo muestra y nada más se
+daría cuenta.
 
 ### `06_traits` — `Display` necesita `Formatter`
 
@@ -175,5 +161,10 @@ for f in examples/*.science; do
 done
 ```
 
-Después agarrá **`03`**: es el único de los tres cuyo bloqueo está localizado
-hasta la línea y cuya mitad de backend ya está construida y probada.
+Esperá `FAIL` en exactamente `00_kitchen_sink`, `06_traits`, `17_modules` y
+`20_extern` — y en `19_stdlib` si el `science.toml` no está en el directorio
+desde el que corrés.
+
+Después agarrá **`06`**: es el único que queda con una decisión ya tomada y
+1221 líneas de trabajo a medias esperando en
+`wip/agents-formatter-constgenerics`.

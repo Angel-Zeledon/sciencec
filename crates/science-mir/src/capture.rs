@@ -200,7 +200,7 @@ impl Walker<'_> {
             | ExprKind::Item(_)
             | ExprKind::Unit
             | ExprKind::Error => {}
-            ExprKind::Call { callee, args } => {
+            ExprKind::Call { callee, args, .. } => {
                 self.bind_expr(*callee);
                 for arg in args {
                     self.bind_expr(*arg);
@@ -369,7 +369,7 @@ impl Walker<'_> {
             ExprKind::Local(def) | ExprKind::SelfValue(def) => self.record(*def, ctx, span),
             ExprKind::Literal(_) | ExprKind::Item(_) | ExprKind::Unit | ExprKind::Error => {}
             // An indirect call's callee is a value, and so are its arguments.
-            ExprKind::Call { callee, args } => {
+            ExprKind::Call { callee, args, .. } => {
                 self.expr(*callee, Ctx::Consume(*callee));
                 for arg in args {
                     self.expr(*arg, Ctx::Consume(*arg));

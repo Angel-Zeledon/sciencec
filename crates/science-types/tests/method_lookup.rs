@@ -774,8 +774,15 @@ def scratch() -> String:
         .exprs()
         .find(|(_, expr)| matches!(expr.kind, ExprKind::Call { .. }))
         .expect("the body has a call");
-    let ExprKind::Call { callee, args } = &call.kind else { unreachable!() };
+    let ExprKind::Call { callee, args, self_ty } = &call.kind else { unreachable!() };
     assert!(args.is_empty());
+    // The receiver has no value and so no node, and `self_ty` is the whole of
+    // what survives of it: the type the call was reached through.
+    assert_eq!(
+        self_ty.map(|ty| checked.render(ty)),
+        Some("String".to_string()),
+        "an associated call keeps the type it was reached through"
+    );
     let ExprKind::Item(method) = body.expr(*callee).kind else {
         panic!("the callee is the method's own definition")
     };

@@ -2668,7 +2668,11 @@ impl<'a> BodyChecker<'a> {
                     let ids = args.iter().map(|arg| self.synth(&arg.value).id).collect();
                     let id = self
                         .body
-                        .push_expr(ExprKind::Call { callee, args: ids }, Ty::ERROR, span);
+                        .push_expr(
+                            ExprKind::Call { callee, args: ids, self_ty: None },
+                            Ty::ERROR,
+                            span,
+                        );
                     self.diverged = true;
                     return Typed { id, ty: InferTy::Known(Ty::ERROR) };
                 }
@@ -2697,7 +2701,11 @@ impl<'a> BodyChecker<'a> {
                     None => self.synth(&arg.value).id,
                 })
                 .collect();
-            let id = self.body.push_expr(ExprKind::Call { callee: callee.id, args: ids }, ret, span);
+            let id = self.body.push_expr(
+                ExprKind::Call { callee: callee.id, args: ids, self_ty: None },
+                ret,
+                span,
+            );
             return Typed { id, ty: InferTy::Known(ret) };
         }
         let ids = args
@@ -2711,7 +2719,11 @@ impl<'a> BodyChecker<'a> {
             })
             .collect();
         let id =
-            self.body.push_expr(ExprKind::Call { callee: callee.id, args: ids }, Ty::ERROR, span);
+            self.body.push_expr(
+                ExprKind::Call { callee: callee.id, args: ids, self_ty: None },
+                Ty::ERROR,
+                span,
+            );
         Typed { id, ty: InferTy::Known(Ty::ERROR) }
     }
 
@@ -2835,7 +2847,11 @@ impl<'a> BodyChecker<'a> {
         // `demand` at whatever meets the call next or through Decision 2's
         // default at `finish` if nothing does.
         if !deferred.is_empty() {
-            let id = self.body.push_expr(ExprKind::Call { callee, args: ids }, Ty::ERROR, span);
+            let id = self.body.push_expr(
+                ExprKind::Call { callee, args: ids, self_ty: None },
+                Ty::ERROR,
+                span,
+            );
             return match self.instantiate_return(ret, &substitution, &deferred, id, span) {
                 InferTy::Var(var) => {
                     self.pending.push((id, var));
@@ -2849,7 +2865,8 @@ impl<'a> BodyChecker<'a> {
         }
         let ret = self.apply(&substitution, ret, span);
         let ret = self.instantiate(ret, span);
-        let id = self.body.push_expr(ExprKind::Call { callee, args: ids }, ret, span);
+        let id =
+            self.body.push_expr(ExprKind::Call { callee, args: ids, self_ty: None }, ret, span);
         if !self.decls.prelude().is_never(self.types, ret) {
             return Typed { id, ty: InferTy::Known(ret) };
         }
@@ -3689,12 +3706,17 @@ impl<'a> BodyChecker<'a> {
                 })
                 .collect();
             let ty = self.types.named(choice, generic_args);
-            let id = self.body.push_expr(ExprKind::Call { callee, args: ids }, ty, span);
+            let id =
+                self.body.push_expr(ExprKind::Call { callee, args: ids, self_ty: None }, ty, span);
             return Typed { id, ty: InferTy::Known(ty) };
         }
         let var = self.infer.fresh(span);
         let typed =
-            self.push_typed(ExprKind::Call { callee, args: ids }, InferTy::Var(var), span);
+            self.push_typed(
+                ExprKind::Call { callee, args: ids, self_ty: None },
+                InferTy::Var(var),
+                span,
+            );
         self.pending_named.push(PendingNamed {
             var,
             def: choice,
@@ -3960,8 +3982,11 @@ impl<'a> BodyChecker<'a> {
                 Callee::Missing(supplied) => {
                     let ids = self.argument_ids(args, supplied);
                     let callee = self.body.push_expr(ExprKind::Error, Ty::ERROR, span);
-                    let id =
-                        self.body.push_expr(ExprKind::Call { callee, args: ids }, Ty::ERROR, span);
+                    let id = self.body.push_expr(
+                        ExprKind::Call { callee, args: ids, self_ty: None },
+                        Ty::ERROR,
+                        span,
+                    );
                     return Typed { id, ty: InferTy::Known(Ty::ERROR) };
                 }
             };
@@ -3980,7 +4005,11 @@ impl<'a> BodyChecker<'a> {
         };
         // Same deferral `method_call` takes, for the same reason: `ret` may
         // still be the argument's own open variable.
-        let typed = self.push_typed(ExprKind::Call { callee, args: ids }, ret, span);
+        let typed = self.push_typed(
+            ExprKind::Call { callee, args: ids, self_ty: Some(self_ty) },
+            ret,
+            span,
+        );
         if let InferTy::Known(ret) = ret {
             if self.decls.prelude().is_never(self.types, ret) {
                 self.diverged = true;
