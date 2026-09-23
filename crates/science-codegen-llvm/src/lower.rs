@@ -6985,7 +6985,31 @@ impl<'a> Lowerer<'a> {
             // type for it to disagree with.
             mir::Operand::Const(Constant::Count(count)) => Ok(Operand::ConstInt(*count as i128)),
             mir::Operand::Const(Constant::Item(def)) => {
-                Err(Unlowered::new(format!("`{}` named as a value", self.defs.get(*def).name)))
+                // A const generic parameter read as a *value* — the `ROWS`
+                // of `Grid[T, const ROWS: Int, const COLS: Int]`'s `area`,
+                // reading `ROWS * COLS` — has no `Ty` at this site for
+                // `science_mir::instantiate` to rewrite: its type is `Int`,
+                // not the parameter, so the instantiated body still names
+                // `def` here, exactly as the generic body did.
+                // `science_codegen::mono::Instance::const_arg` is the const
+                // half of that same substitution, resolved through the
+                // instance this symbol names — `mono` and `decls` are both
+                // `None` only for a caller with no monomorphisation set at
+                // all (`self.calls`'s own doc comment), which never reaches
+                // a const parameter because nothing generic is emitted then
+                // either.
+                let bound = self.calls.zip(self.decls).and_then(|(mono, decls)| {
+                    mono.get(&ctx.symbol)
+                        .and_then(|item| item.instance.const_arg(decls, *def))
+                        .and_then(|form| form.as_constant())
+                });
+                match bound {
+                    Some(value) => Ok(Operand::ConstInt(value)),
+                    None => Err(Unlowered::new(format!(
+                        "`{}` named as a value",
+                        self.defs.get(*def).name
+                    ))),
+                }
             }
             mir::Operand::Copy(place) | mir::Operand::Move(place) => {
                 if !place.projection.is_empty() {
