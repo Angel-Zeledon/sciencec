@@ -2030,3 +2030,87 @@ fn test_runs_a_program_named_without_any_directory_in_front_of_it() {
     assert!(stdout.contains("ran"), "the program's own output should reach the terminal");
     assert_eq!(output.status.code(), Some(0));
 }
+
+// --- `--emit=llvm-ir` and `--no-noalias` -------------------------------
+
+/// §4.4's mitigation, end to end from the command line: the same source, built
+/// twice, differing by exactly one attribute in the emitted module.
+///
+/// > *The available mitigation, and it should be taken: `--no-noalias` as an
+/// > unsupported debugging flag that suppresses the attribute, so that "is this
+/// > a region bug or a codegen bug" is one recompile rather than a week.*
+///
+/// **Both flags are exercised by one test because neither is useful alone.**
+/// `--no-noalias` changes nothing a program prints — `noalias` is a promise to
+/// the optimiser and has no runtime behaviour of its own — so without
+/// `--emit=llvm-ir` there is nothing for a user to look at, and *"one recompile
+/// rather than a week"* would still be a week. And `--emit=llvm-ir` would be a
+/// flag with no caller. The pair is the mitigation; either half alone is a
+/// field.
+///
+/// **The negative half is the one that matters.** `_S4read` takes a shared
+/// borrow and must not be `noalias` in *either* build: two shared borrows of one
+/// place are legal, so the claim would be a lie the optimiser is entitled to act
+/// on, and the symptom would be a program that computes something else at `-O2`
+/// with no diagnostic anywhere. A test that only watched `_S4bump` would pass on
+/// the day somebody moved one line in `science_codegen::abi::borrow_attrs`.
+///
+/// `nocapture` is asserted nowhere here; `science-codegen-llvm`'s
+/// `tests/borrow_attributes.rs` is where it is, and where the program that says
+/// why it is withheld lives.
+#[cfg(feature = "llvm")]
+#[test]
+fn no_noalias_suppresses_the_attribute_and_emit_llvm_ir_is_how_you_see_it() {
+    let source = "def read(value: &I64) -> I64:\n    value\n\n\
+                  def bump(counter: &mut Int):\n    counter be counter + 1\n\n\
+                  def main():\n    let mutable hits be 0\n    bump(hits)\n    \
+                  print(read(hits))\n";
+    let file = scratch("noalias_flag.science", source.as_bytes());
+    let ir_file = Path::new(&file).with_extension("ll");
+
+    let run = sciencec(&["build", "--emit=llvm-ir", &file]);
+    run.succeeded().silent_stderr();
+    let with = std::fs::read_to_string(&ir_file).expect("`--emit=llvm-ir` writes the module");
+    let bump = define(&with, "_S4bump");
+    let read = define(&with, "_S4read");
+    assert!(bump.contains("noalias"), "no `noalias` on the exclusive borrow:\n{bump}");
+    assert!(bump.contains("align 8"), "no alignment on the exclusive borrow:\n{bump}");
+    assert!(read.contains("readonly"), "no `readonly` on the shared borrow:\n{read}");
+    assert!(
+        !read.contains("noalias"),
+        "`noalias` on a **shared** borrow — two shared borrows of one place are legal:\n{read}"
+    );
+
+    let run = sciencec(&["build", "--emit=llvm-ir", "--no-noalias", &file]);
+    run.succeeded().silent_stderr();
+    let without = std::fs::read_to_string(&ir_file).expect("`--emit=llvm-ir` writes the module");
+    let bump = define(&without, "_S4bump");
+    let read = define(&without, "_S4read");
+    assert!(!bump.contains("noalias"), "`--no-noalias` did not reach the emitter:\n{bump}");
+    assert!(
+        bump.contains("align 8"),
+        "`--no-noalias` suppressed more than the attribute:\n{bump}"
+    );
+    assert!(read.contains("readonly"), "`--no-noalias` changed the shared borrow:\n{read}");
+    assert!(!read.contains("noalias"), "`noalias` on a shared borrow:\n{read}");
+
+    // The executable is still produced and still right, because `--emit=llvm-ir`
+    // adds a file rather than replacing the build — and because a debugging flag
+    // that changed the answer would be the bug it is meant to find.
+    let executable = Path::new(&file).with_extension(if cfg!(windows) { "exe" } else { "" });
+    let program = Command::new(&executable).output().expect("the program runs");
+    assert_eq!(String::from_utf8_lossy(&program.stdout).replace("\r\n", "\n"), "1\n");
+}
+
+/// The one `define` line naming `needle`.
+///
+/// Matched on `define` rather than on the symbol alone: the same symbol appears
+/// on every `call` to it, and a call's argument list carries attributes too.
+#[cfg(feature = "llvm")]
+#[track_caller]
+fn define(ir: &str, needle: &str) -> String {
+    ir.lines()
+        .find(|line| line.starts_with("define") && line.contains(needle))
+        .unwrap_or_else(|| panic!("no `define` of `{needle}` in:\n{ir}"))
+        .to_string()
+}

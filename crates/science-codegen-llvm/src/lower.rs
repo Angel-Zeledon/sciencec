@@ -225,8 +225,8 @@
 use std::collections::BTreeMap;
 
 use science_codegen::abi::{
-    AbiParam, AbiSignature, ArgClass, ParamAttrs, ReturnClass, classify_extern_argument,
-    classify_extern_return,
+    AbiParam, AbiSignature, ArgClass, BorrowKind, ParamAttrs, ReturnClass, borrow_attrs,
+    classify_extern_argument, classify_extern_return,
 };
 use science_codegen::backend::{
     BlockId, Callee, CmpOp, Inst, IntOp, FloatOp, LocalId, Operand, Terminator, ValueId,
@@ -374,16 +374,30 @@ impl Unlowered {
 /// built from the signature cannot fall off anything.
 ///
 /// **No pointer attributes are emitted, and that is a finding rather than
-/// laziness.** Decision 24 wants `readonly nocapture` on a shared borrow and
-/// `noalias nocapture` on an exclusive one, and
-/// [`science_codegen::runtime::RtParam`] has **one** pointer variant: it does
-/// not distinguish `*const ScienceString` from `*mut ScienceString`. Every one
-/// of the signatures makes the distinction in Rust —
-/// `science_print(text: *const ScienceString)` against
+/// laziness.** [`science_codegen::runtime::RtParam`] has **one** pointer
+/// variant: it does not distinguish `*const ScienceString` from
+/// `*mut ScienceString`. Every one of the signatures makes the distinction in
+/// Rust — `science_print(text: *const ScienceString)` against
 /// `science_string_free(value: *mut ScienceString)` — and the table that codegen
 /// reads erases it. Emitting `readonly` on a guess is §4.4's failure mode with
-/// the compiler on the wrong end of it, so nothing is emitted and the
-/// optimisation Decision 24 buys is left on the table until `RtParam` splits.
+/// the compiler on the wrong end of it, so nothing is emitted.
+///
+/// **Decision 24 is emitted now, and it does not reach here, and the two facts
+/// are not in tension.** [`Lowerer::param_attrs`] classifies a *Science*
+/// parameter, where `&T` and `&mut T` are language types that region inference
+/// has checked rule 4 against. These are `extern "C"` declarations of Rust
+/// functions, and **splitting `RtParam` would still not license `noalias` on
+/// any of them**: Rust's `*mut T` carries no uniqueness claim — that is the
+/// whole difference between `*mut T` and `&mut T` in the language these are
+/// written in — so the split would buy `readonly` on the `*const` rows and
+/// nothing else. It is worth doing; it is not this decision, and the audit it
+/// needs is fifty-nine signatures read against `science-rt`, one at a time,
+/// with a miscompile as the price of each mistake.
+///
+/// **`nocapture` would be wrong here for a second, independent reason.**
+/// `science_array_as_ptr` and `science_array_get` hand back interior pointers,
+/// and whether those count as a capture of the *argument* turns on provenance
+/// the table does not record either.
 pub fn runtime_signature(target: Triple, entry: &RuntimeFn) -> AbiSignature {
     let ret_ty = match entry.ret {
         RtRet::Void | RtRet::Never => CgTy::Unit,
@@ -519,6 +533,15 @@ struct Foreign {
 /// The whole of what this backend can lower.
 pub struct Lowerer<'a> {
     target: Triple,
+    /// §4.4's unsupported debugging flag, suppressing `noalias` on an exclusive
+    /// borrow and nothing else.
+    ///
+    /// **A `bool` and not the whole `TargetConfig`.** The config carries a
+    /// triple as well, this already has one, and two triples in one struct is a
+    /// disagreement waiting to be found by whichever of them a reader happened
+    /// to reach for. The flag is the only field of the config this file has a
+    /// use for, so the flag is the only field it takes.
+    no_noalias: bool,
     defs: &'a DefTable,
     types: &'a Types,
     decls: Option<&'a Declarations>,
@@ -657,6 +680,7 @@ impl<'a> Lowerer<'a> {
     pub fn new(target: Triple, defs: &'a DefTable, types: &'a Types) -> Lowerer<'a> {
         Lowerer {
             target,
+            no_noalias: false,
             defs,
             types,
             decls: None,
@@ -719,6 +743,18 @@ impl<'a> Lowerer<'a> {
             }
         }
         lowerer
+    }
+
+    /// §4.4's `--no-noalias`, carried down to [`Lowerer::science_signature`].
+    ///
+    /// **A builder method rather than a constructor argument**, because the two
+    /// constructors above are called by eight tests that have no opinion about
+    /// the flag, and a `false` threaded through eight call sites is eight places
+    /// to read as a decision when none of them made one. The one caller that
+    /// has an opinion is [`crate::build`], which reads it off `BuildRequest`.
+    pub fn with_no_noalias(mut self, no_noalias: bool) -> Lowerer<'a> {
+        self.no_noalias = no_noalias;
+        self
     }
 
     fn declare(&mut self, symbol: &str) -> Result<AbiSignature, Unlowered> {
@@ -3824,17 +3860,14 @@ impl<'a> Lowerer<'a> {
     /// one this replaced, because this boundary no longer knows *why* the
     /// type survived unsubstituted, only that it did.
     ///
-    /// **No parameter attributes are emitted, and that is finding 14 rather
-    /// than laziness.** Decision 24 wants `readonly nocapture` on a shared
-    /// borrow and `noalias nocapture` on an exclusive one, and §4.4 calls
-    /// `noalias` *"the single place in the language where a bug in region
-    /// inference produces a wrong answer rather than a missed error"*. Its own
-    /// mitigation is `--no-noalias`, which `TargetConfig` carries and **this
-    /// function cannot see**: a [`Lowerer`] is built from a `Triple`, and the
-    /// flag arrives at [`crate::emit`] one layer below. Emitting the attribute
-    /// with its escape hatch unreachable is the worst of the three options; the
-    /// cost of emitting none is an optimisation, which is the same trade
-    /// [`runtime_signature`] already takes for the same kind of reason.
+    /// **Decision 24's parameter attributes are emitted here**, by
+    /// [`Lowerer::param_attrs`], and finding 14 — *"no parameter attributes are
+    /// emitted"* — is discharged. The escape hatch the finding was waiting on is
+    /// [`Lowerer::with_no_noalias`]: `TargetConfig` still carries the flag and
+    /// this function still cannot see a `TargetConfig`, but [`crate::build`]
+    /// reads `BuildRequest::no_noalias` before it builds either one and hands
+    /// the same `bool` to both. Nothing else about the shape of the problem
+    /// changed; what changed is that the flag now arrives.
     fn science_signature(
         &mut self,
         body: &MirBody,
@@ -3849,7 +3882,9 @@ impl<'a> Lowerer<'a> {
                 .def()
                 .map(|def| self.defs.get(def).name.clone())
                 .unwrap_or_else(|| format!("a{}", local.index()));
-            params.push((param_name, self.layout_of_ty(decl.ty)?, ParamAttrs::default()));
+            let layout = self.layout_of_ty(decl.ty)?;
+            let attrs = self.param_attrs(decl.ty, &layout)?;
+            params.push((param_name, layout, attrs));
         }
         // **The symbol is the instance's, except for the entry point.**
         // `science_codegen::mono` mangles `main` from its path like any other
@@ -3864,6 +3899,122 @@ impl<'a> Lowerer<'a> {
             false => symbol.to_string(),
         };
         Ok(AbiSignature::science(self.target, symbol, ret_layout, params))
+    }
+
+    /// Decision 24's attributes for one parameter of a Science function.
+    ///
+    /// > *A `mutable borrowed T` parameter is emitted `noalias nocapture` and
+    /// > aligned. A `borrowed T` parameter is emitted `readonly nocapture` and
+    /// > aligned, and **not** `noalias`.*
+    ///
+    /// **The `PtrKind` is read off the layout and not off the type, and the two
+    /// are not interchangeable.** `science_codegen::layout` already carries the
+    /// distinction Decision 24 needs — [`PtrKind::Borrow`] against
+    /// [`PtrKind::MutBorrow`], documented in that enum with these very
+    /// attributes — and [`Lowerer::cg_ty`] is the one function that decides
+    /// which a type becomes. Asking the layout means the attribute cannot
+    /// disagree with the representation: the day `cg_ty` gains an arm that maps
+    /// some `TyKind::Borrowed` to something that is not a thin pointer, this
+    /// stops emitting rather than emitting onto the wrong thing. The one such
+    /// arm today is `borrowed any I`, which is [`CgTy::Interface`] — a two-word
+    /// fat pointer, Decision 13's `{ data, vtable }` — and it falls out of the
+    /// match below with no attributes, which is right: `nocapture` on a
+    /// by-value pair of words is not a claim LLVM would accept, and the data
+    /// word's alignment is the dynamic type's and is not known here.
+    ///
+    /// **The alignment is the referent's**, which is why the type is needed as
+    /// well as the layout: `layout.align` is the *pointer's* — eight, on every
+    /// F0 target — and `align 8` on a `borrowed U8` is a false claim in the
+    /// harmless direction and a useless one in the other. `layout_of_ty` on the
+    /// inner type is the number Decision 24 means.
+    ///
+    /// **`noalias` is the one attribute here that can produce a wrong answer**,
+    /// and §4.4 says so: *"this is the single place in the language where a bug
+    /// in region inference produces a wrong answer rather than a missed
+    /// error"*. It is emitted only for [`PtrKind::MutBorrow`], because rule 4
+    /// — *shared many, or exclusive one* — forbids any other live borrow of the
+    /// place an exclusive borrow names, and it is suppressed entirely by
+    /// [`Lowerer::with_no_noalias`]. A shared borrow gets `readonly` instead
+    /// and never `noalias`: two shared borrows of one place are legal, so the
+    /// claim would be a lie, and [`science_codegen::abi::borrow_attrs`] is
+    /// where that trade is written down rather than re-decided here.
+    ///
+    /// **Rule 4 was checked by running the compiler and not by reading it.**
+    /// Both shapes `noalias` depends on are rejected, at the call site, with
+    /// `SC0330`: `both(x, x)` against `def both(a: &mut Int, b: &Int)` gives
+    /// *"a shared borrow and an exclusive one cannot overlap (§6.1 rule 4)"*,
+    /// and `two(x, x)` against `def two(a: &mut Int, b: &mut Int)` gives
+    /// *"an exclusive borrow admits no other access to the same place while it
+    /// lasts"*. `readonly`'s premise was checked the same way: writing through
+    /// a `&T` parameter is `SC0304`.
+    ///
+    /// # `nocapture` is **withheld**, and that is the finding this function carries
+    ///
+    /// Decision 24 asks for it on both kinds and [`borrow_attrs`] produces it.
+    /// It is cleared here, because **it is false today for a program that
+    /// checks clean**:
+    ///
+    /// ```text
+    /// type Holder:
+    ///     seen: &mut Int
+    ///
+    /// def keep(n: &mut Int) -> Holder:
+    ///     Holder(seen: n)
+    /// ```
+    ///
+    /// which emits `define { ptr } @_S4keep(ptr … %0) { ret { ptr } { %0 } }` —
+    /// the argument pointer, copied into a value that outlives the call. LLVM's
+    /// `nocapture` is *"the callee does not make any copies of the pointer that
+    /// outlive the callee itself"*, and returning one is the textbook copy.
+    /// `def passthrough(n: &mut Int) -> &mut Int: n` checks clean as well and
+    /// is the same violation with nothing in between.
+    ///
+    /// **Why not emit it conditionally.** The condition is an escape analysis:
+    /// a borrow leaves through the return value, through memory reachable from
+    /// another parameter, or through its own referent, and deciding those from
+    /// a signature needs a transitive walk with a separate soundness judgement
+    /// at every opaque pointer — `Box`, a raw pointer, an interface object's
+    /// data word. Each judgement is the same class of risk as an unjustified
+    /// `noalias`, in a function whose job is to classify a signature.
+    ///
+    /// **And the cost of withholding it is close to nothing**, which is what
+    /// makes the trade easy rather than painful. Every Science definition is
+    /// emitted into the *same module* as its callers, so LLVM's own
+    /// `FunctionAttrs` infers `nocapture` from the body at `-O2` — from the
+    /// body, which is strictly better evidence than a signature. `noalias` is
+    /// the attribute it cannot infer, because that one is a promise about
+    /// *callers* that only the language can make, and `noalias` is what this
+    /// function is for.
+    ///
+    /// The day an escape analysis exists, deleting one line here restores
+    /// Decision 24 in full; [`borrow_attrs`] already says what to restore it to.
+    fn param_attrs(&mut self, ty: Ty, layout: &Layout) -> Result<ParamAttrs, Unlowered> {
+        let kind = match layout.repr {
+            Repr::Scalar(Scalar::Pointer(PtrKind::Borrow)) => BorrowKind::Shared,
+            Repr::Scalar(Scalar::Pointer(PtrKind::MutBorrow)) => BorrowKind::Exclusive,
+            _ => return Ok(ParamAttrs::default()),
+        };
+        // A `(borrowed T)?` is `Repr::Niched` and not `Repr::Scalar`, so it does
+        // not reach here — deliberately. The niche is the null pointer, the
+        // parameter may *be* null, and `readonly align` on a null pointer is a
+        // set of claims about a thing that is not there. It costs an
+        // optimisation on a shape stage 3 barely builds; it is not worth
+        // reasoning about null under two attributes to buy it.
+        let TyKind::Borrowed { inner, .. } = *self.types.kind(ty) else {
+            // Unreachable by construction: `cg_ty` produces `PtrKind::Borrow`
+            // and `PtrKind::MutBorrow` from `TyKind::Borrowed` and from nothing
+            // else. A value rather than an `expect`, because a future arm that
+            // broke that correspondence should cost the optimisation, not the
+            // compiler.
+            return Ok(ParamAttrs::default());
+        };
+        let referent = self.layout_of_ty(inner)?;
+        let mut attrs = borrow_attrs(kind, referent.align, self.no_noalias);
+        // The one line the section above is about. `borrow_attrs` stays
+        // Decision 24's table; this is what this compiler can honestly claim
+        // about a function it has not analysed.
+        attrs.nocapture = false;
+        Ok(attrs)
     }
 
     /// Decision 16's mangled symbol for one definition.

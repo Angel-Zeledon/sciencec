@@ -109,8 +109,24 @@ impl Lowered {
         output: &std::path::Path,
         opt: OptLevel,
     ) -> Result<Built, Vec<science_diagnostics::Diagnostic>> {
+        self.try_build_with(output, opt, false)
+    }
+
+    /// [`Lowered::try_build`], with §4.4's `--no-noalias` set.
+    ///
+    /// **A second entry point rather than a fourth argument to the first**,
+    /// because every existing caller means *the default*, and a `false` added to
+    /// twenty call sites is twenty places that look like a decision. The one
+    /// test that means something else says so by name.
+    pub fn try_build_with(
+        &self,
+        output: &std::path::Path,
+        opt: OptLevel,
+        no_noalias: bool,
+    ) -> Result<Built, Vec<science_diagnostics::Diagnostic>> {
         let mut request = BuildRequest::new(vec!["fixture.science".to_string()]);
         request.opt = opt;
+        request.no_noalias = no_noalias;
         let externs = science_codegen_llvm::extern_blocks(&self.krate);
         let input = BuildInput {
             request: &request,

@@ -313,19 +313,43 @@
 //!     [`link::undefined_symbols`] is the account, including why forcing the
 //!     linker into English was the wrong repair.
 //!
-//! 14. **Decision 24's parameter attributes cannot be emitted from where the
-//!     signature is built.** §4.4 calls `noalias` *"the single place in the
-//!     language where a bug in region inference produces a wrong answer rather
-//!     than a missed error"* and names `--no-noalias` as the mitigation that
-//!     *"should be taken"*. It was: `TargetConfig` carries the flag. But a
-//!     [`lower::Lowerer`] is built from a `Triple` and nothing else, and the
-//!     `TargetConfig` reaches [`emit`] one layer below — so the function that
-//!     classifies a Science parameter cannot see whether the escape hatch is
-//!     open. Emitting the attribute with its mitigation unreachable is the
-//!     worst of the three options, so **no parameter attributes are emitted on
-//!     any Science signature**, and the cost is an optimisation rather than an
-//!     answer. It is the same trade [`lower::runtime_signature`] takes for
-//!     finding 2's reason.
+//! 14. **Decision 24's parameter attributes are emitted, and `nocapture` is the
+//!     word of it that is withheld.** This finding used to say that none were:
+//!     §4.4 names `--no-noalias` as the mitigation that *"should be taken"*,
+//!     `TargetConfig` carried the flag, and a [`lower::Lowerer`] built from a
+//!     `Triple` could not see it. That part is closed —
+//!     [`lower::Lowerer::with_no_noalias`] takes the `bool` off `BuildRequest`
+//!     before either the lowerer or the config is built, and `&mut T` now
+//!     emits `noalias align N` while `&T` emits `readonly align N` and never
+//!     `noalias`, which is the whole of what §4.4 calls *"the single place in
+//!     the language where a bug in region inference produces a wrong answer
+//!     rather than a missed error"*.
+//!
+//!     What replaced it is smaller and sharper. **`nocapture` is false for a
+//!     Science function that returns a borrow it was given**, and one can:
+//!     `def keep(n: &mut Int) -> Holder` with a `seen: &mut Int` field checks
+//!     clean and emits `ret { ptr } { %0 }`. Deciding it per function is an
+//!     escape analysis, and [`lower::Lowerer::param_attrs`] is where the trade
+//!     is argued. The cost is measured rather than assumed: at `-O2` LLVM's own
+//!     `FunctionAttrs` puts `nocapture` back on `bump` and `read` and correctly
+//!     leaves it off `keep`, because every Science definition is in the same
+//!     module as its callers and a body is better evidence than a signature.
+//!     `noalias` is the one it cannot infer, and `noalias` is the one emitted.
+//!
+//!     **The old wording read as a contradiction and was not one.** It quoted
+//!     §4.4 calling `noalias` the one place a region bug gives a *wrong answer*
+//!     and then said the cost here was *"an optimisation rather than an
+//!     answer"*. Both are true, of opposite sides: emitting the attribute
+//!     wrongly costs an answer, and declining to emit it costs an
+//!     optimisation, so silence was the safe side of the trade and was the
+//!     right thing to hold until the mitigation existed. What silence is not is
+//!     free, and §4.4 sequences `--no-noalias` first precisely so that the safe
+//!     side has an exit — the flag does not make an unjustified `noalias` safe,
+//!     it makes a justified one *diagnosable*, which is the only thing that
+//!     turns "hold indefinitely" into "emit and be able to bisect".
+//!
+//!     [`lower::runtime_signature`] still emits none, for a different reason
+//!     that is finding 2's and is stated there.
 //! 15. **`science_codegen::descriptor::needs_drop` answers `false` for a
 //!     `String`.** It is a predicate over `CgTy`, and `CgTy` is *"the set of
 //!     distinctions that change a layout or an ABI classification, and nothing
@@ -1021,13 +1045,20 @@ pub fn build(input: &BuildInput) -> Result<Built, Diagnostics> {
     let config = TargetConfig::new(triple, input.request.opt)
         .with_no_noalias(input.request.no_noalias);
 
+    // **The flag is read once and handed to both.** §4.4's `--no-noalias` has to
+    // reach the place that *decides* the attribute, which is `lower`, and the
+    // `TargetConfig` that records what the build was configured with, which is
+    // `emit`'s. Deriving the lowerer's copy from `config` rather than from the
+    // request would be the same value by a longer route; deriving it from a
+    // second field would be the disagreement.
     let mut lowerer = lower::Lowerer::with_externs(
         triple,
         input.defs,
         input.types,
         input.decls,
         input.externs,
-    );
+    )
+    .with_no_noalias(input.request.no_noalias);
     let lowered = match lowerer.lower_crate(input.bodies, input.instances, input.mono) {
         Ok(lowered) => lowered,
         Err(unlowered) => {
