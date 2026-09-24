@@ -1044,6 +1044,31 @@ pub mod codes {
     /// `Self.Item?` — that `SC0535`'s note has nowhere to put.
     pub const NOT_ITERABLE: Code = Code(544);
 
+    /// An inherent method called from a module that may not name it — §4.3's
+    /// `public`, at the one place a method boundary is crossed.
+    ///
+    /// **The rule is one rule and it is
+    /// [`science_resolve::hir::Visibility`]'s**; what is split is the
+    /// reporting, and §9 splits it by *"the phase that detects the error"*.
+    /// A `use lib (secret)` and a `lib.secret()` are names in a module's
+    /// table, so the resolver refuses them with `SC0222`. A method is in no
+    /// name table — `science-resolve`'s `resolve_methods` says so — and the
+    /// earliest phase that can say which method `d.bare()` means is this one,
+    /// once the receiver has a type and the method index has answered.
+    ///
+    /// **Only an inherent method can reach it.** An interface's methods,
+    /// declared or answered, are gated by the interface: a caller proves the
+    /// bound rather than naming the block, and a private answer to a public
+    /// obligation would be a type that implements an interface it cannot be
+    /// used through.
+    ///
+    /// **Not [`NO_SUCH_METHOD`]**, for [`BOX_RECEIVER_NOT_SHARED`]'s reason
+    /// one door over: the method is in the index and the identical lookup
+    /// found it. Saying the type has no such method would be false and would
+    /// send the author looking for a spelling mistake in a name they read in
+    /// the other file.
+    pub const PRIVATE_METHOD: Code = Code(545);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -1081,6 +1106,7 @@ pub mod codes {
         CONST_INITIALISER_NOT_A_LITERAL,
         BOX_RECEIVER_NOT_SHARED,
         NOT_ITERABLE,
+        PRIVATE_METHOD,
     ];
 
     #[cfg(test)]

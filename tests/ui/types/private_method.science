@@ -1,0 +1,24 @@
+# UI test: an inherent method declared without `public`, called from another
+# file (SC0545).
+#
+# This is the fifth form of §4.3's rule and the only one the resolver cannot
+# reach. `resolve_methods` says why in one sentence: a method "is reached
+# through a receiver or through its type, never as a bare name, so it has no
+# entry in any name table". `use` and a qualified path are both lookups in a
+# module's table, so SC0222 can refuse them; `p.margin()` is neither, and the
+# earliest phase that knows which `margin` is meant is the type checker, once
+# the receiver has a type. One rule, two codes, allocated by the phase that
+# detects it.
+#
+# What must NOT be refused is the rest of the file, and it is here for that:
+# `Paper` and `Report` are public, `new` and `pages_of` carry their own
+# `public`, and `report` carries none because an interface's answer is gated
+# by the interface.
+
+use shared.paper (Paper, Report)
+
+def main():
+    let p be Paper.new(3)
+    print(p.pages_of())
+    print(p.report())
+    print(p.margin())

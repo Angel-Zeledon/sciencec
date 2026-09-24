@@ -157,6 +157,31 @@ pub mod codes {
     /// against.
     pub const REPEATED_VARIADIC_PARAM: Code = Code(221);
 
+    /// A name reached across a module boundary that was declared without
+    /// `public` (§4.3).
+    ///
+    /// **The rule it enforces is [`hir::Visibility`]'s**, which is §4.3's
+    /// keyword row read against §4.4's *"a file is a module"* and stated in
+    /// one sentence by `examples/17_modules.science`: `public` *"is what makes
+    /// the item visible outside its own file"*. Until this code existed the
+    /// word was parsed and dropped, and a `def` with no `public` was
+    /// importable by name **and** reachable through its module's path from
+    /// any other file in the crate.
+    ///
+    /// **Two call sites, and they are not interchangeable.** `resolve.rs`'s
+    /// `resolve_uses` is the import — `use lib (secret)` — and `resolve_in`
+    /// is the qualified path — `lib.secret()`. Gating only the first would
+    /// make `public` a rule about one spelling: the import would be refused
+    /// and the qualified call would run.
+    ///
+    /// **Not [`UNRESOLVED_NAME`] and not [`UNRESOLVED_IMPORT`]**, although
+    /// each is one branch away. Both of those say *"there is no such name"*,
+    /// and there is: the author read it in the other file. A message that
+    /// denies the item exists sends them hunting a typo, so this one names
+    /// the item, points a secondary label at the declaration, and says which
+    /// word to add and where.
+    pub const PRIVATE_ITEM: Code = Code(222);
+
     /// Every code this crate can emit, for the test that keeps them inside
     /// `SC0200`-`SC0249` and distinct.
     pub const ALL: &[Code] = &[
@@ -175,6 +200,7 @@ pub mod codes {
         STATEMENTS_OUTSIDE_THE_ENTRY,
         NOT_A_CONST_PARAM_KIND,
         REPEATED_VARIADIC_PARAM,
+        PRIVATE_ITEM,
     ];
 
     #[cfg(test)]

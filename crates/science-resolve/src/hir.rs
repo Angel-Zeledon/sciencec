@@ -194,6 +194,75 @@ pub const BUILTIN_FILE: FileId = FileId(u32::MAX);
 /// The span every builtin definition carries.
 pub const BUILTIN_SPAN: Span = Span { file: BUILTIN_FILE, start: 0, end: 0 };
 
+/// How far a name reaches: §4.3's `public`, and the absence of it.
+///
+/// # The rule, and where it is written down
+///
+/// §4.3's keyword table gives one row to visibility — `public`, where Rust
+/// writes `pub` — and §4.4 gives the unit it applies to: *"a file is a
+/// module; a directory with `mod.science` is a module containing its
+/// siblings"*. `examples/17_modules.science` states the consequence in one
+/// sentence: **`public` "is what makes the item visible outside its own
+/// file"**. So the granularity is **per module**, which here is per file:
+///
+/// * an item declared without `public` is nameable only from inside the
+///   module that declares it;
+/// * an item declared `public` is nameable from any module in the crate.
+///
+/// `package-manager.md` §7 is the same rule seen from outside the crate —
+/// *"its `public` items are exactly its API surface"* — so nothing here has
+/// to be revisited when a package boundary exists.
+///
+/// **A module is not an item and carries no visibility of its own.** There is
+/// no declaration to write `public` on: a module is a file, and §4.4 keeps
+/// `mod` reserved and unused. Every module is therefore reachable by path, and
+/// what the path reaches at the end of it is what this enum gates.
+///
+/// # Two things this deliberately does not decide
+///
+/// * **A child module seeing its parent's private items.** Rust's `pub`
+///   admits it; the sentence `17_modules` writes — *"outside its own file"* —
+///   does not, and nothing in the specs or the design notes takes the
+///   question up. The literal reading is what is implemented, so
+///   `text/parser.science` cannot name a private item of `text/mod.science`.
+/// * **A private type in a `public` signature.** Rust warns; no note here
+///   says anything either way, so nothing checks it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Visibility {
+    /// Declared without `public` (§4.3): nameable only from inside the module
+    /// that declares it.
+    Module,
+    /// Declared `public` (§4.3): nameable from every module in the crate.
+    ///
+    /// **This is the default**, and the default is the permissive one for one
+    /// reason: [`DefTable::alloc`] is what the prelude is built out of, and
+    /// every name in the prelude is part of the language. Source items do not
+    /// take it — they go through the resolver's `declare_in_module`, which
+    /// reads the declaration and calls [`DefTable::set_visibility`] with what
+    /// it found. The defs that keep the default are the prelude's, the crate
+    /// root's, the modules, and the definitions no module-level lookup can
+    /// reach at all: fields, parameters, generic parameters, associated
+    /// types.
+    #[default]
+    Public,
+}
+
+impl Visibility {
+    /// Whether a `public` was written.
+    pub fn is_public(self) -> bool {
+        self == Visibility::Public
+    }
+
+    /// The word the declaration would have to carry for this visibility, for
+    /// a diagnostic that is telling the reader what to add.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Visibility::Module => "private to its module",
+            Visibility::Public => "public",
+        }
+    }
+}
+
 /// One definition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Def {
@@ -209,6 +278,9 @@ pub struct Def {
     /// a variant, the function for a parameter. `None` only for the crate
     /// root.
     pub parent: Option<DefId>,
+    /// Whether `public` was written on the declaration. See [`Visibility`]
+    /// for the rule and for what it does not decide.
+    pub vis: Visibility,
 }
 
 impl Def {
@@ -234,6 +306,9 @@ impl DefTable {
     }
 
     /// Records a definition and hands back its id.
+    ///
+    /// The definition comes out [`Visibility::Public`]; see that variant for
+    /// why the permissive value is the default and which callers narrow it.
     pub fn alloc(
         &mut self,
         kind: DefKind,
@@ -242,8 +317,40 @@ impl DefTable {
         parent: Option<DefId>,
     ) -> DefId {
         let id = DefId(self.defs.len() as u32);
-        self.defs.push(Def { id, kind, name: name.into(), span, parent });
+        self.defs.push(Def {
+            id,
+            kind,
+            name: name.into(),
+            span,
+            parent,
+            vis: Visibility::Public,
+        });
         id
+    }
+
+    /// Records what the declaration wrote, or did not write, for `public`.
+    ///
+    /// Separate from [`DefTable::alloc`] rather than a parameter on it
+    /// because the prelude is a hundred `alloc` calls that have no
+    /// declaration to read and the resolver is one call site that does.
+    pub fn set_visibility(&mut self, id: DefId, vis: Visibility) {
+        self.defs[id.index()].vis = vis;
+    }
+
+    /// Whether `from` may name `id`: [`Visibility`]'s rule, in one place.
+    ///
+    /// `from` is the module doing the naming and `id` is what it reached. The
+    /// answer is *yes* when the item is `public`, and *yes* when the item is
+    /// in `from` itself — a module can always name its own declarations, which
+    /// is what makes a `use` of a sibling different from a call down the file.
+    ///
+    /// A definition with no enclosing module is the crate root and every
+    /// module in it, which nothing gates: see [`Visibility`].
+    pub fn is_visible_from(&self, from: DefId, id: DefId) -> bool {
+        if self.get(id).vis.is_public() {
+            return true;
+        }
+        self.module_of(id) == Some(from)
     }
 
     /// Records an implementation block, naming it after the type it was

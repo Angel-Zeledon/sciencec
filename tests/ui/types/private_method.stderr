@@ -1,0 +1,12 @@
+error[SC0545]: method `shared.paper.Paper.margin` is private to module `shared.paper`
+  --> tests/ui/types/private_method.science:24:13
+   |
+24 |     print(p.margin())
+   |             ^^^^^^ not visible from module `private_method`
+   |
+  --> tests/ui/types/shared/paper.science:21:9
+   |
+21 |     def margin(self) -> Int:
+   |         ------ declared here, without `public`
+   |
+   = note: §4.3's `public` is what makes an item visible outside its own file, and a method in an inherent block carries its own: write `public` on the declaration

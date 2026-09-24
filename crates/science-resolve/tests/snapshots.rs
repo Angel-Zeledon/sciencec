@@ -262,8 +262,12 @@ fn self_where_there_is_no_impl() {
 #[test]
 fn a_use_that_names_a_module_an_item_and_something_missing() {
     let sp = &Sp::new();
-    let token = record_item(sp, "Token", vec![], vec![]);
-    let lex = func(sp, "lex").body(block(sp, vec![], None)).item();
+    // Both `public`: the subject is what a `use` does with a name that is a
+    // module, a name that is an item, and a name that is neither. §4.3 is
+    // pinned by `a_use_of_a_private_name_is_refused`, and leaving it to fire
+    // here would bury the `missing` the snapshot exists for.
+    let token = public(record_item(sp, "Token", vec![], vec![]));
+    let lex = public(func(sp, "lex").body(block(sp, vec![], None)).item());
     let parser = module(vec![token, lex]);
 
     let main = module(vec![
@@ -285,7 +289,9 @@ fn a_directory_module_and_its_siblings() {
     let sp = &Sp::new();
     // text/mod.science is the module `text` itself; text/parser.science is
     // `text.parser` under it.
-    let text = module(vec![record_item(sp, "Source", vec![], vec![])]);
+    // `public`, because `main.science` names it: the subject is that
+    // `text/mod.science` *is* the module `text`, not §4.3.
+    let text = module(vec![public(record_item(sp, "Source", vec![], vec![]))]);
     let parser = module(vec![func(sp, "lex").body(block(sp, vec![], None)).item()]);
     let main = module(vec![use_item(sp, &["text"], Some(&["Source"]))]);
 
@@ -299,7 +305,10 @@ fn a_directory_module_and_its_siblings() {
 #[test]
 fn an_orphan_impl_and_a_legal_one() {
     let sp = &Sp::new();
-    let summarize = module(vec![interface_item(sp, "Summarize", vec![], vec![])]);
+    // `public` on both declarations: §4.3 would refuse `shapes.Summarize` and
+    // `types.Doc` before §5.4 could call either block an orphan, and the
+    // orphan message is what this snapshot is for.
+    let summarize = module(vec![public(interface_item(sp, "Summarize", vec![], vec![]))]);
     // types.science owns `Doc`, and implements the foreign trait for it: legal.
     let legal = impl_item(
         sp,
@@ -308,7 +317,7 @@ fn an_orphan_impl_and_a_legal_one() {
         ty(sp, "Doc"),
         vec![],
     );
-    let types = module(vec![record_item(sp, "Doc", vec![], vec![]), legal]);
+    let types = module(vec![public(record_item(sp, "Doc", vec![], vec![])), legal]);
     // main.science owns neither: an orphan.
     let orphan = impl_item(
         sp,

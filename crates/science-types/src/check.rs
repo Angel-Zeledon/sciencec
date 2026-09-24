@@ -4731,7 +4731,50 @@ impl<'a> BodyChecker<'a> {
                 Callee::Missing(None)
             }
         };
-        self.guard_box_receiver(receiver, name, box_type, callee)
+        let callee = self.guard_box_receiver(receiver, name, box_type, callee);
+        self.guard_private_method(name, callee)
+    }
+
+    /// `SC0545`: an inherent method reached from a module that may not name
+    /// it — [`hir::Visibility`]'s rule, at the one boundary the resolver
+    /// cannot see.
+    ///
+    /// **Why this check is here and not in `science-resolve`.** The resolver
+    /// owns the other two gates because both are *names in a module's table*:
+    /// `use lib (secret)` and `lib.secret()` are looked up by string in a
+    /// scope. A method is neither. `resolve_methods`' own note says it —
+    /// *"a method is reached through a receiver or through its type, never as
+    /// a bare name, so it has no entry in any name table"* — so the earliest
+    /// phase that knows which method `d.bare()` means is this one, after the
+    /// receiver has a type and [`Methods::lookup`] has answered. The
+    /// resolver's half of the rule is `SC0222`; this is the same rule and a
+    /// different code, because the two are reported by different phases and
+    /// §9 allocates by the phase that detects the error.
+    ///
+    /// **Only inherent methods can fail it.** `resolve_methods` gives an
+    /// interface's methods — declared or answered — the permissive
+    /// visibility, because a caller reaches them by proving the bound and
+    /// never by naming the block. So `d.report()` on a `public interface
+    /// Report` is unaffected however the `implements` block is written, and
+    /// the only `public` this arm can be reading is one written inside a
+    /// `Doc has:`.
+    ///
+    /// **A silent [`Callee::Missing`] would be the wrong answer** for
+    /// `guard_box_receiver`'s reason, one door over: the method is in the
+    /// index and the lookup found it. What the author needs to be told is
+    /// that it is there and is not theirs to call.
+    ///
+    /// [`Methods::lookup`]: crate::methods::Methods::lookup
+    fn guard_private_method(&mut self, name: &hir::Ident, callee: Callee) -> Callee {
+        let Callee::Found(candidate, supplied) = callee else { return callee };
+        let Some(here) = self.defs.module_of(self.body.def) else {
+            return Callee::Found(candidate, supplied);
+        };
+        if self.defs.is_visible_from(here, candidate.method) {
+            return Callee::Found(candidate, supplied);
+        }
+        self.diagnostics.push(private_method(self.defs, name, candidate.method, here));
+        Callee::Missing(supplied)
     }
 
     /// Decision 28's other half: a candidate [`lookup`](Self::lookup) resolved
@@ -7943,6 +7986,26 @@ fn no_such_method(span: Span, name: &str, ty: &str) -> Diagnostic {
         .with_note(
             "method lookup finds the inherent methods of the type and the methods of the \
              interfaces it implements, and neither has this name",
+        )
+}
+
+/// `SC0545` — `hir::Visibility`'s rule at a method call.
+/// `check::BodyChecker::guard_private_method` is the only caller, and carries
+/// the argument for why the rule is enforced twice in two phases.
+fn private_method(defs: &DefTable, name: &hir::Ident, method: DefId, here: DefId) -> Diagnostic {
+    let path = defs.path_of(method);
+    let there = defs.module_of(method).map(|m| defs.path_of(m)).unwrap_or_default();
+    let there =
+        if there.is_empty() { "the crate root".to_string() } else { format!("module `{there}`") };
+    let here = defs.path_of(here);
+    let here =
+        if here.is_empty() { "the crate root".to_string() } else { format!("module `{here}`") };
+    Diagnostic::error(codes::PRIVATE_METHOD, format!("method `{path}` is private to {there}"))
+        .with_label(Label::primary(name.span, format!("not visible from {here}")))
+        .with_label(Label::secondary(defs.get(method).span, "declared here, without `public`"))
+        .with_note(
+            "§4.3's `public` is what makes an item visible outside its own file, and a \
+             method in an inherent block carries its own: write `public` on the declaration",
         )
 }
 

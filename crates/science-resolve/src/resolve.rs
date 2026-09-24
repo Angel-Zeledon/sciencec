@@ -400,11 +400,19 @@ impl Resolver {
     fn collect_item(&mut self, module: DefId, item: &ast::Item) -> ItemDefs {
         match &item.kind {
             ast::ItemKind::Use(_) => ItemDefs::Use,
-            ast::ItemKind::Fn(decl) => {
-                ItemDefs::Fn(self.declare_in_module(module, DefKind::Fn, &decl.name))
-            }
+            ast::ItemKind::Fn(decl) => ItemDefs::Fn(self.declare_in_module(
+                module,
+                DefKind::Fn,
+                &decl.name,
+                visibility(decl.is_pub),
+            )),
             ast::ItemKind::Record(decl) => {
-                let def = self.declare_in_module(module, DefKind::Record, &decl.name);
+                let def = self.declare_in_module(
+                    module,
+                    DefKind::Record,
+                    &decl.name,
+                    visibility(decl.is_pub),
+                );
                 let mut fields = Vec::new();
                 let mut seen: HashMap<&str, DefId> = HashMap::new();
                 for field in &decl.fields {
@@ -421,7 +429,12 @@ impl Resolver {
                 ItemDefs::Record { def, fields }
             }
             ast::ItemKind::Choice(decl) => {
-                let def = self.declare_in_module(module, DefKind::Choice, &decl.name);
+                let def = self.declare_in_module(
+                    module,
+                    DefKind::Choice,
+                    &decl.name,
+                    visibility(decl.is_pub),
+                );
                 let mut variants = Vec::new();
                 let mut seen: HashMap<&str, DefId> = HashMap::new();
                 for variant in &decl.variants {
@@ -435,6 +448,14 @@ impl Resolver {
                         variant.name.span,
                         Some(def),
                     );
+                    // A variant has no `public` of its own to write — §4.4
+                    // gives it a name and a payload and nothing else — so it
+                    // is exactly as visible as the choice that declares it.
+                    // It has to be *said*, because `scope.variants` is a
+                    // second table the module-level gate reads: §4.5 makes
+                    // `Some(x)` and `Option.Some(x)` the same thing, and the
+                    // unqualified half would otherwise walk around the choice.
+                    self.defs.set_visibility(id, visibility(decl.is_pub));
                     seen.entry(variant.name.name.as_str()).or_insert(id);
                     self.variant_arity.insert(id, variant.payload.len());
                     // §4.5: `Some(x)` and `Option.Some(x)` are the same thing.
@@ -449,19 +470,24 @@ impl Resolver {
                 }
                 ItemDefs::Choice { def, variants }
             }
-            ast::ItemKind::Alias(decl) => {
-                ItemDefs::Alias(self.declare_in_module(module, DefKind::Alias, &decl.name))
-            }
-            ast::ItemKind::Const(decl) => {
-                ItemDefs::Const(self.declare_in_module(module, DefKind::Const, &decl.name))
-            }
-            ast::ItemKind::Interface(decl) => {
-                ItemDefs::Interface(self.declare_in_module(
-                    module,
-                    DefKind::Interface,
-                    &decl.name,
-                ))
-            }
+            ast::ItemKind::Alias(decl) => ItemDefs::Alias(self.declare_in_module(
+                module,
+                DefKind::Alias,
+                &decl.name,
+                visibility(decl.is_pub),
+            )),
+            ast::ItemKind::Const(decl) => ItemDefs::Const(self.declare_in_module(
+                module,
+                DefKind::Const,
+                &decl.name,
+                visibility(decl.is_pub),
+            )),
+            ast::ItemKind::Interface(decl) => ItemDefs::Interface(self.declare_in_module(
+                module,
+                DefKind::Interface,
+                &decl.name,
+                visibility(decl.is_pub),
+            )),
             // §1.2 of `ffi-c-boundary.md` keeps the block a list of symbols,
             // and the names in that list are ordinary module-level names:
             // `cblas_dgemm` is called like any function and `BlasInt` is
@@ -483,7 +509,14 @@ impl Resolver {
                             ast::ExternItemKind::Union(decl) => (DefKind::Union, &decl.name),
                             ast::ExternItemKind::Error => return None,
                         };
-                        Some(self.declare_in_module(module, kind, name))
+                        // An `extern` block takes no `public` — the parser
+                        // reports one on the block head and the grammar has
+                        // no place for one on a member — so there is nothing
+                        // to read and no way for an author to widen a name
+                        // this gate narrowed. Public, and `ffi-c-boundary.md`
+                        // is where a per-symbol rule would have to be decided
+                        // before this changes.
+                        Some(self.declare_in_module(module, kind, name, hir::Visibility::Public))
                     })
                     .collect(),
             ),
@@ -519,9 +552,21 @@ impl Resolver {
     /// A duplicate is reported and still allocated: the tree needs a `DefId`
     /// for the second declaration, and the *first* keeps the name so that the
     /// uses which follow resolve to something a reader would predict.
-    fn declare_in_module(&mut self, module: DefId, kind: DefKind, name: &ast::Ident) -> DefId {
+    ///
+    /// `vis` is what the declaration wrote for `public`, and this is the only
+    /// place a source item gets one: everything the two visibility gates can
+    /// reach is a module-level name, and every module-level name is declared
+    /// here. See [`hir::Visibility`].
+    fn declare_in_module(
+        &mut self,
+        module: DefId,
+        kind: DefKind,
+        name: &ast::Ident,
+        vis: hir::Visibility,
+    ) -> DefId {
         self.check_reserved(name);
         let def = self.defs.alloc(kind, &name.name, name.span, Some(module));
+        self.defs.set_visibility(def, vis);
         match self.scopes.entry(module).or_default().names.get(&name.name) {
             Some(previous) => {
                 let previous = *previous;
@@ -565,6 +610,17 @@ impl Resolver {
                 Some(names) => {
                     for name in names {
                         match self.lookup_in_module(target, &name.name) {
+                            // Gate one of two. A `use` is the only way a name
+                            // declared elsewhere becomes a bare name here, so
+                            // refusing the import is what keeps every later
+                            // unqualified reference honest without the walk
+                            // asking again: the name is never bound, and
+                            // `poison` keeps the uses that follow from
+                            // reporting a second time.
+                            Some(def) if !self.visible_here(module, def) => {
+                                self.report_private(module, target, def, name);
+                                self.poison(module, &name.name);
+                            }
                             Some(def) => self.bind_import(module, name, def),
                             None => {
                                 self.error(
@@ -786,6 +842,62 @@ impl Resolver {
             return;
         }
         self.scopes.entry(module).or_default().names.insert(name.name.clone(), def);
+    }
+
+    /// Whether `from` may name `def`: [`hir::Visibility`]'s rule.
+    ///
+    /// The table carries the rule; this is the resolver's one question, asked
+    /// in the two places a name crosses a module boundary.
+    fn visible_here(&self, from: DefId, def: DefId) -> bool {
+        self.defs.is_visible_from(from, def)
+    }
+
+    /// `SC0222`: a name that is there and is not this module's to use.
+    ///
+    /// **It names the item and points at the declaration**, which is the whole
+    /// difference between this and reporting *"not found"*. The author who
+    /// wrote the name knows the item exists — they read it in the other file —
+    /// so a message that denies it would send them looking for a typo. The
+    /// fix is one word and the message says which word and where it goes.
+    fn report_private(&mut self, from: DefId, module: DefId, def: DefId, at: &ast::Ident) {
+        // A variant is as visible as its choice and has no `public` of its
+        // own, so the declaration to point at — and the one to put the word
+        // on — is the choice's.
+        let declaration = match self.defs.get(def).kind {
+            DefKind::Variant => self.defs.get(def).parent.unwrap_or(def),
+            _ => def,
+        };
+        let kind = self.defs.get(def).kind.describe();
+        let path = self.defs.path_of(def);
+        let here = self.module_label(from);
+        let there = self.module_label(module);
+        let fix = self.defs.get(declaration).name.clone();
+        self.diags.push(
+            Diagnostic::error(
+                codes::PRIVATE_ITEM,
+                format!("{kind} `{path}` is private to {there}"),
+            )
+            .with_label(Label::primary(at.span, format!("not visible from {here}")))
+            .with_label(Label::secondary(
+                self.defs.get(declaration).span,
+                "declared here, without `public`",
+            ))
+            .with_note(format!(
+                "§4.3's `public` is what makes an item visible outside its own file: \
+                 write `public` on the declaration of `{fix}`"
+            )),
+        );
+    }
+
+    /// `the module `text.parser`` or `the crate root`, for a message that has
+    /// to name a module a reader can find.
+    fn module_label(&self, module: DefId) -> String {
+        let path = self.defs.path_of(module);
+        if path.is_empty() {
+            "the crate root".to_string()
+        } else {
+            format!("module `{path}`")
+        }
     }
 
     /// A name offered by one module: an item, an import, or an unqualified
@@ -1263,7 +1375,7 @@ impl Resolver {
             .collect();
 
         let previous_self = self.self_owner.replace(def);
-        let methods = self.resolve_methods(def, &decl.methods);
+        let methods = self.resolve_methods(def, &decl.methods, true);
         self.self_owner = previous_self;
 
         self.ribs.pop();
@@ -1303,7 +1415,7 @@ impl Resolver {
             })
             .collect();
 
-        let methods = self.resolve_methods(def, &block.methods);
+        let methods = self.resolve_methods(def, &block.methods, block.interface.is_some());
         self.self_owner = previous_self;
 
         self.ribs.pop();
@@ -1325,7 +1437,30 @@ impl Resolver {
     /// through a receiver or through its type, never as a bare name, so it has
     /// no entry in any name table. Two methods with the same name in one block
     /// are still a duplicate, and that is checked here.
-    fn resolve_methods(&mut self, owner: DefId, methods: &[ast::FnDecl]) -> Vec<hir::Fn> {
+    ///
+    /// # Which methods carry a visibility of their own
+    ///
+    /// `gated_by_the_block` is the answer, and it is *"all but the inherent
+    /// ones"*. `examples/17_modules.science` writes `public` inside a
+    /// `Document has:` block and plainly inside `Document implements Report:`,
+    /// and that is the rule rather than an accident of the example:
+    ///
+    /// * **An inherent block** — `Doc has:` — declares the type's own surface,
+    ///   and each method is as visible as its declaration says. This is the
+    ///   fifth form [`hir::Visibility`] gates.
+    /// * **An interface's methods**, both the declarations in `interface I:`
+    ///   and the answers in `T implements I:`, are gated by the *interface*.
+    ///   A caller reaches them by proving the bound, never by naming the
+    ///   block, so a private answer to a public obligation would make a type
+    ///   that implements an interface it cannot be used through. The parser
+    ///   accepts `public` there and it means nothing, which is the same thing
+    ///   it means on the block head (`SC0107`).
+    fn resolve_methods(
+        &mut self,
+        owner: DefId,
+        methods: &[ast::FnDecl],
+        gated_by_the_block: bool,
+    ) -> Vec<hir::Fn> {
         let mut seen: HashMap<String, DefId> = HashMap::new();
         methods
             .iter()
@@ -1333,6 +1468,9 @@ impl Resolver {
                 self.check_reserved(&decl.name);
                 let def =
                     self.defs.alloc(DefKind::Fn, &decl.name.name, decl.name.span, Some(owner));
+                if !gated_by_the_block {
+                    self.defs.set_visibility(def, visibility(decl.is_pub));
+                }
                 match seen.get(&decl.name.name) {
                     Some(previous) => {
                         let previous = *previous;
@@ -1843,6 +1981,14 @@ impl Resolver {
 
         match self.defs.get(id).kind {
             DefKind::Module => match self.lookup_in_module(id, &ident.name) {
+                // Gate two of two, and the one that makes the first mean
+                // something: without it `use lib (secret)` would be refused
+                // and `lib.secret()` would still run, so `public` would be a
+                // rule about one spelling rather than about the item.
+                Some(def) if !self.visible_here(self.current_module, def) => {
+                    self.report_private(self.current_module, id, def, ident);
+                    Res::Error
+                }
                 Some(def) => Res::Def(def),
                 None if self.is_poisoned(id, &ident.name) => Res::Error,
                 None => {
@@ -2726,6 +2872,22 @@ impl Resolver {
             }
         }
         None
+    }
+}
+
+/// The parser's `is_pub` as the resolver's [`hir::Visibility`].
+///
+/// One function rather than a `match` at each of the eight declaration forms,
+/// so that the direction of the mapping is written down once: `public` on the
+/// declaration is [`hir::Visibility::Public`], and its absence is
+/// [`hir::Visibility::Module`] — never the other way round, which is the
+/// mistake that would make every item in the crate public and every test
+/// still pass.
+fn visibility(is_pub: bool) -> hir::Visibility {
+    if is_pub {
+        hir::Visibility::Public
+    } else {
+        hir::Visibility::Module
     }
 }
 

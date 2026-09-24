@@ -282,26 +282,28 @@
 //! is the case it cannot cover, and §8 says why.
 //!
 //! **What `EveryBody` costs, and why it is not `public`.** The right root set
-//! for a library is *"every `public` item and everything it reaches"*, and it
-//! cannot be written: `public` does not survive the resolver.
-//! `ast::FnDecl::is_pub` exists, `ast::FnForm::Tool` exists,
-//! [`science_resolve::hir::Fn`] carries neither, and
-//! [`science_resolve::hir::Def`] has `id`, `kind`, `name`, `span` and `parent`
-//! and no visibility. So the two answers available are *"the entry point"* and
-//! *"everything"*, and `EveryBody` is the second: it emits every non-generic
-//! body in the crate, including the ones a `public` root set would have left
-//! out. Measured over `examples/`: `19_stdlib.science` is 34 items from the
-//! entry point and 41 from every body, and `10_loops.science` is 15 and 31. The
-//! whole corpus is 361 items under `EveryBody`, 41 of them instances of a
-//! generic.
+//! for a library is *"every `public` item and everything it reaches"*, and
+//! `EveryBody` is not it: it emits every non-generic body in the crate,
+//! including the ones a `public` root set would have left out. Measured over
+//! `examples/`, the whole corpus is 446 items under `EveryBody`, 83 of them
+//! instances of a generic.
 //!
-//! **What is needed to close it is one `bool` and one enum**, and it is named
-//! precisely because a workaround here would be a second visibility rule:
-//! `hir::Fn` should carry `is_pub: bool` and the `FnForm` the parser already
-//! read, and [`RootSet`] gains the variant that reads them. `tool` matters
-//! separately from `public` — `script-mode.md` makes a `tool` an entry point in
-//! its own right, so it is a root even in a binary build — and neither fact is
-//! reachable from here today.
+//! **Half of what was missing now exists, and the half that is left is the
+//! half this walk needs.** [`science_resolve::hir::Def`] carries
+//! [`science_resolve::hir::Visibility`] as of the `public`-enforcement change,
+//! so *"is this item `public`"* is answerable here — but `tool` is not.
+//! `ast::FnForm::Tool` still stops at the AST, `script-mode.md` makes a `tool`
+//! an entry point in its own right, and a `PublicBody` variant that did not
+//! also root every `tool` would drop bodies a script build has to call. So
+//! [`RootSet`] still offers two answers, *"the entry point"* and
+//! *"everything"*, and the third waits on `hir::Fn` carrying the `FnForm` the
+//! parser already read. `sciencec`'s `tools.rs` matching `ast::FnForm::Tool`
+//! on the AST is still the evidence that the field is missing rather than
+//! merely unused.
+//!
+//! **Enforcing `public` did not move this number.** `SC0222` and `SC0545`
+//! refuse call sites; they add no body and remove none, and the corpus
+//! measures 446 either side of the change, file for file.
 //!
 //! **There is already one workaround for this in the workspace, and it is the
 //! evidence that the field is missing rather than merely unused.**

@@ -1,0 +1,28 @@
+# Not a UI case: a module, imported by `private_method.science`.
+#
+# One `public type` with two inherent methods and one interface it answers, so
+# the case can show that §4.3 divides the inherent block and leaves the
+# interface alone.
+
+public interface Report:
+    def report(self) -> Int
+
+public type Paper:
+    pages: Int
+
+Paper has:
+    public def new(pages: Int) -> Paper:
+        Paper(pages: pages)
+
+    public def pages_of(self) -> Int:
+        self.pages
+
+    # No `public`: `Paper`'s own business, and not the crate's.
+    def margin(self) -> Int:
+        self.pages + 1
+
+# An answer to an interface carries no `public` and needs none: the caller
+# reaches `report` by proving the bound, never by naming this block.
+Paper implements Report:
+    def report(self) -> Int:
+        self.margin()

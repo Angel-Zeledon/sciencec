@@ -1,0 +1,25 @@
+# Not a UI case: a module, imported by `private_item.science` and
+# `private_item_ok.science`.
+#
+# Half of it is `public` and half is not, so one file can show both sides of
+# §4.3 without the two cases disagreeing about what the module contains.
+
+public type Ledger:
+    total: Int
+
+public choice Open:
+    Yes
+    No
+
+type Sealed:
+    secret: Int
+
+choice Closed:
+    Locked
+    Bolted
+
+public def balance() -> Int:
+    7
+
+def combination() -> Int:
+    42

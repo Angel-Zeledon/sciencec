@@ -1,0 +1,90 @@
+error[SC0222]: a record type `shared.vault.Sealed` is private to module `shared.vault`
+  --> tests/ui/resolve/private_item.science:24:19
+   |
+24 | use shared.vault (Sealed, combination)
+   |                   ^^^^^^ not visible from module `private_item`
+   |
+  --> tests/ui/resolve/shared/vault.science:14:6
+   |
+14 | type Sealed:
+   |      ------ declared here, without `public`
+   |
+   = note: §4.3's `public` is what makes an item visible outside its own file: write `public` on the declaration of `Sealed`
+
+error[SC0222]: a function `shared.vault.combination` is private to module `shared.vault`
+  --> tests/ui/resolve/private_item.science:24:27
+   |
+24 | use shared.vault (Sealed, combination)
+   |                           ^^^^^^^^^^^ not visible from module `private_item`
+   |
+  --> tests/ui/resolve/shared/vault.science:24:5
+   |
+24 | def combination() -> Int:
+   |     ----------- declared here, without `public`
+   |
+   = note: §4.3's `public` is what makes an item visible outside its own file: write `public` on the declaration of `combination`
+
+error[SC0222]: a variant `shared.vault.Closed.Locked` is private to module `shared.vault`
+  --> tests/ui/resolve/private_item.science:30:19
+   |
+30 | use shared.vault (Locked)
+   |                   ^^^^^^ not visible from module `private_item`
+   |
+  --> tests/ui/resolve/shared/vault.science:17:8
+   |
+17 | choice Closed:
+   |        ------ declared here, without `public`
+   |
+   = note: §4.3's `public` is what makes an item visible outside its own file: write `public` on the declaration of `Closed`
+
+error[SC0222]: a function `shared.vault.combination` is private to module `shared.vault`
+  --> tests/ui/resolve/private_item.science:33:18
+   |
+33 |     shared.vault.combination()
+   |                  ^^^^^^^^^^^ not visible from module `private_item`
+   |
+  --> tests/ui/resolve/shared/vault.science:24:5
+   |
+24 | def combination() -> Int:
+   |     ----------- declared here, without `public`
+   |
+   = note: §4.3's `public` is what makes an item visible outside its own file: write `public` on the declaration of `combination`
+
+error[SC0222]: a record type `shared.vault.Sealed` is private to module `shared.vault`
+  --> tests/ui/resolve/private_item.science:35:30
+   |
+35 | def by_type(s: &shared.vault.Sealed) -> Int:
+   |                              ^^^^^^ not visible from module `private_item`
+   |
+  --> tests/ui/resolve/shared/vault.science:14:6
+   |
+14 | type Sealed:
+   |      ------ declared here, without `public`
+   |
+   = note: §4.3's `public` is what makes an item visible outside its own file: write `public` on the declaration of `Sealed`
+
+error[SC0222]: a choice type `shared.vault.Closed` is private to module `shared.vault`
+  --> tests/ui/resolve/private_item.science:38:34
+   |
+38 | def by_variant() -> shared.vault.Closed:
+   |                                  ^^^^^^ not visible from module `private_item`
+   |
+  --> tests/ui/resolve/shared/vault.science:17:8
+   |
+17 | choice Closed:
+   |        ------ declared here, without `public`
+   |
+   = note: §4.3's `public` is what makes an item visible outside its own file: write `public` on the declaration of `Closed`
+
+error[SC0222]: a choice type `shared.vault.Closed` is private to module `shared.vault`
+  --> tests/ui/resolve/private_item.science:39:18
+   |
+39 |     shared.vault.Closed.Locked
+   |                  ^^^^^^ not visible from module `private_item`
+   |
+  --> tests/ui/resolve/shared/vault.science:17:8
+   |
+17 | choice Closed:
+   |        ------ declared here, without `public`
+   |
+   = note: §4.3's `public` is what makes an item visible outside its own file: write `public` on the declaration of `Closed`

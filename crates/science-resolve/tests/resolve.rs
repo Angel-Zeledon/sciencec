@@ -425,8 +425,14 @@ fn an_unknown_field_names_the_record_as_written_and_not_by_its_path() {
 #[test]
 fn an_unknown_field_on_a_qualified_record_keeps_the_qualification() {
     let sp = &Sp::new();
-    let types =
-        module(vec![record_item(sp, "Doc", vec![], vec![field(sp, "title", ty(sp, "String"))])]);
+    // `public`: the subject is which name `SC0205` prints, and a private
+    // `Doc` would never reach the field check to print anything.
+    let types = module(vec![public(record_item(
+        sp,
+        "Doc",
+        vec![],
+        vec![field(sp, "title", ty(sp, "String"))],
+    ))]);
     let lit = struct_lit(sp, &["types", "Doc"], vec![("subtitle", string(sp, "b"))]);
     let f = func(sp, "f").body(block(sp, vec![], Some(lit))).item();
 
@@ -483,7 +489,10 @@ fn a_path_prefix_is_named_as_written_in_sc0204_and_in_the_variant_sc0200() {
 #[test]
 fn use_brings_a_name_into_the_importing_module() {
     let sp = Sp::new();
-    let token = record_item(&sp, "Token", vec![], vec![]);
+    // `public`, because the subject here is what `use` does and not §4.3: a
+    // `Token` without it is unnameable from `main.science` whatever the `use`
+    // says, and `a_use_of_a_private_name_is_refused` is where that is pinned.
+    let token = public(record_item(&sp, "Token", vec![], vec![]));
     let parser = module(vec![token]);
 
     let use_decl = use_item(&sp, &["text", "parser"], Some(&["Token"]));
@@ -533,6 +542,157 @@ fn use_of_a_name_that_does_not_exist_is_reported() {
     ];
     let (_, diagnostics) = science_resolve::resolve_crate(&sources);
     assert_eq!(codes(&diagnostics), ["SC0202"]);
+}
+
+// --- `public`, and the absence of it (§4.3) ------------------------------
+
+/// Two modules, `main.science` and `text/parser.science`, for the tests that
+/// need a name to cross a file boundary.
+fn two_modules(
+    main: science_parser::ast::Module,
+    parser: science_parser::ast::Module,
+) -> Vec<science_resolve::SourceModule> {
+    vec![
+        science_resolve::SourceModule {
+            file: science_diagnostics::FileId(0),
+            path: "main.science".into(),
+            entry: true,
+            ast: main,
+        },
+        science_resolve::SourceModule {
+            file: science_diagnostics::FileId(1),
+            path: "text/parser.science".into(),
+            entry: false,
+            ast: parser,
+        },
+    ]
+}
+
+/// `SC0222` and not `SC0202`: the name is *there*, and saying it is not would
+/// send a reader who has the other file open looking for a typo.
+#[test]
+fn a_use_of_a_private_name_is_refused() {
+    let sp = Sp::new();
+    let parser = module(vec![record_item(&sp, "Token", vec![], vec![])]);
+    let main = module(vec![use_item(&sp, &["text", "parser"], Some(&["Token"]))]);
+
+    let (_, diagnostics) = science_resolve::resolve_crate(&two_modules(main, parser));
+    assert_eq!(codes(&diagnostics), ["SC0222"]);
+    let d = diagnostics.iter().next().expect("the import is refused");
+    assert_eq!(d.message, "a record type `text.parser.Token` is private to module `text.parser`");
+    assert!(
+        d.notes.iter().any(|n| n.contains("write `public` on the declaration of `Token`")),
+        "the fix is one word and the note says which: {:?}",
+        d.notes
+    );
+}
+
+/// The second gate, and the reason there are two. `use` is one spelling of
+/// *"a name from another module"*; the qualified path is the other, and a
+/// rule that held for only one would be a rule about spelling.
+#[test]
+fn a_qualified_path_to_a_private_name_is_refused() {
+    let sp = Sp::new();
+    let parser = module(vec![func(&sp, "lex").body(block(&sp, vec![], None)).item()]);
+    let main = module(vec![func(&sp, "f")
+        .body(block(&sp, vec![], Some(call(&sp, name(&sp, &["text", "parser", "lex"]), vec![]))))
+        .item()]);
+
+    let (_, diagnostics) = science_resolve::resolve_crate(&two_modules(main, parser));
+    assert_eq!(codes(&diagnostics), ["SC0222"]);
+}
+
+/// `public` is what the import needed, and nothing else changed.
+#[test]
+fn a_use_of_a_public_name_is_allowed() {
+    let sp = Sp::new();
+    let parser = module(vec![public(record_item(&sp, "Token", vec![], vec![]))]);
+    let main = module(vec![use_item(&sp, &["text", "parser"], Some(&["Token"]))]);
+
+    let (_, diagnostics) = science_resolve::resolve_crate(&two_modules(main, parser));
+    assert!(diagnostics.is_empty(), "{:?}", codes(&diagnostics));
+}
+
+/// The gate is *per module*, so the declaring file is always inside it. This
+/// is the half of the rule that would fail silently: a check that refused
+/// every non-`public` name everywhere would still pass every cross-module
+/// test above.
+#[test]
+fn a_private_name_is_reachable_inside_its_own_module() {
+    let sp = Sp::new();
+    let token = record_item(&sp, "Token", vec![], vec![]);
+    let f = func(&sp, "f")
+        .params(vec![param(&sp, "t", ty(&sp, "Token"))])
+        .body(block(&sp, vec![], None))
+        .item();
+    let parser = module(vec![token, f]);
+    let main = module(vec![]);
+
+    let (_, diagnostics) = science_resolve::resolve_crate(&two_modules(main, parser));
+    assert!(diagnostics.is_empty(), "{:?}", codes(&diagnostics));
+}
+
+/// §4.5 makes `Ready` and `Signal.Ready` the same name, so a variant is
+/// offered by a second table. It has no `public` of its own to write, and it
+/// takes its choice's: the message points at the choice, which is where the
+/// word would go.
+#[test]
+fn a_variant_is_as_visible_as_its_choice() {
+    let sp = Sp::new();
+    let parser =
+        module(vec![choice_item(&sp, "Signal", vec![], vec![variant(&sp, "Ready", vec![])])]);
+    let main = module(vec![use_item(&sp, &["text", "parser"], Some(&["Ready"]))]);
+
+    let (_, diagnostics) = science_resolve::resolve_crate(&two_modules(main, parser));
+    assert_eq!(codes(&diagnostics), ["SC0222"]);
+    let d = diagnostics.iter().next().expect("the import is refused");
+    assert_eq!(
+        d.message,
+        "a variant `text.parser.Signal.Ready` is private to module `text.parser`"
+    );
+    assert!(
+        d.notes.iter().any(|n| n.contains("declaration of `Signal`")),
+        "a variant takes no `public`; the choice does: {:?}",
+        d.notes
+    );
+}
+
+/// `public` on the choice reaches the variant, for the same reason.
+#[test]
+fn a_public_choice_offers_its_variants() {
+    let sp = Sp::new();
+    let parser = module(vec![public(choice_item(
+        &sp,
+        "Signal",
+        vec![],
+        vec![variant(&sp, "Ready", vec![])],
+    ))]);
+    let main = module(vec![use_item(&sp, &["text", "parser"], Some(&["Ready"]))]);
+
+    let (_, diagnostics) = science_resolve::resolve_crate(&two_modules(main, parser));
+    assert!(diagnostics.is_empty(), "{:?}", codes(&diagnostics));
+}
+
+/// One refusal, not two. The import is never bound, so every later use of the
+/// bare name would be an `SC0201` on top of the `SC0222` that explains it.
+#[test]
+fn a_refused_import_does_not_also_report_its_uses() {
+    let sp = Sp::new();
+    let parser = module(vec![record_item(&sp, "Token", vec![], vec![])]);
+    let main = module(vec![
+        use_item(&sp, &["text", "parser"], Some(&["Token"])),
+        func(&sp, "f")
+            .params(vec![param(&sp, "t", ty(&sp, "Token"))])
+            .body(block(&sp, vec![], None))
+            .item(),
+        func(&sp, "g")
+            .params(vec![param(&sp, "t", ty(&sp, "Token"))])
+            .body(block(&sp, vec![], None))
+            .item(),
+    ]);
+
+    let (_, diagnostics) = science_resolve::resolve_crate(&two_modules(main, parser));
+    assert_eq!(codes(&diagnostics), ["SC0222"]);
 }
 
 #[test]
@@ -785,10 +945,16 @@ fn two_modules_that_import_each_other_are_loaded_once_each() {
 // --- the orphan rule (§5.4) ---------------------------------------------
 
 /// Three modules: the trait in one, the type in another, the impl in a third.
+///
+/// **Both declarations are `public`**, and unconditionally, so that the two
+/// cases differ in exactly one thing: where the block sits. §4.3 would
+/// otherwise refuse the paths before §5.4 ever ran, and the orphan rule is
+/// what this fixture is for. An `implements` block takes no `public` of its
+/// own — there is no declaration to write it on.
 fn orphan_sources(impl_in_type_module: bool) -> Vec<science_resolve::SourceModule> {
     let sp = Sp::new();
-    let traits = module(vec![interface_item(&sp, "Summarize", vec![], vec![])]);
-    let doc = record_item(&sp, "Doc", vec![], vec![]);
+    let traits = module(vec![public(interface_item(&sp, "Summarize", vec![], vec![]))]);
+    let doc = public(record_item(&sp, "Doc", vec![], vec![]));
 
     let block = impl_item(
         &sp,

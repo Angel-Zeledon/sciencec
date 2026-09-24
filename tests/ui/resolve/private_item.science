@@ -1,0 +1,54 @@
+# UI test: names declared without `public`, reached from another file
+# (SC0222).
+#
+# §4.3 gives `public` the row Rust gives `pub`, and §4.4 gives it the unit it
+# applies to: a file is a module. `examples/17_modules.science` says the
+# consequence in one sentence — `public` "is what makes the item visible
+# outside its own file" — and until SC0222 existed the word was parsed and
+# thrown away.
+#
+# Four of the five refusals are here, and they are deliberately four and not
+# one. The rule has two gates in the resolver, and a gate on one spelling
+# would be a rule about spelling:
+#
+#   * `use shared.vault (secret)` is the import gate, in `resolve_uses`;
+#   * `shared.vault.combination()` is the qualified-path gate, in `resolve_in`;
+#
+# and each has to hold for a type and for a function. A choice's variants get
+# their visibility from the choice — there is no `public` to write on a
+# variant — which is the fourth.
+#
+# The fifth is a method, which no name table holds, so it is SC0545 and lives
+# in `tests/ui/types/private_method.science`.
+
+use shared.vault (Sealed, combination)
+
+# §4.5 makes `Locked` and `Closed.Locked` the same thing, so a variant is
+# offered as a bare name too. That second table is why the variant's
+# visibility has to be *set* to its choice's rather than inherited by
+# accident: without it this line would walk around `Closed`.
+use shared.vault (Locked)
+
+def by_path() -> Int:
+    shared.vault.combination()
+
+def by_type(s: &shared.vault.Sealed) -> Int:
+    s.secret
+
+def by_variant() -> shared.vault.Closed:
+    shared.vault.Closed.Locked
+
+# The public half of the same module, here so that the case proves what is
+# still allowed as well as what is not: nothing below adds a line to the
+# expectation.
+use shared.vault (Ledger, Open, balance)
+
+def kept(l: &Ledger) -> Int:
+    l.total
+
+def also_kept() -> Open:
+    Open.Yes
+
+def main():
+    print(by_path())
+    print(balance())

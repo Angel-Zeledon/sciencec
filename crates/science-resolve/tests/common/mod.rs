@@ -236,6 +236,12 @@ pub fn func(sp: &Sp, name: &str) -> FnBuilder {
 }
 
 impl FnBuilder {
+    /// Writes `public` on the declaration (§4.3).
+    pub fn public(mut self) -> Self {
+        self.decl.is_pub = true;
+        self
+    }
+
     pub fn generics(mut self, generics: Vec<GenericParam>) -> Self {
         self.decl.generics = generics;
         self
@@ -292,6 +298,28 @@ impl FnBuilder {
         }
         span
     }
+}
+
+/// Writes `public` on whatever declaration the item wraps (§4.3).
+///
+/// The builders default to *private*, which is what a declaration with no
+/// `public` in front of it is, so a fixture that means *"another module can
+/// see this"* has to say so — the same word the author of a `.science` file
+/// has to write, and the reason these helpers do not default to `true`.
+///
+/// An `implements` block is the one item with nothing to write it on: a block
+/// is not a name, and §4.3's keyword goes on declarations. It is left alone.
+pub fn public(mut item: Item) -> Item {
+    match &mut item.kind {
+        ItemKind::Fn(d) => d.is_pub = true,
+        ItemKind::Record(d) => d.is_pub = true,
+        ItemKind::Choice(d) => d.is_pub = true,
+        ItemKind::Interface(d) => d.is_pub = true,
+        ItemKind::Alias(d) => d.is_pub = true,
+        ItemKind::Const(d) => d.is_pub = true,
+        _ => {}
+    }
+    item
 }
 
 pub fn field(sp: &Sp, name: &str, ty: Type) -> FieldDef {
