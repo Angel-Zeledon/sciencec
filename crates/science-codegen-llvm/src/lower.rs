@@ -2850,6 +2850,72 @@ impl<'a> Lowerer<'a> {
                     // into it.
                     "Formatter" => Ok(RtAggregate::Formatter.cg_ty()),
                     "IoError" => Ok(RtAggregate::IoError.cg_ty()),
+                    // `ffi-c-boundary.md` §1.3's C scalar vocabulary, at the
+                    // widths **this target's** C compiler gives them.
+                    //
+                    // **These are not aliases and this is not an alias
+                    // expansion.** `science-resolve`'s `builtins.rs` says why
+                    // in as many words — *"they are deliberately not aliases
+                    // of the Science primitives: §1.6's whole argument is that
+                    // a width the author did not think about is how a
+                    // numerical program gets silently wrong answers"* — and
+                    // `science-types`' `alias.rs` gives them no body for the
+                    // same reason. So `CInt` and `I32` stay two types that a
+                    // program cannot mix without saying so, and what is
+                    // decided here is only the one question the front end
+                    // deliberately refuses to answer: how many bits the
+                    // *machine* gives them. That is a fact about
+                    // [`Triple`] and this is where `Triple` is in hand.
+                    //
+                    // The rows that are the same on all three F0 targets are
+                    // written flat; the two that are not — C's `long`, which
+                    // is 64 bits under LP64 and 32 under Windows' LLP64 — ask
+                    // the target. `CSizeT` and `CPtrDiff` are
+                    // [`IntTy::Usize`] and [`IntTy::Isize`] rather than
+                    // `U64`/`I64` for `layout.rs`'s own stated reason: on
+                    // every F0 target those widths coincide, and conflating
+                    // them is *"correct by accident and wrong the first time
+                    // anyone builds for a 32-bit target"*.
+                    //
+                    // `CChar` is signed here because it is signed on all
+                    // three: x86-64 System V and Windows both make plain
+                    // `char` signed, and Apple's ARM64 ABI does too — it is
+                    // 64-bit Linux on ARM and PowerPC where it is unsigned,
+                    // and neither is a triple this compiler has.
+                    "CChar" => Ok(CgTy::Int(IntTy::I8)),
+                    "CInt" => Ok(CgTy::Int(IntTy::I32)),
+                    "CUInt" => Ok(CgTy::Int(IntTy::U32)),
+                    "CLong" => Ok(CgTy::Int(match self.target {
+                        Triple::X86_64WindowsMsvc => IntTy::I32,
+                        Triple::X86_64LinuxGnu | Triple::Aarch64AppleDarwin => IntTy::I64,
+                    })),
+                    "CULong" => Ok(CgTy::Int(match self.target {
+                        Triple::X86_64WindowsMsvc => IntTy::U32,
+                        Triple::X86_64LinuxGnu | Triple::Aarch64AppleDarwin => IntTy::U64,
+                    })),
+                    "CLongLong" => Ok(CgTy::Int(IntTy::I64)),
+                    "CULongLong" => Ok(CgTy::Int(IntTy::U64)),
+                    "CFloat" => Ok(CgTy::Float(science_codegen::layout::FloatTy::F32)),
+                    "CDouble" => Ok(CgTy::Float(science_codegen::layout::FloatTy::F64)),
+                    "CSizeT" => Ok(CgTy::Int(IntTy::Usize)),
+                    "CPtrDiff" => Ok(CgTy::Int(IntTy::Isize)),
+                    // **`CVoid` is the one C scalar with no width, and giving
+                    // it one would be the mistake.** It is C's `void`: the
+                    // thing `void *` points at and the thing a function
+                    // returns when it returns nothing. It has no values, so
+                    // there is no register to put one in and no bytes to lay
+                    // out — a Science program that has a `CVoid` *value* has
+                    // already gone wrong, and `Pointer[CVoid]` never asks this
+                    // arm, because a pointer is one word whatever it points
+                    // at. The refusal says which of the two it is rather than
+                    // falling through to *"a value of type `CVoid`"*, which
+                    // reads as a backend gap.
+                    "CVoid" => Err(Unlowered::new(
+                        "a value of type `CVoid`, which is C's `void` and has no values: it is \
+                         what a `Pointer[CVoid]` points at and what a function that returns \
+                         nothing returns, and neither of those is a value this or any backend \
+                         can hold",
+                    )),
                     other => Err(Unlowered::new(format!("a value of type `{other}`"))),
                 }
             }

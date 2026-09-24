@@ -167,7 +167,12 @@ fn natural_ty(literal: &Literal, prelude: &Prelude, types: &mut Types) -> Option
 /// §5.1's integer types (the module doc's §4 says why the width does not have
 /// to agree here), and likewise every float literal matches every float type.
 /// `Literal::Null` matches nothing, for [`natural_ty`]'s reason.
-fn literal_matches(literal: &Literal, ty: Ty, prelude: &Prelude, types: &Types) -> bool {
+pub(crate) fn literal_matches(
+    literal: &Literal,
+    ty: Ty,
+    prelude: &Prelude,
+    types: &Types,
+) -> bool {
     match literal {
         Literal::Bool(_) => prelude.is(types, ty, "Bool"),
         Literal::Str(_) => prelude.is(types, ty, "String"),

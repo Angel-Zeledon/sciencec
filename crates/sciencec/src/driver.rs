@@ -1096,15 +1096,17 @@ fn check_and_lower(krate: &Crate) -> Checked {
         return Checked { diagnostics: all, types, decls, bodies: Vec::new() };
     }
     // **Between checking and lowering, which is the only window.** A
-    // record's field types and a `choice`'s payloads live in `Declarations`
-    // rather than in any body, so `region_check`'s pass over the MIR does not
-    // reach them and a field declared `ticks: Counter` has no layout.
+    // record's field types, a `choice`'s payloads and an `extern "C"`
+    // function's signature live in `Declarations` rather than in any body, so
+    // `region_check`'s pass over the MIR does not reach them and a field
+    // declared `ticks: Counter` — or a `def H5Fclose(file: Hid)` beside `type
+    // Hid is I64` — has no layout.
     // `Declarations::reveal_layouts` says at length what it touches and what
     // it must not; the timing is the half that belongs here. Earlier, and
     // every `expected … found …` in the program quotes a type the author did
     // not write. Later, and a projection's type disagrees with the type of
     // the local it projects from.
-    decls.reveal_layouts(&mut types, &mut aliases);
+    decls.reveal_layouts(&krate.defs, &mut types, &mut aliases);
     let (regions, bodies) = region_check(krate, &decls, &mut types, &mut aliases, &thir);
     all.extend(regions);
     Checked { diagnostics: all, types, decls, bodies }

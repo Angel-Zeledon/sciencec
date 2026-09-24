@@ -69,10 +69,24 @@ pub fn lower(source: &str) -> Lowered {
     let mut types = Types::new();
     let mut diagnostics = Diagnostics::new();
     let mut aliases = Aliases::of(&krate, &mut types, &order, &mut diagnostics);
-    let decls = Declarations::of(&krate, &mut types, &order, &mut diagnostics);
+    let mut decls = Declarations::of(&krate, &mut types, &order, &mut diagnostics);
     let thir: Vec<thir::Body> =
         check_crate(&krate, &decls, &mut types, &mut aliases, &order, &mut diagnostics);
     assert!(!diagnostics.has_errors(), "the fixture must check: {:?}", codes(&diagnostics));
+    // **Aliases are revealed here for the reason `sciencec`'s driver reveals
+    // them there, and the two orders are the same one.**
+    //
+    // `check_and_lower` calls `Declarations::reveal_layouts` between checking
+    // and lowering and then maps every MIR body through `Aliases::reveal`,
+    // and this file's own note says what it is for: *"the `BuildInput` a test
+    // fills in is the thing under test's input"*, so a harness that skips a
+    // step the driver takes is building a **different program** from the one
+    // `sciencec build` builds. It did skip both, and the symptom was a
+    // one-way disagreement — `type BlasInt is I32` in an `extern` block built
+    // and ran from the command line and was refused here, which is the worst
+    // shape a test harness can have, because it hides a fix rather than a
+    // bug.
+    decls.reveal_layouts(&krate.defs, &mut types, &mut aliases);
     let bodies = {
         let mut context = science_mir::Context {
             defs: &krate.defs,
@@ -82,6 +96,16 @@ pub fn lower(source: &str) -> Lowered {
         };
         science_mir::lower_crate(&mut context, &thir)
     };
+    // The driver's own comment is the argument: an alias whose body did not
+    // evaluate is already `Ty::ERROR` in the table, so a failure here is a
+    // const argument that does not evaluate and the body is left as it was.
+    let bodies: Vec<Body> = bodies
+        .iter()
+        .map(|body| {
+            science_mir::map_types(body, &mut |ty| aliases.reveal(&mut types, ty))
+                .unwrap_or_else(|_| body.clone())
+        })
+        .collect();
     let (mono, instances) = {
         let mut walk = science_codegen::mono::Mono::new(&krate.defs, &decls, &mut types, &bodies);
         let mut set = walk.collect(science_codegen::mono::RootSet::EntryPoint);

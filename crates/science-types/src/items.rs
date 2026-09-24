@@ -184,6 +184,16 @@ pub struct Prelude {
 const WANTED: &[&str] = &[
     "Bool", "String", "Char", "Never", "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64",
     "F16", "BF16", "F32", "F64", "Int", "Float", "panic",
+    // `ffi-c-boundary.md` §1.3's C scalars, which [`Prelude::is_integer`] and
+    // [`Prelude::is_float`] now count as numbers. They are here for the same
+    // reason `I8` is and for no other: the predicates compare **definitions**,
+    // so a name they cannot look up is a name they answer `false` about — and
+    // a `CInt` that is not a number is one that needs drop glue, moves when it
+    // is read, and cannot be a `const`'s value. The list is
+    // `science-resolve`'s `C_SCALARS` minus `CVoid`, which has no values and
+    // so is neither an integer nor a float.
+    "CChar", "CInt", "CUInt", "CLong", "CULong", "CLongLong", "CULongLong", "CSizeT", "CPtrDiff",
+    "CFloat", "CDouble",
     // `Iterate`, which `crate::check`'s `for` reads an element type through.
     // It is the first *interface* on this list, and it is here for the same
     // reason the rest are: the question *"is this the prelude's `Iterate` and
@@ -345,16 +355,67 @@ impl Prelude {
         self.is(types, ty, "Bool")
     }
 
-    /// Whether a type is one of §5.1's integer primitives.
+    /// Whether a type is one of §5.1's integer primitives, **or one of
+    /// `ffi-c-boundary.md` §1.3's C integer scalars**.
+    ///
+    /// # Why the C widths are here
+    ///
+    /// [`Prelude::is_definitely_not_numeric`] already says it in prose —
+    /// *"`ffi.CInt` is numeric although §5.1 does not list it, because
+    /// `ffi-c-boundary.md` §1.6 keeps the C widths as **distinct** types rather
+    /// than as non-numbers"* — and until now nothing acted on the sentence. A
+    /// `CInt` that is not an integer here is not a number anywhere: it is not
+    /// [`crate::ownership::needs_drop`]-free, so every `CInt` local acquires
+    /// drop glue a backend cannot build for a primitive with no field list; it
+    /// is not `is_copy` in `science-mir`, so reading one moves it; it is not
+    /// [`crate::constant`]'s `literal_matches`, so `const SEVEN be 7 as CInt`
+    /// evaluates to nothing; and `named_shape` calls it `Shape::Unanswerable`.
+    /// Every one of those is the same mistake — treating *"the author must
+    /// choose the width"* as *"the compiler does not know what kind of thing
+    /// this is"*.
+    ///
+    /// **This does not make `CInt` an `I32`.** The two are distinct
+    /// definitions, [`Prelude::is`] compares definitions, and
+    /// [`crate::assign`] still refuses one where the other is expected —
+    /// which is §1.6's argument and the whole reason `crate::alias` gives a C
+    /// scalar no body. What is granted here is only the kind: a C scalar is a
+    /// number, and its *width* remains the target's and the author's problem.
+    ///
+    /// `CSizeT` and `CPtrDiff` are integers on the same footing as the rest;
+    /// `CVoid` is in neither list, because C's `void` has no values.
     pub fn is_integer(&self, types: &Types, ty: Ty) -> bool {
         ["I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64", "Int"]
             .iter()
             .any(|name| self.is(types, ty, name))
+            || self.is_c_integer(types, ty)
     }
 
-    /// Whether a type is one of §5.1's floating primitives.
+    /// The C integer scalars of `ffi-c-boundary.md` §1.3, as a list of their
+    /// own so that a caller which needs *"a C width"* rather than *"an
+    /// integer"* has one to ask. [`Prelude::is_integer`] says why they count.
+    pub fn is_c_integer(&self, types: &Types, ty: Ty) -> bool {
+        [
+            "CChar",
+            "CInt",
+            "CUInt",
+            "CLong",
+            "CULong",
+            "CLongLong",
+            "CULongLong",
+            "CSizeT",
+            "CPtrDiff",
+        ]
+        .iter()
+        .any(|name| self.is(types, ty, name))
+    }
+
+    /// Whether a type is one of §5.1's floating primitives, or one of
+    /// §1.3's two C ones. [`Prelude::is_integer`] carries the argument for
+    /// both halves.
     pub fn is_float(&self, types: &Types, ty: Ty) -> bool {
-        ["F16", "BF16", "F32", "F64", "Float"].iter().any(|name| self.is(types, ty, name))
+        ["F16", "BF16", "F32", "F64", "Float", "CFloat", "CDouble"]
+            .iter()
+            .any(|name| self.is(types, ty, name))
     }
 
     pub fn is_numeric(&self, types: &Types, ty: Ty) -> bool {
@@ -412,6 +473,22 @@ pub struct Declarations {
     /// always has. `crate::constant`'s module doc §3 is the scope this table
     /// admits and the reason it is drawn there.
     const_values: HashMap<DefId, hir::Literal>,
+    /// The literal an `extern` block's `const NAME be literal as T` was
+    /// written with, held until [`Declarations::reveal_layouts`] can confirm
+    /// it against the annotation.
+    ///
+    /// **Why it waits.** `ffi-c-boundary.md` §1.2 makes the annotation
+    /// mandatory on this item form and `crate::constant`'s §4 will not
+    /// substitute a value it has not confirmed denotes one of the annotated
+    /// type — and the annotation a real binding writes is the block's own
+    /// alias: `const CBLAS_ROW_MAJOR be 101 as CblasLayout`, beside `type
+    /// CblasLayout is CInt`. Confirming that at [`Declarations::of`] would
+    /// compare an integer literal against the *name* `CblasLayout` and answer
+    /// no, because `crate::alias` deliberately keeps the name; the table of
+    /// alias bodies is not built into this one and the driver holds it. So
+    /// the literal is kept here and confirmed one phase later, where the
+    /// revealed type is in reach.
+    extern_const_literals: HashMap<DefId, hir::Literal>,
     /// An implementation or interface block's `Self`. §1.
     self_types: HashMap<DefId, Ty>,
     /// `type Item is Int` in a block, by the block that wrote it: the name, the
@@ -477,10 +554,10 @@ impl Declarations {
         self.fns.get(&def)
     }
 
-    /// Replace every field type and every variant payload with its
-    /// alias-free form.
+    /// Replace every field type, every variant payload and **every
+    /// `extern "C"` signature's types** with their alias-free form.
     ///
-    /// # Why only these two
+    /// # Why these three
     ///
     /// `crate::alias`'s §1 keeps an alias's own type in the table so that a
     /// diagnostic can say `Embedding` rather than `Array[F32]`, and a
@@ -490,13 +567,26 @@ impl Declarations {
     /// in every MIR body; a record's fields and a `choice`'s payloads are not
     /// in a body, they are here, which is the whole of what this closes.
     ///
-    /// **A signature is deliberately not revealed.** A backend classifies a
-    /// Science function from its **MIR** and not from this table —
-    /// `science-codegen-llvm`'s `science_signature` says why, at length: the
-    /// body's locals *are* its parameters, already substituted, and reading
-    /// the declaration instead *"would introduce a second source for a fact
-    /// the body carries"*. So a signature's types reach no layout, and
-    /// revealing them would change what a diagnostic quotes for nothing.
+    /// **A foreign signature is not in a body either, and that is the third.**
+    /// This paragraph used to read *"a signature is deliberately not revealed
+    /// … a backend classifies a Science function from its MIR and not from
+    /// this table"*, which is true of a **Science** function and says nothing
+    /// about the other kind. An `extern "C"` function has no MIR body at all:
+    /// `science-codegen-llvm`'s `declare_foreign` reads its parameter and
+    /// return types out of `self.fns` and lays each one out, and the same
+    /// crate's `science_signature` says so in its own first line — *"an
+    /// `extern "C"` function has no body, so its parameter types reach codegen
+    /// through the declaration table or through nothing"*. So a `def
+    /// H5Fclose(file: Hid) -> Herr` declared beside `type Hid is I64` reached
+    /// a layout as the bare name `Hid`, and the backend refused a type the
+    /// front end had a body for all along.
+    ///
+    /// **A Science signature is still not revealed**, and the old paragraph's
+    /// argument for that is untouched: the body's locals *are* its parameters,
+    /// already substituted, and reading the declaration instead *"would
+    /// introduce a second source for a fact the body carries"*. The filter is
+    /// [`DefKind::ExternFn`], which is exactly the set with no body to be the
+    /// other source.
     ///
     /// **A `Self` type is deliberately not revealed, and that one is not a
     /// preference.** [`Declarations::methods`] is Decision 11's index and it
@@ -511,7 +601,12 @@ impl Declarations {
     /// found …` in the program quotes a type the author did not write;
     /// after MIR lowering, and a projection's type disagrees with the type of
     /// the local it projects from.
-    pub fn reveal_layouts(&mut self, types: &mut Types, aliases: &mut crate::Aliases) {
+    pub fn reveal_layouts(
+        &mut self,
+        defs: &DefTable,
+        types: &mut Types,
+        aliases: &mut crate::Aliases,
+    ) {
         // A type whose revealing fails is left exactly as it was. `ty`'s §5:
         // an erroneous type must not manufacture a second error, and the
         // unrevealed one refuses by name a phase later, with a message that
@@ -529,6 +624,31 @@ impl Declarations {
         for variant in self.variants.values_mut() {
             for ty in &mut variant.payload {
                 reveal(ty, types);
+            }
+        }
+        for (def, signature) in self.fns.iter_mut() {
+            if defs.get(*def).kind != DefKind::ExternFn {
+                continue;
+            }
+            reveal(&mut signature.ret, types);
+            for param in &mut signature.params {
+                reveal(&mut param.ty, types);
+            }
+        }
+        // An `extern` block's `const`s: reveal the annotation the way a field
+        // is revealed, then run `crate::constant`'s §4 check against the
+        // revealed type and promote the literal into `const_values` if it
+        // passes. `extern_const_literals` says why the check waits for this
+        // pass; the order inside it is the whole point, because `101 as
+        // CblasLayout` is confirmable only once `CblasLayout` reads `CInt`.
+        let pending: Vec<(DefId, hir::Literal)> =
+            self.extern_const_literals.iter().map(|(def, lit)| (*def, lit.clone())).collect();
+        for (def, literal) in pending {
+            let Some(ty) = self.consts.get_mut(&def) else { continue };
+            reveal(ty, types);
+            let ty = *ty;
+            if crate::constant::literal_matches(&literal, ty, &self.prelude, types) {
+                self.const_values.insert(def, literal);
             }
         }
     }
@@ -876,6 +996,37 @@ impl Declarations {
             }
             hir::ItemKind::Extern(block) => {
                 for item in &block.items {
+                    // **`const NAME be literal as T`, which had no row in any
+                    // table until now.** §1.2's second item form was parsed,
+                    // resolved and then dropped on the floor here, so every
+                    // reference to one was a name the checker could find and
+                    // could not type: `Declarations::const_ty` answered `None`,
+                    // `crate::check` fell back to [`Ty::ERROR`] with no
+                    // diagnostic, and the program was refused two phases later
+                    // as *"a value the front end left untyped"* — a sentence
+                    // about a compiler bug, at a span where the author wrote a
+                    // perfectly ordinary transcribed `#define`.
+                    //
+                    // The annotation is the type, with no inference to do:
+                    // §1.2 makes `as T` mandatory on this form precisely
+                    // because a C constant's type is the header's and not the
+                    // literal's. The *value* waits for
+                    // [`Declarations::reveal_layouts`] — see
+                    // `extern_const_literals` for why — and a **negative** one
+                    // does not travel at all: `hir::Literal::Int` holds a
+                    // `u128` and carries the sign in
+                    // `hir::ExternConst::negative` beside it, so there is no
+                    // literal to put in `const_values` that means `-1`.
+                    // `const H5I_BADID be -1 as Hid` therefore still refuses,
+                    // by the older *"named as a value"* message, and closing
+                    // that needs a signed literal rather than a table entry.
+                    if let hir::ExternItemKind::Const(konst) = &item.kind {
+                        let ty = lower(types, krate, order, diagnostics, &konst.ty);
+                        self.consts.insert(konst.def, ty);
+                        if !konst.negative {
+                            self.extern_const_literals.insert(konst.def, konst.value.clone());
+                        }
+                    }
                     if let hir::ExternItemKind::Fn(function) = &item.kind {
                         let params = function
                             .params

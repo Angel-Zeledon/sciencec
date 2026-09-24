@@ -1847,3 +1847,253 @@ def main():
 ";
     assert_eq!(bytes("loop-conditional-move-at-path", source), "20000\n");
 }
+
+// --- `ffi-c-boundary.md` §1.3's C scalars, and §1.2's `type` and `const` ---
+
+// Every test in this section calls a **real** libc function through a C
+// scalar and asserts the number that came back, because building is not the
+// property under test. `builtins.rs` and `alias.rs` both refuse to make a C
+// scalar an alias of a Science primitive — §1.6's *"a width the author did
+// not think about is how a numerical program gets silently wrong answers"* —
+// so the width `crate::lower`'s `cg_ty_in` gives each one is a claim about
+// the **target's** C compiler that only a linked call can check. A `CInt`
+// lowered eight bytes wide still builds and still links; it gives `abs` a
+// register whose upper half is whatever was in it.
+//
+// **The pointer the `size_t` test needs is transcribed as `CSizeT`**, which
+// wants saying out loud: this backend has no lowering for `ffi.Pointer` or
+// `ffi.OpaqueHandle` yet, and `void *` as `uintptr_t` is the ordinary way a
+// binding spells an address it only ever hands back. It is ABI-identical on
+// all three F0 targets — both are one pointer-width INTEGER-class word — and
+// it is what lets `strlen` give a real `size_t` to a Science program today.
+
+/// `abs` through `CInt`: the width is C's `int` and the answer proves it.
+#[test]
+fn a_libc_call_through_c_int_gives_back_the_number_c_computed() {
+    let source = "\
+unsafe extern \"C\" library \"c\":
+    def abs(x: CInt) -> CInt
+
+let v be unsafe: abs(0 - 7 as CInt)
+if v is 7 as CInt:
+    print(\"7\")
+else:
+    print(\"not 7\")
+";
+    assert_eq!(bytes("c-int-abs", source), "7\n");
+}
+
+/// `htonl` through `CUInt`, which is the one of these whose answer is a
+/// **bit pattern**: `0x01020304` byte-swapped is `0x04030201`, so an
+/// argument that arrived at the wrong width gives a different number rather
+/// than the same one.
+#[test]
+fn a_libc_call_through_c_unsigned_int_byte_swaps_the_pattern_it_was_given() {
+    let source = "\
+unsafe extern \"C\" library \"c\":
+    def htonl(hostlong: CUInt) -> CUInt
+
+let swapped be unsafe: htonl(16909060 as CUInt)
+if swapped is 67305985 as CUInt:
+    print(\"swapped\")
+else:
+    print(\"not swapped\")
+";
+    assert_eq!(bytes("c-uint-htonl", source), "swapped\n");
+}
+
+/// `CSizeT` as both argument and return, across three libc calls: `malloc`
+/// sizes a block with one, `memset` fills with one, and `strlen` counts back
+/// through one.
+///
+/// **`strlen` is what makes this a `size_t` test and not a pointer test.**
+/// Its return *is* a `size_t` in the header, so the five that comes back
+/// travelled in whatever register and at whatever width `CSizeT` was lowered
+/// to. The two `memset`s are how a program with no pointer type writes
+/// bytes: zero the block, then fill five of them with `A`, which is a
+/// NUL-terminated string of length five by construction.
+#[test]
+fn c_size_t_carries_a_length_back_out_of_strlen() {
+    let source = "\
+unsafe extern \"C\" library \"c\":
+    def malloc(size: CSizeT) -> CSizeT
+    def free(block: CSizeT)
+    def memset(block: CSizeT, byte: CInt, count: CSizeT) -> CSizeT
+    def strlen(text: CSizeT) -> CSizeT
+
+let block be unsafe: malloc(16 as CSizeT)
+let cleared be unsafe: memset(block, 0 as CInt, 16 as CSizeT)
+let filled be unsafe: memset(block, 65 as CInt, 5 as CSizeT)
+let n be unsafe: strlen(block)
+unsafe:
+    free(block)
+if n is 5 as CSizeT:
+    print(\"5\")
+else:
+    print(\"not 5\")
+";
+    assert_eq!(bytes("c-size-t-strlen", source), "5\n");
+}
+
+/// **`CLong` is the one C scalar whose width the target decides**, and this
+/// is the test that says which target this is.
+///
+/// C's `long` is 64 bits under LP64 — Linux and macOS — and 32 under
+/// Windows' LLP64, which is the single reason `cg_ty_in` asks `self.target`
+/// for this row and takes `IntTy::I64` flat for `CLongLong`. `labs` of
+/// `-(2^32 + 1)` is `2^32 + 1` in 64 bits and `1` in 32, so the number that
+/// comes back names the model rather than merely agreeing with it: a `CLong`
+/// lowered eight bytes wide on Windows would print `wide` and fail here.
+#[test]
+fn c_long_is_the_targets_long_and_a_value_over_thirty_two_bits_says_which() {
+    let source = "\
+unsafe extern \"C\" library \"c\":
+    def labs(x: CLong) -> CLong
+
+let wide be unsafe: labs(0 - 4294967297 as CLong)
+if wide is 4294967297 as CLong:
+    print(\"wide\")
+else:
+    print(\"narrow\")
+";
+    let expected = if cfg!(windows) { "narrow\n" } else { "wide\n" };
+    assert_eq!(bytes("c-long-labs", source), expected);
+}
+
+/// `cos` through `CDouble`, which is the `library "m"` gate of
+/// `tests/stage_two_and_three.rs` with C's spelling of the type in place of
+/// Science's. A `CDouble` lowered as anything but an f64 returns a register
+/// the comparison does not recognise.
+#[test]
+fn a_libm_call_through_c_double_returns_the_float_it_computed() {
+    let source = "\
+unsafe extern \"C\" library \"m\":
+    def cos(x: CDouble) -> CDouble
+
+let x be unsafe: cos(0.0)
+if x is 1.0:
+    print(\"1\")
+else:
+    print(\"not 1\")
+";
+    assert_eq!(bytes("c-double-cos", source), "1\n");
+}
+
+/// §1.2's `type` item: `type BlasInt is I32` inside the block, used as the
+/// parameter and the return of the function beside it.
+///
+/// **This is the item form `examples/20_extern.science` opens with**, and it
+/// was refused as *"cannot build a value of type `BlasInt`"* until
+/// `Declarations::reveal_layouts` started revealing an `extern "C"`
+/// signature. The alias body was in `Aliases` the whole time — `alias.rs`
+/// collects an extern block's `type` item and says so at length — and the
+/// driver already revealed every type in every MIR body; what neither could
+/// reach is a function with **no** MIR body, whose parameter and return
+/// types `declare_foreign` reads out of the declaration table.
+///
+/// **The argument is a negative literal and not `0 - 7`**, and that is a
+/// gap rather than a style: `crate::check`'s `is_operand_type` and
+/// `named_shape` compare the type an operator was given against the
+/// prelude's lists **without revealing it**, so `BlasInt` — which is an
+/// `I32` — is `SC0535`, *"`BlasInt` does not implement `Sub`"*. That is the
+/// same refusal a top-level `type MyInt is I32` gets for `x + x` and it is
+/// not an `extern` block's problem; it is one `&mut Types` short of a fix in
+/// a file this change did not otherwise touch.
+#[test]
+fn a_type_is_alias_declared_in_an_extern_block_lays_out_as_its_body() {
+    let source = "\
+unsafe extern \"C\" library \"c\":
+    type BlasInt is I32
+    def abs(x: BlasInt) -> BlasInt
+
+let v be unsafe: abs(-7 as BlasInt)
+if v is 7 as BlasInt:
+    print(\"7\")
+else:
+    print(\"not 7\")
+";
+    assert_eq!(bytes("extern-alias-abs", source), "7\n");
+}
+
+/// §1.2's `const` item, annotated with the block's own alias — which is the
+/// shape every real binding writes, `const CBLAS_ROW_MAJOR be 101 as
+/// CblasLayout` included.
+///
+/// Two things had to be true for this to run and neither was: the constant
+/// needed a row in `Declarations::consts` at all, and the literal had to be
+/// confirmed against the **revealed** annotation, because an integer literal
+/// compared against the name `BlasInt` matches nothing.
+#[test]
+fn an_extern_blocks_const_reaches_its_call_site_as_the_value_it_names() {
+    let source = "\
+unsafe extern \"C\" library \"c\":
+    type BlasInt is I32
+    const SEVEN be 7 as BlasInt
+    def abs(x: BlasInt) -> BlasInt
+
+let v be unsafe: abs(SEVEN)
+if v is SEVEN:
+    print(\"7\")
+else:
+    print(\"not 7\")
+";
+    assert_eq!(bytes("extern-const-alias", source), "7\n");
+}
+
+/// The same `const`, annotated with a C scalar directly, and **read through
+/// an operator**: `0 - SEVEN` is `Sub` on a `CInt`, which works only because
+/// `Prelude::is_integer` now counts the C widths as integers.
+#[test]
+fn a_c_scalar_const_is_an_operand_like_any_other_integer() {
+    let source = "\
+unsafe extern \"C\" library \"c\":
+    const SEVEN be 7 as CInt
+    def abs(x: CInt) -> CInt
+
+let v be unsafe: abs(0 - SEVEN)
+if v is SEVEN:
+    print(\"7\")
+else:
+    print(\"not 7\")
+";
+    assert_eq!(bytes("extern-const-c-int", source), "7\n");
+}
+
+/// **`CVoid` is refused, and the refusal says why rather than reading as a
+/// backend gap.** C's `void` has no values; a program that names one as a
+/// value has made a mistake this compiler can describe, and the rest of §1.3
+/// building is what makes the distinction worth drawing.
+#[test]
+fn a_c_void_value_is_refused_as_a_type_with_no_values() {
+    let source = "\
+unsafe extern \"C\" library \"c\":
+    def nothing(x: CVoid) -> CInt
+
+let v be unsafe: nothing(0 as CVoid)
+print(\"unreachable\")
+";
+    let message = refusal("c-void", source);
+    assert!(message.contains("CVoid"), "{message}");
+    assert!(message.contains("no values"), "{message}");
+}
+
+/// **An `extern static` is still refused**, and this pins the boundary of
+/// what the C scalars bought.
+///
+/// `c-binding-coverage.md` Decision 7's fourth item form needs three things
+/// this change did not add: a row in the declaration table, a MIR rvalue for
+/// reading a symbol whose address the linker supplies, and an
+/// `external global` in the emitted module. It is its own piece of work, and
+/// the refusal here is the honest record of that rather than a silence.
+#[test]
+fn an_extern_static_is_not_yet_a_value_a_program_can_read() {
+    let source = "\
+unsafe extern \"C\" library \"c\":
+    static sys_nerr: CInt
+
+let n be unsafe: sys_nerr
+print(\"unreachable\")
+";
+    let message = refusal("extern-static", source);
+    assert!(message.contains("untyped"), "{message}");
+}
