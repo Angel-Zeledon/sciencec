@@ -850,16 +850,34 @@ fn what_is_refused_names_itself() {
         // `science_codegen::mono` enqueues it, `cg_ty_in` lays it out as a bare
         // function pointer, and `Lowerer::lower_indirect_closure_call` calls
         // through it. `tests/closures.rs` is that program, run rather than
-        // refused. What is left is a closure that captures something — `n`
-        // reaching into `item giving item + n` from outside it — because its
-        // aggregate is `{ fn ptr, captures }` and a closure's type, the bare
-        // arrow `(A) -> B`, has nowhere to say how many captures or of what.
+        // refused.
+        //
+        // **`refuse-closure` then became `sink(item giving item + n)`, which
+        // captures `n`, and that builds now too.** The reason recorded for it
+        // — that the aggregate is `{ fn ptr, captures }` and the bare arrow
+        // `(A) -> B` has nowhere to say how many captures or of what — was
+        // answered rather than dodged: §8 makes every capture a *borrow*, so
+        // the environment is `N` pointers that `Lowerer::lower_closure` lays
+        // out from `captures.len()` alone, in a slot of the creating frame
+        // that no borrow of a place in that frame can outlive. The type is
+        // never asked. `science-mir`'s §8.6 gives the body one trailing
+        // `borrowed T` parameter per capture.
+        //
+        // **What is left is a closure that *moves* a capture out.** §8.2 has
+        // no spelling for a move and models a consuming capture as an
+        // exclusive borrow; a body lowered against that model would copy an
+        // owning `String` out of storage the enclosing frame still drops, so
+        // §8.6 withholds the body and this backend refuses by name. The word
+        // asserted below moves from `closure` to `moves` for that reason: the
+        // refusal has to distinguish this closure from the ones that build,
+        // and "closure" no longer does.
         (
             "refuse-closure",
-            "def sink(f: (Int) -> Int) -> Int:\n    1\n\n\
-             def go(n: Int) -> Int:\n    sink(item giving item + n)\n\n\
-             let v be go(1)\nprint(\"x\")\n",
-            "closure",
+            "def take(s: String) -> Int:\n    s.length()\n\n\
+             def sink(f: (Int) -> Int) -> Int:\n    1\n\n\
+             def go(name: String) -> Int:\n    sink(item giving item + take(name))\n\n\
+             let v be go(\"world\")\nprint(\"x\")\n",
+            "moves",
         ),
     ];
     for (name, source, word) in cases {

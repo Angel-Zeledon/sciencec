@@ -629,14 +629,28 @@ fn nothing_past_the_boundary_produces_an_executable() {
         // `apply(x giving x + 1)` builds, links and runs; `tests/closures.rs`
         // is that program, run rather than refused.
         //
-        // **A closure that captures something takes its place fifth**, and
-        // for the half of the reason that survives: its aggregate is
-        // `{ fn ptr, captures }`, and a closure's type — a bare arrow,
-        // `(A) -> B` — has nowhere to say how many captures or of what
-        // (`collections-and-chains.md` §1.2, `science-mir`'s `lib.rs` §7 item
-        // 5). `n` crossing into `item giving item + n` is what makes this one
-        // a capture rather than the same acceptance case one word narrower.
-        "def sink(f: (Int) -> Int) -> Int:\n    1\n\ndef go(n: Int) -> Int:\n    sink(item giving item + n)\n\nlet v be go(1)\n",
+        // A closure that **captures** something took its place fifth, on the
+        // reasoning that its aggregate is `{ fn ptr, captures }` and a
+        // closure's type — a bare arrow, `(A) -> B` — has nowhere to say how
+        // many captures or of what. Its fixture was
+        // `def go(n: Int) -> Int:\n    sink(item giving item + n)`, and it
+        // does not belong in this list any more: the type never needed to
+        // say. §8's discipline makes every capture a *borrow*, so the
+        // environment is `N` pointers laid out from the count alone, in a
+        // slot of the creating frame that no borrow can outlive; §8.6 gives
+        // the body one trailing `borrowed T` parameter per capture.
+        // `tests/closures.rs` is that program, run rather than refused.
+        //
+        // **A closure that *moves* a capture out takes its place sixth**, and
+        // it is not the same claim one word weaker — it is the one case where
+        // lowering a body would be *worse* than refusing. §8.2 models a
+        // consuming capture as an exclusive borrow, having no spelling for a
+        // move; a body built against that model would copy the owning
+        // `String` out of storage `go`'s frame still drops. So the body is
+        // withheld, no symbol exists to point at, and this is `SC0400`.
+        // `take(name)` consuming a `String` is what makes this one a move
+        // rather than the acceptance case above.
+        "def take(s: String) -> Int:\n    s.length()\n\ndef sink(f: (Int) -> Int) -> Int:\n    1\n\ndef go(name: String) -> Int:\n    sink(item giving item + take(name))\n\nlet v be go(\"world\")\n",
     ] {
         let dir = scratch("stage23", "refused");
         let output = executable(&dir, "refused");

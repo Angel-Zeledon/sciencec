@@ -627,18 +627,52 @@ def main():
 // --- 6. the holes are counted, not assumed away ---------------------------
 
 #[test]
-fn a_closure_that_captures_something_is_a_hole_and_is_counted() {
-    // §8's hole, narrowed rather than closed: a *captured* closure's body is
-    // still not lowered, because there is nowhere in `(A) -> B` to record what
-    // it captured (`science-mir`'s `lower.rs` §8.5). Counting it is what stops
-    // the set being quietly incomplete.
+fn a_closure_that_moves_a_capture_out_is_a_hole_and_is_counted() {
+    // §8's hole, narrowed twice. This test was `a_closure_is_a_hole_and_is_
+    // counted` over `x giving x`, which captures nothing; then
+    // `a_closure_that_captures_something_is_a_hole_and_is_counted` over
+    // `x giving x + n`, on the reasoning that there is nowhere in `(A) -> B`
+    // to record what a closure captured. Neither claim survives.
     //
-    // This test used to be `a_closure_is_a_hole_and_is_counted`, over
-    // `x giving x`, which captures nothing. `science-mir` gives that one a
-    // `Body` now, and this walk enqueues it — `a_capture_free_closure_is_no_
-    // longer_a_hole`, below, is what replaced this test's claim for that
-    // fixture. This one keeps the sentence true for the case that is still
-    // true of.
+    // **What it asserted, before:**
+    //
+    //     let n be 1
+    //     let f be x giving x + n
+    //     …
+    //     assert!(set.holes().closures >= 1, "{:?}", set.holes());
+    //
+    // That fixture now reports `closures: 0`, and the assertion could not be
+    // kept: `science-mir`'s `lower.rs` §8.6 gives a capturing closure a body
+    // with the captures as trailing parameters, this walk enqueues it, and the
+    // backend builds it — `crates/science-codegen-llvm/tests/closures.rs` runs
+    // the program and reads `12`. A test asserting it is a hole would be
+    // asserting a refusal that no longer exists.
+    //
+    // **What is kept is the sentence, over the case it is still true of.** A
+    // closure whose body *moves* a capture out has no body: §8.2 models the
+    // move as an exclusive borrow, which is not a spelling of a move, so §8.6
+    // withholds the body rather than lowering one that would copy an owning
+    // value out of storage the enclosing frame still drops. Counting it is
+    // what stops the set being quietly incomplete.
+    let source = "\
+def take(s: String) -> Int:
+    s.length()
+
+def main():
+    let name be \"world\"
+    let f be x giving x + take(name)
+";
+    let mut lowered = lower(source);
+    let set = lowered.mono(RootSet::EntryPoint);
+    assert!(set.holes().closures >= 1, "{:?}", set.holes());
+}
+
+#[test]
+fn a_closure_that_captures_something_is_no_longer_a_hole() {
+    // §8.6, at the walk: a capturing closure's `Body` is keyed on the
+    // closure's own `param` exactly as a capture-free one's is, so
+    // `Mono::walk_rvalue` enqueues it and nothing lands in the counter. This
+    // is the fixture the test above used to make the opposite claim about.
     let source = "\
 def main():
     let n be 1
@@ -646,7 +680,7 @@ def main():
 ";
     let mut lowered = lower(source);
     let set = lowered.mono(RootSet::EntryPoint);
-    assert!(set.holes().closures >= 1, "{:?}", set.holes());
+    assert_eq!(set.holes().closures, 0, "{:?}", set.holes());
 }
 
 #[test]

@@ -167,33 +167,64 @@ fn the_module_says_what_stage_one_says_it_should() {
 /// slot. `tests/closures.rs` is that program, built and run: `apply(x giving
 /// x + 1)` prints `2` and exits `0`, a hundred thousand times over.
 ///
-/// **What moved *here* is one word: `giving x + 1` became `giving x + n`,
-/// closing over a binding from outside itself.** A captured closure's
-/// aggregate is `{ fn ptr, captures }`, and there is nowhere in the closure's
-/// own type, a bare arrow `(A) -> B`, to say how many or of what — the gap
-/// `science-mir`'s `lib.rs` §7 item 5 names and `collections-and-chains.md`
-/// has not closed. So this is still `SC0400`, and the refusal still names the
-/// construct; it is one clause more specific about which closure, because the
-/// other clause no longer needs refusing.
+/// **A closure that *captures* took its place sixth, and it has now moved
+/// again, the same way and for the same kind of reason.** That pass wrote
+/// here that a capturing closure's aggregate is `{ fn ptr, captures }` and
+/// that *"there is nowhere in the closure's own type, a bare arrow
+/// `(A) -> B`, to say how many or of what"*, and the fixture was:
+///
+/// ```ignore
+/// def sink(f: (Int) -> Int) -> Int:
+///     1
+///
+/// def go(n: Int) -> Int:
+///     sink(item giving item + n)
+///
+/// let v be go(1)
+/// ```
+///
+/// **That reason was answered rather than worked around, which is why the
+/// fixture had to move.** The type never needed to say: §8's capture
+/// discipline makes *every* capture a borrow, so the environment is `N`
+/// pointers and `Lowerer::lower_closure` lays it out from `captures.len()`
+/// alone, storing the address of a slot in the creating frame — which is
+/// sound precisely because a borrow cannot outlive its referent and every
+/// referent is a place in that frame. `science-mir`'s §8.6 gives the body one
+/// trailing `borrowed T` parameter per capture, and `tests/closures.rs` is
+/// that program, built and run: it prints `12`.
+///
+/// **What is left past the boundary is a closure that *moves* a capture
+/// out**, and it is the sharper of the two cases rather than a leftover.
+/// §8.2 models a consuming capture as an exclusive borrow because a borrow
+/// discipline has no spelling for a move; a body lowered against that model
+/// would copy an owning `String` out of storage `go`'s frame still drops,
+/// which is a double free and not a missing diagnostic. So `science-mir`
+/// withholds the body, no symbol is ever minted for it, and this backend
+/// refuses by name. The refusal is still `SC0400` and still names the
+/// construct — it is one clause more specific about *which* closure, because
+/// the other clause no longer needs refusing.
 #[test]
 fn a_program_past_the_boundary_is_refused_by_name() {
-    let lowered = lower("def sink(f: (Int) -> Int) -> Int:
+    let lowered = lower("def take(s: String) -> Int:
+    s.length()
+
+def sink(f: (Int) -> Int) -> Int:
     1
 
-def go(n: Int) -> Int:
-    sink(item giving item + n)
+def go(name: String) -> Int:
+    sink(item giving item + take(name))
 
-let v be go(1)
+let v be go(\"world\")
 ");
     let dir = scratch("hello", "refused");
     let diagnostics = lowered
         .try_build(&dir.join("out"), OptLevel::O2)
         .map(|_| ())
-        .expect_err("a closure that captures something is not lowered");
+        .expect_err("a closure that moves a capture out is not lowered");
     let first = diagnostics.first().expect("a diagnostic");
     assert_eq!(first.code, science_codegen::diagnostics::code::SC0400);
     assert!(
-        first.message.contains("closure") && first.message.contains("captures"),
+        first.message.contains("closure") && first.message.contains("moves"),
         "the refusal must name the construct, and it said: {}",
         first.message
     );

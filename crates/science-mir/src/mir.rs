@@ -529,15 +529,15 @@ pub enum Rvalue {
     /// [`crate::capture`] is the walk that finds the set.
     ///
     /// `thir_body` is the one place in this crate where an id from another IR
-    /// survives, and it survives because the closure's body has no [`DefId`] to
-    /// be a [`Body`] of — **when it captures something.** §8's *"what is
-    /// left"* used to say whose that was; when `captures` is empty,
+    /// survives. It survived, originally, because the closure's body had no
+    /// [`DefId`] to be a [`Body`] of; that reason is gone —
     /// [`crate::lower::Builder::run_closure`] lowers `thir_body` into a
-    /// [`Body`] of its own anyway, keyed on `param` rather than on a `DefId`
-    /// nothing mints. `thir_body` is left on the rvalue regardless of whether
-    /// that happened, because a consumer with no reason to look one up — every
-    /// consumer but `science_codegen::mono`'s `Rvalue::Closure` arm — should
-    /// not have to ask.
+    /// [`Body`] keyed on `param`, whether or not anything is captured (§8.5,
+    /// §8.6) — and two closures still have none: a generic one, and one that
+    /// moves a capture out. `thir_body` is left on the rvalue regardless,
+    /// because a consumer with no reason to look a body up — every consumer
+    /// but `science_codegen::mono`'s `Rvalue::Closure` arm — should not have
+    /// to ask.
     Closure {
         param: DefId,
         thir_body: science_types::thir::ExprId,
@@ -831,6 +831,18 @@ pub struct Body {
     /// in that order. Everything at or after this index is a binding, a
     /// temporary or a drop flag.
     pub(crate) arg_count: usize,
+    /// `Some(n)` when this body is a closure's, `n` being how many of its
+    /// trailing parameters are captures; `None` for every ordinary function.
+    ///
+    /// **A count and not a flag, because the backend needs both facts and they
+    /// are not the same one.** `Some(0)` — a capture-free closure — still
+    /// calls at the closure calling convention, which
+    /// `science-codegen-llvm`'s `closure_signature` gives a trailing
+    /// environment pointer whether or not anything is in it; only a body that
+    /// is not a closure at all has no environment parameter. The count is what
+    /// says how many of [`Body::params`] are loaded out of that environment
+    /// rather than passed in registers.
+    pub(crate) closure_captures: Option<usize>,
     pub(crate) span: Span,
     /// Predecessors, computed once when the body is finished. A cache, not a
     /// second definition: [`Body::check_predecessors`] says so and is a test.
@@ -875,6 +887,12 @@ impl Body {
     /// one.
     pub fn params(&self) -> impl Iterator<Item = Local> + '_ {
         (1..self.arg_count + 1).map(Local::from_index)
+    }
+
+    /// `Some(n)` when this is a closure's body and `n` of its trailing
+    /// parameters are captures. See the field's own note.
+    pub fn closure_captures(&self) -> Option<usize> {
+        self.closure_captures
     }
 
     /// The local a binding was given, if this body introduced it.

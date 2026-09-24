@@ -318,22 +318,27 @@
 //! monomorphisation set that is quietly incomplete is a link error at the end
 //! of a long build.
 //!
-//! - **A closure's body is not lowered — unless nothing is captured, and now
-//!   that half closes.** `science-mir`'s `lower.rs` §8.5 gives a capture-free
-//!   closure a `Body` keyed on the closure's own `param`, since a closure has
-//!   no `DefId` of its own and `param` is already unique per closure. This
-//!   walk's [`Mono::walk_rvalue`] enqueues it exactly as
-//!   [`Mono::note_address_taken`] enqueues any other function whose address is
-//!   taken — `Instance::plain(param)`, no generic arguments, because
-//!   `science-mir` already refused to build a body for one whose type still
-//!   mentions a generic parameter — and `path_of` names it
-//!   `closure$name$id` rather than the plain name every other definition
-//!   gets, because two closures in one module can share a name (`each`, most
-//!   often) and cannot share a symbol. **What is left is a closure that
-//!   captures something**: its aggregate is `{ fn ptr, captures }` and a
-//!   bare arrow type, `(A) -> B`, has no field for the second half
-//!   (`collections-and-chains.md` §1.2), so `science-mir` still gives it no
-//!   body and this is still the counter that says so.
+//! - **A closure's body is lowered, capturing or not.** `science-mir`'s
+//!   `lower.rs` §8.5 gives a closure a `Body` keyed on the closure's own
+//!   `param`, since a closure has no `DefId` of its own and `param` is already
+//!   unique per closure; §8.6 gives a capturing one the same body with the
+//!   captures as trailing parameters. This walk's [`Mono::walk_rvalue`]
+//!   enqueues either exactly as [`Mono::note_address_taken`] enqueues any other
+//!   function whose address is taken — `Instance::plain(param)`, no generic
+//!   arguments, because `science-mir` refuses to build a body for one whose
+//!   type still mentions a generic parameter — and `path_of` names it
+//!   `closure$name$id` rather than the plain name every other definition gets,
+//!   because two closures in one module can share a name (`each`, most often)
+//!   and cannot share a symbol.
+//!
+//!   **This bullet used to end by counting a capturing closure as the hole**,
+//!   on the reasoning that a bare arrow type `(A) -> B` has no field for the
+//!   capture half of `{ fn ptr, captures }`. It does not need one: the pair the
+//!   backend builds is `{ code, env }`, uniform for every closure of every
+//!   arrow type, and the captures live behind `env` where the type never has to
+//!   describe them. What still lands in [`Holes::closures`] is a closure
+//!   `science-mir` declined to give a body — a generic one, or one that moves a
+//!   capture out (that crate's §8.6).
 //! - **An indirect call has no target, and for a closure that is now mostly
 //!   true by construction rather than by omission.** [`science_mir::Callee::Indirect`]
 //!   holds an operand, and the functions it could reach are exactly the
@@ -668,15 +673,19 @@ pub struct Holes {
     /// declaration, never instantiated.
     pub extern_calls: usize,
     /// [`science_mir::Rvalue::Closure`] whose body is still not lowered: one
-    /// that captures something, or whose parameter or return mentions a
-    /// generic parameter monomorphisation has not resolved yet.
+    /// whose parameter or return mentions a generic parameter monomorphisation
+    /// has not resolved yet, or one that moves a capture out (`science-mir`'s
+    /// `lower.rs` §8.6).
     ///
     /// **This used to count every closure**, because `science-mir` gave a
-    /// `Body` to none of them. A closure with nothing captured now has one —
-    /// `science-mir`'s `lower.rs` §8.5 keys it on the closure's own `param` —
-    /// and [`Mono::walk_rvalue`]'s `Rvalue::Closure` arm enqueues it exactly
-    /// as [`Mono::note_address_taken`] enqueues any other function whose
-    /// address is taken, so it no longer reaches this counter at all.
+    /// `Body` to none of them; then every *capturing* closure, because it gave
+    /// one only to the rest. It gives a capturing closure a body now —
+    /// `lower.rs` §8.5 keys it on the closure's own `param` and §8.6 hands the
+    /// captures in as trailing parameters — and [`Mono::walk_rvalue`]'s
+    /// `Rvalue::Closure` arm enqueues it exactly as
+    /// [`Mono::note_address_taken`] enqueues any other function whose address
+    /// is taken, so whether a closure captures anything no longer decides
+    /// whether it reaches this counter.
     pub closures: usize,
     /// A callee with no signature at all: a prelude name the declaration table
     /// does not carry.
@@ -1406,21 +1415,24 @@ impl<'a> Mono<'a> {
         _span: Span,
     ) {
         match rvalue {
-            // A capture-free closure is exactly an address-taken function
-            // with an unusual `DefId`: `science-mir`'s `lower.rs` §8.5 gave
-            // it a `Body` keyed on its `param`, and this walk already has
-            // `self.bodies` to check that against — a captured closure, or
-            // one whose type still mentions a generic parameter, has no
-            // entry there, because that crate refused to build one. Rooting
-            // it here rather than only through a later call is what
-            // `note_address_taken` already does for a named function value,
-            // and for the same reason: a closure created but never called on
-            // *this* path might still be called through one this walk has
-            // not reached, and a monomorphisation set that is quietly
+            // A closure is exactly an address-taken function with an unusual
+            // `DefId`: `science-mir`'s `lower.rs` §8.5 gave it a `Body` keyed
+            // on its `param`, and this walk already has `self.bodies` to check
+            // that against — a closure whose type still mentions a generic
+            // parameter, or one that moves a capture out (§8.6), has no entry
+            // there, because that crate refused to build one. **Whether it
+            // captures anything is no longer the question**: §8.6 gives a
+            // capturing closure a body too, with the captures as trailing
+            // parameters, and the environment that fills them is the backend's
+            // to build. Rooting it here rather than only through a later call
+            // is what `note_address_taken` already does for a named function
+            // value, and for the same reason: a closure created but never
+            // called on *this* path might still be called through one this
+            // walk has not reached, and a monomorphisation set that is quietly
             // incomplete is a link error at the end of a long build (§8's own
             // words, one section up).
-            Rvalue::Closure { param, captures, .. } => {
-                if captures.is_empty() && self.bodies.contains_key(param) {
+            Rvalue::Closure { param, .. } => {
+                if self.bodies.contains_key(param) {
                     queue.push_back(Task {
                         instance: Instance::plain(*param),
                         chain: Vec::new(),

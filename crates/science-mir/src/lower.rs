@@ -365,33 +365,74 @@
 //! contain. Reserving it and never activating it would make it an exclusive
 //! borrow that rule 4 treats as a reservation forever.
 //!
-//! ## 8.5 What is left, and whose it is
+//! ## 8.5 The body, and the key it is filed under
 //!
-//! **The closure's body is still not lowered.** [`Rvalue::Closure`] keeps the
-//! THIR [`science_types::thir::ExprId`], and the right end state is a separate
-//! [`Body`] with the captures as parameters — which is what
-//! `codegen-and-linking.md`'s *"a struct of `{ fn ptr, captures }`"* will want,
-//! and what makes a region unable to cross the boundary except through a
-//! summary, like any other call.
+//! This section used to open *"the closure's body is still not lowered"* and
+//! say it was blocked on `science-resolve` minting a [`DefId`] for the closure
+//! itself. It is not blocked and it is not unlowered. [`Rvalue::Closure`] still
+//! keeps the THIR [`science_types::thir::ExprId`], and beside it there is now a
+//! separate [`Body`] — *"with the captures as parameters"*, which is what that
+//! same paragraph already named as the right end state.
 //!
-//! **It is blocked on one thing and it is not in this crate.** A [`Body`] is
-//! keyed by a [`DefId`]; [`crate::callgraph`] partitions by [`DefId`]; Decision
-//! 8's cache boundary is a [`DefId`]. `science-resolve`'s `resolve_closure`
-//! allocates a definition for a closure's *parameter* and none for the closure,
-//! so there is no key to file one under, and minting one is that crate's to do.
-//! Until it does, the seam is exactly this: **everything that crosses between
-//! the closure's body and the enclosing body is a capture, every capture is a
-//! borrow in [`Body::borrows`], and the borrow is live for the whole life of
-//! the closure value.** A consumer that honours rule 4 and rule 5 over that
-//! table is sound about closures without reading a closure body — it is
-//! *imprecise*, because it refuses at the closure's creation what a real call
-//! would only conflict with at the call, and imprecise in the direction that
-//! refuses.
+//! **The key is the closure's `param`, not a [`DefId`] of its own.** A [`Body`]
+//! is keyed by a [`DefId`]; [`crate::callgraph`] partitions by [`DefId`];
+//! Decision 8's cache boundary is a [`DefId`]. `science-resolve`'s
+//! `resolve_closure` allocates a definition for a closure's *parameter* and
+//! none for the closure — and a parameter's definition is already unique per
+//! closure, because that function mints a fresh one every time, including for
+//! the implicit `each`. So the key existed the whole time under another name.
+//! `science_codegen::mono`'s `path_of` gives it the symbol `closure$name$id`
+//! for the same reason.
 //!
-//! **What is genuinely not checked** is the closure body's own interior: a
-//! mistake between two of the closure's own locals is reported by nothing,
-//! because those locals exist in no MIR. Nothing outside the closure can name
-//! them, so the hole does not widen past the body.
+//! **The seam is unchanged and still the thing to hold onto**: everything that
+//! crosses between the closure's body and the enclosing body is a capture,
+//! every capture is a borrow in [`Body::borrows`], and the borrow is live for
+//! the whole life of the closure value. A consumer that honours rule 4 and rule
+//! 5 over that table is sound about closures — *imprecise*, because it refuses
+//! at the closure's creation what a real call would only conflict with at the
+//! call, and imprecise in the direction that refuses.
+//!
+//! **The closure body's own interior is checked now**, which this section used
+//! to list as what is *"genuinely not checked"*. Those locals exist in MIR,
+//! [`crate::callgraph`] gives the body a node whether or not a
+//! [`Callee::Def`] edge reaches it, and `science-regions` checks it as an
+//! unreferenced singleton component.
+//!
+//! ## 8.6 A capture reaches the body as a parameter
+//!
+//! > **Decision. A closure's body takes one trailing parameter per capture,
+//! > holding the reference §8's discipline took, in [`crate::capture`]'s
+//! > first-mention order. Inside the body the binding is that parameter behind
+//! > a [`Projection::Deref`].**
+//!
+//! **Why a parameter and not a new local kind.** §8.5's own sentence asked for
+//! *"a separate [`Body`] with the captures as parameters"*, and the reason it
+//! is the right shape is that a capture is already a reference by the time it
+//! crosses: [`Builder::lower_captures`] borrowed it into a temporary in the
+//! enclosing frame, and a reference is the one thing this crate already knows
+//! how to pass. Nothing about [`Body::params`], [`crate::drops`] or
+//! [`crate::moves`] needed a new case — a `borrowed T` parameter drops nothing
+//! and moves nothing, which is exactly what §8 promised a capture would be.
+//!
+//! **Why the `Deref` goes in [`Builder::as_place`].** The body's THIR names the
+//! binding at the *referent's* type: `x giving x + n` types `n` as `Int` while
+//! the parameter is a `borrowed Int`. Putting the projection at the one place a
+//! name becomes a place keeps every reader — `operand`, `argument`,
+//! `lower_method_call`, the f-string holes — reading the referent without
+//! knowing a capture is involved. [`Builder::captured`] is the table, and it
+//! holds the referent type rather than deducing it, because §9's `auto_deref`
+//! peels *every* borrow and a capture of something that was already a reference
+//! must stop after one.
+//!
+//! **What this does not make lowerable.** A closure whose body *moves* a
+//! capture out. §8.2 models that as an exclusive borrow because a borrow
+//! discipline has no spelling for a move, and while no body was lowered the
+//! mismatch was an unreported mistake in a program that could not run. A body
+//! lowered against the same model *would* run it — the owning value copied out
+//! of storage the enclosing frame still drops, which is a double free rather
+//! than a missing diagnostic. So [`Builder::lower_captures`] flags it, no body
+//! is built, and `science-codegen-llvm` refuses the closure by name. The right
+//! repair is above this crate: a `SC0301` from a checker that can see the move.
 //!
 //! # 9. The receiver of a method call is reborrowed, not borrowed
 //!
@@ -710,6 +751,27 @@ struct LoopScope {
     depth: usize,
 }
 
+/// One capture, as the closure's own body will receive it. §8.6.
+///
+/// [`Builder::lower_captures`] produces these beside the operands the
+/// [`Rvalue::Closure`] aggregate holds, so that the two lists are the same list
+/// in the same order: entry *i* of the aggregate is entry *i* of the body's
+/// trailing parameters, and the environment the backend builds out of one is
+/// read back by the other without a second decision about ordering.
+struct CaptureParam {
+    /// The binding the closure's body names.
+    def: DefId,
+    /// The parameter's own type: the reference §8's discipline takes.
+    reference_ty: Ty,
+    /// What that reference points at, which is the type the body's THIR gives
+    /// the name and so the type of the [`Projection::Deref`] between them.
+    referent_ty: Ty,
+    span: Span,
+    /// Whether the body *moves* the captured value out — §8.2's named hole,
+    /// which §8.6 turns from an unreported unsoundness into a refusal.
+    moves: bool,
+}
+
 struct Builder<'a, 'ctx> {
     context: &'a mut Context<'ctx>,
     thir: &'a thir::Body,
@@ -740,6 +802,18 @@ struct Builder<'a, 'ctx> {
     /// closure can be lowered from inside another closure's body (a nested
     /// `giving`) before either of theirs is known to be worth keeping.
     closures: Vec<Body>,
+    /// [`mir::Body::closure_captures`], while the body is still being built.
+    closure_captures: Option<usize>,
+    /// Every capture this body is a closure *for*, and the type of the place
+    /// each one borrows. §8.6.
+    ///
+    /// A capture reaches the closure's body as a parameter holding a
+    /// *reference*, and the body names it at the referent's type — `x giving
+    /// x + n` types `n` as `Int` while the parameter is a `borrowed Int`. This
+    /// table is what [`Builder::as_place`] consults to put the
+    /// [`Projection::Deref`] between the two; the value is the referent's type,
+    /// which is the projection's own.
+    captured: HashMap<DefId, Ty>,
     /// The crate's `Box`, found once by [`Coercions::of`] the way
     /// `science-types`' own `assign.rs` finds it — `None` for a table built by
     /// hand with no prelude. [`Builder::box_deref`] is the one reader:
@@ -767,6 +841,8 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             span,
             bool_ty,
             closures: Vec::new(),
+            closure_captures: None,
+            captured: HashMap::new(),
             box_type,
         }
     }
@@ -785,6 +861,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             blocks: self.blocks,
             borrows: self.borrows,
             arg_count: self.arg_count,
+            closure_captures: self.closure_captures,
             span: self.span,
             predecessors: Vec::new(),
         }
@@ -847,7 +924,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// §1.2's arrow type takes it as one — so this calls [`Builder::expr_into`]
     /// directly rather than [`Builder::lower_block`], which is the entry point
     /// every function body uses because a `def`'s is a block.
-    fn run_closure(&mut self, param: DefId, body: ExprId, ret_ty: Ty) {
+    fn run_closure(&mut self, param: DefId, body: ExprId, ret_ty: Ty, captures: &[CaptureParam]) {
         let span = self.thir.expr(body).span;
         self.span = span;
         self.push_local(ret_ty, LocalKind::Return, span);
@@ -855,11 +932,28 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         let param_span = self.context.defs.get(param).span;
         let local = self.push_local(param_ty, LocalKind::Param(param), param_span);
         self.bindings.insert(param, local);
-        self.arg_count = 1;
+        let mut param_locals = vec![local];
+        // §8.6. Each capture is one more parameter, holding the reference the
+        // enclosing body took, in [`crate::capture`]'s first-mention order —
+        // the same order [`Builder::lower_captures`] wrote the aggregate in, so
+        // that the two halves of one calling convention are one list read
+        // twice.
+        for capture in captures {
+            let local = self.push_local(
+                capture.reference_ty,
+                LocalKind::Param(capture.def),
+                capture.span,
+            );
+            self.bindings.insert(capture.def, local);
+            self.captured.insert(capture.def, capture.referent_ty);
+            param_locals.push(local);
+        }
+        self.arg_count = 1 + captures.len();
+        self.closure_captures = Some(captures.len());
 
         let entry = self.new_block();
         debug_assert_eq!(entry, ENTRY_BLOCK);
-        self.scopes.push(Scope { locals: vec![local] });
+        self.scopes.push(Scope { locals: param_locals });
 
         let block = self.expr_into(Place::local(RETURN_PLACE), body, entry);
         let block = self.exit_scopes(0, block, span);
@@ -1470,31 +1564,39 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             // closure's body now is too.
             ExprKind::Closure { param, body } => {
                 let (param, body) = (*param, *body);
-                let (captures, block) = self.lower_captures(param, body, block);
-                // §8.5's follow-up: a closure with nothing captured has
-                // nothing crossing its boundary that this crate cannot
-                // already lower on its own, so it gets the [`Body`] every
-                // other definition gets — keyed on `param`, since a closure
-                // has no `DefId` of its own to be one of (§8.5's own
+                let (captures, capture_params, block) = self.lower_captures(param, body, block);
+                // §8.5's follow-up, and §8.6's: a closure gets the [`Body`]
+                // every other definition gets — keyed on `param`, since a
+                // closure has no `DefId` of its own to be one of (§8.5's own
                 // sentence) and `param` is already unique per closure
                 // (`science-resolve`'s `resolve_closure` mints one every
-                // time). A closure that captures anything is left exactly as
-                // before: §8.5's hole, unmoved, because its aggregate has a
-                // shape (`{ fn ptr, captures }`) this crate has nowhere to
-                // record — the closure's *type* is `(A) -> B` with no room
-                // for a capture count (`collections-and-chains.md` §1.2) —
-                // and a generic closure is left the same way, because a
-                // `TyKind::Param` anywhere in `ty` means some instantiation
-                // this walk cannot see is still owed a copy (Decision 42's
-                // order: types before mono, and mono is two crates down).
+                // time) — and its captures reach that body as the trailing
+                // parameters §8.6 describes.
+                //
+                // **Two closures are still left without one**, and the reason
+                // is different in each case. A *generic* closure is left
+                // because a `TyKind::Param` anywhere in `ty` means some
+                // instantiation this walk cannot see is still owed a copy
+                // (Decision 42's order: types before mono, and mono is two
+                // crates down). A closure that **moves** a capture out is
+                // left because §8.2 has no spelling for the move — the
+                // discipline models it as an exclusive borrow, and a body
+                // lowered against that model would memcpy an owning value out
+                // of storage the enclosing frame still drops. §8.2 called that
+                // *"one hole and it is worth stating exactly"* while no body
+                // was lowered at all; lowering one would turn it from an
+                // unreported mistake into a double free, so the body is
+                // withheld and `science-codegen-llvm` refuses the closure by
+                // name instead.
                 let closure_ret = match self.context.types.kind(ty) {
                     TyKind::Closure { ret, .. } => Some(*ret),
                     _ => None,
                 };
-                if captures.is_empty() && !ty_mentions_param(self.context.types, ty) {
+                let moves_a_capture = capture_params.iter().any(|capture| capture.moves);
+                if !moves_a_capture && !ty_mentions_param(self.context.types, ty) {
                     if let Some(ret) = closure_ret {
                         let mut nested = Builder::new(self.context, self.thir);
-                        nested.run_closure(param, body, ret);
+                        nested.run_closure(param, body, ret, &capture_params);
                         let mut nested_closures = std::mem::take(&mut nested.closures);
                         self.closures.push(nested.finish_with(param));
                         self.closures.append(&mut nested_closures);
@@ -4263,9 +4365,10 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         param: DefId,
         body: ExprId,
         mut block: BlockId,
-    ) -> (Vec<Operand>, BlockId) {
+    ) -> (Vec<Operand>, Vec<CaptureParam>, BlockId) {
         let found = crate::capture::captures_of(self.context.decls, self.thir, param, body);
         let mut captures = Vec::with_capacity(found.len());
+        let mut params = Vec::with_capacity(found.len());
         for capture in found {
             let Some(local) = self.bindings.get(&capture.def).copied() else { continue };
             // §8.3: the referent, not the reference.
@@ -4292,8 +4395,15 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             block =
                 self.borrow_place(Place::local(temp), mutable, place, block, capture.span, false);
             captures.push(Operand::Move(Place::local(temp)));
+            params.push(CaptureParam {
+                def: capture.def,
+                reference_ty: borrowed,
+                referent_ty: ty,
+                span: capture.span,
+                moves: matches!(capture.use_kind, crate::capture::Use::Consume) && consumed_moves,
+            });
         }
-        (captures, block)
+        (captures, params, block)
     }
 
     /// The two-phase borrow whose reference lives in this local, if any.
@@ -4437,6 +4547,15 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         match &thir.expr(expr).kind {
             ExprKind::Local(def) | ExprKind::SelfValue(def) => {
                 let local = self.bindings.get(def).copied()?;
+                // §8.6. Inside a closure's own body a capture is a parameter
+                // holding a *reference*, and every use of it means the
+                // referent — so the `Deref` goes in here, at the one place
+                // that turns a name into a place, rather than at each of the
+                // dozen readers that would each have had to remember.
+                if let Some(referent) = self.captured.get(def).copied() {
+                    let place = Place::local(local).project(Projection::Deref { ty: referent });
+                    return Some((place, block));
+                }
                 Some((Place::local(local), block))
             }
             // A narrowed read is the same storage seen at a smaller type, so it

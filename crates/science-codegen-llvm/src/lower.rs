@@ -3386,19 +3386,27 @@ impl<'a> Lowerer<'a> {
             // `collections-and-chains.md` §1.2 makes it a bare arrow,
             // `(A) -> B` — so this layout cannot depend on which closure
             // literal produced a given value; it has to be one answer for
-            // every closure of this type. `CgTy::Ptr(PtrKind::Fn)`
-            // unconditionally is exactly right for the only closure this
-            // crate can build a *value* of: one with nothing captured,
-            // `science-mir`'s `Rvalue::Closure` with an empty `captures`
-            // (that crate's `lower.rs` §8.5). A captured closure needs the
-            // aggregate its own doc comment describes, `{ fn ptr, captures }`,
-            // and this type has no room to say how many or of what — the same
-            // gap `science-mir`'s `lib.rs` §7 item 5 names. Nothing builds a
-            // value of a captured closure's type yet, so this layout being
-            // wrong for one is not reachable; [`Lowerer::lower_rvalue`]'s own
-            // `Rvalue::Closure` arm is where a captured closure is refused, by
-            // name, rather than here.
-            TyKind::Closure { .. } => Ok(CgTy::Ptr(PtrKind::Fn)),
+            // every closure of this type, capturing or not, because a
+            // `def apply(f: (Int) -> Int)` takes both.
+            //
+            // §10's own table is that one answer: *"a closure value: a struct
+            // of `{ fn ptr, captures }`; a call through it is an indirect
+            // `call`"*. The captures cannot sit *in* the struct — the arrow
+            // type has no room to say how many or of what — so what is uniform
+            // is a **pair**: the code pointer, and the address of the capture
+            // environment. `{ code, env }` is two words for every closure of
+            // every arrow type, the second of which is null when there is
+            // nothing to point at.
+            //
+            // **Why a pair and not a single pointer to `{ code, captures… }`.**
+            // Both are uniform. The pair keeps a capture-free closure's value
+            // self-contained — `{ @fn, null }` refers to no storage, so it
+            // survives leaving the frame that built it, which a pointer into
+            // that frame would not. §8's discipline already stops a
+            // *capturing* closure from outliving what it borrows; there was no
+            // reason to spend that property on the closures that never needed
+            // it.
+            TyKind::Closure { .. } => Ok(closure_cg_ty()),
             other => Err(Unlowered::new(format!("a value of type `{other:?}`"))),
         }
     }
@@ -3886,14 +3894,14 @@ impl<'a> Lowerer<'a> {
             // the one arm of this match that is not conservative about a type
             // it cannot see behind — because it does not have to. `cg_ty_in`'s
             // `TyKind::Closure` arm gives every value of this type the same
-            // layout, a bare function pointer: a closure that captures
-            // something is refused where it would be *built*
-            // (`Lowerer::lower_rvalue`'s `Rvalue::Closure` arm), so nothing of
-            // this type in a place this backend lowers is ever anything else.
-            // A function pointer releases nothing on its own —
-            // `science_codegen::descriptor::needs_drop` already says so of
-            // `CgTy::Ptr(PtrKind::Fn)` — and this is that fact, read off the
-            // Science type before it reaches a layout.
+            // layout, `{ code, env }`, and **both words are borrows of storage
+            // somebody else owns**: the code is a function's address, and the
+            // environment is `science-mir`'s §8 discipline, which makes every
+            // capture *"a borrow of the captured place"* and no capture a
+            // by-value one. There is nothing a closure could release that its
+            // enclosing frame is not already releasing, which is why a
+            // capturing closure adds no drop here rather than adding one this
+            // arm would have to become conservative about.
             TyKind::Closure { .. } => Ok(false),
             // A type parameter, `Self`, an associated type: nothing here can
             // see what is behind either.
@@ -4369,7 +4377,14 @@ impl<'a> Lowerer<'a> {
         let def = body.def();
         let ret_layout = self.layout_of_ty(body.local_decl(mir::Local::from_index(0)).ty)?;
         let mut params = Vec::new();
-        for local in body.params() {
+        // §8.6: a closure body's trailing `captures` parameters are not
+        // parameters of the *function*. They arrive together, through the one
+        // environment pointer appended below, because every closure of one
+        // arrow type has to be callable at one signature and the arrow says
+        // nothing about captures — see [`closure_cg_ty`].
+        let captures = body.closure_captures().unwrap_or(0);
+        let declared = body.params().count() - captures;
+        for local in body.params().take(declared) {
             let decl = body.local_decl(local);
             let param_name = decl
                 .def()
@@ -4378,6 +4393,13 @@ impl<'a> Lowerer<'a> {
             let layout = self.layout_of_ty(decl.ty)?;
             let attrs = self.param_attrs(decl.ty, &layout)?;
             params.push((param_name, layout, attrs));
+        }
+        if body.closure_captures().is_some() {
+            params.push((
+                "env".to_string(),
+                layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow)),
+                ParamAttrs::default(),
+            ));
         }
         // **The symbol is the instance's, except for the entry point.**
         // `science_codegen::mono` mangles `main` from its path like any other
@@ -4700,11 +4722,22 @@ impl<'a> Lowerer<'a> {
             Some(existing) => existing,
             None => self.science_signature(body, symbol)?,
         };
-        let params: Vec<mir::Local> = body.params().collect();
-        if params.len() != sig.params.len() {
+        // §8.6's split: `params` are the locals the signature classifies one
+        // for one, and `capture_locals` are the trailing ones the environment
+        // pointer stands in for. `env_index` is where that pointer sits in
+        // `sig.params` — last, which is where `science_signature` appended it.
+        let captures = body.closure_captures().unwrap_or(0);
+        let all: Vec<mir::Local> = body.params().collect();
+        let (params, capture_locals) = all.split_at(all.len() - captures);
+        let (params, capture_locals) = (params.to_vec(), capture_locals.to_vec());
+        let env_index = match body.closure_captures().is_some() {
+            true => Some(sig.params.len().saturating_sub(1) as u32),
+            false => None,
+        };
+        if params.len() + usize::from(env_index.is_some()) != sig.params.len() {
             return Err(Unlowered::new(format!(
                 "a function whose MIR declares {} parameter(s) where its signature classifies {}",
-                params.len(),
+                params.len() + usize::from(env_index.is_some()),
                 sig.params.len()
             )));
         }
@@ -4797,6 +4830,45 @@ impl<'a> Lowerer<'a> {
                         layout: layout.clone(),
                     })),
                 }
+            } else if let Some(at) = capture_locals.iter().position(|param| *param == local) {
+                // §8.6's other half. A capture is an ordinary local of this
+                // frame holding an ordinary reference — the body reads it
+                // through a `Projection::Deref` like any other — and the only
+                // thing unusual about it is where its initial value comes
+                // from: field `at` of the environment the caller built, in
+                // `science-mir`'s first-mention order.
+                //
+                // **The load is in the prologue and not at each use**, which
+                // is `ArgClass::Direct`'s own shape one step further: a
+                // register parameter is stored into its slot once and read
+                // back by every use, and this is the same slot filled from a
+                // different place. `-O2`'s `mem2reg` collapses both.
+                let env = env_index.ok_or_else(|| {
+                    Unlowered::new(
+                        "a body with capture parameters and no environment pointer to fill them \
+                         from: `science_signature` and `lower_body` disagree about whether this \
+                         is a closure",
+                    )
+                })?;
+                let pointer = layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow));
+                ctx.entry
+                    .push(ExtInst::Above(Inst::Alloca { local: id, layout: layout.clone() }));
+                let address = ctx.value();
+                ctx.prologue.push(ExtInst::FieldAddr {
+                    dest: address,
+                    base: Operand::Param(env),
+                    offset: at as u64 * pointer.size,
+                });
+                let value = ctx.value();
+                ctx.prologue.push(ExtInst::LoadAt {
+                    dest: value,
+                    address: Operand::Value(address),
+                    layout: pointer,
+                });
+                ctx.prologue.push(ExtInst::Above(Inst::Store {
+                    local: id,
+                    value: Operand::Value(value),
+                }));
             } else {
                 ctx.entry
                     .push(ExtInst::Above(Inst::Alloca { local: id, layout: layout.clone() }));
@@ -5659,41 +5731,18 @@ impl<'a> Lowerer<'a> {
                 }));
                 Ok(())
             }
-            // A closure with nothing captured is a bare function pointer —
-            // the value `cg_ty_in`'s `TyKind::Closure` arm now gives a layout
-            // to. `param` is the identity `science-mir`'s `lower.rs` §8.5
-            // minted the closure's body under, and `by_def` — the same table
-            // every direct call's own symbol comes from — names it once
-            // `science_codegen::mono`'s `Mono::walk_rvalue` has walked a use
-            // of this closure and enqueued it. `Operand::GlobalAddr` already
-            // resolves a function as well as a global (its own doc says so:
-            // *"a string literal's bytes, a descriptor, a function"*), which
-            // is what makes this one `Store` and no new backend primitive.
-            Rvalue::Closure { param, captures, .. } if captures.is_empty() => {
-                let symbol = self.by_def.get(param).cloned().ok_or_else(|| {
-                    Unlowered::new(
-                        "a capture-free closure whose body `science_codegen::mono` never \
-                         walked: nothing reachable from `main` created a value of it, so it was \
-                         never enqueued and no function exists to point at",
-                    )
-                })?;
-                insts.push(ExtInst::Above(Inst::Store {
-                    local: dest,
-                    value: Operand::GlobalAddr(symbol),
-                }));
-                Ok(())
+            // §10's `{ fn ptr, captures }`, built. `param` is the identity
+            // `science-mir`'s `lower.rs` §8.5 minted the closure's body under,
+            // and `by_def` — the same table every direct call's own symbol
+            // comes from — names it once `science_codegen::mono`'s
+            // `Mono::walk_rvalue` has walked a use of this closure and
+            // enqueued it. `Operand::GlobalAddr` already resolves a function
+            // as well as a global (its own doc says so: *"a string literal's
+            // bytes, a descriptor, a function"*), which is what makes the code
+            // half one store and no new backend primitive.
+            Rvalue::Closure { param, captures, .. } => {
+                self.lower_closure(ctx, *param, captures, dest, layout, insts)
             }
-            // A closure that captures something is still §8.5's hole,
-            // unmoved: its value is `{ fn ptr, captures }`, `cg_ty_in` gives
-            // every closure type the bare pointer that is only true of one
-            // with nothing captured, and there is nowhere here to put the
-            // rest even if there were room for it in the type.
-            Rvalue::Closure { .. } => Err(Unlowered::new(
-                "a closure that captures something: only a capture-free closure has a concrete \
-                 representation today, a bare function pointer, and this one needs the \
-                 `{ fn ptr, captures }` aggregate `science-mir`'s `Rvalue::Closure` documents and \
-                 no phase builds",
-            )),
             other => Err(Unlowered::new(describe_rvalue(other))),
         }
     }
@@ -6677,6 +6726,132 @@ impl<'a> Lowerer<'a> {
         let loaded = ctx.value();
         insts.push(ExtInst::Above(Inst::Load { dest: loaded, local: slot }));
         Ok(Operand::Value(loaded))
+    }
+
+    /// §10's closure value, built: the code pointer, and the address of the
+    /// environment its body reads its captures back out of.
+    ///
+    /// # The environment is a slot in *this* frame, and that follows from §8
+    ///
+    /// `science-mir`'s `lower.rs` §8 decides the capture discipline and it is
+    /// one sentence: *"every capture is a **borrow** of the captured place,
+    /// taken at the point the closure value is created and held for as long as
+    /// the closure value is live … There is no by-value capture and no copy
+    /// capture, not even for a `Copy` type."* So every entry in `captures` is a
+    /// reference, every one is a pointer, and the environment is `N` pointers
+    /// — a shape this function can lay out from the count alone, without
+    /// asking the closure's *type*, which §1.2 of `collections-and-chains.md`
+    /// made a bare arrow with no room to say.
+    ///
+    /// It also settles the *storage*. A borrow cannot outlive its referent, and
+    /// every referent here is a place in this frame, so an environment that
+    /// lives exactly as long as this frame gives away nothing the discipline
+    /// had not already given away — and costs no allocation, no free, and no
+    /// drop. [`Lowerer::temp`] is that slot: an `alloca` in the entry block,
+    /// like every other local.
+    ///
+    /// **A closure that captures nothing gets a null environment rather than an
+    /// empty slot**, so that `{ @fn, null }` is a value referring to no storage
+    /// at all. That is the property [`Lowerer::cg_ty_in`]'s own note declines to
+    /// spend: such a closure may still be returned out of the function that
+    /// wrote it, exactly as it could when it was a bare function pointer.
+    fn lower_closure(
+        &mut self,
+        ctx: &mut BodyCtx,
+        param: DefId,
+        captures: &[mir::Operand],
+        dest: LocalId,
+        layout: &Layout,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let symbol = self.by_def.get(&param).cloned().ok_or_else(|| {
+            Unlowered::new(
+                "a closure whose body no phase built. `science-mir`'s `lower.rs` §8.6 withholds \
+                 one from a closure whose type still mentions a type parameter, and from a \
+                 closure that *moves* a capture out — which §8.2 models as an exclusive borrow \
+                 and has no spelling for, so a body lowered against that model would copy an \
+                 owning value out of storage the enclosing frame still drops. Otherwise nothing \
+                 reachable from `main` created a value of this closure, so \
+                 `science_codegen::mono` never enqueued it and no function exists to point at",
+            )
+        })?;
+        let Repr::Aggregate { fields } = &layout.repr else {
+            return Err(Unlowered::new(
+                "a closure value whose layout is not the `{ code, env }` pair `cg_ty_in` gives \
+                 every closure type",
+            ));
+        };
+        let (code_place, env_place) = match (fields.get(CLOSURE_CODE), fields.get(CLOSURE_ENV)) {
+            (Some(code), Some(env)) => (code.clone(), env.clone()),
+            _ => {
+                return Err(Unlowered::new(
+                    "a closure value whose layout has fewer than the two fields `{ code, env }` \
+                     asks for",
+                ));
+            }
+        };
+
+        // The environment first, because the pair below stores its address.
+        let env = match captures.is_empty() {
+            true => Operand::Null,
+            false => {
+                let pointer = layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow));
+                let slot = self.temp(
+                    ctx,
+                    layout_of(
+                        self.target,
+                        &CgTy::Struct {
+                            name: "closure.env".to_string(),
+                            fields: (0..captures.len())
+                                .map(|at| {
+                                    CgField::new(format!("c{at}"), CgTy::Ptr(PtrKind::Borrow))
+                                })
+                                .collect(),
+                        },
+                    ),
+                );
+                let base = ctx.value();
+                insts.push(ExtInst::LocalAddr { dest: base, local: slot });
+                // First-mention order, which is `science-mir`'s
+                // `capture::captures_of` order, which is the order that crate
+                // gave the closure body's trailing parameters. One list, read
+                // twice; see `CaptureParam`'s own note there.
+                for (at, capture) in captures.iter().enumerate() {
+                    let address = ctx.value();
+                    insts.push(ExtInst::FieldAddr {
+                        dest: address,
+                        base: Operand::Value(base),
+                        offset: at as u64 * pointer.size,
+                    });
+                    let value = self.typed_operand(ctx, capture, &pointer, insts)?;
+                    insts.push(ExtInst::StoreAt {
+                        address: Operand::Value(address),
+                        layout: pointer.clone(),
+                        value,
+                    });
+                }
+                Operand::Value(base)
+            }
+        };
+
+        let base = ctx.value();
+        insts.push(ExtInst::LocalAddr { dest: base, local: dest });
+        for (place, value) in
+            [(code_place, Operand::GlobalAddr(symbol)), (env_place, env)]
+        {
+            let address = ctx.value();
+            insts.push(ExtInst::FieldAddr {
+                dest: address,
+                base: Operand::Value(base),
+                offset: place.offset,
+            });
+            insts.push(ExtInst::StoreAt {
+                address: Operand::Value(address),
+                layout: place.layout.clone(),
+                value,
+            });
+        }
+        Ok(())
     }
 
     /// A tuple literal: each element written at its own offset.
@@ -8085,12 +8260,12 @@ impl<'a> Lowerer<'a> {
     ) -> Result<Terminator, Unlowered> {
         let def = match callee {
             mir::Callee::Def { def, .. } => *def,
-            // Half of `science-mir`'s own refusal — *"a call through a
-            // closure"* — closes here. The other half, a call through a
-            // *captured* closure's value, never reaches this arm at all: its
-            // `Rvalue::Closure` was refused three functions up, at
-            // `Lowerer::lower_rvalue`, so there is no register holding one to
-            // read `operand` out of.
+            // `science-mir`'s own refusal — *"a call through a closure"* —
+            // closes here, and for a capturing closure too: this used to say
+            // that half *"never reaches this arm at all"* because the value
+            // had been refused where it was built, and it reaches it now like
+            // any other. Which kind arrived is invisible here, which is the
+            // point of a uniform representation.
             mir::Callee::Indirect(operand) => {
                 self.lower_indirect_closure_call(body, ctx, operand, args, destination, insts)?;
                 return Ok(match target {
@@ -8459,18 +8634,25 @@ impl<'a> Lowerer<'a> {
 
     /// A call through a closure value — `science-mir`'s `Callee::Indirect`.
     ///
-    /// **The shape is `dispatch_signature`'s, minus the vtable.** A `borrowed
-    /// any I` erases its receiver behind a fat pointer and a slot index; a
-    /// closure of nothing captured *is* its function pointer (`cg_ty_in`'s
-    /// `TyKind::Closure` arm), so there is no field to load one out of and no
-    /// receiver to smuggle through the signature — `operand` reads straight
-    /// to the value `Callee::Indirect { function, .. }` calls.
+    /// **The shape is `dispatch_signature`'s, and now the resemblance is
+    /// exact.** A `borrowed any I` is a pair whose first word is the receiver
+    /// and whose second is a table to load the callee out of; a closure is a
+    /// pair whose first word is the callee and whose second is the environment
+    /// to pass it ([`closure_cg_ty`]). Both load two fields out of a place and
+    /// call the one with the other; the two differ in which word is which and
+    /// in whether the erased half goes first (a receiver) or last (an
+    /// environment).
     ///
-    /// **What this cannot do, named rather than guessed.** A captured closure
-    /// never reaches here: its value was refused where it was built
-    /// (`Lowerer::lower_rvalue`'s `Rvalue::Closure` arm), so there is no
-    /// register for `operand` to name and this function is never asked about
-    /// one.
+    /// **The environment is passed whether or not there is one**, which is why
+    /// [`Lowerer::closure_signature`] appends its parameter unconditionally.
+    /// This call site cannot know which closure literal produced the value it
+    /// holds — that is the whole reason the representation is uniform — so the
+    /// convention has to be too, and a capture-free closure's body simply never
+    /// reads the null it is handed.
+    ///
+    /// **`operand` must be a place**, and every closure value is: `science-mir`
+    /// assigns a `Rvalue::Closure` into a local before anything calls through
+    /// it, and a two-word aggregate has no other way to reach here.
     fn lower_indirect_closure_call(
         &mut self,
         body: &MirBody,
@@ -8496,28 +8678,65 @@ impl<'a> Lowerer<'a> {
         };
         let signature = self.closure_signature(&params, ret)?;
 
-        let ptr_layout = layout_of(self.target, &CgTy::Ptr(PtrKind::Fn));
-        let function = match self.lower_operand(ctx, operand, Some(&ptr_layout), insts)? {
-            Operand::Value(value) => value,
-            _ => {
+        let place = match operand {
+            mir::Operand::Copy(place) | mir::Operand::Move(place) => place,
+            mir::Operand::Const(_) => {
                 return Err(Unlowered::new(
-                    "a call through a closure value that is not a loaded register: every \
-                     closure reaches a call site through a place, and this one did not",
-                ))
+                    "a call through a closure value that is not a place: a closure is a \
+                     `{ code, env }` pair and there is no constant of one",
+                ));
             }
         };
+        let (base, _) = self.place_address(ctx, place, insts)?;
+        let closure_layout = self.layout_of_ty(closure_ty)?;
+        let Repr::Aggregate { fields } = &closure_layout.repr else {
+            return Err(Unlowered::new(
+                "a call through a closure value whose layout is not the `{ code, env }` pair \
+                 `cg_ty_in` gives every closure type",
+            ));
+        };
+        let (code_place, env_place) = match (fields.get(CLOSURE_CODE), fields.get(CLOSURE_ENV)) {
+            (Some(code), Some(env)) => (code.clone(), env.clone()),
+            _ => {
+                return Err(Unlowered::new(
+                    "a call through a closure value whose layout has fewer than the two fields \
+                     `{ code, env }` asks for",
+                ));
+            }
+        };
+        let mut word = [0u32; 2];
+        for (slot, place) in word.iter_mut().zip([&code_place, &env_place]) {
+            let address = ctx.value();
+            insts.push(ExtInst::FieldAddr {
+                dest: address,
+                base: Operand::Value(base),
+                offset: place.offset,
+            });
+            let value = ctx.value();
+            insts.push(ExtInst::LoadAt {
+                dest: value,
+                address: Operand::Value(address),
+                layout: place.layout.clone(),
+            });
+            *slot = value.0;
+        }
+        let (function, env) = (ValueId(word[0]), ValueId(word[1]));
 
-        if args.len() != signature.params.len() {
+        // The environment parameter is `closure_signature`'s last, and it is
+        // not one of the arrow's own — so the arity checked here is one short
+        // of the signature's, deliberately.
+        if args.len() + 1 != signature.params.len() {
             return Err(Unlowered::new(format!(
                 "a call through a closure declaring {} parameter(s) with {} argument(s)",
-                signature.params.len(),
+                signature.params.len() - 1,
                 args.len()
             )));
         }
-        let mut lowered = Vec::with_capacity(args.len());
+        let mut lowered = Vec::with_capacity(args.len() + 1);
         for (arg, param) in args.iter().zip(&signature.params) {
             lowered.push(self.typed_operand(ctx, arg, &param.layout, insts)?);
         }
+        lowered.push(Operand::Value(env));
 
         let ret_class = signature.ret.clone();
         self.emit_result(
@@ -8531,14 +8750,26 @@ impl<'a> Lowerer<'a> {
     }
 
     /// The ABI signature a call through a closure value calls at: the
-    /// closure's own arrow type, `(A) -> B`, with no receiver.
+    /// closure's own arrow type, `(A) -> B`, plus §8.6's environment pointer.
+    ///
+    /// **The environment is appended and not prepended**, which is the one
+    /// place this differs from [`Lowerer::dispatch_signature`]'s receiver. A
+    /// receiver is an argument the *language* has and the ABI moves; an
+    /// environment is one the language does not have at all. Putting it last
+    /// keeps every argument the author wrote at the index they wrote it at, so
+    /// a signature mismatch reads as the arity it is rather than as an
+    /// off-by-one in every position.
+    ///
+    /// **Unconditional, because the call site cannot know.** A `(Int) -> Int`
+    /// parameter takes a capture-free closure and a capturing one at one
+    /// signature; see the caller's own note.
     ///
     /// **`symbol` is a description and not a symbol**, mirroring
     /// [`Lowerer::dispatch_signature`]'s own note: there is no symbol for a
     /// call whose callee is a value.
     fn closure_signature(&self, params: &[Ty], ret: Ty) -> Result<AbiSignature, Unlowered> {
         let ret_layout = self.layout_of_ty(ret)?;
-        let mut lowered_params = Vec::with_capacity(params.len());
+        let mut lowered_params = Vec::with_capacity(params.len() + 1);
         for (index, param) in params.iter().enumerate() {
             lowered_params.push((
                 format!("_{index}"),
@@ -8546,6 +8777,11 @@ impl<'a> Lowerer<'a> {
                 ParamAttrs::default(),
             ));
         }
+        lowered_params.push((
+            "env".to_string(),
+            layout_of(self.target, &CgTy::Ptr(PtrKind::Borrow)),
+            ParamAttrs::default(),
+        ));
         Ok(AbiSignature::science(self.target, "a closure".to_string(), ret_layout, lowered_params))
     }
 
@@ -10646,6 +10882,30 @@ fn conversion(source: Scalar, destination: Scalar, target: Triple) -> Option<Opt
         }
         (Scalar::Char, Scalar::Char) | (Scalar::Bool, Scalar::Bool) => Some(None),
         _ => None,
+    }
+}
+
+/// The field of a closure value holding its code pointer.
+const CLOSURE_CODE: usize = 0;
+/// The field of a closure value holding its capture environment's address, or
+/// null when it captures nothing.
+const CLOSURE_ENV: usize = 1;
+
+/// §10's *"a struct of `{ fn ptr, captures }`"*, as the one layout every
+/// closure of every arrow type shares. [`Lowerer::cg_ty_in`]'s
+/// `TyKind::Closure` arm is where the shape is argued for.
+///
+/// **A free function and not a `const`, because a [`CgTy`] owns its field
+/// names** — and a function keeps the three readers (the layout, the value
+/// built into it, and the call that reads it back out) quoting one definition
+/// rather than three agreeing ones.
+fn closure_cg_ty() -> CgTy {
+    CgTy::Struct {
+        name: "closure".to_string(),
+        fields: vec![
+            CgField::new("code", CgTy::Ptr(PtrKind::Fn)),
+            CgField::new("env", CgTy::Ptr(PtrKind::Borrow)),
+        ],
     }
 }
 

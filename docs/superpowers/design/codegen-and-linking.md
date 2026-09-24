@@ -2216,6 +2216,18 @@ dispatched both statically and dynamically, `any Error` as a fat pointer, const
 generics through the mangler, closures and the callback trampoline, and a type
 holding a borrow in a field.
 
+**Closures that capture are done**, and the two halves of that item have come
+apart. A closure value is the `{ code, env }` pair §5's table above calls *"a
+struct of `{ fn ptr, captures }`"*: `science-mir`'s `lower.rs` §8.6 gives a
+capturing closure's body the captures as trailing parameters, and
+`science-codegen-llvm`'s `lower_closure` fills an environment with the borrows
+§8's discipline already took. `crates/science-codegen-llvm/tests/closures.rs`
+runs them. **The callback trampoline is not done and is not this item**: it is
+`ffi-c-boundary.md` §4.3's `ffi.Callback of ((A…), R)`, a `{ code, data }` pair
+that *borrows* a closure so that C can call it, and it needs a stdlib type this
+compiler does not have. Nothing above blocks it — the environment pointer is
+already the `data` half — but it is the FFI note's to land, not this one's.
+
 **Gate:** `sciencec build examples/00_kitchen_sink.science` produces an
 executable that runs and exits 0. **Gate A closes. F0's backend is done.**
 
