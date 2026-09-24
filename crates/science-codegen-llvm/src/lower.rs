@@ -465,7 +465,10 @@ pub fn runtime_signature(target: Triple, entry: &RuntimeFn) -> AbiSignature {
         .enumerate()
         .map(|(index, param)| {
             let ty = match param {
-                RtParam::Descriptor | RtParam::Pointer => CgTy::Ptr(PtrKind::Raw),
+                // A slot is the same C type as a pointer — the difference is
+                // what the *call site* puts in it, which is
+                // `Lowerer::lower_runtime_call`'s to say and not the ABI's.
+                RtParam::Descriptor | RtParam::Pointer | RtParam::Slot => CgTy::Ptr(PtrKind::Raw),
                 RtParam::Usize => CgTy::Int(IntTy::Usize),
                 RtParam::Int => CgTy::Int(IntTy::I64),
                 RtParam::I32 => CgTy::Int(IntTy::I32),
@@ -9372,9 +9375,58 @@ impl<'a> Lowerer<'a> {
                 param += 2;
                 continue;
             }
+            // **What the [`RtParam::Slot`] at this position holds one of**, or
+            // `None` when this parameter is not a slot. It is the same type
+            // the spill below gives its scratch slot, computed before the
+            // branch because the *argument* is now compared against it.
+            let slot_ty = if matches!(entry.params.get(param), Some(RtParam::Slot)) {
+                match (element_ty, map_kv) {
+                    (Some(element), _) => Some(element),
+                    (None, Some((key, value))) => {
+                        Some(if map_pointer_args == 0 { key } else { value })
+                    }
+                    (None, None) => None,
+                }
+            } else {
+                None
+            };
             if pointer {
                 if let Some(place) = arg.place() {
-                    lowered.push(self.pointer_to_place(ctx, place, insts)?);
+                    // **A slot takes the argument's address when the argument
+                    // *is* the value, and the pointer in it when the argument
+                    // is a borrow *of* the value.**
+                    //
+                    // `pointer_to_place` answers that question structurally —
+                    // load when the place is pointer-shaped — and the proxy is
+                    // right for both of the shapes this corpus had and wrong
+                    // for the one it did not. `science_map_get(P, D, S)` takes
+                    // `key: &K` in the declaration, so MIR hands over a borrow
+                    // of the key and the *pointer* is what the runtime wants.
+                    // `science_array_push(P, D, S)` takes `value: T`, so MIR
+                    // hands over the element itself and its *address* is what
+                    // the runtime wants — and the two are indistinguishable by
+                    // layout the moment `T` is `&Doc`, which is exactly what
+                    // `collections-and-chains.md` §4.3 makes `collect()`
+                    // produce. `Array[&Int]` stored the referent's bytes where
+                    // the reference belonged, and `out[0]` dereferenced `0xb`.
+                    //
+                    // The Science type answers it where the layout cannot: the
+                    // operand is the value when its type *is* the slot's, and
+                    // a borrow of it otherwise.
+                    let by_address = match (slot_ty, self.operand_ty(body, arg)) {
+                        (Some(slot), Some(actual)) => actual == slot,
+                        _ => false,
+                    };
+                    let operand = if by_address {
+                        let (address, _) = self.place_address(ctx, place, insts)?;
+                        Operand::Value(address)
+                    } else {
+                        self.pointer_to_place(ctx, place, insts)?
+                    };
+                    lowered.push(operand);
+                    if slot_ty.is_some() {
+                        map_pointer_args += 1;
+                    }
                     param += 1;
                     continue;
                 }
@@ -9398,14 +9450,27 @@ impl<'a> Lowerer<'a> {
                 // interned for — the same `T`, by construction, since both are
                 // read off the same array — and not from the operand, which
                 // carries no type at all.
-                let spill_ty = match (element_ty, map_kv) {
-                    (Some(element), _) => element,
-                    (None, Some((key, value))) => {
-                        let ty = if map_pointer_args == 0 { key } else { value };
-                        map_pointer_args += 1;
+                //
+                // `slot_ty` above is that type, computed once for the
+                // parameter rather than twice for its two branches — which is
+                // also what keeps `map_pointer_args` counting *slots* and not
+                // "slots that happened to be spilled".
+                let spill_ty = match slot_ty.or_else(|| {
+                    match (element_ty, map_kv) {
+                        (Some(element), _) => Some(element),
+                        (None, Some((key, value))) => {
+                            Some(if map_pointer_args == 0 { key } else { value })
+                        }
+                        (None, None) => None,
+                    }
+                }) {
+                    Some(ty) => {
+                        if slot_ty.is_some() {
+                            map_pointer_args += 1;
+                        }
                         ty
                     }
-                    (None, None) => {
+                    None => {
                         return Err(Unlowered::new(format!(
                             "a value passed by address to `{symbol}`, which is not one of the \
                              entry points this crate reads an element type for: there is nothing \

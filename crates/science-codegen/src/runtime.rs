@@ -431,8 +431,39 @@ pub enum RtParam {
     /// `*const ScienceTypeInfo` or `*const ScienceMapInfo`: the element
     /// descriptor of §6.
     Descriptor,
-    /// A pointer to a runtime aggregate, or to a value slot.
+    /// A pointer that **is** the thing: a runtime aggregate's address, a byte
+    /// buffer, a box's own pointer. The call site passes the pointer *value*.
     Pointer,
+    /// A pointer to a **slot holding one value** of the element, key or value
+    /// type the descriptor beside it names. The call site passes the
+    /// *address* of the argument, and the runtime copies `info.size` bytes
+    /// through it.
+    ///
+    /// # Why this is a variant and not a structural rule
+    ///
+    /// [`RtParam::Pointer`] and this one are the same C type, and the backend
+    /// used to tell them apart by asking whether the *argument's own* layout
+    /// was pointer-shaped: pointer-shaped meant "a handle, load it", anything
+    /// else meant "a value, take its address". That proxy is right for every
+    /// element type that is not itself a pointer and wrong for every element
+    /// type that is. `Array[&Int]` is the smallest case: `xs.push(n)` reached
+    /// `science_array_push(P, D, P)` with the third argument a local holding
+    /// `&n`, the proxy loaded it, and the runtime copied eight bytes *from
+    /// `n`* — so the array stored the integer `11` where a pointer belonged
+    /// and reading the element back dereferenced `0xb`. It was a segfault in
+    /// a program the front end had accepted, and no test could reach it while
+    /// `Array[&T]` was unspellable.
+    ///
+    /// The question the proxy was standing in for — *is this parameter the
+    /// container or one of its elements* — is a fact about the entry point,
+    /// not about the argument, so it belongs in this table beside
+    /// [`RtParam::Descriptor`]'s position, which is the same kind of fact and
+    /// is recorded the same way (§9.3's finding 4). Every row marked here was
+    /// read off the `science-rt` signature it names: `science_box_new`'s
+    /// second parameter is a `value: *const u8` and is a slot, and
+    /// `science_box_free`'s second is a `ptr: *mut u8` — the box itself — and
+    /// is not.
+    Slot,
     /// `usize`: the target's pointer width. **Not** `i64`.
     Usize,
     /// `i64`: Science's `Int`.
@@ -544,6 +575,8 @@ const P: RtParam = RtParam::Pointer;
 const D: RtParam = RtParam::Descriptor;
 const Z: RtParam = RtParam::Usize;
 const N: RtParam = RtParam::Int;
+/// A slot holding one element, key or value: see [`RtParam::Slot`].
+const S: RtParam = RtParam::Slot;
 
 /// The 57 entry points. §2.6: *"They are the whole list."*
 ///
@@ -569,13 +602,13 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_array_len", params: &[P], ret: RtRet::Int },
     RuntimeFn { symbol: "science_array_is_empty", params: &[P], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_array_as_ptr", params: &[P], ret: RtRet::Ptr },
-    RuntimeFn { symbol: "science_array_push", params: &[P, D, P], ret: RtRet::Void },
-    RuntimeFn { symbol: "science_array_pop", params: &[P, D, P], ret: RtRet::Bool },
+    RuntimeFn { symbol: "science_array_push", params: &[P, D, S], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_array_pop", params: &[P, D, S], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_array_get", params: &[P, D, N], ret: RtRet::Ptr },
     RuntimeFn { symbol: "science_array_get_mut", params: &[P, D, N], ret: RtRet::Ptr },
     // --- boxed.rs ---
     // Descriptor **first**. This is the pair finding 4 is about.
-    RuntimeFn { symbol: "science_box_new", params: &[D, P], ret: RtRet::Ptr },
+    RuntimeFn { symbol: "science_box_new", params: &[D, S], ret: RtRet::Ptr },
     RuntimeFn { symbol: "science_box_free", params: &[D, P], ret: RtRet::Void },
     // --- exit.rs ---
     // §9.3's finding 5, discharged. These are the two symbols the note asks for
@@ -594,10 +627,10 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_map_new", params: &[D], ret: RtRet::Aggregate(RtAggregate::Map) },
     RuntimeFn { symbol: "science_map_free", params: &[P, D], ret: RtRet::Void },
     RuntimeFn { symbol: "science_map_len", params: &[P], ret: RtRet::Int },
-    RuntimeFn { symbol: "science_map_insert", params: &[P, D, P, P, P], ret: RtRet::Bool },
-    RuntimeFn { symbol: "science_map_get", params: &[P, D, P], ret: RtRet::Ptr },
-    RuntimeFn { symbol: "science_map_contains", params: &[P, D, P], ret: RtRet::Bool },
-    RuntimeFn { symbol: "science_map_remove", params: &[P, D, P, P], ret: RtRet::Bool },
+    RuntimeFn { symbol: "science_map_insert", params: &[P, D, S, S, S], ret: RtRet::Bool },
+    RuntimeFn { symbol: "science_map_get", params: &[P, D, S], ret: RtRet::Ptr },
+    RuntimeFn { symbol: "science_map_contains", params: &[P, D, S], ret: RtRet::Bool },
+    RuntimeFn { symbol: "science_map_remove", params: &[P, D, S, S], ret: RtRet::Bool },
     // The `hash_fn`/`eq_fn` pair for an eight-byte integer key. These are never
     // *called* by emitted code — their addresses go into a `ScienceMapInfo`
     // global — but they are declared here for the same reason every other

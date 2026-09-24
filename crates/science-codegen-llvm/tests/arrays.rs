@@ -558,3 +558,77 @@ fn an_index_out_of_bounds_panics_on_a_method_calls_result() {
         assert_eq!(ran.stdout, "", "nothing was printed before the panic");
     }
 }
+
+/// **An `Array of borrowed T` holds the borrows, not the bytes behind them.**
+///
+/// # The miscompile, and why nothing could reach it before
+///
+/// `science_array_push(P, D, S)` takes a pointer to the *element*, and this
+/// backend chose between "pass this place's address" and "load this place and
+/// pass what is in it" by asking whether the place's own layout was
+/// pointer-shaped. For every element type this corpus had, that proxy is
+/// right, because no element type was itself a pointer. `&Int` is one:
+/// `out.push(n)` takes §6.3's auto-borrow, the proxy loaded `&n`, and the
+/// runtime copied eight bytes *from `n`* — so the array held the integer `11`
+/// in a slot declared to hold a reference, and `out[0]` dereferenced `0xb`.
+///
+/// It was unreachable because the type was unspellable: `Array[&Int]` stayed
+/// an `ExprKind::Index` in `science-resolve`, typed as `Ty::ERROR`, and the
+/// backend refused the local long before a `push`.
+/// `collections-and-chains.md` §4.3 makes `iterate()` yield `borrowed T`, so
+/// `collect()` produces exactly this type and the hole stopped being
+/// theoretical.
+///
+/// The **values** are asserted and not the length: a length of two is what the
+/// broken lowering reported too.
+#[test]
+fn an_array_of_borrows_holds_the_borrows() {
+    assert_eq!(
+        prints(
+            "borrowed-elements",
+            "def main():\n\
+             \x20   let n be 11\n\
+             \x20   let m be 22\n\
+             \x20   let mutable out be Array[&Int].new()\n\
+             \x20   out.push(n)\n\
+             \x20   out.push(m)\n\
+             \x20   print(f\"{out.length()} {out[0]} {out[1]}\")\n",
+        ),
+        "2 11 22\n"
+    );
+}
+
+/// The same one indirection out: the borrows are of elements of a collection
+/// this function only *borrowed*, and the array of them outlives the loop that
+/// filled it and crosses a function boundary on the way back.
+///
+/// This is `headlines` in `examples/00_kitchen_sink.science` with the chain
+/// written out by hand — `collections-and-chains.md` §4.4's *"`Array of
+/// borrowed Doc` is a set of views into something else"* — and it is here
+/// because the shape the chain API collects into has to work before the chain
+/// API can be believed. `length()` of each string rather than the string,
+/// because `print` of a `&String` is not a rendering this backend has.
+#[test]
+fn an_array_of_borrows_survives_a_function_boundary() {
+    assert_eq!(
+        prints(
+            "borrowed-elements-returned",
+            "type Doc:\n\
+             \x20   title: String\n\
+             \n\
+             def titles(docs: &Array[Doc]) -> Array[&String]:\n\
+             \x20   let mutable out be Array[&String].new()\n\
+             \x20   for d in docs:\n\
+             \x20       out.push(d.title)\n\
+             \x20   out\n\
+             \n\
+             def main():\n\
+             \x20   let mutable docs be Array[Doc].new()\n\
+             \x20   docs.push(Doc(title: \"one\"))\n\
+             \x20   docs.push(Doc(title: \"three\"))\n\
+             \x20   let t be titles(docs)\n\
+             \x20   print(f\"{t.length()} {t[0].length()} {t[1].length()}\")\n",
+        ),
+        "2 3 5\n"
+    );
+}

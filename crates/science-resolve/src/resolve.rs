@@ -2514,6 +2514,26 @@ impl Resolver {
                 let span = index.span;
                 Some(ast::Type { kind: ast::TypeKind::Path(path), span })
             }
+            // **A borrow is a type argument too**, and it is the one the chain
+            // API makes unavoidable. `collections-and-chains.md` §4.3 gives
+            // `iterate()` an `Item` of `borrowed T` and §4.4 prints what a
+            // chain over it collects into as *"`Array of borrowed Doc` is a
+            // set of views into something else"* — so `Array[&Doc]` is a type
+            // the language must be able to *spell*, and before this arm
+            // `Array[&Doc].new()` stayed an `ExprKind::Index`, typed as
+            // `Ty::ERROR`, and reached the backend with nothing said about it.
+            //
+            // It cannot collide with a subscript: `index_as_instantiation`
+            // has already required the base to be a bare name that
+            // [`Self::type_named`] answers for, and `xs[&i]` — indexing a
+            // collection *by a borrow* — is not a form any note gives.
+            ast::ExprKind::Borrowed { mutable, expr } => {
+                let inner = self.expr_as_type_arg(expr)?;
+                Some(ast::Type {
+                    kind: ast::TypeKind::Borrowed { mutable: *mutable, inner: Box::new(inner) },
+                    span: index.span,
+                })
+            }
             _ => None,
         }
     }
