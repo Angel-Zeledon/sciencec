@@ -54,6 +54,45 @@ pub struct Session {
     tally: Tally,
 }
 
+/// The two flags [`Session::build`] and [`Session::test`] take.
+///
+/// **A struct and not two `bool` arguments**, for the reason a reader of the
+/// call site needs: `session.build(&files, true, false)` is a line nobody can
+/// check without opening this file, and the two flags mean unrelated things.
+///
+/// Both are `codegen-and-linking.md`'s and neither is a convenience.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuildFlags {
+    /// §4.4's unsupported debugging flag: suppress `noalias` on an exclusive
+    /// borrow, and change nothing else.
+    ///
+    /// **Why it exists at all**, in §4.4's own words: *"the available
+    /// mitigation, and it should be taken: `--no-noalias` as an unsupported
+    /// debugging flag that suppresses the attribute, so that 'is this a region
+    /// bug or a codegen bug' is one recompile rather than a week."* Decision 24
+    /// is the single place in the language where a bug in region inference
+    /// produces a wrong answer rather than a missed error, and this is the one
+    /// switch that separates the two halves of that question.
+    pub no_noalias: bool,
+    /// §8.6's `--emit=llvm-ir`: also write the module's IR beside the
+    /// executable, as `<stem>.ll`.
+    ///
+    /// **`also`, not `instead`.** The build still links. That is not what §8.6
+    /// eventually means by `--emit`, and it is what this flag can honestly do
+    /// today: `science_codegen_llvm::emit_and_link` produces the IR and the
+    /// executable in one pass and has no stopping point between them, and
+    /// inventing one here would be a second emission path for a debugging flag
+    /// to be the only user of.
+    ///
+    /// **It is here because [`BuildFlags::no_noalias`] is unobservable without
+    /// it.** A suppression flag whose effect nothing can see is not a
+    /// mitigation; it is a field. The IR is the only artefact `noalias`
+    /// survives into — it has no runtime behaviour of its own, only a licence
+    /// the optimiser may or may not act on — so *"one recompile"* has to mean a
+    /// recompile somebody can read the result of.
+    pub emit_ir: bool,
+}
+
 impl Session {
     pub fn new() -> Self {
         Session { db: ScienceDatabase::new(), tally: Tally::default() }
@@ -177,7 +216,7 @@ impl Session {
     /// was standing. The cost is that a build writes into the source tree, which
     /// is the wrong default the day there is a `target/` directory to write to
     /// instead — and there is no package manager yet, so there is not one.
-    pub fn build(&mut self, paths: &[PathBuf]) {
+    pub fn build(&mut self, paths: &[PathBuf], flags: BuildFlags) {
         let mut entries: Vec<(PathBuf, FileId)> = Vec::with_capacity(paths.len());
         for path in paths {
             if let Some(file) = self.load(path) {
@@ -198,7 +237,7 @@ impl Session {
             // command. The day `science_db::pending::mir` has a body, both calls
             // become one query and this paragraph goes with them — that is the
             // same shortcut this module's header names, counted a fourth time.
-            match self.emit_executable(path, *file) {
+            match self.emit_executable(path, *file, flags) {
                 Ok(()) => {}
                 Err(diagnostics) => all.extend(diagnostics),
             }
@@ -211,7 +250,12 @@ impl Session {
     /// Split out so that the front end's diagnostics and the back end's are
     /// reported in one batch by the caller, which is what makes a build's output
     /// ordered the way `check`'s is.
-    fn emit_executable(&mut self, path: &Path, file: FileId) -> Result<(), Vec<Diagnostic>> {
+    fn emit_executable(
+        &mut self,
+        path: &Path,
+        file: FileId,
+        flags: BuildFlags,
+    ) -> Result<(), Vec<Diagnostic>> {
         let (sources, _) = self.crate_sources(path, file);
         let (krate, _) = self.resolved(&sources);
         let Some(mut lowered) = lower_to_mir(&krate) else {
@@ -306,7 +350,8 @@ impl Session {
         if !mono.diagnostics().is_empty() {
             return Err(mono.diagnostics().to_vec());
         }
-        let request = science_codegen::driver::BuildRequest::new(vec![display_path(path)]);
+        let mut request = science_codegen::driver::BuildRequest::new(vec![display_path(path)]);
+        request.no_noalias = flags.no_noalias;
         // Decision 28 makes the source order of the `library` clauses the link
         // order, so the blocks are collected in source order and handed over as
         // a list rather than a set.
@@ -323,7 +368,27 @@ impl Session {
             output: executable_path(path),
         };
         match science_codegen_llvm::build(&input) {
-            Ok(_) => Ok(()),
+            Ok(built) => {
+                // **Written after the link and not instead of it.** The IR is
+                // already in hand either way — `emit_and_link` keeps it for the
+                // build record — so this is a file write and not a second
+                // emission path. A failed build writes nothing, which is right:
+                // the IR of a module that did not link is the IR of a program
+                // that does not exist.
+                if flags.emit_ir {
+                    let ir = ir_path(path);
+                    if let Err(error) = std::fs::write(&ir, &built.ir) {
+                        // Reported the way `fmt --write` reports the same
+                        // failure — a line on stderr and a nonzero exit — and
+                        // not as a `Diagnostic`. A diagnostic carries a code, a
+                        // span and a source file, and "the disk is full" has
+                        // none of the three.
+                        eprintln!("error: cannot write `{}`: {}", display_path(&ir), io_reason(&error));
+                        self.tally.error();
+                    }
+                }
+                Ok(())
+            }
             Err(diagnostics) => Err(diagnostics.into_vec()),
         }
     }
@@ -361,7 +426,7 @@ impl Session {
     /// the whole suite passed — a hang has no exit code to compare and no
     /// diagnostic to match, so nothing before this asked the one question
     /// that would have caught it. [`run_bounded`] asks it.
-    pub fn test(&mut self, paths: &[PathBuf]) {
+    pub fn test(&mut self, paths: &[PathBuf], flags: BuildFlags) {
         let mut entries: Vec<(PathBuf, FileId)> = Vec::with_capacity(paths.len());
         for path in paths {
             if let Some(file) = self.load(path) {
@@ -376,7 +441,7 @@ impl Session {
                 self.report(all);
                 continue;
             }
-            if let Err(diagnostics) = self.emit_executable(path, *file) {
+            if let Err(diagnostics) = self.emit_executable(path, *file, flags) {
                 all.extend(diagnostics);
                 self.report(all);
                 continue;
@@ -1060,6 +1125,16 @@ fn lower_to_mir(krate: &Crate) -> Option<Checked> {
 /// extension. See [`Session::build`] for why it is not the working directory.
 fn executable_path(source: &Path) -> PathBuf {
     if cfg!(windows) { source.with_extension("exe") } else { source.with_extension("") }
+}
+
+/// Where `--emit=llvm-ir` writes the module.
+///
+/// Beside the source and named after it, exactly as [`executable_path`] is and
+/// for [`Session::build`]'s reason: *"`package-manager.md` Decision 7 removes
+/// environment-dependent inputs from a build's output, and the working
+/// directory is one."* `hello.science` gives `hello.ll`, next to `hello`.
+fn ir_path(source: &Path) -> PathBuf {
+    source.with_extension("ll")
 }
 
 /// The same path, in a form [`std::process::Command`] will treat as a file

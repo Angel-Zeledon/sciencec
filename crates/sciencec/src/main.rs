@@ -60,7 +60,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use driver::Session;
+use driver::{BuildFlags, Session};
 
 const USAGE: &str = "\
 sciencec — the Science compiler
@@ -68,6 +68,8 @@ sciencec — the Science compiler
 Usage:
     sciencec check FILE...    run the front half; report what is wrong
     sciencec build FILE...    check, then produce an executable
+    sciencec build --emit=llvm-ir FILE...
+                              the same, and write the module's IR as FILE.ll
     sciencec test FILE...     build, then run the executable and report its exit
     sciencec fmt FILE         print the file, formatted, to stdout
     sciencec fmt --write F... format the files in place
@@ -150,6 +152,24 @@ fn run(args: &[OsString]) -> Outcome {
         _ => (rest, false),
     };
 
+    // `build` and `test` take two flags of `codegen-and-linking.md`'s, taken off
+    // the operands here for the same reason the two above are: outside these
+    // lines `collect_files` still rejects anything beginning with `-`.
+    //
+    // **`--no-noalias` is unsupported and deliberately not in `USAGE`.** §4.4
+    // asks for it as *"an unsupported debugging flag"*, and a debugging flag
+    // listed beside `--help`'s real ones is a flag somebody will reach for
+    // because it made their program work — which, for this one, means it hid
+    // the bug rather than fixed it.
+    let (rest, no_noalias) = match command.to_str() {
+        Some("build") | Some("test") => take_flag(&rest, "--no-noalias"),
+        _ => (rest, false),
+    };
+    let (rest, emit_ir) = match command.to_str() {
+        Some("build") | Some("test") => take_flag(&rest, "--emit=llvm-ir"),
+        _ => (rest, false),
+    };
+
     let files = match collect_files(&rest) {
         Ok(files) => files,
         Err(message) => {
@@ -167,25 +187,30 @@ fn run(args: &[OsString]) -> Outcome {
             }
             session.check(&files);
         }
-        // `build` takes the same operands as `check` and no flags of its own
-        // yet. `--emit`, `-O` and `--target-cpu` are `codegen-and-linking.md`
-        // §8.6 and §7.4's, and they are not spelled here because there is no
-        // backend for them to configure: a flag that is accepted and ignored is
-        // worse than one that is not there.
+        // `build` takes the same operands as `check`, plus the two flags read
+        // off above. **`-O` and `--target-cpu` are still not spelled**:
+        // `codegen-and-linking.md` §7.4 defines them, nothing reads them, and a
+        // flag that is accepted and ignored is worse than one that is not there.
+        // The two that are here are read: `--no-noalias` reaches
+        // `abi::borrow_attrs` and `--emit=llvm-ir` writes a file.
         Some("build") => {
             if files.is_empty() {
                 return usage_error("build expects at least one file");
             }
-            session.build(&files);
+            session.build(&files, BuildFlags { no_noalias, emit_ir });
         }
         // `test` takes the same operands as `build`: each file is an entry,
         // each entry is a crate, and there is no `test` item yet to select
         // among (`Session::test`'s own note says what that costs).
+        //
+        // **And the same two flags**, because `test` builds through the same
+        // `emit_executable` and a debugging flag that worked for `build` and
+        // silently did nothing for `test` is the shape of an hour lost.
         Some("test") => {
             if files.is_empty() {
                 return usage_error("test expects at least one file");
             }
-            session.test(&files);
+            session.test(&files, BuildFlags { no_noalias, emit_ir });
         }
         Some("fmt") => {
             if write {

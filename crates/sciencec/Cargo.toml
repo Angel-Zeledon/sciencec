@@ -16,7 +16,7 @@ path = "src/main.rs"
 default = []
 llvm = ["science-codegen-llvm/llvm"]
 
-# No argument-parsing dependency. The surface is six subcommands and three
+# No argument-parsing dependency. The surface is six subcommands and five
 # flags, which is less code than the `clap` derive would be, and the workspace
 # has exactly one third-party dependency today (salsa, in `science-db`) — a
 # driver is the wrong place to double that.
