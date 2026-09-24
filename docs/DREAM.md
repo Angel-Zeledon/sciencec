@@ -2118,7 +2118,7 @@ Esto es lo que convierte la sección en un plan y no en un deseo. `use python
 
 | # | Pieza | Por qué la bloquea | Estado |
 |---|---|---|---|
-| 1 | Backend completo de F0 | Falta `00_kitchen_sink`: cierres con capturas, boxes | 19/20 ejemplos |
+| 1 | Backend completo de F0 | Falta `00_kitchen_sink`: el vocabulario de cadenas (`iterate`/`map`/`discard`/`take`/`collect`/`sort`) | 19/20 ejemplos |
 | 2 | `Formatter` / `Display` | Sin esto no hay mensaje de error legible en la membrana | Decidido, sin implementar |
 | 3 | ABI de C exportable | **El shim de Python se escribe contra él**, no contra el backend | `extern "C"` anda |
 | 4 | `Tensor` con cabecera DLPack | Requisito 1 de `python-interop.md` §2 | No existe |
