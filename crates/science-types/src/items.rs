@@ -199,6 +199,18 @@ const WANTED: &[&str] = &[
     // reason the rest are: the question *"is this the prelude's `Iterate` and
     // not a user interface of the same name"* has no other way to be asked.
     "Iterate",
+    // `Drop`, which [`crate::ownership::needs_drop`] asks about for every type
+    // whose drop it decides. It is here for `Iterate`'s reason — a user may
+    // declare an `interface Drop:` of their own, and holding the prelude's id
+    // is the only way to tell the two apart — and it is the first name on this
+    // list read by a predicate rather than by the checker.
+    //
+    // It buys the *relation* and nothing else. `builtins.rs` declares `Drop`
+    // with no methods, so there is no `drop` signature behind this id to
+    // conform an implementation against; what is asked is only whether a type
+    // has an `implements Drop:` block, which is precisely the question
+    // Decision 12's *"if it has one"* is about.
+    "Drop",
     // The operator interfaces of §5.4, which `crate::check`'s §6 dispatches
     // `+ - * / % ** @ is` and `[` through. Each is here for `Iterate`'s reason
     // and no other: a user may declare an `interface Add:` of their own, and

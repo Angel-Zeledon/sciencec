@@ -28,13 +28,42 @@
 //!
 //! # 2. What it cannot know, unchanged from where it was written
 //!
-//! It cannot ask whether a type implements `Drop`, because that lookup does
-//! not exist yet, and it answers **true** — needs a drop, owns something —
-//! everywhere it cannot tell: a choice type, an interface object, a type
-//! parameter, a foreign union, `Self`. The false answers this produces
-//! (`ffi.Span` chief among them, [`crate::check`]'s field rule inherits the
-//! same conservatism its refuser already lived with) disappear the day that
-//! lookup lands, with no change here.
+//! It answers **true** — needs a drop, owns something — everywhere it cannot
+//! tell: a choice type, an interface object, a type parameter, a foreign
+//! union, `Self`. The false answers this produces (`ffi.Span` chief among
+//! them, [`crate::check`]'s field rule inherits the same conservatism its
+//! refuser already lived with) disappear the day the missing lookups land.
+//!
+//! # 3. The `Drop` lookup, which has landed
+//!
+//! This module used to open by saying it *"cannot ask whether a type
+//! implements `Drop`, because that lookup does not exist yet"*. It does
+//! exist: [`crate::methods::Methods::declares`] is the index §4 builds out of
+//! every `T implements I:` block in the crate, and [`crate::items::Prelude`]
+//! can hold `Drop`'s id the same way it already holds `Iterate`'s and
+//! `Display`'s. So the question is asked now, first, before any structural
+//! answer.
+//!
+//! **It has to be first, and the cost of its having been absent was a
+//! destructor that never ran.** A record of two `Int`s is structurally inert,
+//! so this predicate said `false`, so `science-mir` emitted no `Drop`
+//! terminator for it at all — and a `Doc implements Drop:` on that record was
+//! a block the compiler read, checked, and then dropped on the floor with no
+//! diagnostic. Nothing downstream could repair that: codegen's drop glue is
+//! only ever reached *through* a `Drop` terminator, and there was none to
+//! reach it through. Decision 12 of `codegen-and-linking.md` describes glue
+//! that *"drops fields in reverse declaration order and then calls the type's
+//! own `Drop` implementation if it has one"*; the second half of that
+//! sentence had no way of being true for a type whose fields own nothing, and
+//! this is the half of the repair that lives above codegen.
+//!
+//! **What it costs is a `false` becoming a `true` for [`crate::check`]'s
+//! field rule too**, which is the other caller: a field read out of a
+//! `borrowed T` where `T` has a `Drop` implementation is now typed as a
+//! borrow rather than as an owned copy. That is the conservative direction
+//! and it is the *right* direction — a type with a destructor is exactly a
+//! type two owners must not both free — so the two callers still want the one
+//! answer, which is §1's whole argument for there being one function.
 
 use science_resolve::hir::DefId;
 
@@ -55,6 +84,31 @@ pub fn needs_drop(decls: &Declarations, types: &mut Types, aliases: &mut Aliases
     needs_drop_inner(decls, types, aliases, ty, &mut visiting)
 }
 
+/// Whether the crate writes `T implements Drop:` for this type — §3.
+///
+/// **A borrow answers `false`, and that guard is the whole reason this is a
+/// function rather than two lines at each call site.**
+/// [`crate::methods::Methods::declares`] reads a type's *head*, and a head is
+/// transparent through a borrow: asked about `mutable self` inside
+/// `H.drop`, the index would answer *"yes, `H` implements `Drop`"* and the
+/// receiver would acquire a destructor of its own — a second release of the
+/// value the caller is in the middle of releasing. The `Borrowed` arm of
+/// [`needs_drop`] already says `false` for the structural reason (*"a borrow
+/// releases nothing"*), and this says it again for the nominal one, because
+/// §3's lookup has to run before that arm is reached.
+///
+/// A compilation with no prelude has no `Drop` id and answers `false`, which
+/// is the same admission every other [`crate::items::Prelude`] lookup makes
+/// for a hand-built definition table.
+pub fn implements_drop(decls: &Declarations, types: &Types, ty: Ty) -> bool {
+    if matches!(types.kind(ty), TyKind::Borrowed { .. }) {
+        return false;
+    }
+    decls.prelude().get("Drop").is_some_and(|interface| {
+        decls.methods().declares(types, ty, interface)
+    })
+}
+
 fn needs_drop_inner(
     decls: &Declarations,
     types: &mut Types,
@@ -63,6 +117,13 @@ fn needs_drop_inner(
     visiting: &mut Vec<DefId>,
 ) -> bool {
     let ty = aliases.reveal(types, ty).unwrap_or(ty);
+    // §3. A user's own `Drop` implementation, asked before any structural
+    // answer because it overrides every one of them: a record of two `Int`s
+    // with a `drop` of its own still has to run it, and asking the fields
+    // would say `false` and lose the destructor entirely.
+    if implements_drop(decls, types, ty) {
+        return true;
+    }
     let kind = types.kind(ty).clone();
     match kind {
         // A hole drops nothing. `ty`'s §5: an erroneous type must not

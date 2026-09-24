@@ -163,7 +163,31 @@ pub fn elaborate(body: &mut Body, flag_ty: Ty, decls: &Declarations, types: &mut
             continue;
         };
         let local = place.local;
-        if let Some(leaf_paths) = field_analysis.fields_of(local) {
+        // **A record with no leaf to track is not a decomposed local**, and
+        // routing it to §4 anyway is how a user's `drop` was deleted.
+        //
+        // [`moves::FieldMoves::fields_of`] answers `Some(&[])` for a type that
+        // has fields and none of which [`moves::needs_drop`] admits, and its
+        // own doc used to finish that sentence with *"so `crate::drops`
+        // reaches the same `Goto` a whole-local `Gone` would have given it"*.
+        // That was true while `needs_drop` was purely structural, because a
+        // record whose fields own nothing got no `Drop` terminator in the
+        // first place and this arm was unreachable. It stopped being true the
+        // moment [`science_types::ownership::needs_drop`] learned to ask
+        // whether the type writes `implements Drop:`: `type H: v: Int` with a
+        // `drop` of its own now *does* get a terminator, decomposes to zero
+        // leaves because an `Int` owns nothing, and §4's first row rewrote it
+        // to a `Goto` — deleting the destructor with no diagnostic.
+        //
+        // **The empty case belongs to the whole-local analysis, which is the
+        // only one that has an answer for it.** With no leaf path there is no
+        // per-field state to read, so the field table cannot say whether the
+        // value is still there; `analyse`'s per-local table can, and its three
+        // rows — keep, delete, flag — are exactly the three this value needs.
+        // Falling through costs nothing for any type that reached here before,
+        // because a non-empty leaf list still takes §4.
+        if let Some(leaf_paths) = field_analysis.fields_of(local).filter(|paths| !paths.is_empty())
+        {
             let leaf_states = field_analysis
                 .before_terminator(body, id, local)
                 .expect("`fields_of` and `before_terminator` agree on which locals are tracked");

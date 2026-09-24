@@ -676,6 +676,11 @@ fn reachable_from(
                 queue.push(method);
             }
         }
+        for method in lowerer.drop_methods_of(body) {
+            if !reached.contains(&method) {
+                queue.push(method);
+            }
+        }
     }
     reached
 }
@@ -993,6 +998,106 @@ impl<'a> Lowerer<'a> {
             }
         }
         out
+    }
+
+    /// Every `def drop` a `Drop` terminator in this body will reach — the
+    /// user's own, not the glue's.
+    ///
+    /// [`reachable_from`]'s third half, and it exists for the identical reason
+    /// the vtable half does: a definition whose *only* caller is a function
+    /// this crate synthesises is invisible to a walk over
+    /// [`MirBody::callees`], because the call that reaches it is not in any
+    /// MIR. A vtable slot is one such call; Decision 12's glue is the other.
+    /// Left out, the symptom is the one `define_vtable`'s own refusal
+    /// describes — a definition naming a function the module does not define,
+    /// reported by the linker after the build the user waited for.
+    ///
+    /// **The walk is over the type and not over the terminator**, because
+    /// dropping an `Outer` runs `Inner`'s `drop` too: glue calls glue, all the
+    /// way down. So this asks [`Lowerer::drop_methods_in`] for the whole
+    /// transitive answer rather than only for the head of the dropped place's
+    /// type.
+    ///
+    /// A type this crate cannot decompose contributes nothing and is not an
+    /// error here, which is [`Lowerer::vtable_methods_of`]'s rule too: the
+    /// drop is lowered later in the same run, where a refusal has a place to
+    /// point at.
+    fn drop_methods_of(&self, body: &MirBody) -> Vec<DefId> {
+        let mut out = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for (_, block) in body.blocks() {
+            let TerminatorKind::Drop { place, .. } = &block.terminator.kind else { continue };
+            self.drop_methods_in(place.ty(body), 0, &mut seen, &mut out);
+        }
+        out
+    }
+
+    /// Every user `drop` reachable by releasing one value of type `ty`:
+    /// its own, and every one its fields', payloads', elements' and
+    /// contents' releases reach in turn.
+    ///
+    /// `seen` is keyed on the type's rendering for the reason
+    /// [`Lowerer::intern_element_descriptor`] gives for keying a descriptor on
+    /// it — a tuple and a `T?` have no path to key on — and it is what stops a
+    /// record that reaches itself through a `Box` from recursing forever. The
+    /// depth bound is the second guard, exactly as it is in
+    /// [`Lowerer::intern_drop_glue`].
+    fn drop_methods_in(
+        &self,
+        ty: Ty,
+        depth: u32,
+        seen: &mut std::collections::BTreeSet<String>,
+        out: &mut Vec<DefId>,
+    ) {
+        if depth > MAX_TYPE_DEPTH {
+            return;
+        }
+        let rendered = self.types.render(self.defs, ty);
+        if !seen.insert(rendered) {
+            return;
+        }
+        let Some(decls) = self.decls else { return };
+        if let Some(interface) = self.drop_interface() {
+            if decls.methods().declares(self.types, ty, interface) {
+                if let Some(def) = self.concrete_head(ty) {
+                    if let Found::One(candidate) =
+                        decls.methods().lookup(def, "drop", Form::Value)
+                    {
+                        out.push(candidate.method);
+                    }
+                }
+            }
+        }
+        match self.types.kind(ty) {
+            TyKind::Nullable(inner) => self.drop_methods_in(*inner, depth + 1, seen, out),
+            TyKind::Tuple(elements) => {
+                for element in elements.clone() {
+                    self.drop_methods_in(element, depth + 1, seen, out);
+                }
+            }
+            TyKind::Named { def, args } => {
+                let def = *def;
+                let args = args.clone();
+                // A container's contents are released by the runtime through
+                // a descriptor, and the `drop_fn` in that descriptor is glue
+                // this crate emits for the element — so an `Array of Doc`
+                // reaches `Doc.drop` exactly as a record with a `Doc` field
+                // does, one indirection further out.
+                for arg in &args {
+                    if let GenericArg::Type(inner) = arg {
+                        self.drop_methods_in(*inner, depth + 1, seen, out);
+                    }
+                }
+                if matches!(self.defs.get(def).kind, DefKind::Record | DefKind::Choice) {
+                    if let Ok((_, members)) = self.aggregate_members(def, &args) {
+                        for member in members {
+                            self.drop_methods_in(member, depth + 1, seen, out);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     /// The glue for a `T?` whose payload owns something: one test, one branch.
@@ -2074,7 +2179,7 @@ impl<'a> Lowerer<'a> {
             TyKind::Named { args, .. } => args.clone(),
             _ => Vec::new(),
         };
-        let (name, _) = self.aggregate_members(def, &args)?;
+        let (name, members) = self.aggregate_members(def, &args)?;
         let symbol = format!("{}.drop", mangle(&MonoKey::plain(&[name.as_str()])));
         if self.glue.contains(&symbol) {
             return Ok(Some(symbol));
@@ -2084,6 +2189,77 @@ impl<'a> Lowerer<'a> {
         // is already claimed rather than recursing until the stack runs out.
         // The depth bound above is the second guard and this is the first.
         self.glue.insert(symbol.clone());
+
+        // **Decision 12's second half: *"and then calls the type's own `Drop`
+        // implementation if it has one"*.** It had never been emitted. The
+        // predicate that finds the implementation — [`Lowerer::drop_interface`]
+        // — existed and had exactly one caller,
+        // [`Lowerer::drop_runs_something`], which used it only to decide that a
+        // drop was *needed*; no emitter in this file ever called the method,
+        // so a user's `drop` was a body the compiler read, checked and never
+        // ran, with no diagnostic. Decision 12's first half was genuinely
+        // working the whole time, which is what made the gap invisible: a type
+        // owning a `String` had its `String` freed on time and its own `drop`
+        // skipped, and only a `print` inside that `drop` could tell the
+        // difference — which is precisely the test nothing could write until
+        // this call existed.
+        //
+        // **The order is fields first, then the type's own `drop`, because
+        // Decision 12 says so in that order.** It is the reverse of the order
+        // Rust runs them in, and the sentence in the note is unambiguous, so
+        // the note wins and [`Lowerer::emit_user_drop_glue`] is where it is
+        // written down once.
+        //
+        // **A wrapper rather than an extra instruction inside
+        // [`Lowerer::emit_field_glue`] and [`Lowerer::emit_choice_glue`].**
+        // Those two and [`Lowerer::emit_niched_glue`] build three different
+        // block shapes, and "after every field, before the return" is a
+        // different place in each — the record's single block, the `choice`'s
+        // `done` block, the niched option's join. One function per shape
+        // appending its own copy of the call is three chances for the order to
+        // drift; one wrapper that calls the structural glue and then the
+        // user's `drop` is the same order for all three by construction, and
+        // costs one call that `-O1`'s inliner removes.
+        if let Some(user) = self.user_drop_symbol(def, ty, &name)? {
+            let mut owns = false;
+            for member in &members {
+                if self.drop_runs_something(*member, 0)? {
+                    owns = true;
+                    break;
+                }
+            }
+            // No structural glue at all for a type whose fields own nothing —
+            // `H` of one `Int` with a `drop` of its own — rather than a call
+            // to an empty function. The `Option` is what says so.
+            let fields = match owns {
+                false => None,
+                true => {
+                    let inner = format!("{symbol}.fields");
+                    self.glue.insert(inner.clone());
+                    match self.defs.get(def).kind == DefKind::Choice {
+                        true => {
+                            let layout = self.layout_of_ty(ty)?;
+                            self.emit_choice_glue(
+                                def,
+                                &args,
+                                name.clone(),
+                                inner,
+                                layout,
+                                depth,
+                            )?
+                        }
+                        false => self.emit_field_glue(
+                            ty,
+                            &name,
+                            inner,
+                            self.record_field_types(def, &args)?,
+                            depth,
+                        )?,
+                    }
+                }
+            };
+            return self.emit_user_drop_glue(symbol, fields, user);
+        }
 
         // **A `choice` whose payload owns something, which is `emit_choice_glue`'s
         // `switch` over however many variants own something.** This used to be
@@ -2096,6 +2272,138 @@ impl<'a> Lowerer<'a> {
             return self.emit_choice_glue(def, &args, name, symbol, layout, depth);
         }
         self.emit_field_glue(ty, &name, symbol, self.record_field_types(def, &args)?, depth)
+    }
+
+    /// The symbol of the `drop` a `T implements Drop:` block writes, if this
+    /// type has one — Decision 12's *"if it has one"*, resolved to an address.
+    ///
+    /// # Why the lookup is by name and not through the interface's methods
+    ///
+    /// [`Lowerer::vtable_slots`] resolves a slot by reading the methods the
+    /// *interface* declares and asking the implementor for each. That cannot
+    /// work here: `science-resolve`'s `builtins.rs` puts `Drop` on its
+    /// `INTERFACES` list and declares **no methods on it**, the same way it
+    /// leaves `Display` bare — so the interface side of the relation is empty
+    /// and there is no declared `drop` to match against. What the index does
+    /// have is the implementation: `Methods::declares` knows the crate wrote
+    /// `H implements Drop:`, and `Methods::lookup` knows which `def drop` that
+    /// block put on `H`. So the relation is read off the block, which is the
+    /// only end of it that exists.
+    ///
+    /// **The cost is that conformance is not checked, and it is named rather
+    /// than hidden.** A block that writes `def close(mutable self)` and no
+    /// `drop` at all is a `Drop` implementation this function refuses by name
+    /// instead of one `conform` reported at its own span — declaring
+    /// `Drop.drop(mutable self)` in `builtins.rs` is what moves that
+    /// diagnostic to where it belongs, and it is a change to the prelude's
+    /// surface rather than to this file.
+    ///
+    /// # Why `by_def` and not [`Lowerer::symbol_of`] alone
+    ///
+    /// [`Lowerer::lower_crate`] fills `by_def` for every emitted body
+    /// **before** it lowers any of them, so by the time glue is interned the
+    /// map holds the name the definition is actually being emitted under —
+    /// `science_codegen::mono`'s, when the walk reached it, and this crate's
+    /// mangling when the reachability fallback did. Reconstructing the name
+    /// here would be a second speller of it, and the two disagreeing is a
+    /// glue function calling a symbol nothing defines, which the linker
+    /// reports and no test in this crate would.
+    fn user_drop_symbol(
+        &self,
+        def: DefId,
+        ty: Ty,
+        name: &str,
+    ) -> Result<Option<String>, Unlowered> {
+        let Some(decls) = self.decls else { return Ok(None) };
+        let Some(interface) = self.drop_interface() else { return Ok(None) };
+        if !decls.methods().declares(self.types, ty, interface) {
+            return Ok(None);
+        }
+        match decls.methods().lookup(def, "drop", Form::Value) {
+            Found::One(candidate) => Ok(Some(
+                self.by_def
+                    .get(&candidate.method)
+                    .cloned()
+                    .unwrap_or_else(|| self.symbol_of(candidate.method)),
+            )),
+            _ => Err(Unlowered::new(format!(
+                "drop glue for `{name}`, which the crate declares `implements Drop:` for without \
+                 a single `drop` method behind it: `builtins.rs` declares `Drop` with no methods, \
+                 so `conform` has nothing to check the block against and this is the first place \
+                 the absence can be seen"
+            ))),
+        }
+    }
+
+    /// Decision 12's whole sentence, as one function: *"drops fields in
+    /// reverse declaration order and then calls the type's own `Drop`
+    /// implementation if it has one"*.
+    ///
+    /// `fields` is the structural glue — [`Lowerer::emit_field_glue`]'s or
+    /// [`Lowerer::emit_choice_glue`]'s, already emitted under its own symbol —
+    /// or `None` for a type whose fields own nothing and which therefore has
+    /// no first half to run. `user` is the `drop` the implementation block
+    /// wrote.
+    ///
+    /// **Both calls take `Param(0)` unchanged**, and that is the one fact this
+    /// function has to get right. Glue's parameter is a pointer to the value;
+    /// `def drop(mutable self)` is typed `borrowed mutable Self` by
+    /// `science-types`' `check`, which is `CgTy::Ptr(PtrKind::MutBorrow)` —
+    /// the identical layout — so the receiver is the pointer already in hand
+    /// and there is nothing to project, load or spill.
+    ///
+    /// **The order is observable now, which is the point.** Until this call
+    /// existed, no drop in this language had an effect a program could see, so
+    /// the only test of the drop path was a resident-set measurement over
+    /// millions of allocations. A `drop` that prints turns every ordering
+    /// question — fields before the type's own `drop`, later fields before
+    /// earlier ones, the scrutinee of a `match` before the arm's bindings —
+    /// into an execution test that reads two lines of output.
+    fn emit_user_drop_glue(
+        &mut self,
+        symbol: String,
+        fields: Option<String>,
+        user: String,
+    ) -> Result<Option<String>, Unlowered> {
+        let mut insts: Vec<ExtInst> = Vec::new();
+        if let Some(fields) = fields {
+            insts.push(ExtInst::Above(Inst::Call {
+                dest: None,
+                callee: Callee::Science(fields),
+                args: vec![Operand::Param(0)],
+                ret: ReturnClass::Void,
+                sret_slot: None,
+            }));
+        }
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: None,
+            callee: Callee::Science(user),
+            args: vec![Operand::Param(0)],
+            ret: ReturnClass::Void,
+            sret_slot: None,
+        }));
+        let signature = AbiSignature::science(
+            self.target,
+            symbol.clone(),
+            layout_of(self.target, &CgTy::Unit),
+            vec![(
+                "self".to_string(),
+                layout_of(self.target, &CgTy::Ptr(PtrKind::MutBorrow)),
+                ParamAttrs::default(),
+            )],
+        );
+        self.glue_definitions.push((
+            signature,
+            ExtBody {
+                blocks: vec![ExtBlock {
+                    id: BlockId(0),
+                    label: "entry".to_string(),
+                    insts,
+                    terminator: Terminator::Return(None),
+                }],
+            },
+        ));
+        Ok(Some(symbol))
     }
 
     /// A record's field types, in declaration order.
@@ -2381,21 +2689,24 @@ impl<'a> Lowerer<'a> {
         // things that can go there: `intern_drop_glue`'s glue function for a
         // record, and `science_string_free` for a `String`.
         //
-        // **An element whose release needs a descriptor of its own is still
-        // refused, and `Array of (Array of T)` is the whole of that set.**
-        // `science_array_free(P, D)` takes two arguments where `drop_fn` calls
-        // with one, so a nested array's element cannot be named here at all;
-        // closing it means a one-argument thunk per element type, which is a
-        // function this crate would emit for no program that has run.
+        // **An element whose release needs a descriptor of its own is a thunk
+        // now, and it used to be a refusal.** The sentence read *"`Array of
+        // (Array of T)` is the whole of that set … closing it means a
+        // one-argument thunk per element type, which is a function this crate
+        // would emit for no program that has run"* — and it was wrong twice
+        // over. `Array of Box[Expr]` is a literal Gate C1 clause, so the
+        // program exists and is on the critical path; and the thunk was never
+        // a new kind of function, because **the workaround proves it**:
+        // wrapping the inner container in a one-field record —
+        // `type Row: cells: Array[Int]` — makes `Array of Row` build today,
+        // and that record's own Decision 12 glue *is* a one-argument function
+        // that calls `science_array_free(field_address, descriptor)`. The only
+        // thing the record was contributing was a name to hang the glue on.
+        // [`Lowerer::intern_container_thunk`] hangs it on the element's
+        // rendering instead, which is the same key this function already
+        // interns the descriptor under.
         let drop_fn = match self.direct_release(element)? {
-            Some((_, Some(_))) => {
-                return Err(Unlowered::new(format!(
-                    "an `Array of {}`, whose element is released by a runtime call that takes a \
-                     descriptor of its own: Decision 20's `drop_fn` is called with the element's \
-                     address and nothing else, and there is no one-argument symbol to name",
-                    self.types.render(self.defs, element)
-                )));
-            }
+            Some((_, Some(_))) => Some(self.intern_container_thunk(element)?),
             Some((symbol, None)) => Some(symbol.to_string()),
             None => self.intern_drop_glue(element, 0)?,
         };
@@ -2403,6 +2714,107 @@ impl<'a> Lowerer<'a> {
         let info = science_codegen::descriptor::type_info(self.target, &cg, drop_fn);
         let rendered = self.types.render(self.defs, element);
         Ok(self.descriptors.intern(&MonoKey::plain(&[rendered.as_str()]), info))
+    }
+
+    /// The one-argument `drop_fn` a container nested inside another container
+    /// needs: a function of the element's address that makes the two-argument
+    /// runtime call releasing it.
+    ///
+    /// # The decision
+    ///
+    /// One emitted function per element type, interned in the same `glue` set
+    /// and under the same `.drop` suffix Decision 12's glue uses, because that
+    /// is what it is: glue for a type whose whole content is one runtime
+    /// aggregate. `Array of (Array of Int)`'s element gets
+    /// `science_array_free(%p, @typeinfo.I64)`; `Array of Box[Expr]`'s gets
+    /// `science_box_free(@typeinfo.Expr, load %p)`; `Map[String, Array[Int]]`'s
+    /// value gets the first of those, because a map's value descriptor is the
+    /// same [`Lowerer::intern_element_descriptor`] an array's element goes
+    /// through.
+    ///
+    /// # The reason the argument shapes differ and this does not have to know
+    ///
+    /// [`Lowerer::release_args`] already owns the difference — three of the
+    /// four runtime frees take the slot's address and `science_box_free` takes
+    /// the pointer *stored in* the slot, one `LoadAt` further, with its
+    /// descriptor first rather than second. Spelling that out a fifth time
+    /// here is the drift this codebase warns about everywhere else, so this
+    /// function builds the address, hands it to `release_args`, and emits
+    /// whatever call comes back.
+    ///
+    /// # The cost
+    ///
+    /// The key is the element's **rendering**, which is
+    /// [`Lowerer::intern_element_descriptor`]'s own key and carries its own
+    /// argument for being injective over the types that reach here. The
+    /// symbol therefore reads `_S…Array of I64.drop` and not a path, because
+    /// `Array of I64` has no path — the same reason a tuple's glue is keyed on
+    /// its rendering in [`Lowerer::intern_drop_glue`].
+    fn intern_container_thunk(&mut self, element: Ty) -> Result<String, Unlowered> {
+        let rendered = self.types.render(self.defs, element);
+        let symbol = format!("{}.drop", mangle(&MonoKey::plain(&[rendered.as_str()])));
+        if self.glue.contains(&symbol) {
+            return Ok(symbol);
+        }
+        // Claimed before the body is built, for [`Lowerer::intern_drop_glue`]'s
+        // reason: the descriptor `release_args` needs is interned by
+        // `direct_release` below, and for an `Array of (Array of (Array of
+        // T))` that walk comes back through this function.
+        self.glue.insert(symbol.clone());
+        let Some(direct) = self.direct_release(element)? else {
+            return Err(Unlowered::new(format!(
+                "a one-argument release for `{rendered}`, which `direct_release` claimed needed \
+                 one and then did not name"
+            )));
+        };
+        let mut next_value = 0u32;
+        let mut insts: Vec<ExtInst> = Vec::new();
+        // `Param(0)` *is* the element's address — the slot the runtime hands
+        // `drop_fn` — so there is no `FieldAddr` to make first, which is the
+        // one line of difference from `emit_field_glue`'s loop body.
+        let address = ValueId(next_value);
+        next_value += 1;
+        insts.push(ExtInst::FieldAddr { dest: address, base: Operand::Param(0), offset: 0 });
+        let args = self.release_args(
+            &direct,
+            address,
+            &mut || {
+                let id = ValueId(next_value);
+                next_value += 1;
+                id
+            },
+            &mut insts,
+        );
+        let ret = self.declare(direct.0)?.ret.clone();
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: None,
+            callee: Callee::Runtime(direct.0),
+            args,
+            ret,
+            sret_slot: None,
+        }));
+        let signature = AbiSignature::science(
+            self.target,
+            symbol.clone(),
+            layout_of(self.target, &CgTy::Unit),
+            vec![(
+                "self".to_string(),
+                layout_of(self.target, &CgTy::Ptr(PtrKind::MutBorrow)),
+                ParamAttrs::default(),
+            )],
+        );
+        self.glue_definitions.push((
+            signature,
+            ExtBody {
+                blocks: vec![ExtBlock {
+                    id: BlockId(0),
+                    label: "entry".to_string(),
+                    insts,
+                    terminator: Terminator::Return(None),
+                }],
+            },
+        ));
+        Ok(symbol)
     }
 
     /// `Box of T`'s element, when the type is one.
@@ -8380,6 +8792,35 @@ impl<'a> Lowerer<'a> {
     /// directly takes the slot's own address. [`Lowerer::lower_runtime_call`]'s
     /// own doc comment states the rule in full; this is that rule with no
     /// change of behaviour, so the two callers cannot answer it differently.
+    ///
+    /// # `Box of T` is a value and not an indirection, and the test is the
+    /// pointer's *kind*
+    ///
+    /// The rule above used to read *"a place whose slot is itself a pointer"*
+    /// and test `Scalar::Pointer(_)` — any kind at all. That is right for the
+    /// case it was written for and wrong for the one kind that is not an
+    /// indirection the caller inserted: `PtrKind::Box`. A borrow's slot exists
+    /// only to name another value, so forwarding what is stored there *is*
+    /// passing the argument by address; a `Box of T` slot **holds the
+    /// argument**, and an indirect parameter wants the slot.
+    ///
+    /// **What the missing distinction cost was a silent wrong value, not a
+    /// refusal.** `[Box.new(Expr(n: 1))]` lowers to
+    /// `science_array_push(%array, @typeinfo, %value)`, which copies
+    /// `info.size` bytes *out of* `%value`; with the load in place `%value`
+    /// was the heap pointer itself, so the eight bytes copied into the array
+    /// were `Expr`'s `n` field — `1` — and the array held the integer `1`
+    /// where a pointer belonged. The length printed correctly and the program
+    /// aborted in `free` on the way out, which is the shape
+    /// [`Builder::element_move`]'s own comment warns about one crate over.
+    /// It was invisible until now only because
+    /// [`Lowerer::intern_element_descriptor`] refused every
+    /// `Array of Box[T]` before one could be built.
+    ///
+    /// `PtrKind::Fn` and `PtrKind::Raw` are values by the same argument and
+    /// are left loading, because no entry point in [`RUNTIME`] takes one by
+    /// address and a change with no program behind it is a change no test
+    /// covers.
     fn pointer_to_place(
         &mut self,
         ctx: &mut BodyCtx,
@@ -8387,7 +8828,8 @@ impl<'a> Lowerer<'a> {
         insts: &mut Vec<ExtInst>,
     ) -> Result<Operand, Unlowered> {
         let (address, layout) = self.place_address(ctx, place, insts)?;
-        if matches!(layout.repr, Repr::Scalar(Scalar::Pointer(_))) {
+        let indirection = !matches!(layout.repr, Repr::Scalar(Scalar::Pointer(PtrKind::Box)));
+        if indirection && matches!(layout.repr, Repr::Scalar(Scalar::Pointer(_))) {
             let value = ctx.value();
             insts.push(ExtInst::LoadAt { dest: value, address: Operand::Value(address), layout });
             Ok(Operand::Value(value))
