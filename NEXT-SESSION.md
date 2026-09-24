@@ -1,4 +1,4 @@
-# Traspaso — estado al 2026-09-23
+# Traspaso — estado al 2026-09-24
 
 > **Lo primero, porque cuesta horas cada vez.** Los mensajes de rechazo de este
 > compilador envejecen peor que el código que los rodea. Nadie los relee cuando
@@ -22,26 +22,61 @@ binario rehúsa con `SC0400`, y `cargo test --workspace` **sin** features
 reemplaza `target/debug/sciencec` por uno sin backend — si de golpe todos los
 ejemplos fallan, es eso.
 
-**El paralelismo ya no hace falta acotarlo.** La carrera del scratch se cerró
-en `be46f94`: cada test end-to-end tiene su propio directorio. Tres corridas
-consecutivas a paralelismo completo dieron 2230/0. Si volvés a ver conjuntos de
-fallos *distintos* entre corridas, es una carrera nueva, no esta.
+**El paralelismo ya no hace falta acotarlo por el scratch.** Esa carrera se
+cerró en `be46f94`: cada test end-to-end tiene su propio directorio. Si volvés a
+ver conjuntos de fallos *distintos* entre corridas, es una carrera nueva, no
+esta. Lo que sí conviene, en una máquina con muchos worktrees, es medir en
+serie (`-- --test-threads=1`): el daemon de verificación de macOS serializa el
+primer arranque de cada binario recién enlazado contra el presupuesto de diez
+segundos de `harness::RUN_BUDGET`, y un `killed after not exiting within 10s`
+es la cola, no tu cambio.
 
 ## El número
 
-**18 de 20 ejemplos** compilan, enlazan, corren y tienen su salida fijada byte
-por byte. El denominador es 20: `17_modules` importa módulos que la biblioteca
-F0 no tiene y `20_extern` es una biblioteca sin `main` a propósito, las dos
-cerradas por decisión documentada.
+> **No lo copies a mano.** Vive en `UNMEASURED`, en
+> `crates/sciencec/tests/corpus_output.rs`: una fila por cada ejemplo que *no*
+> se mide, con su razón, y `tally` al lado deriva la cuenta de esa tabla más el
+> listado del directorio. Las cifras de acá abajo las relee
+> `no_document_quotes_a_corpus_count_this_file_does_not` contra esa tabla, así
+> que una cifra vieja en este archivo es un test en rojo y no una sorpresa para
+> el que venga. Llegaron a convivir **cuatro** denominadores en el repo (20, 21,
+> 22 y un 15/20 suelto) justo porque cada uno estaba tipeado a mano al lado de
+> la frase que lo necesitaba.
 
-Suite: **2232 en verde**.
+**19 de 20 ejemplos** compilan, enlazan, corren y tienen su salida fijada byte
+por byte. El denominador es 20 y no 22 programas porque dos de los 22 archivos
+no son programas, cada uno por su propia razón y las dos buenas:
 
-> **Ojo con `19_stdlib` cuando lo corras a mano.** Lee `science.toml` del
-> directorio actual, así que desde una copia limpia falla con `panic: the file
-> is missing`. El `cargo test` no se ve afectado: `corpus_output.rs` corre cada
-> ejemplo en un directorio vacío a propósito.
+- **`20_extern`** es una biblioteca sin `main` a propósito — declaraciones
+  `extern`, un tipo handle y tres wrappers —, y §11 tiene `SC0403` justamente
+  para rechazarla. Lo pincha desde los dos lados
+  `a_pure_declarations_file_has_no_entry_point_by_design`: `sciencec test` la
+  rechaza con `SC0403`, `sciencec check` la acepta limpia.
+- **`17_modules`** importa `text.parser` y `compiler.frontend.lexer`: módulos
+  **del propio crate**, resueltos contra el directorio del archivo de entrada,
+  que a propósito no existen. **No es un agujero de la biblioteca F0** — esa
+  frase estaba acá y era falsa, prestada del ítem de `ffi.Span`, donde sí
+  corresponde, y no transfiere: §8 no tiene nada que ver. El argumento real
+  está en `UNRESOLVED`, en `crates/sciencec/tests/cli.rs`, que además fija la
+  cuenta de diagnósticos en cuatro: el archivo existe para mostrar las dos
+  formas de `use` que escribe el spec, y escribir un `examples/text/parser.science`
+  para conformarlo convertiría un ejemplo de sintaxis en un fixture y taparía
+  justo el diagnóstico que este corpus mide.
 
-## Los dos ejemplos que faltan
+El que falta es **`00_kitchen_sink`**, y desde `1c3db63` es el único.
+
+Suite: **2331 en verde**, medida en serie.
+
+> **Un pin presente no prueba nada por sí solo.** Arreglar `Drop::drop` de
+> usuario agregó **11 líneas en tres `.stdout`** (`06_traits` +1,
+> `18_ownership` +8, `19_stdlib` +2), todas altas puras: ni una línea borrada
+> ni cambiada. `19_stdlib.science:249` imprime `"record dropped"` dentro de un
+> bloque `Drop` y su `.stdout` commiteado tenía **cero** ocurrencias. Tres
+> expectativas habían sido bendecidas contra un defecto real y lo estaban
+> certificando. Un test que le da la razón a un bug en silencio es peor que no
+> tener test.
+
+## El ejemplo que falta
 
 Cada bloqueo está bisecado y verificado corriendo programas.
 
@@ -65,35 +100,30 @@ Pinchado por `an_associated_call_on_a_generic_type_is_solved_from_its_receiver`
 en cualquier punto del recorrido — el dump de MIR no lo muestra y nada más se
 daría cuenta.
 
-### `06_traits` — `Display` necesita `Formatter`
+### ~~`06_traits`~~ — cerrado
 
-**Decisión tomada por el autor: gana el spec.** `strings-formatting-and-docs.md`
-§3.1 decide `def display(self, into: mutable &Formatter)` con un conjunto
-cerrado de cinco métodos, y el corpus —que escribe `def display(self) -> String`
-en `06` y `00`— es el que está desactualizado.
-
-Hay trabajo a medias en la rama **`wip/agents-formatter-constgenerics`**: 1221
-líneas que declaran `Formatter`, `FormatSpec` y los cuatro `choice`
-(`Align`, `Sign`, `Code`, `Grouping`), más el renderer de `science-rt` con sus
-tests. **No está mezclado a propósito**, por dos razones:
-
-1. Murió una edición antes de declarar `Display` en `INTERFACE_DECLS`, que era
-   el punto.
-2. Rompe **32 snapshots** de `science-resolve` — `Module main #372` → `#409`,
-   deriva mecánica de `DefId` por las definiciones nuevas del preludio.
-
-Al retomar: terminar la entrada de `Display` primero y re-bendecir los
-snapshots **en el mismo commit**, para que el corrimiento y su razón lleguen
-juntos.
-
-**Riesgo conocido:** declarar métodos en una interfaz del preludio que no los
-tenía ya rompió este corpus una vez, con `Clone.clone`. Si vuelve a pasar,
-revertir la declaración y explicar por qué — **no** tocar el ejemplo para
-taparlo.
+`Display` se declaró con el `Formatter` de §3.1 en `baf5b70` y el ejemplo
+imprime un tipo de usuario. **Se ganó el spec, como estaba decidido.** El
+riesgo que este documento anticipaba —declarar métodos en una interfaz del
+preludio que no los tenía rompió este corpus una vez, con `Clone.clone`— no se
+materializó.
 
 ### `00_kitchen_sink` — cierres con capturas, boxes, operadores
 
 Es el último por construcción. No es una tarea: es la unión de tres.
+
+Hoy corta antes que eso, en `SC0400` sobre una tupla: el arm `ExprKind::Tuple`
+de `science-types` lee el tipo de cada elemento antes de que la inferencia lo
+haya defaulteado, así que `(1, 2)` es una tupla de dos agujeros y `(1i64, 2i64)`
+no. Reproducilo en un programa mínimo antes de creerle al mensaje.
+
+Su fila está en `UNMEASURED` (`crates/sciencec/tests/corpus_output.rs`) con esa
+razón, que es lo que lo mantiene dentro del denominador en lugar de fuera de la
+medición: **el día que construya, el corpus falla en rojo** con
+`these examples are listed in UNMEASURED as not measured, and this compiler
+built them anyway`. Eso es la buena noticia, no una regresión — borrá la fila,
+bendecí la salida con `SCIENCE_BLESS=1`, renombrá
+`the_corpus_is_nineteen_of_twenty` y corregí la cifra en los tres documentos.
 
 ## Un bug de corrección, aparte de los ejemplos — **cerrado**
 
@@ -126,6 +156,13 @@ El documento se conserva porque dos de las tres cosas que se aprendieron ahí so
   reescribiendo el binario en ese momento — medí un corpus en 10/22 que en
   realidad era 17/22 por eso.
 - **Nunca debilitar una prueba.** Si una tiene que cambiar, citá antes y después.
+- **Un ejemplo que no se mide tiene que estar nombrado.** El arm
+  `Verdict::NotBuilt` de `corpus_output.rs` era un `continue` pelado, y por eso
+  `00_kitchen_sink` estaba fuera del corpus sin aparecer en un solo mensaje,
+  dentro de una exclusión que todo el mundo describía como de dos archivos.
+  Hoy la lista es `UNMEASURED` y la corrida falla en las dos direcciones: un
+  archivo que deja de construir y no está listado, y un archivo listado que
+  construye igual.
 - **Nunca `git stash` pelado** — la pila se comparte entre worktrees.
 - **Nunca tocar la config de git.** Pasá `GIT_AUTHOR_*` **y** `GIT_COMMITTER_*`.
 - **No commitees en `master` mientras un agente trabaja en el mismo checkout.**
@@ -152,24 +189,32 @@ de estos, el mensaje miente:
 - **Operadores sobre tipos de usuario.** `a + b` sobre un `implements Add`
   compila y corre. `Unresolved::Operator` no se construía en ningún lado y se
   eliminó en `19473a4`.
-- **`Formatter` está especificado**, entero, con una `Decision`. El comentario
-  que decía lo contrario se corrigió.
+- **`Formatter` está especificado**, entero, con una `Decision` — y desde
+  `baf5b70` está además **implementado**: `Display` se declara con él y
+  `06_traits` imprime un tipo de usuario.
+- **`19_stdlib` ya no depende del directorio desde el que lo corras.** Desde
+  `2653270` el ejemplo **crea** el archivo que lee, en vez de esperar que
+  `science.toml` esté ahí. La advertencia que había acá quedó vieja.
 
 ## Primer movimiento sugerido
 
-Medí antes de creerle a este documento:
+Medí antes de creerle a este documento. Corré cada ejemplo en un directorio
+**vacío**, que es lo que hace `corpus_output.rs`: un archivo que el corpus no
+versiona es un archivo que el corpus no tiene que ver.
 
 ```bash
-for f in examples/*.science; do
-  ./target/debug/sciencec test "$PWD/$f" >/dev/null 2>&1 \
-    && echo "ok   $f" || echo "FAIL $f"
+for f in "$PWD"/examples/*.science; do
+  d=$(mktemp -d)
+  ( cd "$d" && "$OLDPWD/target/debug/sciencec" test "$f" >/dev/null 2>&1 ) \
+    && echo "ok   $(basename "$f")" || echo "FAIL $(basename "$f")"
+  rm -rf "$d"
 done
 ```
 
-Esperá `FAIL` en exactamente `00_kitchen_sink`, `06_traits`, `17_modules` y
-`20_extern` — y en `19_stdlib` si el `science.toml` no está en el directorio
-desde el que corrés.
+Esperá `FAIL` en exactamente `00_kitchen_sink`, `17_modules` y `20_extern` — los
+tres que están en `UNMEASURED`, y nada más. Si aparece un cuarto, el corpus
+también te lo va a decir: `cargo test -p sciencec --features llvm --test
+corpus_output` lo nombra en vez de saltearlo.
 
-Después agarrá **`06`**: es el único que queda con una decisión ya tomada y
-1221 líneas de trabajo a medias esperando en
-`wip/agents-formatter-constgenerics`.
+Después agarrá **`00`**, que es el único que queda. No es una tarea: repartilo
+por *feature* y por *crate*, no por ejemplo.

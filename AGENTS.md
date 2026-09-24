@@ -6,7 +6,16 @@ write it by analogy you will get it wrong in the twenty-four specific ways below
 
 Read §1 before writing a line. The authority is
 `docs/superpowers/specs/2026-09-16-science-f0-core-design.md` §4, and
-`examples/` holds twenty programs that are guaranteed valid — imitate them.
+`examples/` holds 22 programs that are guaranteed valid — imitate them.
+
+> **The corpus's number lives in one place.** `UNMEASURED` in
+> `crates/sciencec/tests/corpus_output.rs` names every example that is *not*
+> measured and why; `tally` beside it derives the count from that table and the
+> directory listing. **19 of 20 examples** build, link, run and have their
+> output pinned byte for byte — 22 files less the two that are not programs.
+> Every number quoted below is read back against that table by
+> `no_document_quotes_a_corpus_count_this_file_does_not`, so a stale one here
+> is a failing test and not a surprise for the next reader.
 
 ---
 
@@ -271,13 +280,18 @@ def main():
 The corpus is the test suite. These commands are the ground truth:
 
 ```bash
-cargo test -p science-lexer      # lexing, 121 tests, includes all 20 examples
-cargo test -p science-parser     # parsing, 176 tests, includes all 20 examples
+cargo test -p science-lexer      # lexing, 165 tests, includes all 22 examples
+cargo test -p science-parser     # parsing, 315 tests, includes all 22 examples
 cargo test --workspace           # everything
 ```
 
-- `examples/*.science` — twenty programs, one per feature, **guaranteed valid**.
-  If you are unsure how something is written, find it there first.
+- `examples/*.science` — 22 programs, one per feature, **guaranteed valid**.
+  If you are unsure how something is written, find it there first. Both suites
+  above walk the directory, so a file added there is measured by both without
+  anyone listing it. What the *output* corpus measures is narrower and is
+  written down in `UNMEASURED` (`crates/sciencec/tests/corpus_output.rs`): 19
+  of 20 build, link, run and have their bytes pinned, and the two that are out
+  of the denominator are named there with their reasons.
 - `tests/ui/*.science` — programs that must **fail**, each paired with the exact
   diagnostic it must produce.
 - `examples/README.md` — what each example covers, and the standing assumptions

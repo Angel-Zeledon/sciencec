@@ -2118,7 +2118,7 @@ Esto es lo que convierte la sección en un plan y no en un deseo. `use python
 
 | # | Pieza | Por qué la bloquea | Estado |
 |---|---|---|---|
-| 1 | Backend completo de F0 | Hoy no se puede ni imprimir un tipo de usuario | 15/20 ejemplos |
+| 1 | Backend completo de F0 | Falta `00_kitchen_sink`: cierres con capturas, boxes | 19/20 ejemplos |
 | 2 | `Formatter` / `Display` | Sin esto no hay mensaje de error legible en la membrana | Decidido, sin implementar |
 | 3 | ABI de C exportable | **El shim de Python se escribe contra él**, no contra el backend | `extern "C"` anda |
 | 4 | `Tensor` con cabecera DLPack | Requisito 1 de `python-interop.md` §2 | No existe |
@@ -2898,33 +2898,68 @@ Sin embargo, una vez establecida una versión de lenguaje:
 > **Por qué esta sección está en un documento de destino.** Todo lo de arriba
 > es catálogo: métodos que ninguna máquina ha ejecutado. Esta sección es lo
 > único aquí que se midió corriendo el compilador, y existe para que nadie
-> lea la Parte IV y crea que falta poco. Fecha de la medición: **2026-09-22**.
+> lea la Parte IV y crea que falta poco. Fecha de la medición: **2026-09-24**.
 
 ### El número honesto
 
-**17 de 20 ejemplos** compilan, enlazan, corren y tienen su salida fijada byte
-por byte. El denominador es 20 y no 22 porque dos nunca van a construir, y eso
-está decidido: `17_modules` importa módulos que la biblioteca F0 no tiene, y
-`20_extern` es una biblioteca sin `main` a propósito, que `SC0403` existe para
-rechazar.
+> **No está tipeado a mano.** La fuente es `UNMEASURED`, en
+> `crates/sciencec/tests/corpus_output.rs`: una fila por cada ejemplo que no se
+> mide, con su razón, y `tally` al lado deriva la cuenta de esa tabla más el
+> listado del directorio. `no_document_quotes_a_corpus_count_this_file_does_not`
+> relee esta sección contra ella. Antes de eso convivían **cuatro**
+> denominadores en el repo —20, 21, 22 y un 15/20 suelto—, y uno de ellos se
+> movió como *efecto colateral* de un commit sobre el catálogo de librerías:
+> `c2dcb7a` reportó 14 de 22 y catorce horas después `4733b9c` metió acá "el
+> denominador es 20 y no 22" sin mencionar el corpus en ninguna otra línea.
 
-Suite: **2229 tests en verde**. Correrla con paralelismo acotado
-(`-- --test-threads=4`): a carga completa el directorio de scratch compartido
-compite consigo mismo y falla un puñado distinto de tests en cada corrida, con
-conjuntos disjuntos. Se lee igual que una regresión y no lo es.
+**19 de 20 ejemplos** compilan, enlazan, corren y tienen su salida fijada byte
+por byte. El denominador es 20 y no 22 programas porque dos de los 22 archivos
+no son programas, cada uno por su propia razón:
 
-### Los tres que faltan, con el bloqueo real
+- `20_extern` es una biblioteca sin `main` a propósito, que §11 tiene `SC0403`
+  para rechazar.
+- `17_modules` importa `text.parser` y `compiler.frontend.lexer`: módulos **del
+  propio crate**, resueltos contra el directorio del archivo de entrada, que a
+  propósito no existen. **No es un agujero de la biblioteca F0** —esa frase
+  estaba acá y era falsa—; el argumento es de diseño del corpus y está en
+  `UNRESOLVED`, en `crates/sciencec/tests/cli.rs`: inventar un
+  `examples/text/parser.science` convertiría un ejemplo de sintaxis en un
+  fixture y taparía el diagnóstico que el corpus mide.
 
-Cada uno está bisecado hasta la línea. **Los mensajes de error del compilador
-no son de fiar para esto**, y esa es la lección más cara de la sesión: de cinco
-bloqueos investigados, **cinco** culpaban a la fase equivocada o describían un
-agujero ya cerrado.
+Las dos decisiones se auditaron y las dos son buenas. Ninguna se toca.
+
+Suite: **2331 tests en verde**. La carrera del scratch compartido que obligaba
+a acotar el paralelismo se cerró en `be46f94` —cada test end-to-end tiene su
+propio directorio—, pero en una máquina con muchos worktrees conviene medir en
+serie (`-- --test-threads=1`): el daemon de verificación de macOS serializa el
+primer arranque de cada binario recién enlazado contra el presupuesto de diez
+segundos de `harness::RUN_BUDGET`, y un `killed after not exiting within 10s`
+es la cola, no una regresión.
+
+### Un pin presente no prueba nada por sí solo
+
+Arreglar `Drop::drop` de usuario agregó **11 líneas en tres `.stdout`**
+(`06_traits` +1, `18_ownership` +8, `19_stdlib` +2), **todas altas puras**: ni
+una línea borrada ni cambiada. `19_stdlib.science:249` imprime
+`"record dropped"` dentro de un bloque `Drop` y su `.stdout` commiteado tenía
+**cero** ocurrencias. Tres expectativas habían sido bendecidas contra un
+defecto real y lo estaban certificando. Un test que le da la razón a un bug en
+silencio es peor que no tener test — y un denominador que descarta en silencio
+el archivo que no sabe explicar es el mismo error contado de otra forma.
+
+### El que falta, con el bloqueo real
+
+**Los mensajes de error del compilador no son de fiar para esto**, y esa es la
+lección más cara de la sesión: de cinco bloqueos investigados, **cinco**
+culpaban a la fase equivocada o describían un agujero ya cerrado.
 
 | Ejemplo | Bloqueo real | Dónde |
 |---|---|---|
-| `03_structs` | const generics sustituidos en el cuerpo — el front end ya sale limpio | mono |
-| `06_traits` | `print` de un tipo de usuario: necesita `Display`/`Formatter` | 4 crates |
-| `00_kitchen_sink` | cierres con capturas, interfaces de operador, boxes | varios |
+| `00_kitchen_sink` | cierres con capturas, boxes; hoy corta antes, en `SC0400` sobre una tupla cuyos elementos `ExprKind::Tuple` lee antes de que la inferencia los defaultee | varios |
+
+`03_structs` y `06_traits` estaban acá y están cerrados: const generics a
+través de la mono el primero, `Display` declarado con el `Formatter` de §3.1 el
+segundo.
 
 ### Lo que resultó no estar roto
 
@@ -2944,23 +2979,24 @@ leyendo código:
   propio lowering aritmético.
 - **`Formatter`.** Un comentario en `builtins.rs` afirmaba que ninguna nota lo
   especifica. `strings-formatting-and-docs.md` §3.1 lo especifica entero, con
-  una `Decision` y un conjunto cerrado de cinco métodos.
+  una `Decision` y un conjunto cerrado de cinco métodos — y desde `baf5b70`
+  está además declarado y andando: `Display` se declara con él.
 
 **El patrón, porque cuesta horas cada vez:** un mensaje de rechazo envejece
 peor que el código que lo rodea. Nadie lo vuelve a leer cuando arregla la cosa
 que describe, y el siguiente lector lo trata como diagnóstico actual. Antes de
-perseguir cualquiera de los tres que quedan, **reproducí el bloqueo en un
-programa mínimo** y creele a lo que imprime, no a lo que dice el mensaje.
+perseguir el que queda, **reproducí el bloqueo en un programa mínimo** y creele
+a lo que imprime, no a lo que dice el mensaje.
 
 ### Las decisiones que bloquean, y que no son código
 
 Ninguna de estas se resuelve programando. Están en `STDLIB-DECISIONS.md`.
 
-1. **`Display`.** El spec decidió `display(self, into: mutable &Formatter)`, con
-   `Formatter` completamente especificado en `strings-formatting-and-docs.md`
-   §3.1. El corpus escribe `def display(self) -> String`. Uno de los dos está
-   mal. Bloquea `06`, y bloquea cualquier mensaje de error legible en la
-   membrana de Python.
+1. **~~`Display`~~ — resuelta, y ganó el spec.** Se decidió
+   `display(self, into: mutable &Formatter)`, con `Formatter` completamente
+   especificado en `strings-formatting-and-docs.md` §3.1, y en `baf5b70` se
+   declaró así y el corpus se actualizó. Ya no bloquea `06` ni el mensaje de
+   error legible en la membrana de Python.
 2. **`Eq`/`Ord`.** Si `other` va prestado. Aquí **no** hay contradicción de
    spec — ninguna nota lo especifica —, es el corpus peleándose consigo mismo.
 3. **`Add` y las cadenas.** `"a" + "b"` no existe porque `Add` está sin métodos
@@ -2968,23 +3004,23 @@ Ninguna de estas se resuelve programando. Están en `STDLIB-DECISIONS.md`.
 
 ### El orden que yo tomaría
 
-1. **Const generics a través de la mono → 18/20.** El front end ya sale
-   limpio, así que es sólo sustitución: reemplazar `ROWS` y `COLS` por sus
-   argumentos const en el cuerpo instanciado. Acotado y sin decisiones.
-2. **`Display`/`Formatter` → 19/20.** La decisión está tomada: gana el spec.
-   Hay que aterrizar `Formatter`, `FormatSpec` y cuatro `choice` en
-   `builtins.rs`, los puntos de entrada del runtime, y una vtable que el
-   backend hoy no emite. Cuatro crates, y el corpus escribe la firma vieja en
-   dos ejemplos.
-   **Riesgo real:** declarar métodos en una interfaz del preludio que hasta
-   ahora no tenía ya rompió este corpus una vez, con `Clone.clone`. Si pasa,
-   revertir la declaración y decir por qué — no arreglar el ejemplo.
-3. **`00_kitchen_sink` → 20/20.** Cierres con capturas, interfaces de operador
-   y boxes. Es el último por construcción, no por descuido.
+Los dos primeros pasos de esta lista están hechos. **Const generics a través de
+la mono** cerró `03_structs`, y **`Display`/`Formatter`** cerró `06_traits`,
+con el riesgo que se anticipaba —declarar métodos en una interfaz del preludio
+que no los tenía rompió este corpus una vez, con `Clone.clone`— sin
+materializarse. Queda uno:
 
-Y una de infraestructura que no mueve el contador y ahorra horas: **el scratch
-compartido de los tests**. Cuesta dos corridas y un rato descartar que un fallo
-sea propio, y va a engañar a la próxima persona que toque el repo.
+1. **`00_kitchen_sink`, y el corpus queda completo.** Cierres con capturas,
+   interfaces de operador y boxes. Es el último por construcción, no por
+   descuido: no es una tarea sino la unión de tres, y hay que repartirlo por
+   *feature* y por *crate*.
+
+Las dos de infraestructura que ahorran horas ya se pagaron y conviene no
+volver a perderlas: **el scratch compartido de los tests** se cerró en
+`be46f94`, y **el arm que salteaba un ejemplo en silencio** se cerró con
+`UNMEASURED`. El segundo costó que `00_kitchen_sink` estuviera fuera de la
+medición sin aparecer en un solo mensaje, dentro de una exclusión que todos los
+documentos describían como de dos archivos y era de tres.
 
 **Cómo repartirlos.** No por ejemplo, por *feature*: `00` no es una tarea, es
 la unión de tres. Y el reparto tiene que ser por crate, porque varias de estas
