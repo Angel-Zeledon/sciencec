@@ -2365,16 +2365,41 @@ impl Backend for LlvmBackend {
         let module = self.module_ref()?;
         let usize_ty = self.int_ty((self.triple().pointer_width() * 8) as u32);
         let ptr_ty = self.ptr_ty();
-        let mut nested = |descriptor: &science_codegen::descriptor::TypeInfo| {
+        let mut nested = |what: &str,
+                          descriptor: &science_codegen::descriptor::TypeInfo|
+         -> Result<sys::LLVMValueRef, BackendError> {
+            // The same three words `define_type_info` writes, and the third
+            // one is read by the same runtime code: `science_map_insert`
+            // destroys the key it displaces through `key.drop_fn` and
+            // `science_map_free` destroys every live key and value through
+            // both. A null here is not a crash, which is why it survived —
+            // it is *"this type owns nothing"*, so every displaced `String`
+            // key was silently leaked and only the resident set said so.
+            let drop_fn = match &descriptor.drop_fn {
+                None => unsafe { sys::LLVMConstPointerNull(ptr_ty) },
+                Some(glue) => {
+                    let name = cstr(glue);
+                    let value = unsafe { sys::LLVMGetNamedFunction(module.raw(), name.as_ptr()) };
+                    if value.is_null() {
+                        return Err(BackendError::Other(format!(
+                            "the map descriptor `{symbol}` names drop glue `{glue}` for its \
+                             {what}, which the module does not define"
+                        )));
+                    }
+                    value
+                }
+            };
             let mut members = [
                 unsafe { sys::LLVMConstInt(usize_ty, descriptor.size, 0) },
                 unsafe { sys::LLVMConstInt(usize_ty, descriptor.align, 0) },
-                unsafe { sys::LLVMConstPointerNull(ptr_ty) },
+                drop_fn,
             ];
-            unsafe { sys::LLVMConstStructInContext(self.context.raw(), members.as_mut_ptr(), 3, 0) }
+            Ok(unsafe {
+                sys::LLVMConstStructInContext(self.context.raw(), members.as_mut_ptr(), 3, 0)
+            })
         };
-        let key = nested(&info.key);
-        let value = nested(&info.value);
+        let key = nested("key", &info.key)?;
+        let value = nested("value", &info.value)?;
 
         let mut function = |name: &str| -> Result<sys::LLVMValueRef, BackendError> {
             let c_name = cstr(name);
