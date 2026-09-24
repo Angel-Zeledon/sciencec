@@ -89,6 +89,24 @@ pub mod code {
     /// `ffi-c-boundary.md`'s: `F16`/`BF16` by value across the boundary.
     /// Referenced, not claimed.
     pub const SC0431: Code = Code(431);
+    /// `ffi-c-boundary.md`'s: a `library` clause whose link flags could not be
+    /// worked out. Referenced, not claimed.
+    ///
+    /// **This is the one borrowed code that is not already named by the note it
+    /// is borrowed from,** and the argument for spending it here is the same
+    /// one `SC0522`'s doc comment makes. `ffi-c-boundary.md` §8 reserves
+    /// `SC0460`–`SC0479` for **Linking** and its "named in this document" table
+    /// lists only `SC0461` in that band; `native-dependencies.md` §9 says in as
+    /// many words that *"`SC0460`, `SC0462`–`SC0470` remain free within it"*.
+    /// So the number
+    /// is inside a reserved sub-range whose *topic* — linking — is exactly what
+    /// this diagnostic is about, and the README's rule is *"a band is a topic,
+    /// not a crate"*. `SC0402` was the alternative and it is the wrong shape:
+    /// its two sentences are *"the linker failed"* and *"the backend failed
+    /// before the linker ran"*, and neither is true of a `via pkg-config` that
+    /// named a module `pkg-config` does not know — that is the compiler
+    /// refusing to guess, before anything failed.
+    pub const SC0460: Code = Code(460);
     /// `ffi-c-boundary.md`'s: an undefined symbol codegen can attribute to a
     /// declaration. Referenced, not claimed; §5.5 specifies its rendering and
     /// §11 gives `SC0402` as the fallback.
@@ -426,6 +444,37 @@ pub fn undefined_foreign_symbol(
     )
 }
 
+/// `SC0460`: a `library` clause was understood and could not be honoured.
+///
+/// **The diagnostic that exists because the alternative was silence.** §5.1's
+/// `via pkg-config`, `kind static` and `when available` all parsed, all reached
+/// HIR, and all three arrived at the linker as the plain `-lname` the block
+/// would have produced without them — four blocks differing only in their
+/// clause passed byte-identical flags. A clause that cannot be honoured has two
+/// honest endings and silently doing something else is neither: either the
+/// compiler works out what the clause asked for, or it says which clause it
+/// could not honour and why. This is the second.
+///
+/// `clause` is the clause as it reads in source — `via pkg-config "openblas"`,
+/// `kind static` — because a message naming only the library sends a reader
+/// looking at the library.
+pub fn library_clause_unhonoured(
+    library: &str,
+    clause: &str,
+    why: &str,
+    notes: &[String],
+) -> Diagnostic {
+    let mut diagnostic = Diagnostic::error(
+        code::SC0460,
+        format!("`library \"{library}\" {clause}` could not be honoured"),
+    )
+    .with_note(why.to_string());
+    for note in notes {
+        diagnostic = diagnostic.with_note(note.clone());
+    }
+    diagnostic
+}
+
 /// Whether a code belongs to the range this crate claims.
 pub fn is_claimed(code: Code) -> bool {
     CLAIMED.contains(&code.0)
@@ -571,9 +620,34 @@ mod tests {
 
     #[test]
     fn borrowed_codes_are_outside_the_claimed_range_which_is_the_point() {
-        for code in [code::SC0429, code::SC0431, code::SC0461, code::SC0522] {
+        for code in [code::SC0429, code::SC0431, code::SC0460, code::SC0461, code::SC0522] {
             assert!(!is_claimed(code), "{code} would be a claim on someone else's range");
         }
+    }
+
+    /// `SC0460` names the clause, not just the library.
+    ///
+    /// The failure this guards against is a message that says only *"`lzma`
+    /// could not be linked"* for a program whose `library "lzma"` is perfectly
+    /// good and whose `kind static` is the part that could not be honoured.
+    #[test]
+    fn sc0460_names_the_clause_that_could_not_be_honoured() {
+        let diagnostic = library_clause_unhonoured(
+            "openblas",
+            "via pkg-config \"openblas\"",
+            "`pkg-config` does not know the module `openblas`",
+            &["searched nothing else".to_string()],
+        );
+        assert_eq!(diagnostic.code, code::SC0460);
+        assert!(!is_claimed(diagnostic.code), "SC0460 is `ffi-c-boundary.md`'s Linking band");
+        assert!(
+            diagnostic.message.contains("via pkg-config \"openblas\""),
+            "the clause is the subject: {}",
+            diagnostic.message
+        );
+        let notes = diagnostic.notes.join("\n");
+        assert!(notes.contains("does not know the module"), "{notes}");
+        assert!(notes.contains("searched nothing else"), "{notes}");
     }
 
     #[test]

@@ -139,6 +139,44 @@ pub enum LinkError {
         /// The operating system's reason.
         reason: String,
     },
+    /// `via pkg-config` asked a `pkg-config` that was there, and it said no.
+    /// `SC0460`. See [`library_arguments`] for why this is not the fallback.
+    PkgConfigFailed {
+        /// The `library` clause's own name, which is the fallback that was
+        /// deliberately not taken.
+        library: String,
+        /// The module named by the clause.
+        module: String,
+        /// The `pkg-config` command, as it was run.
+        command: String,
+        /// Everything `pkg-config` said, verbatim.
+        output: String,
+    },
+    /// `kind static` named a library with no archive anywhere on the search
+    /// path. `SC0460`.
+    NoStaticArchive {
+        /// The `library` clause's name.
+        library: String,
+        /// The file that was looked for.
+        file: String,
+        /// Every path that was tried, in order.
+        searched: Vec<String>,
+    },
+    /// `when available` reached the link step, and §5.2's `dlopen` table is not
+    /// written. `SC0400` — a construct this backend does not lower.
+    OptionalLibraryNotLowered {
+        /// The `library` clause's name.
+        library: String,
+    },
+    /// Two `extern` blocks name one library with different clauses. `SC0460`.
+    ClausesDisagree {
+        /// The shared name.
+        library: String,
+        /// One block's clause.
+        one: String,
+        /// The other's.
+        other: String,
+    },
 }
 
 /// A resolved linker driver.
@@ -251,12 +289,70 @@ pub fn system_libraries(triple: Triple) -> Vec<&'static str> {
     }
 }
 
-/// A library a program's `extern` blocks asked to be linked against.
+/// A library a program's `extern` blocks asked to be linked against, and the
+/// three clauses of §5.1 and §5.2 that say *how*.
 ///
-/// A name and nothing else: `via pkg-config`, `kind static` and
-/// `when available` are §5.4's and are refused above, by name, rather than
-/// carried here half-implemented.
-pub type Library = String;
+/// # What this used to be, and the comment that was not true
+///
+/// This was `pub type Library = String;` — a name and nothing else — under a
+/// doc comment claiming that *"`via pkg-config`, `kind static` and
+/// `when available` … are refused above, by name, rather than carried here
+/// half-implemented"*. **No such refusal existed anywhere.** All three parsed,
+/// all three reached `hir::ExternLibrary`, and all three were dropped on the
+/// way down: four `extern` blocks declaring `library "lzma"` and differing only
+/// in their clause passed byte-identical `-llzma` to the linker. `via
+/// pkg-config "totally-fake-pkg"` compiled, linked and ran on a machine with no
+/// `pkg-config` installed at all, and `when available` — whose entire meaning
+/// is *"do not make this a load-time dependency"* — emitted a hard `-lcudnn`
+/// and failed the link with `ld: library 'cudnn' not found`, which is the
+/// opposite of what the clause asks for.
+///
+/// So the comment was not describing a decision, it was describing a decision
+/// nobody had taken. [`library_arguments`] is where each clause is now either
+/// honoured or refused by name, and there is no third thing it can do.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Library {
+    /// `library "openblas"`: the link target.
+    pub name: String,
+    /// `via pkg-config "openblas"`: the module whose `--libs` replaces the
+    /// plain name, when `pkg-config` is there to ask.
+    pub pkg_config: Option<String>,
+    /// `kind static`: link the archive rather than the shared object.
+    pub static_link: bool,
+    /// `when available`: §5.2's optional library, which must not become a
+    /// load-time dependency.
+    pub when_available: bool,
+}
+
+impl Library {
+    /// A plain `library "name"` with no clause on it.
+    pub fn named(name: impl Into<String>) -> Library {
+        Library { name: name.into(), ..Library::default() }
+    }
+
+    /// The clause as it reads in source, for a diagnostic that has to name it.
+    ///
+    /// A message that says only *"`lzma` could not be linked"* for a block
+    /// whose `library "lzma"` is perfectly good and whose `kind static` is the
+    /// unhonourable half sends the reader to look at the wrong word.
+    pub fn clause(&self) -> String {
+        let mut text = String::new();
+        if let Some(module) = &self.pkg_config {
+            text.push_str(&format!("via pkg-config \"{module}\""));
+        }
+        for (flag, spelling) in
+            [(self.static_link, "kind static"), (self.when_available, "when available")]
+        {
+            if flag {
+                if !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(spelling);
+            }
+        }
+        text
+    }
+}
 
 /// The `-l` flags one library name becomes on a target.
 ///
@@ -285,13 +381,256 @@ pub fn library_flags(triple: Triple, name: &str) -> Vec<String> {
     vec![format!("-l{name}")]
 }
 
+/// Everything the `library` clauses add to the link line, in Decision 28's
+/// source order — or the first clause that could not be honoured.
+///
+/// **One function, three clauses, and each of them ends in exactly one of two
+/// places.** The thing this replaces silently ignored all three; the rule here
+/// is that a clause either changes the arguments or produces an error naming
+/// itself, and there is no path through which a clause does nothing.
+///
+/// # `when available` is refused, and that is the honest half of it
+///
+/// §5.2's full feature is *"a lazily-initialized table of function pointers,
+/// populated on first use by `dlopen`/`dlsym` … inside `science-rt`"*, a
+/// generated `is_available() -> Bool` binding, and every call in the block
+/// turned into an indirect call through the table. None of that exists:
+/// `dlopen` appears in this tree exactly once, in a design note, and
+/// `is_available()` resolves to nothing (`SC0200`). Dropping the `-l` alone
+/// would not make the clause work — the block's symbols are still emitted as
+/// direct `declare`s, so the link would fail with *undefined symbol* instead of
+/// *library not found*, which is a different wrong answer rather than a right
+/// one. What is in reach in one change is to stop the compiler pretending, so
+/// the clause is refused by name, with the message saying which piece is
+/// missing. A block that is never called is never in this list — Decision 28's
+/// filter already drops it — so a program that merely *declares* an optional
+/// library still builds.
+///
+/// # `via pkg-config` falls back only when `pkg-config` is absent
+///
+/// `SC0412` states the intent: *"a block discovering its flags with `via
+/// pkg-config` still declares the plain name as the fallback, because
+/// pkg-config is not present on every platform."* **Absent** is the word doing
+/// the work. Three outcomes and they are not the same:
+///
+/// 1. **`pkg-config` is not installed.** Fall back to the plain name. That is
+///    the sentence above and the reason `--libs` is not a hard requirement.
+/// 2. **`pkg-config` ran and does not know the module.** *Refused.* This was
+///    the fallback too, and it is how `via pkg-config "opneblas"` reaches
+///    production: the typo produces a working build on the developer's machine,
+///    where the plain name resolves, and the wrong flags on the HPC node the
+///    clause exists for. A `pkg-config` that is present and says *"No package
+///    'openblas' found"* has answered the question, and the answer is not
+///    "use the fallback"; it is that the `.pc` file this build depends on is
+///    not installed.
+/// 3. **`pkg-config` ran and knows it.** Its `--libs` output replaces the plain
+///    `-l` entirely. §5.1's whole argument is that the right flags are
+///    `-lopenblas` here, `-lblas -llapack` there and six MKL libraries
+///    somewhere else; appending the plain name to that would put back the one
+///    guess the clause exists to remove.
+///
+/// # `kind static` names the archive, because no flag says this portably
+///
+/// `-Wl,-Bstatic` is GNU `ld` and `lld`; Apple's `ld64` has no such flag, and
+/// `-l:libfoo.a` is a GNU extension. The one spelling that means *this archive
+/// and not the shared object* on every linker is the archive's own path, so
+/// `kind static` resolves `libNAME.a` (`NAME.lib` on MSVC) against
+/// `$SCIENCE_LIBRARY_PATH` and then the target's default directories, and
+/// passes the path it found. Not finding it is a refusal and not a quiet
+/// downgrade to `-lNAME`, because a quiet downgrade is the bug this whole
+/// function exists to remove: `kind static` on a machine with only
+/// `libfoo.dylib` would link dynamically and say nothing.
+///
+/// **The MSVC caveat is real and is not hidden.** A static archive and an
+/// import library are both `.lib` there, so resolving the path pins *which
+/// file* is linked without proving it is an archive. That is less than the
+/// clause promises, and it is still strictly more than passing `-lNAME`.
+pub fn library_arguments(triple: Triple, libraries: &[Library]) -> Result<Vec<String>, LinkError> {
+    let mut arguments = Vec::new();
+    for library in libraries {
+        if let Some(other) =
+            libraries.iter().find(|other| other.name == library.name && *other != library)
+        {
+            return Err(LinkError::ClausesDisagree {
+                library: library.name.clone(),
+                one: library.clause(),
+                other: other.clause(),
+            });
+        }
+        arguments.extend(one_library(triple, library)?);
+    }
+    Ok(arguments)
+}
+
+/// One library's arguments. See [`library_arguments`] for the whole argument.
+fn one_library(triple: Triple, library: &Library) -> Result<Vec<String>, LinkError> {
+    if library.when_available {
+        return Err(LinkError::OptionalLibraryNotLowered { library: library.name.clone() });
+    }
+    // The UCRT names, which resolve to no flag on MSVC whatever else is on the
+    // clause: there is no `m.lib` to find statically either.
+    let plain = library_flags(triple, &library.name);
+    if plain.is_empty() {
+        return Ok(plain);
+    }
+    if let Some(module) = &library.pkg_config {
+        if let Some(flags) = pkg_config_libs(&library.name, module, library.static_link)? {
+            return Ok(flags);
+        }
+    }
+    if library.static_link {
+        return static_archive(triple, library).map(|path| vec![path]);
+    }
+    Ok(plain)
+}
+
+/// The `pkg-config` to ask, which is a variable because cross-compiling asks a
+/// different one.
+///
+/// A cross build wants `aarch64-linux-gnu-pkg-config`, and a build that has to
+/// point at a private `.pc` tree wants its own wrapper. `$SCIENCE_PKG_CONFIG`
+/// is the same escape hatch `$SCIENCE_LINKER` already is, and it is what lets
+/// the tests in this crate exercise all three of [`library_arguments`]'s
+/// `pkg-config` outcomes on a machine where `pkg-config` itself is not
+/// installed.
+fn pkg_config_program() -> std::ffi::OsString {
+    std::env::var_os("SCIENCE_PKG_CONFIG").unwrap_or_else(|| "pkg-config".into())
+}
+
+/// `pkg-config --libs`, or `None` when there is no `pkg-config` to run.
+///
+/// `None` is *absent* and nothing else. A `pkg-config` that started and exited
+/// non-zero has answered the question — see [`library_arguments`].
+fn pkg_config_libs(
+    library: &str,
+    module: &str,
+    static_link: bool,
+) -> Result<Option<Vec<String>>, LinkError> {
+    let program = pkg_config_program();
+    let mut command = Command::new(&program);
+    if static_link {
+        // `--static` is what turns `Libs:` into `Libs: + Libs.private:`, which
+        // is the transitive closure a static link needs and a dynamic one does
+        // not.
+        command.arg("--static");
+    }
+    command.arg("--libs").arg(module);
+    let rendered = render(&command);
+    match command.output() {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(LinkError::PkgConfigFailed {
+            library: library.to_string(),
+            module: module.to_string(),
+            command: rendered,
+            output: error.to_string(),
+        }),
+        Ok(result) if result.status.success() => Ok(Some(
+            String::from_utf8_lossy(&result.stdout)
+                .split_whitespace()
+                .map(str::to_string)
+                .collect(),
+        )),
+        Ok(result) => {
+            let mut output = String::from_utf8_lossy(&result.stdout).into_owned();
+            output.push_str(&String::from_utf8_lossy(&result.stderr));
+            Err(LinkError::PkgConfigFailed {
+                library: library.to_string(),
+                module: module.to_string(),
+                command: rendered,
+                output,
+            })
+        }
+    }
+}
+
+/// The static archive `kind static` asked for, found by name in the search
+/// path, or the refusal that names everywhere it was not.
+fn static_archive(triple: Triple, library: &Library) -> Result<String, LinkError> {
+    let name = &library.name;
+    let file = match triple {
+        Triple::X86_64WindowsMsvc => format!("{name}.lib"),
+        _ => format!("lib{name}.a"),
+    };
+    let mut searched = Vec::new();
+    for directory in library_search_paths(triple) {
+        let candidate = directory.join(&file);
+        searched.push(candidate.display().to_string());
+        if candidate.is_file() {
+            return Ok(candidate.display().to_string());
+        }
+    }
+    Err(LinkError::NoStaticArchive { library: name.clone(), file, searched })
+}
+
+/// Where a library is looked for: §5.1's list, minus the part that does not
+/// exist yet.
+///
+/// §5.1 gives three sources in priority order — `--library-path`, then
+/// `$SCIENCE_LIBRARY_PATH`, then the system defaults. **There is no
+/// `--library-path` flag in this compiler**, so this is the second and the
+/// third; the first is named here rather than silently omitted, because an
+/// omission that is not written down is how the clauses above came to be
+/// ignored in the first place.
+///
+/// The defaults are the ones the platform's own linker searches. On MSVC that
+/// is `$LIB`, which the environment of a developer prompt sets and `clang`
+/// reconstructs through `vswhere`; there is no fixed directory to name.
+fn library_search_paths(triple: Triple) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    if let Some(value) = std::env::var_os("SCIENCE_LIBRARY_PATH") {
+        for entry in value.to_string_lossy().split(separator) {
+            if !entry.is_empty() {
+                paths.push(PathBuf::from(entry));
+            }
+        }
+    }
+    match triple {
+        Triple::X86_64WindowsMsvc => {
+            if let Some(value) = std::env::var_os("LIB") {
+                for entry in value.to_string_lossy().split(';') {
+                    if !entry.is_empty() {
+                        paths.push(PathBuf::from(entry));
+                    }
+                }
+            }
+        }
+        Triple::Aarch64AppleDarwin => {
+            paths.extend(["/opt/homebrew/lib", "/usr/local/lib", "/usr/lib"].map(PathBuf::from));
+        }
+        Triple::X86_64LinuxGnu => {
+            paths.extend(
+                [
+                    "/usr/local/lib",
+                    "/usr/lib/x86_64-linux-gnu",
+                    "/usr/lib64",
+                    "/usr/lib",
+                    "/lib/x86_64-linux-gnu",
+                    "/lib",
+                ]
+                .map(PathBuf::from),
+            );
+        }
+    }
+    paths
+}
+
 /// Link one object file, the runtime and the declared libraries into an
-/// executable.
+/// executable, and give back the command line that did it.
 ///
 /// **Link order is the thing that goes wrong first** (§5.4): the program's
 /// objects, then `science-rt`, then the declared libraries in dependency
 /// order, then the system libraries. `libraries` is Decision 28's *"source
 /// order of their `library` clauses"*, and it is the third of the four.
+///
+/// **The command line is returned on success as well as on failure, and that
+/// is what made the clauses testable.** `SC0402` has always printed it when the
+/// linker failed, so the only way to see what a *successful* build passed was
+/// to wrap the driver in a shell script — which is how the defect this function
+/// now fixes was found and is not something a test can do portably. `Built`
+/// carries it for the same reason it already carries the resolved driver: §12
+/// item 12 wants the build recorded, and *which libraries were linked and how*
+/// is the part of that record the `library` clauses decide.
 pub fn link(
     driver: &Driver,
     object: &Path,
@@ -299,15 +638,13 @@ pub fn link(
     output: &Path,
     triple: Triple,
     libraries: &[Library],
-) -> Result<(), LinkError> {
+) -> Result<String, LinkError> {
     let mut command = Command::new(&driver.program);
     command.arg(object);
     command.arg(runtime);
     command.arg("-o").arg(output);
-    for library in libraries {
-        for flag in library_flags(triple, library) {
-            command.arg(flag);
-        }
+    for argument in library_arguments(triple, libraries)? {
+        command.arg(argument);
     }
     for library in system_libraries(triple) {
         command.arg(format!("-l{library}"));
@@ -317,7 +654,7 @@ pub fn link(
         Err(error) => {
             Err(LinkError::NotRunnable { command: rendered, reason: error.to_string() })
         }
-        Ok(result) if result.status.success() => Ok(()),
+        Ok(result) if result.status.success() => Ok(rendered),
         Ok(result) => {
             let mut output = String::from_utf8_lossy(&result.stdout).into_owned();
             output.push_str(&String::from_utf8_lossy(&result.stderr));
@@ -477,6 +814,89 @@ impl LinkError {
             ),
             LinkError::Failed { command, output } => linker_failed(command, output),
             LinkError::NotRunnable { command, reason } => linker_failed(command, reason),
+            LinkError::PkgConfigFailed { library, module, command, output } => {
+                science_codegen::diagnostics::library_clause_unhonoured(
+                    library,
+                    &format!("via pkg-config \"{module}\""),
+                    &format!("`pkg-config` ran and could not answer for `{module}`"),
+                    &[
+                        format!("the command was: {command}"),
+                        "what follows is `pkg-config`'s own output, verbatim:".to_string(),
+                        output.trim_end().to_string(),
+                        "a `pkg-config` that is *absent* falls back to the plain `library` \
+                         name, because it is not on every platform. One that is present and \
+                         does not know the module has answered, and the answer is that the \
+                         `.pc` file this build depends on is not installed — falling back \
+                         there is how a typo in the module name ships."
+                            .to_string(),
+                        "install the module's development package, point `$PKG_CONFIG_PATH` at \
+                         its `.pc` file, set `$SCIENCE_PKG_CONFIG` to the `pkg-config` to use, \
+                         or drop the `via pkg-config` clause and link the plain name"
+                            .to_string(),
+                    ],
+                )
+            }
+            LinkError::NoStaticArchive { library, file, searched } => {
+                science_codegen::diagnostics::library_clause_unhonoured(
+                    library,
+                    "kind static",
+                    &format!("no `{file}` was found, so there is no archive to link"),
+                    &[
+                        format!("searched, in order:\n  {}", searched.join("\n  ")),
+                        "`kind static` names the archive's path, because no linker flag means \
+                         *this archive and not the shared object* on all three platforms: \
+                         `-Wl,-Bstatic` is GNU `ld`'s and Apple's `ld64` has no equivalent"
+                            .to_string(),
+                        "add the directory holding the archive to `$SCIENCE_LIBRARY_PATH`, or \
+                         drop `kind static` and link the shared object. Linking the shared \
+                         object silently is what this refusal replaces."
+                            .to_string(),
+                    ],
+                )
+            }
+            LinkError::ClausesDisagree { library, one, other } => {
+                science_codegen::diagnostics::library_clause_unhonoured(
+                    library,
+                    one,
+                    &format!(
+                        "another `extern` block declares `library \"{library}\"` too, with a \
+                         different clause on it"
+                    ),
+                    &[
+                        format!(
+                            "one block says `{}` and the other says `{}`",
+                            if one.is_empty() { "(no clause)" } else { one },
+                            if other.is_empty() { "(no clause)" } else { other },
+                        ),
+                        "one library is linked once, so one of the two clauses would have to \
+                         lose. Which one is not something this compiler should decide quietly: \
+                         give both blocks the same clause, or give them different `library` \
+                         names."
+                            .to_string(),
+                    ],
+                )
+            }
+            LinkError::OptionalLibraryNotLowered { library } => {
+                science_codegen::diagnostics::construct_not_lowered(
+                    &format!("a call into `library \"{library}\" when available`"),
+                    "§5.2's optional library is a lazily-initialised table of function \
+                     pointers filled in by `dlopen`/`dlsym` inside `science-rt`, a generated \
+                     `is_available() -> Bool`, and an indirect call per foreign call. None of \
+                     the three is written yet: `is_available()` resolves to nothing (`SC0200`) \
+                     and nothing in `science-rt` loads a library at run time.",
+                )
+                .with_note(format!(
+                    "this is refused rather than linked as `-l{library}`, which is what it used \
+                     to do — a hard load-time dependency on the library the clause exists to \
+                     make optional, failing the link on exactly the machine `when available` \
+                     was written for"
+                ))
+                .with_note(
+                    "declaring the block is still fine; only calling into it is refused. Drop \
+                     `when available` to depend on the library at load time."
+                        .to_string(),
+                )
+            }
         }
     }
 }

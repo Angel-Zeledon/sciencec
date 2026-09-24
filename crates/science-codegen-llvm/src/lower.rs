@@ -501,7 +501,11 @@ pub struct Lowered {
     /// The `library` clauses of every `extern` block that contributed a
     /// declaration, in **source order** — Decision 28, which makes that order
     /// significant and says so.
-    pub libraries: Vec<String>,
+    ///
+    /// **Whole clauses and not just names.** `via pkg-config`, `kind static`
+    /// and `when available` are decided in [`crate::link::library_arguments`],
+    /// and this list is the only path from the `extern` block to it.
+    pub libraries: Vec<crate::link::Library>,
     /// Every foreign symbol declared, for `SC0461`.
     pub foreign: Vec<ForeignSymbol>,
 }
@@ -550,7 +554,13 @@ pub struct Lowerer<'a> {
     /// reached. Decision 28's order is the first; the second is what keeps a
     /// program that declares a block it never calls from failing to link
     /// against a library it never needed.
-    library_order: Vec<String>,
+    ///
+    /// **The order is deduplicated by the whole clause and the used-set by the
+    /// name alone**, and the asymmetry is deliberate: two blocks that name one
+    /// library with different clauses stay two entries here, so
+    /// [`crate::link::library_arguments`] can see the disagreement and refuse
+    /// it, rather than one of the two clauses vanishing into a dedup.
+    library_order: Vec<crate::link::Library>,
     libraries_used: Vec<String>,
     literals: Vec<StringLiteral>,
     /// The vtables interned so far, keyed by symbol through
@@ -723,9 +733,14 @@ impl<'a> Lowerer<'a> {
         lowerer.decls = Some(decls);
         for block in blocks {
             let library = block.library.as_ref().map(|library| library.name.clone());
-            if let Some(name) = &library {
-                if !lowerer.library_order.contains(name) {
-                    lowerer.library_order.push(name.clone());
+            if let Some(clause) = block.library.as_ref().map(|library| crate::link::Library {
+                name: library.name.clone(),
+                pkg_config: library.pkg_config.clone(),
+                static_link: library.static_link,
+                when_available: library.when_available,
+            }) {
+                if !lowerer.library_order.contains(&clause) {
+                    lowerer.library_order.push(clause);
                 }
             }
             for item in &block.items {
@@ -4159,10 +4174,10 @@ impl<'a> Lowerer<'a> {
         // Decision 28's source order, filtered to the blocks a call actually
         // reached. `library_order` is the order; `libraries_used` is the set.
         let used = std::mem::take(&mut self.libraries_used);
-        let libraries: Vec<String> = self
+        let libraries: Vec<crate::link::Library> = self
             .library_order
             .iter()
-            .filter(|name| used.contains(name))
+            .filter(|library| used.contains(&library.name))
             .cloned()
             .collect();
         // Taken once: the table owns both lists and reading the second after

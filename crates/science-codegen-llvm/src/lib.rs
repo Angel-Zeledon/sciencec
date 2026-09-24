@@ -716,6 +716,34 @@
 //!     neither of which types as `String`, so the refusal that remains is
 //!     one no program reaches.
 //!
+//! 31. **Three `extern` clauses reached the linker as nothing, and a comment
+//!     said they had been refused instead.** `via pkg-config`, `kind static`
+//!     and `when available` all lex, parse, resolve and land in
+//!     `hir::ExternLibrary`; [`link::Library`] was `String`, so the name
+//!     survived the journey to [`link::link`] and the clauses did not. Four
+//!     programs differing only in the clause on one block passed **byte-
+//!     identical** `-llzma`, and `via pkg-config "totally-fake-pkg"` built,
+//!     linked and ran with no diagnostic on a machine with no `pkg-config`
+//!     installed at all. `when available` was worse than inert: its whole
+//!     meaning is *do not make this a load-time dependency* and it emitted a
+//!     hard `-lcudnn`, failing the link with `ld: library 'cudnn' not found`
+//!     on exactly the CPU-only machine §5.2 is written for.
+//!
+//!     **Two things kept it invisible.** The first is that the doc comment on
+//!     `pub type Library = String` asserted the opposite — that the three
+//!     *"are refused above, by name, rather than carried here
+//!     half-implemented"* — and no such refusal existed anywhere in the tree;
+//!     a reader checking whether the clauses were handled found a sentence
+//!     saying they were. The second is that the link command line was only
+//!     ever observable **on failure**, through `SC0402`, so a successful build
+//!     showed nothing and the only way to see what was passed was to put a
+//!     shell script in `$SCIENCE_LINKER`. [`Built::link_command`] makes it an
+//!     ordinary value, `tests/library_clauses.rs` asserts it per clause, and
+//!     [`link::library_arguments`] is where each clause is now either honoured
+//!     or refused by name — with `when available`'s refusal scoped honestly,
+//!     because §5.2's `dlopen` table, its `is_available()` binding and its
+//!     indirect call reach three other crates and none of the three exists.
+//!
 //! **And nine was itself found this way**, which is the point of the list: the
 //! numbering has grown ten times now and each entry is something the notes did
 //! not say. Eleven, twelve, thirteen and eighteen were all found by *running* a
@@ -930,6 +958,19 @@ pub struct Built {
     /// and the CPU to be in the build record, and the driver belongs beside
     /// them.
     pub linker: String,
+    /// The whole linker command line, as it was run.
+    ///
+    /// **The driver alone was not enough to record, and the gap was a bug that
+    /// lived in the tree.** `SC0402` prints this string when the linker fails,
+    /// so a *failing* build has always shown its flags; a succeeding one showed
+    /// nothing, and under that blind spot `via pkg-config`, `kind static` and
+    /// `when available` were all silently discarded — four `extern` blocks
+    /// differing only in their clause passed byte-identical `-llzma` and every
+    /// test in the suite passed. The only way to see it was to put a shell
+    /// script in `$SCIENCE_LINKER`, which is not something a portable test can
+    /// do. This makes the link line an ordinary assertable value, and
+    /// `tests/library_clauses.rs` asserts it per clause.
+    pub link_command: String,
 }
 
 /// Build a program.
@@ -1164,8 +1205,16 @@ pub fn emit_and_link(
             return Err(diagnostics);
         }
     };
-    if let Err(error) = link::link(&driver, &object, &runtime, output, triple, &lowered.libraries)
-    {
+    let link_command = match link::link(
+        &driver,
+        &object,
+        &runtime,
+        output,
+        triple,
+        &lowered.libraries,
+    ) {
+        Ok(command) => command,
+        Err(error) => {
         // Decision 29: `SC0461` for an undefined symbol codegen's own table can
         // attribute to an `extern` declaration, and `SC0402` for everything
         // else. The table is `lowered.foreign` and it exists as of stage 2; the
@@ -1205,7 +1254,8 @@ pub fn emit_and_link(
         }
         diagnostics.push(error.to_diagnostic());
         return Err(diagnostics);
-    }
+        }
+    };
     let _ = std::fs::remove_file(&object);
 
     Ok(Built {
@@ -1213,6 +1263,7 @@ pub fn emit_and_link(
         config: config.clone(),
         ir,
         linker: driver.program.display().to_string(),
+        link_command,
     })
 }
 
