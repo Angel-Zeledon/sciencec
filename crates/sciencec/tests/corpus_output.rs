@@ -179,9 +179,16 @@ const UNMEASURED: &[Unmeasured] = &[
         why: Why::NotYet,
         reason: "§11's acceptance program, and the last one by construction rather than by \
                  oversight: it is the union of every remaining gap, not a task. Today it stops \
-                 at `SC0400` on a tuple whose elements `science-types`' `ExprKind::Tuple` arm \
-                 reads before inference has defaulted them, so `(1, 2)` is a tuple of two \
-                 holes. Delete this row when it builds — the run will tell you to.",
+                 at `SC0400` on the two chains, `headlines` and `by_length` — \
+                 `docs.iterate().map(each.title)` and its sibling. §5.4's chain vocabulary is \
+                 on `science-resolve`'s `UNWRITTEN` list, so the closure passed to `map` has no \
+                 parameter type and the backend refuses it as a value the front end left as \
+                 `TyKind::Error`. Nothing else in the file is short: replace those two bodies \
+                 with `Array[String].new()` and the whole program builds, links, runs and exits \
+                 0. The reason here used to name a tuple — *\"`science-types`' `ExprKind::Tuple` \
+                 arm reads each element before inference has defaulted them\"* — and §3's \
+                 finding 20 closed that; `let t be (1, 2)` builds. Delete this row when the \
+                 chains land — the run will tell you to.",
     },
     Unmeasured {
         file: "17_modules.science",

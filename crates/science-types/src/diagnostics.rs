@@ -169,7 +169,8 @@ pub fn division_is_f1(span: Span) -> Diagnostic {
     Diagnostic::error(codes::NOT_A_CONST_EXPRESSION, "a const expression cannot divide yet")
         .with_label(Label::primary(span, "division in a const expression is F1"))
         .with_note(
-            "`const-expression-arithmetic.md` §4 specifies the quotient atom; F0 is the              quotient-free fragment, and multiplying by a literal is what F0 offers instead",
+            "`const-expression-arithmetic.md` §4 specifies the quotient atom; F0 is the \
+             quotient-free fragment, and multiplying by a literal is what F0 offers instead",
         )
 }
 

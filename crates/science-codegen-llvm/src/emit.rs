@@ -1134,7 +1134,8 @@ impl LlvmBackend {
                 let value_ty = unsafe { sys::LLVMTypeOf(v) };
                 if value_ty != ty && Some(value_ty) != self.niche_ty(&layout) {
                     return Err(BackendError::Other(format!(
-                        "local _{} is {} and the value stored into it is {}; opaque pointers                          make the mismatch legal IR, so it is caught here or not at all",
+                        "local _{} is {} and the value stored into it is {}; opaque pointers \
+                         make the mismatch legal IR, so it is caught here or not at all",
                         local.0,
                         self.describe_type(ty),
                         self.describe_type(value_ty)
@@ -2019,7 +2020,9 @@ impl LlvmBackend {
                 // the releases are what ship.
                 if sys::LLVMGetTypeKind(tag_ty) != sys::type_kind::INTEGER {
                     return Err(BackendError::Unsupported {
-                        what: "a `switch` on a value that is not an integer; Decision 18 makes                                every discriminant a `u8`, `u16` or `u32`, so this is a                                discriminant that was read from the wrong place"
+                        what: "a `switch` on a value that is not an integer; Decision 18 makes \
+                               every discriminant a `u8`, `u16` or `u32`, so this is a \
+                               discriminant that was read from the wrong place"
                             .to_string(),
                     });
                 }
@@ -2406,7 +2409,9 @@ impl Backend for LlvmBackend {
             let found = unsafe { sys::LLVMGetNamedFunction(module.raw(), c_name.as_ptr()) };
             if found.is_null() {
                 return Err(BackendError::Other(format!(
-                    "the map descriptor `{symbol}` names `{name}`, which the module does not                      declare: the runtime calls it on the first operation, so a null here is a                      jump to address zero rather than a link error"
+                    "the map descriptor `{symbol}` names `{name}`, which the module does not \
+                     declare: the runtime calls it on the first operation, so a null here is a \
+                     jump to address zero rather than a link error"
                 )));
             }
             Ok(found)

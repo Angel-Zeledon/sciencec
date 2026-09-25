@@ -244,12 +244,20 @@ fn a_script_body_that_returns_an_error_exits_one_and_says_something() {
 /// **A unit test in an integration file, on purpose.** [`ERROR_MESSAGE`] is the
 /// one place this compiler falls short of a design note *in output a user
 /// reads*, so the shortfall is asserted rather than described: the prefix is
-/// §2.3's, and the rest is not the error's `Display`, because the prelude's
-/// `Display` has no method to call. `EXIT_CONTRACT.display_is_renderable` is the
-/// same fact one crate up.
+/// §2.3's, and the rest is not the error's `Display`.
+/// `EXIT_CONTRACT.display_is_renderable` is the same fact one crate up.
 ///
-/// The day `Display` gets a method, this test is the one that says what to
-/// delete.
+/// **The reason moved and this comment used to give the old one.** It said the
+/// rest was not the error's `Display` *"because the prelude's `Display` has no
+/// method to call"*, and closed *"the day `Display` gets a method, this test is
+/// the one that says what to delete"*. That day came:
+/// `science-resolve`'s `builtins.rs` declares
+/// `Display.display(self, into: &mut Formatter)`, and `f"{v}"` on a concrete
+/// type calls the user's body (`examples/06_traits.science` prints one). The
+/// message is still a placeholder because the failing `main` holds an
+/// `Error?` — Decision 13's fat pointer — and this backend emits no `call`
+/// through a vtable slot. The tripwire is now
+/// `EXIT_CONTRACT.renders_the_error()`, which flips when that call is emitted.
 #[test]
 fn the_message_carries_the_required_prefix_and_admits_what_it_cannot_render() {
     assert!(ERROR_MESSAGE.starts_with(EXIT_CONTRACT.required_prefix));
@@ -260,6 +268,7 @@ fn the_message_carries_the_required_prefix_and_admits_what_it_cannot_render() {
     );
     assert!(
         !EXIT_CONTRACT.renders_the_error(),
-        "if this fails, `Display` has a method and this message is no longer the honest answer"
+        "if this fails, a `display` through a vtable slot is emitted and this message is no \
+         longer the honest answer"
     );
 }

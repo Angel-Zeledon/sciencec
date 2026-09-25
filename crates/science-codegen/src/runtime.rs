@@ -892,10 +892,11 @@ pub struct ExitContract {
     /// Whether codegen can render the error itself, rather than a placeholder.
     ///
     /// `false`, and it is the half of §2.3 that the two symbols above do not
-    /// buy. See [`EXIT_CONTRACT`] for why, and what the alternative would have
-    /// cost. It is a field rather than a comment so that the day `Display`
-    /// grows a method, the test asserting this is `false` fails and points at
-    /// the message that should stop being a placeholder.
+    /// buy. See [`EXIT_CONTRACT`] for why: `Display` has a method now, and
+    /// what is missing is a `call` through the vtable slot of an `any Error`.
+    /// It is a field rather than a comment so that the day that call is
+    /// emitted, the test asserting this is `false` fails and points at the
+    /// message that should stop being a placeholder.
     pub display_is_renderable: bool,
 }
 
@@ -907,9 +908,12 @@ impl ExitContract {
     /// with status 1; [`ExitContract::display_is_renderable`] is the separate
     /// question of whether what it writes is the error rather than a stand-in
     /// for it. Folding the two into one predicate would have made the contract
-    /// unsatisfiable for as long as `Display` has no method, which would hide
-    /// the exit status behind the rendering and leave a program that returns an
-    /// error aborting with 3 — the state this replaced.
+    /// unsatisfiable for as long as the error cannot be rendered — which was
+    /// *"for as long as `Display` has no method"* when this was written, and
+    /// is now *"for as long as no `display` is called through an `any Error`'s
+    /// vtable slot"* — and that would hide the exit status behind the
+    /// rendering and leave a program that returns an error aborting with 3,
+    /// the state this replaced.
     pub fn is_satisfiable(&self) -> bool {
         self.eprint_symbol.is_some() && self.exit_symbol.is_some()
     }

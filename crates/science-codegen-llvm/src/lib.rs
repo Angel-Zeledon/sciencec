@@ -92,19 +92,28 @@
 //! of its representations. `tests/past_stage_three.rs` is twenty-eight programs
 //! that build, link, run and are asked what they printed.
 //!
-//! **The smallest program that still cannot be built is `let a be [1]`** — an
-//! array literal, which reaches MIR with `TyKind::Error` for its element type
-//! and which, given an annotation, is an `Array of Int`: one of §2.6's runtime
-//! containers, whose value is a `science-rt` aggregate reached through a
-//! `ScienceTypeInfo` descriptor this backend emits none of. An **index** is
-//! behind it and needs §2.4's bounds check as well.
+//! **The two programs this paragraph used to name both build now, and the
+//! paragraph is re-measured rather than deleted**, because *"the smallest
+//! program that cannot be built"* is the question this crate's status is read
+//! off and a stale answer to it sends a reader to the wrong crate. It said the
+//! smallest was `let a be [1]` — an array literal reaching MIR with
+//! `TyKind::Error` for its element type, behind it §2.6's runtime containers
+//! and §2.4's bounds check. `let a be [1]`, `let a: Array[Int] be [1]` and
+//! `print(a[0])` all build, link and run; the descriptors and the check
+//! landed. It also said `let t be (1, 2)` was still refused, by
+//! `science-types` rather than here; §3's finding 20 closed that too and the
+//! bare tuple binding builds.
 //!
-//! **`let t be (1, 2)` is still refused and it is no longer this crate's
-//! refusal**, which is worth the sentence because it was the last pass's
-//! answer to this question. `cg_ty` has the `TyKind::Tuple` arm;
-//! `let t: (Int, Int) be (1, 2)` builds, runs and prints. What is left is
-//! finding 20: the unannotated literal types as `(<error>, <error>)`, with no
-//! diagnostic, from a phase this crate must not edit.
+//! **Two small programs that still do not build**, each checked by running
+//! `sciencec build` on it. `let a, b be (1, 2)` — the tuple *pattern*, whose
+//! names bind at `Ty::ERROR` because `science-types` matches the pattern
+//! before inference has settled the literal's type, and which `lower`'s
+//! `UNTYPED` message names. And `xs.iterate()` — §5.4's chain vocabulary,
+//! which `science-resolve`'s `UNWRITTEN` list excuses so that no `SC0532` is
+//! reported, and which arrives here as `mir::Unresolved::Method` with nothing
+//! behind it. The second is what `examples/00_kitchen_sink.science` stops on:
+//! replace `headlines` and `by_length`'s chain bodies with
+//! `Array[String].new()` and the rest of the file builds, runs and exits 0.
 //!
 //! **A method call is emitted, and two of the twenty-two programs in
 //! `examples/` built, linked and ran for the first time.** `11_literals
@@ -446,12 +455,25 @@
 //!     `TyKind::Error` **with no diagnostic**, §5's *"the mistake has already
 //!     been reported"* firing on a mistake nobody made — and it is worse in one
 //!     way: `print`'s temporary is dead on arrival and can be skipped, and a
-//!     tuple element's type is load-bearing. It is not repaired here;
-//!     `science-types` is another crate and the fix is in its `Tuple` arm.
-//!     `cg_ty` names the phase in the refusal instead, and
+//!     tuple element's type is load-bearing. It was not repaired here;
+//!     `science-types` is another crate and the fix was in its `Tuple` arm.
+//!
+//!     `cg_ty` named the phase in the refusal instead, and
 //!     `tests/past_stage_three.rs`'s
-//!     `the_unannotated_tuple_literal_is_a_front_end_hole` fails if it is ever
-//!     fixed, so this note cannot go on describing a closed bug.
+//!     `the_unannotated_tuple_literal_is_a_front_end_hole` was written to fail
+//!     if it was ever fixed, so this note could not go on describing a closed
+//!     bug.
+//!
+//!     **Closed, and the tripwire fired.** The `Tuple` arm now defers through
+//!     `BodyChecker::pending_tuples` and `finish` writes the type back, so
+//!     `let t be (1, 2)` builds, links and runs; that test is gone and
+//!     `a_tuple_builds_however_its_elements_got_their_type` replaced it. What
+//!     the mechanism left behind is the tuple **pattern**: `let a, b be
+//!     (1, 2)` and `match t:` over an inferred tuple still bind their names at
+//!     `Ty::ERROR`, because `pattern`'s `PatternKind::Tuple` arm reads the
+//!     scrutinee before the writeback. That is the shape to look for now, and
+//!     `cg_ty`'s `TyKind::Error` arm is not it — that one is a `for` with no
+//!     nameable `Iterate` and a chain method's closure.
 //! 21. **The type checker validates no cast at all.** `science-types`' `Cast`
 //!     arm is four lines: synthesise the operand, lower the target type, push
 //!     the node. It never compares them, so `"hola" as Int` **type-checks**,
@@ -640,8 +662,13 @@
 //!     read out of an integer literal before inference has defaulted it — met
 //!     at an `if` expression instead of at a tuple, which says the bug is in
 //!     `known_or_error`'s callers generally and not in the `Tuple` arm.
-//!     `examples/13_inline_blocks.science` is refused here for it, by the
-//!     `UNTYPED` message, and the refusal names the phase.
+//!     `examples/13_inline_blocks.science` was refused here for it, by the
+//!     `UNTYPED` message, and the refusal named the phase.
+//!
+//!     **Closed with finding 20, and the `UNTYPED` message no longer lists
+//!     it.** `let chosen be if flag: 1 else: 0` builds, and
+//!     `examples/13_inline_blocks.science` builds, links, runs and is
+//!     measured by the corpus.
 //!
 //! 28. **`name is not ""` was refused as *"a string literal read as a value"*,
 //!     and the construct it could not name was equality.** §4.6 gives the

@@ -7664,7 +7664,8 @@ fn no_operator_implementation(
     )
     .with_label(Label::primary(span, format!("`{symbol}` needs `{interface}` and `{ty}` has no implementation of it")))
     .with_note(format!(
-        "every operator is an interface method (§5.4): the block \n         `{ty} implements {interface}:` is what gives `{ty}` this operator"
+        "every operator is an interface method (§5.4): the block \
+         `{ty} implements {interface}:` is what gives `{ty}` this operator"
     ))
 }
 
@@ -7683,7 +7684,10 @@ fn not_iterable(span: Span, ty: &str) -> Diagnostic {
             format!("`for` needs `Iterate` and `{ty}` has no implementation of it"),
         ))
         .with_note(format!(
-            "`for` walks whatever implements `Iterate` (§5.4): the block \n         `{ty} implements Iterate:` is what gives `{ty}` a `for`, and it \n         needs a `type Item is …` and a `def next(mutable self) -> \n         Self.Item?` that answers `null` at the end"
+            "`for` walks whatever implements `Iterate` (§5.4): the block \
+             `{ty} implements Iterate:` is what gives `{ty}` a `for`, and it needs a \
+             `type Item is …` and a `def next(mutable self) -> Self.Item?` that answers `null` \
+             at the end"
         ))
 }
 

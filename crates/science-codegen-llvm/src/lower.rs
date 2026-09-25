@@ -270,10 +270,16 @@ type TyEnv = BTreeMap<DefId, Ty>;
 ///
 /// **It opens with `script-mode.md` §2.3's required prefix and then says
 /// something true and smaller than §2.3 asks for.** The note asks for the
-/// error's `Display`; the prelude's `Display` has no method, so there is
-/// nothing to call and no vtable slot to call it through. The module
-/// documentation is the full argument, including why inventing `Formatter` to
-/// close the gap would be the worse trade.
+/// error's `Display`. `Display` now *has* a method —
+/// `display(self, into: &mut Formatter)`, which `science-resolve`'s
+/// `builtins.rs` declares from `strings-formatting-and-docs.md` §3.1 — and a
+/// `print` or an `f"…"` of a **concrete** type that implements it calls the
+/// user's own body. What this message records is the other half: the failing
+/// `main` holds an `Error?`, which is Decision 13's two-word fat pointer, and
+/// this backend has no `call` through a vtable slot, so `display` cannot be
+/// reached from here. `f"{v}"` on a `&any Display` is refused by name at the
+/// f-string hole, for the same missing mechanism. The module documentation is
+/// the full argument.
 ///
 /// The prefix is asserted against
 /// [`science_codegen::runtime::EXIT_CONTRACT`]`.required_prefix` by
@@ -289,8 +295,8 @@ type TyEnv = BTreeMap<DefId, Ty>;
 /// the compiler was built.
 pub const ERROR_MESSAGE: &str = "error: the script returned an error, and this compiler cannot \
                                  say which one — `script-mode.md` §2.3 asks for the error's \
-                                 `Display`, and the prelude declares `Display` with no method to \
-                                 call\n";
+                                 `Display`, and this backend cannot call `Display.display` \
+                                 through the vtable of an `any Error`\n";
 
 /// What a local with no type is refused as.
 ///
@@ -298,24 +304,47 @@ pub const ERROR_MESSAGE: &str = "error: the script returned an error, and this c
 /// apart.** A local whose `Ty` is `TyKind::Error` reaches this backend with
 /// **no diagnostic having been reported** — §5's *"the mistake has already been
 /// reported"* rule firing on a mistake nobody made — so there is nothing here
-/// that says which expression produced it. Two are known and both are named:
-/// a call to `print` or `write`, whose signatures `science-resolve`'s
-/// `builtins.rs` wrote, measured seven corpus false positives on, and withdrew;
-/// and a `for` loop, whose range and iterator temporaries the checker leaves
-/// untyped for the same reason its `next` callee is
-/// [`science_mir::mir::Unresolved::IterateNext`].
+/// that says which expression produced it. The message therefore lists what
+/// has been *measured* to arrive, and the list is re-measured rather than
+/// appended to: an earlier version named four, and three of the four had
+/// since been closed while the one that fires was not on it at all.
 ///
-/// An earlier version of this message named `print` alone, so a `for` loop over
-/// a range was refused with a sentence about a function it does not call. A
-/// refusal that names the wrong construct is worse than one that names two.
+/// **The two that arrive today**, each established by building a program:
+///
+/// 1. A tuple **pattern** against an inferred tuple literal:
+///    `let a, b be (1, 2)`, and `match t:` over a `let t be (1, 2)`.
+///    `science-types`' `pattern` reads the scrutinee in its
+///    `PatternKind::Tuple` arm, and a bare tuple literal built out of
+///    unsuffixed literals is still a deferred inference variable at that
+///    moment — `BodyChecker::pending_tuples`, bound by `finish` — so the arm
+///    falls to its `vec![Ty::ERROR; elements.len()]` branch and every name in
+///    the pattern binds at `Ty::ERROR`. `let a, b be (1i64, 2i64)`, an
+///    annotation on the tuple, and destructuring a *call's* result all build.
+///    `tests/past_stage_three.rs`'s
+///    `a_tuple_builds_however_its_elements_got_their_type` argues the same
+///    limit from the other side, and names the forcing rule that would close
+///    it.
+/// 2. A **read** of `print`'s or `write`'s result, whose signature
+///    `science-resolve`'s `builtins.rs` wrote, measured seven corpus false
+///    positives on, and withdrew. `let r be print("a")` on its own builds,
+///    because nothing loads `r`; `print(r)` and `let s be r` are refused.
+///
+/// **Three that this message used to name and that no longer arrive**, kept
+/// here so the next reader does not put them back: a `for` loop's range and
+/// iterator temporaries (the prelude declares `Iterate`, and `for i in 0..5:`
+/// and `for x in a:` both build); `let n be if f: 1 else: 0`, which §3's
+/// finding 20 closed at the `if` as well as at the tuple; and the discriminant
+/// temporary, which was always handled rather than refused.
 const UNTYPED: &str = "a value the front end left untyped: its `Ty` is `TyKind::Error` and no \
-                       diagnostic was reported for it. The four this compiler has met are a call \
-                       to `print` or `write`, whose signatures `science-resolve`'s `builtins.rs` \
-                       withdrew; a `for` loop's range and iterator temporaries; a binding whose \
-                       value is an `if` expression over integer literals — `let n be if f: 1 \
-                       else: 0`, which `let n be if f: 1i64 else: 0i64` fixes and which is §3's \
-                       finding 20 met at an `if` rather than at a tuple; and a discriminant \
-                       temporary, which is handled rather than refused";
+                       diagnostic was reported for it. Two programs are known to reach this. A \
+                       tuple pattern against an inferred tuple literal — `let a, b be (1, 2)`, \
+                       or `match t:` over a `let t be (1, 2)` — binds every name at `Ty::ERROR`, \
+                       because `science-types` matches the pattern before inference has settled \
+                       the tuple's own type; suffix the elements, annotate the tuple, or \
+                       destructure the result of a call and all of them build. And a read of the \
+                       result of `print` or `write`, whose signature `science-resolve`'s \
+                       `builtins.rs` withdrew: binding it is fine, and it is the load that is \
+                       refused";
 
 /// How deep [`Lowerer::cg_ty`] follows a type before it gives up.
 ///
@@ -351,16 +380,36 @@ impl Unlowered {
     /// refusal here as *"no `a tuple` backend is compiled into this
     /// `sciencec`"*. Same code, same contract, a sentence the construct fits
     /// into.
+    ///
+    /// **The note is a measurement and it goes stale faster than anything else
+    /// in this crate**, because it is appended to *every* refusal and nothing
+    /// fails when a row of it becomes untrue. The version before this one
+    /// ended *"and drops of values that own nothing"* on a compiler that had
+    /// been calling a user's own `Drop.drop` since Decision 12 landed, and it
+    /// omitted `Display` through §3.1's `Formatter`, `is`/`is not` over a user
+    /// `Eq`, `for` over a user's own `implements Iterate:`, const generic
+    /// arguments, dynamic dispatch, capturing closures and the C scalars.
+    /// Every clause below was re-established by building and **running** a
+    /// program; `examples/` is where most of them run, and the three files
+    /// that still do not build — `00_kitchen_sink`, `17_modules`,
+    /// `20_extern` — are the measurement of what is left.
     pub fn to_diagnostic(&self) -> Diagnostic {
         construct_not_lowered(
             &self.construct,
-            "this `sciencec` implements §10's stages 0 to 3 of `codegen-and-linking.md` and some \
-             of what comes after — a script body, string literals and `print` of anything the \
-             `f\"…\"` builder renders, `extern \"C\"` declarations and the calls to them, the \
-             CFG, scalar arithmetic, functions with parameters, records, `choice`s and `match`, \
-             `T?`, methods and associated functions on a concrete type, the prelude's `String` \
-             methods, and drops of values that own nothing — and refuses everything else rather \
-             than lowering a construct no execution test has ever run",
+            "this `sciencec` implements §10's stages 0 to 3 of `codegen-and-linking.md` and a \
+             good deal of what comes after — a script body and functions with parameters, the \
+             CFG, scalar arithmetic and §5.1's `as` casts, string literals and `print` of \
+             anything the `f\"…\"` builder renders, records, `choice`s and `match`, tuples, \
+             `T?`, `String`, `Array`, `Map` and `Box` with the prelude's methods on them, \
+             `extern \"C\"` blocks with §1.3's C scalars and their `type` aliases and the calls \
+             to them, methods and associated functions on a concrete type including const generic \
+             arguments, generics monomorphised against their bounds, dynamic dispatch through \
+             `&any I` and `Box[any I]`, the operator interfaces and `is`/`is not` over a user \
+             `Eq`, `for` over a range, over `String.chars()` and over a user's own `implements \
+             Iterate:`, `Display` through §3.1's `Formatter` on a concrete type, closures \
+             including ones that capture, and Decision 12's drops, a user's own `Drop.drop` \
+             among them — and refuses everything else rather than lowering a construct no \
+             execution test has ever run",
         )
     }
 }
@@ -2908,7 +2957,10 @@ impl<'a> Lowerer<'a> {
         let key_cg = self.cg_ty(key)?;
         let Some((hash, eq)) = science_codegen::runtime::map_key_support(&key_cg) else {
             return Err(Unlowered::new(format!(
-                "a `Map` keyed by `{}`, for which no `hash_fn`/`eq_fn` pair exists:                  `runtime::map_key_support` names one for `String` and for the eight-byte                  integers and refuses the rest, because a byte-wise default hashes a record's                  padding and would lose entries as a function of what the allocator left there",
+                "a `Map` keyed by `{}`, for which no `hash_fn`/`eq_fn` pair exists: \
+                 `runtime::map_key_support` names one for `String` and for the eight-byte \
+                 integers and refuses the rest, because a byte-wise default hashes a record's \
+                 padding and would lose entries as a function of what the allocator left there",
                 self.types.render(self.defs, key)
             )));
         };
@@ -3343,28 +3395,51 @@ impl<'a> Lowerer<'a> {
             // *"to one unchanged"*. The arm was simply not written.
             TyKind::Tuple(elements) => self.tuple_ty(ty, elements.clone(), depth),
             // **A type the front end left as a hole, met where a *type* was
-            // needed rather than a value.** [`UNTYPED`] is the sibling message
-            // for a whole local whose `Ty` is this, and the two are different
-            // situations: that one is `print`'s undeclared return, which is
-            // skipped because nothing reads it, and this one is an erroneous
-            // type *inside* a type that is otherwise fine — a tuple element, a
-            // record field — where there is nothing to skip.
+            // needed.** [`UNTYPED`] is the sibling message, for a whole local
+            // whose `Ty` is this; the two are reached by different programs
+            // and the list each carries is its own.
             //
-            // **It is reachable from a program that checks clean**, which is
-            // what makes the message worth writing out. `let t be (1, 2)` types
-            // as `(TyKind::Error, TyKind::Error)`: `science-types`'s `Tuple`
-            // arm calls `known_or_error` on each element as it synthesises the
-            // node, and an integer literal's type is still an inference
-            // variable at that moment. Nothing reports it, because §5's rule is
-            // that an erroneous type means a mistake already reported and here
-            // there was no mistake. `let t: (Int, Int) be (1, 2)` and
-            // `let t be (1i64, 2i64)` both build; the bare one is refused here,
-            // by the only phase that ever looks.
+            // **The story this comment used to tell is dead, and the message
+            // above it told the same dead story.** It said the arm was
+            // `science-types`' `ExprKind::Tuple` reading an element's type
+            // before inference defaulted it, so that `let t be (1, 2)` was
+            // refused here. §3's finding 20 closed that: the `Tuple` arm now
+            // defers through `BodyChecker::pending_tuples` and `let t be
+            // (1, 2)` builds. What is left of the tuple in this neighbourhood
+            // is one *pattern*, and it reaches [`UNTYPED`] and not this arm.
+            //
+            // **What arrives here instead, each established by building a
+            // program**, is a binding whose type the checker could not name at
+            // all:
+            //
+            // 1. A `for` whose subject has no `Iterate` this compiler can
+            //    name. `science-types`' `for_expr` calls `iterate_item`, and
+            //    where that answers `None` the loop's binding is `Ty::ERROR`
+            //    with nothing reported — §5's *"the mistake has already been
+            //    reported"* rule firing on a mistake nobody made. Four
+            //    subjects do it: a tuple (even `let t: (Int, Int)`, which is
+            //    what rules the old element-inference story out), a `Map`, a
+            //    bare `String` (`text.chars()` is the iterator, not the
+            //    string), and a type parameter — including one under
+            //    `where T: Iterate[Int]`, because the bound is not an
+            //    implementation the index can look in.
+            // 2. The closure argument of a chain method, `docs.iterate()
+            //    .map(each.title)`. The chain's own iterator type is one
+            //    `science-resolve`'s `UNWRITTEN` list excuses, so the closure
+            //    has no parameter type to be given, and it is the closure's
+            //    *parameter* that is refused — `map(d giving 1)`, which never
+            //    reads `d`, is refused too. `examples/00_kitchen_sink.science`
+            //    fails here, on `headlines`.
             TyKind::Error => Err(Unlowered::new(
                 "a value whose type the front end left as `TyKind::Error` with no diagnostic \
-                 beside it — for a tuple this is `science-types`' `ExprKind::Tuple` arm reading \
-                 each element's type before inference has defaulted it, so `(1, 2)` is a tuple of \
-                 two holes and `(1i64, 2i64)` is not",
+                 beside it. Two programs are known to reach this. A `for` whose subject has no \
+                 `Iterate` this compiler can name — a tuple, a `Map`, a bare `String` \
+                 (`text.chars()` is the iterator), or a type parameter, even under a \
+                 `where T: Iterate` bound — binds its loop variable at `TyKind::Error`, because \
+                 `science-types`' `for_expr` has nothing to read the element type off. And a \
+                 closure written as an argument to a chain method, `xs.iterate().map(…)`, has no \
+                 parameter type, because the chain's own iterator type is one the prelude does \
+                 not write down",
             )),
             // **A parameter bound by the aggregate this field belongs to.**
             // `Pair[A, B]`'s field list is written in `A` and `B`, and
@@ -7169,7 +7244,11 @@ impl<'a> Lowerer<'a> {
         if let TyKind::Borrowed { mutable, .. } = *self.types.kind(operand_ty) {
             let written = if mutable { "mutable borrowed" } else { "borrowed" };
             return Err(Unlowered::new(format!(
-                "`{}` applied to a `{written} {}`: an operator reads its operands and this one \n                 is a reference. `science-types` inserts the dereferencing coercion at an \n                 operand when the referent implements `Copy`, so this one's does not — a \n                 bound on a type parameter is the case that cannot be seen — and the operand \n                 reaches this crate as a pointer",
+                "`{}` applied to a `{written} {}`: an operator reads its operands and this one \
+                 is a reference. `science-types` inserts the dereferencing coercion at an \
+                 operand when the referent implements `Copy`, so this one's does not — a \
+                 bound on a type parameter is the case that cannot be seen — and the operand \
+                 reaches this crate as a pointer",
                 op.as_str(),
                 self.render_referent(operand_ty)
             )));
@@ -9985,7 +10064,9 @@ impl<'a> Lowerer<'a> {
         let dest_ty = destination.ty(body);
         let TyKind::Nullable(payload_ty) = *self.types.kind(self.referent(dest_ty)) else {
             return Err(Unlowered::new(format!(
-                "a call to `{symbol}` whose destination is `{}` rather than a `T?`: §5.3's                  convention builds an option out of a `bool` and an out-parameter, and there is                  nothing else for it to build",
+                "a call to `{symbol}` whose destination is `{}` rather than a `T?`: §5.3's \
+                 convention builds an option out of a `bool` and an out-parameter, and there is \
+                 nothing else for it to build",
                 self.types.render(self.defs, dest_ty)
             )));
         };
@@ -10764,10 +10845,13 @@ impl BodyCtx {
 fn describe_refusal(refusal: &science_codegen::abi::AbiRefusal, function: &str) -> String {
     match refusal {
         science_codegen::abi::AbiRefusal::AggregateByValue { position } => format!(
-            "a call to `{function}`, whose {position} is a by-value aggregate: F0 implements no              argument classifier, and System V, AAPCS64 and Windows x64 classify aggregates by              three different rules, so guessing links cleanly and corrupts the stack at run time"
+            "a call to `{function}`, whose {position} is a by-value aggregate: F0 implements no \
+             argument classifier, and System V, AAPCS64 and Windows x64 classify aggregates by \
+             three different rules, so guessing links cleanly and corrupts the stack at run time"
         ),
         science_codegen::abi::AbiRefusal::HalfPrecision => format!(
-            "a call to `{function}`, which passes `F16` or `BF16` by value across the              `extern \"C\"` boundary"
+            "a call to `{function}`, which passes `F16` or `BF16` by value across the \
+             `extern \"C\"` boundary"
         ),
     }
 }
@@ -10775,24 +10859,50 @@ fn describe_refusal(refusal: &science_codegen::abi::AbiRefusal, function: &str) 
 /// What a [`mir::Unresolved`] callee is, named the way a user would recognise
 /// it.
 ///
-/// **The `for` loop row is the boundary this crate reports and does not own.**
-/// `science-mir`'s own note on `Unresolved::IterateNext` says `thir::ExprKind::For`
-/// *"has no field for a callee"*, so every range- and collection-driven `for`
-/// in the language arrives here with a hole where its `next` should be. That is
-/// §10's stage 3 program — `for i in 0..10:` — and it cannot be lowered by
-/// anything this crate does.
+/// **The `for` loop row is the boundary this crate reports and does not own,
+/// and it is now a narrow one.** It used to be every `for` in the language:
+/// `thir::ExprKind::For` had no field for a callee, so `for i in 0..10:` —
+/// §10's stage 3 program — arrived with a hole where its `next` should be.
+/// The prelude declares `Iterate` now, `check`'s `iterate_item` resolves it,
+/// and `thir::ExprKind::For` carries the answer, so a range, an `Array`,
+/// `String.chars()` and a user's own `implements Iterate:` all lower to a real
+/// call. What still arrives is the subject `iterate_item` cannot answer for,
+/// which [`Lowerer::cg_ty`]'s `TyKind::Error` arm enumerates.
 fn describe_unresolved(unresolved: mir::Unresolved) -> &'static str {
     match unresolved {
+        // **The lookup found *nothing*, and the old sentence said the
+        // opposite.** It read *"Decision 11's method lookup does not put what
+        // it found in the tree"*, which sends a reader to look for a `DefId`
+        // that got dropped on the way down. There is none: `science-mir`'s
+        // `lower_method_call` reaches `Unresolved::Method` exactly when THIR's
+        // `MethodCall::method` is `None`, and this crate's own `lib.rs`
+        // finding 24 already establishes that a lookup which *does* find
+        // something puts it in the tree. Two programs arrive, both checking
+        // clean: `xs.iterate()`, whose name `science-resolve`'s `UNWRITTEN`
+        // list excuses so that `SC0532` stays silent (`xs.no_such_method()`
+        // on the same receiver *is* reported), and any method at all on a
+        // **tuple** receiver, for which `Methods::receiver` finds no head to
+        // look in and so returns `None` before a name is ever considered.
         mir::Unresolved::Method => {
-            "a method call the front end could not resolve: Decision 11's method lookup does not              put what it found in the tree"
+            "a method call the front end resolved to no method at all. Either the receiver is a \
+             prelude type and the name is one `science-resolve`'s `UNWRITTEN` list excuses — \
+             `xs.iterate()` and the rest of §5.4's chain vocabulary, which is why no `SC0532` \
+             was reported for it — or the receiver is a tuple, whose head `Methods::receiver` \
+             cannot speak for, so every method name on a tuple is accepted by the checker and \
+             arrives here with nothing behind it"
         }
         mir::Unresolved::IterateNext => {
-            "a `for` whose subject has no `Iterate` implementation this compiler can name — a              `Map`, a type parameter, a tuple. A subject that has one resolves: `thir::ExprKind::For`              carries the `next` the checker found, and `for c in text.chars():` and a user's own              `implements Iterate:` both lower to a real call. A range never reaches here at all"
+            "a `for` whose subject has no `Iterate` implementation this compiler can name — a \
+             `Map`, a type parameter, a tuple. A subject that has one resolves: \
+             `thir::ExprKind::For` carries the `next` the checker found, and \
+             `for c in text.chars():` and a user's own `implements Iterate:` both lower to a \
+             real call. A range never reaches here at all"
         }
         // The typed spelling is at the call site, which has the argument this
         // one does not. This is what is left when the operand names no place.
         mir::Unresolved::Display => {
-            "an `f\"…\"` hole whose type neither `science-rt`'s `science_string_push_*` entry points nor a `Display.display` of its own can render"
+            "an `f\"…\"` hole whose type neither `science-rt`'s `science_string_push_*` entry \
+             points nor a `Display.display` of its own can render"
         }
     }
 }
@@ -10802,9 +10912,11 @@ fn describe_binary(op: BinaryOp) -> String {
     match op {
         BinaryOp::Pow => "`**`, which needs `llvm.pow` and Decision 37's intrinsic whitelist"
             .to_string(),
-        BinaryOp::MatMul => "`@`, the matrix product, which is a whole-array operation and                              Decision 5 makes one a runtime call that does not exist"
+        BinaryOp::MatMul => "`@`, the matrix product, which is a whole-array operation and \
+                             Decision 5 makes one a runtime call that does not exist"
             .to_string(),
-        BinaryOp::And | BinaryOp::Or => "`and` or `or` as a value: MIR turns both into blocks                                          and edges, so one reaching here is a MIR that did not"
+        BinaryOp::And | BinaryOp::Or => "`and` or `or` as a value: MIR turns both into blocks \
+                                         and edges, so one reaching here is a MIR that did not"
             .to_string(),
         other => format!("`{}` on this type", other.as_str()),
     }
