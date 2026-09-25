@@ -63,9 +63,10 @@ no son programas, cada uno por su propia razón y las dos buenas:
   para conformarlo convertiría un ejemplo de sintaxis en un fixture y taparía
   justo el diagnóstico que este corpus mide.
 
-El que falta es **`00_kitchen_sink`**, y desde `1c3db63` es el único.
+**No falta ninguno.** `00_kitchen_sink` cerró en `7914ce0` y con él la Puerta A.
 
-Suite: **2331 en verde**, medida en serie.
+Suite: **2343 en verde**, medida en serie (`--test-threads=1`; ver la regla sobre
+el reloj de pared más abajo).
 
 > **Un pin presente no prueba nada por sí solo.** Arreglar `Drop::drop` de
 > usuario agregó **11 líneas en tres `.stdout`** (`06_traits` +1,
@@ -171,14 +172,43 @@ El documento se conserva porque dos de las tres cosas que se aprendieron ahí so
 - **No commitees en `master` mientras un agente trabaja en el mismo checkout.**
   Mover `HEAD` le borró ediciones sin commitear a un agente en esta sesión. Lo
   detectó y las reaplicó, pero pudo perderse trabajo en silencio.
-- **Verificá a los agentes corriendo su código.** Esta sesión: uno metió un
-  espacio suelto en un archivo ajeno, otro eligió un arreglo peor que el que
-  prescribía la nota que citaba, y varios reportaron "terminado" mientras
-  esperaban tests. Las citas que dieron, en cambio, resultaron **exactas** las
-  cuatro veces que las verifiqué.
+- **Verificá a los agentes corriendo su código.** Las citas que dan resultan
+  exactas casi siempre; las *conclusiones* no. Verificando cambió el resultado
+  cuatro veces en una sola sesión: una fuga de `Map` era un tercio de lo
+  reportado, un "cuelgue" no existía, una regresión atribuida a un cambio era un
+  staticlib viejo, y tres tandas de fallos eran artefactos de máquina.
 - **Repartí por *feature*, no por ejemplo, y por *crate*, no por tarea.** `00`
   no es una tarea. Y varias features convergen en `science-codegen-llvm`: dos
-  agentes editando ese archivo se pisan.
+  agentes editando ese archivo se pisan. La convención que ese archivo ya sigue
+  y conviene mantener: agregá un campo y un builder, no cambies una firma.
+- **Medí en serie.** `harness::RUN_BUDGET` son diez segundos de **reloj de
+  pared**, y macOS serializa a nivel de máquina el primer arranque de cada
+  binario recién enlazado y sin firmar. Un mismo árbol dio *33 pasan / 17 fallan
+  en 37,8 s* bajo carga y *50 / 0 en 11,6 s* solo. Si ves
+  `[harness] killed after not exiting within 10s`, es la cola, no tu cambio.
+- **Mirá el disco antes de creerle a un fallo.** 76 worktrees a ~2 GB de
+  `target` cada uno llenaron un volumen de 460 GB. Un `No space left on device`
+  se ve exactamente igual que un test roto: una corrida dio 13 fallos y otra
+  115, y el conteo de "no space" coincidía 1 a 1 en las dos.
+- **Para medir una fuga, mantené constante el conjunto vivo.** Insertá la misma
+  clave muchas veces, o asigná y soltá en un bucle. Un informe reportó 130 MB de
+  fuga que eran 300 000 claves distintas reteniéndose legítimamente, y yo caí en
+  lo mismo antes de darme cuenta.
+- **Una prueba también envejece, y miente más caro que un comentario.** Tres
+  `.stdout` estaban bendecidos contra un defecto real: `19_stdlib.science:249`
+  imprime `"record dropped"` dentro de un `Drop` y su pin tenía cero
+  ocurrencias. Y el harness de tests construía un programa **distinto** del que
+  construye el driver — se saltaba los dos pasos de revelado de
+  `check_and_lower`—, así que un alias `extern` andaba desde la línea de
+  comandos y la suite lo rechazaba.
+- **Un número corregido al lado de una razón vieja es la mitad más cara.** Un
+  barrido arregló el conteo de una fila de `DREAM.md` y dejó intacta la
+  explicación, que nombraba dos cosas que ya funcionaban. Un número equivocado
+  se le nota a cualquiera que corra el corpus; una razón equivocada manda al
+  próximo lector al crate equivocado y nada de lo que corra lo contradice.
+- **Los agentes mueren sin commitear.** Rescatá antes de evaluar: dos cayeron con
+  2092 y 245 líneas sueltas, y uno que nunca obtuvo worktree dejó 529 líneas en
+  el checkout principal que un merge habría pisado. Lo frenó git, no el proceso.
 
 ## Lo que resultó no estar roto
 
@@ -214,10 +244,34 @@ for f in "$PWD"/examples/*.science; do
 done
 ```
 
-Esperá `FAIL` en exactamente `00_kitchen_sink`, `17_modules` y `20_extern` — los
-tres que están en `UNMEASURED`, y nada más. Si aparece un cuarto, el corpus
-también te lo va a decir: `cargo test -p sciencec --features llvm --test
-corpus_output` lo nombra en vez de saltearlo.
+Esperá `FAIL` en exactamente `17_modules` y `20_extern` — los dos que están en
+`UNMEASURED`, y nada más. Si aparece un tercero, el corpus también te lo va a
+decir: `cargo test -p sciencec --features llvm --test corpus_output` lo nombra
+en vez de saltearlo, y falla igual si un archivo *listado* empieza a construir.
 
-Después agarrá **`00`**, que es el único que queda. No es una tarea: repartilo
-por *feature* y por *crate*, no por ejemplo.
+## Y después, qué
+
+La Puerta A está cerrada: el backend de F0 construye los veinte programas que el
+proyecto se propuso. Lo que sigue son las dos compuertas que §10 todavía tiene
+abiertas, y las dos están **medidas**, no supuestas.
+
+**Compuerta C1, etapa 4.** El programa que la nota describe se detiene en
+`resolve`, en dos nombres y nada más: `Set` y `BufferedWriter`. Sacale esos dos
+y se traba en `text.lines()`; sacá eso y **corre**. `Map`, `Array`, `Box`, los
+boxes de interfaz, los drops, los genéricos, el mangler y los descriptores ya
+funcionan, verificados corriendo programas. La mitad de reproducibilidad de la
+compuerta ya pasa: dos compilaciones del mismo fuente desde directorios
+distintos dan un ejecutable byte por byte idéntico.
+
+**Compuerta C2, etapa 5.** Falta una sola cosa para la mitad numérica, y es
+`&Array[T]` → `ffi.Span[T]`: hoy no hay forma de construir un `Span` desde
+código Science. Las cláusulas de biblioteca (`via pkg-config`, `kind static`,
+`when available`) ya llegan al linker. La máquina no tiene OpenBLAS ni
+`pkg-config`, pero macOS resuelve `-lblas` por Accelerate, así que `cblas_ddot`
+—el programa de la compuerta— es alcanzable acá salvo por esa coerción.
+
+Lo demás que quedó abierto está nombrado donde vive, no acá: una cadena guardada
+en variable y un eslabón después de `sorted(by:)` se rechazan diciendo por qué;
+las AMENDMENT 13 y 15 de `collections-and-chains.md` no están; `Ord` sigue sin
+un `Ordering` que ninguna nota especifica; y `a is a` da `SC0334`, que es una
+limitación preexistente de `science-regions` que `is` volvió alcanzable.
