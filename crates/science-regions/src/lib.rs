@@ -411,12 +411,25 @@
 //!
 //!     - `lower` §5: *"calling a copy a move … costs at worst a drop flag on a
 //!       local that does not need dropping"*. Against rule 3 it costs a **false
-//!       positive on a correct program**, because whether a user record is
-//!       `Copy` is Decision 11's lookup and there is none.
+//!       positive on a correct program**.
 //!       `examples/21_compiler_shapes.science`'s `DefTable.alloc` is the
 //!       program: it builds a `Def` out of a `DefId` and returns that same
 //!       `DefId`, and a checker that trusted the operand would refuse the file
 //!       the whole engine is accepted against.
+//!
+//!       **The stated cause — *"whether a user record is `Copy` is Decision
+//!       11's lookup and there is none"* — was wrong, and the correction is
+//!       worth more than the entry.** There is one: `science-types`'
+//!       `assign.rs` §7 has needed the `Copy` interface's id since it was
+//!       written, and `Coercions::of` finds it. `science-mir`'s `lower` §5.1
+//!       now reads it too, so a type that *declares* `Copy` and owns nothing is
+//!       a copy in MIR and never reaches rule 3 or rule 4 as a move. **This
+//!       crate's rules did not change**; the operand it was handed did. The
+//!       program that found it was `a is a` on a `Copy` record, refused by
+//!       [`check`] for a move the language says does not happen — and the
+//!       general lesson is the one §8 keeps re-learning: *"a hole that three
+//!       notes have written down is still worth re-measuring, because the
+//!       lookup may have been built for somebody else."*
 //!     - `moves` §3: *"the imprecision leaks toward the leak"*, because a
 //!       partially moved local is `Maybe`, is not dropped, and the rest leaks.
 //!       Against rule 3 it leaks toward a false positive instead —

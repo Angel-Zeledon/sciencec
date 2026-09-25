@@ -10621,14 +10621,36 @@ impl<'a> Lowerer<'a> {
                             }
                             slot
                         }
+                        // **A copy gets a slot of its own, which is what a copy
+                        // is.** This was a refusal, and the refusal's own
+                        // sentence contained the answer: Decision 22 wants *"a
+                        // pointer to the caller's own slot"* the callee may
+                        // write through, and the objection to passing
+                        // `&_1` for `copy _1` is that `_1` has another owner.
+                        // Inventing a slot and loading the value into it
+                        // removes the objection instead of arguing with it —
+                        // the callee writes through bytes nothing else reads,
+                        // and the original stays where the copy said it would.
+                        //
+                        // This is the [`mir::Operand::Const`] arm above, one
+                        // step later: *"a constant has no owner to alias …
+                        // give it one"*. A copy has an owner and the point is
+                        // not to share it.
+                        //
+                        // **What reaches this arm.** `science-mir`'s `lower`
+                        // §5.1: an aggregate operand is a copy exactly where
+                        // the type declares `Copy` and owns nothing, which is
+                        // §6.1 rule 2's own exception. So the bytes duplicated
+                        // here are a bag of scalars, the duplicate needs no
+                        // drop, and there is no second free to arrange.
+                        // `a is a` on a `Copy` record is the program that got
+                        // here first.
                         mir::Operand::Copy(_) => {
-                            return Err(Unlowered::new(format!(
-                                "an aggregate argument to `{}` that is not a move: Decision 22 \
-                                 passes a pointer to the caller's own slot and the callee may \
-                                 write through it, so a copy would hand it a slot something else \
-                                 still owns",
-                                sig.symbol
-                            )));
+                            let slot = self.temp(ctx, param.layout.clone());
+                            let value =
+                                self.lower_operand(ctx, arg, Some(&param.layout), insts)?;
+                            insts.push(ExtInst::Above(Inst::Store { local: slot, value }));
+                            slot
                         }
                     };
                     let address = ctx.value();

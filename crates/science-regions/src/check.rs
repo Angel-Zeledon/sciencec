@@ -57,6 +57,27 @@
 //! message then has two spans and says less, which is the honest outcome and
 //! not a bug to paper over.
 //!
+//! ## 3.1 When the three spans are one span
+//!
+//! Decision 9's narrative assumes the three are different places in the file.
+//! `a is a` is the program where they are not: one expression borrows `a` for
+//! the receiver and uses it again as an argument, so *born*, *kept alive* and
+//! *conflicting* are the same six characters. [`one_expression`] is what is
+//! reported there, and its doc comment is the argument — including why the
+//! refusal itself is correct, in both of the two shapes that reach it, and is
+//! left standing.
+//!
+//! **What made this worth separating is that the over-refusal it used to be
+//! mixed up with is gone.** Until `science-mir`'s `lower` §5.1, *every* record
+//! argument was a `Move` whatever the type declared, so `a is a` on a `Copy`
+//! record was refused too — and that one was a false positive against §6.1 rule
+//! 2's *"unless the type is `Copy`"*. That is fixed where it was caused, one
+//! crate up. What is left under this branch is the genuine article, twice over:
+//! a type that is not `Copy` passed by value to a method of itself (`SC0334`),
+//! and a `mutable self` method handed its own receiver (`SC0330`) — which is
+//! refused *whatever* the type declares, because rule 4's strict half is about
+//! the borrow and not about the copy.
+//!
 //! # 4. Rule 5, and the borrow it is not checked for
 //!
 //! Rule 5 — *"no borrow outlives its referent"* — is checked against
@@ -327,6 +348,20 @@ fn narrative(
     };
     let held = if exclusive { "exclusively" } else { "shared" };
 
+    // §3.1. One written expression that both borrows the place and uses it.
+    // Decision 9's narrative has nothing to narrate about it, so it says
+    // something else.
+    //
+    // A `Borrow` access is excluded deliberately: `pair(&mut d, &mut d)` is two
+    // loans and two spans of its own, so the narrative still has three things
+    // to point at and keeps them.
+    if matches!(access.kind, AccessKind::Move | AccessKind::Read)
+        && data.span == access.span
+        && access.place.local == data.place.local
+    {
+        return one_expression(code, name, access, held, moved);
+    }
+
     let mut diagnostic = Diagnostic::error(code, headline)
         .with_label(Label::secondary(data.span, format!("{name} is borrowed here, {held}")))
         .with_label(Label::primary(access.span, format!("...and {}", access.kind.described())));
@@ -347,6 +382,128 @@ fn narrative(
             "the borrow ends at its last use, so moving the last use above the conflicting \
              line is enough; binding what is needed before it is the other fix",
         )
+}
+
+/// §3.1. `SC0334` where the borrow and the move are the **same expression**.
+///
+/// # The shape
+///
+/// `a is a`, and every call underneath it: `a.eq(a)`, `a.same(a)`, `a + a`. One
+/// place appears twice in one call — once as the receiver, once as an argument
+/// — and §6.1 hits it from two sides at once. A method's bare `self` is a
+/// *shared borrow* (`science-parser`'s [`SelfKind::Shared`]: `self: Self` is the
+/// by-value spelling and almost nobody writes it), so the receiver takes a loan
+/// of `a`; the argument then either moves the place or reads it; and rule 4 says
+/// what may coexist with the loan. **The refusal is right in both shapes below**,
+/// and it is right for a reason the author can do something about.
+///
+/// [`SelfKind::Shared`]: science_resolve::hir::SelfKind::Shared
+///
+/// # Why the general narrative cannot say it
+///
+/// §3's three spans are *where the borrow was born*, *what keeps it alive* and
+/// *where the conflict is*. Here all three are one span, because one expression
+/// is all three. The message that came out said
+///
+/// ```text
+/// 12 |     print(a is a)
+///    |           ------ `a` is borrowed here, shared
+///    |           ^^^^^^ ...and moved here
+/// ```
+///
+/// — two labels under the same six characters, saying that `a is a` is where
+/// something happened — and then advised *"moving the last use above the
+/// conflicting line is enough"*, which is not a thing that can be done to an
+/// expression with no earlier line in it. Both halves are §7.1's own complaint
+/// about pointing at a line the author cannot act on, reached from the other
+/// direction: the span is one the author did write, and it is the *only* one, so
+/// the narrative form carries no information.
+///
+/// # Two shapes reach it, and they are two different mistakes
+///
+/// 1. **A shared receiver and a moved argument** — `a is a` on a type that is
+///    not `Copy`. `SC0334`. Rule 2 moved the argument because the type did not
+///    claim the exemption, and rule 4 refuses the overlap with the receiver's
+///    loan.
+/// 2. **An exclusive receiver and a *read* argument** — `c.absorb(c)` where
+///    `absorb` is `mutable self` and `Counter` **is** `Copy`. `SC0330`. There is
+///    no move here at all: the argument is a copy, and rule 4's strict half
+///    (*"an exclusive borrow admits no other access"*) is what refuses it. The
+///    author is asking a method to write `c` while reading `c`, and no `Copy`
+///    declaration makes that legal.
+///
+/// The second used to be reported as `SC0334` *"moved while still borrowed"*,
+/// which named a move the program does not contain — a consequence of every
+/// record operand being a `Move` before `science-mir`'s `lower` §5.1. The code
+/// changing from `334` to `330` is that sentence becoming true, and the program
+/// is refused on both sides of the change.
+///
+/// # Why each note is true without a type table
+///
+/// [`crate::check::check_body`] takes no [`science_types::ty::Types`] on
+/// purpose — [`crate::moved`]'s §2 is that decision — so this cannot ask
+/// whether the receiver's type *could* be `Copy`, nor name it. Every sentence
+/// below is therefore about the call's shape rather than about the type, and
+/// shape 1's three fixes are offered as three rather than ranked, because which
+/// one applies is exactly the question the missing table would answer.
+///
+/// The `Copy` fix is first because it is the one that changed: an argument of a
+/// type that declares `Copy` and owns nothing is a *copy* in MIR now, so
+/// `a is a` on a `Copy` record does not reach this function at all. What
+/// reaches shape 1 is a type that is not `Copy` — and for that type the refusal
+/// is rule 2 working, not a limitation.
+fn one_expression(
+    code: science_diagnostics::Code,
+    name: String,
+    access: &Access,
+    held: &str,
+    moved: bool,
+) -> Diagnostic {
+    let headline = if moved {
+        format!("this expression borrows {name} and moves it at the same time")
+    } else {
+        format!("this expression borrows {name} exclusively and reads it at the same time")
+    };
+    let label = if moved {
+        format!(
+            "{name} is borrowed here, {held}, for the receiver — and moved here into an argument"
+        )
+    } else {
+        format!(
+            "{name} is borrowed here, {held}, for the receiver — and read here as an argument"
+        )
+    };
+    let mechanism = if moved {
+        "a method's `self` is a shared borrow of the receiver (§4.4), and an argument declared \
+         by value is moved (§6.1 rule 2) — so a call that names the same place as its receiver \
+         and as a by-value argument borrows it and consumes it at once, which is rule 4"
+    } else {
+        "a `mutable self` receiver is an exclusive borrow (§4.4), and rule 4 lets an exclusive \
+         borrow coexist with no other access at all — so a call that names the same place as \
+         its `mutable self` receiver and as an argument reads what it is in the middle of \
+         writing, whether or not the type is `Copy`"
+    };
+    let fixes = if moved {
+        "three fixes: `Type implements Copy` if the type owns nothing, which makes the argument \
+         a copy and not a move; or declare the parameter `borrowed T`, which the caller still \
+         writes without `borrowed` (§6.3); or pass a second value"
+    } else {
+        "bind the argument to a second name before the call, so that the value the method reads \
+         is not the one it is writing; a `Copy` type makes that binding a copy and costs nothing"
+    };
+
+    Diagnostic::error(code, headline)
+        // **One label, not two.** They would carry the same span — that is the
+        // condition this function is reached under — and two rules under the
+        // same characters is the shape §7.1 objects to, not a second piece of
+        // information.
+        .with_label(Label::primary(access.span, label))
+        .with_note(mechanism)
+        .with_note(
+            "there is no earlier line to move a use to: the borrow and the conflicting use are \
+             one expression",
+        )
+        .with_note(fixes)
 }
 
 fn verb(access: &Access) -> &'static str {

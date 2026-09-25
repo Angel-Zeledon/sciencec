@@ -276,3 +276,206 @@ def go():
         "the load-bearing third span is missing: {rendered}"
     );
 }
+
+// --- §3.1: a call whose receiver and argument are the same place ------------
+
+const COPY_EQ: &str = "\
+type P:
+    x: Int
+
+P implements Eq:
+    def eq(self, other: P) -> Bool:
+        self.x is other.x
+
+P implements Copy
+";
+
+const OWNING_EQ: &str = "\
+type Note:
+    text: String
+
+Note implements Eq:
+    def eq(self, other: Note) -> Bool:
+        self.text is other.text
+";
+
+/// **`a is a` on a `Copy` record is not a borrow error, and it used to be.**
+///
+/// §6.1 rule 2 is *"assigning, passing, or returning moves ownership, **unless
+/// the type is `Copy`**"*, and `eq`'s `other` is a passing. The refusal came
+/// from `science-mir`'s `lower` §5 making every record operand a `Move`
+/// whatever it declared — so this was the rule-4 check being handed a move that
+/// rule 2 says is a copy, and the fix is §5.1 one crate up rather than a
+/// relaxation here. **Nothing in this file's rules changed to make it pass.**
+#[test]
+fn a_call_on_a_copy_record_may_name_the_same_place_twice() {
+    let source = format!(
+        "{COPY_EQ}
+def go() -> Bool:
+    let a be P(x: 1)
+    a is a
+"
+    );
+    assert_eq!(only(&source), Vec::<u16>::new());
+}
+
+/// The hand-written call underneath it, which is what `is` lowers to. It gave
+/// the byte-identical diagnostic before and it is clean for the same reason
+/// now: the operator is not a special case of anything.
+#[test]
+fn the_same_holds_for_the_method_call_the_operator_lowers_to() {
+    let source = format!(
+        "{COPY_EQ}
+def go() -> Bool:
+    let a be P(x: 1)
+    a.eq(a)
+"
+    );
+    assert_eq!(only(&source), Vec::<u16>::new());
+}
+
+/// **And the refusal survives where rule 2 says it should.** `Note` owns a
+/// `String`, so it is not `Copy`; `other: Note` therefore moves, `self` holds a
+/// shared borrow of the same local, and rule 4 forbids the overlap. This is not
+/// the case above with the `Copy` line missing by accident — it is the case the
+/// language rejects on purpose, and a checker that accepted it would be
+/// accepting a value consumed while it is borrowed.
+#[test]
+fn a_call_on_a_type_that_owns_something_still_may_not() {
+    let source = format!(
+        "{OWNING_EQ}
+def go() -> Bool:
+    let a be Note(text: \"hi\")
+    a is a
+"
+    );
+    assert_eq!(only(&source), vec![334]);
+}
+
+/// `check`'s §3.1. Decision 9's three spans are one span here, so the message
+/// says something other than a narrative — and, in particular, does not advise
+/// moving a use above a line that does not exist.
+#[test]
+fn the_message_for_one_expression_does_not_narrate_three_spans() {
+    let source = format!(
+        "{OWNING_EQ}
+def go() -> Bool:
+    let a be Note(text: \"hi\")
+    a is a
+"
+    );
+    let checked = check(&source);
+    let diagnostic = checked.regions.iter().next().expect("one diagnostic");
+    assert_eq!(
+        diagnostic.labels.len(),
+        1,
+        "two labels under the same span is the thing being removed: {:?}",
+        diagnostic.labels
+    );
+    let rendered = format!("{diagnostic:?}");
+    assert!(
+        !rendered.contains("moving the last use above"),
+        "advice that cannot be followed survived: {rendered}"
+    );
+    assert!(
+        rendered.contains("borrows `a` and moves it at the same time"),
+        "the shape is not named: {rendered}"
+    );
+    assert!(
+        rendered.contains("implements Copy"),
+        "the first of the three fixes is missing: {rendered}"
+    );
+}
+
+/// **A `mutable self` method may not be handed its own receiver, and `Copy`
+/// does not help.** `Counter` *is* `Copy`, so the argument is a copy and there
+/// is no move anywhere in the program — and it is still refused, by rule 4's
+/// strict half: *"an exclusive borrow admits no other access to the same place
+/// while it lasts"*. This is the shape that most needed the negative evidence,
+/// because making the argument a copy is exactly what could have let it
+/// through.
+///
+/// **The code moved from `SC0334` to `SC0330` and that is the point.** It used
+/// to say *"`c` is moved while it is still borrowed"* about a program with no
+/// move in it.
+#[test]
+fn an_exclusive_receiver_may_not_be_its_own_argument_even_when_copy() {
+    let source = "\
+type Counter:
+    hits: Int
+
+Counter implements Copy
+
+Counter has:
+    def absorb(mutable self, other: Counter):
+        self.hits be self.hits + other.hits
+
+def go():
+    let mutable c be Counter(hits: 1)
+    c.absorb(c)
+";
+    let checked = check(source);
+    assert_eq!(checked.reported(), vec![330], "{:?}", codes(&checked.regions));
+    let diagnostic = checked.regions.iter().next().expect("one diagnostic");
+    assert_eq!(
+        diagnostic.labels.len(),
+        1,
+        "one expression is one span: {:?}",
+        diagnostic.labels
+    );
+    let rendered = format!("{diagnostic:?}");
+    assert!(
+        rendered.contains("borrows `c` exclusively and reads it"),
+        "the shape is not named: {rendered}"
+    );
+    assert!(
+        !rendered.contains("moved"),
+        "a program with no move in it is still described as a move: {rendered}"
+    );
+}
+
+/// The same method with the receiver shared instead. Nothing is written, so
+/// nothing conflicts, and the `Copy` argument is an ordinary read.
+#[test]
+fn a_shared_receiver_may_be_its_own_argument_when_copy() {
+    let source = "\
+type Counter:
+    hits: Int
+
+Counter implements Copy
+
+Counter has:
+    def total(self, other: Counter) -> Int:
+        self.hits + other.hits
+
+def go() -> Int:
+    let c be Counter(hits: 1)
+    c.total(c)
+";
+    assert_eq!(only(source), Vec::<u16>::new());
+}
+
+/// **The ordinary three-span narrative is untouched**, which is the guard
+/// against §3.1's branch being reached by anything but its own shape: here the
+/// borrow, the move and the last use are three different lines and Decision 9
+/// still gets all three.
+#[test]
+fn a_move_and_a_borrow_on_different_lines_keep_the_narrative() {
+    let source = format!(
+        "{DOC}
+def go():
+    let doc be Doc(title: 0)
+    let shared be &doc
+    print(take(doc))
+    print(look(shared))
+"
+    );
+    let checked = check(&source);
+    assert_eq!(checked.reported(), vec![334], "{:?}", codes(&checked.regions));
+    let diagnostic = checked.regions.iter().next().expect("one diagnostic");
+    assert_eq!(diagnostic.labels.len(), 3, "§7.1 wants three spans: {:?}", diagnostic.labels);
+    assert!(
+        format!("{diagnostic:?}").contains("is moved while it is still borrowed"),
+        "the general headline was replaced: {diagnostic:?}"
+    );
+}

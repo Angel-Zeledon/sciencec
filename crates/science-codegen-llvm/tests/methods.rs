@@ -1801,3 +1801,58 @@ def main():
 ";
     assert_eq!(prints("niched-field-presence", source), "present\nabsent\n");
 }
+
+// --- a call whose receiver and argument are the same place ------------------
+
+/// **`a is a`, built, linked and run.** Four things had to be true at once for
+/// this line and none of them was:
+///
+/// 1. `science-types` §6 dispatches `is` to the user's `eq` (it did);
+/// 2. `science-mir`'s `lower` §5.1 makes `other` a *copy* and not a move,
+///    because §6.1 rule 2 exempts a `Copy` type — until it did, the receiver's
+///    shared borrow and the argument's move were `SC0334` on one expression;
+/// 3. `crate::lower`'s by-pointer argument path gives a copied aggregate a slot
+///    of its own — until it did, the same program was `SC0400`, *"an aggregate
+///    argument … that is not a move"*;
+/// 4. the two slots are genuinely different memory, which is what the second
+///    half of this test is for.
+///
+/// **`a + a` is the half that cannot pass by accident.** Decision 22 lets the
+/// callee write through the pointer it is handed. If the invented slot were
+/// `a`'s own — the thing the old refusal was protecting against — `add` would
+/// build its answer on top of its argument and the `2 5` below would come out
+/// as whatever `add` left behind. So the test prints `a` *after* the call.
+#[test]
+fn a_call_may_name_the_same_copy_value_as_receiver_and_argument() {
+    let source = "\
+type P:
+    x: Int
+    y: Int
+
+P implements Eq:
+    def eq(self, other: P) -> Bool:
+        self.x is other.x and self.y is other.y
+
+P implements Add:
+    def add(self, other: P) -> P:
+        P(x: self.x + other.x, y: self.y + other.y)
+
+P implements Copy
+
+def main():
+    let a be P(x: 2, y: 5)
+    let b be P(x: 9, y: 5)
+    print(a is a)
+    print(a is not a)
+    print(a is b)
+    let doubled be a + a
+    print(doubled.x)
+    print(doubled.y)
+    print(a.x)
+    print(a.y)
+";
+    assert_eq!(
+        prints("same-place-receiver-and-argument", source),
+        "true\nfalse\nfalse\n4\n10\n2\n5\n"
+    );
+}

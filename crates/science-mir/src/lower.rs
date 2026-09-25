@@ -88,12 +88,45 @@
 //! **That accounting is drop elaboration's and there is now a second
 //! consumer.** *"A drop flag on a local that does not need dropping"* is what
 //! calling a copy a move costs [`crate::drops`]; what it costs a **check** is a
-//! false positive, because whether a user type is `Copy` is Decision 11's
+//! false positive. `science-regions`' `moved` §3 item 4 pays part of that bill
+//! on its own side — it reports rule 3 only where the type owns something —
+//! rather than asking this rule to reverse, because reversing it *wholesale*
+//! would move the cost back onto drop elaboration, where the direction above is
+//! right.
+//!
+//! # 5.1. `T implements Copy` is asked, and this paragraph used to say it could
+//! not be
+//!
+//! §5 above used to end: *"whether a user type is `Copy` is Decision 11's
 //! lookup and this compiler has none, so every record operand arrives here as a
-//! move. `science-regions`' `moved` §3 item 4 pays that bill on its own side —
-//! it reports rule 3 only where the type owns something — rather than asking
-//! this rule to reverse, because reversing it would move the cost back onto
-//! drop elaboration, where the direction above is right.
+//! move."* **The second half of that sentence was false when it was written and
+//! the first half is now false too.** `science-types`' `assign.rs` §7 needs the
+//! same id for the borrowed-to-owned coercion and finds it with
+//! [`Coercions::of`]; [`Builder::copy_interface`] reads it from there, beside
+//! the `Box` this file was already reading out of the same call.
+//!
+//! So [`Builder::is_copy`]'s `Named` arm asks it, and §6.1 rule 2's own
+//! exception — *"assigning, passing, or returning moves ownership, **unless the
+//! type is `Copy`**"* — reaches the operand rule that is supposed to implement
+//! rule 2. [`Builder::declares_copy`] is the predicate.
+//!
+//! **The doubt still goes §5's way, and the guard is not decoration.** Nothing
+//! in this compiler checks that a `Copy` implementation is well formed: `type
+//! P: text: String` followed by `P implements Copy` is a program the resolver
+//! and the checker both accept today. Believing that declaration would copy a
+//! `String`'s three words, leave the source's drop standing and free the buffer
+//! twice — a miscompile manufactured out of a front-end gap. So
+//! [`Builder::declares_copy`] requires the type to own nothing as well as to
+//! declare `Copy`, which makes the copy and [`crate::drops`]'s elaboration agree
+//! by construction and keeps §5's asymmetry exactly where §5 wants it: wherever
+//! there is doubt.
+//!
+//! **What it cost `science-regions` was nothing and what it bought was a
+//! program.** `a is a` — `is` dispatching to a user `eq`, whose bare `self` is a
+//! *shared borrow* of the receiver while `other` was a `Move` of the same local
+//! — was refused by rule 4 on a `Copy` record. The rule was right; the operand
+//! was wrong. `tests/copy_operands.rs` measures all four corners and
+//! `science-regions`' `check` §3.1 is what is left of the message.
 //!
 //! **A second exception: the six comparison operators never move.**
 //! `ExprKind::Binary`'s arm for `Eq`, `Ne`, `Lt`, `Gt`, `Le` and `Ge` runs
@@ -826,13 +859,30 @@ struct Builder<'a, 'ctx> {
     /// method call's receiver, and this is the id that says which
     /// [`TyKind::Named`] that layer is.
     box_type: Option<DefId>,
+    /// The crate's `Copy`, found once by [`Coercions::of`] beside
+    /// [`Builder::box_type`] and for the same reason: §6.1 rule 2's exception
+    /// is a *named interface*, so the operand rule has to be able to ask
+    /// whether a type declares it. `None` for a table built by hand with no
+    /// prelude, which is the admission §5.1 is happy with — the doubt then goes
+    /// §5's way, as it did everywhere before this field existed.
+    ///
+    /// **It is `Coercions`' id and not the [`science_types::items::Prelude`]'s
+    /// because `Copy` is not one of the prelude's `WANTED` names.** `Drop` is,
+    /// and `Copy` is the interface with the same standing and no entry.
+    /// `science-types`' `assign.rs` §7 needed it first and found it this way;
+    /// this is the second reader, so the two agree on which `Copy` they mean by
+    /// sharing the lookup rather than by adding a name to a list in a third
+    /// crate.
+    copy_interface: Option<DefId>,
 }
 
 impl<'a, 'ctx> Builder<'a, 'ctx> {
     fn new(context: &'a mut Context<'ctx>, thir: &'a thir::Body) -> Builder<'a, 'ctx> {
         let span = thir.block(thir.root()).span;
         let bool_ty = context.decls.prelude().ty(context.types, "Bool").unwrap_or(Ty::ERROR);
-        let box_type = Coercions::of(context.defs).box_type();
+        let coercions = Coercions::of(context.defs);
+        let box_type = coercions.box_type();
+        let copy_interface = coercions.copy_interface();
         Builder {
             context,
             thir,
@@ -849,6 +899,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             closure_captures: None,
             captured: HashMap::new(),
             box_type,
+            copy_interface,
         }
     }
 
@@ -5300,9 +5351,46 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 prelude.is_numeric(self.context.types, ty)
                     || prelude.is_bool(self.context.types, ty)
                     || prelude.is(self.context.types, ty, "Char")
+                    // §5.1. `T implements Copy` is §6.1 rule 2's own exception,
+                    // and it is asked last because the three above are a
+                    // comparison and this is an index lookup plus a walk.
+                    || self.declares_copy(ty)
             }
             _ => false,
         }
+    }
+
+    /// §5.1. Whether the crate writes `T implements Copy:` for this type **and**
+    /// the type owns nothing.
+    ///
+    /// The second half is not redundant, and it is the whole reason this is a
+    /// function rather than a `declares` call inlined into [`Self::is_copy`].
+    /// Nothing in the compiler checks that a `Copy` implementation is
+    /// well-formed: `type P: text: String` followed by `P implements Copy` is
+    /// accepted by the resolver and the checker today. Believing that
+    /// declaration would make `f(p)` a bitwise copy of a `String`'s three
+    /// words, leave the source's drop standing, and free the buffer twice —
+    /// turning a mistake the front end has not learned to refuse into a
+    /// miscompile. [`crate::moves::needs_drop`] is the same predicate
+    /// [`crate::drops`] elaborates against, so gating on it makes the copy and
+    /// the drop agree by construction.
+    ///
+    /// **So the doubt still goes §5's way wherever it is doubt.** A type that
+    /// owns something keeps its `Move` whatever it declares; what changes is
+    /// only the case where the answer is not in doubt at all.
+    fn declares_copy(&mut self, ty: Ty) -> bool {
+        let Some(interface) = self.copy_interface else {
+            return false;
+        };
+        if !self.context.decls.methods().declares(self.context.types, ty, interface) {
+            return false;
+        }
+        !crate::moves::needs_drop(
+            self.context.decls,
+            self.context.types,
+            self.context.aliases,
+            ty,
+        )
     }
 }
 

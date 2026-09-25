@@ -78,14 +78,24 @@
 //!    every non-trivially-copyable operand a `Move` and argues the cost of
 //!    being wrong that way is *"at worst a drop flag on a local that does not
 //!    need dropping"* — **that pricing is for drop elaboration and it does not
-//!    hold here.** Whether a user type is `Copy` is Decision 11's
-//!    implementation lookup, which this compiler does not have, so
-//!    `examples/21_compiler_shapes.science`'s `DefTable.alloc` — which builds a
-//!    `Def` out of a `DefId` and then returns that same `DefId`, a record of
-//!    one `Int` — reaches this check as a use after move. Refusing it would be
-//!    charging the author for a `Copy` the language would derive. A value that
-//!    drops nothing is a bag of scalars: moving it frees nothing and dangles
-//!    nothing, so the only thing a missed report costs is the report.
+//!    hold here.** `examples/21_compiler_shapes.science`'s `DefTable.alloc` —
+//!    which builds a `Def` out of a `DefId` and then returns that same `DefId`,
+//!    a record of one `Int` — reaches this check as a use after move. Refusing
+//!    it would be charging the author for a `Copy` the language would derive. A
+//!    value that drops nothing is a bag of scalars: moving it frees nothing and
+//!    dangles nothing, so the only thing a missed report costs is the report.
+//!
+//!    **This condition used to be justified by a sentence that is no longer
+//!    true, and it survives the sentence.** The justification was *"whether a
+//!    user type is `Copy` is Decision 11's implementation lookup, which this
+//!    compiler does not have"*. It has one — `science-mir`'s `lower` §5.1 asks
+//!    it now, through the id `science-types`' `assign.rs` §7 was already
+//!    finding — so a type that *declares* `Copy` and owns nothing no longer
+//!    arrives here as a move at all. What is left for this condition is the
+//!    larger set it always really covered: a record of scalars that declares
+//!    **nothing**, which rule 2 does move and which `DefTable.alloc` is. So the
+//!    condition is unchanged, its reason is now *"a missed report costs only
+//!    the report"* alone, and the `Copy` half of it is answered upstream.
 //!
 //! # 4. A hole cannot manufacture one, and that is somebody else's decision
 //!
