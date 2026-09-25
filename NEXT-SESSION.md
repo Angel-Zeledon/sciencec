@@ -43,7 +43,7 @@ es la cola, no tu cambio.
 > 22 y un 15/20 suelto) justo porque cada uno estaba tipeado a mano al lado de
 > la frase que lo necesitaba.
 
-**19 de 20 ejemplos** compilan, enlazan, corren y tienen su salida fijada byte
+**20 de 20 ejemplos** compilan, enlazan, corren y tienen su salida fijada byte
 por byte. El denominador es 20 y no 22 programas porque dos de los 22 archivos
 no son programas, cada uno por su propia razón y las dos buenas:
 
@@ -108,22 +108,25 @@ riesgo que este documento anticipaba —declarar métodos en una interfaz del
 preludio que no los tenía rompió este corpus una vez, con `Clone.clone`— no se
 materializó.
 
-### `00_kitchen_sink` — cierres con capturas, boxes, operadores
+### ~~`00_kitchen_sink`~~ — cerrado, y con él la Puerta A
 
-Es el último por construcción. No es una tarea: es la unión de tres.
+Compila, enlaza, corre y sale 0. Su salida está fijada en
+`examples/00_kitchen_sink.stdout`, su fila salió de `UNMEASURED`, y el corpus
+es **20 de 20**. Eso es la condición 1 del "definition of done" de §11 y la
+Puerta A1 de `self-hosting.md`: el backend de F0 está terminado.
 
-Hoy corta antes que eso, en `SC0400` sobre una tupla: el arm `ExprKind::Tuple`
-de `science-types` lee el tipo de cada elemento antes de que la inferencia lo
-haya defaulteado, así que `(1, 2)` es una tupla de dos agujeros y `(1i64, 2i64)`
-no. Reproducilo en un programa mínimo antes de creerle al mensaje.
+Lo que faltaba era el vocabulario de cadenas —`iterate`, `discard`, `map`,
+`take`, `sorted(by:)`, `collect`— y está en el preludio con una bajada fusionada
+en `science-mir` (`Builder::lower_chain_collect`). **Seis de los treinta y ocho
+combinadores de §1.4 están transcriptos**, exactamente los que el ejemplo
+escribe; los otros treinta y dos siguen en silencio por la fila de
+`WHOLLY_OPEN`, que dice por qué. Lo que no baja, y lo dice al rechazarlo:
 
-Su fila está en `UNMEASURED` (`crates/sciencec/tests/corpus_output.rs`) con esa
-razón, que es lo que lo mantiene dentro del denominador en lugar de fuera de la
-medición: **el día que construya, el corpus falla en rojo** con
-`these examples are listed in UNMEASURED as not measured, and this compiler
-built them anyway`. Eso es la buena noticia, no una regresión — borrá la fila,
-bendecí la salida con `SCIENCE_BLESS=1`, renombrá
-`the_corpus_is_nineteen_of_twenty` y corregí la cifra en los tres documentos.
+- una cadena **guardada en una variable** (§2.3), porque ningún adaptador tiene
+  representación en tiempo de ejecución;
+- un eslabón **después** de `sorted(by:)` (§1.4 lo llama barrera), porque qué
+  hacer con el buffer de ítems propios es una pregunta de pertenencia que la
+  nota no contesta.
 
 ## Un bug de corrección, aparte de los ejemplos — **cerrado**
 

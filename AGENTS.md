@@ -11,7 +11,7 @@ Read §1 before writing a line. The authority is
 > **The corpus's number lives in one place.** `UNMEASURED` in
 > `crates/sciencec/tests/corpus_output.rs` names every example that is *not*
 > measured and why; `tally` beside it derives the count from that table and the
-> directory listing. **19 of 20 examples** build, link, run and have their
+> directory listing. **20 of 20 examples** build, link, run and have their
 > output pinned byte for byte — 22 files less the two that are not programs.
 > Every number quoted below is read back against that table by
 > `no_document_quotes_a_corpus_count_this_file_does_not`, so a stale one here

@@ -95,16 +95,37 @@
 //! foreclose it. What it does is a stronger, checkable statement of the same
 //! thing:
 //!
-//! > **Every loop in a body's CFG comes from a `loop` or a `for` the author
-//! > wrote. This crate synthesises no loop.**
+//! > **Every loop in a body's CFG comes from a `loop`, a `for`, or a chain
+//! > terminal the author wrote. This crate synthesises no loop of its own.**
 //!
 //! Counted as *loop headers* — the targets of back edges — and not as back
 //! edges, because a `continue` is a second edge into a header the author wrote
 //! once.
 //!
+//! **The third clause arrived with the chain vocabulary, and it is a widening
+//! of the claim rather than an escape from it.** `docs.iterate().map(f)
+//! .collect()` is one loop in the CFG and no `for` in the source, so the
+//! sentence as it stood was false the day `collect()` lowered. What it is
+//! *not* is an invented loop: the author wrote a traversal, in the spelling
+//! `collections-and-chains.md` §4.6 calls *"the shape most Science code
+//! takes"*, and [`lower`]'s `Builder::lower_chain_collect` emits exactly one
+//! header per terminal — the barrier folds its key pass into the same loop
+//! rather than adding a second.
+//!
+//! **It could not have been avoided by lowering the chain differently.** The
+//! note's own design is a struct per adapter with a `next()` each, and an
+//! eager terminal over those is still a loop in somebody's MIR; the only
+//! version with no loop here is one where the loop lives in a runtime entry
+//! point, and no entry point can call a Science closure. What Decision 5 is
+//! protecting — F1's fusion pass having array operations to schedule rather
+//! than loops to reverse-engineer — is untouched either way: a chain is not
+//! an array operation, its source may be a file, and §2.1 of that note makes
+//! fusing it the *specified* behaviour rather than an optimisation.
+//!
 //! `tests/no_invented_loops.rs` is that claim, run over every example in the
-//! corpus. [`mir::Callee::Runtime`] is where an array operation lands when
-//! there is one.
+//! corpus, and it counts the terminals the same way it counts the `for`s.
+//! [`mir::Callee::Runtime`] is where an array operation lands when there is
+//! one.
 //!
 //! **And the variant is no longer unreached.** `f"…"` lowers to §1.7's builder,
 //! which is one [`mir::Callee::Runtime`] per fragment ([`lower`]'s §10), so the

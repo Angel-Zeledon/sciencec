@@ -338,3 +338,93 @@ fn in_bounds(len: usize, index: i64) -> Option<usize> {
         None
     }
 }
+
+/// The barrier behind `chain.sorted(by: key)`.
+///
+/// Reorders `array` so that its elements are in non-decreasing order of the
+/// `Int` key at the matching index of `keys`, and reorders `keys` with them.
+/// Both arrays must have the same length; a mismatch is a compiler bug and the
+/// call does nothing rather than read past either buffer.
+///
+/// # Why the keys are computed by the caller and passed in
+///
+/// `collections-and-chains.md` §1.4 classes `sorted(by:)` as a **barrier**:
+/// it buffers the whole stream, sorts, and yields. The key is a *closure*, and
+/// this side of the boundary has no way to call one — a Science closure is a
+/// function pointer and an environment that `science-codegen-llvm` knows the
+/// layout of and this crate does not. So the fused loop
+/// (`science-mir`'s `Builder::lower_chain`) evaluates the key once per element
+/// on its way into the buffer, exactly as a Schwartzian transform does, and
+/// hands over two parallel arrays. That also gives the note's own guarantee
+/// for free: the key is computed once per element, not once per comparison.
+///
+/// # The sort is stable, and that is a published-results decision
+///
+/// §5.2 of the same note makes `Map` and `Set` iterate in insertion order
+/// *"because this is a language whose users publish"*, and an unstable sort
+/// breaks the same promise one link along: two elements with equal keys would
+/// come out in an order that depends on the algorithm's internal state. A
+/// stable sort makes `sorted(by:)` a function of the input alone.
+///
+/// # Safety
+///
+/// `array` and `keys` must be non-null, aligned pointers to live
+/// [`ScienceArray`]s; `info` must be the descriptor `array` was created with;
+/// `keys` must hold `i64` elements. Elements are moved, never dropped, and no
+/// destructor runs.
+#[no_mangle]
+pub unsafe extern "C" fn science_array_sort_by_int_key(
+    array: *mut ScienceArray,
+    info: *const ScienceTypeInfo,
+    keys: *mut ScienceArray,
+) {
+    // SAFETY: the caller guarantees two live arrays and the descriptor.
+    let (array, info, keys) = unsafe { (&mut *array, &*info, &mut *keys) };
+    if array.len != keys.len || array.len < 2 {
+        return;
+    }
+    // SAFETY: `keys` holds `array.len` initialised `i64`s, by the contract.
+    let key_at = |index: usize| -> i64 { unsafe { *(keys.ptr as *const i64).add(index) } };
+
+    // **An index permutation, not a swap sort.** The element type is opaque
+    // bytes of `info.size` and may be anything from an `i64` to a record that
+    // owns a `String`, so every move has to be a `copy_nonoverlapping` of the
+    // whole element. Sorting the *indices* and then materialising the
+    // permutation once costs `len` element-moves total instead of one per
+    // comparison, and it is the only version whose cost does not depend on
+    // how wide `T` is.
+    let mut order: Vec<usize> = (0..array.len).collect();
+    // `sort_by_key` on the key alone would be stable only because the
+    // standard library's sort is; the index tiebreak states it rather than
+    // relying on it, and costs nothing.
+    order.sort_by(|left, right| {
+        key_at(*left).cmp(&key_at(*right)).then_with(|| left.cmp(right))
+    });
+
+    let mut sorted_elements: Vec<u8> = vec![0; info.offset_of(array.len)];
+    let mut sorted_keys: Vec<i64> = Vec::with_capacity(array.len);
+    for (destination, source) in order.iter().copied().enumerate() {
+        // SAFETY: `source < len`, so the slot holds an initialised element;
+        // the scratch buffer is `len` elements wide and is a distinct
+        // allocation, so the ranges cannot overlap.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                array.slot(info, source),
+                sorted_elements.as_mut_ptr().add(info.offset_of(destination)),
+                info.size,
+            );
+        }
+        sorted_keys.push(key_at(source));
+    }
+    // SAFETY: the scratch buffer holds `len` initialised elements laid out at
+    // the same stride as the array's own, and the two allocations are
+    // distinct.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            sorted_elements.as_ptr(),
+            array.ptr,
+            info.offset_of(array.len),
+        );
+        std::ptr::copy_nonoverlapping(sorted_keys.as_ptr(), keys.ptr as *mut i64, array.len);
+    }
+}

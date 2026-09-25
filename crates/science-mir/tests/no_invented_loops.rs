@@ -10,11 +10,33 @@
 //!
 //! What *can* be tested is the stronger claim `lib`'s §4 makes instead:
 //!
-//! > **Every loop in a body's CFG comes from a `loop` or a `for` the author
-//! > wrote. This crate synthesises no loop.**
+//! > **Every loop in a body's CFG comes from a `loop`, a `for`, or a chain
+//! > terminal the author wrote. This crate synthesises no loop of its own.**
 //!
 //! It is run over the whole corpus, because the claim is about the lowering and
 //! not about any one program.
+//!
+//! # The third clause, and why it is a widening rather than an escape
+//!
+//! The claim read *"a `loop` or a `for`"* until the chain vocabulary landed,
+//! and `docs.iterate().map(f).collect()` made it false: one loop header, no
+//! `for` in the source. The reading that keeps the test honest is that the
+//! author **did** write a traversal — in the spelling
+//! `collections-and-chains.md` §4.6 calls *"the shape most Science code
+//! takes"* — and `lower`'s `Builder::lower_chain_collect` emits exactly one
+//! header per terminal, folding the barrier's key pass into the same loop
+//! rather than adding a second. So a terminal is counted the same way a `for`
+//! is, and the test keeps its teeth: a chain that acquired *two* loops, or any
+//! body that acquired one with nothing written for it, still fails.
+//!
+//! It could not have been avoided by lowering the chain another way. The
+//! note's own design is a struct per adapter with a `next()`, and an eager
+//! terminal over those is still a loop in somebody's MIR; the only version
+//! with no loop here puts it in a runtime entry point, and no entry point can
+//! call a Science closure. Decision 5's actual subject — F1 wanting array
+//! operations to schedule rather than loops to reverse-engineer — is
+//! untouched: a chain is not an array operation, and §2.1 of that note makes
+//! fusing it the specified behaviour rather than an optimisation.
 
 mod support;
 
@@ -60,13 +82,19 @@ fn back_edges(body: &Body) -> Vec<(BlockId, BlockId)> {
     out
 }
 
+/// The traversals the author wrote: a `loop`, a `for`, and a chain terminal.
+///
+/// A terminal is counted by occurrences of `.collect()` and not by lines,
+/// because a short chain fits on one — `xs.iterate().take(2).collect()` is one
+/// traversal on one line, and this corpus writes both the long form and the
+/// short one. `collect` is the only terminal the prelude declares; the day a
+/// second lands it belongs in this list, and the failure that says so is this
+/// test.
 fn loops_written(source: &str) -> usize {
-    source
-        .lines()
-        .map(str::trim_start)
-        .filter(|line| !line.starts_with('#'))
-        .filter(|line| *line == "loop:" || line.starts_with("for "))
-        .count()
+    let lines = || source.lines().map(str::trim_start).filter(|line| !line.starts_with('#'));
+    let statements = lines().filter(|line| *line == "loop:" || line.starts_with("for ")).count();
+    let terminals: usize = lines().map(|line| line.matches(".collect()").count()).sum();
+    statements + terminals
 }
 
 #[test]

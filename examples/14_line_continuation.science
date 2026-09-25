@@ -65,7 +65,13 @@ def deep(
 # §4.6: a chain is broken across lines by indenting the continuation, and a
 # line whose continuation begins with `.` continues. This is the only thing
 # besides an unclosed bracket that may be split across lines at all.
-def hosts(configs: &Array[Config]) -> Array[String]:
+#
+# `Array[&String]`, not `Array[String]`: `collections-and-chains.md` §4.3
+# gives `iterate()` an `Item` of `borrowed T`, and its copy-out rule hands a
+# place expression back by value only when the type is `Copy`. `String` is
+# not, so `.map(each.host)` is a chain of borrows and `.collect()` collects
+# them (§4.4). `examples/00_kitchen_sink.science` carries the full argument.
+def hosts(configs: &Array[Config]) -> Array[&String]:
     configs
         .iterate()
         .discard(each.verbose)
@@ -75,7 +81,7 @@ def hosts(configs: &Array[Config]) -> Array[String]:
 
 # The two kinds of continuation nest: a chain broken by `.`, one of whose
 # calls is itself broken inside its parentheses.
-def named_hosts(configs: &Array[Config]) -> Array[String]:
+def named_hosts(configs: &Array[Config]) -> Array[&String]:
     configs
         .iterate()
         .map(

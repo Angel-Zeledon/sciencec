@@ -154,8 +154,27 @@ const C_SCALARS: &[&str] = &[
 /// program *can* name (§3.1's `fill`, `align`, `sign`, …), so it needs
 /// `DefKind::Record` and its own field declaration, which [`build`]'s
 /// `format_spec` gives it the way `ffi_view` already gives `Span` its two.
-const LIBRARY_TYPES: &[&str] =
-    &["Array", "Map", "Box", "Chars", "Range", "IoError", "TextError", "Formatter"];
+const LIBRARY_TYPES: &[&str] = &[
+    "Array",
+    "Map",
+    "Box",
+    "Chars",
+    "Range",
+    "IoError",
+    "TextError",
+    "Formatter",
+    // `collections-and-chains.md` §1.4's chain, narrowed to the links
+    // `examples/00_kitchen_sink.science` writes. `ArrayIterate` is §5.4's
+    // source type by name; the other four are §1.4's adapter names —
+    // `Discard of (Self, P)`, `MapOver of (Self, F)`, `Take of Self`,
+    // `SortedBy of (Self, F)`. What each one's parameters are, and why they
+    // are not the note's, is argued at [`BLOCKS`]' chain section.
+    "ArrayIterate",
+    "Discard",
+    "MapOver",
+    "Take",
+    "SortedBy",
+];
 
 /// The interfaces the compiler knows about (§5.4).
 /// §5.4 lists seventeen, and the operator ones are load-bearing: "a scientific
@@ -380,6 +399,20 @@ enum Ty {
     Opt(&'static Ty),
     /// A pair, which is what `-> (T, Error?)` is.
     Pair(&'static Ty, &'static Ty),
+    /// `(A) -> B`: `collections-and-chains.md` §1.2's closure type, which that
+    /// note's AMENDMENT 1 decided and the parser already builds.
+    ///
+    /// **Written out rather than taken as a parameter, and that is forced.**
+    /// §1.4 spells every combinator as `map of (U, F)(self, f: F)` with a
+    /// `where F: (Self.Item) -> U` beside it, and [`Method`] has no
+    /// `where_clause` to put the bound in. Spelling the parameter `f: F`
+    /// without the bound would be worse than a deviation — it would be a
+    /// silent hole, because a closure literal checked against a bare
+    /// `TyKind::Param` reaches `BodyChecker::closure`'s *"no concrete arrow"*
+    /// arm, which binds `each` at `Ty::ERROR` and reports nothing. Writing
+    /// the arrow out is the same contract with the indirection removed, and
+    /// it is the spelling that makes `each` have a type.
+    Fn(&'static [Ty], &'static Ty),
     /// `Self`, standing for the block's own implementing type. §5.4's
     /// [`hir::TypeKind::SelfType`] one level down.
     ///
@@ -411,6 +444,15 @@ const IO_ERROR: Ty = Ty::Name("IoError");
 #[derive(Debug, Clone, Copy)]
 struct Method {
     name: &'static str,
+    /// The method's **own** generic parameters, on top of the block's.
+    ///
+    /// Empty for every declaration but the chain vocabulary's, and the reason
+    /// it had to exist is `map`: `collections-and-chains.md` §1.4 gives it
+    /// `map of (U, F)(self, f: F) -> MapOver of (Self, F)`, and `U` — the
+    /// item type *after* the link — is introduced by the method and by
+    /// nothing else. A block parameter cannot stand in for it, because one
+    /// chain value may be mapped twice at two different result types.
+    generics: &'static [&'static str],
     /// `None` is an associated function — `Array.new()` — which takes no
     /// receiver at all. `science-types`' `Form` is computed from exactly this.
     recv: Option<SelfKind>,
@@ -521,6 +563,7 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
         // defaulted method into a required one, so it is left out.
         methods: &[Method {
             name: "message",
+            generics: &[],
             recv: Some(SelfKind::Shared),
             params: &[],
             ret: Some(STRING),
@@ -532,6 +575,7 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
         assoc: &["Item"],
         methods: &[Method {
             name: "next",
+            generics: &[],
             recv: Some(SelfKind::Mutable),
             params: &[],
             ret: Some(Ty::Opt(&Ty::Assoc("Item"))),
@@ -586,6 +630,7 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
         assoc: &["Output"],
         methods: &[Method {
             name: "index",
+            generics: &[],
             recv: Some(SelfKind::Shared),
             params: &[("at", Ty::Var("Idx"))],
             ret: Some(Ty::Ref(&Ty::Assoc("Output"))),
@@ -597,6 +642,7 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
         assoc: &["Output"],
         methods: &[Method {
             name: "index_mutably",
+            generics: &[],
             recv: Some(SelfKind::Mutable),
             params: &[("at", Ty::Var("Idx"))],
             ret: Some(Ty::MutRef(&Ty::Assoc("Output"))),
@@ -664,6 +710,7 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
         assoc: &[],
         methods: &[Method {
             name: "clone",
+            generics: &[],
             recv: Some(SelfKind::Shared),
             params: &[],
             ret: Some(Ty::SelfTy),
@@ -687,6 +734,7 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
         assoc: &[],
         methods: &[Method {
             name: "display",
+            generics: &[],
             recv: Some(SelfKind::Shared),
             params: &[("into", Ty::MutRef(&Ty::Name("Formatter")))],
             ret: None,
@@ -797,6 +845,7 @@ const BLOCKS: &[Block] = &[
             // reaches into an associated call.
             Method {
                 name: "new",
+                generics: &[],
                 recv: None,
                 params: &[],
                 ret: Some(Ty::App("Array", &[Ty::Var("T")])),
@@ -804,6 +853,7 @@ const BLOCKS: &[Block] = &[
             // §3.6 verbatim.
             Method {
                 name: "push",
+                generics: &[],
                 recv: Some(SelfKind::Mutable),
                 params: &[("value", Ty::Var("T"))],
                 ret: None,
@@ -812,6 +862,7 @@ const BLOCKS: &[Block] = &[
             // `&(T?)`.
             Method {
                 name: "get",
+                generics: &[],
                 recv: Some(SelfKind::Shared),
                 params: &[("index", INT)],
                 ret: Some(Ty::Opt(&Ty::Ref(&Ty::Var("T")))),
@@ -877,6 +928,7 @@ const BLOCKS: &[Block] = &[
             // `science_array_get`'s mutable twin.
             Method {
                 name: "get_mutably",
+                generics: &[],
                 recv: Some(SelfKind::Mutable),
                 params: &[("index", INT)],
                 ret: Some(Ty::Opt(&Ty::MutRef(&Ty::Var("T")))),
@@ -915,6 +967,7 @@ const BLOCKS: &[Block] = &[
             // which is where the remaining work honestly is.
             Method {
                 name: "pop",
+                generics: &[],
                 recv: Some(SelfKind::Mutable),
                 params: &[],
                 ret: Some(Ty::Opt(&Ty::Var("T"))),
@@ -925,8 +978,21 @@ const BLOCKS: &[Block] = &[
             // integer context and Decision 2 defaults an integer literal to
             // `I64`; a `U64` length would make `length() - 1` a mixed-signedness
             // expression in the most-written loop in the language.
-            Method { name: "length", recv: Some(SelfKind::Shared), params: &[], ret: Some(INT) },
-            Method { name: "is_empty", recv: Some(SelfKind::Shared), params: &[], ret: Some(BOOL) },
+            Method { name: "length", generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(INT) },
+            Method { name: "is_empty", generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(BOOL) },
+            // `collections-and-chains.md` §5.4, transcribed: *"`Array of T`
+            // has: `def iterate(self) -> ArrayIterate of T`"*. Its two
+            // siblings, `iterate_mutably` and `iterate_consuming`, stay on
+            // [`UNWRITTEN`]: §4.1 gives all three and the corpus writes only
+            // this one, and a link with no lowering behind it is a name that
+            // type-checks and then refuses.
+            Method {
+                name: "iterate",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[],
+                ret: Some(Ty::App("ArrayIterate", &[Ty::Var("T")])),
+            },
         ],
     },
     // --- Map, §3.6 --------------------------------------------------------
@@ -942,6 +1008,7 @@ const BLOCKS: &[Block] = &[
             // compiles; a bare `Map.new()` is `SC0536` naming both `K` and `V`.
             Method {
                 name: "new",
+                generics: &[],
                 recv: None,
                 params: &[],
                 ret: Some(Ty::App("Map", &[Ty::Var("K"), Ty::Var("V")])),
@@ -953,6 +1020,7 @@ const BLOCKS: &[Block] = &[
             // in the report as the one clause of §3.6 dropped.
             Method {
                 name: "insert",
+                generics: &[],
                 recv: Some(SelfKind::Mutable),
                 params: &[("key", Ty::Var("K")), ("value", Ty::Var("V"))],
                 ret: Some(Ty::Opt(&Ty::Var("V"))),
@@ -976,6 +1044,7 @@ const BLOCKS: &[Block] = &[
             //    that a `Map[Int, _]` borrows a number to look it up.
             Method {
                 name: "get",
+                generics: &[],
                 recv: Some(SelfKind::Shared),
                 params: &[("key", Ty::Ref(&Ty::Var("K")))],
                 ret: Some(Ty::Opt(&Ty::Ref(&Ty::Var("V")))),
@@ -985,6 +1054,7 @@ const BLOCKS: &[Block] = &[
             // well, the one that compiles wins"*.
             Method {
                 name: "contains",
+                generics: &[],
                 recv: Some(SelfKind::Shared),
                 params: &[("key", Ty::Ref(&Ty::Var("K")))],
                 ret: Some(BOOL),
@@ -994,12 +1064,13 @@ const BLOCKS: &[Block] = &[
             // it"* two lookups.
             Method {
                 name: "remove",
+                generics: &[],
                 recv: Some(SelfKind::Mutable),
                 params: &[("key", Ty::Ref(&Ty::Var("K")))],
                 ret: Some(Ty::Opt(&Ty::Var("V"))),
             },
-            Method { name: "length", recv: Some(SelfKind::Shared), params: &[], ret: Some(INT) },
-            Method { name: "is_empty", recv: Some(SelfKind::Shared), params: &[], ret: Some(BOOL) },
+            Method { name: "length", generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(INT) },
+            Method { name: "is_empty", generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(BOOL) },
         ],
     },
     // --- Box --------------------------------------------------------------
@@ -1038,6 +1109,7 @@ const BLOCKS: &[Block] = &[
         assoc: &[],
         methods: &[Method {
             name: "new",
+            generics: &[],
             recv: None,
             params: &[("value", Ty::Var("T"))],
             ret: Some(Ty::App("Box", &[Ty::Var("T")])),
@@ -1070,13 +1142,14 @@ const BLOCKS: &[Block] = &[
         interface: None,
         assoc: &[],
         methods: &[
-            Method { name: "new", recv: None, params: &[], ret: Some(STRING) },
+            Method { name: "new", generics: &[], recv: None, params: &[], ret: Some(STRING) },
             // §6.5: **bytes**, and the note states the cost — `"héllo".length()`
             // is 6 — as documentation debt with no compiler mitigation.
-            Method { name: "length", recv: Some(SelfKind::Shared), params: &[], ret: Some(INT) },
-            Method { name: "is_empty", recv: Some(SelfKind::Shared), params: &[], ret: Some(BOOL) },
+            Method { name: "length", generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(INT) },
+            Method { name: "is_empty", generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(BOOL) },
             Method {
                 name: "push_str",
+                generics: &[],
                 recv: Some(SelfKind::Mutable),
                 params: &[("tail", Ty::Ref(&STRING))],
                 ret: None,
@@ -1094,30 +1167,35 @@ const BLOCKS: &[Block] = &[
             // name is the whole of what was missing.
             Method {
                 name: "truncate",
+                generics: &[],
                 recv: Some(SelfKind::Mutable),
                 params: &[("bytes", INT)],
                 ret: None,
             },
             Method {
                 name: "starts_with",
+                generics: &[],
                 recv: Some(SelfKind::Shared),
                 params: &[("prefix", Ty::Ref(&STRING))],
                 ret: Some(BOOL),
             },
             Method {
                 name: "ends_with",
+                generics: &[],
                 recv: Some(SelfKind::Shared),
                 params: &[("suffix", Ty::Ref(&STRING))],
                 ret: Some(BOOL),
             },
             Method {
                 name: "contains",
+                generics: &[],
                 recv: Some(SelfKind::Shared),
                 params: &[("needle", Ty::Ref(&STRING))],
                 ret: Some(BOOL),
             },
             Method {
                 name: "find",
+                generics: &[],
                 recv: Some(SelfKind::Shared),
                 params: &[("needle", Ty::Ref(&STRING))],
                 ret: Some(Ty::Opt(&INT)),
@@ -1125,12 +1203,14 @@ const BLOCKS: &[Block] = &[
             // §6.9: ASCII whitespace only, pinned forever.
             Method {
                 name: "trim",
+                generics: &[],
                 recv: Some(SelfKind::Shared),
                 params: &[],
                 ret: Some(Ty::Ref(&STRING)),
             },
             Method {
                 name: "replace",
+                generics: &[],
                 recv: Some(SelfKind::Shared),
                 params: &[("from", Ty::Ref(&STRING)), ("to", Ty::Ref(&STRING))],
                 ret: Some(STRING),
@@ -1145,6 +1225,7 @@ const BLOCKS: &[Block] = &[
             // report says so.
             Method {
                 name: "chars",
+                generics: &[],
                 recv: Some(SelfKind::Shared),
                 params: &[],
                 ret: Some(Ty::Name("Chars")),
@@ -1153,12 +1234,14 @@ const BLOCKS: &[Block] = &[
             // unique answer"* and because `read_lines` is useless without them.
             Method {
                 name: "parse_int",
+                generics: &[],
                 recv: Some(SelfKind::Shared),
                 params: &[],
                 ret: Some(Ty::Pair(&I64, &Ty::Opt(&Ty::Name("TextError")))),
             },
             Method {
                 name: "parse_float",
+                generics: &[],
                 recv: Some(SelfKind::Shared),
                 params: &[],
                 ret: Some(Ty::Pair(&F64, &Ty::Opt(&Ty::Name("TextError")))),
@@ -1291,6 +1374,7 @@ const BLOCKS: &[Block] = &[
         // guard every user `implements` block already relies on.
         methods: &[Method {
             name: "next",
+            generics: &[],
             recv: Some(SelfKind::Mutable),
             params: &[],
             ret: Some(Ty::Opt(&CHAR)),
@@ -1372,33 +1456,350 @@ const BLOCKS: &[Block] = &[
         methods: &[
             Method {
                 name: "text",
+                generics: &[],
                 recv: Some(SelfKind::Mutable),
                 params: &[("value", Ty::Ref(&STRING))],
                 ret: None,
             },
             Method {
                 name: "raw",
+                generics: &[],
                 recv: Some(SelfKind::Mutable),
                 params: &[("value", Ty::Ref(&STRING))],
                 ret: None,
             },
             Method {
                 name: "number",
+                generics: &[],
                 recv: Some(SelfKind::Mutable),
                 params: &[("value", F64)],
                 ret: None,
             },
             Method {
                 name: "integer",
+                generics: &[],
                 recv: Some(SelfKind::Mutable),
                 params: &[("value", I64)],
                 ret: None,
             },
             Method {
                 name: "spec",
+                generics: &[],
                 recv: Some(SelfKind::Shared),
                 params: &[],
                 ret: Some(Ty::Name("FormatSpec")),
+            },
+        ],
+    },
+
+    // --- the chain vocabulary -------------------------------------------
+    //
+    // `collections-and-chains.md` §1.4's closed set, narrowed to the six links
+    // `examples/00_kitchen_sink.science` writes: the source `iterate()`, the
+    // adapters `discard`, `map`, `take` and `sorted(by:)`, and the terminal
+    // `collect()`. Nothing else from that table is declared, under §10's own
+    // rule that a name is transcribed when a program that runs it arrives with
+    // it.
+    //
+    // # The three places this departs from the note, each priced
+    //
+    // 1. **The combinators are inherent methods on each adapter, not provided
+    //    methods on `Iterate`.** §1.1 wants the second — *"Users implement
+    //    `next`; they never implement a combinator"* — and it is the right
+    //    shape. It is not available here: [`InterfaceDecl`] carries no bodies,
+    //    so a method declared on `Iterate` is a **required** method, and every
+    //    `implements Iterate:` in the corpus would stop compiling the day it
+    //    landed. `examples/00_kitchen_sink.science`'s own `Countdown` is one.
+    //    The note's §7 point 1 is what this costs: F2's `Divide` will have to
+    //    repeat the list rather than inherit it. Closing it needs defaulted
+    //    methods in the prelude, which is a change to this file's vocabulary
+    //    and not to this table.
+    //
+    // 2. **An adapter carries its source and its `Item`, not its source and
+    //    its closure.** §1.4 writes `MapOver of (Self, F)`. `F` is there so
+    //    the lazy struct has a field to hold the closure in; this compiler
+    //    fuses the whole chain at the terminal (`science-mir`'s
+    //    `Builder::lower_chain`), so no struct is ever built and `F` would be
+    //    a parameter nothing reads. `Item` is carried instead, because that is
+    //    what `collect()` must name and what the *next* link's closure must
+    //    take. The source is kept so the type still identifies the chain.
+    //
+    // 3. **`sorted(by:)` and not `sort(by:)`.** §3.2 splits the pair —
+    //    *"`sorted` yields a new chain, `sort` reorders an `Array` in
+    //    place"* — and §1.4 lists `sorted(by: key)` as the barrier adapter.
+    //    The example wrote `.sort(by:)` mid-chain, which is the `Array`
+    //    method in a position no `Array` is in; the example is what moved.
+    //
+    // # Why the closure parameters are written as arrows
+    //
+    // See [`Ty::Fn`]. A bare `f: F` would type-check and then bind `each` at
+    // `Ty::ERROR` in silence, which is the failure mode this compiler has lost
+    // the most time to.
+
+    // # `sorted(by:)` takes an `Int` key, where §1.4 writes `K: Ord`
+    //
+    // Narrowed deliberately, because `K: Ord` is not a bound this prelude can
+    // state or this compiler can discharge. [`INTERFACE_DECLS`]' own comment
+    // says so in as many words: `Ord` is declared as *"a name with
+    // implementations and no methods"*, because writing `Ord.compare ->
+    // Ordering` would invent `Ordering` — a Level 1 type no note specifies —
+    // and a rule for how four operators sit over one `compare`. So the cost
+    // of *"two operators still do not dispatch"* lands here too: there is no
+    // comparison a generic key could be sorted by.
+    //
+    // An `Int` key is what §1.4's own example sorts on
+    // (`.sorted(by: each.score)` over a numeric field), it is what
+    // `examples/00_kitchen_sink.science` writes (`line.length()`), and the
+    // difference from the note is a **type error at the call site** rather
+    // than a program that checks clean and is refused by the backend — which
+    // is the trade this file makes everywhere else. Widening it is one
+    // `K: Ord` bound and one comparison in `science_array_sort_by_int_key`,
+    // the day `Ord` has a method.
+
+    // # A predicate and a key closure take a **borrow** of the item; `map`
+    // # takes the item
+    //
+    // §1.2 writes the predicate out: `where P: (borrowed Self.Item) -> Bool`.
+    // That is not decoration — a chain whose `Item` is an owned `String`
+    // (anything after a `map` that allocates) would have `discard` and
+    // `sorted(by:)` *destroy* the value they were asked to inspect, because a
+    // by-value closure parameter is dropped at the end of the closure body.
+    // It is a use-after-free with a length of zero for a symptom, and it is
+    // what the first version of this table produced.
+    //
+    // `map` is the exception and stays `(Self.Item) -> U`, per §1.4: a map
+    // *consumes* the item and hands back another, which is exactly what its
+    // own link does to the chain.
+    //
+    // **On `ArrayIterate[T]` the borrow is already there.** §4.3 makes the
+    // item `borrowed T`, so `borrowed Self.Item` would be `borrowed borrowed
+    // T` — a spelling that says nothing the first borrow does not. It
+    // collapses, and the declaration below is written `(borrowed T)` on all
+    // three. `science-mir`'s `Builder::chain_argument` reads whichever of the
+    // two spellings a link was declared with rather than assuming either.
+
+    // The source. §5.4: *"`def iterate(self) -> ArrayIterate of T`"*, and §4.3
+    // fixes its `Item`: *"`iterate()` yields `borrowed Item` uniformly"*, which
+    // §4.1's three-word table writes as `Item = borrowed Doc` and §4.4's
+    // ownership table restates as a shared borrow of the source for the
+    // chain's life. That decision is the note's, not this file's, and it is
+    // why every `Item` below starts life as `&T` and why `headlines` in
+    // `examples/00_kitchen_sink.science` collects into `Array[&String]`.
+    Block {
+        ty: "ArrayIterate",
+        generics: &["T"],
+        interface: None,
+        assoc: &[],
+        methods: &[
+            Method {
+                name: "discard",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("predicate", Ty::Fn(&[Ty::Ref(&Ty::Var("T"))], &BOOL))],
+                ret: Some(Ty::App("Discard", &[Ty::App("ArrayIterate", &[Ty::Var("T")]), Ty::Ref(&Ty::Var("T"))])),
+            },
+            Method {
+                name: "map",
+                generics: &["U"],
+                recv: Some(SelfKind::Value),
+                params: &[("f", Ty::Fn(&[Ty::Ref(&Ty::Var("T"))], &Ty::Var("U")))],
+                ret: Some(Ty::App("MapOver", &[Ty::App("ArrayIterate", &[Ty::Var("T")]), Ty::Var("U")])),
+            },
+            Method {
+                name: "take",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("n", INT)],
+                ret: Some(Ty::App("Take", &[Ty::App("ArrayIterate", &[Ty::Var("T")]), Ty::Ref(&Ty::Var("T"))])),
+            },
+            Method {
+                name: "sorted",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("by", Ty::Fn(&[Ty::Ref(&Ty::Var("T"))], &INT))],
+                ret: Some(Ty::App("SortedBy", &[Ty::App("ArrayIterate", &[Ty::Var("T")]), Ty::Ref(&Ty::Var("T"))])),
+            },
+            Method {
+                name: "collect",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[],
+                ret: Some(Ty::App("Array", &[Ty::Ref(&Ty::Var("T"))])),
+            },
+        ],
+    },
+    // The four adapters. Each is `X[S, I]` — the chain it consumed, and the
+    // `Item` it yields — so the five links read identically on all of them and
+    // a chain's type still spells the chain out.
+    Block {
+        ty: "Discard",
+        generics: &["S", "I"],
+        interface: None,
+        assoc: &[],
+        methods: &[
+            Method {
+                name: "discard",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("predicate", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &BOOL))],
+                ret: Some(Ty::App("Discard", &[Ty::App("Discard", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
+            },
+            Method {
+                name: "map",
+                generics: &["U"],
+                recv: Some(SelfKind::Value),
+                params: &[("f", Ty::Fn(&[Ty::Var("I")], &Ty::Var("U")))],
+                ret: Some(Ty::App("MapOver", &[Ty::App("Discard", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("U")])),
+            },
+            Method {
+                name: "take",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("n", INT)],
+                ret: Some(Ty::App("Take", &[Ty::App("Discard", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
+            },
+            Method {
+                name: "sorted",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("by", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &INT))],
+                ret: Some(Ty::App("SortedBy", &[Ty::App("Discard", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
+            },
+            Method {
+                name: "collect",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[],
+                ret: Some(Ty::App("Array", &[Ty::Var("I")])),
+            },
+        ],
+    },
+    Block {
+        ty: "MapOver",
+        generics: &["S", "I"],
+        interface: None,
+        assoc: &[],
+        methods: &[
+            Method {
+                name: "discard",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("predicate", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &BOOL))],
+                ret: Some(Ty::App("Discard", &[Ty::App("MapOver", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
+            },
+            Method {
+                name: "map",
+                generics: &["U"],
+                recv: Some(SelfKind::Value),
+                params: &[("f", Ty::Fn(&[Ty::Var("I")], &Ty::Var("U")))],
+                ret: Some(Ty::App("MapOver", &[Ty::App("MapOver", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("U")])),
+            },
+            Method {
+                name: "take",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("n", INT)],
+                ret: Some(Ty::App("Take", &[Ty::App("MapOver", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
+            },
+            Method {
+                name: "sorted",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("by", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &INT))],
+                ret: Some(Ty::App("SortedBy", &[Ty::App("MapOver", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
+            },
+            Method {
+                name: "collect",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[],
+                ret: Some(Ty::App("Array", &[Ty::Var("I")])),
+            },
+        ],
+    },
+    Block {
+        ty: "Take",
+        generics: &["S", "I"],
+        interface: None,
+        assoc: &[],
+        methods: &[
+            Method {
+                name: "discard",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("predicate", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &BOOL))],
+                ret: Some(Ty::App("Discard", &[Ty::App("Take", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
+            },
+            Method {
+                name: "map",
+                generics: &["U"],
+                recv: Some(SelfKind::Value),
+                params: &[("f", Ty::Fn(&[Ty::Var("I")], &Ty::Var("U")))],
+                ret: Some(Ty::App("MapOver", &[Ty::App("Take", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("U")])),
+            },
+            Method {
+                name: "take",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("n", INT)],
+                ret: Some(Ty::App("Take", &[Ty::App("Take", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
+            },
+            Method {
+                name: "sorted",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("by", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &INT))],
+                ret: Some(Ty::App("SortedBy", &[Ty::App("Take", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
+            },
+            Method {
+                name: "collect",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[],
+                ret: Some(Ty::App("Array", &[Ty::Var("I")])),
+            },
+        ],
+    },
+    Block {
+        ty: "SortedBy",
+        generics: &["S", "I"],
+        interface: None,
+        assoc: &[],
+        methods: &[
+            Method {
+                name: "discard",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("predicate", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &BOOL))],
+                ret: Some(Ty::App("Discard", &[Ty::App("SortedBy", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
+            },
+            Method {
+                name: "map",
+                generics: &["U"],
+                recv: Some(SelfKind::Value),
+                params: &[("f", Ty::Fn(&[Ty::Var("I")], &Ty::Var("U")))],
+                ret: Some(Ty::App("MapOver", &[Ty::App("SortedBy", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("U")])),
+            },
+            Method {
+                name: "take",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("n", INT)],
+                ret: Some(Ty::App("Take", &[Ty::App("SortedBy", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
+            },
+            Method {
+                name: "sorted",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("by", Ty::Fn(&[Ty::Ref(&Ty::Var("I"))], &INT))],
+                ret: Some(Ty::App("SortedBy", &[Ty::App("SortedBy", &[Ty::Var("S"), Ty::Var("I")]), Ty::Var("I")])),
+            },
+            Method {
+                name: "collect",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[],
+                ret: Some(Ty::App("Array", &[Ty::Var("I")])),
             },
         ],
     },
@@ -1512,7 +1913,11 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     // declared, and its method name is *"not written down"* by the same
     // argument.
     ("Array", &[
-        "sort", "reserve", "iterate", "iterate_mutably", "iterate_consuming", "clone",
+        // `iterate` left this row when [`BLOCKS`] gained it: the reason it
+        // was here was that `ArrayIterate[T]` is *"a type the prelude does not
+        // have"*, and the prelude has it now. Its two siblings stay, for the
+        // reason `iterate`'s own declaration gives.
+        "sort", "reserve", "iterate_mutably", "iterate_consuming", "clone",
     ]),
     // `Map` — `keys`, `values` and `values_mutably` are
     // `collections-and-chains.md` §5.4 by name; the three `iterate*` are the
@@ -1588,6 +1993,27 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
 /// `science-types/tests/method_lookup.rs` has a test that fails when it does.
 const WHOLLY_OPEN: &[&str] = &[
     "Chars",
+    // **The five chain types, for `Chars`' reason and not a new one.** Each
+    // one's surface is `collections-and-chains.md` §1.4's thirty-eight
+    // provided methods, and [`BLOCKS`] transcribes the six
+    // `examples/00_kitchen_sink.science` writes. Listing the other
+    // thirty-two in [`UNWRITTEN`], five times over, is what that row already
+    // refuses as *"transcribing the vocabulary into the wrong table"*.
+    //
+    // **What it costs, measured rather than assumed.** A misspelled link is
+    // silent, which is the cost `Chars` pays. What paid for it is
+    // `examples/16_indentation.science`: it writes `.first()` — §1.4's
+    // terminal, and a real name — mid-chain, and before these types existed
+    // the whole chain was excused because `MapOver` was not a type. Leaving
+    // them closed would make that file stop building on a name the note
+    // gives, to no one's benefit; the honest answer is that the vocabulary
+    // is six-thirty-eighths transcribed and says so. The row shrinks as the
+    // set lands, and disappears when it is whole.
+    "ArrayIterate",
+    "Discard",
+    "MapOver",
+    "Take",
+    "SortedBy",
     // The numeric primitives, `Bool` and `Char`, which `Clone.clone` gave an
     // index entry and therefore a closed surface they have no note for.
     "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64", "F16", "BF16", "F32", "F64", "Int",
@@ -1715,6 +2141,7 @@ const FUNCTION_SIGNATURES: &[Method] = &[
     // written against it.
     Method {
         name: "panic",
+        generics: &[],
         recv: None,
         params: &[("message", Ty::Ref(&STRING))],
         ret: Some(Ty::Name("Never")),
@@ -1724,12 +2151,14 @@ const FUNCTION_SIGNATURES: &[Method] = &[
     // caller's `match` exhaustive.
     Method {
         name: "read_file",
+        generics: &[],
         recv: None,
         params: &[("path", Ty::Ref(&STRING))],
         ret: Some(Ty::Pair(&STRING, &Ty::Opt(&IO_ERROR))),
     },
     Method {
         name: "write_file",
+        generics: &[],
         recv: None,
         params: &[("path", Ty::Ref(&STRING)), ("text", Ty::Ref(&STRING))],
         ret: Some(Ty::Opt(&IO_ERROR)),
@@ -1811,6 +2240,10 @@ impl Declarer<'_> {
             Ty::Pair(left, right) => {
                 hir::TypeKind::Tuple(vec![self.ty(left, scope), self.ty(right, scope)])
             }
+            Ty::Fn(params, ret) => hir::TypeKind::Closure {
+                params: params.iter().map(|param| self.ty(param, scope)).collect(),
+                ret: Box::new(self.ty(ret, scope)),
+            },
             Ty::SelfTy => {
                 let owner = scope
                     .owner
@@ -1833,6 +2266,27 @@ impl Declarer<'_> {
 
     fn function(&mut self, method: &Method, parent: DefId, scope: &Scope<'_>) -> hir::Fn {
         let def = self.defs.alloc(DefKind::Fn, method.name, BUILTIN_SPAN, Some(parent));
+        // **The method's own parameters shadow nothing and extend the
+        // block's.** `map[U]` on `MapOver[S, I]` is written in `S`, `I` *and*
+        // `U`, so the scope its signature is read in is the block's map with
+        // the method's names added — the same nesting a user's
+        // `def map[U](…)` inside a `Wrap[T] has:` block gets from the
+        // resolver.
+        let mut generics = scope.generics.clone();
+        let generic_params: Vec<hir::GenericParam> = method
+            .generics
+            .iter()
+            .map(|name| {
+                let id = self.defs.alloc(DefKind::TypeParam, *name, BUILTIN_SPAN, Some(def));
+                generics.insert(*name, id);
+                hir::GenericParam {
+                    def: id,
+                    kind: hir::GenericParamKind::Type { bounds: Vec::new() },
+                    span: BUILTIN_SPAN,
+                }
+            })
+            .collect();
+        let scope = &Scope { generics: &generics, assocs: scope.assocs, owner: scope.owner };
         let self_param = method.recv.map(|kind| hir::SelfParam {
             def: self.defs.alloc(DefKind::SelfParam, "self", BUILTIN_SPAN, Some(def)),
             kind,
@@ -1849,7 +2303,7 @@ impl Declarer<'_> {
             .collect();
         hir::Fn {
             def,
-            generics: Vec::new(),
+            generics: generic_params,
             self_param,
             params,
             ret: method.ret.as_ref().map(|ty| self.ty(ty, scope)),

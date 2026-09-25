@@ -3100,7 +3100,7 @@ impl<'a> BodyChecker<'a> {
                                     .copied()
                                 {
                                     Some(typed) => typed,
-                                    None => self.synth(&arg.value),
+                                    None => self.synth_against(&arg.value, *param_ty),
                                 };
                                 presynthesised.insert(at, typed);
                                 typed.ty
@@ -3502,6 +3502,39 @@ impl<'a> BodyChecker<'a> {
     /// mismatch stays out of `solved` and `deferred`, closes to
     /// [`Ty::ERROR`] the same way an unreachable parameter already does, and
     /// reporting here as well would be the same mistake reported twice.
+    /// Synthesise an argument, giving a **closure literal** the arrow its
+    /// parameter was declared with.
+    ///
+    /// # Why an argument being solved *for* still gets an expectation
+    ///
+    /// [`BodyChecker::instantiate_call`] synthesises an argument when the
+    /// generic it is solving appears somewhere inside the parameter's type
+    /// rather than at its root — and for `def map[U](self, f: (borrowed T) ->
+    /// U)` that is the only route, because `U` is inside the arrow's return
+    /// and nowhere else. Synthesising with **no** expectation is right for
+    /// every other shape: there is nothing the declaration can tell a record
+    /// literal or a call that the argument does not already know.
+    ///
+    /// A closure is the exception, and `BodyChecker::closure`'s own contract
+    /// is why: with no expectation it has no parameter type to bind the
+    /// binder at, so it binds it at `Ty::ERROR` and reports nothing.
+    /// `docs.iterate().map(each.title)` then has an `each` of no type, the
+    /// field lookup answers nothing, and the whole chain is a silent hole.
+    ///
+    /// The declaration knows the parameter type and does not know the return
+    /// — that is the thing being solved — which is exactly the split
+    /// `BodyChecker::closure` already makes: bind from the expectation,
+    /// synthesise the body when the expected return is still a parameter.
+    fn synth_against(&mut self, expr: &hir::Expr, param_ty: Ty) -> Typed {
+        if let hir::ExprKind::Closure { param, body } = &expr.kind {
+            let revealed = self.revealed(param_ty, expr.span);
+            if matches!(self.types.kind(revealed), TyKind::Closure { .. }) {
+                return self.closure(*param, body, expr.span, Some(revealed));
+            }
+        }
+        self.synth(expr)
+    }
+
     fn structural_solve(
         &mut self,
         pattern: Ty,
@@ -3588,6 +3621,37 @@ impl<'a> BodyChecker<'a> {
                     }
                 }
             },
+            // **A closure type, which is how a combinator's item type is
+            // spelled.** `collections-and-chains.md` §1.4 writes
+            // `map of (U, F)(self, f: F) -> MapOver of (Self, F)` with
+            // `F: (Self.Item) -> U`, and the shape a prelude without
+            // `where` clauses can carry is the arrow written out:
+            // `def map[U](self, f: (borrowed T) -> U) -> MapOver[Self, U]`.
+            // `U` then appears **only inside the arrow's return**, so unless
+            // this arm exists the parameter is never solved, `MapOver[Self,
+            // U]` keeps a `TyKind::Param` nothing monomorphises, and the
+            // whole chain reaches the backend as a hole. Parameters are
+            // walked too, for the same reason a tuple's elements are: nothing
+            // says a combinator may not take its item type on the left.
+            TyKind::Closure { params: ppar, ret: pret } => {
+                let InferTy::Known(ty) = resolved else { return };
+                let TyKind::Closure { params: cpar, ret: cret } = self.types.kind(ty).clone()
+                else {
+                    return;
+                };
+                if cpar.len() == ppar.len() {
+                    for (pat_ty, conc_ty) in ppar.iter().zip(cpar.iter()) {
+                        self.structural_solve(
+                            *pat_ty,
+                            InferTy::Known(*conc_ty),
+                            generics,
+                            solved,
+                            deferred,
+                        );
+                    }
+                }
+                self.structural_solve(pret, InferTy::Known(cret), generics, solved, deferred);
+            }
             TyKind::Borrowed { inner: p_inner, .. } => {
                 // An open var behind a borrow is not attempted: no corpus
                 // site needs it, and peeling a shape that is not a `Ty` yet
@@ -4372,8 +4436,30 @@ impl<'a> BodyChecker<'a> {
 
         let block = self.block_substitution(candidate, self_ty, span);
         let order = self.argument_order(&params, args);
+        // **The block's parameters are substituted before the method's own
+        // are solved**, and it is the closure argument that makes the order
+        // load-bearing.
+        //
+        // `instantiate_call` may have to *synthesise* an argument to solve a
+        // generic that appears nowhere else — which is the whole shape of
+        // `def map[U](self, f: (borrowed T) -> U)` in
+        // `collections-and-chains.md` §1.4 — and the type it synthesises
+        // against is the expectation the closure's parameter gets. Handed the
+        // declaration unsubstituted, that expectation is `(borrowed T) -> U`
+        // with `T` still the *block's* parameter, so `each` in
+        // `docs.iterate().map(each.title)` was bound at `borrowed T`, the
+        // field lookup on a type parameter answered nothing, and the chain
+        // reached the backend as a hole with nothing said about it.
+        //
+        // `block` is already solved from the receiver at this point — that is
+        // what the line above it does — so there is nothing to wait for. Every
+        // declaration with no generics of its own returns from
+        // `instantiate_call` before reading any of this, which is why the
+        // order never mattered until now.
+        let solved: Vec<(DefId, Ty)> =
+            params.iter().map(|(def, ty)| (*def, self.apply(&block, *ty, span))).collect();
         let CallSolve { substitution: generic, mut presynthesised, deferred } = self
-            .instantiate_call(&declared, generics, &params, args, &order, supplied.as_deref(), span);
+            .instantiate_call(&declared, generics, &solved, args, &order, supplied.as_deref(), span);
         self.check_bounds(candidate.method, &generic, span);
 
         let mut ids: Vec<ExprId> = Vec::with_capacity(args.len());
@@ -6407,6 +6493,28 @@ impl<'a> BodyChecker<'a> {
             // §6: a closure in synthesis mode has no parameter type to take.
             _ => (None, None),
         };
+        // **A return that is still a type parameter is a return this call has
+        // not solved yet, and the body is what solves it.**
+        //
+        // `def map[U](self, f: (borrowed T) -> U)` is the chain vocabulary's
+        // own shape (`collections-and-chains.md` §1.4), and `U` appears
+        // nowhere but inside the arrow — so `instantiate_call` has to
+        // synthesise the argument *before* it can solve `U`, and the
+        // expectation it synthesises against still spells the return `U`.
+        // Checking `each.title` against `U` reports a mismatch against a name
+        // the author never wrote; synthesising it gives `borrowed String`,
+        // which is exactly what `structural_solve`'s `TyKind::Closure` arm
+        // then unifies `U` with.
+        //
+        // The parameter type is kept either way — it is concrete by this
+        // point, substituted from the receiver — so `each` is still bound at
+        // a real type and §4.6's implicit subject still works. Only the
+        // *return* is left to the body.
+        //
+        // When the parameter is genuinely fixed — a closure passed inside a
+        // generic function whose own `T` is the return — synthesising gives
+        // that same `Param`, so nothing is lost by not checking against it.
+        let ret = ret.filter(|ty| !matches!(self.types.kind(*ty), TyKind::Param { .. }));
         // `x giving x * 2` binds its parameter the way a pattern does, and
         // there is no place in that syntax for `mutable`.
         self.bind_local(param, InferTy::Known(param_ty.unwrap_or(Ty::ERROR)), BoundAs::Parameter);

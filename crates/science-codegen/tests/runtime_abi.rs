@@ -85,6 +85,11 @@ fn the_container_entry_points_all_take_a_descriptor_and_the_scalar_ones_do_not()
                 | "science_array_pop"
                 | "science_array_get"
                 | "science_array_get_mut"
+                // The chain's one barrier. It moves whole elements around
+                // inside the buffer, so it needs their width and alignment
+                // exactly as `push` and `pop` do — the keys beside them are
+                // `Int`s and need no describing.
+                | "science_array_sort_by_int_key"
                 | "science_map_new"
                 | "science_map_free"
                 | "science_map_insert"
@@ -240,7 +245,7 @@ fn nothing_outside_the_table_is_callable() {
     // character, grouping digits in threes and choosing between fixed and
     // exponential form at a significant-figure count are a library, and §3.1
     // asks for them by name and by signature.
-    assert_eq!(RUNTIME.len(), 66);
+    assert_eq!(RUNTIME.len(), 67);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

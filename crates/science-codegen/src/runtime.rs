@@ -578,7 +578,7 @@ const N: RtParam = RtParam::Int;
 /// A slot holding one element, key or value: see [`RtParam::Slot`].
 const S: RtParam = RtParam::Slot;
 
-/// The 57 entry points. §2.6: *"They are the whole list."*
+/// The 67 entry points. §2.6: *"They are the whole list."*
 ///
 /// **It was 47, `format.rs` added seven, `science_string_with_capacity`
 /// added the fifty-fifth, and `math.rs`'s two — `science_libm_pow` and
@@ -606,6 +606,11 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_array_pop", params: &[P, D, S], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_array_get", params: &[P, D, N], ret: RtRet::Ptr },
     RuntimeFn { symbol: "science_array_get_mut", params: &[P, D, N], ret: RtRet::Ptr },
+    // The barrier behind `chain.sorted(by: key)`: the values, their
+    // descriptor, and a parallel `Array[Int]` of keys the fused loop
+    // computed. Both arrays are reordered together. `collections-and-chains.md`
+    // §1.4 classes the link as a barrier and this is that barrier.
+    RuntimeFn { symbol: "science_array_sort_by_int_key", params: &[P, D, P], ret: RtRet::Void },
     // --- boxed.rs ---
     // Descriptor **first**. This is the pair finding 4 is about.
     RuntimeFn { symbol: "science_box_new", params: &[D, S], ret: RtRet::Ptr },
@@ -1001,7 +1006,7 @@ mod tests {
     /// count are library work, not a handful of instructions.
     #[test]
     fn there_are_sixty_six_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 66, "§2.6: \"they are the whole list\"");
+        assert_eq!(RUNTIME.len(), 67, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");

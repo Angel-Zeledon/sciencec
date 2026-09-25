@@ -10942,19 +10942,37 @@ fn describe_unresolved(unresolved: mir::Unresolved) -> &'static str {
         // `lower_method_call` reaches `Unresolved::Method` exactly when THIR's
         // `MethodCall::method` is `None`, and this crate's own `lib.rs`
         // finding 24 already establishes that a lookup which *does* find
-        // something puts it in the tree. Two programs arrive, both checking
-        // clean: `xs.iterate()`, whose name `science-resolve`'s `UNWRITTEN`
-        // list excuses so that `SC0532` stays silent (`xs.no_such_method()`
-        // on the same receiver *is* reported), and any method at all on a
-        // **tuple** receiver, for which `Methods::receiver` finds no head to
-        // look in and so returns `None` before a name is ever considered.
+        // something puts it in the tree.
+        //
+        // **The example moved once already and is worth keeping current.** It
+        // was `xs.iterate()`, which is now declared and resolves; what is left
+        // on the silent list is the rest of the chain — `.first()`,
+        // `.keep()`, thirty-two of §1.4's thirty-eight — and
+        // `iterate_mutably`/`iterate_consuming`, each excused by
+        // `science-resolve`'s `UNWRITTEN` or `WHOLLY_OPEN` so that `SC0532`
+        // stays quiet about a vocabulary the prelude has not finished
+        // transcribing. The other arrival is any method at all on a **tuple**
+        // receiver, for which `Methods::receiver` finds no head to look in and
+        // so returns `None` before a name is ever considered.
         mir::Unresolved::Method => {
             "a method call the front end resolved to no method at all. Either the receiver is a \
-             prelude type and the name is one `science-resolve`'s `UNWRITTEN` list excuses — \
-             `xs.iterate()` and the rest of §5.4's chain vocabulary, which is why no `SC0532` \
-             was reported for it — or the receiver is a tuple, whose head `Methods::receiver` \
-             cannot speak for, so every method name on a tuple is accepted by the checker and \
-             arrives here with nothing behind it"
+             prelude type and the name is one `science-resolve`'s `UNWRITTEN` or `WHOLLY_OPEN` \
+             list excuses — `.first()` on a chain, and the thirty-two of §1.4's chain vocabulary \
+             that are not transcribed yet, which is why no `SC0532` was reported for it — or the \
+             receiver is a tuple, whose head `Methods::receiver` cannot speak for, so every \
+             method name on a tuple is accepted by the checker and arrives here with nothing \
+             behind it"
+        }
+        // The one chain shape `science-mir`'s `Builder::lower_chain_collect`
+        // reads and declines to fuse. Its own `Unresolved::Chain` doc carries
+        // the ownership argument; this is the sentence a user sees.
+        mir::Unresolved::Chain => {
+            "a chain whose shape this compiler does not fuse: a link **after** `sorted(by:)`. \
+             `collections-and-chains.md` §1.4 makes that link a barrier, and what to do with the \
+             buffer it leaves — move its owned items out, and leak whatever a later `discard` \
+             drops, or borrow them, which the chain's own `Item` contradicts — is an ownership \
+             question the note does not answer. Collect into an `Array`, then chain over it \
+             again"
         }
         mir::Unresolved::IterateNext => {
             "a `for` whose subject has no `Iterate` implementation this compiler can name — a \

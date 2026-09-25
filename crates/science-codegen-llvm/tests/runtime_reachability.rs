@@ -221,6 +221,19 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   if a? and b?:\n\
          \x20       print(f\"{xs.length()} {xs.is_empty()} {a} {b}\")\n",
     ),
+    // The chain's one barrier. `collections-and-chains.md` §1.4 makes
+    // `sorted(by:)` the link that buffers, and `science-mir`'s
+    // `Builder::lower_chain_collect` fuses everything around it into one loop
+    // — so `science_array_sort_by_int_key` is the only symbol in `RUNTIME`
+    // that no `for`, no literal and no method call can reach. A chain is the
+    // only thing that emits it, and this is the chain.
+    (
+        "chain_sorted_by_a_key",
+        "def main():\n\
+         \x20   let mutable xs be [3, 1, 2]\n\
+         \x20   let out be xs.iterate().map(each * 1).sorted(by: n giving n * 1).collect()\n\
+         \x20   print(f\"{out[0]}{out[1]}{out[2]}\")\n",
+    ),
     // `Array.new()`, which the literal above does not call, and a string
     // literal, which is `science_string_from_bytes` — Decision 15's temporary,
     // and the first runtime call any `print("…")` in this language makes.

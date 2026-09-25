@@ -175,22 +175,6 @@ struct Unmeasured {
 /// the directory listing.
 const UNMEASURED: &[Unmeasured] = &[
     Unmeasured {
-        file: "00_kitchen_sink.science",
-        why: Why::NotYet,
-        reason: "§11's acceptance program, and the last one by construction rather than by \
-                 oversight: it is the union of every remaining gap, not a task. Today it stops \
-                 at `SC0400` on the two chains, `headlines` and `by_length` — \
-                 `docs.iterate().map(each.title)` and its sibling. §5.4's chain vocabulary is \
-                 on `science-resolve`'s `UNWRITTEN` list, so the closure passed to `map` has no \
-                 parameter type and the backend refuses it as a value the front end left as \
-                 `TyKind::Error`. Nothing else in the file is short: replace those two bodies \
-                 with `Array[String].new()` and the whole program builds, links, runs and exits \
-                 0. The reason here used to name a tuple — *\"`science-types`' `ExprKind::Tuple` \
-                 arm reads each element before inference has defaulted them\"* — and §3's \
-                 finding 20 closed that; `let t be (1, 2)` builds. Delete this row when the \
-                 chains land — the run will tell you to.",
-    },
-    Unmeasured {
         file: "17_modules.science",
         why: Why::NotAProgram,
         reason: "it imports `text.parser` and `compiler.frontend.lexer`: crate-local modules, \
@@ -661,8 +645,14 @@ fn no_expectation_outlives_its_example() {
     }
 }
 
-/// **The corpus is nineteen of twenty, and the twenty is twenty-two less the
+/// **The corpus is twenty of twenty, and the twenty is twenty-two less the
 /// two files that are not programs.**
+///
+/// **It reached twenty when `00_kitchen_sink.science` built** — §11's
+/// definition-of-done condition 1, and `self-hosting.md`'s Gate A1. The last
+/// row of [`UNMEASURED`]'s `Why::NotYet` class is gone with it, so the
+/// numerator and the denominator are now the same number and the only way
+/// this test moves again is a new example or a new exclusion.
 ///
 /// This test's name carries the number on purpose. It is the first thing every
 /// handoff in this repository states, and it moved once as an unreviewed side
@@ -692,7 +682,7 @@ fn no_expectation_outlives_its_example() {
 /// and a row kept for a file that now builds fails there as `stale`. This test
 /// is the count; that one is whether the count is true.
 #[test]
-fn the_corpus_is_nineteen_of_twenty() {
+fn the_corpus_is_twenty_of_twenty() {
     let counts = tally();
 
     for entry in UNMEASURED {
@@ -735,8 +725,8 @@ fn the_corpus_is_nineteen_of_twenty() {
         counts.denominator, counts.total
     );
     assert_eq!(
-        counts.measured, 19,
-        "the corpus now measures {} of {} and this test says 19. If an example started \
+        counts.measured, 20,
+        "the corpus now measures {} of {} and this test says 20. If an example started \
          building, this is the good failure: rename this test, fix the number in `AGENTS.md`, \
          `NEXT-SESSION.md` and `docs/DREAM.md`, and say so in the commit message — that is the \
          review the number never got",

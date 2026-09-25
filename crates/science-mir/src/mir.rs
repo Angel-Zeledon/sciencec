@@ -711,6 +711,18 @@ pub enum Unresolved {
     /// something below this crate lowers a widening cast; it closes for a user
     /// type when `Formatter` exists.
     Display,
+    /// A chain shape [`crate::lower`]'s `Builder::lower_chain_collect` does
+    /// not fuse.
+    ///
+    /// Today that is one shape and one only: **a link after
+    /// `sorted(by:)`**. `collections-and-chains.md` §1.4 classes that link as
+    /// a barrier, and the buffer it leaves holds owned items — so a second
+    /// pass either moves them out, and then a `discard` after a `sorted`
+    /// leaks every item it drops, or borrows them, and the chain's `Item`
+    /// says it does not. The note does not answer that, and a lowering is the
+    /// wrong place to decide it. §1.4's `.sorted(by:).reverse().take(10)` is
+    /// the shape that wants it, and `reverse()` is not declared either.
+    Chain,
 }
 
 #[derive(Debug, Clone, PartialEq)]

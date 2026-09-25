@@ -353,7 +353,19 @@ def ruler(width: Int) -> Int:
 # (9) A closure, in the chain that is the shape most Science code takes
 # (§4.6). `each` names the subject of the enclosing call without declaring
 # it; `name giving expression` declares it where `each` will not do.
-def headlines(docs: &Array[Doc]) -> Array[String]:
+#
+# The return type is `Array[&String]` and not `Array[String]`, because
+# `collections-and-chains.md` §4.3 gives `iterate()` an `Item` of `borrowed T`
+# and its copy-out rule yields the *value* of a place expression only when the
+# type is `Copy`. `String` is not, so `.map(each.title)` is a chain of borrows
+# and `.collect()` collects them: "`Array of borrowed Doc` is a set of views
+# into something else" (§4.4). That note's own open question names this exact
+# line — "`headlines` has type `Array of borrowed String` under this design,
+# not `Array of String` ... the spec's example should say so, or add
+# `.owned()`" — and `.owned()` is not available, because it needs `T: Clone`
+# and §8 gives `String` no `clone`. So the example says so. Zero copies, and
+# the result cannot outlive `docs`.
+def headlines(docs: &Array[Doc]) -> Array[&String]:
     docs
         .iterate()
         .discard(each.is_empty())
@@ -361,11 +373,19 @@ def headlines(docs: &Array[Doc]) -> Array[String]:
         .take(5)
         .collect()
 
+# `sorted`, not `sort`. `collections-and-chains.md` §3.2 splits the pair:
+# "`sorted` yields a new chain, `sort` reorders an `Array` in place", and §1.4
+# lists `sorted(by: key)` as the barrier adapter. §4.6 of the core spec writes
+# `docs.sort(by: ...)` — on `docs`, which is an `Array`, so that is the
+# in-place one and it is the right spelling there. Mid-chain it is not.
+#
+# Nothing else moves: `summarize()` returns an owned `String`, so this chain's
+# `Item` is owned all the way and it really does collect into `Array[String]`.
 def by_length(docs: &Array[Doc]) -> Array[String]:
     docs
         .iterate()
         .map(doc giving doc.summarize())
-        .sort(by: line giving line.length())
+        .sorted(by: line giving line.length())
         .collect()
 
 # ---------------------------------------------------------------------------

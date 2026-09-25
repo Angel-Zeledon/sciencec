@@ -1199,9 +1199,21 @@ fn the_label_on_a_named_argument_is_not_resolved_as_a_name() {
         Some("by"),
         "the label survives for the type checker to match against a parameter"
     );
+    // **Scoped to this program's own definitions, and the prelude is why.**
+    // The assertion used to read `!krate.defs.iter().any(|d| d.name == "by")`
+    // — every definition in the compilation, of any origin. That was true
+    // while no declaration anywhere had a parameter called `by`, and it stops
+    // being true the moment one does: `science-resolve`'s `builtins` declares
+    // `sorted(by: …)` on the five chain types, and a *label* is matched
+    // against a parameter's name, so a parameter named `by` is precisely what
+    // has to exist for this call to resolve at all. What the test is about is
+    // unchanged and is the sentence below: the label at the **call site** is
+    // not turned into a binding, a definition, or anything the resolver looks
+    // up. `is_builtin` is the same predicate `Methods` uses to tell a prelude
+    // head from a program's own.
     assert!(
-        !krate.defs.iter().any(|d| d.name == "by"),
-        "and it is not a definition of any kind"
+        !krate.defs.iter().any(|d| d.name == "by" && !d.is_builtin()),
+        "and the label is not a definition of any kind in this program"
     );
 }
 

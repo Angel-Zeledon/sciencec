@@ -2118,7 +2118,7 @@ Esto es lo que convierte la sección en un plan y no en un deseo. `use python
 
 | # | Pieza | Por qué la bloquea | Estado |
 |---|---|---|---|
-| 1 | Backend completo de F0 | Falta `00_kitchen_sink`: el vocabulario de cadenas (`iterate`/`map`/`discard`/`take`/`collect`/`sort`) | 19/20 ejemplos |
+| 1 | Backend completo de F0 | Cerrado: `00_kitchen_sink` compila, corre y sale 0 | 20/20 ejemplos |
 | 2 | `Formatter` / `Display` | Sin esto no hay mensaje de error legible en la membrana | Decidido, sin implementar |
 | 3 | ABI de C exportable | **El shim de Python se escribe contra él**, no contra el backend | `extern "C"` anda |
 | 4 | `Tensor` con cabecera DLPack | Requisito 1 de `python-interop.md` §2 | No existe |
@@ -2912,7 +2912,7 @@ Sin embargo, una vez establecida una versión de lenguaje:
 > `c2dcb7a` reportó 14 de 22 y catorce horas después `4733b9c` metió acá "el
 > denominador es 20 y no 22" sin mencionar el corpus en ninguna otra línea.
 
-**19 de 20 ejemplos** compilan, enlazan, corren y tienen su salida fijada byte
+**20 de 20 ejemplos** compilan, enlazan, corren y tienen su salida fijada byte
 por byte. El denominador es 20 y no 22 programas porque dos de los 22 archivos
 no son programas, cada uno por su propia razón:
 

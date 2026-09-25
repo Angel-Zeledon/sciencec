@@ -2,17 +2,17 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![empty, choice, f, g]))"
 ---
-Module `main` #424 @0..38
-  Record `Empty` #425 @0..5
-  Choice `Choice` #426 @6..15
+Module `main` #520 @0..38
+  Record `Empty` #521 @0..5
+  Choice `Choice` #522 @6..15
     variants
-      Variant `No` #427 @6..8
-  Fn `f` #428 @16..28
+      Variant `No` #523 @6..8
+  Fn `f` #524 @16..28
     body: Block @18..28
-      tail: StructLit -> `Empty` #425 @18..26
-  Fn `g` #429 @29..38
+      tail: StructLit -> `Empty` #521 @18..26
+  Fn `g` #525 @29..38
     body: Block @31..38
       tail: Call @31..36
-        callee: Path -> `No` #427 @31..33
+        callee: Path -> `No` #523 @31..33
 --- diagnostics ---
 (none)

@@ -2,25 +2,25 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![pair, f]))"
 ---
-Module `main` #424 @0..45
-  Choice `Two` #425 @9..25
+Module `main` #520 @0..45
+  Choice `Two` #521 @9..25
     variants
-      Variant `Pair` #426 @9..21
+      Variant `Pair` #522 @9..21
         payload
           Path -> `I64` #5 @9..12
           Path -> `I64` #5 @13..16
-  Fn `f` #427 @0..45
+  Fn `f` #523 @0..45
     params
-      Param `t` #428 @30..35
-        type: Path -> `Two` #425 @30..33
+      Param `t` #524 @30..35
+        type: Path -> `Two` #521 @30..33
     body: Block @0..45
       tail: Match @0..43
-        scrutinee: Path -> `t` #428 @36..37
+        scrutinee: Path -> `t` #524 @36..37
         arms
           Arm @0..27
-            pattern: Variant -> `Pair` #426 @0..8
-              Binding `a` #429 @0..1
-              Binding `a` #430 @2..3
+            pattern: Variant -> `Pair` #522 @0..8
+              Binding `a` #525 @0..1
+              Binding `a` #526 @2..3
             body: Int 0 @26..27
 --- diagnostics ---
 SC0201 @2..3 the binding `a` is defined more than once

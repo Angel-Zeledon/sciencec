@@ -142,7 +142,7 @@ fn the_derived_sret_set_is_eleven_and_has_moved_three_times() {
         "the derived `sret` set is not the eleven `science-codegen`'s \
          `runtime.rs` names"
     );
-    assert_eq!(RUNTIME.len(), 66, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 67, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the
