@@ -867,7 +867,11 @@ impl LlvmBackend {
             match param.class {
                 ArgClass::Ignore => {}
                 ArgClass::Direct => params.push(self.llvm_type(&param.layout)),
-                ArgClass::IndirectByPointer => params.push(self.ptr_ty()),
+                // Both are `ptr`, and the difference between them is what the
+                // *call site* puts there — the address of the argument for
+                // one, the pointer inside it for the other. See
+                // [`ArgClass::SpanPointer`].
+                ArgClass::IndirectByPointer | ArgClass::SpanPointer => params.push(self.ptr_ty()),
             }
         }
         let ret = match &sig.ret {
@@ -895,8 +899,14 @@ impl LlvmBackend {
         param: &AbiParam,
     ) -> Result<(), BackendError> {
         let attrs = self.attrs_ref()?;
-        let pointer =
-            matches!(param.class, ArgClass::IndirectByPointer) || Self::is_pointer(&param.layout);
+        // A [`ArgClass::SpanPointer`] parameter is a pointer at the ABI and an
+        // aggregate in `param.layout` — §1.3's *"at the ABI only the pointer
+        // crosses"* — so it joins `IndirectByPointer` in being known to be a
+        // pointer by its class rather than by its layout. Without this the
+        // `noalias` §2.2 asks for on an `ffi.MutableSpan` would be computed,
+        // carried, and silently dropped here.
+        let pointer = matches!(param.class, ArgClass::IndirectByPointer | ArgClass::SpanPointer)
+            || Self::is_pointer(&param.layout);
         if !pointer {
             return Ok(());
         }

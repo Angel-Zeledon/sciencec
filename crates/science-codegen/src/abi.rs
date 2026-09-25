@@ -244,6 +244,30 @@ pub enum ArgClass {
     /// applies to every aggregate regardless of size. A `{ f64, f64 }` goes
     /// through memory here where System V would use `xmm0`/`xmm1`.
     IndirectByPointer,
+    /// The pointer half of an `ffi.Span of T` or `ffi.MutableSpan of T`.
+    ///
+    /// **This is the one class where the Science value and the C argument are
+    /// different widths on purpose**, and `ffi-c-boundary.md` §1.3 is the whole
+    /// reason:
+    ///
+    /// > *`ffi.Span of T` is `{ borrowed T, Int }` … **At the ABI only the
+    /// > pointer crosses.** The length exists solely on the Science side, and
+    /// > it exists for one reason: so that the safe wrapper's precondition —
+    /// > that `lda * n` does not exceed the buffer — is an expression the
+    /// > compiler type-checks rather than a comment.*
+    ///
+    /// So it is **not** [`ArgClass::Direct`] with a pointer layout: a `Direct`
+    /// argument is the operand read as a value, and reading a span as a value
+    /// gives sixteen bytes. It is not [`ArgClass::IndirectByPointer`] either:
+    /// that hands the callee the *address of* the argument, and what C is owed
+    /// is the pointer the argument *contains*. The C parameter type is `ptr`
+    /// in both, which is exactly why the two had to be told apart here rather
+    /// than left to the emitter — a span passed as `IndirectByPointer` links
+    /// cleanly, type-checks nowhere, and hands BLAS a pointer to a pointer.
+    ///
+    /// `cblas_ddot(4, &xs, 1, &ys, 1)` is the test that says which one this is,
+    /// and it returns a number that is either right or not.
+    SpanPointer,
 }
 
 /// Classify an argument in a Science-to-Science call (Decision 22).
@@ -393,11 +417,20 @@ impl AbiRefusal {
 }
 
 /// What a borrow parameter is.
+///
+/// **A span is one of these too.** `ffi-c-boundary.md` §2.2 puts
+/// `ffi.MutableSpan` and `mutable borrowed` in one sentence — *"`mutable
+/// borrowed` and `ffi.MutableSpan` lower with LLVM's `noalias`"* — and §1.3's
+/// own table gives `ffi.Span of T` the row *"`const T*`, many elements"*
+/// against `borrowed T`'s *"`const T*`, one element"*. The count is the only
+/// difference and no attribute in Decision 24's table depends on it, so
+/// [`borrow_attrs`] answers for both and there is no second table to keep in
+/// step with this one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BorrowKind {
-    /// `borrowed T`.
+    /// `borrowed T`, or `ffi.Span of T`.
     Shared,
-    /// `mutable borrowed T`.
+    /// `mutable borrowed T`, or `ffi.MutableSpan of T`.
     Exclusive,
 }
 

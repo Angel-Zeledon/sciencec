@@ -282,6 +282,10 @@ pub mod ffi_codes {
     pub const ARRAY_IN_SIGNATURE: Code = Code(421);
     /// `F16` or `BF16` passed by value across the boundary (§8, `SC0431`).
     pub const HALF_PRECISION_BY_VALUE: Code = Code(431);
+    /// Two `ffi.MutableSpan`s of one element type in one declaration
+    /// (§2.2, `SC0433`). A **warning**: the shape is the one that goes wrong
+    /// and it is also the shape half of BLAS's in-place kernels have.
+    pub const OVERLAPPING_MUTABLE_SPANS: Code = Code(433);
     /// A variadic function in a hand-written `extern` block. Asked for by
     /// number in `c-binding-coverage.md` §7.
     pub const VARIADIC_FUNCTION: Code = Code(434);
@@ -2268,6 +2272,7 @@ impl<'t> Parser<'t> {
         if let Some(span) = variadic {
             self.report_variadic_function(&name, span);
         }
+        self.check_overlapping_mutable_spans(&name, &params);
 
         Some(ExternFn {
             name,
@@ -2490,6 +2495,88 @@ impl<'t> Parser<'t> {
                  `function` items",
             ),
         );
+    }
+
+    /// §2.2's `SC0433`, and it is a **warning** because the shape it fires on
+    /// is legal and common.
+    ///
+    /// > *"`SC0433` warns when a single extern declaration takes two
+    /// > `MutableSpan`s of the same element type and the library was not
+    /// > marked as promising non-overlap — a heuristic, but it fires on
+    /// > exactly the shape that goes wrong."*
+    ///
+    /// # Why it is worth a diagnostic at all
+    ///
+    /// `ffi.MutableSpan` is what makes this backend emit `noalias`, and §4.4
+    /// calls that *"the single place in the language where a bug in region
+    /// inference produces a wrong answer rather than a missed error"*. Rule 4
+    /// makes the claim true of the *Science* side; what it cannot make true is
+    /// the C side, and a callee that aliases two of its own arguments makes
+    /// the attribute a lie the optimiser is entitled to act on. Two exclusive
+    /// spans of one element type is the signature shape where that happens.
+    ///
+    /// # Two deviations from the sentence, both named
+    ///
+    /// **"the library was not marked as promising non-overlap" has no
+    /// spelling yet**, so there is no clause to read and the warning fires
+    /// whenever the shape appears. Adding the marker is a grammar change to
+    /// `library` — which §5.1's clause list does not have — and inventing one
+    /// here would put a keyword in the language on this function's authority.
+    /// Until it exists the escape is `ffi.Pointer`, which §2.2 already names
+    /// as the answer *"for a library whose contract is silent"* and which
+    /// carries no attribute.
+    ///
+    /// **The element types are compared as written text.** `ffi.MutableSpan[F64]`
+    /// and `ffi.MutableSpan[Scalar]` under `type Scalar is F64` are the same
+    /// type and are two strings here, so that pair is missed. The alternative
+    /// is to run this after alias resolution, in a phase that has none of
+    /// §1.3's other FFI checks in it; the miss is one direction of a heuristic
+    /// the note already calls a heuristic, and a false *positive* — which
+    /// comparing text cannot produce, since two identical spellings under one
+    /// declaration are one type — is the failure that would matter.
+    fn check_overlapping_mutable_spans(&mut self, name: &Ident, params: &[Param]) {
+        let mut seen: Vec<(String, Span)> = Vec::new();
+        let mut warned: Vec<String> = Vec::new();
+        for param in params {
+            let Some(element) = mutable_span_element(&param.ty) else { continue };
+            if warned.contains(&element) {
+                continue;
+            }
+            if let Some((_, first)) = seen.iter().find(|(other, _)| *other == element) {
+                let first = *first;
+                self.diagnostics.push(
+                    Diagnostic::warning(
+                        ffi_codes::OVERLAPPING_MUTABLE_SPANS,
+                        format!(
+                            "`{}` takes two exclusive spans of `{element}`",
+                            name.name
+                        ),
+                    )
+                    .with_label(Label::primary(
+                        param.ty.span,
+                        "this one is emitted `noalias`, and so is the other",
+                    ))
+                    .with_label(Label::secondary(first, "the other one"))
+                    .with_note(
+                        "`noalias` is a promise about the callee as well as the caller: if the \
+                         C function aliases the two internally the optimiser may reorder, cache \
+                         and duplicate accesses across the call, and the answer changes",
+                    )
+                    .with_note(
+                        "where the library's published contract guarantees they do not overlap \
+                         — BLAS says so — this is correct as written; where it is silent, \
+                         declare them `ffi.Pointer[T]`, which carries no attribute",
+                    ),
+                );
+                // One warning per declaration per element type: a four-span
+                // kernel says the thing once, about the first pair, and a
+                // reader who fixes that pair gets the next message on the
+                // next build rather than four at once about one decision.
+                warned.push(element);
+                continue;
+            }
+            seen.push((element, param.ty.span));
+        }
     }
 
     // --- the FFI type vocabulary -----------------------------------------
@@ -5619,6 +5706,21 @@ fn split_trailing_call(args: &mut [Type], next: &TokenKind) -> Option<Ident> {
 ///
 /// Matching on the name is the whole of it: the parser has no definitions, and
 /// `Array` is the F0 library's, not any user's.
+/// What `ffi.MutableSpan[T]` is a view of, as it was written.
+///
+/// Spelled `ffi.MutableSpan` and nothing else: §1.3 puts every one of these
+/// names in the `ffi` module precisely so that a bare `MutableSpan` is a name
+/// a user may take, and a user's own two-word record carries no attribute for
+/// this to warn about.
+fn mutable_span_element(ty: &Type) -> Option<String> {
+    let TypeKind::Path(path) = &ty.kind else { return None };
+    if path.dotted() != "ffi.MutableSpan" {
+        return None;
+    }
+    let [element] = path.segments.last()?.generics.as_slice() else { return None };
+    Some(type_text(element))
+}
+
 fn array_element(ty: &Type) -> Option<String> {
     let TypeKind::Path(path) = &ty.kind else { return None };
     let [segment] = path.segments.as_slice() else { return None };

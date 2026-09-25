@@ -384,6 +384,16 @@ enum Ty {
     Name(&'static str),
     /// A prelude type applied to arguments: `Array[T]`.
     App(&'static str, &'static [Ty]),
+    /// A type from the `ffi` module applied to arguments: `ffi.Span[T]`.
+    ///
+    /// **Its own variant because `ffi`'s names are not the prelude's**, and
+    /// deliberately: `the_ffi_names_are_not_also_bare_prelude_names` is the
+    /// test, and §1.3 spells every one of them `ffi.` so that `Span` stays a
+    /// name a user may take. [`Ty::App`] resolves through
+    /// [`Declarer::named`], which reads `prelude.names`, and `Span` is not in
+    /// it — so a second lookup table is what naming one costs, and this says
+    /// which table a name is being looked up in rather than merging the two.
+    Ffi(&'static str, &'static [Ty]),
     /// A generic parameter of the enclosing block, by name.
     Var(&'static str),
     /// `Self.Item` (§5.4).
@@ -971,6 +981,50 @@ const BLOCKS: &[Block] = &[
                 recv: Some(SelfKind::Mutable),
                 params: &[],
                 ret: Some(Ty::Opt(&Ty::Var("T"))),
+            },
+            // `ffi-c-boundary.md` §1.3's `.span()`, which `SC0421`'s own note
+            // names: *"a call site still passes the array — `&Array[T]`
+            // coerces to `ffi.Span[T]` there, and `.span()` names the
+            // conversion **where it has to be written out**"*.
+            //
+            // **Where it has to be written out is every position that is not
+            // an argument.** `assign.rs`'s rule 8 is gated on
+            // `Site::Argument`, on §1.3's own ergonomic argument — *"every
+            // BLAS call has between two and four array arguments, and
+            // `.span()` four times per call would be the most-typed token in
+            // numerical Science code"* — so a `let`, a `return` and a record
+            // field each still need the spelling. §1.7's `MatrixView(data: …,
+            // rows: …, lda: …)` is the shape that needs it, and
+            // `codegen-and-linking.md` §10 writes the *call* form out as
+            // `LLVMBuildGEP2(builder, ty, base, indices.span(),
+            // indices.len(), "")`.
+            //
+            // **The name of the mutable half is this file's and not a
+            // note's.** No note spells it. `collections-and-chains.md` §4.3
+            // forbids an abbreviation where a word exists and §5.4 already
+            // spells the sibling accessors `values_mutably` and
+            // `iterate_mutably`, which `get_mutably` above was decided by;
+            // `span_mutably` is that rule applied once more, and it is named
+            // here as a decision rather than as a transcription.
+            //
+            // **The receiver's mutability is the whole of the distinction.** A
+            // `Span` holds a shared borrow and a `MutableSpan` an exclusive
+            // one, so the two differ in exactly the way `get` and
+            // `get_mutably` do and the region engine is asked the question it
+            // already answers for those.
+            Method {
+                name: "span",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[],
+                ret: Some(Ty::Ffi("Span", &[Ty::Var("T")])),
+            },
+            Method {
+                name: "span_mutably",
+                generics: &[],
+                recv: Some(SelfKind::Mutable),
+                params: &[],
+                ret: Some(Ty::Ffi("MutableSpan", &[Ty::Var("T")])),
             },
             // `collections-and-chains.md` §3.1: *"`length()` on a collection is
             // O(1), counting a stream consumes it"*. `Int` and not `U64`
@@ -2170,6 +2224,9 @@ struct Declarer<'a> {
     defs: &'a mut DefTable,
     module: DefId,
     names: HashMap<String, DefId>,
+    /// `ffi`'s own names, which [`Ty::Ffi`] resolves through. Kept apart from
+    /// `names` for that variant's reason.
+    ffi_names: HashMap<String, DefId>,
     items: Vec<hir::Item>,
 }
 
@@ -2200,6 +2257,14 @@ impl Declarer<'_> {
             .unwrap_or_else(|| panic!("the prelude declares `{name}` before it is used"))
     }
 
+    /// [`Declarer::named`] for the `ffi` module's own scope.
+    fn ffi_named(&self, name: &str) -> DefId {
+        *self
+            .ffi_names
+            .get(name)
+            .unwrap_or_else(|| panic!("the prelude declares `ffi.{name}` before it is used"))
+    }
+
     fn item(&mut self, kind: hir::ItemKind) {
         self.items.push(hir::Item { kind, span: BUILTIN_SPAN, doc: None });
     }
@@ -2211,6 +2276,10 @@ impl Declarer<'_> {
             }
             Ty::App(name, args) => hir::TypeKind::Path {
                 res: Res::Def(self.named(name)),
+                generics: args.iter().map(|arg| self.ty(arg, scope)).collect(),
+            },
+            Ty::Ffi(name, args) => hir::TypeKind::Path {
+                res: Res::Def(self.ffi_named(name)),
                 generics: args.iter().map(|arg| self.ty(arg, scope)).collect(),
             },
             Ty::Var(name) => {
@@ -2702,10 +2771,17 @@ pub fn build(defs: &mut DefTable) -> Prelude {
 
     // Every name above exists before a single signature is written, which is
     // what lets a declaration name any of them without an ordering rule.
+    let ffi_scope: HashMap<String, DefId> = prelude
+        .modules
+        .iter()
+        .find(|(id, _)| *id == ffi)
+        .map(|(_, names)| names.iter().cloned().collect())
+        .expect("`ffi` was pushed onto `prelude.modules` above");
     let mut declarer = Declarer {
         defs,
         module,
         names: prelude.names.iter().cloned().collect(),
+        ffi_names: ffi_scope,
         items: Vec::new(),
     };
     // `ffi.Span` and `ffi.MutableSpan` get their fields before anything below

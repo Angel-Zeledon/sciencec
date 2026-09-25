@@ -1,0 +1,65 @@
+---
+source: crates/science-parser/tests/parse_extern.rs
+expression: "parse_source_allowing_errors(r#\"unsafe extern \"C\" library \"blas\":\n    def swap(n: I32, x: ffi.MutableSpan[F64], y: ffi.MutableSpan[F64])\n    def axpy(n: I32, x: ffi.Span[F64], y: ffi.MutableSpan[F64])\n    def mixed(x: ffi.MutableSpan[F64], y: ffi.MutableSpan[F32])\n    def four(a: ffi.MutableSpan[F64], b: ffi.MutableSpan[F64], c: ffi.MutableSpan[F64])\n\"#)"
+---
+Module @0..321
+  Extern "C" unsafe @0..320
+    Library "blas" @18..32
+    items
+      ExternFn `swap` @38..104
+        params
+          Param `n` @47..53
+            type: Path `I32` @50..53
+          Param `x` @55..78
+            type: Path `ffi.MutableSpan` @58..78
+              generics of `MutableSpan`
+                Path `F64` @74..77
+          Param `y` @80..103
+            type: Path `ffi.MutableSpan` @83..103
+              generics of `MutableSpan`
+                Path `F64` @99..102
+      ExternFn `axpy` @109..168
+        params
+          Param `n` @118..124
+            type: Path `I32` @121..124
+          Param `x` @126..142
+            type: Path `ffi.Span` @129..142
+              generics of `Span`
+                Path `F64` @138..141
+          Param `y` @144..167
+            type: Path `ffi.MutableSpan` @147..167
+              generics of `MutableSpan`
+                Path `F64` @163..166
+      ExternFn `mixed` @173..232
+        params
+          Param `x` @183..206
+            type: Path `ffi.MutableSpan` @186..206
+              generics of `MutableSpan`
+                Path `F64` @202..205
+          Param `y` @208..231
+            type: Path `ffi.MutableSpan` @211..231
+              generics of `MutableSpan`
+                Path `F32` @227..230
+      ExternFn `four` @237..320
+        params
+          Param `a` @246..269
+            type: Path `ffi.MutableSpan` @249..269
+              generics of `MutableSpan`
+                Path `F64` @265..268
+          Param `b` @271..294
+            type: Path `ffi.MutableSpan` @274..294
+              generics of `MutableSpan`
+                Path `F64` @290..293
+          Param `c` @296..319
+            type: Path `ffi.MutableSpan` @299..319
+              generics of `MutableSpan`
+                Path `F64` @315..318
+--- diagnostics ---
+SC0433 @83..103 `swap` takes two exclusive spans of `F64`
+  note @58..78 the other one
+  note `noalias` is a promise about the callee as well as the caller: if the C function aliases the two internally the optimiser may reorder, cache and duplicate accesses across the call, and the answer changes
+  note where the library's published contract guarantees they do not overlap — BLAS says so — this is correct as written; where it is silent, declare them `ffi.Pointer[T]`, which carries no attribute
+SC0433 @274..294 `four` takes two exclusive spans of `F64`
+  note @249..269 the other one
+  note `noalias` is a promise about the callee as well as the caller: if the C function aliases the two internally the optimiser may reorder, cache and duplicate accesses across the call, and the answer changes
+  note where the library's published contract guarantees they do not overlap — BLAS says so — this is correct as written; where it is silent, declare them `ffi.Pointer[T]`, which carries no attribute

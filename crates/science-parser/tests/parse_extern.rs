@@ -216,6 +216,28 @@ fn half_precision_is_refused_by_value_and_admitted_by_reference() {
     ));
 }
 
+/// §2.2, `SC0433`: two exclusive spans of one element type in one
+/// declaration, which is the shape `noalias` goes wrong on.
+///
+/// **Three declarations, and only the first two are the shape.** `swap` is it
+/// — two `ffi.MutableSpan[F64]`. `axpy` is not: one span is exclusive and the
+/// other is shared, and two of those may overlap without anything being
+/// claimed about them. `mixed` is not either: the element types differ, so no
+/// C function can alias them without a type error of its own. And `four`
+/// warns **once**, not three times, which is what makes the diagnostic
+/// readable on a kernel that takes four buffers.
+#[test]
+fn two_exclusive_spans_of_one_element_type_are_warned_about_once() {
+    insta::assert_snapshot!(parse_source_allowing_errors(
+        r#"unsafe extern "C" library "blas":
+    def swap(n: I32, x: ffi.MutableSpan[F64], y: ffi.MutableSpan[F64])
+    def axpy(n: I32, x: ffi.Span[F64], y: ffi.MutableSpan[F64])
+    def mixed(x: ffi.MutableSpan[F64], y: ffi.MutableSpan[F32])
+    def four(a: ffi.MutableSpan[F64], b: ffi.MutableSpan[F64], c: ffi.MutableSpan[F64])
+"#
+    ));
+}
+
 // --- the block's own mistakes -------------------------------------------
 
 /// §1.1: the keyword belongs where the unverifiable act is, and the act is

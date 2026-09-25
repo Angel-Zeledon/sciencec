@@ -579,13 +579,42 @@ pub enum Coercion {
     /// this a conversion with a branch in it rather than a load, and it is why
     /// it is not [`Coercion::Copy`] with a note attached.
     CopyWhenPresent,
+    /// `ffi-c-boundary.md` §1.3: `&Array[T]` into `ffi.Span[T]`, and
+    /// `&mut Array[T]` into `ffi.MutableSpan[T]`, at an argument.
+    ///
+    /// > *"For ergonomics, an argument of type `borrowed Array of T` at an
+    /// > extern call site **coerces** to `ffi.Span of T`, on the same principle
+    /// > as auto-borrow (§6.3 of the core spec): the signature keeps the
+    /// > information, the call site loses the noise."*
+    ///
+    /// **This one reads two words out of a header and writes two words.** An
+    /// `Array` is `science-rt`'s three-word `{ptr, len, cap}`; a `Span` is
+    /// §1.3's `{ borrowed T, Int }`. The conversion copies the first two and
+    /// drops the capacity, which is the whole of it — no allocation, no call,
+    /// and **no length crossing the ABI**: §1.3 keeps the length on the Science
+    /// side so the wrapper's bounds check is an expression the compiler checks,
+    /// and the pointer alone is what reaches C.
+    ///
+    /// **One variant for both mutabilities**, on [`Coercion::Unsize`]'s
+    /// precedent: the two emit the same two loads and the same two stores, and
+    /// which of `Span` and `MutableSpan` is being built is already in the
+    /// destination's type. What differs is the *attribute* on the C
+    /// declaration's parameter, and that is decided at the declaration by
+    /// `ffi-c-boundary.md` §2.2 and not here.
+    ///
+    /// **It does not weaken.** `&mut Array[T]` does not reach `ffi.Span[T]`
+    /// and `&Array[T]` does not reach `ffi.MutableSpan[T]`. The second would
+    /// be unsound and the first is §6's excluded question — mutability — which
+    /// rule 6 refuses for `Unsize` in the same words.
+    Span,
 }
 
-/// The three definitions this relation has to know by name.
+/// The six definitions this relation has to know by name.
 ///
 /// `any Error` is a type mentioning the prelude's `Error` interface, `Copy` is
 /// the interface §7's rule is conditioned on, `Box` is the one type constructor
-/// §4a looks through, and the prelude does not export
+/// §4a looks through, `Array`, `ffi.Span` and `ffi.MutableSpan` are the three
+/// rule 8 is written about, and the prelude does not export
 /// its ids: `resolve_module` hands back a
 /// [`hir::Crate`](science_resolve::hir::Crate) whose `DefTable` contains the
 /// prelude's definitions but names none of them. So [`Coercions::of`] finds
@@ -596,8 +625,17 @@ pub enum Coercion {
 /// HIR exists to abolish, performed once. The honest fix is for the resolver to
 /// publish the handful of prelude ids that later phases need by name; that is
 /// `science-resolve`'s decision and this crate should not make it by reaching
-/// into `builtins`. The cost has not changed shape now that there are three
+/// into `builtins`. The cost has not changed shape now that there are six
 /// names rather than one — it is the same single pass.
+///
+/// **The three rule 8 added are three because §1.3 gives the conversion three
+/// heads and not because each needed its own argument.** `Array` is the source
+/// constructor, and `Span` and `MutableSpan` are two target constructors
+/// rather than one with a flag, because that is how `builtins.rs` declares
+/// them — two `DefId`s with two different field types — and a `Ty` says which
+/// by naming one of them. The structural guess §2 refuses is available here in
+/// the same shape it is for `Box`: a rule reading "a two-field record whose
+/// first field is a borrow" would admit any user record of that shape.
 ///
 /// **The third name was to be an argument rather than a habit, and this is the
 /// argument.** `Box` is not an interface and it is not a question about
@@ -626,6 +664,9 @@ pub struct Coercions {
     error: Option<DefId>,
     copy: Option<DefId>,
     boxed: Option<DefId>,
+    array: Option<DefId>,
+    span: Option<DefId>,
+    mutable_span: Option<DefId>,
 }
 
 impl Coercions {
@@ -646,7 +687,50 @@ impl Coercions {
             error: find(DefKind::Interface, "Error"),
             copy: find(DefKind::Interface, "Copy"),
             boxed: find(DefKind::Primitive, "Box"),
+            array: find(DefKind::Primitive, "Array"),
+            // `builtins.rs` allocates these two as [`DefKind::Record`] rather
+            // than as primitives, and deliberately: §1.3 gives each of them
+            // fields, and the record kind is what makes `needs_drop` able to
+            // walk them. So the kind is part of the query, exactly as it is
+            // for `Box`.
+            span: find(DefKind::Record, "Span"),
+            mutable_span: find(DefKind::Record, "MutableSpan"),
         }
+    }
+
+    /// What `ffi.Span[T]` or `ffi.MutableSpan[T]` is a view of, and which of
+    /// the two it is.
+    ///
+    /// Exactly one type argument, for [`Coercions::box_element`]'s reason: a
+    /// span takes one, so a `Span of (A, B)` is a mistake the arity check
+    /// reports and not a thing to convert into.
+    pub fn span_element(self, types: &Types, ty: Ty) -> Option<(bool, Ty)> {
+        let TyKind::Named { def, args } = types.kind(ty) else {
+            return None;
+        };
+        if args.len() != 1 {
+            return None;
+        }
+        let mutable = if Some(*def) == self.span {
+            false
+        } else if Some(*def) == self.mutable_span {
+            true
+        } else {
+            return None;
+        };
+        Some((mutable, args[0].as_type()?))
+    }
+
+    /// What an `Array[T]` holds, when `ty` is one.
+    pub fn array_element(self, types: &Types, ty: Ty) -> Option<Ty> {
+        let array = self.array?;
+        let TyKind::Named { def, args } = types.kind(ty) else {
+            return None;
+        };
+        if *def != array || args.len() != 1 {
+            return None;
+        }
+        args[0].as_type()
     }
 
     /// The interface `any Error` names, when there is one.
@@ -799,13 +883,51 @@ pub fn assignable(
             }
         }
         // No `return None` here, deliberately: a `Box of any I` target that
-        // this rule refuses is still a target rules 8 and 9 may answer about,
-        // and both of them answer no on their own terms. Rule 6 returns early
+        // this rule refuses is still a target rules 8 to 10 may answer about,
+        // and all three answer no on their own terms. Rule 6 returns early
         // because a *borrowed* target is a shape nothing below it can match;
         // a `Box of T` is a `TyKind::Named` and that is not true of it.
     }
 
-    // Rule 8. Decision 14.
+    // Rule 8. `ffi-c-boundary.md` §1.3's span coercion.
+    //
+    // **The site is `Site::Argument`, and §1.3 says "at an extern call
+    // site".** This relation cannot see whether the callee is `extern`: a
+    // `Ty` carries no such fact and `Site` has three cases, none of which is
+    // "a call into C". What it can see is that the *target* is one of the two
+    // types §1.3's vocabulary exists for, and the only thing admitting the
+    // conversion at an ordinary Science call adds is that a hand-written
+    // wrapper — `def dot(x: ffi.Span[F64], ...)`, which §1.7 is entirely made
+    // of — takes `&xs` the same way the `extern` declaration below it does.
+    // That is a superset of the rule and it is named here rather than
+    // smoothed over; the honest narrowing is a fourth `Site`, and it would
+    // have to be threaded through every caller of this function to buy a
+    // refusal nobody has asked for.
+    //
+    // **Not at a `let`, a field or a return**, which is where `.span()` is.
+    // §1.3's own argument for the coercion is ergonomic and is about calls —
+    // *"every BLAS call has between two and four array arguments"* — and
+    // `Array.span` is the spelling everywhere else, exactly as `SC0421`'s
+    // note says: *"a call site still passes the array … and `.span()` names
+    // the conversion where it has to be written out"*.
+    if site == Site::Argument {
+        if let Some((mutable, element)) = coercions.span_element(types, target) {
+            if let TyKind::Borrowed { mutable: source_mutable, inner } = *types.kind(source) {
+                // The same `m` on both sides, for rule 6's reason. `&mut` into
+                // `Span` is §6's excluded question and `&` into `MutableSpan`
+                // is the unsound direction §1.7 refuses by name.
+                if source_mutable == mutable {
+                    if let Some(held) = coercions.array_element(types, inner) {
+                        if types.compatible(held, element) {
+                            return Some(Coercion::Span);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Rule 9. Decision 14.
     if site.boxes()
         && coercions.is_any_error(types, target)
         && may_box(types, methods, coercions, source)
@@ -813,7 +935,7 @@ pub fn assignable(
         return Some(Coercion::Box);
     }
 
-    // Rule 9. §7. Not gated on the site: a copy of a `Copy` type is the same
+    // Rule 10. §7. Not gated on the site: a copy of a `Copy` type is the same
     // value, so there is no position at which it would be a surprise, and the
     // corpus needs it at a block's tail as well as at a `return`.
     if copies(types, methods, coercions, site, source, target) {

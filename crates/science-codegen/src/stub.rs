@@ -185,6 +185,11 @@ fn render_param(param: &AbiParam) -> String {
         ArgClass::Ignore => "; zero-sized, passed as nothing".to_string(),
         ArgClass::Direct => render_layout(&param.layout),
         ArgClass::IndirectByPointer => format!("ptr byval({})", render_layout(&param.layout)),
+        // Not `byval`: §1.3's span passes the pointer it *holds*, so the
+        // aggregate in `param.layout` is what the argument is on the Science
+        // side and not what crosses. The transcript says which of the two
+        // words went.
+        ArgClass::SpanPointer => "ptr ; the pointer half of a span".to_string(),
     };
     // Attribute order is fixed so that a transcript is comparable. LLVM does
     // not care; a diff does.

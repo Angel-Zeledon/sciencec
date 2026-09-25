@@ -893,6 +893,37 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// Whether this is `ffi.Span[T]` or `ffi.MutableSpan[T]`, which of the two,
+    /// and what it is a view of.
+    ///
+    /// **Keyed on the name and on `is_builtin`, which is
+    /// [`Lowerer::cg_ty_in`]'s compromise and is stated there**: *"the `Named`
+    /// case reads the name, which is wrong in general — two modules can each
+    /// define a `String` — and is right for the prelude types it is restricted
+    /// to, all of which are builtins."* A user's own `record Span[T]` is not
+    /// `is_builtin`, so it does not reach this and is refused as the ordinary
+    /// by-value aggregate it is.
+    ///
+    /// **Nothing here looks through a borrow.** §1.3's table gives `ffi.Span
+    /// of T` its own row beside `borrowed T`, and a `&ffi.Span[F64]` in an
+    /// extern signature is a pointer to a span — a different C parameter, and
+    /// one the ordinary borrow path already classifies correctly.
+    fn ffi_span(&self, ty: Ty) -> Option<(bool, Ty)> {
+        let TyKind::Named { def, args } = self.types.kind(ty) else {
+            return None;
+        };
+        let def = self.defs.get(*def);
+        if !def.is_builtin() || def.kind != DefKind::Record || args.len() != 1 {
+            return None;
+        }
+        let mutable = match def.name.as_str() {
+            "Span" => false,
+            "MutableSpan" => true,
+            _ => return None,
+        };
+        Some((mutable, args[0].as_type()?))
+    }
+
     /// The definition a concrete type is headed by: the `Doc` of a `Doc`, of a
     /// `borrowed Doc`, and of a `Box of Doc`.
     ///
@@ -4907,6 +4938,24 @@ impl<'a> Lowerer<'a> {
                         local: id,
                         layout: layout.clone(),
                     })),
+                    // Unreachable, and worth a sentence rather than a
+                    // `_ => {}`. [`ArgClass::SpanPointer`] is produced by
+                    // [`Lowerer::declare_foreign`] and by nothing else, and a
+                    // foreign declaration has no body to build a prologue for.
+                    // A Science function that *takes* an `ffi.Span[T]` — §1.7's
+                    // safe wrapper, which is the reason the type has a length
+                    // at all — is classified by `classify_science_argument` and
+                    // arrives here as Decision 22's `IndirectByPointer`, with
+                    // both words present. The day something makes a Science
+                    // definition the C side of the boundary, this arm is where
+                    // the length has to come back from.
+                    ArgClass::SpanPointer => {
+                        return Err(Unlowered::new(
+                            "a definition whose parameter is classified as the pointer half of \
+                             a span: §1.3 drops the length at a call *into* C, and a body \
+                             cannot be given a parameter one word short of its type",
+                        ));
+                    }
                 }
             } else if let Some(at) = capture_locals.iter().position(|param| *param == local) {
                 // §8.6's other half. A capture is an ordinary local of this
@@ -6146,6 +6195,7 @@ impl<'a> Lowerer<'a> {
             Coercion::Unsize | Coercion::UnsizeInBox => {
                 self.lower_unsize(body, ctx, operand, dest, ty, insts)
             }
+            Coercion::Span => self.lower_span(body, ctx, operand, dest, layout, insts),
             // §7, whole: `borrowed T` into `T` is the load and nothing else.
             // The destination's layout is checked against the referent's rather
             // than assumed equal to it, because the two come from different
@@ -6254,6 +6304,156 @@ impl<'a> Lowerer<'a> {
                  basic block\" — the same line integer `/` is refused at",
             )),
         }
+    }
+
+    /// `ffi-c-boundary.md` §1.3's span: the first two words of an `Array`
+    /// header, copied into a `{ pointer, len }`.
+    ///
+    /// # The decision
+    ///
+    /// Two loads and two stores, at offsets read from the two layouts. No
+    /// runtime call, no descriptor, and no allocation.
+    ///
+    /// # The reason
+    ///
+    /// `science-rt`'s `ScienceArray` is `{ ptr, len, cap }` — `array.rs`'s own
+    /// struct, whose `ptr` is documented *"pointer to the elements; never
+    /// null, dangling when nothing is allocated"* — and §1.3's `ffi.Span of T`
+    /// is `{ borrowed T, Int }`. The conversion is the first two fields and
+    /// the capacity dropped. There is nothing for the runtime to do that this
+    /// cannot do: no element is touched, so no `ScienceTypeInfo` is needed,
+    /// which is what makes this the one `Array` operation in the crate with no
+    /// descriptor beside it.
+    ///
+    /// **The offsets are read and not assumed.** Both are zero and eight
+    /// today, and writing them out would be `science-codegen`'s layout
+    /// duplicated in a second place — the mistake `place_address`'s own note
+    /// refuses. `RtAggregate::Array.cg_ty()` is the same `CgTy`
+    /// [`Lowerer::cg_ty_in`] gives an `Array[T]`, so the header this reads is
+    /// the header every other `Array` operation in this crate writes.
+    ///
+    /// **A `usize` length read into an `Int` slot is the one width claim
+    /// here**, and it is exact rather than lucky: `RtAggregate`'s note calls
+    /// out *"the `usize` in every length and capacity"*, `usize` is 64 bits on
+    /// all three F0 targets, and `Int` is `I64`. Both are `i64` to LLVM and
+    /// the store's own width check — [`ExtInst::StoreAt`]'s reason for
+    /// existing — is what would catch it if either ever stopped being true.
+    ///
+    /// # What does not happen here
+    ///
+    /// **The length does not cross the ABI.** §1.3: *"At the ABI only the
+    /// pointer crosses. The length exists solely on the Science side."* This
+    /// builds the whole two-word value because that is the type the Science
+    /// program now holds; [`Lowerer::lower_foreign_call`]'s
+    /// [`ArgClass::SpanPointer`] is where the second word is dropped, at the
+    /// call and not at the conversion, so that a `Span` living in a local or a
+    /// record field keeps the length §1.7's `covers` is written against.
+    fn lower_span(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        operand: &mir::Operand,
+        dest: LocalId,
+        layout: &Layout,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        let Repr::Aggregate { fields } = &layout.repr else {
+            return Err(Unlowered::new(
+                "a span built into a slot whose representation is not Decision 17's aggregate \
+                 one: `ffi.Span[T]` is `{ borrowed T, Int }` and there is nowhere to put the \
+                 two words",
+            ));
+        };
+        let [pointer_field, len_field] = &fields[..] else {
+            return Err(Unlowered::new(format!(
+                "a span built into a slot with {} field(s): §1.3 gives `ffi.Span[T]` exactly \
+                 two, a pointer and a length",
+                fields.len()
+            )));
+        };
+        let (pointer_field, len_field) = (pointer_field.clone(), len_field.clone());
+
+        let header = layout_of(self.target, &RtAggregate::Array.cg_ty());
+        let Repr::Aggregate { fields: header_fields } = &header.repr else {
+            return Err(Unlowered::new(
+                "a `ScienceArray` header that is not an aggregate, which `science-codegen`'s \
+                 `RtAggregate::Array` says it is",
+            ));
+        };
+        let [array_ptr, array_len, _cap] = &header_fields[..] else {
+            return Err(Unlowered::new(format!(
+                "a `ScienceArray` header with {} field(s) where `science-rt`'s `array.rs` \
+                 declares three: `{{ ptr, len, cap }}`",
+                header_fields.len()
+            )));
+        };
+        let (array_ptr, array_len) = (array_ptr.clone(), array_len.clone());
+
+        // The operand is the `&Array[T]` the coercion's rule required — its
+        // own layout and not a stand-in, so that a disagreement between the
+        // type and the load is finding 12's shape rather than an invisible
+        // one.
+        let source_ty = self.operand_ty(body, operand).ok_or_else(|| {
+            Unlowered::new(
+                "a span built from an operand MIR carries no type for: §1.3's coercion is \
+                 written about `&Array[T]` and nothing else can be read as one",
+            )
+        })?;
+        let source_layout = self.layout_of_ty(source_ty)?;
+        if !matches!(source_layout.repr, Repr::Scalar(Scalar::Pointer(_))) {
+            return Err(Unlowered::new(format!(
+                "a span built from a value of type `{}`, which is not a borrow: §1.3's \
+                 coercion takes `&Array[T]` and this is not one",
+                self.types.render(self.defs, source_ty)
+            )));
+        }
+        let base = self.typed_operand(ctx, operand, &source_layout, insts)?;
+
+        let data = self.read_field(ctx, base.clone(), &array_ptr, insts);
+        let len = self.read_field(ctx, base, &array_len, insts);
+
+        let slot = ctx.value();
+        insts.push(ExtInst::LocalAddr { dest: slot, local: dest });
+        self.write_field(ctx, Operand::Value(slot), &pointer_field, Operand::Value(data), insts);
+        self.write_field(ctx, Operand::Value(slot), &len_field, Operand::Value(len), insts);
+        Ok(())
+    }
+
+    /// One field of an aggregate at a computed address, as a value.
+    fn read_field(
+        &self,
+        ctx: &mut BodyCtx,
+        base: Operand,
+        field: &science_codegen::layout::FieldPlace,
+        insts: &mut Vec<ExtInst>,
+    ) -> ValueId {
+        let address = ctx.value();
+        insts.push(ExtInst::FieldAddr { dest: address, base, offset: field.offset });
+        let value = ctx.value();
+        insts.push(ExtInst::LoadAt {
+            dest: value,
+            address: Operand::Value(address),
+            layout: field.layout.clone(),
+        });
+        value
+    }
+
+    /// The write half of [`Lowerer::read_field`].
+    fn write_field(
+        &self,
+        ctx: &mut BodyCtx,
+        base: Operand,
+        field: &science_codegen::layout::FieldPlace,
+        value: Operand,
+        insts: &mut Vec<ExtInst>,
+    ) {
+        let address = ctx.value();
+        insts.push(ExtInst::FieldAddr { dest: address, base, offset: field.offset });
+        insts.push(ExtInst::StoreAt {
+            address: Operand::Value(address),
+            layout: field.layout.clone(),
+            value,
+        });
     }
 
     /// Decision 14's boxing: a concrete value moved to the heap and paired
@@ -8471,6 +8671,8 @@ impl<'a> Lowerer<'a> {
             self.prelude_method(def, args.first().and_then(|op| self.operand_ty(body, op)))
         {
             self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;
+        } else if self.array_span(def, args.first().and_then(|op| self.operand_ty(body, op))) {
+            self.lower_array_span(body, ctx, args, destination, insts)?;
         } else if self.trivial_scalar_clone(def, args.first().and_then(|op| self.operand_ty(body, op)))
         {
             self.lower_trivial_scalar_clone(ctx, args, destination, insts)?;
@@ -9854,6 +10056,62 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
+    /// Whether this call is `Array[T].span()` or `Array[T].span_mutably()`.
+    ///
+    /// **Not a row in `PRELUDE_METHODS`, for that table's own stated reason.**
+    /// A row there promises [`Lowerer::lower_runtime_call`]'s shape — one
+    /// symbol, one call, one result — and there is no `science_array_span` and
+    /// should not be: the conversion reads two words out of a header it can
+    /// see the layout of and touches no element, so a runtime entry point
+    /// would be a call, a descriptor and a boundary crossing to do what two
+    /// loads do. [`Lowerer::trivial_scalar_clone`] is the same judgement about
+    /// `Clone.clone` on a scalar, and this sits beside it.
+    ///
+    /// The receiver is required and is filtered on `is_builtin`, exactly as
+    /// that function filters, so a user's own `span()` on a user's own type
+    /// does not reach this.
+    fn array_span(&self, def: DefId, receiver_ty: Option<Ty>) -> bool {
+        if !matches!(self.defs.get(def).name.as_str(), "span" | "span_mutably") {
+            return false;
+        }
+        let Some(receiver_ty) = receiver_ty else { return false };
+        let self_ty = self.referent(receiver_ty);
+        let TyKind::Named { def: receiver, args } = self.types.kind(self_ty) else {
+            return false;
+        };
+        args.len() == 1
+            && self.defs.get(*receiver).is_builtin()
+            && self.defs.get(*receiver).name == "Array"
+    }
+
+    /// The lowering [`Lowerer::array_span`] names, which is
+    /// [`Lowerer::lower_span`] with the receiver as its operand.
+    ///
+    /// `self` is `SelfKind::Shared` for `span` and `SelfKind::Mutable` for
+    /// `span_mutably`, so the call's first argument is a borrow of the array
+    /// either way — the identical input §1.3's coercion hands
+    /// [`Lowerer::lower_span`] — and the destination is the `{ pointer, len }`
+    /// the method's return type already gave a slot. There is nothing for this
+    /// to add beyond naming the two.
+    fn lower_array_span(
+        &mut self,
+        body: &MirBody,
+        ctx: &mut BodyCtx,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        if !destination.projection.is_empty() {
+            return Err(Unlowered::new("a `span()` whose result goes through a field"));
+        }
+        let receiver = args
+            .first()
+            .ok_or_else(|| Unlowered::new("a `span()` call lowered with no receiver argument"))?;
+        let dest_local = LocalId(destination.local.index() as u32);
+        let layout = ctx.layout(dest_local)?.clone();
+        self.lower_span(body, ctx, receiver, dest_local, &layout, insts)
+    }
+
     /// The `science-rt` entry point a method reaches through §5.3's
     /// bool-plus-out-parameter convention, if it is one.
     ///
@@ -10265,6 +10523,17 @@ impl<'a> Lowerer<'a> {
         for (arg, param) in args.iter().zip(&sig.params) {
             match param.class {
                 ArgClass::Ignore => {}
+                // Unreachable for [`Lowerer::declare_foreign`]'s reason, stated
+                // at the parameter-binding arm above: this is a Science-to-
+                // Science call, `classify_science_argument` classified it, and
+                // that function produces three classes and not this one.
+                ArgClass::SpanPointer => {
+                    return Err(Unlowered::new(
+                        "a Science call whose argument is classified as the pointer half of a \
+                         span: Decision 22 passes an aggregate whole, and dropping the length \
+                         is a thing that happens only at the C boundary",
+                    ));
+                }
                 ArgClass::Direct => {
                     lowered.push(self.typed_operand(ctx, arg, &param.layout, insts)?);
                 }
@@ -10520,10 +10789,47 @@ impl<'a> Lowerer<'a> {
         }
         let mut lowered: Vec<Operand> = Vec::with_capacity(args.len());
         for (arg, param) in args.iter().zip(&sig.params) {
-            if matches!(param.class, ArgClass::Ignore) {
-                continue;
+            match param.class {
+                ArgClass::Ignore => continue,
+                // §1.3: *"At the ABI only the pointer crosses."* This is the
+                // one place the sentence is executable. The argument is a
+                // sixteen-byte `{ pointer, len }` in a caller local; what goes
+                // on the call is the first field, read at the offset the
+                // layout gives it, and the length stays where Science can see
+                // it.
+                //
+                // **Not `place_address`, which is the mistake this shape
+                // invites.** The address of the span and the pointer inside it
+                // are both `ptr`, both non-null, and both link; the first is a
+                // pointer to a pointer and `cblas_ddot` reads it as an array
+                // of doubles.
+                ArgClass::SpanPointer => {
+                    let Repr::Aggregate { fields } = &param.layout.repr else {
+                        return Err(Unlowered::new(
+                            "a span argument whose layout is not Decision 17's aggregate one",
+                        ));
+                    };
+                    let Some(pointer_field) = fields.first().cloned() else {
+                        return Err(Unlowered::new(
+                            "a span argument with no fields: §1.3 gives `ffi.Span[T]` a \
+                             pointer and a length",
+                        ));
+                    };
+                    let Some(place) = arg.place() else {
+                        return Err(Unlowered::new(
+                            "a span argument that is not a place: the pointer half is read out \
+                             of the value, and a constant has nowhere to read it from",
+                        ));
+                    };
+                    let (address, _) = self.place_address(ctx, place, insts)?;
+                    let pointer =
+                        self.read_field(ctx, Operand::Value(address), &pointer_field, insts);
+                    lowered.push(Operand::Value(pointer));
+                }
+                ArgClass::Direct | ArgClass::IndirectByPointer => {
+                    lowered.push(self.lower_operand(ctx, arg, Some(&param.layout), insts)?);
+                }
             }
-            lowered.push(self.lower_operand(ctx, arg, Some(&param.layout), insts)?);
         }
 
         self.emit_result(
@@ -10584,13 +10890,48 @@ impl<'a> Lowerer<'a> {
         for param in &params {
             let ty = self.cg_ty(param.ty)?;
             let layout = layout_of(self.target, &ty);
-            let class = classify_extern_argument(&ty, &layout)
-                .map_err(|refusal| Unlowered::new(describe_refusal(&refusal, &name)))?;
+            // §1.3's two view types, before the scalar classifier sees them: a
+            // span is a two-field record and `check_extern_scalar` refuses
+            // every one of those with `SC0429`, correctly, because it has no
+            // argument classifier and will not guess. This is not a guess — it
+            // is the note saying which word crosses.
+            let (class, attrs) = match self.ffi_span(param.ty) {
+                Some((mutable, element)) => {
+                    let kind =
+                        if mutable { BorrowKind::Exclusive } else { BorrowKind::Shared };
+                    // The *element's* alignment, not the span's and not the
+                    // pointer's, for `param_attrs`' reason: `align N` on a
+                    // pointer is a claim about what it points at.
+                    let align = self.layout_of_ty(element)?.align;
+                    let mut attrs = borrow_attrs(kind, align, self.no_noalias);
+                    // Withheld for `param_attrs`' reason and one more. That
+                    // function cannot claim a *Science* callee does not
+                    // capture without an escape analysis; here the callee is C
+                    // and there is not even a body to analyse. §2.2 names this
+                    // exact hole — *"that C does not retain the pointer past
+                    // the call … there is no way to state it and no way to
+                    // check it"* — so the attribute that asserts it is not
+                    // emitted.
+                    attrs.nocapture = false;
+                    (ArgClass::SpanPointer, attrs)
+                }
+                None => {
+                    let class = classify_extern_argument(&ty, &layout)
+                        .map_err(|refusal| Unlowered::new(describe_refusal(&refusal, &name)))?;
+                    // Decision 24 at the boundary, which §2.2 asks for in the
+                    // same sentence as the span: *"`mutable borrowed` and
+                    // `ffi.MutableSpan` lower with LLVM's `noalias`"*. A
+                    // `borrowed T` parameter of a C function is the same claim
+                    // a Science one makes and rule 4 is what justifies both,
+                    // so it is the same function that answers.
+                    (class, self.param_attrs(param.ty, &layout)?)
+                }
+            };
             abi_params.push(AbiParam {
                 name: self.defs.get(param.def).name.clone(),
                 class,
                 layout,
-                attrs: ParamAttrs::default(),
+                attrs,
             });
         }
         let sig = AbiSignature {
