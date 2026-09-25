@@ -1088,6 +1088,36 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
 
     // --- blocks and statements --------------------------------------------
 
+    /// A block's statements, then its tail into `dest`.
+    ///
+    /// # A discarded tail gets a slot of its own type
+    ///
+    /// **A tail whose value the enclosing construct throws away is lowered
+    /// into a temporary typed like the tail, and `dest` is assigned unit.**
+    /// The tail is written into `dest` directly only when `dest` can hold it.
+    ///
+    /// The reason is that `dest`'s type is the *enclosing construct's*, not
+    /// the tail's, and the two part company exactly where a value is
+    /// discarded: `check`'s §6 types an `if` with no `else`, a `loop` and a
+    /// `for` as `Ty::UNIT` however their bodies end, and says nothing about
+    /// them to the body. (A `()`-returning *function* body is the case that
+    /// never reaches here: the checker refuses a non-unit tail under it with
+    /// `SC0525`, *"expected `()`, found `I64?`"*, so the disagreement is a
+    /// diagnostic long before MIR. The three above are the ones where
+    /// discarding is the language's own rule rather than a mistake.) So
+    /// `if ready: m.insert(k, v)` used to hand
+    /// [`Builder::expr_into`] a `()` place for a call that produces a `V?`,
+    /// and the disagreement travelled all the way to codegen, where §5.3's
+    /// bool-plus-out-parameter convention has nowhere to write the payload
+    /// and refuses — while the same call one line earlier, as a
+    /// `StmtKind::Expr`, was fine, because [`Builder::lower_stmt`] already
+    /// builds its discard out of the *expression's* own type.
+    ///
+    /// This is that same rule, moved to the other place a value is dropped on
+    /// the floor. It also puts the discarded value somewhere a destructor can
+    /// find it: the temporary belongs to this block's scope, so
+    /// [`Builder::pop_scope`] drops it, and the displaced `V` a
+    /// `Map[K, String].insert` hands back is released rather than leaked.
     fn lower_block(&mut self, dest: Place, block_id: thir::BlockId, mut block: BlockId) -> BlockId {
         let thir = self.thir;
         let thir_block = thir.block(block_id);
@@ -1096,6 +1126,18 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             block = self.lower_stmt(statement, block);
         }
         match thir_block.tail {
+            Some(tail) if self.tail_is_discarded(&dest, tail) => {
+                let ty = self.thir.ty(tail);
+                let span = self.thir.expr(tail).span;
+                let discard = self.temp(ty, span, block);
+                block = self.expr_into(Place::local(discard), tail, block);
+                self.assign(
+                    block,
+                    dest,
+                    Rvalue::Use(Operand::Const(Constant::Unit)),
+                    thir_block.span,
+                );
+            }
             Some(tail) => block = self.expr_into(dest, tail, block),
             None => {
                 self.assign(
@@ -1107,6 +1149,30 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             }
         }
         self.pop_scope(block, thir_block.span)
+    }
+
+    /// Whether the value `tail` produces has nowhere to go in `dest`.
+    ///
+    /// **The one question asked is whether the destination is `()` and the
+    /// tail is not.** Both types are revealed through their aliases first, so
+    /// a `type Nothing be ()` on either side answers the same as the spelling
+    /// it stands for.
+    ///
+    /// Any *other* disagreement between the two is left alone and handed to
+    /// [`Builder::expr_into`] as before: a `T` tail under a `T?` destination
+    /// is `check`'s widening and not a discard, and inventing a slot for it
+    /// here would put a `T` where a `T?` belongs. `Ty::ERROR` is excluded for
+    /// the same reason [`Builder::temp`] is never given one deliberately —
+    /// the mistake is already reported, and a temporary of the error type
+    /// would ask the layout engine a question with no answer.
+    fn tail_is_discarded(&mut self, dest: &Place, tail: ExprId) -> bool {
+        let dest_ty = self.place_ty(dest);
+        if self.revealed(dest_ty) != Ty::UNIT {
+            return false;
+        }
+        let tail_ty = self.thir.ty(tail);
+        let tail_ty = self.revealed(tail_ty);
+        tail_ty != Ty::UNIT && tail_ty != Ty::ERROR
     }
 
     fn lower_stmt(&mut self, statement: &thir::Stmt, mut block: BlockId) -> BlockId {
@@ -1714,46 +1780,48 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         block: BlockId,
         span: Span,
     ) -> BlockId {
-        // **The discard's type is the body's tail's, not `Ty::UNIT`.** A
-        // `loop:` is itself `Ty::UNIT` (`check`'s §6) — nobody reads what the
-        // body produces — but the body's *tail* can be anything, including a
-        // `T?` a `science-rt` call builds out of a `bool` and an
-        // out-parameter (§5.3), and that shape has nowhere else to write its
-        // answer. Typing the discard `Ty::UNIT` regardless of the tail's real
-        // type used to reach codegen as a call whose destination disagreed
-        // with its own callee — `Map.insert` inside a loop hits the same
-        // refusal `Array.pop` does, which is what makes this a gap in
-        // discarding a loop tail and not a fact about either method.
-        let tail_ty = match self.thir.block(body).tail {
-            Some(tail) => self.thir.ty(tail),
-            None => Ty::UNIT,
-        };
+        // **`Ty::UNIT`, because a `loop:` *is* `Ty::UNIT` (`check`'s §6) and
+        // nobody reads what the body produces.**
+        //
+        // This used to be typed from the body's *tail* instead — a `T?` a
+        // `science-rt` call builds out of a `bool` and an out-parameter (§5.3)
+        // has nowhere else to write its answer, and a `()` destination reached
+        // codegen as a call whose destination disagreed with its own callee.
+        // That was the right diagnosis and the wrong place: the same
+        // disagreement arrives through an `if` with no `else` and through a
+        // `for`, neither of which has a `tail_ty` line to copy, so
+        // [`Builder::lower_block`] now answers it once for every construct
+        // that discards a tail. A second answer here would only decide which
+        // of the two got there first.
+        //
         // Still allocated *outside* the loop, so its `StorageLive` runs once
         // rather than once per iteration — a temporary whose storage began
         // inside the loop and outlived it would pair a `StorageDead` with no
-        // `StorageLive` on the zero-more-writes path.
-        let discard = self.temp(tail_ty, span, block);
+        // `StorageLive` on the zero-more-writes path. The tail's own value now
+        // lives in a temporary of `lower_block`'s making, which belongs to the
+        // body's scope and is therefore dropped on every trip round the back
+        // edge rather than surviving into the next one.
+        let discard = self.temp(Ty::UNIT, span, block);
         let head = self.new_block();
         let exit = self.new_block();
         self.terminate(block, TerminatorKind::Goto { target: head }, span);
         self.loops.push(LoopScope { head, continue_to: head, exit, depth: self.scopes.len() });
         let after = self.lower_block(Place::local(discard), body, head);
         // **Dropped every iteration the tail is reached, not just once at the
-        // enclosing scope's exit.** The discard's storage is shared across
-        // every trip around the back edge, so overwriting it on iteration
-        // `n + 1` without first releasing iteration `n`'s answer would leak
-        // whatever it owned — `Array[String].pop()` discarded in a hot loop
-        // is exactly this, `n - 1` times over. `break`/`continue` skip this
-        // block entirely, by construction (§5's terminators leave from
-        // wherever they are written, never falling through to a block's own
-        // tail), so a value is only ever here to drop on the path that just
-        // wrote one. `emit_drop_if_needed` is `crate::moves`' unconditional
-        // half — `Ty::UNIT` and every other `Copy` tail cost nothing — and
-        // the same discipline `emit_scope_exit` uses elsewhere then
-        // elaborates it: the leftover write from whichever iteration last
-        // reached the tail before a `break`, if any, is still live when the
-        // enclosing scope's own exit runs, and that drop is the one built
-        // into `discard` being registered there below, unchanged from before.
+        // enclosing scope's exit**, because the discard's storage is shared
+        // across every trip around the back edge and overwriting it on
+        // iteration `n + 1` without first releasing iteration `n`'s answer
+        // would leak whatever it owned. `Ty::UNIT` owns nothing, so today this
+        // emits no drop at all and the leak it guards against is
+        // `lower_block`'s to prevent — `Array[String].pop()` discarded in a hot
+        // loop is released there, in the body's own scope, once per trip. The
+        // call stays because the *slot* is still loop-carried: anything that
+        // ever gives this local an owning type again needs this line, and
+        // `crate::moves`' elaboration deletes it for free while it does not.
+        // `break`/`continue` skip this block entirely, by construction (§5's
+        // terminators leave from wherever they are written, never falling
+        // through to a block's own tail), so a value is only ever here to drop
+        // on the path that just wrote one.
         let after = self.emit_drop_if_needed(discard, after, span);
         self.terminate(after, TerminatorKind::Goto { target: head }, span);
         self.loops.pop();
