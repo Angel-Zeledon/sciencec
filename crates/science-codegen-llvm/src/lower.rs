@@ -6349,6 +6349,15 @@ impl<'a> Lowerer<'a> {
                  has one, and Decision 5 says \"every MIR basic block becomes exactly one LLVM \
                  basic block\" — the same line integer `/` is refused at",
             )),
+            // Decision 28's AMENDMENT 6. `science-mir` lowers this coercion as
+            // a shared reborrow of the place one `Projection::Deref` further
+            // in and never as an `Rvalue::Coerce`, so reaching here means a
+            // MIR producer other than `science_mir::lower` built one; refused
+            // by name rather than guessed at.
+            Coercion::BorrowThroughBox => Err(Unlowered::new(
+                "a `&Box[T]` into `&T` as an `Rvalue::Coerce`: `science-mir` lowers this \
+                 coercion as a reborrow through a `Deref`, and no other producer should emit it",
+            )),
         }
     }
 

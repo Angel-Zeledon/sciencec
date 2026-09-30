@@ -454,6 +454,7 @@ pub fn check_crate(
     // `conform`'s own head comment is the decision; this is its one call site.
     crate::conform::report(krate, decls, types, diagnostics);
     let mut bodies = Vec::new();
+    let boxed = Coercions::of(&krate.defs).box_type();
     for module in &krate.modules {
         for item in &module.items {
             collect(&item.kind, &mut |function, owner, block_bounds| {
@@ -469,7 +470,15 @@ pub fn check_crate(
                     diagnostics,
                 );
                 crate::unchecked::report(&body, krate, decls, types, diagnostics);
-                crate::exhaustive::report(&body, krate, decls, types, aliases, diagnostics);
+                crate::exhaustive::report(
+                    &body,
+                    krate,
+                    decls,
+                    types,
+                    aliases,
+                    boxed,
+                    diagnostics,
+                );
                 bodies.push(body);
             });
         }
@@ -1149,6 +1158,12 @@ impl<'a> BodyChecker<'a> {
             }
             None => match self.auto_borrow(expr, source, to, target, site, span) {
                 Some(borrowed) => borrowed,
+                None if self.mutable_through_box(source, target, site) => {
+                    let found = self.types.render(self.defs, from);
+                    let expected = self.types.render(self.defs, to);
+                    self.diagnostics.push(mutable_through_box(span, &expected, &found));
+                    expr
+                }
                 None => {
                     self.mismatch(from, to, span);
                     // The node stays. Decision 3 makes THIR the tree a
@@ -1249,6 +1264,29 @@ impl<'a> BodyChecker<'a> {
                 span,
             ),
         })
+    }
+
+    /// Whether a refused argument is the one Decision 28's AMENDMENT 6 leaves
+    /// out by name, so that [`BodyChecker::coerce`] can say `SC0546` rather
+    /// than quote two types one word apart.
+    ///
+    /// An owned `Box of T` is asked about as the borrow §6.3 would have taken
+    /// of it — at the target's own mutability, exactly as
+    /// [`BodyChecker::auto_borrow`] builds it — because that is the value the
+    /// refusal is really about: `bump(boxed)` into a `mutable borrowed T` is
+    /// `mutable borrowed Box of T` into it, one elaboration earlier.
+    fn mutable_through_box(&mut self, source: Ty, target: Ty, site: Site) -> bool {
+        if site != Site::Argument {
+            return false;
+        }
+        let probe = match *self.types.kind(source) {
+            TyKind::Borrowed { .. } => source,
+            _ => match *self.types.kind(target) {
+                TyKind::Borrowed { mutable, .. } => self.types.borrowed(mutable, source),
+                _ => return false,
+            },
+        };
+        crate::assign::is_mutable_through_box(self.types, self.coercions, probe, target)
     }
 
     fn mismatch(&mut self, found: Ty, expected: Ty, span: Span) {
@@ -7295,6 +7333,17 @@ impl<'a> BodyChecker<'a> {
     /// owned type. `pattern`'s two structural arms apply that widening
     /// through [`BodyChecker::borrow_ergonomics`] once this function has said
     /// whether there was a borrow to widen from, and by which mutability.
+    ///
+    /// **A `Box` is peeled after the borrow, and it always answers *shared*.**
+    /// Decision 28's AMENDMENT 6: `match` over a `Box[E]` or a `&Box[E]`
+    /// matches on the `E`, and the payload is reached read-only whatever the
+    /// borrow above the box said — so `via_borrow` becomes `Some(false)` the
+    /// moment a `Box` is crossed, and every owning payload element binds as a
+    /// shared borrow of the box's contents, never as a move out of it. An
+    /// owned `Box[E]` scrutinee with no borrow above it gets the same answer:
+    /// its payload is this frame's to move in principle, but moving out of a
+    /// `Box` is exactly what the amendment leaves closed, and a shared borrow
+    /// is the binding that needs no new rule in `science-regions` at all.
     fn scrutinee_substitution(
         &mut self,
         scrutinee: Ty,
@@ -7307,10 +7356,14 @@ impl<'a> BodyChecker<'a> {
         // is not generic over `owner`, which the substitution's own early-out
         // would otherwise skip past.
         let revealed = self.revealed(scrutinee, span);
-        let (revealed, via_borrow) = match *self.types.kind(revealed) {
+        let (mut revealed, mut via_borrow) = match *self.types.kind(revealed) {
             TyKind::Borrowed { inner, mutable } => (self.revealed(inner, span), Some(mutable)),
             _ => (revealed, None),
         };
+        while let Some(payload) = self.coercions.box_element(self.types, revealed) {
+            revealed = self.revealed(payload, span);
+            via_borrow = Some(false);
+        }
         let substitution = match (owner, generics.is_empty()) {
             (Some(owner), false) => match self.types.kind(revealed).clone() {
                 TyKind::Named { def, args } if def == owner => {
@@ -8212,6 +8265,25 @@ fn box_receiver_not_shared(span: Span, name: &str, candidate: &Candidate) -> Dia
     .with_note(
         "moving a value out of a borrow through the identical kind of indirection is refused \
          for the same reason (`SC0303`); call this method on the unboxed value instead",
+    )
+}
+
+/// `SC0546` — Decision 28's AMENDMENT 6's boundary at an argument.
+/// [`BodyChecker::coerce`] is the only caller.
+fn mutable_through_box(span: Span, expected: &str, found: &str) -> Diagnostic {
+    Diagnostic::error(
+        codes::MUTABLE_THROUGH_BOX,
+        format!("`{found}` cannot be passed as `{expected}` through a `Box`"),
+    )
+    .with_label(Label::primary(span, format!("this is `{found}`")))
+    .with_note(
+        "a `Box` is transparent at an argument only read-only: a shared borrow of a `Box[T]` \
+         reaches a `&T` parameter, and a `mutable` borrow through a `Box` is left out on \
+         purpose rather than by oversight",
+    )
+    .with_note(
+        "writing through a `Box` is refused here for the reason a `mutable self` method \
+         through one is (`SC0543`); take the parameter as `&T`, or pass the unboxed value",
     )
 }
 

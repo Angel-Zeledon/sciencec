@@ -433,6 +433,115 @@ gives it one. No corpus site returns a borrow through a `Box`, so nothing
 exercises the gap today; closing it is either giving `Box` its own position in
 that walk or narrowing this decision further, to a method whose return type
 does not mention `Self`, and it is named here rather than risked silently.
+**The receiver is no longer the only reader that crosses a `Box`:** AMENDMENT
+6 below extends the same transparency, read-only and at the same scope, to a
+`match` on a `Box[T]` and to a `&Box[T]` argument at a `&T` parameter. Field
+access and the implements question are still exactly as undecided as this
+paragraph says.
+
+> **AMENDMENT 6: a `Box` is transparent to a `match` and to a borrowed
+> argument too — read-only, with the receiver's scope, and for the receiver's
+> reason.** A recursive type is the one thing a `Box` is for, and a recursive
+> walk over one was unwritable:
+>
+> ```science
+> def describe(expr: &Expr) -> String:
+>     match expr:
+>         Neg(inner): f"neg ({describe(inner)})"
+> ```
+>
+> `inner` is a `&Box[Expr]` (Decision 27 borrows an owning payload element
+> under a borrowed scrutinee), `describe` wants a `&Expr`, and the program was
+> `SC0525` — *expected `&Expr`, found `&Box[Expr]`* — with no spelling that
+> fixes it, because there is no dereference operator and `Box has:` declares
+> only `Box.new`. `match boxed:` on an owned `Box[Expr]` was worse: the
+> constructor set was read off `Box`, which has none, so no arm could match
+> and every such `match` was `SC0250`. Decision 28's *Reason* paragraph is the
+> whole argument again, one construct over: the construct is not inconvenient,
+> it is unwritable.
+>
+> **The decision, in three parts.**
+>
+> 1. **A `match` whose scrutinee is a `Box[T]` or a `&Box[T]` matches on the
+>    `T`.** `check::BodyChecker::scrutinee_substitution` peels the `Box` after
+>    the borrow, and `exhaustive::Checker::classify` peels it too, so the
+>    constructor set is `T`'s. It applies at every level of a pattern — a
+>    payload element of type `Box[T]` under a variant pattern is peeled the
+>    same way, which is what `Node(Leaf(_), right)` needs. **The bindings are
+>    shared borrows of the payload, never moves**: crossing a `Box` makes the
+>    scrutinee read as a *shared* borrow whatever was above it (an owned box,
+>    a `&Box`, a `&mut Box`), so Decision 27 binds every owning payload element
+>    as `&U`. A `Copy` element is bound by value — a copy, not a move. A
+>    non-`Copy` element that owns nothing (a plain record of `Int`s) is bound
+>    by value exactly as it is under a borrowed scrutinee today, and
+>    `deref_move.rs` refuses the move through the `Deref` with `SC0303` — the
+>    same answer, for the same reason, as the borrowed case.
+> 2. **At a call site, a shared `&Box[T]` argument reaches a shared `&T`
+>    parameter.** This is `assign.rs`'s rule 6a and a new variant,
+>    `Coercion::BorrowThroughBox`, rather than a reuse: `Identity` would hand
+>    the callee the box's address where it wants the address in it, `Unsize`
+>    pairs a pointer with a vtable, `Copy` produces an owned value — none of
+>    them is a dereference. It is gated on `Site::Argument`, crosses exactly
+>    one `Box` (`&Box[Box[T]]` reaches `&Box[T]`, not `&T`), and does not
+>    apply to a `Box[any I]`, which is itself the two-word fat pointer rather
+>    than a pointer to one (`Builder::box_deref`'s own finding). **An owned
+>    `Box[T]` argument reaches `&T` too, and no rule is added for it:** §6.3's
+>    auto-borrow (AMENDMENT 2) borrows it to `&Box[T]` at the parameter's
+>    mutability and asks the relation again, which is how `describe_any(doc)`
+>    in `examples/08_dyn_dispatch.science` already composes an elaboration
+>    with a coercion. The THIR is a `Borrow` the author did not write under a
+>    `Coerce`, and MIR lowers the pair as one loan of the payload — no loan of
+>    the box is taken in between. **The `Coercion` enum gains a variant, and
+>    Decision 14's count is still two**, by AMENDMENT 4's measure: this one
+>    changes no value and allocates nothing — it reads the pointer a box
+>    already is.
+> 3. **Moving out of a `Box` stays refused, and so does writing through one.**
+>    Nothing here produces a `Move` through a `Deref`; `deref_move.rs` still
+>    refuses any that arrives. `&mut Box[T]` into `&mut T` — or into `&T`,
+>    which would weaken an exclusive borrow on the way through, rule 6's
+>    *"same `m` on both sides"* — is refused, and by name: **`SC0546`**,
+>    *"`&mut Box[Expr]` cannot be passed as `&mut Expr` through a `Box`"*,
+>    rather than an `SC0525` quoting two types one word apart. An owned box
+>    at a `&mut T` parameter and a shared `&Box[T]` at a `&mut T` parameter
+>    get the same code. It is `SC0543`'s twin at an argument, for `SC0543`'s
+>    reason.
+>
+> **What MIR needed: nothing new.** Both halves are the one projection
+> Decision 28 already reused. `Builder::test_pattern` and
+> `Builder::bind_pattern` call `Builder::box_deref` at the top of their
+> variant and record arms, so the tag read is `Discriminant(*boxed)` and a
+> binding is `Ref(shared, (*boxed as Variant))`; `Builder::borrow_through_box`
+> lowers rule 6a as `Ref(shared, **inner)` — through the borrow, then through
+> the box — and never as an `Rvalue::Coerce`, so what reaches
+> `science-regions` is an ordinary loan of the payload whose place is rooted
+> at the box. That is why a move of the box while a binding is live is the
+> ordinary `SC0334`, with no region rule added; `science-codegen-llvm`'s
+> `Projection::Deref` lowering asks only whether the base is pointer-shaped,
+> and a `Box` is. `Coercion::BorrowThroughBox` reaching codegen as an rvalue
+> is refused by name, because no producer should emit one.
+>
+> **Reason for the scope.** The same as Decision 28's: a shared borrow is
+> the one access that needs no new answer from the region engine or from
+> drop elaboration — the box keeps owning its payload, is freed once by its
+> own drop, and every loan through it is a loan the solver already checks.
+> Measured, not assumed: a recursive tree walk through `Box`es, 2 000 trees
+> built and dropped, `leaks --atExit` reports *"0 leaks for 0 total leaked
+> bytes"* (`science-codegen-llvm`'s `tests/box_match.rs`).
+>
+> **Cost.** Four things are still closed, and named rather than implied.
+> *A borrow returned through a `Box`* — `def left(tree: &Tree) -> &Tree`
+> answering `left` out of a `Node(left, _)` arm — is Decision 28's own *Cost*
+> gap: `regions.rs`' per-type walk gives a `Box` no region position, so the
+> outlives obligation of a reference derived through one is not tied to the
+> box's storage. No test here returns one. *A literal or tuple pattern under a
+> `Box`* is not peeled — only variant and record patterns are, which is every
+> shape a recursive type is matched with. *`SC0303`'s message* says
+> *"moved out of a borrow"* when the `Deref` it found is a box's; it is the
+> right refusal with a word that is one indirection off. And *`&mut` through a
+> `Box`* — the `mutable self` half of Decision 28 and the `&mut T` half of
+> this amendment — waits on the same question as moving out: nothing has
+> shown it safe yet, and `SC0543` and `SC0546` are the record that somebody
+> asked.
 
 ### 6.2 `any Error` became common overnight
 

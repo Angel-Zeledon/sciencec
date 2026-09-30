@@ -1069,6 +1069,21 @@ pub mod codes {
     /// the other file.
     pub const PRIVATE_METHOD: Code = Code(545);
 
+    // --- the box argument, `SC0546` ---------------------------------------
+
+    /// A `mutable borrowed Box of T` where a `mutable borrowed T` is wanted —
+    /// or any exclusive borrow on either side of a `Box` at an argument.
+    ///
+    /// **Decision 28's AMENDMENT 6, and [`BOX_RECEIVER_NOT_SHARED`]'s twin at
+    /// an argument.** The amendment lets a shared `borrowed Box of T` reach a
+    /// `borrowed T` parameter (`assign`'s rule 6a) and stops there: writing
+    /// through a `Box` is not part of it, for the same reason a `mutable self`
+    /// method through a `Box` is not. Without its own code the refusal would
+    /// be [`MISMATCHED_TYPES`] quoting `mutable borrowed Box[Expr]` against
+    /// `mutable borrowed Expr` — two types one word apart, a message that
+    /// reads like an oversight — where this one says the scope is deliberate.
+    pub const MUTABLE_THROUGH_BOX: Code = Code(546);
+
     /// Every code this crate emits from its own bands, for the test that keeps
     /// them inside those bands and distinct.
     ///
@@ -1107,6 +1122,8 @@ pub mod codes {
         BOX_RECEIVER_NOT_SHARED,
         NOT_ITERABLE,
         PRIVATE_METHOD,
+
+        MUTABLE_THROUGH_BOX,
     ];
 
     #[cfg(test)]

@@ -479,3 +479,45 @@ def go():
         "the general headline was replaced: {diagnostic:?}"
     );
 }
+
+/// Decision 28's AMENDMENT 6: a `match` binding under a `Box` is a loan of the
+/// box's payload, reached through the box, and the region engine sees it as
+/// one — moving the box while the binding is still needed is `SC0334`, and
+/// the same program with the last use first compiles. No new rule was needed
+/// here: the binding is a `Ref` of a place with a `Deref` in it, which is what
+/// a binding under a borrowed scrutinee already was.
+#[test]
+fn a_boxed_match_binding_borrows_the_box() {
+    let prefix = "\
+choice Expr:
+    Name(String)
+    Neg(Box[Expr])
+
+def keep(expr: Box[Expr]) -> Int:
+    1
+";
+    let conflicting = format!(
+        "{prefix}
+def go():
+    let boxed be Box.new(Expr.Name(\"x\"))
+    match boxed:
+        Name(t):
+            let n be keep(boxed)
+            print(t)
+        _: print(\"other\")
+"
+    );
+    assert_eq!(only(&conflicting), vec![334]);
+    let reordered = format!(
+        "{prefix}
+def go():
+    let boxed be Box.new(Expr.Name(\"x\"))
+    match boxed:
+        Name(t):
+            print(t)
+            let n be keep(boxed)
+        _: print(\"other\")
+"
+    );
+    assert_eq!(only(&reordered), Vec::<u16>::new());
+}

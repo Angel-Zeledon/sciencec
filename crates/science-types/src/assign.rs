@@ -28,6 +28,8 @@
 //!   T = (any Error)?  and  may_box(S)  and  boxes(site) =>  BoxThenWiden
 //!   T = borrowed[m] any I  and  S = borrowed[m] C
 //!                and  unsizable(C)  and  C implements I =>  Unsize
+//!   T = borrowed U  and  S = borrowed Box of U
+//!                and  site = argument                   =>  BorrowThroughBox
 //!   T = Box of any I  and  S = Box of C
 //!                and  unsizable(C)  and  C implements I =>  UnsizeInBox
 //!   T = any Error  and  may_box(S)  and  boxes(site)    =>  Box
@@ -41,9 +43,11 @@
 //! and *`C` implements `I`* is its other one, `copies(S, T)` is §7 — *`S` is
 //! `borrowed T` and `T` implements `Copy`* — and `borrowed[m]` is a borrow
 //! whose mutability is `m` — the same `m` on both sides, because changing that
-//! is not this table's question.
+//! is not this table's question. The `BorrowThroughBox` row is the one row
+//! that asks for a site other than `boxes(site)`: Decision 28's AMENDMENT 6
+//! grants it at a call and nowhere else, shared on both sides.
 //!
-//! **Three of those nine rules ask [`crate::methods`] a question** — counted by
+//! **Three of those ten rules ask [`crate::methods`] a question** — counted by
 //! decision rather than by row, because §4's two rows ask one question of two
 //! indirections — and that is new: §3 and §4 both used to be *proposals with an
 //! obligation attached*, admitted on shape alone and left for a caller to
@@ -607,6 +611,27 @@ pub enum Coercion {
     /// be unsound and the first is §6's excluded question — mutability — which
     /// rule 6 refuses for `Unsize` in the same words.
     Span,
+
+    /// Decision 28's AMENDMENT 6: `borrowed Box of T` into `borrowed T`, both
+    /// shared, at an argument and nowhere else.
+    ///
+    /// **This one is a load, and nothing is allocated or dropped.** A `Box of
+    /// T` is the same one-word pointer to `T` a `borrowed T` is
+    /// (`science_codegen::layout::CgTy::Ptr`'s `PtrKind::Box` and
+    /// `PtrKind::Borrow`), so a borrow *of* the box is a pointer to that
+    /// pointer, and the `borrowed T` wanted is the pointer read out of it.
+    /// `science-mir` never emits it as an `Rvalue::Coerce`: it lowers it as a
+    /// shared reborrow of the place one `Projection::Deref` further in, which
+    /// is what the region engine already knows how to check — a loan of the
+    /// box's payload, reached through the box — rather than a conversion it
+    /// would have to be taught.
+    ///
+    /// **Why a variant of its own rather than a reuse.** [`Coercion::Identity`]
+    /// would hand the callee the address of the box where it wants the address
+    /// of the payload; [`Coercion::Unsize`] pairs a pointer with a vtable;
+    /// [`Coercion::Copy`] produces an owned value. None of them is a
+    /// dereference, and no existing variant is.
+    BorrowThroughBox,
 }
 
 /// The six definitions this relation has to know by name.
@@ -845,6 +870,20 @@ pub fn assignable(
     // Rule 6. §4's unsizing. Not gated on the site, because it emits no code
     // and changes no value, and because the corpus needs it at a record field.
     if let TyKind::Borrowed { mutable, inner: object } = *types.kind(target) {
+        // Rule 6a. Decision 28's AMENDMENT 6: a shared borrow of a `Box of T`
+        // reaches a shared `borrowed T` at an argument. Read-only and one
+        // layer: an exclusive borrow on either side is refused here (the
+        // caller names why, `SC0546`), a `Box of (Box of T)` reaches
+        // `borrowed Box of T` and not `borrowed T`, and a `Box of any I` is
+        // left out because it is itself the two-word fat pointer, not a
+        // pointer to one — `science_mir::lower::Builder::box_deref`'s reason.
+        if site == Site::Argument && !mutable {
+            if let Some(payload) = through_box(types, coercions, source) {
+                if types.compatible(payload, object) {
+                    return Some(Coercion::BorrowThroughBox);
+                }
+            }
+        }
         // Nothing below this can apply to a borrowed target — rule 5's target
         // is `any Error`, unborrowed — so this arm answers for all of them.
         let TyKind::Object { interface, .. } = *types.kind(object) else {
@@ -943,6 +982,44 @@ pub fn assignable(
     }
 
     None
+}
+
+/// The `T` a *shared* `borrowed Box of T` points through to, for rule 6a.
+///
+/// `None` for an exclusive borrow, for anything that is not a borrow of the
+/// prelude's `Box`, and for a `Box of any I` — the last because that box is
+/// itself the fat pointer (`descriptor::needs_drop`'s *"two words, same
+/// layout"*), so there is no pointer inside it to read out.
+fn through_box(types: &Types, coercions: Coercions, source: Ty) -> Option<Ty> {
+    let TyKind::Borrowed { mutable: false, inner } = *types.kind(source) else { return None };
+    let payload = coercions.box_element(types, inner)?;
+    if matches!(types.kind(payload), TyKind::Object { .. }) {
+        return None;
+    }
+    Some(payload)
+}
+
+/// Whether a refused `source` into `target` is the one Decision 28's AMENDMENT
+/// 6 leaves out by name: `mutable borrowed Box of T` into `mutable borrowed T`
+/// — or into a shared `borrowed T`, which would weaken the exclusive borrow
+/// on the way through, rule 6's *"same `m` on both sides"*.
+///
+/// The body checker asks this only after [`assignable`] and the auto-borrow
+/// have both said no, so that the refusal it reports can say *why* rather
+/// than quoting two types that look one word apart.
+pub fn is_mutable_through_box(
+    types: &Types,
+    coercions: Coercions,
+    source: Ty,
+    target: Ty,
+) -> bool {
+    let TyKind::Borrowed { inner: object, .. } = *types.kind(target) else { return false };
+    let TyKind::Borrowed { mutable, inner } = *types.kind(source) else { return false };
+    let target_mutable = matches!(types.kind(target), TyKind::Borrowed { mutable: true, .. });
+    if !mutable && !target_mutable {
+        return false;
+    }
+    coercions.box_element(types, inner).is_some_and(|payload| types.compatible(payload, object))
 }
 
 /// Whether `source` is a borrow of `target` and `target` is `Copy`: §7's

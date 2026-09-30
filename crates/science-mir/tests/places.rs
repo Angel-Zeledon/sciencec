@@ -790,3 +790,97 @@ fn a_match_on_a_borrowed_choice_reads_through_the_borrow() {
         assert_eq!(read, "*", "{}", lowered.dump("name_of"));
     }
 }
+
+/// Every tag read in a body, as its projection string.
+fn tag_reads(lowered: &support::Lowered, name: &str) -> Vec<String> {
+    lowered
+        .body(name)
+        .blocks()
+        .flat_map(|(_, block)| block.statements.iter())
+        .filter_map(|statement| match &statement.kind {
+            StatementKind::Assign { rvalue: Rvalue::Discriminant(place), .. } => {
+                Some(describe(place))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Decision 28's AMENDMENT 6, the MIR half: a `match` on an owned `Box[Expr]`
+/// reads the *payload's* tag — one `Deref` through the box, exactly the
+/// projection `Builder::box_deref` already gives a method receiver — and a
+/// binding that owns something is a shared loan of the payload, never a move
+/// out of it.
+#[test]
+fn a_match_on_a_box_reads_the_payloads_tag_and_borrows_its_bindings() {
+    let source = concat!(
+        "choice Expr:\n",
+        "    Number(Int)\n",
+        "    Name(String)\n",
+        "    Neg(Box[Expr])\n",
+        "\n",
+        "def show(boxed: Box[Expr]) -> Int:\n",
+        "    match boxed:\n",
+        "        Name(t): t.length()\n",
+        "        _: 0\n",
+    );
+    let lowered = lower(source);
+    let reads = tag_reads(&lowered, "show");
+    assert_eq!(reads, vec!["*".to_string()], "{}", lowered.dump("show"));
+    let body = lowered.body("show");
+    let boxed = Local::from_index(1);
+    let binding = body
+        .borrows()
+        .iter()
+        .find(|data| data.place.local == boxed)
+        .unwrap_or_else(|| panic!("`t` is not a loan of the box: {}", lowered.dump("show")));
+    assert_eq!(describe(&binding.place), "*d", "{}", lowered.dump("show"));
+    assert_eq!(binding.kind, science_mir::mir::BorrowKind::Shared);
+}
+
+/// Rule 6a lowered: `describe(inner)` with `inner: &Box[Expr]` passes a
+/// reborrow of the place two `Deref`s in — through the borrow, then through
+/// the box — and never an `Rvalue::Coerce`, which nothing downstream reads as
+/// a loan. An owned box auto-borrowed at the same parameter borrows its own
+/// payload directly: one `Deref`, and no loan of the box itself in between.
+#[test]
+fn a_borrow_through_a_box_is_a_reborrow_of_the_payload() {
+    let source = concat!(
+        "choice Expr:\n",
+        "    Number(Int)\n",
+        "    Neg(Box[Expr])\n",
+        "\n",
+        "def value(expr: &Expr) -> Int:\n",
+        "    match expr:\n",
+        "        Number(n): n\n",
+        "        Neg(inner): 0 - value(inner)\n",
+        "\n",
+        "def owned(boxed: Box[Expr]) -> Int:\n",
+        "    value(boxed)\n",
+    );
+    let lowered = lower(source);
+    for name in ["value", "owned"] {
+        let body = lowered.body(name);
+        let coerced = body
+            .blocks()
+            .flat_map(|(_, block)| block.statements.iter())
+            .any(|statement| {
+                matches!(
+                    &statement.kind,
+                    StatementKind::Assign { rvalue: Rvalue::Coerce { .. }, .. }
+                )
+            });
+        assert!(!coerced, "`{name}` lowered a coercion: {}", lowered.dump(name));
+    }
+    let through: Vec<String> = lowered
+        .body("value")
+        .borrows()
+        .iter()
+        .map(|data| describe(&data.place))
+        .filter(|place| place.ends_with("**"))
+        .collect();
+    assert_eq!(through, vec!["**".to_string()], "{}", lowered.dump("value"));
+    let owned: Vec<String> =
+        lowered.body("owned").borrows().iter().map(|data| describe(&data.place)).collect();
+    assert_eq!(owned, vec!["*".to_string()], "{}", lowered.dump("owned"));
+}

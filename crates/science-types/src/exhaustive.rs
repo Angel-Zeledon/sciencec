@@ -276,9 +276,11 @@ pub fn report(
     decls: &Declarations,
     types: &mut Types,
     aliases: &mut Aliases,
+    boxed: Option<DefId>,
     diagnostics: &mut Diagnostics,
 ) {
-    let mut checker = Checker { body, defs: &krate.defs, decls, types, aliases, spent: 0 };
+    let mut checker =
+        Checker { body, defs: &krate.defs, decls, types, aliases, boxed, spent: 0 };
     for (_, expr) in body.exprs() {
         let ExprKind::Match { scrutinee, arms } = &expr.kind else { continue };
         checker.spent = 0;
@@ -292,6 +294,9 @@ struct Checker<'a> {
     decls: &'a Declarations,
     types: &'a mut Types,
     aliases: &'a mut Aliases,
+    /// The prelude's `Box`, which [`Checker::classify`] peels — Decision 28's
+    /// AMENDMENT 6. `None` for a table with no prelude.
+    boxed: Option<DefId>,
     /// §5's budget, spent per `match`.
     spent: u32,
 }
@@ -747,13 +752,29 @@ impl Checker<'_> {
     /// so a scrutinee that came in as a parameter is one, and a constructor set
     /// read off `borrowed Format` rather than off `Format` would be empty and
     /// would report on every `match` in `examples/05_match.science`.
+    ///
+    /// **A `Box` is peeled too**, for Decision 28's AMENDMENT 6: `match` over
+    /// a `Box[Expr]` or a `&Box[Expr]` matches on the `Expr`, and
+    /// `check::BodyChecker::scrutinee_substitution` already typed every
+    /// sub-pattern as though it did. A constructor set read off `Box` itself —
+    /// a `DefKind::Primitive`, which `named_set` has no row for — would be
+    /// infinite, and every such `match` would need a `_` arm that covers
+    /// nothing.
     fn classify(&mut self, ty: Ty) -> Option<Ty> {
         let mut ty = self.aliases.reveal(self.types, ty).ok()?;
-        while let TyKind::Borrowed { inner, .. } = self.types.kind(ty) {
-            let inner = *inner;
+        loop {
+            let inner = match self.types.kind(ty) {
+                TyKind::Borrowed { inner, .. } => *inner,
+                TyKind::Named { def, args } if Some(*def) == self.boxed && args.len() == 1 => {
+                    match args[0].as_type() {
+                        Some(inner) => inner,
+                        None => return Some(ty),
+                    }
+                }
+                _ => return Some(ty),
+            };
             ty = self.aliases.reveal(self.types, inner).ok()?;
         }
-        Some(ty)
     }
 
     /// `T` when the column is a `T?`, already classified. §3.

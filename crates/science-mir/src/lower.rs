@@ -556,7 +556,7 @@ use science_diagnostics::Span;
 use science_lexer::IntBase;
 use science_resolve::hir::{BinaryOp, DefId, DefKind, DefTable, Literal, SelfKind};
 use science_types::alias::Aliases;
-use science_types::assign::Coercions;
+use science_types::assign::{Coercion, Coercions};
 use science_types::items::Declarations;
 use science_types::methods::{Form, Found};
 use science_types::thir::{self, Arm, ExprId, ExprKind, PatId, PatKind, StmtKind};
@@ -1702,6 +1702,9 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 self.assign(block, dest, rvalue, span);
                 block
             }
+            ExprKind::Coerce { operand, coercion: Coercion::BorrowThroughBox } => {
+                self.borrow_through_box(dest, *operand, block, span, false)
+            }
             ExprKind::Coerce { operand, coercion } => {
                 let coercion = *coercion;
                 let (value, block) = self.operand(*operand, block);
@@ -2315,6 +2318,9 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             }
             PatKind::Variant { def: Some(variant), elems } => {
                 let variant = *variant;
+                // Decision 28's AMENDMENT 6: a variant pattern under a `Box`
+                // tests the payload's tag, never the box's pointer.
+                let place = &self.box_deref(place.clone());
                 let discr = self.temp(Ty::ERROR, span, block);
                 let rvalue = Rvalue::Discriminant(place.clone());
                 self.assign(block, Place::local(discr), rvalue, span);
@@ -2337,7 +2343,8 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             }
             PatKind::Record { def: Some(def), fields } => {
                 let owner = *def;
-                let record_ty = pat.ty;
+                let (place, record_ty) = self.pattern_payload(place, pat.ty);
+                let place = &place;
                 let mut current = block;
                 for (field, sub) in fields {
                     let next = self.new_block();
@@ -2428,6 +2435,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             }
             PatKind::Variant { def: Some(variant), elems } => {
                 let variant = *variant;
+                let place = &self.box_deref(place.clone());
                 let choice_ty = self.variant_payload_ty(variant, None).unwrap_or(pat.ty);
                 let down = place.project(Projection::Downcast { variant, ty: choice_ty });
                 // A one-element payload is bound straight off `down`, with no
@@ -2454,7 +2462,8 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             }
             PatKind::Record { def: Some(def), fields } => {
                 let owner = *def;
-                let record_ty = pat.ty;
+                let (place, record_ty) = self.pattern_payload(place, pat.ty);
+                let place = &place;
                 for (field, sub) in fields {
                     let ty = self.field_ty(owner, *field, record_ty);
                     let sub_place = place.project(Projection::Field { field: *field, ty });
@@ -2477,6 +2486,77 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             | PatKind::Record { def: None, .. }
             | PatKind::Error => block,
         }
+    }
+
+    /// A record pattern's place and the type its fields are substituted by,
+    /// once any `Box` above it is crossed — Decision 28's AMENDMENT 6.
+    ///
+    /// **The type comes off the place when a `Box` was crossed, and off the
+    /// pattern otherwise.** `science-types` types a pattern at its scrutinee,
+    /// so a record pattern under a `Box[Pair of Int]` carries `Box[Pair of
+    /// Int]`, and [`Builder::field_ty`] would substitute `Pair`'s parameters
+    /// with `Box`'s one argument. The place past the `Deref` is typed by the
+    /// box's own argument, which is the record at its real arguments. Every
+    /// pattern that crosses no `Box` keeps exactly the type it always had.
+    fn pattern_payload(&mut self, place: &Place, pat_ty: Ty) -> (Place, Ty) {
+        let peeled = self.box_deref(place.clone());
+        if peeled.projection.len() == place.projection.len() {
+            return (peeled, pat_ty);
+        }
+        let ty = self.place_ty(&peeled);
+        (peeled, ty)
+    }
+
+    /// Decision 28's AMENDMENT 6 at an argument: `borrowed Box of T` into
+    /// `borrowed T`, lowered as a shared reborrow of the box's payload.
+    ///
+    /// **Not an `Rvalue::Coerce`, deliberately.** A borrow of a box is a
+    /// pointer to a pointer, and the `borrowed T` a callee wants is the inner
+    /// one; the MIR that says so is `&(*box)` — a [`Projection::Deref`]
+    /// through the box, exactly [`Builder::box_deref`]'s projection — and a
+    /// `Ref` of that place is a loan `science-regions` already checks, of the
+    /// payload, reached through the box. A coercion rvalue would say the same
+    /// thing in a form nothing downstream reads as a loan.
+    ///
+    /// **The operand is either the borrow of a box or a value of `&Box[T]`.**
+    /// The first is the auto-borrow (`bump(boxed)`, §6.3) or a written
+    /// `&boxed`, and the place borrowed is the box itself — no temporary is
+    /// made for the intermediate `&Box[T]`, which would be a loan of the box
+    /// whose only use is to be read through. The second is a parameter, a
+    /// Decision 27 binding (`Neg(inner)` under a borrowed scrutinee), or
+    /// anything else already typed `&Box[T]`: [`Builder::auto_deref`] takes
+    /// its place to the box, and one `Deref` more reaches the payload.
+    fn borrow_through_box(
+        &mut self,
+        dest: Place,
+        operand: ExprId,
+        block: BlockId,
+        span: Span,
+        in_argument: bool,
+    ) -> BlockId {
+        let thir = self.thir;
+        let source = match thir.expr(operand).kind {
+            ExprKind::Borrow { operand: boxed, .. } => boxed,
+            _ => operand,
+        };
+        let (place, block) = match self.as_place(source, block) {
+            Some(found) => found,
+            None => {
+                let ty = thir.ty(source);
+                let temp = self.temp(ty, span, block);
+                let block = self.expr_into(Place::local(temp), source, block);
+                (Place::local(temp), block)
+            }
+        };
+        let place = self.auto_deref(place);
+        let boxed = self.revealed(self.place_ty(&place));
+        let payload = match self.context.types.kind(boxed) {
+            TyKind::Named { args, .. } => args.first().and_then(|arg| arg.as_type()),
+            _ => None,
+        }
+        .unwrap_or(Ty::ERROR);
+        let place = place.project(Projection::Deref { ty: payload });
+        self.borrow_place(dest, false, place, block, span, in_argument)
     }
 
     // --- calls ------------------------------------------------------------
@@ -5033,7 +5113,17 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// [`Builder::auto_deref`]'s Decision 28 sibling: inserts a `Deref` for
     /// every `Box` between a place and its payload.
     ///
-    /// **`lower_method_call`'s Shared/Mutable arm is the one caller**, run
+    /// **Two callers now, and the second is Decision 28's AMENDMENT 6.**
+    /// [`Builder::test_pattern`] and [`Builder::bind_pattern`] run it at the
+    /// top of their variant and record arms, so that a pattern under a `Box` —
+    /// at the scrutinee or one payload down — tests and binds the payload
+    /// rather than the box's pointer; `science-types` has already typed every
+    /// owning binding under it as a shared borrow, so what that caller builds
+    /// from the place is a `Ref`, never a `Move`. [`Builder::borrow_through_box`]
+    /// takes the same projection by hand, exactly one layer, because rule 6a
+    /// crosses exactly one `Box`.
+    ///
+    /// **`lower_method_call`'s Shared/Mutable arm is the first caller**, run
     /// after [`Builder::auto_deref`] and [`Builder::deref_to_hole`] have taken
     /// the place as far as *those* peel — which is never through a `Box`,
     /// because [`TyKind::Named`] is not [`TyKind::Borrowed`] and neither
@@ -5267,6 +5357,15 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 let temp = self.temp(ty, span, block);
                 let block =
                     self.lower_borrow(Place::local(temp), *mutable, *operand, block, span, true);
+                (Operand::Move(Place::local(temp)), block)
+            }
+            // Decision 28's AMENDMENT 6: a reborrow through a `Box`, never an
+            // `Rvalue::Coerce`. Shared, so `in_argument` changes nothing about
+            // its kind; passed anyway, so the call reads like its neighbours.
+            ExprKind::Coerce { operand, coercion: Coercion::BorrowThroughBox } => {
+                let temp = self.temp(ty, span, block);
+                let block =
+                    self.borrow_through_box(Place::local(temp), *operand, block, span, true);
                 (Operand::Move(Place::local(temp)), block)
             }
             // A coercion over a borrow — `assign`'s §4 unsizing — is still a

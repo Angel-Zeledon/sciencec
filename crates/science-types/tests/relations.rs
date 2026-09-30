@@ -99,6 +99,11 @@ def shapes(
     boxed_borrowed_doc: Box[&Doc],
     boxed_docs: Array[Box[Doc]],
     owned_boxes: Array[Box[any Summarize]],
+    borrowed_boxed_doc: &Box[Doc],
+    mutable_borrowed_boxed_doc: &mut Box[Doc],
+    borrowed_owned_box: &Box[any Summarize],
+    borrowed_boxed_box: &Box[Box[Doc]],
+    borrowed_box_of_doc: &Box[Doc],
 ) -> Int:
     0
 
@@ -1129,4 +1134,73 @@ fn with_no_prelude_the_relation_is_compatible_plus_decision_six() {
         assignable(&types, &Methods::default(), coercions, Site::Return, unit_or_nothing, Ty::UNIT),
         None
     );
+}
+
+// --- rule 6a: a shared borrow through a `Box` -----------------------------
+
+/// Decision 28's AMENDMENT 6, the relation's half: a shared `&Box[Doc]`
+/// reaches a shared `&Doc` at an argument, and it is its own variant — not
+/// `Identity`, which would hand the callee the box's address, and not `Unsize`.
+#[test]
+fn a_shared_borrow_of_a_box_reaches_a_shared_borrow_of_its_payload_at_an_argument() {
+    let mut program = Program::new(FIXTURE);
+    let through = program.ty("shapes", "borrowed_boxed_doc");
+    let borrowed_doc = program.ty("shapes", "borrowed_doc");
+    assert_eq!(
+        fits(&program, Site::Argument, through, borrowed_doc),
+        Some(Coercion::BorrowThroughBox)
+    );
+}
+
+/// **At a call and nowhere else.** The amendment says *"at a call site"*, and
+/// a `let x: &Doc be boxed` or a `return` of one is not a call site; admitting
+/// either would be a language change made by a table.
+#[test]
+fn a_borrow_through_a_box_is_gated_on_the_argument_site() {
+    let mut program = Program::new(FIXTURE);
+    let through = program.ty("shapes", "borrowed_boxed_doc");
+    let borrowed_doc = program.ty("shapes", "borrowed_doc");
+    for site in [Site::Return, Site::Operand, Site::Elsewhere] {
+        assert_eq!(fits(&program, site, through, borrowed_doc), None, "{site:?}");
+    }
+}
+
+/// **Read-only, on both sides.** `&mut Box[Doc]` into `&mut Doc` is the
+/// amendment's named exclusion, and into `&Doc` it would weaken an exclusive
+/// borrow on the way through, which rule 6 already refuses as not this table's
+/// question.
+#[test]
+fn an_exclusive_borrow_never_crosses_a_box() {
+    let mut program = Program::new(FIXTURE);
+    let mutable_through = program.ty("shapes", "mutable_borrowed_boxed_doc");
+    let through = program.ty("shapes", "borrowed_boxed_doc");
+    let borrowed_doc = program.ty("shapes", "borrowed_doc");
+    let mutable_borrowed_doc = program.ty("shapes", "mutable_borrowed_doc");
+    assert_eq!(fits(&program, Site::Argument, mutable_through, mutable_borrowed_doc), None);
+    assert_eq!(fits(&program, Site::Argument, mutable_through, borrowed_doc), None);
+    assert_eq!(fits(&program, Site::Argument, through, mutable_borrowed_doc), None);
+}
+
+/// **One layer, and never into an interface object.** `&Box[Box[Doc]]`
+/// reaches `&Box[Doc]` and not `&Doc`; and a `Box[any Summarize]` is itself
+/// the two-word fat pointer, so there is no pointer inside it for rule 6a to
+/// read out — `&Box[any Summarize]` into `&any Summarize` stays refused.
+#[test]
+fn a_borrow_through_a_box_crosses_exactly_one_box_and_no_object() {
+    let mut program = Program::new(FIXTURE);
+    let double = program.ty("shapes", "borrowed_boxed_box");
+    let through = program.ty("shapes", "borrowed_boxed_doc");
+    let borrowed_box = program.ty("shapes", "borrowed_box_of_doc");
+    let borrowed_doc = program.ty("shapes", "borrowed_doc");
+    let object_box = program.ty("shapes", "borrowed_owned_box");
+    let borrowed_summarizer = program.ty("shapes", "borrowed_summarizer");
+    assert_eq!(fits(&program, Site::Argument, double, borrowed_doc), None);
+    assert_eq!(
+        fits(&program, Site::Argument, double, borrowed_box),
+        Some(Coercion::BorrowThroughBox)
+    );
+    assert_eq!(fits(&program, Site::Argument, object_box, borrowed_summarizer), None);
+    // And a `&Box[Doc]` against itself is still `Identity`: rule 1 answers
+    // first, so a parameter written `&Box[Doc]` is never coerced.
+    assert_eq!(fits(&program, Site::Argument, through, borrowed_box), Some(Coercion::Identity));
 }
