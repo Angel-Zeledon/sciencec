@@ -115,7 +115,15 @@ fn check(
         entry: true,
     };
     let sources = science_resolve::modules::collect_crate(entry, |candidate| {
-        let text = std::fs::read_to_string(root.join(candidate)).ok()?;
+        // The driver's fallback, for the driver's reason: a case that writes
+        // `use io` must reach the bundled module here too, or this suite would
+        // check a different program from the one `sciencec check` checks.
+        let Ok(text) = std::fs::read_to_string(root.join(candidate)) else {
+            let text = science_resolve::stdlib::source(candidate)?;
+            let bundled =
+                db.add_file(science_resolve::stdlib::display_path(candidate), text.to_string());
+            return Some((bundled, science_db::ast(db, bundled).value().clone()));
+        };
         // The same normalisation the harness applies to a case: a module
         // checked out with CRLF must not shift every span by one byte a line.
         let name = format!("tests/ui/{shard}/{candidate}");

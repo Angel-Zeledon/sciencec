@@ -1284,7 +1284,38 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 // §4's rule on the other side of `be`. See
                 // [`Builder::assign_target`].
                 let place = self.assign_target(place, self.thir.ty(*value));
-                block = self.expr_into(place, *value, next);
+                // **Drop and replace.** An assignment overwrites a value, and
+                // a value that owns something has to be released first or it
+                // leaks: `name be make()` in a loop leaked one `String` per
+                // iteration, because drops were emitted at scope exits and
+                // nowhere else. The new value is built into a temporary
+                // *before* the old one is dropped — `name be name.clone()`
+                // reads the value it replaces — and then moved in. The `Drop`
+                // is elaborated like any other: `crate::drops` deletes it on a
+                // path where the old value was already moved out, flags it
+                // where it may have been, and leaves it standing where it is
+                // certainly there.
+                let ty = self.place_ty(&place);
+                if crate::moves::needs_drop(
+                    self.context.decls,
+                    self.context.types,
+                    self.context.aliases,
+                    ty,
+                ) {
+                    let temp = self.temp(ty, span, next);
+                    let evaluated = self.expr_into(Place::local(temp), *value, next);
+                    let replace = self.new_block();
+                    self.terminate(
+                        evaluated,
+                        TerminatorKind::Drop { place: place.clone(), flag: None, target: replace },
+                        span,
+                    );
+                    let read = self.read(Place::local(temp), ty);
+                    self.assign(replace, place, Rvalue::Use(read), span);
+                    block = replace;
+                } else {
+                    block = self.expr_into(place, *value, next);
+                }
             }
             StmtKind::Return(value) => {
                 block = match value {
@@ -2538,6 +2569,12 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         if !entry.is_builtin() || !matches!(entry.name.as_str(), "print" | "write") {
             return false;
         }
+        // `Write.write` is a builtin named `write` too, and it is a method:
+        // the free function's parent is the prelude module, a method's is its
+        // interface.
+        if entry.parent.is_some_and(|parent| self.context.defs.get(parent).kind != DefKind::Module) {
+            return false;
+        }
         let ty = self.thir.ty(arg);
         let stripped = self.stripped(ty);
         if self.context.decls.prelude().is(self.context.types, stripped, "String") {
@@ -2818,11 +2855,25 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             _ => false,
         };
         let target = if diverges { None } else { Some(self.new_block()) };
-        self.terminate(
-            block,
-            TerminatorKind::Call { callee, args, destination: dest, target },
-            span,
-        );
+        // **A call writes a whole local, and a field is moved into after.**
+        // `b.buffer be Array[U8].new()` put the call's destination on a
+        // projection, and `science-codegen-llvm` has one slot per local for a
+        // return to land in — `sret_slot` names a local, not an address — so it
+        // refused *"a call whose result goes through a field"*. A temporary of
+        // the field's type takes the result and a move puts it in place, which
+        // is how every other rvalue already reaches a field.
+        let (destination, into_field) = if dest.projection.is_empty() {
+            (dest, None)
+        } else {
+            let ty = self.place_ty(&dest);
+            let temp = self.temp(ty, span, block);
+            (Place::local(temp), Some((dest, temp, ty)))
+        };
+        self.terminate(block, TerminatorKind::Call { callee, args, destination, target }, span);
+        if let (Some(target), Some((field, temp, ty))) = (target, into_field) {
+            let read = self.read(Place::local(temp), ty);
+            self.assign(target, field, Rvalue::Use(read), span);
+        }
         match target {
             Some(target) => target,
             // A diverging call has no successor, and the statements after it

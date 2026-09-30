@@ -1146,7 +1146,18 @@ impl<'a> Lowerer<'a> {
                     if let Found::One(candidate) =
                         decls.methods().lookup(def, "drop", Form::Value)
                     {
-                        out.push(candidate.method);
+                        // A generic block's `drop` has no single body to
+                        // reach: `science_codegen::mono`'s `user_drops`
+                        // instantiates it per type, and scheduling the
+                        // definition here would lower it unsubstituted.
+                        let generic = decls
+                            .signature(candidate.method)
+                            .and_then(|signature| signature.owner)
+                            .and_then(|owner| decls.block_generics(owner))
+                            .is_some_and(|generics| !generics.is_empty());
+                        if !generic {
+                            out.push(candidate.method);
+                        }
                     }
                 }
             }
@@ -2273,8 +2284,10 @@ impl<'a> Lowerer<'a> {
         // The depth bound above is the second guard and this is the first.
         self.glue.insert(symbol.clone());
 
-        // **Decision 12's second half: *"and then calls the type's own `Drop`
-        // implementation if it has one"*.** It had never been emitted. The
+        // **Decision 12's other half: the type's own `Drop` implementation, if
+        // it has one — run first since the note's AMENDMENT 4, before the
+        // fields `emit_user_drop_glue` releases after it.** It had never been
+        // emitted. The
         // predicate that finds the implementation — [`Lowerer::drop_interface`]
         // — existed and had exactly one caller,
         // [`Lowerer::drop_runs_something`], which used it only to decide that a
@@ -2403,6 +2416,14 @@ impl<'a> Lowerer<'a> {
             return Ok(None);
         }
         match decls.methods().lookup(def, "drop", Form::Value) {
+            // A generic type's `drop` is a different function per concrete
+            // type, and `science_codegen::mono` instantiated the one this
+            // type needs where it walked the `Drop` that releases it.
+            Found::One(candidate)
+                if self.calls.and_then(|mono| mono.user_drop(candidate.method, ty)).is_some() =>
+            {
+                Ok(self.calls.and_then(|mono| mono.user_drop(candidate.method, ty)).map(str::to_string))
+            }
             Found::One(candidate) => Ok(Some(
                 self.by_def
                     .get(&candidate.method)
@@ -2418,9 +2439,10 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Decision 12's whole sentence, as one function: *"drops fields in
-    /// reverse declaration order and then calls the type's own `Drop`
-    /// implementation if it has one"*.
+    /// Decision 12's whole sentence, as one function — as amended: the type's
+    /// own `Drop` implementation if it has one, *and then* its fields in
+    /// reverse declaration order. The note had it the other way round; see
+    /// the AMENDMENT there.
     ///
     /// `fields` is the structural glue — [`Lowerer::emit_field_glue`]'s or
     /// [`Lowerer::emit_choice_glue`]'s, already emitted under its own symbol —
@@ -2448,7 +2470,20 @@ impl<'a> Lowerer<'a> {
         fields: Option<String>,
         user: String,
     ) -> Result<Option<String>, Unlowered> {
+        // **The type's own `drop` first, and then its fields** —
+        // `codegen-and-linking.md` Decision 12's AMENDMENT, which reverses the
+        // note's *"drops fields … and then calls the type's own `Drop`"*. A
+        // destructor that ran second saw every owning field already released:
+        // `BufferedWriter`'s `drop` flushed an emptied buffer into a closed
+        // file, and wrote nothing.
         let mut insts: Vec<ExtInst> = Vec::new();
+        insts.push(ExtInst::Above(Inst::Call {
+            dest: None,
+            callee: Callee::Science(user),
+            args: vec![Operand::Param(0)],
+            ret: ReturnClass::Void,
+            sret_slot: None,
+        }));
         if let Some(fields) = fields {
             insts.push(ExtInst::Above(Inst::Call {
                 dest: None,
@@ -2458,13 +2493,6 @@ impl<'a> Lowerer<'a> {
                 sret_slot: None,
             }));
         }
-        insts.push(ExtInst::Above(Inst::Call {
-            dest: None,
-            callee: Callee::Science(user),
-            args: vec![Operand::Param(0)],
-            ret: ReturnClass::Void,
-            sret_slot: None,
-        }));
         let signature = AbiSignature::science(
             self.target,
             symbol.clone(),
@@ -8628,6 +8656,13 @@ impl<'a> Lowerer<'a> {
             self.lower_foreign_call(ctx, def, args, destination, insts)?;
         } else if self.defs.get(def).is_builtin()
             && matches!(self.defs.get(def).name.as_str(), "print" | "write")
+            // Not `Write.write`, which is a builtin method of the same name:
+            // `science-mir`'s `prints_by_rendering` draws the same line.
+            && self
+                .defs
+                .get(def)
+                .parent
+                .is_none_or(|parent| self.defs.get(parent).kind == DefKind::Module)
         {
             // **One function, not two.** `print` and `write` are
             // `strings-formatting-and-docs.md` §4.2's two names for the same
@@ -8691,6 +8726,8 @@ impl<'a> Lowerer<'a> {
             self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;
         } else if self.array_span(def, args.first().and_then(|op| self.operand_ty(body, op))) {
             self.lower_array_span(body, ctx, args, destination, insts)?;
+        } else if self.string_bytes(def, args.first().and_then(|op| self.operand_ty(body, op))) {
+            self.lower_string_bytes(ctx, args, destination, insts)?;
         } else if self.trivial_scalar_clone(def, args.first().and_then(|op| self.operand_ty(body, op)))
         {
             self.lower_trivial_scalar_clone(ctx, args, destination, insts)?;
@@ -8706,6 +8743,27 @@ impl<'a> Lowerer<'a> {
             // signature. So this arm is dynamic dispatch, and saying so is
             // worth more than saying there is no body.
             if self.declaring_interface(def).is_some() {
+                // **Only an interface object has a vtable to read.** This arm
+                // assumed every call that reaches it is through `any I`, and a
+                // concrete receiver whose implementation declares no method of
+                // its own falls back to the interface's declaration too:
+                // `IoError implements Error` in the prelude, so
+                // `err.message()` on an `IoError` resolved to `Error.message`
+                // and arrived here. The dispatch then read two words of
+                // pointer out of a one-byte error code, the optimiser proved
+                // that undefined, and the program trapped — or, with nothing
+                // after the call, printed nothing and exited 0.
+                let receiver = args.first().and_then(|operand| self.operand_ty(body, operand));
+                if let Some(receiver) = receiver {
+                    if self.object_interface(receiver).is_none() {
+                        return Err(Unlowered::new(format!(
+                            "a call to `{name}` on a `{}`, which is not an interface object: the \
+                             implementation declares no body for it and there is no vtable to \
+                             find one in",
+                            self.render_referent(receiver)
+                        )));
+                    }
+                }
                 self.lower_dispatch(ctx, def, args, destination, insts)?;
                 return Ok(match target {
                     Some(block) => Terminator::Goto(BlockId(block.index() as u32)),
@@ -9829,6 +9887,9 @@ impl<'a> Lowerer<'a> {
         /// `(the receiver's `Self`, the method) -> the entry point`.
         const PRELUDE_METHODS: &[(&str, &str, &str)] = &[
             ("String", "length", "science_string_len"),
+            // `IoError implements Error`'s `message`, whose block
+            // `builtins.rs` declares for exactly this row.
+            ("IoError", "message", "science_io_error_message"),
             ("String", "is_empty", "science_string_is_empty"),
             ("String", "new", "science_string_new"),
             ("String", "push_str", "science_string_push_str"),
@@ -10098,6 +10159,55 @@ impl<'a> Lowerer<'a> {
         let value = ctx.value();
         insts.push(ExtInst::LoadAt { dest: value, address, layout });
         insts.push(ExtInst::Above(Inst::Store { local: dest_local, value: Operand::Value(value) }));
+        Ok(())
+    }
+
+    /// Whether this call is `String.bytes()`.
+    ///
+    /// **A reinterpretation, and the two layouts are why it can be one.**
+    /// `stdlib-core.md` §6.9 gives `def bytes(self) -> borrowed Array of U8`,
+    /// and a borrow of an array needs an array to point at. A `String` is
+    /// `{ ptr, len, cap }` over UTF-8 bytes and an `Array of U8` is `{ ptr,
+    /// len, cap }` over bytes — `RtAggregate::String` and `RtAggregate::Array`
+    /// are field-for-field the same, and `tests/layout.rs` in `science-codegen`
+    /// pins both against `science-rt`. So the string's own header *is* an
+    /// array header, and the borrow of the string is the borrow of the array.
+    ///
+    /// The borrow is shared, which is what keeps it sound: the array view
+    /// cannot `push` a byte that breaks UTF-8 because nothing mutable reaches
+    /// it. Filtered on `is_builtin` for [`Lowerer::array_span`]'s reason.
+    fn string_bytes(&self, def: DefId, receiver_ty: Option<Ty>) -> bool {
+        if self.defs.get(def).name != "bytes" {
+            return false;
+        }
+        let Some(receiver_ty) = receiver_ty else { return false };
+        let self_ty = self.referent(receiver_ty);
+        let TyKind::Named { def: receiver, .. } = self.types.kind(self_ty) else {
+            return false;
+        };
+        self.defs.get(*receiver).is_builtin() && self.defs.get(*receiver).name == "String"
+    }
+
+    /// The lowering [`Lowerer::string_bytes`] names: the receiver, which is a
+    /// pointer to the string, stored as the result, which is a pointer to the
+    /// same three words read as an array.
+    fn lower_string_bytes(
+        &mut self,
+        ctx: &mut BodyCtx,
+        args: &[mir::Operand],
+        destination: &mir::Place,
+        insts: &mut Vec<ExtInst>,
+    ) -> Result<(), Unlowered> {
+        if !destination.projection.is_empty() {
+            return Err(Unlowered::new("a `bytes()` whose result goes through a field"));
+        }
+        let receiver = args
+            .first()
+            .ok_or_else(|| Unlowered::new("a `bytes()` call lowered with no receiver argument"))?;
+        let dest_local = LocalId(destination.local.index() as u32);
+        let layout = ctx.layout(dest_local)?.clone();
+        let pointer = self.lower_operand(ctx, receiver, Some(&layout), insts)?;
+        insts.push(ExtInst::Above(Inst::Store { local: dest_local, value: pointer }));
         Ok(())
     }
 

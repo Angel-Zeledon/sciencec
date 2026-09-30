@@ -206,6 +206,10 @@ const INTERFACES: &[&str] = &[
     // need an import. `Error?` is shorthand for `(any Error)?`; the expansion
     // is in `resolve_nullable_inner`, not here.
     "Error",
+    // `Write`, `stdlib-core.md` §4.2's one-method interface over *"a place
+    // bytes go"*: Level 1 by §4.5's table, so that `io`'s `BufferedWriter of
+    // W` can bound `W` by it without the interface living beside the type.
+    "Write",
 ];
 
 /// The free functions (§8).
@@ -587,6 +591,21 @@ const INTERFACE_DECLS: &[InterfaceDecl] = &[
             ret: Some(STRING),
         }],
     },
+    // §4.2, verbatim: *"Writes all of `bytes`, or fails. There is no partial
+    // write."* Returning `Error?` and not a count is that note's decision
+    // against `data-io.md` §7's `(U64, IoError?)`, argued there.
+    InterfaceDecl {
+        name: "Write",
+        generics: &[],
+        assoc: &[],
+        methods: &[Method {
+            name: "write",
+            generics: &[],
+            recv: Some(SelfKind::Mutable),
+            params: &[("bytes", Ty::Ref(&Ty::App("Array", &[Ty::Name("U8")])))],
+            ret: Some(Ty::Opt(&Ty::Name("Error"))),
+        }],
+    },
     InterfaceDecl {
         name: "Iterate",
         generics: &[],
@@ -813,7 +832,9 @@ const IMPLEMENTS: &[(&str, &[&str])] = &[
     // §7.2's three Level 1 error types. `Error` on a concrete error is what
     // lets it stand in an `Error?` slot, which `assign`'s §3 asks about by
     // name.
-    ("IoError", &["Error", "Display", "Eq", "Clone"]),
+    // `Error` is not in `IoError`'s row: its block below declares it, with
+    // the method, for `Chars`' reason.
+    ("IoError", &["Display", "Eq", "Clone"]),
     ("TextError", &["Error", "Display", "Eq", "Clone"]),
 ];
 
@@ -1241,25 +1262,23 @@ const BLOCKS: &[Block] = &[
     },
     // --- String, §6.9 -----------------------------------------------------
     //
-    // Thirteen of the note's nineteen, and `new` is the one of the thirteen
-    // that a note declares in full: §6.9's first line is `def new() -> String`,
-    // so it is transcription and not a decision.
+    // Fifteen of the note's nineteen, and `new` is the one of them that a note
+    // declares in full: §6.9's first line is `def new() -> String`, so it is
+    // transcription and not a decision.
     //
-    // The five left out, with the reason each is out — and the grouping is
-    // finer than it was, because two of them were being refused for a reason
-    // that is not theirs:
+    // The ones left out, with the reason each is out:
     //
-    // - `slice`, `lines` and `split` return `Range`, `Lines` and `Split` —
-    //   Level 1 types §9 lists and the prelude does not have.
-    // - `from_bytes` and `bytes` are **expressible today**: `&Array of
-    //   U8`, `(String, TextError?)` and `&Array[U8]` name nothing the
-    //   prelude lacks. They stay out for a different reason, which is that no
-    //   program in `examples/` calls either, so landing them would be landing a
-    //   signature the acceptance corpus cannot measure. `from_bytes` is now
-    //   *reachable* — `science-types` accepts a prelude type as the receiver of
-    //   an associated call, which is what `String.new()` needed — so the day
-    //   the corpus writes one, the declaration is a transcription of §6.9 and
-    //   two lines.
+    // - `slice` and `split` return `Range` and `Split` — the second a Level 1
+    //   type §9 lists and the prelude does not have, the first a borrowed
+    //   `String` in the middle of another, which has no `String` header of its
+    //   own to point at (the reason `Lines` hands out owned lines).
+    // - `from_bytes` is **expressible today** — `&Array of U8` and `(String,
+    //   TextError?)` name nothing the prelude lacks, and a prelude type is a
+    //   valid receiver of an associated call — and no program calls it, so it
+    //   waits for one.
+    //
+    // `lines` and `bytes` joined for Gate C1: a file split into lines, and a
+    // dump written through `Write.write(bytes: &Array[U8])`.
     Block {
         ty: "String",
         generics: &[],
@@ -1353,6 +1372,16 @@ const BLOCKS: &[Block] = &[
                 recv: Some(SelfKind::Shared),
                 params: &[],
                 ret: Some(Ty::Name("Chars")),
+            },
+            // §6.9's `def bytes(self) -> borrowed Array of U8`, transcribed.
+            // No entry point: `science-codegen-llvm`'s `string_bytes` says
+            // why a string's header already is the array this borrows.
+            Method {
+                name: "bytes",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[],
+                ret: Some(Ty::Ref(&Ty::App("Array", &[Ty::Name("U8")]))),
             },
             // §6.9's `def lines(self) -> Lines`, transcribed. It borrows the
             // string exactly as `chars` does; what it hands out is decided at
@@ -1512,6 +1541,32 @@ const BLOCKS: &[Block] = &[
             recv: Some(SelfKind::Mutable),
             params: &[],
             ret: Some(Ty::Opt(&CHAR)),
+        }],
+    },
+    // --- `IoError implements Error` ----------------------------------------
+    //
+    // **Declared here with its method, and moved out of [`IMPLEMENTS`], because
+    // it has a body.** A method-less `implements Error` row made `err.message()`
+    // on an `IoError` resolve to the *interface's* `message`, which has no body
+    // anywhere; `science-codegen-llvm` then lowered it as a dispatch through a
+    // vtable the one-byte error code does not have. Restating `message` here
+    // gives the call a type for an owner, which is what `prelude_method` keys
+    // on, and `science_io_error_message` is the body.
+    //
+    // `TextError` keeps its row: nothing constructs one yet (`parse_int` has
+    // no lowering), and a call to its `message` is now refused by name rather
+    // than miscompiled.
+    Block {
+        ty: "IoError",
+        generics: &[],
+        interface: Some(("Error", &[])),
+        assoc: &[],
+        methods: &[Method {
+            name: "message",
+            generics: &[],
+            recv: Some(SelfKind::Shared),
+            params: &[],
+            ret: Some(STRING),
         }],
     },
     // --- Lines ------------------------------------------------------------
@@ -2370,6 +2425,11 @@ impl Declarer<'_> {
             .unwrap_or_else(|| panic!("the prelude declares `{name}` before it is used"))
     }
 
+    /// The kind of a prelude name, when it is declared.
+    fn defs_kind(&self, name: &str) -> Option<DefKind> {
+        self.names.get(name).map(|def| self.defs.get(*def).kind)
+    }
+
     /// [`Declarer::named`] for the `ffi` module's own scope.
     fn ffi_named(&self, name: &str) -> DefId {
         *self
@@ -2417,6 +2477,26 @@ impl Declarer<'_> {
             }
             Ty::MutRef(inner) => {
                 hir::TypeKind::Borrowed { mutable: true, inner: Box::new(self.ty(inner, scope)) }
+            }
+            // **`Error?` is `(any Error)?` here too**, which is
+            // `resolve_nullable_inner`'s expansion for a user's source and was
+            // not this function's. A prelude signature returning `Error?` was a
+            // nullable *path to the interface*, and a user's `def write(…) ->
+            // Error?` a nullable `any Error` — two types for one spelling, so
+            // `SC0541` refused every implementation of `Write` with *"this
+            // returns `any Error?`; `Write` declares `Error?`"*.
+            Ty::Opt(Ty::Name(name)) if self.defs_kind(name) == Some(DefKind::Interface) => {
+                let bound = hir::Bound {
+                    kind: hir::BoundKind::Interface {
+                        res: Res::Def(self.named(name)),
+                        generics: Vec::new(),
+                    },
+                    span: BUILTIN_SPAN,
+                };
+                hir::TypeKind::Nullable(Box::new(hir::Type {
+                    kind: hir::TypeKind::Any(bound),
+                    span: BUILTIN_SPAN,
+                }))
             }
             Ty::Opt(inner) => hir::TypeKind::Nullable(Box::new(self.ty(inner, scope))),
             Ty::Pair(left, right) => {

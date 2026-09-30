@@ -31,19 +31,18 @@
 //! §2.7, whose body drops fields in reverse declaration order and then calls
 //! the type's own `Drop` implementation if it has one."*
 //!
-//! Two orderings are stated there and both are tested below, because both are
-//! choices a future edit could silently reverse:
+//! **AMENDMENT 4 reverses the first half of that sentence**: the type's own
+//! `drop` runs first, then its fields. Two orderings are tested below, because
+//! both are choices a future edit could silently reverse:
 //!
-//! 1. **fields before the type's own `drop`** —
-//!    [`the_fields_are_dropped_before_the_type_s_own_drop`]; and
+//! 1. **the type's own `drop` before its fields** —
+//!    [`the_type_s_own_drop_runs_before_its_fields`]; and
 //! 2. **fields among themselves in reverse declaration order** —
 //!    [`the_fields_run_in_reverse_declaration_order`].
 //!
-//! Note that (1) is the *opposite* of the order Rust runs the two in, and it is
-//! not a typo in the note — it is stated as one sentence with one `and then` in
-//! it. The cost of reading it literally is real and is recorded in
-//! [`a_drop_sees_its_owning_fields_already_released`], which is a test of what
-//! this compiler does today rather than an endorsement of it.
+//! (1) was the *opposite* until the amendment, read literally from the note's
+//! one `and then`, and its cost was pinned by what is now
+//! [`a_drop_sees_its_owning_fields`]: a destructor that read a freed field.
 
 #![cfg(feature = "llvm")]
 
@@ -107,14 +106,15 @@ def main():
     );
 }
 
-/// Decision 12's first ordering: the fields, then the type's own `drop`.
+/// Decision 12's first ordering, as amended: the type's own `drop`, then its
+/// fields.
 ///
-/// `Outer` owns two `Inner`s and both types print, so the four lines are a
-/// total order and not a set. A reordering that ran `Outer.drop` first would
-/// still print four lines, still exit zero, and still leak nothing — this
-/// assertion is the only thing between that edit and the tree.
+/// `Outer` owns an `Inner` and both types print, so the lines are a total
+/// order and not a set. A reordering would still print them all, still exit
+/// zero, and still leak nothing — this assertion is the only thing between
+/// that edit and the tree. It read `inner` then `outer` until AMENDMENT 4.
 #[test]
-fn the_fields_are_dropped_before_the_type_s_own_drop() {
+fn the_type_s_own_drop_runs_before_its_fields() {
     assert_eq!(
         prints(
             "fields_first",
@@ -137,10 +137,9 @@ def main():
     print(\"made\")
 "
         ),
-        "made\ninner\nouter\n",
-        "Decision 12 reads `drops fields in reverse declaration order and then \
-         calls the type's own `Drop` implementation` — the field's `drop` runs \
-         first and the record's own runs last"
+        "made\nouter\ninner\n",
+        "Decision 12's AMENDMENT 4: the record's own `drop` runs first, while its \
+         fields are still there, and the field's runs after it returns"
     );
 }
 
@@ -430,32 +429,24 @@ def main():
     );
 }
 
-/// What reading Decision 12 literally costs: a `drop` cannot see its own
-/// owning fields.
+/// A `drop` sees its own owning fields, because it runs before they go.
 ///
-/// # This is a record of behaviour, not an endorsement of it
+/// # What this pinned, and what changed it
 ///
-/// Decision 12 orders the two halves *"drops fields in reverse declaration
-/// order **and then** calls the type's own `Drop`"*. Run literally — which is
-/// what this compiler now does, and what the note says — the `String` field is
-/// released before `drop(mutable self)` is entered, so the destructor reads an
-/// emptied field. It is **memory-safe**: `science_string_free`'s own contract
-/// is that *"the receiver is left as a valid empty `String` rather than as a
-/// dangling one"*, so this is a wrong value and not a use-after-free. A
-/// non-owning field — `n` below — is untouched and reads correctly, which is
-/// what localises the effect to exactly the fields the first half released.
-///
-/// Rust runs the two halves the other way round for precisely this reason. The
-/// sentence in the note is unambiguous, one `and then` with no qualification,
-/// so the note wins and the consequence is written down here rather than
-/// quietly fixed against it: changing the order is a change to
-/// `codegen-and-linking.md` first and to `emit_user_drop_glue` second, and this
-/// assertion is what will fail the day someone makes it — which is the point.
+/// Decision 12 used to order the two halves *"drops fields in reverse
+/// declaration order **and then** calls the type's own `Drop`"*, and this test
+/// recorded the consequence on purpose: `tag` printed as the empty string the
+/// runtime left in place of a freed `String` — `"made\n7\n\n"`. Its note said
+/// changing the order was *"a change to `codegen-and-linking.md` first and to
+/// `emit_user_drop_glue` second"*, and that is the order it happened in: the
+/// note's AMENDMENT 4 reverses it, for `io`'s `BufferedWriter`, whose `drop`
+/// flushed a freed buffer into a closed file. `n` and `tag` both read
+/// correctly now.
 #[test]
-fn a_drop_sees_its_owning_fields_already_released() {
+fn a_drop_sees_its_owning_fields() {
     assert_eq!(
         prints(
-            "fields_already_freed",
+            "fields_still_owned",
             "type A:
     n: Int
     tag: String
@@ -470,9 +461,56 @@ def main():
     print(\"made\")
 "
         ),
-        "made\n7\n\n",
-        "`n` is an `Int` and survives; `tag` was freed by the first half of \
-         Decision 12's sentence and prints as the empty string the runtime left \
-         in its place"
+        "made\n7\nhello\n",
+        "the destructor runs first and its fields are released after it returns"
+    );
+}
+
+/// An assignment releases the value it overwrites, before the new one lands.
+///
+/// Drops were emitted at scope exits and nowhere else, so `name be make()` in
+/// a loop leaked one `String` per iteration — 500 000 leaks under `leaks
+/// --atExit` for a loop of that length. `science-mir` now builds the new value
+/// into a temporary, drops the old one, and moves the new one in. The `drop`
+/// line before `end` is the old value's; the one after is the scope's. The
+/// reassigned field is the same rule one projection down, and the field that
+/// was moved out first is dropped by nobody — its drop is elaborated away.
+///
+/// **`drop 4` and `drop 6` were both missing before `moves::decompose` learned
+/// that a field whose type has its own `Drop` is a leaf.** It descended into
+/// `H`, found no owning field, and tracked nothing, so moving `p.left` out left
+/// `Pair` with no per-field state and the whole-local table said *moved*: the
+/// remaining `p.right` was never released, at the reassignment or at the end.
+/// Fields go in reverse declaration order, so `right` before `left`.
+#[test]
+fn an_assignment_drops_the_value_it_overwrites() {
+    assert_eq!(
+        prints(
+            "drop_and_replace",
+            "type H:
+    n: Int
+
+H implements Drop:
+    def drop(mutable self):
+        print(f\"drop {self.n}\")
+
+type Pair:
+    left: H
+    right: H
+
+def take(h: H) -> Int:
+    h.n
+
+def main():
+    let mutable h be H(n: 1)
+    h be H(n: 2)
+    let mutable p be Pair(left: H(n: 3), right: H(n: 4))
+    print(take(p.left))
+    p.left be H(n: 5)
+    p.right be H(n: 6)
+    print(\"end\")
+",
+        ),
+        "drop 1\ndrop 3\n3\ndrop 4\nend\ndrop 6\ndrop 5\ndrop 2\n"
     );
 }

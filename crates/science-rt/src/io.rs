@@ -40,7 +40,7 @@ impl ScienceIoError {
     /// Anything else.
     pub const OTHER: Self = Self(4);
 
-    fn from_io(error: &std::io::Error) -> Self {
+    pub(crate) fn from_io(error: &std::io::Error) -> Self {
         match error.kind() {
             std::io::ErrorKind::NotFound => Self::NOT_FOUND,
             std::io::ErrorKind::PermissionDenied => Self::PERMISSION_DENIED,
@@ -49,6 +49,31 @@ impl ScienceIoError {
             _ => Self::OTHER,
         }
     }
+}
+
+/// `IoError implements Error`'s `message(self) -> String`.
+///
+/// **The five sentences are this crate's, and they are all there is.** §7.4 of
+/// `stdlib-core.md` gives `Error` its one required method and says nothing about
+/// what an `IoError`'s message reads; the variants carry no path and no OS
+/// detail, so the sentence names the kind and nothing more. A richer message is
+/// a richer `IoError`, which is a representation change and not this function's.
+///
+/// # Safety
+///
+/// `error` must be a non-null, aligned pointer to a live [`ScienceIoError`].
+#[no_mangle]
+pub unsafe extern "C" fn science_io_error_message(error: *const ScienceIoError) -> ScienceString {
+    // SAFETY: the caller guarantees a live error code.
+    let text: &str = match unsafe { *error } {
+        ScienceIoError::NOT_FOUND => "not found",
+        ScienceIoError::PERMISSION_DENIED => "permission denied",
+        ScienceIoError::ALREADY_EXISTS => "already exists",
+        ScienceIoError::INVALID_DATA => "invalid data",
+        _ => "input/output error",
+    };
+    // SAFETY: a `&str` is valid UTF-8 of its own length.
+    unsafe { ScienceString::from_raw_utf8(text.as_ptr(), text.len()) }
 }
 
 /// Science's `IoError?`, the return type of [`science_write_file`].

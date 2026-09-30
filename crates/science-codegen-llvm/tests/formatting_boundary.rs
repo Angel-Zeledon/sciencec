@@ -134,8 +134,10 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// words, exactly as `science_string_chars` beside it does. The four entry
 /// points Gate C1 added are the two `Lines` ones and `Set`'s two; only this
 /// one returns an aggregate.
+///
+/// **And thirteen**: `science_io_error_message` returns a `String`.
 #[test]
-fn the_derived_sret_set_is_twelve_and_has_moved_four_times() {
+fn the_derived_sret_set_is_thirteen_and_has_moved_five_times() {
     let triple = Triple::host().expect("a supported host");
     let indirect = RUNTIME
         .iter()
@@ -143,11 +145,11 @@ fn the_derived_sret_set_is_twelve_and_has_moved_four_times() {
         .filter(|sig| sig.ret.is_sret())
         .count();
     assert_eq!(
-        indirect, 12,
-        "the derived `sret` set is not the twelve `science-codegen`'s \
+        indirect, 13,
+        "the derived `sret` set is not the thirteen `science-codegen`'s \
          `runtime.rs` names"
     );
-    assert_eq!(RUNTIME.len(), 71, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 72, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

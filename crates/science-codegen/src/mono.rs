@@ -814,6 +814,21 @@ pub struct MonoSet {
     /// for — so a backend can report it at the coercion's own span rather
     /// than at this walk's, which has none worth printing.
     vtables: BTreeMap<(DefId, DefId), Result<Vec<String>, String>>,
+    /// The instance of a **generic** type's `drop` each concrete type that is
+    /// dropped reaches, keyed by `(the drop method, the concrete type)`.
+    ///
+    /// Decision 12's glue calls a type's own `drop`, and for `BufferedWriter
+    /// of W implements Drop:` that is a different function per `W`. No MIR
+    /// calls it — the call is inside glue the backend synthesises — so the
+    /// ordinary walk over callees never reached it, and the backend lowered
+    /// the generic definition as if it were concrete and refused. The walk
+    /// now visits every `Drop` terminator's type, `vtables`' shape one
+    /// interface over. A non-generic `drop` is not listed: its one definition
+    /// is its one instance, which the backend already names.
+    user_drops: BTreeMap<(DefId, Ty), String>,
+    /// Every type a `Drop` terminator's walk has entered, so that a type
+    /// dropped in a hundred bodies is decomposed once.
+    drops_walked: HashSet<Ty>,
     holes: Holes,
     diagnostics: Vec<Diagnostic>,
 }
@@ -916,6 +931,13 @@ impl MonoSet {
     /// exactly the reason [`MonoSet::vtables`]'s own documentation gives.
     pub fn vtable(&self, interface: DefId, concrete: DefId) -> Option<&Result<Vec<String>, String>> {
         self.vtables.get(&(interface, concrete))
+    }
+
+    /// The symbol of `method`'s instance for the concrete type `ty`, when
+    /// `method` is a generic type's `drop` and some `Drop` the walk reached
+    /// releases a `ty`. See [`MonoSet::user_drops`].
+    pub fn user_drop(&self, method: DefId, ty: Ty) -> Option<&str> {
+        self.user_drops.get(&(method, ty)).map(String::as_str)
     }
 
     /// The whole set as one deterministic block of text, for a dump and for the
@@ -1359,6 +1381,12 @@ impl<'a> Mono<'a> {
                 }
             }
             let span = block.terminator.span;
+            if let TerminatorKind::Drop { place, .. } = &block.terminator.kind {
+                let ty = place.ty(body);
+                let ty = self.apply(&caller_subst, ty);
+                self.walk_drop(ty, 0, symbol, queue, set);
+                continue;
+            }
             let TerminatorKind::Call { callee, args, destination, .. } = &block.terminator.kind
             else {
                 continue;
@@ -1589,6 +1617,119 @@ impl<'a> Mono<'a> {
             Err(message) => Err(message),
         };
         set.vtables.insert(key, outcome);
+    }
+
+    /// Every generic `drop` releasing one `ty` reaches: its own, and its
+    /// fields', payloads' and type arguments' in turn — Decision 12's glue
+    /// calls glue all the way down, so the walk follows it. See
+    /// [`MonoSet::user_drops`].
+    fn walk_drop(
+        &mut self,
+        ty: Ty,
+        depth: u32,
+        symbol: &str,
+        queue: &mut VecDeque<Task>,
+        set: &mut MonoSet,
+    ) {
+        if depth > 32 || !set.drops_walked.insert(ty) {
+            return;
+        }
+        match self.types.kind(ty).clone() {
+            TyKind::Nullable(inner) => self.walk_drop(inner, depth + 1, symbol, queue, set),
+            TyKind::Tuple(elements) => {
+                for element in elements {
+                    self.walk_drop(element, depth + 1, symbol, queue, set);
+                }
+            }
+            TyKind::Named { def, args } => {
+                for arg in &args {
+                    if let GenericArg::Type(inner) = arg {
+                        self.walk_drop(*inner, depth + 1, symbol, queue, set);
+                    }
+                }
+                if !matches!(self.defs.get(def).kind, DefKind::Record | DefKind::Choice) {
+                    return;
+                }
+                self.instantiate_user_drop(def, ty, symbol, queue, set);
+                for member in self.members_at(def, &args) {
+                    self.walk_drop(member, depth + 1, symbol, queue, set);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// `ty`'s own `drop`, instantiated at `ty`, when its implementation block
+    /// is generic. The block's parameters are solved by matching its declared
+    /// self type against `ty` — [`Mono::solve_call`]'s receiver rule, for a
+    /// call no MIR spells.
+    fn instantiate_user_drop(
+        &mut self,
+        def: DefId,
+        ty: Ty,
+        symbol: &str,
+        queue: &mut VecDeque<Task>,
+        set: &mut MonoSet,
+    ) {
+        let Some(interface) = self.decls.prelude().get("Drop") else { return };
+        if !self.decls.methods().declares(self.types, ty, interface) {
+            return;
+        }
+        let Found::One(candidate) = self.decls.methods().lookup(def, "drop", Form::Value) else {
+            return;
+        };
+        let method = candidate.method;
+        let generics = self.generics_of(method);
+        if generics.is_empty() || set.user_drops.contains_key(&(method, ty)) {
+            return;
+        }
+        let Some(owner) = self.decls.signature(method).and_then(|signature| signature.owner)
+        else {
+            return;
+        };
+        let Some(declared_self) = self.decls.self_ty(owner) else { return };
+        let unknowns: HashSet<DefId> = generics.iter().map(|param| param.def).collect();
+        let mut solution = Solution::default();
+        self.match_ty(declared_self, ty, &unknowns, &mut solution);
+        let Some(instance) = self.assemble_instance(method, &generics, &solution, set) else {
+            return;
+        };
+        let Ok(instance_symbol) = self.symbol_of(&instance) else { return };
+        set.user_drops.insert((method, ty), instance_symbol);
+        queue.push_back(Task { instance, chain: Vec::new(), from: Some(symbol.to_string()) });
+    }
+
+    /// A record's fields or a `choice`'s payloads, substituted at `args`.
+    fn members_at(&mut self, def: DefId, args: &[GenericArg]) -> Vec<Ty> {
+        let mut out = Vec::new();
+        match self.defs.get(def).kind {
+            DefKind::Record => {
+                let Some(record) = self.decls.record(def) else { return out };
+                let subst = Substitution::of_generics(&record.generics, args);
+                let fields: Vec<Ty> = record.fields.iter().map(|(_, ty)| *ty).collect();
+                for field in fields {
+                    out.push(subst.apply(self.types, field).unwrap_or(Ty::ERROR));
+                }
+            }
+            DefKind::Choice => {
+                let variants: Vec<DefId> = self
+                    .defs
+                    .children(def)
+                    .filter(|child| child.kind == DefKind::Variant)
+                    .map(|child| child.id)
+                    .collect();
+                for variant in variants {
+                    let Some(declared) = self.decls.variant(variant) else { continue };
+                    let subst = Substitution::of_generics(&declared.generics, args);
+                    let payload = declared.payload.clone();
+                    for field in payload {
+                        out.push(subst.apply(self.types, field).unwrap_or(Ty::ERROR));
+                    }
+                }
+            }
+            _ => {}
+        }
+        out
     }
 
     /// Decision 13's slot order, as instances rather than as raw

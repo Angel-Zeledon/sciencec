@@ -227,6 +227,15 @@ fn the_library_clause_becomes_the_right_flag_on_each_target() {
     );
 }
 
+/// `science-rt` is already the second argument of every link, so the bundled
+/// `io` module's `library "science-rt"` adds nothing on any target.
+#[test]
+fn the_runtime_library_clause_adds_no_flag_anywhere() {
+    for triple in [Triple::X86_64LinuxGnu, Triple::Aarch64AppleDarwin, Triple::X86_64WindowsMsvc] {
+        assert!(science_codegen_llvm::link::library_flags(triple, "science-rt").is_empty());
+    }
+}
+
 // --- stage 3: control flow ------------------------------------------------
 
 /// A loop with a back edge, a comparison, a `break`, and an accumulator whose

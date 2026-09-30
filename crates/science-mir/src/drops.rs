@@ -163,6 +163,46 @@ pub fn elaborate(body: &mut Body, flag_ty: Ty, decls: &Declarations, types: &mut
             continue;
         };
         let local = place.local;
+        // **A projected `Drop` is `crate::lower`'s drop-and-replace**, and
+        // which of the three rows it is in depends on what it projects
+        // through. Behind a reference or an index the old value is there by
+        // construction — nothing can move out of a borrow or out of an
+        // element — so the drop stands. A chain of fields on an owned record
+        // is §4's question asked of one subtree, and is routed there with the
+        // field's path as the prefix. Anything else falls through to the
+        // whole-local state, which is right whenever the local's fields are
+        // not tracked one by one.
+        let mut prefix: Vec<DefId> = Vec::new();
+        if !place.projection.is_empty() {
+            if place
+                .projection
+                .iter()
+                .any(|step| matches!(step, Projection::Deref { .. } | Projection::Index { .. }))
+            {
+                continue;
+            }
+            let fields: Option<Vec<DefId>> = place
+                .projection
+                .iter()
+                .map(|step| match step {
+                    Projection::Field { field, .. } => Some(*field),
+                    _ => None,
+                })
+                .collect();
+            match fields {
+                Some(path) => prefix = path,
+                // A tuple element or a payload: leave it standing only when
+                // the whole local is certainly there, and otherwise leak
+                // rather than risk a second free.
+                None => {
+                    let states = analysis.before_terminator(body, id);
+                    if states[local.index()] != State::Init {
+                        delete.push(id);
+                    }
+                    continue;
+                }
+            }
+        }
         // **A record with no leaf to track is not a decomposed local**, and
         // routing it to §4 anyway is how a user's `drop` was deleted.
         //
@@ -193,7 +233,14 @@ pub fn elaborate(body: &mut Body, flag_ty: Ty, decls: &Declarations, types: &mut
                 .expect("`fields_of` and `before_terminator` agree on which locals are tracked");
             let leaves: Vec<(Vec<DefId>, State)> =
                 leaf_paths.iter().cloned().zip(leaf_states).collect();
-            records.push(RecordDrop { block: id, local, target: *target, leaves });
+            records.push(RecordDrop {
+                block: id,
+                local,
+                target: *target,
+                prefix,
+                place: place.clone(),
+                leaves,
+            });
             continue;
         }
         let states = analysis.before_terminator(body, id);
@@ -259,6 +306,12 @@ struct RecordDrop {
     block: BlockId,
     local: Local,
     target: BlockId,
+    /// The field path the `Drop` releases: empty for a scope exit's
+    /// whole-local drop, and one field's path for `crate::lower`'s
+    /// drop-and-replace of `record.field be …`.
+    prefix: Vec<DefId>,
+    /// The place at `prefix` — `Place::local(local)` when it is empty.
+    place: Place,
     /// One entry per leaf path [`moves::decompose`] tracked for `local` —
     /// only the fields [`moves::needs_drop`] admits, at whatever depth it
     /// found them, so a field that drops nothing never enters this list and
@@ -317,19 +370,26 @@ fn rewrite_record_drop(
     aliases: &mut Aliases,
     field_flags: &mut Vec<(Local, Vec<DefId>, Local)>,
 ) {
-    let RecordDrop { block, local, target, leaves } = record;
+    let RecordDrop { block, local, target, prefix, place, leaves } = record;
     let span = body.blocks[block.index()].terminator.span;
 
-    if leaves.is_empty() || leaves.iter().all(|(_, state)| matches!(state, State::Gone | State::Unreached)) {
-        body.blocks[block.index()].terminator.kind = TerminatorKind::Goto { target: *target };
-        body.blocks[block.index()].terminator.span = span;
-        return;
-    }
-    if leaves.iter().all(|(_, state)| *state == State::Init) {
-        // Every leaf is fully there: the whole-record `Drop` `crate::lower`
-        // already built is already the cheapest correct answer, and this
-        // pass's whole job here is to leave it alone.
-        return;
+    match aggregate(prefix, leaves) {
+        None if !prefix.is_empty() => {
+            // A field `decompose` never entered — deeper than it walks, or
+            // with nothing under it it counted. The drop stands, as it does
+            // for any local this analysis does not track.
+            return;
+        }
+        None | Some(Aggregate::Gone) => {
+            body.blocks[block.index()].terminator.kind = TerminatorKind::Goto { target: *target };
+            body.blocks[block.index()].terminator.span = span;
+            return;
+        }
+        // Every leaf is fully there: the `Drop` `crate::lower` already built
+        // is already the cheapest correct answer, and this pass's whole job
+        // here is to leave it alone.
+        Some(Aggregate::Init) => return,
+        Some(Aggregate::Mixed) => {}
     }
 
     // Mixed: one `Drop` per remaining field, chained in declaration order,
@@ -337,11 +397,10 @@ fn rewrite_record_drop(
     // `build_chain`'s own three rows, applied at the root and at every field
     // it descends into.
     let decl_span = body.local_decl(*local).span;
-    let root_ty = body.local_decl(*local).ty;
-    let root_place = Place::local(*local);
+    let root_ty = place.ty(body);
     let chain = build_chain(
-        body, *local, &[], &root_place, root_ty, leaves, decls, types, aliases, flag_ty, decl_span,
-        0, field_flags,
+        body, *local, prefix, place, root_ty, leaves, decls, types, aliases, flag_ty, decl_span,
+        prefix.len(), field_flags,
     );
 
     if chain.is_empty() {
@@ -536,7 +595,10 @@ fn write_flags(body: &mut Body, flags: &[(Local, Local)]) {
                     }
                 }
             }
-            TerminatorKind::Drop { place, target, .. } => {
+            // Only a whole-local `Drop` clears the local's flag: a projected
+            // one is a drop-and-replace of part of it, and the value is back
+            // by the next statement.
+            TerminatorKind::Drop { place, target, .. } if place.projection.is_empty() => {
                 if let Some(flag) = flag_of(flags, place.local) {
                     insertions.push(Insertion {
                         block: *target,

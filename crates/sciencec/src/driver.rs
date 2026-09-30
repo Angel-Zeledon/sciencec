@@ -758,10 +758,16 @@ impl Session {
         let mut whole = true;
         let sources = science_resolve::modules::collect_crate(entry_source, |candidate| {
             let path = root.join(candidate);
-            // A missing file is the resolver's to report, against the `use`.
-            // Only a file that is there and unusable is reported here.
+            // A missing file is the resolver's to report, against the `use` —
+            // unless the toolchain carries a module by that name, which is
+            // searched last (`science_resolve::stdlib`). Only a file that is
+            // there and unusable is reported here.
             if !path.is_file() {
-                return None;
+                let text = science_resolve::stdlib::source(candidate)?;
+                let bundled = self
+                    .db
+                    .add_file(science_resolve::stdlib::display_path(candidate), text.to_string());
+                return Some((bundled, science_db::ast(&self.db, bundled).value().clone()));
             }
             let Some(loaded) = self.load(&path) else {
                 whole = false;

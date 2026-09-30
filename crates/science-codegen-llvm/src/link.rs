@@ -354,6 +354,9 @@ impl Library {
     }
 }
 
+/// The library name an `extern` block writes for `science-rt` itself.
+pub const RUNTIME_LIBRARY: &str = "science-rt";
+
 /// The `-l` flags one library name becomes on a target.
 ///
 /// **Two names are special on Windows and the specialness is real rather than
@@ -374,7 +377,19 @@ impl Library {
 /// **What this costs:** a Windows user who genuinely has a third-party
 /// `m.lib` cannot name it. That is a narrow loss against making the note's own
 /// stage-2 program unbuildable on the platform this compiler is developed on.
+///
+/// **`science-rt` is the third name, and it resolves to no flag on every
+/// target.** The runtime archive is already the second argument of every link
+/// [`link`] runs, so the library it names is present before any clause is
+/// read. It is how the bundled `io` module's `unsafe extern "C":` block names
+/// where `science_file_create` and its two siblings come from — §5.1 requires a
+/// block to name its library, and `science-rt` is the true answer. The hyphen
+/// is deliberate: no system library is spelled that way, so the name cannot
+/// shadow one.
 pub fn library_flags(triple: Triple, name: &str) -> Vec<String> {
+    if name == RUNTIME_LIBRARY {
+        return Vec::new();
+    }
     if triple == Triple::X86_64WindowsMsvc && matches!(name, "c" | "m") {
         return Vec::new();
     }

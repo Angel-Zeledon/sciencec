@@ -456,9 +456,18 @@ pub fn check_crate(
     let mut bodies = Vec::new();
     for module in &krate.modules {
         for item in &module.items {
-            collect(&item.kind, &mut |function, owner| {
-                let body =
-                    check_fn(function, owner, krate, decls, types, aliases, order, diagnostics);
+            collect(&item.kind, &mut |function, owner, block_bounds| {
+                let body = check_fn(
+                    function,
+                    owner,
+                    block_bounds,
+                    krate,
+                    decls,
+                    types,
+                    aliases,
+                    order,
+                    diagnostics,
+                );
                 crate::unchecked::report(&body, krate, decls, types, diagnostics);
                 crate::exhaustive::report(&body, krate, decls, types, aliases, diagnostics);
                 bodies.push(body);
@@ -468,18 +477,33 @@ pub fn check_crate(
     bodies
 }
 
-/// Walks the functions with bodies in one item, with the block that owns each.
-fn collect(kind: &hir::ItemKind, visit: &mut impl FnMut(&hir::Fn, Option<DefId>)) {
+/// Walks the functions with bodies in one item, with the block that owns each
+/// and the bounds that block puts on its own parameters.
+///
+/// **The block's bounds are a method body's too.** `Holder[W: Speak] has:` —
+/// or `Holder[W] has where W: Speak:` — says every method in it may call
+/// `speak` on a `W`, and `Signature::bounds` reads only the method's *own*
+/// generics and `where` clause. So `self.inner.speak()` found no bound to
+/// look through, checked clean because a parameter's surface is open, and
+/// reached the backend as a method call resolved to nothing. The bounds join
+/// the body's list and not the signature's: a call site is already held to
+/// them by the receiver's type, and `check_bounds` substitutes the callee's
+/// generics, which do not include the block's.
+fn collect(
+    kind: &hir::ItemKind,
+    visit: &mut impl FnMut(&hir::Fn, Option<DefId>, &[ParamBound]),
+) {
     match kind {
-        hir::ItemKind::Fn(function) if function.body.is_some() => visit(function, None),
+        hir::ItemKind::Fn(function) if function.body.is_some() => visit(function, None, &[]),
         hir::ItemKind::Impl(block) => {
+            let bounds = crate::items::param_bounds(&block.generics, &block.where_clause);
             for method in block.methods.iter().filter(|m| m.body.is_some()) {
-                visit(method, Some(block.def));
+                visit(method, Some(block.def), &bounds);
             }
         }
         hir::ItemKind::Interface(interface) => {
             for method in interface.methods.iter().filter(|m| m.body.is_some()) {
-                visit(method, Some(interface.def));
+                visit(method, Some(interface.def), &[]);
             }
         }
         _ => {}
@@ -491,6 +515,7 @@ fn collect(kind: &hir::ItemKind, visit: &mut impl FnMut(&hir::Fn, Option<DefId>)
 pub fn check_fn(
     function: &hir::Fn,
     owner: Option<DefId>,
+    block_bounds: &[ParamBound],
     krate: &hir::Crate,
     decls: &Declarations,
     types: &mut Types,
@@ -509,7 +534,8 @@ pub fn check_fn(
 
     let signature = decls.signature(function.def);
     let ret = signature.map(|sig| sig.ret).unwrap_or(Ty::UNIT);
-    let bounds = signature.map(|sig| sig.bounds.clone()).unwrap_or_default();
+    let mut bounds = signature.map(|sig| sig.bounds.clone()).unwrap_or_default();
+    bounds.extend_from_slice(block_bounds);
 
     let checker = BodyChecker {
         defs: &krate.defs,
@@ -3184,6 +3210,34 @@ impl<'a> BodyChecker<'a> {
                 let mutable =
                     matches!(self.types.kind(*param_ty), TyKind::Borrowed { mutable: true, .. });
                 match self.infer.resolve(typed.ty) {
+                    // **An argument that is already a borrow is not borrowed
+                    // again.** `emit(&mut counter)` against `def emit[W:
+                    // Write](sink: &mut W)` synthesises a `&mut Counter`; the
+                    // arm below took that as the peeled type, solved `W :=
+                    // &mut Counter` and wrapped a second borrow round it. The
+                    // callee then ran `Counter`'s `write` on a pointer to the
+                    // caller's *pointer* temporary: the count went into the
+                    // temporary's bits and the counter stayed at zero, with
+                    // nothing refused anywhere. `probe`'s sibling arm above
+                    // peels an explicit borrow by hand; this is the same peel
+                    // for an argument `probe` could not answer, and the node
+                    // is handed on as written, for the ordinary check below to
+                    // hold its mutability to the parameter's.
+                    InferTy::Known(ty) if matches!(self.types.kind(ty), TyKind::Borrowed { .. }) => {
+                        let peeled = self.peel_borrow(ty, arg.span);
+                        if let Some(&existing) = deferred.get(&def) {
+                            let _ = self.infer.bind(self.types, existing, peeled);
+                        }
+                        solved.insert(def, peeled);
+                        // Held to the parameter's own borrow here, because a
+                        // presynthesised node is handed on unchecked:
+                        // `via(&c)` against `sink: &mut W` is `SC0525`, as it
+                        // is against a concrete `&mut Counter`, and a `&mut`
+                        // argument into a shared parameter weakens as usual.
+                        let expected = self.types.borrowed(mutable, peeled);
+                        let id = self.demand(typed, expected, Site::Argument, arg.span);
+                        presynthesised.insert(at, Typed { id, ty: InferTy::Known(expected) });
+                    }
                     InferTy::Known(ty) => {
                         // `borrowed T` against a `borrowed Doc` and against a
                         // `Doc` both solve `T := Doc` — the borrow taken here

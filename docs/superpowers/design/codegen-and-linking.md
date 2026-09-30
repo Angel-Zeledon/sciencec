@@ -603,6 +603,25 @@ note that the descriptor is the *second* argument for `Array` and `Map` and the
 *first* for `Box`, which is §9.3's finding 4 and is not derivable from the
 runtime's contract page.
 
+> **AMENDMENT 4: the order is reversed. The type's own `drop` runs first, and
+> then its fields in reverse declaration order.**
+>
+> Run as written, *"drops fields … and then calls the type's own `Drop`"* hands
+> a destructor a value whose owning fields are already released. It was
+> memory-safe — `science_string_free` leaves an empty `String` behind — and it
+> was wrong for every destructor that needs its fields, which is most of them.
+> `io`'s `BufferedWriter` found it: its `drop` flushes the buffer to the sink,
+> and by the time it ran the buffer was freed and the `File` closed, so a
+> program that forgot `flush()` lost its output without a word.
+> `crates/science-codegen-llvm/tests/user_drop.rs` pinned the old order on
+> purpose — *"this assertion is what will fail the day someone makes it"* —
+> and it is the test that changed.
+>
+> This is Rust's order, for Rust's reason: the destructor is the last code that
+> sees the value whole. The cost is the one Rust pays too — a destructor may
+> not assume its fields are gone, and a field's own destructor runs after its
+> owner's has returned.
+
 **Decision 13. Drop elaboration is MIR's, not codegen's. Codegen sees only
 unconditional `Drop` terminators.**
 

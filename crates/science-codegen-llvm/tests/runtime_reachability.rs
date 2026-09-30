@@ -218,6 +218,15 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   let gone be seen.remove(\"a\")\n\
          \x20   print(f\"{gone} {seen.length()}\")\n",
     ),
+    // `IoError`'s `message`, on the path where a write fails: it was lowered
+    // as a vtable dispatch until `science_io_error_message` gave it a body.
+    (
+        "io_error_message",
+        "def main():\n\
+         \x20   let err be write_file(\"/nonexistent/x\", \"hi\")\n\
+         \x20   if err?:\n\
+         \x20       print(err.message())\n",
+    ),
     // `arrays.rs`'s literal, `get`, `push` and `get_mutably` (the row
     // `tests/arrays.rs` itself does not exercise; `get_mutably` has an
     // execution test nowhere in this crate today, so this is that call's

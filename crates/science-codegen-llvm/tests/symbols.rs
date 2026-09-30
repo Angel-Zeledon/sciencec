@@ -292,6 +292,24 @@ fn every_runtime_definition_is_an_entry_point_codegen_knows_about() {
         assert!(name.starts_with("science_"), "`{name}` breaks §8's one-prefix rule");
     }
 
+    // **The second caller.** `science-rt/src/file.rs`'s three are called by
+    // the bundled `io` module's `unsafe extern "C":` block — Science source,
+    // not emitted code — so they are not `RUNTIME` rows and must not be:
+    // `RUNTIME` is what codegen may call, and codegen never calls these.
+    // Named here so that the next symbol nothing declares still fails.
+    const LIBRARY: &[&str] = &["science_file_create", "science_file_write", "science_file_close"];
+    // And each of them is declared where the note says: a symbol on this list
+    // that `io` stopped calling would be dead code this exemption hid.
+    let io = science_resolve::stdlib::source("io.science").expect("`io` is bundled");
+    for symbol in LIBRARY {
+        assert!(
+            io.contains(&format!("def {symbol}(")),
+            "`{symbol}` is exempted as called by the bundled `io` module, which does not declare it"
+        );
+    }
+    let defined: Vec<String> =
+        defined.into_iter().filter(|name| !LIBRARY.contains(&name.as_str())).collect();
+
     let declared: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
     let undeclared: Vec<&String> =
         defined.iter().filter(|name| !declared.contains(&name.as_str())).collect();

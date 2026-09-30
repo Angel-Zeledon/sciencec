@@ -373,3 +373,79 @@ fn clone_on_a_bounded_type_parameter_runs_at_a_builtin_scalar() {
     );
     assert_eq!(out, "5 5 hi hi\n");
 }
+
+/// A bound written on a block's own parameter reaches the methods in it.
+///
+/// `Holder[W: Speak] has:` — and `Holder[W] has where W: Speak:` — say every
+/// method in the block may call `speak` on a `W`. `Signature::bounds` read only
+/// a method's own generics, so `self.inner.speak()` found no bound to look
+/// through, checked clean because a parameter's surface is open, and reached
+/// the backend as a call resolved to nothing. Both spellings, run.
+#[test]
+fn a_bound_on_a_block_parameter_reaches_its_methods() {
+    for (name, header) in
+        [("block_bound_list", "Holder[W: Speak] has:"), ("block_bound_where", "Holder[W] has where W: Speak:")]
+    {
+        let source = format!(
+            "interface Speak:
+    def speak(self) -> Int
+
+type Dog:
+    n: Int
+
+Dog implements Speak:
+    def speak(self) -> Int:
+        self.n
+
+type Holder[W]:
+    inner: W
+
+{header}
+    def twice(self) -> Int:
+        self.inner.speak() * 2
+
+def main():
+    let h be Holder(inner: Dog(n: 21))
+    print(h.twice())
+"
+        );
+        let (stdout, _) = built(name, &source);
+        assert_eq!(stdout, "42\n", "{header}");
+    }
+}
+
+/// An explicit `&mut` argument into a `&mut W` parameter is borrowed once.
+///
+/// `instantiate_call` solved `W` from the synthesised argument and took a
+/// borrow of its own for the parameter, which is right for `via(c)` and wrong
+/// for `via(&mut c)`: the argument was already the borrow, so `W` became
+/// `&mut Counter` and the callee ran `Counter.bump` on a pointer to the
+/// caller's pointer temporary. The sum went into that temporary and the
+/// counter printed its old value, with nothing refused. Both spellings, run.
+#[test]
+fn an_explicit_borrow_into_a_generic_borrowed_parameter_is_not_borrowed_twice() {
+    let (stdout, _) = built(
+        "explicit_borrow_generic",
+        "interface Bump:
+    def bump(mutable self, by: Int)
+
+type Counter:
+    total: Int
+
+Counter implements Bump:
+    def bump(mutable self, by: Int):
+        self.total be self.total + by
+
+def via[W: Bump](sink: &mut W):
+    sink.bump(10)
+
+def main():
+    let mutable c be Counter(total: 0)
+    via(&mut c)
+    print(c.total)
+    via(c)
+    print(c.total)
+",
+    );
+    assert_eq!(stdout, "10\n20\n");
+}

@@ -641,6 +641,7 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_print", params: &[P], ret: RtRet::Void },
     RuntimeFn { symbol: "science_read_file", params: &[P], ret: RtRet::Aggregate(RtAggregate::StringAndIoError) },
     RuntimeFn { symbol: "science_write_file", params: &[P, P], ret: RtRet::Aggregate(RtAggregate::NullableIoError) },
+    RuntimeFn { symbol: "science_io_error_message", params: &[P], ret: RtRet::Aggregate(RtAggregate::String) },
     // --- map.rs ---
     RuntimeFn { symbol: "science_map_new", params: &[D], ret: RtRet::Aggregate(RtAggregate::Map) },
     RuntimeFn { symbol: "science_map_free", params: &[P, D], ret: RtRet::Void },
@@ -1036,9 +1037,13 @@ mod tests {
     /// `()`. They are the two methods whose answer is not a map's — `insert`
     /// reports *new* where a map reports *displaced*, and neither has a value
     /// to hand back — and the other four reuse `science_map_*` outright.
+    ///
+    /// **Seventy-two**: `science_io_error_message`, `IoError implements
+    /// Error`'s one method. It had no body anywhere, and a call to it was
+    /// lowered as a vtable dispatch on a one-byte error code.
     #[test]
-    fn there_are_seventy_one_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 71, "§2.6: \"they are the whole list\"");
+    fn there_are_seventy_two_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 72, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");
@@ -1162,6 +1167,7 @@ mod tests {
             "science_string_chars",
             "science_string_lines",
             "science_read_file",
+            "science_io_error_message",
             "science_formatter_spec",
             "science_format_spec_default",
         ];

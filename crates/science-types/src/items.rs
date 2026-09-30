@@ -1123,7 +1123,7 @@ impl Declarations {
 /// on is a bare parameter, so a `Res` comparison answers it. Lowering it would
 /// mean interning a type nothing else needs and running `TypeLowerer`'s
 /// diagnostics over an annotation that is already reported where it is used.
-fn param_bounds(
+pub(crate) fn param_bounds(
     generics: &[hir::GenericParam],
     where_clause: &[hir::WherePredicate],
 ) -> Vec<ParamBound> {

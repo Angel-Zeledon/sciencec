@@ -156,6 +156,7 @@ fn the_eleven_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
             "science_array_with_capacity",
             "science_format_spec_default",
             "science_formatter_spec",
+            "science_io_error_message",
             "science_map_new",
             "science_read_file",
             "science_string_chars",
@@ -261,7 +262,11 @@ fn nothing_outside_the_table_is_callable() {
     // negation of *displaced*, which is an instruction, but the value slot a
     // map's insert and remove need an address for is not — so both are here
     // rather than threading a zero-sized operand through two call sites.
-    assert_eq!(RUNTIME.len(), 71);
+    //
+    // **Seventy-two.** `science_io_error_message` is `IoError`'s `message`,
+    // five constant sentences picked by a byte — a table in the binary, which
+    // a runtime function holds once instead of every call site holding five.
+    assert_eq!(RUNTIME.len(), 72);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

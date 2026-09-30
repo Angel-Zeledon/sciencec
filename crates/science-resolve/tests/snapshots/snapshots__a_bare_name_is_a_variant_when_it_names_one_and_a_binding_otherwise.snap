@@ -2,29 +2,29 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![choice, f]))"
 ---
-Module `main` #546 @0..60
-  Choice `Choice` #547 @0..17
+Module `main` #554 @0..60
+  Choice `Choice` #555 @0..17
     variants
-      Variant `Yes` #548 @0..7
+      Variant `Yes` #556 @0..7
         payload
           Path -> `I64` #5 @0..3
-      Variant `No` #549 @8..10
-  Fn `f` #550 @18..60
+      Variant `No` #557 @8..10
+  Fn `f` #558 @18..60
     params
-      Param `c` #551 @42..50
-        type: Path -> `Choice` #547 @42..48
+      Param `c` #559 @42..50
+        type: Path -> `Choice` #555 @42..48
     body: Block @18..60
       tail: Match @18..58
-        scrutinee: Path -> `c` #551 @51..52
+        scrutinee: Path -> `c` #559 @51..52
         arms
           Arm @18..22
-            pattern: Variant -> `No` #549 @18..20
+            pattern: Variant -> `No` #557 @18..20
             body: Int 0 @21..22
           Arm @23..28
-            pattern: Binding `Yes` #552 @23..26
+            pattern: Binding `Yes` #560 @23..26
             body: Int 1 @27..28
           Arm @29..39
-            pattern: Binding `anything` #553 @29..37
+            pattern: Binding `anything` #561 @29..37
             body: Int 2 @38..39
 --- diagnostics ---
 (none)

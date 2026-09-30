@@ -1127,6 +1127,120 @@ fn a_use_that_finds_no_module_does_not_report_the_names_it_promised() {
         .stderr_contains("the crate root has one module");
 }
 
+/// **Gate C1** (`self-hosting.md` §10), as the execution test it asks for:
+/// *"builds a `Map of (String, Int)`, a `Set of DefId`, an `Array of (Box of
+/// Expr)`, splits a file into lines, formats a dump through a
+/// `BufferedWriter`, and writes it … and its output is byte-identical across
+/// two runs"*.
+///
+/// Every clause is a line below, and it goes through `sciencec build` rather
+/// than a harness because the last clause's `BufferedWriter` is the bundled
+/// `io` module, which only reaches a program through the driver's
+/// `collect_crate` fallback. It is run twice, each time from an empty
+/// directory of its own, and both what it prints and the file it writes are
+/// compared byte for byte. The gate's *"and two machines"* half is not
+/// something one test on one machine can show; `examples/` pins stdout across
+/// machines, and this pins it across runs.
+#[cfg(feature = "llvm")]
+#[test]
+fn gate_c1_builds_its_collections_and_writes_a_dump_through_a_buffered_writer() {
+    let entry = scratch_crate(
+        "gate_c1",
+        &[(
+            "gate.science",
+            "use io (File, BufferedWriter)
+
+type DefId is Int
+
+choice Expr:
+    Number(Int)
+    Name(String)
+
+Expr has:
+    def describe(self) -> String:
+        match self:
+            Number(n): f\"number {n}\"
+            Name(text): f\"name {text}\"
+
+def main():
+    let err be write_file(\"input.txt\", \"alpha\\nbeta\\n42\\nalpha\\ngamma\\n\")
+    if err?:
+        panic(err.message())
+    let text, read_err be read_file(\"input.txt\")
+    if read_err?:
+        panic(read_err.message())
+
+    let mutable counts be Map[String, Int].new()
+    let mutable seen be Set[DefId].new()
+    let mutable exprs be Array[Box[Expr]].new()
+    let mutable next: DefId be 0
+    for line in text.lines():
+        let mutable n be 1
+        let previous be counts.get(line)
+        if previous?:
+            n be previous + 1
+        counts.insert(line.clone(), n)
+        if line.starts_with(\"a\"):
+            exprs.push(Box.new(Expr.Number(line.length())))
+        else:
+            exprs.push(Box.new(Expr.Name(line.clone())))
+        if seen.insert(next % 3):
+            print(f\"new id {next % 3}\")
+        next be next + 1
+
+    let file, create_err be File.create(\"dump.txt\")
+    if create_err?:
+        panic(create_err.message())
+    let mutable out be BufferedWriter.new(file, 64)
+    for expr in exprs:
+        let line be f\"{expr.describe()}\\n\"
+        let w be out.write(line.bytes())
+        if w?:
+            panic(w.message())
+    let alpha be counts.get(\"alpha\")
+    if alpha?:
+        let line be f\"alpha seen {alpha} times\\n\"
+        let w be out.write(line.bytes())
+        if w?:
+            panic(w.message())
+    let summary be f\"{seen.length()} ids\\n\"
+    let w be out.write(summary.bytes())
+    if w?:
+        panic(w.message())
+    let flushed be out.flush()
+    if flushed?:
+        panic(flushed.message())
+    print(\"dumped\")
+",
+        )],
+    );
+    sciencec(&["build", &entry]).succeeded();
+    let executable = entry.trim_end_matches(".science").to_string();
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("crates").join("gate_c1_runs");
+    let mut outputs = Vec::new();
+    for run in ["first", "second"] {
+        let dir = base.join(run);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the target directory is writable");
+        let output = Command::new(&executable)
+            .current_dir(&dir)
+            .output()
+            .expect("the gate program runs");
+        assert!(output.status.success(), "run {run}: {}", String::from_utf8_lossy(&output.stderr));
+        let dump = std::fs::read(dir.join("dump.txt")).expect("the dump was written");
+        outputs.push((output.stdout, dump));
+    }
+    assert_eq!(outputs[0], outputs[1], "two runs of one program disagree");
+    assert_eq!(
+        String::from_utf8_lossy(&outputs[0].0),
+        "new id 0\nnew id 1\nnew id 2\ndumped\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&outputs[0].1),
+        "number 5\nname beta\nname 42\nnumber 5\nname gamma\nalpha seen 2 times\n3 ids\n"
+    );
+}
+
 /// Writes a crate under the target directory and returns the **last** file's
 /// path, which every test above writes as its entry.
 ///

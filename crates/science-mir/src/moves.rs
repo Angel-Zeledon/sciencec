@@ -325,8 +325,14 @@ fn apply_terminator(kind: &TerminatorKind, successor: crate::mir::BlockId, state
                 states[destination.local.index()] = State::Init;
             }
         }
+        // A projected `Drop` is `crate::lower`'s drop-and-replace of one field
+        // or of a value behind a reference, and the assignment right after it
+        // puts a value back: the local as a whole is neither gone nor newly
+        // there, so its state stands. Only a whole-local `Drop` ends it.
         TerminatorKind::Drop { place, .. } => {
-            states[place.local.index()] = State::Gone;
+            if place.projection.is_empty() {
+                states[place.local.index()] = State::Gone;
+            }
         }
         TerminatorKind::If { cond, .. } => {
             if let Some(place) = cond.moved_place() {
@@ -569,13 +575,22 @@ fn apply_terminator_fields(
                 }
             }
         }
-        // A `Drop` terminator's place is always a whole local —
-        // `crate::lower`'s `emit_drop_if_needed` is the only place one is
-        // built, and it never projects — so this is the whole local going,
-        // fields and all, exactly like [`apply_terminator`]'s own arm.
+        // A whole-local `Drop` is the local going, fields and all, exactly
+        // like [`apply_terminator`]'s own arm. A projected one is
+        // `crate::lower`'s drop-and-replace of one field, which is that
+        // field's paths going — a move out of them, as far as the states are
+        // concerned — until the assignment that follows re-initialises them.
         TerminatorKind::Drop { place, .. } => {
             if place.local == local {
-                states.iter_mut().for_each(|slot| *slot = State::Gone);
+                if place.projection.is_empty() {
+                    states.iter_mut().for_each(|slot| *slot = State::Gone);
+                } else if let Some(event) = assign_event(place) {
+                    // Only a pure chain of fields: a drop through an index
+                    // or a reference releases storage this table does not
+                    // track, and the write after it re-initialises nothing
+                    // here either — `assign_event`'s `None`, mirrored.
+                    apply_event(event, leaves, states, State::Gone);
+                }
             }
         }
         TerminatorKind::If { cond, .. } => {
@@ -669,6 +684,19 @@ fn decompose(
     ty: Ty,
     out: &mut Vec<Vec<DefId>>,
 ) {
+    // **A field whose type has its own `Drop` is a leaf.** Its destructor
+    // observes the whole value, so it is released whole or not at all, and
+    // there is nothing below it to track. Descending instead found no owning
+    // field in `type H: n: Int` with a `drop`, recorded no path for it, and
+    // made a `Pair` of two `H`s decompose to nothing — so moving `p.left` out
+    // fell back to the whole-local table, which read "moved", and `p.right`
+    // was never dropped at all. The root is excluded: a record with its own
+    // `Drop` and no tracked fields keeps `Some(&[])`, which `crate::drops`
+    // already hands to the whole-local analysis.
+    if !prefix.is_empty() && science_types::ownership::implements_drop(decls, types, ty) {
+        out.push(prefix.clone());
+        return;
+    }
     if prefix.len() < MAX_PATH_DEPTH {
         if let Some(direct) = record_fields(decls, types, aliases, ty) {
             for (field, field_ty) in direct {

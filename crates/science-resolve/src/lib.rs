@@ -45,6 +45,7 @@ pub mod hir;
 pub mod modules;
 pub mod resolve;
 pub mod scope;
+pub mod stdlib;
 
 pub use resolve::{resolve_crate, resolve_module, SourceModule};
 

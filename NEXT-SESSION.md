@@ -65,7 +65,7 @@ no son programas, cada uno por su propia razón y las dos buenas:
 
 **No falta ninguno.** `00_kitchen_sink` cerró en `7914ce0` y con él la Puerta A.
 
-Suite: **2384 en verde**, medida en serie (`--test-threads=1`; ver la regla sobre
+Suite: **2395 en verde**, medida en serie (`--test-threads=1`; ver la regla sobre
 el reloj de pared más abajo).
 
 > **Un pin presente no prueba nada por sí solo.** Arreglar `Drop::drop` de
@@ -255,24 +255,49 @@ La Puerta A está cerrada: el backend de F0 construye los veinte programas que e
 proyecto se propuso. Lo que sigue son las dos compuertas que §10 todavía tiene
 abiertas, y las dos están **medidas**, no supuestas.
 
-**Compuerta C1, etapa 4 — falta un solo nombre: `BufferedWriter`.** `Set`,
-`String.lines()` y un alias numérico bajo un operador (`type DefId is Int`,
-`next + 1` era `SC0535`) están cerrados, con pruebas de ejecución en
-`crates/science-codegen-llvm/tests/lines_and_sets.rs`. El programa de la
-compuerta sin `BufferedWriter` —`Map[String, Int]`, `Set[DefId]`,
-`Array[Box[Expr]]`, un archivo partido en líneas, un volcado escrito con
-`write_file` y releído— compila, corre, sale 0, `leaks` da **cero**, y su
-salida y el archivo que escribe son idénticos byte por byte entre dos
-corridas.
+**Compuerta C1, etapa 4 — cerrada.** La prueba de ejecución que pide está en
+`crates/sciencec/tests/cli.rs`,
+`gate_c1_builds_its_collections_and_writes_a_dump_through_a_buffered_writer`:
+`Map[String, Int]`, `Set[DefId]`, `Array[Box[Expr]]`, un archivo partido con
+`lines()`, un volcado escrito por un `BufferedWriter` sobre un `File`, dos
+corridas desde directorios vacíos y salida y archivo idénticos byte por byte.
+La mitad de *"dos máquinas"* no la puede mostrar una prueba en una sola.
 
-Lo que falta es más que un nombre: `BufferedWriter of W` envuelve un
-`W: Write`, y no existen ni la interfaz `Write` (`stdlib-core.md` §4.2), ni
-`File` (`data-io.md` §7), ni bytes como `Array of U8` en ese camino, ni un
-módulo de biblioteca que `use io` pueda resolver. Es diseño antes que código.
+**`io` es el primer módulo de la biblioteca escrito en Science**:
+`crates/science-resolve/stdlib/io.science`, empaquetado con `include_str!` y
+alcanzado por `use io` como un archivo hermano, a través del `open` de
+`collect_crate` — en el driver, en `tests/ui.rs` y en el harness de
+`science-codegen-llvm`, los tres iguales. Un `io.science` del usuario al lado
+de la entrada gana (§6.3: la toolchain va última). Lo que ese archivo decide
+por su cuenta está escrito en su cabecera: `File` vive en `io` y no en el
+preludio (el preludio es datos y no puede tener cuerpos), el error es
+`FileError` y no `IoError`, `create` toma `&String` porque no hay `Path`, y
+`BufferedWriter` vacía el buffer al soltarse sin poder reportar el error.
 
-Dos agujeros aparecieron en el camino y **no** son de la compuerta: `match`
-sobre un `&Box[Expr]` no ve a través del `Box` (un método sí: `expr.describe()`
-funciona), y `String.parse_int` no tiene bajada (`SC0400` en `TextError`).
+Para llegar hubo que arreglar, cada uno con su prueba:
+
+- **Dos miscompilaciones silenciosas.** `IoError.message()` se bajaba como
+  despacho por vtable sobre un byte (trap, o nada impreso y salida 0), y
+  `emit(&mut c)` contra `sink: &mut W` tomaba el préstamo dos veces: el
+  callee escribía en el temporal y `c` quedaba igual. Además `&c` contra
+  `&mut W` pasaba el chequeo.
+- **Toda reasignación perdía memoria**: `x be f()` no soltaba el valor viejo.
+  `science-mir` hace ahora *drop-and-replace* (valor nuevo a un temporal,
+  `Drop` del destino, move), y `drops.rs`/`moves.rs` elaboran un `Drop`
+  proyectado por campo.
+- `moves::decompose` perdía de vista un campo cuyo tipo tiene `Drop` propio.
+- **Decision 12, AMENDMENT 4**: el `drop` del tipo corre antes que sus campos
+  (el orden de Rust). Con el orden viejo `BufferedWriter` vaciaba un buffer ya
+  liberado en un archivo ya cerrado.
+- Un `drop` de un tipo genérico se instancia por tipo concreto:
+  `MonoSet::user_drops`, llenado recorriendo cada terminador `Drop`.
+- Una cota en el bloque (`Holder[W: Speak] has:`) no llegaba a los métodos;
+  una llamada no podía escribir directo en un campo; `Error?` en el preludio
+  era otro tipo que en el código del usuario; `Write.write` se confundía con
+  la función libre `write`.
+
+Siguen abiertos, fuera de la compuerta: `match` sobre un `&Box[Expr]` no ve a
+través del `Box` (un método sí), y `String.parse_int` no tiene bajada.
 
 **Compuerta C2, etapa 5 — cerrada en `18550da`.** `&Array[T]` → `ffi.Span[T]`
 existe, y según ese commit `cblas_ddot` corre contra el BLAS de Accelerate (no lo volví a medir).

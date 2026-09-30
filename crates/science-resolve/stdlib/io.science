@@ -1,0 +1,131 @@
+# io — `stdlib-core.md` §4, Level 2: `use io (File, BufferedWriter)`.
+#
+# The first module of the standard library written in Science. It is bundled
+# into the compiler (`science_resolve::stdlib`) and resolved like a file beside
+# the entry, so `use io` reaches it exactly as `use text.parser` reaches a
+# sibling — and a sibling `io.science` of the user's own is found first, which
+# is `stdlib-shape-and-packages.md` §6.3's search order: the toolchain last.
+#
+# Four decisions are this file's, and each is written where it applies:
+#
+# - `File` lives here, at Level 2, where §4.5's table puts it at Level 1. The
+#   prelude is declared as data and cannot hold a body, and `File implements
+#   Write` needs one — `Write.write` returns `Error?`, which no runtime entry
+#   point can build. Moving `File` back is a `use` line in every program that
+#   names it, the day the prelude can hold Science.
+# - The error type is `FileError`, where `data-io.md` §7 names `IoError`: this
+#   file cannot construct an `IoError`, whose variants the prelude does not
+#   declare. Both implement `Error` and read the same five sentences.
+# - `File.create` takes `&String`, not `data-io.md`'s `&Path`: there is no
+#   `Path` yet, and `read_file` and `write_file` take a `String` today.
+# - `BufferedWriter` flushes when it is dropped, and a failure there is not
+#   reported — a destructor has nowhere to report it. Call `flush()` to see it.
+#   Dropping without flushing losing the output silently is the alternative,
+#   and it is the worse one.
+
+# `science-rt`'s three file entry points. They are called from here and from
+# nowhere else, and they cross as C scalars and a pointer: a negative result is
+# `-(code + 1)`, where `code` is `IoError`'s byte; anything else is a handle or
+# success. `library "science-rt"` adds nothing to the link line, because the
+# runtime is already on it.
+unsafe extern "C" library "science-rt":
+    def science_file_create(path: ffi.Span[U8], length: I64) -> I64
+    def science_file_write(handle: I64, bytes: ffi.Span[U8], length: I64) -> I64
+    def science_file_close(handle: I64) -> I64
+
+# --- FileError ----------------------------------------------------------------
+
+# What a file operation failed with. `code` is `IoError`'s byte.
+public type FileError:
+    code: Int
+
+# The same five sentences `science_io_error_message` gives an `IoError`.
+FileError implements Error:
+    def message(self) -> String:
+        if self.code is 0:
+            return "not found"
+        if self.code is 1:
+            return "permission denied"
+        if self.code is 2:
+            return "already exists"
+        if self.code is 3:
+            return "invalid data"
+        "input/output error"
+
+# A runtime status as `Error?`: `null` for success, a boxed `FileError` for a
+# failure.
+def failure(status: Int) -> Error?:
+    if status >= 0:
+        return null
+    FileError(code: -status - 1)
+
+# --- File ---------------------------------------------------------------------
+
+# An open file, unbuffered: one system call per `write` (`stdlib-core.md` §4.3).
+# `handle` is `-1` once the file is closed, which is what its `drop` reads.
+public type File:
+    handle: Int
+
+File has:
+    # Opens `path` for writing, creating it or emptying it.
+    public def create(path: &String) -> (File, Error?):
+        let status be unsafe: science_file_create(path.bytes(), path.length())
+        if status < 0:
+            return (File(handle: -1), failure(status))
+        (File(handle: status), null)
+
+    # Closes the file and reports what closing it failed with, which a drop
+    # cannot (`data-io.md` §7). It consumes the file.
+    public def close(self) -> Error?:
+        let mutable file be self
+        let status be unsafe: science_file_close(file.handle)
+        file.handle be -1
+        failure(status)
+
+# All of `bytes`, or an error — §4.2's *"there is no partial write"*; the loop
+# over short writes is `science_file_write`'s.
+File implements Write:
+    def write(mutable self, bytes: &Array[U8]) -> Error?:
+        failure(unsafe: science_file_write(self.handle, bytes, bytes.length()))
+
+# A file nobody closed is closed here, and what closing it failed with is lost.
+File implements Drop:
+    def drop(mutable self):
+        if self.handle >= 0:
+            let _unreported be unsafe: science_file_close(self.handle)
+
+# --- BufferedWriter -----------------------------------------------------------
+
+# Collects writes in memory and hands them to `sink` in pieces of at least
+# `capacity` bytes. §4.3: `File` is unbuffered on purpose, and this is the
+# named wrapper that buffers.
+public type BufferedWriter[W: Write]:
+    sink: W
+    buffer: Array[U8]
+    capacity: Int
+
+BufferedWriter[W: Write] has:
+    public def new(sink: W, capacity: Int) -> BufferedWriter[W]:
+        BufferedWriter(sink: sink, buffer: Array[U8].new(), capacity: capacity)
+
+    # Hands everything buffered to the sink, and reports what that failed with.
+    public def flush(mutable self) -> Error?:
+        if self.buffer.is_empty():
+            return null
+        let err be self.sink.write(&self.buffer)
+        self.buffer be Array[U8].new()
+        err
+
+BufferedWriter[W: Write] implements Write:
+    def write(mutable self, bytes: &Array[U8]) -> Error?:
+        for byte in bytes:
+            self.buffer.push(byte)
+        if self.buffer.length() >= self.capacity:
+            return self.flush()
+        null
+
+# The buffer reaches the sink even when nobody called `flush()`. The failure,
+# if there is one, has nowhere to go.
+BufferedWriter[W: Write] implements Drop:
+    def drop(mutable self):
+        let _unreported be self.flush()

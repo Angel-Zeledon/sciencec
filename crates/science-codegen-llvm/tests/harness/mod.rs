@@ -62,7 +62,28 @@ pub fn lower(source: &str) -> Lowered {
     assert!(!lexed.has_errors(), "the fixture must lex: {:?}", codes(&lexed));
     let (ast, parsed) = science_parser::parse_module(&tokens, file);
     assert!(!parsed.has_errors(), "the fixture must parse: {:?}", codes(&parsed));
-    let (krate, resolution) = science_resolve::resolve_module(file, "fixture.science", &ast);
+    // `collect_crate` and not `resolve_module`, for the driver's reason: a
+    // fixture that writes `use io` reaches the bundled module, as `sciencec
+    // build` does. A fixture has no sibling files, so the bundled modules are
+    // all `open` can answer with; each gets the next `FileId`.
+    let entry = science_resolve::SourceModule {
+        file,
+        path: "fixture.science".to_string(),
+        ast,
+        entry: true,
+    };
+    let mut next_file = 1;
+    let sources = science_resolve::modules::collect_crate(entry, |candidate| {
+        let text = science_resolve::stdlib::source(candidate)?;
+        let bundled = FileId(next_file);
+        next_file += 1;
+        let (tokens, lexed) = science_lexer::lex(bundled, text);
+        assert!(!lexed.has_errors(), "`{candidate}` must lex: {:?}", codes(&lexed));
+        let (ast, parsed) = science_parser::parse_module(&tokens, bundled);
+        assert!(!parsed.has_errors(), "`{candidate}` must parse: {:?}", codes(&parsed));
+        Some((bundled, ast))
+    });
+    let (krate, resolution) = science_resolve::resolve_crate(&sources);
     assert!(!resolution.has_errors(), "the fixture must resolve: {:?}", codes(&resolution));
 
     let order = AtomOrder::of(&krate.defs);

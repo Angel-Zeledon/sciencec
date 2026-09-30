@@ -1496,3 +1496,35 @@ def failed() -> Bool:
     ));
     checked.assert_clean();
 }
+
+/// A shared borrow is not an exclusive one because the parameter is generic.
+///
+/// `via(&c)` against `sink: &mut W` was accepted — the argument, already a
+/// borrow, was handed on to the call without being held to the parameter's
+/// mutability — and the callee then wrote through it. It is `SC0525` against a
+/// concrete `&mut Counter`, and it is here.
+#[test]
+fn a_shared_borrow_does_not_reach_a_generic_exclusive_parameter() {
+    let checked = support::check(
+        "\
+interface Bump:
+    def bump(mutable self, by: Int)
+
+type Counter:
+    total: Int
+
+Counter implements Bump:
+    def bump(mutable self, by: Int):
+        self.total be self.total + by
+
+def via[W: Bump](sink: &mut W):
+    sink.bump(10)
+
+def main():
+    let c be Counter(total: 0)
+    via(&c)
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(checked.messages(), vec!["expected `&mut Counter`, found `&Counter`"]);
+}
