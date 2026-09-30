@@ -11279,9 +11279,9 @@ impl<'a> Lowerer<'a> {
         // is the call and `science_exit(0)`.
         //
         // **`science_exit(0)` and not `ret i32 0`**, for the same reason the
-        // `ok` block below gives: the process's last `write` may be sitting in
-        // `science-rt`'s own `LineWriter`, which the C runtime's exit does not
-        // know about.
+        // `ok` block below gives: the process's output may be sitting in
+        // `science-rt`'s own stdout buffer, which the C runtime's exit reaches
+        // only through the `atexit` handler that buffer registers.
         if matches!(science_main.ret, ReturnClass::Void) {
             let exit = self.declare("science_exit")?;
             let entry = ExtBlock {
@@ -11388,13 +11388,13 @@ impl<'a> Lowerer<'a> {
         //
         // **`science_exit(0)` rather than `ret i32 0`, and the difference is a
         // flush.** A Science binary's entry point is this function, so Rust's
-        // `lang_start` never runs and nothing is registered to flush the
-        // `LineWriter` inside `science-rt`'s `std::io::stdout()`. Returning
-        // would end the process through the C runtime, which flushes C's stdio
-        // and knows nothing about that buffer. `print` appends a newline and a
-        // `LineWriter` flushes on one, so today nothing is lost; `write` does
-        // not, and the first program that ends with one would lose its last
-        // line. `exit.rs` is the account.
+        // `lang_start` never runs, and `science-rt`'s stdout — 64 KiB
+        // block-buffered in a pipe, line-buffered on a terminal — is a buffer
+        // the C runtime knows nothing about. Returning would end the process
+        // through the C runtime, whose exit reaches that buffer only through
+        // the `atexit` handler `science-rt`'s `stdout.rs` registers as a safety
+        // net; `science_exit` is the flush this edge relies on, in an order
+        // the runtime chooses. `exit.rs` is the account.
         let ok = ExtBlock {
             id: BlockId(1),
             label: "ok".to_string(),

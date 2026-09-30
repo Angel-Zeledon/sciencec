@@ -29,7 +29,11 @@ fn child_entry_point() {
         },
         "panic_after_print" => unsafe {
             // Buffered stdout must reach the terminal before the abort, or the
-            // program's last words are lost exactly when they matter most.
+            // program's last words are lost exactly when they matter most. A
+            // whole line first, which a pipe's block buffer holds and a
+            // `LineWriter` would not, then a partial one, which both hold.
+            let line = s("a whole line before the panic");
+            science_print(&line);
             let out = s("printed before the panic");
             science_write(&out);
             let message = s("and then it panicked");
@@ -76,7 +80,7 @@ fn child_entry_point() {
             science_exit(0);
         },
         // The other buffered layer, and the one nothing used to empty. C's
-        // `stdout` is a different buffer from Rust's `LineWriter`, and a
+        // `stdout` is a different buffer from Science's own, and a
         // Science program that calls a C library writes through it. `putchar`
         // rather than a Science entry point because the entry points all go
         // through Rust; this is the layer under them.
@@ -107,9 +111,11 @@ fn child_entry_point() {
             science_exit(0);
         },
         // §4.2's one case for `flush`: a `write` with no newline, which the
-        // `LineWriter` holds. `std::process::abort` runs no flush of its own —
-        // unlike `science_abort` and `science_exit`, which both do — so the
-        // bytes reach the pipe only if `science_flush` put them there.
+        // pipe's block buffer holds (and a terminal's `LineWriter` would too).
+        // `std::process::abort` runs no flush of its own — unlike
+        // `science_abort` and `science_exit`, which both do, and unlike
+        // `exit(3)`, which runs `stdout.rs`'s `atexit` handler — so the bytes
+        // reach the pipe only if `science_flush` put them there.
         "flush" => unsafe {
             let progress = s("working...");
             science_write(&progress);
@@ -125,8 +131,55 @@ fn child_entry_point() {
             free(progress);
             std::process::abort();
         },
+        // §4.2's block buffering, observed: a *whole line*, then `_exit`, which
+        // runs no `atexit` handler and flushes nothing. A `LineWriter` would
+        // have sent the line at its `\n`; a 64 KiB block buffer in front of a
+        // pipe holds it, and `_exit` discards it.
+        "print_then_exit_without_flushing" => unsafe {
+            let line = s("a whole line");
+            science_print(&line);
+            free(line);
+            exit_without_flushing();
+        },
+        // More than one block, then `_exit`: the blocks that filled went out
+        // on their own, and at most one block's worth was lost.
+        "print_past_one_block_then_exit_without_flushing" => unsafe {
+            let line = s(BLOCK_LINE);
+            for _ in 0..BLOCK_LINES {
+                science_print(&line);
+            }
+            free(line);
+            exit_without_flushing();
+        },
+        // No `science_exit`, no `flush`: the child returns and libtest ends the
+        // process through `exit(3)`, which runs the `atexit` handler
+        // `stdout.rs` registered at the first write.
+        "write_then_return" => unsafe {
+            let line = s("a whole line");
+            science_print(&line);
+            free(line);
+            let out = s("no newline and no flush");
+            science_write(&out);
+            free(out);
+        },
         other => panic!("unknown child role {other:?}"),
     }
+}
+
+/// The line the multi-block child prints, and how many times: 20 000 lines of
+/// eleven bytes is 220 000 bytes, three full 64 KiB blocks and part of a
+/// fourth.
+const BLOCK_LINE: &str = "0123456789";
+const BLOCK_LINES: usize = 20_000;
+
+/// libc's `_exit`: ends the process without `atexit` handlers or any flush,
+/// the door `output_streams.rs` uses from a compiled program.
+fn exit_without_flushing() -> ! {
+    unsafe extern "C" {
+        fn _exit(status: core::ffi::c_int) -> !;
+    }
+    // SAFETY: `_exit` takes any status and does not return.
+    unsafe { _exit(0) }
 }
 
 fn run_child(role: &str) -> std::process::Output {
@@ -173,7 +226,7 @@ fn panic_flushes_stdout_first() {
     let output = run_child("panic_after_print");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("printed before the panic"),
+        stdout.contains("a whole line before the panic\nprinted before the panic"),
         "stdout was lost on abort, got: {stdout:?}"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -256,11 +309,12 @@ fn exit_flushes_what_a_c_library_wrote() {
 
 /// `science_exit(0)` is a successful exit, and it takes the buffer with it.
 ///
-/// The `write` in the child has no newline, so a `LineWriter` holds it. Nothing
-/// in a Science binary flushes at exit — Rust's `lang_start` never runs, because
-/// the entry point is the `main` codegen emitted — so if this passes it is
-/// because `science_exit` flushed, and if `science_exit` stopped flushing this
-/// is the test that notices.
+/// The `write` in the child has no newline, so any buffer holds it. Rust's
+/// `lang_start` never runs in a Science binary, because the entry point is the
+/// `main` codegen emitted, so `science_exit`'s flush is the one on this path.
+/// `std::process::exit` also runs `stdout.rs`'s `atexit` handler, so this test
+/// alone cannot tell the two apart; `exit_without_flushing_loses_a_whole_line`
+/// and `a_return_through_exit_delivers_the_buffer` below separate them.
 #[test]
 fn exit_zero_succeeds_and_flushes_what_print_left_behind() {
     let output = run_child("script_ok");
@@ -315,5 +369,67 @@ fn flush_makes_an_unterminated_write_visible_before_the_process_dies() {
     assert!(
         !stdout.contains("working..."),
         "stdout was not buffered, so the test above proves nothing: {stdout:?}"
+    );
+}
+
+/// **stdout into a pipe is block-buffered**, `strings-formatting-and-docs.md`
+/// §4.2's first bullet, observed from outside.
+///
+/// The child prints a whole line — newline and all — and ends through `_exit`,
+/// which flushes nothing and runs no `atexit` handler. Under the `LineWriter`
+/// this crate used to write through, the `\n` sent the line and it arrived;
+/// under a 64 KiB block buffer it is still in memory when the process ends,
+/// and is lost. That loss is the policy working, and it is also why the
+/// `flush` test's control above still means what it says.
+#[test]
+fn exit_without_flushing_loses_a_whole_line() {
+    let output = run_child("print_then_exit_without_flushing");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("a whole line"),
+        "a whole line reached the pipe without a flush, so stdout is not block-buffered: {stdout:?}"
+    );
+}
+
+/// **The block is bounded**: past 64 KiB the buffer goes out on its own, and
+/// `_exit` loses at most one block's worth.
+///
+/// Three of the child's four blocks must arrive without any flush — which
+/// proves the buffer is not unbounded — and the tail must not, which proves
+/// the test above did not lose its line for some reason of its own.
+#[test]
+fn a_full_block_goes_out_without_a_flush() {
+    let output = run_child("print_past_one_block_then_exit_without_flushing");
+    assert_eq!(output.status.code(), Some(0));
+    let per_line = BLOCK_LINE.len() + 1;
+    let delivered =
+        String::from_utf8_lossy(&output.stdout).matches(BLOCK_LINE).count() * per_line;
+    let written = BLOCK_LINES * per_line;
+    assert!(
+        delivered >= written - 64 * 1024,
+        "only {delivered} of {written} bytes left the process: a full block was held back"
+    );
+    assert!(
+        delivered < written,
+        "all {written} bytes arrived through `_exit`, so the tail was not buffered"
+    );
+}
+
+/// **A process that ends through `exit(3)` without `science_exit` still
+/// delivers the buffer**, through the `atexit` handler `stdout.rs` registers
+/// at first use.
+///
+/// The child returns, and libtest ends the process by returning from Rust's
+/// `main` — a path that flushes Rust's `LineWriter` and knows nothing of this
+/// crate's block buffer. A C library that calls `exit` takes the same door.
+#[test]
+fn a_return_through_exit_delivers_the_buffer() {
+    let output = run_child("write_then_return");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("a whole line\nno newline and no flush"),
+        "the block buffer was still full when the process ended: {stdout:?}"
     );
 }

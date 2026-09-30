@@ -48,14 +48,16 @@
 //!
 //! **Why `science_exit` exists at all, when C's `main` could `return 1`.** A
 //! Science binary's entry point is the emitted `main`, so Rust's `lang_start`
-//! never runs and **nothing installs a flush of Rust's buffered stdout**.
+//! never runs and **nothing Rust provides flushes Science's buffered stdout**.
 //! Returning from `main` would end the process through the C runtime, which
-//! flushes C's stdio and knows nothing about the `LineWriter` inside
-//! `std::io::stdout()`. Today that is invisible, because Science's `print`
-//! appends a newline and a `LineWriter` flushes on one — but `write` does not,
-//! and the first program that ends with a `write` would lose its last line.
-//! Routing both exits through one symbol that flushes first makes the buffer
-//! somebody else's problem exactly once.
+//! flushes C's stdio and knows nothing about `stdout.rs`'s 64 KiB block buffer
+//! or the `LineWriter` inside `std::io::stdout()` — and in a pipe, where the
+//! block buffer holds whole lines, that would be most of a program's output.
+//! `stdout.rs` registers an `atexit` handler of its own at first use, so a
+//! return would no longer lose it; that handler is the safety net and this is
+//! the path. Routing both exits through one symbol that flushes first makes
+//! the buffer somebody else's problem exactly once, in an order this crate
+//! chooses.
 //!
 //! # The cost
 //!
@@ -126,19 +128,25 @@ unsafe extern "C" {
     fn fflush(stream: *mut core::ffi::c_void) -> core::ffi::c_int;
 }
 
-/// Flush both buffered layers a Science process writes through: Rust's
-/// `LineWriter` inside `std::io::stdout()`, and the C runtime's streams.
+/// Flush every buffered layer a Science process writes through: `stdout.rs`'s
+/// block buffer and Rust's `LineWriter` behind it, and the C runtime's streams.
 ///
-/// **Both, and in that order.** They are different buffers with no knowledge
-/// of each other: `print` goes through the first and a C library's `printf`
-/// goes through the second, and flushing one leaves the other's bytes in
-/// memory. Rust's goes first so that a program which printed and then called a
+/// **All of them, and in that order.** They are different buffers with no
+/// knowledge of each other: `print` goes through the first two and a C
+/// library's `printf` goes through the third, and flushing one leaves the
+/// others' bytes in memory. Rust's goes first so that a program which printed and then called a
 /// C library gets its output in the order it wrote it — which
 /// `stdlib-core.md` §4.1 does not guarantee across streams, and which is worth
 /// having anyway for the same reason `science_write_error_bytes` flushes
 /// stdout before writing to stderr.
 pub(crate) fn flush_all() {
-    let _ = std::io::stdout().lock().flush();
+    crate::stdout::flush();
+    flush_c_streams();
+}
+
+/// `fflush(NULL)`: every C output stream. Shared with `stdout.rs`'s abort
+/// path, which empties the same layers without taking a lock it could wait on.
+pub(crate) fn flush_c_streams() {
     // SAFETY: a null `stream` is `fflush`'s documented "every output stream".
     unsafe { fflush(core::ptr::null_mut()) };
 }
@@ -208,7 +216,7 @@ pub unsafe extern "C" fn science_write_error_bytes(ptr: *const u8, len: usize) {
 /// failing path, where [`science_write_error_bytes`] has already flushed, and
 /// it is the only flush on the succeeding one.
 ///
-/// **It flushes C's buffers as well as Rust's**, and that is not belt and
+/// **It flushes C's buffers as well as Science's**, and that is not belt and
 /// braces: a Science program that calls a C library writes through the C
 /// runtime's `stdout`, which nothing else here empties. See [`flush_all`] for
 /// the program that found this and for what the declaration assumes.

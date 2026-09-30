@@ -167,6 +167,34 @@ fn flush_delivers_a_partial_line_that_exit_without_flushing_would_lose() {
     );
 }
 
+/// **In a pipe, stdout is block-buffered, not line-buffered** — §4.2's first
+/// bullet, observed from a compiled program.
+///
+/// A whole `print`ed line, newline included, is still in `science-rt`'s
+/// 64 KiB buffer when `_exit` ends the process, and is lost; the same program
+/// with `flush()` before the `_exit` delivers it. Under a line-buffered stdout
+/// both programs would print the line, which is what this runtime did before
+/// the policy was implemented.
+#[test]
+fn a_whole_line_waits_for_the_block_in_a_pipe() {
+    let control = streams(
+        "whole_line_unflushed",
+        &format!("{EXIT_WITHOUT_FLUSHING}print(\"a whole line\")\nunsafe: _exit(0)\n"),
+    );
+    assert_eq!(control.status, Some(0), "stderr: {}", control.stderr);
+    assert_eq!(
+        control.stdout, "",
+        "a `print` reached the pipe at its newline, so stdout is line-buffered in a pipe"
+    );
+
+    let flushed = streams(
+        "whole_line_flushed",
+        &format!("{EXIT_WITHOUT_FLUSHING}print(\"a whole line\")\nflush()\nunsafe: _exit(0)\n"),
+    );
+    assert_eq!(flushed.status, Some(0), "stderr: {}", flushed.stderr);
+    assert_eq!(flushed.stdout, "a whole line\n");
+}
+
 /// `flush()` is a statement of `()`, and a program may call it any number of
 /// times, including with nothing to flush.
 #[test]

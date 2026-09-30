@@ -8,8 +8,6 @@
 //! returns `IoError?` alone. See the crate documentation, §5, for the rules the
 //! three types below follow.
 
-use std::io::Write;
-
 use crate::abi::{SCIENCE_NULLABLE_NULL, SCIENCE_NULLABLE_PRESENT};
 use crate::string::ScienceString;
 
@@ -173,9 +171,11 @@ pub struct ScienceStringAndIoError {
 /// Science's `write(text: borrowed String)` — the form that adds nothing.
 ///
 /// Writes the bytes to standard output verbatim, adding nothing. Standard
-/// output is line buffered, so a `print` with no newline in it may sit in the
-/// buffer until one arrives; [`science_panic`](crate::science_panic) flushes before
-/// aborting so that it is not lost.
+/// output is line-buffered on a terminal and 64 KiB block-buffered otherwise
+/// (`stdout.rs`), so a `write` with no newline in it may sit in the buffer
+/// until one arrives — or, in a pipe, until the block fills;
+/// [`science_flush`], [`science_exit`](crate::science_exit) and
+/// [`science_panic`](crate::science_panic) all empty it so that it is not lost.
 ///
 /// A write error is ignored. §8's signature returns nothing to report one
 /// through, and a program whose standard output has gone away has no better
@@ -188,8 +188,7 @@ pub struct ScienceStringAndIoError {
 pub unsafe extern "C" fn science_write(text: *const ScienceString) {
     // SAFETY: the caller guarantees a live `ScienceString`.
     let bytes = unsafe { (*text).bytes() };
-    let mut out = std::io::stdout().lock();
-    let _ = out.write_all(bytes);
+    crate::stdout::write_parts(&[bytes]);
 }
 
 /// Science's `println(text: &String)`.
@@ -206,9 +205,7 @@ pub unsafe extern "C" fn science_write(text: *const ScienceString) {
 pub unsafe extern "C" fn science_print(text: *const ScienceString) {
     // SAFETY: the caller guarantees a live `ScienceString`.
     let bytes = unsafe { (*text).bytes() };
-    let mut out = std::io::stdout().lock();
-    let _ = out.write_all(bytes);
-    let _ = out.write_all(b"\n");
+    crate::stdout::write_parts(&[bytes, b"\n"]);
 }
 
 /// Science's `write_error(value: borrowed any Display)` — [`science_write`]'s
@@ -237,13 +234,15 @@ pub unsafe extern "C" fn science_print(text: *const ScienceString) {
 /// **Standard output is flushed first, on every call**, because the delegate
 /// does. §4.2 says cross-stream ordering *"is not guaranteed"*, so this is the
 /// same courtesy `science_panic` pays and not a contract; what it costs is a
-/// flush of whatever partial line `write` left in stdout's `LineWriter` each
-/// time a progress message goes to stderr — at most one syscall per call, and
-/// none when stdout's buffer is empty, which under `print` it nearly always
-/// is. A program that interleaves thousands of `write` fragments with
-/// thousands of `write_error` calls pays it thousands of times; one that
-/// follows §4.2's own rule — *"results to stdout, progress and warnings to
-/// stderr"* — with `print` pays nothing it would notice.
+/// flush of whatever stdout holds each time a message goes to stderr. On a
+/// terminal that is at most a partial line. **In a pipe it is whatever the
+/// 64 KiB block buffer has collected**, so a program that interleaves every
+/// `print` with a `print_error` gets one stdout `write` per stderr line and
+/// none of block buffering's saving — but no more syscalls than it made
+/// before `stdout.rs` existed, and the ordering it would see at a terminal.
+/// A program that follows §4.2's own rule — *"results to stdout, progress
+/// and warnings to stderr"* — with occasional progress pays one stdout
+/// `write` per progress message, which it would not notice.
 ///
 /// # Safety
 ///
@@ -292,21 +291,24 @@ pub unsafe extern "C" fn science_print_error(text: *const ScienceString) {
 /// # The decision
 ///
 /// **It flushes every buffered layer a Science program's stdout goes
-/// through**, which is two: Rust's `LineWriter` inside `std::io::stdout()`,
-/// where `print` and `write` put their bytes, and the C runtime's streams,
-/// where a C library called through an `extern` block puts its own. It is the
-/// same `flush_all` [`science_exit`](crate::science_exit) ends the process
-/// with, called without ending it.
+/// through**, which is three: `stdout.rs`'s 64 KiB block buffer, where
+/// `print` and `write` put their bytes when stdout is not a terminal; Rust's
+/// `LineWriter` inside `std::io::stdout()`, where they put them when it is;
+/// and the C runtime's streams, where a C library called through an `extern`
+/// block puts its own. It is the same `flush_all`
+/// [`science_exit`](crate::science_exit) ends the process with, called
+/// without ending it.
 ///
 /// # The reason
 ///
 /// `strings-formatting-and-docs.md` §4.2 adds `flush` *"reluctantly"* and for
 /// exactly one case: *"`write` of a progress line with no newline is
-/// line-buffered into invisibility otherwise"*. That case is live, because
-/// [`science_write`] goes through the `LineWriter` and a `LineWriter` holds a
-/// partial line until a `\n` arrives. Flushing only Rust's layer would make
-/// `flush()` a statement about which of two buffers the user's bytes happened
-/// to be in, and the user cannot see which one that is.
+/// line-buffered into invisibility otherwise"*. That case is live on a
+/// terminal, where a `LineWriter` holds a partial line until a `\n` arrives,
+/// and wider in a pipe, where the block buffer holds whole lines until 64 KiB
+/// of them have collected. Flushing only one layer would make `flush()` a
+/// statement about which buffer the user's bytes happened to be in, and the
+/// user cannot see which one that is.
 ///
 /// # The cost
 ///

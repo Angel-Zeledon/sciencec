@@ -258,7 +258,8 @@ const INTERFACES: &[&str] = &[
 /// - `science_flush()` — the flush `science_exit` performs on the way out,
 ///   without the way out. §4.2 adds `flush` *"reluctantly"* for exactly one
 ///   case, a `write` of a progress line with no newline, and that case is
-///   live because `science_write` goes through a `LineWriter`.
+///   live because stdout is buffered — by line on a terminal, by 64 KiB block
+///   in a pipe.
 ///
 /// **`print_error` and `write_error` carry no signature, for the reason
 /// `print` and `write` carry none** — §4.1 gives all four the same
@@ -278,11 +279,11 @@ const INTERFACES: &[&str] = &[
 /// cost is one row in [`FUNCTION_SIGNATURES`] and one arm in the backend's
 /// free-builtin dispatch, beside `read_file`'s.
 ///
-/// **What is still not implemented is §4.2's buffering policy**: stdout
-/// line-buffered on a terminal and 64 KiB block-buffered otherwise. Rust's
-/// `LineWriter` line-buffers unconditionally, which agrees in the terminal
-/// case and flushes more often than §4.2 asks in a pipe — a cost in syscalls,
-/// never in lost output, and so not a reason to hold these names back.
+/// **§4.2's buffering policy is `science-rt`'s, and implemented there**:
+/// stdout line-buffered on a terminal and 64 KiB block-buffered otherwise,
+/// decided at the first write (`science-rt`'s `stdout.rs`). Nothing here
+/// depends on it; it is recorded because this comment once said it was
+/// missing.
 const FUNCTIONS: &[&str] = &[
     "print", "write", "print_error", "write_error", "flush", "panic", "read_file", "write_file",
 ];

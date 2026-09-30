@@ -463,6 +463,7 @@ mod map;
 mod math;
 mod mem;
 mod panic;
+mod stdout;
 mod string;
 mod text;
 

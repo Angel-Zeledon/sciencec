@@ -23,10 +23,26 @@
 //! the mechanism is fixed. Deciding that now, with no supervisor to answer to,
 //! would be guessing.
 //!
-//! Standard output is flushed before the abort. Science's stdout is line
-//! buffered, so without that a program's last `print` — very often the one
-//! explaining what it was doing when it failed — would be discarded exactly
-//! when it matters most.
+//! # Standard output is flushed before the message
+//!
+//! **Decision.** A panic empties every stdout layer — `stdout.rs`'s 64 KiB
+//! block buffer, Rust's `LineWriter` behind it, and C's streams — and only
+//! then writes `panic: …` to stderr and aborts. `science_abort` does the same
+//! without the message.
+//!
+//! **Reason.** In a pipe, stdout is block-buffered (`stdout.rs`), so what a
+//! program printed before it failed is up to 64 KiB of whole lines rather than
+//! at most one partial one. `abort()` runs no `atexit` handler, so without
+//! this flush all of it — very often including the line that explains what the
+//! program was doing when it failed — would be discarded exactly when it
+//! matters most. Flushing *before* the message keeps the two in the order they
+//! were written when both streams go to the same place.
+//!
+//! **Cost.** C's streams are flushed too, which the panic path did not do
+//! before block buffering: harmless, since a flush discards nothing, and a C
+//! library's last output is as worth keeping as Science's. The stdout lock is
+//! taken with `try_lock`, so a panic can never wait on it; see
+//! `stdout::flush_before_abort` for why it is always free in F0.
 
 use std::io::Write;
 
@@ -93,5 +109,5 @@ pub unsafe extern "C" fn science_panic_bytes(ptr: *const u8, len: usize) -> ! {
 }
 
 fn flush_stdout() {
-    let _ = std::io::stdout().lock().flush();
+    crate::stdout::flush_before_abort();
 }
