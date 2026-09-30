@@ -96,6 +96,9 @@ pub enum RtAggregate {
     String,
     /// `{ ptr, len, offset }` — three words.
     Chars,
+    /// `{ ptr, len, offset }` — three words, `Chars`' layout for `Chars`'
+    /// reason: it borrows the string it walks.
+    Lines,
     /// `{ ptr, len, cap }` — three words.
     Array,
     /// `{ states, keys, values, len, tombstones, cap }` — six words.
@@ -159,10 +162,11 @@ pub enum RtAggregate {
 }
 
 impl RtAggregate {
-    /// All eleven, in a fixed order.
-    pub const ALL: [RtAggregate; 11] = [
+    /// All twelve, in a fixed order.
+    pub const ALL: [RtAggregate; 12] = [
         RtAggregate::String,
         RtAggregate::Chars,
+        RtAggregate::Lines,
         RtAggregate::Array,
         RtAggregate::Map,
         RtAggregate::TypeInfo,
@@ -179,6 +183,7 @@ impl RtAggregate {
         match self {
             RtAggregate::String => "ScienceString",
             RtAggregate::Chars => "ScienceChars",
+            RtAggregate::Lines => "ScienceLines",
             RtAggregate::Array => "ScienceArray",
             RtAggregate::Map => "ScienceMap",
             RtAggregate::TypeInfo => "ScienceTypeInfo",
@@ -213,6 +218,14 @@ impl RtAggregate {
             ),
             RtAggregate::Chars => CgTy::strukt(
                 "ScienceChars",
+                vec![
+                    Field::new("ptr", CgTy::Ptr(PtrKind::Raw)),
+                    Field::new("len", usize_ty.clone()),
+                    Field::new("offset", usize_ty),
+                ],
+            ),
+            RtAggregate::Lines => CgTy::strukt(
+                "ScienceLines",
                 vec![
                     Field::new("ptr", CgTy::Ptr(PtrKind::Raw)),
                     Field::new("len", usize_ty.clone()),
@@ -636,6 +649,10 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_map_get", params: &[P, D, S], ret: RtRet::Ptr },
     RuntimeFn { symbol: "science_map_contains", params: &[P, D, S], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_map_remove", params: &[P, D, S, S], ret: RtRet::Bool },
+    // `Set of T` is a `ScienceMap` whose value is `()`, so only its two
+    // methods whose answer differs from a map's have entry points of their own.
+    RuntimeFn { symbol: "science_set_insert", params: &[P, D, S], ret: RtRet::Bool },
+    RuntimeFn { symbol: "science_set_remove", params: &[P, D, S], ret: RtRet::Bool },
     // The `hash_fn`/`eq_fn` pair for an eight-byte integer key. These are never
     // *called* by emitted code — their addresses go into a `ScienceMapInfo`
     // global — but they are declared here for the same reason every other
@@ -701,6 +718,8 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_string_starts_with", params: &[P, P], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_string_chars", params: &[P], ret: RtRet::Aggregate(RtAggregate::Chars) },
     RuntimeFn { symbol: "science_chars_next", params: &[P, P], ret: RtRet::Bool },
+    RuntimeFn { symbol: "science_string_lines", params: &[P], ret: RtRet::Aggregate(RtAggregate::Lines) },
+    RuntimeFn { symbol: "science_lines_next", params: &[P, P], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_string_eq", params: &[P, P], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_string_cmp", params: &[P, P], ret: RtRet::I32 },
     RuntimeFn { symbol: "science_string_hash", params: &[P], ret: RtRet::U64 },
@@ -1004,9 +1023,22 @@ mod tests {
     /// string to a width with a fill character, grouping digits in threes and
     /// choosing between fixed and exponential form at a significant-figure
     /// count are library work, not a handful of instructions.
+    ///
+    /// **Sixty-seven became sixty-nine**, and the name had already fallen one
+    /// behind the assertion it names. The two are `stdlib-core.md` §4.5's
+    /// `String.lines()` and its `Lines.next`: `science_string_lines` and
+    /// `science_lines_next`, `Chars`' pair one type over. Finding a line end,
+    /// dropping a `\r` before it and allocating the line is a loop, not an
+    /// instruction sequence, so Decision 14 is met the way the seven were.
+    ///
+    /// **Seventy-one**, with `science_set_insert` and `science_set_remove`:
+    /// `collections-and-chains.md` §5.1's `Set of T`, represented as a map to
+    /// `()`. They are the two methods whose answer is not a map's — `insert`
+    /// reports *new* where a map reports *displaced*, and neither has a value
+    /// to hand back — and the other four reuse `science_map_*` outright.
     #[test]
-    fn there_are_sixty_six_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 67, "§2.6: \"they are the whole list\"");
+    fn there_are_seventy_one_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 71, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");
@@ -1128,6 +1160,7 @@ mod tests {
             "science_array_with_capacity",
             "science_map_new",
             "science_string_chars",
+            "science_string_lines",
             "science_read_file",
             "science_formatter_spec",
             "science_format_spec_default",

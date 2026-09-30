@@ -96,6 +96,10 @@ fn the_container_entry_points_all_take_a_descriptor_and_the_scalar_ones_do_not()
                 | "science_map_get"
                 | "science_map_contains"
                 | "science_map_remove"
+                // `Set of T`'s own two: a set is a map whose value is `()`,
+                // and hashing the element needs the map descriptor's `hash_fn`.
+                | "science_set_insert"
+                | "science_set_remove"
                 | "science_box_new"
                 | "science_box_free"
         );
@@ -157,6 +161,7 @@ fn the_eleven_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
             "science_string_chars",
             "science_string_clone",
             "science_string_from_bytes",
+            "science_string_lines",
             "science_string_new",
             "science_string_with_capacity",
         ]
@@ -245,7 +250,18 @@ fn nothing_outside_the_table_is_callable() {
     // character, grouping digits in threes and choosing between fixed and
     // exponential form at a significant-figure count are a library, and §3.1
     // asks for them by name and by signature.
-    assert_eq!(RUNTIME.len(), 67);
+    //
+    // **Sixty-nine now.** `science_string_lines` and `science_lines_next` are
+    // `stdlib-core.md` §4.5's Level 1 `Lines`, `Chars`' pair one type over:
+    // finding each line end, dropping a `\r` before it and allocating the line
+    // is a loop over a buffer, not an instruction sequence.
+    //
+    // **Seventy-one.** `science_set_insert` and `science_set_remove` are
+    // `Set of T`'s, over a `ScienceMap` whose value is `()`: *new* is the
+    // negation of *displaced*, which is an instruction, but the value slot a
+    // map's insert and remove need an address for is not — so both are here
+    // rather than threading a zero-sized operand through two call sites.
+    assert_eq!(RUNTIME.len(), 71);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

@@ -2156,11 +2156,21 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         // `ExprKind::Narrow` lowers to one construct over, and it works for
         // both of Decision 18's and 19's layouts because `Rvalue::Narrow` now
         // has a lowering for each.
+        //
+        // **A move when the item owns something.** `Chars` and `Range` hand
+        // out a `Char` and an `Int`, and a copy of either is the value; `Lines`
+        // hands out an owned `String`, and a copy of that is a second owner of
+        // one buffer — the option releasing it at the end of the iteration and
+        // the binding releasing it again. Moving is §5's answer for a
+        // non-`Copy` read, and it is the one the backend's `Rvalue::Narrow`
+        // can prove sound: the drop flag on `element` is cleared here, so only
+        // the binding releases the line.
         let narrowed = self.temp(element_ty, span, body_block);
+        let read = self.read(Place::local(element), element_ty);
         self.assign(
             body_block,
             Place::local(narrowed),
-            Rvalue::Narrow { operand: Operand::Copy(Place::local(element)), ty: element_ty },
+            Rvalue::Narrow { operand: read, ty: element_ty },
             span,
         );
         let bound = self.bind_pattern(&Place::local(narrowed), pattern, body_block);

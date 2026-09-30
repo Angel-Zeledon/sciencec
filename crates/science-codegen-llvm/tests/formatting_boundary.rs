@@ -129,8 +129,13 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// other five return `()`, and `science_formatter_init` returns `()` because
 /// it takes an out-pointer rather than because it happened to. Same
 /// derivation, third movement.
+///
+/// **And twelve**: `science_string_lines` returns a `ScienceLines`, three
+/// words, exactly as `science_string_chars` beside it does. The four entry
+/// points Gate C1 added are the two `Lines` ones and `Set`'s two; only this
+/// one returns an aggregate.
 #[test]
-fn the_derived_sret_set_is_eleven_and_has_moved_three_times() {
+fn the_derived_sret_set_is_twelve_and_has_moved_four_times() {
     let triple = Triple::host().expect("a supported host");
     let indirect = RUNTIME
         .iter()
@@ -138,11 +143,11 @@ fn the_derived_sret_set_is_eleven_and_has_moved_three_times() {
         .filter(|sig| sig.ret.is_sret())
         .count();
     assert_eq!(
-        indirect, 11,
-        "the derived `sret` set is not the eleven `science-codegen`'s \
+        indirect, 12,
+        "the derived `sret` set is not the twelve `science-codegen`'s \
          `runtime.rs` names"
     );
-    assert_eq!(RUNTIME.len(), 67, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 71, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

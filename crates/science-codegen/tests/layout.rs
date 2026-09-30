@@ -26,7 +26,7 @@ use std::mem::{align_of, offset_of, size_of};
 use science_codegen::layout::{Repr, Triple, layout_of};
 use science_codegen::runtime::RtAggregate;
 use science_rt::{
-    SCIENCE_NULLABLE_NULL, SCIENCE_NULLABLE_PRESENT, ScienceArray, ScienceChars, ScienceFormatSpec,
+    SCIENCE_NULLABLE_NULL, SCIENCE_NULLABLE_PRESENT, ScienceArray, ScienceChars, ScienceFormatSpec, ScienceLines,
     ScienceFormatter, ScienceMap, ScienceMapInfo, ScienceNullableIoError, ScienceString,
     ScienceStringAndIoError, ScienceTypeInfo,
 };
@@ -60,6 +60,7 @@ macro_rules! agrees {
 fn every_runtime_aggregate_has_the_size_and_alignment_rustc_gives_it() {
     agrees!(RtAggregate::String, ScienceString);
     agrees!(RtAggregate::Chars, ScienceChars);
+    agrees!(RtAggregate::Lines, ScienceLines);
     agrees!(RtAggregate::Array, ScienceArray);
     agrees!(RtAggregate::Map, ScienceMap);
     agrees!(RtAggregate::TypeInfo, ScienceTypeInfo);

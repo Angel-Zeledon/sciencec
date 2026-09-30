@@ -51,6 +51,26 @@ pub struct ScienceChars {
     pub offset: usize,
 }
 
+/// `String::lines()`, an iterator over a string's lines.
+///
+/// This is `stdlib-core.md` §4.5's Level 1 `Lines`, which `implements
+/// Iterate` with `Item is String`. Like [`ScienceChars`] it **borrows** the
+/// string it walks and owns nothing; unlike it, each line it hands out is an
+/// **owned** `String`, because the same `Lines` is what `File.lines()` returns
+/// and a line read from a file has no buffer to borrow from.
+///
+/// Layout: three words, `{ ptr, len, offset }` — [`ScienceChars`]' exactly.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ScienceLines {
+    /// Start of the borrowed bytes.
+    pub ptr: *const u8,
+    /// Total length of the borrowed bytes.
+    pub len: usize,
+    /// Byte offset of the next line's first byte.
+    pub offset: usize,
+}
+
 impl ScienceString {
     #[inline]
     pub(crate) fn empty() -> Self {
@@ -454,6 +474,71 @@ pub unsafe extern "C" fn science_chars_next(iter: *mut ScienceChars, out: *mut u
     iter.offset += character.len_utf8();
     // SAFETY: the caller guarantees `out` is writable and aligned for `u32`.
     unsafe { *out = character as u32 };
+    true
+}
+
+/// `String::lines(&self) -> Lines`.
+///
+/// # Safety
+///
+/// `value` must be a non-null, aligned pointer to a live [`ScienceString`], and it
+/// must stay alive and unmodified for as long as the returned [`ScienceLines`] is
+/// used — [`science_string_chars`]' contract, for the same reason.
+#[no_mangle]
+pub unsafe extern "C" fn science_string_lines(value: *const ScienceString) -> ScienceLines {
+    // SAFETY: the caller guarantees a live `ScienceString`.
+    let value = unsafe { &*value };
+    ScienceLines {
+        ptr: value.ptr,
+        len: value.len,
+        offset: 0,
+    }
+}
+
+/// Advance a [`ScienceLines`], yielding `String?`.
+///
+/// The owned-`T?` convention of the crate documentation, §5.3, which is
+/// [`science_chars_next`]'s: `true` after writing a freshly allocated `String`
+/// to `out`, which is then the caller's to drop; `false` when exhausted, with
+/// `out` not written.
+///
+/// **What a line is, decided here.** A line ends at `\n`, which is not part
+/// of it, and a `\r` immediately before that `\n` is dropped with it. A final
+/// line with no terminator is still a line; a terminator at the very end does
+/// **not** start an empty one, so `"a\nb\n"` has two lines and `"a\nb"`
+/// has two as well. That is the answer every mainstream `lines` gives —
+/// Rust's `str::lines`, Python's `splitlines`, POSIX's definition of a text
+/// file — and the alternative, a trailing `""`, makes the most ordinary loop
+/// over a file see one line too many.
+///
+/// # Safety
+///
+/// `iter` must be a non-null, aligned pointer to a live [`ScienceLines`] whose
+/// string is still alive; `out` must be non-null, aligned for a
+/// [`ScienceString`], and writable.
+#[no_mangle]
+pub unsafe extern "C" fn science_lines_next(
+    iter: *mut ScienceLines,
+    out: *mut ScienceString,
+) -> bool {
+    // SAFETY: the caller guarantees a live, uniquely borrowed `ScienceLines`.
+    let iter = unsafe { &mut *iter };
+    if iter.offset >= iter.len {
+        return false;
+    }
+    // SAFETY: the iterator borrows a live string and `offset` is within it.
+    let rest = unsafe {
+        std::slice::from_raw_parts(iter.ptr.add(iter.offset), iter.len - iter.offset)
+    };
+    let (line, consumed) = match rest.iter().position(|&byte| byte == b'\n') {
+        Some(end) => (&rest[..end], end + 1),
+        None => (rest, rest.len()),
+    };
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    iter.offset += consumed;
+    // SAFETY: `line` is a sub-slice of valid UTF-8 cut only at ASCII bytes, so
+    // it is valid UTF-8; the caller guarantees `out` is writable.
+    unsafe { out.write(ScienceString::from_raw_utf8(line.as_ptr(), line.len())) };
     true
 }
 

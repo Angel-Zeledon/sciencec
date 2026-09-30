@@ -617,3 +617,74 @@ fn the_string_key_pair_needs_no_shim() {
         science_map_free(&mut m, &info);
     }
 }
+
+// --- Set: a map whose value is `()` -----------------------------------------
+
+fn set_info() -> ScienceMapInfo {
+    ScienceMapInfo { key: i64_info(), value: unit_info(), hash_fn: hash_u64, eq_fn: eq_u64 }
+}
+
+fn string_set_info() -> ScienceMapInfo {
+    ScienceMapInfo {
+        key: string_info(),
+        value: unit_info(),
+        hash_fn: hash_link_string,
+        eq_fn: eq_link_string,
+    }
+}
+
+#[test]
+fn a_set_insert_answers_whether_the_value_is_new() {
+    unsafe {
+        let info = set_info();
+        let mut set = science_map_new(&info);
+        for key in 0i64..100 {
+            assert!(science_set_insert(&mut set, &info, (&raw const key).cast()), "{key} is new");
+        }
+        for key in 0i64..100 {
+            assert!(!science_set_insert(&mut set, &info, (&raw const key).cast()), "{key} is not");
+        }
+        assert_eq!(science_map_len(&set), 100);
+        let absent = 100i64;
+        assert!(!science_map_contains(&set, &info, (&raw const absent).cast()));
+        let present = 42i64;
+        assert!(science_map_contains(&set, &info, (&raw const present).cast()));
+        science_map_free(&mut set, &info);
+    }
+}
+
+#[test]
+fn a_set_remove_answers_whether_the_value_was_there() {
+    unsafe {
+        let info = set_info();
+        let mut set = science_map_new(&info);
+        let key = 7i64;
+        assert!(!science_set_remove(&mut set, &info, (&raw const key).cast()));
+        science_set_insert(&mut set, &info, (&raw const key).cast());
+        assert!(science_set_remove(&mut set, &info, (&raw const key).cast()));
+        assert!(!science_set_remove(&mut set, &info, (&raw const key).cast()));
+        assert_eq!(science_map_len(&set), 0);
+        science_map_free(&mut set, &info);
+    }
+}
+
+/// An owned element is moved in on every insert, so a duplicate still costs
+/// exactly one release: the set keeps one of the two equal strings and frees
+/// the other, and the free at the end releases the survivor.
+#[test]
+fn a_set_of_strings_releases_every_string_it_was_given_exactly_once() {
+    unsafe {
+        let info = string_set_info();
+        let mut set = science_map_new(&info);
+        for text in ["alpha", "beta", "alpha"] {
+            let value = s(text);
+            science_set_insert(&mut set, &info, (&raw const value).cast());
+        }
+        assert_eq!(science_map_len(&set), 2);
+        let probe = s("beta");
+        assert!(science_map_contains(&set, &info, (&raw const probe).cast()));
+        assert!(science_set_remove(&mut set, &info, (&raw const probe).cast()));
+        free(probe);
+        science_map_free(&mut set, &info);
+    }
+}

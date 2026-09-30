@@ -1,4 +1,4 @@
-# Traspaso — estado al 2026-09-24
+# Traspaso — estado al 2026-09-30
 
 > **Lo primero, porque cuesta horas cada vez.** Los mensajes de rechazo de este
 > compilador envejecen peor que el código que los rodea. Nadie los relee cuando
@@ -65,7 +65,7 @@ no son programas, cada uno por su propia razón y las dos buenas:
 
 **No falta ninguno.** `00_kitchen_sink` cerró en `7914ce0` y con él la Puerta A.
 
-Suite: **2343 en verde**, medida en serie (`--test-threads=1`; ver la regla sobre
+Suite: **2384 en verde**, medida en serie (`--test-threads=1`; ver la regla sobre
 el reloj de pared más abajo).
 
 > **Un pin presente no prueba nada por sí solo.** Arreglar `Drop::drop` de
@@ -255,20 +255,27 @@ La Puerta A está cerrada: el backend de F0 construye los veinte programas que e
 proyecto se propuso. Lo que sigue son las dos compuertas que §10 todavía tiene
 abiertas, y las dos están **medidas**, no supuestas.
 
-**Compuerta C1, etapa 4.** El programa que la nota describe se detiene en
-`resolve`, en dos nombres y nada más: `Set` y `BufferedWriter`. Sacale esos dos
-y se traba en `text.lines()`; sacá eso y **corre**. `Map`, `Array`, `Box`, los
-boxes de interfaz, los drops, los genéricos, el mangler y los descriptores ya
-funcionan, verificados corriendo programas. La mitad de reproducibilidad de la
-compuerta ya pasa: dos compilaciones del mismo fuente desde directorios
-distintos dan un ejecutable byte por byte idéntico.
+**Compuerta C1, etapa 4 — falta un solo nombre: `BufferedWriter`.** `Set`,
+`String.lines()` y un alias numérico bajo un operador (`type DefId is Int`,
+`next + 1` era `SC0535`) están cerrados, con pruebas de ejecución en
+`crates/science-codegen-llvm/tests/lines_and_sets.rs`. El programa de la
+compuerta sin `BufferedWriter` —`Map[String, Int]`, `Set[DefId]`,
+`Array[Box[Expr]]`, un archivo partido en líneas, un volcado escrito con
+`write_file` y releído— compila, corre, sale 0, `leaks` da **cero**, y su
+salida y el archivo que escribe son idénticos byte por byte entre dos
+corridas.
 
-**Compuerta C2, etapa 5.** Falta una sola cosa para la mitad numérica, y es
-`&Array[T]` → `ffi.Span[T]`: hoy no hay forma de construir un `Span` desde
-código Science. Las cláusulas de biblioteca (`via pkg-config`, `kind static`,
-`when available`) ya llegan al linker. La máquina no tiene OpenBLAS ni
-`pkg-config`, pero macOS resuelve `-lblas` por Accelerate, así que `cblas_ddot`
-—el programa de la compuerta— es alcanzable acá salvo por esa coerción.
+Lo que falta es más que un nombre: `BufferedWriter of W` envuelve un
+`W: Write`, y no existen ni la interfaz `Write` (`stdlib-core.md` §4.2), ni
+`File` (`data-io.md` §7), ni bytes como `Array of U8` en ese camino, ni un
+módulo de biblioteca que `use io` pueda resolver. Es diseño antes que código.
+
+Dos agujeros aparecieron en el camino y **no** son de la compuerta: `match`
+sobre un `&Box[Expr]` no ve a través del `Box` (un método sí: `expr.describe()`
+funciona), y `String.parse_int` no tiene bajada (`SC0400` en `TextError`).
+
+**Compuerta C2, etapa 5 — cerrada en `18550da`.** `&Array[T]` → `ffi.Span[T]`
+existe, y según ese commit `cblas_ddot` corre contra el BLAS de Accelerate (no lo volví a medir).
 
 Lo demás que quedó abierto está nombrado donde vive, no acá: una cadena guardada
 en variable y un eslabón después de `sorted(by:)` se rechazan diciendo por qué;

@@ -1066,3 +1066,50 @@ def at(m: &Map[String, I64], key: &String) -> I64:
     )
     .assert_clean();
 }
+
+// --- An alias is its target at an operator ---------------------------------
+
+/// `type Counter is Int` is `Int` under `+`, on either side and against a
+/// literal.
+///
+/// `examples/02_bindings.science` promises *"an alias declared above is a name
+/// for the same type"*, and the arithmetic arm unified its operands without
+/// revealing them: `a + 1` was `SC0535`, *"`Counter` does not implement
+/// `Add`"*, and `a + b` with `b: Int` was `SC0525`, *"expected `Counter`,
+/// found `I64`"*. Gate C1's `Set of DefId` is where it was found — a counter
+/// of ids, stepped with `+ 1`.
+#[test]
+fn an_alias_of_a_number_is_that_number_under_an_operator() {
+    let checked = support::check(
+        "\
+type Counter is Int
+
+def step(a: Counter, b: Int) -> Counter:
+    let c be a + 1
+    let d be b + a
+    let e be a * b
+    if a < b:
+        return c
+    d + e
+",
+    );
+    checked.assert_clean();
+}
+
+/// The negative: revealing an alias of a record reveals a record, and a record
+/// with no `Add` is still refused — naming the record, not the alias.
+#[test]
+fn an_alias_of_a_record_with_no_add_is_still_refused() {
+    let checked = support::check(
+        "\
+type Point:
+    x: Int
+
+type Spot is Point
+
+def twice(a: Spot) -> Spot:
+    a + a
+",
+    );
+    assert_eq!(checked.codes(), vec![535]);
+}

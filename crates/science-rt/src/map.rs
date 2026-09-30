@@ -533,6 +533,73 @@ pub unsafe extern "C" fn science_map_remove(
     true
 }
 
+// --- Set: a `Map` whose value is `()` -----------------------------------------
+//
+// **`Set of T` has no representation of its own.** It is a [`ScienceMap`]
+// whose [`ScienceMapInfo`] describes a zero-sized value, which every function
+// above already handles without a case for it: [`science_alloc`] answers a
+// zero-byte request with a dangling pointer, [`science_dealloc`] ignores one,
+// and a zero-byte `copy_nonoverlapping` is a no-op. So `Set.new`, `contains`,
+// `length` and a set's drop are [`science_map_new`], [`science_map_contains`],
+// [`science_map_len`] and [`science_map_free`] with that descriptor, and the
+// two below exist only because a set's `insert` and `remove` answer a
+// different question from a map's.
+//
+// `collections-and-chains.md` §5.1's own argument for `Set` is that without it
+// *"users write `Map of (T, ())`, which is worse in every way"*. That is worse
+// as a *surface*; as a representation it is exactly right, and building a
+// second hash table to avoid it would be a second place for probing,
+// tombstones and the load factor to be wrong.
+
+/// `Set::insert(&mut self, value: T) -> Bool`.
+///
+/// **`true` when the value was not already present**, which is the question a
+/// work-queue asks — *"is this node new?"* — and is the opposite polarity from
+/// [`science_map_insert`]'s *"was something displaced?"*. The value is moved
+/// in either way: when an equal one is already present, the set keeps the one
+/// it was given and destroys the one it held, which is `science_map_insert`'s
+/// behaviour and is observable only through `Drop`.
+///
+/// # Safety
+///
+/// `set` must be a non-null, aligned pointer to a live set; `info` must be the
+/// descriptor it was created with, and describe a zero-sized value; `value`
+/// must be non-null, aligned, point to an initialised value of the described
+/// key type, and not alias the set's own storage.
+#[no_mangle]
+pub unsafe extern "C" fn science_set_insert(
+    set: *mut ScienceMap,
+    info: *const ScienceMapInfo,
+    value: *const u8,
+) -> bool {
+    // SAFETY: the caller's obligations are `science_map_insert`'s; the value
+    // slot is zero-sized, so a dangling pointer is a valid source and target.
+    unsafe {
+        let unit = dangling((*info).value.align);
+        !science_map_insert(set, info, value, unit, unit)
+    }
+}
+
+/// `Set::remove(&mut self, value: &T) -> Bool`: `true` when the value was
+/// present and is now gone. The stored value belonged to the set and is
+/// destroyed; the probe is borrowed and untouched.
+///
+/// # Safety
+///
+/// As [`science_set_insert`], except that `value` is only read.
+#[no_mangle]
+pub unsafe extern "C" fn science_set_remove(
+    set: *mut ScienceMap,
+    info: *const ScienceMapInfo,
+    value: *const u8,
+) -> bool {
+    // SAFETY: as above.
+    unsafe {
+        let unit = dangling((*info).value.align);
+        science_map_remove(set, info, value, unit)
+    }
+}
+
 // --- Key support: the `hash_fn`/`eq_fn` pair for `Int` -----------------------
 //
 // **Decided here, because the measurement that prompted it is worth writing

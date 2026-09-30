@@ -157,8 +157,16 @@ const C_SCALARS: &[&str] = &[
 const LIBRARY_TYPES: &[&str] = &[
     "Array",
     "Map",
+    // `collections-and-chains.md` §5.1's AMENDMENT 10, the one type that note
+    // adds to §8's list.
+    "Set",
     "Box",
     "Chars",
+    // `stdlib-core.md` §4.5's Level 1 `Lines`, from `String.lines()`. Level 1
+    // and not `io`'s, on that note's argument: *"a language where avoiding
+    // [materialising a forty-gigabyte file] requires an import has put the
+    // trap on the default path"*.
+    "Lines",
     "Range",
     "IoError",
     "TextError",
@@ -1127,6 +1135,68 @@ const BLOCKS: &[Block] = &[
             Method { name: "is_empty", generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(BOOL) },
         ],
     },
+    // --- Set, `collections-and-chains.md` §5.1 ----------------------------
+    //
+    // Five of AMENDMENT 10's nine, and the four left out are left out for
+    // four different reasons: `union` is a reserved word (`stdlib-core.md`
+    // §3.3's hazard, unresolved); `intersection` and `difference` return a
+    // `Set` built from two, which is a loop this compiler would have to emit
+    // over a table it cannot iterate; `iterate()` and `Set.from` need
+    // insertion order, which §5.2 promises and `science-rt`'s map does not
+    // keep. `has` is spelled `contains` per `stdlib-core.md` §3.4.
+    //
+    // `T: Eq + Hash` is dropped for `Map.insert`'s reason: `Hash` is not a
+    // prelude interface. What stands in for it is `map_key_support` in
+    // `science-codegen`, which refuses an element type with no hash pair.
+    Block {
+        ty: "Set",
+        generics: &["T"],
+        interface: None,
+        assoc: &[],
+        methods: &[
+            // `Map.new`'s decision, one parameter down.
+            Method {
+                name: "new",
+                generics: &[],
+                recv: None,
+                params: &[],
+                ret: Some(Ty::App("Set", &[Ty::Var("T")])),
+            },
+            // **Decided: `-> Bool`, and `true` means the value was new.** No
+            // note gives the return. `()` was the alternative and costs the
+            // one question a work-queue asks — `if seen.insert(node):` is
+            // *"visit it the first time only"* in one line instead of a
+            // `contains` and an `insert`, two lookups. The polarity is Rust's
+            // `HashSet::insert` and the opposite of `Map.insert`'s *displaced*
+            // — which is why a set does not return `()?`, a type whose only
+            // information would be that inverted bit.
+            Method {
+                name: "insert",
+                generics: &[],
+                recv: Some(SelfKind::Mutable),
+                params: &[("value", Ty::Var("T"))],
+                ret: Some(BOOL),
+            },
+            // `Map.contains`, and the value is borrowed for `Map.get`'s
+            // reason: a probe in a loop must not consume the probe.
+            Method {
+                name: "contains",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[("value", Ty::Ref(&Ty::Var("T")))],
+                ret: Some(BOOL),
+            },
+            // `true` when it was there. `insert`'s answer, mirrored.
+            Method {
+                name: "remove",
+                generics: &[],
+                recv: Some(SelfKind::Mutable),
+                params: &[("value", Ty::Ref(&Ty::Var("T")))],
+                ret: Some(BOOL),
+            },
+            Method { name: "length", generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(INT) },
+        ],
+    },
     // --- Box --------------------------------------------------------------
     //
     // **`new` is decided here, no note declares it, and it is the one
@@ -1284,6 +1354,16 @@ const BLOCKS: &[Block] = &[
                 params: &[],
                 ret: Some(Ty::Name("Chars")),
             },
+            // §6.9's `def lines(self) -> Lines`, transcribed. It borrows the
+            // string exactly as `chars` does; what it hands out is decided at
+            // the `Lines` block below.
+            Method {
+                name: "lines",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[],
+                ret: Some(Ty::Name("Lines")),
+            },
             // §6.9: Level 1 because *"correctly-rounded decimal parsing has a
             // unique answer"* and because `read_lines` is useless without them.
             Method {
@@ -1432,6 +1512,36 @@ const BLOCKS: &[Block] = &[
             recv: Some(SelfKind::Mutable),
             params: &[],
             ret: Some(Ty::Opt(&CHAR)),
+        }],
+    },
+    // --- Lines ------------------------------------------------------------
+    //
+    // **`Item is String`, owned, and that is a decision no note takes.**
+    // §4.5 names `Lines` and gives it two sources, `String.lines()` and
+    // `File.lines()`, and says nothing about what a line is. A `&String` item
+    // was the other candidate and is not available: a `String` is `{ ptr, len,
+    // cap }` and a line in the middle of one has no `String` of its own for a
+    // borrow to point at — which is also why `trim`, declared above as
+    // returning a borrow, has no entry point. And the file source settles it
+    // regardless: a line read from a `File` has no buffer to borrow from, and
+    // one `Lines` with one `Item` is what lets §4.5 give both sources one type.
+    //
+    // The cost is an allocation per line, which is `read_line`'s cost in §4.4
+    // and is stated there.
+    //
+    // `next` restated for `Chars`' reason: it has a body, `science_lines_next`,
+    // and declaring it here is what gives the call a type for an owner.
+    Block {
+        ty: "Lines",
+        generics: &[],
+        interface: Some(("Iterate", &[])),
+        assoc: &[("Item", STRING)],
+        methods: &[Method {
+            name: "next",
+            generics: &[],
+            recv: Some(SelfKind::Mutable),
+            params: &[],
+            ret: Some(Ty::Opt(&STRING)),
         }],
     },
     // --- `Range[T] implements Iterate`, AMENDMENT 14 --------------------
@@ -2047,6 +2157,9 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
 /// `science-types/tests/method_lookup.rs` has a test that fails when it does.
 const WHOLLY_OPEN: &[&str] = &[
     "Chars",
+    // `Lines`, for `Chars`' reason: its surface is `Iterate`'s provided
+    // methods and only `next` is transcribed.
+    "Lines",
     // **The five chain types, for `Chars`' reason and not a new one.** Each
     // one's surface is `collections-and-chains.md` §1.4's thirty-eight
     // provided methods, and [`BLOCKS`] transcribes the six

@@ -36,7 +36,7 @@
 //! return.** Several entry points return a struct by value —
 //! [`science_string_new`], [`science_string_clone`], [`science_string_truncate`],
 //! [`science_array_new`], [`science_array_with_capacity`], [`science_map_new`],
-//! [`science_string_chars`], [`science_string_from_bytes`],
+//! [`science_string_chars`], [`science_string_lines`], [`science_string_from_bytes`],
 //! [`science_string_with_capacity`], [`science_read_file`]. Every one of those
 //! is three words or more, which both
 //! the System V x86-64 and the Windows x64 conventions classify as MEMORY:
@@ -238,8 +238,8 @@
 //!   writes the payload through a `*mut u8` out-parameter that the caller
 //!   supplies. `true` means the payload was written and is now the caller's to
 //!   own; `false` means the out slot was **not touched** and the answer is
-//!   `null`. [`science_array_pop`], [`science_map_insert`], [`science_map_remove`] and
-//!   [`science_chars_next`] work this way. The returned `bool` is the same byte
+//!   `null`. [`science_array_pop`], [`science_map_insert`], [`science_map_remove`],
+//!   [`science_chars_next`] and [`science_lines_next`] work this way. The returned `bool` is the same byte
 //!   as the discriminant of §5.1, so when `T` has no niche codegen may store it
 //!   straight into the tag.
 //!

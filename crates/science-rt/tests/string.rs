@@ -296,6 +296,41 @@ fn chars_of_empty_yields_nothing() {
     }
 }
 
+/// Every line of `text`, owned, in order, with each one freed after reading.
+fn lines_of(text: &str) -> Vec<String> {
+    let v = s(text);
+    let mut seen = Vec::new();
+    unsafe {
+        let mut it = science_string_lines(&v);
+        let mut out = science_string_new();
+        while science_lines_next(&mut it, &mut out) {
+            seen.push(as_str(&out).to_owned());
+            free(out);
+        }
+        assert!(!science_lines_next(&mut it, &mut out), "exhausted stays exhausted");
+    }
+    free(v);
+    seen
+}
+
+#[test]
+fn lines_splits_at_newlines_and_drops_a_carriage_return_before_one() {
+    assert_eq!(lines_of("alpha\nbeta\r\ngamma"), ["alpha", "beta", "gamma"]);
+}
+
+#[test]
+fn a_trailing_newline_does_not_start_an_empty_line() {
+    assert_eq!(lines_of("a\nb\n"), ["a", "b"]);
+    assert_eq!(lines_of("a\nb"), ["a", "b"]);
+}
+
+#[test]
+fn blank_lines_are_lines_and_an_empty_string_has_none() {
+    assert_eq!(lines_of("\n\nx\n"), ["", "", "x"]);
+    assert_eq!(lines_of(""), Vec::<String>::new());
+    assert_eq!(lines_of("é€\n\u{1F600}"), ["é€", "\u{1F600}"]);
+}
+
 #[test]
 fn chars_of_one_character() {
     unsafe {

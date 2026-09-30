@@ -2920,15 +2920,19 @@ impl<'a> Lowerer<'a> {
     }
 
     /// `Map of (K, V)`'s key and value, when the type is one.
+    ///
+    /// **`Set of T` answers `(T, ())`.** A set is a `ScienceMap` whose value
+    /// is zero-sized — `science-rt`'s `map` module says why there is no second
+    /// table — so every question this function is asked on a map's behalf
+    /// has the same answer for a set: which descriptor to intern, which
+    /// `drop_fn` to run, which `P` parameter is the key.
     fn map_key_value(&self, ty: Ty) -> Option<(Ty, Ty)> {
         let TyKind::Named { def, args } = self.types.kind(self.referent(ty)) else {
             return None;
         };
-        if self.defs.get(*def).name != "Map" || args.len() != 2 {
-            return None;
-        }
-        match (&args[0], &args[1]) {
-            (GenericArg::Type(key), GenericArg::Type(value)) => Some((*key, *value)),
+        match (self.defs.get(*def).name.as_str(), args.as_slice()) {
+            ("Map", [GenericArg::Type(key), GenericArg::Type(value)]) => Some((*key, *value)),
+            ("Set", [GenericArg::Type(element)]) => Some((*element, Ty::UNIT)),
             _ => None,
         }
     }
@@ -3256,6 +3260,13 @@ impl<'a> Lowerer<'a> {
             {
                 Ok(RtAggregate::Map.cg_ty())
             }
+            // `Set of T` is a `Map of (T, ())` in every word of its value —
+            // see `map_key_value`.
+            TyKind::Named { def, args }
+                if args.len() == 1 && self.defs.get(*def).name == "Set" =>
+            {
+                Ok(RtAggregate::Map.cg_ty())
+            }
             // `Box of T` — §2.6's third runtime container, and the one whose
             // *value* is not an aggregate at all: Decision 19's null niche
             // makes it one word, `CgTy::Ptr(PtrKind::Box)`, with no
@@ -3338,6 +3349,9 @@ impl<'a> Lowerer<'a> {
                     // makes it the one runtime aggregate that is an ordinary
                     // value here.
                     "Chars" => Ok(RtAggregate::Chars.cg_ty()),
+                    // `Lines`: `Chars`' layout, and `Chars`' reason for
+                    // being an ordinary value — it borrows the string it walks.
+                    "Lines" => Ok(RtAggregate::Lines.cg_ty()),
                     // §3.1's `Formatter`: `{ sink, spec }`. Like `Chars` it
                     // borrows rather than owns, so it needs no descriptor and
                     // no `drop_fn`; unlike `Chars` a *user's* method body
@@ -3984,6 +3998,10 @@ impl<'a> Lowerer<'a> {
                             // `Map` three lines up, which are on the other side
                             // of this list for exactly that difference.
                             | "Chars"
+                            // `Lines` too: the lines it hands out are owned,
+                            // but the iterator itself is `{ ptr, len, offset }`
+                            // into a string somebody else owns.
+                            | "Lines"
                             // **`Formatter` owns nothing either, and for
                             // `Chars`' reason exactly.** §3.1's `Formatter` is
                             // `{ sink, spec }` where `sink` *borrows* the
@@ -9490,7 +9508,7 @@ impl<'a> Lowerer<'a> {
                 // second field to `RuntimeFn` keeps the table describing
                 // signatures; the day a third descriptor kind exists, that is
                 // the trade to revisit.
-                if symbol.starts_with("science_map_") {
+                if symbol.starts_with("science_map_") || symbol.starts_with("science_set_") {
                     let (key, value) =
                         self.map_operand_kv(body, args, destination).ok_or_else(|| {
                             Unlowered::new(format!(
@@ -9558,25 +9576,6 @@ impl<'a> Lowerer<'a> {
                 continue;
             }
             let pointer = matches!(class.layout.repr, Repr::Scalar(Scalar::Pointer(_)));
-            // A literal into `(ptr, len)`.
-            if let mir::Operand::Const(Constant::Literal(Literal::Str(text))) = arg {
-                let follows_a_length = sig
-                    .params
-                    .get(param + 1)
-                    .is_some_and(|next| next.layout == layout_of(self.target, &CgTy::Int(IntTy::Usize)));
-                if !pointer || !follows_a_length {
-                    return Err(Unlowered::new(format!(
-                        "a string literal passed to `{symbol}` where its parameters are not a \
-                         pointer followed by a length: a literal has no other spelling in MIR and \
-                         no other lowering here"
-                    )));
-                }
-                let literal = self.intern_literal(text);
-                lowered.push(Operand::GlobalAddr(literal.bytes_symbol.clone()));
-                lowered.push(Operand::ConstInt(literal.len() as i128));
-                param += 2;
-                continue;
-            }
             // **What the [`RtParam::Slot`] at this position holds one of**, or
             // `None` when this parameter is not a slot. It is the same type
             // the spill below gives its scratch slot, computed before the
@@ -9592,6 +9591,44 @@ impl<'a> Lowerer<'a> {
             } else {
                 None
             };
+            // A literal into `(ptr, len)`.
+            if let mir::Operand::Const(Constant::Literal(Literal::Str(text))) = arg {
+                let follows_a_length = sig
+                    .params
+                    .get(param + 1)
+                    .is_some_and(|next| next.layout == layout_of(self.target, &CgTy::Int(IntTy::Usize)));
+                // **A literal into a slot is a `String` moved in**, which is
+                // `field_value`'s case one position over: `words.insert("a")`
+                // on a `Set of String` and `xs.push("a")` on an `Array of
+                // String` take the element by value, and a literal is built
+                // into a slot of its own and its address handed over. The
+                // runtime moves the three words out of it, so nothing here
+                // frees it.
+                if pointer && slot_ty.is_some_and(|ty| self.is_string(ty)) {
+                    let text = text.clone();
+                    let layout = self.layout_of_ty(slot_ty.expect("checked"))?;
+                    let temp = self.temp(ctx, layout);
+                    self.build_string(&text, temp, insts)?;
+                    let address = ctx.value();
+                    insts.push(ExtInst::LocalAddr { dest: address, local: temp });
+                    lowered.push(Operand::Value(address));
+                    map_pointer_args += 1;
+                    param += 1;
+                    continue;
+                }
+                if !pointer || !follows_a_length {
+                    return Err(Unlowered::new(format!(
+                        "a string literal passed to `{symbol}` where its parameters are not a \
+                         pointer followed by a length: a literal has no other spelling in MIR and \
+                         no other lowering here"
+                    )));
+                }
+                let literal = self.intern_literal(text);
+                lowered.push(Operand::GlobalAddr(literal.bytes_symbol.clone()));
+                lowered.push(Operand::ConstInt(literal.len() as i128));
+                param += 2;
+                continue;
+            }
             if pointer {
                 if let Some(place) = arg.place() {
                     // **A slot takes the argument's address when the argument
@@ -9818,6 +9855,7 @@ impl<'a> Lowerer<'a> {
             // is the right report.
             ("String", "starts_with", "science_string_starts_with"),
             ("String", "chars", "science_string_chars"),
+            ("String", "lines", "science_string_lines"),
             // `Array of T`'s two descriptor-free rows. **Only two**, and the
             // line is `RuntimeFn::descriptor_index`: `science_array_len(P)` and
             // `science_array_is_empty(P)` read a header field, so they take the
@@ -9879,6 +9917,13 @@ impl<'a> Lowerer<'a> {
             ("Map", "get", "science_map_get"),
             ("Map", "contains", "science_map_contains"),
             ("Map", "length", "science_map_len"),
+            // `Set of T`: four of its five are a map's entry points over a
+            // `(T, ())` descriptor, and `insert` and `remove` are its own.
+            ("Set", "new", "science_map_new"),
+            ("Set", "contains", "science_map_contains"),
+            ("Set", "length", "science_map_len"),
+            ("Set", "insert", "science_set_insert"),
+            ("Set", "remove", "science_set_remove"),
             // §2.6's third runtime container. `science_box_new(D, P)` takes a
             // descriptor exactly as `science_array_new(D)` does, and it is
             // recovered the same way: `Box.new`'s one argument is `T` and
@@ -10182,6 +10227,9 @@ impl<'a> Lowerer<'a> {
             // above it is Decision 7's narrowing and a back edge, both of which
             // already existed.
             ("Chars", "next", "science_chars_next"),
+            // `Lines.next`, the same shape with a `String` in `out`: the
+            // runtime allocates the line and the `String?` this builds owns it.
+            ("Lines", "next", "science_lines_next"),
             // **`Array.pop`, the third.** `science_array_pop(array, D, out) ->
             // Bool` moves the array's last element into `out` and decrements
             // `len`; it does not run the element's drop glue, so nothing is

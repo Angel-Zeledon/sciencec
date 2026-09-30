@@ -204,6 +204,20 @@ const CORPUS: &[(&str, &str)] = &[
     // on the allowlist until the day `for` ran, and this is the program that
     // took them off it.
     ("a `for` over a string's characters", "for c in \"abc\".chars():\n    print(f\"[{c}]\")\n"),
+    // `lines_and_sets.rs`, reduced: a `for` over `String.lines()` reaches
+    // `science_string_lines` and `science_lines_next`, and a `Set` reaches
+    // its own two, `science_set_insert` and `science_set_remove` — the four
+    // entry points Gate C1 added. The set's `new`, `contains` and `length` are
+    // a map's and are already reached below.
+    (
+        "lines_into_a_set",
+        "def main():\n\
+         \x20   let mutable seen be Set[String].new()\n\
+         \x20   for line in \"a\\nb\\na\".lines():\n\
+         \x20       seen.insert(line)\n\
+         \x20   let gone be seen.remove(\"a\")\n\
+         \x20   print(f\"{gone} {seen.length()}\")\n",
+    ),
     // `arrays.rs`'s literal, `get`, `push` and `get_mutably` (the row
     // `tests/arrays.rs` itself does not exercise; `get_mutably` has an
     // execution test nowhere in this crate today, so this is that call's

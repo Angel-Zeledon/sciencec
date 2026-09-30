@@ -46,6 +46,14 @@ fn chars_is_pointer_length_offset() {
 }
 
 #[test]
+fn lines_is_pointer_length_offset() {
+    assert_eq!(size_of::<ScienceLines>(), 3 * WORD);
+    assert_eq!(offset_of!(ScienceLines, ptr), 0);
+    assert_eq!(offset_of!(ScienceLines, len), WORD);
+    assert_eq!(offset_of!(ScienceLines, offset), 2 * WORD);
+}
+
+#[test]
 fn type_info_is_size_align_drop() {
     assert_eq!(size_of::<ScienceTypeInfo>(), 3 * WORD);
     assert_eq!(offset_of!(ScienceTypeInfo, size), 0);

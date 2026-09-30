@@ -5538,10 +5538,24 @@ impl<'a> BodyChecker<'a> {
     /// Returns the operand unchanged wherever the relation says no, so a
     /// `borrowed String` stays a `borrowed String` and the mismatch below is
     /// reported about the types the author can see.
+    ///
+    /// **An operand that is not a borrow comes back revealed.** `type Counter
+    /// is Int` names `Int` (`alias`' §1), and the arithmetic arm unifies its
+    /// two operands and then asks `is_operand_type` of the result — both over
+    /// the type they are handed, neither revealing. So `a + 1` on a `Counter`
+    /// was `SC0535`, *"`Counter` does not implement `Add`"*, and `a + b` with
+    /// `b: Int` was `SC0525`, *"expected `Counter`, found `I64`"*: an alias
+    /// that `02_bindings` promises is *"a name for the same type"* was a
+    /// different type at the one place a number is most often written.
+    /// `operator` above already reveals its receiver; this is the same step
+    /// for the arm that falls through it. The cost is that a mismatch between
+    /// two operands names the revealed types and not the alias.
     fn read_value(&mut self, typed: Typed, span: Span) -> Typed {
         let InferTy::Known(ty) = self.infer.resolve(typed.ty) else { return typed };
         let source = self.revealed(ty, span);
-        let TyKind::Borrowed { inner, .. } = *self.types.kind(source) else { return typed };
+        let TyKind::Borrowed { inner, .. } = *self.types.kind(source) else {
+            return Typed { id: typed.id, ty: InferTy::Known(source) };
+        };
         let target = self.revealed(inner, span);
         // `Site::Operand` is what admits §7 for an *exclusive* borrow, and
         // this is the only caller that may: `read_value` is reached from the
