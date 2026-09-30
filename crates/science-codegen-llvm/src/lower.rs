@@ -8086,6 +8086,27 @@ impl<'a> Lowerer<'a> {
                 // applied. `u128 as i128` is a reinterpretation and not a
                 // truncation for every literal the lexer admits, because the
                 // widest integer type is 64 bits.
+                //
+                // **An unsuffixed integer literal at a floating slot is a
+                // float constant.** §5 of `science_types::check` admits it —
+                // *"an integer is exact in every numeric type — `let x: F64 be
+                // 1` is what a scientific program writes"* — so the checker
+                // hands MIR a `Literal::Int` typed `F64`, and a `ConstInt`
+                // here reached `crate::emit`, which (rightly) will not build
+                // an integer at `double`: `let x: F64 be 1` was `SC0402`,
+                // *"local _1 is double and the value stored into it is i64"*,
+                // and `0 + 1.5` *"a constant of a type this backend cannot
+                // build at double"*. The slot's layout is the literal's type,
+                // so it decides. The cost: an integer above 2^53 rounds, which
+                // is what the same digits with a `.0` would have done.
+                Literal::Int { value, .. }
+                    if matches!(
+                        expected.map(|layout| &layout.repr),
+                        Some(Repr::Scalar(Scalar::Float(_)))
+                    ) =>
+                {
+                    Ok(Operand::ConstFloat(*value as f64))
+                }
                 Literal::Int { value, .. } => Ok(Operand::ConstInt(*value as i128)),
                 Literal::Float { value, .. } => Ok(Operand::ConstFloat(*value)),
                 Literal::Bool(value) => Ok(Operand::ConstInt(i128::from(*value))),

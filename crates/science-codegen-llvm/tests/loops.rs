@@ -553,3 +553,48 @@ fn a_loop_whose_entire_body_is_continue_still_terminates() {
         "done\n"
     );
 }
+
+/// A loop item assigned to a binding a literal initialised, read back by `is`,
+/// by `print` and by an `f"…"`.
+///
+/// `x` is `&Int` — a `for` over an array binds a borrow — and `first` took
+/// its type from `0`. The checker used to unify the two, so the literal was
+/// typed as a reference and this program was `SC0402`, *"local _9 is ptr and
+/// the value stored into it is i64"*, with nothing from the front end.
+/// `science_types::check`'s `literal_value` now reads the borrow out (§7).
+/// The `F64` half is also an *integer* literal at a float slot, which was the
+/// same `SC0402` one step later and is `lower_operand`'s to build.
+#[test]
+fn a_loop_item_assigned_to_a_literal_initialised_binding_is_its_value() {
+    assert_eq!(
+        prints(
+            "literal-then-item",
+            "def main():\n\
+             \x20   let xs be [3, 1, 2]\n\
+             \x20   let mutable first be 0\n\
+             \x20   for x in xs:\n\
+             \x20       first be x\n\
+             \x20   if first is 0:\n\
+             \x20       print(\"zero\")\n\
+             \x20   print(first)\n\
+             \x20   print(f\"{first}!\")\n",
+        ),
+        "2\n2!\n"
+    );
+    assert_eq!(
+        prints(
+            "literal-then-float-item",
+            "def main():\n\
+             \x20   let xs be [1.5, 2.5]\n\
+             \x20   let mutable first be 0\n\
+             \x20   for x in xs:\n\
+             \x20       first be x\n\
+             \x20   if first is 0.0:\n\
+             \x20       print(\"zero\")\n\
+             \x20   print(first)\n\
+             \x20   let whole: F64 be 1\n\
+             \x20   print(whole + first)\n",
+        ),
+        "2.5\n3.5\n"
+    );
+}

@@ -1113,3 +1113,95 @@ def twice(a: Spot) -> Spot:
     );
     assert_eq!(checked.codes(), vec![535]);
 }
+
+// --- §7 at an assignment whose target is still a literal's class ----------
+
+/// The program that found it. `let mutable first be 0` gives `first` the
+/// literal's class for a type, and `x` is `&I64` because a `for` over an
+/// `Array of I64` binds a borrow (`collections-and-chains.md` §4.3). The
+/// assignment used to *unify* the class with `&I64`, so the literal `0` was
+/// typed as a reference — no diagnostic, and the backend's `SC0402`, *"local
+/// _9 is ptr and the value stored into it is i64"*. §7 reads the borrow out
+/// instead, exactly as it does when `first` is annotated `I64`.
+#[test]
+fn a_loop_item_assigned_to_a_literal_initialised_binding_reads_as_a_value() {
+    let checked = support::check(
+        "\
+def last(xs: &Array[I64]) -> I64:
+    let mutable first be 0
+    for x in xs:
+        first be x
+    if first is 0:
+        return 0
+    first
+",
+    );
+    checked.assert_clean();
+    assert!(coercions(&checked, "last").contains(&Coercion::Copy));
+    assert_eq!(ty_of(&checked, "last", |kind| matches!(kind, ExprKind::Literal(_))), "I64");
+}
+
+/// The same shape over `F64`, and over an *integer* literal meeting a float:
+/// the class takes `F64`, which §5 admits an integer literal at.
+#[test]
+fn a_float_loop_item_assigned_to_an_integer_initialised_binding_is_an_f64() {
+    let checked = support::check(
+        "\
+def last(xs: &Array[F64]) -> F64:
+    let mutable first be 0
+    for x in xs:
+        first be x
+    first
+",
+    );
+    checked.assert_clean();
+    assert_eq!(ty_of(&checked, "last", |kind| matches!(kind, ExprKind::Literal(_))), "F64");
+}
+
+/// The negative: a borrow of a type that is not `Copy` is not read out, and a
+/// literal's class does not become a reference either — so it is refused,
+/// once, at the value, naming the literal.
+#[test]
+fn a_borrowed_string_assigned_to_a_literal_initialised_binding_is_refused() {
+    let checked = support::check(
+        "\
+def last(xs: &Array[String]):
+    let mutable first be 0
+    for x in xs:
+        first be x
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(checked.messages(), vec!["expected `an integer literal`, found `&String`"]);
+}
+
+/// And an owned value that is not a number is refused the same way. Before
+/// this, `n be "s"` unified the literal `0` with `String` and the backend was
+/// the first to object.
+#[test]
+fn a_string_assigned_to_a_literal_initialised_binding_is_refused() {
+    let checked = support::check(
+        "\
+def main():
+    let mutable n be 0
+    n be \"s\"
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(checked.messages(), vec!["expected `an integer literal`, found `String`"]);
+}
+
+/// §5's exclusive-borrow bullet holds here as it does at an annotated target,
+/// where `let mutable n: I64 be 0` then `n be counter` is refused too.
+#[test]
+fn an_exclusive_borrow_assigned_to_a_literal_initialised_binding_is_refused() {
+    let checked = support::check(
+        "\
+def bump(counter: &mut I64):
+    let mutable n be 0
+    n be counter
+",
+    );
+    assert_eq!(checked.codes(), vec![525]);
+    assert_eq!(checked.messages(), vec!["expected `an integer literal`, found `&mut I64`"]);
+}

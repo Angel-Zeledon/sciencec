@@ -1541,6 +1541,109 @@ impl<'a> BodyChecker<'a> {
         }
     }
 
+    /// The literal a class of variables was opened by, if one was: a
+    /// floating-point literal when the class holds one, because §5 admits
+    /// strictly less to it, and otherwise the first literal found.
+    ///
+    /// `literal_kind` asks about one variable exactly, which is right where the
+    /// variable is the literal's own. An assignment's target is not: `first` in
+    /// `let mutable first be 0` has the literal's class as its type, and by the
+    /// time `first be x` is checked the class may have been unified with
+    /// others, so the question is asked of every member's root.
+    fn class_literal(&mut self, var: InferVar) -> Option<InferVar> {
+        let root = self.infer.find(var);
+        let mut found = None;
+        for index in 0..self.numeric.len() {
+            let (member, kind) = self.numeric[index];
+            if self.infer.find(member) != root {
+                continue;
+            }
+            if kind == Numeric::Float {
+                return Some(member);
+            }
+            found.get_or_insert(member);
+        }
+        found
+    }
+
+    /// An assigned value, made fit for a target whose type is still a
+    /// literal's class — or refused, once, with the literal named.
+    ///
+    /// **Decision. A borrow of a `Copy` type assigned to such a target is read
+    /// out as the value (§7 of [`crate::assign`]), and then asked §5's
+    /// question like any other value a literal meets.** The program is
+    ///
+    /// ```text
+    /// let mutable first be 0
+    /// for x in xs:
+    ///     first be x
+    /// ```
+    ///
+    /// and `x` is `borrowed I64`, because a `for` over an `Array of I64`
+    /// binds a borrow (`collections-and-chains.md` §4.3). Unifying the
+    /// target's class with that type made the literal `0` a `borrowed I64`:
+    /// a reference with no place behind it, which no diagnostic mentioned and
+    /// the backend met as *"local _9 is ptr and the value stored into it is
+    /// i64"*, `SC0402`. And unifying it with `String`, for `n be "s"`, made
+    /// `0` a `String` the same way.
+    ///
+    /// **Reason.** Decision 2 makes an unsuffixed literal a *number* whose
+    /// width is still open, and a class it opened is therefore a value's
+    /// type: no literal is a reference, so no assignment can make one. §7 is
+    /// the rule that turns a `Copy` borrow into its value wherever a value is
+    /// wanted — AMENDMENT 7a's *"a borrow of a `Copy` type coerces to a value
+    /// at each operand"* — and the target already having been written
+    /// `let mutable first: I64 be 0` takes exactly this path through
+    /// [`BodyChecker::check`]. Leaving the annotation out should not change
+    /// what `first` is.
+    ///
+    /// **Cost.** `Site::Elsewhere`, so a *`mutable borrowed`* scalar is not
+    /// read out here: it is refused as §5 refuses it, where `total be total +
+    /// n` would have read it at the operator. That matches the annotated
+    /// form, which refuses it too. And a class that a literal opened can no
+    /// longer become a borrow at all — the program that means that writes
+    /// the borrow first: `let mutable first be xs.get(0)`.
+    fn literal_value(
+        &mut self,
+        literal: InferVar,
+        typed: Typed,
+        span: Span,
+    ) -> Result<Typed, ExprId> {
+        let InferTy::Known(found) = self.infer.resolve(typed.ty) else { return Ok(typed) };
+        let source = self.revealed(found, span);
+        let (typed, ty) = match *self.types.kind(source) {
+            TyKind::Borrowed { inner, .. } => {
+                let target = self.revealed(inner, span);
+                let verdict = assignable(
+                    self.types,
+                    self.decls.methods(),
+                    self.coercions,
+                    Site::Elsewhere,
+                    source,
+                    target,
+                );
+                if verdict == Some(Coercion::Copy) {
+                    let id = self.body.push_expr(
+                        ExprKind::Coerce { operand: typed.id, coercion: Coercion::Copy },
+                        target,
+                        span,
+                    );
+                    (Typed { id, ty: InferTy::Known(target) }, target)
+                } else {
+                    (typed, found)
+                }
+            }
+            _ => (typed, found),
+        };
+        if !self.literal_admits(literal, ty, span) {
+            let expected = self.numeric_name(literal);
+            let found = self.types.render(self.defs, ty);
+            self.diagnostics.push(mismatched_types(span, expected, &found));
+            return Err(typed.id);
+        }
+        Ok(typed)
+    }
+
     /// §5b. **A numeric literal at a `borrowed any I` parameter is defaulted
     /// here, and then asked the ordinary question.**
     ///
@@ -7100,12 +7203,31 @@ impl<'a> BodyChecker<'a> {
                 let value = match self.infer.resolve(target.ty) {
                     InferTy::Var(var) => {
                         let typed = self.synth(value);
-                        if self.infer.unify(self.types, InferTy::Var(var), typed.ty).is_err() {
-                            let (found, expected) =
-                                (self.known_or_error(typed.ty), self.known_or_error(target.ty));
-                            self.mismatch(found, expected, stmt.span);
+                        // A literal's class is a value's type, never a
+                        // borrow's: [`Self::literal_value`].
+                        let typed = match self.class_literal(var) {
+                            Some(literal) => self.literal_value(literal, typed, value.span),
+                            None => Ok(typed),
+                        };
+                        match typed {
+                            Ok(typed) => {
+                                if self
+                                    .infer
+                                    .unify(self.types, InferTy::Var(var), typed.ty)
+                                    .is_err()
+                                {
+                                    let (found, expected) = (
+                                        self.known_or_error(typed.ty),
+                                        self.known_or_error(target.ty),
+                                    );
+                                    self.mismatch(found, expected, stmt.span);
+                                }
+                                typed.id
+                            }
+                            // Reported once, at the value: unifying as well
+                            // would bind the literal to the type refused.
+                            Err(reported) => reported,
                         }
-                        typed.id
                     }
                     InferTy::Known(_) => {
                         let want = self.known_or_error(target.ty);
