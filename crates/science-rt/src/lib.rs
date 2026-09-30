@@ -45,7 +45,18 @@
 //! through it. Codegen must emit those calls with an `sret` parameter rather
 //! than an LLVM `ret { ptr, i64, i64 }`, or the two sides will disagree about
 //! where the value lives. [`ScienceNullableIoError`] is the exception: at two
-//! bytes it comes back in a register on both conventions.
+//! bytes it comes back in a register on both conventions. The parse pairs of
+//! `text.rs`, [`ScienceI64AndTextError`] and [`ScienceF64AndTextError`], are
+//! the second: sixteen bytes, two registers on System V and AArch64, and a
+//! hidden pointer on Windows x64 alone.
+//!
+//! **"In a register" means the C convention's registers, not LLVM's.** A C
+//! compiler packs a `{ u8, u8 }` into one integer register and a sixteen-byte
+//! pair into two; LLVM, handed the struct type itself, splits it one register
+//! per member. `science-codegen-llvm`'s `emit.rs` therefore declares these
+//! entry points returning the registers (`c_return_ty`) and not the struct,
+//! which is what `science_write_file` was missing until the parse pairs made
+//! the mismatch visible.
 //!
 //! **This list has now been wrong twice, and the second time was worse.**
 //! `science_array_with_capacity` was missing until `codegen-and-linking.md`
@@ -453,6 +464,7 @@ mod math;
 mod mem;
 mod panic;
 mod string;
+mod text;
 
 pub use abi::*;
 pub use array::*;
@@ -466,3 +478,4 @@ pub use math::*;
 pub use mem::*;
 pub use panic::*;
 pub use string::*;
+pub use text::*;

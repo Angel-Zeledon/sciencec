@@ -20,37 +20,60 @@ use science_codegen::runtime::{
 
 const ABIS: [CAbi; 3] = [CAbi::SystemVAmd64, CAbi::Aapcs64, CAbi::Win64];
 
+/// The two entry points whose return sits in the sixteen-byte band, where the
+/// three conventions disagree about `sret`.
+///
+/// **This used to be the empty set, asserted.** The test below was
+/// `the_sret_set_is_the_same_on_every_target`, and its comment said what would
+/// make it fire: *"the day somebody adds an entry point returning a `{ f64,
+/// f64 }`, which would be register-passed on System V and AAPCS64 and indirect
+/// on Windows — and would need a per-target call site for the first time."*
+/// `stdlib-core.md` §6.9's `parse_int` and `parse_float` are that day: their
+/// pairs are `{ i64, TextError? }` and `{ f64, TextError? }`, sixteen bytes.
+///
+/// **The per-target call site already existed**, which is why the property
+/// could be narrowed rather than defended: `science-codegen-llvm` builds every
+/// runtime declaration from `runtime_signature(target, …)`, which classifies
+/// per target, and emits `sret` or a register return from that answer alone.
+/// What did not exist was the register return being spoken in C's registers
+/// rather than LLVM's per-member split; `emit.rs`'s `c_return_ty` is that, and
+/// its note records that `science_write_file` had been missing it too.
+///
+/// So the assertion is now exact rather than empty: these two, and only these
+/// two, may differ by convention — and they differ in exactly one way.
+const SIXTEEN_BYTE_RETURNS: [&str; 2] = ["science_string_parse_int", "science_string_parse_float"];
+
 #[test]
-fn the_sret_set_is_the_same_on_every_target() {
-    // Not a law of C — a `{ f64, f64 }` return differs between these three, as
-    // `abi.rs` asserts at length. It is a fact about `science-rt`'s types:
-    // every aggregate it returns is either three words or more, which is
-    // MEMORY everywhere, or two bytes, which is a register everywhere. There is
-    // nothing in the 16-byte band where the conventions disagree.
-    //
-    // Asserting it is what will fire on the day somebody adds an entry point
-    // returning a `{ f64, f64 }`, which would be register-passed on System V
-    // and AAPCS64 and indirect on Windows — and would need a per-target call
-    // site for the first time.
-    let sets: Vec<Vec<&str>> = ABIS
-        .iter()
-        .map(|abi| RUNTIME.iter().filter(|f| f.needs_sret(*abi)).map(|f| f.symbol).collect())
-        .collect();
-    assert!(
-        sets.windows(2).all(|w| w[0] == w[1]),
-        "the runtime's return conventions differ between targets: {sets:?}"
-    );
+fn the_sret_set_differs_between_targets_by_the_two_parse_pairs_on_windows_alone() {
+    let sret = |abi: CAbi| -> Vec<&str> {
+        RUNTIME.iter().filter(|f| f.needs_sret(abi)).map(|f| f.symbol).collect()
+    };
+    // System V and AAPCS64 both return up to sixteen bytes in two registers,
+    // so they still agree on every entry point.
+    assert_eq!(sret(CAbi::SystemVAmd64), sret(CAbi::Aapcs64));
+    // Windows x64 returns in a register only at 1, 2, 4 or 8 bytes, so the two
+    // sixteen-byte pairs are `sret` there and nowhere else.
+    let mut windows: Vec<&str> = sret(CAbi::Win64);
+    windows.retain(|symbol| !SIXTEEN_BYTE_RETURNS.contains(symbol));
+    assert_eq!(windows, sret(CAbi::SystemVAmd64));
+    for symbol in SIXTEEN_BYTE_RETURNS {
+        let f = runtime_fn(symbol).unwrap();
+        assert!(f.needs_sret(CAbi::Win64), "{symbol} on Windows x64");
+        assert!(!f.needs_sret(CAbi::SystemVAmd64), "{symbol} on System V");
+        assert!(!f.needs_sret(CAbi::Aapcs64), "{symbol} on AAPCS64");
+    }
 }
 
 #[test]
-fn every_aggregate_return_is_either_three_words_or_two_bytes() {
-    // The reason the previous test passes, stated as the property rather than
-    // as the consequence. If this fails, the previous test is about to.
+fn every_aggregate_return_is_three_words_two_bytes_or_one_of_the_named_pairs() {
+    // The reason the previous test's two sets agree everywhere else, stated as
+    // the property rather than as the consequence. A new entry point in the
+    // band has to be named above, which is the deliberate act it should be.
     for f in RUNTIME {
         let RtRet::Aggregate(aggregate) = f.ret else { continue };
         let size = aggregate.layout(Triple::X86_64LinuxGnu).size;
         assert!(
-            size == 2 || size >= 24,
+            size == 2 || size >= 24 || (size == 16 && SIXTEEN_BYTE_RETURNS.contains(&f.symbol)),
             "{}: {} is {size} bytes, which is in the band where the three conventions disagree",
             f.symbol,
             aggregate.name()
@@ -175,6 +198,11 @@ fn the_eleven_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
     // `ends_with`, `contains`, `find` — return a `Bool` and are not here;
     // `find`'s `Int?` travels through an out-pointer for §5.3's reason, not
     // this list's.
+    //
+    // `science_text_error_message` joins as `science_io_error_message` did: a
+    // `String` back, three words. The two parse pairs beside it do **not**
+    // join this list, which is System V's — sixteen bytes is two registers
+    // there; see `the_sret_set_differs_between_targets_…` for Windows.
     let mut derived: Vec<&str> =
         RUNTIME.iter().filter(|f| f.needs_sret(CAbi::SystemVAmd64)).map(|f| f.symbol).collect();
     derived.sort_unstable();
@@ -195,6 +223,7 @@ fn the_eleven_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
             "science_string_new",
             "science_string_replace",
             "science_string_with_capacity",
+            "science_text_error_message",
         ]
     );
 }
@@ -322,7 +351,15 @@ fn nothing_outside_the_table_is_callable() {
     // there — and a loop that read one header field inline and called the
     // runtime for the rest would be two places that know `ScienceMap`'s
     // layout instead of one.
-    assert_eq!(RUNTIME.len(), 81);
+    //
+    // **Eighty-four.** `science_string_parse_int` and
+    // `science_string_parse_float` are `stdlib-core.md` §6.9's two parses, and
+    // `science_text_error_message` is the `message` of the `TextError` they
+    // return — `science_io_error_message`'s reason exactly. Correctly rounded
+    // decimal-to-binary conversion is Eisel–Lemire with a big-number fallback,
+    // which is a library and not an instruction sequence, so Decision 14's
+    // door is the one `**`'s two came through.
+    assert_eq!(RUNTIME.len(), 84);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

@@ -144,6 +144,44 @@ fn string_and_io_error_is_a_pair_with_both_fields_live() {
 }
 
 #[test]
+fn text_error_is_one_byte_numbered_in_declaration_order() {
+    // `stdlib-core.md` §7.4's four variants, in its order. The first two are not
+    // produced yet and are numbered so that they will not renumber the last two.
+    assert_eq!(size_of::<ScienceTextError>(), 1);
+    assert_eq!(align_of::<ScienceTextError>(), 1);
+    assert_eq!(ScienceTextError::NOT_UTF8.0, 0);
+    assert_eq!(ScienceTextError::NOT_A_CHARACTER_BOUNDARY.0, 1);
+    assert_eq!(ScienceTextError::NOT_A_NUMBER.0, 2);
+    assert_eq!(ScienceTextError::OUT_OF_RANGE.0, 3);
+}
+
+#[test]
+fn nullable_text_error_is_a_discriminant_byte_then_the_error() {
+    // `IoError?`'s shape exactly, for `IoError?`'s reason.
+    assert_eq!(size_of::<ScienceNullableTextError>(), 2);
+    assert_eq!(align_of::<ScienceNullableTextError>(), 1);
+    assert_eq!(offset_of!(ScienceNullableTextError, present), 0);
+    assert_eq!(offset_of!(ScienceNullableTextError, error), 1);
+}
+
+#[test]
+fn the_two_parse_pairs_are_a_word_then_the_nullable_error() {
+    // `(I64, TextError?)` and `(F64, TextError?)`: the eight-byte value at 0,
+    // `TextError?` at 8 for two bytes, six of tail padding. Sixteen bytes —
+    // under the three-word line, so these come back in registers on System V
+    // and AArch64, which `every_aggregate_return_is_three_words_or_more`
+    // names as its second stated exception.
+    assert_eq!(size_of::<ScienceI64AndTextError>(), 16);
+    assert_eq!(align_of::<ScienceI64AndTextError>(), 8);
+    assert_eq!(offset_of!(ScienceI64AndTextError, value), 0);
+    assert_eq!(offset_of!(ScienceI64AndTextError, error), 8);
+    assert_eq!(size_of::<ScienceF64AndTextError>(), 16);
+    assert_eq!(align_of::<ScienceF64AndTextError>(), 8);
+    assert_eq!(offset_of!(ScienceF64AndTextError, value), 0);
+    assert_eq!(offset_of!(ScienceF64AndTextError, error), 8);
+}
+
+#[test]
 fn the_nullable_discriminant_is_the_bool_that_the_presence_test_yields() {
     // Null is zero in both representations of §5.2 — the null pointer and the
     // null discriminant agree — and `present` is bit-for-bit the `Bool` of `?`.
@@ -222,4 +260,10 @@ fn every_aggregate_return_is_three_words_or_more() {
     }
     // The stated exception: two bytes, returned in a register.
     assert_eq!(std::mem::size_of::<ScienceNullableIoError>(), 2);
+    // The second: `science_string_parse_int` and `science_string_parse_float`
+    // return sixteen bytes, which is two registers on System V and AArch64 and
+    // a hidden pointer only on Windows x64. `science-codegen` derives which;
+    // this pins the size that derivation starts from.
+    assert_eq!(std::mem::size_of::<ScienceI64AndTextError>(), 2 * word);
+    assert_eq!(std::mem::size_of::<ScienceF64AndTextError>(), 2 * word);
 }

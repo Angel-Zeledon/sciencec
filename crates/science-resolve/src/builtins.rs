@@ -843,10 +843,10 @@ const IMPLEMENTS: &[(&str, &[&str])] = &[
     // §7.2's three Level 1 error types. `Error` on a concrete error is what
     // lets it stand in an `Error?` slot, which `assign`'s §3 asks about by
     // name.
-    // `Error` is not in `IoError`'s row: its block below declares it, with
-    // the method, for `Chars`' reason.
+    // `Error` is not in `IoError`'s or `TextError`'s row: each has a block
+    // below that declares it, with the method, for `Chars`' reason.
     ("IoError", &["Display", "Eq", "Clone"]),
-    ("TextError", &["Error", "Display", "Eq", "Clone"]),
+    ("TextError", &["Display", "Eq", "Clone"]),
 ];
 
 /// The prelude's blocks with methods in them.
@@ -1610,12 +1610,30 @@ const BLOCKS: &[Block] = &[
     // vtable the one-byte error code does not have. Restating `message` here
     // gives the call a type for an owner, which is what `prelude_method` keys
     // on, and `science_io_error_message` is the body.
-    //
-    // `TextError` keeps its row: nothing constructs one yet (`parse_int` has
-    // no lowering), and a call to its `message` is now refused by name rather
-    // than miscompiled.
     Block {
         ty: "IoError",
+        generics: &[],
+        interface: Some(("Error", &[])),
+        assoc: &[],
+        methods: &[Method {
+            name: "message",
+            generics: &[],
+            recv: Some(SelfKind::Shared),
+            params: &[],
+            ret: Some(STRING),
+        }],
+    },
+    // --- `TextError implements Error` --------------------------------------
+    //
+    // `IoError`'s block above, for `IoError`'s reason, now that something
+    // constructs one: `String.parse_int` and `String.parse_float` lower to
+    // `science_string_parse_int` and `science_string_parse_float`, and
+    // `science_text_error_message` is this method's body. Until then the row
+    // in [`IMPLEMENTS`] was enough, because a call to `message` on a
+    // `TextError` could only be reached by a program the backend refused
+    // earlier, for the type.
+    Block {
+        ty: "TextError",
         generics: &[],
         interface: Some(("Error", &[])),
         assoc: &[],

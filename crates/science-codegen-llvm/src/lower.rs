@@ -3390,6 +3390,14 @@ impl<'a> Lowerer<'a> {
                     // into it.
                     "Formatter" => Ok(RtAggregate::Formatter.cg_ty()),
                     "IoError" => Ok(RtAggregate::IoError.cg_ty()),
+                    // `IoError`'s row, for the `err` of `let n, err be
+                    // text.parse_int()`. The pair itself needs no arm: a
+                    // tuple of `I64` and `TextError?` lays out from its
+                    // elements, and `RtAggregate::I64AndTextError` is that
+                    // layout written down for the runtime's side, which
+                    // `science-codegen`'s `tests/layout.rs` checks against
+                    // `rustc`.
+                    "TextError" => Ok(RtAggregate::TextError.cg_ty()),
                     // `ffi-c-boundary.md` §1.3's C scalar vocabulary, at the
                     // widths **this target's** C compiler gives them.
                     //
@@ -4018,6 +4026,7 @@ impl<'a> Lowerer<'a> {
                             | "F16"
                             | "BF16"
                             | "IoError"
+                            | "TextError"
                             // **`Chars` owns nothing, which is the whole
                             // reason it can be an iterator at all.** It is
                             // `{ ptr, len, offset }` *into a string somebody
@@ -9928,6 +9937,18 @@ impl<'a> Lowerer<'a> {
             // `IoError implements Error`'s `message`, whose block
             // `builtins.rs` declares for exactly this row.
             ("IoError", "message", "science_io_error_message"),
+            // `TextError`'s, by the same route: its `implements Error` block
+            // in `builtins.rs` declares `message` so the call has a type for
+            // an owner.
+            ("TextError", "message", "science_text_error_message"),
+            // §6.9's two parses. Each returns its `(value, TextError?)` pair
+            // by value, and `lower_runtime_call` needs nothing new for it:
+            // `RUNTIME`'s signature classifies the return per target — two
+            // registers on System V and AArch64, `sret` on Windows x64 — and
+            // `emit.rs`'s `c_return_ty` speaks the register form in C's
+            // registers rather than LLVM's per-member split.
+            ("String", "parse_int", "science_string_parse_int"),
+            ("String", "parse_float", "science_string_parse_float"),
             ("String", "is_empty", "science_string_is_empty"),
             ("String", "new", "science_string_new"),
             ("String", "push_str", "science_string_push_str"),

@@ -172,3 +172,71 @@ fn every_runtime_declaration_is_nounwind() {
     }
     assert!(ir.contains("attributes #0 = { nounwind }"), "{ir}");
 }
+
+/// A register-returned aggregate is declared in **C's** registers on every
+/// target, not as the struct LLVM would split one register per member.
+///
+/// Run as IR text against all three triples, because only AArch64 can be
+/// executed here: `tests/text.rs` runs the parse pairs on this machine, and
+/// this is what says the other two conventions were spoken to as well. The
+/// expected types are the ones `clang` and `rustc` give the same `#[repr(C)]`
+/// structs — measured with `rustc --emit=llvm-ir` on `science-rt`'s own
+/// shapes when `emit.rs`'s `c_return_ty` was written.
+///
+/// `science_write_file` is here because it was the first casualty:
+/// `[2 x i8]` reads the error byte from `w1`/`dl`, a register the runtime
+/// never writes, and it passed its tests because the byte was still there.
+#[test]
+fn a_register_returned_aggregate_is_declared_in_the_c_conventions_registers() {
+    let expected: [(Triple, [(&str, &str); 3]); 3] = [
+        (
+            Triple::Aarch64AppleDarwin,
+            [
+                ("science_write_file", "declare i64 @science_write_file("),
+                ("science_string_parse_int", "declare [2 x i64] @science_string_parse_int("),
+                ("science_string_parse_float", "declare [2 x i64] @science_string_parse_float("),
+            ],
+        ),
+        (
+            Triple::X86_64LinuxGnu,
+            [
+                ("science_write_file", "declare i16 @science_write_file("),
+                ("science_string_parse_int", "declare { i64, i16 } @science_string_parse_int("),
+                (
+                    "science_string_parse_float",
+                    "declare { double, i16 } @science_string_parse_float(",
+                ),
+            ],
+        ),
+        // Windows x64 returns in a register only at 1, 2, 4 or 8 bytes: the
+        // two-byte error is `i16`, and the two sixteen-byte pairs are `sret`.
+        (
+            Triple::X86_64WindowsMsvc,
+            [
+                ("science_write_file", "declare i16 @science_write_file("),
+                ("science_string_parse_int", "declare void @science_string_parse_int(ptr noalias sret("),
+                (
+                    "science_string_parse_float",
+                    "declare void @science_string_parse_float(ptr noalias sret(",
+                ),
+            ],
+        ),
+    ];
+    for (triple, declarations) in expected {
+        let config = TargetConfig::new(triple, OptLevel::O0);
+        let mut backend = LlvmBackend::new();
+        backend.begin_module("registers", &config).expect("a module");
+        for signature in runtime_signatures(triple) {
+            backend.declare_function(&signature).expect("a runtime declaration");
+        }
+        backend.verify().expect("the module verifies");
+        let ir = backend.ir();
+        for (symbol, prefix) in declarations {
+            let line = ir
+                .lines()
+                .find(|line| line.contains(&format!("@{symbol}(")))
+                .unwrap_or_else(|| panic!("`{symbol}` is not declared on {triple:?}"));
+            assert!(line.starts_with(prefix), "{triple:?}: expected `{prefix}…`, got:\n{line}");
+        }
+    }
+}

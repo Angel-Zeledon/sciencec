@@ -504,6 +504,14 @@ unsafe extern "C" {
     /// than four gigabytes and wrong in a way nothing would ever exercise.
     pub fn LLVMArrayType2(element_type: LLVMTypeRef, element_count: u64) -> LLVMTypeRef;
 
+    /// `LLVMTypeRef LLVMVectorType(LLVMTypeRef ElementType, unsigned ElementCount)`
+    ///
+    /// For one shape only: System V's SSE eightbyte holding two `float`s, which
+    /// a C compiler returns as `<2 x float>` in `xmm0`. `LlvmBackend::
+    /// c_return_ty` is the one caller, and nothing in Science lowers to a
+    /// vector.
+    pub fn LLVMVectorType(element_type: LLVMTypeRef, element_count: c_uint) -> LLVMTypeRef;
+
     /// `LLVMTypeRef LLVMStructTypeInContext(LLVMContextRef C, LLVMTypeRef *ElementTypes, unsigned ElementCount, LLVMBool Packed)`
     pub fn LLVMStructTypeInContext(
         c: LLVMContextRef,
@@ -733,6 +741,28 @@ unsafe extern "C" {
 
     /// `void LLVMPositionBuilderAtEnd(LLVMBuilderRef Builder, LLVMBasicBlockRef Block)`
     pub fn LLVMPositionBuilderAtEnd(builder: LLVMBuilderRef, block: LLVMBasicBlockRef);
+
+    /// `void LLVMPositionBuilderBefore(LLVMBuilderRef Builder, LLVMValueRef Instr)`
+    ///
+    /// With the two below, what lets an `alloca` the body did not ask for be
+    /// put in the **entry** block while the builder is somewhere else — the
+    /// entry-block half of [`LLVMBuildAlloca`]'s note, for the one slot that
+    /// is born mid-body: a foreign call's coerced return.
+    pub fn LLVMPositionBuilderBefore(builder: LLVMBuilderRef, instr: LLVMValueRef);
+
+    /// `LLVMBasicBlockRef LLVMGetInsertBlock(LLVMBuilderRef Builder)`
+    pub fn LLVMGetInsertBlock(builder: LLVMBuilderRef) -> LLVMBasicBlockRef;
+
+    /// `LLVMValueRef LLVMGetBasicBlockParent(LLVMBasicBlockRef BB)`
+    pub fn LLVMGetBasicBlockParent(bb: LLVMBasicBlockRef) -> LLVMValueRef;
+
+    /// `LLVMBasicBlockRef LLVMGetEntryBasicBlock(LLVMValueRef Fn)`
+    pub fn LLVMGetEntryBasicBlock(fn_: LLVMValueRef) -> LLVMBasicBlockRef;
+
+    /// `LLVMValueRef LLVMGetFirstInstruction(LLVMBasicBlockRef BB)`
+    ///
+    /// Null for an empty block.
+    pub fn LLVMGetFirstInstruction(bb: LLVMBasicBlockRef) -> LLVMValueRef;
 
     /// `LLVMValueRef LLVMBuildAlloca(LLVMBuilderRef, LLVMTypeRef Ty, const char *Name)`
     ///

@@ -27,8 +27,9 @@ use science_codegen::layout::{Repr, Triple, layout_of};
 use science_codegen::runtime::RtAggregate;
 use science_rt::{
     SCIENCE_NULLABLE_NULL, SCIENCE_NULLABLE_PRESENT, ScienceArray, ScienceChars, ScienceFormatSpec, ScienceLines,
-    ScienceFormatter, ScienceMap, ScienceMapInfo, ScienceNullableIoError, ScienceString,
-    ScienceStringAndIoError, ScienceTypeInfo,
+    ScienceF64AndTextError, ScienceFormatter, ScienceI64AndTextError, ScienceMap, ScienceMapInfo,
+    ScienceNullableIoError, ScienceNullableTextError, ScienceString, ScienceStringAndIoError,
+    ScienceTextError, ScienceTypeInfo,
 };
 
 /// The host triple. These comparisons are only meaningful against the target
@@ -67,6 +68,11 @@ fn every_runtime_aggregate_has_the_size_and_alignment_rustc_gives_it() {
     agrees!(RtAggregate::MapInfo, ScienceMapInfo);
     agrees!(RtAggregate::NullableIoError, ScienceNullableIoError);
     agrees!(RtAggregate::StringAndIoError, ScienceStringAndIoError);
+    // `TextError` and the two parse pairs, `IoError`'s three one type over.
+    agrees!(RtAggregate::TextError, ScienceTextError);
+    agrees!(RtAggregate::NullableTextError, ScienceNullableTextError);
+    agrees!(RtAggregate::I64AndTextError, ScienceI64AndTextError);
+    agrees!(RtAggregate::F64AndTextError, ScienceF64AndTextError);
     // §3.1's two. `FormatSpec` is the one row in `RtAggregate` that is also a
     // record a *Science program* declares fields on, so it has three layouts
     // to agree rather than two — `science-codegen`'s, `rustc`'s, and the one
@@ -156,6 +162,44 @@ fn nullable_io_error_is_two_bytes_and_takes_the_discriminant_not_a_niche() {
             assert_eq!(*payload_offset, offset_of!(ScienceNullableIoError, error) as u64);
             // Discriminant values follow declaration order from zero, and the
             // runtime fixes which is which.
+            assert_eq!(variants[0].discriminant, u64::from(SCIENCE_NULLABLE_NULL));
+            assert_eq!(variants[1].discriminant, u64::from(SCIENCE_NULLABLE_PRESENT));
+        }
+        other => panic!("expected the tagged form, got {other:?}"),
+    }
+}
+
+/// The parse pairs' fields sit where `rustc` put them, and `TextError?` is the
+/// tagged form `IoError?` is.
+///
+/// A pair returned in **registers** is where an offset error would hide
+/// longest: the backend stores the two registers to a slot and reads the
+/// struct back out of it, so a model that put `error` at 9 instead of 8 would
+/// read the tag out of the value's padding on every call — the null byte
+/// there is zero, so every parse would look successful.
+#[test]
+fn the_parse_pairs_put_the_error_at_eight_and_it_takes_the_discriminant() {
+    for (aggregate, value, error) in [
+        (
+            RtAggregate::I64AndTextError,
+            offset_of!(ScienceI64AndTextError, value),
+            offset_of!(ScienceI64AndTextError, error),
+        ),
+        (
+            RtAggregate::F64AndTextError,
+            offset_of!(ScienceF64AndTextError, value),
+            offset_of!(ScienceF64AndTextError, error),
+        ),
+    ] {
+        let pair = layout_of(host(), &aggregate.cg_ty());
+        assert_eq!(pair.field_offset(0), Some(value as u64), "{}", aggregate.name());
+        assert_eq!(pair.field_offset(1), Some(error as u64), "{}", aggregate.name());
+    }
+    let nullable = layout_of(host(), &RtAggregate::NullableTextError.cg_ty());
+    match &nullable.repr {
+        Repr::Tagged { tag, payload_offset, variants } => {
+            assert_eq!(tag.width(host()), 1);
+            assert_eq!(*payload_offset, offset_of!(ScienceNullableTextError, error) as u64);
             assert_eq!(variants[0].discriminant, u64::from(SCIENCE_NULLABLE_NULL));
             assert_eq!(variants[1].discriminant, u64::from(SCIENCE_NULLABLE_PRESENT));
         }

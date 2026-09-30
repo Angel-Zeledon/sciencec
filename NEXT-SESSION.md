@@ -296,8 +296,16 @@ Para llegar hubo que arreglar, cada uno con su prueba:
   era otro tipo que en el código del usuario; `Write.write` se confundía con
   la función libre `write`.
 
-Siguen abiertos, fuera de la compuerta: `match` sobre un `&Box[Expr]` no ve a
-través del `Box` (un método sí), y `String.parse_int` no tiene bajada.
+Sigue abierto, fuera de la compuerta: `match` sobre un `&Box[Expr]` no ve a
+través del `Box` (un método sí). `String.parse_int`, `String.parse_float` y
+`TextError.message()` ya bajan y corren (`science-rt/src/text.rs`,
+`science-codegen-llvm/tests/text.rs`); `TextError` es un byte sin payload, como
+`IoError`, y no acepta espacios alrededor (§6.11 hace `trim()` antes). De paso
+salió a la luz que un agregado devuelto en registros (`science_write_file`) se
+declaraba con el tipo del struct y LLVM lo reparte un registro por miembro,
+distinto de C: `emit.rs` `c_return_ty` lo declara ahora en los registros de C.
+`print(err)` sobre un `TextError` o un `IoError` sigue rechazado (no hay
+`display`).
 
 **Compuerta C2, etapa 5 — cerrada en `18550da`.** `&Array[T]` → `ffi.Span[T]`
 existe, y según ese commit `cblas_ddot` corre contra el BLAS de Accelerate (no lo volví a medir).

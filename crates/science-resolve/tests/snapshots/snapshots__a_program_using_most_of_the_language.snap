@@ -2,40 +2,40 @@
 source: crates/science-resolve/tests/snapshots.rs
 expression: "report(&module(vec![doc, summarize, impl_block, build]))"
 ---
-Module `main` #569 @0..168
-  Record `Doc` #570 @0..28
+Module `main` #571 @0..168
+  Record `Doc` #572 @0..28
     fields
-      Field `title` #571 @0..19
+      Field `title` #573 @0..19
         type: Path -> `String` #16 @0..6
-      Field `body` #572 @7..24
+      Field `body` #574 @7..24
         type: Path -> `String` #16 @7..13
-  Interface `Summarize` #573 @29..60
+  Interface `Summarize` #575 @29..60
     methods
-      Fn `summarize` #576 @29..50
-        receiver: SelfParam `self` #577 @39..43
+      Fn `summarize` #578 @29..50
+        receiver: SelfParam `self` #579 @39..43
         ret: Path -> `String` #16 @44..50
         body: (none)
-  Impl #574 @61..119
-    interface: Bound -> `Summarize` #573 @95..104
-    for: Path -> `Doc` #570 @105..108
+  Impl #576 @61..119
+    interface: Bound -> `Summarize` #575 @95..104
+    for: Path -> `Doc` #572 @105..108
     methods
-      Fn `summarize` #578 @61..94
-        receiver: SelfParam `self` #579 @83..87
+      Fn `summarize` #580 @61..94
+        receiver: SelfParam `self` #581 @83..87
         ret: Path -> `String` #16 @88..94
         body: Block @61..72
           tail: Field `body` (unresolved: needs the type) @61..70
-            Self -> `self` #579 @61..65
-  Fn `build` #575 @120..168
+            Self -> `self` #581 @61..65
+  Fn `build` #577 @120..168
     params
-      Param `title` #580 @150..162
+      Param `title` #582 @150..162
         type: Path -> `String` #16 @150..156
-    ret: Path -> `Doc` #570 @163..166
+    ret: Path -> `Doc` #572 @163..166
     body: Block @120..168
-      tail: StructLit -> `Doc` #570 @120..143
+      tail: StructLit -> `Doc` #572 @120..143
         fields
-          FieldInit `title` -> `title` #571 @120..138
-            value: Path -> `title` #580 @120..125
-          FieldInit `body` -> `body` #572 @126..143
+          FieldInit `title` -> `title` #573 @120..138
+            value: Path -> `title` #582 @120..125
+          FieldInit `body` -> `body` #574 @126..143
             value: Str "" @126..128
 --- diagnostics ---
 (none)

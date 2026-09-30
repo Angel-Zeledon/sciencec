@@ -138,6 +138,25 @@ pub enum RtAggregate {
     /// `{ value: ScienceString, error: ScienceNullableIoError }` — the pair of
     /// §5.4.
     StringAndIoError,
+    /// `u8` — `stdlib-core.md` §7.4's four `TextError` variants as a
+    /// payload-free byte, numbered in §7.4's order; `science-rt`'s `text.rs`
+    /// says why the payloads are left out.
+    ///
+    /// A row for [`RtAggregate::IoError`]'s reason: it is the type of a local
+    /// — `err` in `let n, err be text.parse_int()` — and the variant list is
+    /// written once so that the numbering has one place to live.
+    TextError,
+    /// `{ present: u8, error: u8 }` — [`RtAggregate::NullableIoError`]'s shape.
+    NullableTextError,
+    /// `{ value: i64, error: ScienceNullableTextError }` — `parse_int`'s pair.
+    /// Sixteen bytes, so two registers on System V and AArch64 and `sret` on
+    /// Windows x64 only: the first aggregate in this table whose `sret`-ness
+    /// differs by convention.
+    I64AndTextError,
+    /// `{ value: f64, error: ScienceNullableTextError }` — `parse_float`'s
+    /// pair. On System V the value is an SSE eightbyte and the error an
+    /// INTEGER one, so this is also the first mixed-class register return.
+    F64AndTextError,
     /// `strings-formatting-and-docs.md` §3.1's `FormatSpec`: `{ fill: Char,
     /// align: Align?, sign: Sign?, width: Int?, precision: Int?, code: Code?,
     /// alternate: Bool, grouping: Grouping? }`, in that field order.
@@ -164,8 +183,8 @@ pub enum RtAggregate {
 }
 
 impl RtAggregate {
-    /// All twelve, in a fixed order.
-    pub const ALL: [RtAggregate; 12] = [
+    /// All sixteen, in a fixed order.
+    pub const ALL: [RtAggregate; 16] = [
         RtAggregate::String,
         RtAggregate::Chars,
         RtAggregate::Lines,
@@ -176,6 +195,10 @@ impl RtAggregate {
         RtAggregate::IoError,
         RtAggregate::NullableIoError,
         RtAggregate::StringAndIoError,
+        RtAggregate::TextError,
+        RtAggregate::NullableTextError,
+        RtAggregate::I64AndTextError,
+        RtAggregate::F64AndTextError,
         RtAggregate::FormatSpec,
         RtAggregate::Formatter,
     ];
@@ -193,6 +216,10 @@ impl RtAggregate {
             RtAggregate::IoError => "ScienceIoError",
             RtAggregate::NullableIoError => "ScienceNullableIoError",
             RtAggregate::StringAndIoError => "ScienceStringAndIoError",
+            RtAggregate::TextError => "ScienceTextError",
+            RtAggregate::NullableTextError => "ScienceNullableTextError",
+            RtAggregate::I64AndTextError => "ScienceI64AndTextError",
+            RtAggregate::F64AndTextError => "ScienceF64AndTextError",
             RtAggregate::FormatSpec => "ScienceFormatSpec",
             RtAggregate::Formatter => "ScienceFormatter",
         }
@@ -300,6 +327,32 @@ impl RtAggregate {
                 vec![
                     Field::new("value", RtAggregate::String.cg_ty()),
                     Field::new("error", RtAggregate::NullableIoError.cg_ty()),
+                ],
+            ),
+            // `IoError`'s modelling, for `IoError`'s reason: a `choice` of unit
+            // variants, so Decision 18 gives the byte and its nullable the tag.
+            RtAggregate::TextError => CgTy::choice(
+                "ScienceTextError",
+                vec![
+                    Variant::unit("not_utf8"),
+                    Variant::unit("not_a_character_boundary"),
+                    Variant::unit("not_a_number"),
+                    Variant::unit("out_of_range"),
+                ],
+            ),
+            RtAggregate::NullableTextError => CgTy::nullable(RtAggregate::TextError.cg_ty()),
+            RtAggregate::I64AndTextError => CgTy::strukt(
+                "ScienceI64AndTextError",
+                vec![
+                    Field::new("value", CgTy::Int(IntTy::I64)),
+                    Field::new("error", RtAggregate::NullableTextError.cg_ty()),
+                ],
+            ),
+            RtAggregate::F64AndTextError => CgTy::strukt(
+                "ScienceF64AndTextError",
+                vec![
+                    Field::new("value", CgTy::Float(crate::layout::FloatTy::F64)),
+                    Field::new("error", RtAggregate::NullableTextError.cg_ty()),
                 ],
             ),
             // §3.1's eight fields in §3.1's order. The four `choice` fields
@@ -593,7 +646,7 @@ const N: RtParam = RtParam::Int;
 /// A slot holding one element, key or value: see [`RtParam::Slot`].
 const S: RtParam = RtParam::Slot;
 
-/// The 76 entry points. §2.6: *"They are the whole list."*
+/// The 84 entry points. §2.6: *"They are the whole list."*
 ///
 /// **It was 47, `format.rs` added seven, `science_string_with_capacity`
 /// added the fifty-fifth, and `math.rs`'s two — `science_libm_pow` and
@@ -783,6 +836,19 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_formatter_integer", params: &[P, N], ret: RtRet::Void },
     RuntimeFn { symbol: "science_formatter_spec", params: &[P], ret: RtRet::Aggregate(RtAggregate::FormatSpec) },
     RuntimeFn { symbol: "science_format_spec_default", params: &[], ret: RtRet::Aggregate(RtAggregate::FormatSpec) },
+    // --- text.rs ---
+    //
+    // **Seventy-three to seventy-five: `stdlib-core.md` §6.9's `parse_int` and
+    // `parse_float`, and `TextError`'s `message`.** Decision 14 is met the way
+    // `science_libm_pow` meets it: correctly rounded decimal-to-binary
+    // conversion is Eisel–Lemire with a big-number fallback, not an
+    // instruction sequence. The two parse entry points return their pair **by
+    // value**, like `science_read_file`, because every type in it is concrete;
+    // at sixteen bytes that is registers on two conventions and `sret` on the
+    // third, derived below rather than listed.
+    RuntimeFn { symbol: "science_text_error_message", params: &[P], ret: RtRet::Aggregate(RtAggregate::String) },
+    RuntimeFn { symbol: "science_string_parse_int", params: &[P], ret: RtRet::Aggregate(RtAggregate::I64AndTextError) },
+    RuntimeFn { symbol: "science_string_parse_float", params: &[P], ret: RtRet::Aggregate(RtAggregate::F64AndTextError) },
     // --- math.rs ---
     //
     // The fifty-sixth and fifty-seventh, and the first addition since
@@ -1109,9 +1175,18 @@ mod tests {
     /// removed entries is a loop over a layout only the runtime knows, so
     /// Decision 14 is met the way `lines` met it. Neither returns an
     /// aggregate, so the `sret` list below did not move.
+    ///
+    /// **Eighty-four**: `science_string_parse_int`, `science_string_parse_float`
+    /// and `science_text_error_message` — `stdlib-core.md` §6.9's two parses and
+    /// the `message` of the `TextError` they return. The prelude had declared
+    /// both methods and the backend refused the type they return; correctly
+    /// rounded decimal parsing is library work and not an instruction sequence,
+    /// so Decision 14 is met as it was for `science_libm_pow`. The name moves
+    /// with the number, so that it does not fall behind the way it did at
+    /// sixty-nine.
     #[test]
-    fn there_are_eighty_one_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 81, "§2.6: \"they are the whole list\"");
+    fn there_are_eighty_four_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 84, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");
@@ -1248,15 +1323,54 @@ mod tests {
             "science_io_error_message",
             "science_formatter_spec",
             "science_format_spec_default",
+            "science_text_error_message",
         ];
+        // **And for the first time the set differs by convention.**
+        // `science_string_parse_int` and `science_string_parse_float` return
+        // sixteen bytes: two registers on System V and AArch64, whose register
+        // return reaches sixteen, and MEMORY on Windows x64, whose stops at
+        // eight. Nobody chose that either — it is `classify_return`'s answer
+        // per convention — and a single list for all three would have had to
+        // be wrong about one of them.
+        let windows_only = ["science_string_parse_int", "science_string_parse_float"];
         for abi in [CAbi::SystemVAmd64, CAbi::Aapcs64, CAbi::Win64] {
             let mut derived: Vec<&str> =
                 RUNTIME.iter().filter(|f| f.needs_sret(abi)).map(|f| f.symbol).collect();
             derived.sort_unstable();
             let mut want = expected.to_vec();
+            if abi == CAbi::Win64 {
+                want.extend(windows_only);
+            }
             want.sort_unstable();
             assert_eq!(derived, want, "{abi:?}");
         }
+    }
+
+    #[test]
+    fn text_error_is_io_error_s_shape_and_the_parse_pairs_are_sixteen_bytes() {
+        // `science-rt`'s `tests/layout.rs` pins the Rust side of each; this is
+        // the model of it that the backend lays locals out from.
+        for target in [Triple::X86_64LinuxGnu, Triple::Aarch64AppleDarwin, Triple::X86_64WindowsMsvc] {
+            assert_eq!(RtAggregate::TextError.layout(target).size, 1);
+            assert_eq!(RtAggregate::NullableTextError.layout(target).size, 2);
+            for pair in [RtAggregate::I64AndTextError, RtAggregate::F64AndTextError] {
+                assert_eq!(pair.layout(target).size, 16, "{pair:?}");
+                assert_eq!(pair.layout(target).align, 8, "{pair:?}");
+            }
+        }
+        assert_eq!(
+            RtAggregate::NullableTextError.cg_ty(),
+            CgTy::nullable(RtAggregate::TextError.cg_ty())
+        );
+        // The classes a C compiler returns them in, which is what
+        // `science-codegen-llvm`'s `c_return_ty` declares them with.
+        use crate::abi::RegClass::{Integer, Sse};
+        let int = runtime_fn("science_string_parse_int").unwrap();
+        let float = runtime_fn("science_string_parse_float").unwrap();
+        assert_eq!(int.return_class(CAbi::SystemVAmd64), ReturnClass::Direct { registers: vec![Integer, Integer] });
+        assert_eq!(float.return_class(CAbi::SystemVAmd64), ReturnClass::Direct { registers: vec![Sse, Integer] });
+        assert_eq!(int.return_class(CAbi::Aapcs64), ReturnClass::Direct { registers: vec![Integer, Integer] });
+        assert_eq!(float.return_class(CAbi::Aapcs64), ReturnClass::Direct { registers: vec![Integer, Integer] });
     }
 
     #[test]

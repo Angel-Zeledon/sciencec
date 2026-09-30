@@ -876,12 +876,156 @@ impl LlvmBackend {
         }
         let ret = match &sig.ret {
             ReturnClass::Void | ReturnClass::Indirect => self.void_ty(),
-            ReturnClass::Direct { .. } => self.llvm_type(&sig.ret_layout),
+            ReturnClass::Direct { .. } => {
+                self.c_return_ty(sig).unwrap_or_else(|| self.llvm_type(&sig.ret_layout))
+            }
         };
         let ty = unsafe {
             sys::LLVMFunctionType(ret, params.as_mut_ptr(), params.len() as c_uint, 0)
         };
         (ty, sret)
+    }
+
+    /// The type a **foreign** symbol's aggregate return travels in, when that
+    /// is not the aggregate's own LLVM type.
+    ///
+    /// # The decision
+    ///
+    /// A foreign declaration whose return [`ReturnClass::Direct`] classifies as
+    /// registers, and whose layout is an aggregate, is declared returning the
+    /// registers — one integer or float per class the classifier assigned — and
+    /// never the aggregate. That is what a C compiler does: `clang` and `rustc`
+    /// both return a `{ u8, u8 }` as `i64` on AArch64 and `i16` on System V, and
+    /// a sixteen-byte `{ i64, { u8, u8 } }` as `[2 x i64]` on AArch64 and
+    /// `{ i64, i16 }` on System V.
+    ///
+    /// # The reason
+    ///
+    /// **LLVM does not implement the C convention for a first-class aggregate
+    /// return; it splits the aggregate one register per member.** Measured with
+    /// `llc` 18 for `arm64-apple-macosx`: a call declared `[2 x i8] @f()`
+    /// reads its second byte out of `w1`, and one declared `{ i64, [2 x i8],
+    /// [6 x i8] } @g()` runs out of registers and demotes to a hidden `x8`
+    /// return slot. `science-rt`'s `extern "C"` side packs the first into `x0`
+    /// and the second into `x0`/`x1`, so both disagree with the caller.
+    /// `science_write_file` was declared the first way from the day it was
+    /// wired and passed every test by coincidence — all three error codes a
+    /// probe provoked came back right, which can only mean the byte was
+    /// still in `w1` when the runtime returned — and `science_string_parse_int`'s
+    /// pair would have been the second way, a call that reads its result from
+    /// stack nobody wrote. Classification was already right; only the type
+    /// the classification was spoken in was not.
+    ///
+    /// # The cost
+    ///
+    /// A stack slot and a store/load pair at each such call, because an
+    /// integer cannot be reinterpreted as a struct without memory —
+    /// [`LlvmBackend::emit_call_through`] does it. SROA removes the pair at any
+    /// optimisation level above `O0`. Science-to-Science calls are untouched:
+    /// both ends are LLVM, and they agree on the split form with each other.
+    ///
+    /// `None` for everything that needs no coercion: a scalar, a pointer niche,
+    /// and an AArch64 homogeneous float aggregate — LLVM already puts
+    /// `{ double, double }` in `d0`/`d1`, which is where C wants it.
+    fn c_return_ty(&self, sig: &AbiSignature) -> Option<sys::LLVMTypeRef> {
+        use science_codegen::abi::RegClass;
+        use science_codegen::layout::CAbi;
+        if !sig.foreign {
+            return None;
+        }
+        let ReturnClass::Direct { registers } = &sig.ret else { return None };
+        let layout = &sig.ret_layout;
+        let aggregate = match &layout.repr {
+            Repr::Aggregate { .. } | Repr::Tagged { .. } => true,
+            Repr::Niched { payload, .. } => {
+                matches!(payload.repr, Repr::Aggregate { .. } | Repr::Tagged { .. })
+            }
+            Repr::Zero | Repr::Scalar(_) => false,
+        };
+        if !aggregate {
+            return None;
+        }
+        let abi = self.triple().c_abi();
+        if abi == CAbi::Aapcs64 && registers.iter().all(|r| *r == RegClass::Sse) {
+            return None;
+        }
+        let leaves = science_codegen::layout::scalar_leaves(layout);
+        // Where the last byte of data ends, which is short of `layout.size` by
+        // the tail padding: `clang` sizes the last integer register to the
+        // data (`{ i64, i16 }`, not `{ i64, i64 }`), and so does this.
+        let width = |scalar: &Scalar| match scalar {
+            Scalar::Bool => 1,
+            Scalar::Char => 4,
+            Scalar::Int(int) => int.width(self.triple()),
+            Scalar::Float(float) => float.width(),
+            Scalar::Pointer(_) => 8,
+        };
+        let data_end =
+            leaves.iter().map(|(offset, scalar)| offset + width(scalar)).max().unwrap_or(layout.size);
+        let mut members: Vec<sys::LLVMTypeRef> = Vec::with_capacity(registers.len());
+        for (index, class) in registers.iter().enumerate() {
+            let start = index as u64 * 8;
+            let bytes = data_end.saturating_sub(start).clamp(1, 8);
+            members.push(match class {
+                // AAPCS64 widens to a whole `x` register; the other two name
+                // the bytes that are there, as `clang` does. Either is the same
+                // register — the width only says how much of it is meaningful.
+                RegClass::Integer if abi == CAbi::Aapcs64 => self.int_ty(64),
+                RegClass::Integer => self.int_ty((bytes * 8) as u32),
+                RegClass::Sse => {
+                    let floats: Vec<Scalar> = leaves
+                        .iter()
+                        .filter(|(offset, _)| *offset >= start && *offset < start + 8)
+                        .map(|(_, scalar)| *scalar)
+                        .collect();
+                    match floats.as_slice() {
+                        [Scalar::Float(FloatTy::F32), Scalar::Float(FloatTy::F32)] => unsafe {
+                            sys::LLVMVectorType(self.scalar_ty(Scalar::Float(FloatTy::F32)), 2)
+                        },
+                        [single] => self.scalar_ty(*single),
+                        // No F0 type reaches this: an SSE eightbyte is one
+                        // double, one float or two floats. The aggregate's own
+                        // type is the answer that was here before.
+                        _ => return None,
+                    }
+                }
+            });
+        }
+        Some(match members.as_slice() {
+            [single] => *single,
+            // `[2 x i64]` and not `{ i64, i64 }` on AArch64, matching `clang`
+            // and `rustc` — the two are the same registers, and the IR then
+            // reads like theirs.
+            [first, second] if abi == CAbi::Aapcs64 && first == second => unsafe {
+                sys::LLVMArrayType2(*first, 2)
+            },
+            _ => self.anon_struct(&mut members),
+        })
+    }
+
+    /// A stack slot in the function's **entry** block, wherever the builder is.
+    ///
+    /// `LLVMBuildAlloca`'s note says why the entry block: an `alloca` in a loop
+    /// body is a stack allocation per iteration. The builder is put back where
+    /// it was.
+    fn entry_alloca(&self, ty: sys::LLVMTypeRef, align: u64, name: &str) -> sys::LLVMValueRef {
+        let b = self.builder.raw();
+        unsafe {
+            let here = sys::LLVMGetInsertBlock(b);
+            let function = sys::LLVMGetBasicBlockParent(here);
+            let entry = sys::LLVMGetEntryBasicBlock(function);
+            let first = sys::LLVMGetFirstInstruction(entry);
+            if first.is_null() {
+                sys::LLVMPositionBuilderAtEnd(b, entry);
+            } else {
+                sys::LLVMPositionBuilderBefore(b, first);
+            }
+            let name = cstr(name);
+            let slot = sys::LLVMBuildAlloca(b, ty, name.as_ptr());
+            sys::LLVMSetAlignment(slot, align as c_uint);
+            sys::LLVMPositionBuilderAtEnd(b, here);
+            slot
+        }
     }
 
     /// Apply a parameter's attributes at `index`, skipping the pointer-only ones
@@ -1976,7 +2120,29 @@ impl LlvmBackend {
         }
         if let Some(ValueId(id)) = dest {
             if !matches!(ret, ReturnClass::Void) && !ret.is_sret() {
-                state.values.insert(*id, call);
+                // A C-convention return arrives as registers, and the body
+                // above the line asked for the aggregate: through memory, the
+                // only way to reinterpret one as the other. The slot is the
+                // larger of the two — `IoError?` is two bytes and comes back
+                // in a whole `i64` — and is aligned for both.
+                let value = match self.c_return_ty(sig) {
+                    Some(registers) => {
+                        let natural = self.llvm_type(&sig.ret_layout);
+                        let slot = self.entry_alloca(
+                            registers,
+                            sig.ret_layout.align.max(8),
+                            &format!("c{id}"),
+                        );
+                        let b = self.builder.raw();
+                        let name = cstr(&format!("v{id}.c"));
+                        unsafe {
+                            sys::LLVMBuildStore(b, call, slot);
+                            sys::LLVMBuildLoad2(b, natural, slot, name.as_ptr())
+                        }
+                    }
+                    None => call,
+                };
+                state.values.insert(*id, value);
             }
         }
         Ok(())

@@ -242,6 +242,23 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   if err?:\n\
          \x20       print(err.message())\n",
     ),
+    // `text.rs`, reduced: §6.9's two parses and the `message` of the
+    // `TextError` either returns — `science_string_parse_int`,
+    // `science_string_parse_float` and `science_text_error_message`. The pair
+    // each returns is the first register-returned aggregate wider than a
+    // register, which is why `text.rs` exists as an execution test and not
+    // only as this reduction.
+    (
+        "parse_int_and_parse_float",
+        "def main():\n\
+         \x20   let n, err be \"4x2\".parse_int()\n\
+         \x20   if err?:\n\
+         \x20       print(err.message())\n\
+         \x20   let x, float_err be \"0.5\".parse_float()\n\
+         \x20   if float_err?:\n\
+         \x20       print(float_err.message())\n\
+         \x20   print(f\"{n} {x}\")\n",
+    ),
     // `arrays.rs`'s literal, `get`, `push` and `get_mutably` (the row
     // `tests/arrays.rs` itself does not exercise; `get_mutably` has an
     // execution test nowhere in this crate today, so this is that call's

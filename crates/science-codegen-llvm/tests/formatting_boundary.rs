@@ -154,20 +154,30 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// which is the seven `format.rs` rows' lesson again: the count moves only for
 /// a return that is MEMORY, and the derivation — not anybody here — decides
 /// which.
+///
+/// **And fifteen — or seventeen, and which one depends on the host for the
+/// first time.** `science_text_error_message` returns a `String`, as its
+/// `IoError` twin does, and joins everywhere. `science_string_parse_int` and
+/// `science_string_parse_float` return sixteen-byte pairs, which System V and
+/// AArch64 hand back in two registers and Windows x64, whose register return
+/// stops at eight bytes, through a hidden pointer. This test asks the host, so
+/// the expected count has to as well; `science-codegen`'s `runtime_abi.rs`
+/// pins the per-convention membership by name.
 #[test]
-fn the_derived_sret_set_is_fourteen_and_has_moved_six_times() {
+fn the_derived_sret_set_is_fifteen_and_seventeen_on_windows_and_has_moved_seven_times() {
     let triple = Triple::host().expect("a supported host");
     let indirect = RUNTIME
         .iter()
         .map(|entry| runtime_signature(triple, entry))
         .filter(|sig| sig.ret.is_sret())
         .count();
+    let expected = if triple == Triple::X86_64WindowsMsvc { 17 } else { 15 };
     assert_eq!(
-        indirect, 14,
-        "the derived `sret` set is not the fourteen `science-codegen`'s \
-         `runtime.rs` names"
+        indirect, expected,
+        "the derived `sret` set is not the {expected} `science-codegen`'s `runtime.rs` names \
+         for {triple:?}"
     );
-    assert_eq!(RUNTIME.len(), 81, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 84, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the
