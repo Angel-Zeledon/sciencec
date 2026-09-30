@@ -2428,17 +2428,43 @@ impl<'a> BodyChecker<'a> {
                 PendingArg::Open(open) => match self.infer.binding(open) {
                     Some(ty) if ty != Ty::ERROR => GenericArg::Type(ty),
                     Some(_) => return None,
-                    None => {
-                        let default = match self.literal_kind(open)? {
-                            Numeric::Integer => self.decls.prelude().default_int(self.types)?,
-                            Numeric::Float => self.decls.prelude().default_float(self.types)?,
-                            // `null`'s class names no default: Decision 2
-                            // closes the numeric literals and not this one.
-                            Numeric::Null => return None,
-                        };
-                        defaults.push((open, default));
-                        GenericArg::Type(default)
-                    }
+                    None => match self.literal_kind(open) {
+                        Some(kind) => {
+                            let default = match kind {
+                                Numeric::Integer => {
+                                    self.decls.prelude().default_int(self.types)?
+                                }
+                                Numeric::Float => {
+                                    self.decls.prelude().default_float(self.types)?
+                                }
+                                // `null`'s class names no default: Decision 2
+                                // closes the numeric literals and not this one.
+                                Numeric::Null => return None,
+                            };
+                            defaults.push((open, default));
+                            GenericArg::Type(default)
+                        }
+                        // **An argument that is itself a deferred composite is
+                        // settled first, by [`Self::settle_open`].** `Box.new(
+                        // Pair(left: 8, right: 9))` defers `Box`'s `T` to
+                        // `Pair`'s own placeholder, which is neither bound nor
+                        // a literal, so without this the box never settled
+                        // and a `match` on it typed its record pattern at
+                        // `Ty::ERROR` — `SC0400` in the LLVM backend, about a
+                        // field still typed `T`.
+                        //
+                        // Decision: the inner composite is bound even when an
+                        // outer argument then fails to settle, which bends
+                        // the all-or-nothing rule above by one layer.
+                        // Reason: the inner binding is the one a `match` or a
+                        // method call on the inner value alone would have
+                        // made — its own arguments are all settled or
+                        // defaulted by the same rule — so it commits to no
+                        // shape it would not have committed to anyway. Cost:
+                        // the inner literal's class closes here and not at
+                        // the end of the body, as it does at a receiver.
+                        None => GenericArg::Type(self.settle_open(open)?),
+                    },
                 },
             };
             args.push(arg);
@@ -2452,6 +2478,58 @@ impl<'a> BodyChecker<'a> {
         let settled = self.types.named(self.pending_named[at].def, args);
         self.infer.bind(self.types, root, settled).ok()?;
         Some(settled)
+    }
+
+    /// Settle one still-open variable *now*, whatever shape it stands for:
+    /// an unsuffixed literal takes Decision 2's default, a deferred record or
+    /// variant goes through [`Self::settle_receiver`], and a deferred tuple is
+    /// built from its parts, each settled by this same rule. `None` leaves the
+    /// variable open — a `null` with nothing to say what it is absent from,
+    /// or a composite with such a hole somewhere inside it — and the caller
+    /// keeps the `Ty::ERROR` it always had.
+    ///
+    /// **Why it exists.** Three places need a type *before* the body ends:
+    /// a `match`'s scrutinee, whose patterns are typed against it; an array
+    /// literal's element, because `infer`'s §2 has no `Array of ?0` to intern;
+    /// and an argument of a deferred composite that is itself one. Each used
+    /// to settle only the numeric literal, so `[Pair(left: 1, right: 2)]` and
+    /// `[(1, 2)]` became `ExprKind::Error` with nothing reported — a program
+    /// `sciencec check` passed and the backend refused with `SC0400`, *"an
+    /// expression the front end replaced with a hole"*.
+    ///
+    /// **A tuple's parts are settled one by one and it is bound only if all
+    /// of them are.** A part that settled is a commitment the part would have
+    /// made on its own at the same point, so it stays even when a sibling
+    /// does not — the same one-layer bend [`Self::settle_receiver`] states
+    /// for its own nested arguments.
+    fn settle_open(&mut self, var: InferVar) -> Option<Ty> {
+        if let InferTy::Known(ty) = self.infer.resolve(InferTy::Var(var)) {
+            return (ty != Ty::ERROR).then_some(ty);
+        }
+        match self.open_var(var) {
+            OpenVar::Named(_) => self.settle_receiver(InferTy::Var(var)),
+            OpenVar::Tuple(at) => {
+                let tuple_var = self.pending_tuples[at].1;
+                let parts = self.pending_tuples[at].2.clone();
+                let mut tys = Vec::with_capacity(parts.len());
+                for part in parts {
+                    let ty = match self.infer.resolve(part) {
+                        InferTy::Known(ty) if ty != Ty::ERROR => ty,
+                        InferTy::Known(_) => return None,
+                        InferTy::Var(open) => self.settle_open(open)?,
+                    };
+                    tys.push(ty);
+                }
+                let ty = self.types.tuple(tys);
+                self.infer.bind(self.types, tuple_var, ty).ok()?;
+                Some(ty)
+            }
+            OpenVar::Plain => {
+                let ty = self.default_of(var)?;
+                self.infer.bind(self.types, var, ty).ok()?;
+                Some(ty)
+            }
+        }
     }
 
     fn field(&mut self, base: &hir::Expr, name: &hir::Ident, span: Span) -> Typed {
@@ -6173,11 +6251,14 @@ impl<'a> BodyChecker<'a> {
             // literal has no type at all. An unsuffixed integer literal is
             // `I64` and an unsuffixed float is `F64`, which is §3.2's own
             // sentence about a literal array.
-            Some(InferTy::Var(var)) => match self.default_of(var) {
-                Some(ty) => {
-                    let _ = self.infer.bind(self.types, var, ty);
-                    ty
-                }
+            //
+            // **A deferred composite is settled the same way**, through
+            // [`Self::settle_open`]: `[Pair(left: 1, right: 2)]` and
+            // `[(1, 2)]` have an element that is a shape over a literal, not
+            // a literal, and `default_of` alone answered `None` for both —
+            // the literal became `ExprKind::Error` with nothing reported.
+            Some(InferTy::Var(var)) => match self.settle_open(var) {
+                Some(ty) => ty,
                 // `[null]`: a class with no default. `finish` reports
                 // `SC0526` for it, so this says nothing and takes the error
                 // type, and `ty`'s §5 keeps the count at one.
@@ -6843,6 +6924,30 @@ impl<'a> BodyChecker<'a> {
         expected: Option<(Ty, Site)>,
     ) -> Typed {
         let scrutinee = self.synth(&match_expr.scrutinee);
+        // Decision 2's default, taken at a *scrutinee* — through
+        // `settle_open`, so a deferred tuple settles too — for the reason
+        // `method_call` takes it at a receiver.
+        //
+        // Decision: settle a deferred composite before its patterns are
+        // typed. Reason: `let p be Pair(left: 1, right: 2)` defers its whole
+        // shape through `pending_named`, because `T` is answered only by an
+        // unsuffixed literal, so the scrutinee was a variable with no head;
+        // `known_or_error` stored `Ty::ERROR` on every pattern and
+        // `scrutinee_substitution` had no arguments to substitute, so
+        // `Pair(left: a, right: b)` bound `a` and `b` at the declaration's
+        // own `T`. Nothing reported it — an erroneous type agrees with
+        // everything — and the first phase to object was the LLVM backend,
+        // with `SC0400`'s *"a value whose type is still a type parameter"*
+        // about a field projection `science-mir` typed from the declaration.
+        // Settling here is the commitment `let p: Pair[Int]` makes, and it
+        // is exactly what that annotated program already did. Cost: the
+        // literal's class is closed at the `match` and not at the end of
+        // the body, so a later statement that would have pinned `T` to
+        // `I32` instead meets an `Int` — the same cost `method_call`'s
+        // receiver already pays, and an annotation still says otherwise.
+        if let InferTy::Var(open) = scrutinee.ty {
+            self.settle_open(open);
+        }
         let scrutinee_ty = self.known_or_error(scrutinee.ty);
         let entry = self.facts.clone();
         let mut arms = Vec::with_capacity(match_expr.arms.len());
@@ -7377,6 +7482,14 @@ impl<'a> BodyChecker<'a> {
                 Some(ty) => (self.check(&binding.value, ty, Site::Elsewhere), ty),
                 None => {
                     let typed = self.synth(&binding.value);
+                    // The names are bound from the tuple's elements *now*, so
+                    // `let a, b be (1, 2)` settles its tuple here the way a
+                    // `match` settles its scrutinee: [`Self::settle_open`].
+                    // Left open, every name bound at `Ty::ERROR` with nothing
+                    // reported, and the backend refused the first read.
+                    if let InferTy::Var(open) = typed.ty {
+                        self.settle_open(open);
+                    }
                     let ty = self.known_or_error(typed.ty);
                     (typed.id, ty)
                 }
@@ -7574,6 +7687,12 @@ impl<'a> BodyChecker<'a> {
             }
             hir::PatternKind::Tuple(elements) => {
                 let revealed = self.revealed(scrutinee, span);
+                let (revealed, via_borrow) = match *self.types.kind(revealed) {
+                    TyKind::Borrowed { inner, mutable } => {
+                        (self.revealed(inner, span), Some(mutable))
+                    }
+                    _ => (revealed, None),
+                };
                 let tys = match self.types.kind(revealed).clone() {
                     TyKind::Tuple(tys) if tys.len() == elements.len() => tys,
                     _ => vec![Ty::ERROR; elements.len()],
@@ -7581,7 +7700,10 @@ impl<'a> BodyChecker<'a> {
                 let elements = elements
                     .iter()
                     .zip(tys)
-                    .map(|(element, ty)| self.pattern(element, ty))
+                    .map(|(element, ty)| {
+                        let ty = self.borrow_ergonomics(ty, via_borrow);
+                        self.pattern(element, ty)
+                    })
                     .collect();
                 self.body.push_pat(PatKind::Tuple(elements), scrutinee, span)
             }

@@ -300,7 +300,7 @@ pub const ERROR_MESSAGE: &str = "error: the script returned an error, and this c
 
 /// What a local with no type is refused as.
 ///
-/// **One sentence for two causes, because the compiler cannot tell them
+/// **One sentence for every cause, because the compiler cannot tell them
 /// apart.** A local whose `Ty` is `TyKind::Error` reaches this backend with
 /// **no diagnostic having been reported** — §5's *"the mistake has already been
 /// reported"* rule firing on a mistake nobody made — so there is nothing here
@@ -309,25 +309,22 @@ pub const ERROR_MESSAGE: &str = "error: the script returned an error, and this c
 /// appended to: an earlier version named four, and three of the four had
 /// since been closed while the one that fires was not on it at all.
 ///
-/// **The two that arrive today**, each established by building a program:
+/// **The one that arrives today**, established by building a program: a
+/// **read** of `print`'s or `write`'s result, whose signature
+/// `science-resolve`'s `builtins.rs` wrote, measured seven corpus false
+/// positives on, and withdrew. `let r be print("a")` on its own builds,
+/// because nothing loads `r`; `print(r)` and `let s be r` are refused.
 ///
-/// 1. A tuple **pattern** against an inferred tuple literal:
-///    `let a, b be (1, 2)`, and `match t:` over a `let t be (1, 2)`.
-///    `science-types`' `pattern` reads the scrutinee in its
-///    `PatternKind::Tuple` arm, and a bare tuple literal built out of
-///    unsuffixed literals is still a deferred inference variable at that
-///    moment — `BodyChecker::pending_tuples`, bound by `finish` — so the arm
-///    falls to its `vec![Ty::ERROR; elements.len()]` branch and every name in
-///    the pattern binds at `Ty::ERROR`. `let a, b be (1i64, 2i64)`, an
-///    annotation on the tuple, and destructuring a *call's* result all build.
-///    `tests/past_stage_three.rs`'s
-///    `a_tuple_builds_however_its_elements_got_their_type` argues the same
-///    limit from the other side, and names the forcing rule that would close
-///    it.
-/// 2. A **read** of `print`'s or `write`'s result, whose signature
-///    `science-resolve`'s `builtins.rs` wrote, measured seven corpus false
-///    positives on, and withdrew. `let r be print("a")` on its own builds,
-///    because nothing loads `r`; `print(r)` and `let s be r` are refused.
+/// **A tuple pattern against an inferred tuple literal no longer arrives.**
+/// `let a, b be (1, 2)` and `match t:` over a `let t be (1, 2)` bound every
+/// name at `Ty::ERROR`, because the tuple was still a deferred inference
+/// variable when the pattern was typed. `science-types`' `settle_open` now
+/// forces Decision 2's default at a `match` scrutinee, at a `let` that
+/// destructures, and at an array literal's element, and the same gap under a
+/// deferred *record* — `match p:` over `let p be Pair(left: 1, right: 2)`,
+/// which reached `cg_ty`'s type-parameter arm instead of this one — closed
+/// with it. `tests/generics.rs`' `a_record_pattern_on_a_generic_record_*`
+/// and `tests/past_stage_three.rs`' tuple test are the programs.
 ///
 /// **Three that this message used to name and that no longer arrive**, kept
 /// here so the next reader does not put them back: a `for` loop's range and
@@ -336,15 +333,10 @@ pub const ERROR_MESSAGE: &str = "error: the script returned an error, and this c
 /// finding 20 closed at the `if` as well as at the tuple; and the discriminant
 /// temporary, which was always handled rather than refused.
 const UNTYPED: &str = "a value the front end left untyped: its `Ty` is `TyKind::Error` and no \
-                       diagnostic was reported for it. Two programs are known to reach this. A \
-                       tuple pattern against an inferred tuple literal — `let a, b be (1, 2)`, \
-                       or `match t:` over a `let t be (1, 2)` — binds every name at `Ty::ERROR`, \
-                       because `science-types` matches the pattern before inference has settled \
-                       the tuple's own type; suffix the elements, annotate the tuple, or \
-                       destructure the result of a call and all of them build. And a read of the \
-                       result of `print` or `write`, whose signature `science-resolve`'s \
-                       `builtins.rs` withdrew: binding it is fine, and it is the load that is \
-                       refused";
+                       diagnostic was reported for it. One program is known to reach this: a \
+                       read of the result of `print` or `write`, whose signature \
+                       `science-resolve`'s `builtins.rs` withdrew: binding it is fine, and it is \
+                       the load that is refused";
 
 /// How deep [`Lowerer::cg_ty`] follows a type before it gives up.
 ///

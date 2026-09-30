@@ -2425,7 +2425,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         let mut current = block;
         for (index, element) in elements.iter().enumerate() {
             let next = self.new_block();
-            let ty = self.positional_ty(variant, index, *element);
+            let ty = self.positional_ty(place, variant, index, *element);
             let sub = place.project(Projection::TupleField { index: index as u32, ty });
             self.test_pattern(&sub, *element, current, next, fail);
             current = next;
@@ -2459,7 +2459,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                     return self.bind_pattern(&down, *only, block);
                 }
                 for (index, element) in elems.iter().enumerate() {
-                    let ty = self.positional_ty(Some(variant), index, *element);
+                    let ty = self.positional_ty(&down, Some(variant), index, *element);
                     let sub = down.project(Projection::TupleField { index: index as u32, ty });
                     block = self.bind_pattern(&sub, *element, block);
                 }
@@ -2467,7 +2467,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             }
             PatKind::Tuple(elements) => {
                 for (index, element) in elements.iter().enumerate() {
-                    let ty = self.positional_ty(None, index, *element);
+                    let ty = self.positional_ty(place, None, index, *element);
                     let sub = place.project(Projection::TupleField { index: index as u32, ty });
                     block = self.bind_pattern(&sub, *element, block);
                 }
@@ -5686,11 +5686,38 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
 
     /// The type at one position of a variant's payload or a tuple, falling back
     /// to the sub-pattern's own type.
-    fn positional_ty(&mut self, variant: Option<DefId>, index: usize, element: PatId) -> Ty {
+    ///
+    /// **A tuple's element is read off the place, not off the sub-pattern.**
+    /// Decision 27 types a binding under a borrowed tuple — `match t:` over
+    /// `t: &(String, Int)`, or the `&(String, Int)` a `for` over an array of
+    /// tuples binds — as `&String`, because it borrows what it names. The
+    /// bytes at that position are still the `String`, and a `TupleField`
+    /// typed `&String` made `bind_pattern` store the aggregate into a pointer
+    /// slot — `SC0402`'s *"local is ptr and the value stored into it is an
+    /// aggregate"*. It is [`Builder::field_ty`]'s rule for a record — the
+    /// declaration's type and never the binding's — at the other shape a
+    /// pattern projects through; `read_ergonomic` takes the borrow from the
+    /// place the same way it does for a field.
+    fn positional_ty(
+        &mut self,
+        place: &Place,
+        variant: Option<DefId>,
+        index: usize,
+        element: PatId,
+    ) -> Ty {
         let fallback = self.thir.pat(element).ty;
         match variant {
             Some(variant) => self.variant_payload_ty(variant, Some(index)).unwrap_or(fallback),
-            None => fallback,
+            None => {
+                let mut tuple = self.revealed(self.place_ty(place));
+                while let TyKind::Borrowed { inner, .. } = *self.context.types.kind(tuple) {
+                    tuple = self.revealed(inner);
+                }
+                match self.tuple_field_ty(tuple, index) {
+                    Ty::ERROR => fallback,
+                    ty => ty,
+                }
+            }
         }
     }
 

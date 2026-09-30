@@ -449,3 +449,110 @@ def main():
     );
     assert_eq!(stdout, "10\n20\n");
 }
+
+/// A record pattern on a generic record whose argument only an unsuffixed
+/// literal answered, at every argument shape that deferred it.
+///
+/// **The defect.** `let p be Pair(left: 1, right: 2)` defers `Pair`'s whole
+/// type to a placeholder `finish` binds at the end of the body, because `T`
+/// is answered only by the literal. `match p:` typed its patterns against
+/// that placeholder while it was still open, so the record pattern carried
+/// `Ty::ERROR`, `science-mir` took each field's type from the declaration
+/// unsubstituted — `T` — and the build ended in `SC0400`, *"a value whose
+/// type is still a type parameter, which nothing has monomorphised"*, about
+/// a program with no generic function in it. `sciencec check` passed it.
+/// Annotating `let p: Pair[Int]` built, which is what located the gap in the
+/// front end rather than in a lowering.
+///
+/// The float and the variant are the same placeholder at a different class
+/// and a different declaration; `Mixed` has one argument deferred and one
+/// fixed; the `String` pair never deferred and is the control.
+#[test]
+fn a_record_pattern_on_a_generic_record_binds_at_the_inferred_argument() {
+    let (stdout, _) = built(
+        "record_pattern_inferred",
+        "type Pair[T]:
+    left: T
+    right: T
+
+type Mixed[A, B]:
+    first: A
+    second: B
+
+choice Maybe[T]:
+    Has(T)
+    Nothing
+
+def main():
+    let p be Pair(left: 1, right: 2)
+    match p:
+        Pair(left: 1, right: b): print(b * 10)
+        Pair(left: a, right: b): print(a + b)
+    let f be Pair(left: 1.5, right: 2.0)
+    match f:
+        Pair(left: a, right: b): print(a + b)
+    let m be Mixed(first: 3, second: \"three\")
+    match m:
+        Mixed(first: n, second: s): print(f\"{n} {s}\")
+    let o be Has(41)
+    match o:
+        Has(x): print(x + 1)
+        Nothing: print(\"nothing\")
+    let q be Pair(left: \"x\", right: \"y\")
+    match q:
+        Pair(left: a, right: b): print(f\"{a}{b}\")
+",
+    );
+    assert_eq!(stdout, "20\n3.5\n3 three\n42\nxy\n");
+}
+
+/// The same pattern one layer further in: under a `Box`, in an array, and
+/// through a borrow, with `String` fields so a binding that moved instead of
+/// borrowing would free twice.
+///
+/// `Box.new(Pair(left: 8, right: 9))` defers `Box`'s argument to `Pair`'s
+/// own placeholder, and `[Pair(left: 3, right: 4)]` defers the array's
+/// element to it; the first reached `SC0400` about a type parameter and the
+/// second `SC0400` about *"an expression the front end replaced with a
+/// hole"* — the array literal became `ExprKind::Error`, silently. Both settle
+/// now through `science-types`' `settle_open`.
+#[test]
+fn a_record_pattern_on_a_generic_record_under_a_box_in_an_array_and_a_borrow() {
+    let (stdout, _) = built(
+        "record_pattern_nested",
+        "type Pair[T]:
+    left: T
+    right: T
+
+choice Shape:
+    Circle(Int)
+    Rect(Pair[Int])
+
+def joined(p: &Pair[String]) -> String:
+    match p:
+        Pair(left: a, right: b): f\"{a}+{b}\"
+
+def main():
+    let one be Box.new(Pair(left: 8, right: 9))
+    match one:
+        Pair(left: a, right: _): print(a)
+    let boxes be [Box.new(Pair(left: 1, right: 2)), Box.new(Pair(left: 3, right: 4))]
+    for s in boxes:
+        match s:
+            Pair(left: a, right: b): print(a + b)
+    let mutable shapes be Array[Box[Shape]].new()
+    shapes.push(Box.new(Circle(5)))
+    shapes.push(Box.new(Rect(Pair(left: 6, right: 7))))
+    for s in shapes:
+        match s:
+            Circle(r): print(r)
+            Rect(Pair(left: w, right: h)): print(w * h)
+    let words be [Pair(left: \"ab\", right: \"cd\")]
+    for p in words:
+        print(joined(p))
+        match p:
+            Pair(left: a, right: b): print(a.length() + b.length())
+",
+    );
+    assert_eq!(stdout, "8\n3\n7\n5\n42\nab+cd\n4\n");
+}

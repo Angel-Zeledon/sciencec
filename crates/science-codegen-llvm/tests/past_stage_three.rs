@@ -1300,29 +1300,72 @@ fn a_tuple_of_five_writes_every_element_at_its_own_offset() {
 ///
 /// The spellings are kept together because the point is that they agree.
 ///
-/// # The limit this deliberately stops at
+/// # The limit this used to stop at, and the forcing rule that closed it
 ///
-/// The inferred tuple is **built and dropped**, not matched. Deferring means
-/// the tuple's type is not known until `finish`, and a `match` needs the
-/// scrutinee's *shape* while checking is still running, to give its pattern's
-/// bindings a type — so `match t:` over an inferred tuple still leaves those
-/// bindings at `Ty::ERROR`.
+/// This section read, before:
 ///
-/// Closing that is a language decision and not a repair: it means naming the
-/// points at which Decision 2's default is forced early, the way Rust forces
-/// its integer fallback at certain positions. The annotated and suffixed
-/// spellings below both match, so what is missing is the forcing rule and
-/// nothing about tuples.
+/// > The inferred tuple is **built and dropped**, not matched. [...] a
+/// > `match` needs the scrutinee's *shape* while checking is still running,
+/// > [...] so `match t:` over an inferred tuple still leaves those bindings
+/// > at `Ty::ERROR`. Closing that is a language decision and not a repair: it
+/// > means naming the points at which Decision 2's default is forced early.
+///
+/// The points are named now, in `science-types`' `settle_open`: a `match`
+/// scrutinee, a `let` that destructures, an array literal's element, and an
+/// argument of a deferred composite that is itself one — beside the method
+/// receiver `settle_receiver` already forced. So the inferred tuple is now
+/// matched and destructured as well as built, and asserted to agree with the
+/// annotated and suffixed spellings; the original `print("12")` program is
+/// kept unchanged as the first assertion.
 #[test]
 fn a_tuple_builds_however_its_elements_got_their_type() {
     let inferred = "let t be (1, 2)\nprint(\"12\")\n";
     assert_eq!(bytes("tuple-untyped", inferred), "12\n");
+    let matched =
+        "let t be (1, 2)\nmatch t:\n\x20   (a, b):\n\x20       print(f\"{a}{b}\")\n";
+    assert_eq!(bytes("tuple-inferred-match", matched), "12\n");
+    let destructured = "let a, b be (1, 2)\nprint(f\"{a}{b}\")\n";
+    assert_eq!(bytes("tuple-inferred-let", destructured), "12\n");
+    let in_array = "let ts be [(1, (2, 3))]\nfor t in ts:\n\x20   match t:\n\x20       \
+                    (a, (b, c)): print(a + b + c)\n";
+    assert_eq!(bytes("tuple-inferred-array", in_array), "6\n");
     let annotated =
         "let t: (Int, Int) be (1, 2)\nmatch t:\n\x20   (a, b):\n\x20       print(f\"{a}{b}\")\n";
     assert_eq!(bytes("tuple-annotated", annotated), "12\n");
     let suffixed =
         "let t be (1i64, 2i64)\nmatch t:\n\x20   (a, b):\n\x20       print(f\"{a}{b}\")\n";
     assert_eq!(bytes("tuple-suffixed", suffixed), "12\n");
+}
+
+/// A tuple pattern under a borrow binds each element, and an owning element
+/// as a borrow of it.
+///
+/// **Two defects, one per phase.** `science-types`' tuple arm read the
+/// scrutinee's type without peeling the borrow, so `match t:` over
+/// `t: &(Int, Int)` — or over the `&(String, Int)` a `for` over an array of
+/// tuples binds — bound every name at `Ty::ERROR` and the backend refused it
+/// as `UNTYPED`. With the borrow peeled and Decision 27 applied, as the
+/// record and variant arms already did, `science-mir` then typed the
+/// `TupleField` projection by the *binding's* type, `&String`, over bytes
+/// that are the `String` — `SC0402`, *"local is ptr and the value stored into
+/// it is an aggregate"*. It now reads the element type off the place, as a
+/// record field reads the declaration. The exit status is the ownership
+/// assertion: a binding that moved out of the borrowed tuple frees twice.
+#[test]
+fn a_tuple_pattern_under_a_borrow_binds_its_owning_elements_as_borrows() {
+    let source = "def show(t: &(String, Int)) -> String:\n\
+                  \x20   match t:\n\
+                  \x20       (name, n): f\"{name}={n}\"\n\n\
+                  def total(t: &(Int, Int)) -> Int:\n\
+                  \x20   match t:\n\
+                  \x20       (a, b): a + b\n\n\
+                  print(total((1i64, 2i64)))\n\
+                  let rows be [(\"a\", 1), (\"bb\", 2)]\n\
+                  for row in rows:\n\
+                  \x20   print(show(row))\n\
+                  \x20   match row:\n\
+                  \x20       (name, n): print(f\"{name.length()} {n}\")\n";
+    assert_eq!(bytes("tuple-under-borrow", source), "3\na=1\n1 1\nbb=2\n2 2\n");
 }
 
 /// A record with `String` fields, built from literals, read back, and released.

@@ -370,6 +370,89 @@ def main():
     );
 }
 
+/// `Array[Box[Shape]]` for a `choice Shape` and for a record, each owning a
+/// `String`, built with `push`, walked by `for`, read through the box by a
+/// `match`, a `&Shape` argument and a method — 2 000 times, with the live set
+/// one array per iteration — and then `leaks --atExit`.
+///
+/// **Reported as `SC0400` and measured not to be one here.** The report was
+/// an `Array[Box[Shape]]` over a `choice` refused by the backend; at `fa5c167`
+/// every spelling of it below already built and ran, and the one `SC0400`
+/// that reproduced was a *generic* payload whose argument only a literal
+/// answered — `Box.new(Pair(left: 1, right: 2))` —, which is
+/// `tests/generics.rs`' `a_record_pattern_on_a_generic_record_under_a_box_*`
+/// and was a front-end gap. This pins the non-generic shapes, which nothing
+/// did: `every_nested_container_shape_gate_c1_names_builds_and_runs` builds
+/// `Array[Box[Expr]]` over a record of one `Int` and never reads an element.
+/// A payload freed by a binding and again by its box aborts; a box whose
+/// descriptor forgot its payload leaks one `String` per element per round.
+#[test]
+fn an_array_of_boxed_choices_and_records_frees_every_payload_once() {
+    let source = "choice Shape:
+    Circle(String)
+    Square(Int)
+
+Shape has:
+    def size(self) -> Int:
+        match self:
+            Circle(name): name.length()
+            Square(w): w * w
+
+type Label:
+    text: String
+
+def area(s: &Shape) -> Int:
+    match s:
+        Circle(name): name.length()
+        Square(w): w * w
+
+def show(l: &Label) -> Int:
+    l.text.length()
+
+def main():
+    let mutable total be 0
+    for round in 0..2000:
+        let mutable shapes be Array[Box[Shape]].new()
+        shapes.push(Box.new(Circle(\"a circle, long enough to be a heap allocation\")))
+        shapes.push(Box.new(Square(3)))
+        let mutable labels be Array[Box[Label]].new()
+        labels.push(Box.new(Label(text: \"a label, long enough to be a heap allocation\")))
+        for s in shapes:
+            match s:
+                Circle(name): total be total + name.length()
+                Square(w): total be total + w
+            total be total + area(s) + s.size()
+        for l in labels:
+            total be total + show(l)
+    print(total)
+";
+    let name = "boxed_shapes_leaks";
+    let dir = scratch("user-drop", name);
+    require_runtime();
+    let built = lower(source).build_at(&executable(&dir, name), OptLevel::O2);
+    let ran = run(&built);
+    assert_eq!(ran.status, Some(0), "stderr: {}", ran.stderr);
+    assert_eq!(ran.stderr, "", "nothing belongs on stderr");
+    // Per round: the circle's 45 bytes three times (match, `area`, `size`),
+    // the square 3 + 9 + 9, the label's 44 once: 135 + 21 + 44 = 200.
+    assert_eq!(ran.stdout, "400000\n");
+    let leaks = std::path::Path::new("/usr/bin/leaks");
+    if cfg!(target_os = "macos") && leaks.is_file() {
+        let report = std::process::Command::new(leaks)
+            .arg("--atExit")
+            .arg("--")
+            .arg(&built.executable)
+            .output()
+            .expect("`leaks` runs");
+        let text = String::from_utf8_lossy(&report.stdout);
+        assert!(
+            text.contains(" 0 leaks for 0 total leaked bytes"),
+            "`leaks` found something:\n{text}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A record with a field moved out of it releases the fields that are left and
 /// does **not** run its own `drop`.
 ///

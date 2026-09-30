@@ -104,14 +104,16 @@
 //! `science-types` rather than here; §3's finding 20 closed that too and the
 //! bare tuple binding builds.
 //!
-//! **Two small programs that still do not build**, each checked by running
-//! `sciencec build` on it. `let a, b be (1, 2)` — the tuple *pattern*, whose
-//! names bind at `Ty::ERROR` because `science-types` matches the pattern
-//! before inference has settled the literal's type, and which `lower`'s
-//! `UNTYPED` message names. And `xs.iterate()` — §5.4's chain vocabulary,
+//! **Two small programs that did not build; one still does not**, each checked
+//! by running `sciencec build` on it. `let a, b be (1, 2)` — the tuple
+//! *pattern*, whose names bound at `Ty::ERROR` because `science-types` matched
+//! the pattern before inference had settled the literal's type — builds now:
+//! `science-types`' `settle_open` forces Decision 2's default at a
+//! destructuring `let`, a `match` scrutinee and an array element. And
+//! `xs.iterate()` — §5.4's chain vocabulary,
 //! which `science-resolve`'s `UNWRITTEN` list excuses so that no `SC0532` is
 //! reported, and which arrives here as `mir::Unresolved::Method` with nothing
-//! behind it. The second is what `examples/00_kitchen_sink.science` stops on:
+//! behind it. That one is what `examples/00_kitchen_sink.science` stops on:
 //! replace `headlines` and `by_length`'s chain bodies with
 //! `Array[String].new()` and the rest of the file builds, runs and exits 0.
 //!
