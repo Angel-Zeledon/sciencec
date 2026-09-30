@@ -294,6 +294,12 @@ const WANTED: &[&str] = &[
     // half of the same mistake `Iterate` is on this list to avoid, and holding
     // the id answers both questions with one lookup.
     "Range",
+    // `Map` and `Set`, which `science-mir`'s `lower_for` asks about to walk
+    // them in `collections-and-chains.md` §5.2's insertion order. Here for
+    // `Iterate`'s reason: a user's own `type Map:` must not be lowered as the
+    // runtime's table, and holding the prelude's ids is the only way to tell
+    // the two apart.
+    "Map", "Set",
 ];
 
 impl Prelude {

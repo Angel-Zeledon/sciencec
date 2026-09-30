@@ -688,3 +688,229 @@ fn a_set_of_strings_releases_every_string_it_was_given_exactly_once() {
         science_map_free(&mut set, &info);
     }
 }
+
+// --- Insertion order: `collections-and-chains.md` §5.2, AMENDMENT 9 ----------
+//
+// The order a loop sees is read here the way `science-mir`'s loop reads it:
+// `science_map_extent` once, then `science_map_entry_at` for every position,
+// skipping the nulls.
+
+/// The keys of an `Int`-keyed map, in the order a `for` over it would see them.
+unsafe fn walk_keys(map: &ScienceMap, info: &ScienceMapInfo) -> Vec<i64> {
+    let mut out = Vec::new();
+    for position in 0..science_map_extent(map) {
+        let entry = science_map_entry_at(map, info, position);
+        if !entry.is_null() {
+            out.push(*entry.cast::<i64>());
+        }
+    }
+    out
+}
+
+/// The `(key, value)` pairs, reading the value at [`entry_layout`]'s offset.
+unsafe fn walk_pairs(map: &ScienceMap, info: &ScienceMapInfo) -> Vec<(i64, i64)> {
+    let layout = entry_layout(info);
+    let mut out = Vec::new();
+    for position in 0..science_map_extent(map) {
+        let entry = science_map_entry_at(map, info, position);
+        if !entry.is_null() {
+            out.push((*entry.cast::<i64>(), *entry.add(layout.value_offset).cast::<i64>()));
+        }
+    }
+    out
+}
+
+/// A hundred keys inserted in a scrambled order come back in that order, across
+/// every rebuild the table went through on the way — eight slots, then sixteen,
+/// up to two hundred and fifty-six. A table iterated in slot order would give
+/// them back in hash order, which the vector below is not.
+#[test]
+fn iteration_is_insertion_order_across_every_rehash() {
+    unsafe {
+        let info = u64_map_info();
+        let mut m = science_map_new(&info);
+        let keys: Vec<i64> = (0..100i64).map(|i| (i * 37 + 11) % 101).collect();
+        for &key in &keys {
+            insert(&mut m, &info, key, key * 10);
+        }
+        assert!(m.cap >= 128, "the table was rebuilt several times: {}", m.cap);
+        assert_eq!(walk_keys(&m, &info), keys);
+        let pairs: Vec<(i64, i64)> = keys.iter().map(|&k| (k, k * 10)).collect();
+        assert_eq!(walk_pairs(&m, &info), pairs);
+        science_map_free(&mut m, &info);
+    }
+}
+
+/// Overwriting a key replaces its value and leaves it where it was:
+/// `stdlib-core.md` §3.6, *"re-inserting an existing key does not move it"*.
+#[test]
+fn overwriting_a_key_keeps_its_position() {
+    unsafe {
+        let info = u64_map_info();
+        let mut m = science_map_new(&info);
+        for key in [5, 3, 9] {
+            insert(&mut m, &info, key, 0);
+        }
+        assert_eq!(insert(&mut m, &info, 5, 55), Some(0));
+        assert_eq!(walk_pairs(&m, &info), vec![(5, 55), (3, 0), (9, 0)]);
+        science_map_free(&mut m, &info);
+    }
+}
+
+/// A removed key leaves a hole the walk skips, every other key keeps its place,
+/// and the same key inserted again is a new key and goes last. Then the holes
+/// are compacted away by a rebuild and the order survives that too.
+#[test]
+fn removal_leaves_the_order_and_reinsertion_goes_last() {
+    unsafe {
+        let info = colliding_map_info();
+        let mut m = science_map_new(&info);
+        for key in [1, 2, 3, 4] {
+            insert(&mut m, &info, key, key);
+        }
+        assert_eq!(remove(&mut m, &info, 2), Some(2));
+        assert_eq!(walk_keys(&m, &info), vec![1, 3, 4]);
+        insert(&mut m, &info, 2, 20);
+        assert_eq!(walk_keys(&m, &info), vec![1, 3, 4, 2]);
+        // Enough churn to force rebuilds that compact the holes.
+        let mut compacted = false;
+        for round in 0..50i64 {
+            insert(&mut m, &info, 100 + round, round);
+            assert_eq!(remove(&mut m, &info, 100 + round), Some(round));
+            compacted |= m.used == m.len + 1;
+        }
+        assert!(compacted, "some rebuild compacted the holes");
+        assert_eq!(walk_pairs(&m, &info), vec![(1, 1), (3, 3), (4, 4), (2, 20)]);
+        science_map_free(&mut m, &info);
+    }
+}
+
+/// Positions outside the extent, and negative ones, are null rather than a read
+/// past the entry array.
+#[test]
+fn an_entry_outside_the_extent_is_null() {
+    unsafe {
+        let info = u64_map_info();
+        let mut m = science_map_new(&info);
+        assert_eq!(science_map_extent(&m), 0);
+        assert!(science_map_entry_at(&m, &info, 0).is_null());
+        insert(&mut m, &info, 1, 1);
+        assert!(science_map_entry_at(&m, &info, -1).is_null());
+        assert!(science_map_entry_at(&m, &info, 1).is_null());
+        assert!(!science_map_entry_at(&m, &info, 0).is_null());
+        science_map_free(&mut m, &info);
+    }
+}
+
+/// A set's entry is its element: the value is zero-sized, so the entry pointer
+/// *is* a `&T`, which is what `for x in set:` hands out.
+#[test]
+fn a_set_iterates_its_elements_in_insertion_order() {
+    unsafe {
+        let info = set_info();
+        let layout = entry_layout(&info);
+        assert_eq!(layout.stride, 8);
+        assert_eq!(layout.value_offset, 8);
+        let mut set = science_map_new(&info);
+        for key in [30i64, 10, 20, 10, 40] {
+            science_set_insert(&mut set, &info, (&raw const key).cast());
+        }
+        let gone = 20i64;
+        assert!(science_set_remove(&mut set, &info, (&raw const gone).cast()));
+        assert_eq!(walk_keys(&set, &info), vec![30, 10, 40]);
+        science_map_free(&mut set, &info);
+    }
+}
+
+/// Decision 17's layout of a two-field record, which the compiler's
+/// `Entry[K, V]` has and this table must match: padding between a small key
+/// and a wide value, and a stride rounded up to the wider alignment.
+#[test]
+fn the_entry_layout_is_a_c_record_of_key_then_value() {
+    let pad = ScienceMapInfo {
+        key: ScienceTypeInfo { size: 1, align: 1, drop_fn: None },
+        value: i64_info(),
+        hash_fn: hash_u64,
+        eq_fn: eq_u64,
+    };
+    assert_eq!(entry_layout(&pad), EntryLayout { value_offset: 8, stride: 16, align: 8 });
+    let tail = ScienceMapInfo {
+        key: i64_info(),
+        value: ScienceTypeInfo { size: 4, align: 4, drop_fn: None },
+        hash_fn: hash_u64,
+        eq_fn: eq_u64,
+    };
+    assert_eq!(entry_layout(&tail), EntryLayout { value_offset: 8, stride: 16, align: 8 });
+    let over =
+        ScienceMapInfo { key: i64_info(), value: over_info(), hash_fn: hash_u64, eq_fn: eq_u64 };
+    assert_eq!(entry_layout(&over), EntryLayout { value_offset: 32, stride: 64, align: 32 });
+}
+
+/// Owned keys and values are destroyed exactly once whatever path they left
+/// by: removed (key destroyed, value handed out), overwritten (old key
+/// destroyed, old value handed out), compacted by a rebuild (moved, not
+/// destroyed), or still present at the free. The order is checked on the way.
+#[test]
+fn string_entries_keep_their_order_across_removal_overwrite_and_rebuild() {
+    unsafe {
+        let info = ScienceMapInfo {
+            key: string_info(),
+            value: string_info(),
+            hash_fn: hash_link_string,
+            eq_fn: eq_link_string,
+        };
+        let layout = entry_layout(&info);
+        let mut m = science_map_new(&info);
+        let mut out = std::mem::zeroed::<ScienceString>();
+        for i in 0..40 {
+            let key = s(&format!("k{i}"));
+            let value = s(&format!("v{i}"));
+            let replaced = science_map_insert(
+                &mut m,
+                &info,
+                (&raw const key).cast(),
+                (&raw const value).cast(),
+                (&raw mut out).cast(),
+            );
+            assert!(!replaced);
+        }
+        for i in (0..40).step_by(3) {
+            let probe = s(&format!("k{i}"));
+            let found = science_map_remove(
+                &mut m,
+                &info,
+                (&raw const probe).cast(),
+                (&raw mut out).cast(),
+            );
+            assert!(found);
+            free(out);
+            free(probe);
+        }
+        let key = s("k1");
+        let value = s("again");
+        let replaced = science_map_insert(
+            &mut m,
+            &info,
+            (&raw const key).cast(),
+            (&raw const value).cast(),
+            (&raw mut out).cast(),
+        );
+        assert!(replaced);
+        free(out);
+        let mut seen = Vec::new();
+        for position in 0..science_map_extent(&m) {
+            let entry = science_map_entry_at(&m, &info, position);
+            if !entry.is_null() {
+                let k = as_str(&*entry.cast::<ScienceString>()).to_string();
+                let v = as_str(&*entry.add(layout.value_offset).cast::<ScienceString>());
+                seen.push(format!("{k}={v}"));
+            }
+        }
+        let expected: Vec<String> = (0..40)
+            .filter(|i| i % 3 != 0)
+            .map(|i| if i == 1 { "k1=again".to_string() } else { format!("k{i}=v{i}") })
+            .collect();
+        assert_eq!(seen, expected);
+        science_map_free(&mut m, &info);
+    }
+}

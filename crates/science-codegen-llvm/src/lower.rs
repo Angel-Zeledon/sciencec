@@ -3509,7 +3509,7 @@ impl<'a> Lowerer<'a> {
             TyKind::Error => Err(Unlowered::new(
                 "a value whose type the front end left as `TyKind::Error` with no diagnostic \
                  beside it. Two programs are known to reach this. A `for` whose subject has no \
-                 `Iterate` this compiler can name — a tuple, a `Map`, a bare `String` \
+                 `Iterate` this compiler can name — a tuple, a bare `String` \
                  (`text.chars()` is the iterator), or a type parameter, even under a \
                  `where T: Iterate` bound — binds its loop variable at `TyKind::Error`, because \
                  `science-types`' `for_expr` has nothing to read the element type off. And a \
@@ -11562,7 +11562,7 @@ fn describe_unresolved(unresolved: mir::Unresolved) -> &'static str {
         }
         mir::Unresolved::IterateNext => {
             "a `for` whose subject has no `Iterate` implementation this compiler can name — a \
-             `Map`, a type parameter, a tuple. A subject that has one resolves: \
+             type parameter, a tuple. A subject that has one resolves: \
              `thir::ExprKind::For` carries the `next` the checker found, and \
              `for c in text.chars():` and a user's own `implements Iterate:` both lower to a \
              real call. A range never reaches here at all"

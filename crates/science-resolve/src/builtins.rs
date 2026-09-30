@@ -1173,9 +1173,10 @@ const BLOCKS: &[Block] = &[
     // four different reasons: `union` is a reserved word (`stdlib-core.md`
     // §3.3's hazard, unresolved); `intersection` and `difference` return a
     // `Set` built from two, which is a loop this compiler would have to emit
-    // over a table it cannot iterate; `iterate()` and `Set.from` need
-    // insertion order, which §5.2 promises and `science-rt`'s map does not
-    // keep. `has` is spelled `contains` per `stdlib-core.md` §3.4.
+    // over a table it cannot iterate; `Set.from` needs §5.5's `From` over a
+    // chain. `for x in set:` is supported — see `Set implements Iterate`
+    // below — and `iterate()` itself is not declared, for `Map`'s reason in
+    // [`UNWRITTEN`]. `has` is spelled `contains` per `stdlib-core.md` §3.4.
     //
     // `T: Eq + Hash` is dropped for `Map.insert`'s reason: `Hash` is not a
     // prelude interface. What stands in for it is `map_key_support` in
@@ -1454,21 +1455,66 @@ const BLOCKS: &[Block] = &[
     // block's `Item` is substituted into it. A `next` written here would be a
     // second declaration of the same method with a body neither of them has.
     //
-    // **`Map` is *not* here, and its absence is a finding.**
-    // `collections-and-chains.md` §1.3 says what `Map.iterate()` yields and it
-    // is not a `V` and not a tuple: *"`type Entry[K, V]: key: K; value:
-    // V`"*, with §1.3's whole argument being that *"pairs are records, never
-    // tuples"* because `each.key` works with §4.6's implicit subject and
-    // `each.0` does not. `Entry` is not in §8's closed library, this table
-    // declares names and methods and cannot give a record its *fields*, and the
-    // two spellings that are expressible are both wrong: `Item is &V`
-    // throws the key away, and `Item is (&K, &V)` is the tuple
-    // §1.3 refuses. `examples/10_loops.science` already walks a map through an
-    // `Array` of its keys and says in a comment that it does so because §8 does
-    // not give `Map` an `Iterate`. So the honest declaration is none, and what
-    // it waits for is `Entry[K, V]` as a Level 1 record.
+    // `Map` and `Set` are the two blocks after this one. `Map` used to be
+    // absent from here with a paragraph saying why — its item is §1.3's
+    // `Entry[K, V]`, a record this table could not give fields to — and
+    // [`Declarer::entry`] is what closed that.
     Block {
         ty: "Array",
+        generics: &["T"],
+        interface: Some(("Iterate", &[])),
+        assoc: &[("Item", Ty::Ref(&Ty::Var("T")))],
+        methods: &[],
+    },
+    // --- `Map[K, V] implements Iterate`, `collections-and-chains.md` §5.2 ---
+    //
+    // **Decision: `Item is &Entry[K, V]` — one borrow of a record that
+    // exists, not a record of two borrows.**
+    //
+    // The reason is three sentences of the note read together. §5.4: *"`Map`
+    // yields `Entry of (K, V)`"*. §1.3: *"pairs are records, never tuples"*,
+    // because `each.key` works with the implicit subject and `each.0` does
+    // not — which rules out `(&K, &V)`. §4.3: `iterate()` yields a borrow
+    // *"uniformly — no conditional associated type"*, which is `Array`'s
+    // `&T` above and makes the item `&Entry[K, V]` rather than
+    // `Entry[K, V]` (a copy of every key and value on every turn, the
+    // allocation per row per iteration `Array`'s own comment refuses).
+    //
+    // **The alternative that was measured against it** is
+    // `Entry[&K, &V]`, a record holding two borrows by value, which is
+    // what a table with separate key and value arrays could hand out. It is
+    // refused because `science-regions`' `regions.rs` §2 does not descend into
+    // generic arguments — a borrow *inside* `Entry`'s `K` is invisible to it
+    // — so `let kept be entry` would carry a borrow of the map that nothing
+    // checks. A top-level `&` is exactly what that engine does see. The price
+    // was paid in `science-rt` instead: `map.rs` now stores each pair as an
+    // `Entry[K, V]` in insertion order (AMENDMENT 9's *"one index array"*),
+    // so the borrow has something to point at.
+    //
+    // **`for (key, value) in counts:` is not a form**, and nothing is lost by
+    // it: `for entry in counts:` then `entry.key` / `entry.value` is §1.3's
+    // own spelling, and a destructuring pattern in a `for` header is
+    // something no note specifies.
+    //
+    // Method-less for `Array`'s reason: `Iterate`'s own `next` is what the
+    // lookup finds, and `science-mir`'s `lower_for_over_map` is what runs,
+    // because a map, like an array, has nowhere to keep a cursor.
+    Block {
+        ty: "Map",
+        generics: &["K", "V"],
+        interface: Some(("Iterate", &[])),
+        assoc: &[(
+            "Item",
+            Ty::Ref(&Ty::App("Entry", &[Ty::Var("K"), Ty::Var("V")])),
+        )],
+        methods: &[],
+    },
+    // --- `Set[T] implements Iterate`, §5.4: *"`Set` yields its elements"* ---
+    //
+    // `Item is &T`, `Array`'s item: a set's entry is its element (the value is
+    // zero-sized), so the borrow points straight at it.
+    Block {
+        ty: "Set",
         generics: &["T"],
         interface: Some(("Iterate", &[])),
         assoc: &[("Item", Ty::Ref(&Ty::Var("T")))],
@@ -1498,8 +1544,9 @@ const BLOCKS: &[Block] = &[
     // the interface's, not the associated type's. Writing `&T` here
     // would make `a[i]` a `&&T`.
     //
-    // **`Map` is deliberately absent, and it is the same finding
-    // `Map`'s missing `Iterate` is.** `Map[K, V] implements Index[K]`
+    // **`Map` is deliberately absent**, and it is the finding `Map`'s
+    // `Iterate` used to share before `Entry` gave it one: `Map[K, V]
+    // implements Index[K]`
     // would be an indexing operation that panics on a key that is not there,
     // and §1.3's four discharge rules are all about an *extent* — none of them
     // can speak about a key. §1.1 never names `Map`, so declaring it would be
@@ -2152,7 +2199,12 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     // `Map` — `keys`, `values` and `values_mutably` are
     // `collections-and-chains.md` §5.4 by name; the three `iterate*` are the
     // same section's requirement of *"every collection"*; `from` is §5.5's
-    // `Map.from(..)`.
+    // `Map.from(..)`. `for entry in counts:` works without `iterate` —
+    // `Map implements Iterate` in [`BLOCKS`] is what it reads, and
+    // `science-mir`'s `lower_for_over_map` what it runs — so `iterate` stays
+    // here for `Array`'s sibling reason: it returns a source type
+    // (`MapIterate`, by §5.4's pattern) the prelude does not have, and no
+    // chain link after it would lower if it did.
     (
         "Map",
         &[
@@ -2810,6 +2862,59 @@ impl Declarer<'_> {
         }));
     }
 
+    /// `Entry[K, V]`, at the `DefId` `build` already allocated as
+    /// `DefKind::Record`: `{ key: K, value: V }`, in that order —
+    /// `collections-and-chains.md` §1.3 transcribed:
+    ///
+    /// ```text
+    /// type Entry of (K, V):          # what Map.iterate() yields
+    ///     key: K
+    ///     value: V
+    /// ```
+    ///
+    /// [`Declarer::ffi_view`]'s shape with two parameters where it has one.
+    ///
+    /// **The field order is load-bearing, unlike `Span`'s.** `science-rt`'s
+    /// `map.rs` stores every pair as this record and hands out a pointer to
+    /// it, computing the value's offset from Decision 17's C layout of *key,
+    /// then value*. Swapping the two lines here would make every
+    /// `entry.value` read the key's bytes.
+    fn entry(&mut self, def: DefId) {
+        let key = self.defs.alloc(DefKind::TypeParam, "K", BUILTIN_SPAN, Some(def));
+        let value = self.defs.alloc(DefKind::TypeParam, "V", BUILTIN_SPAN, Some(def));
+        let mut generics = HashMap::new();
+        generics.insert("K", key);
+        generics.insert("V", value);
+        let assocs = HashMap::new();
+        let scope = Scope { generics: &generics, assocs: &assocs, owner: Some(def) };
+        let key_ty = self.ty(&Ty::Var("K"), &scope);
+        let value_ty = self.ty(&Ty::Var("V"), &scope);
+        let fields = vec![
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "key", BUILTIN_SPAN, Some(def)),
+                ty: key_ty,
+                span: BUILTIN_SPAN,
+            },
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "value", BUILTIN_SPAN, Some(def)),
+                ty: value_ty,
+                span: BUILTIN_SPAN,
+            },
+        ];
+        let param = |def| hir::GenericParam {
+            def,
+            kind: hir::GenericParamKind::Type { bounds: Vec::new() },
+            span: BUILTIN_SPAN,
+        };
+        self.item(hir::ItemKind::Record(hir::Record {
+            def,
+            generics: vec![param(key), param(value)],
+            where_clause: Vec::new(),
+            fields,
+            span: BUILTIN_SPAN,
+        }));
+    }
+
     /// `FormatSpec`, at the `DefId` `build` already allocated as
     /// `DefKind::Record`: `{ fill: Char, align: Align?, sign: Sign?, width:
     /// Int?, precision: Int?, code: Code?, alternate: Bool, grouping:
@@ -2917,6 +3022,10 @@ pub fn build(defs: &mut DefTable) -> Prelude {
     // given its fields below, once `Align`, `Sign`, `Code` and `Grouping`
     // exist for [`Declarer::format_spec`] to name.
     let format_spec_def = declare(defs, DefKind::Record, "FormatSpec", &mut prelude);
+    // `Entry[K, V]`, `collections-and-chains.md` §1.3's record — *"what
+    // `Map.iterate()` yields"* — declared the way `FormatSpec` is and for its
+    // reason: a program names its fields, `entry.key` and `entry.value`.
+    let entry_def = declare(defs, DefKind::Record, "Entry", &mut prelude);
     // The second spelling of a primitive that has two. No `alloc`: the whole
     // point is that `Int` and `I64` are one `DefId` and therefore one `Ty`,
     // which is what makes them unify. Pushing a name is all a second spelling
@@ -3002,6 +3111,7 @@ pub fn build(defs: &mut DefTable) -> Prelude {
     // `Code` and `Grouping` — named by [`CHOICES`], processed above — exist
     // for it to name.
     declarer.format_spec(format_spec_def);
+    declarer.entry(entry_def);
     for decl in INTERFACE_DECLS {
         declarer.interface(decl);
     }

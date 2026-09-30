@@ -147,6 +147,13 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// joined `RUNTIME` after `String`'s four and none joined the derived set — the second assertion
 /// moved and the first did not, which is the two numbers measuring different
 /// things as they should.
+///
+/// **Still fourteen, with eighty-one rows**: `science_map_extent` and
+/// `science_map_entry_at`, the two entry points `for entry in counts:` compiles
+/// to, return an `Int` and a pointer. The table grew and this set did not,
+/// which is the seven `format.rs` rows' lesson again: the count moves only for
+/// a return that is MEMORY, and the derivation — not anybody here — decides
+/// which.
 #[test]
 fn the_derived_sret_set_is_fourteen_and_has_moved_six_times() {
     let triple = Triple::host().expect("a supported host");
@@ -160,7 +167,7 @@ fn the_derived_sret_set_is_fourteen_and_has_moved_six_times() {
         "the derived `sret` set is not the fourteen `science-codegen`'s \
          `runtime.rs` names"
     );
-    assert_eq!(RUNTIME.len(), 79, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 81, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

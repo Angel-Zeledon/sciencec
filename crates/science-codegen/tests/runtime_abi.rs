@@ -100,6 +100,10 @@ fn the_container_entry_points_all_take_a_descriptor_and_the_scalar_ones_do_not()
                 // and hashing the element needs the map descriptor's `hash_fn`.
                 | "science_set_insert"
                 | "science_set_remove"
+                // The positional accessor behind `for entry in counts:`. It
+                // computes where entry `n` starts from the key and value
+                // sizes, which only the descriptor knows.
+                | "science_map_entry_at"
                 | "science_box_new"
                 | "science_box_free"
         );
@@ -131,6 +135,8 @@ fn the_container_entry_points_all_take_a_descriptor_and_the_scalar_ones_do_not()
         assert!(f.descriptor_index().is_none(), "{symbol} takes a descriptor");
         assert!(!f.params.contains(&RtParam::Slot), "{symbol} takes a slot");
     }
+    // A loop's extent is a count of positions, which is a header field too.
+    assert!(runtime_fn("science_map_extent").unwrap().descriptor_index().is_none());
 }
 
 #[test]
@@ -305,7 +311,18 @@ fn nothing_outside_the_table_is_callable() {
     // write to a file descriptor and a flush of a buffer that lives inside
     // `std` are not instruction sequences this crate could have emitted, and
     // none of the three is on the tempting list below.
-    assert_eq!(RUNTIME.len(), 79);
+    //
+    // **Eighty-one.** `science_map_extent` and `science_map_entry_at` are
+    // what `for entry in counts:` and `for x in set:` compile to, in
+    // `collections-and-chains.md` §5.2's insertion order. The extent is a
+    // field read, and on its own it would be the kind of addition this rule
+    // forbids; it is here because the accessor beside it cannot be inline —
+    // it computes an entry's address from a stride only the descriptor's two
+    // sizes determine and tests a liveness byte the runtime's own layout puts
+    // there — and a loop that read one header field inline and called the
+    // runtime for the rest would be two places that know `ScienceMap`'s
+    // layout instead of one.
+    assert_eq!(RUNTIME.len(), 81);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

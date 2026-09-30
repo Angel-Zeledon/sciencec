@@ -23,8 +23,10 @@ def titles(docs: &Array[Doc]):
     for doc in docs:
         print(doc.title)
 
-# §8 does not say `Map` implements `Iterate`, and its method set is closed,
-# so a map is walked through an `Array` of its keys and `Map.get`.
+# `for entry in settings:` would walk the map in insertion order
+# (`collections-and-chains.md` §5.2). This walks it in the order of an
+# `Array` of keys instead, which is the loop to write when the order is the
+# caller's and not the map's — and the keys may name entries that are absent.
 def dump(settings: &Map[String, String], keys: &Array[String]):
     for key in keys:
         # `Map.get` returns `(&V)?`, so the loop body asks with `?`

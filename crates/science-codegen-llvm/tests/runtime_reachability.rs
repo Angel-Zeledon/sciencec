@@ -301,6 +301,23 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   let m be Map[Int, Int].new()\n\
          \x20   print(f\"{m.length()} {m.contains(7)}\")\n",
     ),
+    // `maps.rs`'s insertion-order tests, reduced: a `for` over a `Map` and one
+    // over a `Set` reach `science_map_extent` and `science_map_entry_at`,
+    // which `science-mir`'s `lower_for_over_map` calls directly as
+    // `Callee::Runtime` — no prelude method names either, so no other program
+    // in this list can reach them.
+    (
+        "map_and_set_iteration",
+        "def main():\n\
+         \x20   let mutable m be Map[Int, Int].new()\n\
+         \x20   m.insert(2, 20)\n\
+         \x20   for entry in m:\n\
+         \x20       print(f\"{entry.key} {entry.value}\")\n\
+         \x20   let mutable s be Set[Int].new()\n\
+         \x20   s.insert(3)\n\
+         \x20   for x in s:\n\
+         \x20       print(x)\n",
+    ),
     // `maps.rs`'s `a_map_insert_overwrite_read_and_remove_round_trip`,
     // verbatim: `Map.insert` and `Map.remove` reach `science_map_insert` and
     // `science_map_remove` through `Lowerer::owned_nullable_method`'s

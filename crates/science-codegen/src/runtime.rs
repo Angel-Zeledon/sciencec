@@ -101,7 +101,9 @@ pub enum RtAggregate {
     Lines,
     /// `{ ptr, len, cap }` — three words.
     Array,
-    /// `{ states, keys, values, len, tombstones, cap }` — six words.
+    /// `{ slots, entries, live, len, used, cap }` — six words, laid out for
+    /// `collections-and-chains.md` §5.2's insertion order; `science-rt`'s
+    /// `map.rs` says what each is.
     Map,
     /// `{ size, align, drop_fn }` — three words.
     TypeInfo,
@@ -243,11 +245,11 @@ impl RtAggregate {
             RtAggregate::Map => CgTy::strukt(
                 "ScienceMap",
                 vec![
-                    Field::new("states", CgTy::Ptr(PtrKind::Raw)),
-                    Field::new("keys", CgTy::Ptr(PtrKind::Raw)),
-                    Field::new("values", CgTy::Ptr(PtrKind::Raw)),
+                    Field::new("slots", CgTy::Ptr(PtrKind::Raw)),
+                    Field::new("entries", CgTy::Ptr(PtrKind::Raw)),
+                    Field::new("live", CgTy::Ptr(PtrKind::Raw)),
                     Field::new("len", usize_ty.clone()),
-                    Field::new("tombstones", usize_ty.clone()),
+                    Field::new("used", usize_ty.clone()),
                     Field::new("cap", usize_ty),
                 ],
             ),
@@ -663,6 +665,15 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_map_get", params: &[P, D, S], ret: RtRet::Ptr },
     RuntimeFn { symbol: "science_map_contains", params: &[P, D, S], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_map_remove", params: &[P, D, S, S], ret: RtRet::Bool },
+    // `for entry in counts:` and `for x in set:`, in insertion order
+    // (`collections-and-chains.md` §5.2's AMENDMENT 9). The loop's extent,
+    // read once, and a positional accessor whose null is a removed entry's
+    // hole — `science_array_len` and an index, one container over. The
+    // accessor takes the descriptor because the entry's stride is computed
+    // from the key and value sizes; the extent does not, because `used` is a
+    // count.
+    RuntimeFn { symbol: "science_map_extent", params: &[P], ret: RtRet::Int },
+    RuntimeFn { symbol: "science_map_entry_at", params: &[P, D, N], ret: RtRet::Ptr },
     // `Set of T` is a `ScienceMap` whose value is `()`, so only its two
     // methods whose answer differs from a map's have entry points of their own.
     RuntimeFn { symbol: "science_set_insert", params: &[P, D, S], ret: RtRet::Bool },
@@ -1087,9 +1098,20 @@ mod tests {
     /// the way `science_print` meets it. The first two are `science_write` and
     /// `science_print` one stream over; the third is the flush `science_exit`
     /// already performed, callable without ending the process.
+    ///
+    /// **Eighty-one**, with `science_map_extent` and `science_map_entry_at`:
+    /// `collections-and-chains.md` §5.2's AMENDMENT 9, `Map` and `Set`
+    /// iterating in insertion order. They are an extent and a positional
+    /// accessor — the `science_array_len` and index a `for` over an `Array`
+    /// already compiles to, one container over — and not an iterator object,
+    /// because an iterator the runtime owned would hold a pointer to the map
+    /// that region inference cannot see. Walking the entry array and skipping
+    /// removed entries is a loop over a layout only the runtime knows, so
+    /// Decision 14 is met the way `lines` met it. Neither returns an
+    /// aggregate, so the `sret` list below did not move.
     #[test]
-    fn there_are_seventy_nine_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 79, "§2.6: \"they are the whole list\"");
+    fn there_are_eighty_one_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 81, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");

@@ -594,6 +594,11 @@ const PUSH_CHAR: &str = "science_string_push_char";
 const ARRAY_WITH_CAPACITY: &str = "science_array_with_capacity";
 const ARRAY_PUSH: &str = "science_array_push";
 const ARRAY_LEN: &str = "science_array_len";
+/// `for entry in counts:` and `for x in set:`: the loop's extent, and the
+/// entry at a position — null for a removed entry's hole. See
+/// [`Builder::lower_for_over_map`].
+const MAP_EXTENT: &str = "science_map_extent";
+const MAP_ENTRY_AT: &str = "science_map_entry_at";
 /// `collections-and-chains.md` §1.4's one **barrier**, as the one call a
 /// fused chain still makes: `sorted(by: key)` buffers, sorts and yields.
 /// The keys are an `Array[Int]` the same loop computed — see the entry
@@ -1995,6 +2000,14 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         // `Iterate` implemented on *it* rather than on the container. That is
         // a spec amendment, and until it lands this is what the amendment
         // would compile to.
+        // `Map` and `Set`, for `Array`'s reason one container over — and asked
+        // of the subject's *type* before anything is evaluated, so a subject
+        // that is neither is evaluated once, by whichever path does take it.
+        if self.iterates_in_insertion_order(self.thir.ty(iter)) {
+            let (place, next) = self.borrow_source(iter, block, span);
+            let place = self.auto_deref(place);
+            return self.lower_for_over_map(dest, pattern, place, body, next, span);
+        }
         if let Some((place, next)) = self.array_subject(iter, block, span) {
             return self.lower_for_over_array(dest, pattern, place, body, next, span);
         }
@@ -4004,6 +4017,205 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             step,
             Place::local(stepped),
             Rvalue::Binary { op: BinaryOp::Add, lhs: Operand::Copy(Place::local(cursor)), rhs: one },
+            span,
+        );
+        self.assign(
+            step,
+            Place::local(cursor),
+            Rvalue::Use(Operand::Copy(Place::local(stepped))),
+            span,
+        );
+        self.terminate(step, TerminatorKind::Goto { target: head }, span);
+        self.loops.pop();
+
+        self.assign(exit, dest, Rvalue::Use(Operand::Const(Constant::Unit)), span);
+        exit
+    }
+
+    /// Whether a `for` over a value of this type walks a `Map` or a `Set` —
+    /// directly or through any number of borrows.
+    fn iterates_in_insertion_order(&mut self, ty: Ty) -> bool {
+        let mut ty = self.revealed(ty);
+        while let TyKind::Borrowed { inner, .. } = *self.context.types.kind(ty) {
+            ty = self.revealed(inner);
+        }
+        let TyKind::Named { def, args } = self.context.types.kind(ty) else { return false };
+        let (def, arity) = (*def, args.len());
+        let prelude = self.context.decls.prelude();
+        (prelude.get("Map") == Some(def) && arity == 2)
+            || (prelude.get("Set") == Some(def) && arity == 1)
+    }
+
+    /// `for entry in counts:` over a `Map[K, V]`, and `for x in set:` over a
+    /// `Set[T]`, in insertion order.
+    ///
+    /// # The decision
+    ///
+    /// **The array loop, with the index replaced by a runtime accessor and a
+    /// hole test added.** One shared borrow of the map, taken before the loop
+    /// and live across every turn; the extent — `science_map_extent`, every
+    /// entry position written since the last rebuild — read once; a cursor
+    /// that is a local of this loop; and on every turn
+    /// `science_map_entry_at(&map, cursor)`, whose answer is the item as an
+    /// `Item?`: null for a removed entry's hole, which the loop skips, and
+    /// otherwise the `&Entry[K, V]` — or the `&T`, for a set — that the
+    /// pattern binds.
+    ///
+    /// # The reason
+    ///
+    /// `collections-and-chains.md` §5.2's AMENDMENT 9 fixes the order, §4.2's
+    /// AMENDMENT 11 fixes the borrow — `for x in xs:` is `xs.iterate()`, which
+    /// borrows shared — and a `Map`, like an `Array`, has nowhere to keep a
+    /// cursor, so [`Builder::lower_for_over_array`]'s argument for a lowering
+    /// of its own applies unchanged.
+    ///
+    /// **The item is reached through the loop's loan, and that is what makes
+    /// this sound rather than merely working.** The accessor is a
+    /// [`Callee::Runtime`], which `science-regions` treats as opaque: its
+    /// result may point into anything its arguments reach. The loan is one of
+    /// the arguments on every turn, so (1) the loan is live for the whole loop
+    /// — `for e in m: m.insert(…)` conflicts with it by rule 4, and is
+    /// refused rather than left to reallocate the entries under the item —
+    /// and (2) an item stored somewhere that outlives the loop keeps the loan
+    /// alive with it, which is the array case's `(*reference)[at]` projection
+    /// reached by a different road.
+    ///
+    /// **Mutation during iteration is refused, not defined.** The note does
+    /// not say what inserting into a map one is walking means, and the only
+    /// answers a table can give are Python's runtime error or an order that
+    /// depends on when the insertion happened. The borrow makes it a compile
+    /// error instead, which is the same answer `Array` gives.
+    ///
+    /// # The cost
+    ///
+    /// A call per turn where the array loop has a projection, and a turn per
+    /// removed entry since the last rebuild. Both are bounded by the table's
+    /// own load factor: holes are at most a quarter of the slot count before a
+    /// rebuild compacts them.
+    fn lower_for_over_map(
+        &mut self,
+        dest: Place,
+        pattern: PatId,
+        map: Place,
+        body: thir::BlockId,
+        mut block: BlockId,
+        span: Span,
+    ) -> BlockId {
+        let Some(int_ty) = self.context.decls.prelude().ty(self.context.types, "Int") else {
+            return block;
+        };
+
+        // The loop's loan, for `lower_for_over_array`'s reason: taken once,
+        // with `in_argument` false, and copied — never consumed — by every
+        // call below.
+        let map_ty = self.place_ty(&map);
+        let borrowed = self.context.types.borrowed(false, map_ty);
+        let reference = self.temp(borrowed, span, block);
+        block = self.borrow_place(Place::local(reference), false, map, block, span, false);
+        let extent = self.temp(int_ty, span, block);
+        block = self.emit_call(
+            Place::local(extent),
+            Callee::Runtime(MAP_EXTENT),
+            vec![Operand::Copy(Place::local(reference))],
+            block,
+            span,
+        );
+
+        let cursor = self.temp(int_ty, span, block);
+        self.assign(block, Place::local(cursor), Rvalue::Use(Self::bits(0)), span);
+
+        // The item, and its `Item?` slot, outside the loop for `lower_loop`'s
+        // reason.
+        let element_ty = self.thir.pat(pattern).ty;
+        let slot_ty = self.context.types.nullable(element_ty);
+        let slot = self.temp(slot_ty, span, block);
+        let present = self.temp(self.bool_ty, span, block);
+
+        let head = self.new_block();
+        let fetch = self.new_block();
+        let body_block = self.new_block();
+        let step = self.new_block();
+        let exit = self.new_block();
+        self.terminate(block, TerminatorKind::Goto { target: head }, span);
+
+        // The cursor never goes below zero, so the signed comparison is the
+        // same question the array loop's unsigned one asks.
+        let more = self.temp(self.bool_ty, span, head);
+        self.assign(
+            head,
+            Place::local(more),
+            Rvalue::Binary {
+                op: BinaryOp::Lt,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Operand::Copy(Place::local(extent)),
+            },
+            span,
+        );
+        self.terminate(
+            head,
+            TerminatorKind::If {
+                cond: Operand::Copy(Place::local(more)),
+                then_block: fetch,
+                else_block: exit,
+            },
+            span,
+        );
+
+        // A position the loop body cannot reassign: the cursor is written
+        // twice, and a single-assignment copy says which entry this turn is.
+        let at = self.temp(int_ty, span, fetch);
+        self.assign(fetch, Place::local(at), Rvalue::Use(Operand::Copy(Place::local(cursor))), span);
+        let fetched = self.emit_call(
+            Place::local(slot),
+            Callee::Runtime(MAP_ENTRY_AT),
+            vec![Operand::Copy(Place::local(reference)), Operand::Copy(Place::local(at))],
+            fetch,
+            span,
+        );
+        self.assign(
+            fetched,
+            Place::local(present),
+            Rvalue::IsPresent(Operand::Copy(Place::local(slot))),
+            span,
+        );
+        // A hole goes straight to the increment.
+        self.terminate(
+            fetched,
+            TerminatorKind::If {
+                cond: Operand::Copy(Place::local(present)),
+                then_block: body_block,
+                else_block: step,
+            },
+            span,
+        );
+
+        self.loops.push(LoopScope { head, continue_to: step, exit, depth: self.scopes.len() });
+        self.push_scope();
+        // The general path's narrowing. The item is a borrow, so the read is
+        // a copy and nothing here owns anything.
+        let narrowed = self.temp(element_ty, span, body_block);
+        let read = self.read(Place::local(slot), element_ty);
+        self.assign(
+            body_block,
+            Place::local(narrowed),
+            Rvalue::Narrow { operand: read, ty: element_ty },
+            span,
+        );
+        let mut after = self.bind_pattern(&Place::local(narrowed), pattern, body_block);
+        let discard = self.temp(Ty::UNIT, span, after);
+        after = self.lower_block(Place::local(discard), body, after);
+        after = self.pop_scope(after, span);
+        self.terminate(after, TerminatorKind::Goto { target: step }, span);
+
+        let stepped = self.temp(int_ty, span, step);
+        self.assign(
+            step,
+            Place::local(stepped),
+            Rvalue::Binary {
+                op: BinaryOp::Add,
+                lhs: Operand::Copy(Place::local(cursor)),
+                rhs: Self::bits(1),
+            },
             span,
         );
         self.assign(

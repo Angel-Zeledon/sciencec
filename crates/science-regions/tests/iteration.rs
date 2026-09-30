@@ -219,3 +219,70 @@ def go(xs: &Array[Int]):
         "a `for` over an `Array` calls nothing unresolved, so nothing excuses it"
     );
 }
+
+// --- `Map` and `Set`: the same loan, reached through a runtime accessor ------
+//
+// `science-mir`'s `lower_for_over_map` takes the array loop's shared loan and
+// passes it, on every turn, to `science_map_entry_at` — a `Callee::Runtime`
+// this crate treats as opaque, so the entry it hands back may point into
+// anything the loan reaches. Nothing below is a rule of its own; each test is
+// rule 4 or Decision 1 arriving at a construct through that one call.
+
+/// **The map's version of the program the loop's borrow exists to refuse.**
+/// An insertion can rebuild the table and move every entry, and the loop is
+/// holding a borrow of one of them. `collections-and-chains.md` does not say
+/// what inserting into a map one is walking means; this makes it a compile
+/// error rather than an answer.
+#[test]
+fn a_for_over_a_map_the_body_inserts_into_is_refused() {
+    let source = "\
+def go(counts: &mut Map[Int, Int]):
+    for entry in counts:
+        counts.insert(entry.key + 1, 0)
+";
+    assert_eq!(reported(source), vec![330]);
+}
+
+/// And a `Set`, whose `remove` destroys the element the loop may be looking at.
+#[test]
+fn a_for_over_a_set_the_body_removes_from_is_refused() {
+    let source = "\
+def go(seen: &mut Set[Int]):
+    for x in seen:
+        seen.remove(x)
+";
+    assert_eq!(reported(source), vec![330]);
+}
+
+/// **An entry that escapes the loop keeps the loan alive with it.** The
+/// insertion after the loop would be fine on its own — the next test is that
+/// control — and is refused here only because `kept` still points into the
+/// table it would rebuild. This is the half of the soundness argument the
+/// accessor's opacity carries: the entry's region flows from the loan.
+#[test]
+fn an_entry_kept_past_the_loop_keeps_the_map_borrowed() {
+    let source = "\
+def go(counts: &mut Map[Int, Int]) -> Int:
+    let mutable kept: (&Entry[Int, Int])? be null
+    for entry in counts:
+        kept be entry
+    counts.insert(9, 9)
+    if kept?:
+        return kept.value
+    0
+";
+    assert_eq!(reported(source), vec![330]);
+}
+
+/// The control for both: read in the loop, write after it, nothing kept.
+#[test]
+fn reading_a_map_in_the_loop_and_writing_it_after_is_fine() {
+    let source = "\
+def go(counts: &mut Map[Int, Int]):
+    let mutable total be 0
+    for entry in counts:
+        total be total + entry.value + counts.length()
+    counts.insert(total, 0)
+";
+    assert_eq!(reported(source), Vec::<u16>::new());
+}

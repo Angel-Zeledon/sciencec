@@ -298,3 +298,228 @@ def main():
     assert_eq!(ran.stdout, "499995\n", "stderr: {}", ran.stderr);
     assert_eq!(ran.status, Some(0), "stderr: {}", ran.stderr);
 }
+
+// --- Iteration, in insertion order -------------------------------------------
+//
+// `collections-and-chains.md` §5.2's AMENDMENT 9: `Map` and `Set` iterate in
+// the order their keys were first inserted. `for entry in counts:` binds a
+// `&Entry[K, V]` (§5.4, §1.3) and `for x in set:` a `&T`; `science-rt`'s
+// `map.rs` stores each pair as that record, and `science-mir`'s
+// `lower_for_over_map` walks it. Every expected output below is written in
+// insertion order and would be in hash order on the table this replaced —
+// which is the whole claim, since hash order would differ between hashers and
+// insertion order cannot.
+
+/// Twenty keys, inserted in an order that is neither sorted nor anything a
+/// hash would produce, come back in that order after the table has been
+/// rebuilt from eight slots to thirty-two on the way.
+#[test]
+fn a_map_iterates_in_insertion_order_across_a_rehash() {
+    let source = "\
+def main():
+    let mutable m be Map[Int, Int].new()
+    for i in 0..20:
+        let key be (i * 7 + 3) % 20
+        m.insert(key, i)
+    let mutable line be \"\"
+    for entry in m:
+        line be f\"{line}{entry.key}:{entry.value} \"
+    print(line)
+";
+    let expected: String =
+        (0..20).map(|i| format!("{}:{} ", (i * 7 + 3) % 20, i)).collect::<String>() + "\n";
+    assert_eq!(prints("order-rehash", source), expected);
+}
+
+/// A removed key vanishes from the walk without moving anything else; the
+/// same key inserted again is a new key and goes last; overwriting a key that
+/// is present keeps its place (`stdlib-core.md` §3.6: *"re-inserting an
+/// existing key does not move it"*). `continue` and `break` reach the loop's
+/// increment and exit, which have their own blocks here because a removed
+/// entry's hole skips the body.
+#[test]
+fn removal_reinsertion_and_overwrite_each_do_what_the_order_rules_say() {
+    let source = "\
+def main():
+    let mutable m be Map[Int, Int].new()
+    for key in [5, 1, 4, 2, 3]:
+        m.insert(key, key * 10)
+    let gone be m.remove(4)
+    m.insert(4, 44)
+    m.insert(1, 11)
+    for entry in m:
+        if entry.key is 2:
+            continue
+        print(f\"{entry.key}={entry.value}\")
+    for entry in m:
+        if entry.key is 3:
+            break
+        print(entry.key)
+";
+    assert_eq!(
+        prints("order-remove", source),
+        "5=50\n1=11\n3=30\n4=44\n5\n1\n2\n"
+    );
+}
+
+/// `String` keys and values — owned, dropped by the map, borrowed by the loop
+/// and read through the borrow — over a map reached through a `&` parameter
+/// and through a record field, and a nested loop over the same map, which two
+/// shared loans allow.
+#[test]
+fn a_string_keyed_map_is_walked_through_a_borrow_and_a_field() {
+    let source = "\
+type Index:
+    words: Map[String, String]
+
+def show(words: &Map[String, String]):
+    for entry in words:
+        print(f\"{entry.key} -> {entry.value} ({entry.key.length()})\")
+
+def main():
+    let mutable words be Map[String, String].new()
+    words.insert(\"uno\", \"one\")
+    words.insert(\"dos\", \"two\")
+    words.insert(\"tres\", \"three\")
+    words.insert(\"dos\", \"TWO\")
+    show(words)
+    let index be Index(words: words)
+    for a in index.words:
+        for b in index.words:
+            if a.key is not b.key:
+                write(f\"{a.key}/{b.key} \")
+    print(\"\")
+";
+    assert_eq!(
+        prints("strings", source),
+        "uno -> one (3)\ndos -> TWO (3)\ntres -> three (4)\n\
+         uno/dos uno/tres dos/uno dos/tres tres/uno tres/dos \n"
+    );
+}
+
+/// A value narrower than its key, and a record value, so the value is read at
+/// the offset `science-rt`'s `entry_layout` computed and not merely at the
+/// key's size: `Entry[Int, Bool]` is sixteen bytes with seven of padding, and
+/// `Entry[Int, Pair]` holds a record whose own fields are read through the
+/// entry.
+#[test]
+fn the_entry_layout_agrees_with_the_compilers_for_padded_values() {
+    let source = "\
+type Pair:
+    weight: F64
+    flag: Bool
+
+def main():
+    let mutable flags be Map[Int, Bool].new()
+    for i in 0..10:
+        flags.insert(9 - i, i % 3 is 0)
+    for e in flags:
+        write(f\"{e.key}{e.value} \")
+    print(\"\")
+    let mutable pairs be Map[Int, Pair].new()
+    pairs.insert(2, Pair(weight: 1.5, flag: true))
+    pairs.insert(1, Pair(weight: 2.5, flag: false))
+    for e in pairs:
+        print(f\"{e.key} {e.value.weight} {e.value.flag}\")
+";
+    assert_eq!(
+        prints("layout", source),
+        "9true 8false 7false 6true 5false 4false 3true 2false 1false 0true \n\
+         2 1.5 true\n1 2.5 false\n"
+    );
+}
+
+/// `for x in set:` yields the elements, in insertion order, with a duplicate
+/// insert ignored and a removed element gone.
+///
+/// `first` is annotated `Int`, and the annotation is load-bearing for a reason
+/// that is not this file's: an unannotated `let mutable first be 0` later
+/// assigned a loop item infers `first` at `&Int`, and `first is 0` then
+/// reaches the backend as `==` over a borrow (`SC0400`). A `for` over an
+/// `Array` does exactly the same; it is `science-types`' inference, measured
+/// here and not changed.
+#[test]
+fn a_set_iterates_its_elements_in_insertion_order() {
+    let source = "\
+def main():
+    let mutable seen be Set[String].new()
+    for word in [\"pear\", \"fig\", \"apple\", \"fig\", \"kiwi\"]:
+        seen.insert(word.clone())
+    seen.remove(\"apple\")
+    for word in seen:
+        print(word)
+    let mutable ids be Set[Int].new()
+    for i in 0..12:
+        ids.insert(100 - i * 3)
+    let mutable total be 0
+    let mutable first: Int be 0
+    for id in ids:
+        if first is 0:
+            first be id
+        total be total + id
+    print(f\"{first} {total}\")
+";
+    assert_eq!(prints("set", source), "pear\nfig\nkiwi\n100 1002\n");
+}
+
+/// **No leak, with a constant live set.** Three thousand rounds of: build a
+/// map of twenty owned keys and values, remove one and reinsert it, overwrite
+/// another, copy the keys into a `Set` through the loop, walk the set, and
+/// drop everything. Each round's live set is the same size, so a leak shows
+/// as a growing heap rather than hiding among values that are legitimately
+/// kept — `NEXT-SESSION.md`'s rule, after a report counted three hundred
+/// thousand retained keys as a leak.
+///
+/// The printed total checks that every round did the work; `leaks --atExit`
+/// checks the heap. The second half runs only where macOS's `leaks` exists.
+#[test]
+fn iterating_maps_and_sets_of_owned_strings_leaks_nothing() {
+    let source = "\
+def main():
+    let mutable last be 0
+    for round in 0..3000:
+        let mutable m be Map[String, String].new()
+        for i in 0..20:
+            m.insert(f\"k{i}\", f\"v{i}\")
+        let gone be m.remove(\"k3\")
+        m.insert(\"k3\", \"again\")
+        m.insert(\"k5\", \"over\")
+        let mutable seen be Set[String].new()
+        for e in m:
+            seen.insert(e.key.clone())
+        seen.remove(\"k7\")
+        let mutable count be 0
+        for s in seen:
+            count be count + s.length()
+        let mutable lengths be 0
+        for e in m:
+            lengths be lengths + e.key.length() + e.value.length()
+        last be lengths + count
+    print(last)
+";
+    let dir = scratch("maps", "iteration_leaks");
+    require_runtime();
+    let built = lower(source).build_at(&executable(&dir, "iteration_leaks"), OptLevel::O2);
+    let ran = run(&built);
+    // Keys: ten of two bytes and ten of three, 50. Values: the same 50, less
+    // `v3` and `v5`, plus `again` and `over`: 55. The set: the 50 key bytes
+    // less `k7`: 48.
+    assert_eq!(ran.stdout, "153\n", "stderr: {}", ran.stderr);
+    assert_eq!(ran.status, Some(0), "stderr: {}", ran.stderr);
+
+    let leaks = std::path::Path::new("/usr/bin/leaks");
+    if cfg!(target_os = "macos") && leaks.is_file() {
+        let report = std::process::Command::new(leaks)
+            .arg("--atExit")
+            .arg("--")
+            .arg(&built.executable)
+            .output()
+            .expect("`leaks` runs");
+        let text = String::from_utf8_lossy(&report.stdout);
+        assert!(
+            text.contains(" 0 leaks for 0 total leaked bytes"),
+            "`leaks --atExit` found something:\n{text}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

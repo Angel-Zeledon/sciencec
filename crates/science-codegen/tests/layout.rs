@@ -98,12 +98,14 @@ fn every_field_is_where_decision_17_puts_it() {
     assert_eq!(array.field_offset(1), Some(offset_of!(ScienceArray, len) as u64));
     assert_eq!(array.field_offset(2), Some(offset_of!(ScienceArray, cap) as u64));
 
+    // Renamed field for field by `collections-and-chains.md` §5.2's insertion
+    // order — the same six words at the same offsets, meaning different things.
     let map = layout_of(host(), &RtAggregate::Map.cg_ty());
-    assert_eq!(map.field_offset(0), Some(offset_of!(ScienceMap, states) as u64));
-    assert_eq!(map.field_offset(1), Some(offset_of!(ScienceMap, keys) as u64));
-    assert_eq!(map.field_offset(2), Some(offset_of!(ScienceMap, values) as u64));
+    assert_eq!(map.field_offset(0), Some(offset_of!(ScienceMap, slots) as u64));
+    assert_eq!(map.field_offset(1), Some(offset_of!(ScienceMap, entries) as u64));
+    assert_eq!(map.field_offset(2), Some(offset_of!(ScienceMap, live) as u64));
     assert_eq!(map.field_offset(3), Some(offset_of!(ScienceMap, len) as u64));
-    assert_eq!(map.field_offset(4), Some(offset_of!(ScienceMap, tombstones) as u64));
+    assert_eq!(map.field_offset(4), Some(offset_of!(ScienceMap, used) as u64));
     assert_eq!(map.field_offset(5), Some(offset_of!(ScienceMap, cap) as u64));
 
     let info = layout_of(host(), &RtAggregate::TypeInfo.cg_ty());

@@ -26,14 +26,20 @@ fn array_is_pointer_length_capacity() {
     assert_eq!(offset_of!(ScienceArray, cap), 2 * WORD);
 }
 
+/// Still six words after AMENDMENT 9's insertion order, and that is not a
+/// coincidence worth relying on but a count worth pinning: the parallel
+/// `states`/`keys`/`values` arrays became `slots`/`entries`/`live`, and
+/// `tombstones` became `used`, the number of entry positions written — the
+/// tombstone count is no longer needed, because the positions written bound
+/// the index's occupied-plus-tombstoned slots from above.
 #[test]
 fn map_is_six_words() {
     assert_eq!(size_of::<ScienceMap>(), 6 * WORD);
-    assert_eq!(offset_of!(ScienceMap, states), 0);
-    assert_eq!(offset_of!(ScienceMap, keys), WORD);
-    assert_eq!(offset_of!(ScienceMap, values), 2 * WORD);
+    assert_eq!(offset_of!(ScienceMap, slots), 0);
+    assert_eq!(offset_of!(ScienceMap, entries), WORD);
+    assert_eq!(offset_of!(ScienceMap, live), 2 * WORD);
     assert_eq!(offset_of!(ScienceMap, len), 3 * WORD);
-    assert_eq!(offset_of!(ScienceMap, tombstones), 4 * WORD);
+    assert_eq!(offset_of!(ScienceMap, used), 4 * WORD);
     assert_eq!(offset_of!(ScienceMap, cap), 5 * WORD);
 }
 
@@ -147,6 +153,9 @@ fn the_nullable_discriminant_is_the_bool_that_the_presence_test_yields() {
     assert_eq!(SCIENCE_NULLABLE_PRESENT, u8::from(true));
 }
 
+/// The three states are now the low two bits of a slot *word* rather than a
+/// byte of their own, and they kept their values: zeroed memory is still an
+/// empty index, which is what lets a rebuild clear it with one `write_bytes`.
 #[test]
 fn slot_states_are_the_documented_bytes() {
     assert_eq!(SCIENCE_MAP_SLOT_EMPTY, 0);
