@@ -298,7 +298,14 @@ fn nothing_outside_the_table_is_callable() {
     // search is a loop over the haystack, and `replace` is that loop building
     // a new buffer, so none stands in for an instruction sequence — the same
     // door `science_string_lines` went through, and not a convenience.
-    assert_eq!(RUNTIME.len(), 76);
+    //
+    // **Seventy-nine.** `science_write_error`, `science_print_error` and
+    // `science_flush` are §8's `write_error`, `print_error` and `flush`, which
+    // `strings-formatting-and-docs.md` §4.3 added to the free functions. A
+    // write to a file descriptor and a flush of a buffer that lives inside
+    // `std` are not instruction sequences this crate could have emitted, and
+    // none of the three is on the tempting list below.
+    assert_eq!(RUNTIME.len(), 79);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

@@ -645,6 +645,13 @@ pub const RUNTIME: &[RuntimeFn] = &[
     // --- io.rs ---
     RuntimeFn { symbol: "science_write", params: &[P], ret: RtRet::Void },
     RuntimeFn { symbol: "science_print", params: &[P], ret: RtRet::Void },
+    // `strings-formatting-and-docs.md` §4.2's other three output functions:
+    // `write`'s and `print`'s stderr twins, and `flush`. Each is a `String` in
+    // and nothing out, so none joins the `sret` set, and `science_flush` is
+    // the second entry point after `science_abort` to take no argument at all.
+    RuntimeFn { symbol: "science_write_error", params: &[P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_print_error", params: &[P], ret: RtRet::Void },
+    RuntimeFn { symbol: "science_flush", params: &[], ret: RtRet::Void },
     RuntimeFn { symbol: "science_read_file", params: &[P], ret: RtRet::Aggregate(RtAggregate::StringAndIoError) },
     RuntimeFn { symbol: "science_write_file", params: &[P, P], ret: RtRet::Aggregate(RtAggregate::NullableIoError) },
     RuntimeFn { symbol: "science_io_error_message", params: &[P], ret: RtRet::Aggregate(RtAggregate::String) },
@@ -1070,9 +1077,19 @@ mod tests {
     /// sequence this crate could have emitted, and Decision 14's rule is met
     /// the way `science_string_lines` met it. `find` is §5.3's
     /// bool-plus-out-parameter shape, the same one `science_chars_next` has.
+    ///
+    /// **Seventy-nine**: `science_write_error`, `science_print_error` and
+    /// `science_flush`, the three `strings-formatting-and-docs.md` §4.3 added
+    /// to §8's free functions and `science-resolve`'s `builtins.rs` kept out of
+    /// the prelude until an entry point stood behind each. None of them is an
+    /// instruction sequence in disguise — they are writes to a file descriptor
+    /// and a flush of a buffer this crate cannot see — so Decision 14 is met
+    /// the way `science_print` meets it. The first two are `science_write` and
+    /// `science_print` one stream over; the third is the flush `science_exit`
+    /// already performed, callable without ending the process.
     #[test]
-    fn there_are_seventy_six_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 76, "§2.6: \"they are the whole list\"");
+    fn there_are_seventy_nine_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 79, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");

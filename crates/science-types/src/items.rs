@@ -264,7 +264,13 @@ const WANTED: &[&str] = &[
     // against. §4.1's decision that `print` is unary is a fact about the call
     // rather than about the value, and it is the half of that decision the
     // phases below this one do not have to move for.
-    "print", "write",
+    //
+    // **`print_error` and `write_error` joined them** when `science-rt` gained
+    // the entry points behind them. §4.2 gives the pair `print`'s and `write`'s
+    // shape one stream over, so they are here for the same reason, buy the
+    // same arity, and are as undeclared. `flush` is not here: it is declared,
+    // with no parameter, so its arity is the ordinary check's.
+    "print", "write", "print_error", "write_error",
     // `Array`, which `check`'s `array_lit` builds. It is the first *type
     // constructor* on this list and the first entry here for a reason that is
     // not "tell it from a user's declaration of the same name": Decision 10 of
@@ -457,14 +463,18 @@ impl Prelude {
     /// The name of §4.1's unary output function this definition is, if it is
     /// one.
     ///
-    /// Two entries and not three: `panic` takes `borrowed any Display` in the
+    /// Four entries and not five: `panic` takes `borrowed any Display` in the
     /// same section and is *declared*, so a `panic("a", b)` is already
     /// `SC0527` from the ordinary arity check and does not need this one.
+    /// `print_error` and `write_error` are §4.2's stderr twins of the first two,
+    /// and are undeclared for the same reason, so they need it identically.
     /// Returning the name rather than a `bool` is what lets the message say
     /// which function it is about without the caller reaching back into the
     /// definition table for a string it already had.
     pub fn unary_output(&self, def: DefId) -> Option<&'static str> {
-        ["print", "write"].into_iter().find(|name| self.get(name) == Some(def))
+        ["print", "write", "print_error", "write_error"]
+            .into_iter()
+            .find(|name| self.get(name) == Some(def))
     }
 }
 

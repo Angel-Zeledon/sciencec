@@ -142,6 +142,11 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// and is MEMORY for the reason every `String` return is; `ends_with`,
 /// `contains` and `find` return a `Bool` — `find`'s `Int?` goes out through
 /// a pointer, §5.3's convention — and the count did not move for them.
+/// **Still fourteen, with the table at seventy-nine.** `science_write_error`,
+/// `science_print_error` and `science_flush` return nothing, so three entries
+/// joined `RUNTIME` after `String`'s four and none joined the derived set — the second assertion
+/// moved and the first did not, which is the two numbers measuring different
+/// things as they should.
 #[test]
 fn the_derived_sret_set_is_fourteen_and_has_moved_six_times() {
     let triple = Triple::host().expect("a supported host");
@@ -155,7 +160,7 @@ fn the_derived_sret_set_is_fourteen_and_has_moved_six_times() {
         "the derived `sret` set is not the fourteen `science-codegen`'s \
          `runtime.rs` names"
     );
-    assert_eq!(RUNTIME.len(), 76, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 79, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

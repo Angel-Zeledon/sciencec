@@ -2552,6 +2552,15 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// keeping this condition at `entry.name != "print"` would just move the
     /// gap from *"no lowering"* to *"no rendering"* for the same call.
     ///
+    /// **`print_error` and `write_error` are the same condition, one stream
+    /// over.** §4.2's table gives them `print`'s and `write`'s shape exactly —
+    /// one `borrowed any Display`, a newline or none — and differing only in
+    /// the file descriptor, which is `lower_print`'s business and not this
+    /// crate's. Leaving them off this list would make `print_error(42)` reach
+    /// the backend as an `Int` handed to a `String` writer, refused there by
+    /// type, while `print(42)` beside it builds: the gap the paragraph above
+    /// describes, reopened for two new names.
+    ///
     /// **Both exclusions are load-bearing and the second one was measured.** A
     /// `String` already prints without rendering and the builder would cost it
     /// an allocation and a copy. A type the builder *cannot* render would be
@@ -2566,7 +2575,9 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// borrows of a program it cannot lower anyway.
     fn prints_by_rendering(&mut self, def: DefId, arg: ExprId) -> bool {
         let entry = self.context.defs.get(def);
-        if !entry.is_builtin() || !matches!(entry.name.as_str(), "print" | "write") {
+        if !entry.is_builtin()
+            || !matches!(entry.name.as_str(), "print" | "write" | "print_error" | "write_error")
+        {
             return false;
         }
         // `Write.write` is a builtin named `write` too, and it is a method:
@@ -2705,8 +2716,8 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// **The cost.** A signature-less callee that really does consume gets a
     /// double release: nothing drops it here, the callee drops it there. That
     /// cost is not new and is not payable today — the only signature-less
-    /// `Def`s in the language are `print` and `write`, and §4.1 declares both
-    /// `borrowed` — and the direction is the one §5 already chose for
+    /// `Def`s in the language are `print`, `write`, `print_error` and
+    /// `write_error`, and §4.1 and §4.2 declare all four `borrowed` — and the direction is the one §5 already chose for
     /// [`Callee::Unresolved`]: a leak a profiler finds rather than a
     /// use-after-free a user finds.
     fn has_no_signature(&self, callee: &Callee) -> bool {

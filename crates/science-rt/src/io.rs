@@ -1,4 +1,5 @@
-//! The free functions of §8: `print`, `println`, `read_file`, `write_file`.
+//! The free functions of §8: `print`, `write`, `print_error`, `write_error`,
+//! `flush`, `read_file`, `write_file`.
 //!
 //! The two file functions are the one place in this crate where the runtime
 //! assembles a Science aggregate itself rather than leaving it to codegen: every
@@ -208,6 +209,119 @@ pub unsafe extern "C" fn science_print(text: *const ScienceString) {
     let mut out = std::io::stdout().lock();
     let _ = out.write_all(bytes);
     let _ = out.write_all(b"\n");
+}
+
+/// Science's `write_error(value: borrowed any Display)` — [`science_write`]'s
+/// stderr twin, and the form that adds nothing.
+///
+/// # The decision
+///
+/// **This is [`science_write_error_bytes`](crate::science_write_error_bytes)
+/// with a `ScienceString` in front of it, and nothing else.** That symbol was
+/// named for this spelling before this one existed — its own note says so — and
+/// it already does every part of `strings-formatting-and-docs.md` §4.2's row:
+/// stderr, verbatim, unbuffered, a write error ignored. Writing the body a
+/// second time would be two stderr writers that could come to disagree, which
+/// is the defect `science-codegen-llvm`'s `runtime_reachability.rs` catalogues
+/// under other names.
+///
+/// # The reason
+///
+/// §4.2's table gives `print_error` and `write_error` the one stream and the
+/// one policy — *"stderr is unbuffered. A message that precedes a crash must
+/// survive the crash"* — and Rust's `std::io::stderr()` is unbuffered, so the
+/// policy is the platform's and not something this crate implements.
+///
+/// # The cost
+///
+/// **Standard output is flushed first, on every call**, because the delegate
+/// does. §4.2 says cross-stream ordering *"is not guaranteed"*, so this is the
+/// same courtesy `science_panic` pays and not a contract; what it costs is a
+/// flush of whatever partial line `write` left in stdout's `LineWriter` each
+/// time a progress message goes to stderr — at most one syscall per call, and
+/// none when stdout's buffer is empty, which under `print` it nearly always
+/// is. A program that interleaves thousands of `write` fragments with
+/// thousands of `write_error` calls pays it thousands of times; one that
+/// follows §4.2's own rule — *"results to stdout, progress and warnings to
+/// stderr"* — with `print` pays nothing it would notice.
+///
+/// # Safety
+///
+/// `text` must be a non-null, aligned pointer to a live [`ScienceString`].
+#[no_mangle]
+pub unsafe extern "C" fn science_write_error(text: *const ScienceString) {
+    // SAFETY: the caller guarantees a live `ScienceString`, and its `bytes()`
+    // are `len` readable bytes at a non-null, aligned pointer — including the
+    // empty string's dangling one (crate documentation, §7).
+    unsafe {
+        let bytes = (*text).bytes();
+        crate::science_write_error_bytes(bytes.as_ptr(), bytes.len());
+    }
+}
+
+/// Science's `print_error(value: borrowed any Display)` — [`science_print`]'s
+/// stderr twin.
+///
+/// As [`science_write_error`], followed by one `\n`, which is exactly
+/// [`science_print`]'s relation to [`science_write`] one stream over. The line
+/// feed is `\n` on every platform for the reason [`science_print`] gives.
+///
+/// **One write, not two.** The text and its newline are handed to the stderr
+/// writer as a single buffer, so an unbuffered stream sees one `write(2)` and a
+/// line from `print_error` cannot be split by anything another thread or a C
+/// library writes to stderr between the halves. F0 has no threads; a C library
+/// linked through an `extern` block does write to stderr, and it is the reason
+/// the allocation is paid rather than a second syscall.
+///
+/// # Safety
+///
+/// `text` must be a non-null, aligned pointer to a live [`ScienceString`].
+#[no_mangle]
+pub unsafe extern "C" fn science_print_error(text: *const ScienceString) {
+    // SAFETY: the caller guarantees a live `ScienceString`.
+    let bytes = unsafe { (*text).bytes() };
+    let mut line = Vec::with_capacity(bytes.len() + 1);
+    line.extend_from_slice(bytes);
+    line.push(b'\n');
+    // SAFETY: `line` owns `line.len()` initialised bytes and is non-null.
+    unsafe { crate::science_write_error_bytes(line.as_ptr(), line.len()) };
+}
+
+/// Science's `flush()` — empties standard output's buffer, and returns.
+///
+/// # The decision
+///
+/// **It flushes every buffered layer a Science program's stdout goes
+/// through**, which is two: Rust's `LineWriter` inside `std::io::stdout()`,
+/// where `print` and `write` put their bytes, and the C runtime's streams,
+/// where a C library called through an `extern` block puts its own. It is the
+/// same `flush_all` [`science_exit`](crate::science_exit) ends the process
+/// with, called without ending it.
+///
+/// # The reason
+///
+/// `strings-formatting-and-docs.md` §4.2 adds `flush` *"reluctantly"* and for
+/// exactly one case: *"`write` of a progress line with no newline is
+/// line-buffered into invisibility otherwise"*. That case is live, because
+/// [`science_write`] goes through the `LineWriter` and a `LineWriter` holds a
+/// partial line until a `\n` arrives. Flushing only Rust's layer would make
+/// `flush()` a statement about which of two buffers the user's bytes happened
+/// to be in, and the user cannot see which one that is.
+///
+/// # The cost
+///
+/// **`fflush(NULL)` flushes every C output stream, not only `stdout`** — a
+/// file a C library opened is flushed too. That is harmless, since flushing
+/// never discards anything, and it is `flush_all`'s documented choice; naming
+/// C's `stdout` alone would need its per-platform spelling (`stdout`,
+/// `__stdoutp`, `__acrt_iob_func(1)`) in a crate that otherwise reaches libc
+/// through one portable declaration.
+///
+/// A flush error is ignored, for [`science_write`]'s reason: `flush()` returns
+/// nothing to report one through.
+#[no_mangle]
+pub extern "C" fn science_flush() {
+    crate::exit::flush_all();
 }
 
 /// Science's `read_file(path: borrowed String) -> (String, IoError?)`.

@@ -340,12 +340,15 @@
 //! [`science_write_error_bytes`] is named against a spelling §8 does **not**
 //! have and `stdlib-core.md` §4.1 does: `write_error` is the stderr form that
 //! adds nothing and `print_error` is the form that appends a newline, dividing
-//! stderr exactly as `write` and `print` divide stdout. Only the `write_error`
-//! side exists here, because codegen composes the whole message — prefix,
-//! text and line terminator — as one static constant and has no call site for
-//! the other. Naming it for the spelling it will implement rather than for
-//! what it does today is this paragraph's own rule applied in advance, and the
-//! next paragraph is the record of what happens when it is not.
+//! stderr exactly as `write` and `print` divide stdout. It was written as the
+//! `write_error` side alone, because the emitted `main` composes the whole
+//! message — prefix, text and line terminator — as one static constant and had
+//! no call site for the other. Naming it for the spelling it would implement
+//! rather than for what it did then was this paragraph's own rule applied in
+//! advance, and it paid: when Science's `print_error` and `write_error` arrived
+//! they became [`science_print_error`] and [`science_write_error`], each a
+//! `ScienceString` in front of this symbol, and nothing had to be renamed. The
+//! next paragraph is the record of what happens when the rule is not applied.
 //!
 //! This paragraph said `link_`-prefixed until it was checked against the crate:
 //! all exported symbols are `science_`-prefixed and always were, and the

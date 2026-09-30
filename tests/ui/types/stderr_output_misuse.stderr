@@ -1,0 +1,37 @@
+error[SC0275]: `print_error` takes one value
+ --> tests/ui/types/stderr_output_misuse.science:8:5
+  |
+8 |     print_error("rows:", 3)
+  |     ^^^^^^^^^^^^^^^^^^^^^^^ 2 arguments were supplied
+  |
+  = note: interpolate instead: `print_error(f"… {value}")`
+
+error[SC0275]: `write_error` takes one value
+ --> tests/ui/types/stderr_output_misuse.science:9:5
+  |
+9 |     write_error()
+  |     ^^^^^^^^^^^^^ 0 arguments were supplied
+  |
+  = note: a blank line is `write_error("")`: there are no default arguments (§4.4)
+
+error[SC0527]: this call takes 0 arguments and was given 1
+  --> tests/ui/types/stderr_output_misuse.science:10:5
+   |
+10 |     flush(1)
+   |     ^^^^^^^^ 1 given
+
+error[SC0275]: `I64?` cannot be printed: it does not implement `Display`
+  --> tests/ui/types/stderr_output_misuse.science:11:17
+   |
+11 |     print_error(found)
+   |                 ^^^^^ this is `I64?`
+   |
+   = note: `print_error` renders its argument through `Display`. A nullable does not implement it until it is narrowed — `if x?: print_error(x)` — the same rule an f-string hole already enforces
+
+error[SC0275]: `I64?` cannot be written: it does not implement `Display`
+  --> tests/ui/types/stderr_output_misuse.science:12:17
+   |
+12 |     write_error(found)
+   |                 ^^^^^ this is `I64?`
+   |
+   = note: `write_error` renders its argument through `Display`. A nullable does not implement it until it is narrowed — `if x?: write_error(x)` — the same rule an f-string hole already enforces

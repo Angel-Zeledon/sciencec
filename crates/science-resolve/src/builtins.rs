@@ -214,67 +214,78 @@ const INTERFACES: &[&str] = &[
 
 /// The free functions (§8).
 ///
-/// Five, not `stdlib-core.md` §9's thirteen. The eight this list does not have
-/// — `print_error`, `write_error`, `flush`, `read_line`, `read_bytes`,
-/// `write_bytes`, `read_lines`, `write_lines` — are names in every program's
-/// scope forever (§1.3), and §12 of that note names *"thirteen free functions,
-/// and the trend is upward"* as its own second risk.
+/// Eight, not `stdlib-core.md` §9's thirteen. The five this list does not have
+/// — `read_line`, `read_bytes`, `write_bytes`, `read_lines`, `write_lines` —
+/// are names in every program's scope forever (§1.3), and §12 of that note
+/// names *"thirteen free functions, and the trend is upward"* as its own second
+/// risk.
 ///
-/// # Three of the eight stopped being a spec change, and they still do not go in
+/// # Three of the thirteen stopped being a spec change, and now they are in
 ///
 /// This comment used to rest its whole case on *"adding eight global names is a
-/// spec change under §2.2's rule"*. **For three of them that is no longer
+/// spec change under §2.2's rule"*. **For three of them that stopped being
 /// true.** `strings-formatting-and-docs.md` §4.3 makes the change and §8 item 5
 /// asks §8 for it by name: the list *"becomes `print`, `write`, `print_error`,
 /// `write_error`, `flush`, `panic`, `read_file`, `write_file`"*, and
 /// `stdlib-core.md` §4.1 restates the whole of it as settled — *"`print_error`
 /// and `write_error` go to stderr, `flush` is a free function … none of that is
-/// reopened"*. So the decision this file would have been taking has been taken
-/// elsewhere, by the note that owns the surface, and the question left here is
+/// reopened"*. So the decision this file would have been taking had been taken
+/// elsewhere, by the note that owns the surface, and the question left here was
 /// not *may they* but *can they mean anything yet*.
 ///
-/// **Decision: they stay off, and the reason is `science-rt`, not the
+/// **For a while the answer was no, and the reason was `science-rt`, not the
 /// namespace.** A name on this list resolves; a name that resolves with no
 /// entry point behind it is checked in silence and refused at the end of the
-/// build — `science-codegen-llvm` answers *"a call to `write_error`, which this
-/// crate was given no MIR body for"*, after the link the user waited for.
-/// Today `print_error("…")` is `SC0201`, at the call, with the name in the
-/// message, and it is **true**: this compiler has no `print_error`. Trading a
-/// true early diagnostic for a promise redeemed late is not a trade the prelude
-/// can make on its own.
+/// build — *"a call to `write_error`, which this crate was given no MIR body
+/// for"*, after the link the user waited for. `print_error("…")` was `SC0201`
+/// at the call instead, and that was true: the compiler had no `print_error`.
+/// The runtime had `science_write_error_bytes`, but as **codegen support** for
+/// the emitted `main`, taking bytes because its message is a constant in the
+/// binary; and it had no flush but `science_exit`'s.
 ///
-/// **Why the runtime cannot be assumed to have them.** `science-rt`'s `exit`
-/// module has `science_write_error_bytes`, and it is **codegen support**: its
-/// own note says it takes bytes rather than a `String` because the message is a
-/// constant in the binary, and *"there is no
-/// `science_write_error(text: *const ScienceString)` beside this one, because
-/// codegen has no call site for it"*. It is a writer for the emitted `main`,
-/// not a Science name wearing a different spelling. There is no `science_flush`
-/// at all — `science_exit` flushes on the way out and nothing else does — and
-/// §4.2's buffering policy (stdout line-buffered on a terminal, 64 KiB
-/// block-buffered otherwise, stderr unbuffered) is not implemented: Rust's
-/// `LineWriter` line-buffers unconditionally, which is a different policy that
-/// happens to agree in the terminal case.
+/// # The handover, and how it was redeemed
 ///
-/// # The handover, exactly
+/// The handover this comment wrote asked for three entry points in
+/// `science-rt`, each the stderr or flush twin of a symbol that already
+/// existed, each added to `science-codegen`'s `RUNTIME` table and given an arm
+/// beside `science-codegen-llvm`'s `lower_print`. All three exist:
 ///
-/// Three entry points in `science-rt`, each the stderr or flush twin of a
-/// symbol that already exists, each then added to `science-codegen`'s `RUNTIME`
-/// table and given an arm beside `lower_print`:
-///
-/// - `science_print_error(text: *const ScienceString)` — `science_write_error`
-///   then one `\n`, which is `science_print`'s relation to `science_write`.
 /// - `science_write_error(text: *const ScienceString)` — the `ScienceString`
-///   form of `science_write_error_bytes`, unbuffered per §4.2.
-/// - `science_flush()` — flushes standard output. §4.2 adds `flush`
-///   *"reluctantly"* for exactly one case, a `write` of a progress line with no
-///   newline, and that case is live today because `science_write` goes through
-///   the same `LineWriter`.
+///   form of `science_write_error_bytes`, and nothing more: it hands that
+///   symbol its bytes, so stderr has one writer and one policy.
+/// - `science_print_error(text: *const ScienceString)` — the same with one
+///   `\n`, which is `science_print`'s relation to `science_write`.
+/// - `science_flush()` — the flush `science_exit` performs on the way out,
+///   without the way out. §4.2 adds `flush` *"reluctantly"* for exactly one
+///   case, a `write` of a progress line with no newline, and that case is
+///   live because `science_write` goes through a `LineWriter`.
 ///
-/// When those three exist, this list is a three-name edit and nothing else here
-/// moves — the names carry no signature, for the reason `print` and `write`
-/// carry none.
-const FUNCTIONS: &[&str] = &["print", "write", "panic", "read_file", "write_file"];
+/// **`print_error` and `write_error` carry no signature, for the reason
+/// `print` and `write` carry none** — §4.1 gives all four the same
+/// `(value: borrowed any Display)`, and [`FUNCTION_SIGNATURES`] says at length
+/// why that parameter cannot be declared yet. They are unary by
+/// `science-types`' `Prelude::unary_output`, and a non-`String` argument is
+/// rendered by `science-mir`'s `prints_by_rendering` exactly as `print`'s is,
+/// so `print_error(42)` means what `print(42)` means, one stream over.
+///
+/// **`flush` does carry one, and that is a departure from the handover's last
+/// line**, which said *"the names carry no signature"*. The reason given for
+/// `print` — a `borrowed any Display` parameter the back half cannot lower —
+/// does not reach a function with no parameter at all. `def flush()` declares
+/// exactly what §4.2 means, so `flush(x)` is the ordinary arity diagnostic
+/// rather than a call accepted in silence, and `let x be flush()` is `()`
+/// rather than an error type the checker agrees with everything through. The
+/// cost is one row in [`FUNCTION_SIGNATURES`] and one arm in the backend's
+/// free-builtin dispatch, beside `read_file`'s.
+///
+/// **What is still not implemented is §4.2's buffering policy**: stdout
+/// line-buffered on a terminal and 64 KiB block-buffered otherwise. Rust's
+/// `LineWriter` line-buffers unconditionally, which agrees in the terminal
+/// case and flushes more often than §4.2 asks in a pipe — a cost in syscalls,
+/// never in lost output, and so not a reason to hold these names back.
+const FUNCTIONS: &[&str] = &[
+    "print", "write", "print_error", "write_error", "flush", "panic", "read_file", "write_file",
+];
 
 /// `ffi`, the closed vocabulary of `ffi-c-boundary.md` §1.3.
 ///
@@ -2266,7 +2277,9 @@ pub fn is_unwritten(ty: &str, method: &str) -> bool {
 /// report names it as the deviation that should be closed by whoever lands
 /// `Path`.
 ///
-/// **`print` and `write` are deliberately left undeclared**, and this is the
+/// **`print` and `write` are deliberately left undeclared** — and
+/// `print_error` and `write_error` with them, whose §4.1 parameter is the same
+/// `borrowed any Display` and whose lowering is `print`'s — and this is the
 /// one place a declaration was written, measured, withdrawn, measured a second
 /// time and withdrawn again — for a different reason, which is the part worth
 /// reading.
@@ -2385,6 +2398,10 @@ const FUNCTION_SIGNATURES: &[Method] = &[
         params: &[("path", Ty::Ref(&STRING)), ("text", Ty::Ref(&STRING))],
         ret: Some(Ty::Opt(&IO_ERROR)),
     },
+    // `strings-formatting-and-docs.md` §4.2's `flush()`. Declared where
+    // `print_error` and `write_error` are not, because it has no `any
+    // Display` parameter to be unable to lower — see [`FUNCTIONS`].
+    Method { name: "flush", generics: &[], recv: None, params: &[], ret: None },
 ];
 
 /// Builds the HIR for the declared surface, given the names already allocated.

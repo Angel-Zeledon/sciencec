@@ -1747,26 +1747,15 @@ Formatter has:
   = note: interpolate instead: `print(f"… {value}")`</code></pre>
 
   <p class="note">
-    <strong>Of those five, the prelude declares three.</strong>
-    <code>print</code>, <code>write</code> and <code>panic</code> resolve;
-    <code>print_error</code> and <code>write_error</code> do not, and calling
-    one is <code>SC0200</code>, <em>cannot find <code>print_error</code> in
-    this scope</em>. That is deliberate and it is the better failure: a name
-    that resolves with no runtime entry point behind it is checked in silence
-    and refused at the end of the build, which tells the user nothing at the
-    place they can act on it. The two names are absent because the runtime has
-    no entry point for them, not because the namespace is crowded.
-    <span class="cite wip">changing</span>
-  </p>
-
-  <p class="note">
-    <strong>Of the three that resolve, one builds.</strong> <code>print</code>
-    is emitted. <code>write</code> and <code>panic</code> resolve, check, and
-    are refused by the back end with <code>SC0400</code>, <em>a call to
-    <code>write</code>, which this crate was given no MIR body for</em>. So
-    every listing on this page that produces output produces it through
-    <code>print</code>, and there is no program yet that can demonstrate a
-    panic message. <span class="cite wip">changing</span>
+    <strong>All five build, and so does <code>flush()</code>.</strong>
+    <code>print_error</code> and <code>write_error</code> take what
+    <code>print</code> and <code>write</code> take &mdash; one value, rendered
+    through <code>Display</code> &mdash; and the same misuse is the same
+    <code>SC0275</code>. <code>flush()</code> empties stdout's buffer, which is
+    what a <code>write</code> of a progress line with no newline needs before
+    anyone can see it. What is not yet implemented is the 64&nbsp;KiB block
+    buffering in a pipe: stdout is line-buffered everywhere today, which costs
+    syscalls and never output. <span class="cite wip">changing</span>
   </p>
 
   <p class="note">

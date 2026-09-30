@@ -7900,13 +7900,15 @@ fn print_takes_one_value(span: Span, name: &str, supplied: usize) -> Diagnostic 
         .with_note(note)
 }
 
-/// `SC0275` — a nullable handed straight to `print` or `write`, no
-/// interpolation involved. Same code as [`not_displayable`], for the reason
+/// `SC0275` — a nullable handed straight to `print` or `write` (or their
+/// stderr twins, `print_error` and `write_error`), no interpolation involved. Same code as [`not_displayable`], for the reason
 /// that function's own comment gives: §7's row is one row. Only the sentence
 /// changes, because nothing here was interpolated and the message should not
 /// claim it was.
 fn output_argument_not_displayable(span: Span, ty: &str, name: &str) -> Diagnostic {
-    let action = if name == "print" { "printed" } else { "written" };
+    // `print_error` prints and `write_error` writes: the verb follows the
+    // stdout half of the name, which is the half §4.2 says it means.
+    let action = if name.starts_with("print") { "printed" } else { "written" };
     Diagnostic::error(
         codes::NOT_DISPLAYABLE,
         format!("`{ty}` cannot be {action}: it does not implement `Display`"),

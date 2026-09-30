@@ -478,6 +478,23 @@ const CORPUS: &[(&str, &str)] = &[
          def main():\n\
          \x20   print(Doc(n: 1, weight: 0.5))\n",
     ),
+    // `strings-formatting-and-docs.md` §4.2's other three output functions,
+    // which joined `RUNTIME` together with their callers: the prelude names
+    // in `science-resolve`'s `builtins.rs`, and `lower_print`'s two new rows
+    // and `flush`'s arm here. The program is the smallest one that reaches all
+    // three — a literal to `write_error`, a rendered integer to `print_error`
+    // so the stderr pair goes through `prints_by_rendering` exactly as
+    // `write_reaches_stdout` sends `write` through it, and `flush()` — and it
+    // closes nothing on `ALLOWLIST`, because the symbols and their callers
+    // arrived in one change rather than one waiting on the other.
+    (
+        "stderr_and_flush",
+        "def main():\n\
+         \x20   write_error(\"progress: \")\n\
+         \x20   print_error(42)\n\
+         \x20   write(\"partial\")\n\
+         \x20   flush()\n",
+    ),
 ];
 
 /// Every symbol in [`RUNTIME`] this compiler's own lowering, run over

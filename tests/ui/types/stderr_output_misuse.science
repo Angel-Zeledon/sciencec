@@ -1,0 +1,12 @@
+# `strings-formatting-and-docs.md` §4.2's stderr pair and `flush`, each
+# called the way §4.1 rules out for `print`. `print_error` and `write_error`
+# are `print` and `write` one stream over, so they take one value and refuse
+# a nullable exactly as those do; `flush` is declared with no parameter, so
+# its arity is the ordinary check's.
+
+def report(found: Int?):
+    print_error("rows:", 3)
+    write_error()
+    flush(1)
+    print_error(found)
+    write_error(found)

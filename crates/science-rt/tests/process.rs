@@ -87,6 +87,44 @@ fn child_entry_point() {
             putchar(b'A' as core::ffi::c_int);
             science_exit(0);
         },
+        // `strings-formatting-and-docs.md` §4.2's two stderr rows. Written
+        // between two stdout writes so the test can say which stream each
+        // byte went to, not merely that it arrived somewhere.
+        "print_error" => unsafe {
+            let a = s("alpha");
+            let b = s("beta");
+            science_print(&a);
+            science_write_error(&a);
+            science_write_error(&b);
+            science_print_error(&a);
+            science_print_error(&b);
+            let empty = science_string_new();
+            science_print_error(&empty);
+            science_print(&b);
+            free(empty);
+            free(b);
+            free(a);
+            science_exit(0);
+        },
+        // §4.2's one case for `flush`: a `write` with no newline, which the
+        // `LineWriter` holds. `std::process::abort` runs no flush of its own —
+        // unlike `science_abort` and `science_exit`, which both do — so the
+        // bytes reach the pipe only if `science_flush` put them there.
+        "flush" => unsafe {
+            let progress = s("working...");
+            science_write(&progress);
+            science_flush();
+            free(progress);
+            std::process::abort();
+        },
+        // The control for `flush`: the same program without the call. If this
+        // one's bytes arrive too, the `flush` test above proves nothing.
+        "no_flush" => unsafe {
+            let progress = s("working...");
+            science_write(&progress);
+            free(progress);
+            std::process::abort();
+        },
         other => panic!("unknown child role {other:?}"),
     }
 }
@@ -236,5 +274,46 @@ fn exit_zero_succeeds_and_flushes_what_print_left_behind() {
         String::from_utf8_lossy(&output.stdout).contains("no newline in sight"),
         "an unterminated line was buffered and never flushed: {:?}",
         String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+/// `print_error` and `write_error` go to **stderr**, and divide it exactly as
+/// `print` and `write` divide stdout: one appends a `\n` and the other adds
+/// nothing.
+///
+/// **Both streams are asserted, and the stdout half is the one that proves
+/// the routing.** A stderr writer that also echoed to stdout would pass a test
+/// that only read stderr; this one requires stdout to hold the two `print`s
+/// and nothing between them.
+#[test]
+fn write_error_is_verbatim_and_print_error_adds_one_newline_on_stderr() {
+    let output = run_child("print_error");
+    assert_eq!(output.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr, "alphabetaalpha\nbeta\n\n", "stderr");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.ends_with("alpha\nbeta\n"), "stdout: {stdout:?}");
+    assert!(!stdout.contains("alphabeta"), "a stderr write reached stdout: {stdout:?}");
+}
+
+/// `science_flush` empties stdout's buffer **without** ending the process.
+///
+/// The child writes a line with no newline, flushes, and then aborts through
+/// `std::process::abort`, which flushes nothing. `no_flush` is the control:
+/// the same program without the call, whose bytes must be lost — otherwise the
+/// pipe would not be buffering and the first assertion would be vacuous.
+#[test]
+fn flush_makes_an_unterminated_write_visible_before_the_process_dies() {
+    let flushed = run_child("flush");
+    assert!(!flushed.status.success());
+    let stdout = String::from_utf8_lossy(&flushed.stdout);
+    assert!(stdout.ends_with("working..."), "the write was still buffered: {stdout:?}");
+
+    let control = run_child("no_flush");
+    assert!(!control.status.success());
+    let stdout = String::from_utf8_lossy(&control.stdout);
+    assert!(
+        !stdout.contains("working..."),
+        "stdout was not buffered, so the test above proves nothing: {stdout:?}"
     );
 }

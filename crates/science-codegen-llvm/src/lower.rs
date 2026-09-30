@@ -8655,7 +8655,10 @@ impl<'a> Lowerer<'a> {
         if self.defs.get(def).kind == DefKind::ExternFn {
             self.lower_foreign_call(ctx, def, args, destination, insts)?;
         } else if self.defs.get(def).is_builtin()
-            && matches!(self.defs.get(def).name.as_str(), "print" | "write")
+            && matches!(
+                self.defs.get(def).name.as_str(),
+                "print" | "write" | "print_error" | "write_error"
+            )
             // Not `Write.write`, which is a builtin method of the same name:
             // `science-mir`'s `prints_by_rendering` draws the same line.
             && self
@@ -8672,6 +8675,11 @@ impl<'a> Lowerer<'a> {
             // name. Two spellings of one lowering is the shape this file's own
             // `undisplayable` and the module-level docs elsewhere name as the
             // recurring defect; this arm is the fix applied to itself.
+            //
+            // **Four names, and still one function.** `print_error` and
+            // `write_error` are §4.2's same call on stderr, and joined this
+            // arm rather than getting one of their own: what varies is the
+            // runtime symbol, which `lower_print` already reads off `function`.
             let function = self.defs.get(def).name.clone();
             self.lower_print(body, ctx, args, insts, &function)?;
         } else if self.defs.get(def).is_builtin()
@@ -8683,6 +8691,16 @@ impl<'a> Lowerer<'a> {
                 _ => "science_write_file",
             };
             self.lower_runtime_call(body, ctx, symbol, args, destination, insts)?;
+        } else if self.defs.get(def).is_builtin()
+            && self.defs.get(def).name == "flush"
+            && self.decls.and_then(|d| d.signature(def)).is_some_and(|s| s.owner.is_none())
+        {
+            // §4.2's `flush()`: declared, free, no argument and nothing back,
+            // so it is `read_file`'s arm with the one symbol it can mean. The
+            // `owner` test is the line `BufferedWriter.flush` — a method, and
+            // written in Science — is on the other side of; it has a body and
+            // is found by `symbol_for_call` below.
+            self.lower_runtime_call(body, ctx, "science_flush", args, destination, insts)?;
         } else if self.defs.get(def).is_builtin()
             && self.defs.get(def).name == "panic"
             && self.decls.and_then(|d| d.signature(def)).is_some_and(|s| s.owner.is_none())
@@ -9157,6 +9175,13 @@ impl<'a> Lowerer<'a> {
     /// defect `runtime_reachability.rs`'s module doc catalogues six instances
     /// of, filed a seventh time in the one function best placed to avoid it.
     ///
+    /// **`print_error` and `write_error` are the same two calls on stderr**,
+    /// and `function` names them too: the stream is one more thing that is
+    /// the runtime symbol's business, so they cost this function two rows in
+    /// its `match` and nothing else — the operand shapes, the ownership rule
+    /// below and the refusals are §4.2's one argument shape, whichever stream
+    /// it goes to.
+    ///
     /// **The decision. Who frees the buffer is read off the operand, and the
     /// operand is the only thing that can say.** A `Const` is a `String` this
     /// call site built, so this call site frees it. A `Move` says MIR gave up
@@ -9194,8 +9219,12 @@ impl<'a> Lowerer<'a> {
         insts: &mut Vec<ExtInst>,
         function: &str,
     ) -> Result<(), Unlowered> {
+        // §4.2's table, row for row. The stderr pair is unbuffered in the
+        // runtime and nothing here needs to know it.
         let symbol = match function {
             "write" => "science_write",
+            "print_error" => "science_print_error",
+            "write_error" => "science_write_error",
             _ => "science_print",
         };
         let string_layout = layout_of(self.target, &RtAggregate::String.cg_ty());

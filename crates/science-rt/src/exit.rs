@@ -37,10 +37,14 @@
 //! `science_panic_bytes` does: the message is a `private unnamed_addr constant`
 //! in the binary (Decision 15), and building a `ScienceString` around it would
 //! mean an allocation and a matching free on the path that is about to exit.
-//! There is no `science_write_error(text: *const ScienceString)` beside this
-//! one, because codegen has no call site for it — and §2.6's rule is that the
-//! table of runtime symbols is the set codegen calls, so a symbol nothing calls
-//! is dead weight the linker still carries.
+//! For a long time there was no `science_write_error(text: *const
+//! ScienceString)` beside this one, because codegen had no call site for it —
+//! and §2.6's rule is that the table of runtime symbols is the set codegen
+//! calls, so a symbol nothing calls is dead weight the linker still carries.
+//! **There is one now**, in `io.rs`, because Science's `write_error` and
+//! `print_error` are call sites for it; both hand their bytes to this function
+//! rather than writing to stderr a second way, so the stderr policy — flush
+//! stdout first, write verbatim, ignore the error — has one body.
 //!
 //! **Why `science_exit` exists at all, when C's `main` could `return 1`.** A
 //! Science binary's entry point is the emitted `main`, so Rust's `lang_start`
@@ -133,7 +137,7 @@ unsafe extern "C" {
 /// `stdlib-core.md` §4.1 does not guarantee across streams, and which is worth
 /// having anyway for the same reason `science_write_error_bytes` flushes
 /// stdout before writing to stderr.
-fn flush_all() {
+pub(crate) fn flush_all() {
     let _ = std::io::stdout().lock().flush();
     // SAFETY: a null `stream` is `fflush`'s documented "every output stream".
     unsafe { fflush(core::ptr::null_mut()) };
