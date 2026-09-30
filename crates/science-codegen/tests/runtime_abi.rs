@@ -116,6 +116,21 @@ fn the_container_entry_points_all_take_a_descriptor_and_the_scalar_ones_do_not()
     assert!(runtime_fn("science_array_is_empty").unwrap().descriptor_index().is_none());
     assert!(runtime_fn("science_array_as_ptr").unwrap().descriptor_index().is_none());
     assert!(runtime_fn("science_map_len").unwrap().descriptor_index().is_none());
+    // `String`'s four searches take none either, and are named so that the
+    // loop above is not the only thing saying so: a `ScienceString` is always
+    // bytes, so there is no element type to describe. `find`'s third pointer
+    // is its `Int?` out-parameter, not a slot the runtime sizes from a
+    // descriptor — `science_chars_next`'s shape and not `science_map_remove`'s.
+    for symbol in [
+        "science_string_ends_with",
+        "science_string_contains",
+        "science_string_find",
+        "science_string_replace",
+    ] {
+        let f = runtime_fn(symbol).unwrap_or_else(|| panic!("{symbol} is not in RUNTIME"));
+        assert!(f.descriptor_index().is_none(), "{symbol} takes a descriptor");
+        assert!(!f.params.contains(&RtParam::Slot), "{symbol} takes a slot");
+    }
 }
 
 #[test]
@@ -146,6 +161,14 @@ fn the_eleven_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
     // convention, so the classifier said so. The other five `Formatter` entry
     // points return `()`, and `science_formatter_init` does so by taking an
     // out-pointer rather than by luck.
+    //
+    // **Fourteen.** `science_io_error_message` and `science_string_lines`
+    // had already made it thirteen without this test's name following, and
+    // `science_string_replace` is the fourteenth: `String.replace` returns a
+    // fresh `String`, three words, MEMORY everywhere. Its three siblings —
+    // `ends_with`, `contains`, `find` — return a `Bool` and are not here;
+    // `find`'s `Int?` travels through an out-pointer for §5.3's reason, not
+    // this list's.
     let mut derived: Vec<&str> =
         RUNTIME.iter().filter(|f| f.needs_sret(CAbi::SystemVAmd64)).map(|f| f.symbol).collect();
     derived.sort_unstable();
@@ -164,6 +187,7 @@ fn the_eleven_sret_entry_points_are_named_so_a_reader_can_check_them_by_hand() {
             "science_string_from_bytes",
             "science_string_lines",
             "science_string_new",
+            "science_string_replace",
             "science_string_with_capacity",
         ]
     );
@@ -266,7 +290,15 @@ fn nothing_outside_the_table_is_callable() {
     // **Seventy-two.** `science_io_error_message` is `IoError`'s `message`,
     // five constant sentences picked by a byte — a table in the binary, which
     // a runtime function holds once instead of every call site holding five.
-    assert_eq!(RUNTIME.len(), 72);
+    //
+    // **Seventy-six.** `science_string_ends_with`, `science_string_contains`,
+    // `science_string_find` and `science_string_replace` are `stdlib-core.md`
+    // §6.9's searches beside `starts_with`, declared in the prelude and
+    // refused by the backend until now for want of a body. A substring
+    // search is a loop over the haystack, and `replace` is that loop building
+    // a new buffer, so none stands in for an instruction sequence — the same
+    // door `science_string_lines` went through, and not a convenience.
+    assert_eq!(RUNTIME.len(), 76);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

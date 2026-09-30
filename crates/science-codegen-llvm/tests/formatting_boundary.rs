@@ -136,8 +136,14 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// one returns an aggregate.
 ///
 /// **And thirteen**: `science_io_error_message` returns a `String`.
+///
+/// **And fourteen**: `String`'s four searches added four entry points and
+/// one of them lands here. `science_string_replace` returns a fresh `String`
+/// and is MEMORY for the reason every `String` return is; `ends_with`,
+/// `contains` and `find` return a `Bool` — `find`'s `Int?` goes out through
+/// a pointer, §5.3's convention — and the count did not move for them.
 #[test]
-fn the_derived_sret_set_is_thirteen_and_has_moved_five_times() {
+fn the_derived_sret_set_is_fourteen_and_has_moved_six_times() {
     let triple = Triple::host().expect("a supported host");
     let indirect = RUNTIME
         .iter()
@@ -145,11 +151,11 @@ fn the_derived_sret_set_is_thirteen_and_has_moved_five_times() {
         .filter(|sig| sig.ret.is_sret())
         .count();
     assert_eq!(
-        indirect, 13,
-        "the derived `sret` set is not the thirteen `science-codegen`'s \
+        indirect, 14,
+        "the derived `sret` set is not the fourteen `science-codegen`'s \
          `runtime.rs` names"
     );
-    assert_eq!(RUNTIME.len(), 72, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 76, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

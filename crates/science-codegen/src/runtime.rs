@@ -591,7 +591,7 @@ const N: RtParam = RtParam::Int;
 /// A slot holding one element, key or value: see [`RtParam::Slot`].
 const S: RtParam = RtParam::Slot;
 
-/// The 67 entry points. §2.6: *"They are the whole list."*
+/// The 76 entry points. §2.6: *"They are the whole list."*
 ///
 /// **It was 47, `format.rs` added seven, `science_string_with_capacity`
 /// added the fifty-fifth, and `math.rs`'s two — `science_libm_pow` and
@@ -599,6 +599,12 @@ const S: RtParam = RtParam::Slot;
 /// is asserted in two places and all had to be edited, which is the point of
 /// asserting it: a table that is *"the whole list"* grows only when somebody
 /// says so.
+///
+/// This sentence then said 67 while the assertions said 72, which is the
+/// failure the sentence itself describes, one level up: the assertions were
+/// edited and the prose beside the table was not. It says 76 now, because
+/// `String`'s four searches — `ends_with`, `contains`, `find`, `replace` —
+/// joined; the test named for the count says why each of them earns a row.
 ///
 /// Ordered by module and then as `science-rt` declares them, which is neither
 /// alphabetical nor arbitrary: it is the order a reader comparing this table
@@ -717,6 +723,18 @@ pub const RUNTIME: &[RuntimeFn] = &[
     // reach this entry point. Both are corrected together.
     RuntimeFn { symbol: "science_string_truncate", params: &[P, N], ret: RtRet::Void },
     RuntimeFn { symbol: "science_string_starts_with", params: &[P, P], ret: RtRet::Bool },
+    // `starts_with`'s four siblings, which the prelude had declared and no
+    // program could reach. Each is a search — a loop over the haystack, which
+    // is library work and not an instruction sequence — so Decision 14's rule
+    // is met the way `science_string_lines` meets it. `find` hands back `Int?`
+    // through §5.3's bool-plus-out-parameter convention, which is why it has a
+    // third pointer and a `Bool` where its Science signature says `Int?`;
+    // `replace` builds a fresh `String`, three words, so it joins the derived
+    // `sret` set without anybody writing its name into a list.
+    RuntimeFn { symbol: "science_string_ends_with", params: &[P, P], ret: RtRet::Bool },
+    RuntimeFn { symbol: "science_string_contains", params: &[P, P], ret: RtRet::Bool },
+    RuntimeFn { symbol: "science_string_find", params: &[P, P, P], ret: RtRet::Bool },
+    RuntimeFn { symbol: "science_string_replace", params: &[P, P, P], ret: RtRet::Aggregate(RtAggregate::String) },
     RuntimeFn { symbol: "science_string_chars", params: &[P], ret: RtRet::Aggregate(RtAggregate::Chars) },
     RuntimeFn { symbol: "science_chars_next", params: &[P, P], ret: RtRet::Bool },
     RuntimeFn { symbol: "science_string_lines", params: &[P], ret: RtRet::Aggregate(RtAggregate::Lines) },
@@ -1041,9 +1059,20 @@ mod tests {
     /// **Seventy-two**: `science_io_error_message`, `IoError implements
     /// Error`'s one method. It had no body anywhere, and a call to it was
     /// lowered as a vtable dispatch on a one-byte error code.
+    ///
+    /// **Seventy-six**: `science_string_ends_with`, `science_string_contains`,
+    /// `science_string_find` and `science_string_replace` — `stdlib-core.md`
+    /// §6.9's four searches beside `starts_with`. The prelude had declared
+    /// all four and they type-checked, and the backend refused each by name
+    /// because `science-rt` had no body for any of them. Each is a loop over
+    /// the haystack — a substring search, and for `replace` a search that
+    /// builds a new buffer as it goes — so none stands in for an instruction
+    /// sequence this crate could have emitted, and Decision 14's rule is met
+    /// the way `science_string_lines` met it. `find` is §5.3's
+    /// bool-plus-out-parameter shape, the same one `science_chars_next` has.
     #[test]
-    fn there_are_seventy_two_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 72, "§2.6: \"they are the whole list\"");
+    fn there_are_seventy_six_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 76, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");
@@ -1156,11 +1185,21 @@ mod tests {
         // returns `()` *because* it takes an out-pointer, which is the one
         // place a signature was shaped by this list rather than merely
         // measured against it, and its own doc comment says so.
+        //
+        // **Fourteen, with `science_string_replace`.** It returns a fresh
+        // `String`, three words, MEMORY on all three conventions, and the
+        // derivation put it here before this list did. Its three siblings
+        // that joined `RUNTIME` with it return a `Bool` and stay off.
+        // (`science_string_lines` and `science_io_error_message` had already
+        // made this thirteen while the test's name still says eleven; the
+        // name is left alone rather than renamed under a concurrent change,
+        // and the list below is what is asserted.)
         let expected = [
             "science_string_new",
             "science_string_with_capacity",
             "science_string_clone",
             "science_string_from_bytes",
+            "science_string_replace",
             "science_array_new",
             "science_array_with_capacity",
             "science_map_new",

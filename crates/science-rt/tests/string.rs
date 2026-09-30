@@ -271,6 +271,207 @@ fn empty_starts_with_only_empty() {
 }
 
 #[test]
+fn ends_with() {
+    unsafe {
+        let v = s("naïve café");
+        let cases: [(&str, bool); 7] = [
+            ("", true),
+            ("é", true),
+            ("café", true),
+            ("naïve café", true),
+            ("_naïve café", false),
+            // The last *byte* of `é` is a continuation byte and is not a
+            // character on its own; a suffix that is only a character's tail
+            // cannot be spelled as a valid `String` at all, and `e` is a
+            // different character from `é`.
+            ("e", false),
+            ("naïve", false),
+        ];
+        for (suffix, expected) in cases {
+            let p = s(suffix);
+            assert_eq!(science_string_ends_with(&v, &p), expected, "suffix {suffix:?}");
+            free(p);
+        }
+        free(v);
+    }
+}
+
+#[test]
+fn empty_ends_with_only_empty() {
+    unsafe {
+        let v = science_string_new();
+        let e = science_string_new();
+        let a = s("a");
+        assert!(science_string_ends_with(&v, &e));
+        assert!(!science_string_ends_with(&v, &a));
+        free(a);
+        free(e);
+        free(v);
+    }
+}
+
+#[test]
+fn contains() {
+    unsafe {
+        let v = s("día €5 😀!");
+        let cases: [(&str, bool); 8] = [
+            ("", true),
+            ("í", true),
+            ("€5", true),
+            ("😀", true),
+            ("día €5 😀!", true),
+            ("i", false),
+            ("€6", false),
+            ("día €5 😀!!", false),
+        ];
+        for (needle, expected) in cases {
+            let n = s(needle);
+            assert_eq!(science_string_contains(&v, &n), expected, "needle {needle:?}");
+            free(n);
+        }
+        // The empty string contains the empty string and nothing else.
+        let e = science_string_new();
+        let a = s("a");
+        assert!(science_string_contains(&e, &e));
+        assert!(!science_string_contains(&e, &a));
+        // A string contains itself, through one pointer twice.
+        assert!(science_string_contains(&v, &v));
+        free(a);
+        free(e);
+        free(v);
+    }
+}
+
+/// `science_string_find` read back as a Rust option. `out` starts at a
+/// sentinel so that a `false` which wrote anyway would be seen.
+unsafe fn find(value: &ScienceString, needle: &str) -> Option<i64> {
+    let n = s(needle);
+    let mut out: i64 = -7;
+    let found = unsafe { science_string_find(value, &n, &mut out) };
+    free(n);
+    if found {
+        Some(out)
+    } else {
+        assert_eq!(out, -7, "a miss must not write `out`");
+        None
+    }
+}
+
+#[test]
+fn find_is_a_byte_offset_of_the_first_occurrence() {
+    unsafe {
+        // `á` and `€` are two and three bytes, so a character offset and a
+        // byte offset disagree from the second character on.
+        let v = s("aá€b€b");
+        assert_eq!(find(&v, "a"), Some(0));
+        assert_eq!(find(&v, "á"), Some(1));
+        assert_eq!(find(&v, "€"), Some(3), "a character offset would say 2");
+        assert_eq!(find(&v, "b"), Some(6), "the first `b`, not the second");
+        assert_eq!(find(&v, "€b"), Some(3));
+        assert_eq!(find(&v, "b€b"), Some(6));
+        assert_eq!(find(&v, "\u{1F600}"), None);
+        assert_eq!(find(&v, "c"), None);
+        assert_eq!(find(&v, "aá€b€bb"), None, "longer than the haystack");
+        free(v);
+    }
+}
+
+#[test]
+fn find_of_the_empty_needle_is_zero_and_agrees_with_contains() {
+    unsafe {
+        let v = s("xyz");
+        let e = science_string_new();
+        assert_eq!(find(&v, ""), Some(0));
+        assert_eq!(find(&e, ""), Some(0));
+        assert_eq!(find(&e, "x"), None);
+        // The two searches are one question asked two ways.
+        for needle in ["", "x", "yz", "zz", "xyz", "xyzw"] {
+            let n = s(needle);
+            assert_eq!(
+                science_string_contains(&v, &n),
+                find(&v, needle).is_some(),
+                "needle {needle:?}"
+            );
+            free(n);
+        }
+        free(e);
+        free(v);
+    }
+}
+
+/// `science_string_replace` over three Rust strings, freeing every
+/// `ScienceString` it made.
+unsafe fn replace(text: &str, from: &str, to: &str) -> String {
+    let (v, f, t) = (s(text), s(from), s(to));
+    let mut out = unsafe { science_string_replace(&v, &f, &t) };
+    let result = unsafe { as_str(&out) }.to_owned();
+    unsafe { science_string_free(&mut out) };
+    free(t);
+    free(f);
+    free(v);
+    result
+}
+
+#[test]
+fn replace_replaces_every_occurrence() {
+    unsafe {
+        assert_eq!(replace("a-b-c", "-", "+"), "a+b+c");
+        assert_eq!(replace("a-b-c", "-", ""), "abc");
+        assert_eq!(replace("a-b-c", "-", "<->"), "a<->b<->c");
+        assert_eq!(replace("a-b-c", "x", "y"), "a-b-c", "not found is a copy");
+        assert_eq!(replace("", "a", "b"), "");
+        assert_eq!(replace("aaa", "aaa", ""), "");
+    }
+}
+
+#[test]
+fn replace_is_non_overlapping_and_left_to_right() {
+    unsafe {
+        // Three `a`s hold two overlapping `aa`s; the first consumes its bytes
+        // and the second is never seen.
+        assert_eq!(replace("aaa", "aa", "b"), "ba");
+        assert_eq!(replace("aaaa", "aa", "b"), "bb");
+        assert_eq!(replace("abababa", "aba", "X"), "XbX");
+        // A replacement that contains the pattern is not searched again.
+        assert_eq!(replace("aa", "a", "aa"), "aaaa");
+    }
+}
+
+#[test]
+fn replace_works_on_characters_not_bytes() {
+    unsafe {
+        assert_eq!(replace("café café", "é", "e"), "cafe cafe");
+        assert_eq!(replace("1€ 2€", "€", "EUR"), "1EUR 2EUR");
+        assert_eq!(replace("a😀b", "😀", "ñ"), "añb");
+        assert_eq!(replace("ñññ", "ññ", "n"), "nñ");
+    }
+}
+
+#[test]
+fn replace_with_an_empty_pattern_inserts_at_every_character_boundary() {
+    unsafe {
+        assert_eq!(replace("ab", "", "-"), "-a-b-");
+        // Boundaries, not bytes: `é` is two bytes and is not split.
+        assert_eq!(replace("é€", "", "|"), "|é|€|");
+        assert_eq!(replace("", "", "x"), "x", "the empty string has one boundary");
+        assert_eq!(replace("ab", "", ""), "ab");
+    }
+}
+
+#[test]
+fn replace_may_be_given_the_same_string_three_times() {
+    unsafe {
+        let v = s("abc");
+        let mut out = science_string_replace(&v, &v, &v);
+        assert_eq!(as_str(&out), "abc");
+        science_string_free(&mut out);
+        // And the receiver is untouched.
+        assert_eq!(as_str(&v), "abc");
+        free(v);
+    }
+}
+
+#[test]
 fn chars_iterates_code_points() {
     unsafe {
         let v = s("aá€\u{1F600}");

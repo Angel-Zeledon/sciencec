@@ -218,6 +218,21 @@ const CORPUS: &[(&str, &str)] = &[
          \x20   let gone be seen.remove(\"a\")\n\
          \x20   print(f\"{gone} {seen.length()}\")\n",
     ),
+    // `string_search.rs`, reduced: `String`'s four searches beside
+    // `starts_with`. Three reach their symbols through `PRELUDE_METHODS`
+    // rows and `find` through `owned_nullable_method`'s table, so one
+    // program declares `science_string_ends_with`, `science_string_contains`,
+    // `science_string_find` and `science_string_replace` — the entry points
+    // the prelude had declared and `science-rt` had not written, which is
+    // this file's own defect with the halves swapped.
+    (
+        "string_searches",
+        "def main():\n\
+         \x20   let text be \"naïve café\"\n\
+         \x20   let at be text.find(\"café\")\n\
+         \x20   let out be text.replace(\"é\", \"e\")\n\
+         \x20   print(f\"{text.ends_with(out)} {text.contains(out)} {at?} {out}\")\n",
+    ),
     // `IoError`'s `message`, on the path where a write fails: it was lowered
     // as a vtable dispatch until `science_io_error_message` gave it a body.
     (

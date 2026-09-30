@@ -419,6 +419,154 @@ pub unsafe extern "C" fn science_string_starts_with(
     value.starts_with(prefix)
 }
 
+/// `String::ends_with(&self, suffix: &String) -> Bool`.
+///
+/// [`science_string_starts_with`] from the other end, and a character
+/// comparison for the mirror of its reason: a valid UTF-8 sequence begins
+/// with a lead byte, never a continuation byte, so it can only be a byte
+/// suffix of another valid sequence at a character boundary.
+///
+/// # Safety
+///
+/// Both pointers must be non-null, aligned and point to live [`ScienceString`]s.
+/// They may be the same string.
+#[no_mangle]
+pub unsafe extern "C" fn science_string_ends_with(
+    value: *const ScienceString,
+    suffix: *const ScienceString,
+) -> bool {
+    // SAFETY: the caller guarantees two live strings.
+    let (value, suffix) = unsafe { ((*value).bytes(), (*suffix).bytes()) };
+    value.ends_with(suffix)
+}
+
+/// `String::contains(&self, needle: &String) -> Bool`.
+///
+/// **The empty needle is contained in every string**, `""` included. That is
+/// the answer [`science_string_find`] gives it — offset `0` — and the two
+/// have to agree, because `s.contains(n)` and `s.find(n) is not null` are the
+/// same question and a reader will write either.
+///
+/// A substring search over bytes is a search over characters for
+/// [`science_string_starts_with`]'s reason: both operands are valid UTF-8, a
+/// needle begins with a lead byte, and a lead byte never equals a
+/// continuation byte, so no match can start inside a character.
+///
+/// # Safety
+///
+/// Both pointers must be non-null, aligned and point to live [`ScienceString`]s.
+/// They may be the same string.
+#[no_mangle]
+pub unsafe extern "C" fn science_string_contains(
+    value: *const ScienceString,
+    needle: *const ScienceString,
+) -> bool {
+    // SAFETY: the caller guarantees two live strings, each valid UTF-8.
+    let (value, needle) = unsafe { ((*value).as_str(), (*needle).as_str()) };
+    value.contains(needle)
+}
+
+/// `String::find(&self, needle: &String) -> Int?`, the **byte** offset of
+/// the first occurrence.
+///
+/// **Bytes and not characters**, because `stdlib-core.md` §6.9 writes
+/// `# byte offset` beside the signature and §6.5 made `length()` bytes for
+/// the reason that applies here unchanged: the offset is the number that
+/// pairs with `bytes()`, `slice()` and `truncate`, and a character offset is
+/// O(n) to use afterwards. For [`science_string_contains`]' reason the offset
+/// is always a character boundary, so handing it to `slice` or `truncate`
+/// never cuts a character.
+///
+/// **The owned-`T?` convention of the crate documentation, §5.3** —
+/// [`science_chars_next`]'s and `science_map_remove`'s: `true` after writing
+/// the offset to `out`, `false` when the needle does not occur, in which case
+/// `out` is **not written** and the answer is `null`. An empty needle is
+/// found at `0`, which is where it first occurs.
+///
+/// # Safety
+///
+/// `value` and `needle` must be non-null, aligned and point to live
+/// [`ScienceString`]s, and may be the same string; `out` must be non-null,
+/// aligned for `i64`, and writable.
+#[no_mangle]
+pub unsafe extern "C" fn science_string_find(
+    value: *const ScienceString,
+    needle: *const ScienceString,
+    out: *mut i64,
+) -> bool {
+    // SAFETY: the caller guarantees two live strings, each valid UTF-8.
+    let (value, needle) = unsafe { ((*value).as_str(), (*needle).as_str()) };
+    match value.find(needle) {
+        Some(offset) => {
+            // SAFETY: the caller guarantees `out` is writable and aligned.
+            // A live string's length fits an `isize`, so its offsets fit an
+            // `i64` on every target this runtime supports.
+            unsafe { out.write(offset as i64) };
+            true
+        }
+        None => false,
+    }
+}
+
+/// `String::replace(&self, from: &String, to: &String) -> String` — a fresh
+/// string with **every** occurrence of `from` replaced by `to`.
+///
+/// **Every, non-overlapping, left to right.** `stdlib-core.md` §6.9 gives the
+/// signature and no sentence, and `docs/DREAM.md`'s list gives the same
+/// signature and none either; "every" is the reading both Rust's
+/// `str::replace` and Python's `str.replace` share, and a method named
+/// `replace` that stopped after the first would need a second name for the
+/// common case. Matches are taken left to right and a match consumes its
+/// bytes, so `"aaa".replace("aa", "b")` is `"ba"` — the one answer that
+/// never reads a byte twice.
+///
+/// **An empty `from` matches at every character boundary, both ends
+/// included**: `"ab".replace("", "-")` is `"-a-b-"`. Neither note decides
+/// this, so it is decided here, and it is the answer Rust and Python both
+/// give. The argument is consistency with the two searches beside this
+/// function — [`science_string_find`] finds `""` at `0` and
+/// [`science_string_contains`] says every string contains it, so `""`
+/// *occurs*, and replacing every occurrence of something that occurs cannot
+/// be a no-op. The two alternatives each break something: returning the
+/// receiver unchanged makes `replace` disagree with `find` about whether
+/// there is anything to replace, and a panic makes a total function partial
+/// over an input a program can build at run time. Boundaries and not bytes,
+/// so a multi-byte character is never split and the result stays UTF-8.
+///
+/// The result is always a new allocation-or-empty [`ScienceString`] owned by
+/// the caller; the receiver is not modified, which is why this is `self` and
+/// not `mutable self`.
+///
+/// # Safety
+///
+/// All three pointers must be non-null, aligned and point to live
+/// [`ScienceString`]s. Any of them may be the same string: the result is
+/// written to a fresh buffer that none of them can alias.
+#[no_mangle]
+pub unsafe extern "C" fn science_string_replace(
+    value: *const ScienceString,
+    from: *const ScienceString,
+    to: *const ScienceString,
+) -> ScienceString {
+    // SAFETY: the caller guarantees three live strings, each valid UTF-8.
+    let (text, from, to) = unsafe { ((*value).as_str(), (*from).as_str(), (*to).as_str()) };
+    let mut result = ScienceString::empty();
+    let mut copied = 0;
+    for (start, found) in text.match_indices(from) {
+        // SAFETY: `result` is live, and every slice appended is valid UTF-8 —
+        // `text` cut at match boundaries, which are character boundaries, or
+        // `to` whole — and lives in a buffer `result` does not own.
+        unsafe {
+            result.append(text[copied..start].as_bytes());
+            result.append(to.as_bytes());
+        }
+        copied = start + found.len();
+    }
+    // SAFETY: as above.
+    unsafe { result.append(text[copied..].as_bytes()) };
+    result
+}
+
 /// `String::chars(&self) -> Chars`.
 ///
 /// # Safety

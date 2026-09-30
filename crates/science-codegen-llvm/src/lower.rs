@@ -9907,14 +9907,29 @@ impl<'a> Lowerer<'a> {
             // *"a prelude method added to `builtins.rs` is not added here, and
             // the symptom is a refusal rather than a wrong answer"*.
             //
-            // **Its four siblings are not rows and cannot be.** The prelude
-            // also declares `contains`, `ends_with`, `find`, `replace` and
-            // `trim`, and `science-rt` exports an entry point for **none** of
-            // them — so those are declared-and-unimplemented, which is a
-            // different gap from this one and is not closed by guessing a
-            // symbol. The refusal a user meets for them names the method, which
-            // is the right report.
+            // **Its siblings were not rows and could not be**, because
+            // `science-rt` exported an entry point for none of them. Three of
+            // the four now are, on `starts_with`'s own terms: `ends_with` and
+            // `contains` take two `String` addresses and return a `Bool`, and
+            // `replace` takes three and returns a fresh `String`, which
+            // `emit_result` already carries through `sret` exactly as it does
+            // `clone`'s. The fourth, `find`, returns `Int?` through §5.3's
+            // bool-plus-out-parameter convention — two results where a row
+            // here maps one call to one — so it is a row in
+            // [`Lowerer::owned_nullable_method`]'s table instead, beside
+            // `Chars.next`.
+            //
+            // `trim` is still not a row, and for a different reason than
+            // before: §6.9 returns a `borrowed String` — a view into the
+            // receiver — and a `&String` that points into the middle of
+            // another `String`'s buffer is not a value `ScienceString`'s
+            // three-word layout can be, so there is no entry point to write
+            // until a borrowed string slice has a representation. The refusal
+            // a user meets for it names the method, which is the right report.
             ("String", "starts_with", "science_string_starts_with"),
+            ("String", "ends_with", "science_string_ends_with"),
+            ("String", "contains", "science_string_contains"),
+            ("String", "replace", "science_string_replace"),
             ("String", "chars", "science_string_chars"),
             ("String", "lines", "science_string_lines"),
             // `Array of T`'s two descriptor-free rows. **Only two**, and the
@@ -10350,6 +10365,18 @@ impl<'a> Lowerer<'a> {
             // `StoreBoolIntoTag`'s existing empty-case handling and needed
             // nothing new here.
             ("Array", "pop", "science_array_pop"),
+            // **`String.find`, the fourth, and the first whose payload is a
+            // scalar a caller asked for rather than an element it stored.**
+            // `science_string_find(value, needle, out) -> Bool` writes the
+            // byte offset of the first match to `out` and returns `true`, or
+            // leaves `out` alone and returns `false`. `Int` has no niche, so
+            // `owned_nullable_return` answers `StoreBoolIntoTag` and `out` is
+            // the payload field of the destination's own `Int?` — the same
+            // path `Map.remove` of an `Int` value takes. It takes no
+            // descriptor, like `Chars.next`, and one further Science argument,
+            // the needle, which the loop in `lower_owned_nullable_call`
+            // passes by address as it does `remove`'s key.
+            ("String", "find", "science_string_find"),
         ];
         if !self.defs.get(def).is_builtin() {
             return None;
