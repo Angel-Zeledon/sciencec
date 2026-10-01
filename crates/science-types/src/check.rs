@@ -1393,6 +1393,21 @@ impl<'a> BodyChecker<'a> {
                 return self.demand(typed, expected, site, expr.span);
             }
         }
+        // An indexed place passed where `&mut T` is expected is borrowed
+        // exclusively, the way `a[i] be v` writes through `IndexMutably`: the
+        // element is the slot, and the auto-borrow takes `&mut` of it. Read
+        // through `Index` it would be a `&T`, which `&mut T` refuses.
+        if site == Site::Argument
+            && (matches!(expr.kind, hir::ExprKind::Index { .. }) || field_chain_ends_in_index(expr))
+        {
+            let target = self.revealed(expected, expr.span);
+            if matches!(self.types.kind(target), TyKind::Borrowed { mutable: true, .. }) {
+                self.write_through_index = true;
+                let typed = self.synth(expr);
+                self.write_through_index = false;
+                return self.demand(typed, expected, site, expr.span);
+            }
+        }
         match &expr.kind {
             hir::ExprKind::If(if_expr) => {
                 self.if_expr(if_expr, expr.span, Some((expected, site))).id

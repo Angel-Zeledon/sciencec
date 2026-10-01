@@ -127,6 +127,32 @@ print(names[0])
 }
 
 #[test]
+fn an_indexed_place_is_borrowed_exclusively_where_mut_is_expected() {
+    let source = r#"type M:
+    n: Int
+
+def bump(m: &mut M):
+    m.n be m.n + 1
+
+def add_ten(x: &mut Int):
+    x be x + 10
+
+let mutable members be [M(n: 1), M(n: 5)]
+let i be 1
+bump(members[i])
+bump(members[i])
+print(members[1].n)
+print(members[0].n)
+add_ten(members[0].n)
+print(members[0].n)
+let mutable nums be [1, 2]
+add_ten(nums[1])
+print(nums[1])
+"#;
+    assert_eq!(prints("index_mut_argument", source), "7\n1\n11\n12\n");
+}
+
+#[test]
 fn a_nested_tuple_index_is_two_indices_not_a_float() {
     let source = r#"let t be ((1, 2), (3, (4, 5)))
 print(t.0.1)
