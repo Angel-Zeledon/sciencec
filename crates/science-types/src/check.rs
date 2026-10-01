@@ -6035,6 +6035,17 @@ impl<'a> BodyChecker<'a> {
         span: Span,
     ) -> Option<Typed> {
         let interface_def = self.decls.prelude().get(interface)?;
+        // `method_call`'s settling, at the receiver an operator has. `Pair(re:
+        // 1.5, im: 2.0) + b` is a generic record whose argument is an
+        // unsuffixed literal, so its type is still a deferred composite here;
+        // `known_or_error` read that as `Ty::ERROR`, the `references_error`
+        // below then declined to speak, and the fall-through built a
+        // structural `Binary` over two records — accepted by `check` and
+        // refused by the backend as *"an operator on a value that is not a
+        // scalar"*. `a.add(b)` on the same line always worked, because the
+        // written call settles first. Pinned by `crates/science-codegen-llvm/
+        // tests/complex.rs`' `an_operator_on_a_generic_record_built_from_literals`.
+        self.settle_receiver(receiver.ty);
         let written = self.known_or_error(receiver.ty);
         let revealed = self.revealed(written, span);
         // `ty`'s §5: an erroneous operand agrees with whatever it meets, and a

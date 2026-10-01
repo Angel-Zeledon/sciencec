@@ -35,6 +35,7 @@ const MODULES: &[(&str, &str)] = &[
     ("collections.science", include_str!("../stdlib/collections.science")),
     ("os.science", include_str!("../stdlib/os.science")),
     ("time.science", include_str!("../stdlib/time.science")),
+    ("complex.science", include_str!("../stdlib/complex.science")),
 ];
 
 /// The source of the bundled module at `candidate`, if there is one.

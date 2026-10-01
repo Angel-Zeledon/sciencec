@@ -2662,6 +2662,9 @@ impl Resolver {
         path: &ast::Path,
         fields: &[ast::FieldInit],
     ) -> hir::ExprKind {
+        if let Some(call) = self.method_with_named_args(path, fields) {
+            return call;
+        }
         let (res, generics) = self.resolve_path(path);
 
         // §1.7 of `ffi-c-boundary.md`: an extern call site may use named
@@ -2704,6 +2707,62 @@ impl Resolver {
             })
             .collect();
         hir::ExprKind::StructLit { res, fields }
+    }
+
+    /// `z.scaled(by: 0.5)`, where `z` is a local: a method call with named
+    /// arguments, which the parser hands over as a qualified record literal.
+    ///
+    /// **Decision. A dotted "record literal" whose first name is a local
+    /// binding is a method call on it.** The parser's postfix loop says in as
+    /// many words that `docs.sort(by: f)` and `text.Doc(title: "a")` parse
+    /// alike and that *"resolution tells them apart, because only it knows
+    /// whether `docs` is a module"* — and nothing here did: the path went to
+    /// [`Self::resolve_path`], which refused it as `SC0204`, *"`z` is a local
+    /// binding, so `scaled` cannot be reached through it"*. The same call on a
+    /// receiver that is not a bare name (`Doc(title: t).scaled(by: 2.0)`)
+    /// always parsed as the method call it is.
+    ///
+    /// **A local and not anything else**, because the ribs are the one
+    /// namespace that shadows every other ([`Self::type_named`]'s order): a
+    /// head that is a module or a type is still a path, and goes on to be a
+    /// qualified record or an associated function exactly as before.
+    ///
+    /// Pinned by `crates/science-codegen-llvm/tests/complex.rs`'
+    /// `conjugate_modulus_squared_and_a_real_factor`.
+    fn method_with_named_args(
+        &mut self,
+        path: &ast::Path,
+        fields: &[ast::FieldInit],
+    ) -> Option<hir::ExprKind> {
+        let (method, links) = path.segments.split_last()?;
+        let (head, between) = links.split_first()?;
+        self.ribs.lookup(&head.name.name)?;
+        // The receiver as the postfix loop would have built it: the local,
+        // then a field read per name between it and the method.
+        let head_path = ast::Path { segments: vec![head.clone()], span: head.span };
+        let mut receiver = ast::Expr { kind: ast::ExprKind::Path(head_path), span: head.span };
+        for link in between {
+            let span = receiver.span.merge(link.span);
+            receiver = ast::Expr {
+                kind: ast::ExprKind::Field { base: Box::new(receiver), name: link.name.clone() },
+                span,
+            };
+        }
+        let receiver = Box::new(self.resolve_expr(&receiver));
+        let args = fields
+            .iter()
+            .map(|init| hir::Arg {
+                name: Some(init.name.clone()),
+                value: self.resolve_expr(&init.value),
+                span: init.span,
+            })
+            .collect();
+        Some(hir::ExprKind::MethodCall {
+            receiver,
+            method: method.name.clone(),
+            generics: method.generics.iter().map(|t| self.resolve_type(t)).collect(),
+            args,
+        })
     }
 
     /// The definition behind a name used where only a record can go.

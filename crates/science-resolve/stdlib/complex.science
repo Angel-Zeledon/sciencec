@@ -1,0 +1,159 @@
+# complex — `DREAM.md` §14.2, `scientific-libraries.md` §5.10 and
+# `intrinsics-math-physics.md` §5.7: `use complex (Complex)`.
+#
+# The second module of the standard library written in Science, bundled the way
+# `io` is (`science_resolve::stdlib`). It needs no runtime at all: every
+# operation below is arithmetic on two `F64`s.
+#
+# Seven decisions are this file's, and each is written where it applies:
+#
+# - `Complex` is over `F64` only, where §5.10 writes `Complex of T`. The
+#   generic record was tried and does not hold yet: there is no `Real`
+#   interface to bound `T` by, so `Complex[T: Add + Sub + Mul + Div + Copy]`
+#   admits `I64`, and this file's `0.0` and `1.0` would be accepted into an
+#   `I64` slot unchecked — a type parameter is `assign`'s rule 1, which admits
+#   anything. A field read through a shared `self` is also `&T` and is not
+#   copied out for a `T: Copy` parameter, so every method would have to take
+#   `self: Self`. `Complex[T: Real]` is the shape the day `Real` exists, and
+#   it is a source change for every program that writes `Complex` bare.
+# - The parts are the fields `re` and `im`, the names the task that commissioned
+#   this file used and the ones every C, Fortran and NumPy reader already
+#   knows. §5.10's `real` and `imaginary` are method names over the same parts,
+#   not written yet; a field and a method are different things here (`x.re` is
+#   a read, `x.re()` would be a call), so adding them later breaks nothing.
+# - The method names are the notes': `conjugate` and `modulus_squared`, not
+#   `conj` and `norm_sqr`.
+# - A real factor is `scaled(by)`, not `z * 2.0`. An operator interface is
+#   looked up by its method name and one implementation answers it, so a
+#   second `Complex implements Mul:` taking an `F64` makes *both* `z * w` and
+#   `z * 2.0` a refusal, and `2.0 * z` dispatches on `F64`, which is the
+#   prelude's. `Mul[Rhs]` is the change that would allow it.
+# - Division is Smith's algorithm (1962), not the textbook
+#   `(a·c + b·d) / (c² + d²)`: the textbook squares the divisor's parts, so it
+#   overflows to `inf` or underflows to `0` for any divisor with a part beyond
+#   about `1e154` or below `1e-154` even when the quotient is an ordinary
+#   number. Smith divides by the larger part first and never squares. A zero
+#   divisor gives `NaN+NaNi`, where C99 Annex G's infinity recovery would give
+#   an infinity; that recovery is not written.
+# - `is` is IEEE equality part by part: `NaN` is not equal to itself and `0.0`
+#   is equal to `-0.0`. It is the comparison `F64`'s own `is` makes, twice.
+# - The layout is `{re: F64, im: F64}` and the record implements `ffi.CLayout`,
+#   which is the layout of C's `double _Complex` and of LAPACKE's
+#   `lapack_complex_double` under `LAPACK_COMPLEX_STRUCTURE`
+#   (`c-binding-coverage.md` §2.3). So a `ffi.Span[Complex]` or a `&mut
+#   Complex` can be handed to a `cblas_zdotc_sub` directly, and `ffi.Complex64`
+#   stays what it is: the name a generated binding writes, declared bare in
+#   the prelude. Making `ffi.Complex64` this type is the prelude naming a
+#   module's type, which it cannot do; until it can, the two have one layout
+#   and two names.
+#
+# Not here, because `F64` has no `sqrt`, `atan2`, `hypot`, `exp`, `ln`, `sin`
+# or `cos` yet: `modulus`, `argument`, `from_polar`, `to_polar`, `exp`, `ln`,
+# `sqrt`, `pow` and the trigonometric family. They are methods over the two
+# parts and nothing else, and they join this file when those arrive.
+
+# --- Complex ------------------------------------------------------------------
+
+# A complex number `re + im·i`, two `F64`s in that order.
+public type Complex:
+    re: F64
+    im: F64
+
+Complex implements ffi.CLayout
+
+Complex implements Copy
+
+Complex has:
+    # `re + im·i`. The record literal `Complex(re: 1.0, im: 2.0)` is the
+    # same value, with the names written out.
+    public def new(re: F64, im: F64) -> Complex:
+        Complex(re: re, im: im)
+
+    # A real number on the complex plane: `re + 0i`.
+    public def from_real(re: F64) -> Complex:
+        Complex(re: re, im: 0.0)
+
+    # `re - im·i`, the reflection across the real axis.
+    public def conjugate(self) -> Complex:
+        Complex(re: self.re, im: -self.im)
+
+    # `re² + im²`: the squared modulus, which needs no square root. It
+    # overflows where the modulus would not, for a part beyond about `1e154`.
+    public def modulus_squared(self) -> F64:
+        self.re * self.re + self.im * self.im
+
+    # Both parts multiplied by a real `factor` — the `z * 2.0` the operator
+    # cannot be (see the header).
+    public def scaled(self, by: F64) -> Complex:
+        Complex(re: self.re * by, im: self.im * by)
+
+# `|x|` for one part. `F64` has no `abs` method yet.
+def magnitude(x: F64) -> F64:
+    if x < 0.0:
+        return -x
+    x
+
+# Whether `x` carries a minus sign, `-0.0` included: `-0.0 < 0.0` is false, and
+# `1.0 / -0.0` is `-inf`. `NaN` answers false.
+def is_negative(x: F64) -> Bool:
+    x < 0.0 or (x is 0.0 and 1.0 / x < 0.0)
+
+# --- Arithmetic ---------------------------------------------------------------
+
+Complex implements Add:
+    def add(self, other: Complex) -> Complex:
+        Complex(re: self.re + other.re, im: self.im + other.im)
+
+Complex implements Sub:
+    def sub(self, other: Complex) -> Complex:
+        Complex(re: self.re - other.re, im: self.im - other.im)
+
+# `(a + bi)(c + di) = (ac - bd) + (ad + bc)i`, four products and no fused
+# multiply-add, so it rounds as the formula reads.
+Complex implements Mul:
+    def mul(self, other: Complex) -> Complex:
+        let re be self.re * other.re - self.im * other.im
+        let im be self.re * other.im + self.im * other.re
+        Complex(re: re, im: im)
+
+# Smith's algorithm (see the header): divide through by the divisor's larger
+# part, so that `ratio` is at most 1 in magnitude and nothing is squared.
+Complex implements Div:
+    def div(self, other: Complex) -> Complex:
+        if magnitude(other.re) >= magnitude(other.im):
+            let ratio be other.im / other.re
+            let denominator be other.re + other.im * ratio
+            let re be (self.re + self.im * ratio) / denominator
+            let im be (self.im - self.re * ratio) / denominator
+            return Complex(re: re, im: im)
+        let ratio be other.re / other.im
+        let denominator be other.re * ratio + other.im
+        let re be (self.re * ratio + self.im) / denominator
+        let im be (self.im * ratio - self.re) / denominator
+        Complex(re: re, im: im)
+
+Complex implements Neg:
+    def neg(self) -> Complex:
+        Complex(re: -self.re, im: -self.im)
+
+Complex implements Eq:
+    def eq(self, other: Complex) -> Bool:
+        self.re is other.re and self.im is other.im
+
+# --- Display ------------------------------------------------------------------
+
+# `1.5+2.0i`, `1.5-2.0i`, `0.0-0.0i`: each part as `print` writes an `F64`,
+# with no spaces and the sign of the imaginary part always written, so a
+# negative one reads `a-bi` rather than `a+-bi`. Both parts go through
+# `number`, so both will render under the caller's spec once `f"{z:.2}"` is
+# built (`SC0173` refuses a spec today).
+Complex implements Display:
+    def display(self, into: &mut Formatter):
+        into.number(self.re)
+        if is_negative(self.im):
+            into.raw("-")
+            into.number(-self.im)
+        else:
+            into.raw("+")
+            into.number(self.im)
+        into.raw("i")
