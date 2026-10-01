@@ -149,7 +149,7 @@ fn a_misspelled_link_is_reported_and_an_untranscribed_one_is_not() {
 def uses(xs: &Array[Int]) -> Int:
     let a be xs.iterate().frist()
     let b be xs.iterate().keep(each > 1).colect()
-    let c be xs.iterate().numbered()
+    let c be xs.iterate().unique()
     let d be xs.iterate().map(each * 2).reduce(0, each)
     0
 ",
@@ -158,4 +158,144 @@ def uses(xs: &Array[Int]) -> Int:
     let messages = checked.messages();
     assert!(messages[0].contains("`frist`"), "{messages:?}");
     assert!(messages[1].contains("`colect`"), "{messages:?}");
+}
+
+/// **`numbered()` yields §1.3's `Numbered of T`**, and the chain's own type
+/// says so: the adapter carries the record as its `Item`, so `collect()` names
+/// it and the next link's closure takes it. `index` is an `Int` and `item` is
+/// whatever the chain carried — a borrow, over the source.
+#[test]
+fn numbered_yields_the_numbered_record() {
+    let checked = check(
+        "\
+def pairs(xs: &Array[Int]) -> Int:
+    let all be xs.iterate().numbered().collect()
+    0
+
+def positions(xs: &Array[Int]) -> Int:
+    let mutable total be 0
+    for pair in xs.iterate().numbered():
+        total be total + pair.index
+    total
+",
+    );
+    checked.assert_clean();
+    assert_eq!(
+        terminal_type(&checked, "pairs", "collect"),
+        "Array[Numbered[&I64]]",
+        "{:?}",
+        checked.messages()
+    );
+}
+
+/// **The new terminals have the types the note gives them**: `last()` and the
+/// two extremes are `Self.Item?`, a nullable borrow over the source, and the
+/// extremes' key is an `Int` the way `sorted(by:)`'s is.
+#[test]
+fn last_and_the_extremes_hand_back_a_nullable_item() {
+    let checked = check(
+        "\
+type Doc:
+    title: String
+    score: Int
+
+def last_doc(docs: &Array[Doc]) -> (&Doc)?:
+    docs.iterate().last()
+
+def best(docs: &Array[Doc]) -> (&Doc)?:
+    docs.iterate().maximum(by: each.score)
+
+def worst(docs: &Array[Doc]) -> (&Doc)?:
+    docs.iterate().minimum(by: doc giving doc.score)
+",
+    );
+    checked.assert_clean();
+    assert_eq!(terminal_type(&checked, "last_doc", "last"), "(&Doc)?");
+    assert_eq!(terminal_type(&checked, "best", "maximum"), "(&Doc)?");
+    assert_eq!(terminal_type(&checked, "worst", "minimum"), "(&Doc)?");
+}
+
+/// **A closure of the wrong type is refused at the closure** for the new links
+/// too: `take_while` and `skip_while` take a predicate, `every` takes a count,
+/// and the extremes take an `Int` key. A bare `minimum()` is a wrong argument
+/// count and not a silence — `sorted()`'s narrowing, and the reason is the same.
+#[test]
+fn the_new_links_refuse_a_closure_of_the_wrong_type() {
+    let checked = check(
+        "\
+def uses(xs: &Array[Int]) -> Int:
+    let a be xs.iterate().take_while(each + 1).count()
+    let b be xs.iterate().skip_while(each * 2).count()
+    let c be xs.iterate().every(\"two\").count()
+    let d be xs.iterate().minimum(by: each > 1)
+    0
+",
+    );
+    assert_eq!(checked.codes(), vec![525, 525, 525, 525], "{:?}", checked.messages());
+    let bare = check(
+        "\
+def uses(xs: &Array[Int]) -> Int:
+    let a be xs.iterate().minimum()
+    0
+",
+    );
+    assert_eq!(bare.codes().len(), 1, "{:?}", bare.messages());
+}
+
+/// **`Map.keys()` and `values()` are chain sources typed over the map's own
+/// arguments**: a borrow of each key, a borrow of each value, and `sum()` over
+/// the values is the number it is over any other chain of borrowed numbers —
+/// over the keys of a `Map[String, _]` it is `SC0547`.
+#[test]
+fn a_maps_sources_are_typed_over_its_arguments() {
+    let checked = check(
+        "\
+def names(m: &Map[String, Int]) -> Int:
+    let keys be m.keys().collect()
+    let entries be m.iterate().collect()
+    m.values().sum()
+
+def walk(m: &Map[String, Int]) -> Int:
+    let mutable total be 0
+    for k in m.keys():
+        total be total + k.length()
+    for v in m.values():
+        total be total + v
+    total
+",
+    );
+    checked.assert_clean();
+    assert_eq!(terminal_type(&checked, "names", "sum"), "I64");
+    assert_eq!(terminal_type(&checked, "names", "collect"), "Array[&String]");
+    let refused = check(
+        "\
+def bad(m: &Map[String, Int]) -> Int:
+    let total be m.keys().sum()
+    0
+",
+    );
+    assert_eq!(refused.codes(), vec![547], "{:?}", refused.messages());
+}
+
+/// **`zip` yields §1.3's `Pair`**, `left` the chain's item and `right` a
+/// borrow of the other array's element. The other side is declared as an
+/// `ArrayIterate[U]` — `builtins.rs` says why — and what that costs is in
+/// `science-codegen-llvm/tests/chains.rs`: anything else leaves `U` unsolved,
+/// the checker is silent, and the backend refuses the `Zip` it cannot build.
+#[test]
+fn zip_yields_the_pair_record() {
+    let checked = check(
+        "\
+def together(xs: &Array[Int], names: &Array[String]) -> Int:
+    let all be xs.iterate().zip(names.iterate()).collect()
+    0
+",
+    );
+    checked.assert_clean();
+    assert_eq!(
+        terminal_type(&checked, "together", "collect"),
+        "Array[Pair[&I64, &String]]",
+        "{:?}",
+        checked.messages()
+    );
 }

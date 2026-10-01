@@ -674,3 +674,453 @@ fn a_predicate_after_a_filter_reads_through_both_borrows() {
         "1\n9\ntrue\n"
     );
 }
+
+// --- the second tranche: `numbered`, the filters that read a prefix, the
+// --- terminals that keep one item, and `Map`'s sources ----------------------
+
+/// **`numbered()` pairs each item with the position it arrived at**, from zero
+/// and counted *where it sits in the chain*: after a `skip` the first item to
+/// arrive is number zero, which is what makes `numbered().skip(…)` and
+/// `skip(…).numbered()` different programs.
+///
+/// The record is §1.3's, so `each.index` and `each.item` work as `each` does on
+/// any other: a predicate reads the position, a `map` takes the item out. The
+/// `map(each.item)` runs over `Int`s the chain owns — over borrows it is the
+/// regions engine's `SC0340`, which is its own finding and not this test's.
+#[test]
+fn numbered_pairs_each_item_with_where_it_arrived() {
+    assert_eq!(
+        prints(
+            "numbered",
+            &over_five(
+                "    let n be xs.iterate().numbered().collect()
+    print(f\"{n.length()} {n[0].index} {n[0].item} {n[4].index} {n[4].item}\")
+    let late be xs.iterate().map(each * 10).numbered().discard(each.index < 3).map(each.item).collect()
+    print(f\"{late.length()} {late[0]} {late[1]}\")
+    print(xs.iterate().numbered().keep(each.index > 2).map(each.index).sum())
+    let after_skip be xs.iterate().skip(2).numbered().map(each.index).collect()
+    print(f\"{after_skip[0]} {after_skip[1]} {after_skip[2]}\")
+    let before_skip be xs.iterate().numbered().skip(2).map(each.index).collect()
+    print(f\"{before_skip[0]} {before_skip[1]} {before_skip[2]}\")
+"
+            ),
+        ),
+        "5 0 1 4 5\n2 40 50\n7\n0 1 2\n2 3 4\n"
+    );
+}
+
+/// **A `Numbered` over owned items owns them**: `map` takes the record by
+/// value and the closure releases it, and a `discard` that drops one releases
+/// the item inside. Four items, four `dropped` lines, each after the turn that
+/// made it and before the result is printed.
+#[test]
+fn a_numbered_record_owns_the_item_it_holds() {
+    assert_eq!(
+        prints(
+            "numbered-owned",
+            &traced(
+                "    let out be xs.iterate().map(x giving Tracer(tag: x)).numbered().discard(each.index is 1).map(p giving p.item.tag * 10 + p.index).collect()
+    print(f\"{out.length()} {out[0]} {out[1]} {out[2]}\")
+"
+            ),
+        ),
+        "dropped 1\ndropped 2\ndropped 3\ndropped 4\n3 10 32 43\n"
+    );
+}
+
+/// **`take_while` ends the chain at the first item the predicate does not hold
+/// for**, and reads nothing after it: with a `Tracer` per item, the `4` is
+/// never built, and the `3` that failed the test is released by the turn that
+/// made it. `[1, 5, 2, 0]` is the data that tells it from `keep`, which would
+/// pass the `2` as well.
+#[test]
+fn take_while_stops_at_the_first_miss() {
+    assert_eq!(
+        prints(
+            "take-while",
+            &traced(
+                "    let n be xs.iterate().map(x giving Tracer(tag: x)).take_while(each.tag < 3).count()
+    print(f\"count {n}\")
+    let mutable ys be Array[Int].new()
+    ys.push(1)
+    ys.push(5)
+    ys.push(2)
+    ys.push(0)
+    let head be ys.iterate().take_while(each < 3).collect()
+    print(f\"{head.length()} {head[0]}\")
+    print(ys.iterate().take_while(each > 9).count())
+    print(ys.iterate().take_while(each >= 0).count())
+"
+            ),
+        ),
+        "dropped 1\ndropped 2\ndropped 3\ncount 2\n1 1\n0\n4\n"
+    );
+}
+
+/// **`skip_while` swallows until the first miss and then passes everything**,
+/// including later items the predicate would have swallowed: `[1, 5, 2, 0]`
+/// past `< 3` is `[5, 2, 0]`, not `[5]`.
+#[test]
+fn skip_while_passes_everything_after_the_first_miss() {
+    assert_eq!(
+        prints(
+            "skip-while",
+            &traced(
+                "    let mutable ys be Array[Int].new()
+    ys.push(1)
+    ys.push(5)
+    ys.push(2)
+    ys.push(0)
+    let tail be ys.iterate().skip_while(each < 3).collect()
+    print(f\"{tail.length()} {tail[0]} {tail[1]} {tail[2]}\")
+    print(ys.iterate().skip_while(each > 9).count())
+    print(ys.iterate().skip_while(each >= 0).count())
+    let n be xs.iterate().map(x giving Tracer(tag: x)).skip_while(each.tag < 3).count()
+    print(f\"count {n}\")
+"
+            ),
+        ),
+        "3 5 2 0\n4\n0\ndropped 1\ndropped 2\ndropped 3\ndropped 4\ncount 2\n"
+    );
+}
+
+/// **`every(n)` passes the first item and every `n`th after it** — §1.4's
+/// `step_by`. Counted over what reaches it, so `keep(each > 1).every(2)` over
+/// `[1, 2, 3, 4, 5]` is `[2, 4]` and not the odd positions of the source.
+/// `every(1)` passes everything; an empty source passes nothing.
+#[test]
+fn every_passes_the_first_of_each_run_of_n() {
+    assert_eq!(
+        prints(
+            "every",
+            &over_five(
+                "    let two be xs.iterate().every(2).collect()
+    print(f\"{two.length()} {two[0]} {two[1]} {two[2]}\")
+    let three be xs.iterate().every(3).collect()
+    print(f\"{three.length()} {three[0]} {three[1]}\")
+    print(xs.iterate().every(1).count())
+    print(xs.iterate().every(5).count())
+    print(xs.iterate().every(9).count())
+    let after be xs.iterate().keep(each > 1).every(2).collect()
+    print(f\"{after[0]} {after[1]}\")
+    let empty be Array[Int].new()
+    print(empty.iterate().every(2).count())
+"
+            ),
+        ),
+        "3 1 3 5\n2 1 4\n5\n1\n1\n2 4\n0\n"
+    );
+}
+
+/// **`last()` is the final item, or `null`**, and walks the whole chain to
+/// say so. Over owned items every item it displaces is released as it is
+/// replaced — `dropped 1`, `2` and `3` before `got` — and the one it returns
+/// is the last thing alive, released when `l` goes out of scope.
+#[test]
+fn last_keeps_the_final_item_and_releases_the_rest() {
+    assert_eq!(
+        prints(
+            "last",
+            &traced(
+                "    let l be xs.iterate().map(x giving Tracer(tag: x)).last()
+    if l?:
+        print(\"got\")
+    let n be xs.iterate().map(each * 3).last()
+    if n?:
+        print(f\"last {n}\")
+    let none be xs.iterate().discard(each > 0).last()
+    if not none?:
+        print(\"last null\")
+    print(\"end\")
+"
+            ),
+        ),
+        "dropped 1\ndropped 2\ndropped 3\ngot\nlast 12\nlast null\nend\ndropped 4\n"
+    );
+}
+
+/// A record the extremes can be asked about: an id, and what is measured.
+const ROW: &str = "type Row:
+    id: Int
+    score: Int
+
+";
+
+/// **`minimum(by:)` and `maximum(by:)` hand back the item with the least or
+/// greatest key — the record, not the score** — and the **first** of equal keys
+/// wins in both, which is the same answer from the same data whichever way
+/// round the question is asked. `[(1,5) (2,3) (3,3) (4,9)]`: the least score
+/// is row 2 and not row 3; the greatest *negated* score is row 2 too.
+#[test]
+fn the_extremes_hand_back_the_record_and_the_first_of_equal_keys() {
+    assert_eq!(
+        prints(
+            "extremes",
+            &format!(
+                "{ROW}def main():
+    let mutable rows be Array[Row].new()
+    rows.push(Row(id: 1, score: 5))
+    rows.push(Row(id: 2, score: 3))
+    rows.push(Row(id: 3, score: 3))
+    rows.push(Row(id: 4, score: 9))
+    let low be rows.iterate().minimum(by: each.score)
+    let high be rows.iterate().maximum(by: each.score)
+    let flipped be rows.iterate().maximum(by: row giving 0 - row.score)
+    if low? and high? and flipped?:
+        print(f\"{{low.id}} {{high.id}} {{flipped.id}}\")
+    let empty be Array[Row].new()
+    let nobody be empty.iterate().minimum(by: each.score)
+    let nothing be empty.iterate().maximum(by: each.score)
+    if not nobody? and not nothing?:
+        print(\"null null\")
+"
+            ),
+        ),
+        "2 4 2\nnull null\n"
+    );
+}
+
+/// **An extreme over owned items releases what it displaces and what it
+/// passes over**: the first item is taken, each better one drops the holder,
+/// and each that is not better is dropped by its own turn. `minimum` over
+/// `10 - tag` keeps the `4` and drops `1`, `2`, `3` as they are replaced;
+/// `maximum` over the same key keeps the `1` and drops `2`, `3`, `4` as they
+/// arrive.
+#[test]
+fn an_extreme_over_owned_items_drops_every_one_it_does_not_keep() {
+    assert_eq!(
+        prints(
+            "extremes-owned",
+            &traced(
+                "    let best be xs.iterate().map(x giving Tracer(tag: x)).minimum(by: t giving 10 - t.tag)
+    if best?:
+        print(\"min\")
+    let worst be xs.iterate().map(x giving Tracer(tag: x)).maximum(by: t giving 10 - t.tag)
+    if worst?:
+        print(\"max\")
+"
+            ),
+        ),
+        "dropped 1\ndropped 2\ndropped 3\nmin\ndropped 2\ndropped 3\ndropped 4\nmax\n\
+         dropped 1\ndropped 4\n"
+    );
+}
+
+/// **`for` over a chain is the chain with the body as its terminal.** The
+/// links run as they do before `collect`, `continue` goes to the next item and
+/// `break` leaves the chain, and an owned item the pattern binds is released
+/// at the end of the turn that bound it — including the turns that `continue`
+/// and `break` cut short. `1` is dropped by the `keep` and never reaches the
+/// body.
+#[test]
+fn a_for_over_a_chain_runs_the_body_as_its_terminal() {
+    assert_eq!(
+        prints(
+            "for-chain",
+            &traced(
+                "    for t in xs.iterate().map(x giving Tracer(tag: x)).keep(each.tag > 1):
+        if t.tag is 3:
+            continue
+        if t.tag is 4:
+            break
+        print(f\"body {t.tag}\")
+    print(\"after\")
+    for x in xs.iterate().skip(1).take(2):
+        print(x)
+    for pair in xs.iterate().numbered().keep(each.index > 1):
+        print(f\"{pair.index} {pair.item}\")
+"
+            ),
+        ),
+        "dropped 1\nbody 2\ndropped 2\ndropped 3\ndropped 4\nafter\n2\n3\n2 3\n3 4\n"
+    );
+}
+
+/// **A `for` over an empty chain, or a chain that filters everything out,
+/// runs no turn**, and a `for` over `iterate()` alone reads the source in
+/// order and leaves it usable.
+#[test]
+fn a_for_over_an_empty_chain_runs_no_turn() {
+    assert_eq!(
+        prints(
+            "for-empty",
+            "def main():
+    let empty be Array[Int].new()
+    for x in empty.iterate():
+        print(\"never\")
+    let mutable xs be Array[Int].new()
+    xs.push(1)
+    xs.push(2)
+    for x in xs.iterate().discard(each > 0):
+        print(\"never\")
+    for x in xs.iterate():
+        print(x)
+    print(xs.length())
+",
+        ),
+        "1\n2\n2\n"
+    );
+}
+
+/// `a`, `b`, `c` pushed into a `Map[String, Int]` under `1`, `2`, `3`.
+const ABC: &str = "    let mutable m be Map[String, Int].new()
+    m.insert(\"a\", 1)
+    m.insert(\"b\", 2)
+    m.insert(\"c\", 3)
+";
+
+/// **`Map.keys()` and `Map.values()` are §5.4's chain sources**, in insertion
+/// order (§5.2): every adapter and terminal the `Array` source has works on
+/// them, and `iterate()` yields the `Entry` `for entry in m:` does.
+#[test]
+fn a_maps_keys_and_values_are_chain_sources() {
+    assert_eq!(
+        prints(
+            "map-sources",
+            &format!(
+                "def main():\n{ABC}    let ks be m.keys().collect()
+    print(f\"{{ks.length()}} {{ks[0]}} {{ks[1]}} {{ks[2]}}\")
+    print(m.values().sum())
+    print(m.values().keep(each > 1).count())
+    let shouted be m.keys().map(k giving f\"{{k}}!\").collect()
+    print(f\"{{shouted[0]}} {{shouted[2]}}\")
+    let es be m.iterate().map(e giving e.value * 10).collect()
+    print(f\"{{es[0]}} {{es[2]}}\")
+    let top be m.values().maximum(by: v giving v)
+    if top?:
+        print(f\"top {{top}}\")
+    let first_key be m.keys().first()
+    if first_key?:
+        print(f\"{{first_key}}\")
+    print(m.keys().numbered().map(each.index).sum())
+"
+            ),
+        ),
+        "3 a b c\n6\n2\na! c!\n10 30\ntop 3\na\n3\n"
+    );
+}
+
+/// **`for k in m.keys():` and `for v in m.values():`**, in insertion order,
+/// over a map that has had a key removed — the hole `remove` leaves is stepped
+/// over, as `for entry in m:` steps over it — and over an empty map, which
+/// runs no turn.
+#[test]
+fn a_for_over_a_maps_sources_walks_the_live_entries() {
+    assert_eq!(
+        prints(
+            "for-map",
+            &format!(
+                "def main():\n{ABC}    for k in m.keys():
+        print(k)
+    for v in m.values():
+        print(v)
+    for e in m.iterate():
+        print(f\"{{e.key}}={{e.value}}\")
+    m.remove(\"b\")
+    let rest be m.keys().collect()
+    print(f\"{{rest.length()}} {{rest[0]}} {{rest[1]}}\")
+    for v in m.values():
+        print(v)
+    let empty be Map[String, Int].new()
+    for k in empty.keys():
+        print(\"never\")
+    print(empty.values().count())
+"
+            ),
+        ),
+        "a\nb\nc\n1\n2\n3\na=1\nb=2\nc=3\n2 a c\n1\n3\n0\n"
+    );
+}
+
+/// **`zip(other)` pairs each item with the next element of `other`** — §1.3's
+/// `Pair`, `left` the chain's item and `right` a borrow of the array's — and
+/// ends when either side does. The position in `other` is counted over what
+/// reaches the link, so `skip(1).zip(…)` starts `other` at its front. Over
+/// owned items the one in hand when `other` runs out is released, and nothing
+/// after it is built: three `Tracer`s against two names is three drops and a
+/// count of two.
+#[test]
+fn zip_pairs_items_until_either_side_runs_out() {
+    assert_eq!(
+        prints(
+            "zip",
+            &traced(
+                "    let mutable names be Array[String].new()
+    names.push(\"a\")
+    names.push(\"b\")
+    let z be xs.iterate().zip(names.iterate()).collect()
+    print(f\"{z.length()} {z[0].left} {z[0].right} {z[1].left} {z[1].right}\")
+    let mutable ys be Array[Int].new()
+    ys.push(10)
+    ys.push(20)
+    ys.push(30)
+    ys.push(40)
+    ys.push(50)
+    print(xs.iterate().zip(ys.iterate()).map(p giving p.left * p.right).sum())
+    for p in ys.iterate().skip(3).zip(xs.iterate()):
+        print(f\"{p.left} {p.right}\")
+    let empty be Array[Int].new()
+    print(xs.iterate().zip(empty.iterate()).count())
+    let n be xs.iterate().map(x giving Tracer(tag: x)).zip(names.iterate()).count()
+    print(f\"count {n}\")
+"
+            ),
+        ),
+        "2 1 a 2 b\n300\n40 1\n50 2\n0\ndropped 1\ndropped 2\ndropped 3\ncount 2\n"
+    );
+}
+
+/// **A closure that takes an aggregate by value is called with its address**,
+/// as any Science function is: `map` over an owned record hands the closure
+/// the record itself, and a record is more than a register. Before this the
+/// loaded value went where a pointer was declared and the module failed
+/// verification — the shape every `numbered().map(each.index)` has, and any
+/// `map(p giving …)` over a chain that has already built a record.
+#[test]
+fn a_closure_taking_a_record_by_value_is_called_by_address() {
+    assert_eq!(
+        prints(
+            "closure-record",
+            "type Point:
+    x: Int
+    y: Int
+
+def main():
+    let mutable xs be Array[Int].new()
+    xs.push(10)
+    xs.push(20)
+    let sums be xs.iterate().map(n giving Point(x: n, y: 1)).map(p giving p.x + p.y).collect()
+    print(f\"{sums[0]} {sums[1]}\")
+    let doubled be xs.iterate().map(n giving f\"{n}\").map(s giving s.length()).sum()
+    print(doubled)
+",
+        ),
+        "11 21\n4\n"
+    );
+}
+
+/// **A `zip` whose other side is not an `Array.iterate()` is refused by
+/// name.** The declaration takes an `ArrayIterate[U]`, so a bare array leaves
+/// `U` unsolved and the checker has nothing to report; the chain then does not
+/// fuse, and the backend names the `Zip` it was asked to build as a value —
+/// with the unsolved `{unknown}` in it, which is the finding.
+#[test]
+fn a_zip_with_anything_but_an_array_source_is_refused() {
+    let lowered = lower(
+        "def main():
+    let mutable xs be Array[Int].new()
+    xs.push(1)
+    let all be xs.iterate().zip(xs).collect()
+    print(all.length())
+",
+    );
+    let dir = scratch("chains", "zip-refused");
+    let diagnostics = lowered
+        .try_build(&dir.join("out"), OptLevel::O2)
+        .map(|_| ())
+        .expect_err("a zip with no source on the right is not lowered");
+    let _ = std::fs::remove_dir_all(&dir);
+    let first = diagnostics.first().expect("a diagnostic");
+    assert_eq!(first.code, science_codegen::diagnostics::code::SC0400);
+    assert!(first.message.contains("Zip["), "it must name the chain it could not build: {}", first.message);
+}

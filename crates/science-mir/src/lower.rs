@@ -2064,6 +2064,21 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
                 .lower_for_over_range(dest, pattern, start, end, inclusive, body, block, span);
         }
 
+        // **A chain is a `for`'s subject whole, and the loop is its terminal.**
+        //
+        // `for k in m.keys():` and `for x in xs.iterate().keep(…):` are the
+        // chain a terminal would have fused, with the body in the place of
+        // `collect`'s push: one loop, no adapter built, and `break` and
+        // `continue` ending or advancing it. §2.1's laziness is what makes
+        // that the same program — a chain does nothing until something pulls
+        // it, and a `for` is something that pulls.
+        if let Some(chain) = self.chain_of(iter) {
+            let terminal = Terminal::Each { pattern, body };
+            if chain.steps.iter().all(|(step, _)| !matches!(step, Step::Sorted(_))) {
+                return self.lower_chain_terminal(dest, terminal, &chain, block, span);
+            }
+        }
+
         // **AMENDMENT 11's desugaring, taken for the one subject that cannot
         // express it any other way.**
         //
@@ -2998,7 +3013,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
         if let Some(def) = method {
             let terminal = self
                 .chain_method(def)
-                .and_then(|(_, name)| Terminal::named(name, args.first().copied()));
+                .and_then(|(_, name)| Terminal::named(name, args));
             if let Some(terminal) = terminal {
                 if let Some(chain) = self.chain_of(receiver) {
                     return self.lower_chain_terminal(dest, terminal, &chain, block, span);
@@ -6308,6 +6323,35 @@ enum Step {
     Skip(ExprId),
     /// `sorted(by: key)` — §1.4's **barrier**: buffer, sort, yield.
     Sorted(ExprId),
+    /// `numbered()` — wrap each item that reaches it in §1.3's `Numbered`,
+    /// with the position it arrived at, counted from zero.
+    Numbered,
+    /// `take_while(p)` — pass items while `p` holds; the first one it does not
+    /// hold for ends the chain, as a `take` at its limit does.
+    TakeWhile(ExprId),
+    /// `skip_while(p)` — swallow items while `p` holds; from the first one it
+    /// does not hold for, everything passes and `p` is not asked again.
+    SkipWhile(ExprId),
+    /// `every(n)` — pass the first item and every `n`th after it.
+    Every(ExprId),
+    /// `zip(other)` — pair each item with the next element of `other`, an
+    /// `Array`'s `iterate()` whose array this holds; the chain ends when
+    /// `other` does.
+    Zip(ExprId),
+}
+
+/// What a chain reads: §5.4's source methods, each of which a fused loop
+/// walks by index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Source {
+    /// `Array.iterate()` — `&T` for each element.
+    Array,
+    /// `Map.iterate()` — the `&Entry[K, V]` `for entry in m:` hands out.
+    MapEntries,
+    /// `Map.keys()` — a borrow of each entry's key.
+    MapKeys,
+    /// `Map.values()` — a borrow of each entry's value.
+    MapValues,
 }
 
 /// What a chain ends in: `collections-and-chains.md` §1.4's terminals that
@@ -6331,19 +6375,34 @@ enum Terminal {
     First,
     /// `find(p)` — the first item `p` holds for, or `null`.
     Find(ExprId),
+    /// `last()` — the final item, or `null`; walks the whole chain.
+    Last,
+    /// `minimum(by: key)` — the item with the least key, or `null`. The first
+    /// of equal keys wins.
+    Minimum(ExprId),
+    /// `maximum(by: key)` — the item with the greatest key, or `null`. The
+    /// first of equal keys wins, as it does for `Minimum`.
+    Maximum(ExprId),
+    /// The body of a written `for`, run once per item. Not a method at all:
+    /// `for x in chain:` is a chain whose terminal is the loop.
+    Each { pattern: PatId, body: thir::BlockId },
 }
 
 impl Terminal {
     /// The terminal a prelude chain method's name is, when it is one.
-    fn named(name: &str, argument: Option<ExprId>) -> Option<Terminal> {
-        Some(match (name, argument) {
+    fn named(name: &str, arguments: &[ExprId]) -> Option<Terminal> {
+        let first = arguments.first().copied();
+        Some(match (name, first) {
             ("collect", _) => Terminal::Collect,
             ("count", _) => Terminal::Count,
             ("sum", _) => Terminal::Sum,
             ("first", _) => Terminal::First,
+            ("last", _) => Terminal::Last,
             ("has_any", Some(predicate)) => Terminal::HasAny(predicate),
             ("has_all", Some(predicate)) => Terminal::HasAll(predicate),
             ("find", Some(predicate)) => Terminal::Find(predicate),
+            ("minimum", Some(key)) => Terminal::Minimum(key),
+            ("maximum", Some(key)) => Terminal::Maximum(key),
             _ => return None,
         })
     }
@@ -6352,18 +6411,27 @@ impl Terminal {
     /// a link's closure is.
     fn predicate(self) -> Option<ExprId> {
         match self {
-            Terminal::HasAny(predicate) | Terminal::HasAll(predicate) | Terminal::Find(predicate) => {
-                Some(predicate)
-            }
-            Terminal::Collect | Terminal::Count | Terminal::Sum | Terminal::First => None,
+            Terminal::HasAny(predicate)
+            | Terminal::HasAll(predicate)
+            | Terminal::Find(predicate)
+            | Terminal::Minimum(predicate)
+            | Terminal::Maximum(predicate) => Some(predicate),
+            Terminal::Collect
+            | Terminal::Count
+            | Terminal::Sum
+            | Terminal::First
+            | Terminal::Last
+            | Terminal::Each { .. } => None,
         }
     }
 }
 
 /// A whole chain, read off the THIR spine of a terminal's receiver.
 struct Chain {
-    /// The `Array` the source `iterate()` was called on.
+    /// The `Array` or `Map` the source method was called on.
     source: ExprId,
+    /// Which of §5.4's source methods it was.
+    kind: Source,
     /// Each link, and the `Item` the chain has *after* it.
     ///
     /// The item *before* the first link is not carried: it is a borrow of the
@@ -6407,13 +6475,22 @@ impl Builder<'_, '_> {
         WRAPPING_TYPES.contains(&self.context.defs.get(owner).name.as_str()).then_some(op)
     }
 
-    /// Whether this definition is the prelude's `Array.iterate`.
-    fn is_array_iterate(&self, def: DefId) -> bool {
+    /// Which of §5.4's source methods this definition is, when it is one:
+    /// the prelude's `Array.iterate`, or `Map`'s `iterate`, `keys` and
+    /// `values`.
+    fn chain_source_kind(&self, def: DefId) -> Option<Source> {
         let entry = self.context.defs.get(def);
-        if !entry.is_builtin() || entry.name != "iterate" {
-            return false;
+        if !entry.is_builtin() {
+            return None;
         }
-        entry.parent.is_some_and(|owner| self.context.defs.get(owner).name == "Array")
+        let owner = self.context.defs.get(entry.parent?).name.as_str();
+        match (owner, entry.name.as_str()) {
+            ("Array", "iterate") => Some(Source::Array),
+            ("Map", "iterate") => Some(Source::MapEntries),
+            ("Map", "keys") => Some(Source::MapKeys),
+            ("Map", "values") => Some(Source::MapValues),
+            _ => None,
+        }
     }
 
     /// Read a chain off the receiver of a terminal, or answer `None` when the
@@ -6429,9 +6506,9 @@ impl Builder<'_, '_> {
                 return None;
             };
             let (receiver, method, args) = (*receiver, *method, args.clone());
-            if self.is_array_iterate(method) {
+            if let Some(kind) = self.chain_source_kind(method) {
                 steps.reverse();
-                return Some(Chain { source: receiver, steps });
+                return Some(Chain { source: receiver, kind, steps });
             }
             let (_, name) = self.chain_method(method)?;
             let item = self.thir.expr(expr).ty;
@@ -6443,6 +6520,24 @@ impl Builder<'_, '_> {
                 ("take", Some(arg)) => Step::Take(*arg),
                 ("skip", Some(arg)) => Step::Skip(*arg),
                 ("sorted", Some(arg)) => Step::Sorted(*arg),
+                ("numbered", _) => Step::Numbered,
+                ("take_while", Some(arg)) => Step::TakeWhile(*arg),
+                ("skip_while", Some(arg)) => Step::SkipWhile(*arg),
+                ("every", Some(arg)) => Step::Every(*arg),
+                // Only an `Array.iterate()` can be walked beside the loop's
+                // own cursor, and the prelude's declaration says so by taking
+                // an `ArrayIterate`: the receiver is the array.
+                ("zip", Some(arg)) => {
+                    let ExprKind::MethodCall { receiver: other, method: Some(source), .. } =
+                        self.thir.expr(*arg).kind
+                    else {
+                        return None;
+                    };
+                    if self.chain_source_kind(source) != Some(Source::Array) {
+                        return None;
+                    }
+                    Step::Zip(other)
+                }
                 _ => return None,
             };
             steps.push((step, item));
@@ -6511,7 +6606,16 @@ impl Builder<'_, '_> {
         let barrier = chain.steps.iter().position(|(step, _)| matches!(step, Step::Sorted(_)));
         let Some(at) = barrier else {
             let (source, block) = self.chain_source(chain.source, block, span);
-            return self.chain_pass(dest, terminal, None, &source, &chain.steps, block, span);
+            return self.chain_pass(
+                dest,
+                terminal,
+                None,
+                chain.kind,
+                &source,
+                &chain.steps,
+                block,
+                span,
+            );
         };
         if at + 1 != chain.steps.len() || !matches!(terminal, Terminal::Collect) {
             // Something after the barrier. Named rather than mis-lowered.
@@ -6547,6 +6651,7 @@ impl Builder<'_, '_> {
             dest.clone(),
             Terminal::Collect,
             Some((keys.clone(), key)),
+            chain.kind,
             &source,
             &chain.steps[..at],
             block,
@@ -6666,6 +6771,7 @@ impl Builder<'_, '_> {
         dest: Place,
         terminal: Terminal,
         keys: Option<(Place, ExprId)>,
+        kind: Source,
         source: &Place,
         steps: &[(Step, Ty)],
         mut block: BlockId,
@@ -6699,11 +6805,29 @@ impl Builder<'_, '_> {
                 let zero = self.zero_of(self.place_ty(&dest));
                 self.assign(block, dest.clone(), Rvalue::Use(zero), span);
             }
+            // `last` and the extremes hold `null` until an item replaces it,
+            // which is what an empty chain answers.
+            Terminal::Last | Terminal::Minimum(_) | Terminal::Maximum(_) => {
+                let null = Operand::Const(Constant::Literal(Literal::Null));
+                self.assign(block, dest.clone(), Rvalue::Use(null), span);
+            }
             Terminal::HasAny(_)
             | Terminal::HasAll(_)
             | Terminal::First
-            | Terminal::Find(_) => {}
+            | Terminal::Find(_)
+            | Terminal::Each { .. } => {}
         }
+        // What `minimum` and `maximum` carry between items: whether one has
+        // been seen, and the key it had.
+        let extreme = if matches!(terminal, Terminal::Minimum(_) | Terminal::Maximum(_)) {
+            let seen = self.temp(self.bool_ty, span, block);
+            self.chain_assign_bool(&Place::local(seen), false, block, span);
+            let best = self.temp(int_ty, span, block);
+            self.assign(block, Place::local(best), Rvalue::Use(Self::bits(0)), span);
+            Some((seen, best))
+        } else {
+            None
+        };
         // The barrier's parallel key array, built the same way and in step
         // with the buffer, so that index `i` of one describes index `i` of
         // the other for `science_array_sort_by_int_key`.
@@ -6733,13 +6857,28 @@ impl Builder<'_, '_> {
         block =
             self.borrow_place(Place::local(reference), false, source.clone(), block, span, false);
         let length = self.temp(int_ty, span, block);
+        let extent = if kind == Source::Array { ARRAY_LEN } else { MAP_EXTENT };
         block = self.emit_call(
             Place::local(length),
-            Callee::Runtime(ARRAY_LEN),
+            Callee::Runtime(extent),
             vec![Operand::Copy(Place::local(reference))],
             block,
             span,
         );
+        // A map is walked by entry, and an entry can be a hole (a removed
+        // pair): the slot `science_map_entry_at` answers in, and its test.
+        // Outside the loop for `lower_for_over_map`'s reason.
+        let (entry_slot, entry_present) = if kind == Source::Array {
+            (None, None)
+        } else {
+            let entry_ty = self.map_entry_ty(source);
+            let item = self.context.types.borrowed(false, entry_ty);
+            let slot_ty = self.context.types.nullable(item);
+            (
+                Some((self.temp(slot_ty, span, block), item, entry_ty)),
+                Some(self.temp(self.bool_ty, span, block)),
+            )
+        };
 
         // **Every closure is evaluated once, before the loop.** A closure
         // expression allocates its capture set, and building it per turn
@@ -6748,16 +6887,72 @@ impl Builder<'_, '_> {
         // terminal's own predicate is evaluated beside the links'.
         let mut closures: Vec<Option<(Local, Ty)>> = Vec::with_capacity(steps.len());
         let mut limits: Vec<Option<(Local, Local)>> = Vec::with_capacity(steps.len());
+        // A `zip`'s second array: the loan on it, its type and its element's.
+        let mut zips: Vec<Option<(Local, Ty, Ty)>> = vec![None; steps.len()];
         for (step, _) in steps {
             match step {
-                Step::Discard(arg) | Step::Keep(arg) | Step::Map(arg) | Step::Sorted(arg) => {
+                // The other array is borrowed for the chain's life, as the
+                // source is, and read at the position each item reaches the
+                // link — which is not the source's cursor after a filter.
+                Step::Zip(other) => {
+                    let (place, next) = self.chain_source(*other, block, span);
+                    block = next;
+                    let other_ty = self.place_ty(&place);
+                    let other_element = self.element_ty(&place);
+                    let borrowed = self.context.types.borrowed(false, other_ty);
+                    let reference = self.temp(borrowed, span, block);
+                    block = self.borrow_place(
+                        Place::local(reference),
+                        false,
+                        place,
+                        block,
+                        span,
+                        false,
+                    );
+                    let other_length = self.temp(int_ty, span, block);
+                    block = self.emit_call(
+                        Place::local(other_length),
+                        Callee::Runtime(ARRAY_LEN),
+                        vec![Operand::Copy(Place::local(reference))],
+                        block,
+                        span,
+                    );
+                    let counted = self.temp(int_ty, span, block);
+                    self.assign(block, Place::local(counted), Rvalue::Use(Self::bits(0)), span);
+                    zips[closures.len()] = Some((reference, other_ty, other_element));
+                    closures.push(None);
+                    limits.push(Some((other_length, counted)));
+                }
+                Step::Discard(arg)
+                | Step::Keep(arg)
+                | Step::Map(arg)
+                | Step::Sorted(arg)
+                | Step::TakeWhile(arg) => {
                     let ty = self.thir.expr(*arg).ty;
                     let temp = self.temp(ty, span, block);
                     block = self.expr_into(Place::local(temp), *arg, block);
                     closures.push(Some((temp, ty)));
                     limits.push(None);
                 }
-                Step::Take(arg) | Step::Skip(arg) => {
+                // A closure and a flag: still swallowing, until the first
+                // item `p` does not hold for.
+                Step::SkipWhile(arg) => {
+                    let ty = self.thir.expr(*arg).ty;
+                    let temp = self.temp(ty, span, block);
+                    block = self.expr_into(Place::local(temp), *arg, block);
+                    closures.push(Some((temp, ty)));
+                    let skipping = self.temp(self.bool_ty, span, block);
+                    self.chain_assign_bool(&Place::local(skipping), true, block, span);
+                    limits.push(Some((skipping, skipping)));
+                }
+                // The position the next item arrives at.
+                Step::Numbered => {
+                    let counted = self.temp(int_ty, span, block);
+                    self.assign(block, Place::local(counted), Rvalue::Use(Self::bits(0)), span);
+                    closures.push(None);
+                    limits.push(Some((counted, counted)));
+                }
+                Step::Take(arg) | Step::Skip(arg) | Step::Every(arg) => {
                     let limit = self.temp(int_ty, span, block);
                     block = self.expr_into(Place::local(limit), *arg, block);
                     let counted = self.temp(int_ty, span, block);
@@ -6781,6 +6976,9 @@ impl Builder<'_, '_> {
         let head = self.new_block();
         let body_block = self.new_block();
         let step_block = self.new_block();
+        // An array's element is read in the body; a map's entry is fetched
+        // first, and a hole goes straight to the increment.
+        let fetch = if kind == Source::Array { body_block } else { self.new_block() };
         // Two ends, not one: `exhausted` is reached when the source or a
         // `take` runs out, and `done` also from a terminal that has its
         // answer early. `exhausted` writes the answer running out means —
@@ -6821,36 +7019,102 @@ impl Builder<'_, '_> {
             head,
             TerminatorKind::If {
                 cond: Operand::Copy(Place::local(more)),
-                then_block: body_block,
+                then_block: fetch,
                 else_block: exhausted,
             },
             span,
         );
+        if let (Some((slot, _, _)), Some(present)) = (entry_slot, entry_present) {
+            let at = self.temp(int_ty, span, fetch);
+            self.assign(
+                fetch,
+                Place::local(at),
+                Rvalue::Use(Operand::Copy(Place::local(cursor))),
+                span,
+            );
+            let fetched = self.emit_call(
+                Place::local(slot),
+                Callee::Runtime(MAP_ENTRY_AT),
+                vec![Operand::Copy(Place::local(reference)), Operand::Copy(Place::local(at))],
+                fetch,
+                span,
+            );
+            self.assign(
+                fetched,
+                Place::local(present),
+                Rvalue::IsPresent(Operand::Copy(Place::local(slot))),
+                span,
+            );
+            self.terminate(
+                fetched,
+                TerminatorKind::If {
+                    cond: Operand::Copy(Place::local(present)),
+                    then_block: body_block,
+                    else_block: step_block,
+                },
+                span,
+            );
+        }
 
         // The item's scope. Everything the body makes is registered here.
         self.push_scope();
         let depth = self.scopes.len() - 1;
 
-        // The element, reached *through* the loan, at an index temporary the
-        // body assigns once — `Projection::Index`'s own contract.
-        let at = self.temp(int_ty, span, body_block);
-        self.assign(
-            body_block,
-            Place::local(at),
-            Rvalue::Use(Operand::Copy(Place::local(cursor))),
-            span,
-        );
-        let through = Place::local(reference).project(Projection::Deref { ty: array_ty });
-        let element = through.project(Projection::Index { index: at, ty: element_ty });
-        let item_ty = self.context.types.borrowed(false, element_ty);
-        let item = self.temp(item_ty, span, body_block);
         let mut current = body_block;
-        current = self.borrow_place(Place::local(item), false, element, current, span, false);
-        let mut value = Place::local(item);
+        let mut value;
+        if let Some((slot, entry_ref_ty, entry_ty)) = entry_slot {
+            // The entry the fetch found, narrowed out of its slot: a borrow,
+            // so the read is a copy and nothing here owns anything.
+            let narrowed = self.temp(entry_ref_ty, span, body_block);
+            let read = self.read(Place::local(slot), entry_ref_ty);
+            self.assign(
+                body_block,
+                Place::local(narrowed),
+                Rvalue::Narrow { operand: read, ty: entry_ref_ty },
+                span,
+            );
+            value = Place::local(narrowed);
+            if kind != Source::MapEntries {
+                // `keys()` and `values()` hand out a borrow of one field of
+                // the entry, reached through the entry's own borrow.
+                let fields = crate::moves::record_fields(
+                    self.context.decls,
+                    self.context.types,
+                    self.context.aliases,
+                    entry_ty,
+                )
+                .expect("`Entry` is a record with two fields");
+                let (field, field_ty) = fields[if kind == Source::MapKeys { 0 } else { 1 }];
+                let element = Place::local(narrowed)
+                    .project(Projection::Deref { ty: entry_ty })
+                    .project(Projection::Field { field, ty: field_ty });
+                let item_ty = self.context.types.borrowed(false, field_ty);
+                let item = self.temp(item_ty, span, body_block);
+                current =
+                    self.borrow_place(Place::local(item), false, element, current, span, false);
+                value = Place::local(item);
+            }
+        } else {
+            // The element, reached *through* the loan, at an index temporary
+            // the body assigns once — `Projection::Index`'s own contract.
+            let at = self.temp(int_ty, span, body_block);
+            self.assign(
+                body_block,
+                Place::local(at),
+                Rvalue::Use(Operand::Copy(Place::local(cursor))),
+                span,
+            );
+            let through = Place::local(reference).project(Projection::Deref { ty: array_ty });
+            let element = through.project(Projection::Index { index: at, ty: element_ty });
+            let item_ty = self.context.types.borrowed(false, element_ty);
+            let item = self.temp(item_ty, span, body_block);
+            current = self.borrow_place(Place::local(item), false, element, current, span, false);
+            value = Place::local(item);
+        }
 
         for (index, (step, item_after)) in steps.iter().enumerate() {
             match step {
-                Step::Discard(_) | Step::Keep(_) => {
+                Step::Discard(_) | Step::Keep(_) | Step::TakeWhile(_) => {
                     let (closure, closure_ty) =
                         closures[index].expect("a filter carries a closure");
                     let (argument, next) =
@@ -6869,16 +7133,231 @@ impl Builder<'_, '_> {
                     // That direction is the whole reason the note carries two
                     // verbs instead of one and a negation.
                     let (pass, skip) = (self.new_block(), self.new_block());
+                    //
+                    // `take_while` is `keep` whose first miss is not a skip
+                    // but the end: it leaves the loop as a `take` at its
+                    // limit does, and nothing after it is read.
                     let (then_block, else_block) = match step {
                         Step::Discard(_) => (skip, pass),
                         _ => (pass, skip),
                     };
+                    let onward = if matches!(step, Step::TakeWhile(_)) { exhausted } else { step_block };
                     self.terminate(
                         current,
                         TerminatorKind::If {
                             cond: Operand::Copy(Place::local(matched)),
                             then_block,
                             else_block,
+                        },
+                        span,
+                    );
+                    self.chain_leave(skip, depth, onward, span);
+                    current = pass;
+                }
+                Step::SkipWhile(_) => {
+                    let (closure, closure_ty) =
+                        closures[index].expect("a `skip_while` carries a closure");
+                    let (skipping, _) = limits[index].expect("a `skip_while` carries its flag");
+                    // Still swallowing? Only then is the predicate asked.
+                    let (ask, through) = (self.new_block(), self.new_block());
+                    self.terminate(
+                        current,
+                        TerminatorKind::If {
+                            cond: Operand::Copy(Place::local(skipping)),
+                            then_block: ask,
+                            else_block: through,
+                        },
+                        span,
+                    );
+                    let (argument, next) =
+                        self.chain_argument(&value, closure_ty, false, ask, span);
+                    let matched = self.temp(self.bool_ty, span, next);
+                    let asked = self.emit_call(
+                        Place::local(matched),
+                        Callee::Indirect(Operand::Copy(Place::local(closure))),
+                        vec![argument],
+                        next,
+                        span,
+                    );
+                    let (swallow, begin) = (self.new_block(), self.new_block());
+                    self.terminate(
+                        asked,
+                        TerminatorKind::If {
+                            cond: Operand::Copy(Place::local(matched)),
+                            then_block: swallow,
+                            else_block: begin,
+                        },
+                        span,
+                    );
+                    self.chain_leave(swallow, depth, step_block, span);
+                    // The first item it does not hold for ends the skipping
+                    // and is itself the first to pass.
+                    self.chain_assign_bool(&Place::local(skipping), false, begin, span);
+                    self.terminate(begin, TerminatorKind::Goto { target: through }, span);
+                    current = through;
+                }
+                Step::Numbered => {
+                    let (counted, _) = limits[index].expect("a `numbered` carries its counter");
+                    let position = self.temp(int_ty, span, current);
+                    self.assign(
+                        current,
+                        Place::local(position),
+                        Rvalue::Use(Operand::Copy(Place::local(counted))),
+                        span,
+                    );
+                    self.chain_add(&Place::local(counted), Self::bits(1), current, span);
+                    let record_ty = *item_after;
+                    let fields = crate::moves::record_fields(
+                        self.context.decls,
+                        self.context.types,
+                        self.context.aliases,
+                        record_ty,
+                    )
+                    .expect("`Numbered` is a record with two fields");
+                    let TyKind::Named { def, .. } = *self.context.types.kind(record_ty) else {
+                        unreachable!("`numbered()` yields a `Numbered`")
+                    };
+                    let carried = self.chain_operand(&value, true);
+                    let made = self.temp(record_ty, span, current);
+                    self.assign(
+                        current,
+                        Place::local(made),
+                        Rvalue::Record {
+                            def,
+                            fields: vec![
+                                (fields[0].0, Operand::Copy(Place::local(position))),
+                                (fields[1].0, carried),
+                            ],
+                        },
+                        span,
+                    );
+                    value = Place::local(made);
+                }
+                Step::Zip(_) => {
+                    let (length, counted) = limits[index].expect("a `zip` carries its position");
+                    let (reference, other_ty, other_element) =
+                        zips[index].expect("a `zip` carries its second array");
+                    // The other array running out ends the chain, as a `take`
+                    // at its limit does. The item in hand is released by the
+                    // exit, because nothing took it.
+                    let remaining = self.temp(self.bool_ty, span, current);
+                    self.assign(
+                        current,
+                        Place::local(remaining),
+                        Rvalue::Binary {
+                            op: BinaryOp::Lt,
+                            lhs: Operand::Copy(Place::local(counted)),
+                            rhs: Operand::Copy(Place::local(length)),
+                        },
+                        span,
+                    );
+                    let (paired, over) = (self.new_block(), self.new_block());
+                    self.terminate(
+                        current,
+                        TerminatorKind::If {
+                            cond: Operand::Copy(Place::local(remaining)),
+                            then_block: paired,
+                            else_block: over,
+                        },
+                        span,
+                    );
+                    self.chain_leave(over, depth, exhausted, span);
+                    let at = self.temp(int_ty, span, paired);
+                    self.assign(
+                        paired,
+                        Place::local(at),
+                        Rvalue::Use(Operand::Copy(Place::local(counted))),
+                        span,
+                    );
+                    let through =
+                        Place::local(reference).project(Projection::Deref { ty: other_ty });
+                    let element =
+                        through.project(Projection::Index { index: at, ty: other_element });
+                    let right_ty = self.context.types.borrowed(false, other_element);
+                    let right = self.temp(right_ty, span, paired);
+                    current = self.borrow_place(
+                        Place::local(right),
+                        false,
+                        element,
+                        paired,
+                        span,
+                        false,
+                    );
+                    self.chain_add(&Place::local(counted), Self::bits(1), current, span);
+                    let record_ty = *item_after;
+                    let fields = crate::moves::record_fields(
+                        self.context.decls,
+                        self.context.types,
+                        self.context.aliases,
+                        record_ty,
+                    )
+                    .expect("`Pair` is a record with two fields");
+                    let TyKind::Named { def, .. } = *self.context.types.kind(record_ty) else {
+                        unreachable!("`zip()` yields a `Pair`")
+                    };
+                    let left = self.chain_operand(&value, true);
+                    let made = self.temp(record_ty, span, current);
+                    self.assign(
+                        current,
+                        Place::local(made),
+                        Rvalue::Record {
+                            def,
+                            fields: vec![
+                                (fields[0].0, left),
+                                (fields[1].0, Operand::Copy(Place::local(right))),
+                            ],
+                        },
+                        span,
+                    );
+                    value = Place::local(made);
+                }
+                Step::Every(_) => {
+                    let (limit, phase) = limits[index].expect("an `every` carries a count");
+                    // The first item of each run of `n` passes. The phase is
+                    // stepped on every item and wraps at the limit, so an
+                    // `n` below two passes everything.
+                    let at_start = self.temp(self.bool_ty, span, current);
+                    self.assign(
+                        current,
+                        Place::local(at_start),
+                        Rvalue::Binary {
+                            op: BinaryOp::Eq,
+                            lhs: Operand::Copy(Place::local(phase)),
+                            rhs: Self::bits(0),
+                        },
+                        span,
+                    );
+                    self.chain_add(&Place::local(phase), Self::bits(1), current, span);
+                    let wrapped = self.temp(self.bool_ty, span, current);
+                    self.assign(
+                        current,
+                        Place::local(wrapped),
+                        Rvalue::Binary {
+                            op: BinaryOp::Ge,
+                            lhs: Operand::Copy(Place::local(phase)),
+                            rhs: Operand::Copy(Place::local(limit)),
+                        },
+                        span,
+                    );
+                    let (wrap, settled) = (self.new_block(), self.new_block());
+                    self.terminate(
+                        current,
+                        TerminatorKind::If {
+                            cond: Operand::Copy(Place::local(wrapped)),
+                            then_block: wrap,
+                            else_block: settled,
+                        },
+                        span,
+                    );
+                    self.assign(wrap, Place::local(phase), Rvalue::Use(Self::bits(0)), span);
+                    self.terminate(wrap, TerminatorKind::Goto { target: settled }, span);
+                    let (pass, skip) = (self.new_block(), self.new_block());
+                    self.terminate(
+                        settled,
+                        TerminatorKind::If {
+                            cond: Operand::Copy(Place::local(at_start)),
+                            then_block: pass,
+                            else_block: skip,
                         },
                         span,
                     );
@@ -7007,6 +7486,87 @@ impl Builder<'_, '_> {
                 self.chain_found(&dest, &value, current, span);
                 self.chain_leave(current, depth, done, span);
             }
+            Terminal::Last => {
+                // Every item replaces the one before it, which is released
+                // first: the chain keeps only the final item it saw.
+                let replaced = self.chain_replace(&dest, &value, current, span);
+                self.chain_leave(replaced, depth, step_block, span);
+            }
+            Terminal::Minimum(_) | Terminal::Maximum(_) => {
+                let (closure, closure_ty) = predicate.expect("a terminal key was evaluated");
+                let (seen, best) = extreme.expect("an extreme carries its state");
+                let (argument, next) =
+                    self.chain_argument(&value, closure_ty, false, current, span);
+                current = next;
+                let key = self.temp(int_ty, span, current);
+                current = self.emit_call(
+                    Place::local(key),
+                    Callee::Indirect(Operand::Copy(Place::local(closure))),
+                    vec![argument],
+                    current,
+                    span,
+                );
+                // The first item is the extreme so far. After it, an item
+                // replaces the holder only when its key is *strictly* better,
+                // so the first of equal keys wins.
+                let (compare, take, keep) = (self.new_block(), self.new_block(), self.new_block());
+                self.terminate(
+                    current,
+                    TerminatorKind::If {
+                        cond: Operand::Copy(Place::local(seen)),
+                        then_block: compare,
+                        else_block: take,
+                    },
+                    span,
+                );
+                let better = self.temp(self.bool_ty, span, compare);
+                let op = if matches!(terminal, Terminal::Minimum(_)) {
+                    BinaryOp::Lt
+                } else {
+                    BinaryOp::Gt
+                };
+                self.assign(
+                    compare,
+                    Place::local(better),
+                    Rvalue::Binary {
+                        op,
+                        lhs: Operand::Copy(Place::local(key)),
+                        rhs: Operand::Copy(Place::local(best)),
+                    },
+                    span,
+                );
+                self.terminate(
+                    compare,
+                    TerminatorKind::If {
+                        cond: Operand::Copy(Place::local(better)),
+                        then_block: take,
+                        else_block: keep,
+                    },
+                    span,
+                );
+                let taken = self.chain_replace(&dest, &value, take, span);
+                self.assign(
+                    taken,
+                    Place::local(best),
+                    Rvalue::Use(Operand::Copy(Place::local(key))),
+                    span,
+                );
+                self.chain_assign_bool(&Place::local(seen), true, taken, span);
+                self.chain_leave(taken, depth, step_block, span);
+                self.chain_leave(keep, depth, step_block, span);
+            }
+            Terminal::Each { pattern, body } => {
+                // A written `for`: the loop's own body is the terminal, with
+                // `continue` going to the next item and `break` out of the
+                // chain. The pattern binds in the item's scope, so what it
+                // owns is released with everything else the item made.
+                self.loops.push(LoopScope { head, continue_to: step_block, exit: done, depth });
+                let bound = self.bind_pattern(&value, pattern, current);
+                let discard = self.temp(Ty::UNIT, span, bound);
+                let after = self.lower_block(Place::local(discard), body, bound);
+                self.loops.pop();
+                self.chain_leave(after, depth, step_block, span);
+            }
             Terminal::HasAny(_) | Terminal::HasAll(_) | Terminal::Find(_) => {
                 let (closure, closure_ty) = predicate.expect("a terminal predicate was evaluated");
                 let (argument, next) =
@@ -7076,9 +7636,20 @@ impl Builder<'_, '_> {
                 let null = Operand::Const(Constant::Literal(Literal::Null));
                 self.assign(exhausted, dest.clone(), Rvalue::Use(null), span);
             }
-            Terminal::Collect | Terminal::Count | Terminal::Sum => {}
+            Terminal::Collect
+            | Terminal::Count
+            | Terminal::Sum
+            | Terminal::Last
+            | Terminal::Minimum(_)
+            | Terminal::Maximum(_)
+            | Terminal::Each { .. } => {}
         }
         self.terminate(exhausted, TerminatorKind::Goto { target: done }, span);
+        // A `for` is a statement of type `()`, and both ways out of it — the
+        // chain running out and a `break` — arrive here.
+        if matches!(terminal, Terminal::Each { .. }) {
+            self.assign(done, dest, Rvalue::Use(Operand::Const(Constant::Unit)), span);
+        }
         done
     }
 
@@ -7149,6 +7720,7 @@ impl Builder<'_, '_> {
             counted,
             Terminal::Count,
             Some((keys.clone(), key)),
+            Source::Array,
             &source,
             &[],
             block,
@@ -7173,6 +7745,46 @@ impl Builder<'_, '_> {
             && entry.name == "sort"
             && entry.parent.is_some_and(|owner| self.context.defs.get(owner).name == "Array")
             && self.context.decls.signature(def).is_some_and(|sig| sig.params.len() == 1)
+    }
+
+    /// `Entry[K, V]` for a map place, from the map's own arguments.
+    fn map_entry_ty(&mut self, map: &Place) -> Ty {
+        let written = self.place_ty(map);
+        let ty = self.revealed(written);
+        let args = match self.context.types.kind(ty) {
+            TyKind::Named { args, .. } => args.clone(),
+            _ => return Ty::ERROR,
+        };
+        let Some(entry) = self.context.decls.prelude().get("Entry") else { return Ty::ERROR };
+        self.context.types.named(entry, args)
+    }
+
+    /// `dest = value?` over whatever `dest` held, which is released first
+    /// when it owns something: `last()` and the extremes overwrite their
+    /// answer, and a `String` they displaced would otherwise leak.
+    ///
+    /// Returns the block the new value was written in. The `Drop` is
+    /// elaborated like any other, as an assignment's is.
+    fn chain_replace(&mut self, dest: &Place, value: &Place, block: BlockId, span: Span) -> BlockId {
+        let ty = self.place_ty(dest);
+        let block = if crate::moves::needs_drop(
+            self.context.decls,
+            self.context.types,
+            self.context.aliases,
+            ty,
+        ) {
+            let next = self.new_block();
+            self.terminate(
+                block,
+                TerminatorKind::Drop { place: dest.clone(), flag: None, target: next },
+                span,
+            );
+            next
+        } else {
+            block
+        };
+        self.chain_found(dest, value, block, span);
+        block
     }
 
     /// Leave the item's scope from `from` and go to `target`: the drops and

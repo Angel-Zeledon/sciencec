@@ -188,6 +188,18 @@ const LIBRARY_TYPES: &[&str] = &[
     "Take",
     "Skip",
     "SortedBy",
+    // The second tranche: `numbered()`'s `NumberedOver`, §1.4's `take_while`,
+    // `skip_while` and `every` adapters, and §5.4's `Map` sources —
+    // `iterate()`'s `MapIterate` (by `ArrayIterate`'s pattern), `keys()`'s
+    // `MapKeys` and `values()`'s `MapValues`. Same shape as the seven above.
+    "NumberedOver",
+    "TakeWhile",
+    "SkipWhile",
+    "Every",
+    "Zip",
+    "MapIterate",
+    "MapKeys",
+    "MapValues",
 ];
 
 /// The interfaces the compiler knows about (§5.4).
@@ -1023,6 +1035,54 @@ macro_rules! chain_links {
                 params: &[("by", Ty::Fn(&[$borrowed], &INT))],
                 ret: Some(Ty::App("SortedBy", &[$this, $item])),
             },
+            // `numbered()`: §1.3's `Numbered of T`, one record per item. The
+            // adapter's own `Item` is the record, which is what the next
+            // link's closure takes and what `collect()` names.
+            Method {
+                name: "numbered",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[],
+                ret: Some(Ty::App("NumberedOver", &[$this, Ty::App("Numbered", &[$item])])),
+            },
+            Method {
+                name: "take_while",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("predicate", Ty::Fn(&[$borrowed], &BOOL))],
+                ret: Some(Ty::App("TakeWhile", &[$this, $item])),
+            },
+            Method {
+                name: "skip_while",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("predicate", Ty::Fn(&[$borrowed], &BOOL))],
+                ret: Some(Ty::App("SkipWhile", &[$this, $item])),
+            },
+            Method {
+                name: "every",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("n", INT)],
+                ret: Some(Ty::App("Every", &[$this, $item])),
+            },
+            // `zip of O(self, other: O) -> Zip of (Self, O)` where `O:
+            // Iterate`, narrowed to the one `O` a fused loop can walk beside
+            // its own: `Array.iterate()`. The declaration cannot say `O.Item`
+            // for a bounded parameter, and a second chain with links of its
+            // own has no place in a loop that reads one cursor; an array's
+            // `iterate()` is `ArrayIterate[U]`, and its item is `&U`, so the
+            // pair is `Pair[Self.Item, &U]` — §1.3's `left` and `right`.
+            Method {
+                name: "zip",
+                generics: &["U"],
+                recv: Some(SelfKind::Value),
+                params: &[("other", Ty::App("ArrayIterate", &[Ty::Var("U")]))],
+                ret: Some(Ty::App(
+                    "Zip",
+                    &[$this, Ty::App("Pair", &[$item, Ty::Ref(&Ty::Var("U"))])],
+                )),
+            },
             // The terminals. Each runs the chain.
             Method {
                 name: "collect",
@@ -1061,6 +1121,21 @@ macro_rules! chain_links {
                 params: &[("predicate", Ty::Fn(&[$borrowed], &BOOL))],
                 ret: Some(Ty::Opt(&$item)),
             },
+            Method { name: "last", generics: &[], recv: Some(SelfKind::Value), params: &[], ret: Some(Ty::Opt(&$item)) },
+            Method {
+                name: "minimum",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("by", Ty::Fn(&[$borrowed], &INT))],
+                ret: Some(Ty::Opt(&$item)),
+            },
+            Method {
+                name: "maximum",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[("by", Ty::Fn(&[$borrowed], &INT))],
+                ret: Some(Ty::Opt(&$item)),
+            },
         ]
     };
 }
@@ -1080,6 +1155,19 @@ macro_rules! chain_adapter {
                 borrowed: Ty::Ref(&Ty::Var("I")),
                 total: Ty::Var("I"),
             ),
+        }
+    };
+}
+
+/// One adapter's `implements Iterate:` block, `Item` being its `I`.
+macro_rules! chain_iterate {
+    ($name:literal) => {
+        Block {
+            ty: $name,
+            generics: &["S", "I"],
+            interface: Some(("Iterate", &[])),
+            assoc: &[("Item", Ty::Var("I"))],
+            methods: &[],
         }
     };
 }
@@ -1692,6 +1780,32 @@ const BLOCKS: &[Block] = &[
             },
             Method { name: "length", generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(INT) },
             Method { name: "is_empty", generics: &[], recv: Some(SelfKind::Shared), params: &[], ret: Some(BOOL) },
+            // §5.4's `Map` sources, `Array.iterate`'s way: the receiver is
+            // shared and the chain's own type names the source. `for k in
+            // m.keys():` and `m.keys().collect()` both run, in insertion
+            // order (§5.2); `values_mutably` and the other two `iterate*`
+            // stay in [`UNWRITTEN`].
+            Method {
+                name: "iterate",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[],
+                ret: Some(Ty::App("MapIterate", &[Ty::Var("K"), Ty::Var("V")])),
+            },
+            Method {
+                name: "keys",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[],
+                ret: Some(Ty::App("MapKeys", &[Ty::Var("K"), Ty::Var("V")])),
+            },
+            Method {
+                name: "values",
+                generics: &[],
+                recv: Some(SelfKind::Shared),
+                params: &[],
+                ret: Some(Ty::App("MapValues", &[Ty::Var("K"), Ty::Var("V")])),
+            },
         ],
     },
     // --- Set, `collections-and-chains.md` §5.1 ----------------------------
@@ -2425,6 +2539,31 @@ const BLOCKS: &[Block] = &[
     // arrives with it — `chains.rs` in `science-codegen-llvm` is that program
     // for every name here.
     //
+    // # The second tranche: twenty-one names, and what each one narrows
+    //
+    // `numbered`, `take_while`, `skip_while`, `every`, `zip` and the `Map`
+    // sources `iterate`, `keys` and `values` arrive with `last`, `minimum` and
+    // `maximum`; `chains.rs` runs every one. Four narrowings, each the first
+    // tranche's own argument applied again:
+    //
+    // - **`minimum` and `maximum` take `by:` and nothing else**, `sorted`'s
+    //   narrowing for `sorted`'s reason: there is no `Ord` to compare a bare
+    //   item by, and a name cannot be declared with and without its argument.
+    // - **`every(n)` is §1.4's `step_by`**, under the name the note gives it.
+    // - **`zip`'s `other` is an `ArrayIterate[U]`**, where the note writes
+    //   `O: Iterate` and an item `O.Item` this prelude cannot spell. It is the
+    //   one second source a fused loop can walk beside its own, and the
+    //   yielded `Pair[Self.Item, &U]` is §1.3's, borrow and all.
+    // - **`reduce` is not declared**, although the note specifies it: its
+    //   closure is `(A, Self.Item) -> A`, and a two-parameter closure
+    //   (`(acc, x) giving …`, AMENDMENT 3) does not parse yet, so no program
+    //   could write the argument.
+    //
+    // **Every chain type also `implements Iterate`**, at the end of this
+    // section: that is what gives `for x in xs.iterate().keep(…):` an element
+    // type, and `science-mir` fuses the loop body into the chain as it fuses
+    // a terminal.
+
     // # The four places this departs from the note, each priced
     //
     // 1. **The combinators are inherent methods on each adapter, not provided
@@ -2583,6 +2722,96 @@ const BLOCKS: &[Block] = &[
     chain_adapter!("Take"),
     chain_adapter!("Skip"),
     chain_adapter!("SortedBy"),
+    chain_adapter!("NumberedOver"),
+    chain_adapter!("TakeWhile"),
+    chain_adapter!("SkipWhile"),
+    chain_adapter!("Every"),
+    chain_adapter!("Zip"),
+    // The `Map` sources, §5.4: *"`Map` yields `Entry of (K, V)` and
+    // additionally offers `keys()`, `values()`"*. `iterate()` yields the
+    // same `&Entry[K, V]` `for entry in m:` does, `keys()` a borrow of each
+    // key and `values()` of each value, all in insertion order (§5.2).
+    Block {
+        ty: "MapIterate",
+        generics: &["K", "V"],
+        interface: None,
+        assoc: &[],
+        methods: chain_links!(
+            Ty::App("MapIterate", &[Ty::Var("K"), Ty::Var("V")]),
+            item: Ty::Ref(&Ty::App("Entry", &[Ty::Var("K"), Ty::Var("V")])),
+            borrowed: Ty::Ref(&Ty::App("Entry", &[Ty::Var("K"), Ty::Var("V")])),
+            total: Ty::Var("V"),
+        ),
+    },
+    Block {
+        ty: "MapKeys",
+        generics: &["K", "V"],
+        interface: None,
+        assoc: &[],
+        methods: chain_links!(
+            Ty::App("MapKeys", &[Ty::Var("K"), Ty::Var("V")]),
+            item: Ty::Ref(&Ty::Var("K")),
+            borrowed: Ty::Ref(&Ty::Var("K")),
+            total: Ty::Var("K"),
+        ),
+    },
+    Block {
+        ty: "MapValues",
+        generics: &["K", "V"],
+        interface: None,
+        assoc: &[],
+        methods: chain_links!(
+            Ty::App("MapValues", &[Ty::Var("K"), Ty::Var("V")]),
+            item: Ty::Ref(&Ty::Var("V")),
+            borrowed: Ty::Ref(&Ty::Var("V")),
+            total: Ty::Var("V"),
+        ),
+    },
+    // **Every chain type `implements Iterate`**, so that `for x in chain:`
+    // has an element type. Method-less, `Array`'s way: the interface's own
+    // `next` is what `iterate_item` reads `Item` out of, and
+    // `science-mir`'s `lower_for` fuses the chain with the loop body rather
+    // than calling a `next` no adapter has (no adapter has a runtime
+    // representation: §2.3 of the note, and this block's section above).
+    Block {
+        ty: "ArrayIterate",
+        generics: &["T"],
+        interface: Some(("Iterate", &[])),
+        assoc: &[("Item", Ty::Ref(&Ty::Var("T")))],
+        methods: &[],
+    },
+    Block {
+        ty: "MapIterate",
+        generics: &["K", "V"],
+        interface: Some(("Iterate", &[])),
+        assoc: &[("Item", Ty::Ref(&Ty::App("Entry", &[Ty::Var("K"), Ty::Var("V")])))],
+        methods: &[],
+    },
+    Block {
+        ty: "MapKeys",
+        generics: &["K", "V"],
+        interface: Some(("Iterate", &[])),
+        assoc: &[("Item", Ty::Ref(&Ty::Var("K")))],
+        methods: &[],
+    },
+    Block {
+        ty: "MapValues",
+        generics: &["K", "V"],
+        interface: Some(("Iterate", &[])),
+        assoc: &[("Item", Ty::Ref(&Ty::Var("V")))],
+        methods: &[],
+    },
+    chain_iterate!("Discard"),
+    chain_iterate!("Keep"),
+    chain_iterate!("MapOver"),
+    chain_iterate!("Take"),
+    chain_iterate!("Skip"),
+    chain_iterate!("SortedBy"),
+    chain_iterate!("NumberedOver"),
+    chain_iterate!("TakeWhile"),
+    chain_iterate!("SkipWhile"),
+    chain_iterate!("Every"),
+    chain_iterate!("Zip"),
     // --- Level 1 `math`, `stdlib-core.md` §8 --------------------------------
     //
     // **Methods, and §8.2 is why.** *"The Level 1 subset is methods on `F32`,
@@ -2914,10 +3143,7 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     (
         "Map",
         &[
-            "keys",
-            "values",
             "values_mutably",
-            "iterate",
             "iterate_mutably",
             "iterate_consuming",
             "from",
@@ -2942,6 +3168,14 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     ("Take", CHAIN_UNWRITTEN),
     ("Skip", CHAIN_UNWRITTEN),
     ("SortedBy", CHAIN_UNWRITTEN),
+    ("NumberedOver", CHAIN_UNWRITTEN),
+    ("TakeWhile", CHAIN_UNWRITTEN),
+    ("SkipWhile", CHAIN_UNWRITTEN),
+    ("Every", CHAIN_UNWRITTEN),
+    ("Zip", CHAIN_UNWRITTEN),
+    ("MapIterate", CHAIN_UNWRITTEN),
+    ("MapKeys", CHAIN_UNWRITTEN),
+    ("MapValues", CHAIN_UNWRITTEN),
     // `F64` and `F32` — the eleven names `intrinsics-math-physics.md` §4.2's
     // Decision 8 adds to §8.1's prelude (P1–P3), which [`BLOCKS`] does not
     // transcribe because the task that wrote the block was §8.1's list and
@@ -2976,11 +3210,22 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
 /// `collections-and-chains.md` §1.4's names that no chain type in [`BLOCKS`]
 /// declares yet, in the note's own order.
 ///
-/// Twenty-six names. §1.4 counts *rows* — thirty-eight — and a row is not a
+/// Eighteen names. §1.4 counts *rows* — thirty-eight — and a row is not a
 /// name: `minimum`/`maximum` and `has_any`/`has_all` are one row and two
 /// names each, and `sorted()`/`sorted(by:)` and `unique()`/`unique(by:)` are
-/// two rows and one name each. Thirteen names are declared; these are the
+/// two rows and one name each. Twenty-one names are declared; these are the
 /// rest, and the two lists together are every name the table gives.
+///
+/// **`minimum` and `maximum` are declared with `by:` only**, `sorted`'s
+/// narrowing for `sorted`'s reason (there is no `Ord` to compare a bare item
+/// by), so §1.4's bare `minimum()` is a wrong argument count and not a
+/// silence. **`every(n)` is §1.4's `step_by`**, under the name the note gives
+/// it. **`zip` is declared for an `Array.iterate()` as its `other` and for no
+/// other chain** (see the declaration). **`reduce` is here although it is
+/// specified**: its closure is
+/// `(A, Self.Item) -> A`, and the multi-parameter form `(acc, x) giving …`
+/// (§1.2's AMENDMENT 3) does not parse yet, so a program could not write the
+/// argument the method takes.
 ///
 /// **Two names in §1.4 are not here although only one of their forms is
 /// declared**: `sorted()` beside `sorted(by:)`, and `unique()` beside
@@ -2993,17 +3238,12 @@ const CHAIN_UNWRITTEN: &[&str] = &[
     "expand",
     "flatten",
     "owned",
-    "numbered",
     "accumulate",
     // Filtering and selecting.
     "keep_some",
     "keep_ok",
-    "take_while",
-    "skip_while",
-    "every",
     "unique",
     // Pairing, grouping, windowing.
-    "zip",
     "followed_by",
     "batches",
     "windows",
@@ -3014,9 +3254,6 @@ const CHAIN_UNWRITTEN: &[&str] = &[
     "partition",
     "reduce",
     "product",
-    "minimum",
-    "maximum",
-    "last",
     "group",
     "tally",
 ];
@@ -3131,16 +3368,31 @@ pub fn is_unwritten(ty: &str, method: &str) -> bool {
         || UNWRITTEN.iter().any(|(name, methods)| *name == ty && methods.contains(&method))
 }
 
-/// The seven prelude types a chain link is declared on: §5.4's source and
-/// §1.4's six adapters that [`BLOCKS`] transcribes.
+/// The fifteen prelude types a chain link is declared on: §5.4's four
+/// sources and §1.4's eleven adapters that [`BLOCKS`] transcribes.
 ///
 /// **Public because two crates ask "is this a chain link" by name** —
 /// `science-types`, to peel `sum()`'s borrow (see [`BLOCKS`]' chain
 /// section), and `science-mir`, to fuse a chain at its terminal — and a
 /// list each of them kept would be a third place to update the day an
 /// adapter lands, which is exactly the edit nothing would report missing.
-pub const CHAIN_TYPES: &[&str] =
-    &["ArrayIterate", "Discard", "Keep", "MapOver", "Take", "Skip", "SortedBy"];
+pub const CHAIN_TYPES: &[&str] = &[
+    "ArrayIterate",
+    "Discard",
+    "Keep",
+    "MapOver",
+    "Take",
+    "Skip",
+    "SortedBy",
+    "NumberedOver",
+    "TakeWhile",
+    "SkipWhile",
+    "Every",
+    "Zip",
+    "MapIterate",
+    "MapKeys",
+    "MapValues",
+];
 
 /// The free functions' signatures.
 ///
@@ -3752,6 +4004,100 @@ impl Declarer<'_> {
         }));
     }
 
+    /// `Pair[A, B]`, at the `DefId` `build` allocated as `DefKind::Record`:
+    /// `{ left: A, right: B }` — `collections-and-chains.md` §1.3
+    /// transcribed:
+    ///
+    /// ```text
+    /// type Pair of (A, B):           # what zip() yields
+    ///     left: A
+    ///     right: B
+    /// ```
+    ///
+    /// [`Declarer::entry`]'s shape under other names. A program's own `type
+    /// Pair` shadows it, as it does any prelude name.
+    fn pair(&mut self, def: DefId) {
+        let left = self.defs.alloc(DefKind::TypeParam, "A", BUILTIN_SPAN, Some(def));
+        let right = self.defs.alloc(DefKind::TypeParam, "B", BUILTIN_SPAN, Some(def));
+        let mut generics = HashMap::new();
+        generics.insert("A", left);
+        generics.insert("B", right);
+        let assocs = HashMap::new();
+        let scope = Scope { generics: &generics, assocs: &assocs, owner: Some(def) };
+        let left_ty = self.ty(&Ty::Var("A"), &scope);
+        let right_ty = self.ty(&Ty::Var("B"), &scope);
+        let fields = vec![
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "left", BUILTIN_SPAN, Some(def)),
+                ty: left_ty,
+                span: BUILTIN_SPAN,
+            },
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "right", BUILTIN_SPAN, Some(def)),
+                ty: right_ty,
+                span: BUILTIN_SPAN,
+            },
+        ];
+        let param = |def| hir::GenericParam {
+            def,
+            kind: hir::GenericParamKind::Type { bounds: Vec::new() },
+            span: BUILTIN_SPAN,
+        };
+        self.item(hir::ItemKind::Record(hir::Record {
+            def,
+            generics: vec![param(left), param(right)],
+            where_clause: Vec::new(),
+            fields,
+            span: BUILTIN_SPAN,
+        }));
+    }
+
+    /// `Numbered[T]`, at the `DefId` `build` allocated as `DefKind::Record`:
+    /// `{ index: Int, item: T }` — `collections-and-chains.md` §1.3
+    /// transcribed:
+    ///
+    /// ```text
+    /// type Numbered of T:            # what numbered() yields
+    ///     index: Int
+    ///     item: T
+    /// ```
+    ///
+    /// [`Declarer::entry`]'s shape with one parameter. Unlike `Entry`, no
+    /// runtime stores one: `science-mir` builds each as the chain's fused
+    /// loop reaches it, so the order is the note's and nothing else's.
+    fn numbered(&mut self, def: DefId) {
+        let item = self.defs.alloc(DefKind::TypeParam, "T", BUILTIN_SPAN, Some(def));
+        let mut generics = HashMap::new();
+        generics.insert("T", item);
+        let assocs = HashMap::new();
+        let scope = Scope { generics: &generics, assocs: &assocs, owner: Some(def) };
+        let index_ty = self.ty(&INT, &scope);
+        let item_ty = self.ty(&Ty::Var("T"), &scope);
+        let fields = vec![
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "index", BUILTIN_SPAN, Some(def)),
+                ty: index_ty,
+                span: BUILTIN_SPAN,
+            },
+            hir::Field {
+                def: self.defs.alloc(DefKind::Field, "item", BUILTIN_SPAN, Some(def)),
+                ty: item_ty,
+                span: BUILTIN_SPAN,
+            },
+        ];
+        self.item(hir::ItemKind::Record(hir::Record {
+            def,
+            generics: vec![hir::GenericParam {
+                def: item,
+                kind: hir::GenericParamKind::Type { bounds: Vec::new() },
+                span: BUILTIN_SPAN,
+            }],
+            where_clause: Vec::new(),
+            fields,
+            span: BUILTIN_SPAN,
+        }));
+    }
+
     /// `FormatSpec`, at the `DefId` `build` already allocated as
     /// `DefKind::Record`: `{ fill: Char, align: Align?, sign: Sign?, width:
     /// Int?, precision: Int?, code: Code?, alternate: Bool, grouping:
@@ -3863,6 +4209,11 @@ pub fn build(defs: &mut DefTable) -> Prelude {
     // `Map.iterate()` yields"* — declared the way `FormatSpec` is and for its
     // reason: a program names its fields, `entry.key` and `entry.value`.
     let entry_def = declare(defs, DefKind::Record, "Entry", &mut prelude);
+    // `Numbered[T]`, §1.3's other record that `numbered()` yields, for
+    // `Entry`'s reason: a program names `item.index` and `item.item`.
+    let numbered_def = declare(defs, DefKind::Record, "Numbered", &mut prelude);
+    // `Pair[A, B]`, what `zip()` yields, for the same reason.
+    let pair_def = declare(defs, DefKind::Record, "Pair", &mut prelude);
     // The second spelling of a primitive that has two. No `alloc`: the whole
     // point is that `Int` and `I64` are one `DefId` and therefore one `Ty`,
     // which is what makes them unify. Pushing a name is all a second spelling
@@ -3974,6 +4325,8 @@ pub fn build(defs: &mut DefTable) -> Prelude {
         }));
     }
     declarer.entry(entry_def);
+    declarer.numbered(numbered_def);
+    declarer.pair(pair_def);
     for decl in INTERFACE_DECLS {
         declarer.interface(decl);
     }

@@ -252,6 +252,10 @@ const WANTED: &[&str] = &[
     // definition table with no prelude answers `None` here, which is the case
     // that lowering falls back to `Unresolved::Display` for.
     "Formatter",
+    // `Entry`, which `science-mir`'s fused chain names to type the entry a
+    // `Map`'s `keys()` and `values()` read a field of: `Entry[K, V]` from the
+    // map's own arguments. For `Array`'s reason, as `Formatter` is.
+    "Entry",
     // `print` and `write`, which `check`'s `call` refuses to give more than one
     // argument. They are here for `panic`'s reason and not for `Display`'s: the
     // question is *"is this call the prelude's `print`"*, and a user is free to

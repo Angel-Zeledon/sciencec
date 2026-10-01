@@ -10069,18 +10069,67 @@ impl<'a> Lowerer<'a> {
             )));
         }
         let mut lowered = Vec::with_capacity(args.len() + 1);
+        let mut aliases_destination = false;
         for (arg, param) in args.iter().zip(&signature.params) {
-            lowered.push(self.typed_operand(ctx, arg, &param.layout, insts)?);
+            if !matches!(param.class, ArgClass::IndirectByPointer) {
+                lowered.push(self.typed_operand(ctx, arg, &param.layout, insts)?);
+                continue;
+            }
+            // **An aggregate the closure takes by value travels by address**,
+            // as it does to any Science function (`lower_science_call`'s
+            // `IndirectByPointer` arm, of which this is the closure's copy):
+            // the callee binds a slot it owns, so the caller hands over the
+            // address of one. A closure with such a parameter is what a chain's
+            // `map` over an owned record is — `numbered().map(each.index)` —
+            // and passing the loaded value, which is what this loop did, was
+            // an IR the verifier refused.
+            let (slot, aliases) = match arg {
+                mir::Operand::Move(place) if !place.projection.is_empty() => {
+                    let (address, _) = self.place_address(ctx, place, insts)?;
+                    lowered.push(Operand::Value(address));
+                    aliases_destination |= place.local == destination.local;
+                    continue;
+                }
+                mir::Operand::Move(place) => {
+                    let local = LocalId(place.local.index() as u32);
+                    if ctx.untyped.contains(&local) {
+                        return Err(Unlowered::new(format!("{UNTYPED} (local _{})", local.0)));
+                    }
+                    ctx.layout(local)?;
+                    let aliases =
+                        place.local == destination.local && destination.projection.is_empty();
+                    (local, aliases)
+                }
+                // A copy is a bag of scalars by §5.1, so a slot of its own is
+                // what a copy is.
+                mir::Operand::Copy(_) => {
+                    let slot = self.temp(ctx, param.layout.clone());
+                    let value = self.lower_operand(ctx, arg, Some(&param.layout), insts)?;
+                    insts.push(ExtInst::Above(Inst::Store { local: slot, value }));
+                    (slot, false)
+                }
+                mir::Operand::Const(_) => {
+                    return Err(Unlowered::new(
+                        "a constant passed by address to a closure: only a place has bytes to \
+                         point at",
+                    ));
+                }
+            };
+            aliases_destination |= aliases;
+            let address = ctx.value();
+            insts.push(ExtInst::LocalAddr { dest: address, local: slot });
+            lowered.push(Operand::Value(address));
         }
         lowered.push(Operand::Value(env));
 
         let ret_class = signature.ret.clone();
-        self.emit_result(
+        self.emit_result_maybe_aliased(
             ctx,
             Callee::Indirect { function, signature: Box::new(signature) },
             &ret_class,
             lowered,
             destination,
+            aliases_destination,
             insts,
         )
     }
