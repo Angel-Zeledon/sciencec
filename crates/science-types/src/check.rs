@@ -564,6 +564,7 @@ pub fn check_fn(
         facts: Facts::new(),
         pending: Vec::new(),
         pending_tuples: Vec::new(),
+        write_through_index: false,
         pending_named: Vec::new(),
         pending_borrows: Vec::new(),
         numeric: Vec::new(),
@@ -861,6 +862,13 @@ struct BodyChecker<'a> {
     /// tuple containing it is reached. Nesting needs no second pass and no
     /// fixed point.
     pending_tuples: Vec<(ExprId, InferVar, Vec<InferTy>)>,
+    /// Set by an assignment whose target is a field chain rooted in an index,
+    /// `members[i].value be v`, and taken by the next `Index` the checker
+    /// synthesises — which is that root, because `field` synthesises its base
+    /// first and nothing else is reached in between. The write then goes
+    /// through `IndexMutably`, so the element is the referent and its fields
+    /// have their declared types instead of the borrows a read would give them.
+    write_through_index: bool,
     /// Record literals and variant constructions built while at least one
     /// generic argument was only an unsuffixed literal's still-open
     /// variable. See [`PendingNamed`]; insertion order is load-bearing for
@@ -2239,7 +2247,12 @@ impl<'a> BodyChecker<'a> {
             }
             hir::ExprKind::Field { base, name } => self.field(base, name, span),
             hir::ExprKind::Index { base, index } => {
-                self.index_expr(base, index, span, Indexing::Read)
+                let indexing = if std::mem::take(&mut self.write_through_index) {
+                    Indexing::Write
+                } else {
+                    Indexing::Read
+                };
+                self.index_expr(base, index, span, indexing)
             }
             hir::ExprKind::ArrayLit(elements) => self.array_lit(elements, span),
             hir::ExprKind::StructLit { res, fields } => self.record_lit(*res, fields, span),
@@ -8449,7 +8462,12 @@ impl<'a> BodyChecker<'a> {
                     hir::ExprKind::Index { base, index } => {
                         self.index_expr(base, index, target.span, Indexing::Write)
                     }
-                    _ => self.synth(target),
+                    _ => {
+                        self.write_through_index = field_chain_ends_in_index(target);
+                        let typed = self.synth(target);
+                        self.write_through_index = false;
+                        typed
+                    }
                 };
                 // §4.7: *"borrows auto-dereference for field access, method
                 // calls, and assignment. There is no dereference operator."*
@@ -10024,4 +10042,16 @@ fn not_nullable(span: Span, ty: &str) -> Diagnostic {
     Diagnostic::error(codes::PRESENCE_TEST_ON_NON_NULLABLE, "this value is never absent")
         .with_label(Label::primary(span, format!("`{ty}` is not a nullable type")))
         .with_note("`?` tests a `T?` for a value; on a `T` it is always true")
+}
+
+/// Whether `expr` is `a[i].f`, `a[i].f.g`, ... : fields all the way down to an
+/// index. An assignment to such a target writes into the element.
+fn field_chain_ends_in_index(expr: &hir::Expr) -> bool {
+    match &expr.kind {
+        hir::ExprKind::Field { base, .. } => match &base.kind {
+            hir::ExprKind::Index { .. } => true,
+            _ => field_chain_ends_in_index(base),
+        },
+        _ => false,
+    }
 }

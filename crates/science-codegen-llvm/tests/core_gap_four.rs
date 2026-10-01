@@ -68,3 +68,36 @@ print(m.0 + m.1)
 "#;
     assert_eq!(prints("tuple_field", source), "4\n7\nhi\nhi\n6\n7\n11\n");
 }
+
+#[test]
+fn a_field_of_an_indexed_element_is_assigned() {
+    let source = r#"type M:
+    name: String
+    value: Int
+
+type Team:
+    members: Array[M]
+
+Team has:
+    def rename(mutable self, i: Int, s: String):
+        self.members[i].name be s
+
+def relabel(members: &mut Array[M], i: Int):
+    members[i].name be f"m{i}"
+
+let mutable members be [M(name: "a", value: 1), M(name: "b", value: 2)]
+let i be 1
+members[i].value be 9
+print(members[1].value)
+members[0].name be "z"
+print(members[0].name)
+relabel(members, 1)
+print(members[1].name)
+let mutable t be Team(members: members)
+t.rename(0, "first")
+print(t.members[0].name)
+t.members[1].value be 8
+print(t.members[1].value)
+"#;
+    assert_eq!(prints("indexed_field", source), "9\nz\nm1\nfirst\n8\n");
+}
