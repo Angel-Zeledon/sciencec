@@ -203,6 +203,7 @@ const LIBRARY_TYPES: &[&str] = &[
     "KeepSome",
     "Accumulate",
     "Reverse",
+    "Unique",
     // @LIB-END
 ];
 
@@ -1128,6 +1129,18 @@ macro_rules! chain_links {
                 recv: Some(SelfKind::Value),
                 params: &[],
                 ret: Some(Ty::App("Reverse", &[$this, $item])),
+            },
+            // `unique()`: each distinct item once, the first of equals. The
+            // item is unchanged; `science-types` holds it to a key a `Set`
+            // can file (a number, `Bool`, `Char` or `String`, through one
+            // borrow), and the fused loop keeps the seen keys in a `Set`.
+            // **`unique(by: key)` is not declared**: one name, one shape.
+            Method {
+                name: "unique",
+                generics: &[],
+                recv: Some(SelfKind::Value),
+                params: &[],
+                ret: Some(Ty::App("Unique", &[$this, $item])),
             },
             // `product()` is `sum()`'s twin: the item with a borrow peeled, from
             // one, held to the same numbers by the same checker half.
@@ -2799,6 +2812,7 @@ const BLOCKS: &[Block] = &[
     chain_adapter!("KeepSome"),
     chain_adapter!("Accumulate"),
     chain_adapter!("Reverse"),
+    chain_adapter!("Unique"),
     // @ADAPTER-END
     // The `Map` sources, §5.4: *"`Map` yields `Entry of (K, V)` and
     // additionally offers `keys()`, `values()`"*. `iterate()` yields the
@@ -2888,6 +2902,7 @@ const BLOCKS: &[Block] = &[
     chain_iterate!("KeepSome"),
     chain_iterate!("Accumulate"),
     chain_iterate!("Reverse"),
+    chain_iterate!("Unique"),
     // @ITERATE-END
     // --- Level 1 `math`, `stdlib-core.md` §8 --------------------------------
     //
@@ -3253,6 +3268,7 @@ const UNWRITTEN: &[(&str, &[&str])] = &[
     ("KeepSome", CHAIN_UNWRITTEN),
     ("Accumulate", CHAIN_UNWRITTEN),
     ("Reverse", CHAIN_UNWRITTEN),
+    ("Unique", CHAIN_UNWRITTEN),
     // @UNWRITTEN-END
     ("MapIterate", CHAIN_UNWRITTEN),
     ("MapKeys", CHAIN_UNWRITTEN),
@@ -3318,7 +3334,6 @@ const CHAIN_UNWRITTEN: &[&str] = &[
     "owned",
     // Filtering and selecting.
     "keep_ok",
-    "unique",
     // Pairing, grouping, windowing.
     "followed_by",
     "batches",
@@ -3468,6 +3483,7 @@ pub const CHAIN_TYPES: &[&str] = &[
     "KeepSome",
     "Accumulate",
     "Reverse",
+    "Unique",
     // @CHAIN-END
 ];
 

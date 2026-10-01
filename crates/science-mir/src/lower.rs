@@ -6677,6 +6677,10 @@ enum Step {
     /// `keep_some()` — items `T?` are dropped when absent and unwrapped to `T`
     /// when present.
     KeepSome,
+    /// `unique()` — each distinct item once, the first of its equals: a `Set`
+    /// of the keys seen so far, and an item whose key is already in it is
+    /// dropped. The key is the item read through one borrow.
+    Unique,
 }
 
 /// What a chain reads: §5.4's source methods, each of which a fused loop
@@ -6878,6 +6882,7 @@ impl Builder<'_, '_> {
                 ("numbered", _) => Step::Numbered,
                 ("keep_some", _) => Step::KeepSome,
                 ("reverse", _) => Step::Reverse,
+                ("unique", _) => Step::Unique,
                 ("accumulate", Some(initial)) if args.len() == 2 => {
                     Step::Accumulate(*initial, args[1])
                 }
@@ -7116,13 +7121,26 @@ impl Builder<'_, '_> {
     /// The prelude's `Array` method of this name, for a call this crate builds
     /// itself rather than reads off a `MethodCall`.
     fn array_method(&mut self, array_ty: Ty, name: &str) -> Option<DefId> {
-        let ty = self.revealed(array_ty);
+        self.type_method(array_ty, name, Form::Value)
+    }
+
+    /// The method of this name on a prelude type, in the given form: an
+    /// instance method (`Form::Value`) or an associated function such as
+    /// `Set.new` (`Form::Type`).
+    fn type_method(&mut self, ty: Ty, name: &str, form: Form) -> Option<DefId> {
+        let ty = self.revealed(ty);
         let methods = self.context.decls.methods();
         let head = methods.receiver(self.context.defs, self.context.types, ty)?;
-        match methods.lookup(head, name, Form::Value) {
+        match methods.lookup(head, name, form) {
             Found::One(candidate) => Some(candidate.method),
             _ => None,
         }
+    }
+
+    /// `Set[element]`, interned.
+    fn set_of(&mut self, element: Ty) -> Option<Ty> {
+        let set = self.context.decls.prelude().get("Set")?;
+        Some(self.context.types.named(set, vec![GenericArg::Type(element)]))
     }
 
     /// The operand a chain's closure is called with, read off the closure's
@@ -7383,8 +7401,29 @@ impl Builder<'_, '_> {
         let mut limits: Vec<Option<(Local, Local)>> = Vec::with_capacity(steps.len());
         // A `zip`'s second array: the loan on it, its type and its element's.
         let mut zips: Vec<Option<(Local, Ty, Ty)>> = vec![None; steps.len()];
-        for (step, _) in steps {
+        for (step, item_after) in steps {
             match step {
+                // The keys seen so far, in a `Set` made before the loop.
+                Step::Unique => {
+                    let key_ty = match *self.context.types.kind(*item_after) {
+                        TyKind::Borrowed { inner, .. } => inner,
+                        _ => *item_after,
+                    };
+                    let seen = match self.set_of(key_ty) {
+                        Some(set_ty) => {
+                            let seen = self.temp(set_ty, span, block);
+                            let callee = match self.type_method(set_ty, "new", Form::Type) {
+                                Some(def) => Callee::Def { def, self_ty: Some(set_ty) },
+                                None => Callee::Unresolved(Unresolved::Chain),
+                            };
+                            block = self.emit_call(Place::local(seen), callee, vec![], block, span);
+                            seen
+                        }
+                        None => return block,
+                    };
+                    closures.push(None);
+                    limits.push(Some((seen, seen)));
+                }
                 // The other array is borrowed for the chain's life, as the
                 // source is, and read at the position each item reaches the
                 // link — which is not the source's cursor after a filter.
@@ -7780,6 +7819,77 @@ impl Builder<'_, '_> {
                         span,
                     );
                     value = Place::local(yielded);
+                }
+                Step::Unique => {
+                    let (seen, _) = limits[index].expect("a `unique` carries its set");
+                    let item_ty = self.place_ty(&value);
+                    // The key is the item read through one borrow.
+                    let (key_ty, source, through_borrow) = match *self.context.types.kind(item_ty) {
+                        TyKind::Borrowed { inner, .. } => {
+                            (inner, value.clone().project(Projection::Deref { ty: inner }), true)
+                        }
+                        _ => (item_ty, value.clone(), false),
+                    };
+                    let key = self.temp(key_ty, span, current);
+                    if self.is_copy(key_ty) {
+                        self.assign(
+                            current,
+                            Place::local(key),
+                            Rvalue::Use(Operand::Copy(source)),
+                            span,
+                        );
+                    } else {
+                        // A `String`: an owned copy, since the set owns what it
+                        // files and the chain keeps the item.
+                        let shared = if through_borrow {
+                            Operand::Copy(value.clone())
+                        } else {
+                            let borrowed = self.context.types.borrowed(false, key_ty);
+                            let temp = self.temp(borrowed, span, current);
+                            current = self.borrow_place(
+                                Place::local(temp),
+                                false,
+                                value.clone(),
+                                current,
+                                span,
+                                true,
+                            );
+                            Operand::Move(Place::local(temp))
+                        };
+                        let callee = match self.type_method(key_ty, "clone", Form::Value) {
+                            Some(def) => Callee::Def { def, self_ty: None },
+                            None => Callee::Unresolved(Unresolved::Chain),
+                        };
+                        current =
+                            self.emit_call(Place::local(key), callee, vec![shared], current, span);
+                    }
+                    let set_ty = self.place_ty(&Place::local(seen));
+                    let (set_ref, next) = self.exclusive_ref(&Place::local(seen), current, span);
+                    current = next;
+                    let fresh = self.temp(self.bool_ty, span, current);
+                    let callee = match self.type_method(set_ty, "insert", Form::Value) {
+                        Some(def) => Callee::Def { def, self_ty: None },
+                        None => Callee::Unresolved(Unresolved::Chain),
+                    };
+                    current = self.emit_call(
+                        Place::local(fresh),
+                        callee,
+                        vec![set_ref, Operand::Move(Place::local(key))],
+                        current,
+                        span,
+                    );
+                    let (pass, skip) = (self.new_block(), self.new_block());
+                    self.terminate(
+                        current,
+                        TerminatorKind::If {
+                            cond: Operand::Copy(Place::local(fresh)),
+                            then_block: pass,
+                            else_block: skip,
+                        },
+                        span,
+                    );
+                    self.chain_leave(skip, depth, step_block, span);
+                    current = pass;
                 }
                 Step::KeepSome => {
                     // The item is a `T?`, or a borrow of one over a `T` that

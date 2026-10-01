@@ -418,3 +418,31 @@ def f(xs: &Array[Int]) -> Int:
     );
     assert_eq!(refused.codes(), vec![549], "{:?}", refused.messages());
 }
+
+// --- unique -----------------------------------------------------------------
+
+/// **`unique()` keeps the item type and admits only keys a `Set` can file and
+/// the loop can copy**: integers, `Bool`, `Char` and `String`, borrowed or
+/// owned. A float (no equivalence) or a record is `SC0549`.
+#[test]
+fn unique_keeps_the_item_and_refuses_what_cannot_be_a_key() {
+    let checked = check(
+        "\
+def ints(xs: &Array[Int]) -> Array[&Int]:
+    xs.iterate().unique().collect()
+
+def words(xs: &Array[String]) -> Array[String]:
+    xs.iterate().map(each.clone()).unique().collect()
+",
+    );
+    checked.assert_clean();
+    assert_eq!(terminal_type(&checked, "ints", "collect"), "Array[&I64]");
+    let refused = check(
+        "\
+def f(xs: &Array[F64]) -> Int:
+    xs.iterate().unique().count()
+",
+    );
+    assert_eq!(refused.codes(), vec![549], "{:?}", refused.messages());
+    assert!(refused.messages()[0].contains("`unique()`"), "{:?}", refused.messages());
+}

@@ -1338,3 +1338,36 @@ fn accumulate_yields_the_state_after_each_item() {
         "5 1 3 15\n1.0 4.0\n-4\n120\n10\n15\n"
     );
 }
+
+// --- unique -----------------------------------------------------------------
+
+/// **`unique()` keeps the first of each distinct item**, in arrival order, over
+/// borrowed numbers, borrowed strings and owned strings (a `map` that clones),
+/// and composes with the links on either side of it: the filter before it runs
+/// first, the `take` after it sees only the survivors.
+#[test]
+fn unique_keeps_the_first_of_each_distinct_item() {
+    assert_eq!(
+        prints(
+            "unique",
+            r#"def main():
+    let xs be [3, 1, 3, 2, 1, 4]
+    let u be xs.iterate().unique().collect()
+    print(f"{u.length()} {u[0]} {u[1]} {u[2]} {u[3]}")
+    let words be ["b", "a", "b", "c", "a"]
+    let w be words.iterate().unique().collect()
+    print(f"{w.length()} {w[0]} {w[1]} {w[2]}")
+    let owned be words.iterate().map(each.clone()).unique().collect()
+    print(f"{owned.length()} {owned[0]} {owned[1]} {owned[2]}")
+    print(xs.iterate().unique().count())
+    print(xs.iterate().unique().take(2).sum())
+    print(xs.iterate().discard(each is 3).unique().sum())
+    for x in xs.iterate().unique().skip(2):
+        print(x)
+    let empty be Array[Int].new()
+    print(empty.iterate().unique().count())
+"#,
+        ),
+        "4 3 1 2 4\n3 b a c\n3 b a c\n4\n4\n7\n2\n4\n0\n"
+    );
+}

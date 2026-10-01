@@ -5403,6 +5403,45 @@ impl<'a> BodyChecker<'a> {
             }
             return ret;
         }
+        if on_a_chain && name == "unique" {
+            // The fused loop files a copy of each item's key in a `Set`, so
+            // the item (through one borrow) must be a key a `Set` admits that
+            // can be duplicated by a copy or by `String.clone`: an integer,
+            // `Bool`, `Char` or `String`.
+            if let TyKind::Named { args, .. } = self.types.kind(ret).clone() {
+                if let Some(item) = args.get(1).and_then(|arg| arg.as_type()) {
+                    if !self.types.references_error(item) {
+                        let key = match *self.types.kind(item) {
+                            TyKind::Borrowed { mutable: false, inner } => inner,
+                            _ => item,
+                        };
+                        let simple = match self.types.kind(key) {
+                            TyKind::Named { def, args } if args.is_empty() => {
+                                let entry = self.defs.get(*def);
+                                entry.is_builtin()
+                                    && matches!(
+                                        entry.name.as_str(),
+                                        "Int" | "I8" | "I16" | "I32" | "I64" | "U8" | "U16"
+                                            | "U32" | "U64" | "Bool" | "Char" | "String"
+                                    )
+                            }
+                            _ => false,
+                        };
+                        if !simple {
+                            let rendered = self.types.render(self.defs, item);
+                            self.diagnostics.push(wrong_item_shape(
+                                span,
+                                "unique",
+                                &rendered,
+                                "an integer, `Bool`, `Char` or `String`, owned or borrowed",
+                            ));
+                            return Ty::ERROR;
+                        }
+                    }
+                }
+            }
+            return ret;
+        }
         if !on_a_chain || name != "keep_some" {
             return ret;
         }
