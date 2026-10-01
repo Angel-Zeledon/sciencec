@@ -10,6 +10,6 @@
 # here so that fixing it shows up in `git diff` rather than being discovered by
 # the next person to write this program.
 
-def escape() -> borrowed Int:
+def escape() -> &Int:
     let value be 5
-    borrowed value
+    &value

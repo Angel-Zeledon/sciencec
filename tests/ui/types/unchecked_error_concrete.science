@@ -17,7 +17,7 @@
 choice ParseError:
     Bad(I64)
 
-def parse(s: borrowed String) -> (I64, ParseError?):
+def parse(s: &String) -> (I64, ParseError?):
     (0, null)
 
 def main():

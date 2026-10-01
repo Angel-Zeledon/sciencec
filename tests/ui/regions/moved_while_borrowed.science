@@ -12,6 +12,6 @@ def take(d: Doc) -> Int:
 
 def main():
     let doc be Doc(title: 0)
-    let shared be borrowed doc
+    let shared be &doc
     print(take(doc))
     print(shared.title)

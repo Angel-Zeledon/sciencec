@@ -13,7 +13,7 @@
 #
 # The inclusive form is the same mistake and is caught by the same rule.
 
-def windows(samples: Array of Int) -> Int:
+def windows(samples: Array[Int]) -> Int:
     let empty be samples[5..1]
     let also be samples[9..=2]
     return 0

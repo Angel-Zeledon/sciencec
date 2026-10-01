@@ -1090,7 +1090,11 @@ impl<'t> Parser<'t> {
         let generics_span = self.at(&TokenKind::LBracket).then(|| self.span());
         let generics = self.parse_generic_params();
         if form == FnForm::Tool {
-            self.check_tool_is_concrete(generics_span, &generics);
+            // The `]` was the last token `parse_generic_params` consumed, so
+            // the clause the fix deletes ends there and not at the last
+            // parameter — otherwise the fix leaves a `]` behind.
+            let generics_end = self.prev_span();
+            self.check_tool_is_concrete(generics_span, generics_end, &generics);
         }
         let (self_param, params) = self.parse_params(form);
         // The receiver is dropped rather than kept, so the tree holds the tool
@@ -1459,9 +1463,14 @@ impl<'t> Parser<'t> {
     /// would leave every mention of `T` in the signature unresolved, and one
     /// stale word would cost a diagnostic plus a name-resolution failure per
     /// use — which is the cascade, arriving from a later phase.
-    fn check_tool_is_concrete(&mut self, generics_span: Option<Span>, generics: &[GenericParam]) {
+    fn check_tool_is_concrete(
+        &mut self,
+        generics_span: Option<Span>,
+        generics_end: Span,
+        generics: &[GenericParam],
+    ) {
         let (Some(generics_span), Some(last)) = (generics_span, generics.last()) else { return };
-        let clause = generics_span.merge(last.span);
+        let clause = generics_span.merge(last.span).merge(generics_end);
         self.diagnostics.push(
             Diagnostic::error(codes::GENERIC_TOOL, "a `tool` is not generic")
                 .with_label(Label::primary(clause, "a type parameter has no single schema"))
@@ -3780,7 +3789,30 @@ impl<'t> Parser<'t> {
         match self.peek() {
             TokenKind::Let => {
                 self.advance();
-                let mutable = self.eat(&TokenKind::Mutable).is_some();
+                let mut mutable = self.eat(&TokenKind::Mutable).is_some();
+                // `let mut x` is Rust's spelling and the one generated code
+                // reaches for first. `mut` is a keyword only so that `&mut T`
+                // can be one, so left alone it reports "expected an
+                // identifier" at a word the author never meant as a name.
+                // Named and fixed here instead, and parsed as the `mutable`
+                // that was meant, so it costs one diagnostic and no cascade.
+                if !mutable && self.at(&TokenKind::Mut) {
+                    let span = self.span();
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            codes::UNEXPECTED_TOKEN,
+                            "a mutable binding is written `let mutable`",
+                        )
+                        .with_label(Label::primary(span, "`mut` appears only in `&mut T`"))
+                        .with_suggestion(Suggestion {
+                            span,
+                            replacement: "mutable".to_string(),
+                            message: "write the binding as".to_string(),
+                        }),
+                    );
+                    self.advance();
+                    mutable = true;
+                }
                 // One name, or several separated by commas. `mutable` is read
                 // once and applies to all of them: the list receives one
                 // tuple, and a binding list where half the names are mutable
@@ -6048,6 +6080,7 @@ fn fixed_text(kind: &TokenKind) -> &'static str {
         Has => "has",
         Of => "of",
         Borrowed => "borrowed",
+        Mut => "mut",
         Any => "any",
         Use => "use",
         Public => "public",

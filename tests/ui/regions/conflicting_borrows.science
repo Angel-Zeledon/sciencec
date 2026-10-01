@@ -14,6 +14,6 @@ type Doc:
 
 def main():
     let mutable doc be Doc(title: 0)
-    let shared be borrowed doc
+    let shared be &doc
     doc.title be 1
     print(shared.title)

@@ -12,5 +12,5 @@
 # one, about the `)` or about a parameter whose type never finished, would
 # mean the recovery had stopped working.
 
-def f of (const N: Int, const M: Int)(w: Grid of (Int, N * M)):
+def f[const N: Int, const M: Int](w: Grid[Int, N * M]):
     print("x")

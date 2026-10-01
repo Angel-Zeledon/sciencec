@@ -5,12 +5,12 @@
 # at.
 #
 # Two things this pins. The fix is a deletion, and the renderer shows what
-# disappears rather than an empty pair of backticks — `of T`, the whole clause
-# including the `of`, because deleting the parameter alone would leave a
-# dangling keyword. And there is exactly **one** diagnostic: the parameter is
+# disappears rather than an empty pair of backticks — `[T]`, the whole clause
+# including both brackets, because deleting the parameter alone would leave an
+# empty `[]` and deleting up to it would leave a dangling `]`. And there is exactly **one** diagnostic: the parameter is
 # kept in the tree after the report, so `T` still resolves where it is used
 # and one stale word does not cost a name-resolution failure per mention.
 
 ## Return the largest of the values.
-tool largest of T(values: Array of T) -> Int:
+tool largest[T](values: Array[T]) -> Int:
     0

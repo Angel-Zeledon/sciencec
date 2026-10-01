@@ -14,11 +14,11 @@
 type Load:
     detail: String
 
-Load implements From of I64:
+Load implements From[I64]:
     def from(value: I64) -> Self:
         Load(detail: "")
 
-Load implements From of F64:
+Load implements From[F64]:
     def from(value: F64) -> Self:
         Load(detail: "")
 

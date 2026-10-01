@@ -19,6 +19,6 @@
 # two, and the second one is the price of a `..` the grammar cannot start an
 # expression with. Neither can be one until the grammar carries the form.
 
-def views(m: Array of Int, samples: Array of Int):
+def views(m: Array[Int], samples: Array[Int]):
     let cell be m[1, 1]
     let head be samples[..5]

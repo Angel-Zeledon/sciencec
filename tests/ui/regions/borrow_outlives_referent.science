@@ -13,7 +13,7 @@
 #
 # The headline is wrong and is pinned wrong on purpose; the README says how.
 
-def escape() -> borrowed Int:
+def escape() -> &Int:
     let value be 5
-    let r be borrowed value
+    let r be &value
     r

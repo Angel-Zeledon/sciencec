@@ -13,5 +13,5 @@
 # error node rather than collapsing to one, so a misspelling in the thing
 # being indexed is still the resolver's to find.
 
-def first(row: Array of Int) -> Int:
+def first(row: Array[Int]) -> Int:
     return row[]

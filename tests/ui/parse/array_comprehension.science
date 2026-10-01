@@ -17,7 +17,7 @@
 # that guessed at three spellings would be worse than the note that names the
 # shape, which is `try_word.science`'s rule applied a second time.
 
-def main(xs: Array of Int):
+def main(xs: Array[Int]):
     let scaled be [x * 2 for x in xs if x > 0]
     let total be 0
     print(total)

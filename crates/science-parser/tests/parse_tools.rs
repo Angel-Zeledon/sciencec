@@ -153,7 +153,7 @@ fn a_def_without_a_description_is_fine() {
 fn a_generic_tool_is_rejected() {
     insta::assert_snapshot!(parse_source_allowing_errors(
         "## Return the largest of the values.
-tool largest of T(values: Array[T]) -> Int:
+tool largest[T](values: Array[T]) -> Int:
     0
 "
     ));

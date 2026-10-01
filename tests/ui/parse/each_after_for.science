@@ -6,6 +6,6 @@
 # loop dropped it. The fix therefore spans `for each` and replaces it with
 # `for`, rather than deleting one word.
 
-def main(rows: Array of Int):
+def main(rows: Array[Int]):
     for each row in rows:
         print(row)

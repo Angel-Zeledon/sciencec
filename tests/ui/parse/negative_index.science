@@ -12,7 +12,7 @@
 # `a[a.length() - 2]`, which needs the base written twice and cannot be built
 # from spans; it gets the note instead.
 
-def ends(row: Array of Int) -> Int:
+def ends(row: Array[Int]) -> Int:
     let last be row[-1]
     let before be row[-2]
     return last + before

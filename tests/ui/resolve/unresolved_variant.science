@@ -12,7 +12,7 @@ choice Signal:
     Ready
     Done
 
-def code_of(s: borrowed Signal) -> Int:
+def code_of(s: &Signal) -> Int:
     match s:
         Signal.Pending: 1
         _: 0

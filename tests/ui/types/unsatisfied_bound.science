@@ -1,7 +1,7 @@
 # UI test: a generic argument that does not satisfy the callee's bound (SC0534).
 #
 # Decision 11's fourth case, and the one the decision assumes rather than
-# numbers. `def describe of T: Summarize(..)` is a promise the body is checked
+# numbers. `def describe[T: Summarize](..)` is a promise the body is checked
 # against — `value.preview()` resolves because `T` implements `Summarize` — and
 # until this code existed nothing held a *call* to that promise, so `T` unified
 # with anything and the bound was decoration.
@@ -18,7 +18,7 @@
 interface Summarize:
     def preview(self) -> String
 
-def describe of T: Summarize(value: borrowed T) -> String:
+def describe[T: Summarize](value: &T) -> String:
     value.preview()
 
 def main(n: Int):

@@ -538,3 +538,29 @@ fn a_generic_type_written_with_of_does_not_derail_the_rest_of_the_file() {
         "def f(m: Map of (String, Int)) -> Int:\n    m.length()\n\ndef g(xs: Array[Int]) -> Int:\n    xs.length()\n";
     assert_eq!(codes(source), ["SC0100"]);
 }
+
+// --- `let mut` ------------------------------------------------------------
+
+/// `let mut x` is Rust's mutable binding and the one generated code reaches
+/// for first. `mut` is a keyword so that `&mut T` can be one, which left this
+/// reporting *"expected an identifier, found `?`"* — the wrong place, and a
+/// token the renderer could not even spell. It names the binding now, and
+/// offers `mutable` in the word's place.
+#[test]
+fn let_mut_is_reported_where_let_mutable_belongs() {
+    let source = "def main():\n    let mut x be 1\n    x be 2\n";
+    let (code, message, replaced, replacement) = only_fix(source);
+    assert_eq!(code, "SC0100");
+    assert_eq!(message, "a mutable binding is written `let mutable`");
+    assert_eq!(replaced, "mut");
+    assert_eq!(replacement, "mutable");
+}
+
+/// Recovery reads the binding as the `mutable` one that was meant, so the
+/// assignment after it and the declaration after that cost nothing more.
+#[test]
+fn let_mut_does_not_derail_the_rest_of_the_file() {
+    let source =
+        "def f():\n    let mut x be 1\n    x be 2\n\ndef g() -> Int:\n    let mutable y be 1\n    y\n";
+    assert_eq!(codes(source), ["SC0100"]);
+}

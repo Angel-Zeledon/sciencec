@@ -11,5 +11,5 @@
 # correctly, and still not a kind. Resolving the annotation as a type would
 # accept it.
 
-def widest of (const N: Str)(rows: Int) -> Int:
+def widest[const N: Str](rows: Int) -> Int:
     rows

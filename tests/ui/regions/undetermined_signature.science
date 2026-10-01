@@ -10,5 +10,5 @@
 # ever produces one. §14 of `region-inference.md` feared this code would fire
 # in ordinary code; this is the whole of its reachable domain.
 
-def only(x: borrowed Int) -> borrowed Int:
+def only(x: &Int) -> &Int:
     only(x)
