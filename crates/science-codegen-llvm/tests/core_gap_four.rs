@@ -103,6 +103,18 @@ print(t.members[1].value)
 }
 
 #[test]
+fn a_nested_tuple_index_is_two_indices_not_a_float() {
+    let source = r#"let t be ((1, 2), (3, (4, 5)))
+print(t.0.1)
+print(t.1.0)
+print(t.1.1.1)
+let x be 0.5
+print(x + 1.25)
+"#;
+    assert_eq!(prints("nested_tuple_index", source), "2\n3\n5\n1.75\n");
+}
+
+#[test]
 fn a_function_name_is_a_closure_where_one_is_expected() {
     let source = r#"def half(x: Int) -> Int:
     x / 2

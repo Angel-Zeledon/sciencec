@@ -562,7 +562,18 @@ impl<'a> Lexer<'a> {
 
         // A dot only makes a float if a digit follows it. `1.foo()` is field
         // access on an integer, and `1.` is an integer followed by a dot.
-        if self.peek() == Some('.') && self.peek_at(1).is_some_and(|c| c.is_ascii_digit()) {
+        //
+        // After a member dot the digits are a tuple index, not a float's
+        // whole part: in `t.0.1` the `0.1` is two indices, as in Rust, so the
+        // second dot is left for the next token.
+        let after_member_dot = self
+            .tokens
+            .last()
+            .is_some_and(|t| matches!(t.kind, TokenKind::Dot) && t.span.end as usize == start);
+        if !after_member_dot
+            && self.peek() == Some('.')
+            && self.peek_at(1).is_some_and(|c| c.is_ascii_digit())
+        {
             is_float = true;
             self.bump();
             literal.push('.');
