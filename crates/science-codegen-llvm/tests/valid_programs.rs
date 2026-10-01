@@ -544,3 +544,43 @@ fn array_clone_of_strings_is_independent() {
 ";
     assert_eq!(prints("array_clone_strings", source), "2\nx\nxzz\nyy\n");
 }
+
+/// `Array.clone()` of elements that own more than a `String`: a record with a
+/// `Clone` impl, and arrays of arrays. Every original and every copy is dropped
+/// exactly once (four `drop` lines for two docs cloned once), and the copy is
+/// independent of the original.
+#[test]
+fn array_clone_of_owning_elements_drops_each_copy_once() {
+    let source = "type Doc:
+    title: String
+    n: Int
+
+Doc implements Clone:
+    def clone(self) -> Doc:
+        Doc(title: self.title.clone(), n: self.n)
+
+Doc implements Drop:
+    def drop(mutable self):
+        print(f\"drop {self.title}\")
+
+def copies(docs: &Array[Doc]) -> Array[Doc]:
+    docs.clone()
+
+def main():
+    let docs be [Doc(title: \"a\", n: 1), Doc(title: \"b\", n: 2)]
+    let copy be copies(docs)
+    print(copy.length())
+    let mutable nest be [[1, 2], [3]]
+    let nc be nest.clone()
+    nest[0].push(9)
+    print(nc[0].length())
+    print(nest[0].length())
+    let names be [[\"p\", \"q\"], [\"r\"]]
+    let nn be names.clone()
+    print(nn[0][1])
+";
+    assert_eq!(
+        prints("array_clone_owning", source),
+        "2\n2\n3\nq\ndrop a\ndrop b\ndrop a\ndrop b\n"
+    );
+}

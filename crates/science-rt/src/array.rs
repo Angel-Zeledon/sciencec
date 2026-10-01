@@ -187,6 +187,42 @@ pub unsafe extern "C" fn science_array_clone_strings(
     out
 }
 
+/// `Array::clone(&self) -> Array[T]` for an element that owns something other
+/// than a `String`: `clone_fn` writes a clone of the element at its first
+/// argument into the uninitialised slot at its second.
+///
+/// `ScienceTypeInfo` carries no clone function, and growing it would change the
+/// layout every descriptor in every compiled program shares; the function
+/// travels beside the descriptor instead, as a third argument, and only this
+/// one call takes it. Codegen emits one `clone_fn` per element type.
+///
+/// # Safety
+///
+/// `src` must be a non-null, aligned pointer to a live [`ScienceArray`], `info`
+/// the descriptor it was created with, and `clone_fn` a function that, given a
+/// live element and room for one, initialises that room with an independent
+/// copy.
+#[no_mangle]
+pub unsafe extern "C" fn science_array_clone_with(
+    src: *const ScienceArray,
+    info: *const ScienceTypeInfo,
+    clone_fn: unsafe extern "C" fn(*const u8, *mut u8),
+) -> ScienceArray {
+    // SAFETY: the caller guarantees a live array and its descriptor.
+    let (src, info) = unsafe { (&*src, &*info) };
+    let mut out = ScienceArray::empty(info);
+    // SAFETY: `out` is live and described by `info`.
+    unsafe { out.reserve(info, src.len) };
+    for index in 0..src.len {
+        // SAFETY: both slots are within their buffers, `src`'s is a live
+        // element, and `out`'s is uninitialised and written once.
+        unsafe { clone_fn(src.slot(info, index), out.slot(info, index)) };
+        // Counted as it is written, so a panic part-way leaves a valid array.
+        out.len = index + 1;
+    }
+    out
+}
+
 /// Ensure room for `additional` more elements without reallocating.
 ///
 /// **Codegen support**, as [`science_array_with_capacity`].

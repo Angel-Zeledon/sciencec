@@ -755,6 +755,11 @@ fn reachable_from(
                 queue.push(method);
             }
         }
+        for method in lowerer.clone_methods_of(body) {
+            if !reached.contains(&method) {
+                queue.push(method);
+            }
+        }
     }
     reached
 }
@@ -1099,6 +1104,70 @@ impl<'a> Lowerer<'a> {
                 };
                 if let Ok(slots) = self.vtable_slots(interface, concrete) {
                     out.extend(slots);
+                }
+            }
+        }
+        out
+    }
+
+    /// The prelude's `Clone` interface.
+    fn clone_interface(&self) -> Option<DefId> {
+        self.defs
+            .iter()
+            .find(|def| {
+                def.is_builtin() && def.kind == DefKind::Interface && def.name == "Clone"
+            })
+            .map(|def| def.id)
+    }
+
+    /// The `clone` a user's `T implements Clone:` block wrote, for a concrete
+    /// (non-generic) `T`.
+    ///
+    /// A generic block's `clone` has no single body to schedule, and
+    /// `science_codegen::mono` does not instantiate one per element type the
+    /// way it does a `Drop`, so a generic implementor is not found here and
+    /// [`Lowerer::intern_clone_thunk`] refuses it by name.
+    fn user_clone_method(&self, ty: Ty) -> Option<DefId> {
+        let decls = self.decls?;
+        let interface = self.clone_interface()?;
+        if !decls.methods().declares(self.types, ty, interface) {
+            return None;
+        }
+        let def = self.concrete_head(ty)?;
+        let Found::One(candidate) = decls.methods().lookup(def, "clone", Form::Value) else {
+            return None;
+        };
+        let generic = decls
+            .signature(candidate.method)
+            .and_then(|signature| signature.owner)
+            .and_then(|owner| decls.block_generics(owner))
+            .is_some_and(|generics| !generics.is_empty());
+        (!generic).then_some(candidate.method)
+    }
+
+    /// Every user `clone` an `Array.clone` call in this body will reach through
+    /// its per-element clone thunk: [`reachable_from`]'s fourth half, for
+    /// [`Lowerer::drop_methods_of`]'s reason. The call that reaches the `clone`
+    /// is in the thunk this crate synthesises, so no MIR names it.
+    fn clone_methods_of(&self, body: &MirBody) -> Vec<DefId> {
+        let mut out = Vec::new();
+        for (_, block) in body.blocks() {
+            let TerminatorKind::Call { callee: mir::Callee::Def { def, .. }, args, .. } =
+                &block.terminator.kind
+            else {
+                continue;
+            };
+            if self.array_method(*def) != Some("clone") {
+                continue;
+            }
+            let Some(array) = args.first().and_then(|arg| self.operand_ty(body, arg)) else {
+                continue;
+            };
+            let mut ty = array;
+            while let Some(element) = self.array_element(ty) {
+                ty = element;
+                if let Some(method) = self.user_clone_method(ty) {
+                    out.push(method);
                 }
             }
         }
@@ -12127,15 +12196,194 @@ impl<'a> Lowerer<'a> {
             Some(_) => true,
             None => self.intern_drop_glue(element, 0)?.is_some(),
         };
-        if owns {
+        if !owns {
+            return self.lower_runtime_call(body, ctx, "science_array_clone", args, destination, insts);
+        }
+        // An element that owns something is cloned by a thunk of its own,
+        // handed to the runtime beside the descriptor.
+        const SYMBOL: &str = "science_array_clone_with";
+        let sig = self.declare(SYMBOL)?;
+        let Some(receiver) = args.first().and_then(|arg| arg.place()) else {
+            return Err(Unlowered::new(
+                "an `Array.clone` whose receiver is not a place this crate can take the address of",
+            ));
+        };
+        let receiver = self.pointer_to_place(ctx, receiver, insts)?;
+        let descriptor = Operand::GlobalAddr(self.intern_element_descriptor(element)?);
+        let thunk = Operand::GlobalAddr(self.intern_clone_thunk(element)?);
+        self.emit_result(
+            ctx,
+            Callee::Runtime(SYMBOL),
+            &sig.ret,
+            vec![receiver, descriptor, thunk],
+            destination,
+            insts,
+        )
+    }
+
+    /// The `(from: *const T, to: *mut T)` function `science_array_clone_with`
+    /// calls once per element: it writes an independent copy of `*from` into
+    /// the uninitialised `*to`.
+    ///
+    /// What the copy is depends on the element, and each case is the clone
+    /// that type already has: a `String` is `science_string_clone`; an
+    /// `Array[U]` is the runtime's clone for `U` (itself `..._with` and a
+    /// thunk for `U` when `U` owns something, which is the recursion); a
+    /// record or `choice` is the `clone` its `implements Clone:` block wrote.
+    /// Anything else owning memory (a `Box`, a tuple, a `T?`) is refused by
+    /// name, since it has no `clone` to call.
+    ///
+    /// Every case produces the value in a local of the element's layout (or in
+    /// registers for a small `Direct` return) and `StoreAt`s it through `to`.
+    /// The symbol is the element's rendering with a `.clone` suffix, claimed in
+    /// the `glue` set before the body is built for the same reason
+    /// [`Lowerer::intern_drop_glue`] claims its own.
+    fn intern_clone_thunk(&mut self, element: Ty) -> Result<String, Unlowered> {
+        let rendered = self.types.render(self.defs, element);
+        let symbol = format!("{}.clone", mangle(&MonoKey::plain(&[rendered.as_str()])));
+        if self.glue.contains(&symbol) {
+            return Ok(symbol);
+        }
+        self.glue.insert(symbol.clone());
+        let layout = self.layout_of_ty(element)?;
+        let local = LocalId(0);
+        let mut insts: Vec<ExtInst> = vec![ExtInst::Above(Inst::Alloca {
+            local,
+            layout: layout.clone(),
+        })];
+        let mut next_value = 0u32;
+        let mut value = || {
+            let id = ValueId(next_value);
+            next_value += 1;
+            id
+        };
+        let produced: Option<ValueId>;
+        if self.is_string(element) {
+            let sig = self.declare("science_string_clone")?;
+            if !sig.ret.is_sret() {
+                return Err(Unlowered::new(
+                    "an `Array.clone` thunk for `String`, on a target where `science_string_clone` \
+                     does not return through a slot",
+                ));
+            }
+            insts.push(ExtInst::Above(Inst::Call {
+                dest: None,
+                callee: Callee::Runtime("science_string_clone"),
+                args: vec![Operand::Param(0)],
+                ret: sig.ret.clone(),
+                sret_slot: Some(local),
+            }));
+            produced = None;
+        } else if let Some(inner) = self.array_element(element) {
+            let inner_owns = match self.direct_release(inner)? {
+                Some(_) => true,
+                None => self.intern_drop_glue(inner, 0)?.is_some(),
+            };
+            let descriptor = Operand::GlobalAddr(self.intern_element_descriptor(inner)?);
+            let (name, args) = if self.is_string(inner) {
+                ("science_array_clone_strings", vec![Operand::Param(0), descriptor])
+            } else if inner_owns {
+                let thunk = Operand::GlobalAddr(self.intern_clone_thunk(inner)?);
+                ("science_array_clone_with", vec![Operand::Param(0), descriptor, thunk])
+            } else {
+                ("science_array_clone", vec![Operand::Param(0), descriptor])
+            };
+            let sig = self.declare(name)?;
+            if !sig.ret.is_sret() {
+                return Err(Unlowered::new(format!(
+                    "an `Array.clone` thunk for `{rendered}`, on a target where `{name}` does \
+                     not return through a slot"
+                )));
+            }
+            insts.push(ExtInst::Above(Inst::Call {
+                dest: None,
+                callee: Callee::Runtime(name),
+                args,
+                ret: sig.ret.clone(),
+                sret_slot: Some(local),
+            }));
+            produced = None;
+        } else if let Some(method) = self.user_clone_method(element) {
+            let user = self.by_def.get(&method).cloned().ok_or_else(|| {
+                Unlowered::new(format!(
+                    "an `Array.clone` thunk for `{rendered}`, whose `clone` was not emitted"
+                ))
+            })?;
+            let sig = self.science.get(&user).cloned().ok_or_else(|| {
+                Unlowered::new(format!(
+                    "an `Array.clone` thunk for `{rendered}`, whose `clone` has no signature"
+                ))
+            })?;
+            match &sig.ret {
+                ReturnClass::Indirect => {
+                    insts.push(ExtInst::Above(Inst::Call {
+                        dest: None,
+                        callee: Callee::Science(user),
+                        args: vec![Operand::Param(0)],
+                        ret: sig.ret.clone(),
+                        sret_slot: Some(local),
+                    }));
+                    produced = None;
+                }
+                ReturnClass::Direct { .. } => {
+                    let dest = value();
+                    insts.push(ExtInst::Above(Inst::Call {
+                        dest: Some(dest),
+                        callee: Callee::Science(user),
+                        args: vec![Operand::Param(0)],
+                        ret: sig.ret.clone(),
+                        sret_slot: None,
+                    }));
+                    produced = Some(dest);
+                }
+                ReturnClass::Void => {
+                    return Err(Unlowered::new(format!(
+                        "an `Array.clone` thunk for `{rendered}`, whose `clone` returns nothing"
+                    )));
+                }
+            }
+        } else {
             return Err(Unlowered::new(format!(
-                "`clone` on an `Array of {}`: an element that owns memory (other than a `String`) needs a clone function \
-                 per element, which `ScienceTypeInfo` does not carry; `Array.clone` copies the \
-                 elements of an array whose element type owns nothing",
-                self.types.render(self.defs, element)
+                "`clone` on an `Array of {rendered}`: an element that owns memory needs a \
+                 `clone` to copy it with, and this one is not a `String`, an `Array`, or a \
+                 non-generic type with an `implements Clone:` block"
             )));
         }
-        self.lower_runtime_call(body, ctx, "science_array_clone", args, destination, insts)
+        let loaded = match produced {
+            Some(dest) => dest,
+            None => {
+                let dest = value();
+                insts.push(ExtInst::Above(Inst::Load { dest, local }));
+                dest
+            }
+        };
+        insts.push(ExtInst::StoreAt {
+            address: Operand::Param(1),
+            layout,
+            value: Operand::Value(loaded),
+        });
+        let ptr = layout_of(self.target, &CgTy::Ptr(PtrKind::MutBorrow));
+        let signature = AbiSignature::science(
+            self.target,
+            symbol.clone(),
+            layout_of(self.target, &CgTy::Unit),
+            vec![
+                ("from".to_string(), ptr.clone(), ParamAttrs::default()),
+                ("to".to_string(), ptr, ParamAttrs::default()),
+            ],
+        );
+        self.glue_definitions.push((
+            signature,
+            ExtBody {
+                blocks: vec![ExtBlock {
+                    id: BlockId(0),
+                    label: "entry".to_string(),
+                    insts,
+                    terminator: Terminator::Return(None),
+                }],
+            },
+        ));
+        Ok(symbol)
     }
 
     fn lower_array_replace(
