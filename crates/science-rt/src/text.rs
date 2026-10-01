@@ -69,15 +69,42 @@ impl ScienceTextError {
 #[no_mangle]
 pub unsafe extern "C" fn science_text_error_message(error: *const ScienceTextError) -> ScienceString {
     // SAFETY: the caller guarantees a live error code.
-    let text: &str = match unsafe { *error } {
+    let text = text_error_sentence(unsafe { *error });
+    // SAFETY: a `&str` is valid UTF-8 of its own length.
+    unsafe { ScienceString::from_raw_utf8(text.as_ptr(), text.len()) }
+}
+
+/// The four sentences, once, for `io.rs`'s `io_error_sentence`'s reason.
+fn text_error_sentence(error: ScienceTextError) -> &'static str {
+    match error {
         ScienceTextError::NOT_UTF8 => "not valid UTF-8",
         ScienceTextError::NOT_A_CHARACTER_BOUNDARY => "not a character boundary",
         ScienceTextError::NOT_A_NUMBER => "not a number",
         ScienceTextError::OUT_OF_RANGE => "number out of range",
         _ => "text error",
-    };
-    // SAFETY: a `&str` is valid UTF-8 of its own length.
-    unsafe { ScienceString::from_raw_utf8(text.as_ptr(), text.len()) }
+    }
+}
+
+/// `TextError implements Display`: append the error's sentence to a `String`.
+///
+/// [`crate::science_string_push_io_error`]'s decision, reason and cost, for
+/// the other error type at Level 1: `print(err)` and `f"{err}"` on a
+/// `TextError` render exactly what `err.message()` returns.
+///
+/// # Safety
+///
+/// `value` must be a non-null, aligned pointer to a live [`ScienceString`];
+/// `error` a non-null pointer to a live [`ScienceTextError`].
+#[no_mangle]
+pub unsafe extern "C" fn science_string_push_text_error(
+    value: *mut ScienceString,
+    error: *const ScienceTextError,
+) {
+    // SAFETY: the caller guarantees a live error code.
+    let text = text_error_sentence(unsafe { *error });
+    // SAFETY: the caller guarantees a live string, and a `&'static str` cannot
+    // alias its buffer.
+    unsafe { (*value).append(text.as_bytes()) };
 }
 
 /// Science's `TextError?`: a discriminant byte, then the error.

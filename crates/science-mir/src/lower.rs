@@ -606,6 +606,10 @@ const MAP_ENTRY_AT: &str = "science_map_entry_at";
 const ARRAY_SORT_BY_INT_KEY: &str = "science_array_sort_by_int_key";
 const PANIC_BYTES: &str = "science_panic_bytes";
 const PUSH_STR: &str = "science_string_push_str";
+/// `IoError implements Display` and `TextError implements Display`, as two
+/// more pushes the builder reaches by pointer. See [`Builder::push_of`].
+const PUSH_IO_ERROR: &str = "science_string_push_io_error";
+const PUSH_TEXT_ERROR: &str = "science_string_push_text_error";
 /// `strings-formatting-and-docs.md` §3.1's `Formatter`, built over the
 /// accumulator: `science_formatter_init(&mut formatter, &mut accumulator)`.
 /// It takes an out-pointer rather than returning, which is `science-rt`'s
@@ -2722,7 +2726,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// `strings-formatting-and-docs.md` §4.1 is `def print(value: borrowed any
     /// Display)`, so what `print(42)` means is *"render `42` through `Display`
     /// and write the result"*. There is exactly one renderer in this compiler
-    /// and it is the f-string builder: `science-rt`'s seven
+    /// and it is the f-string builder: `science-rt`'s nine
     /// `science_string_push_*` entry points, reached through
     /// [`Builder::push_of`], with [`Builder::widen_hole`]'s cast in front of
     /// the six narrow integer widths. Emitting anything else would be a second
@@ -4650,8 +4654,24 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// takes it.
     ///
     /// **The list is `science-rt`'s and it is closed.** §1.7 names the builder,
-    /// `science-codegen`'s `RUNTIME` names the seven entry points that exist,
-    /// and there is no eighth to be had.
+    /// `science-codegen`'s `RUNTIME` names the entry points that exist, and a
+    /// type with none is [`Push::Missing`].
+    ///
+    /// **`IoError` and `TextError` are the eighth and ninth, by pointer.**
+    /// *Decision:* a hole of either type is `science_string_push_io_error` or
+    /// `science_string_push_text_error`, taking the hole by shared borrow as a
+    /// `String` hole is taken, and appending the sentence the error's
+    /// `message()` returns — `science-rt` reads both from one table. *Reason:*
+    /// the prelude lists both as implementing `Display` and neither has a
+    /// `display` with a body, so `print(err)` and `f"{err}"` were refused
+    /// while `err.message()` beside them built; a push is the builder's one
+    /// mechanism, so `print`, `write`, `print_error`, `write_error` and the
+    /// f-string all follow without a line of their own, where composing
+    /// `message()`, `push_str` and a free here would have been three calls and
+    /// an allocation per hole. *Cost:* two symbols in `RUNTIME` and its count
+    /// tests. A format specification (`{err:>20}`) needs nothing: the lexer
+    /// refuses every one, for every type, so the error holes are in the same
+    /// position as a `String` hole.
     ///
     /// **The six narrow integer widths reach one of them through a cast**, and
     /// this entry used to say they could not. `science_string_push_i64`'s own
@@ -4718,6 +4738,10 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             direct(PUSH_CHAR)
         } else if is("String") {
             Push::Pointer(PUSH_STR)
+        } else if is("IoError") {
+            Push::Pointer(PUSH_IO_ERROR)
+        } else if is("TextError") {
+            Push::Pointer(PUSH_TEXT_ERROR)
         } else {
             Push::Missing
         }
@@ -4793,6 +4817,8 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// | `F32` | 16 | a **guess**. `{:?}` on an `f32` is shortest-round-trip, so `1e-30` is five bytes and `-1.1754944e-38` is fourteen; there is no short bound and the tail is rare |
     /// | `F64` | 24 | the same guess one width up. `0.1 + 0.2` renders `0.30000000000000004`, nineteen bytes, which is the case §2.3 exists to keep visible |
     /// | `String` | 16 | a **guess**, and the only hole whose true size is known at run time and not here |
+    /// | `IoError` | 18 | `input/output error`, the longest of its five sentences |
+    /// | `TextError` | 24 | `not a character boundary`, the longest of its four |
     /// | anything else | 0 | there is no renderer, so there will be no bytes |
     ///
     /// The `F64` and `String` numbers are the two worth revisiting with a
@@ -4814,7 +4840,7 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
     /// One hole's contribution to [`Builder::capacity_estimate`].
     ///
     /// A table rather than a chain of comparisons, because the table is what
-    /// the note above is: fourteen rows, each a type and a number, and a reader
+    /// the note above is: sixteen rows, each a type and a number, and a reader
     /// checking one against the other should not have to read control flow to
     /// do it. A type not in it contributes nothing, which is right for both
     /// kinds of absence — a hole with no renderer will produce no bytes, and a
@@ -4835,6 +4861,8 @@ impl<'a, 'ctx> Builder<'a, 'ctx> {
             ("String", 16),
             ("Bool", 5),
             ("Char", 4),
+            ("IoError", 18),
+            ("TextError", 24),
         ];
         let ty = self.stripped(ty);
         let prelude = self.context.decls.prelude();

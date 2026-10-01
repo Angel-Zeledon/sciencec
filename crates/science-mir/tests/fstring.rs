@@ -263,6 +263,30 @@ fn the_entry_point_is_chosen_by_the_holes_type() {
     );
 }
 
+/// **`IoError` and `TextError` have a push each, chosen here, by pointer.**
+///
+/// Both are listed as implementing `Display` and neither has a `display` with
+/// a body, so until these two entry points existed the hole was
+/// `Unresolved::Display` and the backend refused it by type. The test above
+/// is left alone: it pins the seven scalar-and-`String` choices, and this one
+/// pins the two that joined them.
+#[test]
+fn an_error_hole_is_pushed_by_its_own_entry_point() {
+    let source = "let err be write_file(\"/x/y\", \"hi\")\n\
+                  let n, text_err be \"4\".parse_int()\n\
+                  if err?:\n\x20   print(f\"{err}\")\n\
+                  if text_err?:\n\x20   print(f\"{text_err}\")\n";
+    assert_eq!(
+        pushes(lower(source).body("main")),
+        vec![
+            "science_string_with_capacity",
+            "science_string_push_io_error",
+            "science_string_with_capacity",
+            "science_string_push_text_error",
+        ]
+    );
+}
+
 /// **A borrow is looked through rather than rendered.** A `borrowed String`
 /// hole is a `String`, and a `borrowed Int` hole is an `Int`.
 ///

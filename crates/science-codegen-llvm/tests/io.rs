@@ -190,3 +190,84 @@ def main():
     assert_eq!(stdout, "5\n290\n", "100 short writes reach the sink as 5");
     assert_eq!(written, "never flushed by hand\n");
 }
+
+/// Builds and runs `source`, returning stdout and stderr: the two streams
+/// `print` and `print_error` write to, kept apart so that a line on the wrong
+/// one fails.
+fn streams(name: &str, source: &str) -> (String, String) {
+    let dir = scratch("io", name);
+    require_runtime();
+    let built = lower(source).build_at(&executable(&dir, name), OptLevel::O2);
+    let ran = run(&built);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(ran.status, Some(0), "stderr: {}", ran.stderr);
+    (ran.stdout, ran.stderr)
+}
+
+/// **`IoError implements Display`, run.** `print(err)`, `write(err)` and a
+/// hole each render the sentence `err.message()` returns — printed beside them
+/// so that the two cannot drift apart unseen — and printing borrows: `err` is
+/// used five times and moved by none of them.
+///
+/// Before `science_string_push_io_error` this program was refused at the first
+/// line inside the `if`, `SC0400`, *"`IoError` has no `display` this compiler
+/// can call"*, although the prelude lists `IoError` as implementing `Display`.
+#[test]
+fn an_io_error_prints_its_message() {
+    assert_eq!(
+        prints(
+            "io_error_display",
+            "def main():
+    let err be write_file(\"/nonexistent-science-dir/x.txt\", \"hi\")
+    if err?:
+        print(err)
+        write(err)
+        print(\"|\")
+        print(f\"write failed: {err} ({err.message()})\")
+        print(err.message())
+    print(\"after\")
+",
+        ),
+        "not found\nnot found|\nwrite failed: not found (not found)\nnot found\nafter\n"
+    );
+}
+
+/// `print_error(err)` and `write_error(err)` are the same rendering on the
+/// other stream, and nothing of it reaches stdout.
+#[test]
+fn an_io_error_prints_to_stderr() {
+    let (stdout, stderr) = streams(
+        "io_error_display_stderr",
+        "def main():
+    let err be write_file(\"/nonexistent-science-dir/x.txt\", \"hi\")
+    if err?:
+        print_error(err)
+        write_error(err)
+        print_error(f\"!{err}!\")
+    print(\"done\")
+",
+    );
+    assert_eq!(stdout, "done\n");
+    assert_eq!(stderr, "not found\nnot found!not found!\n");
+}
+
+/// A borrowed `IoError` renders its referent, as a borrowed `String` does: the
+/// hole is reborrowed through rather than read as a pointer to a pointer.
+#[test]
+fn a_borrowed_io_error_prints_its_referent() {
+    assert_eq!(
+        prints(
+            "io_error_display_borrowed",
+            "def report(err: &IoError):
+    print(f\"[{err}]\")
+    print(err)
+
+def main():
+    let err be write_file(\"/nonexistent-science-dir/x.txt\", \"hi\")
+    if err?:
+        report(err)
+",
+        ),
+        "[not found]\nnot found\n"
+    );
+}

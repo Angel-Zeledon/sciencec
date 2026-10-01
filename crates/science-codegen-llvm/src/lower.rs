@@ -8668,8 +8668,9 @@ impl<'a> Lowerer<'a> {
                     // find.
                     Some(name) => format!(
                         "an `f\"…\"` hole of type `{name}`, which neither rendering reaches. \
-                         `science-rt`'s seven `science_string_push_*` entry points render \
-                         `Int`/`I64`, `U64`, `F64`, `F32`, `Bool`, `Char` and `String`; §3.1's \
+                         `science-rt`'s nine `science_string_push_*` entry points render \
+                         `Int`/`I64`, `U64`, `F64`, `F32`, `Bool`, `Char`, `String`, `IoError` and \
+                         `TextError`; §3.1's \
                          `Formatter` renders any type whose `implements Display:` block writes \
                          `def display(self, into: &mut Formatter)`, and `{name}` has no such \
                          block this compiler can resolve — a bare `any Display`, a type \
@@ -9419,7 +9420,8 @@ impl<'a> Lowerer<'a> {
                 "a `{function}` of a value of type `{name}`: §4.1 declares `{function}` as \
                  `def {function}(value: &any Display)`, and `{name}` has no `display` this \
                  compiler can call. Two renderings exist and neither reaches it. §1.7's builder \
-                 covers `Int`/`I64`, `U64`, `F64`, `F32`, `Bool`, `Char` and `String`; §3.1's \
+                 covers `Int`/`I64`, `U64`, `F64`, `F32`, `Bool`, `Char`, `String`, `IoError` and \
+                 `TextError`; §3.1's \
                  `Formatter` covers any type whose `implements Display:` block writes \
                  `def display(self, into: &mut Formatter)`, which is the fix for a record or a \
                  `choice`. What is left over is `any Display` — whose `display` is in a vtable \

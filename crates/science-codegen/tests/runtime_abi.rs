@@ -359,7 +359,16 @@ fn nothing_outside_the_table_is_callable() {
     // decimal-to-binary conversion is Eisel–Lemire with a big-number fallback,
     // which is a library and not an instruction sequence, so Decision 14's
     // door is the one `**`'s two came through.
-    assert_eq!(RUNTIME.len(), 84);
+    //
+    // **Eighty-six.** `science_string_push_io_error` and
+    // `science_string_push_text_error` are `IoError implements Display` and
+    // `TextError implements Display`: the f-string builder's pushes for the
+    // two error types, which append the sentence each `message` returns. The
+    // sentence is picked by a byte from a table `science-rt` holds once, for
+    // `science_io_error_message`'s reason; emitting the table here instead
+    // would be a second copy that `print(err)` and `print(err.message())` could
+    // disagree through.
+    assert_eq!(RUNTIME.len(), 86);
     // The tempting additions, named so that adding one is a deliberate act:
     // §2.6 puts every one of these in the inline column.
     for tempting in [

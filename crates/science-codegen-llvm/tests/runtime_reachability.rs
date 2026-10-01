@@ -259,6 +259,20 @@ const CORPUS: &[(&str, &str)] = &[
          \x20       print(float_err.message())\n\
          \x20   print(f\"{n} {x}\")\n",
     ),
+    // `IoError implements Display` and `TextError implements Display`:
+    // `science_string_push_io_error` and `science_string_push_text_error`,
+    // reached once through `print(err)`'s rewrite and once through a hole.
+    // `io.rs` and `text.rs` run the same shapes and assert the sentences.
+    (
+        "error_display",
+        "def main():\n\
+         \x20   let err be write_file(\"/nonexistent/x\", \"hi\")\n\
+         \x20   if err?:\n\
+         \x20       print(err)\n\
+         \x20   let n, text_err be \"4x2\".parse_int()\n\
+         \x20   if text_err?:\n\
+         \x20       print(f\"{n}: {text_err}\")\n",
+    ),
     // `arrays.rs`'s literal, `get`, `push` and `get_mutably` (the row
     // `tests/arrays.rs` itself does not exercise; `get_mutably` has an
     // execution test nowhere in this crate today, so this is that call's

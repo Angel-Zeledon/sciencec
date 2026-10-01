@@ -64,15 +64,71 @@ impl ScienceIoError {
 #[no_mangle]
 pub unsafe extern "C" fn science_io_error_message(error: *const ScienceIoError) -> ScienceString {
     // SAFETY: the caller guarantees a live error code.
-    let text: &str = match unsafe { *error } {
+    let text = io_error_sentence(unsafe { *error });
+    // SAFETY: a `&str` is valid UTF-8 of its own length.
+    unsafe { ScienceString::from_raw_utf8(text.as_ptr(), text.len()) }
+}
+
+/// The five sentences, once: what [`science_io_error_message`] returns and
+/// what [`science_string_push_io_error`] appends.
+///
+/// One function rather than two `match`es, because `print(err)` and
+/// `print(err.message())` printing different text would be a defect no type
+/// could catch, and one table is what makes it impossible rather than
+/// unlikely.
+fn io_error_sentence(error: ScienceIoError) -> &'static str {
+    match error {
         ScienceIoError::NOT_FOUND => "not found",
         ScienceIoError::PERMISSION_DENIED => "permission denied",
         ScienceIoError::ALREADY_EXISTS => "already exists",
         ScienceIoError::INVALID_DATA => "invalid data",
         _ => "input/output error",
-    };
-    // SAFETY: a `&str` is valid UTF-8 of its own length.
-    unsafe { ScienceString::from_raw_utf8(text.as_ptr(), text.len()) }
+    }
+}
+
+/// `IoError implements Display`: append the error's sentence to a `String`.
+///
+/// # The decision
+///
+/// **An eighth `science_string_push_*`, and `IoError`'s `Display` is its
+/// `message()`.** `science-mir`'s `Builder::push_of` answers a hole of type
+/// `IoError` with this entry point, by pointer, exactly as it answers a
+/// `String` hole with `science_string_push_str` — so `print(err)`,
+/// `write(err)`, `print_error(err)`, `write_error(err)` and `f"… {err} …"`
+/// are one lowering, the builder's, and not five.
+///
+/// # The reason
+///
+/// The prelude has listed `IoError` as implementing `Display` for as long as
+/// it has had the type, and `stdlib-core.md` §7.4 gives `Error` exactly one
+/// method, whose job is the human-readable sentence; a rendering that said
+/// anything else would be a second answer to one question. The alternatives
+/// were §3.1's `Formatter` — a `display` body for a one-byte code, with no
+/// user source for it to live in — or composing `message()`,
+/// `science_string_push_str` and a free in `science-mir`, which is three calls
+/// and an allocation per hole to produce the bytes this function copies from a
+/// `&'static str`.
+///
+/// # The cost
+///
+/// One more symbol in `science-codegen`'s `RUNTIME`, and its count tests. A
+/// format specification on the hole needs nothing here: the lexer refuses
+/// every one, for every type, before any hole is typed.
+///
+/// # Safety
+///
+/// `value` must be a non-null, aligned pointer to a live [`ScienceString`];
+/// `error` a non-null pointer to a live [`ScienceIoError`].
+#[no_mangle]
+pub unsafe extern "C" fn science_string_push_io_error(
+    value: *mut ScienceString,
+    error: *const ScienceIoError,
+) {
+    // SAFETY: the caller guarantees a live error code.
+    let text = io_error_sentence(unsafe { *error });
+    // SAFETY: the caller guarantees a live string, and a `&'static str` cannot
+    // alias its buffer.
+    unsafe { (*value).append(text.as_bytes()) };
 }
 
 /// Science's `IoError?`, the return type of [`science_write_file`].

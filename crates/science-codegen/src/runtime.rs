@@ -710,6 +710,12 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_read_file", params: &[P], ret: RtRet::Aggregate(RtAggregate::StringAndIoError) },
     RuntimeFn { symbol: "science_write_file", params: &[P, P], ret: RtRet::Aggregate(RtAggregate::NullableIoError) },
     RuntimeFn { symbol: "science_io_error_message", params: &[P], ret: RtRet::Aggregate(RtAggregate::String) },
+    // **`IoError implements Display`, as an eighth `science_string_push_*`.**
+    // The accumulator and a pointer to the error, the shape
+    // `science_string_push_str` has, and `()` back, so the `sret` set does not
+    // move. It appends the sentence `science_io_error_message` returns, from
+    // the one table both read; `science-rt`'s own note has the decision.
+    RuntimeFn { symbol: "science_string_push_io_error", params: &[P, P], ret: RtRet::Void },
     // --- map.rs ---
     RuntimeFn { symbol: "science_map_new", params: &[D], ret: RtRet::Aggregate(RtAggregate::Map) },
     RuntimeFn { symbol: "science_map_free", params: &[P, D], ret: RtRet::Void },
@@ -849,6 +855,9 @@ pub const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn { symbol: "science_text_error_message", params: &[P], ret: RtRet::Aggregate(RtAggregate::String) },
     RuntimeFn { symbol: "science_string_parse_int", params: &[P], ret: RtRet::Aggregate(RtAggregate::I64AndTextError) },
     RuntimeFn { symbol: "science_string_parse_float", params: &[P], ret: RtRet::Aggregate(RtAggregate::F64AndTextError) },
+    // `science_string_push_io_error`'s twin for `TextError`, and for its
+    // reason.
+    RuntimeFn { symbol: "science_string_push_text_error", params: &[P, P], ret: RtRet::Void },
     // --- math.rs ---
     //
     // The fifty-sixth and fifty-seventh, and the first addition since
@@ -1184,9 +1193,21 @@ mod tests {
     /// so Decision 14 is met as it was for `science_libm_pow`. The name moves
     /// with the number, so that it does not fall behind the way it did at
     /// sixty-nine.
+    ///
+    /// **Eighty-six**: `science_string_push_io_error` and
+    /// `science_string_push_text_error`, `IoError implements Display` and
+    /// `TextError implements Display`. The prelude listed both and the backend
+    /// refused `print(err)` and `f"{err}"` on either, because no `display`
+    /// had a body; each is now an entry point the f-string builder reaches by
+    /// pointer, as it reaches `science_string_push_str`, appending the
+    /// sentence the error's `message` returns. Copying a static sentence into
+    /// a buffer is not an instruction sequence this crate could emit without
+    /// duplicating `science-rt`'s table, so Decision 14 is met by the table
+    /// living in one place. Both return `()`, so the `sret` list below did not
+    /// move.
     #[test]
-    fn there_are_eighty_four_and_they_are_all_science_prefixed_and_unique() {
-        assert_eq!(RUNTIME.len(), 84, "§2.6: \"they are the whole list\"");
+    fn there_are_eighty_six_and_they_are_all_science_prefixed_and_unique() {
+        assert_eq!(RUNTIME.len(), 86, "§2.6: \"they are the whole list\"");
         let mut symbols: Vec<&str> = RUNTIME.iter().map(|f| f.symbol).collect();
         for symbol in &symbols {
             assert!(symbol.starts_with("science_"), "{symbol} breaks §8's one-prefix rule");

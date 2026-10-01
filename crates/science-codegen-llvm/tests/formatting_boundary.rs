@@ -163,6 +163,11 @@ fn the_seven_are_declared_with_an_accumulator_first_and_no_return() {
 /// stops at eight bytes, through a hidden pointer. This test asks the host, so
 /// the expected count has to as well; `science-codegen`'s `runtime_abi.rs`
 /// pins the per-convention membership by name.
+///
+/// **Still fifteen and seventeen, with eighty-six rows**:
+/// `science_string_push_io_error` and `science_string_push_text_error`, the
+/// builder's pushes for the two error types, return `()` like every other
+/// `science_string_push_*`. The table grew and the derived set did not.
 #[test]
 fn the_derived_sret_set_is_fifteen_and_seventeen_on_windows_and_has_moved_seven_times() {
     let triple = Triple::host().expect("a supported host");
@@ -177,7 +182,7 @@ fn the_derived_sret_set_is_fifteen_and_seventeen_on_windows_and_has_moved_seven_
         "the derived `sret` set is not the {expected} `science-codegen`'s `runtime.rs` names \
          for {triple:?}"
     );
-    assert_eq!(RUNTIME.len(), 84, "§2.6: \"they are the whole list\"");
+    assert_eq!(RUNTIME.len(), 86, "§2.6: \"they are the whole list\"");
 }
 
 /// **The whole of an `f"…"` lowering, run.** A `String` is built, each of the

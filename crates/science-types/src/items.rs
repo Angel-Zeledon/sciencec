@@ -300,6 +300,13 @@ const WANTED: &[&str] = &[
     // runtime's table, and holding the prelude's ids is the only way to tell
     // the two apart.
     "Map", "Set",
+    // `IoError` and `TextError`, which `science-mir`'s `Builder::push_of`
+    // asks about to give an `f"…"` hole of either type its own
+    // `science_string_push_*` — `print(err)` is that hole, rewritten. Here for
+    // `Map`'s reason: a user's own `type IoError:` must not be rendered as the
+    // runtime's one-byte code, and holding the prelude's ids is the only way
+    // to tell the two apart.
+    "IoError", "TextError",
 ];
 
 impl Prelude {

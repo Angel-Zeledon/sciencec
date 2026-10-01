@@ -210,3 +210,38 @@ def main():
         "false\n42\ntotal failed: not a number\n0\n"
     );
 }
+
+/// **`TextError implements Display`, run.** `io.rs`'s
+/// `an_io_error_prints_its_message` for the other error type: both codes the
+/// parses produce, through `print(err)`, `write(err)`, a hole and
+/// `print_error`, each the sentence `err.message()` returns.
+#[test]
+fn a_text_error_prints_its_message() {
+    let dir = scratch("text", "text_error_display");
+    require_runtime();
+    let built = lower(
+        "def main():
+    let n, err be \"x\".parse_int()
+    if err?:
+        print(err)
+        print(f\"{n}: {err} = {err.message()}\")
+        print_error(err)
+    let big, range be \"99999999999999999999\".parse_int()
+    if range?:
+        write(range)
+        print(f\" ({big})\")
+    let x, float_err be \"1.2.3\".parse_float()
+    if float_err?:
+        print(f\"{x} <{float_err}>\")
+",
+    )
+    .build_at(&executable(&dir, "text_error_display"), OptLevel::O2);
+    let ran = run(&built);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(ran.status, Some(0), "stderr: {}", ran.stderr);
+    assert_eq!(
+        ran.stdout,
+        "not a number\n0: not a number = not a number\nnumber out of range (0)\n0.0 <not a number>\n"
+    );
+    assert_eq!(ran.stderr, "not a number\n");
+}
