@@ -1,0 +1,447 @@
+# csv — `docs/DREAM.md` §19.2's "robust reading/writing" of delimited text:
+# `use csv (Table, Reader, Writer, Options)`.
+#
+# `data-io.md` §5 specifies the *typed* `read_csv of R(path, options)`, which
+# needs `Record` and explicit type arguments at call sites, neither of which
+# exists. This module is the layer under it: records as `Array[String]`, a
+# header, columns by name, and typed column helpers. Bundled and reached the
+# way `io` is (`science_resolve::stdlib`). Decisions, where the notes are silent:
+#
+# - RFC 4180, with the usual tolerances. A field may be quoted; inside quotes a
+#   delimiter, a CR or LF and a doubled `""` are data. Records end at LF, CRLF
+#   or a lone CR. A final record needs no terminator. A leading UTF-8 byte
+#   order mark is dropped.
+# - **A quote inside an unquoted field is an ordinary character** (`a"b` is
+#   `a"b`), as most readers do. A quoted field followed by anything but a
+#   delimiter or the end of the record is an error, and so is a quote that is
+#   never closed; the error is at the line the quote opened on.
+# - **Blank lines are skipped.** The writer never produces one: a record whose
+#   only field is empty is written `""`, so it round-trips.
+# - **Strict width.** Every record must have as many fields as the first (the
+#   header's, when there is one); a record that does not is an error at its
+#   line. `Options.flexible()` turns the check off.
+# - **Lines are physical lines, from 1**, counting the ones inside quoted
+#   fields; a record's line is the one it starts on. `CsvError.line` is that
+#   line, `0` when the error belongs to no line (an option, a missing column).
+#   Rows in typed-helper messages are data rows from 1, the header not counted.
+# - **The delimiter is a one-character `String`**, not `data-io.md`'s `Char`:
+#   it must be one ASCII byte that is not `"`, CR or LF (`Options.delimiter`
+#   is checked when a reader or writer opens). Default `,`.
+# - The whole text is read before the first record (`Reader.open` reads the
+#   file with `read_file`). Streaming a file larger than memory is a
+#   `BufferedReader` change inside `Reader`, not an interface change.
+# - The writer quotes **only when needed**: a field that holds the delimiter,
+#   a quote, CR or LF, or is the lone empty field of its record. Records end
+#   with `\n`; `Options.crlf()` makes it `\r\n`.
+# - `floats` and `ints` do no trimming and accept what `parse_float` and
+#   `parse_int` accept; an empty field is an error, not a `0` or a NaN.
+
+use io (FileError)
+
+# --- errors -------------------------------------------------------------------
+
+public type CsvError:
+    line: Int
+    reason: String
+
+CsvError implements Error:
+    def message(self) -> String:
+        if self.line > 0:
+            return f"line {self.line}: {self.reason}"
+        self.reason.clone()
+
+def failed(line: Int, reason: String) -> Error?:
+    CsvError(line: line, reason: reason)
+
+# --- options ------------------------------------------------------------------
+
+public type Options:
+    separator: String
+    has_header: Bool
+    strict: Bool
+    carriage_return: Bool
+
+Options has:
+    # A comma, a header row, strict widths, `\n` line ends.
+    public def new() -> Options:
+        Options(separator: ",", has_header: true, strict: true, carriage_return: false)
+
+    public def delimiter(self: Self, separator: String) -> Options:
+        Options(separator: separator, has_header: self.has_header, strict: self.strict, carriage_return: self.carriage_return)
+
+    # Whether the first record is a header (the default) or data.
+    public def header(self: Self, present: Bool) -> Options:
+        Options(separator: self.separator, has_header: present, strict: self.strict, carriage_return: self.carriage_return)
+
+    # Accept records whose width differs from the first's.
+    public def flexible(self: Self) -> Options:
+        Options(separator: self.separator, has_header: self.has_header, strict: false, carriage_return: self.carriage_return)
+
+    # Write `\r\n` at the end of a record.
+    public def crlf(self: Self) -> Options:
+        Options(separator: self.separator, has_header: self.has_header, strict: self.strict, carriage_return: true)
+
+def check_options(options: &Options) -> Error?:
+    let bytes be options.separator.bytes()
+    if bytes.length() is not 1:
+        return failed(0, "the delimiter must be exactly one character")
+    let byte be bytes[0]
+    if byte is 34 or byte is 10 or byte is 13 or byte >= 128:
+        return failed(0, "the delimiter must be an ASCII character other than a quote, CR or LF")
+    null
+
+# --- scanning -----------------------------------------------------------------
+
+def cut(text: &String, start: Int, end: Int) -> String:
+    let piece, err be text.slice(start..end)
+    if err?:
+        panic("csv: a field boundary was not on a character boundary")
+    piece
+
+def copy_all(items: &Array[String]) -> Array[String]:
+    let mutable out be Array[String].new()
+    for item in items:
+        out.push(item.clone())
+    out
+
+# What one `scan` found: a record, where the next begins, and why it failed.
+type Scan:
+    fields: Array[String]
+    pos: Int
+    line: Int
+    start_line: Int
+    done: Bool
+    problem: Error?
+
+# The next record of `text` from byte `pos`, which is at physical line `line`.
+# `done` is set at the end of input (no record) or on an error.
+def scan(text: &String, pos: Int, line: Int, separator: U8) -> Scan:
+    let bytes be text.bytes()
+    let size be bytes.length()
+    let mutable at be pos
+    let mutable row be line
+    loop:
+        if at >= size:
+            return Scan(fields: Array[String].new(), pos: at, line: row, start_line: row, done: true, problem: null)
+        if bytes[at] is 10:
+            at be at + 1
+            row be row + 1
+        else:
+            if bytes[at] is 13:
+                at be at + 1
+                if at < size and bytes[at] is 10:
+                    at be at + 1
+                row be row + 1
+            else:
+                break
+    let start_line be row
+    let mutable fields be Array[String].new()
+    loop:
+        let mutable field be String.new()
+        if at < size and bytes[at] is 34:
+            let opened be row
+            at be at + 1
+            let mutable piece be at
+            let mutable closed be false
+            loop:
+                if at >= size:
+                    break
+                let byte be bytes[at]
+                if byte is 34:
+                    if at + 1 < size and bytes[at + 1] is 34:
+                        field.push_str(&cut(text, piece, at + 1))
+                        at be at + 2
+                        piece be at
+                    else:
+                        field.push_str(&cut(text, piece, at))
+                        at be at + 1
+                        closed be true
+                        break
+                else:
+                    if byte is 10:
+                        row be row + 1
+                    at be at + 1
+            if not closed:
+                return Scan(fields: fields, pos: at, line: row, start_line: start_line, done: true, problem: failed(opened, "a quoted field is never closed"))
+            if at < size and bytes[at] is not separator and bytes[at] is not 10 and bytes[at] is not 13:
+                return Scan(fields: fields, pos: at, line: row, start_line: start_line, done: true, problem: failed(row, "a closing quote must be followed by a delimiter or the end of the record"))
+        else:
+            let begin be at
+            loop:
+                if at >= size:
+                    break
+                let byte be bytes[at]
+                if byte is separator or byte is 10 or byte is 13:
+                    break
+                at be at + 1
+            field be cut(text, begin, at)
+        fields.push(field)
+        if at >= size:
+            break
+        if bytes[at] is separator:
+            at be at + 1
+            continue
+        if bytes[at] is 13:
+            at be at + 1
+            if at < size and bytes[at] is 10:
+                at be at + 1
+        else:
+            at be at + 1
+        row be row + 1
+        break
+    Scan(fields: fields, pos: at, line: row, start_line: start_line, done: false, problem: null)
+
+# --- Reader -------------------------------------------------------------------
+
+# Records one at a time. It ends at the end of the text or at the first error,
+# and `error` says which: a reader whose `error` is `null` read everything.
+public type Reader:
+    text: String
+    pos: Int
+    line: Int
+    separator: U8
+    strict: Bool
+    width: Int
+    # The header record; empty when `Options.header(false)`.
+    header: Array[String]
+    # The line the record `next` last returned started on.
+    last_line: Int
+    error: Error?
+
+Reader has:
+    # A reader with nothing in it, for a file that would not open.
+    def blank() -> Reader:
+        Reader(text: String.new(), pos: 0, line: 1, separator: 44, strict: true, width: -1, header: Array[String].new(), last_line: 0, error: null)
+
+    # A reader over `text`. The header, when there is one, is read now.
+    public def from_text(text: &String, options: &Options) -> (Reader, Error?):
+        let bad be check_options(options)
+        let mutable owned be String.new()
+        owned.push_str(text)
+        let mutable reader be Reader(text: owned, pos: 0, line: 1, separator: 44, strict: options.strict, width: -1, header: Array[String].new(), last_line: 0, error: null)
+        if bad?:
+            return (reader, bad)
+        reader.separator be options.separator.bytes()[0]
+        let bytes be text.bytes()
+        if bytes.length() >= 3 and bytes[0] is 239 and bytes[1] is 187 and bytes[2] is 191:
+            reader.pos be 3
+        if options.has_header:
+            let first be reader.record()
+            if first?:
+                reader.header be first
+            if reader.error?:
+                return (reader, reader.error)
+        (reader, null)
+
+    # A reader over the file at `path`.
+    public def open(path: &String, options: &Options) -> (Reader, Error?):
+        let text, err be read_file(path)
+        if err?:
+            return (Reader.blank(), failed(0, f"{path}: {err.message()}"))
+        Reader.from_text(&text, options)
+
+    # The next record, `null` at the end or after an error. A `for` loop over a
+    # reader calls this.
+    public def record(mutable self) -> Array[String]?:
+        if self.error?:
+            return null
+        let found be scan(&self.text, self.pos, self.line, self.separator)
+        self.pos be found.pos
+        self.line be found.line
+        if found.problem?:
+            self.error be found.problem
+            return null
+        if found.done:
+            return null
+        if self.strict and self.width >= 0 and found.fields.length() is not self.width:
+            self.error be failed(found.start_line, f"expected {self.width} fields, found {found.fields.length()}")
+            return null
+        if self.width < 0:
+            self.width be found.fields.length()
+        self.last_line be found.start_line
+        found.fields
+
+    public def failure(self) -> Bool:
+        self.error?
+
+Reader implements Iterate:
+    type Item is Array[String]
+
+    def next(mutable self) -> Self.Item?:
+        self.record()
+
+# --- Table --------------------------------------------------------------------
+
+# A whole file: the header, every record, and the line each began on.
+public type Table:
+    header: Array[String]
+    rows: Array[Array[String]]
+    lines: Array[Int]
+
+Table has:
+    public def parse(text: &String, options: &Options) -> (Table, Error?):
+        let mutable reader, err be Reader.from_text(text, options)
+        let mutable table be Table(header: copy_all(&reader.header), rows: Array[Array[String]].new(), lines: Array[Int].new())
+        if err?:
+            return (table, err)
+        loop:
+            let record be reader.record()
+            if not record?:
+                break
+            table.rows.push(record)
+            table.lines.push(reader.last_line)
+        if reader.error?:
+            return (table, reader.error)
+        (table, null)
+
+    public def read(path: &String, options: &Options) -> (Table, Error?):
+        let text, err be read_file(path)
+        if err?:
+            return (Table(header: Array[String].new(), rows: Array[Array[String]].new(), lines: Array[Int].new()), failed(0, f"{path}: {err.message()}"))
+        Table.parse(&text, options)
+
+    public def row_count(self) -> Int:
+        self.rows.length()
+
+    public def column_count(self) -> Int:
+        if self.header.length() > 0:
+            return self.header.length()
+        if self.rows.length() > 0:
+            return self.rows[0].length()
+        0
+
+    # The position of the column called `name`, `null` when there is none.
+    public def column_index(self, name: &String) -> Int?:
+        for i in 0..self.header.length():
+            if self.header[i] is name:
+                return i
+        null
+
+    # The field at data row `row` (from 0) of column `name`.
+    public def get(self, row: Int, name: &String) -> (String, Error?):
+        let index be self.column_index(name)
+        if not index?:
+            return ("", failed(0, f"no column named \"{name}\""))
+        if row < 0 or row >= self.rows.length():
+            return ("", failed(0, f"no row {row + 1}"))
+        let record be &self.rows[row]
+        if index >= record.length():
+            return ("", failed(self.lines[row], f"row {row + 1} has no column \"{name}\""))
+        (record[index].clone(), null)
+
+    # Every field of column `index` (from 0), as text.
+    public def column_at(self, index: Int) -> (Array[String], Error?):
+        let mutable out be Array[String].new()
+        for row in 0..self.rows.length():
+            let record be &self.rows[row]
+            if index < 0 or index >= record.length():
+                return (out, failed(self.lines[row], f"row {row + 1} has no column {index + 1}"))
+            out.push(record[index].clone())
+        (out, null)
+
+    public def column(self, name: &String) -> (Array[String], Error?):
+        let index be self.column_index(name)
+        if not index?:
+            return (Array[String].new(), failed(0, f"no column named \"{name}\""))
+        self.column_at(index)
+
+    # Column `name` read as numbers; the error names the row, column and field.
+    public def floats(self, name: &String) -> (Array[F64], Error?):
+        let index be self.column_index(name)
+        if not index?:
+            return (Array[F64].new(), failed(0, f"no column named \"{name}\""))
+        self.floats_at(index)
+
+    public def floats_at(self, index: Int) -> (Array[F64], Error?):
+        let mutable out be Array[F64].new()
+        for row in 0..self.rows.length():
+            let record be &self.rows[row]
+            if index < 0 or index >= record.length():
+                return (out, failed(self.lines[row], f"row {row + 1} has no column {index + 1}"))
+            let value, err be record[index].parse_float()
+            if err? or record[index].is_empty():
+                return (out, failed(self.lines[row], f"row {row + 1}, column {self.label(index)}: cannot read \"{record[index]}\" as a float"))
+            out.push(value)
+        (out, null)
+
+    public def ints(self, name: &String) -> (Array[Int], Error?):
+        let index be self.column_index(name)
+        if not index?:
+            return (Array[Int].new(), failed(0, f"no column named \"{name}\""))
+        self.ints_at(index)
+
+    public def ints_at(self, index: Int) -> (Array[Int], Error?):
+        let mutable out be Array[Int].new()
+        for row in 0..self.rows.length():
+            let record be &self.rows[row]
+            if index < 0 or index >= record.length():
+                return (out, failed(self.lines[row], f"row {row + 1} has no column {index + 1}"))
+            let value, err be record[index].parse_int()
+            if err? or record[index].is_empty():
+                return (out, failed(self.lines[row], f"row {row + 1}, column {self.label(index)}: cannot read \"{record[index]}\" as an integer"))
+            out.push(value)
+        (out, null)
+
+    # How a message names column `index`: `"mass"`, or its number without a header.
+    def label(self, index: Int) -> String:
+        if index < self.header.length():
+            return f"\"{self.header[index]}\""
+        f"{index + 1}"
+
+# --- Writer -------------------------------------------------------------------
+
+# Builds the text of a CSV file a record at a time. `text()` is what has been
+# written; `save` puts it in a file.
+public type Writer:
+    out: String
+    separator: String
+    terminator: String
+
+Writer has:
+    public def new(options: &Options) -> Writer:
+        let mutable end be "\n"
+        if options.carriage_return:
+            end be "\r\n"
+        Writer(out: String.new(), separator: options.separator.clone(), terminator: end)
+
+    # Appends `record`, quoting the fields that need it.
+    public def write_record(mutable self, record: &Array[String]):
+        for i in 0..record.length():
+            if i > 0:
+                self.out.push_str(&self.separator)
+            let field be &record[i]
+            if needs_quotes(field, self.separator.bytes()[0], record.length() is 1):
+                self.out.push_str("\"")
+                self.out.push_str(&field.replace("\"", "\"\""))
+                self.out.push_str("\"")
+            else:
+                self.out.push_str(field)
+        self.out.push_str(&self.terminator)
+
+    # Appends a whole table: its header (if it has one) and every record.
+    public def write_table(mutable self, table: &Table):
+        if table.header.length() > 0:
+            self.write_record(&table.header)
+        for row in 0..table.rows.length():
+            self.write_record(&table.rows[row])
+
+    public def text(self) -> &String:
+        &self.out
+
+    public def save(self, path: &String) -> Error?:
+        let err be write_file(path, &self.out)
+        if err?:
+            return failed(0, f"{path}: {err.message()}")
+        null
+
+# Whether `field` must be quoted: it holds the delimiter, a quote, CR or LF, or
+# it is empty and alone in its record (a bare blank line would be skipped).
+def needs_quotes(field: &String, separator: U8, alone: Bool) -> Bool:
+    if field.is_empty():
+        return alone
+    let bytes be field.bytes()
+    for i in 0..bytes.length():
+        let byte be bytes[i]
+        if byte is separator or byte is 34 or byte is 10 or byte is 13:
+            return true
+    false

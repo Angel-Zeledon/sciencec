@@ -41,6 +41,7 @@ const MODULES: &[(&str, &str)] = &[
     ("path.science", include_str!("../stdlib/path.science")),
     ("stats.science", include_str!("../stdlib/stats.science")),
     ("ndarray.science", include_str!("../stdlib/ndarray.science")),
+    ("csv.science", include_str!("../stdlib/csv.science")),
 ];
 
 /// The source of the bundled module at `candidate`, if there is one.
