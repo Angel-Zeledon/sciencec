@@ -1,0 +1,383 @@
+# stats — `DREAM.md` §14.4 and `scientific-libraries.md` §7.1, the descriptive
+# part: `use stats (mean, variance, median, quantile, Welford)`.
+#
+# Summary statistics over a borrowed `Array[F64]`, written in Science and
+# bundled the way `random` is (`science_resolve::stdlib`). It needs no runtime
+# and no `math` beyond `F64.sqrt`. Distributions, tests, intervals and the
+# multivariate routines (§7.2, §7.4 onwards) are not here: they are other
+# phases, and §7.1's `mode`, `skewness`, `kurtosis`, the weighted and trimmed
+# means and the rank correlations are not written yet.
+#
+#     let xs be Array[F64].new()
+#     xs.push(2.0)
+#     xs.push(4.0)
+#     let m be mean(&xs)
+#     if m?:
+#         print(m)
+#
+# What this file decides, each where it applies:
+#
+# - **Summation is Neumaier's improved Kahan summation**, not pairwise: one
+#   pass, no allocation, a fixed left-to-right order. It keeps a running
+#   correction for the low bits each addition drops, and unlike Kahan's own it
+#   stays right when a later term is larger than the running sum. The result
+#   is the correctly rounded sum for every input a double can hold apart from
+#   one whose exact sum needs more than about two words of precision. It is
+#   one order, so it is reproducible bit for bit (`reproducibility.md`).
+# - **A sum that is not finite is the plain sum.** The correction term is
+#   `inf - inf` when a term is infinite, and it would turn `inf` into `NaN`.
+#   The plain running sum gives IEEE's own answer: `inf`, `-inf`, or `NaN` for
+#   `inf - inf`, and `NaN` for any `NaN` term.
+# - **`NaN` is propagated, never skipped.** A `NaN` in the input makes `sum`,
+#   `mean`, `variance`, `std`, `covariance` and `correlation` `NaN`, which is
+#   what IEEE arithmetic does without being asked. `min`, `max`, `median` and
+#   `quantile` are made to agree: they scan for a `NaN` first and return it,
+#   because a comparison sort or a selection over a `NaN` answers by where the
+#   `NaN` happens to sit. `missing-data.md` §0 refuses an `NA`: `NaN` here is a
+#   number that came out of a computation, and *absence* is `null`. So these
+#   functions take `Array[F64]` and not `Array[F64?]`; `skipping null`
+#   (`missing-data.md` §3) is the call-site policy for the nullable element
+#   type and belongs to the day that note lands. Dropping the `NaN`s first is
+#   a decision about the data, and it is the caller's.
+# - **An answer that does not exist is `null`**, not `NaN` and not an error:
+#   `mean` of nothing, `variance` of one value under `ddof: 1`, `quantile`
+#   outside `[0, 1]`, two arrays of different lengths. `F64?` is the language's
+#   spelling of "no value" (`missing-data.md` §1), a caller has to look before
+#   it uses the number, and `NaN` is left to mean what it says. There is no
+#   `StatsError` here; `scientific-libraries.md` §7.4's `(TestResult,
+#   StatsError?)` is for the tests, which have several ways to fail and a
+#   reason to name each.
+# - **`sum` of nothing is `0.0`**: the additive identity is an answer, and
+#   `null` would make every caller that sums a possibly empty array check.
+# - **There is no default for the degrees of freedom.** `variance`, `std` and
+#   `covariance` take `ddof: Int`, the divisor being `n - ddof`, with `0` the
+#   population and `1` Bessel's sample estimate. NumPy's default is `0` and R's
+#   and pandas' is `1`, and a program that moves between them changes every
+#   number silently; `intrinsics-math-physics.md` §2.3 says the choice is
+#   `Variance.Sample` against `Variance.Population`, not a name for a
+#   correction. `ddof` is a bare argument here until that enumeration exists.
+#   `correlation` has none: the divisor cancels.
+# - **Variance is the corrected two-pass algorithm.** The mean is found with
+#   the compensated sum, then `Σ(x - m)²` and `Σ(x - m)` are both summed with
+#   it, and the second, which is zero in exact arithmetic, corrects the first
+#   for the rounding in `m` (Chan, Golub and LeVeque, 1983). It needs two
+#   passes over the array and does not lose every digit to cancellation when
+#   the mean is large against the spread, as `E[x²] - E[x]²` does. The
+#   `Welford` type is the one-pass answer, for data that cannot be held.
+# - **`median` and `quantile` select; they do not sort.** `Array` has `sort`
+#   by name only and `sorted` takes an `Int` key, so an `F64` array cannot be
+#   put in order. Both copy the input, because the caller's array is only
+#   borrowed, and run Wirth's quickselect over the copy: expected linear time,
+#   quadratic in a contrived worst case, no `NaN` in it by the check above, so
+#   every comparison is a total order.
+# - **`quantile(xs, q)` is Hyndman and Fan's type 7**, the default of NumPy
+#   (`linear`), R and Julia: the value at the real position `q·(n - 1)` of the
+#   sorted data, interpolated linearly between its two neighbours. `q` is a
+#   fraction in `[0, 1]`, not a percentage. `median` is `quantile(xs, 0.5)`:
+#   for an even count, the mean of the two middle values.
+# - **`correlation` is Pearson's `r`**, in the same compensated passes, so it
+#   is exact enough to say `1.0` for two arrays that are one linear function
+#   of the other. A constant input has no correlation and the quotient is
+#   `0 / 0`: `NaN`, as NumPy answers it with a warning, rather than a `null`
+#   that would claim the data were the problem. The result is clamped to
+#   `[-1, 1]`, because the quotient can land a rounding error outside.
+# - **`Welford` is Welford's update** (1962) in the form Knuth gives, with
+#   Chan's merge (1979) for combining two accumulators — the one-pass,
+#   constant-space, numerically stable running mean and variance. Its count is
+#   an `Int`, and a `NaN` pushed poisons it for good, like the functions above.
+
+# --- Compensated summation ----------------------------------------------------
+
+# A running Neumaier sum: the sum so far, its correction, and the plain sum
+# alongside, for the non-finite case in the header.
+type Running:
+    total: F64
+    carry: F64
+    plain: F64
+
+Running has:
+    def start() -> Running:
+        Running(total: 0.0, carry: 0.0, plain: 0.0)
+
+    def add(mutable self, x: F64):
+        let t be self.total + x
+        if self.total.abs() >= x.abs():
+            self.carry be self.carry + ((self.total - t) + x)
+        else:
+            self.carry be self.carry + ((x - t) + self.total)
+        self.total be t
+        self.plain be self.plain + x
+
+    # The compensated sum, or the plain one where that is not finite.
+    def value(self) -> F64:
+        let result be self.total + self.carry
+        if result.is_nan() or result.is_infinite():
+            return self.plain
+        result
+
+# The compensated sum of `xs`. Zero for an empty array.
+public def sum(xs: &Array[F64]) -> F64:
+    let mutable running be Running.start()
+    for x in xs:
+        running.add(x)
+    running.value()
+
+# `x`, or zero where rounding has left a variance a hair below it. `F64.max`
+# is not used: it returns the other operand for a `NaN`, and a `NaN` is to stay.
+def non_negative(x: F64) -> F64:
+    if x < 0.0:
+        return 0.0
+    x
+
+# The mean of `xs`, or `null` for an empty array.
+public def mean(xs: &Array[F64]) -> F64?:
+    let count be xs.length()
+    if count is 0:
+        return null
+    sum(xs) / count as F64
+
+# --- Variance and covariance --------------------------------------------------
+
+# The compensated `Σ(x - cx)(y - cy)`, `Σ(x - cx)` and `Σ(y - cy)` over two
+# arrays of one length, the three of the corrected two-pass formula.
+def centred_sums(xs: &Array[F64], ys: &Array[F64], cx: F64, cy: F64) -> (F64, F64, F64):
+    let mutable products be Running.start()
+    let mutable lefts be Running.start()
+    let mutable rights be Running.start()
+    for i in 0..xs.length():
+        let dx be xs[i] - cx
+        let dy be ys[i] - cy
+        products.add(dx * dy)
+        lefts.add(dx)
+        rights.add(dy)
+    (products.value(), lefts.value(), rights.value())
+
+# `Σ(x - mx)(y - my)` corrected for the rounding in the two means, over `count`
+# values: the centred cross-product that variance, covariance and correlation
+# divide by something.
+def cross_product(xs: &Array[F64], ys: &Array[F64], mx: F64, my: F64) -> F64:
+    let products, lefts, rights be centred_sums(xs, ys, mx, my)
+    products - lefts * rights / xs.length() as F64
+
+# The sample variance of `xs` with divisor `n - ddof`: `null` when `xs` is
+# empty or `n - ddof` is not positive. `ddof: 0` is the population variance and
+# `ddof: 1` is Bessel's correction.
+public def variance(xs: &Array[F64], ddof: Int) -> F64?:
+    let count be xs.length()
+    if ddof < 0 or count - ddof <= 0:
+        return null
+    let m be sum(xs) / count as F64
+    let spread be cross_product(xs, xs, m, m)
+    non_negative(spread / (count - ddof) as F64)
+
+# The standard deviation: `variance`'s square root, with the same `ddof`.
+public def std(xs: &Array[F64], ddof: Int) -> F64?:
+    let v be variance(xs, ddof)
+    if v?:
+        return v.sqrt()
+    null
+
+# The covariance of `xs` and `ys` with divisor `n - ddof`: `null` when the
+# arrays differ in length, are empty, or `n - ddof` is not positive.
+public def covariance(xs: &Array[F64], ys: &Array[F64], ddof: Int) -> F64?:
+    let count be xs.length()
+    if count is not ys.length() or ddof < 0 or count - ddof <= 0:
+        return null
+    let mx be sum(xs) / count as F64
+    let my be sum(ys) / count as F64
+    cross_product(xs, ys, mx, my) / (count - ddof) as F64
+
+# Pearson's correlation of `xs` and `ys`, in `[-1, 1]`: `null` when the arrays
+# differ in length or hold fewer than two values, and `NaN` when either is
+# constant (the header says why).
+public def correlation(xs: &Array[F64], ys: &Array[F64]) -> F64?:
+    let count be xs.length()
+    if count is not ys.length() or count < 2:
+        return null
+    let mx be sum(xs) / count as F64
+    let my be sum(ys) / count as F64
+    let cross be cross_product(xs, ys, mx, my)
+    let left be cross_product(xs, xs, mx, mx)
+    let right be cross_product(ys, ys, my, my)
+    let r be cross / (left * right).sqrt()
+    if r > 1.0:
+        return 1.0
+    if r < -1.0:
+        return -1.0
+    r
+
+# --- Extremes, median and quantiles -------------------------------------------
+
+# Whether any value of `xs` is `NaN`.
+def has_nan(xs: &Array[F64]) -> Bool:
+    for x in xs:
+        if x.is_nan():
+            return true
+    false
+
+# The smallest value of `xs`, `NaN` if any is, and `null` for an empty array.
+public def min(xs: &Array[F64]) -> F64?:
+    if xs.length() is 0:
+        return null
+    if has_nan(xs):
+        return F64.NAN
+    let mutable best be xs[0]
+    for x in xs:
+        if x < best:
+            best be x
+    best
+
+# The largest value of `xs`, `NaN` if any is, and `null` for an empty array.
+public def max(xs: &Array[F64]) -> F64?:
+    if xs.length() is 0:
+        return null
+    if has_nan(xs):
+        return F64.NAN
+    let mutable best be xs[0]
+    for x in xs:
+        if x > best:
+            best be x
+    best
+
+# A copy of `xs`, which the selection below may reorder.
+def copy_of_values(xs: &Array[F64]) -> Array[F64]:
+    let mutable copy be Array[F64].new()
+    for x in xs:
+        copy.push(x)
+    copy
+
+# `items[i]` as a value. A bare `items[i]` bound by `let` stays a borrow of the
+# array, and the exchange below would be refused as a write under it.
+def at(items: &Array[F64], i: Int) -> F64:
+    items[i]
+
+# Wirth's quickselect: reorder `items` so that `items[k]` is the value a sort
+# would put there, everything before it is no larger and everything after it is
+# no smaller, and `values` comes back reordered. It must hold no `NaN`. It is
+# taken by value because a `&mut` is not passed where a `&` is expected, which
+# `at` below needs.
+def select(values: Array[F64], k: Int) -> Array[F64]:
+    let mutable items be values
+    let mutable low be 0
+    let mutable high be items.length() - 1
+    loop:
+        if low >= high:
+            break
+        let pivot be at(items, k)
+        let mutable i be low
+        let mutable j be high
+        loop:
+            loop:
+                if items[i] >= pivot:
+                    break
+                i be i + 1
+            loop:
+                if pivot >= items[j]:
+                    break
+                j be j - 1
+            if i <= j:
+                let held be at(items, i)
+                items[i] be at(items, j)
+                items[j] be held
+                i be i + 1
+                j be j - 1
+            if i > j:
+                break
+        if j < k:
+            low be i
+        if k < i:
+            high be j
+    items
+
+# Hyndman and Fan's type 7 quantile of `xs` at the fraction `q` of `[0, 1]`:
+# `null` for an empty array or a `q` outside `[0, 1]` (a `NaN` `q` included),
+# and `NaN` when `xs` holds a `NaN`.
+public def quantile(xs: &Array[F64], q: F64) -> F64?:
+    let count be xs.length()
+    if count is 0 or not (q >= 0.0 and q <= 1.0):
+        return null
+    if has_nan(xs):
+        return F64.NAN
+    let position be q * (count - 1) as F64
+    let lower be position.floor() as Int
+    let weight be position - lower as F64
+    let items be select(copy_of_values(xs), lower)
+    let below be items[lower]
+    if weight is 0.0 or lower + 1 >= count:
+        return below
+    # Everything after `lower` is no smaller than `below`, so the next order
+    # statistic is the smallest of it.
+    let mutable above be items[lower + 1]
+    for i in lower + 1..count:
+        if items[i] < above:
+            above be items[i]
+    below + weight * (above - below)
+
+# The median of `xs`: its middle value, or for an even count the mean of the
+# two middle ones. `null` for an empty array, `NaN` if `xs` holds a `NaN`.
+public def median(xs: &Array[F64]) -> F64?:
+    quantile(xs, 0.5)
+
+# --- Welford's accumulator ----------------------------------------------------
+
+# A running count, mean and sum of squared deviations from the mean, updated
+# one value at a time in constant space.
+public type Welford:
+    seen: Int
+    centre: F64
+    spread: F64
+
+Welford has:
+    # An accumulator that has seen nothing.
+    public def new() -> Welford:
+        Welford(seen: 0, centre: 0.0, spread: 0.0)
+
+    # Fold one value in.
+    public def add(mutable self, x: F64):
+        self.seen be self.seen + 1
+        let delta be x - self.centre
+        self.centre be self.centre + delta / self.seen as F64
+        self.spread be self.spread + delta * (x - self.centre)
+
+    # Fold in everything `other` has seen, as if its values had been `add`ed
+    # here (Chan's pairwise update), so that two halves of a data set can be
+    # accumulated apart and joined.
+    public def merge(mutable self, other: Welford):
+        if other.seen is 0:
+            return
+        if self.seen is 0:
+            self.seen be other.seen
+            self.centre be other.centre
+            self.spread be other.spread
+            return
+        let total be self.seen + other.seen
+        let delta be other.centre - self.centre
+        let share be other.seen as F64 / total as F64
+        let mine be self.seen as F64
+        self.spread be self.spread + other.spread + delta * delta * mine * share
+        self.centre be self.centre + delta * share
+        self.seen be total
+
+    # How many values have been added.
+    public def count(self) -> Int:
+        self.seen
+
+    # The mean so far, or `null` before the first value.
+    public def mean(self) -> F64?:
+        if self.seen is 0:
+            return null
+        self.centre
+
+    # The variance so far with divisor `count - ddof`, `null` when that is not
+    # positive. `ddof` is `variance`'s, and has no default for the same reason.
+    public def variance(self, ddof: Int) -> F64?:
+        if ddof < 0 or self.seen - ddof <= 0:
+            return null
+        non_negative(self.spread / (self.seen - ddof) as F64)
+
+    # The standard deviation so far: `variance`'s square root.
+    public def std(self, ddof: Int) -> F64?:
+        let v be self.variance(ddof)
+        if v?:
+            return v.sqrt()
+        null
